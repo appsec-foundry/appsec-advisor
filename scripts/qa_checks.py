@@ -1526,6 +1526,17 @@ def check_ms_structure(md_path: Path) -> tuple[Report, str]:
 # ---------------------------------------------------------------------------
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _attack_glyphs() -> str:
+    """The attack-path glyphs in order, from the taxonomy the composer numbers with."""
+    import yaml
+
+    data = yaml.safe_load((PLUGIN_ROOT / "data" / "attack-class-taxonomy.yaml").read_text(encoding="utf-8"))
+    return "".join(data["glyph_sequence"])
+
+
+_GLYPH_CLASS = "[" + _attack_glyphs() + "]"
 DEFAULT_CONTRACT_PATH = PLUGIN_ROOT / "data" / "sections-contract.yaml"
 
 
@@ -10451,7 +10462,7 @@ def _check_posture_structure_svg(report: Report, section: str, md_path: Path, im
     # T2/G3: figure arrow glyphs (from data-glyphs) == Top Threats row glyphs.
     # Table glyphs are circled unicode (①..); normalise both to integers.
     table_glyphs = re.findall(
-        r'^\|\s*(?:<a id="[^"]+"></a>)?\s*([①②③④⑤⑥⑦])\s*\|',
+        r'^\|\s*(?:<a id="[^"]+"></a>)?\s*(' + _GLYPH_CLASS + r")\s*\|",
         section,
         re.MULTILINE,
     )
@@ -10608,15 +10619,17 @@ def check_security_posture_structure(md_path: Path) -> Report:
             in_relay = True
         elif re.search(r"%%\s*(Consequence|Attack)", ln):
             in_relay = False
-        if not in_relay and ("==>" in ln or "-.->" in ln) and re.search(r"[①②③④⑤⑥⑦]", ln):
+        if not in_relay and ("==>" in ln or "-.->" in ln) and re.search(_GLYPH_CLASS, ln):
             attack_lines.append(ln)
-    if not (1 <= len(attack_lines) <= 7):
-        report.issues.append(f"E2: expected 1–7 attack arrows with ①–⑦ labels, found {len(attack_lines)}")
+    if not (1 <= len(attack_lines) <= len(_GLYPH_CLASS) - 2):
+        report.issues.append(
+            f"E2: expected 1–{len(_GLYPH_CLASS) - 2} attack arrows with glyph labels, found {len(attack_lines)}"
+        )
     # Reference form (2026-05): a single grouped arrow per (actor, tier) may
     # carry SEVERAL glyphs in its label, e.g. `|" ① ③ ④ ⑤ "|`. Collect every
     # glyph that appears inside an attack-arrow's edge label; the UNION must be
     # the contiguous run ① ② … N with no duplicates (G1) and no gaps (G2).
-    _GLYPHS = "①②③④⑤⑥⑦"
+    _GLYPHS = _GLYPH_CLASS[1:-1]
     actual_glyphs: list[str] = []
     for ln in attack_lines:
         mlab = re.search(r"\|([^|]*)\|", ln)
@@ -10636,8 +10649,8 @@ def check_security_posture_structure(md_path: Path) -> Report:
 
     # E3: consequence arrows (-.->). Exclude glyph-carrying dashed edges — those
     # are INDIRECT attack arrows (counted in E2 above), not tier→impact
-    # consequence edges (which never carry a ①–⑦ glyph label).
-    cons_lines = [ln for ln in mermaid.splitlines() if "-.->" in ln and not re.search(r"[①②③④⑤⑥⑦]", ln)]
+    # consequence edges (which never carry an attack glyph label).
+    cons_lines = [ln for ln in mermaid.splitlines() if "-.->" in ln and not re.search(_GLYPH_CLASS, ln)]
     if not (1 <= len(cons_lines) <= 6):
         report.issues.append(f"E3: expected 1–6 consequence arrows (-.->), found {len(cons_lines)}")
 
@@ -10697,7 +10710,7 @@ def check_security_posture_structure(md_path: Path) -> Report:
     # T2/G3: every diagram arrow glyph appears exactly once as a table-row `#`
     # glyph (the row carries `<a id="path-…"></a>①`), and vice versa.
     table_glyphs = re.findall(
-        r'^\|\s*(?:<a id="[^"]+"></a>)?\s*([①②③④⑤⑥⑦])\s*\|',
+        r'^\|\s*(?:<a id="[^"]+"></a>)?\s*(' + _GLYPH_CLASS + r")\s*\|",
         after_mermaid,
         re.MULTILINE,
     )

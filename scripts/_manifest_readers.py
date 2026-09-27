@@ -120,7 +120,7 @@ def read_project_manifest(ctx: RenderContext) -> dict[str, Any]:
 
 
 def manifest_display_name(pkg: dict[str, Any]) -> str | None:
-    """A manifest's package name as a reader sees it: `juice-shop` → `Juice Shop`, scoped names unchanged."""
+    """A manifest's package name as a reader sees it: `order-portal` → `Order Portal`, scoped names unchanged."""
     name = pkg.get("name")
     if not isinstance(name, str) or not name.strip():
         return None

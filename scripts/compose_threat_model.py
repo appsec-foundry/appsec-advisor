@@ -3481,7 +3481,7 @@ def _build_finding_to_path_map(
     security-posture-attack-paths.schema.json), so every lookup missed and
     the cell rendered as a literal em-dash.
     """
-    glyphs = ["①", "②", "③", "④", "⑤", "⑥", "⑦"]
+    glyphs = list(_load_attack_class_taxonomy().get("glyph_sequence") or [])
     out: dict[str, tuple[str, str]] = {}
 
     # M-9: Build a bidirectional F↔T alias from threats so both namespaces
@@ -9747,7 +9747,7 @@ def _compute_top_threats_rows(ctx: RenderContext) -> list[dict[str, Any]]:
 
     attack_paths_data = _load_attack_paths_fragment(ctx, taxonomy, list(threats.values()))
     paths = attack_paths_data.get("attack_paths") or []
-    glyphs = ["①", "②", "③", "④", "⑤", "⑥", "⑦"]
+    glyphs = list(_load_attack_class_taxonomy().get("glyph_sequence") or [])
 
     def resolve_component(slug: str | None) -> tuple[str, str]:
         if not slug:

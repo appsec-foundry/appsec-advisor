@@ -129,7 +129,7 @@ every run:
 - **no actor→data edges** — data-tier attacks (injection, secret/file exposure)
   route as internal `app ⇒ data` edges; victim-targeting classes route
   `app ⇒ client ⇒ Shop User`;
-- one red attacker edge per attack class, glyph-labelled ①–⑦ in the SAME order as
+- one red attacker edge per attack class, glyph-labelled ① ② … in the SAME order as
   Figure 2 and the Top Threats table;
 - `linkStyle` index ranges computed from the actual edge count (never out of
   range — the historic crash mode).
