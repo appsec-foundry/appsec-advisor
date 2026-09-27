@@ -53,6 +53,7 @@ def test_exact_group_rejects_partial_rename_and_inventory_detects_addition(tmp_p
     monkeypatch.setattr(runner, "GROUPS", {"example": (first, added)})
     monkeypatch.setattr(runner, "MANUAL_TESTS", {})
     monkeypatch.setattr(runner, "SOURCE_TESTS", {})
+    monkeypatch.setattr(runner, "SOURCE_PREFIX_TESTS", {})
     assert runner.select_tests("example", tmp_path) == [first, added]
     assert runner.group_problems(tmp_path) == []
     (tmp_path / "tests/test_unrelated.py").touch()
@@ -236,8 +237,59 @@ def selection_repo(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "GROUPS", groups)
     monkeypatch.setattr(runner, "MANUAL_TESTS", {})
     monkeypatch.setattr(runner, "SOURCE_TESTS", sources)
+    monkeypatch.setattr(runner, "SOURCE_PREFIX_TESTS", {})
     monkeypatch.setattr(runner, "requirement_tests", lambda paths, root: [])
     return tmp_path
+
+
+def _touch(root, path):
+    (root / path).parent.mkdir(parents=True, exist_ok=True)
+    (root / path).touch()
+
+
+@pytest.mark.parametrize("prefix,name", [("notes/plans/", "layout-plan.md"), ("docs/drafts/", "2026-review.md")])
+def test_working_document_under_a_routed_directory_selects_only_its_readers(selection_repo, monkeypatch, prefix, name):
+    _touch(selection_repo, prefix + name)
+    monkeypatch.setattr(runner, "SOURCE_PREFIX_TESTS", {prefix: ("tests/test_contract.py",)})
+    result = runner.select_changed([prefix + name, "scripts/emitter.py"], selection_repo)
+    assert set(result.paths) == {"tests/test_contract.py", "tests/test_emitter.py", "tests/test_reader.py"}
+
+
+@pytest.mark.parametrize("name", ["inventory.md", "edge-cases-2026.md"])
+def test_document_under_a_routed_directory_also_selects_tests_that_name_it(selection_repo, monkeypatch, name):
+    _touch(selection_repo, f"notes/plans/{name}")
+    (selection_repo / "tests/test_reader.py").write_text(f'SOURCE = ROOT / "notes" / "plans" / "{name}"\n')
+    monkeypatch.setattr(runner, "SOURCE_PREFIX_TESTS", {"notes/plans/": ("tests/test_contract.py",)})
+    result = runner.select_changed([f"notes/plans/{name}"], selection_repo)
+    assert set(result.paths) == {"tests/test_contract.py", "tests/test_reader.py"}
+
+
+def test_named_route_precedes_the_directory_route(selection_repo, monkeypatch):
+    _touch(selection_repo, "notes/plans/inventory.md")
+    monkeypatch.setattr(runner, "SOURCE_PREFIX_TESTS", {"notes/plans/": ("tests/test_contract.py",)})
+    monkeypatch.setitem(runner.SOURCE_TESTS, "notes/plans/inventory.md", ("tests/test_reader.py",))
+    assert runner.select_changed(["notes/plans/inventory.md"], selection_repo).paths == ("tests/test_reader.py",)
+
+
+@pytest.mark.parametrize("path", ["notes/plans/data.yaml", "notes/other/plan.md", "notes/plans.md"])
+def test_directory_route_covers_only_markdown_inside_it(selection_repo, monkeypatch, path):
+    _touch(selection_repo, path)
+    (selection_repo / "notes/plans").mkdir(exist_ok=True)
+    monkeypatch.setattr(runner, "SOURCE_PREFIX_TESTS", {"notes/plans/": ("tests/test_contract.py",)})
+    result = runner.select_changed([path], selection_repo)
+    assert result.paths == ("tests/",)
+    assert "no reviewed" in result.reasons[0]
+
+
+def test_directory_route_with_a_missing_directory_or_test_is_reported(selection_repo, monkeypatch):
+    (selection_repo / "notes").mkdir()
+    routes = {"notes/": ("tests/test_absent.py",), "absent/": ("tests/test_contract.py",)}
+    monkeypatch.setattr(runner, "SOURCE_PREFIX_TESTS", routes)
+    problems = runner.group_problems(selection_repo)
+    assert [p for p in problems if "prefix route" in p] == [
+        "invalid source prefix route: notes/",
+        "invalid source prefix route: absent/",
+    ]
 
 
 @pytest.mark.parametrize("name", ["emitter", "converter"])

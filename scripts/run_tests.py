@@ -5229,6 +5229,18 @@ SOURCE_TESTS = {
     """),
 }
 
+# Markdown under these directories is a repository document, not runtime input.
+# A document without its own route in SOURCE_TESTS selects the tests listed here
+# and every test module that names the document's file name.
+SOURCE_PREFIX_TESTS = {
+    "docs/": _tests("requirements_verification"),
+}
+
+
+def _document_readers(path: str, root: Path, tests: set[str]) -> set[str]:
+    name = PurePosixPath(path).name
+    return {test for test in tests if _safe_file(test, root) and name in (root / test).read_text(encoding="utf-8")}
+
 
 def _safe_file(path: str, root: Path) -> bool:
     relative = PurePosixPath(path)
@@ -5286,6 +5298,14 @@ def group_problems(root: Path = ROOT) -> list[str]:
             or any(test not in grouped or not _safe_file(test, root) for test in tests)
         ):
             problems.append(f"invalid source route: {path}")
+    for prefix, tests in SOURCE_PREFIX_TESTS.items():
+        if (
+            not prefix.endswith("/")
+            or not (root / prefix).is_dir()
+            or not tests
+            or any(test not in grouped or not _safe_file(test, root) for test in tests)
+        ):
+            problems.append(f"invalid source prefix route: {prefix}")
     return problems
 
 
@@ -5363,6 +5383,10 @@ def select_changed(paths: list[str], root: Path = ROOT) -> Selection:
             fallbacks.append(f"full suite: {path!r}: {FULL_SUITE_SOURCES[path]}")
             continue
         affected = SOURCE_TESTS.get(path)
+        if affected is None and path.endswith(".md"):
+            listed = next((tests for prefix, tests in SOURCE_PREFIX_TESTS.items() if path.startswith(prefix)), None)
+            if listed is not None:
+                affected = tuple(sorted({*listed, *_document_readers(path, root, inventoried)}))
         if affected is None and path.startswith("tests/"):
             if path in inventoried:
                 selected.add(path)
