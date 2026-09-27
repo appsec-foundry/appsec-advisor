@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Wait for a background abuse-verifier wave to finalize every candidate."""
+"""Wait for a background abuse-verifier wave to finalize every candidate.
+
+Exit codes: 0 every candidate finalized; 75 the slice ended while a verifier
+call is still live, so repeat the identical command; 1 the cap was reached with
+no live verifier left, so its jobs are closed and finalize-abuse owns the retry;
+2 invalid arguments.
+"""
 
 from __future__ import annotations
 
@@ -13,6 +19,9 @@ from pathlib import Path
 import agent_lifecycle
 import budget_watchdog
 import verify_abuse_cases
+import wait_agent_calls
+
+PENDING_EXIT_CODE = 75
 
 _CANDIDATE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 
@@ -48,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("output_dir", type=Path)
     parser.add_argument("candidate_ids", nargs="*")
     parser.add_argument("--interval", type=int, default=20)
-    parser.add_argument("--rounds", type=int, default=45)
+    parser.add_argument("--rounds", type=int, default=24)
     args = parser.parse_args(argv)
 
     if not args.candidate_ids:
@@ -80,6 +89,17 @@ def main(argv: list[str] | None = None) -> int:
         if round_no < args.rounds:
             time.sleep(max(args.interval, 1))
 
+    # One Bash call cannot outlast a verifier. Closing a call that still runs
+    # lets finalize-abuse re-dispatch a duplicate beside it.
+    pending_jobs = {f"phase10c-abuse-{candidate}" for candidate in pending}
+    live = [call for call in agent_lifecycle.running_calls(args.output_dir) if call.get("job_id") in pending_jobs]
+    if wait_agent_calls.still_waiting(live, time.time(), wait_agent_calls.DEFAULT_DEADLINE_MINUTES * 60):
+        print(
+            "Abuse verifiers still running when this join slice ended. This is expected, not a failure: "
+            "exit 75 means repeat the identical command.",
+            file=sys.stderr,
+        )
+        return PENDING_EXIT_CODE
     print(
         "BASH_WARN abuse verifier poll cap reached; unfinished: " + ", ".join(pending),
         file=sys.stderr,

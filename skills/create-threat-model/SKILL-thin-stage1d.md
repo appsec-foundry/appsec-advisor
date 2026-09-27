@@ -34,15 +34,15 @@ Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; use no other Stage-1d instru
    Use the job model alias — `dispatch_jobs[].model`, else
    `dispatch_values.abuse_verifier_model_alias`; `MODEL_ID` keeps the operator
    id, which the Agent tool rejects. Never replace a versioned ID with 4.6. Run
-   one blocking waiter with every job's candidate id:
+   one blocking waiter (Bash timeout 600000) with every job's candidate id:
 
    ```bash
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/wait_abuse_progress.py" "$OUTPUT_DIR" \
-     <candidate ids from dispatch_jobs[]> --interval 20 --rounds 45
+     <candidate ids from dispatch_jobs[]>
    ```
 
-   The waiter's exit status is informational; step 4 owns the retry, so do not
-   branch on it or repeat steps 2-3 yourself. Aggregate usage.
+   Exit `75`: repeat it unchanged. Other exits are informational; step 4 owns
+   the retry, so do not branch on them or repeat steps 2-3 yourself. Aggregate usage.
    Require concise status without reproducing evidence or artifact content.
    Abort or overflow is fatal and must not silently drop candidates.
    `dispatch_jobs[]` is the only dispatch authority: `run_gate` needs no

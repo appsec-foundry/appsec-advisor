@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -1253,6 +1254,18 @@ def test_finalize_abuse_spends_the_retry_once_and_then_says_it_is_unverified(tmp
     second = _finalize_with_empty_wave(output, monkeypatch, ["AC-T-001"])
     assert second["action"] == "run_gate"
     assert any("remain unverified" in r for r in second["receipts"])
+
+
+def test_finalize_abuse_never_redispatches_a_verifier_that_is_still_running(tmp_path, monkeypatch):
+    # juice-shop2 2026-09-27: the waiter was cut at the 600 s Bash cap while two
+    # verifiers still ran; finalize-abuse offered to re-dispatch both beside them.
+    output = _abuse_output(tmp_path)
+    live = {"state": "running", "job_id": "phase10c-abuse-AC-T-002", "spawned_at": time.time()}
+    monkeypatch.setattr(controller.agent_lifecycle, "running_calls", lambda _o: [live])
+    with pytest.raises(controller.CallError, match="AC-T-002"):
+        _finalize_with_empty_wave(output, monkeypatch, ["AC-T-001", "AC-T-002"])
+    # The retry budget is untouched: the first claim still yields attempt 2.
+    assert controller._claim_producer_retry(output, controller.ABUSE_WAVE_RETRY_KEY) == 2
 
 
 def test_finalize_abuse_does_not_retry_when_every_chain_was_decided(tmp_path, monkeypatch):

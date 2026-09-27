@@ -56,6 +56,7 @@ PLUGIN_ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import acquire_lock  # noqa: E402
+import agent_lifecycle  # noqa: E402
 import budget_watchdog  # noqa: E402
 import check_permissions  # noqa: E402
 import context_routing  # noqa: E402
@@ -6624,6 +6625,16 @@ def finalize_abuse(output_dir: Path) -> dict[str, Any]:
     # empty wave (rate limit, crash, turn ceiling, a mis-invoked waiter) in
     # any repo, and cannot be masked by how the waiter was called.
     if redispatchable := _abuse_redispatchable(output_dir):
+        # An undecided verdict of a verifier that still runs is not a failure;
+        # re-dispatching it would start a duplicate beside the live call.
+        jobs = {f"phase10c-abuse-{cid}" for cid in redispatchable}
+        live = [call for call in agent_lifecycle.running_calls(output_dir) if call.get("job_id") in jobs]
+        if running := wait_agent_calls.still_waiting(live, time.time(), wait_agent_calls.DEFAULT_DEADLINE_MINUTES * 60):
+            names = ", ".join(sorted(str(call["job_id"]).removeprefix("phase10c-abuse-") for call in running))
+            raise CallError(
+                f"abuse verifier still running: {names}; repeat wait_abuse_progress.py until it exits "
+                "0 or 1, then repeat finalize-abuse; do not re-dispatch it"
+            )
         attempt = _claim_producer_retry(output_dir, ABUSE_WAVE_RETRY_KEY)
         if attempt is None:
             # Budget spent. Finalize, but never as a silent success — the
