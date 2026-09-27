@@ -1262,22 +1262,17 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
         refs = [
             ref for ref in asset.get("component_refs") or [] if ref.get("component_id") in nodes and ref.get("evidence")
         ]
+        priority = (
+            min((asset_risk.get(tid, 3) for tid in asset.get("linked_threats") or []), default=3),
+            CLS_RANK.get(str(asset.get("classification")).title(), 9),
+            asset["id"],
+        )
         for relation in ("stored", "processed", "transmitted"):
             owners = dict.fromkeys(ref["component_id"] for ref in refs if ref.get("relation") == relation)
             if not owners:
                 continue
             for owner in owners:
-                nodes[owner]["assets"].append(
-                    dict(
-                        asset,
-                        _relation=relation,
-                        _priority=(
-                            min((asset_risk.get(tid, 3) for tid in asset.get("linked_threats") or []), default=3),
-                            CLS_RANK.get(str(asset.get("classification")).title(), 9),
-                            asset["id"],
-                        ),
-                    )
-                )
+                nodes[owner]["assets"].append(dict(asset, _relation=relation, _priority=priority))
                 # A scenario that hits stored data reaches the component that
                 # stores it, even when its finding sits in another component.
                 if relation == "stored":
@@ -1286,6 +1281,14 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
                         if linked & set(s.get("fids") or []) and badge not in nodes[owner]["badges"]:
                             nodes[owner]["badges"].append(badge)
             break
+        # A store's own evidenced handling stays visible even when another
+        # component holds the asset; otherwise it reads "Asset mapping not
+        # established" beside an evidenced reference.
+        for ref in refs:
+            owner = nodes[ref["component_id"]]
+            if owner["kind"] == "store" and not any(a["id"] == asset["id"] for a in owner["assets"]):
+                if ref.get("relation") in ("stored", "processed", "transmitted"):
+                    owner["assets"].append(dict(asset, _relation=ref["relation"], _priority=priority))
     for node in nodes.values():
         asset_height = _asset_inline_height(node["assets"])
         node["compact_assets"] = asset_height > ASSET_INLINE_HEIGHT

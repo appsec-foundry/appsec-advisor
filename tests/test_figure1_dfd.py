@@ -2635,6 +2635,35 @@ def test_asset_annotations_require_evidence_and_keep_handling_explicit(relation)
     assert bool(state["nodes"]["records-0"]["assets"]) == (relation == "stored")
 
 
+def test_a_store_keeps_its_evidenced_asset_when_another_store_holds_it():
+    """A second store that only processes an asset stored elsewhere read
+    "Asset mapping not established" although its ref was evidenced
+    (juice-shop2 2026-09-27, MarsDB beside SQLite)."""
+    model = _routing_model(["data", "data"], [], "records")
+    evidence = [{"file": "src/records.py", "line": 1}]
+    model["assets"] = [
+        {
+            "id": "A-001",
+            "name": "Records",
+            "classification": "Internal",
+            "component_refs": [
+                {"component_id": "records-0", "relation": "stored", "evidence": evidence},
+                {"component_id": "records-1", "relation": "processed", "evidence": evidence},
+            ],
+        }
+    ]
+    _, state = F._build(model, [], [], detail=False)
+    assert {
+        n: [(a["id"], a["_relation"]) for a in state["nodes"][n]["assets"]] for n in ("records-0", "records-1")
+    } == {
+        "records-0": [("A-001", "stored")],
+        "records-1": [("A-001", "processed")],
+    }
+    del model["assets"][0]["component_refs"][1]["evidence"]
+    _, state = F._build(model, [], [], detail=False)
+    assert state["nodes"]["records-1"]["assets"] == []
+
+
 def test_many_asset_scenarios_badge_the_storing_component_border_not_the_asset():
     model = _routing_model(["data"], [], "archive")
     model["assets"] = [
