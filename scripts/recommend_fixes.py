@@ -939,6 +939,33 @@ def _recommend_injected_component_without_flows(issue: dict, output_dir: Path) -
     }
 
 
+def _recommend_topology_workload_unmodelled(issue: dict, output_dir: Path) -> dict:
+    """The component inventory left deployed workloads unaccounted for."""
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "high",
+        "risk_level": "medium",
+        "summary": "Part of the deployed topology has no component, so no boundary or threat covers it.",
+        "rationale": (
+            "The architecture analyst receives `.dispatch-context/architecture/topology.json` and its "
+            "self-check rejects unaccounted workloads; a gap here means that check did not pass before "
+            "the inventory was finalized."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": ".components.json",
+                "details": (
+                    "Map each named workload to the component that runs it via `workloads`, or list it in "
+                    "`unmodelled_workloads` with the reason it carries no security role."
+                ),
+            },
+        ],
+        "verification": [],
+    }
+
+
 def _recommend_actor_attribution_corrected(issue: dict, output_dir: Path) -> dict:
     """A STRIDE analyst named an access group the finding's evidence does not support."""
     return {
@@ -1038,6 +1065,7 @@ RECOMMENDERS: dict[str, Callable[[dict, Path], dict]] = {
     "privileged_role_unevidenced": _recommend_privileged_role_unevidenced,
     "business_context_unmapped": _recommend_business_context_unmapped,
     "injected_component_without_flows": _recommend_injected_component_without_flows,
+    "topology_workload_unmodelled": _recommend_topology_workload_unmodelled,
     "actor_attribution_corrected": _recommend_actor_attribution_corrected,
     "privileged_role_added": _recommend_privileged_role_added,
     "pillar_cwe_finding": _recommend_pillar_cwe_finding,

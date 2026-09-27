@@ -5779,6 +5779,37 @@ class TestContextV2PostActors:
         receipt = next(r for r in action["artifact_receipts"] if r["artifact_path"].endswith("role-units.json"))
         assert receipt["record_count"] == 1
 
+    @pytest.mark.parametrize("state", ["absent", "current", "stale"])
+    def test_architecture_receives_the_topology_only_when_the_run_has_one(self, tmp_path, monkeypatch, state):
+        output = self._prepare(tmp_path)
+        inventory = output / ".deployment-inventory.json"
+        if state != "absent":
+            inventory.write_text(
+                json.dumps(
+                    {
+                        "topology": {
+                            "zones": [],
+                            "zone_bridging": [],
+                            "workloads": [
+                                {"name": "api", "platform": "compose", "source": "c.yml", "line": 3, "zones": ["edge"]}
+                            ],
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            architecture_context.build_topology(output)
+        if state == "stale":
+            inventory.write_text(inventory.read_text().replace('"edge"', '"core"'), encoding="utf-8")
+        monkeypatch.setattr(controller, "_run_script", self._script([]))
+        if state == "stale":
+            with pytest.raises(controller.ControllerError, match="topology.json is stale"):
+                controller.context_v2_post_actors(output)
+            return
+        action = controller.context_v2_post_actors(output)
+        inputs = action["dispatch_jobs"][0]["input_artifacts"]
+        assert (architecture_context.TOPOLOGY_CONTEXT in inputs) is (state == "current")
+
     def test_valid_discovery_feeds_the_resolver_and_dispatches_architecture(self, tmp_path, monkeypatch):
         output = self._prepare(tmp_path)
         calls: list[tuple[str, list[str]]] = []

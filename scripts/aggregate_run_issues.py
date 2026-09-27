@@ -1692,6 +1692,42 @@ def _extract_unconnected_injected_components(output_dir: Path) -> list[dict]:
     ]
 
 
+def _extract_unmodelled_workloads(output_dir: Path) -> list[dict]:
+    """Report deployment-topology workloads that no component models and none declares unmodelled.
+
+    The analyst's own gate enforces the same rule; a gap left here means the
+    report's components, boundaries and threats do not cover part of what the
+    repository deploys.
+    """
+    from build_architecture_analysis_context import topology_workloads
+    from validate_fragment import workload_coverage_errors
+
+    try:
+        inventory = json.loads((output_dir / ".deployment-inventory.json").read_text(encoding="utf-8"))
+        components = json.loads((output_dir / ".components.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    workloads = topology_workloads(inventory)
+    if not workloads:
+        return []
+    errors = workload_coverage_errors(components, {"workloads": workloads})
+    if not errors:
+        return []
+    return [
+        {
+            "category": "topology_workload_unmodelled",
+            "severity": "warning",
+            "title": f"The component inventory does not account for every deployed workload ({len(errors)} gap(s))",
+            "evidence": {
+                "log_file": ".components.json",
+                "log_line": 1,
+                "raw_event": "; ".join(errors)[:1000],
+                "outcome": "workload_coverage_gap",
+            },
+        }
+    ]
+
+
 def _extract_pillar_cwe_findings(output_dir: Path) -> list[dict]:
     """Report findings whose primary CWE is a class-level pillar.
 
@@ -2472,6 +2508,7 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     issues.extend(_extract_recovery_events(output_dir))
     issues.extend(_extract_business_context_reach(output_dir))
     issues.extend(_extract_unconnected_injected_components(output_dir))
+    issues.extend(_extract_unmodelled_workloads(output_dir))
     issues.extend(_extract_actor_model_corrections(output_dir, agent_log))
     issues.extend(_extract_pillar_cwe_findings(output_dir))
     issues.extend(_extract_render_integrity(output_dir))

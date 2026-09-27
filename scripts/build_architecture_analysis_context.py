@@ -20,6 +20,13 @@ MAX_ROUTES = 96
 MAX_UNSUPPORTED_ROUTE_FILES = 64
 MAX_ROLE_UNITS = 12
 MAX_ROLE_UNIT_PATHS = 25
+MAX_TOPOLOGY_WORKLOADS = 128
+MAX_WORKLOAD_DEFINITIONS = 4
+# The recon template's component table carries one hint per row; the generic
+# level-2 cap kept its intro and header plus five hints.
+COMPONENT_HINTS_HEADING = "Preliminary Components"
+MAX_COMPONENT_HINT_LINES = 48
+TOPOLOGY_CONTEXT = ".dispatch-context/architecture/topology.json"
 
 _ROUTE_CONTEXT_SCHEMA = Path(__file__).resolve().parent.parent / "schemas" / "architecture-route-context.schema.json"
 # The projection carries only the route fields its own schema declares; a field
@@ -108,6 +115,8 @@ def project_recon_summary(payload: bytes) -> dict[str, Any]:
     for section in sections:
         level = section["level"]
         per_section_cap = 4 if level == 1 else (8 if level == 2 else 3)
+        if level == 2 and section["heading"].endswith(COMPONENT_HINTS_HEADING):
+            per_section_cap = MAX_COMPONENT_HINT_LINES
         available = max(0, MAX_RECON_RETAINED_LINES - retained_total)
         kept = _select_body_lines(section["source_body_lines"], min(per_section_cap, available))
         retained_total += len(kept)
@@ -269,6 +278,80 @@ def build_role_units(output_dir: Path, repo_root: Path) -> Path:
     return target
 
 
+def topology_workloads(inventory: Any) -> list[dict[str, Any]]:
+    """One row per workload name with platform-qualified zones, in name order.
+
+    A name deployed on several platforms is one workload; its zones stay
+    qualified by platform so a compose network and a namespace of the same
+    name are not mistaken for one zone.
+    """
+    topology = inventory.get("topology") if isinstance(inventory, dict) else None
+    rows = topology.get("workloads") if isinstance(topology, dict) else None
+    bridging = {
+        (row.get("name"), row.get("platform"))
+        for row in (topology or {}).get("zone_bridging") or []
+        if isinstance(row, dict)
+    }
+    by_name: dict[str, dict[str, Any]] = {}
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict) or not isinstance(row.get("name"), str) or not row["name"]:
+            continue
+        platform = str(row.get("platform") or "")
+        entry = by_name.setdefault(
+            row["name"], {"name": row["name"], "zones": [], "zone_bridging": False, "definitions": []}
+        )
+        for zone in row.get("zones") or []:
+            qualified = f"{platform}:{zone}"
+            if isinstance(zone, str) and qualified not in entry["zones"]:
+                entry["zones"].append(qualified)
+        entry["zone_bridging"] = entry["zone_bridging"] or (row["name"], platform) in bridging
+        definition = {"platform": platform, "source": row.get("source"), "line": row.get("line")}
+        if isinstance(row.get("kind"), str):
+            definition["kind"] = row["kind"]
+        entry["definitions"].append(definition)
+    for entry in by_name.values():
+        entry["zones"].sort()
+    return [by_name[name] for name in sorted(by_name)]
+
+
+def project_topology(payload: bytes) -> dict[str, Any] | None:
+    """Bound the deployable workloads, or ``None`` when the inventory has no topology."""
+    try:
+        inventory = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ContextProjectionError("deployment inventory is not valid JSON") from exc
+    workloads = topology_workloads(inventory)
+    if not workloads:
+        return None
+    return {
+        "schema_version": 1,
+        "source": {"artifact_path": ".deployment-inventory.json", "sha256": _sha256(payload)},
+        "limits": {
+            "max_workloads": MAX_TOPOLOGY_WORKLOADS,
+            "max_definitions": MAX_WORKLOAD_DEFINITIONS,
+            "original_workloads": len(workloads),
+            "omitted_workloads": max(0, len(workloads) - MAX_TOPOLOGY_WORKLOADS),
+        },
+        "workloads": [
+            {**row, "definitions": row["definitions"][:MAX_WORKLOAD_DEFINITIONS]}
+            for row in workloads[:MAX_TOPOLOGY_WORKLOADS]
+        ],
+    }
+
+
+def build_topology(output_dir: Path) -> Path | None:
+    """Write the topology projection; remove a stale one when the run has none."""
+    target = output_dir / TOPOLOGY_CONTEXT
+    source = output_dir / ".deployment-inventory.json"
+    projected = project_topology(source.read_bytes()) if source.is_file() else None
+    if projected is None:
+        target.unlink(missing_ok=True)
+        return None
+    target.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(target, projected, sort_keys=False)
+    return target
+
+
 def build(output_dir: Path) -> tuple[Path, Path]:
     recon_path = output_dir / ".recon-summary.md"
     routes_path = output_dir / ".route-inventory.json"
@@ -297,6 +380,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"build_architecture_analysis_context: {exc}", file=sys.stderr)
         return 1
     result = {"recon_context": str(recon), "route_context": str(routes)}
+    try:
+        topology = build_topology(args.output_dir.resolve())
+    except ContextProjectionError as exc:
+        print(f"build_architecture_analysis_context: {exc}", file=sys.stderr)
+        return 1
+    if topology is not None:
+        result["topology_context"] = str(topology)
     if args.repo_root is not None:
         result["role_units"] = str(build_role_units(args.output_dir.resolve(), args.repo_root.resolve()))
     print(json.dumps(result, sort_keys=True))

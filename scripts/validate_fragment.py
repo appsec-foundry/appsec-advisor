@@ -491,6 +491,42 @@ def _context_components(context: Any) -> list | None:
     return components if isinstance(components, list) else None
 
 
+def workload_coverage_errors(data: Any, topology: Any) -> list[str]:
+    """Every topology workload is modelled by a component or declared unmodelled, and no other name is cited."""
+    rows = topology.get("workloads") if isinstance(topology, dict) else None
+    if not isinstance(rows, list) or not isinstance(data, dict):
+        return []
+    known = {row["name"] for row in rows if isinstance(row, dict) and isinstance(row.get("name"), str)}
+    owners: dict[str, list[str]] = {}
+    for component in data.get("components") or []:
+        if not isinstance(component, dict):
+            continue
+        for name in component.get("workloads") or []:
+            owners.setdefault(name, []).append(str(component.get("id")))
+    declared = {
+        row["name"] for row in data.get("unmodelled_workloads") or [] if isinstance(row, dict) and "name" in row
+    }
+    errors = [
+        f"component {', '.join(ids)} lists workload {name!r}, which the topology does not contain"
+        for name, ids in sorted(owners.items())
+        if name not in known
+    ]
+    errors += [
+        f"unmodelled_workloads names {name!r}, which the topology does not contain" for name in sorted(declared - known)
+    ]
+    errors += [
+        f"workload {name!r} is both modelled by {', '.join(owners[name])} and declared unmodelled"
+        for name in sorted(declared & set(owners))
+    ]
+    missing = sorted(known - set(owners) - declared)
+    if missing:
+        errors.append(
+            "topology workloads neither listed in a component's workloads nor in unmodelled_workloads: "
+            + ", ".join(missing)
+        )
+    return errors
+
+
 def fragment_invariant_errors(
     fragment_type: str,
     data: Any,
@@ -528,6 +564,8 @@ def fragment_invariant_errors(
     """
     if fragment_type == "trust-boundary-candidates":
         return _trust_boundary_candidate_errors(data, context)
+    if fragment_type == "components":
+        return workload_coverage_errors(data, context)
     components = _context_components(context)
     if fragment_type == "data-flows" and isinstance(data, dict):
         if components is None:
@@ -1263,7 +1301,8 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="Companion input artifact the relational rules need "
         "(trust-boundary-candidates: .trust-boundary-assessment-input.json; "
-        "data-flows, assets: .components.json). "
+        "data-flows, assets: .components.json; "
+        "components: .dispatch-context/architecture/topology.json). "
         "Without it the cross-artifact rules are skipped.",
     )
     largs = legacy.parse_args(args)

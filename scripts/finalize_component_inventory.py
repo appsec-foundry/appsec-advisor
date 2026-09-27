@@ -33,7 +33,12 @@ FINGERPRINT_FIELDS = (
     "deployment_zones",
     "handles_sensitive_data",
     "sensitive_data",
+    "workloads",
+    "workload_zones",
 )
+# Fingerprinted only when present, so an inventory without them keeps its fingerprint.
+OPTIONAL_FINGERPRINT_FIELDS = frozenset({"sensitive_data", "workloads", "workload_zones"})
+MAX_DEPLOYMENT_EVIDENCE = 16
 # Code categories that do not say which language implements a component.
 NON_IMPLEMENTATION_LANGUAGES = frozenset(
     {"C/C++ header", "C++ header", "CSS", "CSS (Less)", "CSS (Sass)", "Gradle", "HTML", "Jupyter", "Protobuf", "SQL"}
@@ -55,7 +60,8 @@ def _validate(document: Any, schema_path: Path) -> None:
 def component_inventory_fingerprint(components: list[dict[str, Any]]) -> str:
     """Fingerprint only fields that can change boundary endpoint semantics."""
     cards = [
-        {key: row.get(key) for key in FINGERPRINT_FIELDS if key != "sensitive_data" or key in row} for row in components
+        {key: row.get(key) for key in FINGERPRINT_FIELDS if key not in OPTIONAL_FINGERPRINT_FIELDS or key in row}
+        for row in components
     ]
     payload = json.dumps(cards, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -203,6 +209,36 @@ def annotate_languages(components: list[dict[str, Any]], repo_root: Path) -> Non
             component["language"] = min(totals, key=lambda name: (-totals[name], name))
 
 
+def annotate_workload_placement(components: list[dict[str, Any]], output_dir: Path) -> None:
+    """Derive `workload_zones` and `deployment_evidence` from the workloads a component lists.
+
+    Both come only from the deployment inventory; an authored value never
+    survives, and a component that lists no known workload carries neither.
+    """
+    from build_architecture_analysis_context import topology_workloads
+
+    inventory_path = output_dir / ".deployment-inventory.json"
+    inventory = _load_json(inventory_path) if inventory_path.is_file() else {}
+    by_name = {row["name"]: row for row in topology_workloads(inventory)}
+    for component in components:
+        component.pop("workload_zones", None)
+        component.pop("deployment_evidence", None)
+        rows = [by_name[name] for name in component.get("workloads") or [] if name in by_name]
+        if not rows:
+            continue
+        zones = sorted({zone for row in rows for zone in row["zones"]})
+        if zones:
+            component["workload_zones"] = zones
+        evidence = [
+            {"file": definition["source"], "line": definition["line"]}
+            for row in rows
+            for definition in row["definitions"]
+            if isinstance(definition.get("source"), str) and isinstance(definition.get("line"), int)
+        ]
+        if evidence:
+            component["deployment_evidence"] = evidence[:MAX_DEPLOYMENT_EVIDENCE]
+
+
 def finalize(repo_root: Path, output_dir: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     repo_root = repo_root.resolve()
     output_dir = output_dir.resolve()
@@ -214,6 +250,7 @@ def finalize(repo_root: Path, output_dir: Path) -> tuple[dict[str, Any], dict[st
     finalized, injected = reconcile_inventory(original, repo_root)
     annotate_languages(finalized, repo_root)
     refine_model_capabilities(finalized, repo_root)
+    annotate_workload_placement(finalized, output_dir)
     payload = dict(document)
     payload["components"] = finalized
     _validate(payload, COMPONENT_SCHEMA)

@@ -124,6 +124,7 @@ _RECEIPT_RECORD_KEYS = {
     "schemas/recon-summary-context.schema.json#v1": "sections",
     "schemas/architecture-route-context.schema.json#v1": "routes",
     "schemas/architecture-role-units.schema.json#v1": "units",
+    "schemas/architecture-topology-context.schema.json#v1": "workloads",
     "schemas/recon-signals.schema.json#v2": "signals",
     "schemas/evidence-verifier-context.schema.json#v1": "samples",
     "schemas/post-stride-generated-threats.schema.json#v1": "threats",
@@ -4894,6 +4895,22 @@ def _context_v2_role_units_receipt(output_dir: Path, cfg: dict[str, Any]) -> dic
     )
 
 
+def _context_v2_topology_receipt(output_dir: Path) -> dict[str, Any] | None:
+    """Bind the workload projection to the inventory bytes, when the run has a topology."""
+    from build_architecture_analysis_context import TOPOLOGY_CONTEXT, project_topology  # noqa: PLC0415
+
+    if not (output_dir / TOPOLOGY_CONTEXT).is_file():
+        return None
+    return _validated_projection_receipt(
+        output_dir,
+        TOPOLOGY_CONTEXT,
+        schema_id="schemas/architecture-topology-context.schema.json#v1",
+        record_key="workloads",
+        source_artifact=".deployment-inventory.json",
+        projector=project_topology,
+    )
+
+
 def _context_v2_actor_input_receipts(output_dir: Path) -> list[dict[str, Any]]:
     signals = _load_json_object(output_dir / ".recon-signals.json", contract="recon-signals-v2")
     signal_values = signals.get("signals")
@@ -4928,18 +4945,23 @@ def _context_v2_dispatch_architecture(output_dir: Path, cfg: dict[str, Any], rec
             record_count=_record_count(output_dir / ".actors-resolved.json", "resolved_actors"),
         ),
     ]
+    input_artifacts = [
+        ".dispatch-context/architecture/recon-summary-context.json",
+        ".dispatch-context/architecture/route-context.json",
+        ".dispatch-context/architecture/role-units.json",
+        ".actors-resolved.json",
+    ]
+    topology = _context_v2_topology_receipt(output_dir)
+    if topology is not None:
+        structured.append(topology)
+        input_artifacts.append(topology["artifact_path"])
     action = _context_v2_dispatch(
         output_dir,
         cfg,
         role="architecture_analyst",
         job_id="phase3-6-architecture",
         next_boundary="context-v2-post-architecture",
-        input_artifacts=[
-            ".dispatch-context/architecture/recon-summary-context.json",
-            ".dispatch-context/architecture/route-context.json",
-            ".dispatch-context/architecture/role-units.json",
-            ".actors-resolved.json",
-        ],
+        input_artifacts=input_artifacts,
         output_artifacts=[
             ".components.json",
             ".data-flows.json",

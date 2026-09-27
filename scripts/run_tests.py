@@ -452,6 +452,7 @@ GROUPS = {
         slice_cross_repo_for_component
         slice_taxonomy
         stage1_context_edge_inventory
+        topology_workloads
         validate_recon_summary
         validate_threat_modeling_context
         verify_abuse_cases
@@ -1123,6 +1124,7 @@ SOURCE_TESTS = {
         requirements_verification
         run_path_guard
         stride_outputs
+        topology_workloads
     """),
     "scripts/inline_code_formatter.py": _tests("""
         analysis_version_upgrade
@@ -1402,6 +1404,7 @@ SOURCE_TESTS = {
         stride_outputs
         terminate_run
         thin_runtime_regressions_2026_07_20
+        topology_workloads
     """),
     "scripts/harvest_requirements.py": _tests("""
         check_target_specificity
@@ -1716,6 +1719,39 @@ SOURCE_TESTS = {
         stage1_context_edge_inventory
         stride_outputs
     """),
+    "agents/appsec-architecture-analyst.md": _tests("""
+        agent_definitions
+        agent_doc_shell_snippets
+        check_target_specificity
+        fragment_invariant_parity
+        orchestration_controller
+        requirements_verification
+        stride_outputs
+        topology_workloads
+    """),
+    "schemas/architecture-topology-context.schema.json": _tests("""
+        build_architecture_analysis_context
+        check_target_specificity
+        orchestration_controller
+        requirements_verification
+        schemas
+        stride_outputs
+        topology_workloads
+    """),
+    "schemas/fragments/components.schema.json": _tests("""
+        build_threat_model_yaml
+        build_trust_boundary_assessment_input
+        check_target_specificity
+        finalize_component_inventory
+        fragment_invariant_parity
+        requirements_verification
+        schema_integrity
+        schemas
+        stride_outputs
+        threat_fixture
+        topology_workloads
+        validate_fragment
+    """),
     "agents/shared/ms-template.md": _tests("""
         agent_definitions
         agent_doc_shell_snippets
@@ -2010,6 +2046,7 @@ SOURCE_TESTS = {
         validate_fragment
         validate_intermediate
         validate_ms_compactness
+        topology_workloads
     """),
     "skills/create-threat-model/SKILL-full-runtime.md": _tests("""
         check_target_specificity
@@ -2969,6 +3006,7 @@ SOURCE_TESTS = {
         requirements_verification
         run_path_guard
         stride_outputs
+        topology_workloads
     """),
     "scripts/build_cross_repo_register.py": _tests("""
         build_cross_repo_register

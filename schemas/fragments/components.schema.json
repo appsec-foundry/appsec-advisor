@@ -204,7 +204,49 @@
             "type": "boolean",
             "default": false,
             "description": "Crown-jewel flag: true when the component stores or processes credentials, PII, payment data, or secrets. Phase-3-authored from the component's own role (the analyst already knows this while writing the description). Lets the selection predicate keep a high-value datastore in scope even when it is not directly internet-exposed."
+          },
+          "workloads": {
+            "type": "array",
+            "maxItems": 128,
+            "uniqueItems": true,
+            "items": {"type": "string", "minLength": 1, "maxLength": 120},
+            "description": "Names of the deployment-topology workloads (.dispatch-context/architecture/topology.json) this component models. Authored by the architecture analyst; every topology workload belongs to a component or to unmodelled_workloads."
+          },
+          "workload_zones": {
+            "type": "array",
+            "maxItems": 64,
+            "uniqueItems": true,
+            "items": {"type": "string", "pattern": "^(?:compose|kubernetes|openshift):.+$", "maxLength": 140},
+            "description": "Platform-qualified network zones of the listed workloads. Derived by component-inventory finalization from the deployment inventory; an authored value never survives. Separate from the canonical deployment_zones vocabulary."
+          },
+          "deployment_evidence": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "type": "object",
+              "required": ["file", "line"],
+              "additionalProperties": false,
+              "properties": {
+                "file": {"type": "string", "minLength": 1, "maxLength": 300},
+                "line": {"type": "integer", "minimum": 0}
+              }
+            },
+            "description": "Where each listed workload is defined in deployment configuration. Derived by component-inventory finalization; lets a component without own source files cite its service definition."
           }
+        }
+      }
+    },
+    "unmodelled_workloads": {
+      "type": "array",
+      "maxItems": 128,
+      "description": "Topology workloads deliberately not modelled as or within a component, each with the reason.",
+      "items": {
+        "type": "object",
+        "required": ["name", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {"type": "string", "minLength": 1, "maxLength": 120},
+          "reason": {"type": "string", "minLength": 8, "maxLength": 300}
         }
       }
     },
