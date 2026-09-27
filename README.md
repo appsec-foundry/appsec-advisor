@@ -252,6 +252,12 @@ Highlights from the 0.6.0 beta releases.
 
 ### What's new in 0.6.0-beta.4
 
+- Interactive runs propose the application's use case and its worst plausible business impact for confirmation, and save the answers in `docs/business-context.md` for later analyses. The answers keep business-critical assets in scope and inform finding priority.
+
+  ![Use case question for OWASP Juice Shop](docs/images/business-context-use-case.png)
+
+  ![Business impact question for OWASP Juice Shop](docs/images/business-context-impact.png)
+
 - `scripts/repo_scan.py` runs standalone checks with severity filtering and endpoint and technology inventories; both it and `/appsec-advisor:security-score` support local repositories and HTTPS GitHub/GitLab URLs, with YAML or JSON exports.
 - Architecture and attack-route diagrams show technology, authentication evidence, attacker prerequisites, weaknesses, impact, and linked findings, with detail views for large architectures. Existing models need a new analysis to populate missing authentication evidence.
 - Malicious insiders and attackers holding a user's device now require opt-in through `.appsec/actors.yaml` or the organization profile; otherwise, they are listed as not assessed.
