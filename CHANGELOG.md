@@ -47,7 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AI analysis retains component-specific RAG and agentic evidence and tags, checks model-context entry paths and tool identities, and applies transport-specific MCP checks without misclassifying unrelated LLM findings as agentic risks.
 - Actor discovery preserves confirmed administrators and relevant attackers without inventing unnecessary roles or treating unauthenticated paths as signed-in access.
 - Detection gaps no longer name an attacker, and attack vectors match the attributed attacker, including build-time supply-chain attacks.
-- Runs no longer abort when consolidated findings move to their owning application component or stall and curtail other analyses when agents exhaust their turn budget.
+- Runs no longer abort when consolidated findings move to their owning application component or when a component spans more than 32 paths, whose remaining files are now analysed too, and no longer stall and curtail other analyses when agents exhaust their turn budget.
 - STRIDE validation retries receive the exact errors to repair, and aborted runs name the failed rule instead of reporting missing output.
 - Architecture diagrams preserve component connections, avoid duplicate databases, identity providers and user roles, keep the project name when a report moves, align finding counts with the report, and identify each scenario's attacker, with build-pipeline attacks shown as supply-chain attacks.
 - Architecture enrichment fills Security Architecture prose and routes remaining placeholders to repair, while self-checks catch inconsistent flows and asset locations before later validation failures.
