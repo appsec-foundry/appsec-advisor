@@ -119,6 +119,51 @@ class TestArchRecon:
         kinds = [f["kind"] for f in r["findings"]]
         assert "invented_component" in kinds
 
+    @pytest.mark.parametrize(
+        "paths",
+        [
+            '["lib/startup/registerWebsocketEvents.ts", "lib/challengeUtils.ts"]',
+            '["src/realtime/**"]',
+        ],
+    )
+    def test_component_under_a_generic_root_is_found_by_its_cited_files(self, out_dir, paths):
+        """A component living under lib/ or src/ was reported as invented although
+        the recon cited its file verbatim (juice-shop2 2026-09-27, realtime-channel)."""
+        _write_yaml(
+            out_dir / "threat-model.yaml",
+            f"""
+            components:
+              - id: realtime-channel
+                name: Real-time WebSocket Channel
+                kind: service
+                paths: {paths}
+        """,
+        )
+        _write_text(
+            out_dir / ".recon-summary.md",
+            """
+            # Recon
+            **Key files:** `lib/startup/registerWebsocketEvents.ts:8`, `src/realtime/hub.ts:3`
+        """,
+        )
+        r = asc.check_arch_recon(out_dir / "threat-model.yaml", out_dir / ".recon-summary.md")
+        assert "invented_component" not in [f["kind"] for f in r["findings"]]
+
+    def test_a_generic_root_alone_is_no_evidence(self, out_dir):
+        _write_yaml(
+            out_dir / "threat-model.yaml",
+            """
+            components:
+              - id: ghost-service
+                name: Ghost Service
+                kind: service
+                paths: ["lib/**", "src/ghost/**"]
+        """,
+        )
+        _write_text(out_dir / ".recon-summary.md", "# Recon\n`lib/other.ts:1` and `src/app/main.ts:2`\n")
+        r = asc.check_arch_recon(out_dir / "threat-model.yaml", out_dir / ".recon-summary.md")
+        assert "invented_component" in [f["kind"] for f in r["findings"]]
+
     def test_missing_component_flagged_when_recon_has_service_suffix(self, out_dir):
         _write_yaml(
             out_dir / "threat-model.yaml",

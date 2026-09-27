@@ -198,10 +198,18 @@ def check_arch_recon(tm_yaml_path: Path, recon_md_path: Path) -> dict[str, Any]:
             candidates.append(c["id"].lower())
         if c["name"]:
             candidates.append(c["name"].lower())
+        # A cited file or a directory at least two levels deep is as distinctive
+        # as a name; a component living under a generic root (lib/, src/) is
+        # otherwise invisible although the recon names its files verbatim.
+        path_candidates: list[str] = []
         for p in c.get("paths", []):
-            seg = re.split(r"[/*]", str(p).lstrip("./"))[0]
+            path = str(p).lstrip("./")
+            seg = re.split(r"[/*]", path)[0]
             if seg and seg.lower() not in {"src", "lib", "app", "core"}:
                 candidates.append(seg.lower())
+            literal = re.split(r"[*?\[{]", path)[0].lower()
+            if "/" in literal.rstrip("/"):
+                path_candidates.append(literal)
 
         def _contained(tok: str) -> bool:
             if tok in recon_services:
@@ -211,7 +219,7 @@ def check_arch_recon(tm_yaml_path: Path, recon_md_path: Path) -> dict[str, Any]:
             # "auth-service" to match "uses `auth-service`".
             return re.search(r"(?<![\w-])" + re.escape(tok) + r"(?![\w])", recon_lower) is not None
 
-        hit_recon = any(_contained(t) for t in candidates)
+        hit_recon = any(_contained(t) for t in candidates) or any(t in recon_lower for t in path_candidates)
         if hit_recon:
             for t in candidates:
                 if t in recon_services:
