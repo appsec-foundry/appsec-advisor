@@ -1151,10 +1151,19 @@ def build_meta(
 
     # project: sidecar fallback chain — recon-summary, then prior yaml meta.project, then repo basename
     project = recon_project or (prior_yaml or {}).get("meta", {}).get("project") or repo_root.name
+    # The display name comes from the repository's manifest, resolved here once:
+    # a renderer that looked beside its output directory would rename the
+    # project whenever the report moved.
+    from types import SimpleNamespace
+
+    from _manifest_readers import manifest_display_name, read_project_manifest
+
+    project_name = manifest_display_name(read_project_manifest(SimpleNamespace(repo_root=repo_root)))
 
     return {
         "schema_version": 1,
         "project": project,
+        **({"project_name": project_name} if project_name else {}),
         "generated": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         # ``rebuild`` is an orchestration/cleanup mode, not a public assessment
         # mode.  The output contract deliberately exposes only a complete

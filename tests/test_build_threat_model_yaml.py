@@ -536,6 +536,34 @@ def test_build_meta_records_the_register_severity_floor():
     assert _meta(register_severity_floor="low")["register_severity_floor"] == "low"
 
 
+@pytest.mark.parametrize(
+    "manifest,content,name",
+    [
+        ("package.json", '{"name": "order-portal"}', "Order Portal"),
+        ("pyproject.toml", '[project]\nname = "billing_worker"\n', "Billing Worker"),
+        ("package.json", '{"name": "@acme/shop"}', "@acme/shop"),
+    ],
+)
+def test_build_meta_records_the_manifest_display_name_of_the_repository(tmp_path, manifest, content, name):
+    """The name comes from the scanned repository, wherever the report is written."""
+    repo = tmp_path / "checkout-7"
+    repo.mkdir()
+    (repo / manifest).write_text(content, encoding="utf-8")
+    (tmp_path / "package.json").write_text('{"name": "enclosing-directory"}', encoding="utf-8")
+    meta = b.build_meta(skill_cfg={}, org=None, recon_project=None, plugin_root=ROOT, repo_root=repo, prior_yaml=None)
+    assert meta["project_name"] == name
+    assert meta["project"] == "checkout-7"
+
+
+def test_build_meta_without_a_manifest_records_no_display_name(tmp_path):
+    (tmp_path / "package.json").write_text('{"name": "enclosing-directory"}', encoding="utf-8")
+    (tmp_path / "repo").mkdir()
+    meta = b.build_meta(
+        skill_cfg={}, org=None, recon_project=None, plugin_root=ROOT, repo_root=tmp_path / "repo", prior_yaml=None
+    )
+    assert "project_name" not in meta
+
+
 def _business_meta(tmp_path):
     repo = tmp_path / "repo"
     (repo / "docs").mkdir(parents=True, exist_ok=True)

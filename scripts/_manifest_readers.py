@@ -39,13 +39,18 @@ __all__ = [
     "derive_homepage",
     "derive_runtime",
     "extract_repo_url",
+    "manifest_display_name",
 ]
 
 
 def _repo_root_candidates(ctx: RenderContext) -> list[Path]:
     """Possible repo roots. Usually `OUTPUT_DIR.parent.parent` (when output
     is at `<repo>/docs/security/`), but we try a few levels up to be
-    defensive about non-standard layouts."""
+    defensive about non-standard layouts. A known repository root is the only
+    candidate."""
+    root = getattr(ctx, "repo_root", None)
+    if root is not None:
+        return [Path(root)]
     try:
         p = ctx.output_dir
     except Exception:
@@ -112,6 +117,15 @@ def read_project_manifest(ctx: RenderContext) -> dict[str, Any]:
 
     desc = read_readme_description(ctx)
     return {"description": desc} if desc else {}
+
+
+def manifest_display_name(pkg: dict[str, Any]) -> str | None:
+    """A manifest's package name as a reader sees it: `juice-shop` → `Juice Shop`, scoped names unchanged."""
+    name = pkg.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return None
+    name = name.strip()
+    return name if "/" in name else name.replace("-", " ").replace("_", " ").title()
 
 
 def _read_pyproject_toml(ctx: RenderContext) -> dict[str, Any]:
