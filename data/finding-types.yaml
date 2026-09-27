@@ -373,14 +373,26 @@ finding_types:
   - id: FT-161
     name: "Insecure docker-compose Configuration"
     parent_category: TH-14
-    cwe_any: [CWE-732, CWE-16]
-    title_hints: ["privileged: true", "volumes mount", "docker.sock"]
+    cwe_any: [CWE-732, CWE-16, CWE-668]
+    title_hints: ["privileged: true", "volumes mount", "docker.sock", "ports on all interfaces"]
 
   - id: FT-162
     name: "Dockerfile Install Privilege Misuse"
     parent_category: TH-14
     cwe_any: [CWE-250]
     title_hints: ["--unsafe-perm", "RUN as root", "install --ignore-scripts missing"]
+
+  - id: FT-163
+    name: "Insecure Kubernetes Workload Configuration"
+    parent_category: TH-14
+    cwe_any: [CWE-250, CWE-668]
+    title_hints: ["privileged: true", "hostNetwork", "runAsNonRoot", "securityContext"]
+
+  - id: FT-164
+    name: "Insecure Cloud Infrastructure Configuration"
+    parent_category: TH-14
+    cwe_any: [CWE-311, CWE-668]
+    title_hints: ["0.0.0.0/0", "public-read", "block_public_acls", "storage_encrypted"]
 
   # ---------- Config / IaC — Dependency Management ----------
   - id: FT-170

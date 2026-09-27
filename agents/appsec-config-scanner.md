@@ -77,7 +77,14 @@ The script reads `$CLAUDE_PLUGIN_ROOT/data/config-iac-checks.yaml` once and buil
 - `agent_config` — committed coding-agent settings (Claude Code, Codex, VS Code
   agent mode, Gemini CLI, Kiro)
 - `agent_automation` — workflows and scripts that start a coding agent
-- `kubernetes` / `terraform` (not used in initial version, room for extension)
+- `kubernetes` — workload manifests (privileged, host namespaces, root, env secrets)
+- `terraform` — `.tf` / `.tfvars` (internet-open admin/data ports, public
+  storage, unencrypted data stores, credential literals)
+
+Categories listed in `file_patterns_by_type` without a check (Helm, Pulumi,
+CDK, Serverless, Bicep, ARM, Ansible, Nomad) are recognised but not examined;
+their files go to `uncovered_iac` and surface as the run issue
+`config_scan_uncovered_iac`.
 
 ### Step 2 — Inventory target files
 
@@ -97,6 +104,8 @@ Glob beneath `REPO_ROOT` for each file-pattern relevant to loaded checks:
 - `package-lock.json`
 - `.claude/settings*.json` / `.codex/config.toml` / `.gemini/settings.json` /
   `.kiro/settings/mcp.json` / `.vscode/settings.json`
+- `**/{k8s,kubernetes,manifests,deploy,deployment}/**/*.{yaml,yml}`
+- `**/*.tf` / `**/*.tfvars`
 
 When `ASSESSMENT_DEPTH=quick`, limit to the first 5 files per category. Otherwise scan all. `agent_config` is exempt: it holds one settings path per coding agent, so a cap would drop a whole tool rather than sample it.
 
@@ -107,8 +116,11 @@ The script applies every check matching each target file's `iac_type`:
 1. **`expect: present`** — file must contain a match for `pattern`. Violation when no match.
 2. **`expect: absent`** — file must NOT contain `pattern`. Violation when match is found.
 3. **`expect: structured`** — the named `evaluator` in
-   `scripts/agent_config_checks.py` parses the document and decides. Used where
-   a regex cannot tell an enabled sandbox from an absent one.
+   `scripts/agent_config_checks.py` (coding-agent settings) or
+   `scripts/iac_resource_checks.py` (Compose, Kubernetes, Terraform) parses the
+   document and decides. Used where a regex cannot tell an enabled sandbox from
+   an absent one, or a literal secret from a reference. Secret evidence names
+   the key and masks the value.
 4. **`expect: all_third_party_actions`** — for `uses:` statements in GitHub Actions, every third-party action reference (not `actions/*`) must match `pattern` (the SHA-pin form). Violation when any non-pinned third-party action is found.
 5. **`expect: any_of_present`** — any of the patterns in `pattern_any_of` must match. Violation when none match.
 6. **`expect: file_exists`** — file must be present in the glob result. Violation when the glob returned zero files.
@@ -164,7 +176,8 @@ The orchestrator's Phase 9 STRIDE merge step reads `.config-scan-findings.json` 
 
 ## Breach-vector mapping
 
-The `breach_vector` field on each finding uses the vocabulary in `data/breach-vector-taxonomy.yaml`:
+The `breach_vector` field on each finding comes from the check's optional
+`breach_vector` (default `Build-Time`) and uses the vocabulary in `data/breach-vector-taxonomy.yaml`:
 
 | Value | When used |
 |---|---|

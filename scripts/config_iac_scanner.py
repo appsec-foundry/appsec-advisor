@@ -16,9 +16,15 @@ from typing import Any
 
 import yaml
 from _atomic_io import atomic_write_json
-from agent_config_checks import EVALUATORS
+from agent_config_checks import EVALUATORS as AGENT_EVALUATORS
+from iac_resource_checks import EVALUATORS as RESOURCE_EVALUATORS
+
+EVALUATORS = {**AGENT_EVALUATORS, **RESOURCE_EVALUATORS}
+DEFAULT_BREACH_VECTOR = "Build-Time"
+UNCOVERED_FILES_LISTED = 10
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+FINDINGS_SCHEMA = PLUGIN_ROOT / "schemas" / "config-scan-findings.schema.yaml"
 DEFAULT_CHECKS = PLUGIN_ROOT / "data" / "config-iac-checks.yaml"
 QUICK_FILES_PER_CATEGORY = 5
 # The quick-depth cap bounds categories whose file count grows with the
@@ -68,6 +74,7 @@ def _catalog(path: Path) -> list[dict[str, Any]]:
     if not isinstance(patterns_by_type, dict):
         raise ConfigScanError("file_patterns_by_type must be a mapping")
     required = {"id", "name", "violation_title", "iac_type", "file_pattern", "expect", "severity_if_violated", "cwe"}
+    breach_vectors = set(yaml.safe_load(FINDINGS_SCHEMA.read_text(encoding="utf-8"))["$defs"]["breachVector"]["enum"])
     seen: set[str] = set()
     for index, check in enumerate(checks):
         if not isinstance(check, dict) or not required.issubset(check):
@@ -95,6 +102,8 @@ def _catalog(path: Path) -> list[dict[str, Any]]:
                 raise ConfigScanError(f"{check_id} has an invalid pattern: {exc}") from exc
         if check["expect"] == "structured" and check.get("evaluator") not in EVALUATORS:
             raise ConfigScanError(f"{check_id} names an unknown evaluator {check.get('evaluator')!r}")
+        if check.get("breach_vector", DEFAULT_BREACH_VECTOR) not in breach_vectors:
+            raise ConfigScanError(f"{check_id} names an unknown breach_vector {check.get('breach_vector')!r}")
         if check["expect"] in {"any_of", "any_of_present"}:
             alternatives = check.get("pattern_any_of")
             if (
@@ -109,6 +118,30 @@ def _catalog(path: Path) -> list[dict[str, Any]]:
                 except re.error as exc:
                     raise ConfigScanError(f"{check_id} has an invalid pattern_any_of value: {exc}") from exc
     return checks
+
+
+def _uncovered_surfaces(repo_root: Path, checks_path: Path, checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Files of inventory categories that no check covers.
+
+    ``file_patterns_by_type`` is the scanner's inventory of recognised
+    surfaces; a category listed there without a check still has files the
+    catalog cannot judge. Reporting them keeps a scan with zero findings from
+    reading as a repository without that surface.
+    """
+    patterns_by_type = yaml.safe_load(checks_path.read_text(encoding="utf-8")).get("file_patterns_by_type") or {}
+    covered = {check["iac_type"] for check in checks}
+    root = repo_root.resolve()
+    rows: list[dict[str, Any]] = []
+    for iac_type, patterns in sorted(patterns_by_type.items()):
+        if iac_type in covered:
+            continue
+        if not isinstance(patterns, list) or not all(isinstance(value, str) and value for value in patterns):
+            raise ConfigScanError(f"surface {iac_type} has invalid file patterns")
+        surface = {"id": f"surface:{iac_type}", "file_pattern": patterns[0], "_file_patterns": patterns}
+        files = [path.relative_to(root).as_posix() for path in _matches_for_check(repo_root, surface)]
+        if files:
+            rows.append({"iac_type": iac_type, "file_count": len(files), "files": files[:UNCOVERED_FILES_LISTED]})
+    return rows
 
 
 def _matches_for_check(repo_root: Path, check: dict[str, Any]) -> list[Path]:
@@ -260,16 +293,20 @@ def scan(repo_root: Path, checks_path: Path, *, depth: str, output: Path) -> dic
                 "line": row["line"],
                 "evidence_snippet": row["snippet"],
                 "scenario": f"{canonical['title']}: {check.get('rationale', '').strip()}",
-                "breach_vector": "Build-Time",
+                "breach_vector": check.get("breach_vector", DEFAULT_BREACH_VECTOR),
             }
         )
-    return {
+    result: dict[str, Any] = {
         "version": 1,
         "generated_at": _generated_at(output),
         "checks_run": len(checks),
         "violations": len(findings),
         "findings": findings,
     }
+    uncovered = _uncovered_surfaces(repo_root, checks_path, checks)
+    if uncovered:
+        result["uncovered_iac"] = uncovered
+    return result
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -288,7 +325,9 @@ def main(argv: list[str] | None = None) -> int:
         # excerpts, which anchor on `usage:`.
         print(f"{parser.prog}: {exc}", file=sys.stderr)
         return 2
-    print(f"config-iac-scanner: {result['checks_run']} checks, {result['violations']} violations")
+    uncovered = ", ".join(row["iac_type"] for row in result.get("uncovered_iac", []))
+    suffix = f"; no checks for: {uncovered}" if uncovered else ""
+    print(f"config-iac-scanner: {result['checks_run']} checks, {result['violations']} violations{suffix}")
     return 0
 
 

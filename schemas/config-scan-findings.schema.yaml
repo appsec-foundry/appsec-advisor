@@ -86,6 +86,29 @@ $defs:
         type: array
         items:
           $ref: "#/$defs/finding"
+      # Recognised IaC surfaces present in the repository for which the
+      # catalog has no check; absent when every present surface is covered.
+      uncovered_iac:
+        type: array
+        minItems: 1
+        items:
+          type: object
+          required: [iac_type, file_count, files]
+          additionalProperties: false
+          properties:
+            iac_type:
+              type: string
+              pattern: "^[a-z][a-z0-9_]*$"
+            file_count:
+              type: integer
+              minimum: 1
+            files:
+              type: array
+              minItems: 1
+              maxItems: 10
+              items:
+                type: string
+                minLength: 1
 
   finding:
     type: object

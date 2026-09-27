@@ -428,6 +428,35 @@ def _recommend_config_scan_invalid(issue: dict, output_dir: Path) -> dict:
     }
 
 
+def _recommend_config_scan_uncovered_iac(issue: dict, output_dir: Path) -> dict:
+    """The repository carries IaC the config catalog has no check for."""
+    ev = issue["evidence"]
+    types = ", ".join(ev.get("iac_types") or []) or "an unlisted type"
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "high",
+        "risk_level": "medium",
+        "summary": f"Configuration files of type {types} were recognised but not examined.",
+        "rationale": (
+            "config_iac_scanner.py inventories these files but data/config-iac-checks.yaml has no "
+            "check for their type, so the report carries no configuration finding for them. "
+            "The gap is in the catalog, not evidence that the files are secure."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": "data/config-iac-checks.yaml",
+                "details": (
+                    f"Review the listed {types} files manually for this assessment, and add checks for "
+                    "the type to the catalog so later runs examine them."
+                ),
+            },
+        ],
+        "verification": [],
+    }
+
+
 def _recommend_bash_warn(issue: dict, output_dir: Path) -> dict:
     """Bash output contained error/warning keywords."""
     ev = issue["evidence"]
@@ -1033,6 +1062,7 @@ RECOMMENDERS: dict[str, Callable[[dict, Path], dict]] = {
     "tool_error": _recommend_tool_error,
     "orchestration_gate_warn": _recommend_orchestration_gate_warn,
     "config_scan_invalid": _recommend_config_scan_invalid,
+    "config_scan_uncovered_iac": _recommend_config_scan_uncovered_iac,
     "bash_warn": _recommend_bash_warn,
     "auto_retry_fired": _recommend_auto_retry_fired,
     "compose_retries_section": _recommend_compose_retries_section,

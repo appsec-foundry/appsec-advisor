@@ -2012,3 +2012,33 @@ def test_pillar_cwe_findings_are_reported_and_base_cwes_are_not(tmp_path):
     ]
     (tmp_path / ".threats-merged.json").write_text(json.dumps({"threats": threats[2:]}))
     assert agg._extract_pillar_cwe_findings(tmp_path) == []
+
+
+def test_uncovered_iac_surface_becomes_one_warning(tmp_path):
+    (tmp_path / ".config-scan-findings.json").write_text(
+        json.dumps(
+            {
+                "findings": [],
+                "uncovered_iac": [
+                    {"iac_type": "helm", "file_count": 2, "files": ["a/Chart.yaml", "b/Chart.yaml"]},
+                    {"iac_type": "bicep", "file_count": 1, "files": ["main.bicep"]},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    (issue,) = agg._extract_config_scan_uncovered_iac(tmp_path)
+
+    assert issue["category"] == "config_scan_uncovered_iac"
+    assert issue["severity"] == "warning"
+    assert issue["evidence"]["iac_types"] == ["bicep", "helm"]
+    assert "3 IaC file(s)" in issue["title"]
+
+
+def test_covered_or_missing_config_scan_raises_no_uncovered_warning(tmp_path):
+    assert agg._extract_config_scan_uncovered_iac(tmp_path) == []
+    path = tmp_path / ".config-scan-findings.json"
+    for payload in ({"findings": []}, {"parse_error": "x", "findings": []}, {"uncovered_iac": []}):
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        assert agg._extract_config_scan_uncovered_iac(tmp_path) == [], payload

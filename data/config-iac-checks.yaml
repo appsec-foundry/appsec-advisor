@@ -23,6 +23,10 @@
 #   finding_type               — FT-NNN from finding-types.yaml
 #   rationale                  — 1-2 sentence reason this matters
 #   remediation                — short fix text (becomes mitigation_title_hint)
+#   breach_vector              — optional; how an attacker reaches the defect
+#                                (config-scan-findings `breachVector`), default
+#                                `Build-Time`. Set it only when the check itself
+#                                establishes the reach, e.g. an internet-open rule
 
 schema_version: 1
 
@@ -57,6 +61,44 @@ file_patterns_by_type:
     - "ci/**/*.sh"
     - "tools/**/*.sh"
     - "Makefile"
+  # Raw manifests only; Helm templates are not YAML until rendered and are
+  # listed as their own surface below.
+  kubernetes:
+    - "**/k8s/**/*.yaml"
+    - "**/k8s/**/*.yml"
+    - "**/kubernetes/**/*.yaml"
+    - "**/kubernetes/**/*.yml"
+    - "**/manifests/**/*.yaml"
+    - "**/manifests/**/*.yml"
+    - "**/deploy/**/*.yaml"
+    - "**/deploy/**/*.yml"
+    - "**/deployment/**/*.yaml"
+    - "**/deployment/**/*.yml"
+  terraform:
+    - "**/*.tf"
+    - "**/*.tfvars"
+  # Recognised surfaces without checks yet. The scanner reports their files as
+  # `uncovered_iac` so a run names what it did not examine instead of reading
+  # as a clean scan. A category moves out of this block with its first check.
+  helm:
+    - "**/Chart.yaml"
+  pulumi:
+    - "**/Pulumi.yaml"
+    - "**/Pulumi.yml"
+  aws_cdk:
+    - "**/cdk.json"
+  serverless:
+    - "**/serverless.yml"
+    - "**/serverless.yaml"
+  bicep:
+    - "**/*.bicep"
+  azure_arm:
+    - "**/azuredeploy*.json"
+  ansible:
+    - "**/ansible.cfg"
+  nomad:
+    - "**/*.nomad"
+    - "**/*.nomad.hcl"
 
 checks:
   # ============ Dockerfile ============
@@ -250,6 +292,33 @@ checks:
     finding_type: FT-161
     rationale: "Host networking defeats container network isolation; any port the app opens binds on the host."
     remediation: "Use bridge/custom networks; expose only the needed ports via `ports:`"
+
+  - id: IAC-023
+    name: "docker-compose secrets supplied by reference"
+    violation_title: "Hardcoded Secret in Compose Environment"
+    iac_type: docker_compose
+    file_pattern: "docker-compose*.yml"
+    expect: structured
+    evaluator: compose_environment_secret_literal
+    severity_if_violated: High
+    cwe: CWE-798
+    finding_type: FT-050
+    breach_vector: "Repo-Read"
+    rationale: "A credential written as a literal in a service's `environment` is readable by everyone with repository access and runs unchanged wherever the file is deployed."
+    remediation: "Move the value to Compose `secrets` or an untracked env file and reference it as `${VAR}`; rotate the committed value"
+
+  - id: IAC-024
+    name: "docker-compose data and admin ports bound to a host address"
+    violation_title: "Data or Admin Port Published on All Interfaces"
+    iac_type: docker_compose
+    file_pattern: "docker-compose*.yml"
+    expect: structured
+    evaluator: compose_sensitive_port_on_all_interfaces
+    severity_if_violated: Medium
+    cwe: CWE-668
+    finding_type: FT-161
+    rationale: "A published database, broker, or remote-administration port without a host address binds on every interface of the host, so the service is reachable from any network the host is attached to."
+    remediation: "Drop the `ports:` entry and use the Compose network, or bind it to `127.0.0.1:`"
 
   # ============ Dependabot / Renovate ============
   - id: IAC-030
@@ -621,3 +690,116 @@ checks:
     finding_type: FT-181
     rationale: "An unrestricted `Read` reaches files outside the project, and a `WebFetch` without a domain list is a usable channel for sending what it read anywhere."
     remediation: "Scope Read rules to project paths and pin WebFetch to the domains the work needs"
+
+  # ============ Kubernetes manifests ============
+  # Evaluated per workload manifest (Pod, Deployment, StatefulSet, DaemonSet,
+  # ReplicaSet, ReplicationController, Job, CronJob). A missing NetworkPolicy is
+  # a property of a namespace across files and is not checked per file.
+  - id: IAC-080
+    name: "Kubernetes containers run unprivileged"
+    violation_title: "Privileged Kubernetes Container"
+    iac_type: kubernetes
+    file_pattern: "k8s/*.yaml"
+    expect: structured
+    evaluator: kubernetes_privileged_container
+    severity_if_violated: High
+    cwe: CWE-250
+    finding_type: FT-163
+    rationale: "`securityContext.privileged: true` gives the container every capability and the host's devices, so a compromise of the workload is a compromise of the node."
+    remediation: "Remove `privileged: true`; add only the individual capabilities the workload needs"
+
+  - id: IAC-081
+    name: "Kubernetes pods keep their own namespaces"
+    violation_title: "Kubernetes Pod Shares Host Namespaces"
+    iac_type: kubernetes
+    file_pattern: "k8s/*.yaml"
+    expect: structured
+    evaluator: kubernetes_host_namespace
+    severity_if_violated: High
+    cwe: CWE-668
+    finding_type: FT-163
+    rationale: "`hostNetwork`, `hostPID`, or `hostIPC` puts the pod into the node's namespace, where it sees node traffic and processes and bypasses network policy."
+    remediation: "Remove `hostNetwork`/`hostPID`/`hostIPC` and expose the workload through a Service"
+
+  - id: IAC-082
+    name: "Kubernetes containers are prevented from running as root"
+    violation_title: "Kubernetes Container Allowed to Run as Root"
+    iac_type: kubernetes
+    file_pattern: "k8s/*.yaml"
+    expect: structured
+    evaluator: kubernetes_root_not_prevented
+    severity_if_violated: Medium
+    cwe: CWE-250
+    finding_type: FT-163
+    rationale: "Without `runAsNonRoot: true` or a non-zero `runAsUser` on the pod or the container, an image that defaults to root runs as root and any container escape starts with root."
+    remediation: "Set `securityContext.runAsNonRoot: true` and a non-zero `runAsUser` on the pod or each container"
+
+  - id: IAC-083
+    name: "Kubernetes container secrets come from Secret references"
+    violation_title: "Hardcoded Secret in Kubernetes Container Env"
+    iac_type: kubernetes
+    file_pattern: "k8s/*.yaml"
+    expect: structured
+    evaluator: kubernetes_env_secret_literal
+    severity_if_violated: High
+    cwe: CWE-798
+    finding_type: FT-050
+    breach_vector: "Repo-Read"
+    rationale: "A credential in a container's `env[].value` is committed with the manifest and visible to anyone who can read the Deployment."
+    remediation: "Store the value in a Secret and reference it with `valueFrom.secretKeyRef`; rotate the committed value"
+
+  # ============ Terraform ============
+  - id: IAC-090
+    name: "Terraform ingress to data and admin ports is restricted"
+    violation_title: "Data or Admin Port Open to the Internet"
+    iac_type: terraform
+    file_pattern: "*.tf"
+    expect: structured
+    evaluator: terraform_open_sensitive_ingress
+    severity_if_violated: High
+    cwe: CWE-668
+    finding_type: FT-164
+    breach_vector: "Internet Anon"
+    rationale: "An ingress rule from `0.0.0.0/0` or `::/0` to SSH, RDP, a database, or a broker port makes that service directly attackable from the internet."
+    remediation: "Restrict the source to known CIDRs or security groups and reach admin ports through a bastion or VPN"
+
+  - id: IAC-091
+    name: "Terraform storage buckets and containers are private"
+    violation_title: "Publicly Accessible Storage Bucket"
+    iac_type: terraform
+    file_pattern: "*.tf"
+    expect: structured
+    evaluator: terraform_public_storage
+    severity_if_violated: High
+    cwe: CWE-668
+    finding_type: FT-164
+    breach_vector: "Internet Anon"
+    rationale: "A public ACL, a disabled public access block, or a policy granting `*` lets anyone on the internet read the stored objects."
+    remediation: "Enable all public access block flags, drop public ACLs, and grant bucket access to named principals only"
+
+  - id: IAC-092
+    name: "Terraform data stores encrypt data at rest"
+    violation_title: "Unencrypted Data Store at Rest"
+    iac_type: terraform
+    file_pattern: "*.tf"
+    expect: structured
+    evaluator: terraform_unencrypted_storage
+    severity_if_violated: Medium
+    cwe: CWE-311
+    finding_type: FT-164
+    rationale: "A database, volume, or cache with encryption disabled — or left at a provider default that is unencrypted — exposes its data through snapshots, backups, and underlying storage."
+    remediation: "Set the resource's encryption flag to `true`, preferably with a customer-managed KMS key"
+
+  - id: IAC-093
+    name: "Terraform credentials come from variables without defaults or a secret store"
+    violation_title: "Hardcoded Credential in Terraform Configuration"
+    iac_type: terraform
+    file_pattern: "*.tf"
+    expect: structured
+    evaluator: terraform_credential_literal
+    severity_if_violated: High
+    cwe: CWE-798
+    finding_type: FT-050
+    breach_vector: "Repo-Read"
+    rationale: "A credential written as a literal attribute, local, or variable default is committed with the configuration and lands in plan output and state."
+    remediation: "Declare the variable without a default and mark it `sensitive`, or read the value from a secret manager data source; rotate the committed value"

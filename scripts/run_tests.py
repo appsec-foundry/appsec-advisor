@@ -134,6 +134,7 @@ GROUPS = {
         database_privilege_separation
         detect_open_registration
         handler_resolver
+        iac_resource_checks
         lib_manifest
         manifest_readers
         mass_assignment_scanner
@@ -1203,11 +1204,19 @@ SOURCE_TESTS = {
         config_iac_scanner
         config_scanner_wireup
         gate_preconditions
+        iac_resource_checks
         repo_scan
         requirements_verification
         run_path_guard
         security_score
         stride_outputs
+        validate_intermediate
+    """),
+    "scripts/iac_resource_checks.py": _tests("""
+        config_iac_checks
+        config_iac_scanner
+        config_scanner_wireup
+        iac_resource_checks
         validate_intermediate
     """),
     "scripts/deployment_inventory.py": _tests("""

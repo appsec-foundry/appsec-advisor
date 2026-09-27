@@ -992,6 +992,41 @@ def _extract_trust_boundary_coverage(output_dir: Path) -> list[dict]:
     ]
 
 
+def _extract_config_scan_uncovered_iac(output_dir: Path) -> list[dict]:
+    """Surface IaC files the config catalog has no check for.
+
+    Without this a repository whose only infrastructure is, say, a Helm chart
+    reports zero configuration findings and reads as a clean scan.
+    """
+    try:
+        data = json.loads((output_dir / ".config-scan-findings.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    rows = data.get("uncovered_iac") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        return []
+    rows = [row for row in rows if isinstance(row, dict) and isinstance(row.get("iac_type"), str)]
+    if not rows:
+        return []
+    types = sorted(row["iac_type"] for row in rows)
+    files = sum(row.get("file_count", 0) for row in rows if isinstance(row.get("file_count"), int))
+    detail = f"{files} IaC file(s) of type {', '.join(types)} have no config check and were not examined"
+    return [
+        {
+            "category": "config_scan_uncovered_iac",
+            "severity": "warning",
+            "title": detail,
+            "evidence": {
+                "log_file": ".config-scan-findings.json",
+                "log_line": 1,
+                "raw_event": detail,
+                "iac_types": types,
+                "files": [path for row in rows for path in row.get("files", [])][:20],
+            },
+        }
+    ]
+
+
 _EVIDENCE_COVERAGE_MIN_FILES = 5
 _EVIDENCE_COVERAGE_FLOOR = 0.25
 
@@ -2425,6 +2460,7 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     issues.extend(_extract_warnings(hook_log))
     issues.extend(_extract_trust_boundary_diagnostics(output_dir))
     issues.extend(_extract_trust_boundary_coverage(output_dir))
+    issues.extend(_extract_config_scan_uncovered_iac(output_dir))
     issues.extend(_extract_component_evidence_coverage(output_dir))
     issues.extend(_extract_routing_effectiveness(output_dir))
     issues.extend(_extract_dispatch_count_consistency(output_dir, hook_log))

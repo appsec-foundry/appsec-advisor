@@ -276,7 +276,7 @@ def test_every_structured_check_names_a_known_evaluator():
 
     assert structured
     for check in structured:
-        assert check["evaluator"] in checks.EVALUATORS, check["id"]
+        assert check["evaluator"] in scanner.EVALUATORS, check["id"]
 
 
 def test_unknown_evaluator_fails_the_catalog_gate(tmp_path):

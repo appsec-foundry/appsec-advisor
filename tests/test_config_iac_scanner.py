@@ -212,3 +212,83 @@ def test_main_writes_run_stable_timestamp(tmp_path):
     assert scanner.main(["--repo-root", str(repo), "--output", str(output), "--checks", str(catalog)]) == 0
     result = json.loads(output.read_text(encoding="utf-8"))
     assert result["generated_at"] == "1970-01-01T00:00:00Z"
+
+
+def _iac_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    (repo / "deploy" / "k8s").mkdir(parents=True)
+    (repo / "infra" / "prod").mkdir(parents=True)
+    (repo / "docker-compose.yaml").write_text(
+        "services:\n  db:\n    image: postgres\n    ports: ['5432:5432']\n"
+        "    environment:\n      POSTGRES_PASSWORD: compose-literal-pw\n",
+        encoding="utf-8",
+    )
+    (repo / "deploy" / "k8s" / "app.yml").write_text(
+        "apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: api}\nspec:\n  template:\n    spec:\n"
+        "      containers:\n        - name: api\n          image: api\n"
+        "          env: [{name: API_TOKEN, value: k8s-literal-token}]\n",
+        encoding="utf-8",
+    )
+    (repo / "infra" / "prod" / "main.tf").write_text(
+        'variable "db_password" {\n  default = "tf-literal-pw"\n}\n'
+        'resource "aws_security_group" "s" {\n  ingress {\n    from_port = 22\n    to_port = 22\n'
+        '    protocol = "tcp"\n    cidr_blocks = ["0.0.0.0/0"]\n  }\n}\n',
+        encoding="utf-8",
+    )
+    return repo
+
+
+def test_shipped_catalog_covers_compose_kubernetes_and_terraform_and_masks_secrets(tmp_path):
+    import validate_intermediate as vi
+
+    result = scanner.scan(_iac_repo(tmp_path), scanner.DEFAULT_CHECKS, depth="standard", output=tmp_path / "r.json")
+
+    hits = {(row["check_id"], row["file"]) for row in result["findings"]}
+    assert {
+        ("IAC-023", "docker-compose.yaml"),
+        ("IAC-024", "docker-compose.yaml"),
+        ("IAC-082", "deploy/k8s/app.yml"),
+        ("IAC-083", "deploy/k8s/app.yml"),
+        ("IAC-090", "infra/prod/main.tf"),
+        ("IAC-093", "infra/prod/main.tf"),
+    } <= hits
+    breach = {row["check_id"]: row["breach_vector"] for row in result["findings"]}
+    assert (
+        breach["IAC-090"] == "Internet Anon" and breach["IAC-023"] == "Repo-Read" and breach["IAC-082"] == "Build-Time"
+    )
+    serialized = json.dumps(result)
+    assert not any(value in serialized for value in ("compose-literal-pw", "k8s-literal-token", "tf-literal-pw"))
+    assert "uncovered_iac" not in result
+    assert vi.validate_config_scan_findings(result) == (True, [])
+
+
+def test_recognised_surface_without_checks_is_reported_not_silent(tmp_path):
+    import validate_intermediate as vi
+
+    repo = tmp_path / "repo"
+    chart = repo / "charts" / "api"
+    chart.mkdir(parents=True)
+    (chart / "Chart.yaml").write_text("apiVersion: v2\nname: api\n", encoding="utf-8")
+
+    result = scanner.scan(repo, scanner.DEFAULT_CHECKS, depth="quick", output=tmp_path / "r.json")
+
+    assert result["uncovered_iac"] == [{"iac_type": "helm", "file_count": 1, "files": ["charts/api/Chart.yaml"]}]
+    assert vi.validate_config_scan_findings(result) == (True, [])
+
+
+def test_repository_without_iac_reports_neither_findings_nor_uncovered_surfaces(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    (repo / "config.yaml").write_text("password: not-iac\n", encoding="utf-8")
+
+    result = scanner.scan(repo, scanner.DEFAULT_CHECKS, depth="standard", output=tmp_path / "r.json")
+
+    assert not [row for row in result["findings"] if row["iac_type"] in {"kubernetes", "terraform", "docker_compose"}]
+    assert "uncovered_iac" not in result
+
+
+def test_catalog_rejects_an_unknown_breach_vector(tmp_path):
+    catalog = _catalog(tmp_path, [_check("IAC-900", "Dockerfile", "Dockerfile", "absent", breach_vector="Nearby")])
+    with pytest.raises(scanner.ConfigScanError, match="breach_vector"):
+        scanner.scan(tmp_path, catalog, depth="standard", output=tmp_path / "r.json")

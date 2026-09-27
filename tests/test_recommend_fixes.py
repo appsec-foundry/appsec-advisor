@@ -595,3 +595,12 @@ def test_cli_diagnosis_refresh_and_dry_run(tmp_path, diagnosed_run, capsys, dry_
         result = json.loads((tmp_path / ".run-issues.json").read_text())
     assert result["summary"]["auto_applicable_fixes"] == 0
     assert result["issues"][0]["fix_recommendation"]["actions"][0]["type"] == "manual_review"
+
+
+def test_uncovered_iac_points_at_the_catalog_not_at_the_repository(tmp_path):
+    issue = {"category": "config_scan_uncovered_iac", "evidence": {"iac_types": ["helm"], "log_line": 1}}
+    rec = rf.RECOMMENDERS["config_scan_uncovered_iac"](issue, tmp_path)
+    assert "degraded" not in rec
+    assert rec["auto_applicable"] is False
+    assert rec["actions"][0]["target"] == "data/config-iac-checks.yaml"
+    assert "helm" in rec["summary"]
