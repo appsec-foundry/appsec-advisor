@@ -325,6 +325,43 @@ def test_terraform_tls_and_waf_remove_the_facts(tmp_path: Path):
     assert lb["facts"] == [{"text": "HTTPS :443", "tone": "neutral", "source": {"file": "main.tf", "line": 21}}]
 
 
+@pytest.mark.parametrize(
+    "dirs", [("infra/prod", "infra/staging"), ("envs/blue", "envs/green")], ids=["neutral", "renamed"]
+)
+def test_terraform_roots_sharing_addresses_stay_separate_environments(tmp_path: Path, dirs):
+    """Resource addresses are unique only within one root: equal addresses in two roots never overwrite."""
+    first, second = dirs
+    _write(tmp_path, f"{first}/main.tf", TF.format(p="app", port=443, proto="HTTPS"))
+    _write(tmp_path, f"{second}/main.tf", TF.format(p="app", port=80, proto="HTTP"))
+    envs = DI.scan_terraform(tmp_path)
+    assert [(e["label"], e["source"]) for e in envs] == [
+        (f"AWS · eu-west-1 · {first}", f"{first}/main.tf"),
+        (f"AWS · eu-west-1 · {second}", f"{second}/main.tf"),
+    ]
+    assert all(e["tree"]["title"] == e["label"] for e in envs)
+    lbs = [e["tree"]["children"][0]["children"][0]["children"][0] for e in envs]
+    assert [f["text"] for f in lbs[0]["facts"]] == ["no WAF in this Terraform", "HTTPS :443"]
+    assert lbs[1]["facts"][0]["text"] == "HTTP :80 from 0.0.0.0/0 — no TLS"
+    assert DI.validation_errors(DI.build_inventory(tmp_path)) == []
+
+
+@pytest.mark.parametrize("module_dir", ["modules/network", "../shared/net"], ids=["nested", "sibling"])
+def test_terraform_local_modules_belong_to_the_root_that_calls_them(tmp_path: Path, module_dir: str):
+    """Negative: a directory a root calls through a relative source is part of that root, not a second root."""
+    root_dir = "infra/live"
+    text = TF.format(p="svc", port=80, proto="HTTP")
+    vpc_start, lb_start = text.index('resource "aws_vpc"'), text.index('resource "aws_security_group"')
+    network, rest = text[vpc_start:lb_start], text[:vpc_start] + text[lb_start:]
+    _write(tmp_path, f"{root_dir}/main.tf", rest + f'module "net" {{\n  source = "./{module_dir}"\n}}\n')
+    target = (tmp_path / root_dir / module_dir).resolve().relative_to(tmp_path.resolve()).as_posix()
+    _write(tmp_path, f"{target}/main.tf", network)
+    assert [d.relative_to(tmp_path.resolve()).as_posix() for d in DI._tf_roots(tmp_path)] == [root_dir]
+    [env] = DI.scan_terraform(tmp_path)
+    assert env["label"] == "AWS · eu-west-1"  # a single root keeps the label it always had
+    public, private = env["tree"]["children"][0]["children"]
+    assert public["children"][0]["title"] == "Load balancer" and private["children"][0]["kind"] == "workload"
+
+
 def test_terraform_without_aws_resources_is_no_environment(tmp_path: Path):
     _write(tmp_path, "main.tf", 'resource "null_resource" "x" {\n}\n')
     assert DI.scan_terraform(tmp_path) == []
@@ -355,7 +392,7 @@ def test_dependencies_ranges_lockfile_and_roles(tmp_path: Path):
 def test_oversize_and_deep_files_are_skipped(tmp_path: Path):
     _write(tmp_path, "a/b/c/d/e/deep.tf", 'resource "aws_vpc" "v" {\n  cidr_block = "10.0.0.0/16"\n}\n')
     _write(tmp_path, "big.tf", 'resource "aws_s3_bucket" "b" {\n' + "#" * (DI.MAX_BYTES + 1) + "\n}\n")
-    assert DI._tf_blocks(tmp_path)[0] == {}
+    assert DI._tf_roots(tmp_path) == {} and DI.scan_terraform(tmp_path) == []
 
 
 # ---------------------------------------------------------------- topology: zones and the workloads in them

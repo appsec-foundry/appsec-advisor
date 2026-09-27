@@ -762,11 +762,44 @@ def scan_gitlab_auto_deploy(root: Path) -> list[dict]:
 
 
 # ================================================================ Terraform (AWS)
-def _tf_blocks(root: Path) -> tuple[dict[str, tuple[str, str, int]], str]:
-    """resource address -> (body, file, line). Bounded brace matching; not a full HCL parser."""
+_TF_LOCAL_MODULE_RE = re.compile(r'^\s*module\s+"[\w-]+"\s*\{[^}]*?\bsource\s*=\s*"(\.\.?/[^"]+)"', re.M | re.S)
+
+
+def _tf_roots(root: Path) -> dict[Path, list[Path]]:
+    """Terraform root directory -> its files plus those of the local modules it calls, transitively.
+
+    Resource addresses are unique only inside one root module, so two roots are separate environments; a
+    directory that another one calls through a relative ``source`` is a module of that root, not a root.
+    """
+    by_dir: dict[Path, list[Path]] = {}
+    for p in _walk(root, lambda p: p.suffix == ".tf"):
+        by_dir.setdefault(p.parent.resolve(), []).append(p)
+    calls: dict[Path, set[Path]] = {d: set() for d in by_dir}
+    for d, files in by_dir.items():
+        for p in files:
+            for src in _TF_LOCAL_MODULE_RE.findall(_read(p, root)):
+                target = (d / src).resolve()
+                if target in by_dir and target != d:
+                    calls[d].add(target)
+    called = set().union(*calls.values())
+    roots: dict[Path, list[Path]] = {}
+    for d in sorted(set(by_dir) - called) or sorted(by_dir):
+        seen: set[Path] = set()
+        stack = [d]
+        while stack:
+            x = stack.pop()
+            if x not in seen:
+                seen.add(x)
+                stack.extend(calls[x])
+        roots[d] = sorted(p for x in seen for p in by_dir[x])
+    return roots
+
+
+def _tf_blocks(root: Path, files: list[Path]) -> tuple[dict[str, tuple[str, str, int]], str]:
+    """resource address -> (body, file, line) within one root. Bounded brace matching; not a full HCL parser."""
     out: dict[str, tuple[str, str, int]] = {}
     region = ""
-    for p in _walk(root, lambda p: p.suffix == ".tf"):
+    for p in files:
         text = _read(p, root)
         rel = _rel(p, root)
         region = (
@@ -934,12 +967,22 @@ def _tf_nodes(res: dict) -> dict[str, dict]:
 
 
 def scan_terraform(root: Path) -> list[dict]:
-    res, region = _tf_blocks(root)
+    """One AWS environment per Terraform root; the root directory joins the label when there are several."""
+    envs = [(d, env) for d, files in _tf_roots(root).items() if (env := _tf_environment(root, files))]
+    if len(envs) > 1:
+        for d, env in envs:
+            where = _rel(d, root) if d != root else "repository root"
+            env["label"] = env["tree"]["title"] = _clip(f"{env['label']} · {where}", 120)
+    return [env for _, env in envs]
+
+
+def _tf_environment(root: Path, files: list[Path]) -> dict | None:
+    res, region = _tf_blocks(root, files)
     if not any(k.startswith("aws_") for k in res):
-        return []
+        return None
     nodes = _tf_nodes(res)
     if not nodes:
-        return []
+        return None
     bodies = {k: v[0] for k, v in res.items()}
     subnets = [k for k in res if k.startswith("aws_subnet.")]
     public = {s for s in subnets if _attr(bodies[s], "map_public_ip_on_launch") == "true"}
@@ -964,7 +1007,7 @@ def scan_terraform(root: Path) -> list[dict]:
         )
     src = sorted({v[1] for v in res.values()})[0]
     label = f"AWS · {region}" if region else "AWS"
-    return [{"platform": "aws", "label": label, "source": src, "tree": _node("cloud", label, [], children, note=src)}]
+    return {"platform": "aws", "label": label, "source": src, "tree": _node("cloud", label, [], children, note=src)}
 
 
 # ================================================================ CI systems
