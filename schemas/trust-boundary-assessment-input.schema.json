@@ -32,6 +32,11 @@
           "name": {"type": "string", "minLength": 1, "maxLength": 80},
           "tier": {"type": "string", "enum": ["client", "application", "data"]},
           "deployment_zones": {"type": "array", "maxItems": 20, "items": {"type": "string", "maxLength": 80}},
+          "workload_zones": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {"type": "string", "pattern": "^(?:compose|kubernetes|openshift):.+$", "maxLength": 140}
+          },
           "handles_sensitive_data": {"type": "boolean"},
           "paths": {
             "type": "array",

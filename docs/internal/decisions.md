@@ -151,6 +151,7 @@ Removing an entry means listing it here in the same change.
 | TB-7 | A legacy migration never promotes absence into a positive claim | `test_normalize_migrates_legacy_without_promoting_absence` | `schemas/threat-model.output.schema.yaml` |
 | TB-8 | The same crossing collapses unless a stated reason distinguishes it | `test_same_crossing_without_a_stated_reason_collapses` | `schemas/threat-model.output.schema.yaml` |
 | TB-9 | Boundary identity survives renumbering; external IDs are translated at delivery | `test_external_boundary_ids_are_translated_through_the_delivery_renumber` | `scripts/emit_severity_rationale.py` |
+| TB-10 | A flow whose endpoints run on different network zones of one deployment platform is a mandatory `cross-zone-flow` signal even when their canonical zones agree; zones are compared per platform, and differing sets count, so a zone-bridging workload is where the crossing is found | `test_flows_between_different_network_zones_are_cross_zone_signals`, `test_a_component_without_workload_zones_keeps_its_previous_card_and_signals` | `scripts/build_trust_boundary_assessment_input.py` → `_network_zone_crossing` |
 
 ## Findings and evidence
 

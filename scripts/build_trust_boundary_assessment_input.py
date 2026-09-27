@@ -113,24 +113,47 @@ def _component_cards(components: list[dict[str, Any]]) -> list[dict[str, Any]]:
             for path in row.get("paths", [])[:40]
             if isinstance(path, str) and _SAFE_RELATIVE.match(path.replace("\\", "/"))
         ]
-        cards.append(
-            {
-                "id": row["id"],
-                "name": str(row["name"])[:80],
-                "tier": row["tier"],
-                "deployment_zones": [
-                    str(zone)[:80] for zone in row.get("deployment_zones", [])[:20] if isinstance(zone, str)
-                ],
-                "handles_sensitive_data": bool(row.get("handles_sensitive_data", False)),
-                "paths": safe_paths,
-            }
-        )
+        card = {
+            "id": row["id"],
+            "name": str(row["name"])[:80],
+            "tier": row["tier"],
+            "deployment_zones": [
+                str(zone)[:80] for zone in row.get("deployment_zones", [])[:20] if isinstance(zone, str)
+            ],
+            "handles_sensitive_data": bool(row.get("handles_sensitive_data", False)),
+            "paths": safe_paths,
+        }
+        workload_zones = [str(zone)[:140] for zone in row.get("workload_zones") or [] if isinstance(zone, str)]
+        if workload_zones:
+            card["workload_zones"] = workload_zones[:64]
+        cards.append(card)
     return cards
 
 
 def _material_zones(component: dict[str, Any]) -> set[str]:
     ignored = {"unknown", "runtime", "docker", "docker-container", "prod-env"}
     return {str(value) for value in component.get("deployment_zones", []) if str(value) not in ignored}
+
+
+def _network_zone_crossing(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    """Both endpoints run on one deployment platform but on different network zones there.
+
+    Zones are compared per platform, so a component known only from compose and
+    one known only from Kubernetes are not a crossing. Differing zone sets count,
+    not only disjoint ones: a workload that bridges two zones is exactly where a
+    peer from one of them reaches the other.
+    """
+
+    def by_platform(component: dict[str, Any]) -> dict[str, set[str]]:
+        zones: dict[str, set[str]] = {}
+        for value in component.get("workload_zones") or []:
+            platform, _, zone = str(value).partition(":")
+            if zone:
+                zones.setdefault(platform, set()).add(zone)
+        return zones
+
+    left_zones, right_zones = by_platform(left), by_platform(right)
+    return any(left_zones[platform] != right_zones[platform] for platform in left_zones.keys() & right_zones.keys())
 
 
 def _signal_id(signal_class: str, source: str, target: str) -> str:
@@ -170,6 +193,14 @@ def _signal_specs(flow: dict[str, Any], components: dict[str, dict[str, Any]]) -
                 "cross-zone-flow",
                 "resolved flow endpoints have materially different deployment zones",
                 ["runtime-only placement labels", "duplicate protocol view"],
+            )
+        )
+    elif left and right and _network_zone_crossing(left, right):
+        result.append(
+            (
+                "cross-zone-flow",
+                "resolved flow endpoints run on different network zones of the deployment configuration",
+                ["network declared but unused by either workload", "duplicate protocol view"],
             )
         )
     if left and right and left.get("tier") == "application" and right.get("tier") == "data":

@@ -3096,6 +3096,14 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
+    "schemas/trust-boundary-assessment-input.schema.json": _tests("""
+        build_trust_boundary_assessment_input
+        check_target_specificity
+        prepare_trust_boundary_context
+        requirements_verification
+        schemas
+        stride_outputs
+    """),
     "scripts/build_verify_diff.py": _tests("""
         build_verify_diff
         check_target_specificity

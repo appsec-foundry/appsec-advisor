@@ -372,3 +372,46 @@ def test_access_groups_survive_boundary_handoff_and_invalid_groups_block(tmp_pat
     path.write_text(json.dumps(data))
     with pytest.raises(ValueError, match="access_group"):
         builder.build(repo, output, "standard")
+
+
+def _zone_card(cid: str, deployment_zones: list[str], workload_zones: list[str] | None = None) -> dict:
+    row = {"id": cid, "name": cid, "tier": "application", "deployment_zones": deployment_zones, "paths": ["src"]}
+    if workload_zones is not None:
+        row["workload_zones"] = workload_zones
+    return builder._component_cards([row])[0]
+
+
+def _cross_zone(left: dict, right: dict) -> list[str]:
+    flow = {"from": left["id"], "to": right["id"], "label": "call", "protocol": "HTTP"}
+    specs = builder._signal_specs(flow, {left["id"]: left, right["id"]: right})
+    return [trigger for signal_class, trigger, _ in specs if signal_class == "cross-zone-flow"]
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "crosses"),
+    [
+        (["compose:edge"], ["compose:core"], True),
+        (["compose:edge", "compose:core"], ["compose:core"], True),
+        (["compose:core"], ["compose:core"], False),
+        (["compose:front"], ["kubernetes:back"], False),
+        (["compose:core", "kubernetes:a"], ["compose:core", "kubernetes:b"], True),
+        (["compose:public-net"], ["compose:vault-net"], True),
+    ],
+)
+def test_flows_between_different_network_zones_are_cross_zone_signals(left, right, crosses) -> None:
+    triggers = _cross_zone(_zone_card("gateway", ["dmz"], left), _zone_card("ledger", ["dmz"], right))
+    assert bool(triggers) is crosses
+    assert all("network zones" in trigger for trigger in triggers)
+
+
+def test_a_canonical_zone_difference_keeps_its_own_single_signal() -> None:
+    triggers = _cross_zone(
+        _zone_card("gateway", ["internet"], ["compose:edge"]), _zone_card("store", ["prod-write-db"], ["compose:data"])
+    )
+    assert triggers == ["resolved flow endpoints have materially different deployment zones"]
+
+
+def test_a_component_without_workload_zones_keeps_its_previous_card_and_signals() -> None:
+    plain = _zone_card("gateway", ["dmz"])
+    assert "workload_zones" not in plain
+    assert _cross_zone(plain, _zone_card("ledger", ["dmz"], ["compose:core"])) == []
