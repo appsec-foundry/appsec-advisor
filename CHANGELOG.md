@@ -49,7 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Detection gaps no longer name an attacker, and attack vectors match the attributed attacker, including build-time supply-chain attacks.
 - Runs no longer abort when consolidated findings move to their owning application component or stall and curtail other analyses when agents exhaust their turn budget.
 - STRIDE validation retries receive the exact errors to repair, and aborted runs name the failed rule instead of reporting missing output.
-- Architecture diagrams preserve component connections, avoid duplicate databases and identity providers, align finding counts with the report, and identify each scenario's attacker.
+- Architecture diagrams preserve component connections, avoid duplicate databases, identity providers and user roles, keep the project name when a report moves, align finding counts with the report, and identify each scenario's attacker, with build-pipeline attacks shown as supply-chain attacks.
 - Architecture enrichment fills Security Architecture prose and routes remaining placeholders to repair, while self-checks catch inconsistent flows and asset locations before later validation failures.
 - Management summaries state the analysis method and coverage limits concisely and use short finding references for unresolved questions.
 - Dependency checks recognise Gradle dependencies declared in map notation (`group:`, `name:`, `version:`).
