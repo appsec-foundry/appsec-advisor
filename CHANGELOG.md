@@ -31,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New aiscb installations load verified modules on demand, and `update-baseline` uses compatible signed upstream installers while preserving installation scope and mode.
 - `create-threat-model` no longer requires the `Bash(*)` allow-list when `permissions.defaultMode` is `auto` or `bypassPermissions`, and permission failures distinguish missing from unreadable settings and provide a usable `setup-target` command.
 - `/appsec-advisor:help` shows a grouped quick start with the full reference behind `--all`, and the session banner shows a threat model only when one exists or a scan runs, including from subdirectories.
+- The configuration scan checks Kubernetes manifests, Helm values, Terraform, and Compose environment secrets and exposed data ports, and reports detected IaC files it has no checks for.
+- Repositories with Compose or Kubernetes deployments account for every deployed workload as a component or a stated exclusion, and flows between services on different deployment networks become trust-boundary candidates.
+- The deployment figure treats each Terraform root directory as its own environment.
 
 ### Fixed
 
