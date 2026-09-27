@@ -3211,6 +3211,11 @@ def main() -> int:
         sys.stderr.write(f"FATAL: {exc}\n")
         return 5
 
+    # Runs on the final threats, so only evidence-verified findings can fill a flow.
+    from flow_route_auth import fill_from_verified_findings
+
+    data_flows, _filled_flows = fill_from_verified_findings(data_flows, threats)
+
     # Compose final document
     doc: dict[str, Any] = {
         "meta": meta,

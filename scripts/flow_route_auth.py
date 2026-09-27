@@ -93,3 +93,41 @@ def reconcile(flows_doc: dict, routes: list) -> tuple[dict, list[str], list[str]
         flow["authentication"] = authentication
         filled.append(flow["id"])
     return result, filled, mixed
+
+
+def fill_from_verified_findings(flows: list, threats: list) -> tuple[list, list[str]]:
+    """(flows, filled ids): an unknown flow takes ``none`` from a verified CWE-306 at its cited code.
+
+    The route inventory cannot see channels that are not HTTP routes (a
+    WebSocket, a queue consumer), so their flows stay unknown even after
+    evidence verification confirmed the missing authentication. Only a finding
+    on the flow's target component whose evidence names a file the flow itself
+    cites may fill it; broken authentication (CWE-287) is still authentication.
+    """
+    result = copy.deepcopy(flows)
+    filled: list[str] = []
+    for flow in result:
+        if not isinstance(flow, dict) or not _open(flow):
+            continue
+        cited = {
+            row.get("file") for row in (flow.get("authentication") or {}).get("evidence") or [] if isinstance(row, dict)
+        }
+        for threat in threats:
+            evidence = [row for row in threat.get("evidence") or [] if isinstance(row, dict)]
+            if (
+                threat.get("cwe") == "CWE-306"
+                and threat.get("evidence_check") == "verified"
+                and threat.get("component") == flow.get("to")
+                and any(row.get("file") in cited for row in evidence)
+            ):
+                authentication = {
+                    "scheme": "none",
+                    "scope": f"No authentication check; confirmed by {threat.get('id')} (evidence-verified)",
+                    "evidence": evidence[:_MAX_EVIDENCE],
+                }
+                if flow["authentication"].get("transport"):
+                    authentication["transport"] = flow["authentication"]["transport"]
+                flow["authentication"] = authentication
+                filled.append(flow["id"])
+                break
+    return result, filled

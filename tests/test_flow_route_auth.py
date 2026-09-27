@@ -9,7 +9,7 @@ import orchestration_controller as controller
 import pytest
 import route_inventory as ri
 import validate_fragment
-from flow_route_auth import mixed_route_auth_errors, reconcile
+from flow_route_auth import fill_from_verified_findings, mixed_route_auth_errors, reconcile
 from handler_resolver import DECODE_ONLY_SCOPE
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -158,3 +158,59 @@ def test_controller_handoff_fills_flow_authentication_from_the_route_inventory(t
     assert result["df-002"]["scheme"] == "cookie"
     assert result["df-002"]["evidence"] == [{"file": "server/profile.ts", "line": 3}]
     assert "FLOW_AUTH_RECONCILED" in (out / ".agent-run.log").read_text()
+
+
+def _socket_flow(**auth):
+    authentication = {
+        "scheme": "unknown",
+        "scope": "token in handshake not confirmed",
+        "evidence": [{"file": "lib/ws.ts", "line": 20}],
+        **auth,
+    }
+    return {"id": "df-6", "from": "spa", "to": "realtime", "authentication": authentication}
+
+
+def _missing_auth(**over):
+    return {
+        "id": "T-027",
+        "component": "realtime",
+        "cwe": "CWE-306",
+        "evidence_check": "verified",
+        "evidence": [{"file": "lib/ws.ts", "line": 23}],
+        **over,
+    }
+
+
+def test_a_verified_missing_authentication_finding_fills_the_flow_it_cites():
+    """A channel the route inventory cannot see (a WebSocket, a queue consumer)
+    stayed `unknown` beside a confirmed CWE-306 at the very file the flow cites
+    (juice-shop2 2026-09-27, df-006)."""
+    flows, filled = fill_from_verified_findings([_socket_flow()], [_missing_auth()])
+    assert filled == ["df-6"]
+    auth = flows[0]["authentication"]
+    assert auth["scheme"] == "none"
+    assert "T-027" in auth["scope"]
+    assert auth["evidence"] == [{"file": "lib/ws.ts", "line": 23}]
+
+
+@pytest.mark.parametrize(
+    "finding",
+    [
+        _missing_auth(evidence_check="refuted"),
+        _missing_auth(evidence_check="ambiguous"),
+        _missing_auth(cwe="CWE-287"),  # broken authentication is still authentication
+        _missing_auth(component="api"),  # another component's gap says nothing about this flow
+        _missing_auth(evidence=[{"file": "lib/other.ts", "line": 1}]),  # not the code the flow rests on
+    ],
+)
+def test_only_a_verified_missing_authentication_at_the_cited_code_fills(finding):
+    flows, filled = fill_from_verified_findings([_socket_flow()], [finding])
+    assert filled == []
+    assert flows[0]["authentication"]["scheme"] == "unknown"
+
+
+def test_a_known_scheme_is_never_overwritten():
+    flow = _socket_flow(scheme="bearer")
+    flows, filled = fill_from_verified_findings([flow], [_missing_auth()])
+    assert filled == []
+    assert flows[0]["authentication"]["scheme"] == "bearer"
