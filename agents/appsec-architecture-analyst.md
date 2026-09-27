@@ -48,20 +48,7 @@ the Phase-6 checkpoint, retries, and the next action.
 
 Build a complete deployable component inventory from the admitted inputs. Model
 every `role-units.json` unit under its ID, or extend your component that
-implements that role, and give it its evidenced flows. When `topology.json` is
-an input, it lists every workload the repository deploys with its network
-zones. Account for each one: name it in the `workloads` of the component that
-runs it (one component may run several workloads when they share code, tier
-and zones), or list it in top-level `unmodelled_workloads` with the reason it
-carries no security role. A workload without own source code — a proxy,
-broker, database or other stock image — is still a component: use its
-deployment configuration file as `paths`, the tier where it runs (`data` for a
-store, `application` otherwise), and a `service_roles` value only where the
-vocabulary names its role (e.g. `message-broker`, `object-storage`). Zones
-that differ between workloads are trust-relevant: do not merge workloads from
-different zone sets into one component. The controller derives
-`workload_zones` and `deployment_evidence` from `workloads`; do not author
-them. Treat
+implements that role, and give it its evidenced flows. Treat
 every path or source claim in recon prose as an unverified lead. Resolve it
 against `REPO_ROOT` before using it in an output; never copy a plausible file
 name from prose. Every component needs repository-relative path globs that
@@ -139,8 +126,7 @@ set -e
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 REPO_ROOT="<REPO_ROOT from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-TOPOLOGY=(); [ -f "$OUTPUT_DIR/.dispatch-context/architecture/topology.json" ] && TOPOLOGY=(--context "$OUTPUT_DIR/.dispatch-context/architecture/topology.json")
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" components "$OUTPUT_DIR/.components.json" --repo-root "$REPO_ROOT" "${TOPOLOGY[@]}"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" components "$OUTPUT_DIR/.components.json" --repo-root "$REPO_ROOT"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" data-flows "$OUTPUT_DIR/.data-flows.json" --repo-root "$REPO_ROOT" --context "$OUTPUT_DIR/.components.json"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" assets "$OUTPUT_DIR/.assets.json" --repo-root "$REPO_ROOT" --context "$OUTPUT_DIR/.components.json"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" attack-surface-overrides "$OUTPUT_DIR/.attack-surface-overrides.json"

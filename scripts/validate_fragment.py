@@ -561,6 +561,11 @@ def workload_coverage_errors(data: Any, topology: Any) -> list[str]:
         errors.append(
             "topology workloads neither listed in a component's workloads nor in unmodelled_workloads: "
             + ", ".join(missing)
+            + ". Name each in the `workloads` of the component that runs it, or in top-level "
+            "`unmodelled_workloads` with the reason it has no security role; keep workloads of different "
+            "zones in different components. A stock image without own source (proxy, broker, database) is "
+            "a component whose `paths` are its deployment files and whose tier is where it runs. "
+            "`workload_zones` and `deployment_evidence` are derived from `workloads`, never authored."
         )
     return errors
 
@@ -886,6 +891,11 @@ def validate(
     # repository, and three of the five agents that self-validate omit
     # --repo-root. Gating them on it would leave exactly those agents — the
     # trust-boundary analyst among them — unable to see what the gate enforces.
+    if fragment_type == "components" and context_path is None:
+        # The run's own workload projection sits beside `.components.json`, so the
+        # analyst's unchanged self-check command enforces the same rule.
+        topology = path.parent / ".dispatch-context" / "architecture" / "topology.json"
+        context_path = topology if topology.is_file() else None
     context = _load_fragment(context_path) if context_path is not None else None
     errors = errors + fragment_invariant_errors(fragment_type, data, context=context)
     if fragment_type == "data-flows" and context_path is not None:

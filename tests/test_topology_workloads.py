@@ -114,6 +114,21 @@ def test_coverage_is_not_enforced_without_a_topology() -> None:
     assert workload_coverage_errors({"components": [{"id": "a"}]}, None) == []
 
 
+@pytest.mark.parametrize("with_topology", [False, True])
+def test_the_unchanged_self_check_finds_the_runs_topology_beside_the_inventory(tmp_path, with_topology) -> None:
+    import validate_fragment
+
+    doc = {"schema_version": 1, "components": [_component("app", ["src/app.py"])]}
+    path = tmp_path / ".components.json"
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    if with_topology:
+        (tmp_path / ".deployment-inventory.json").write_text(
+            json.dumps(_inventory([_workload("api", "compose", ["core"])])), encoding="utf-8"
+        )
+        context.build_topology(tmp_path)
+    assert validate_fragment.validate("components", path) == (1 if with_topology else 0)
+
+
 def _finalize_run(tmp_path: Path, components: list[dict], inventory: dict | None) -> list[dict]:
     repo = tmp_path / "repo"
     (repo / "src").mkdir(parents=True)
