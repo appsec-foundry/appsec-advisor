@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Components with the LLM or agentic lens record a finding, a cited control, not applicable, or no evidence for every OWASP LLM or Agentic Top-10 item.
 - Interactive runs propose use cases and business impacts for confirmation and reuse, and prioritised mitigations name the declared business-critical assets they protect.
 - Report sections use Figure 1's actor names consistently, and Identified Actors lists each actor's access, scenarios, and finding counts.
-- Verdicts assess evidenced concerns without implying release readiness, and completion summaries preserve attack prerequisites, qualify verification, and order P1 fixes by triage rank.
+- Verdicts assess evidenced concerns without implying release readiness, and completion summaries lead with the assessment and grouped P1 fixes, preserve attack prerequisites, and show complete requirement counts.
 - Open team questions stay in the Management Summary and focus on unresolved assumptions and decisions rather than verification of individual findings.
 - `/appsec-advisor:report-error` investigates suspected plugin errors and prepares anonymised GitHub issue drafts for review and explicit publication approval; `--bundle-only` retains the local diagnostic workflow.
 - New aiscb installations load verified modules on demand, and `update-baseline` uses compatible signed upstream installers while preserving installation scope and mode.

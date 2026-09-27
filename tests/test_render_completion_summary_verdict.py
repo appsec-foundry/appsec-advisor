@@ -164,10 +164,10 @@ def test_completion_summary_swaps_the_bullets_for_the_table(tmp_path):
         text=True,
     )
     assert r.returncode == 0, r.stderr
-    verdict_block = r.stdout.split("-- Verdict", 1)[1].split("Fix the query layer first.", 1)[0]
-    assert "\n  What an attacker can do today, worst first\n" in verdict_block
-    assert "\n  ✓  Customer data exposed (CWE-89)  → F-011\n" in verdict_block
-    assert stm.WORST_CASE_LEGEND in verdict_block
+    verdict_block = r.stdout.split("\nVerdict\n", 1)[1].split("Fix the query layer first.", 1)[0]
+    assert "\nSecurity concerns\n" in verdict_block
+    assert "\n  •  Customer data exposed (CWE-89)  → F-011\n" in verdict_block
+    assert "✓" not in verdict_block
     # The sentence survives; the report's reference clause (weakness, location) does not.
     assert "Anyone can dump every record" in verdict_block
     assert "W-003" not in verdict_block and "search.ts" not in verdict_block
@@ -280,7 +280,9 @@ def test_fix_first_orders_by_unnamed_context_but_does_not_print_it():
 
 
 def test_fix_first_caps_the_list_and_names_the_rest():
-    mitigations = [{"id": f"M-{n:03d}", "title": "t", "priority": "P1", "threat_ids": ["T-002"]} for n in range(1, 11)]
+    mitigations = [
+        {"id": f"M-{n:03d}", "title": f"Fix {n}", "priority": "P1", "threat_ids": ["T-002"]} for n in range(1, 11)
+    ]
     lines = rcs.render_fix_first(_fix_first_model(mitigations), {})
     assert len(lines) == 2 + rcs._FIX_FIRST_LIMIT + 1
     assert lines[-1].strip().startswith("+2 more P1")
@@ -317,7 +319,7 @@ def test_verification_legend_limits_the_claim_to_finding_participation():
 @pytest.mark.parametrize("ids", [("M-071", "M-092"), ("M-315", "M-208")])
 def test_fix_first_uses_existing_triage_order(ids):
     model = _fix_first_model(
-        [{"id": mid, "title": "Check access", "priority": "P1", "threat_ids": ["T-002"]} for mid in ids]
+        [{"id": mid, "title": f"Check access {mid}", "priority": "P1", "threat_ids": ["T-002"]} for mid in ids]
     )
     triage = {
         "ranking": {
@@ -363,3 +365,105 @@ def test_completion_summary_reads_persisted_mitigation_order(tmp_path):
     rendered = rcs.render_summary(tmp_path, tmp_path, {}, REPO_ROOT)
     fixes = rendered.split("Fix first (P1 mitigations)", 1)[1]
     assert fixes.index("M-092") < fixes.index("M-071")
+
+
+@pytest.mark.parametrize(
+    "title,ids", [("Validate document access", ("M-071", "M-092")), ("Bind workspace owners", ("M-315", "M-208"))]
+)
+def test_summary_groups_same_title_without_losing_fix_or_finding_ids(title, ids):
+    model = _fix_first_model(
+        [
+            {"id": ids[0], "title": title, "priority": "P1", "threat_ids": ["T-001"]},
+            {"id": ids[1], "title": title, "priority": "P1", "threat_ids": ["T-002"]},
+            {"id": "M-999", "title": "Retain separate action", "priority": "P1", "threat_ids": []},
+        ]
+    )
+    rendered = "\n".join(rcs.render_fix_first(model, {}))
+    assert rendered.count(title) == 1
+    assert all(identifier in rendered for identifier in (*ids, "F-001", "F-002", "M-999"))
+    assert "M-999  Retain separate action" in rendered
+    assert not rendered.split("M-999", 1)[1].rstrip().endswith("→")
+
+
+@pytest.mark.parametrize("component", ["Document processor", "Inventory service"])
+def test_summary_orders_actions_before_metrics_and_preserves_wrapped_prerequisites(tmp_path, component):
+    body = (
+        f"Only an authenticated operator of the {component} with archive access can alter another workspace's records."
+    )
+    model = _fix_first_model(
+        [{"id": "M-001", "title": "Verify workspace ownership", "priority": "P1", "threat_ids": ["T-001"]}]
+    )
+    model["verdict"] = {
+        "severity": "red",
+        "opening": "Records exposed.",
+        "bullets": [
+            {"title": "Workspace records exposed", "body": body, "findings": ["F-001"], "verified_attack_path": True}
+        ],
+    }
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(model))
+    (tmp_path / "threat-model.md").write_text(
+        "## Management Summary\n\n### Verdict\n\n🔴 Records exposed.\n\n"
+        "**Risk distribution:** obsolete duplicated counts\n\n"
+        "**Method and limits:** Static analysis; background jobs screened only.\n\n"
+        "Declared business impact: no material harm under the stated assumptions.\n\n"
+        "**Security concerns behind this assessment:**\n\n"
+        f"- **Workspace records exposed** — {body}\n"
+    )
+    rendered = rcs.render_summary(tmp_path, tmp_path, {}, REPO_ROOT)
+    sections = [
+        "\nVerdict\n",
+        "Declared business impact:",
+        "\nFix first",
+        "\nSecurity concerns\n",
+        "\nResults\n",
+        "\nCoverage and limits\n",
+        "\nRun\n",
+    ]
+    positions = [rendered.index(section) for section in sections]
+    assert positions == sorted(positions)
+    assert body in " ".join(rendered.split())
+    assert "✓" not in rendered and "obsolete duplicated counts" not in rendered
+    assert "background jobs screened only" in rendered
+    assert "\n\n\n" not in rendered
+    assessment = rendered.split("\nVerdict\n")[1].split("\nRun\n")[0]
+    assert all(len(line) <= rcs._SUMMARY_WIDTH for line in assessment.splitlines())
+    assert "\x1b" not in rendered
+
+
+def test_summary_requirements_show_all_statuses_and_align_continuations():
+    model = {
+        "requirements_compliance": {
+            "total": 73,
+            "pass": 1,
+            "fail": 37,
+            "partial": 5,
+            "unverifiable": 27,
+            "not_applicable": 3,
+        }
+    }
+    lines = rcs.render_metrics(rcs.extract_metrics(model, ""), {"check_requirements": True})
+    rendered = " ".join(" ".join(lines).split())
+    assert "73 assessed" in rendered
+    for status in ("1 pass", "37 fail", "5 partial", "27 unverifiable", "3 not applicable"):
+        assert status in rendered
+    assert all(len(line) <= rcs._SUMMARY_WIDTH for line in lines)
+    fields = [line for line in lines if ":" in line]
+    assert {line.index(":") for line in fields} == {14}
+    assert "                3 not applicable" in lines
+    assert not any("Requirements" in line for line in rcs.render_metrics(rcs.extract_metrics(model, ""), {}))
+
+
+def test_summary_legacy_requirement_gap_is_not_silently_classified():
+    model = {"requirements_compliance": {"total": 10, "pass": 1, "fail": 2, "partial": 3}}
+    rendered = " ".join(
+        " ".join(rcs.render_metrics(rcs.extract_metrics(model, ""), {"check_requirements": True})).split()
+    )
+    assert "4 status not recorded" in rendered
+    assert "0 unverifiable" in rendered
+
+
+def test_summary_duration_distinguishes_hours_and_parallel_compute():
+    assert (
+        rcs._summary_duration({"timing": {"wall_secs": 9069, "net_compute_secs": 10000}})
+        == "2h 31m 09s wall · 2h 46m 40s agent compute"
+    )

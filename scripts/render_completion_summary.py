@@ -66,6 +66,7 @@ import re
 import shlex
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 from typing import Any, Optional
 
@@ -235,6 +236,8 @@ def extract_metrics(
         "pass": req.get("pass") or 0,
         "fail": req.get("fail") or 0,
         "partial": req.get("partial") or 0,
+        "unverifiable": req.get("unverifiable") or 0,
+        "not_applicable": req.get("not_applicable") or 0,
         "total": req.get("total") or 0,
     }
 
@@ -260,8 +263,10 @@ def extract_metrics(
         "threats_total": threats_total,
         "threats_by_sev": by_sev,
         # The register severity floor kept Low out of `threats[]`, so the Low
-        # bucket is not a measurement — the console says `n/a`, like the report.
+        # bucket is not a measurement; the summary names the reporting threshold.
         "low_suppressed": _severity_rollup.low_suppressed(yaml_data),
+        "register_floor": _severity_rollup.register_floor(yaml_data),
+        "evidence_breakdown": _severity_rollup.weakness_basis_breakdown(yaml_data),
         "threats_info": threats_info,
         "n_components": n_components,
         "n_stride_components": n_stride_components,
@@ -1181,48 +1186,99 @@ def render_threat_delta(cs: Optional[dict]) -> list[str]:
     return lines
 
 
-def render_metrics(metrics: dict, cfg: dict) -> list[str]:
-    lines = [""]
-    lines.append("Results")
-    s = metrics["threats_by_sev"]
-    _low = "n/a" if metrics.get("low_suppressed") else s["Low"]
-    threat_line = (
-        f"  Threats    : {metrics['threats_total']} total | "
-        f"{s['Critical']} Critical | {s['High']} High | "
-        f"{s['Medium']} Medium | {_low} Low"
+_SUMMARY_WIDTH = 92
+
+
+def _summary_wrap(text: str, indent: str = "  ", continuation: str | None = None) -> list[str]:
+    """Wrap at word boundaries without truncating identifiers or scenario conditions."""
+    return textwrap.wrap(
+        text,
+        width=_SUMMARY_WIDTH,
+        initial_indent=indent,
+        subsequent_indent=continuation if continuation is not None else indent,
+        break_long_words=False,
+        break_on_hyphens=False,
     )
-    if metrics.get("threats_info"):
-        threat_line += f" | {metrics['threats_info']} Informational"
-    lines.append(threat_line)
-    if metrics.get("n_stride_components") is not None:
-        lines.append(
-            f"  Components : {metrics['n_stride_components']} STRIDE-analyzed | {metrics['n_components']} modeled"
+
+
+def _summary_field(label: str, value: str) -> list[str]:
+    prefix = f"  {label:<12}: "
+    continuation = " " * len(prefix)
+    lines = []
+    current = prefix
+    for part in value.split(" | "):
+        separator = " | " if current != prefix and current != continuation else ""
+        if separator and len(current) + len(separator) + len(part) > _SUMMARY_WIDTH:
+            lines.append(current)
+            current, separator = continuation, ""
+        current += separator + part
+    lines.extend(
+        textwrap.wrap(
+            current,
+            width=_SUMMARY_WIDTH,
+            subsequent_indent=continuation,
+            break_long_words=False,
+            break_on_hyphens=False,
         )
-    else:
-        lines.append(f"  Components : {metrics['n_components']} modeled")
-    cs = metrics["control_status"]
-    # RC.F — render all 5 effectiveness buckets per sections-contract.yaml
-    # `effectiveness_taxonomy` (adequate/partial/weak/unsafe/missing). Earlier
-    # this line dropped buckets (first `weak`, later `unsafe`) so the breakdown
-    # total did not reconcile with `{controls_total} cataloged` (2026-05: 12
-    # cataloged rendered 0/3/6=9; 2026-06 juice-shop: 38 cataloged rendered
-    # 3/7/2/23=35, dropping 3 Unsafe).
-    lines.append(
-        f"  Controls   : {metrics['controls_total']} cataloged | "
-        f"{cs['adequate']} adequate | {cs['partial']} partial | "
-        f"{cs['weak']} weak | {cs['unsafe']} unsafe | {cs['missing']} missing"
     )
-    mit_line = f"  Mitigations: {metrics['mitigations_total']} linked"
+    return lines
+
+
+def render_metrics(metrics: dict, cfg: dict) -> list[str]:
+    lines = ["", "Results"]
+    s = metrics["threats_by_sev"]
+    severity = [f"{metrics['threats_total']} total", *(f"{s[k]} {k}" for k in ("Critical", "High", "Medium"))]
+    if not metrics.get("low_suppressed"):
+        severity.append(f"{s['Low']} Low")
+    if metrics.get("threats_info"):
+        severity.append(f"{metrics['threats_info']} Informational")
+    lines.extend(_summary_field("Threats", " | ".join(severity)))
+    components = f"{metrics['n_components']} modeled"
+    if metrics.get("n_stride_components") is not None:
+        components = f"{metrics['n_stride_components']} STRIDE-analyzed | " + components
+    lines.extend(_summary_field("Components", components))
+    cs = metrics["control_status"]
+    lines.extend(
+        _summary_field(
+            "Controls",
+            " | ".join(
+                [
+                    f"{metrics['controls_total']} cataloged",
+                    *(f"{cs[k]} {k}" for k in ("adequate", "partial", "weak", "unsafe", "missing")),
+                ]
+            ),
+        )
+    )
+    priorities = [f"{metrics['mitigations_total']} linked"]
     mp = metrics.get("mitigations_by_priority") or {}
     if metrics["mitigations_total"] and mp:
-        mit_line += f" | {mp.get('P1', 0)} P1 | {mp.get('P2', 0)} P2 | {mp.get('P3', 0)} P3"
+        priorities.extend(f"{mp.get(k, 0)} {k}" for k in ("P1", "P2", "P3"))
         if metrics.get("mitigations_unprioritised"):
-            mit_line += f" | {metrics['mitigations_unprioritised']} unprioritised"
-    lines.append(mit_line)
+            priorities.append(f"{metrics['mitigations_unprioritised']} unprioritised")
+    lines.extend(_summary_field("Mitigations", " | ".join(priorities)))
     if cfg.get("check_requirements"):
         r = metrics["requirements"]
-        lines.append(
-            f"  Requirements: {r['total']} checked | {r['pass']} pass | {r['fail']} fail | {r['partial']} partial"
+        statuses = ("pass", "fail", "partial", "unverifiable", "not_applicable")
+        values = [f"{r['total']} assessed", *(f"{r.get(k, 0)} {k.replace('_', ' ')}" for k in statuses)]
+        unrecorded = r["total"] - sum(r.get(k, 0) for k in statuses)
+        if unrecorded > 0:
+            values.append(f"{unrecorded} status not recorded")
+        lines.extend(_summary_field("Requirements", " | ".join(values)))
+    if metrics.get("low_suppressed"):
+        lines.extend(
+            _summary_field(
+                "Reporting", f"{metrics.get('register_floor', 'medium')} threshold; Low and Informational not reported"
+            )
+        )
+    breakdown = metrics.get("evidence_breakdown")
+    if breakdown is not None:
+        _, confirmed, implementation, design = breakdown
+        lines.extend(_summary_field("Evidence", f"{confirmed} confirmed-exploitable findings"))
+        lines.extend(_summary_field("Weaknesses", f"{implementation} implementation | {design} design"))
+        lines.extend(
+            _summary_wrap(
+                "Findings and weakness records are different counting units; these counts do not add to the threat total."
+            )
         )
     return lines
 
@@ -1987,6 +2043,14 @@ def render_log_files(output_dir: Path) -> list[str]:
     return lines
 
 
+def _summary_time(seconds: int) -> str:
+    if seconds >= 3600:
+        hours, remainder = divmod(int(seconds), 3600)
+        minutes, secs = divmod(remainder, 60)
+        return f"{hours}h {minutes:02d}m {secs:02d}s"
+    return _fmt_duration(seconds)
+
+
 def _summary_duration(stats: dict) -> str:
     # Wall-clock stays the headline "how long did this take" figure — it is the
     # time the user actually waited. Net agent compute is appended because the
@@ -1999,13 +2063,13 @@ def _summary_duration(stats: dict) -> str:
     net = timing.get("net_compute_secs") or stats.get("total_secs_from_stages") or 0
     if wall:
         if net:
-            return f"{_fmt_duration(wall)} wall · {_fmt_duration(net)} agent compute"
-        return _fmt_duration(wall)
+            return f"{_summary_time(wall)} wall · {_summary_time(net)} agent compute"
+        return _summary_time(wall)
     # Fallback: net compute sum (pre-stage-stats runs or missing wall marker).
     total = stats.get("total_secs_from_stages")
     if not total:
         total = sum(secs or 0 for secs in (stats.get("assess_secs"), stats.get("qa_secs"), stats.get("arch_secs")))
-    return _fmt_duration(total) if total else "n/a"
+    return _summary_time(total) if total else "n/a"
 
 
 def _summary_cost(cost: Optional[dict]) -> str:
@@ -2121,7 +2185,7 @@ def render_run_overview(
         f"  Finished  : {finished_str}",
         f"  Duration  : {_summary_duration(stats)}",
         f"  Cost      : {_summary_cost(cost)}",
-        f"  QA        : {_summary_qa(output_dir, cfg)}",
+        f"  Report QA : {_summary_qa(output_dir, cfg)}",
         f"  Architect : {_summary_architect(output_dir, cfg)}",
     ]
     return lines
@@ -2148,10 +2212,12 @@ def render_summary(
     run_notes = build_run_notes(output_dir, cfg)
 
     lines: list[str] = []
-    lines.extend(render_run_overview(repo_root, output_dir, cfg, stats, cost, change))
-    lines.extend(render_metrics(metrics, cfg))
+    overview = render_run_overview(repo_root, output_dir, cfg, stats, cost, change)
+    lines.extend(overview[:4])
 
     if cfg.get("quiet"):
+        lines.extend(render_metrics(metrics, cfg))
+        lines.extend(overview[4:])
         # Compact console mode (--quiet): print only the essentials plus any
         # problem signals — Repository / Run / Results, run-issue + security
         # warnings (when present), and Outputs. Omit the verdict, change
@@ -2164,8 +2230,12 @@ def render_summary(
         lines.extend(render_files(output_dir, cfg))
         return "\n".join(lines) + "\n"
 
-    lines.extend(render_verdict(md_text, cfg, summarize_threat_model.persisted_verdict(yaml_data)))
-    lines.extend(render_fix_first(yaml_data, cfg, _load_json_object(output_dir / ".triage-flags.json")))
+    fixes = render_fix_first(yaml_data, cfg, _load_json_object(output_dir / ".triage-flags.json"))
+    verdict_lines = render_verdict(md_text, cfg, summarize_threat_model.persisted_verdict(yaml_data), fixes)
+    lines.extend(verdict_lines or fixes)
+    lines.extend(render_metrics(metrics, cfg))
+    lines.extend(render_assessment_limits(md_text))
+    lines.extend(overview[4:])
     if change:
         lines.extend(render_change_summary(change))
         lines.extend(render_threat_delta(change))
@@ -2314,23 +2384,70 @@ def _verdict_console_lines(verdict_md: str, bullets: list[dict]) -> list[str]:
     return out
 
 
-def render_verdict(md_text: str, cfg: dict, verdict: dict | None = None) -> list[str]:
-    """Console `-- Verdict --` block: the report's headline verdict.
+def _console_plain(text: str) -> str:
+    return re.sub(r"\[([^\]]+)\]\(#[^)]+\)", r"\1", text).replace("**", "")
 
-    Shown by default so the user sees the assessment's bottom line without
-    opening `threat-model.md`. Suppressed when `cfg["quiet"]` is set
-    (the skill's `--quiet` flag). `verdict` is the model's persisted verdict
-    (`summarize_threat_model.persisted_verdict`); its bullets replace the
-    report's bullet list with the worst-case table.
-    """
+
+def render_assessment_limits(md_text: str) -> list[str]:
+    """Keep the report's method and exclusions in one separately readable block."""
+    lines = []
+    for raw in _extract_verdict(md_text).splitlines():
+        plain = _console_plain(raw).strip()
+        if plain.startswith("Method and limits:"):
+            lines.extend(_summary_wrap(plain.removeprefix("Method and limits:").strip()))
+    return ["", "Coverage and limits", *lines] if lines else []
+
+
+def render_verdict(md_text: str, cfg: dict, verdict: dict | None = None, fixes: list[str] | None = None) -> list[str]:
+    """Lead with the report's assessment and context, then actions and scenarios."""
     if cfg.get("quiet"):
         return []
     verdict_md = _extract_verdict(md_text)
     if not verdict_md:
         return []
-    lines = ["", f"  -- Verdict {SECTION_RULE[:48]}", ""]
-    for line in _verdict_console_lines(verdict_md, (verdict or {}).get("bullets") or []):
-        lines.append(f"  {line}" if line.strip() else "")
+    lines = ["", "Verdict", ""]
+    # Verification stays in the report. A checkmark in the closing summary
+    # looked like a resolved concern; every scenario here uses a neutral bullet.
+    bullets = [{**b, "verified_attack_path": False} for b in (verdict or {}).get("bullets") or []]
+    captions = {m.group(1) for line in verdict_md.splitlines() if (m := _VERDICT_INTRO_RE.match(line.strip()))}
+    inserted_fixes = False
+    logical_lines: list[str] = []
+    for raw in _verdict_console_lines(verdict_md, bullets):
+        if (
+            raw.startswith("   ")
+            and not raw.lstrip().startswith("→")
+            and logical_lines
+            and logical_lines[-1].startswith("   ")
+            and not logical_lines[-1].lstrip().startswith("→")
+        ):
+            logical_lines[-1] += " " + raw.strip()
+        else:
+            logical_lines.append(raw)
+    for raw in logical_lines:
+        plain = _console_plain(raw).strip()
+        if plain.startswith(
+            ("Risk distribution:", "Reporting threshold:", "Assessment evidence:", "Method and limits:")
+        ):
+            continue
+        is_concern = plain.startswith("•") or plain in captions
+        if is_concern and not inserted_fixes:
+            while lines and not lines[-1]:
+                lines.pop()
+            lines.extend(fixes or [])
+            lines.extend(["", "Security concerns"])
+            inserted_fixes = True
+        if is_concern and not plain.startswith("•"):
+            continue
+        if not plain:
+            if lines[-1]:
+                lines.append("")
+        else:
+            indent = "     " if raw.startswith("   ") else "  "
+            lines.extend(_summary_wrap(plain, indent, "     " if plain.startswith("•") else indent))
+    if not inserted_fixes:
+        lines.extend(fixes or [])
+    while lines and not lines[-1]:
+        lines.pop()
     return lines
 
 
@@ -2380,13 +2497,22 @@ def render_fix_first(yaml_data: dict, cfg: dict, triage: dict | None = None) -> 
     if not rows:
         return []
     rows.sort(key=(lambda row: order[row[3]]) if all(row[3] in order for row in rows) else lambda row: row[:4])
-    lines = ["", "  Fix first (P1 mitigations)"]
-    for _, _, _, mid, title, refs, note in rows[:_FIX_FIRST_LIMIT]:
-        # Without an asset name the note explains nothing on the console; it still orders the row.
+    # Group display titles only; every distinct mitigation and its references
+    # remain visible. Preserve the first occurrence in the authoritative order.
+    groups: dict[tuple[str, str], list] = {}
+    for _, _, _, mid, title, refs, note in rows:
+        key = (title or mid, note)
+        if key not in groups:
+            groups[key] = [[], []]
+        groups[key][0].append(mid)
+        groups[key][1].extend(ref for ref in refs if ref not in groups[key][1])
+    lines = ["", "Fix first (P1 mitigations)"]
+    for (title, note), (mids, refs) in list(groups.items())[:_FIX_FIRST_LIMIT]:
         suffix = f"  [{note}]" if note and note != _business_relevance.UNNAMED_CONTEXT_NOTE else ""
-        lines.append(f"    {mid}  {title}  → {', '.join(refs)}{suffix}".rstrip())
-    if len(rows) > _FIX_FIRST_LIMIT:
-        lines.append(f"    +{len(rows) - _FIX_FIRST_LIMIT} more P1 — see §10 Mitigation Register")
+        references = f"  → {', '.join(refs)}" if refs else ""
+        lines.extend(_summary_wrap(f"{', '.join(mids)}  {title}{references}{suffix}", "    ", "      "))
+    if len(groups) > _FIX_FIRST_LIMIT:
+        lines.append(f"    +{len(groups) - _FIX_FIRST_LIMIT} more P1 groups — see §10 Mitigation Register")
     return lines
 
 

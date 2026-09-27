@@ -109,7 +109,7 @@ class TestExtractMetrics:
         mp = m["mitigations_by_priority"]
         assert (mp["P1"], mp["P2"], mp["P3"]) == (2, 1, 2)
         assert sum(mp.values()) + m["mitigations_unprioritised"] == m["mitigations_total"] == 5
-        assert "Mitigations: 5 linked | 2 P1 | 1 P2 | 2 P3" in "\n".join(rcs.render_metrics(m, {}))
+        assert "Mitigations : 5 linked | 2 P1 | 1 P2 | 2 P3" in "\n".join(rcs.render_metrics(m, {}))
 
     def test_unprioritised_mitigations_get_their_own_bucket(self):
         # Same reconciliation rule the control-effectiveness line learned: a
@@ -121,7 +121,7 @@ class TestExtractMetrics:
 
     def test_no_priority_split_when_there_are_no_mitigations(self):
         rendered = "\n".join(rcs.render_metrics(rcs.extract_metrics({"mitigations": []}, ""), {}))
-        assert "  Mitigations: 0 linked" in rendered
+        assert "  Mitigations : 0 linked" in rendered
         assert "P1" not in rendered
 
     def test_components_count_from_yaml(self):
@@ -138,14 +138,14 @@ class TestExtractMetrics:
 
         assert metrics["n_components"] == 8
         assert metrics["n_stride_components"] == 6
-        assert "  Components : 6 STRIDE-analyzed | 8 modeled" in rendered
+        assert "  Components  : 6 STRIDE-analyzed | 8 modeled" in rendered
 
     def test_invalid_stride_selection_is_not_reported_as_analyzed(self):
         yaml_data = {"components": [{"id": "api"}]}
         metrics = rcs.extract_metrics(yaml_data, "", {"selected": [{"id": "invented"}]})
 
         assert metrics["n_stride_components"] is None
-        assert "  Components : 1 modeled" in rcs.render_metrics(metrics, {})
+        assert "  Components  : 1 modeled" in rcs.render_metrics(metrics, {})
 
     def test_components_fallback_to_md_headings(self):
         md = "## 2. Architecture\n### 2.3 Component A\n### 2.3 Component B\n"
@@ -243,7 +243,7 @@ class TestSeverityBasisMatchesTheReport:
         assert m["threats_by_sev"]["High"] == 1
         assert m["threats_total"] == 2
         rendered = "\n".join(rcs.render_metrics(m, {}))
-        assert "  Threats    : 2 total | 1 Critical | 1 High | 0 Medium | n/a Low" in rendered
+        assert "  Threats     : 2 total | 1 Critical | 1 High | 0 Medium" in rendered
 
     def test_design_risk_weakness_is_visible_in_the_headline(self):
         """It has no instance in threats[] and would otherwise be invisible
@@ -272,7 +272,7 @@ class TestSeverityBasisMatchesTheReport:
         Low finding could reach `threats[]`, so the cell is not a count."""
         model = self._model([{"risk": "High"}], floor="medium")
         rendered = "\n".join(rcs.render_metrics(rcs.extract_metrics(model, ""), {}))
-        assert "n/a Low" in rendered
+        assert "Low and Informational not reported" in rendered
 
     def test_low_reads_a_count_when_the_register_floor_kept_it(self):
         model = self._model([{"risk": "High"}, {"risk": "Low"}], floor="low")
@@ -282,7 +282,8 @@ class TestSeverityBasisMatchesTheReport:
     def test_informational_stays_off_the_line_when_absent(self):
         model = self._model([{"risk": "High"}])
         rendered = "\n".join(rcs.render_metrics(rcs.extract_metrics(model, ""), {}))
-        assert "Informational" not in rendered
+        threat_line = next(line for line in rendered.splitlines() if line.strip().startswith("Threats"))
+        assert "Informational" not in threat_line
 
 
 # ---------------------------------------------------------------------------
@@ -2307,7 +2308,7 @@ class TestVerdictEcho:
     def test_render_verdict_default_on(self):
         block = rcs.render_verdict(_VERDICT_MD, {})
         joined = "\n".join(block)
-        assert "-- Verdict" in joined
+        assert "\nVerdict\n" in joined
         assert "Broad attack surface" in joined
 
     def test_render_verdict_quiet_suppresses(self):
@@ -2334,19 +2335,19 @@ class TestVerdictEcho:
             ]
         }
         joined = "\n".join(rcs.render_verdict(md, {}, verdict))
-        assert "  ✓  Admin takeover via forged JWT (CWE-798)  → F-006, F-008" in joined
-        assert rcs.summarize_threat_model.WORST_CASE_LEGEND in joined
+        assert "  •  Admin takeover via forged JWT (CWE-798)  → F-006, F-008" in joined
+        assert "✓" not in joined
         # The report's reference clause (weakness, titles, locations) stays in the report.
         assert "key committed" not in joined
         assert "Hardcoded Key" not in joined and "W-004" not in joined
         assert "lib/insecurity.ts:23" not in joined
-        # Lines outside the bullet list are untouched.
-        assert "**Risk distribution:** 🔴 Critical: 24" in joined
+        # The duplicate tally is omitted; the report's closing statement survives.
+        assert "Risk distribution:" not in joined
         assert "Rotate the key before production." in joined
 
     def test_render_verdict_without_persisted_bullets_keeps_the_report_lines(self):
         joined = "\n".join(rcs.render_verdict(_VERDICT_MD, {}))
-        assert "- **Admin takeover via forged JWT** — key committed at lib/insecurity.ts:23." in joined
+        assert "- Admin takeover via forged JWT — key committed at lib/insecurity.ts:23." in joined
 
     def test_render_verdict_collapses_blank_runs(self):
         body = rcs.render_verdict(_VERDICT_MD.replace("\n\n", "\n\n\n\n"), {})[3:]
@@ -2367,7 +2368,7 @@ class TestVerdictEcho:
             text=True,
         )
         assert r.returncode == 0
-        assert "-- Verdict" in r.stdout
+        assert "\nVerdict\n" in r.stdout
         assert "Broad attack surface" in r.stdout
         assert "<blockquote" not in r.stdout
 
@@ -2401,7 +2402,7 @@ class TestVerdictEcho:
         assert "Results" in quiet.stdout
         assert "Outputs" in quiet.stdout
         # verdict + verbose/narrative blocks dropped
-        assert "-- Verdict" not in quiet.stdout
+        assert "\nVerdict\n" not in quiet.stdout
         assert "Broad attack surface" not in quiet.stdout
         assert "Next Steps" not in quiet.stdout
         assert "-- Run Statistics" not in quiet.stdout
@@ -2409,7 +2410,7 @@ class TestVerdictEcho:
         # quiet really is shorter than the default
         assert len(quiet.stdout) < len(full.stdout)
         # default (non-quiet) still shows the dropped blocks
-        assert "Next Steps" in full.stdout and "-- Verdict" in full.stdout
+        assert "Next Steps" in full.stdout and "\nVerdict\n" in full.stdout
 
 
 # ---------------------------------------------------------------------------
