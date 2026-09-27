@@ -171,6 +171,21 @@ def mmdc_render_args() -> list[str]:
     return _MMDC_RENDER_ARGS
 
 
+MMDC_SANDBOX_BLOCKED = (
+    "Chrome is installed but the Bash sandbox blocks its launch (process_singleton socket(): Operation not permitted)"
+)
+
+
+def mmdc_failure_hints(info: str) -> list[str]:
+    """Remedy lines under a failed render probe; a sandbox block needs no install."""
+    if info == MMDC_SANDBOX_BLOCKED:
+        return ["           re-run this export unsandboxed (dangerouslyDisableSandbox, or `!` in the session)"]
+    return [
+        f"           install: {INSTALL_HINTS['mmdc']}",
+        "           or re-run with --no-mermaid to export without diagrams",
+    ]
+
+
 def probe_mmdc() -> tuple[bool, str]:
     """Actually render a trivial diagram to verify mmdc *works*.
 
@@ -196,6 +211,8 @@ def probe_mmdc() -> tuple[bool, str]:
         except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
             return False, f"render probe failed: {exc}"
         if result.returncode != 0 or not out.exists() or out.stat().st_size == 0:
+            if "process_singleton" in (result.stderr or "") and "Operation not permitted" in result.stderr:
+                return False, MMDC_SANDBOX_BLOCKED
             tail = [ln for ln in (result.stderr or "").splitlines() if ln.strip()]
             hint = tail[-1] if tail else f"exit {result.returncode}"
             return False, f"present but cannot render (missing/broken Chrome for Puppeteer): {hint}"
@@ -271,8 +288,7 @@ def preflight(require_mermaid: bool) -> tuple[bool, list[str]]:
         else:
             ok = False
             messages.append(f"  [bad]  mmdc        {mmdc_path}  — {info}")
-            messages.append(f"           install: {INSTALL_HINTS['mmdc']}")
-            messages.append("           or re-run with --no-mermaid to export without diagrams")
+            messages.extend(mmdc_failure_hints(info))
     else:
         messages.append(f"  [ok]   mmdc        {mmdc_path}")
 

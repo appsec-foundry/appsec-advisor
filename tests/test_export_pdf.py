@@ -161,6 +161,34 @@ class TestPreflight:
         assert ok is False
         assert any("mmdc" in m and "cannot render" in m for m in msgs)
 
+    def test_sandbox_blocked_chrome_is_not_reported_as_missing_chrome(self):
+        """Under the Bash sandbox Chrome dies on its process_singleton socket().
+        The probe must name the sandbox, not send the operator to reinstall
+        a working Chrome."""
+        stderr = (
+            "Error: Failed to launch the browser process!\n"
+            "[1:1:0927/193656.187060:FATAL:chrome/browser/process_singleton_posix.cc:297] "
+            "Check failed: . socket() failed: Operation not permitted (1)\n"
+            "    at ChildProcess._handle.onexit (node:internal/child_process:293:12)\n"
+        )
+        failed = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr=stderr)
+        with patch.object(ep.subprocess, "run", return_value=failed):
+            ok, info = ep.probe_mmdc()
+        assert ok is False
+        assert info == ep.MMDC_SANDBOX_BLOCKED
+
+        with (
+            patch.object(ep, "check_tool", return_value="/usr/bin/mmdc"),
+            patch.object(ep, "probe_runs", return_value=(True, "ok")),
+            patch.object(ep, "probe_mmdc", return_value=(False, ep.MMDC_SANDBOX_BLOCKED)),
+        ):
+            ok, msgs = ep.preflight(require_mermaid=True)
+        joined = "\n".join(msgs)
+        assert ok is False
+        assert "unsandboxed" in joined
+        assert "install:" not in joined
+        assert "--no-mermaid" not in joined
+
     def test_mmdc_render_probe_success_passes(self):
         with (
             patch.object(ep, "check_tool", return_value="/usr/bin/mmdc"),

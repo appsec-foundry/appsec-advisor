@@ -51,6 +51,7 @@ try:
         _inject_table_colgroups,
         check_tool,
         md_to_html,
+        mmdc_failure_hints,
         probe_mmdc,
         probe_runs,
         read_architecture_detail,
@@ -66,6 +67,7 @@ except ImportError:
         _inject_table_colgroups,
         check_tool,
         md_to_html,
+        mmdc_failure_hints,
         probe_mmdc,
         probe_runs,
         read_architecture_detail,
@@ -156,8 +158,7 @@ def preflight(require_mermaid: bool) -> tuple[bool, list[str]]:
         else:
             ok = False
             messages.append(f"  [bad]  mmdc        {mmdc_path}  — {info}")
-            messages.append(f"           install: {INSTALL_HINTS['mmdc']}")
-            messages.append("           or re-run with --no-mermaid to export without diagrams")
+            messages.extend(mmdc_failure_hints(info))
     else:
         messages.append(f"  [ok]   mmdc        {mmdc_path}")
 

@@ -16,6 +16,7 @@ import shutil
 import xml.etree.ElementTree as ET
 
 import export_html
+import export_pdf  # noqa: E402
 import pytest
 
 
@@ -179,6 +180,22 @@ def test_preflight_mmdc_present_require_render_bad(monkeypatch):
     joined = "\n".join(messages)
     assert "[bad]  mmdc" in joined
     assert "--no-mermaid" in joined
+
+
+def test_preflight_sandbox_blocked_render_asks_for_unsandboxed_rerun(monkeypatch):
+    monkeypatch.setattr(
+        export_html,
+        "check_tool",
+        lambda name: "/usr/bin/pandoc" if name == "pandoc" else "/usr/bin/mmdc",
+    )
+    monkeypatch.setattr(export_html, "probe_runs", lambda name: (True, "2.x"))
+    monkeypatch.setattr(export_html, "probe_mmdc", lambda: (False, export_pdf.MMDC_SANDBOX_BLOCKED))
+    ok, messages = export_html.preflight(require_mermaid=True)
+    assert ok is False
+    joined = "\n".join(messages)
+    assert "unsandboxed" in joined
+    assert "install:" not in joined
+    assert "--no-mermaid" not in joined
 
 
 def test_preflight_mmdc_present_not_required(monkeypatch):
