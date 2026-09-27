@@ -66,6 +66,7 @@
           "properties": {
             "file": {"$ref": "#/$defs/path"},
             "variants": {"type": "array", "maxItems": 16, "items": {"$ref": "#/$defs/path"}},
+            "networks": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/zone_name"}},
             "services": {
               "type": "array",
               "maxItems": 64,
@@ -92,13 +93,69 @@
                         "host_ip": {"type": "string", "maxLength": 64}
                       }
                     }
-                  }
+                  },
+                  "networks": {"type": "array", "maxItems": 16, "items": {"$ref": "#/$defs/zone_name"}},
+                  "network_mode": {"type": "string", "maxLength": 64}
                 }
               }
             }
           }
         }
       ]
+    },
+    "topology": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["zones", "workloads", "zone_bridging"],
+      "properties": {
+        "zones": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "platform", "source"],
+            "properties": {
+              "name": {"$ref": "#/$defs/zone_name"},
+              "platform": {"$ref": "#/$defs/topology_platform"},
+              "source": {"$ref": "#/$defs/path"},
+              "line": {"$ref": "#/$defs/line"},
+              "network_policy": {"type": "boolean"}
+            }
+          }
+        },
+        "workloads": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "platform", "source", "line", "zones"],
+            "properties": {
+              "name": {"type": "string", "minLength": 1, "maxLength": 120},
+              "platform": {"$ref": "#/$defs/topology_platform"},
+              "kind": {"type": "string", "maxLength": 40},
+              "source": {"$ref": "#/$defs/path"},
+              "line": {"type": "integer", "minimum": 0},
+              "zones": {"type": "array", "maxItems": 16, "items": {"$ref": "#/$defs/zone_name"}},
+              "network_mode": {"type": "string", "maxLength": 64}
+            }
+          }
+        },
+        "zone_bridging": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "platform"],
+            "properties": {
+              "name": {"type": "string", "minLength": 1, "maxLength": 120},
+              "platform": {"$ref": "#/$defs/topology_platform"}
+            }
+          }
+        }
+      }
     },
     "ci": {
       "type": "array",
@@ -156,6 +213,8 @@
   "$defs": {
     "path": {"type": "string", "minLength": 1, "maxLength": 300, "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$)).+$"},
     "line": {"type": "integer", "minimum": 1},
+    "zone_name": {"type": "string", "minLength": 1, "maxLength": 120},
+    "topology_platform": {"enum": ["compose", "kubernetes", "openshift"]},
     "image": {
       "type": "object",
       "additionalProperties": false,

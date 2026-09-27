@@ -358,6 +358,97 @@ def test_oversize_and_deep_files_are_skipped(tmp_path: Path):
     assert DI._tf_blocks(tmp_path)[0] == {}
 
 
+# ---------------------------------------------------------------- topology: zones and the workloads in them
+ZONED_COMPOSE = """services:
+  {edge}:
+    image: nginx:1.27.0
+    networks: [{outer}, {inner}]
+  {app}:
+    build: .
+    networks:
+      {inner}:
+        aliases: [api]
+    environment:
+      API_TOKEN: plain-token-value
+  {side}:
+    image: example/sidecar:1.0.0
+    network_mode: "service:{app}"
+  {probe}:
+    image: example/probe:1.0.0
+    network_mode: host
+  {plain}:
+    image: example/worker:1.0.0
+networks:
+  {outer}: {{}}
+  {inner}: {{internal: true}}
+"""
+ZONE_NAMES = [
+    dict(edge="gateway", app="api", side="sidecar", probe="probe", plain="worker", outer="dmz", inner="backend"),
+    dict(edge="front", app="orders", side="mesh", probe="agent", plain="jobs", outer="edge-net", inner="core-net"),
+]
+
+
+@pytest.mark.parametrize("n", ZONE_NAMES, ids=["neutral", "renamed"])
+def test_compose_networks_become_zones_with_bridging_workloads(tmp_path: Path, n: dict):
+    _write(tmp_path, "compose.yaml", ZONED_COMPOSE.format(**n))
+    doc = DI.build_inventory(tmp_path)
+    assert DI.validation_errors(doc) == []
+    topo = doc["topology"]
+    # Zone names stay as the configuration declares them, including the implicit default network.
+    assert [z["name"] for z in topo["zones"]] == [n["outer"], n["inner"], "default"]
+    zones = {w["name"]: w["zones"] for w in topo["workloads"]}
+    assert zones == {
+        n["edge"]: [n["outer"], n["inner"]],
+        n["app"]: [n["inner"]],
+        n["side"]: [n["inner"]],  # shares the network namespace of the service it names
+        n["probe"]: [],  # host networking is outside every compose network
+        n["plain"]: ["default"],
+    }
+    modes = {w["name"]: w.get("network_mode") for w in topo["workloads"]}
+    assert modes[n["probe"]] == "host" and modes[n["side"]] == f"service:{n['app']}" and modes[n["plain"]] is None
+    assert topo["zone_bridging"] == [{"name": n["edge"], "platform": "compose"}]
+    # Every workload points at its service block; the compose record keeps the declared networks too.
+    assert all(w["source"] == "compose.yaml" and w["line"] >= 1 for w in topo["workloads"])
+    assert doc["compose"]["networks"] == [n["outer"], n["inner"]]
+    assert "plain-token-value" not in _dump(doc)
+
+
+@pytest.mark.parametrize("names", [("shop", "billing"), ("tenant-a", "tenant-b")], ids=["neutral", "renamed"])
+def test_kubernetes_namespaces_become_zones_and_record_network_policy(tmp_path: Path, names):
+    guarded, open_ns = names
+    workload = "apiVersion: apps/v1\nkind: Deployment\nmetadata: {{name: {n}, namespace: {ns}}}\nspec: {{}}\n"
+    text = "---\n".join(
+        [
+            f"apiVersion: v1\nkind: Namespace\nmetadata: {{name: {guarded}}}\n",
+            workload.format(n="web", ns=guarded),
+            workload.format(n="jobs", ns=open_ns),
+            f"apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata: {{name: deny, namespace: {guarded}}}\n"
+            "spec: {}\n",
+        ]
+    )
+    _write(tmp_path, "deploy/k8s/app.yaml", text)
+    topo = DI.build_inventory(tmp_path)["topology"]
+    assert {z["name"]: z["network_policy"] for z in topo["zones"]} == {guarded: True, open_ns: False}
+    assert [(w["name"], w["kind"], w["zones"]) for w in topo["workloads"]] == [
+        ("web", "Deployment", [guarded]),
+        ("jobs", "Deployment", [open_ns]),
+    ]
+    assert topo["zone_bridging"] == []
+    assert all(w["platform"] == "kubernetes" and w["source"] == "deploy/k8s/app.yaml" for w in topo["workloads"])
+
+
+def test_topology_is_absent_without_compose_or_manifests_and_leaves_environments_alone(tmp_path: Path):
+    """Negative: a repository without a deployment topology gets no key; topology never adds an environment."""
+    _write(tmp_path, "Dockerfile", "FROM node:24\n")
+    _write(tmp_path, "main.tf", TF.format(p="shop", port=80, proto="HTTP"))
+    doc = DI.build_inventory(tmp_path)
+    assert "topology" not in doc and DI.validation_errors(doc) == []
+    _write(tmp_path, "compose.yaml", ZONED_COMPOSE.format(**ZONE_NAMES[0]))
+    with_topology = DI.build_inventory(tmp_path)
+    compose_env = DI.scan_compose(tmp_path)[1]
+    assert with_topology["environments"] == doc["environments"] + [compose_env]
+
+
 def test_cli_writes_a_schema_valid_inventory(tmp_path: Path):
     repo = tmp_path / "repo"
     _write(repo, "Dockerfile", "FROM node:24\n")

@@ -15,6 +15,10 @@ decision, ``neutral`` and ``note`` otherwise. A fact that rests on the absence o
 a resource says "in this Terraform" or "in these manifests", because the control
 can live in another repository.
 
+``topology`` lists the deployable workloads of the compose file and the Kubernetes manifests with the zones they
+sit in — compose networks and namespaces under their declared names, never mapped onto a fixed zone vocabulary —
+and the workloads that sit in more than one zone. It never adds or changes an environment of the figure.
+
 Repository content is untrusted. Discovery is bounded in depth, file count and
 size, skips symlinks and anything that resolves outside the root, parses YAML with
 ``safe_load`` and Terraform with a bounded block reader. No environment value,
@@ -339,6 +343,10 @@ def _root_user(user: dict | None) -> bool:
 
 
 # ================================================================ docker compose
+def _network_mode(spec) -> str:
+    return _clip((spec.get("network_mode") if isinstance(spec, dict) else None) or "", 64)
+
+
 def scan_compose(root: Path) -> tuple[dict | None, dict | None]:
     """The compose file docker compose resolves without -f (root only): services, and an environment tree."""
     primary, variants = primary_compose_file(root)
@@ -352,9 +360,16 @@ def scan_compose(root: Path) -> tuple[dict | None, dict | None]:
     services = parse_compose_file(primary, root)
     if not services:
         return None, None
+    try:
+        data = load_yaml_bounded(_read(primary, root)) or {}
+    except yaml.YAMLError:
+        data = {}
+    specs = data.get("services") if isinstance(data, dict) and isinstance(data.get("services"), dict) else {}
+    declared = data.get("networks") if isinstance(data, dict) and isinstance(data.get("networks"), dict) else {}
     record = {
         "file": rel,
         "variants": [_rel(v, root) for v in variants][:16],
+        "networks": [n for n in (_clip(n, 120) for n in declared) if n][:64],
         "services": [
             {
                 "name": _clip(s.name, 120),
@@ -366,6 +381,8 @@ def scan_compose(root: Path) -> tuple[dict | None, dict | None]:
                     {"host": _clip(p.host, 32), "container": _clip(p.container, 32), "host_ip": _clip(p.host_ip, 64)}
                     for p in s.ports
                 ][:32],
+                "networks": [n for n in (_clip(n, 120) for n in s.networks) if n][:16],
+                "network_mode": _network_mode(specs.get(s.name)),
             }
             for s in services
         ][:64],
@@ -1094,6 +1111,93 @@ def scan_dependencies(root: Path) -> tuple[dict, list[dict]]:
     return {"manifests": len(manifests), "declared": declared, "ranges": ranges, "lockfile": lockfile}, packages
 
 
+# ================================================================ topology: zones and the workloads in them
+_K8S_WORKLOAD_KINDS = ("Deployment", "StatefulSet", "DaemonSet", "DeploymentConfig")
+MAX_ZONES = 64
+MAX_TOPOLOGY_WORKLOADS = 256
+
+
+def _compose_topology(compose: dict | None) -> tuple[list[dict], list[dict]]:
+    """Compose networks as zones. A service without ``networks`` joins ``default``; a ``network_mode`` replaces
+    the networks: ``service:<name>`` shares that service's zones, any other mode (``host``, ``none``,
+    ``container:…``) places the service in no compose network."""
+    if not compose:
+        return [], []
+    src = compose["file"]
+    services = compose["services"]
+    declared = {s["name"]: (s.get("networks") or ["default"]) for s in services if not s.get("network_mode")}
+    workloads = []
+    for s in services:
+        mode = s.get("network_mode") or ""
+        zones = declared.get(mode.removeprefix("service:"), []) if mode.startswith("service:") else []
+        workload = {
+            "name": s["name"],
+            "platform": "compose",
+            "source": src,
+            "line": s["line"],
+            "zones": list(declared.get(s["name"], zones)),
+        }
+        if mode:
+            workload["network_mode"] = mode
+        workloads.append(workload)
+    names = dict.fromkeys(list(compose.get("networks") or []) + [z for w in workloads for z in w["zones"]])
+    return [{"name": n, "platform": "compose", "source": src} for n in names], workloads
+
+
+def _k8s_topology(root: Path) -> tuple[list[dict], list[dict]]:
+    """Namespaces as zones, with whether these manifests hold a NetworkPolicy for them."""
+    docs = _k8s_docs(root)
+    found = [(r, d, ln) for r, d, ln in docs if d.get("kind") in _K8S_WORKLOAD_KINDS]
+    if not found:
+        return [], []
+    platform = "openshift" if any("openshift.io" in str(d.get("apiVersion")) for _, d, _ in docs) else "kubernetes"
+
+    def namespace(d: dict) -> str:
+        return _clip(d["metadata"].get("namespace") or "default", 120)
+
+    policies = {namespace(d) for _, d, _ in docs if d.get("kind") == "NetworkPolicy"}
+    zones: dict[str, dict] = {}
+    for r, d, ln in docs:
+        if d.get("kind") == "Namespace" and d["metadata"].get("name"):
+            name = _clip(d["metadata"]["name"], 120)
+            zones.setdefault(name, {"name": name, "platform": platform, "source": r, "line": ln})
+    workloads = []
+    for r, d, ln in found:
+        ns = namespace(d)
+        zones.setdefault(ns, {"name": ns, "platform": platform, "source": r})
+        workloads.append(
+            {
+                "name": _clip(d["metadata"].get("name") or d["kind"], 120),
+                "platform": platform,
+                "kind": d["kind"],
+                "source": r,
+                "line": ln,
+                "zones": [ns],
+            }
+        )
+    for z in zones.values():
+        z["network_policy"] = z["name"] in policies
+    return list(zones.values()), workloads
+
+
+def build_topology(root: Path, compose: dict | None) -> dict | None:
+    """Deployable workloads with the zones they sit in, as the configuration names them; ``None`` without any.
+
+    Zone names stay as declared (compose network, Kubernetes namespace): they are not mapped onto a fixed zone
+    vocabulary. A workload in more than one zone is listed under ``zone_bridging``.
+    """
+    compose_zones, compose_workloads = _compose_topology(compose)
+    k8s_zones, k8s_workloads = _k8s_topology(root)
+    workloads = (compose_workloads + k8s_workloads)[:MAX_TOPOLOGY_WORKLOADS]
+    if not workloads:
+        return None
+    return {
+        "zones": (compose_zones + k8s_zones)[:MAX_ZONES],
+        "workloads": workloads,
+        "zone_bridging": [{"name": w["name"], "platform": w["platform"]} for w in workloads if len(w["zones"]) > 1],
+    }
+
+
 # ================================================================ assembly
 def build_inventory(root: Path) -> dict:
     root = root.resolve()
@@ -1102,7 +1206,7 @@ def build_inventory(root: Path) -> dict:
     if compose_env:
         environments.append(compose_env)
     deps, packages = scan_dependencies(root)
-    return {
+    doc = {
         "schema_version": 1,
         "runtime": scan_runtime(root),
         "environments": environments[:8],
@@ -1111,6 +1215,10 @@ def build_inventory(root: Path) -> dict:
         "dependencies": deps,
         "packages": packages[:40],
     }
+    topology = build_topology(root, compose)
+    if topology:
+        doc["topology"] = topology
+    return doc
 
 
 def validation_errors(doc: dict) -> list[str]:
