@@ -39,6 +39,7 @@ $defs:
       - renovate
       - npm_config
       - kubernetes
+      - helm_values
       - terraform
       - agent_config
       - agent_automation

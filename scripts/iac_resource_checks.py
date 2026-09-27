@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
-"""Structured evaluators for the Compose, Kubernetes and Terraform checks in the
-Config/IaC catalog.
+"""Structured evaluators for the Compose, Kubernetes, Helm values and Terraform
+checks in the Config/IaC catalog.
+
+The deployment inventory marks some configuration facts ``weak`` for the
+deployment figure. Each such fact kind is covered by a check here or listed as
+an exception with its reason under ``inventory_weak_facts`` in
+``data/config-iac-checks.yaml``, so a weakness never appears only in a figure;
+``tests/test_iac_resource_checks.py`` guards that mapping against the inventory
+source.
 
 A regex cannot judge these files: a securityContext may sit on the pod or on
 the container, a Compose port may be published with or without a host
@@ -152,6 +159,7 @@ _WORKLOAD_POD_SPEC = {
     "ReplicationController": ("spec", "template", "spec"),
     "Job": ("spec", "template", "spec"),
     "CronJob": ("spec", "jobTemplate", "spec", "template", "spec"),
+    "DeploymentConfig": ("spec", "template", "spec"),
 }
 
 
@@ -426,6 +434,53 @@ def kubernetes_env_secret_literal(text: str, path: Path) -> tuple[int, str] | No
                     return _line_of(
                         env, index
                     ), f"{label} container {container.get('name')} env {entry['name']}: {MASK}"
+    return None
+
+
+def kubernetes_route_without_tls(text: str, path: Path) -> tuple[int, str] | None:
+    for doc in _manifests(text):
+        kind, name = doc.get("kind"), _get(doc, "metadata", "name")
+        if not isinstance(doc.get("apiVersion"), str) or kind not in {"Ingress", "Route"}:
+            continue
+        spec = doc.get("spec") if isinstance(doc.get("spec"), dict) else {}
+        label = f"{kind}/{name}" if name else str(kind)
+        if kind == "Ingress":
+            if not spec.get("tls"):
+                return _line_of(doc, "spec"), f"{label}: no spec.tls"
+            continue
+        tls = spec.get("tls") if isinstance(spec.get("tls"), dict) else {}
+        if not tls.get("termination"):
+            return _line_of(doc, "spec"), f"{label}: no tls.termination"
+        if tls.get("insecureEdgeTerminationPolicy") == "Allow":
+            return _line_of(tls, "insecureEdgeTerminationPolicy"), f"{label}: insecureEdgeTerminationPolicy: Allow"
+    return None
+
+
+# --------------------------------------------------------------------------- Helm values
+
+
+def _chart_values(text: str, path: Path) -> dict | None:
+    """The values a chart or GitLab Auto Deploy renders its workload from; other YAML is not values."""
+    is_chart_values = path.name == "values.yaml" and (path.parent / "Chart.yaml").is_file()
+    is_auto_deploy = path.name == "auto-deploy-values.yaml" and path.parent.name == ".gitlab"
+    if not (is_chart_values or is_auto_deploy):
+        return None
+    documents = _documents(text)
+    return documents[0] if documents and isinstance(documents[0], dict) else None
+
+
+def helm_values_privileged_container(text: str, path: Path) -> tuple[int, str] | None:
+    context = _get(_chart_values(text, path), "securityContext")
+    if isinstance(context, dict) and context.get("privileged") is True:
+        return _line_of(context, "privileged"), "securityContext: privileged: true"
+    return None
+
+
+def helm_values_ingress_without_tls(text: str, path: Path) -> tuple[int, str] | None:
+    values = _chart_values(text, path)
+    ingress = _get(values, "ingress")
+    if isinstance(ingress, dict) and ingress.get("enabled") and not ingress.get("tls"):
+        return _line_of(values, "ingress"), "ingress enabled without tls"
     return None
 
 
@@ -768,6 +823,96 @@ def terraform_credential_literal(text: str, path: Path) -> tuple[int, str] | Non
     return min(_credential_literals(_Hcl(text)), default=None)
 
 
+_LB_REFERENCE = re.compile(r"\baws_(?:lb|alb)\.([\w-]+)\.")
+
+
+def _plaintext_listeners(hcl: _Hcl) -> Iterator[tuple[int, str]]:
+    """HTTP listeners of a load balancer that has no HTTPS listener in the same file."""
+    by_lb: dict[str, list[tuple[str | None, int]]] = {}
+    for block in hcl.blocks("resource"):
+        if block.labels[:1] not in (["aws_lb_listener"], ["aws_alb_listener"]):
+            continue
+        attrs = hcl.attributes(block)
+        target = _LB_REFERENCE.search(attrs.get("load_balancer_arn", ("", 0))[0])
+        by_lb.setdefault(target.group(1) if target else f"?{block.line}", []).append(
+            (_quoted(attrs.get("protocol", ("", 0))[0]), attrs.get("protocol", ("", block.line))[1])
+        )
+    for lb, listeners in by_lb.items():
+        if any(protocol == "HTTPS" for protocol, _ in listeners):
+            continue
+        for protocol, line in listeners:
+            if protocol == "HTTP":
+                yield line, f"load balancer {lb.lstrip('?')} listener protocol HTTP without an HTTPS listener"
+
+
+def terraform_plaintext_load_balancer(text: str, path: Path) -> tuple[int, str] | None:
+    return min(_plaintext_listeners(_Hcl(text)), default=None)
+
+
+def _public_addresses(hcl: _Hcl) -> Iterator[tuple[int, str]]:
+    for block in hcl.blocks("resource"):
+        rtype = block.labels[0] if block.labels else ""
+        if rtype == "aws_instance":
+            value = hcl.attributes(block).get("associate_public_ip_address", ("", 0))
+            if value[0] == "true":
+                yield value[1], f"{rtype} associate_public_ip_address = true"
+        elif rtype == "aws_ecs_service":
+            for child in block.children:
+                value = hcl.attributes(child).get("assign_public_ip", ("", 0))
+                if child.kind == "network_configuration" and value[0] == "true":
+                    yield value[1], f"{rtype} assign_public_ip = true"
+
+
+def terraform_public_compute_address(text: str, path: Path) -> tuple[int, str] | None:
+    return min(_public_addresses(_Hcl(text)), default=None)
+
+
+_PUBLICLY_ACCESSIBLE = {"aws_db_instance", "aws_rds_cluster_instance", "aws_redshift_cluster"}
+
+
+def _public_databases(hcl: _Hcl) -> Iterator[tuple[int, str]]:
+    for block in hcl.blocks("resource"):
+        rtype = block.labels[0] if block.labels else ""
+        value = hcl.attributes(block).get("publicly_accessible", ("", 0))
+        if rtype in _PUBLICLY_ACCESSIBLE and value[0] == "true":
+            yield value[1], f"{rtype} publicly_accessible = true"
+
+
+def terraform_publicly_accessible_database(text: str, path: Path) -> tuple[int, str] | None:
+    return min(_public_databases(_Hcl(text)), default=None)
+
+
+_IAM_POLICY_RESOURCES = {"aws_iam_policy", "aws_iam_role_policy", "aws_iam_user_policy", "aws_iam_group_policy"}
+# ``Action = "*"`` / ``"Action": "s3:*"`` inside jsonencode(...) or a heredoc JSON document.
+_WILDCARD_ACTION = re.compile(r'"?Action"?\s*[=:]\s*\[?\s*"(\*|[\w-]+:\*)"')
+_WILDCARD_RESOURCE = re.compile(r'"?Resource"?\s*[=:]\s*\[?\s*"\*"')
+
+
+def _wildcard_policies(hcl: _Hcl) -> Iterator[tuple[int, str]]:
+    for block in hcl.blocks():
+        kind = block.labels[0] if block.labels else ""
+        if block.kind == "resource" and kind in _IAM_POLICY_RESOURCES:
+            body = hcl.text[block.lo : block.hi]
+            action = _WILDCARD_ACTION.search(body)
+            if action and _WILDCARD_RESOURCE.search(body):
+                yield hcl.line_at(block.lo + action.start()), f'{kind} Action "{action.group(1)}" on Resource "*"'
+        elif block.kind == "data" and kind == "aws_iam_policy_document":
+            for statement in (child for child in block.children if child.kind == "statement"):
+                attrs = hcl.attributes(statement)
+                actions = _strings(attrs.get("actions", ("", 0))[0])
+                wildcard = sorted(a for a in actions if a == "*" or a.endswith(":*"))
+                if (
+                    wildcard
+                    and "*" in _strings(attrs.get("resources", ("", 0))[0])
+                    and _quoted(attrs.get("effect", ('"Allow"', 0))[0]) != "Deny"
+                ):
+                    yield attrs["actions"][1], f'{kind} actions "{wildcard[0]}" on resources "*"'
+
+
+def terraform_wildcard_iam_policy(text: str, path: Path) -> tuple[int, str] | None:
+    return min(_wildcard_policies(_Hcl(text)), default=None)
+
+
 EVALUATORS: dict[str, Callable[[str, Path], tuple[int, str] | None]] = {
     "compose_environment_secret_literal": compose_environment_secret_literal,
     "compose_sensitive_port_on_all_interfaces": compose_sensitive_port_on_all_interfaces,
@@ -775,8 +920,15 @@ EVALUATORS: dict[str, Callable[[str, Path], tuple[int, str] | None]] = {
     "kubernetes_host_namespace": kubernetes_host_namespace,
     "kubernetes_root_not_prevented": kubernetes_root_not_prevented,
     "kubernetes_env_secret_literal": kubernetes_env_secret_literal,
+    "kubernetes_route_without_tls": kubernetes_route_without_tls,
+    "helm_values_privileged_container": helm_values_privileged_container,
+    "helm_values_ingress_without_tls": helm_values_ingress_without_tls,
     "terraform_open_sensitive_ingress": terraform_open_sensitive_ingress,
     "terraform_public_storage": terraform_public_storage,
     "terraform_unencrypted_storage": terraform_unencrypted_storage,
     "terraform_credential_literal": terraform_credential_literal,
+    "terraform_plaintext_load_balancer": terraform_plaintext_load_balancer,
+    "terraform_public_compute_address": terraform_public_compute_address,
+    "terraform_publicly_accessible_database": terraform_publicly_accessible_database,
+    "terraform_wildcard_iam_policy": terraform_wildcard_iam_policy,
 }

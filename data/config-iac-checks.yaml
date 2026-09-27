@@ -11,7 +11,7 @@
 #                                a weakness class with a title-case lead
 #   iac_type                   — file category (Dockerfile, github_workflow,
 #                                docker_compose, dependabot, npm_config,
-#                                kubernetes, terraform)
+#                                kubernetes, helm_values, terraform)
 #   file_pattern               — glob to find target files
 # Top-level `file_patterns_by_type` replaces that fallback with the complete
 # category inventory when a format has equivalent names or extensions.
@@ -82,6 +82,9 @@ file_patterns_by_type:
   # as a clean scan. A category moves out of this block with its first check.
   helm:
     - "**/Chart.yaml"
+  helm_values:
+    - "**/values.yaml"
+    - "**/.gitlab/auto-deploy-values.yaml"
   pulumi:
     - "**/Pulumi.yaml"
     - "**/Pulumi.yml"
@@ -748,6 +751,49 @@ checks:
     rationale: "A credential in a container's `env[].value` is committed with the manifest and visible to anyone who can read the Deployment."
     remediation: "Store the value in a Secret and reference it with `valueFrom.secretKeyRef`; rotate the committed value"
 
+  - id: IAC-084
+    name: "Kubernetes Ingresses and OpenShift Routes terminate TLS"
+    violation_title: "Kubernetes Ingress or Route Without TLS"
+    iac_type: kubernetes
+    file_pattern: "k8s/*.yaml"
+    expect: structured
+    evaluator: kubernetes_route_without_tls
+    severity_if_violated: Medium
+    cwe: CWE-319
+    finding_type: FT-053
+    rationale: "An Ingress without `spec.tls`, a Route without `tls.termination`, or a Route with `insecureEdgeTerminationPolicy: Allow` serves the application over plain HTTP, so credentials and session tokens cross the network readable and alterable."
+    remediation: "Add a `tls` section with a certificate to the Ingress or Route, and set `insecureEdgeTerminationPolicy` to `Redirect` or `None`"
+
+  # ============ Helm values ============
+  # A chart's values.yaml (next to its Chart.yaml) and GitLab Auto Deploy's
+  # .gitlab/auto-deploy-values.yaml configure the rendered workload. The chart
+  # templates themselves have no checks, so `helm` stays an uncovered surface.
+  - id: IAC-085
+    name: "Helm chart values run the container unprivileged"
+    violation_title: "Privileged Container in Helm Chart Values"
+    iac_type: helm_values
+    file_pattern: "values.yaml"
+    expect: structured
+    evaluator: helm_values_privileged_container
+    severity_if_violated: High
+    cwe: CWE-250
+    finding_type: FT-163
+    rationale: "`securityContext.privileged: true` in the chart values gives the rendered container every capability and the host's devices."
+    remediation: "Remove `privileged: true` from the values; add only the individual capabilities the workload needs"
+
+  - id: IAC-086
+    name: "Helm chart values enable the ingress only with TLS"
+    violation_title: "Helm Chart Ingress Without TLS"
+    iac_type: helm_values
+    file_pattern: "values.yaml"
+    expect: structured
+    evaluator: helm_values_ingress_without_tls
+    severity_if_violated: Medium
+    cwe: CWE-319
+    finding_type: FT-053
+    rationale: "An enabled ingress without a `tls` section serves the application over plain HTTP, so credentials and session tokens cross the network readable and alterable."
+    remediation: "Add `ingress.tls` with the hosts and certificate secret to the chart values"
+
   # ============ Terraform ============
   - id: IAC-090
     name: "Terraform ingress to data and admin ports is restricted"
@@ -803,3 +849,86 @@ checks:
     breach_vector: "Repo-Read"
     rationale: "A credential written as a literal attribute, local, or variable default is committed with the configuration and lands in plan output and state."
     remediation: "Declare the variable without a default and mark it `sensitive`, or read the value from a secret manager data source; rotate the committed value"
+
+  - id: IAC-094
+    name: "Terraform load balancers serve HTTPS"
+    violation_title: "Load Balancer Serving Plain HTTP"
+    iac_type: terraform
+    file_pattern: "*.tf"
+    expect: structured
+    evaluator: terraform_plaintext_load_balancer
+    severity_if_violated: Medium
+    cwe: CWE-319
+    finding_type: FT-053
+    rationale: "A load balancer whose listeners in this file speak only HTTP carries credentials and session tokens unencrypted between clients and the service."
+    remediation: "Add an HTTPS listener with an ACM certificate and turn the HTTP listener into a redirect to HTTPS"
+
+  - id: IAC-095
+    name: "Terraform compute resources stay without public IP addresses"
+    violation_title: "Compute Resource With a Public IP Address"
+    iac_type: terraform
+    file_pattern: "*.tf"
+    expect: structured
+    evaluator: terraform_public_compute_address
+    severity_if_violated: Medium
+    cwe: CWE-668
+    finding_type: FT-164
+    rationale: "An EC2 instance or ECS task with a public IP address is reachable from the internet directly, bypassing the load balancer and whatever it enforces, as far as its security groups allow."
+    remediation: "Place the instance or task in a private subnet without a public IP and reach it through a load balancer or NAT"
+
+  - id: IAC-096
+    name: "Terraform databases are not publicly accessible"
+    violation_title: "Publicly Accessible Database Instance"
+    iac_type: terraform
+    file_pattern: "*.tf"
+    expect: structured
+    evaluator: terraform_publicly_accessible_database
+    severity_if_violated: High
+    cwe: CWE-668
+    finding_type: FT-164
+    breach_vector: "Internet Anon"
+    rationale: "`publicly_accessible = true` gives the database a public endpoint, so its login is attackable from the internet whenever a security group admits the traffic."
+    remediation: "Set `publicly_accessible = false` and reach the database only from the application subnets"
+
+  - id: IAC-097
+    name: "Terraform IAM policies grant specific actions on specific resources"
+    violation_title: "Wildcard IAM Permissions on All Resources"
+    iac_type: terraform
+    file_pattern: "*.tf"
+    expect: structured
+    evaluator: terraform_wildcard_iam_policy
+    severity_if_violated: High
+    cwe: CWE-732
+    finding_type: FT-164
+    rationale: "A policy that allows `*` or `service:*` on `Resource \"*\"` lets whoever holds the role use the whole service across the account, so a compromise of one workload reaches every resource of that service."
+    remediation: "List the specific actions the workload calls and the ARNs of the resources it needs"
+
+# Deployment-inventory facts the deployment figure marks `weak`, each covered
+# by the checks named here on the same file, or listed with `exception` and its
+# reason when no file-level check can express it. `fact` is a full-match regex
+# on the fact text. tests/test_iac_resource_checks.py fails when a weak fact of
+# scripts/deployment_inventory.py has no entry, so a weakness never appears
+# only in a figure.
+inventory_weak_facts:
+  - fact: "privileged container"
+    checks: [IAC-020, IAC-080, IAC-085]
+  - fact: "Docker socket mounted"
+    checks: [IAC-021]
+  - fact: "host network"
+    checks: [IAC-081]
+  - fact: "no TLS"
+    checks: [IAC-084]
+  - fact: "plain HTTP also accepted \\(insecureEdgeTerminationPolicy: Allow\\)"
+    checks: [IAC-084]
+  - fact: "no TLS on the ingress"
+    checks: [IAC-086]
+  - fact: "HTTP :\\S*( from 0\\.0\\.0\\.0/0)? — no TLS"
+    checks: [IAC-094]
+  - fact: "public IP( on the tasks)?"
+    checks: [IAC-095]
+  - fact: "publicly accessible"
+    checks: [IAC-096]
+  - fact: "task role may use \\S+ on every resource"
+    checks: [IAC-097]
+  - fact: "(storage )?not encrypted"
+    checks: [IAC-092]

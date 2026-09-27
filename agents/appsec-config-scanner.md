@@ -77,11 +77,19 @@ The script reads `$CLAUDE_PLUGIN_ROOT/data/config-iac-checks.yaml` once and buil
 - `agent_config` — committed coding-agent settings (Claude Code, Codex, VS Code
   agent mode, Gemini CLI, Kiro)
 - `agent_automation` — workflows and scripts that start a coding agent
-- `kubernetes` — workload manifests (privileged, host namespaces, root, env secrets)
+- `kubernetes` — workload manifests incl. OpenShift DeploymentConfig (privileged,
+  host namespaces, root, env secrets) and Ingresses/Routes without TLS
+- `helm_values` — a chart's `values.yaml` next to its `Chart.yaml` and
+  `.gitlab/auto-deploy-values.yaml` (privileged container, ingress without TLS)
 - `terraform` — `.tf` / `.tfvars` (internet-open admin/data ports, public
-  storage, unencrypted data stores, credential literals)
+  storage, unencrypted data stores, credential literals, plain-HTTP load
+  balancers, public IPs on compute, publicly accessible databases, wildcard IAM)
 
-Categories listed in `file_patterns_by_type` without a check (Helm, Pulumi,
+Every deployment-inventory fact the deployment figure marks `weak` maps to one
+of these checks (`inventory_weak_facts` in the catalog), so the figure never
+shows a weakness the findings lack.
+
+Categories listed in `file_patterns_by_type` without a check (Helm templates, Pulumi,
 CDK, Serverless, Bicep, ARM, Ansible, Nomad) are recognised but not examined;
 their files go to `uncovered_iac` and surface as the run issue
 `config_scan_uncovered_iac`.
@@ -105,6 +113,7 @@ Glob beneath `REPO_ROOT` for each file-pattern relevant to loaded checks:
 - `.claude/settings*.json` / `.codex/config.toml` / `.gemini/settings.json` /
   `.kiro/settings/mcp.json` / `.vscode/settings.json`
 - `**/{k8s,kubernetes,manifests,deploy,deployment}/**/*.{yaml,yml}`
+- `**/values.yaml` (only next to a `Chart.yaml`) / `.gitlab/auto-deploy-values.yaml`
 - `**/*.tf` / `**/*.tfvars`
 
 When `ASSESSMENT_DEPTH=quick`, limit to the first 5 files per category. Otherwise scan all. `agent_config` is exempt: it holds one settings path per coding agent, so a cap would drop a whole tool rather than sample it.

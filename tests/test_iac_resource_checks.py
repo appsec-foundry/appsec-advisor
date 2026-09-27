@@ -1,13 +1,21 @@
-"""Rule semantics of the Compose, Kubernetes and Terraform evaluators."""
+"""Rule semantics of the Compose, Kubernetes, Helm values and Terraform
+evaluators, and the rule that every weak deployment-inventory fact has a check."""
 
 from __future__ import annotations
 
+import ast
+import re
 from pathlib import Path
 
+import config_iac_scanner as scanner
+import deployment_inventory as di
 import iac_resource_checks as irc
 import pytest
+import yaml
 
 P = Path("x")
+ROOT = Path(__file__).resolve().parents[1]
+CATALOG = yaml.safe_load((ROOT / "data" / "config-iac-checks.yaml").read_text(encoding="utf-8"))
 
 
 # --------------------------------------------------------------------------- shared rules
@@ -410,3 +418,443 @@ def test_hardened_terraform_has_no_violation():
 def test_nested_block_attributes_do_not_leak_into_the_parent():
     text = 'resource "aws_db_instance" "d" {\n  lifecycle {\n    storage_encrypted = true\n  }\n}\n'
     assert irc.terraform_unencrypted_storage(text, P) == (1, "aws_db_instance without storage_encrypted")
+
+
+# --------------------------------------------------------------------------- routes, chart values, more Terraform
+
+
+@pytest.mark.parametrize(
+    "text,violates",
+    [
+        ("apiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata:\n  name: web\nspec:\n  rules: []\n", True),
+        (
+            "apiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata:\n  name: web\nspec:\n"
+            "  tls:\n  - hosts: [a.example]\n    secretName: web-tls\n",
+            False,
+        ),
+        ("apiVersion: route.openshift.io/v1\nkind: Route\nmetadata:\n  name: web\nspec:\n  to:\n    name: web\n", True),
+        (
+            "apiVersion: route.openshift.io/v1\nkind: Route\nmetadata:\n  name: web\nspec:\n"
+            "  tls:\n    termination: edge\n    insecureEdgeTerminationPolicy: Allow\n",
+            True,
+        ),
+        (
+            "apiVersion: route.openshift.io/v1\nkind: Route\nmetadata:\n  name: web\nspec:\n"
+            "  tls:\n    termination: edge\n    insecureEdgeTerminationPolicy: Redirect\n",
+            False,
+        ),
+        ("kind: Ingress\nspec: {}\n", False),
+    ],
+)
+def test_kubernetes_route_without_tls(text, violates):
+    assert (irc.kubernetes_route_without_tls(text, P) is not None) is violates
+
+
+def test_deployment_config_is_a_workload():
+    text = (
+        "apiVersion: apps.openshift.io/v1\nkind: DeploymentConfig\nmetadata:\n  name: api\nspec:\n  template:\n"
+        "    spec:\n      containers:\n      - name: api\n        securityContext:\n          privileged: true\n"
+    )
+    assert irc.kubernetes_privileged_container(text, P) == (11, "DeploymentConfig/api container api: privileged: true")
+
+
+VALUES = "securityContext:\n  privileged: true\ningress:\n  enabled: true\n"
+
+
+@pytest.mark.parametrize("relative", ["charts/api/values.yaml", "helm/renamed-chart/values.yaml"])
+def test_chart_values_next_to_a_chart_are_judged(tmp_path, relative):
+    path = tmp_path / relative
+    path.parent.mkdir(parents=True)
+    (path.parent / "Chart.yaml").write_text("apiVersion: v2\nname: api\n", encoding="utf-8")
+    assert irc.helm_values_privileged_container(VALUES, path) == (2, "securityContext: privileged: true")
+    assert irc.helm_values_ingress_without_tls(VALUES, path) == (3, "ingress enabled without tls")
+    hardened = "securityContext:\n  privileged: false\ningress:\n  enabled: true\n  tls:\n  - secretName: api\n"
+    assert irc.helm_values_privileged_container(hardened, path) is None
+    assert irc.helm_values_ingress_without_tls(hardened, path) is None
+
+
+def test_values_file_without_a_chart_is_not_chart_values(tmp_path):
+    path = tmp_path / "config" / "values.yaml"
+    path.parent.mkdir(parents=True)
+    assert irc.helm_values_privileged_container(VALUES, path) is None
+    auto_deploy = tmp_path / ".gitlab" / "auto-deploy-values.yaml"
+    assert irc.helm_values_ingress_without_tls(VALUES, auto_deploy) == (3, "ingress enabled without tls")
+
+
+@pytest.mark.parametrize(
+    "text,violates",
+    [
+        (
+            'resource "aws_lb_listener" "http" {\n  load_balancer_arn = aws_lb.web.arn\n  protocol = "HTTP"\n}\n',
+            True,
+        ),
+        (
+            'resource "aws_lb_listener" "http" {\n  load_balancer_arn = aws_lb.web.arn\n  protocol = "HTTP"\n}\n'
+            'resource "aws_lb_listener" "https" {\n  load_balancer_arn = aws_lb.web.arn\n  protocol = "HTTPS"\n}\n',
+            False,
+        ),
+        (
+            'resource "aws_lb_listener" "http" {\n  load_balancer_arn = aws_lb.edge.arn\n  protocol = "HTTP"\n}\n'
+            'resource "aws_lb_listener" "https" {\n  load_balancer_arn = aws_lb.web.arn\n  protocol = "HTTPS"\n}\n',
+            True,
+        ),
+    ],
+)
+def test_terraform_plaintext_load_balancer(text, violates):
+    assert (irc.terraform_plaintext_load_balancer(text, P) is not None) is violates
+
+
+@pytest.mark.parametrize(
+    "text,violates",
+    [
+        ('resource "aws_instance" "i" {\n  associate_public_ip_address = true\n}\n', True),
+        ('resource "aws_instance" "i" {\n  associate_public_ip_address = false\n}\n', False),
+        ('resource "aws_ecs_service" "s" {\n  network_configuration {\n    assign_public_ip = true\n  }\n}\n', True),
+        ('resource "aws_ecs_service" "s" {\n  network_configuration {\n    subnets = var.private\n  }\n}\n', False),
+    ],
+)
+def test_terraform_public_compute_address(text, violates):
+    assert (irc.terraform_public_compute_address(text, P) is not None) is violates
+
+
+@pytest.mark.parametrize(
+    "text,violates",
+    [
+        ('resource "aws_db_instance" "d" {\n  publicly_accessible = true\n}\n', True),
+        ('resource "aws_rds_cluster_instance" "d" {\n  publicly_accessible = true\n}\n', True),
+        ('resource "aws_db_instance" "d" {\n  publicly_accessible = false\n}\n', False),
+        ('resource "aws_db_instance" "d" {\n  publicly_accessible = var.public\n}\n', False),
+    ],
+)
+def test_terraform_publicly_accessible_database(text, violates):
+    assert (irc.terraform_publicly_accessible_database(text, P) is not None) is violates
+
+
+@pytest.mark.parametrize(
+    "text,violates",
+    [
+        (
+            'resource "aws_iam_role_policy" "p" {\n  policy = jsonencode({\n'
+            '    Statement = [{ Effect = "Allow", Action = "s3:*", Resource = "*" }]\n  })\n}\n',
+            True,
+        ),
+        (
+            'resource "aws_iam_policy" "p" {\n  policy = <<EOF\n{"Statement": [{"Effect": "Allow", '
+            '"Action": "*", "Resource": "*"}]}\nEOF\n}\n',
+            True,
+        ),
+        (
+            'resource "aws_iam_role_policy" "p" {\n  policy = jsonencode({\n'
+            '    Statement = [{ Effect = "Allow", Action = "s3:GetObject", Resource = "*" }]\n  })\n}\n',
+            False,
+        ),
+        (
+            'resource "aws_iam_role_policy" "p" {\n  policy = jsonencode({\n'
+            '    Statement = [{ Effect = "Allow", Action = "s3:*", Resource = aws_s3_bucket.b.arn }]\n  })\n}\n',
+            False,
+        ),
+        (
+            'data "aws_iam_policy_document" "d" {\n  statement {\n    actions = ["*"]\n    resources = ["*"]\n  }\n}\n',
+            True,
+        ),
+        (
+            'data "aws_iam_policy_document" "d" {\n  statement {\n    effect = "Deny"\n'
+            '    actions = ["*"]\n    resources = ["*"]\n  }\n}\n',
+            False,
+        ),
+    ],
+)
+def test_terraform_wildcard_iam_policy(text, violates):
+    assert (irc.terraform_wildcard_iam_policy(text, P) is not None) is violates
+
+
+# --------------------------------------------------------------------------- weak inventory facts
+# The deployment figure draws inventory facts with a `weak` tone. Each such fact
+# must also be a config finding on the same file, or a listed exception, so a
+# weakness never exists only in a figure.
+
+WEAK_ENTRIES = CATALOG["inventory_weak_facts"]
+
+
+def _weak_templates() -> list[str]:
+    """Every fact text scripts/deployment_inventory.py can emit with the weak tone; interpolations read as X."""
+
+    def text(node: ast.expr) -> str | None:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        if isinstance(node, ast.JoinedStr):
+            return "".join(v.value if isinstance(v, ast.Constant) else "X" for v in node.values)
+        return None
+
+    def weak_text(message: ast.expr, tone: ast.expr) -> str | None:
+        if isinstance(tone, ast.Constant):
+            return text(message) if tone.value == "weak" else ""
+        if isinstance(tone, ast.IfExp) and all(isinstance(t, ast.Constant) for t in (tone.body, tone.orelse)):
+            messages = (message.body, message.orelse) if isinstance(message, ast.IfExp) else (message, message)
+            pairs = zip(messages, (tone.body, tone.orelse))
+            return next((text(m) for m, t in pairs if t.value == "weak"), "")
+        return None
+
+    tree = ast.parse((ROOT / "scripts" / "deployment_inventory.py").read_text(encoding="utf-8"))
+    out = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "_fact" and len(node.args) >= 2:
+            found = weak_text(node.args[0], node.args[1])
+            assert found is not None, f"line {node.lineno}: weak fact text or tone is not a literal the guard can read"
+            if found:
+                out.append(found)
+    return out
+
+
+def _entry(fact: str, entries: list[dict]) -> dict | None:
+    return next((e for e in entries if re.fullmatch(e["fact"], fact)), None)
+
+
+def _weak_facts(inventory: dict) -> set[tuple[str, str | None]]:
+    out: set[tuple[str, str | None]] = set()
+
+    def walk(node: object) -> None:
+        if isinstance(node, dict):
+            for fact in node.get("facts") or []:
+                if isinstance(fact, dict) and fact.get("tone") == "weak":
+                    out.add((fact["text"], (fact.get("source") or {}).get("file")))
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(inventory)
+    return out
+
+
+def _uncovered(weak: set, findings: list[dict], entries: list[dict]) -> list[tuple[str, str | None]]:
+    """Weak facts without an entry, or whose entry's checks raised nothing on the fact's file."""
+    missing = []
+    for text, file in sorted(weak, key=str):
+        entry = _entry(text, entries)
+        if entry is None:
+            missing.append((text, file))
+        elif not entry.get("exception") and not any(
+            f["check_id"] in entry["checks"] and f["file"] == file for f in findings
+        ):
+            missing.append((text, file))
+    return missing
+
+
+def _scan(tmp_path: Path, files: dict[str, str]) -> tuple[set, list[dict]]:
+    repo = tmp_path / "repo"
+    repo.mkdir(parents=True)
+    for relative, content in files.items():
+        (repo / relative).parent.mkdir(parents=True, exist_ok=True)
+        (repo / relative).write_text(content, encoding="utf-8")
+    result = scanner.scan(repo, scanner.DEFAULT_CHECKS, depth="standard", output=tmp_path / "scan.json")
+    return _weak_facts(di.build_inventory(repo)), result["findings"]
+
+
+_K8S_APP = """apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {name}
+spec:
+  template:
+    metadata:
+      labels:
+        app: {name}
+    spec:
+      hostNetwork: true
+      containers:
+      - name: {name}
+        image: registry.example/{name}:1.0
+        securityContext:
+          privileged: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {name}
+spec:
+  selector:
+    app: {name}
+  ports:
+  - port: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {name}
+spec:
+  rules:
+  - http:
+      paths:
+      - path: /
+        backend:
+          service:
+            name: {name}
+"""
+
+_OPENSHIFT_APP = """apiVersion: apps.openshift.io/v1
+kind: DeploymentConfig
+metadata:
+  name: {name}
+spec:
+  template:
+    metadata:
+      labels:
+        app: {name}
+    spec:
+      containers:
+      - name: {name}
+        image: registry.example/{name}:1.0
+        securityContext:
+          privileged: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {name}
+spec:
+  selector:
+    app: {name}
+  ports:
+  - port: 8080
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {name}
+spec:
+  to:
+    name: {name}
+{tls}"""
+
+_TERRAFORM = """resource "aws_security_group" "{lb}" {{
+  ingress {{
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }}
+}}
+
+resource "aws_lb" "{lb}" {{
+  internal        = false
+  security_groups = [aws_security_group.{lb}.id]
+}}
+
+resource "aws_lb_listener" "{lb}_http" {{
+  load_balancer_arn = aws_lb.{lb}.arn
+  port              = 80
+  protocol          = "HTTP"
+}}
+
+resource "aws_iam_role" "{app}" {{
+  name = "{app}"
+}}
+
+resource "aws_iam_role_policy" "{app}" {{
+  role = aws_iam_role.{app}.id
+  policy = jsonencode({{
+    Statement = [{{ Effect = "Allow", Action = "s3:*", Resource = "*" }}]
+  }})
+}}
+
+resource "aws_ecs_task_definition" "{app}" {{
+  task_role_arn = aws_iam_role.{app}.arn
+}}
+
+resource "aws_ecs_service" "{app}" {{
+  task_definition = aws_ecs_task_definition.{app}.arn
+  network_configuration {{
+    assign_public_ip = true
+  }}
+}}
+
+resource "aws_instance" "{app}_bastion" {{
+  associate_public_ip_address = true
+}}
+
+resource "aws_db_instance" "{app}_db" {{
+  publicly_accessible = true
+}}
+
+resource "aws_efs_file_system" "{app}_share" {{
+  encrypted = false
+}}
+"""
+
+_CHART_VALUES = "image:\n  repository: registry.example/api\n  tag: '1.0'\nsecurityContext:\n  privileged: true\ningress:\n  enabled: true\n"
+
+WEAK_FACT_SHAPES = {
+    "compose": {
+        "docker-compose.yml": "services:\n  web:\n    image: nginx:1.25\n    privileged: true\n    volumes:\n"
+        "      - /var/run/docker.sock:/var/run/docker.sock\n",
+    },
+    "compose-renamed": {
+        "compose.yaml": "services:\n  edge-proxy:\n    image: traefik:3\n    privileged: true\n    volumes:\n"
+        "      - /var/run/docker.sock:/var/run/docker.sock:ro\n",
+    },
+    "kubernetes": {"k8s/app.yaml": _K8S_APP.format(name="web")},
+    "kubernetes-renamed": {"manifests/prod/storefront.yml": _K8S_APP.format(name="storefront")},
+    "openshift-without-tls": {"deploy/api.yaml": _OPENSHIFT_APP.format(name="api", tls="")},
+    "openshift-plain-http-allowed": {
+        "deploy/api.yaml": _OPENSHIFT_APP.format(
+            name="api", tls="  tls:\n    termination: edge\n    insecureEdgeTerminationPolicy: Allow\n"
+        )
+    },
+    "helm": {"charts/api/Chart.yaml": "apiVersion: v2\nname: api\n", "charts/api/values.yaml": _CHART_VALUES},
+    "gitlab-auto-deploy": {
+        ".gitlab-ci.yml": "include:\n  - template: Auto-DevOps.gitlab-ci.yml\n",
+        ".gitlab/auto-deploy-values.yaml": "ingress:\n  enabled: true\n",
+    },
+    "terraform": {"infra/main.tf": _TERRAFORM.format(lb="web", app="app")},
+    "terraform-renamed": {"platform/aws/stack.tf": _TERRAFORM.format(lb="edge-lb", app="orders")},
+}
+
+
+@pytest.mark.parametrize("shape", sorted(WEAK_FACT_SHAPES))
+def test_weak_inventory_facts_are_findings_on_the_same_file(tmp_path, shape):
+    weak, findings = _scan(tmp_path, WEAK_FACT_SHAPES[shape])
+    assert weak, f"{shape} no longer produces a weak inventory fact; the guard would pass vacuously"
+    assert _uncovered(weak, findings, WEAK_ENTRIES) == []
+
+
+def test_repository_without_deployment_config_has_no_weak_fact_and_nothing_uncovered(tmp_path):
+    weak, findings = _scan(tmp_path, {"README.md": "# app\n"})
+    assert weak == set()
+    assert not [f for f in findings if f["iac_type"] in {"docker_compose", "kubernetes", "helm_values", "terraform"}]
+    assert _uncovered(weak, findings, WEAK_ENTRIES) == []
+
+
+def test_an_excepted_weak_fact_needs_no_finding_but_an_unlisted_one_is_uncovered():
+    weak = {("public IP", "main.tf")}
+    excepted = [{"fact": "public IP", "exception": "no file-level signal"}]
+    assert _uncovered(weak, [], excepted) == []
+    assert _uncovered(weak, [], [{"fact": "publicly accessible", "checks": ["IAC-096"]}]) == [("public IP", "main.tf")]
+    covered_elsewhere = [{"check_id": "IAC-095", "file": "other.tf"}]
+    assert _uncovered(weak, covered_elsewhere, [{"fact": "public IP", "checks": ["IAC-095"]}]) == [
+        ("public IP", "main.tf")
+    ]
+
+
+def test_every_weak_fact_the_inventory_can_emit_has_an_entry():
+    templates = _weak_templates()
+    assert templates
+    assert [t for t in templates if _entry(t, WEAK_ENTRIES) is None] == []
+
+
+def test_every_entry_names_catalog_checks_or_a_reason_and_matches_an_emittable_fact():
+    check_ids = {check["id"] for check in CATALOG["checks"]}
+    templates = _weak_templates()
+    for entry in WEAK_ENTRIES:
+        assert bool(entry.get("checks")) != bool(entry.get("exception")), entry
+        assert set(entry.get("checks") or []) <= check_ids, entry
+        assert any(re.fullmatch(entry["fact"], t) for t in templates), f"stale entry {entry['fact']!r}"
+
+
+def test_every_checked_entry_is_proven_by_a_shape(tmp_path):
+    proven = set()
+    for index, files in enumerate(WEAK_FACT_SHAPES.values()):
+        weak, _findings = _scan(tmp_path / str(index), files)
+        proven.update(_entry(text, WEAK_ENTRIES)["fact"] for text, _file in weak if _entry(text, WEAK_ENTRIES))
+    assert {e["fact"] for e in WEAK_ENTRIES if e.get("checks")} <= proven
