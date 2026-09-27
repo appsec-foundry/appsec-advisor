@@ -1,6 +1,6 @@
 # Implplan: consistent Figure 1 for arbitrary repositories
 
-**Status:** measures verified by replay on 2026-09-27 and re-verified independently the same day. Implemented: M1 and M1b (`e978f404`), M3 (`eb62810c`), M6 (`f54d6691`), M5 (`8f7646c7`, glyph numbering `f8b6b570`). Deferred: M2 (§4) and M4 (§6).
+**Status:** measures verified by replay on 2026-09-27 and re-verified independently the same day. Implemented: M1 and M1b (`e978f404`), M3 (`8b9eef9e`), M6 (`48e7a60e`), M5 (`9a24382f`, glyph numbering `31ceef8e`, `46d1cc83`). Deferred: M2 (§4) and M4 (§6).
 
 **Trigger:** operator review of the juice-shop2 Figure 1 (run 2026-09-26, rendered before `96c919ba`) and of the same model rendered with the current code.
 
@@ -139,7 +139,7 @@ Guards: a build-time-attributed CWE-347 finding lands in the supply-chain class;
 
 ## 8. Decision edits
 
-Confirmed and committed: RA-15 with its M1b addition (`e978f404`), the RA-11 addition (`eb62810c`), RA-25 for M5 (`8f7646c7`), and the RA-18 note on the recorded project name (`f54d6691`). Confirmed wording:
+Confirmed and committed: RA-15 with its M1b addition (`e978f404`), the RA-11 addition (`8b9eef9e`), RA-25 for M5 (`9a24382f`), and the RA-18 note on the recorded project name (`48e7a60e`). Confirmed wording:
 
 - RA-11 addition (M3b): "An unclassified, undeclared regular role takes `internet-user` only when every counted hop of its request path with a known scheme authenticates, and `internet-anon` only when every counted hop is `none`. A mixed path is an architecture error that returns to the analyst; an unknown-only path leaves the role unclassified."
 - New row (M5): "A finding attributed to the build-time group takes the supply-chain attack class before any CWE lookup; that class reuses the build-time CWE list of the attribution rules."
@@ -155,9 +155,9 @@ What replaces it: deterministic checks at the stage that can correct the defect.
 ## 10. Order
 
 1. Done (`e978f404`): M1 + M1b in one change with the RA-15 edits. M1 alone would bring S4 back.
-2. Done (`eb62810c`): M3a + M3b + prompt. M3a and the mixed-path error carry the effect; M3b only closes unambiguous cases. An existing model keeps both cards until it is analysed again.
-3. Done (`f54d6691`): M6.
-4. Done (`8f7646c7`, `f8b6b570`): M5. The eighth class needed attack-path numbering from `glyph_sequence` in the composer and the posture QA checks, and a build-time attack edge ends at the finding's build component.
+2. Done (`8b9eef9e`): M3a + M3b + prompt. M3a and the mixed-path error carry the effect; M3b only closes unambiguous cases. An existing model keeps both cards until it is analysed again.
+3. Done (`48e7a60e`): M6.
+4. Done (`9a24382f`, `31ceef8e`): M5. The eighth class needed attack-path numbering from `glyph_sequence` in the composer and the posture QA checks, and a build-time attack edge ends at the finding's build component.
 
 Deferred: M4 until the inventory records CI and publish locations (§6); M2 until a large model shows the wrong chip placement in a report (§4).
 
