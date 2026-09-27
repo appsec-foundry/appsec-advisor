@@ -93,7 +93,7 @@ will do and which artifact it produces.
 | `threat-merger` | deduplicates candidate threats via CWE + component + title fingerprint → merge decisions feed `.threats-merged.json` |
 | `triage-validator` | infers breach distance, detects compound attack chains, computes effective severity, re-ranks top threats → `.triage-flags.json` |
 | `qa-reviewer` | verifies rendered `threat-model.md` against `data/sections-contract.yaml` (11 deterministic checks: links, xrefs, anchors, invariants, MS structure, …); emits `.qa-repair-plan.json` on drift |
-| `architect-reviewer` | edits one bounded prose packet → `.dispatch-context/editorial/plan-<batch>.json` |
+| `architect-reviewer` | reviews ratings and fixes → controller-owned `.architect-review.json` |
 | `config-scanner` | scans Dockerfile, GitHub Actions, docker-compose, Dependabot/Renovate against `data/config-iac-checks.yaml` → `.config-scan-findings.json` (Phase 2.5, M3.5) |
 
 **Dispatch echo template:**

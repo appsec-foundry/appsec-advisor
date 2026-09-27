@@ -22,8 +22,8 @@ golden OUTPUTS to diff against. A report-only snapshot cannot be replayed.
 
 Volatile fields scrubbed before every comparison (verified against
 build_threat_model_yaml.py): meta.generated (datetime.now), meta.git.* (read
-from the scanned repo's git), and changelog[].date / current_sha / previous_date
-(date.today / repo HEAD). Everything downstream (compose, export_sarif) inherits
+from the scanned repo's git), and changelog[].date / time_local / current_sha / previous_date
+(date.today / datetime.now / repo HEAD). Everything downstream (compose, export_sarif) inherits
 its determinism from the scrubbed yaml, so it needs no separate scrubbing.
 
 Storage: the canonical form is the UNPACKED directory (git diffs it, reviews it,
@@ -162,6 +162,8 @@ def scrub_yaml_obj(obj: dict[str, Any]) -> dict[str, Any]:
                 continue
             if "date" in entry:
                 entry["date"] = SENTINEL_DATE
+            if "time_local" in entry:
+                entry["time_local"] = "00:00 UTC"
             if entry.get("previous_date"):
                 entry["previous_date"] = SENTINEL_DATE
             if "current_sha" in entry:

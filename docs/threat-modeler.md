@@ -424,6 +424,12 @@ related:
 
 The imported model remains untrusted context. It may produce a hypothesis for local verification, but it cannot establish a finding, assign a CVSS score, or override target-repository evidence. Actor definitions are not imported from related repositories.
 
+### Architect review
+
+Thorough assessments enable architect review automatically; `--architect-review` enables it explicitly and `--no-architect-review` disables it. `--architect-model` selects its model. The reviewer checks findings before prioritization and independently proposes corrections to ratings and remediation steps. Accepted corrections remain in later report rebuilds.
+
+The completion receipt distinguishes reviewed, incomplete and not-run coverage. Timeouts, missing evidence and findings outside the bounded review remain visible as gaps; they do not mean the findings were approved. The review does not edit CVSS, evidence, CWE mappings or general report prose. Rerendering an older model does not run a new analysis.
+
 ## Architecture
 
 Agents read the repository and make the security judgments. Python checks their structured output and builds the report. The report does not come from one free-form model response.

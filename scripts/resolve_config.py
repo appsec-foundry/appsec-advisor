@@ -1132,10 +1132,8 @@ def resolve_architect_review(ns: argparse.Namespace, depth: str, dry_run: bool) 
     # through verbatim — same contract as the APPSEC_ARCHITECT_MODEL env var
     # below. --no-opus still clamps any Opus id to Sonnet in apply_opus_ban().
     #
-    # Opus was the default while Stage 4 was an architect review reasoning over
-    # the whole report. The stage now rewrites prose from a bounded projection
-    # and judges nothing, which is Sonnet work: the measured Opus review cost
-    # 431k tokens, a fifth of its run, for four fragment edits.
+    # The bounded semantic reviewer defaults to Sonnet. Explicit model choice
+    # and the global Opus ban keep their existing precedence.
     model = ns.architect_model or "sonnet"
     if os.environ.get("APPSEC_ARCHITECT_MODEL"):
         model = os.environ["APPSEC_ARCHITECT_MODEL"]
@@ -1807,20 +1805,19 @@ def build_parser() -> argparse.ArgumentParser:
         dest="no_cheap_stride",
         help="Full STRIDE depth on every selected component, including the provably-internal tail and ci-cd.",
     )
-    # Stage 4 — editorial pass over the report's wording. Auto-on at thorough.
+    # Semantic review before triage. Auto-on at thorough.
     p.add_argument(
         "--architect-review",
         action="store_true",
-        help="Run the Stage-4 editorial pass at any depth. It rewrites report "
-        "prose for clarity and changes no finding, rating, evidence or link.",
+        help="Review and correct finding ratings and remediation before triage at any depth.",
     )
-    p.add_argument("--no-architect-review", action="store_true", help="Skip the Stage-4 editorial pass.")
+    p.add_argument("--no-architect-review", action="store_true", help="Skip semantic architect review.")
     p.add_argument(
         "--architect-model",
         default=None,
         metavar="MODEL",
         help="Tier alias (sonnet|opus) or explicit version id for the "
-        "Stage-4 editorial pass. Default sonnet; --no-opus clamps any Opus id to Sonnet.",
+        "architect review. Default sonnet; --no-opus clamps any Opus id to Sonnet.",
     )
     # Architecture-fragment enrichment (M3.3 / D2). On by default at standard
     # and thorough; off at quick since 2026-05.
@@ -3476,7 +3473,7 @@ def _summary_active_options(cfg: dict) -> list[tuple[str, str]]:
     # default-on standard/thorough case is silent (not a deviation).
     abuse_label = cfg.get("abuse_case_label") or ""
     if abuse_label.startswith("enabled ("):
-        extras.append(f"abuse-case verification {abuse_label[len('enabled '):]}")
+        extras.append(f"abuse-case verification {abuse_label[len('enabled ') :]}")
     if extras:
         rows.append(("Extras", ", ".join(extras)))
 

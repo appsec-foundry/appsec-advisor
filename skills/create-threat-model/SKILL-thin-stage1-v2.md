@@ -28,7 +28,7 @@ with `run_in_background: true`; retain its task id, never printed.
 
 ## Boundary loop
 
-Call:
+Bash timeout `600000`: boundaries may run architect review. Never retry an in-flight boundary.
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \

@@ -96,9 +96,7 @@ The standing contract surfaces are:
 - context catalog and effective-plan policy in
   `docs/internal/contracts/context-routing.md`.
 
-Dispatch and mutation ownership is global: Level-0 dispatch belongs to the
-compact runtime acting on controller actions, and no agent recurses through
-`Agent`. One controller boundary owns each state mutation and producer output.
+Dispatch and mutation ownership is global: native Level-0 Agent dispatch belongs to the compact runtime acting on controller actions, and no agent recurses through `Agent`. The enabled architect review is a controller-owned, tool-free host subprocess before triage, bounded by `scripts/architect_review_runtime.py` and `scripts/architect_review_worker.py`. It has no native Agent job or recursive tool surface. One controller boundary owns each state mutation and producer output.
 
 ## Ownership
 
@@ -396,3 +394,13 @@ mutation with the supported alternatives.
 the cost of the last run of the same mode and depth and, for a mode that
 analyzes source, against the depth's floor; a budget that cannot hold the run
 aborts on the same read-only path, before the output directory exists.
+
+## Semantic architect review
+
+When `architect_review` is enabled, `_context_v2_after_evidence` reviews canonical findings after evidence handling and component reconciliation, before triage or synthesis. The existing resolved architect model selects the host model. The runtime owns packet admission, sequential execution, the stage deadline and actual process termination. A failed host stops further calls; missing decisions remain unreviewed. Limits are defined in `scripts/architect_review_runtime.py` and are conservative allowances, not measured throughput claims.
+
+The controller persists `.architect-review.json` under `schemas/architect-review-runtime.schema.json`. The transaction binds the run, original canonical input, analyst context, scoring profile, policy, admitted packets, proposals and accepted output. Every consumer reconstructs the application with the correction core and the recorded scoring profile, including after transient configuration cleanup. A scoring-profile change during an in-flight review blocks publication. Completed transactions recover publication without dispatching again. Interrupted transactions retain already returned results and close the remainder as unreviewed without resetting the budget.
+
+The YAML builder projects accepted fixes after mitigation grouping and before requirement annotation. Changed ratings rederive priorities on linked fix cards through their existing deterministic policy; unrelated authored priorities and separate review or investigation tasks remain intact. Old override cards have no source-bound exception proof and cannot override a changed rating or replace an accepted fix. Shared cards retain unrelated members. Enrichment and Stage 4 reject lost corrections; a finding legitimately below the configured report floor remains in the audit.
+
+Stage 4 performs deterministic preservation and existing release gates only. It never dispatches a second editorial pass. Its `status: pass` means preservation gates passed; `outcome` distinguishes `reviewed`, `incomplete`, and `not_run`. Older rerenders without a transaction report `not_run`. New full/rebuild runs with enabled review cannot close without the transaction. Transport failure degrades the optional semantic enrichment to explicit incomplete coverage, while invalid required source data and corrupted transactions block publication.

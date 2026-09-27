@@ -273,6 +273,11 @@ GROUPS = {
         e2e_pipeline
     """),
     "qa-repair": _tests("""
+        architect_review_runtime
+        architect_review
+        architect_review_worker
+        build_architect_context
+        calibrate_architect_review
         apply_content_repair
         apply_content_repair_coverage
         apply_editorial_plan
@@ -529,6 +534,121 @@ FULL_SUITE_SOURCES = {
 # build_threat_model_yaml and compose_threat_model, so modules they import
 # route to it.
 SOURCE_TESTS = {
+    "agents/appsec-architect-reviewer.md": _tests("""
+        agent_logger
+        completion_contract
+        fragment_invariant_parity
+        requirements_verification
+        agent_definitions
+        agent_doc_shell_snippets
+        check_target_specificity
+        prompt_token_bounds
+        stride_outputs
+    """),
+    "skills/create-threat-model/SKILL-thin-stage4.md": _tests("""
+        integration
+        requirements_verification
+        wait_agent_calls
+        editorial_gate
+        lazy_phase_group_loading
+        runtime_doc_cli_contract
+        check_target_specificity
+        context_prompt_budgets
+        prompt_token_bounds
+    """),
+    "scripts/architect_review_runtime.py": _tests("""
+        actor_presentation
+        incremental_two_run_e2e
+        runtime_doc_cli_contract
+        threat_fixture
+        render_completion_summary
+        architect_review_runtime
+        build_threat_model_yaml
+        orchestration_controller
+        check_target_specificity
+        gate_preconditions
+        run_path_guard
+        stride_outputs
+    """),
+    "schemas/architect-review-runtime.schema.json": _tests("""
+        render_completion_summary
+        architect_review_runtime
+        check_target_specificity
+        schemas
+    """),
+    "scripts/architect_review.py": _tests("""
+        orchestration_controller
+        actor_presentation
+        build_threat_model_yaml
+        incremental_two_run_e2e
+        runtime_doc_cli_contract
+        threat_fixture
+        architect_review
+        architect_review_runtime
+        build_architect_context
+        architect_review_worker
+        calibrate_architect_review
+        check_target_specificity
+        gate_preconditions
+        run_path_guard
+        stride_outputs
+    """),
+    "scripts/build_architect_context.py": _tests("""
+        build_architect_context
+        architect_review_runtime
+        architect_review_worker
+        calibrate_architect_review
+        check_target_specificity
+        gate_preconditions
+        run_path_guard
+        stride_outputs
+    """),
+    "scripts/architect_review_worker.py": _tests("""
+        architect_review_runtime
+        architect_review_worker
+        calibrate_architect_review
+        check_target_specificity
+        gate_preconditions
+        run_path_guard
+        stride_outputs
+    """),
+    "scripts/calibrate_architect_review.py": _tests("""
+        calibrate_architect_review
+        check_target_specificity
+        gate_preconditions
+        run_path_guard
+        stride_outputs
+    """),
+    "schemas/architect-review-context.schema.json": _tests("""
+        build_architect_context
+        architect_review_runtime
+        architect_review_worker
+        calibrate_architect_review
+        check_target_specificity
+        schemas
+    """),
+    "schemas/architect-review-calibration.schema.json": _tests("""
+        architect_review_runtime
+        calibrate_architect_review
+        check_target_specificity
+        schemas
+    """),
+    "agents/shared/architect-semantic-review.md": _tests("""
+        architect_review_worker
+        agent_definitions
+        agent_doc_shell_snippets
+        check_target_specificity
+        stride_outputs
+    """),
+    "tests/fixtures/architect-review/calibration.json": _tests("calibrate_architect_review"),
+    "schemas/architect-corrections.schema.json": _tests("""
+        architect_review
+        architect_review_runtime
+        build_architect_context
+        calibrate_architect_review
+        check_target_specificity
+        schemas
+    """),
     "scripts/_severity_policy.py": _tests("""
         actor_attribution
         actor_presentation
@@ -553,6 +673,11 @@ SOURCE_TESTS = {
         validate_evidence_lines
         validate_intermediate
         weakness_signals
+        architect_review
+        architect_review_runtime
+        architect_review_worker
+        build_architect_context
+        calibrate_architect_review
     """),
     "scripts/match_abuse_cases.py": _tests("""
         abuse_case_verdicts
@@ -690,6 +815,10 @@ SOURCE_TESTS = {
         stage1_coverage_recovery_2026_07_20
         stride_dispatch_waves
         validate_intermediate
+        build_architect_context
+        architect_review_runtime
+        architect_review_worker
+        calibrate_architect_review
     """),
     "schemas/threat-model.output.schema.yaml": _tests("""
         actor_presentation
@@ -718,6 +847,9 @@ SOURCE_TESTS = {
         validate_fragment
         validate_intermediate
         weakness_class_config_consistency
+        architect_review
+        architect_review_runtime
+        build_architect_context
     """),
     "schemas/threats-merged.schema.yaml": _tests("""
         actor_attribution
@@ -735,6 +867,11 @@ SOURCE_TESTS = {
         threats_merged_schema
         validate_intermediate
         weakness_class_config_consistency
+        architect_review
+        architect_review_runtime
+        architect_review_worker
+        build_architect_context
+        calibrate_architect_review
     """),
     "scripts/build_post_stride_contexts.py": _tests("""
         build_post_stride_contexts
@@ -746,6 +883,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/schema_canonicalize.py": _tests("""
+        topology_workloads
         check_stride_dispatch
         check_target_specificity
         gate_preconditions
@@ -776,6 +914,7 @@ SOURCE_TESTS = {
         wait_stride_progress
     """),
     "scripts/validate_intermediate.py": _tests("""
+        config_iac_scanner
         actor_attribution
         actor_presentation
         agent_definitions
@@ -827,6 +966,11 @@ SOURCE_TESTS = {
         triage_compute_ranking
         validate_intermediate
         wait_stride_progress
+        architect_review
+        architect_review_runtime
+        architect_review_worker
+        build_architect_context
+        calibrate_architect_review
     """),
     "AGENTS.md": _tests("""
         context_prompt_budgets
@@ -842,6 +986,7 @@ SOURCE_TESTS = {
     """),
     "CHANGELOG.md": _tests("requirements_verification"),
     "README.md": _tests("""
+        build_threat_model_yaml
         business_context_preview
         marketplace_manifest
         orchestration_controller
@@ -926,6 +1071,19 @@ SOURCE_TESTS = {
         weakness_signals
     """),
     "data/actor-attribution-rules.yaml": _tests("""
+        actor_presentation
+        analysis_version_upgrade
+        compose_threat_model
+        compose_threat_model_cov
+        compose_threat_model_cov2
+        compose_threat_model_cov3
+        e2e_pipeline
+        enforcement_mutations
+        p1_renderer_correctness
+        reference_format
+        render_integrity
+        render_properties
+        requirements_mapping
         actor_attribution
         check_target_specificity
         emit_threat_vektors
@@ -947,6 +1105,8 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/reconcile_role_access.py": _tests("""
+        figure1_security
+        validate_fragment
         check_target_specificity
         discover_identity_providers
         embedded_store_access
@@ -1023,6 +1183,10 @@ SOURCE_TESTS = {
         severity_policy
         stride_outputs
         threat_fixture
+        architect_review
+        architect_review_runtime
+        architect_review_worker
+        build_architect_context
     """),
     "scripts/export_html.py": _tests("""
         check_target_specificity
@@ -1215,6 +1379,14 @@ SOURCE_TESTS = {
         validate_intermediate
     """),
     "scripts/iac_resource_checks.py": _tests("""
+        agent_config_checks
+        check_target_specificity
+        gate_preconditions
+        repo_scan
+        requirements_verification
+        run_path_guard
+        security_score
+        stride_outputs
         config_iac_checks
         config_iac_scanner
         config_scanner_wireup
@@ -1222,6 +1394,7 @@ SOURCE_TESTS = {
         validate_intermediate
     """),
     "scripts/deployment_inventory.py": _tests("""
+        iac_resource_checks
         check_permissions
         check_target_specificity
         deployment_inventory
@@ -1276,6 +1449,7 @@ SOURCE_TESTS = {
         threat_fixture
     """),
     "scripts/compose_services.py": _tests("""
+        iac_resource_checks
         analysis_version_upgrade
         check_target_specificity
         compose_services
@@ -1298,6 +1472,7 @@ SOURCE_TESTS = {
         threat_fixture
     """),
     "data/deployment-technology.yaml": _tests("""
+        iac_resource_checks
         check_target_specificity
         deployment_inventory
         e2e_pipeline
@@ -1346,6 +1521,7 @@ SOURCE_TESTS = {
         threat_fixture
     """),
     "scripts/flow_route_auth.py": _tests("""
+        architect_review_runtime
         check_target_specificity
         discover_identity_providers
         embedded_store_access
@@ -1358,6 +1534,10 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
         validate_fragment
+        threat_fixture
+        actor_presentation
+        build_threat_model_yaml
+        incremental_two_run_e2e
     """),
     "scripts/source_auth_scanner.py": _tests("""
         authz_confirm
@@ -1479,6 +1659,7 @@ SOURCE_TESTS = {
         terminate_run
     """),
     "scripts/render_completion_summary.py": _tests("""
+        architect_review_runtime
         actor_presentation
         check_target_specificity
         completion_relay
@@ -1568,6 +1749,7 @@ SOURCE_TESTS = {
         validate_intermediate
     """),
     "scripts/team_questions.py": _tests("""
+        architect_review_runtime
         analysis_version_upgrade
         build_threat_model_yaml
         check_target_specificity
@@ -1621,8 +1803,12 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
         validate_evidence_lines
+        architect_review
+        architect_review_runtime
+        build_architect_context
     """),
     "scripts/orchestration_controller.py": _tests("""
+        architect_review_runtime
         agent_config_checks
         agent_logger_cov
         auto_emitter_pass
@@ -1720,6 +1906,11 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "agents/appsec-architecture-analyst.md": _tests("""
+        agent_logger
+        context_prompt_budgets
+        hook_payload_contract
+        prompt_token_bounds
+        schema_drift
         agent_definitions
         agent_doc_shell_snippets
         check_target_specificity
@@ -1739,6 +1930,7 @@ SOURCE_TESTS = {
         topology_workloads
     """),
     "schemas/fragments/components.schema.json": _tests("""
+        agent_definitions
         build_threat_model_yaml
         build_trust_boundary_assessment_input
         check_target_specificity
@@ -1871,6 +2063,10 @@ SOURCE_TESTS = {
         schemas
         team_questions
         validate_intermediate
+        architect_review_worker
+        build_architect_context
+        architect_review_runtime
+        calibrate_architect_review
     """),
     "scripts/_severity_rollup.py": _tests("""
         actor_presentation
@@ -1921,8 +2117,12 @@ SOURCE_TESTS = {
         threat_fixture
         validate_fragment
         walkthrough_renderer
+        architect_review
+        architect_review_runtime
     """),
     "scripts/compose_threat_model.py": _tests("""
+        incremental_two_run_e2e
+        architect_review_runtime
         actor_presentation
         analysis_version_upgrade
         build_threat_model_yaml
@@ -1971,6 +2171,7 @@ SOURCE_TESTS = {
         threat_fixture
     """),
     "scripts/runtime_cleanup.py": _tests("""
+        architect_review_runtime
         check_target_specificity
         context_routing
         gate_preconditions
@@ -1997,6 +2198,7 @@ SOURCE_TESTS = {
         summarize_threat_model
     """),
     "scripts/triage_compute_ranking.py": _tests("""
+        architect_review_runtime
         actor_presentation
         build_threat_model_yaml
         check_target_specificity
@@ -2012,6 +2214,7 @@ SOURCE_TESTS = {
         triage_validate_ratings
     """),
     "scripts/validate_fragment.py": _tests("""
+        architect_review_runtime
         actor_presentation
         build_threat_model_yaml
         build_trust_boundary_assessment_input
@@ -2136,6 +2339,8 @@ SOURCE_TESTS = {
         weakness_signals
     """),
     "scripts/_atomic_io.py": _tests("""
+        topology_workloads
+        architect_review_runtime
         actor_attribution
         actor_presentation
         agent_logger_branches
@@ -2222,6 +2427,7 @@ SOURCE_TESTS = {
         validate_recon_summary
         validate_threat_modeling_context
         weakness_signals
+        calibrate_architect_review
     """),
     "scripts/_boundary_adjacency.py": _tests("""
         check_target_specificity
@@ -2300,6 +2506,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/_lib_manifest.py": _tests("""
+        iac_resource_checks
         check_target_specificity
         compose_threat_model_cov2
         deployment_inventory
@@ -2319,6 +2526,9 @@ SOURCE_TESTS = {
         threat_fixture
     """),
     "scripts/_manifest_readers.py": _tests("""
+        build_threat_model_yaml
+        incremental_two_run_e2e
+        architect_review_runtime
         actor_presentation
         analysis_version_upgrade
         check_target_specificity
@@ -2365,6 +2575,7 @@ SOURCE_TESTS = {
         validate_ms_compactness
     """),
     "scripts/_path_guard.py": _tests("""
+        architect_review_runtime
         actor_presentation
         aggregate_run_issues
         apply_editorial_plan
@@ -2453,6 +2664,7 @@ SOURCE_TESTS = {
         threat_fixture
     """),
     "scripts/_shared_sources.py": _tests("""
+        config_iac_scanner
         abuse_case_verdicts
         actor_attribution
         actor_presentation
@@ -2540,6 +2752,11 @@ SOURCE_TESTS = {
         validate_intermediate
         wait_stride_progress
         weakness_signals
+        architect_review
+        architect_review_runtime
+        architect_review_worker
+        build_architect_context
+        calibrate_architect_review
     """),
     "scripts/_slug.py": _tests("""
         analysis_version_upgrade
@@ -2682,6 +2899,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/agent_config_checks.py": _tests("""
+        iac_resource_checks
         agent_config_checks
         check_target_specificity
         config_iac_scanner
@@ -2999,6 +3217,9 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/build_architecture_analysis_context.py": _tests("""
+        build_trust_boundary_assessment_input
+        finalize_component_inventory
+        fragment_invariant_parity
         build_architecture_analysis_context
         check_target_specificity
         gate_preconditions
@@ -3048,6 +3269,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/build_stride_dispatch_manifest.py": _tests("""
+        topology_workloads
         build_architecture_analysis_context
         build_trust_boundary_assessment_input
         check_target_specificity
@@ -3097,6 +3319,11 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "schemas/trust-boundary-assessment-input.schema.json": _tests("""
+        figure1_security
+        fragment_invariant_parity
+        orchestration_controller
+        schema_integrity
+        validate_fragment
         build_trust_boundary_assessment_input
         check_target_specificity
         prepare_trust_boundary_context
@@ -3488,6 +3715,9 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
         validate_evidence_lines
+        architect_review
+        architect_review_runtime
+        build_architect_context
     """),
     "scripts/emit_config_scan_mitigations.py": _tests("""
         agent_config_checks
@@ -3511,6 +3741,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/emit_finding_fix_mitigations.py": _tests("""
+        architect_review
         auto_emitter_pass
         check_target_specificity
         critical_findings_sync
@@ -3562,6 +3793,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/emit_review_mitigations.py": _tests("""
+        architect_review
         auto_emitter_pass
         check_target_specificity
         critical_findings_sync
@@ -3704,6 +3936,8 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/event_log.py": _tests("""
+        render_completion_summary
+        architect_review_runtime
         acquire_lock_heartbeat
         active_tool_calls
         actor_attribution
@@ -3809,6 +4043,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/figure1_security.py": _tests("""
+        architect_review_runtime
         actor_presentation
         analysis_version_upgrade
         build_threat_model_yaml
@@ -3916,6 +4151,8 @@ SOURCE_TESTS = {
         requirements_verification
         run_path_guard
         stride_outputs
+        architect_review
+        architect_review_runtime
     """),
     "scripts/install_baseline.py": _tests("""
         baseline_modular
@@ -4010,6 +4247,9 @@ SOURCE_TESTS = {
         threat_fixture
         validate_evidence_lines
         weakness_signals
+        architect_review
+        architect_review_runtime
+        build_architect_context
     """),
     "scripts/model_lineup.py": _tests("""
         check_target_specificity
@@ -4088,6 +4328,8 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/phase_budgets.py": _tests("""
+        topology_workloads
+        architect_review_runtime
         acquire_lock_heartbeat
         active_tool_calls
         actor_attribution
@@ -4202,6 +4444,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/prepare_trust_boundary_context.py": _tests("""
+        architect_review_runtime
         actor_attribution
         actor_presentation
         build_threat_model_yaml
@@ -4334,6 +4577,8 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/reclassify_components.py": _tests("""
+        topology_workloads
+        architect_review_runtime
         actor_attribution
         auto_emitter_pass
         build_architecture_analysis_context
@@ -4440,6 +4685,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/render_pentest_tasks.py": _tests("""
+        render_completion_summary
         authnz_review_skill
         check_target_specificity
         e2e_pipeline
@@ -4495,6 +4741,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/repo_profile.py": _tests("""
+        topology_workloads
         build_trust_boundary_assessment_input
         check_target_specificity
         finalize_component_inventory
@@ -4559,6 +4806,7 @@ SOURCE_TESTS = {
         threat_fixture
     """),
     "scripts/requirements_trace.py": _tests("""
+        architect_review_runtime
         actor_presentation
         analysis_version_upgrade
         build_threat_model_yaml
@@ -4633,6 +4881,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/resolve_config.py": _tests("""
+        architect_review_runtime
         agent_config_checks
         agent_logger_cov
         check_target_specificity
@@ -4832,6 +5081,10 @@ SOURCE_TESTS = {
         secret_scan
         stride_outputs
         threat_fixture
+        architect_review_worker
+        build_architect_context
+        architect_review_runtime
+        calibrate_architect_review
     """),
     "scripts/section_integrity.py": _tests("""
         check_target_specificity
@@ -4948,6 +5201,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/stamp_threat_model.py": _tests("""
+        export_threat_model_skill
         check_target_specificity
         gate_preconditions
         orchestration_controller
@@ -5147,6 +5401,7 @@ SOURCE_TESTS = {
         validate_recon_summary
     """),
     "scripts/validate_threat_modeling_context.py": _tests("""
+        architect_review_runtime
         agent_config_checks
         agent_logger_cov
         build_threat_modeling_context
@@ -5196,6 +5451,7 @@ SOURCE_TESTS = {
         wait_abuse_progress
     """),
     "scripts/wait_agent_calls.py": _tests("""
+        wait_abuse_progress
         agent_lifecycle
         check_target_specificity
         gate_preconditions

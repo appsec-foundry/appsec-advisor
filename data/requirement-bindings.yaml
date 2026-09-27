@@ -244,6 +244,8 @@ requirements:
 
   REQ-FLW-003:
     applies_to:
+      - scripts/architect_review.py
+      - scripts/architect_review_runtime.py
       - scripts/figure2_svg.py
       - scripts/enrichment_pass.py
       - scripts/auto_emitter_pass.sh
@@ -274,6 +276,7 @@ requirements:
       - docs/internal/contracts/schema-invariants.md
     coverage: partial
     guards:
+      - tests/test_architect_review_runtime.py::test_tampered_transaction_and_foreign_run_are_rejected
       - tests/test_compose_threat_model.py::TestSecurityPostureV2::test_v2_invalid_figure_data_stops_publication
       - tests/test_enrichment_pass.py::test_continuation_never_heals_an_unverified_receipt
       - tests/test_enrichment_pass.py::test_receipt_detects_changed_or_rebuilt_model
@@ -377,7 +380,8 @@ requirements:
       - tests/test_triage_validate_ratings.py::test_step5b_flags_low_impact_where_context_declares_assets
       - tests/test_triage_validate_ratings.py::test_step5b_explicit_no_harm_does_not_request_higher_impact
       - tests/test_triage_compute_ranking.py::test_declared_no_harm_does_not_promote_findings_or_mitigations
-      - tests/test_build_stride_evidence_bundles.py::test_declared_impact_status_reaches_validated_component_context
+      - tests/test_build_stride_evidence_bundles.py::test_declared_material_impact_reaches_validated_component_context
+      - tests/test_build_stride_evidence_bundles.py::test_a_no_harm_declaration_is_withheld_from_the_stride_rating
       - tests/test_build_threat_model_yaml.py::test_no_harm_context_is_applied_without_a_priority_basis
       - tests/test_validate_intermediate.py::test_no_harm_context_counts_as_applied_without_priority_basis
       - tests/test_compose_threat_model.py::test_verdict_discloses_no_harm_without_hiding_critical_findings
@@ -429,6 +433,8 @@ requirements:
 
   REQ-RPT-001:
     applies_to:
+      - scripts/architect_review.py
+      - scripts/architect_review_runtime.py
       - scripts/_severity_policy.py
       - scripts/match_abuse_cases.py
       - scripts/render_abuse_cases.py
@@ -448,6 +454,7 @@ requirements:
       - docs/internal/contracts/schema-invariants.md
     coverage: direct
     guards:
+      - tests/test_architect_review_runtime.py::test_corrections_survive_grouping_hydration_and_repeat_rebuild
       - tests/test_severity_policy.py::test_policy_risk_reaches_register_summary_and_sarif
       - tests/test_triage_compute_ranking.py::test_policy_cap_wins_over_critical_input
       - tests/test_triage_compute_ranking.py::test_unrelated_pattern_matches_do_not_elevate
@@ -675,6 +682,8 @@ requirements:
 
   REQ-RPT-005:
     applies_to:
+      - scripts/architect_review.py
+      - scripts/architect_review_runtime.py
       - scripts/validate_mitigation_quality.py
       - scripts/emit_finding_fix_mitigations.py
       - scripts/hydrate_mitigation_details.py
@@ -684,6 +693,7 @@ requirements:
       - docs/threat-modeler.md
     coverage: direct
     guards:
+      - tests/test_architect_review_runtime.py::test_final_gate_rejects_lost_corrections_and_clears_old_success
       - tests/test_validate_mitigation_quality.py::test_urgent_fix_requires_steps_and_verification
       - tests/test_validate_mitigation_quality.py::test_urgent_code_example_needs_a_source_location
       - tests/test_emit_finding_fix_mitigations.py::test_remediation_string_fallback_and_priority_rules

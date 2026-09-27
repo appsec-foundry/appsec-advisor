@@ -123,16 +123,15 @@ def test_missing_stage3_receipt_is_blocking(run):
     assert gate.main(_argv("prepare", run)) == 2
 
 
-def test_runtime_uses_packet_dispatch_and_comparison_before_release():
+def test_runtime_replaces_editorial_dispatch_with_correction_preservation_gate():
     root = Path(__file__).resolve().parents[1]
     runtime = (root / "skills/create-threat-model/SKILL-thin-stage4.md").read_text()
-    assert "at most three concurrent calls" in runtime
-    assert "Do not retry a failed packet" in runtime
-    assert runtime.index('editorial_gate.py" prepare') < runtime.index("## 2.")
+    assert "editorial_gate.py" not in runtime
+    assert "apply_editorial_plan.py" not in runtime
     assert (
-        runtime.index('editorial_gate.py" check')
+        runtime.index("validate_intermediate.py")
         < runtime.index("unmasked_secrets")
-        < runtime.index('editorial_gate.py" close')
+        < runtime.index("architect_review_runtime.py")
     )
 
 

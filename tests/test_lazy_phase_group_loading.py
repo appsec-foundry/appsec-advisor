@@ -92,35 +92,16 @@ def test_completion_owns_cross_path_release_gates_in_order():
     assert "runtime_cleanup.py" in completion
 
 
-def test_stage4_is_one_editorial_pass_with_no_repair_loop():
-    """Stage 4 judges nothing, so it has nothing to repair.
-
-    It used to review the report, classify defects and hand them back through
-    Stage 3 under MAX_REPAIR_ITERATIONS. That loop is gone: the stage dispatches
-    once, a deterministic applier performs every write, and a rejected result is
-    restored rather than re-reviewed.
-    """
+def test_stage4_preserves_semantic_corrections_without_a_second_review():
     stage4 = _read(SKILL_DIR / "SKILL-thin-stage4.md")
-
     assert ".architect-status.json" in stage4
-    assert "runs **once**" in stage4
-    assert "Never dispatch it twice." in stage4
-    assert "at most three concurrent calls" in stage4
-    assert "Do not retry a failed packet." in stage4
-    assert "secret gate" not in stage4  # the tail is spelled out as commands now
-    assert "qa_checks.py" in stage4 and "unmasked_secrets" in stage4
-
-    # Between waves the console stays silent; progress notes are output too.
-    assert "printing nothing, not even wave notes" in stage4
-
-    # The removed loop stays removed.
-    assert "repair_required" not in stage4
+    assert "architect_review_runtime.py" in stage4
+    assert "Do not dispatch another review" in stage4
+    assert "apply_editorial_plan.py" not in stage4
+    assert "build_editorial_context.py" not in stage4
+    assert "unmasked_secrets" in stage4
+    assert "Every non-zero exit blocks completion" in stage4
     assert "MAX_REPAIR_ITERATIONS" not in stage4
-    assert "SKILL-thin-stage3.md" not in stage4
-
-    # A rejected pass is rolled back, not handed to a repair agent.
-    assert "check_editorial_diff.py restore" in stage4
-    assert "apply_editorial_plan.py" in stage4
 
 
 def test_removed_legacy_runtime_surfaces_are_absent():

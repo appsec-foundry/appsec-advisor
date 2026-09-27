@@ -81,3 +81,7 @@ The outer-session `Stop` hook and a controller `RUN_ABORTED` terminal gate remov
 first fail any running call and retire its budget counter and marker, so cleanup
 cannot erase an unterminated lifecycle silently. Nested Agent stops must not
 clear it while the parent run still owns the lock.
+
+## Durable architect review
+
+Successful cleanup preserves `.architect-review.json` because later YAML rebuilds and rerenders use it to preserve accepted corrections. Full and rebuild preflight remove it before new analysis. Transient packets remain inside the durable transaction; no additional dispatch directory survives cleanup. `.architect-status.json` is still transient and records final gate success separately from semantic coverage.

@@ -1,0 +1,194 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/architect-review-runtime.schema.json",
+  "title": "Durable architect review transaction",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "phase": {
+      "enum": [
+        "running",
+        "complete"
+      ]
+    },
+    "input": {
+      "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml"
+    },
+    "analyst_context": {
+      "$ref": "https://appsec-advisor/schemas/stride-analyst-context.schema.json"
+    },
+    "manifest": {
+      "$ref": "https://appsec-advisor/schemas/architect-review-context.schema.json"
+    },
+    "model": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9:._/-]{0,127}$"
+    },
+    "proposals": {
+      "type": "object",
+      "maxProperties": 128,
+      "patternProperties": {
+        "^packet-[0-9]{4,}$": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "jobs": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "properties": {
+          "packet_id": {
+            "type": "string",
+            "pattern": "^packet-[0-9]{4,}$"
+          },
+          "status": {
+            "enum": [
+              "completed",
+              "unavailable",
+              "unsupported_host",
+              "invalid_response",
+              "failed",
+              "deadline_exceeded",
+              "output_limit_exceeded",
+              "stage_exhausted",
+              "interrupted"
+            ]
+          },
+          "telemetry": {
+            "$ref": "https://appsec-advisor/schemas/architect-review-calibration.schema.json#/properties/comparisons/items/properties/jobs/items/properties/telemetry"
+          }
+        },
+        "required": [
+          "packet_id",
+          "status",
+          "telemetry"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "snapshot": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml"
+        }
+      ]
+    },
+    "application": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "https://appsec-advisor/schemas/architect-corrections.schema.json#/$defs/batch_report"
+        }
+      ]
+    },
+    "scoring_profile": {
+      "type": "object",
+      "properties": {
+        "skip_cvss_scoring": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "skip_cvss_scoring"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema_version",
+    "run_id",
+    "phase",
+    "input",
+    "analyst_context",
+    "manifest",
+    "model",
+    "proposals",
+    "jobs",
+    "snapshot",
+    "application",
+    "scoring_profile"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "phase": {
+            "const": "complete"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "snapshot": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml"
+          },
+          "application": {
+            "$ref": "https://appsec-advisor/schemas/architect-corrections.schema.json#/$defs/batch_report"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "status": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "const": "pass"
+        },
+        "review_kind": {
+          "const": "semantic"
+        },
+        "outcome": {
+          "enum": [
+            "reviewed",
+            "incomplete",
+            "not_run"
+          ]
+        },
+        "findings_recorded": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "assessment_corrected": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "remediation_corrected": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unresolved_or_unreviewed": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "status",
+        "review_kind",
+        "outcome",
+        "findings_recorded",
+        "assessment_corrected",
+        "remediation_corrected",
+        "unresolved_or_unreviewed"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

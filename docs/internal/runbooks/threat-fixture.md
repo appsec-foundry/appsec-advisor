@@ -98,7 +98,7 @@ Verified against `build_threat_model_yaml.py`:
 
 - `meta.generated` (`datetime.now`) → sentinel timestamp
 - `meta.git.*` (read from the scanned repo's git) → sentinels
-- `changelog[].date` / `current_sha` / `previous_date` (`date.today` / repo HEAD)
+- `changelog[].date` / `time_local` / `current_sha` / `previous_date` (`date.today` / `datetime.now` / repo HEAD)
 - `meta.project` falls back to `repo_root.name`; the work dir and no-repo placeholder use stable names so it does not drift
 - compose's fallback project name is `output_dir.parent.name`; the work directory uses a fixed parent to keep the title stable
 - scanner sidecars carry `generated_at` / `repo_root` → scrubbed

@@ -280,6 +280,7 @@ _FULL_INTERMEDIATE_NAMES = {
     ".threats-merged.json",
     ".triage-flags.json",
     ".architect-review.md",
+    ".architect-review.json",
     ".recon-summary.md",
     ".appsec-checkpoint",
     ".assessment-summary-emitted",
@@ -326,6 +327,7 @@ _REBUILD_NAMES = {
     "threat-model.html",
     "pentest-tasks.yaml",
     ".architect-review.md",
+    ".architect-review.json",
     ".threat-modeling-context.md",
     ".business-context-input.md",
     ".recon-summary.md",
@@ -2812,6 +2814,14 @@ def _enrich_and_gate_yaml(output_dir: Path, cfg: dict[str, Any], receipts: list[
         "assert_completeness.py",
         [str(output_dir), "--phase", "build", "--plugin-root", str(PLUGIN_ROOT)],
     )
+
+    from architect_review_runtime import verify_model
+
+    try:
+        if (output_dir / ".architect-review.json").exists():
+            verify_model(output_dir, yaml.safe_load((output_dir / "threat-model.yaml").read_text(encoding="utf-8")))
+    except (OSError, ValueError) as exc:
+        raise ControllerError("architect correction preservation gate failed") from exc
 
 
 def _document_fault(producer: str, message: str, errors: list[str] | None = None) -> ControllerError:
@@ -5742,6 +5752,20 @@ def _context_v2_after_evidence(output_dir: Path, cfg: dict[str, Any]) -> dict[st
         "validate_intermediate.py",
         ["threats_merged", str(output_dir / ".threats-merged.json")],
     )
+    # Review before any derived ranking, grouping or report is built.
+    from architect_review import ReviewError
+    from architect_review_runtime import run_review
+
+    try:
+        review = run_review(output_dir, cfg)
+    except (OSError, ValueError, ReviewError) as exc:
+        raise ControllerError("architect review transaction failed") from exc
+    if review is not None:
+        outcomes = review["application"]["outcomes"]
+        incomplete = sum(
+            row["status"] != "accepted" or "unresolved" in (row["assessment"], row["remediation"]) for row in outcomes
+        )
+        _append_event(output_dir, "ARCHITECT_REVIEW_COMPLETE", f"findings={len(outcomes)} incomplete={incomplete}")
     _run_script(
         "triage_validate_ratings.py",
         [str(output_dir), "--depth", str(cfg.get("assessment_depth") or "standard")],
@@ -7393,6 +7417,7 @@ def next_action(output_dir: Path) -> dict[str, Any]:
     report_inputs = [
         output_dir / "threat-model.md",
         output_dir / "threat-model.yaml",
+        output_dir / ".architect-review.json",
         *(item for item in (output_dir / ".fragments").glob("*") if item.is_file()),
     ]
 

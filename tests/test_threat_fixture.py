@@ -57,6 +57,15 @@ def test_scrub_tolerates_missing_optional_fields():
     assert out["meta"]["model"] == "sonnet"
 
 
+@pytest.mark.parametrize("before,after", [("11:59 CEST", "12:00 CEST"), ("23:59 UTC", "00:00 UTC")])
+def test_replay_ignores_only_volatile_changelog_clock(before, after):
+    first = {"changelog": [{"time_local": before, "threat_count": 2}], "threats": [{"risk": "High"}]}
+    later = {"changelog": [{"time_local": after, "threat_count": 2}], "threats": [{"risk": "High"}]}
+    assert tf.normalize_yaml_text(yaml.safe_dump(first)) == tf.normalize_yaml_text(yaml.safe_dump(later))
+    later["threats"][0]["risk"] = "Low"
+    assert tf.normalize_yaml_text(yaml.safe_dump(first)) != tf.normalize_yaml_text(yaml.safe_dump(later))
+
+
 def test_normalize_yaml_text_idempotent_and_deterministic():
     text = yaml.safe_dump(
         {

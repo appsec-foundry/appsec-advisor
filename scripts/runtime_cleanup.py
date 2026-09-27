@@ -293,6 +293,7 @@ NEVER = {
     ".component-inventory-finalization.json",
     ".data-flows.json",
     ".architect-review.md",
+    ".architect-review.json",
     ".requirements.yaml",
     ".appsec-cache",
     ".appsec-checkpoint",

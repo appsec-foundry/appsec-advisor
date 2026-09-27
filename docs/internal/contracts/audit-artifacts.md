@@ -23,6 +23,7 @@ Files that runtime cleanup MUST preserve. Deleting them breaks post-run audit, S
 | `.component-inventory-finalization.json` | Final component-ID set and endpoint-field fingerprint used by Stage 1b |
 | `.data-flows.json` | Validated architecture topology handed from Stage 1a to Stage 1b |
 | `.context-routing-plan.json`, `.context-routing-plan.receipt.json` | Human-labelled context-v2 delivery decisions, active bindings, and the exact-byte receipt for the plan |
+| `.architect-review.json` | Durable semantic-review transaction, packet coverage, proposals, accepted before/after values and bounded host telemetry; rebuild and final gates validate it against its schema and replay its application |
 | `.architect-review.md` | Advisory output of the former Stage-4 architect review. No stage writes it since the editorial pass replaced that role; a copy from an earlier run is still preserved rather than reaped |
 | `.agent-run.log` | Structured agent run log |
 | `.hook-events.log` | Hook timing/diagnostic events |

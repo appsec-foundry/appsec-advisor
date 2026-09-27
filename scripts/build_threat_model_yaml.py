@@ -3082,6 +3082,11 @@ def main() -> int:
     # set (incl. override splits/additions) and converges the threat links
     # before threat_ids/changelog derivation below.
     threats, mitigations = dedupe_mitigation_controls(threats, mitigations)
+    # Rebuilds cannot let synthesis overrides replace an accepted review fix.
+    from architect_review_runtime import project_model
+
+    reviewed = project_model(od, {"threats": threats, "mitigations": mitigations}, merged)
+    threats, mitigations = reviewed["threats"], reviewed["mitigations"]
     # Requirement and blueprint annotation runs on the final mitigation set, so
     # an override split or a control dedup cannot leave a survivor carrying a
     # merged partner's traceability.

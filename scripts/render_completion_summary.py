@@ -2125,6 +2125,18 @@ def _summary_architect(output_dir: Path, cfg: dict) -> str:
             return "status unreadable"
         if not isinstance(data, dict):
             return "status unreadable"
+        if data.get("review_kind") == "semantic":
+            from architect_review_runtime import validate_status
+
+            try:
+                validate_status(data)
+            except (OSError, ValueError):
+                return "status unreadable"
+            return (
+                f"{data['outcome'].replace('_', ' ')} — "
+                f"{data['assessment_corrected']} assessment(s), {data['remediation_corrected']} mitigation(s) corrected; "
+                f"{data['unresolved_or_unreviewed']}/{data['findings_recorded']} unresolved or unreviewed"
+            )
         outcome = str(data.get("outcome") or "")
         if outcome in _ARCHITECT_OUTCOME_WORDS:
             try:
