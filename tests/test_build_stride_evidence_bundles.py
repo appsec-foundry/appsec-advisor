@@ -1828,3 +1828,46 @@ def test_schema_slice_caps_track_the_code_constant():
     focus = schema["properties"]["path_routing"]["properties"]["focus_admission"]
     projected = focus["items"]["properties"]["projected_files"]
     assert projected["maxItems"] == bundles.MAX_SOURCE_SLICES
+
+
+def _severity_rows(levels, *, key="severity", prefix="row"):
+    return [
+        {key: level, "name": f"{prefix}-{index}"} if level else {"name": f"{prefix}-{index}"}
+        for index, level in enumerate(levels)
+    ]
+
+
+@pytest.mark.parametrize(
+    "levels",
+    [
+        ["Low", "Critical", "Medium", "High", "Info", None] * 12,
+        ["high", "CRITICAL", "informational", "medium"] * 20,
+    ],
+    ids=["mixed-case-titled", "mixed-case-variants"],
+)
+@pytest.mark.parametrize("key", ["severity", "risk", "_severity"])
+def test_class_cap_keeps_the_most_severe_rows(levels, key):
+    """Truncation must keep severity order, never content-hash order."""
+    values = _severity_rows(levels, key=key, prefix=key)
+    retained, stats = bundles._bounded_records("recon_signals", values)
+
+    assert stats["original"] == len(values) > bundles.MAX_CLASS_VALUES
+    kept = [bundles._severity_priority(json.loads(row["value"])) for row in retained]
+    dropped = sorted(bundles._severity_priority(value) for value in values)[bundles.MAX_CLASS_VALUES :]
+    assert kept == sorted(kept)
+    assert max(kept) <= min(dropped)
+
+
+def test_class_cap_is_stable_for_equal_severity_and_unranked_rows():
+    values = _severity_rows(["High"] * 40) + _severity_rows([None] * 5, prefix="plain") + ["bare string"]
+    first, _ = bundles._bounded_records("interfaces", values)
+    second, _ = bundles._bounded_records("interfaces", list(reversed(values)))
+    assert first == second
+    assert all(bundles._severity_priority(json.loads(row["value"])) == 1 for row in first)
+
+
+def test_rows_under_the_cap_are_all_retained():
+    values = _severity_rows(["Low", None, "Critical"])
+    retained, stats = bundles._bounded_records("controls", values)
+    assert stats["original"] == len(retained) == 3
+    assert bundles._severity_priority(json.loads(retained[0]["value"])) == 0

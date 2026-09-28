@@ -418,8 +418,26 @@ def _rows(value: Any) -> list[Any]:
     return [value]
 
 
+_SEVERITY_PRIORITY = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4, "informational": 4}
+_UNRANKED_SEVERITY = 5
+
+
+def _severity_priority(value: Any) -> int:
+    if isinstance(value, dict):
+        for key in ("severity", "risk", "_severity"):
+            level = value.get(key)
+            if isinstance(level, str) and level.strip().lower() in _SEVERITY_PRIORITY:
+                return _SEVERITY_PRIORITY[level.strip().lower()]
+    return _UNRANKED_SEVERITY
+
+
 def _bounded_records(source: str, values: list[Any]) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    records = sorted((_record(source, value) for value in values), key=lambda row: _canonical_bytes(row))
+    # The cap keeps the most severe rows; canonical bytes only break ties.
+    ranked = sorted(
+        ((_severity_priority(value), _record(source, value)) for value in values),
+        key=lambda pair: (pair[0], _canonical_bytes(pair[1])),
+    )
+    records = [record for _, record in ranked]
     retained = records[:MAX_CLASS_VALUES]
     return retained, {"original": len(records), "value_truncations": sum(row["truncated"] for row in retained)}
 
@@ -1217,11 +1235,10 @@ def _source_signals(
         for row in normalized
     }
     ordered = [keyed[key] for key in sorted(keyed)]
-    severity_rank = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Info": 4}
 
     def signal_rank(row: dict[str, Any]) -> tuple[int, str, int, str]:
         return (
-            severity_rank.get(row["_severity"], 5),
+            _severity_priority({"severity": row["_severity"]}),
             row["path"],
             row["start_line"],
             row["signal_kind"],
@@ -1482,7 +1499,7 @@ def _truncation_rows(
                     "retained_count": retained,
                     "omitted_count": original - retained,
                     "cap": MAX_CLASS_VALUES,
-                    "ordering_key": "source,canonical-json",
+                    "ordering_key": "severity,canonical-json",
                 }
             )
         value_truncations = stats[signal_class].get("value_truncations", 0)
