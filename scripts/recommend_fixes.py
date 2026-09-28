@@ -900,7 +900,7 @@ def _recommend_business_context_unmapped(issue: dict, output_dir: Path) -> dict:
         "actions": [
             {
                 "type": "manual_review",
-                "target": "docs/business-context.md",
+                "target": "docs/security/business-context.md",
                 "details": (
                     "Compare the wording with the component names in .components.json "
                     "and state the sensitive assets and compromise impact per service."

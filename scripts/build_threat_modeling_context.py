@@ -57,7 +57,7 @@ def _bounded_lines(path: Path | None, limit: int, *, tail: bool = False) -> str 
     if path is None:
         return None
     # A repository file is arbitrary input. Reading it whole and truncating
-    # afterwards makes the limit cosmetic: `docs/business-context.md` has no
+    # afterwards makes the limit cosmetic: `docs/security/business-context.md` has no
     # capture-time size cap when a human wrote it by hand, and the changelog and
     # SECURITY.md have none at all. Hold at most `limit` lines in memory.
     try:
@@ -388,21 +388,23 @@ def build(repo_root: Path, output_dir: Path, plugin_root: Path, *, skip_business
     external_status, external = _external_context(plugin_root, repo_id)
     # `--skip-context` is a decision about this run's inputs, not only about the
     # interactive question. Honouring it here is what makes the flag mean what
-    # it says: a repository that ships docs/business-context.md is analyzed
+    # it says: a repository that ships docs/security/business-context.md is analyzed
     # without it.
     business_path = None if skip_business_context else load_business_context.effective_source(repo_root, output_dir)
     business_source = (
         load_business_context.RUN_ONLY_NAME
         if business_path is not None and business_path.name == load_business_context.RUN_ONLY_NAME
+        else str(business_path.relative_to(repo_root))
+        if business_path
         else load_business_context.REPO_RELATIVE
     )
     business = _bounded_lines(business_path, 200) or (
         "Business context was skipped for this run (--skip-context)."
         if skip_business_context
-        else "docs/business-context.md not present in this repository."
+        else "docs/security/business-context.md not present in this repository."
     )
     # `load_business_context` refuses a captured source that carries a credential,
-    # but a hand-written docs/business-context.md never passes through it. This
+    # but a hand-written docs/security/business-context.md never passes through it. This
     # artifact is on the cleanup NEVER list, so anything copied here stays in the
     # output directory for good and travels with it when --output points outside
     # the repository. Leave the block out rather than duplicate the secret.

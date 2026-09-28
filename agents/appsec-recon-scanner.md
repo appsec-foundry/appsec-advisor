@@ -99,7 +99,7 @@ When `INPUT_ARTIFACTS` includes `.business-context-preview.json`, reuse its boun
 Read the following files if they exist (use Read, skip missing files silently):
 - `README.md`
 - `CLAUDE.md`
-- Business context only when `SKIP_BUSINESS_CONTEXT` is false: `$OUTPUT_DIR/.business-context-input.md` if present, otherwise `docs/business-context.md`.
+- Business context only when `SKIP_BUSINESS_CONTEXT` is false: `$OUTPUT_DIR/.business-context-input.md` if present, otherwise `docs/security/business-context.md`, falling back to `docs/business-context.md` only when the new path is absent.
 - `SECURITY.md`
 
 Also Glob for any architecture docs: `docs/**/*.md`, `docs/**/*.adoc` (read up to 3 if found).

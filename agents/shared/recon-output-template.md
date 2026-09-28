@@ -19,7 +19,7 @@ The agent fills in every `<placeholder>` and writes the resulting Markdown verba
 
 <2-4 sentence summary of what this project is, derived from README and docs>
 
-**Business context:** <from docs/business-context.md if found, otherwise "not available">
+**Business context:** <from the effective run-only, preferred repository, or legacy business context if found, otherwise "not available">
 **Compliance scope:** <if mentioned in any doc, otherwise "not specified">
 
 ## 2. Tech Stack

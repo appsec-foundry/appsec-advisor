@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Capture business context from a URL or a file into the repository's context file.
 
-The analysis reads business context from ``docs/business-context.md`` (or, for a
+The analysis reads business context from ``docs/security/business-context.md`` (or, for a
 run the user chose not to persist, from ``.business-context-input.md`` in the
 output directory). This script is the only writer of both: it validates the
 source, rejects credentials, and writes the result with a provenance header.
@@ -37,7 +37,8 @@ import secret_scan
 from _atomic_io import atomic_write_text
 from _url_guard import validate_target_url, validated_opener
 
-REPO_RELATIVE = "docs/business-context.md"
+REPO_RELATIVE = "docs/security/business-context.md"
+LEGACY_REPO_RELATIVE = "docs/business-context.md"
 RUN_ONLY_NAME = ".business-context-input.md"
 MAX_BYTES = 65_536
 READ_LINE_LIMIT = 200
@@ -171,6 +172,20 @@ def capture(
     }
 
 
+def repository_source(repo_root: Path) -> Path | None:
+    """Select stored context, falling back only when the preferred path is absent."""
+    repo_file = repo_root / REPO_RELATIVE
+    if not repo_file.exists() and not repo_file.is_symlink():
+        repo_file = repo_root / LEGACY_REPO_RELATIVE
+    if repo_file.is_symlink() or not repo_file.is_file():
+        return None
+    try:
+        repo_file.resolve(strict=True).relative_to(repo_root.resolve())
+    except (OSError, ValueError):
+        return None
+    return repo_file
+
+
 def effective_source(repo_root: Path, output_dir: Path) -> Path | None:
     """Return the file the analysis reads business context from, if any.
 
@@ -180,14 +195,7 @@ def effective_source(repo_root: Path, output_dir: Path) -> Path | None:
     run_only = output_dir / RUN_ONLY_NAME
     if run_only.is_file():
         return run_only
-    repo_file = repo_root / REPO_RELATIVE
-    if repo_file.is_symlink() or not repo_file.is_file():
-        return None
-    try:
-        repo_file.resolve(strict=True).relative_to(repo_root.resolve())
-    except (OSError, ValueError):
-        return None
-    return repo_file
+    return repository_source(repo_root)
 
 
 def context_digest(repo_root: Path, output_dir: Path) -> str | None:

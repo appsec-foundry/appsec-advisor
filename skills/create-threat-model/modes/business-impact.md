@@ -24,4 +24,4 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
   --context-answer <decision>
 ```
 
-The controller validates answers, captures them for this analysis, and saves them in `docs/business-context.md` alongside existing repository context. Explicit `--context` imports remain run-only. Later analyses reuse saved answers and omit answered topics. On rejection, print the reason and stop; never discard an answer silently or continue as if accepted. Return the successful action to the full runtime. Remaining unanswered questions may appear in the report.
+The controller validates answers, captures them for this analysis, and saves them in `docs/security/business-context.md` alongside existing repository context. Explicit `--context` imports remain run-only. Later analyses reuse saved answers and omit answered topics. On rejection, print the reason and stop; never discard an answer silently or continue as if accepted. Return the successful action to the full runtime. Remaining unanswered questions may appear in the report.

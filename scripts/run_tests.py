@@ -1730,6 +1730,7 @@ SOURCE_TESTS = {
         version_status
     """),
     "scripts/load_business_context.py": _tests("""
+        aggregate_run_issues
         build_threat_model_yaml
         build_threat_modeling_context
         check_target_specificity
@@ -1809,7 +1810,6 @@ SOURCE_TESTS = {
     """),
     "scripts/orchestration_controller.py": _tests("""
         architect_review_runtime
-        agent_config_checks
         agent_logger_cov
         auto_emitter_pass
         check_target_specificity
@@ -1837,8 +1837,8 @@ SOURCE_TESTS = {
         run_ownership
         run_path_guard
         runtime_doc_cli_contract
+        runtime_cleanup
         source_auth_scanner
-        stage1_context_edge_inventory
         stage1_coverage_recovery_2026_07_20
         stride_outputs
         telemetry_consistency
@@ -4382,6 +4382,7 @@ SOURCE_TESTS = {
         terminate_run
         threat_model_health
         watch_run
+        runtime_cleanup
     """),
     "scripts/phase_elapsed.py": _tests("""
         check_target_specificity
@@ -4674,6 +4675,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
         threat_fixture
+        runtime_cleanup
     """),
     "scripts/render_editorial_receipt.py": _tests("""
         check_target_specificity
@@ -5402,7 +5404,6 @@ SOURCE_TESTS = {
     """),
     "scripts/validate_threat_modeling_context.py": _tests("""
         architect_review_runtime
-        agent_config_checks
         agent_logger_cov
         build_threat_modeling_context
         check_target_specificity
@@ -5429,6 +5430,7 @@ SOURCE_TESTS = {
         stride_outputs
         telemetry_consistency
         validate_threat_modeling_context
+        runtime_cleanup
     """),
     "scripts/verify_abuse_cases.py": _tests("""
         check_target_specificity

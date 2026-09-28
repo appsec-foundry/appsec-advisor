@@ -17,7 +17,7 @@ from _url_guard import ValidationResult  # noqa: E402
 
 def _repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
-    (repo / "docs").mkdir(parents=True)
+    (repo / "docs" / "security").mkdir(parents=True)
     return repo
 
 
@@ -67,6 +67,52 @@ def test_persists_captured_context_with_provenance(tmp_path):
     assert "Payments are revenue critical." in text
     assert receipt["persisted"] is True
     assert receipt["source_kind"] == "file"
+    assert target == repo / "docs/security/business-context.md"
+    assert not (repo / "docs/business-context.md").exists()
+
+
+@pytest.mark.parametrize("repository_name", ["appointment-board", "parcel-console"])
+def test_repository_context_precedence_and_run_override(tmp_path, repository_name):
+    repo = tmp_path / repository_name
+    (repo / "docs/security").mkdir(parents=True)
+    output = _output(tmp_path)
+    legacy = repo / "docs/business-context.md"
+    preferred = repo / "docs/security/business-context.md"
+    legacy.write_text("Earlier team declaration.\n")
+    assert lbc.effective_source(repo, output) == legacy
+    preferred.write_text("Current team declaration.\n")
+    assert lbc.effective_source(repo, output) == preferred
+    run_only = output / lbc.RUN_ONLY_NAME
+    run_only.write_text("One assessment only.\n")
+    assert lbc.effective_source(repo, output) == run_only
+    assert lbc.repository_source(repo) == preferred
+    assert legacy.read_text() == "Earlier team declaration.\n"
+
+
+@pytest.mark.parametrize("kind", ["symlink", "dangling_symlink", "directory"])
+def test_invalid_preferred_context_does_not_reactivate_legacy(tmp_path, kind):
+    repo, output = _repo(tmp_path), _output(tmp_path)
+    (repo / lbc.LEGACY_REPO_RELATIVE).write_text("Stale declaration.\n")
+    preferred = repo / lbc.REPO_RELATIVE
+    if kind == "directory":
+        preferred.mkdir()
+    else:
+        outside = tmp_path / "outside.md"
+        if kind == "symlink":
+            outside.write_text("External declaration.\n")
+        preferred.symlink_to(outside)
+    assert lbc.effective_source(repo, output) is None
+
+
+def test_rejects_write_through_security_directory_outside_repository(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "docs").mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (repo / "docs/security").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(lbc.BusinessContextError, match="outside the repository"):
+        lbc.capture(repo_root=repo, output_dir=_output(tmp_path), source=str(_source(tmp_path)), persist=True)
+    assert not (outside / "business-context.md").exists()
 
 
 def test_refuses_to_overwrite_an_existing_context_file_without_replace(tmp_path):

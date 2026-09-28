@@ -98,7 +98,7 @@ Options:
   --no-requirements          Skip requirements even when enabled in config
   --context <src>            Business context for this run: an http(s):// URL or
                              a file path. Optional; applies to this run only —
-                             persist it by committing docs/business-context.md
+                             persist it by committing docs/security/business-context.md
   --dry-run                  Unsupported by the compact runtime; exits before dispatch
   --incremental              Unsupported by the compact runtime; exits before dispatch
   --full                     Force full scan even when prior output exists

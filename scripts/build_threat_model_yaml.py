@@ -1008,10 +1008,10 @@ def _business_context_source(skill_cfg: dict, repo_root: Path) -> str | None:
     path = load_business_context.effective_source(repo_root, Path(output_dir))
     if path is None:
         return None
-    # Same two labels the context artifact fences the block with.
+    # Preserve the selected repository path, including the legacy fallback.
     if path.name == load_business_context.RUN_ONLY_NAME:
         return load_business_context.RUN_ONLY_NAME
-    return load_business_context.REPO_RELATIVE
+    return str(path.relative_to(repo_root))
 
 
 _BUSINESS_CONTEXT_TRACE_FIELDS = (

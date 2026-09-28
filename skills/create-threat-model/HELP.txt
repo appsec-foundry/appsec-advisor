@@ -150,7 +150,7 @@ TARGET & SCAN
                                Applies to a new or rebuilt analysis; refused
                                on a run that cannot read it
   --skip-context               Run without business context: no question, and
-                               docs/business-context.md is left unread
+                               docs/security/business-context.md is left unread
 
 MODES
   --full                       Re-analyze everything; preserve changelog history

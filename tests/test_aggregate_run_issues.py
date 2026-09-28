@@ -1634,6 +1634,16 @@ def test_declared_context_mapping_to_no_component_is_surfaced(tmp_path):
     assert "components_with_business_context=0 of 2" in issues[0]["evidence"]["raw_event"]
 
 
+def test_preferred_business_context_mapping_to_no_component_is_surfaced(tmp_path):
+    out = _context_run(tmp_path, {"api": {}})
+    repo = tmp_path / "repo"
+    (repo / "docs/security").mkdir()
+    (repo / "docs/business-context.md").rename(repo / "docs/security/business-context.md")
+    issues = agg._extract_business_context_reach(out)
+    assert len(issues) == 1
+    assert issues[0]["category"] == "business_context_unmapped"
+
+
 def test_mapped_business_context_produces_no_issue(tmp_path):
     out = _context_run(tmp_path, {"api": {"business_context": {"sensitive_assets": ["funds"]}}})
 

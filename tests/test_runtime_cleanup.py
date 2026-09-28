@@ -29,6 +29,24 @@ import runtime_cleanup as rc
 PLUGIN_ROOT = Path(__file__).parent.parent
 
 
+def test_cleanup_preserves_persistent_business_context(tmp_path):
+    import orchestration_controller
+
+    output = tmp_path / "docs/security"
+    output.mkdir(parents=True)
+    context = output / "business-context.md"
+    context.write_text("Confirmed project purpose.\n")
+    for cleanup in (orchestration_controller._cleanup_full, orchestration_controller._cleanup_rebuild):
+        cleanup(output)
+        assert context.read_text() == "Confirmed project purpose.\n"
+    (output / "threat-model.md").write_text("Report\n")
+    (output / ".business-context-input.md").write_text("Temporary context\n")
+    result = rc.run_cleanup(output, "post-qa", False, True)
+    assert not result["skipped"]
+    assert not (output / ".business-context-input.md").exists()
+    assert context.read_text() == "Confirmed project purpose.\n"
+
+
 def test_completed_cleanup_preserves_both_architecture_diagrams(tmp_path):
     for name in ["threat-model.md", "threat-model.figure1.svg", "threat-model.figure1-detail.svg"]:
         (tmp_path / name).write_text("generated report artifact")

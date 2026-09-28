@@ -413,6 +413,7 @@ requirements:
   REQ-BIZ-005:
     applies_to:
       - scripts/business_context_preview.py
+      - scripts/load_business_context.py
       - scripts/orchestration_controller.py
       - schemas/business-context-preview.schema.json
       - skills/create-threat-model/SKILL-full-runtime.md
@@ -428,6 +429,9 @@ requirements:
       - tests/test_orchestration_controller.py::test_early_context_blocks_scanners_until_answers_reach_context
       - tests/test_orchestration_controller.py::test_early_context_persists_answers_without_persisting_run_only_import
       - tests/test_orchestration_controller.py::test_early_context_rejects_unsafe_persistence_before_writes
+      - tests/test_load_business_context.py::test_repository_context_precedence_and_run_override
+      - tests/test_load_business_context.py::test_invalid_preferred_context_does_not_reactivate_legacy
+      - tests/test_runtime_cleanup.py::test_cleanup_preserves_persistent_business_context
       - tests/test_business_context_preview.py::test_large_repository_preview_stays_bounded
       - tests/test_lazy_phase_group_loading.py::test_business_context_reaches_the_default_full_runtime
 

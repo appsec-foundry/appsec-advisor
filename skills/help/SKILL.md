@@ -182,7 +182,7 @@ A prompt hook that adds matching guidance, and your requirements when a catalog 
   - `threat-model.yaml` — the model every command reads
   - `threat-model-changelog.md` — what changed between runs
 - Read when present; none of them can suppress a finding the code supports
-  - `docs/business-context.md` — critical flows, sensitive data, scope
+  - `docs/security/business-context.md` — critical flows, sensitive data, scope
   - `docs/known-threats.yaml` — prior findings, re-checked each run
   - `.appsec/trust-boundaries.yaml` — deployment and tenancy intent
 

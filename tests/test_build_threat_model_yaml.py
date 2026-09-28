@@ -591,9 +591,11 @@ def test_build_meta_records_which_file_the_context_digest_came_from(tmp_path):
     assert m["business_context_sha256"]
 
 
-def test_build_meta_records_the_repository_file_as_its_own_source(tmp_path):
+@pytest.mark.parametrize("relative", ["docs/business-context.md", "docs/security/business-context.md"])
+def test_build_meta_records_the_repository_file_as_its_own_source(tmp_path, relative):
     repo, output = _business_meta(tmp_path)
-    (repo / "docs" / "business-context.md").write_text("Stored context.\n", encoding="utf-8")
+    (repo / relative).parent.mkdir(parents=True, exist_ok=True)
+    (repo / relative).write_text("Stored context.\n", encoding="utf-8")
 
     m = b.build_meta(
         skill_cfg={"output_dir": str(output)},
@@ -604,7 +606,7 @@ def test_build_meta_records_the_repository_file_as_its_own_source(tmp_path):
         prior_yaml=None,
     )
 
-    assert m["business_context_source"] == "docs/business-context.md"
+    assert m["business_context_source"] == relative
 
 
 def test_build_meta_leaves_the_context_source_empty_without_context(tmp_path):

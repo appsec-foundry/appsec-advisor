@@ -252,7 +252,7 @@ Highlights from the 0.6.0 beta releases.
 
 ### What's new in 0.6.0-beta.4
 
-- Interactive runs propose the application's use case and its worst plausible business impact for confirmation, and save the answers in `docs/business-context.md` for later analyses. The answers keep business-critical assets in scope and inform finding priority.
+- Interactive runs propose the application's use case and its worst plausible business impact for confirmation, and save the answers in `docs/security/business-context.md` for later analyses. The answers keep business-critical assets in scope and inform finding priority.
 
   ![Use case question for OWASP Juice Shop](docs/images/business-context-use-case.png)
 

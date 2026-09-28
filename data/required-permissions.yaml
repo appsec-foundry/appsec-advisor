@@ -71,7 +71,7 @@ required:
     reason: "agents and deterministic resolvers read scanned-repository evidence, including external entity roles, sensitive-data handling, asset locations, and optional data-only inputs such as .appsec/trust-boundaries.yaml"
     category: file
 
-  - entry: "Write(${REPO_ROOT}/docs/business-context.md)"
+  - entry: "Write(${REPO_ROOT}/docs/security/business-context.md)"
     reason: "complete-preflight validates and saves substantive early-dialog answers alongside existing repository business context for later analyses; explicit --context imports remain run-only"
     category: file
 

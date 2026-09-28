@@ -52,9 +52,7 @@ Audit artifacts (`docs/internal/contracts/audit-artifacts.md`) and incremental a
 .receipt-verification.json
 ```
 
-`.business-context-input.md` is business context the user supplied for one run
-without persisting it to `docs/business-context.md`. It is cleaned like any other
-run input so it cannot shape a later scan unnoticed.
+`.business-context-input.md` is business context the user supplied for one run without persisting it to `docs/security/business-context.md`. It is cleaned like any other run input so it cannot shape a later scan unnoticed. Persistent `business-context.md` is never a run-cleanup target, including when the output directory is `docs/security/`.
 
 `.pending-dispatch.json` and `.receipt-verification.json` record which dispatch
 is waiting for its receipts to be re-hashed and which ones were. Both belong to

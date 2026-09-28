@@ -6863,8 +6863,11 @@ def test_early_context_blocks_scanners_until_answers_reach_context(tmp_path, mon
     assert answer.strip() in context
     assert f"Business purpose: handles {asset}." in context
     assert f"Business purpose: handles {asset}.\n" in saved.read_text()
-    assert answer.strip() in saved.read_text()
-    assert load_business_context.effective_source(repo, out) == saved
+    assert answer.strip() not in saved.read_text()
+    preferred = repo / "docs/security/business-context.md"
+    assert answer.strip() in preferred.read_text()
+    assert f"Business purpose: handles {asset}." in preferred.read_text()
+    assert load_business_context.effective_source(repo, out) == preferred
     assert not (out / business_context_preview.RAW_NAME).exists()
 
     # Exercise deterministic consumers of the semantic analyst's mapping, not
@@ -6920,7 +6923,7 @@ def test_early_context_blocks_scanners_until_answers_reach_context(tmp_path, mon
     next_out.mkdir()
     next_context = build_threat_modeling_context.build(repo, next_out, plugin).read_text()
     assert answer.strip() in next_context
-    packet = business_context_preview.build(repo, context_path=saved)
+    packet = business_context_preview.build(repo, context_path=load_business_context.effective_source(repo, next_out))
     assert answer.strip() in packet["existing_context"]
 
 
@@ -6996,10 +6999,10 @@ def test_early_context_skipping_preserves_supplied_source(tmp_path, monkeypatch,
     )
     assert source.read_bytes() == original
     assert not (out / ".business-context-raw.md").exists()
-    assert not (Path(cfg["repo_root"]) / "docs/business-context.md").exists()
+    assert not (Path(cfg["repo_root"]) / "docs/security/business-context.md").exists()
 
 
-@pytest.mark.parametrize("existing", [False, True])
+@pytest.mark.parametrize("existing", [None, "docs/business-context.md", "docs/security/business-context.md"])
 def test_early_context_persists_answers_without_persisting_run_only_import(tmp_path, monkeypatch, existing):
     import acquire_lock
 
@@ -7007,9 +7010,11 @@ def test_early_context_persists_answers_without_persisting_run_only_import(tmp_p
     repo, out = Path(cfg["repo_root"]), Path(cfg["output_dir"])
     (repo / "docs").mkdir(parents=True)
     out.mkdir()
-    target = repo / "docs/business-context.md"
+    target = repo / "docs/security/business-context.md"
     if existing:
-        target.write_text("Repository declaration: schedules urgent appointments.\n")
+        prior = repo / existing
+        prior.parent.mkdir(parents=True, exist_ok=True)
+        prior.write_text("Repository declaration: schedules urgent appointments.\n")
     cfg.update(
         run_id="current-run",
         business_context_pending=True,
@@ -7029,7 +7034,7 @@ def test_early_context_persists_answers_without_persisting_run_only_import(tmp_p
     controller.complete_preflight(out, run_id="current-run", context_answer="answered")
     assert answer.strip() in target.read_text()
     assert "Temporary imported context" not in target.read_text()
-    assert ("Repository declaration" in target.read_text()) is existing
+    assert ("Repository declaration" in target.read_text()) is bool(existing)
     assert "Temporary imported context" in source.read_text()
     assert answer.strip() in source.read_text()
 
@@ -7046,7 +7051,8 @@ def test_early_context_rejects_unsafe_persistence_before_writes(tmp_path, monkey
     outside.mkdir()
     untouched = outside / "business-context.md"
     untouched.write_text("Unrelated context must stay unchanged.\n")
-    docs = repo / "docs"
+    docs = repo / "docs/security"
+    docs.parent.mkdir()
     if fault == "parent_escape":
         docs.symlink_to(outside, target_is_directory=True)
     else:

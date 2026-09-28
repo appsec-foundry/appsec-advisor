@@ -27,7 +27,7 @@ REPORT_INTRO = (
 # answer projected by the control analyst settles that question for its scope.
 ASSET_CRITICALITY_IMPACT = (
     "The answer weights the impact rating and fix order of every finding that reaches these assets; recorded "
-    "with the asset name and concrete harm in `docs/business-context.md`, the next full run applies it."
+    "with the asset name and concrete harm in `docs/security/business-context.md`, the next full run applies it."
 )
 _CRITICAL_CLASSIFICATIONS = {"Restricted": 0, "Confidential": 1}
 _UNSAFE_NAME_CHARS_RE = re.compile(r"[\x00-\x1f\x7f\[\]()<>`*_?#|\\]")

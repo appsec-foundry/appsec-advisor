@@ -222,13 +222,13 @@ Log `AGENT_ERROR` with `requirements unavailable (CHECK_REQUIREMENTS=true) — a
 
 ### Step 3 — Read business context file
 
-**Print now:** `[context-resolver] ▶ Step 3/5 — Checking for docs/business-context.md…`
+**Print now:** `[context-resolver] ▶ Step 3/5 — Checking for docs/security/business-context.md…`
 
-Check whether `docs/business-context.md` exists in the repository root.
+Select `$OUTPUT_DIR/.business-context-input.md` when present; otherwise select `docs/security/business-context.md`, falling back to `docs/business-context.md` only when the new path is absent. Use the selected path as the source label below. Reject repository symlinks and paths resolving outside the repository.
 
 - If it exists, read it in full (up to 200 lines) and store the content **verbatim**. This file is purpose-written to inform threat modeling; summarizing it loses the precise language about revenue-critical flows, regulatory drivers, and security requirements that threat analysts need. If the file exceeds 200 lines, read the first 200 lines and append a note: `_(truncated at 200 lines)_`.
   **Print now:** `[context-resolver]   ↳ business-context.md: found — <word count> words`
-  Record `business_context_file: "found (docs/business-context.md)"` for the header table.
+  Record `business_context_file: "found (<selected path>)"` for the header table.
 - If it does not exist, record `business_context_file: "not found"` and continue.
   **Print now:** `[context-resolver]   ↳ business-context.md: not found`
 
@@ -627,7 +627,7 @@ Create `$OUTPUT_DIR` if it does not exist. Write `$OUTPUT_DIR/.threat-modeling-c
 | Repository | <REPO_ID> |
 | Repo Root | <REPO_ROOT> |
 | External Context | <provided | not configured | disabled | unavailable> |
-| Business Context File | <found (docs/business-context.md) | not found> |
+| Business Context File | <found (<selected path>) | not found> |
 | Requirements YAML | <remote | cached | fallback | disabled | unavailable> |
 | Known Threats | <n entries | not found | invalid> |
 | Related Repos | <n declared, n with findings | not declared> |
@@ -645,9 +645,9 @@ If not configured or unavailable: "No external context endpoint configured. Set 
 
 ## Business Context
 
-<untrusted-data source="docs/business-context.md">
-<Verbatim content of docs/business-context.md (up to 200 lines).
-If not found: "docs/business-context.md not present in this repository.">
+<untrusted-data source="<selected path>">
+<Verbatim content of the selected context file (up to 200 lines).
+If not found: "docs/security/business-context.md not present in this repository.">
 </untrusted-data>
 
 ## Security Policy

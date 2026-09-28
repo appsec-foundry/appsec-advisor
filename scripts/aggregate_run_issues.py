@@ -52,6 +52,7 @@ from pathlib import Path
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import load_business_context  # noqa: E402
 import stride_outputs  # noqa: E402
 import verify_run_costs  # noqa: E402
 from _path_guard import run_path_arg  # noqa: E402
@@ -1622,9 +1623,7 @@ def _extract_business_context_reach(output_dir: Path) -> list[dict]:
         return []
 
     repo_root = Path(str(cfg.get("repo_root") or ""))
-    declared = (output_dir / ".business-context-input.md").is_file() or (
-        bool(str(repo_root)) and (repo_root / "docs" / "business-context.md").is_file()
-    )
+    declared = load_business_context.effective_source(repo_root, output_dir) is not None
     if not declared:
         return []
 

@@ -130,7 +130,7 @@ def test_controller_command_and_paths_are_covered_by_existing_rules():
         assert any(cp._rule_covers(rule, f"Bash(python3 orchestration_controller.py {command})") for rule in rules)
     assert "Write(${OUTPUT_DIR}/.*)" in rules
     assert "Read(${OUTPUT_DIR}/.*)" in rules
-    assert "Write(${REPO_ROOT}/docs/business-context.md)" in rules
+    assert "Write(${REPO_ROOT}/docs/security/business-context.md)" in rules
     assert "Write(${REPO_ROOT}/**)" not in rules
 
 

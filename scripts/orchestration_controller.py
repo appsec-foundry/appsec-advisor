@@ -304,7 +304,7 @@ _FULL_INTERMEDIATE_NAMES = {
     ".trust-boundary-candidates.json",
     # Business context supplied for a previous run. `effective_source` gives the
     # run-only file precedence over the repository's own, so a leftover would
-    # shadow `docs/business-context.md` and rate this run against a document
+    # shadow `docs/security/business-context.md` and rate this run against a document
     # nobody passed to it.
     ".business-context-input.md",
     # Stage-2 attempt bookkeeping of an aborted run: a leftover ledger spends the
@@ -2591,7 +2591,7 @@ def complete_preflight(output_dir: Path, *, run_id: str, context_answer: str) ->
             if truncated or not answer.strip():
                 raise ValueError("business-context answer is empty or too large")
             load_business_context._reject_secrets(answer)
-            target = load_business_context._persist_target(repo_root)
+            load_business_context._persist_target(repo_root)
 
             def combined_context(source: Path | None, root: Path) -> str:
                 prior = ""
@@ -2611,7 +2611,7 @@ def complete_preflight(output_dir: Path, *, run_id: str, context_answer: str) ->
             combined = combined_context(source, source.parent if source else repo_root)
             # Validate both destinations before writing. A --context override
             # remains run-only; persist only the repository's own text + answers.
-            saved = combined_context(target if target.exists() else None, repo_root)
+            saved = combined_context(load_business_context.repository_source(repo_root), repo_root)
             if source == output_dir / load_business_context.RUN_ONLY_NAME:
                 atomic_write_text(raw_path, combined)
                 load_business_context.capture(

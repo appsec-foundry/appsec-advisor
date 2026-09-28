@@ -72,7 +72,8 @@ def test_run_only_business_context_replaces_the_repository_file(tmp_path):
     assert "Stored context." not in text
 
 
-def test_header_names_the_business_context_file_that_was_read(tmp_path):
+@pytest.mark.parametrize("relative", ["docs/business-context.md", "docs/security/business-context.md"])
+def test_header_names_the_business_context_file_that_was_read(tmp_path, relative):
     """The report derives its context sources from this row. Without it the
     analyst had no field to read and cited `docs/business-context.md` for a
     document that never was that file."""
@@ -84,14 +85,15 @@ def test_header_names_the_business_context_file_that_was_read(tmp_path):
     absent = builder.build(repo, output, plugin).read_text(encoding="utf-8")
     assert "| Business Context File | not found |" in absent
 
-    (repo / "docs" / "business-context.md").write_text("Stored context.\n", encoding="utf-8")
+    (repo / relative).parent.mkdir(parents=True, exist_ok=True)
+    (repo / relative).write_text("Stored context.\n", encoding="utf-8")
     stored = builder.build(repo, output, plugin).read_text(encoding="utf-8")
-    assert "| Business Context File | found (docs/business-context.md) |" in stored
+    assert f"| Business Context File | found ({relative}) |" in stored
 
     (output / ".business-context-input.md").write_text("This run only.\n", encoding="utf-8")
     run_only = builder.build(repo, output, plugin).read_text(encoding="utf-8")
     assert "| Business Context File | found (.business-context-input.md) |" in run_only
-    assert "found (docs/business-context.md)" not in run_only
+    assert f"found ({relative})" not in run_only
 
 
 def test_supplied_reference_document_is_admitted_as_fenced_and_named_data(tmp_path):
