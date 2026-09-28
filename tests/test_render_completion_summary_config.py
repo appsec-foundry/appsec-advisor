@@ -182,3 +182,60 @@ def test_backstop_covers_every_deliverable_the_controller_produces(tmp_path, mon
     rcs._export_deliverables_if_configured(tmp_path)
 
     assert sorted(invoked) == sorted(produced.values())
+
+
+def _identity_args(argv):
+    import argparse
+
+    ns = argparse.Namespace(
+        repo_root=None,
+        mode=None,
+        reasoning_model=None,
+        assessment_depth=None,
+        plugin_dev=False,
+        verbose=False,
+        quiet=False,
+        issues_only=False,
+    )
+    for key, value in argv.items():
+        setattr(ns, key, value)
+    return ns
+
+
+@pytest.mark.parametrize(
+    ("config", "argv", "expected"),
+    [
+        (
+            {"repo_root": "/srv/a", "mode": "rebuild", "assessment_depth": "thorough", "reasoning_model": "sonnet"},
+            {},
+            ("/srv/a", "rebuild", "thorough", "sonnet"),
+        ),
+        (
+            {"repo_root": "/srv/a", "assessment_depth": "thorough"},
+            {"assessment_depth": "quick"},
+            ("/srv/a", "full", "quick", "opus"),
+        ),
+        ({}, {"repo_root": Path("/work/b")}, ("/work/b", "full", "standard", "opus")),
+    ],
+    ids=["config-only", "flag-overrides", "no-config"],
+)
+def test_run_identity_comes_from_the_run_config(config, argv, expected):
+    args = _identity_args(argv)
+    rcs._apply_run_identity(args, config)
+    assert (str(args.repo_root), args.mode, args.assessment_depth, args.reasoning_model) == expected
+
+
+@pytest.mark.parametrize(
+    "config",
+    [{"repo_root": "/srv/a", "assessment_depth": "exhaustive"}, {"mode": "full"}],
+    ids=["unknown-depth", "no-repository"],
+)
+def test_unusable_run_identity_is_refused(config):
+    with pytest.raises(ValueError):
+        rcs._apply_run_identity(_identity_args({}), config)
+
+
+def test_verbosity_follows_the_run_config():
+    args = _identity_args({"repo_root": Path("/srv/a")})
+    rcs._apply_run_identity(args, {"verbose": True, "quiet": False, "plugin_dev": None})
+    assert (args.verbose, args.quiet, args.plugin_dev) == (True, False, False)

@@ -1907,29 +1907,22 @@ class TestRenderFiles:
         out = "\n".join(rcs.render_files(tmp_path, {"write_yaml": True}))
         assert "Threat Dragon" not in out
 
-    def test_skill_passes_threatdragon_flag_at_every_call_site(self):
-        """The summary prints the line only when the compact completion passes the flag.
-        Regression guard: `--write-threatdragon` was once defined but no
-        completion call site used it, so the artifact was written and never reported.
-        Every site that passes `--write-sarif` must also pass this pair.
+    def test_completion_runtime_passes_only_the_output_dir(self):
+        """RA-8: the run config carries identity and switches; the runtime argv cannot drift from it.
 
-        This used to grep the doc for the phrase "the true/false pairs", which
-        proved nothing: the prose it matched described an argv the parser had
-        long stopped accepting, and the call still aborted with exit 2. Assert
-        the documented invocation itself instead.
+        A long documented argv once described flags the parser no longer
+        accepted, and an auto-mode classifier refused another. Every documented
+        call passes the output directory only, and the parser accepts it.
         """
         impl = (
             Path(__file__).resolve().parents[1] / "skills" / "create-threat-model" / "SKILL-thin-completion.md"
         ).read_text(encoding="utf-8")
-        invocation = re.search(r"scripts/render_completion_summary\.py\"?(?P<args>(?:\\\n|[^\n`])*)", impl)
-        assert invocation, "the runtime doc must show a literal render_completion_summary.py invocation"
-        args = invocation.group("args")
-
-        for flag in ("--repo-root", "--reasoning-model", "--assessment-depth"):
-            assert flag in args, f"{flag} is required by the parser and must appear in the documented argv"
-        for pair in ("write-sarif", "write-threatdragon", "write-yaml"):
-            assert re.search(rf"--(?:no-)?{pair}\b", args), f"--[no-]{pair} must be passed explicitly"
-        assert "PDF and HTML have no summary flags" in impl
+        calls = re.findall(r"scripts/render_completion_summary\.py\"?((?:\\\n|[^\n`])*)", impl)
+        assert len(calls) == 2, calls
+        for args in calls:
+            flags = set(re.findall(r"--[a-z-]+", args))
+            assert flags <= {"--output-dir", "--patch-placeholders", "--no-print"}, flags
+            assert "--output-dir" in flags
 
 
 class TestRunIssues:

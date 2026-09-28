@@ -2717,17 +2717,40 @@ def _bool_pair(
     grp.add_argument(f"--no-{name}", dest=dest, action="store_false", help=help_off)
 
 
+_RUN_CHOICES = {
+    "mode": ("full", "incremental", "rebuild", "dry-run"),
+    "reasoning_model": ("opus-cheap", "sonnet", "opus", "sonnet-economy", "haiku-economy"),
+    "assessment_depth": ("quick", "standard", "thorough"),
+}
+_RUN_DEFAULTS = {"mode": "full", "reasoning_model": "opus", "assessment_depth": "standard"}
+
+
+def _apply_run_identity(args: argparse.Namespace, config: dict) -> None:
+    """Fill unset identity flags from the run config; reject values the parser would reject."""
+    for key, choices in _RUN_CHOICES.items():
+        if getattr(args, key) is not None:
+            continue
+        value = config.get(key)
+        if value is not None and value not in choices:
+            raise ValueError(f".skill-config.json {key}={value!r} is not one of {', '.join(choices)}")
+        setattr(args, key, value or _RUN_DEFAULTS[key])
+    if args.repo_root is None and isinstance(config.get("repo_root"), str) and config["repo_root"]:
+        args.repo_root = Path(config["repo_root"])
+    if args.repo_root is None and not args.issues_only:
+        raise ValueError("--repo-root is required when .skill-config.json does not name the repository")
+    for key in ("plugin_dev", "verbose", "quiet"):
+        setattr(args, key, getattr(args, key) or config.get(key) is True)
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="render_completion_summary.py", description=__doc__.splitlines()[0])
     p.add_argument("--output-dir", type=Path, required=True)
-    p.add_argument("--repo-root", type=Path, required=True)
-    p.add_argument("--mode", default="full", choices=("full", "incremental", "rebuild", "dry-run"))
-    p.add_argument(
-        "--reasoning-model",
-        default="opus",
-        choices=("opus-cheap", "sonnet", "opus", "sonnet-economy", "haiku-economy"),
-    )
-    p.add_argument("--assessment-depth", default="standard", choices=("quick", "standard", "thorough"))
+    # Run identity defaults to the run's resolved .skill-config.json (RA-8);
+    # an explicit flag wins, and the built-in default applies only without either.
+    p.add_argument("--repo-root", type=Path, default=None)
+    p.add_argument("--mode", default=None, choices=_RUN_CHOICES["mode"])
+    p.add_argument("--reasoning-model", default=None, choices=_RUN_CHOICES["reasoning_model"])
+    p.add_argument("--assessment-depth", default=None, choices=_RUN_CHOICES["assessment_depth"])
     _bool_pair(p, "write-yaml", "write_yaml", True)
     _bool_pair(p, "write-sarif", "write_sarif", False)
     _bool_pair(p, "write-pentest-tasks", "write_pentest_tasks", False)
@@ -2776,6 +2799,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.output_dir.is_dir():
         print(f"error: output_dir not a directory: {args.output_dir}", file=sys.stderr)
+        return 2
+    try:
+        _apply_run_identity(args, _load_json_object(args.output_dir / ".skill-config.json"))
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return 2
 
     if args.issues_only:

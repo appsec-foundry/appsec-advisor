@@ -20,22 +20,14 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/aggregate_run_issues.py" "$OUTPUT_DIR" \
   --repo-root "$REPO_ROOT" --depth "$ASSESSMENT_DEPTH" || true
 ```
 
-Compute `.scan-wall-seconds` from `.scan-start-epoch` when available, then run this argv (a wrong argv aborts the run at its last step):
+Compute `.scan-wall-seconds` from `.scan-start-epoch` when available, then run exactly:
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_completion_summary.py" \
-  --output-dir "$OUTPUT_DIR" \
-  --repo-root "$REPO_ROOT" \
-  --mode "$MODE" \
-  --reasoning-model "$REASONING_MODEL" \
-  --assessment-depth "$ASSESSMENT_DEPTH" \
-  --write-yaml --no-write-sarif \
-  --no-write-pentest-tasks --no-write-threatdragon \
-  --no-check-requirements --no-architect-review \
-  --patch-placeholders --no-print
+  --output-dir "$OUTPUT_DIR" --patch-placeholders --no-print
 ```
 
-`--reasoning-model` takes `REASONING_MODEL`, not the session model; there are no `--model` or `--depth` flags. The script reads the run's deliverable switches from `.skill-config.json`; the `--[no-]…` pairs apply only without it. PDF and HTML have no summary flags. Pass `--plugin-dev`, `--verbose` and `--quiet` only when true. Placeholder patching is the only mutation permitted after review.
+The script reads repository, mode, depth, reasoning model, deliverable switches and verbosity from the run's `.skill-config.json`; add no other flag. Placeholder patching is the only mutation permitted after review.
 
 Immediately certify the persisted bytes:
 
@@ -65,8 +57,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/export_html.py" --require-mermaid \
 
 Do **not** call `stamp_threat_model.py` yourself: `render_completion_summary.py` backfills missing SARIF, Threat Dragon and pentest-task exports, then stamps, but never exports PDF or HTML, so run those first. Keep stamped-copy paths out of the response.
 
-Run `render_completion_summary.py` once more with the identical argv from §1
-minus `--patch-placeholders --no-print`. Capture stdout for the final response;
+Run `python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_completion_summary.py" --output-dir "$OUTPUT_DIR"` once more. Capture stdout for the final response;
 do not rewrite or summarize it. The script owns missing-deliverable warnings,
 verdict, timing, cost, output paths, and next steps.
 
