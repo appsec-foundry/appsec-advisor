@@ -7273,3 +7273,26 @@ def test_verdict_discloses_no_harm_without_hiding_critical_findings(tmp_path, co
     else:
         assert note is None
         assert "Declared business impact:" not in text
+
+
+@pytest.mark.parametrize("fold", [False, True], ids=["same-basis", "folded-practice"])
+def test_section8_names_its_basis_when_it_differs_from_the_summary(tmp_path: Path, fold: bool) -> None:
+    """RA-7: a register tally on another basis than the Management Summary says so."""
+    import _severity_rollup
+
+    out = _prepare_output_dir(tmp_path)
+    model_path = out / "threat-model.yaml"
+    model = yaml.safe_load(model_path.read_text())
+    if fold:
+        model["threats"][0]["evidence_tier"] = "insecure-practice"
+        model["weaknesses"] = [{"id": "W-001", "kind": "implementation", "severity": "High"}]
+        model_path.write_text(yaml.safe_dump(model, sort_keys=False))
+    rendered, _ = compose.render(CONTRACT, out)
+
+    summary_total = sum(_severity_rollup.risk_distribution_counts(model).values())
+    notes = [line for line in rendered.splitlines() if line.startswith("*This register counts every finding card")]
+    assert (summary_total != len(model["threats"])) is fold
+    if not fold:
+        assert notes == []
+    else:
+        assert notes and f"(Total: {summary_total})" in notes[0]

@@ -17151,6 +17151,14 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     if counts.get("info", 0) > 0:
         rd_parts.append(f"⚪ Info: {counts['info']}")
     lines.append("**Risk Distribution:** " + " · ".join(rd_parts) + f" · **Total findings: {total}**")
+    # RA-7: a tally on a different basis than the Management Summary says so.
+    summary_total = sum(_severity_rollup.risk_distribution_counts(ctx.yaml_data).values())
+    if summary_total != total:
+        lines.append(
+            f"*This register counts every finding card below. The Management Summary's risk distribution "
+            f"(Total: {summary_total}) counts folded insecure-practice sites under their weakness and adds "
+            f"each design risk once.*"
+        )
     lines.append(
         f"**STRIDE Coverage:** Spoofing: {stride_map['spoofing']} · "
         f"Tampering: {stride_map['tampering']} · Repudiation: {stride_map['repudiation']} · "
