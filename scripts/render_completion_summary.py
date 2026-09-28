@@ -2133,7 +2133,8 @@ def _summary_architect(output_dir: Path, cfg: dict) -> str:
             except (OSError, ValueError):
                 return "status unreadable"
             recorded = data["findings_recorded"]
-            if recorded and data["unresolved_or_unreviewed"] == recorded:
+            corrected = data["assessment_corrected"] + data["remediation_corrected"]
+            if recorded and data["unresolved_or_unreviewed"] == recorded and not corrected:
                 reason = f" ({str(data['reason']).replace('_', ' ')})" if data.get("reason") else ""
                 return f"not performed — none of {recorded} findings reviewed{reason}"
             return (

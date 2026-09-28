@@ -130,10 +130,11 @@ def test_architect_line_reports_the_outcome_not_the_release_status(tmp_path, out
     ("unresolved", "corrected", "expected"),
     [
         (5, 0, "not performed — none of 5 findings reviewed"),
+        (5, 1, "incomplete — 1 assessment(s), 0 mitigation(s) corrected; 5/5 unresolved or unreviewed"),
         (2, 1, "incomplete — 1 assessment(s), 0 mitigation(s) corrected; 2/5 unresolved or unreviewed"),
         (0, 1, "reviewed — 1 assessment(s), 0 mitigation(s) corrected; 0/5 unresolved or unreviewed"),
     ],
-    ids=["none-reviewed", "partial", "complete"],
+    ids=["none-reviewed", "all-open-but-corrected", "partial", "complete"],
 )
 def test_semantic_review_that_covered_nothing_reads_as_not_performed(tmp_path, unresolved, corrected, expected):
     status = {
