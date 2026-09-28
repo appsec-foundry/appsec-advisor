@@ -2052,3 +2052,50 @@ def test_covered_or_missing_config_scan_raises_no_uncovered_warning(tmp_path):
     for payload in ({"findings": []}, {"parse_error": "x", "findings": []}, {"uncovered_iac": []}):
         path.write_text(json.dumps(payload), encoding="utf-8")
         assert agg._extract_config_scan_uncovered_iac(tmp_path) == [], payload
+
+
+# ---------------------------------------------------------------------------
+# _extract_stage_coverage_collapse
+# ---------------------------------------------------------------------------
+
+import pytest  # noqa: E402
+
+
+def _coverage_run(tmp_path, *, enabled=True, recorded=4, unresolved=4, flags=1, threats=2):
+    (tmp_path / ".skill-config.json").write_text(json.dumps({"architect_review": enabled}))
+    status = {"status": "pass", "outcome": "incomplete", "findings_recorded": recorded}
+    status["unresolved_or_unreviewed"] = unresolved
+    (tmp_path / ".architect-status.json").write_text(json.dumps(status))
+    jobs = [{"packet_id": "p1", "status": "stage_exhausted"}, {"packet_id": "p2", "status": "failed"}]
+    (tmp_path / ".architect-review.json").write_text(json.dumps({"jobs": jobs}))
+    (tmp_path / ".threats-merged.json").write_text(
+        json.dumps({"threats": [{"t_id": f"T-{n}"} for n in range(threats)]})
+    )
+    evidence = {"summary": {"sampled": flags}, "flags": [{"t_id": "T-0"}] * flags}
+    (tmp_path / ".evidence-verification.json").write_text(json.dumps(evidence))
+    return tmp_path
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "stages"),
+    [
+        ({}, ["architect_review"]),
+        ({"enabled": False}, []),
+        ({"unresolved": 0}, []),
+        ({"unresolved": 2}, []),
+        ({"recorded": 0, "unresolved": 0}, []),
+        ({"flags": 0}, ["architect_review", "evidence_verification"]),
+        ({"flags": 0, "threats": 0, "unresolved": 1}, []),
+    ],
+    ids=["architect-none", "disabled", "full", "partial", "no-findings", "both-none", "nothing-to-verify"],
+)
+def test_a_stage_that_covered_nothing_is_a_run_issue(tmp_path, kwargs, stages):
+    issues = agg._extract_stage_coverage_collapse(_coverage_run(tmp_path, **kwargs))
+    assert [issue["evidence"]["stage"] for issue in issues] == stages
+    assert all(issue["category"] == "stage_coverage_collapsed" for issue in issues)
+
+
+def test_collapse_names_the_job_states(tmp_path):
+    (issue,) = agg._extract_stage_coverage_collapse(_coverage_run(tmp_path))
+    assert issue["evidence"]["job_states"] == {"failed": 1, "stage_exhausted": 1}
+    assert "failed=1, stage_exhausted=1" in issue["title"]

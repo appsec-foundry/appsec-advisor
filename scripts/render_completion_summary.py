@@ -2132,6 +2132,10 @@ def _summary_architect(output_dir: Path, cfg: dict) -> str:
                 validate_status(data)
             except (OSError, ValueError):
                 return "status unreadable"
+            recorded = data["findings_recorded"]
+            if recorded and data["unresolved_or_unreviewed"] == recorded:
+                reason = f" ({str(data['reason']).replace('_', ' ')})" if data.get("reason") else ""
+                return f"not performed — none of {recorded} findings reviewed{reason}"
             return (
                 f"{data['outcome'].replace('_', ' ')} — "
                 f"{data['assessment_corrected']} assessment(s), {data['remediation_corrected']} mitigation(s) corrected; "

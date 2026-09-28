@@ -126,6 +126,29 @@ def test_architect_line_reports_the_outcome_not_the_release_status(tmp_path, out
         assert "3 block" in line
 
 
+@pytest.mark.parametrize(
+    ("unresolved", "corrected", "expected"),
+    [
+        (5, 0, "not performed — none of 5 findings reviewed"),
+        (2, 1, "incomplete — 1 assessment(s), 0 mitigation(s) corrected; 2/5 unresolved or unreviewed"),
+        (0, 1, "reviewed — 1 assessment(s), 0 mitigation(s) corrected; 0/5 unresolved or unreviewed"),
+    ],
+    ids=["none-reviewed", "partial", "complete"],
+)
+def test_semantic_review_that_covered_nothing_reads_as_not_performed(tmp_path, unresolved, corrected, expected):
+    status = {
+        "status": "pass",
+        "outcome": "incomplete" if unresolved else "reviewed",
+        "review_kind": "semantic",
+        "findings_recorded": 5,
+        "unresolved_or_unreviewed": unresolved,
+        "assessment_corrected": corrected,
+        "remediation_corrected": 0,
+    }
+    (tmp_path / ".architect-status.json").write_text(json.dumps(status), encoding="utf-8")
+    assert rcs._summary_architect(tmp_path, {"architect_review": True}) == expected
+
+
 def test_status_without_outcome_is_still_reported(tmp_path):
     (tmp_path / ".architect-status.json").write_text('{"status": "repair_required"}', encoding="utf-8")
     assert rcs._summary_architect(tmp_path, {"architect_review": True}) == "repair required"

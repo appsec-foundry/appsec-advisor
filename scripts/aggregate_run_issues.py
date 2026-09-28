@@ -46,6 +46,7 @@ import json
 import os
 import re
 import sys
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1992,6 +1993,70 @@ def _extract_abuse_case_outcomes(output_dir: Path) -> list[dict]:
     return issues
 
 
+def _read_json_object(path: Path) -> dict:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _extract_stage_coverage_collapse(output_dir: Path) -> list[dict]:
+    """Flag an enabled review stage that ran but covered nothing.
+
+    Such a stage passes its own gate: the architect status records an
+    ``incomplete`` outcome as ``status=pass``, and an empty evidence sample
+    validates. The report then reads as reviewed although no finding was.
+    """
+    issues: list[dict] = []
+    cfg = _read_json_object(output_dir / ".skill-config.json")
+    status = _read_json_object(output_dir / ".architect-status.json")
+    recorded = status.get("findings_recorded")
+    unresolved = status.get("unresolved_or_unreviewed")
+    if cfg.get("architect_review") and isinstance(recorded, int) and recorded > 0 and unresolved == recorded:
+        jobs = _read_json_object(output_dir / ".architect-review.json").get("jobs") or []
+        job_states = Counter(str(job.get("status")) for job in jobs if isinstance(job, dict))
+        states = ", ".join(f"{state}={count}" for state, count in sorted(job_states.items())) or "no jobs"
+        reason = status.get("reason") or states
+        issues.append(
+            {
+                "category": "stage_coverage_collapsed",
+                "severity": "warning",
+                "title": f"Architect review reviewed none of {recorded} findings ({_clip(str(reason), 80)})",
+                "evidence": {
+                    "log_file": ".architect-status.json",
+                    "log_line": 1,
+                    "raw_event": _clip(json.dumps(status), 200),
+                    "stage": "architect_review",
+                    "recorded": recorded,
+                    "covered": 0,
+                    "job_states": dict(job_states),
+                    "outcome": "collapsed",
+                },
+            }
+        )
+    evidence = _read_json_object(output_dir / ".evidence-verification.json")
+    merged = _read_json_object(output_dir / ".threats-merged.json").get("threats") or []
+    if evidence and merged and not (evidence.get("flags") or []):
+        issues.append(
+            {
+                "category": "stage_coverage_collapsed",
+                "severity": "warning",
+                "title": f"Evidence verification judged none of {len(merged)} findings",
+                "evidence": {
+                    "log_file": ".evidence-verification.json",
+                    "log_line": 1,
+                    "raw_event": _clip(json.dumps(evidence.get("summary") or {}), 200),
+                    "stage": "evidence_verification",
+                    "recorded": len(merged),
+                    "covered": 0,
+                    "outcome": "collapsed",
+                },
+            }
+        )
+    return issues
+
+
 def _extract_stride_ceiling_events(output_dir: Path) -> list[dict]:
     """Surface STRIDE component-ceiling pressure as run issues (large repos).
 
@@ -2512,6 +2577,7 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     issues.extend(_extract_pillar_cwe_findings(output_dir))
     issues.extend(_extract_render_integrity(output_dir))
     issues.extend(_extract_abuse_case_outcomes(output_dir))
+    issues.extend(_extract_stage_coverage_collapse(output_dir))
     issues.extend(_extract_watchdog_absence(output_dir, agent_log))
     issues.extend(_extract_cost_accounting(output_dir))
     issues.extend(_extract_stride_ceiling_events(output_dir))

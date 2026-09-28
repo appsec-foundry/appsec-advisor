@@ -1060,7 +1060,34 @@ def _recommend_privileged_role_unevidenced(issue: dict, output_dir: Path) -> dic
     }
 
 
+def _recommend_stage_coverage_collapsed(issue: dict, output_dir: Path) -> dict:
+    """An enabled review stage passed its gate without covering a single finding."""
+    evidence = issue.get("evidence") or {}
+    stage = evidence.get("stage") or "review stage"
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "high",
+        "risk_level": "medium",
+        "summary": f"The {stage.replace('_', ' ')} ran but covered none of {evidence.get('recorded')} findings.",
+        "rationale": (
+            "Ratings and fixes carry no review of this stage although the run finished green. "
+            "Typical causes are a host that cannot reach the model API from the sandbox, or dispatches "
+            "that returned nothing."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": evidence.get("log_file") or ".agent-run.log",
+                "details": "Check the recorded job states and reason, then rerun the assessment once the cause is fixed.",
+            },
+        ],
+        "verification": [],
+    }
+
+
 RECOMMENDERS: dict[str, Callable[[dict, Path], dict]] = {
+    "stage_coverage_collapsed": _recommend_stage_coverage_collapsed,
     "editorial_pass_incomplete": _recommend_editorial_pass_incomplete,
     "privileged_role_unevidenced": _recommend_privileged_role_unevidenced,
     "business_context_unmapped": _recommend_business_context_unmapped,
