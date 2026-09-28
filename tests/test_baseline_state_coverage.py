@@ -1263,3 +1263,21 @@ def test_main_dirty_set_dispatch(tmp_path: Path, capsys):
     (out / "threat-model.yaml").write_text("components: []\n")
     rc = bs.main(["dirty-set", "--output-dir", str(out), "--no-stdin", "--files"])
     assert rc == 2
+
+
+def test_cmd_update_records_severity_counts_for_the_next_comparison(tmp_path: Path):
+    repo = _make_git_repo(tmp_path)
+    out = repo / "docs" / "security"
+    out.mkdir(parents=True)
+    (out / ".skill-config.json").write_text(json.dumps({"assessment_depth": "thorough"}))
+    (out / "threat-model.yaml").write_text(
+        "threats:\n  - {id: T-001, risk: Critical}\n  - {id: T-002, risk: High}\n  - {id: T-003, risk: High}\n"
+    )
+    assert bs.cmd_update(_ns(output_dir=str(out), repo_root=str(repo), mode="full", manifest_hashes=None)) == 0
+    data = json.loads((out / ".appsec-cache" / "baseline.json").read_text())
+    assert data["severity_counts"] == {"depth": "thorough", "critical": 1, "high": 2}
+
+    (out / "threat-model.yaml").unlink()
+    assert bs.cmd_update(_ns(output_dir=str(out), repo_root=str(repo), mode="full", manifest_hashes=None)) == 0
+    carried = json.loads((out / ".appsec-cache" / "baseline.json").read_text())
+    assert carried["severity_counts"] == data["severity_counts"]

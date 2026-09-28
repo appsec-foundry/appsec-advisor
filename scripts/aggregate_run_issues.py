@@ -2057,6 +2057,54 @@ def _extract_stage_coverage_collapse(output_dir: Path) -> list[dict]:
     return issues
 
 
+_DEPTH_ORDER = {"quick": 0, "standard": 1, "thorough": 2}
+
+
+def _extract_severity_regression(output_dir: Path) -> list[dict]:
+    """Flag a Critical or High count that halved against the previous run.
+
+    The completion runtime updates ``.appsec-cache/baseline.json`` after this
+    aggregation, so the baseline still holds the previous run. A deeper
+    previous run is not comparable and raises nothing.
+    """
+    previous = _read_json_object(output_dir / ".appsec-cache" / "baseline.json").get("severity_counts")
+    if not isinstance(previous, dict):
+        return []
+    try:
+        model = yaml.safe_load((output_dir / "threat-model.yaml").read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return []
+    threats = model.get("threats") if isinstance(model, dict) else None
+    if not isinstance(threats, list):
+        return []
+    depth = str(_read_json_object(output_dir / ".skill-config.json").get("assessment_depth") or "")
+    if _DEPTH_ORDER.get(depth, -1) < _DEPTH_ORDER.get(str(previous.get("depth") or ""), 99):
+        return []
+    risks = [str(t.get("risk") or "") for t in threats if isinstance(t, dict)]
+    issues = []
+    for label in ("Critical", "High"):
+        before = previous.get(label.lower())
+        now = risks.count(label)
+        if isinstance(before, int) and before >= 2 and now * 2 < before:
+            issues.append(
+                {
+                    "category": "severity_regression",
+                    "severity": "warning",
+                    "title": f"{label} findings dropped from {before} to {now} against the previous {previous.get('depth')} run",
+                    "evidence": {
+                        "log_file": ".appsec-cache/baseline.json",
+                        "log_line": 1,
+                        "raw_event": f"{label.lower()}: {before} -> {now}",
+                        "severity_label": label,
+                        "previous": before,
+                        "current": now,
+                        "outcome": "regressed",
+                    },
+                }
+            )
+    return issues
+
+
 def _extract_stride_ceiling_events(output_dir: Path) -> list[dict]:
     """Surface STRIDE component-ceiling pressure as run issues (large repos).
 
@@ -2578,6 +2626,7 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     issues.extend(_extract_render_integrity(output_dir))
     issues.extend(_extract_abuse_case_outcomes(output_dir))
     issues.extend(_extract_stage_coverage_collapse(output_dir))
+    issues.extend(_extract_severity_regression(output_dir))
     issues.extend(_extract_watchdog_absence(output_dir, agent_log))
     issues.extend(_extract_cost_accounting(output_dir))
     issues.extend(_extract_stride_ceiling_events(output_dir))

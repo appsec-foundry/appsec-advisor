@@ -1086,8 +1086,36 @@ def _recommend_stage_coverage_collapsed(issue: dict, output_dir: Path) -> dict:
     }
 
 
+def _recommend_severity_regression(issue: dict, output_dir: Path) -> dict:
+    """A severity tier halved against the previous comparable run."""
+    evidence = issue.get("evidence") or {}
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "medium",
+        "risk_level": "medium",
+        "summary": (
+            f"{evidence.get('severity_label')} findings fell from {evidence.get('previous')} "
+            f"to {evidence.get('current')} against the previous run."
+        ),
+        "rationale": (
+            "Fixed code explains a drop; a lost review stage, narrower evidence or a changed rating rule "
+            "explains it as well. Compare both models before trusting the lower count."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": "threat-model.yaml",
+                "details": "Diff the Critical and High findings against the previous run's model.",
+            },
+        ],
+        "verification": [],
+    }
+
+
 RECOMMENDERS: dict[str, Callable[[dict, Path], dict]] = {
     "stage_coverage_collapsed": _recommend_stage_coverage_collapsed,
+    "severity_regression": _recommend_severity_regression,
     "editorial_pass_incomplete": _recommend_editorial_pass_incomplete,
     "privileged_role_unevidenced": _recommend_privileged_role_unevidenced,
     "business_context_unmapped": _recommend_business_context_unmapped,

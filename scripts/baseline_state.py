@@ -251,6 +251,34 @@ def _parse_manifest_hashes(raw: str | None) -> dict | None:
     return None
 
 
+def _severity_counts(yaml_text: str, output_dir: Path) -> dict:
+    """Register-basis Critical/High counts and the depth that produced them.
+
+    The next run compares against these to flag a silent loss of findings.
+    """
+    if not yaml_text:
+        return {}
+    import yaml
+
+    try:
+        model = yaml.safe_load(yaml_text)
+    except yaml.YAMLError:
+        return {}
+    threats = model.get("threats") if isinstance(model, dict) else None
+    if not isinstance(threats, list):
+        return {}
+    risks = [str(t.get("risk") or "") for t in threats if isinstance(t, dict)]
+    try:
+        cfg = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cfg = {}
+    return {
+        "depth": str(cfg.get("assessment_depth") or ""),
+        "critical": risks.count("Critical"),
+        "high": risks.count("High"),
+    }
+
+
 def cmd_update(args: argparse.Namespace) -> int:
     output_dir = Path(args.output_dir).resolve()
     repo_root = Path(args.repo_root).resolve()
@@ -346,6 +374,9 @@ def cmd_update(args: argparse.Namespace) -> int:
         "working_tree_snapshot": working_tree_snapshot,
         "last_run_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
+    severity_counts = _severity_counts(yaml_text, output_dir)
+    if severity_counts:
+        state["severity_counts"] = severity_counts
 
     # Carry forward the next-run estimator's fields. `cmd_update` rewrites
     # baseline.json from a fresh dict, so without this any baseline write
@@ -366,6 +397,7 @@ def cmd_update(args: argparse.Namespace) -> int:
         "component_durations_recorded_at",
         "component_durations_phase_9_start",
         "trust_boundary_declaration_fingerprint",
+        "severity_counts",
     ):
         if _carry in existing and _carry not in state:
             state[_carry] = existing[_carry]

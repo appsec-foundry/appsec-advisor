@@ -2099,3 +2099,38 @@ def test_collapse_names_the_job_states(tmp_path):
     (issue,) = agg._extract_stage_coverage_collapse(_coverage_run(tmp_path))
     assert issue["evidence"]["job_states"] == {"failed": 1, "stage_exhausted": 1}
     assert "failed=1, stage_exhausted=1" in issue["title"]
+
+
+def _regression_run(tmp_path, previous, risks, depth="thorough"):
+    (tmp_path / ".appsec-cache").mkdir(exist_ok=True)
+    (tmp_path / ".appsec-cache" / "baseline.json").write_text(json.dumps({"severity_counts": previous}))
+    (tmp_path / ".skill-config.json").write_text(json.dumps({"assessment_depth": depth}))
+    threats = [{"id": f"T-{n}", "risk": risk} for n, risk in enumerate(risks)]
+    (tmp_path / "threat-model.yaml").write_text(_json.dumps({"threats": threats}))
+    return tmp_path
+
+
+@pytest.mark.parametrize(
+    ("previous", "risks", "depth", "labels"),
+    [
+        ({"depth": "thorough", "critical": 12, "high": 20}, ["Critical"] * 5 + ["High"] * 20, "thorough", ["Critical"]),
+        (
+            {"depth": "standard", "critical": 4, "high": 10},
+            ["Critical"] * 1 + ["High"] * 4,
+            "thorough",
+            ["Critical", "High"],
+        ),
+        ({"depth": "thorough", "critical": 12, "high": 20}, ["Critical"] * 5, "standard", []),
+        ({"depth": "thorough", "critical": 8, "high": 20}, ["Critical"] * 4 + ["High"] * 10, "thorough", []),
+        ({"depth": "thorough", "critical": 1, "high": 1}, [], "thorough", []),
+    ],
+    ids=["critical-halved", "both-halved", "shallower-run", "exactly-half", "too-few-to-compare"],
+)
+def test_a_halved_severity_tier_is_a_run_issue(tmp_path, previous, risks, depth, labels):
+    issues = agg._extract_severity_regression(_regression_run(tmp_path, previous, risks, depth))
+    assert [issue["evidence"]["severity_label"] for issue in issues] == labels
+
+
+def test_no_previous_counts_raise_nothing(tmp_path):
+    (tmp_path / "threat-model.yaml").write_text("threats: []")
+    assert agg._extract_severity_regression(tmp_path) == []
