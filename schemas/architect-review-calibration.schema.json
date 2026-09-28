@@ -8,36 +8,12 @@
       "const": 1
     },
     "live": {
-      "type": "boolean"
+      "const": false
     },
     "model": {
       "type": "string",
       "minLength": 1,
       "maxLength": 128
-    },
-    "limits": {
-      "type": "object",
-      "properties": {
-        "job_seconds": {
-          "type": "number",
-          "exclusiveMinimum": 0,
-          "maximum": 90
-        },
-        "stage_seconds": {
-          "type": "number",
-          "exclusiveMinimum": 0,
-          "maximum": 360
-        },
-        "max_worker_calls": {
-          "const": 4
-        }
-      },
-      "required": [
-        "job_seconds",
-        "stage_seconds",
-        "max_worker_calls"
-      ],
-      "additionalProperties": false
     },
     "comparisons": {
       "type": "array",
@@ -179,7 +155,6 @@
     "schema_version",
     "live",
     "model",
-    "limits",
     "comparisons",
     "fixture_sha256",
     "rubric"

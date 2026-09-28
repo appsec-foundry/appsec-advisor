@@ -13,7 +13,41 @@ from hydrate_mitigation_details import hydrate
 from tests.test_architect_review import decision, finding, merged
 
 
-def setup_run(tmp_path, monkeypatch, *, component="gateway", filename="routes/orders.py", count=1):
+def answer(packet):
+    return {
+        **{
+            key: packet[key]
+            for key in ("schema_version", "run_id", "packet_id", "input_sha256", "context_sha256", "policy_sha256")
+        },
+        "decisions": [decision(row["finding"]["t_id"]) for row in packet["findings"]],
+    }
+
+
+def run_agents(tmp_path, jobs, respond=answer, calls=None):
+    """Act as the dispatched architect_reviewer agents for one wave."""
+    for job in jobs:
+        document = json.loads((tmp_path / job["input_artifact"]).read_text())
+        assert document["job_id"] == job["job_id"]
+        proposals = {}
+        for packet in document["packets"]:
+            if calls is not None:
+                calls.append(packet)
+            proposal = respond(packet)
+            if proposal is not None:
+                proposals[packet["packet_id"]] = proposal
+        (tmp_path / job["output_artifact"]).write_text(
+            json.dumps({"schema_version": 1, "job_id": job["job_id"], "proposals": proposals})
+        )
+
+
+def review(tmp_path, cfg, respond=answer, calls=None, **kwargs):
+    """Drive every wave to completion and return the saved transaction."""
+    while jobs := runtime.advance_review(tmp_path, cfg, **kwargs):
+        run_agents(tmp_path, jobs, respond, calls)
+    return runtime.load_review(tmp_path)
+
+
+def setup_run(tmp_path, *, component="gateway", filename="routes/orders.py", count=1):
     cfg = {"run_id": "synthetic-run", "architect_review": True, "architect_model": "sonnet", "mode": "full"}
     source = merged(*(finding(f"T-{i:03d}", component, filename) for i in range(1, count + 1)))
     for name, value in (
@@ -22,21 +56,7 @@ def setup_run(tmp_path, monkeypatch, *, component="gateway", filename="routes/or
         (".stride-analyst-context.json", {}),
     ):
         (tmp_path / name).write_text(json.dumps(value))
-    calls = []
-
-    def host(packet, **kwargs):
-        calls.append(packet)
-        kwargs["telemetry"]["wall_seconds"] = 0.01
-        return "completed", {
-            **{
-                key: packet[key]
-                for key in ("schema_version", "run_id", "packet_id", "input_sha256", "context_sha256", "policy_sha256")
-            },
-            "decisions": [decision(row["finding"]["t_id"]) for row in packet["findings"]],
-        }
-
-    monkeypatch.setattr(runtime, "run_packet", host)
-    return cfg, source, calls
+    return cfg, source, []
 
 
 def model_for(source):
@@ -45,9 +65,9 @@ def model_for(source):
 
 
 @pytest.mark.parametrize("component,filename", [("gateway", "routes/orders.py"), ("processor", "lib/records.rs")])
-def test_corrections_survive_grouping_hydration_and_repeat_rebuild(tmp_path, monkeypatch, component, filename):
-    cfg, source, calls = setup_run(tmp_path, monkeypatch, component=component, filename=filename, count=2)
-    result = runtime.run_review(tmp_path, cfg)
+def test_corrections_survive_grouping_hydration_and_repeat_rebuild(tmp_path, component, filename):
+    cfg, source, calls = setup_run(tmp_path, component=component, filename=filename, count=2)
+    result = review(tmp_path, cfg, calls=calls)
     snapshot = result["snapshot"]
     assert snapshot["threats"][0]["risk"] == "High"
     assert source["threats"][0]["risk"] == "Medium"
@@ -57,94 +77,131 @@ def test_corrections_survive_grouping_hydration_and_repeat_rebuild(tmp_path, mon
     assert len(model["mitigations"]) == 2
     assert {row["priority"] for row in model["mitigations"]} == {"P2"}
     assert runtime.project_model(tmp_path, model, snapshot) == model
-    assert runtime.run_review(tmp_path, cfg) == result
+    assert review(tmp_path, cfg, calls=calls) == result
     assert len(calls) == 1
 
 
-def test_disabled_review_does_not_read_sources_or_call_model(tmp_path, monkeypatch):
-    monkeypatch.setattr(runtime, "run_packet", lambda *_args, **_kwargs: pytest.fail("paid call"))
-    assert runtime.run_review(tmp_path, {"architect_review": False}) is None
-    assert runtime.run_review(tmp_path, {"architect_review": True, "dry_run": True}) is None
+def test_disabled_review_does_not_read_sources_or_dispatch(tmp_path):
+    assert runtime.advance_review(tmp_path, {"architect_review": False}) is None
+    assert runtime.advance_review(tmp_path, {"architect_review": True, "dry_run": True}) is None
     assert list(tmp_path.iterdir()) == []
 
 
-def test_empty_review_has_no_host_call_and_records_empty_coverage(tmp_path, monkeypatch):
-    cfg, source, calls = setup_run(tmp_path, monkeypatch)
+def test_empty_review_dispatches_nothing_and_records_empty_coverage(tmp_path):
+    cfg, source, _ = setup_run(tmp_path)
     source["threats"] = []
     (tmp_path / ".threats-merged.json").write_text(json.dumps(source))
-    result = runtime.run_review(tmp_path, cfg)
-    assert calls == []
+    assert runtime.advance_review(tmp_path, cfg) is None
+    result = runtime.load_review(tmp_path)
     assert result["application"]["outcomes"] == []
+    assert result["dispatch_jobs"] == []
     assert result["snapshot"] == source
+    assert runtime.review_coverage(result)["outcome"] == "reviewed"
 
 
-def test_stage_deadline_keeps_completed_packets_without_starting_the_rest(tmp_path, monkeypatch):
-    cfg, _, calls = setup_run(tmp_path, monkeypatch, count=7)
-    clock = iter([0, 0, runtime.STAGE_SECONDS + 1])
-    monkeypatch.setattr(runtime.time, "monotonic", lambda: next(clock))
-    result = runtime.run_review(tmp_path, cfg)
-    assert len(calls) == 1
-    assert len(result["application"]["accepted"]) == 3
-    assert sum(row["status"] == "unreviewed" for row in result["application"]["outcomes"]) == 4
+def _respond_missing_second(packet):
+    return None if packet["packet_id"].endswith("2") else answer(packet)
 
 
-def test_host_failure_stops_further_spending_and_records_coverage(tmp_path, monkeypatch):
-    cfg, source, _ = setup_run(tmp_path, monkeypatch, count=7)
-    calls = []
+@pytest.mark.parametrize(
+    ("shape", "outcome", "reason", "reviewed"),
+    [
+        ("all", "reviewed", None, 7),
+        ("some-missing", "incomplete", None, 4),
+        ("invalid-file", "unavailable", "no_proposals", 0),
+        ("none-returned", "unavailable", "no_proposals", 0),
+        ("foreign-context", "unavailable", "rejected_proposals", 0),
+    ],
+)
+def test_every_result_shape_is_recorded_explicitly(tmp_path, shape, outcome, reason, reviewed):
+    cfg, _, _ = setup_run(tmp_path, count=7)
+    jobs = runtime.advance_review(tmp_path, cfg)
+    assert [job["packet_count"] for job in jobs] == [3]
+    if shape == "invalid-file":
+        (tmp_path / jobs[0]["output_artifact"]).write_text("{not json")
+    elif shape == "some-missing":
+        run_agents(tmp_path, jobs, _respond_missing_second)
+    elif shape == "foreign-context":
+        run_agents(tmp_path, jobs, lambda packet: {**answer(packet), "context_sha256": "0" * 64})
+    elif shape == "all":
+        run_agents(tmp_path, jobs)
+    assert runtime.advance_review(tmp_path, cfg) is None
+    coverage = runtime.review_coverage(runtime.load_review(tmp_path))
+    assert (coverage["outcome"], coverage.get("reason"), coverage["reviewed"]) == (outcome, reason, reviewed)
+    assert coverage["findings_recorded"] == 7
+    assert coverage["jobs_dispatched"] == 1
+    runtime.validate_status({"status": "pass", "review_kind": "semantic", **coverage})
 
-    def failed(packet, **kwargs):
-        calls.append(packet)
-        return "deadline_exceeded", None
 
-    monkeypatch.setattr(runtime, "run_packet", failed)
-    result = runtime.run_review(tmp_path, cfg)
-    assert len(calls) == 1
+def test_waves_respect_concurrency_and_never_repeat_a_returned_job(tmp_path):
+    cfg = {"run_id": "synthetic-run", "architect_review": True, "architect_model": "sonnet", "mode": "full"}
+    source = merged(*(finding(f"T-{i:03d}", f"svc-{i}", f"src/svc{i}/api.py") for i in range(1, 8)))
+    (tmp_path / ".skill-config.json").write_text(json.dumps(cfg))
+    (tmp_path / ".threats-merged.json").write_text(json.dumps(source))
+    (tmp_path / ".stride-analyst-context.json").write_text("{}")
+    first = runtime.advance_review(tmp_path, cfg, concurrency=5)
+    assert len(first) == 5 and len({job["component_id"] for job in first}) == 5
+    run_agents(tmp_path, first)
+    second = runtime.advance_review(tmp_path, cfg, concurrency=5)
+    assert len(second) == 2
+    assert not {job["job_id"] for job in first} & {job["job_id"] for job in second}
+    run_agents(tmp_path, second)
+    assert runtime.advance_review(tmp_path, cfg, concurrency=5) is None
+    assert runtime.advance_review(tmp_path, cfg, concurrency=5) is None
+    result = runtime.load_review(tmp_path)
+    assert {job["status"] for job in result["dispatch_jobs"]} == {"returned"}
+    assert len(result["application"]["accepted"]) == 7
+
+
+def test_a_missing_job_is_closed_not_dispatched_again(tmp_path):
+    cfg, source, _ = setup_run(tmp_path, count=2)
+    assert runtime.advance_review(tmp_path, cfg)
+    assert runtime.advance_review(tmp_path, cfg) is None
+    result = runtime.load_review(tmp_path)
+    assert [job["status"] for job in result["dispatch_jobs"]] == ["missing"]
     assert result["snapshot"] == source
-    assert [j["status"] for j in result["jobs"]] == ["deadline_exceeded", "stage_exhausted", "stage_exhausted"]
-    assert len(result["application"]["outcomes"]) == 7
-    assert all(row["status"] == "unreviewed" for row in result["application"]["outcomes"])
-    runtime.run_review(tmp_path, cfg)
-    assert len(calls) == 1
+    assert runtime.advance_review(tmp_path, cfg) is None
 
 
-def test_interruption_never_restarts_a_model_call(tmp_path, monkeypatch):
-    cfg, source, _ = setup_run(tmp_path, monkeypatch)
-
-    def interrupted(*args, **kwargs):
-        raise KeyboardInterrupt
-
-    monkeypatch.setattr(runtime, "run_packet", interrupted)
-    with pytest.raises(KeyboardInterrupt):
-        runtime.run_review(tmp_path, cfg)
-    monkeypatch.setattr(runtime, "run_packet", lambda *_a, **_k: pytest.fail("retry"))
-    result = runtime.run_review(tmp_path, cfg)
-    assert result["snapshot"] == source
-    assert result["jobs"][0]["status"] == "interrupted"
+def test_a_large_component_splits_into_successive_waves(tmp_path):
+    cfg, _, _ = setup_run(tmp_path, count=3 * (runtime.JOB_PACKET_LIMIT + 1))
+    first = runtime.advance_review(tmp_path, cfg)
+    assert [job["packet_count"] for job in first] == [runtime.JOB_PACKET_LIMIT]
+    run_agents(tmp_path, first)
+    second = runtime.advance_review(tmp_path, cfg)
+    assert [job["packet_count"] for job in second] == [1]
+    assert second[0]["input_artifact"] == first[0]["input_artifact"]
+    run_agents(tmp_path, second)
+    assert runtime.advance_review(tmp_path, cfg) is None
+    assert runtime.review_coverage(runtime.load_review(tmp_path))["outcome"] == "reviewed"
 
 
 def test_publication_recovers_without_repeating_the_review(tmp_path, monkeypatch):
-    cfg, source, calls = setup_run(tmp_path, monkeypatch)
+    cfg, source, calls = setup_run(tmp_path)
     write = runtime.atomic_write_json
 
     def crash(path, data):
-        if path.name == ".threats-merged.json":
+        if (
+            path.name == ".threats-merged.json"
+            and json.loads((tmp_path / runtime.ARTIFACT).read_text())["phase"] == "complete"
+        ):
             raise OSError("interrupted publication")
         write(path, data)
 
     monkeypatch.setattr(runtime, "atomic_write_json", crash)
     with pytest.raises(OSError):
-        runtime.run_review(tmp_path, cfg)
+        review(tmp_path, cfg, calls=calls)
     assert json.loads((tmp_path / ".threats-merged.json").read_text()) == source
     monkeypatch.setattr(runtime, "atomic_write_json", write)
-    result = runtime.run_review(tmp_path, cfg)
+    result = review(tmp_path, cfg, calls=calls)
     assert json.loads((tmp_path / ".threats-merged.json").read_text()) == result["snapshot"]
     assert len(calls) == 1
 
 
 @pytest.mark.parametrize("mutation", ["rating", "fix", "drop", "priority"])
 def test_final_gate_rejects_lost_corrections_and_clears_old_success(tmp_path, monkeypatch, mutation):
-    cfg, _, _ = setup_run(tmp_path, monkeypatch)
-    result = runtime.run_review(tmp_path, cfg)
+    cfg, _, _ = setup_run(tmp_path)
+    result = review(tmp_path, cfg)
     model = runtime.project_model(tmp_path, model_for(result["snapshot"]), result["snapshot"])
     if mutation == "rating":
         model["threats"][0]["risk"] = "Low"
@@ -161,10 +218,10 @@ def test_final_gate_rejects_lost_corrections_and_clears_old_success(tmp_path, mo
 
 
 def test_tampered_transaction_and_foreign_run_are_rejected(tmp_path, monkeypatch):
-    cfg, _, _ = setup_run(tmp_path, monkeypatch)
-    result = runtime.run_review(tmp_path, cfg)
+    cfg, _, _ = setup_run(tmp_path)
+    result = review(tmp_path, cfg)
     with pytest.raises(ReviewError, match="another run"):
-        runtime.run_review(tmp_path, {**cfg, "run_id": "other"})
+        runtime.advance_review(tmp_path, {**cfg, "run_id": "other"})
     result["snapshot"]["threats"][0]["risk"] = "Low"
     (tmp_path / runtime.ARTIFACT).write_text(json.dumps(result))
     with pytest.raises(ReviewError, match="altered"):
@@ -172,28 +229,24 @@ def test_tampered_transaction_and_foreign_run_are_rejected(tmp_path, monkeypatch
 
 
 def test_later_source_changes_are_not_hidden_by_projection(tmp_path, monkeypatch):
-    cfg, _, _ = setup_run(tmp_path, monkeypatch)
-    result = runtime.run_review(tmp_path, cfg)
+    cfg, _, _ = setup_run(tmp_path)
+    result = review(tmp_path, cfg)
     changed = deepcopy(result["snapshot"])
     changed["threats"][0]["remediation"]["steps"] = ["Log requests."]
     with pytest.raises(ReviewError, match="source values"):
         runtime.project_model(tmp_path, model_for(changed), changed)
 
 
-def test_already_correct_findings_remain_unchanged(tmp_path, monkeypatch):
-    cfg, source, _ = setup_run(tmp_path, monkeypatch)
+def test_already_correct_findings_remain_unchanged(tmp_path):
+    cfg, source, _ = setup_run(tmp_path)
 
-    def unchanged(packet, **kwargs):
-        return "completed", {
-            **{
-                key: packet[key]
-                for key in ("schema_version", "run_id", "packet_id", "input_sha256", "context_sha256", "policy_sha256")
-            },
+    def unchanged(packet):
+        return {
+            **answer(packet),
             "decisions": [{"t_id": "T-001", "assessment": "unchanged", "remediation": "unchanged"}],
         }
 
-    monkeypatch.setattr(runtime, "run_packet", unchanged)
-    result = runtime.run_review(tmp_path, cfg)
+    result = review(tmp_path, cfg, unchanged)
     assert result["snapshot"] == source
     assert result["application"]["accepted"] == []
     model = model_for(source)
@@ -214,20 +267,18 @@ def test_old_rerender_does_not_claim_a_semantic_review(tmp_path, capsys):
     assert "not_run" in capsys.readouterr().out
 
 
-def test_changed_context_cannot_publish_a_stale_model_answer(tmp_path, monkeypatch):
-    cfg, source, _ = setup_run(tmp_path, monkeypatch)
+def test_changed_context_cannot_publish_a_stale_model_answer(tmp_path):
+    cfg, source, _ = setup_run(tmp_path)
 
-    def mutate_context(packet, **kwargs):
+    def mutate_context(packet):
         (tmp_path / ".stride-analyst-context.json").write_text('{"gateway":{}}')
-        return "completed", {}
+        return {}
 
-    monkeypatch.setattr(runtime, "run_packet", mutate_context)
     with pytest.raises(ReviewError, match="context changed"):
-        runtime.run_review(tmp_path, cfg)
+        review(tmp_path, cfg, mutate_context)
     assert json.loads((tmp_path / ".threats-merged.json").read_text()) == source
-    monkeypatch.setattr(runtime, "run_packet", lambda *_a, **_k: pytest.fail("retry"))
     with pytest.raises(ReviewError, match="context changed"):
-        runtime.run_review(tmp_path, cfg)
+        runtime.advance_review(tmp_path, cfg)
 
 
 def test_non_object_yaml_fails_without_a_stale_success(tmp_path):
@@ -237,10 +288,11 @@ def test_non_object_yaml_fails_without_a_stale_success(tmp_path):
     assert not (tmp_path / ".architect-status.json").exists()
 
 
-def test_controller_applies_corrections_before_triage_and_synthesis(tmp_path, monkeypatch):
+def test_controller_dispatches_review_then_applies_corrections_before_triage(tmp_path, monkeypatch):
     import orchestration_controller as controller
 
-    cfg, _, calls = setup_run(tmp_path, monkeypatch)
+    cfg, _, calls = setup_run(tmp_path)
+    cfg["output_dir"] = str(tmp_path)
     observed = []
 
     def script(name, args, **kwargs):
@@ -249,24 +301,71 @@ def test_controller_applies_corrections_before_triage_and_synthesis(tmp_path, mo
             assert json.loads((tmp_path / ".threats-merged.json").read_text())["threats"][0]["risk"] == "High"
             assert len(calls) == 1
 
+    events = []
     monkeypatch.setattr(controller, "_run_script", script)
+    monkeypatch.setattr(controller, "_append_event", lambda _out, event, *_a, **_k: events.append(event))
+    monkeypatch.setattr(controller, "_context_v2_after_triage", lambda *_a: {"action": "synthesis"})
+    action = controller._context_v2_after_evidence(tmp_path, cfg)
+    assert action["action"] == "dispatch_parallel"
+    assert action["next_boundary"] == "context-v2-post-architect-review"
+    assert "triage_validate_ratings.py" not in observed
+    job = action["dispatch_jobs"][0]
+    assert job["semantic_role"] == "architect_reviewer"
+    assert job["agent_type"] == "appsec-advisor:appsec-architect-reviewer"
+    assert [receipt["artifact_path"] for receipt in action["artifact_receipts"]] == job["input_artifacts"]
+    run_agents(
+        tmp_path,
+        [
+            {
+                "job_id": job["job_id"],
+                "input_artifact": job["input_artifacts"][0],
+                "output_artifact": job["output_artifacts"][0],
+            }
+        ],
+        calls=calls,
+    )
+    assert controller._context_v2_architect_review(tmp_path, cfg) == {"action": "synthesis"}
+    assert observed.index("reclassify_components.py") < observed.index("triage_validate_ratings.py")
+    assert runtime.load_review(tmp_path)["application"]["accepted"]
+    assert "ARCHITECT_REVIEW_COMPLETE" in events and "ORCHESTRATION_GATE_WARN" not in events
+
+
+def test_controller_warns_when_the_review_decided_nothing(tmp_path, monkeypatch):
+    import orchestration_controller as controller
+
+    cfg, _, _ = setup_run(tmp_path)
+    cfg["output_dir"] = str(tmp_path)
+    events = []
+    monkeypatch.setattr(controller, "_run_script", lambda *_a, **_k: None)
+    monkeypatch.setattr(controller, "_append_event", lambda _out, event, *_a, **_k: events.append(event))
+    monkeypatch.setattr(controller, "_context_v2_after_triage", lambda *_a: {"action": "synthesis"})
+    assert controller._context_v2_after_evidence(tmp_path, cfg)["action"] == "dispatch_parallel"
+    assert controller._context_v2_architect_review(tmp_path, cfg) == {"action": "synthesis"}
+    assert "ORCHESTRATION_GATE_WARN" in events
+
+
+def test_controller_skips_dispatch_when_review_is_disabled(tmp_path, monkeypatch):
+    import orchestration_controller as controller
+
+    cfg, _, _ = setup_run(tmp_path)
+    cfg.update(architect_review=False, output_dir=str(tmp_path))
+    monkeypatch.setattr(controller, "_run_script", lambda *_a, **_k: None)
     monkeypatch.setattr(controller, "_append_event", lambda *_a, **_k: None)
     monkeypatch.setattr(controller, "_context_v2_after_triage", lambda *_a: {"action": "synthesis"})
     assert controller._context_v2_after_evidence(tmp_path, cfg) == {"action": "synthesis"}
-    assert observed.index("reclassify_components.py") < observed.index("triage_validate_ratings.py")
-    assert runtime.load_review(tmp_path)["application"]["accepted"]
+    assert not (tmp_path / runtime.ARTIFACT).exists()
 
 
 def test_concurrent_boundary_cannot_spend_or_consume_inflight_work(tmp_path, monkeypatch):
     import fcntl
     import os
 
-    cfg, _, calls = setup_run(tmp_path, monkeypatch)
+    cfg, _, calls = setup_run(tmp_path)
     descriptor = os.open(tmp_path, os.O_RDONLY)
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         with pytest.raises(ReviewError, match="already running"):
-            runtime.run_review(tmp_path, cfg)
+            runtime.advance_review(tmp_path, cfg)
         assert calls == []
         assert not (tmp_path / runtime.ARTIFACT).exists()
     finally:
@@ -276,7 +375,7 @@ def test_concurrent_boundary_cannot_spend_or_consume_inflight_work(tmp_path, mon
 def test_scoring_opt_out_is_preserved_through_context_application_and_replay(tmp_path, monkeypatch):
     from architect_review import _canonical_valid
 
-    cfg, source, _ = setup_run(tmp_path, monkeypatch)
+    cfg, source, _ = setup_run(tmp_path)
     source["threats"][0]["source"] = "known-vuln"
     cfg["stride_profile"] = {"skip_cvss_scoring": True}
     (tmp_path / ".skill-config.json").write_text(json.dumps(cfg))
@@ -284,7 +383,7 @@ def test_scoring_opt_out_is_preserved_through_context_application_and_replay(tmp
     with pytest.raises(ReviewError):
         _canonical_valid(source)
     _canonical_valid(source, tmp_path)
-    result = runtime.run_review(tmp_path, cfg)
+    result = review(tmp_path, cfg)
     assert result["application"]["accepted"]
     assert runtime.load_review(tmp_path) == result
     import runtime_cleanup
@@ -299,18 +398,16 @@ def test_scoring_opt_out_is_preserved_through_context_application_and_replay(tmp
     assert runtime.verify_model(tmp_path, model) == result
 
 
-def test_scoring_profile_change_during_review_blocks_publication(tmp_path, monkeypatch):
-    cfg, source, _ = setup_run(tmp_path, monkeypatch)
-    host = runtime.run_packet
+def test_scoring_profile_change_during_review_blocks_publication(tmp_path):
+    cfg, source, _ = setup_run(tmp_path)
 
-    def change_profile(packet, **kwargs):
+    def change_profile(packet):
         cfg["stride_profile"] = {"skip_cvss_scoring": True}
         (tmp_path / ".skill-config.json").write_text(json.dumps(cfg))
-        return host(packet, **kwargs)
+        return answer(packet)
 
-    monkeypatch.setattr(runtime, "run_packet", change_profile)
     with pytest.raises(ReviewError, match="scoring profile changed"):
-        runtime.run_review(tmp_path, cfg)
+        review(tmp_path, cfg, change_profile)
     assert json.loads((tmp_path / ".threats-merged.json").read_text()) == source
 
 
@@ -318,8 +415,8 @@ def test_required_review_is_preserved_by_cleanup_and_removed_by_fresh_preflight(
     import orchestration_controller as controller
     import runtime_cleanup
 
-    cfg, _, _ = setup_run(tmp_path, monkeypatch)
-    runtime.run_review(tmp_path, cfg)
+    cfg, _, _ = setup_run(tmp_path)
+    review(tmp_path, cfg)
     runtime_cleanup.run_cleanup(tmp_path, "all", keep_runtime_files=False, force=True)
     assert (tmp_path / runtime.ARTIFACT).exists()
     assert runtime.ARTIFACT in runtime_cleanup.NEVER
@@ -335,7 +432,7 @@ def test_real_yaml_builder_publishes_schema_valid_reviewed_ratings_and_fixes(tmp
     import build_threat_model_yaml as builder
     from validate_intermediate import validate_threat_model_output
 
-    cfg, source, _ = setup_run(tmp_path, monkeypatch)
+    cfg, source, _ = setup_run(tmp_path)
     source["threats"][0]["scenario"] = (
         "A signed-in account updates a foreign order because the handler selects only by order ID."
     )
@@ -356,7 +453,7 @@ def test_real_yaml_builder_publishes_schema_valid_reviewed_ratings_and_fixes(tmp
             }
         )
     )
-    runtime.run_review(tmp_path, cfg)
+    review(tmp_path, cfg)
     monkeypatch.setattr(sys, "argv", ["build_threat_model_yaml.py", str(tmp_path), "--repo-root", str(tmp_path)])
     assert builder.main() == 0
     model = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
@@ -370,8 +467,8 @@ def test_real_yaml_builder_publishes_schema_valid_reviewed_ratings_and_fixes(tmp
 def test_completion_reports_assessment_and_mitigation_corrections_independently(tmp_path, monkeypatch):
     from render_completion_summary import _summary_architect
 
-    cfg, _, _ = setup_run(tmp_path, monkeypatch)
-    result = runtime.run_review(tmp_path, cfg)
+    cfg, _, _ = setup_run(tmp_path)
+    result = review(tmp_path, cfg)
     model = runtime.project_model(tmp_path, model_for(result["snapshot"]), result["snapshot"])
     (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(model))
     assert runtime.main(["--output-dir", str(tmp_path)]) == 0

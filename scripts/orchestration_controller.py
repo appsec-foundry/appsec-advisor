@@ -131,6 +131,7 @@ _RECEIPT_RECORD_KEYS = {
     "schemas/post-stride-generated-threats.schema.json#v1": "threats",
     "schemas/post-stride-proposed-mitigations.schema.json#v1": "mitigations",
     "schemas/abuse-case-verifier-context.schema.json#v1": "candidate",
+    "schemas/architect-review-job.schema.json#v1": "packets",
     "schemas/actors-merged-static.schema.yaml#v1": "resolved_actors",
     "schemas/actors-resolved.schema.yaml#v1": "resolved_actors",
 }
@@ -181,6 +182,12 @@ SEMANTIC_ROLE_REGISTRY: dict[str, dict[str, Any]] = {
             "schemas/fragments/security-controls.schema.json",
             "schemas/stride-analyst-context.schema.json",
         ),
+    },
+    "architect_reviewer": {
+        "agent": "appsec-architect-reviewer",
+        "instruction": PLUGIN_ROOT / "agents" / "appsec-architect-reviewer.md",
+        "tools": ("Read", "Write"),
+        "output_contracts": ("schemas/architect-review-proposals.schema.json",),
     },
     "evidence_verifier": {
         "agent": "appsec-evidence-verifier",
@@ -239,6 +246,7 @@ SEMANTIC_ROLE_MODEL_KEYS = {
     "abuse_case_verifier": "abuse_verifier_model",
     "actor_discoverer": "actor_discovery_model",
     "architecture_analyst": "orchestrator_model",
+    "architect_reviewer": "architect_model",
     "config_scanner": "config_scanner_model",
     "context_resolver": "context_resolver_model",
     "control_analyst": "orchestrator_model",
@@ -255,7 +263,9 @@ SEMANTIC_ROLE_MODEL_KEYS = {
 # boundary. Producer-gated roles run the shared validator within their own
 # budget, so they can correct a bad write without restarting Stage 1. STRIDE
 # is the deliberate exception: its controller-owned bounded retry consumes the
-# same validator errors and redispatches only the affected component.
+# same validator errors and redispatches only the affected component. The
+# architect reviewer is the other: the controller validates each proposal file
+# and records a missing or invalid one as an explicit unreviewed outcome.
 CONTEXT_V2_PRODUCER_GATED_ROLES = frozenset(
     {
         "abuse_case_verifier",
@@ -272,7 +282,7 @@ CONTEXT_V2_PRODUCER_GATED_ROLES = frozenset(
         "trust_boundary_analyst",
     }
 )
-CONTEXT_V2_CONTROLLER_RECOVERY_ROLES = frozenset({"stride_analyzer"})
+CONTEXT_V2_CONTROLLER_RECOVERY_ROLES = frozenset({"architect_reviewer", "stride_analyzer"})
 
 _FULL_INTERMEDIATE_NAMES = {
     ".business-context-preview.json",
@@ -3180,6 +3190,7 @@ _STAGE1_TASK_ROW_BY_ROLE = {
     "stride_analyzer": STAGE1_TASK_ROWS[5],
     "threat_merger": STAGE1_TASK_ROWS[6],
     "evidence_verifier": STAGE1_TASK_ROWS[7],
+    "architect_reviewer": STAGE1_TASK_ROWS[8],
     "triage_validator": STAGE1_TASK_ROWS[8],
     "post_stride_synthesizer": STAGE1_TASK_ROWS[9],
 }
@@ -5780,19 +5791,77 @@ def _context_v2_after_evidence(output_dir: Path, cfg: dict[str, Any]) -> dict[st
         ["threats_merged", str(output_dir / ".threats-merged.json")],
     )
     # Review before any derived ranking, grouping or report is built.
-    from architect_review import ReviewError
-    from architect_review_runtime import run_review
+    return _context_v2_architect_review(output_dir, cfg)
+
+
+def _context_v2_architect_review(output_dir: Path, cfg: dict[str, Any]) -> dict[str, Any]:
+    """Dispatch the next architect-review wave, or finish the review and triage."""
+    from architect_review import ReviewError  # noqa: PLC0415
+    from architect_review_runtime import advance_review, load_review, review_coverage  # noqa: PLC0415
 
     try:
-        review = run_review(output_dir, cfg)
+        wave = advance_review(output_dir, cfg)
     except (OSError, ValueError, ReviewError) as exc:
         raise ControllerError("architect review transaction failed") from exc
-    if review is not None:
-        outcomes = review["application"]["outcomes"]
-        incomplete = sum(
-            row["status"] != "accepted" or "unresolved" in (row["assessment"], row["remediation"]) for row in outcomes
+    if wave:
+        receipts = [
+            _validated_json_receipt(
+                output_dir,
+                job["input_artifact"],
+                schema_id="schemas/architect-review-job.schema.json#v1",
+                record_count=job["packet_count"],
+            )
+            for job in wave
+        ]
+        action = {
+            **_context_v2_common(output_dir, cfg),
+            "action": "dispatch_parallel",
+            "semantic_role": "architect_reviewer",
+            "task_progress": _stage1_task_progress("architect_reviewer"),
+            "next_boundary": _checked_next_boundary("context-v2-post-architect-review"),
+            "dispatch_jobs": [
+                {
+                    "schema_version": 1,
+                    "job_id": job["job_id"],
+                    "semantic_role": "architect_reviewer",
+                    "component_id": job["component_id"],
+                    **_context_v2_job_metadata(cfg, "architect_reviewer"),
+                    "input_artifacts": [job["input_artifact"]],
+                    "output_artifacts": [job["output_artifact"]],
+                    "unresolved_decision_keys": ["architect_review_proposals"],
+                }
+                for job in wave
+            ],
+            "artifact_receipts": receipts,
+            "unresolved_decision_keys": ["architect_review_proposals"],
+        }
+        _prepare_context_v2_dispatch_outputs(output_dir, action["dispatch_jobs"])
+        return _validate_action(action)
+    if cfg.get("architect_review") and not cfg.get("dry_run"):
+        try:
+            coverage = review_coverage(load_review(output_dir))
+        except (OSError, ValueError, ReviewError) as exc:
+            raise ControllerError("architect review transaction failed") from exc
+        _append_event(
+            output_dir,
+            "ARCHITECT_REVIEW_COMPLETE",
+            f"findings={coverage['findings_recorded']} reviewed={coverage['reviewed']} "
+            f"incomplete={coverage['unresolved_or_unreviewed']} jobs={coverage['jobs_returned']}/"
+            f"{coverage['jobs_dispatched']}",
         )
-        _append_event(output_dir, "ARCHITECT_REVIEW_COMPLETE", f"findings={len(outcomes)} incomplete={incomplete}")
+        if coverage["outcome"] == "unavailable":
+            _append_event(
+                output_dir,
+                "ORCHESTRATION_GATE_WARN",
+                f"architect review unavailable ({coverage['reason']}): none of "
+                f"{coverage['findings_recorded']} findings reviewed",
+                level="WARN",
+            )
+    return _context_v2_triage(output_dir, cfg)
+
+
+def _context_v2_triage(output_dir: Path, cfg: dict[str, Any]) -> dict[str, Any]:
+    """Run deterministic triage on the reviewed register; repair it only on failure."""
     _run_script(
         "triage_validate_ratings.py",
         [str(output_dir), "--depth", str(cfg.get("assessment_depth") or "standard")],
@@ -6094,6 +6163,12 @@ def context_v2_post_evidence(output_dir: Path) -> dict[str, Any]:
     """Continue after the optional evidence-verifier boundary."""
     output_dir, cfg = _load_context_v2_config(output_dir)
     return _context_v2_after_evidence(output_dir, cfg)
+
+
+def context_v2_post_architect_review(output_dir: Path) -> dict[str, Any]:
+    """Collect an architect-review wave; dispatch the next or continue to triage."""
+    output_dir, cfg = _load_context_v2_config(output_dir)
+    return _context_v2_architect_review(output_dir, cfg)
 
 
 def context_v2_post_triage(output_dir: Path) -> dict[str, Any]:
@@ -7560,6 +7635,7 @@ _SEMANTIC_RETURN_COMMANDS = frozenset(
         "context-v2-post-stride",
         "context-v2-post-merge",
         "context-v2-post-evidence",
+        "context-v2-post-architect-review",
         "context-v2-post-triage",
         "context-v2-finalize",
         "finalize-abuse",
@@ -7660,6 +7736,8 @@ def main(argv: list[str] | None = None) -> int:
     context_v2_post_merge_parser.add_argument("--output-dir", required=True)
     context_v2_post_evidence_parser = sub.add_parser("context-v2-post-evidence")
     context_v2_post_evidence_parser.add_argument("--output-dir", required=True)
+    context_v2_post_architect_review_parser = sub.add_parser("context-v2-post-architect-review")
+    context_v2_post_architect_review_parser.add_argument("--output-dir", required=True)
     context_v2_post_triage_parser = sub.add_parser("context-v2-post-triage")
     context_v2_post_triage_parser.add_argument("--output-dir", required=True)
     context_v2_finalize_parser = sub.add_parser("context-v2-finalize")
@@ -7716,6 +7794,8 @@ def main(argv: list[str] | None = None) -> int:
             action = context_v2_post_merge(Path(args.output_dir))
         elif args.command == "context-v2-post-evidence":
             action = context_v2_post_evidence(Path(args.output_dir))
+        elif args.command == "context-v2-post-architect-review":
+            action = context_v2_post_architect_review(Path(args.output_dir))
         elif args.command == "context-v2-post-triage":
             action = context_v2_post_triage(Path(args.output_dir))
         elif args.command == "context-v2-finalize":

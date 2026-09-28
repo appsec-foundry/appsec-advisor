@@ -96,7 +96,7 @@ The standing contract surfaces are:
 - context catalog and effective-plan policy in
   `docs/internal/contracts/context-routing.md`.
 
-Dispatch and mutation ownership is global: native Level-0 Agent dispatch belongs to the compact runtime acting on controller actions, and no agent recurses through `Agent`. The enabled architect review is a controller-owned, tool-free host subprocess before triage, bounded by `scripts/architect_review_runtime.py` and `scripts/architect_review_worker.py`. It has no native Agent job or recursive tool surface. One controller boundary owns each state mutation and producer output.
+Dispatch and mutation ownership is global: native Level-0 Agent dispatch belongs to the compact runtime acting on controller actions, and no agent recurses through `Agent`. The enabled architect review runs before triage as controller-dispatched `architect_reviewer` jobs; `scripts/architect_review_runtime.py` plans, collects and applies them, and the agent has no recursive tool surface. One controller boundary owns each state mutation and producer output.
 
 ## Ownership
 
@@ -275,8 +275,9 @@ either returns a bounded merger job or reaches the next boundary.
 The merger reads `.merge-context/candidates.json`; the full
 `.merge-candidates.json` remains a deterministic-finalizer input and is rejected
 if it changes after projection.
-`context-v2-post-merge`, `context-v2-post-evidence`, and
-`context-v2-post-triage` continue from the corresponding focused output;
+`context-v2-post-merge`, `context-v2-post-evidence`,
+`context-v2-post-architect-review`, and `context-v2-post-triage` continue from
+the corresponding focused output;
 `context-v2-finalize` consumes the optional synthesis output. An empty merge
 candidate set skips the merger. The deterministic ranking success path skips
 the triage agent; its focused fallback is selected only when deterministic
@@ -397,10 +398,10 @@ aborts on the same read-only path, before the output directory exists.
 
 ## Semantic architect review
 
-When `architect_review` is enabled, `_context_v2_after_evidence` reviews canonical findings after evidence handling and component reconciliation, before triage or synthesis. The existing resolved architect model selects the host model. The runtime owns packet admission, sequential execution, the stage deadline and actual process termination. A failed host stops further calls; missing decisions remain unreviewed. Limits are defined in `scripts/architect_review_runtime.py` and are conservative allowances, not measured throughput claims.
+When `architect_review` is enabled, `_context_v2_after_evidence` reviews canonical findings after evidence handling and component reconciliation, before triage or synthesis. The runtime admits packets, groups them into one job per component chunk and returns them in waves of the STRIDE concurrency as a `dispatch_parallel` of `architect_reviewer` jobs with `next_boundary` `context-v2-post-architect-review`. Each job reads only its receipted `.dispatch-context/architect/<component>.json` and writes only `.dispatch-context/architect/<component>.proposals.json`. The boundary collects every returned job once, dispatches the next wave, and applies all proposals in one transaction after the last wave; a missing or invalid proposal file leaves its packets unreviewed and is never dispatched again. The resolved architect model selects the job model. Limits are defined in `scripts/architect_review_runtime.py`.
 
-The controller persists `.architect-review.json` under `schemas/architect-review-runtime.schema.json`. The transaction binds the run, original canonical input, analyst context, scoring profile, policy, admitted packets, proposals and accepted output. Every consumer reconstructs the application with the correction core and the recorded scoring profile, including after transient configuration cleanup. A scoring-profile change during an in-flight review blocks publication. Completed transactions recover publication without dispatching again. Interrupted transactions retain already returned results and close the remainder as unreviewed without resetting the budget.
+The controller persists `.architect-review.json` under `schemas/architect-review-runtime.schema.json`. The transaction binds the run, original canonical input, analyst context, scoring profile, policy, admitted packets, proposals and accepted output. Every consumer reconstructs the application with the correction core and the recorded scoring profile, including after transient configuration cleanup. A scoring-profile change during an in-flight review blocks publication. Completed transactions recover publication without dispatching again. Re-entered boundaries retain already returned results and never dispatch a returned or missing job again.
 
 The YAML builder projects accepted fixes after mitigation grouping and before requirement annotation. Changed ratings rederive priorities on linked fix cards through their existing deterministic policy; unrelated authored priorities and separate review or investigation tasks remain intact. Old override cards have no source-bound exception proof and cannot override a changed rating or replace an accepted fix. Shared cards retain unrelated members. Enrichment and Stage 4 reject lost corrections; a finding legitimately below the configured report floor remains in the audit.
 
-Stage 4 performs deterministic preservation and existing release gates only. It never dispatches a second editorial pass. Its `status: pass` means preservation gates passed; `outcome` distinguishes `reviewed`, `incomplete`, and `not_run`. Older rerenders without a transaction report `not_run`. New full/rebuild runs with enabled review cannot close without the transaction. Transport failure degrades the optional semantic enrichment to explicit incomplete coverage, while invalid required source data and corrupted transactions block publication.
+Stage 4 performs deterministic preservation and existing release gates only. It never dispatches a second editorial pass. Its `status: pass` means preservation gates passed; `outcome` distinguishes `reviewed`, `incomplete`, `unavailable`, and `not_run`; `unavailable` means no finding was reviewed and carries `reason` (`not_dispatched`, `no_proposals`, or `rejected_proposals`) together with `reviewed`, `jobs_dispatched` and `jobs_returned`, and the controller logs an `ORCHESTRATION_GATE_WARN`. Older rerenders without a transaction report `not_run`. New full/rebuild runs with enabled review cannot close without the transaction. Missing agent results degrade the optional semantic enrichment to explicit incomplete or unavailable coverage, while invalid required source data and corrupted transactions block publication.

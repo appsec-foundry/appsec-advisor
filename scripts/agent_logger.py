@@ -2346,6 +2346,7 @@ def _context_v2_agent_identity_reason(event: hook_payload.HookEvent) -> str | No
         "appsec-advisor:appsec-stride-analyzer-v2",
         "appsec-advisor:appsec-threat-merger",
         "appsec-advisor:appsec-evidence-verifier",
+        "appsec-advisor:appsec-architect-reviewer",
         "appsec-advisor:appsec-triage-validator",
         "appsec-advisor:appsec-post-stride-synthesizer",
         "appsec-advisor:appsec-abuse-case-verifier",

@@ -1,7 +1,6 @@
-"""Calibration is explicitly opt-in, bounded and independent of runtime state."""
+"""Calibration is offline, bounded and independent of runtime state."""
 
 import json
-from copy import deepcopy
 
 import calibrate_architect_review as calibration
 import pytest
@@ -12,80 +11,21 @@ def fixture():
     return json.loads(calibration.DEFAULT_FIXTURE.read_text(encoding="utf-8"))
 
 
-def test_default_calibration_prepares_four_calls_without_launching_any(monkeypatch):
-    def forbidden(*_args, **_kwargs):
-        pytest.fail("offline preparation must never launch a model")
-
-    monkeypatch.setattr(calibration, "run_packet", forbidden)
+def test_calibration_prepares_both_groupings_without_a_model():
     result = calibration.calibrate(fixture())
+    assert result["live"] is False
     assert [len(row["jobs"]) for row in result["comparisons"]] == [3, 1]
     assert all(row["application"] is None for row in result["comparisons"])
     assert all(job["status"] == "prepared" for row in result["comparisons"] for job in row["jobs"])
     calibration.validate(result)
 
 
-def test_live_driver_passes_bound_context_and_records_independent_dispositions(monkeypatch):
-    calls = []
-
-    def model(packet, *, model, timeout_seconds, telemetry):
-        calls.append((model, timeout_seconds))
-        telemetry["usage"] = {"input_tokens": 10, "output_tokens": 5}
-        return "completed", {
-            **{
-                key: packet[key]
-                for key in ("schema_version", "run_id", "packet_id", "input_sha256", "context_sha256", "policy_sha256")
-            },
-            "decisions": [
-                {
-                    "t_id": row["finding"]["t_id"],
-                    "assessment": "unchanged",
-                    "remediation": "unresolved",
-                    "reason": "The fixture needs independent semantic review.",
-                }
-                for row in packet["findings"]
-            ],
-        }
-
-    monkeypatch.setattr(calibration, "run_packet", model)
-    original = fixture()
-    before = deepcopy(original)
-    result = calibration.calibrate(original, live=True)
-    assert len(calls) == 4
-    assert all(name == "sonnet" and 0 < seconds <= 90 for name, seconds in calls)
-    for comparison in result["comparisons"]:
-        assert len(comparison["application"]["outcomes"]) == 3
-        assert all(row["remediation"] == "unresolved" for row in comparison["application"]["outcomes"])
-    assert original == before
-
-
-def test_stage_deadline_prevents_any_further_call(monkeypatch):
-    ticks = iter([0, 1000, 1000, 1000, 1000])
-    monkeypatch.setattr(calibration.time, "monotonic", lambda: next(ticks))
-    monkeypatch.setattr(calibration, "run_packet", lambda *_args, **_kwargs: pytest.fail("exhausted stage dispatched"))
-    result = calibration.calibrate(fixture(), live=True)
-    assert all(job["status"] == "stage_exhausted" for row in result["comparisons"] for job in row["jobs"])
-    assert all(
-        outcome["status"] == "unreviewed" for row in result["comparisons"] for outcome in row["application"]["outcomes"]
-    )
-
-
-def test_failed_packet_is_not_retried_or_reported_as_success(monkeypatch):
-    calls = []
-
-    def failed(*_args, **_kwargs):
-        calls.append(1)
-        return "deadline_exceeded", None
-
-    monkeypatch.setattr(calibration, "run_packet", failed)
-    result = calibration.calibrate(fixture(), live=True)
-    assert len(calls) == 4
-    assert all(
-        outcome["status"] == "unreviewed" for row in result["comparisons"] for outcome in row["application"]["outcomes"]
-    )
+def test_calibration_has_no_model_transport():
+    assert not hasattr(calibration, "run_packet")
 
 
 @pytest.mark.parametrize("mutation", ["rubric", "components", "count", "unknown"])
-def test_invalid_fixture_never_dispatches(monkeypatch, mutation):
+def test_invalid_fixture_is_rejected(mutation):
     value = fixture()
     if mutation == "rubric":
         value["rubric"][0]["t_id"] = "T-999"
@@ -95,32 +35,24 @@ def test_invalid_fixture_never_dispatches(monkeypatch, mutation):
         value["merged"]["threats"].pop()
     else:
         value["command"] = "run an arbitrary command"
-    monkeypatch.setattr(calibration, "run_packet", lambda *_args, **_kwargs: pytest.fail("invalid fixture dispatched"))
     with pytest.raises(ReviewError):
-        calibration.calibrate(value, live=True)
+        calibration.calibrate(value)
 
 
-@pytest.mark.parametrize("options", [{"live": "false"}, {"live": 1}, {"model": "--tools=Bash"}])
-def test_malformed_execution_selection_never_spends_model_budget(monkeypatch, options):
-    monkeypatch.setattr(
-        calibration, "run_packet", lambda *_args, **_kwargs: pytest.fail("invalid selection dispatched")
-    )
+def test_malformed_model_selection_is_rejected():
     with pytest.raises(ReviewError):
-        calibration.calibrate(fixture(), **options)
+        calibration.calibrate(fixture(), model="--tools=Bash")
 
 
-def test_both_groupings_fit_before_the_first_paid_call(monkeypatch):
+def test_both_groupings_must_fit():
     value = fixture()
     for row in value["merged"]["threats"]:
         row["scenario"] = "x" * 6000
-    monkeypatch.setattr(
-        calibration, "run_packet", lambda *_args, **_kwargs: pytest.fail("unadmitted comparison dispatched")
-    )
     with pytest.raises(ReviewError, match="both planned groupings"):
-        calibration.calibrate(value, live=True)
+        calibration.calibrate(value)
 
 
-def test_cli_writes_only_calibration_artifact_by_default(tmp_path):
+def test_cli_writes_only_calibration_artifact(tmp_path):
     assert calibration.main(["--output-dir", str(tmp_path)]) == 0
     assert [path.name for path in tmp_path.iterdir()] == ["architect-calibration.json"]
     value = json.loads((tmp_path / "architect-calibration.json").read_text())
@@ -128,17 +60,14 @@ def test_cli_writes_only_calibration_artifact_by_default(tmp_path):
     calibration.validate(value)
 
 
-def test_cli_retains_failed_live_evidence_without_success_exit(tmp_path, monkeypatch):
-    monkeypatch.setattr(calibration, "run_packet", lambda *_args, **_kwargs: ("unavailable", None))
-    assert calibration.main(["--output-dir", str(tmp_path), "--live"]) == 2
-    value = json.loads((tmp_path / "architect-calibration.json").read_text())
-    assert value["live"] is True
-    assert all(job["status"] == "unavailable" for comparison in value["comparisons"] for job in comparison["jobs"])
+def test_cli_rejects_the_removed_live_mode(tmp_path):
+    with pytest.raises(SystemExit):
+        calibration.main(["--output-dir", str(tmp_path), "--live"])
+    assert not (tmp_path / "architect-calibration.json").exists()
 
 
-def test_deeply_nested_fixture_is_rejected_before_output_or_dispatch(tmp_path, monkeypatch):
+def test_deeply_nested_fixture_is_rejected_before_output(tmp_path):
     path = tmp_path / "invalid.json"
     path.write_text("[" * 2000 + "0" + "]" * 2000)
-    monkeypatch.setattr(calibration, "run_packet", lambda *_args, **_kwargs: pytest.fail("invalid fixture dispatched"))
-    assert calibration.main(["--fixture", str(path), "--output-dir", str(tmp_path), "--live"]) == 1
+    assert calibration.main(["--fixture", str(path), "--output-dir", str(tmp_path)]) == 1
     assert not (tmp_path / "architect-calibration.json").exists()

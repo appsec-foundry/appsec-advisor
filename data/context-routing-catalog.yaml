@@ -86,6 +86,11 @@ agents:
     purpose: Review bounded candidate groups without reading the complete architecture or source tree.
     scope: whole_run
     stage: Threat consolidation
+  - id: architect_reviewer
+    name: Architect reviewer
+    purpose: Review the ratings and fixes of one component's evidenced findings through bounded correction proposals.
+    scope: one_component
+    stage: Finding triage
   - id: evidence_verifier
     name: Evidence verifier
     purpose: Verify a bounded sample of finding citations against repository evidence.
@@ -380,6 +385,11 @@ contexts:
     category: verification_and_risk
     description: Deterministically selected findings with exact-source-bound cited code windows.
     scope: whole_run
+  - id: verification.architect_packets
+    name: Architect review packets
+    category: verification_and_risk
+    description: Controller-built packets of one component's findings with their frozen ratings, fixes, policy ceilings and evidence context.
+    scope: one_component
   - id: verification.triage_flags
     name: Triage decisions
     category: verification_and_risk
@@ -784,6 +794,14 @@ assignments:
     importance: essential
     applies_to: whole_run
     reason: Verification receives only the deterministically selected findings and exact-source-bound cited windows.
+  - id: architect-packets-for-review
+    context: verification.architect_packets
+    agents:
+      - architect_reviewer
+    delivery: required
+    importance: essential
+    applies_to: current_component
+    reason: Each review job sees only its component's controller-built packets and answers every packet it holds.
   - id: generated-threats-for-synthesis
     context: threats.generated_projection
     agents:
@@ -835,12 +853,13 @@ assignments:
   - id: no-complete-threat-set-for-focused-post-stride-roles
     context: threats.merged
     agents:
+      - architect_reviewer
       - evidence_verifier
       - post_stride_synthesizer
     delivery: forbidden
     importance: essential
     applies_to: whole_run
-    reason: Evidence verification and synthesis receive their bounded projections, never the complete canonical set.
+    reason: Evidence verification, architect review and synthesis receive their bounded projections, never the complete canonical set.
   - id: abuse-case-candidates
     context: abuse_cases.matches
     agents:

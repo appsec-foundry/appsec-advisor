@@ -275,7 +275,6 @@ GROUPS = {
     "qa-repair": _tests("""
         architect_review_runtime
         architect_review
-        architect_review_worker
         build_architect_context
         calibrate_architect_review
         apply_content_repair
@@ -586,7 +585,6 @@ SOURCE_TESTS = {
         architect_review
         architect_review_runtime
         build_architect_context
-        architect_review_worker
         calibrate_architect_review
         check_target_specificity
         gate_preconditions
@@ -596,21 +594,20 @@ SOURCE_TESTS = {
     "scripts/build_architect_context.py": _tests("""
         build_architect_context
         architect_review_runtime
-        architect_review_worker
         calibrate_architect_review
         check_target_specificity
         gate_preconditions
         run_path_guard
         stride_outputs
     """),
-    "scripts/architect_review_worker.py": _tests("""
+    "schemas/architect-review-job.schema.json": _tests("""
         architect_review_runtime
-        architect_review_worker
-        calibrate_architect_review
-        check_target_specificity
-        gate_preconditions
-        run_path_guard
-        stride_outputs
+        orchestration_controller
+        context_routing
+    """),
+    "schemas/architect-review-proposals.schema.json": _tests("""
+        architect_review_runtime
+        orchestration_controller
     """),
     "scripts/calibrate_architect_review.py": _tests("""
         calibrate_architect_review
@@ -622,7 +619,6 @@ SOURCE_TESTS = {
     "schemas/architect-review-context.schema.json": _tests("""
         build_architect_context
         architect_review_runtime
-        architect_review_worker
         calibrate_architect_review
         check_target_specificity
         schemas
@@ -634,7 +630,6 @@ SOURCE_TESTS = {
         schemas
     """),
     "agents/shared/architect-semantic-review.md": _tests("""
-        architect_review_worker
         agent_definitions
         agent_doc_shell_snippets
         check_target_specificity
@@ -675,7 +670,6 @@ SOURCE_TESTS = {
         weakness_signals
         architect_review
         architect_review_runtime
-        architect_review_worker
         build_architect_context
         calibrate_architect_review
     """),
@@ -817,7 +811,6 @@ SOURCE_TESTS = {
         validate_intermediate
         build_architect_context
         architect_review_runtime
-        architect_review_worker
         calibrate_architect_review
     """),
     "schemas/threat-model.output.schema.yaml": _tests("""
@@ -869,7 +862,6 @@ SOURCE_TESTS = {
         weakness_class_config_consistency
         architect_review
         architect_review_runtime
-        architect_review_worker
         build_architect_context
         calibrate_architect_review
     """),
@@ -968,7 +960,6 @@ SOURCE_TESTS = {
         wait_stride_progress
         architect_review
         architect_review_runtime
-        architect_review_worker
         build_architect_context
         calibrate_architect_review
     """),
@@ -1185,7 +1176,6 @@ SOURCE_TESTS = {
         threat_fixture
         architect_review
         architect_review_runtime
-        architect_review_worker
         build_architect_context
     """),
     "scripts/export_html.py": _tests("""
@@ -2063,7 +2053,6 @@ SOURCE_TESTS = {
         schemas
         team_questions
         validate_intermediate
-        architect_review_worker
         build_architect_context
         architect_review_runtime
         calibrate_architect_review
@@ -2754,7 +2743,6 @@ SOURCE_TESTS = {
         weakness_signals
         architect_review
         architect_review_runtime
-        architect_review_worker
         build_architect_context
         calibrate_architect_review
     """),
@@ -5083,7 +5071,6 @@ SOURCE_TESTS = {
         secret_scan
         stride_outputs
         threat_fixture
-        architect_review_worker
         build_architect_context
         architect_review_runtime
         calibrate_architect_review

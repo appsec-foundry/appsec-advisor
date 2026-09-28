@@ -69,6 +69,7 @@ _AGENT_PHASES = {
     "appsec-stride-analyzer-v2": "9/11 STRIDE",
     "appsec-threat-merger": "10/11 Scan Synthesis",
     "appsec-evidence-verifier": "10/11 Scan Synthesis",
+    "appsec-architect-reviewer": "10/11 Scan Synthesis",
     "appsec-triage-validator": "10/11 Scan Synthesis",
     "appsec-post-stride-synthesizer": "10/11 Scan Synthesis",
     "appsec-abuse-case-verifier": "10/11 Abuse Verification",

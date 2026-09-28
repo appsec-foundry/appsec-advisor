@@ -42,12 +42,13 @@
 # make test-plan, make test-changed, and make test-group use the existing
 # Bash(*) rule; local Git diffs and test selection add no permission entries.
 # scripts/calibrate_architect_review.py uses the same maintainer rule. It is
-# offline unless --live is explicitly authorized; live mode invokes a tool-free
-# Claude process and writes only architect-calibration.json in its chosen output
-# directory. It does not enable review or mutate a threat-model run.
-# The controller invokes the same bounded host for enabled semantic reviews;
+# offline, calls no model, and writes only architect-calibration.json in its
+# chosen output directory. It does not enable review or mutate a threat-model run.
+# Enabled semantic reviews run as dispatched architect_reviewer agents, so no
+# nested model process needs network access from the Bash sandbox;
 # architect_review_runtime.py uses existing output-directory access for its
-# durable .architect-review.json and final .architect-status.json gate receipt.
+# durable .architect-review.json, .dispatch-context/architect job and proposal
+# files, and final .architect-status.json gate receipt.
 #
 # Placeholders expanded at check-time:
 #   ${OUTPUT_DIR}   — from --output-dir / $OUTPUT_DIR / <repo>/docs/security
@@ -92,7 +93,7 @@ required:
     category: file
 
   - entry: "Write(${OUTPUT_DIR}/**)"
-    reason: "deterministic preparers, context projectors, build_stride_evidence_bundles.py, compose_threat_model.py (including paired figure1 and figure1-detail SVGs, the figure2 SVG and the figure3 §2 deployment SVG), fragment writers, and annotators write under OUTPUT_DIR, including neutral report-error reproductions under .plugin-issue-repro/ and run-bound .dispatch-context/editorial/plan-<batch>.json packets and gate comparison receipts, bounded .dispatch-context/architecture recon/route inputs, .dispatch-context/post-stride evidence/threat/mitigation inputs, .dispatch-context/abuse-cases candidate inputs, and fingerprinted .dispatch-context/<component> evidence, business, architecture, security, plan, and repository-root artifacts"
+    reason: "deterministic preparers, context projectors, build_stride_evidence_bundles.py, compose_threat_model.py (including paired figure1 and figure1-detail SVGs, the figure2 SVG and the figure3 §2 deployment SVG), fragment writers, and annotators write under OUTPUT_DIR, including neutral report-error reproductions under .plugin-issue-repro/ and run-bound .dispatch-context/editorial/plan-<batch>.json packets and gate comparison receipts, bounded .dispatch-context/architecture recon/route inputs, .dispatch-context/post-stride evidence/threat/mitigation inputs, .dispatch-context/abuse-cases candidate inputs, .dispatch-context/architect review jobs and proposals, and fingerprinted .dispatch-context/<component> evidence, business, architecture, security, plan, and repository-root artifacts"
     category: file
 
   - entry: "Write(${OUTPUT_DIR}/.*)"

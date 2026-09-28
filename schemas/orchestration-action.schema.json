@@ -251,6 +251,7 @@
         "context-v2-post-stride",
         "context-v2-post-merge",
         "context-v2-post-evidence",
+        "context-v2-post-architect-review",
         "context-v2-post-triage",
         "context-v2-finalize",
         "finalize-abuse"
@@ -394,6 +395,7 @@
       "enum": [
         "actor_discoverer",
         "abuse_case_verifier",
+        "architect_reviewer",
         "architecture_analyst",
         "config_scanner",
         "context_resolver",
@@ -448,6 +450,7 @@
           "enum": [
             "appsec-advisor:appsec-actor-discoverer",
             "appsec-advisor:appsec-abuse-case-verifier",
+            "appsec-advisor:appsec-architect-reviewer",
             "appsec-advisor:appsec-architecture-analyst",
             "appsec-advisor:appsec-config-scanner",
             "appsec-advisor:appsec-context-resolver",
