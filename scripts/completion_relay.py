@@ -22,7 +22,9 @@ A printed line counts as reproduced when it appears in printed order with only
 its whitespace changed. A lead-in before the summary and code fences are
 allowed; text after its last line is not, because an appended note repeats or
 contradicts what the summary already says (it prints its own re-export
-commands). The review deletes the record once it has decided. ``runtime_cleanup.py`` deliberately leaves the record alone, because
+commands). Any assistant text of the closing turn may carry the reproduction:
+one delivered before a later tool call is not demanded again, since a repeat
+shows the reader the summary twice. The review deletes the record once it has decided. ``runtime_cleanup.py`` deliberately leaves the record alone, because
 the closing Stop fires after cleanup; the next run's preflight removes a record
 that a crashed session left behind.
 """
@@ -123,12 +125,63 @@ def final_message(transcript_path: str) -> str:
     return "\n".join(closing)
 
 
-def review_final_message(output_dir: Path | str, session_id: str, message: str, *, retry: bool) -> list[str]:
+def _genuine_prompt(content: object) -> bool:
+    """A user record that starts a turn, unlike a tool result inside one."""
+    if isinstance(content, str):
+        return True
+    return isinstance(content, list) and not any(
+        isinstance(block, dict) and block.get("type") == "tool_result" for block in content
+    )
+
+
+def turn_texts(transcript_path: str) -> list[str]:
+    """Every assistant text block since the turn's prompt, in order.
+
+    The reader sees each of them, so a summary reproduced before a later tool
+    call has been delivered. ``""`` paths and unreadable transcripts yield ``[]``.
+    """
+    texts: list[str] = []
+    try:
+        with open(transcript_path, encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                try:
+                    record = json.loads(raw)
+                except ValueError:
+                    continue
+                message = record.get("message") if isinstance(record, dict) else None
+                if not isinstance(message, dict):
+                    continue
+                content = message.get("content")
+                if message.get("role") == "user":
+                    if _genuine_prompt(content):
+                        texts = []
+                    continue
+                if message.get("role") != "assistant":
+                    continue
+                blocks = [{"type": "text", "text": content}] if isinstance(content, str) else content
+                for block in blocks if isinstance(blocks, list) else []:
+                    if isinstance(block, dict) and block.get("type") == "text" and block.get("text"):
+                        texts.append(str(block["text"]))
+    except (OSError, TypeError):
+        return []
+    return texts
+
+
+def _reproduces(summary: str, text: str) -> bool:
+    return not missing_lines(summary, text) and not trailing_lines(summary, text)
+
+
+def review_final_message(
+    output_dir: Path | str, session_id: str, message: str, *, retry: bool, earlier: list[str] | None = None
+) -> list[str]:
     """Return the printed lines the closing message dropped, else the lines it appended; ``[]`` lets the session stop.
 
-    ``retry`` is the host's ``stop_hook_active``. A record of another run is left
-    for that run's session. Every other outcome decides the record: it is
-    deleted, or, when lines are missing for the first time, marked as returned.
+    ``retry`` is the host's ``stop_hook_active``. ``earlier`` holds the turn's
+    other assistant texts: a verbatim summary among them was already delivered,
+    so later tool calls or a short closing line do not force a repeat. A record
+    of another run is left for that run's session. Every other outcome decides
+    the record: it is deleted, or, when lines are missing for the first time,
+    marked as returned.
     """
     path = Path(output_dir) / RECORD
     try:
@@ -141,7 +194,8 @@ def review_final_message(output_dir: Path | str, session_id: str, message: str, 
         return []
     summary = record.get("summary") if isinstance(record, dict) else None
     missing: list[str] = []
-    if isinstance(summary, str) and message and not retry and not record.get("returned"):
+    delivered = isinstance(summary, str) and any(_reproduces(summary, text) for text in [*(earlier or []), message])
+    if isinstance(summary, str) and message and not retry and not record.get("returned") and not delivered:
         missing = missing_lines(summary, message) or trailing_lines(summary, message)
     if missing:
         atomic_write_text(path, json.dumps({**record, "returned": True}))

@@ -86,12 +86,12 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_component_durations.py" \
 
 Mark the final task complete. Unless `KEEP_RUNTIME_FILES=true`, run `python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime_cleanup.py" "$OUTPUT_DIR" --stage post-qa --keep-run-issues` and, when enabled, the same call with `--stage post-architect --keep-run-issues`. The stage is a `--stage` flag with its own vocabulary (`all`, `pre-qa`, `post-qa`, `post-architect`) — neither a positional argument nor the `stageN` labels used elsewhere in this pipeline. Cleanup must preserve canonical deliverables, audit artifacts, and `.appsec-cache/baseline.json`. Always release the run lock, kept runtime files included: `rm -f "$OUTPUT_DIR/.appsec-lock"`. Leave `.appsec-verbose` and `.appsec-tracing` alone: the closing Stop hook still reads them and removes them.
 
-Emit the captured completion-summary stdout verbatim. After releasing the lock, run:
+After releasing the lock, run:
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/report_plugin_issue.py" offer --output-dir "$OUTPUT_DIR"
 ```
 
-Only for `offer=true`, follow `skills/report-error/SKILL.md` with `--offer` and the run paths.
+Then send the captured completion-summary stdout as your message, exactly as printed: no text of your own before, inside or after it. Only for `offer=true`, follow `skills/report-error/SKILL.md` with `--offer` and the run paths after that message.
 
 On failure, first call `terminate_run.py --outcome failure` with run identity and reason. After termination, follow the same `report-error --offer` entry; skip preflight and foreign-lock refusals.

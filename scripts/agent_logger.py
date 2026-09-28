@@ -3346,7 +3346,10 @@ def _review_summary_relay(event: hook_payload.HookEvent, sid: str) -> dict | Non
         import completion_relay  # noqa: PLC0415 — off the per-tool-call path
 
         message = event.last_assistant_message or completion_relay.final_message(event.session_transcript)
-        missing = completion_relay.review_final_message(_output_dir(), sid, message, retry=event.stop_hook_active)
+        earlier = completion_relay.turn_texts(event.session_transcript) if event.session_transcript else []
+        missing = completion_relay.review_final_message(
+            _output_dir(), sid, message, retry=event.stop_hook_active, earlier=earlier
+        )
     except Exception:
         return None  # never crash a hook
     if not missing:

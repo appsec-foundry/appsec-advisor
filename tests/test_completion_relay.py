@@ -299,3 +299,48 @@ class TestTheOutermostStop:
         repo, output, _ = self._completed_run(tmp_path, monkeypatch, "service-a")
         assert self._stop(repo, "Unrelated answer.", run_id="run-1788000000-1") == ""
         assert (output / relay.RECORD).exists()
+
+
+def _transcript(tmp_path, records):
+    path = tmp_path / "transcript.jsonl"
+    path.write_text("\n".join(json.dumps({"message": record}) for record in records), encoding="utf-8")
+    return str(path)
+
+
+def _turn(summary_text, closing="Done."):
+    return [
+        {"role": "user", "content": "create the threat model"},
+        {"role": "assistant", "content": [{"type": "text", "text": summary_text}]},
+        {"role": "assistant", "content": [{"type": "tool_use", "name": "Bash", "input": {}}]},
+        {"role": "user", "content": [{"type": "tool_result", "content": '{"offer": false}'}]},
+        {"role": "assistant", "content": [{"type": "text", "text": closing}]},
+    ]
+
+
+class TestSummaryDeliveredEarlierInTheTurn:
+    @pytest.mark.parametrize("root", ["/srv/app", "/work/other-repo"])
+    def test_a_verbatim_summary_before_a_later_tool_call_is_not_demanded_again(self, run_dir, tmp_path, root):
+        relay.persist(run_dir, _summary(root))
+        transcript = _transcript(tmp_path, _turn(_summary(root)))
+        message = relay.final_message(transcript)
+        assert relay.missing_lines(_summary(root), message)
+        earlier = relay.turn_texts(transcript)
+        assert relay.review_final_message(run_dir, "", message, retry=False, earlier=earlier) == []
+
+    @pytest.mark.parametrize(
+        "earlier_text",
+        [_rewrite("/srv/app"), _summary("/srv/app") + "\nA note of my own."],
+        ids=["rewrite", "appended-note"],
+    )
+    def test_an_earlier_rewrite_or_appended_note_does_not_count(self, run_dir, tmp_path, earlier_text):
+        relay.persist(run_dir, _summary("/srv/app"))
+        transcript = _transcript(tmp_path, _turn(earlier_text))
+        missing = relay.review_final_message(
+            run_dir, "", relay.final_message(transcript), retry=False, earlier=relay.turn_texts(transcript)
+        )
+        assert missing
+
+    def test_a_summary_from_a_previous_turn_does_not_count(self, tmp_path):
+        records = _turn(_summary("/srv/app")) + [{"role": "user", "content": "and now?"}]
+        records.append({"role": "assistant", "content": [{"type": "text", "text": "Done."}]})
+        assert relay.turn_texts(_transcript(tmp_path, records)) == ["Done."]
