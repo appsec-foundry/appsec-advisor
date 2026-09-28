@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Architect review checks ratings and mitigations before prioritization, preserves accepted corrections through report rebuilds, and reports incomplete coverage instead of running a later blanket prose pass; a review that covered no finding is reported as not performed.
+- Architect review checks ratings and mitigations before prioritization as parallel agent jobs that also run in sandboxed sessions, preserves accepted corrections through report rebuilds, and reports a review that covered no finding as not performed with its reason instead of running a later blanket prose pass.
 
 - The architecture report now includes a C4 context diagram (§2.1), deployment details from repository configuration (§2.2), and per-component control coverage (§2.3), replacing the separate Technology Architecture section (§2.4).
 - Figure 1 adds technology and authentication labels and evidenced AI and service roles; very large models also get linked detail views with a PDF appendix, and existing models need a new analysis for missing authentication evidence.
