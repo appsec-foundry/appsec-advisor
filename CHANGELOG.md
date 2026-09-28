@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Architect review checks ratings and mitigations before prioritization, preserves accepted corrections through report rebuilds, and reports incomplete coverage instead of running a later blanket prose pass.
+- Architect review checks ratings and mitigations before prioritization, preserves accepted corrections through report rebuilds, and reports incomplete coverage instead of running a later blanket prose pass; a review that covered no finding is reported as not performed.
 
 - The architecture report now includes a C4 context diagram (§2.1), deployment details from repository configuration (§2.2), and per-component control coverage (§2.3), replacing the separate Technology Architecture section (§2.4).
 - Figure 1 adds technology and authentication labels and evidenced AI and service roles; very large models also get linked detail views with a PDF appendix, and existing models need a new analysis for missing authentication evidence.
@@ -27,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Components with the LLM or agentic lens record a finding, a cited control, not applicable, or no evidence for every OWASP LLM or Agentic Top-10 item.
 - Interactive runs save confirmed business context in `docs/security/business-context.md` with legacy-path fallback, and prioritised mitigations name the declared business-critical assets they protect.
 - Report sections use Figure 1's actor names consistently, and Identified Actors lists each actor's access, scenarios, and finding counts.
-- Verdicts assess evidenced concerns without implying release readiness, and completion summaries lead with the assessment and grouped P1 fixes, preserve attack prerequisites, and show complete requirement counts.
+- Verdicts assess evidenced concerns without implying release readiness, and completion summaries lead with the assessment and grouped P1 fixes, list each concern as its prerequisite-bearing scenario sentence, and show complete requirement counts.
 - Open team questions stay in the Management Summary and focus on unresolved assumptions and decisions rather than verification of individual findings.
 - `/appsec-advisor:report-error` investigates suspected plugin errors and prepares anonymised GitHub issue drafts for review and explicit publication approval; `--bundle-only` retains the local diagnostic workflow.
 - New aiscb installations load verified modules on demand, and `update-baseline` uses compatible signed upstream installers while preserving installation scope and mode.
@@ -39,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Findings and abuse cases use consistent, policy-capped ratings without automatic chain inflation, and abuse cases are ordered by verification status and risk.
+- Findings and abuse cases use consistent, policy-capped ratings, and abuse cases are ordered by verification status and risk; a code-verified attack chain raises its findings only to the goal impact its case declares, also when evidence sampling left a step ambiguous.
 - Config and IaC findings reach the report again, and rejected configuration scans appear in Run Issues.
 - Route authentication checks resolve imported handlers and reject misleading neighbouring-route or decoded-token signals, with findings on authenticated routes attributed to authenticated attackers.
 - Finding deduplication preserves the highest risk, case-sensitive source paths, evidence, and scenario references.
@@ -55,8 +55,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Architecture enrichment fills Security Architecture prose and routes remaining placeholders to repair, while self-checks catch inconsistent flows and asset locations before later validation failures.
 - Management summaries state the analysis method and coverage limits concisely and use short finding references for unresolved questions.
 - Dependency checks recognise Gradle dependencies declared in map notation (`group:`, `name:`, `version:`).
-- Run logs retain earlier events, and completion summaries explain missing cost measurements and provide recovery commands for missing PDF or HTML exports.
+- Run logs retain earlier events, completion summaries appear once and explain missing cost measurements, and the run plan warns up front when requested PDF or HTML exports cannot complete in the environment.
 - Plugin update checks compare against released versions instead of advertising development builds.
+- STRIDE analysis receives the most severe scanner signals when a component exceeds the per-class evidence limit, instead of an arbitrary subset.
+- Run Issues report a review stage that covered no finding and a Critical or High count that fell below half of the previous comparable run.
+- The Findings Register states when its total counts findings differently from the Management Summary's risk distribution.
 
 ## 0.6.0-beta.3 (2026-09-14)
 
