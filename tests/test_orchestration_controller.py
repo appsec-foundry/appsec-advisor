@@ -7770,3 +7770,31 @@ def test_permission_abort_respects_prompt_free_default_mode(monkeypatch, tmp_pat
     action = controller._missing_permissions_action({"mode": "full"}, tmp_path, tmp_path / "out")
 
     assert (action is not None) is aborts
+
+
+@pytest.mark.parametrize(
+    ("cfg", "probe", "expected"),
+    [
+        (
+            {"write_pdf": True},
+            (False, ["  [ok]   pandoc  /usr/bin/pandoc", "  [bad]  mmdc  /usr/bin/mmdc  — blocked"]),
+            "mmdc /usr/bin/mmdc — blocked",
+        ),
+        ({"write_html": True}, (False, ["  [miss] weasyprint  not found"]), "weasyprint not found"),
+        ({"write_pdf": True}, (True, ["  [ok]   mmdc  /usr/bin/mmdc"]), None),
+        ({"write_pdf": False, "write_html": False}, None, None),
+    ],
+    ids=["blocked-chrome", "missing-tool", "ready", "not-requested"],
+)
+def test_requested_exports_are_probed_before_the_analysis(monkeypatch, cfg, probe, expected):
+    import export_pdf
+
+    monkeypatch.delenv("APPSEC_SKIP_EXPORT_CHECK", raising=False)
+    calls = []
+    monkeypatch.setattr(export_pdf, "preflight", lambda require_mermaid: calls.append(require_mermaid) or probe)
+    advisory = controller._export_advisory(cfg)
+    if expected is None:
+        assert advisory == ""
+    else:
+        assert expected in advisory and "run the export step unsandboxed" in advisory
+    assert calls == ([] if probe is None else [True])

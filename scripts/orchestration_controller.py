@@ -1938,6 +1938,29 @@ def _session_context_advisory(output_dir: Path) -> str:
     return ""
 
 
+def _export_advisory(cfg: dict) -> str:
+    """Probe requested PDF/HTML export tools now, not after the analysis.
+
+    Export failures are non-fatal at completion, so a sandbox that blocks
+    headless Chrome used to surface only at the end of a long run.
+    """
+    if not (cfg.get("write_pdf") or cfg.get("write_html")) or os.environ.get("APPSEC_SKIP_EXPORT_CHECK") == "1":
+        return ""
+    try:
+        from export_pdf import preflight
+    except ImportError:
+        return ""
+    ok, messages = preflight(require_mermaid=True)
+    if ok:
+        return ""
+    failures = [" ".join(line.split()[1:]) for line in messages if line.lstrip().startswith(("[bad]", "[miss]"))]
+    return (
+        "PDF/HTML export will not complete in this environment ("
+        + "; ".join(failures)
+        + "). The analysis runs normally; run the export step unsandboxed at completion or re-export later."
+    )
+
+
 def _validator_advisory() -> str:
     """Return the optional Mermaid-validator dependency advisory."""
     if os.environ.get("APPSEC_SKIP_VALIDATOR_CHECK") == "1":
@@ -2700,6 +2723,10 @@ def _prepared_action(
             validator_advisory,
             level="WARN",
         )
+    export_advisory = _export_advisory(cfg)
+    if export_advisory:
+        run_plan = run_plan.rstrip() + "\n\nExports\n" + f"  Advisory : {export_advisory}\n"
+        _append_event(output_dir, "EXPORT_ADVISORY", export_advisory, level="WARN")
     context_advisory = _session_context_advisory(output_dir)
     if context_advisory:
         run_plan = run_plan.rstrip() + "\n\nSession context\n" + f"  Advisory : {context_advisory}\n"
