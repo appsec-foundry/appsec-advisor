@@ -714,3 +714,16 @@ def test_case_actor_carries_the_figure_name_of_its_access_group(access, meta, na
 
     assert model["actor_label"].split(" — ")[0] == name
     assert "external-attacker" not in model["actor_label"]
+
+
+@pytest.mark.parametrize(
+    ("verdict", "case", "expected"),
+    [
+        ("fully_viable", {"goal_impact": "Critical"}, "Critical"),
+        ("fully_viable", {}, "High"),
+        ("partially_blocked", {"goal_impact": "Critical"}, "High"),
+    ],
+)
+def test_section_nine_risk_uses_the_triage_chain_rule(verdict, case, expected):
+    matched = [{"risk": "High"}, {"risk": "Medium"}]
+    assert rac._combined_risk(matched, verdict, case) == expected

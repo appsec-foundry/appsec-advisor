@@ -59,6 +59,12 @@ $defs:
       goal:
         type: string
         minLength: 1
+      goal_impact:
+        description: >
+          Severity of reaching the goal. A code-verified, fully viable chain
+          is rated at least this high; without it, verification adds no
+          severity.
+        enum: [Critical, High, Medium, Low]
       scope_qualifier:
         type: object
         additionalProperties: false

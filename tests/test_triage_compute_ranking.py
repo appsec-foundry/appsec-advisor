@@ -738,6 +738,83 @@ def test_verified_chain_never_increases_its_highest_member_risk(risks):
     assert chains[0]["severity"] == max(risks, key=tcr._sev_rank)
 
 
+@pytest.mark.parametrize(
+    ("member_risk", "goal_impact", "verdict", "expected"),
+    [
+        ("High", "Critical", "fully_viable", "Critical"),
+        ("Medium", "Critical", "fully_viable", "Critical"),
+        ("High", "Medium", "fully_viable", "High"),
+        ("High", None, "fully_viable", "High"),
+        ("High", "Critical", "partially_blocked", None),
+    ],
+)
+def test_fully_viable_chain_reaches_declared_goal_impact(member_risk, goal_impact, verdict, expected):
+    tcr = _tcr()
+    findings = [{"id": "F-1", "risk": member_risk}]
+    verdicts, matches = _ac_docs(verdict)
+    if goal_impact:
+        matches["matches"][0]["case"] = {"id": "AC-T-001", "goal_impact": goal_impact}
+    chains = tcr._detect_verified_abuse_chains(findings, verdicts, matches)
+    assert [chain["severity"] for chain in chains] == ([expected] if expected else [])
+
+
+@pytest.mark.parametrize(
+    ("evidence_check", "step_verdict", "verdict_finding", "member"),
+    [
+        ("ambiguous", "confirmed", "F-1", True),
+        ("ambiguous", "confirmed", "F-9", False),
+        ("ambiguous", None, None, False),
+        ("refuted", "confirmed", "F-1", False),
+        ("verified", "refuted", "F-1", False),
+        ("verified", None, None, True),
+    ],
+)
+def test_verifier_confirmed_step_outranks_ambiguous_sampling(evidence_check, step_verdict, verdict_finding, member):
+    tcr = _tcr()
+    findings = [{"id": "F-1", "risk": "High", "evidence_check": evidence_check}, {"id": "F-9", "risk": "Low"}]
+    verdicts, matches = _ac_docs("fully_viable")
+    if step_verdict:
+        verdicts["verdicts"][0]["step_verdicts"] = [
+            {"step": 1, "verdict": step_verdict, "matched_finding_id": verdict_finding}
+        ]
+    chains = tcr._detect_verified_abuse_chains(findings, verdicts, matches)
+    assert bool(chains and "F-1" in chains[0]["keystones"]) is member
+    if member:
+        assert ("F-1" in chains[0]["verifier_confirmed"]) is (step_verdict == "confirmed")
+
+
+@pytest.mark.parametrize(
+    ("evidence_check", "chain_verified", "expected"),
+    [
+        ("ambiguous", True, "Critical"),
+        ("ambiguous", False, "High"),
+        ("refuted", True, "High"),
+        (None, False, "Critical"),
+    ],
+)
+def test_confirmed_keystone_on_capped_cwe_reaches_chain_severity(evidence_check, chain_verified, expected):
+    tcr = _tcr()
+    finding = {"id": "F-1", "risk": "High", "cwe": "CWE-321", "evidence_check": evidence_check}
+    caps, criteria = _policy()
+    eff, _ = tcr._compute_effective(
+        finding, "keystone", tcr._sev_rank("Critical"), caps, criteria, 1, chain_verified=chain_verified
+    )
+    assert eff == expected
+
+
+def test_capped_cwe_outside_a_chain_stays_high():
+    tcr = _tcr()
+    caps, criteria = _policy()
+    finding = {"id": "F-1", "risk": "High", "cwe": "CWE-798", "evidence_check": "verified"}
+    assert tcr._compute_effective(finding, None, 0, caps, criteria, 1)[0] == "High"
+
+
+def _policy():
+    from _severity_policy import load_policy
+
+    return load_policy()
+
+
 def test_matched_id_key_mismatch_resolves_to_triage_id() -> None:
     """REGRESSION: the matcher binds matched_finding_id via f_id, but triage
     keys findings on t_id. The detector must resolve across id keys and store

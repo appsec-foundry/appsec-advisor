@@ -250,6 +250,29 @@ def test_chain_steps_do_not_collapse_to_one_finding():
     assert ids == ["T-008", "T-009"], ids
 
 
+@pytest.mark.parametrize(
+    ("key_file", "signer_file", "expected"),
+    [
+        ("lib/insecurity.ts", "lib/insecurity.ts", "T-KEY"),
+        ("src/auth/keys.py", "src/auth/keys.py", "T-KEY"),
+        ("lib/insecurity.ts", "lib/other.ts", "T-CRED"),
+    ],
+    ids=["shared-file", "neutral-names", "no-shared-file"],
+)
+def test_equal_score_step_binds_the_finding_its_chain_runs_through(key_file, signer_file, expected):
+    """A declared step CWE names a class; a sibling step's file shows the path."""
+    credential = {"t_id": "T-CRED", "title": "Wallet seed in source", "cwe": "CWE-798", "evidence": {"file": "w.ts"}}
+    key = {"t_id": "T-KEY", "title": "Signing key in source", "cwe": "CWE-321", "evidence": {"file": key_file}}
+    signer = _finding("T-SIGN", "token forgery with the embedded key", file=signer_file)
+    step1 = _step(1, "CWE-(798|321)")
+    step1["finding"] = {"cwe": "CWE-798"}
+    case = _case([step1, _step(2, "token forgery", requires="state")])
+
+    result = mac.match_case(case, [credential, key, signer], None)
+
+    assert result["matched_finding_ids"] == [expected, "T-SIGN"]
+
+
 # ---------------------------------------------------------------------------
 # Case-level structural verdict
 # ---------------------------------------------------------------------------

@@ -196,6 +196,7 @@ abuse_cases:
         Attacker can obtain any valid JWT issued by the system
         (e.g. by registering a free account).
     goal: Forge an admin-role JWT without knowledge of the signing secret.
+    goal_impact: Critical
     scope_qualifier:
       required_signals: [has_auth_surface]
     chain:
@@ -276,6 +277,7 @@ abuse_cases:
       initial_access: unauthenticated
       prerequisite: Self-registration is open (one unauthenticated POST).
     goal: Obtain an administrator account without any existing privilege.
+    goal_impact: Critical
     scope_qualifier:
       required_signals: [has_auth_surface, has_open_self_registration]
     chain:
@@ -325,6 +327,7 @@ abuse_cases:
         Signing material or other secrets are reachable (committed to a public
         repo, served by an unauthenticated route, or in an exposed directory).
     goal: Forge trusted tokens / credentials and impersonate any user.
+    goal_impact: Critical
     scope_qualifier:
       required_signals: [has_auth_surface]
     chain:
@@ -387,6 +390,7 @@ abuse_cases:
       initial_access: unauthenticated
       prerequisite: An input reaches a server-side interpreter / template / eval.
     goal: Execute arbitrary code in the application process.
+    goal_impact: Critical
     scope_qualifier:
       required_signals: []
     chain:

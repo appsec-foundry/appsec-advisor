@@ -132,6 +132,20 @@ def abuse_case_risk(findings: list[dict], *, fallback: str = "High") -> str:
     return labels.get(-abuse_case_priority(findings)[0], fallback)
 
 
+def verified_chain_risk(findings: list[dict], case: dict | None, *, fallback: str = "High") -> str:
+    """Risk of a code-verified, fully viable chain.
+
+    The chain realizes its declared goal, so a declared ``goal_impact`` sets its
+    floor; without one, verification adds no severity. Only callers holding a
+    fully viable verdict may use this.
+    """
+    member_risk = abuse_case_risk(findings, fallback=fallback)
+    goal_impact = case.get("goal_impact") if isinstance(case, dict) else None
+    if goal_impact in RANK and (member_risk not in RANK or RANK[goal_impact] > RANK[member_risk]):
+        return goal_impact
+    return member_risk
+
+
 def policy_errors(findings: list[dict]) -> list[str]:
     """Reject policy violations at artifact gates; never mutate findings."""
     caps, criteria = load_policy()

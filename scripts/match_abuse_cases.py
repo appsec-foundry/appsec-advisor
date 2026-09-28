@@ -341,16 +341,19 @@ def match_step(
     findings: list[dict],
     exclude_ids: set[str] | None = None,
     repo_root: Path | None = None,
+    prefer_files: frozenset[str] = frozenset(),
 ) -> dict:
     """Match one chain step to its best-fitting finding.
 
     Scoring (not first-match): every sink pattern that hits a finding contributes
     its ``_pattern_specificity`` weight, but a CWE pattern earns its strong bonus
     only when it matches the finding's OWN ``cwe`` field (not an incidental CWE
-    mention in prose). The highest-scoring finding wins; ties prefer a finding not
-    already consumed by an earlier step in the same chain (``exclude_ids``) so a
-    two-step chain does not degenerate into the same finding twice; final tie-break
-    is finding list order (deterministic).
+    mention in prose). The highest-scoring finding wins. Equal scores prefer a
+    finding whose evidence file another step of the same chain matched
+    (``prefer_files``): a chain runs through shared code, while the step's own
+    CWE only names a class. Then the declared CWE, a finding not already consumed
+    by an earlier step (``exclude_ids``) so a two-step chain does not degenerate
+    into the same finding twice, and finally finding list order (deterministic).
     """
     exclude_ids = exclude_ids or set()
     probe = step.get("probe") or {}
@@ -428,9 +431,11 @@ def match_step(
             weak_tie_ids = {fid} if weak else set()
         elif score == top_score and weak:
             weak_tie_ids.add(fid)
-        # Maximise: score, the step's own CWE, real mechanism evidence, then
-        # prefer a not-yet-consumed finding, then earliest.
-        key = (score, exact_cwe, has_non_cwe_match, fid not in exclude_ids, -idx)
+        # Maximise: score, chain coherence, the step's own CWE, real mechanism
+        # evidence, then prefer a not-yet-consumed finding, then earliest.
+        ev_file = (finding.get("evidence") or {}).get("file") if isinstance(finding.get("evidence"), dict) else None
+        coherent = bool(ev_file) and ev_file in prefer_files
+        key = (score, coherent, exact_cwe, has_non_cwe_match, fid not in exclude_ids, -idx)
         if best_key is None or key > best_key:
             best_key = key
             best_is_weak = weak
@@ -490,17 +495,52 @@ def _scope_status(case: dict, signals: set[str] | None, repo_root: Path | None) 
     return not unmet_signals and not unmet_paths, unmet_signals, unmet_paths
 
 
-def match_case(case: dict, findings: list[dict], signals: set[str] | None, repo_root: Path | None = None) -> dict:
-    applicable, unmet_signals, unmet_paths = _scope_status(case, signals, repo_root)
+def _match_chain(
+    case: dict,
+    findings: list[dict],
+    repo_root: Path | None,
+    *,
+    prefer: dict | None = None,
+    previous: list[dict] | None = None,
+) -> list[dict]:
     # Thread consumed finding ids so a later step prefers a distinct finding —
     # a two-step chain (IDOR → mass-assignment) must not collapse to one finding.
+    kept = {m["step"]: m for m in previous or [] if not m.get("matched_finding_id")}
     step_matches = []
     consumed: set[str] = set()
     for s in case.get("chain") or []:
-        m = match_step(s, findings, exclude_ids=consumed, repo_root=repo_root if applicable else None)
+        if s.get("step") in kept:
+            m = kept[s.get("step")]
+        else:
+            m = match_step(
+                s,
+                findings,
+                exclude_ids=consumed,
+                repo_root=repo_root,
+                prefer_files=(prefer or {}).get(s.get("step"), frozenset()),
+            )
         if m.get("matched") and m.get("matched_finding_id"):
             consumed.add(m["matched_finding_id"])
         step_matches.append(m)
+    return step_matches
+
+
+def match_case(case: dict, findings: list[dict], signals: set[str] | None, repo_root: Path | None = None) -> dict:
+    applicable, unmet_signals, unmet_paths = _scope_status(case, signals, repo_root)
+    step_matches = _match_chain(case, findings, repo_root if applicable else None)
+    # Second pass: each step prefers findings in files its sibling steps
+    # matched. Steps without a finding keep their first-pass result, so the
+    # repository probe does not run twice.
+    files = {
+        m["step"]: (m.get("evidence") or {}).get("file")
+        for m in step_matches
+        if m.get("matched_finding_id") and (m.get("evidence") or {}).get("file")
+    }
+    prefer = {step: frozenset(file for other, file in files.items() if other != step) for step in files}
+    if any(prefer.values()):
+        step_matches = _match_chain(
+            case, findings, repo_root if applicable else None, prefer=prefer, previous=step_matches
+        )
     required = [m for m in step_matches if m["required"]]
     required_hit = [m for m in required if m["matched"]]
 

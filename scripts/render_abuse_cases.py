@@ -30,7 +30,7 @@ from pathlib import Path
 
 import yaml
 from _atomic_io import atomic_write_text
-from _severity_policy import abuse_case_priority, abuse_case_risk
+from _severity_policy import abuse_case_priority, abuse_case_risk, verified_chain_risk
 from actor_presentation import attacker_display
 from enrichment_pass import EnrichmentContinuation
 
@@ -164,8 +164,10 @@ def _severity(finding: dict) -> str:
     return sev if sev in _SEV_ORDER else ""
 
 
-def _combined_risk(matched: list[dict], chain_verdict: str) -> str:
-    """Verification status is separate from the highest linked finding risk."""
+def _combined_risk(matched: list[dict], chain_verdict: str, case: dict | None = None) -> str:
+    """Highest linked finding risk; a fully viable chain also reaches its declared goal impact."""
+    if chain_verdict == "fully_viable":
+        return verified_chain_risk(matched, case)
     return abuse_case_risk(matched)
 
 
@@ -356,7 +358,7 @@ def render_case(
         )
 
     matched_ids = [r["fid"] for r in rows if r["fid"]]
-    combined = _combined_risk(matched_findings, chain_verdict)
+    combined = _combined_risk(matched_findings, chain_verdict, case)
     blocking = _blocking_mitigations(matched_ids, step_of_fid, mitigations)
 
     return {

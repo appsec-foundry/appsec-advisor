@@ -50,7 +50,13 @@ from typing import Any
 import _yaml_io
 import plugin_meta
 import yaml  # noqa: F401  (kept for downstream callers writing yaml)
-from _severity_policy import abuse_case_risk, companion_cwes, cwe_ceiling, individual_critical_ceiling, normalize_risks
+from _severity_policy import (
+    companion_cwes,
+    cwe_ceiling,
+    individual_critical_ceiling,
+    normalize_risks,
+    verified_chain_risk,
+)
 from prepare_trust_boundary_context import (
     boundary_assumption_state,
     boundary_endpoints_valid,
@@ -431,9 +437,11 @@ def _detect_verified_abuse_chains(findings: list[dict], verdicts_doc: Any, match
     Only ``fully_viable`` chains elevate — ``partially_blocked`` /
     ``inconclusive`` do not (guardrail against inflation). A finding bound to a
     ``required`` step is a keystone; a non-required step is a contributor. The
-    chain severity is the highest policy-rated member risk. A weaker member
-    may inherit that context, but verifying a path cannot raise its strongest
-    finding's risk. Returns [] when the sidecars are absent (non-fatal)."""
+    chain severity is ``verified_chain_risk``: the highest policy-rated member
+    risk, raised only to the case's declared ``goal_impact``. A member whose
+    sampled evidence is ``ambiguous`` still counts when the verifier confirmed
+    its step; refuted evidence or a refuted step drops a required step.
+    Returns [] when the sidecars are absent (non-fatal)."""
     if not isinstance(verdicts_doc, dict) or not isinstance(matches_doc, dict):
         return []
     verdict_by_id = {v.get("abuse_case_id"): v for v in (verdicts_doc.get("verdicts") or []) if isinstance(v, dict)}
@@ -459,12 +467,27 @@ def _detect_verified_abuse_chains(findings: list[dict], verdicts_doc: Any, match
         if not v or v.get("chain_verdict") != "fully_viable":
             continue
 
-        keystones, contributors, members, member_findings = [], [], [], []
+        step_verdicts = {
+            sv.get("step"): sv for sv in (v.get("step_verdicts") or []) if isinstance(sv, dict) and sv.get("step")
+        }
+        keystones, contributors, members, member_findings, verifier_confirmed = [], [], [], [], []
         missing_required = False
         for sm in m.get("step_matches") or []:
             raw = (sm.get("matched_finding_id") or "").strip()
             finding = finding_by_any_id.get(raw)
-            if not finding or finding.get("evidence_check") in ("refuted", "ambiguous"):
+            step_verdict = step_verdicts.get(sm.get("step")) or {}
+            confirmed = (
+                finding is not None
+                and step_verdict.get("verdict") == "confirmed"
+                and finding_by_any_id.get((step_verdict.get("matched_finding_id") or "").strip()) is finding
+            )
+            evidence_state = finding.get("evidence_check") if finding else None
+            if (
+                not finding
+                or evidence_state == "refuted"
+                or step_verdict.get("verdict") == "refuted"
+                or (evidence_state == "ambiguous" and not confirmed)
+            ):
                 missing_required |= bool(sm.get("required", True))
                 continue
             tid = _finding_id(finding)
@@ -472,6 +495,8 @@ def _detect_verified_abuse_chains(findings: list[dict], verdicts_doc: Any, match
                 continue
             members.append(tid)
             member_findings.append(finding)
+            if confirmed:
+                verifier_confirmed.append(tid)
             if sm.get("required", True):
                 keystones.append(tid)
             else:
@@ -483,12 +508,15 @@ def _detect_verified_abuse_chains(findings: list[dict], verdicts_doc: Any, match
             {
                 "id": cid,
                 "name": m.get("title") or cid,
-                "severity": abuse_case_risk(member_findings),
-                "severity_justification": f"highest policy-rated member risk in verified abuse chain {cid}",
+                "severity": verified_chain_risk(member_findings, m.get("case")),
+                "severity_justification": (
+                    f"highest policy-rated member risk or declared goal impact in verified abuse chain {cid}"
+                ),
                 "breach_distance": 1,
                 "keystones": keystones,
                 "contributors": contributors,
                 "members": members,
+                "verifier_confirmed": verifier_confirmed,
                 "narrative": "",
             }
         )
@@ -566,8 +594,14 @@ def _compute_effective(
     breach_distance: int,
     external_boundary_ids: tuple[str, ...] = (),
     companions: set[str] | None = None,
+    chain_verified: bool = False,
 ) -> tuple[str, list[str]]:
-    """Returns (effective_severity_label, reasons[])."""
+    """Returns (effective_severity_label, reasons[]).
+
+    ``chain_verified`` marks a chain member whose step the abuse-case verifier
+    confirmed; that code-level verdict outranks an ambiguous sample verdict for
+    chain elevation only.
+    """
     raw_rank = _sev_rank(_finding_severity(t))
     eff = raw_rank
     reasons: list[str] = []
@@ -579,20 +613,21 @@ def _compute_effective(
     # still receive the final ceiling even for an over-rated input.
     evidence_state = t.get("evidence_check")
     evidence_unverified = evidence_state in ("refuted", "ambiguous")
+    chain_unverified = evidence_unverified and not (chain_verified and evidence_state == "ambiguous")
 
     # Chain elevation by role
-    if chain_role == "keystone" and chain_severity > eff and not evidence_unverified:
+    if chain_role == "keystone" and chain_severity > eff and not chain_unverified:
         eff = chain_severity
         reasons.append(f"elevated:keystone({_sev_label(chain_severity)})")
-    elif chain_role == "keystone" and chain_severity > eff and evidence_unverified:
+    elif chain_role == "keystone" and chain_severity > eff and chain_unverified:
         reasons.append(f"suppressed:evidence_{evidence_state}(keystone)")
-    elif chain_role == "contributor" and not evidence_unverified:
+    elif chain_role == "contributor" and not chain_unverified:
         contributor_cap = _sev_rank((caps.get("contributor_cap") or {}).get("default", "High"))
         target = max(eff, min(chain_severity, contributor_cap))
         if target > eff:
             eff = target
             reasons.append(f"elevated:contributor_cap({_sev_label(target)})")
-    elif chain_role == "contributor" and evidence_unverified:
+    elif chain_role == "contributor" and chain_unverified:
         reasons.append(f"suppressed:evidence_{evidence_state}(contributor)")
 
     # Evidence-backed external-ingress elevation. Component adjacency alone is
@@ -613,7 +648,7 @@ def _compute_effective(
         reasons.append(cap_reason)
 
     # Critical criteria
-    critical_role = chain_role if chain_severity >= _sev_rank("Critical") and not evidence_unverified else ""
+    critical_role = chain_role if chain_severity >= _sev_rank("Critical") and not chain_unverified else ""
     eff, crit_reason = _apply_critical_criteria(t, eff, critical_role or "", criteria, breach_distance)
     if crit_reason:
         reasons.append(crit_reason)
@@ -868,6 +903,7 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
             bd_by_id.get(tid, 2),
             external_ids,
             companion_cwes(t, findings),
+            chain_verified=any(tid in ch.get("verifier_confirmed", ()) for ch in verified_chains),
         )
         eff_by_id[tid] = eff
         eff_reasons_by_id[tid] = reasons
