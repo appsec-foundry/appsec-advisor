@@ -75,6 +75,8 @@ def test_corrections_survive_grouping_hydration_and_repeat_rebuild(tmp_path, com
     hydrate(model)
     assert runtime.verify_model(tmp_path, model) == result
     assert len(model["mitigations"]) == 2
+    for threat in model["threats"]:
+        assert len(threat["mitigation_ids"]) == len(set(threat["mitigation_ids"]))
     assert {row["priority"] for row in model["mitigations"]} == {"P2"}
     assert runtime.project_model(tmp_path, model, snapshot) == model
     assert review(tmp_path, cfg, calls=calls) == result
@@ -483,3 +485,45 @@ def test_completion_reports_assessment_and_mitigation_corrections_independently(
     status["assessment_corrected"] = 2
     (tmp_path / ".architect-status.json").write_text(json.dumps(status))
     assert _summary_architect(tmp_path, cfg) == "status unreadable"
+
+
+def test_generic_mitigation_titles_leave_an_accepted_fix_title_alone(tmp_path):
+    import emit_general_mitigation_titles as titles
+
+    cfg, _, _ = setup_run(tmp_path)
+    result = review(tmp_path, cfg)
+    model = runtime.project_model(tmp_path, model_for(result["snapshot"]), result["snapshot"])
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(model))
+    assert titles.main([str(tmp_path)]) == 0
+    model = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    assert model["mitigations"][0]["title"] == decision()["fix"]["value"]["title"]
+    assert runtime.verify_model(tmp_path, model)
+
+
+def _unsampled_run(tmp_path):
+    cfg, source, _ = setup_run(tmp_path)
+    source["threats"][0]["evidence_check"] = None
+    (tmp_path / ".threats-merged.json").write_text(json.dumps(source))
+    result = review(tmp_path, cfg)
+    model = runtime.project_model(tmp_path, model_for(result["snapshot"]), result["snapshot"])
+    return result, model
+
+
+def test_evidence_floor_may_fill_the_verdict_of_an_unsampled_reviewed_finding(tmp_path):
+    from validate_evidence_lines import persist_to_merged
+
+    _, model = _unsampled_run(tmp_path)
+    model["threats"][0]["evidence_check"] = "verified"
+    assert persist_to_merged(tmp_path, model) == 1
+    assert runtime.verify_model(tmp_path, model)
+
+
+def test_a_set_evidence_verdict_of_a_reviewed_finding_stays_fixed(tmp_path):
+    cfg, _, _ = setup_run(tmp_path)
+    result = review(tmp_path, cfg)
+    model = runtime.project_model(tmp_path, model_for(result["snapshot"]), result["snapshot"])
+    merged_now = deepcopy(result["snapshot"])
+    merged_now["threats"][0]["evidence_check"] = "ambiguous"
+    (tmp_path / ".threats-merged.json").write_text(json.dumps(merged_now))
+    with pytest.raises(ReviewError, match="lost downstream"):
+        runtime.verify_model(tmp_path, model)

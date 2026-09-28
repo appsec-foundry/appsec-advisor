@@ -428,6 +428,7 @@ def project_reviewed_mitigations(
                     continue
             retained.append(mitigation)
         result["mitigations"] = retained
+        linked = [row["id"] for row in retained if tid in row.get("threat_ids", [])]
         mid = f"M-{next_id:03d}"
         next_id += 1
         result["mitigations"].append(
@@ -443,7 +444,7 @@ def project_reviewed_mitigations(
                 "verification": expected["verification"],
             }
         )
-        threat["mitigation_ids"] = [row["id"] for row in retained if tid in row.get("threat_ids", [])] + [mid]
+        threat["mitigation_ids"] = linked + [mid]
     changed_ratings = {row["t_id"] for row in report["accepted"] if row["rating"]}
     for mitigation in result.get("mitigations", []):
         ids = mitigation.get("threat_ids", [])

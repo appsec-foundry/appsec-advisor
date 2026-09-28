@@ -256,7 +256,21 @@ def generalize_title(original: str, cwe: str) -> str:
     return _clamp_mitigation_title(_generalize_fallback(original))
 
 
-def apply(data: dict) -> int:
+def reviewed_fix_titles(output_dir: Path) -> frozenset[tuple[str, str]]:
+    """(t_id, title) of every fix the architect review accepted; those titles are owned by the review."""
+    from architect_review_runtime import load_review
+
+    value = load_review(output_dir)
+    if value is None:
+        return frozenset()
+    return frozenset(
+        (row["t_id"], row["remediation"]["after"]["title"])
+        for row in value["application"]["accepted"]
+        if row["remediation"]
+    )
+
+
+def apply(data: dict, reviewed: frozenset[tuple[str, str]] = frozenset()) -> int:
     """Rewrite mitigation titles in place. Returns the number changed."""
     mitigations = data.get("mitigations") or []
     threats_by_id = {
@@ -267,6 +281,9 @@ def apply(data: dict) -> int:
     changed = 0
     for m in mitigations:
         if not isinstance(m, dict):
+            continue
+        ids = m.get("threat_ids") or []
+        if m.get("kind", "fix") == "fix" and len(ids) == 1 and (ids[0], m.get("title")) in reviewed:
             continue
         # Idempotency: the canonical basis is the FIRST title we ever saw.
         original = (m.get("_title_source") or m.get("title") or m.get("mitigation_title") or "").strip()
@@ -319,7 +336,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     continuation = EnrichmentContinuation(data)
-    n = apply(data)
+    n = apply(data, reviewed_fix_titles(ns.output_dir))
     if n:
         continuation.refresh(data)
         tmp = yaml_path.with_suffix(".yaml.tmp")

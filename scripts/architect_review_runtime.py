@@ -138,6 +138,13 @@ def load_review(output_dir: Path) -> dict | None:
     return value
 
 
+def _verdict_replaced(before: object, after: object) -> bool:
+    """The evidence floor fills a verdict the sampled verifier left open; nothing may replace a set one."""
+    from validate_evidence_lines import _RESPECTED_PRIOR_STATES
+
+    return after != before and str(before or "").strip() in _RESPECTED_PRIOR_STATES
+
+
 def _source_errors(merged: dict, value: dict) -> list[str]:
     """Ranking may add derived fields but cannot undo accepted source values."""
     rows = {row["t_id"]: row for row in merged["threats"]}
@@ -146,8 +153,10 @@ def _source_errors(merged: dict, value: dict) -> list[str]:
     for correction in value["application"]["accepted"]:
         tid = correction["t_id"]
         row = rows.get(tid)
-        if row is None or any(
-            row.get(k) != original[tid].get(k) for k in ("component_id", "evidence", "evidence_check", "cwe", "source")
+        if (
+            row is None
+            or any(row.get(k) != original[tid].get(k) for k in ("component_id", "evidence", "cwe", "source"))
+            or _verdict_replaced(original[tid].get("evidence_check"), row.get("evidence_check"))
         ):
             errors.append(f"{tid}: reviewed finding identity or evidence changed")
             continue
