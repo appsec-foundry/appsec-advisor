@@ -2433,7 +2433,7 @@ def render_verdict(md_text: str, cfg: dict, verdict: dict | None = None, fixes: 
             raw.startswith("   ")
             and not raw.lstrip().startswith("→")
             and logical_lines
-            and logical_lines[-1].startswith("   ")
+            and (logical_lines[-1].startswith("   ") or logical_lines[-1].startswith(("•", "✓")))
             and not logical_lines[-1].lstrip().startswith("→")
         ):
             logical_lines[-1] += " " + raw.strip()

@@ -15,6 +15,8 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "summarize_threat_model.py"
 
@@ -194,8 +196,10 @@ def test_worst_case_prefers_the_persisted_verdict(tmp_path):
     assert "Verdict    🔴 critical security concerns" in out
     assert "anyone can reach admin data today" in out
     assert "Fix the credential handling" in out
-    # The shared worst-case table: ✓, outcome, the finding's CWE and the finding itself.
-    assert "\n  ✓  Full admin takeover (CWE-798)  → F-001\n" in out
+    # The shared worst-case table: ✓, the scenario sentence, then the finding's CWE and the finding.
+    assert "\n  ✓  Anyone can sign in as an administrator without a password. (CWE-798 → F-001)\n" in out
+    # The outcome title repeats the sentence and appears only without one.
+    assert "Full admin takeover" not in out
     assert stm.WORST_CASE_LEGEND in out
     # The scenario sentence survives; the weak fallback must not also render.
     assert "Anyone can sign in as an administrator" in out
@@ -544,3 +548,19 @@ def test_render_text_names_the_ask_and_review_lanes(tmp_path):
     ask_at = next(i for i, ln in enumerate(lines) if "ask-threat-model" in ln)
     findings_at = next(i for i, ln in enumerate(lines) if ln.startswith("Findings"))
     assert ask_at < findings_at
+
+
+@pytest.mark.parametrize(
+    ("bullet", "rows"),
+    [
+        (
+            {"title": "Data exposed", "body": "Anyone reads every record.", "cwes": ["CWE-639"], "findings": ["F-2"]},
+            ["•  Anyone reads every record. (CWE-639 → F-2)"],
+        ),
+        ({"title": "Data exposed", "body": "Anyone reads every record."}, ["•  Anyone reads every record."]),
+        ({"title": "Data exposed", "cwes": ["CWE-639"], "findings": ["F-2"]}, ["•  Data exposed (CWE-639)  → F-2"]),
+    ],
+    ids=["sentence-with-refs", "sentence-only", "title-fallback"],
+)
+def test_worst_case_row_leads_with_the_scenario_sentence(bullet, rows):
+    assert stm.render_worst_case_table([bullet], indent="") == rows

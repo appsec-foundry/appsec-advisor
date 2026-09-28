@@ -469,8 +469,9 @@ def render_worst_case_table(bullets: list[dict], indent: str = "  ") -> list[str
 
     Shared by the completion summary and this overview so both consoles show
     the list identically: ✓ for a cited finding in a verified chain or • otherwise,
-    the outcome with its CWE ids and the cited findings, followed by the
-    scenario's own sentence, preserving its access prerequisites. The finding
+    then the scenario's own sentence, preserving its access prerequisites, closed
+    by its CWE ids and cited findings. The outcome title repeats that sentence, so
+    it appears only for a bullet without one. The finding
     ids are the join key to `Fix first`; mitigations stay there so the console
     names one action list. No rank: nothing orders the verdict's bullets by
     severity (RA-14). There is no header row and each scenario starts with ✓ or
@@ -484,21 +485,26 @@ def render_worst_case_table(bullets: list[dict], indent: str = "  ") -> list[str
     rows = []
     for b in bullets:
         mark = "✓" if b.get("verified_attack_path") else "•"
-        head = f"{indent}{mark}  {b['title']}"
         cwes = b.get("cwes") or []
-        if cwes:
-            head += f" ({_capped(cwes, 2)})"
         findings = b.get("findings") or []
         refs = f"→ {_capped(findings, 4)}" if findings else ""
+        body = str(b.get("body") or "").strip()
+        if body:
+            tail = " ".join(part for part in (_capped(cwes, 2) if cwes else "", refs) if part)
+            text = f"{body} ({tail})" if tail else body
+            wrapped = _wrap(text, indent=indent + "   ")
+            rows.append(f"{indent}{mark}  {wrapped[0].strip()}")
+            rows.extend(wrapped[1:])
+            continue
+        head = f"{indent}{mark}  {b['title']}"
+        if cwes:
+            head += f" ({_capped(cwes, 2)})"
         if refs and len(head) + 2 + len(refs) <= _WRAP_WIDTH:
             rows.append(f"{head}  {refs}")
         else:
             rows.append(head)
             if refs:
                 rows.append(f"{indent}   {refs}")
-        body = str(b.get("body") or "").strip()
-        if body:
-            rows.extend(_wrap(body, indent=indent + "   "))
     if any(b.get("verified_attack_path") for b in bullets):
         rows += ["", f"{indent}{WORST_CASE_LEGEND}"]
     return rows

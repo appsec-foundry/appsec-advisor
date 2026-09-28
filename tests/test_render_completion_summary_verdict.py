@@ -166,7 +166,8 @@ def test_completion_summary_swaps_the_bullets_for_the_table(tmp_path):
     assert r.returncode == 0, r.stderr
     verdict_block = r.stdout.split("\nVerdict\n", 1)[1].split("Fix the query layer first.", 1)[0]
     assert "\nSecurity concerns\n" in verdict_block
-    assert "\n  •  Customer data exposed (CWE-89)  → F-011\n" in verdict_block
+    assert "\n  •  Anyone can dump every record. (CWE-89 → F-011)\n" in verdict_block
+    assert "Customer data exposed" not in verdict_block
     assert "✓" not in verdict_block
     # The sentence survives; the report's reference clause (weakness, location) does not.
     assert "Anyone can dump every record" in verdict_block
