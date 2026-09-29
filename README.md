@@ -133,7 +133,7 @@ The report links findings to the [OWASP Top 10:2025](https://owasp.org/Top10/202
 
 Figure 1 shows the components, data flows, and attack paths identified in OWASP Juice Shop.
 
-![Threat Model Juice Shop Thorough](docs/images/figure1-example.svg)
+![Figure 1 of the Juice Shop threat model](docs/images/figure1-example.svg)
 
 Assessments consume model tokens and usually take tens of minutes; thorough runs may exceed an hour. The [Threat Modeler reference](docs/threat-modeler.md#assessment-depth--cost-control) covers depth, focused scans, repository context, measured costs, and limits.
 
