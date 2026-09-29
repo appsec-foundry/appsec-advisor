@@ -569,12 +569,19 @@ SOURCE_TESTS = {
         gate_preconditions
         run_path_guard
         stride_outputs
+        auto_emitter_pass
+        detect_public_repo
+        emit_general_mitigation_titles
+        render_completion_summary_config
+        requirements_verification
     """),
     "schemas/architect-review-runtime.schema.json": _tests("""
         render_completion_summary
         architect_review_runtime
         check_target_specificity
         schemas
+        render_completion_summary_config
+        requirements_verification
     """),
     "scripts/architect_review.py": _tests("""
         orchestration_controller
@@ -591,6 +598,11 @@ SOURCE_TESTS = {
         gate_preconditions
         run_path_guard
         stride_outputs
+        auto_emitter_pass
+        detect_public_repo
+        emit_general_mitigation_titles
+        render_completion_summary_config
+        requirements_verification
     """),
     "scripts/build_architect_context.py": _tests("""
         build_architect_context
@@ -600,15 +612,23 @@ SOURCE_TESTS = {
         gate_preconditions
         run_path_guard
         stride_outputs
+        render_completion_summary_config
+        requirements_verification
     """),
     "schemas/architect-review-job.schema.json": _tests("""
         architect_review_runtime
         orchestration_controller
         context_routing
+        check_target_specificity
+        requirements_verification
+        schemas
     """),
     "schemas/architect-review-proposals.schema.json": _tests("""
         architect_review_runtime
         orchestration_controller
+        check_target_specificity
+        requirements_verification
+        schemas
     """),
     "scripts/calibrate_architect_review.py": _tests("""
         calibrate_architect_review
@@ -616,6 +636,7 @@ SOURCE_TESTS = {
         gate_preconditions
         run_path_guard
         stride_outputs
+        requirements_verification
     """),
     "schemas/architect-review-context.schema.json": _tests("""
         build_architect_context
@@ -623,20 +644,26 @@ SOURCE_TESTS = {
         calibrate_architect_review
         check_target_specificity
         schemas
+        requirements_verification
     """),
     "schemas/architect-review-calibration.schema.json": _tests("""
         architect_review_runtime
         calibrate_architect_review
         check_target_specificity
         schemas
+        requirements_verification
     """),
     "agents/shared/architect-semantic-review.md": _tests("""
         agent_definitions
         agent_doc_shell_snippets
         check_target_specificity
         stride_outputs
+        requirements_verification
     """),
-    "tests/fixtures/architect-review/calibration.json": _tests("calibrate_architect_review"),
+    "tests/fixtures/architect-review/calibration.json": _tests("""
+        calibrate_architect_review
+        requirements_verification
+    """),
     "schemas/architect-corrections.schema.json": _tests("""
         architect_review
         architect_review_runtime
@@ -644,6 +671,7 @@ SOURCE_TESTS = {
         calibrate_architect_review
         check_target_specificity
         schemas
+        requirements_verification
     """),
     "scripts/_severity_policy.py": _tests("""
         actor_attribution
@@ -813,6 +841,7 @@ SOURCE_TESTS = {
         build_architect_context
         architect_review_runtime
         calibrate_architect_review
+        refusal_aware_stride
     """),
     "schemas/threat-model.output.schema.yaml": _tests("""
         actor_presentation
@@ -888,6 +917,7 @@ SOURCE_TESTS = {
         stride_dispatch_waves
         stride_outputs
         validate_fragment
+        refusal_aware_stride
     """),
     "scripts/stride_dispatch_waves.py": _tests("""
         check_stride_dispatch
@@ -906,6 +936,17 @@ SOURCE_TESTS = {
         stride_outputs
         stride_serial_dispatch_detection
         wait_stride_progress
+        actor_presentation
+        architect_review_runtime
+        auto_emitter_pass
+        build_threat_model_yaml
+        detect_public_repo
+        emit_general_mitigation_titles
+        incremental_two_run_e2e
+        render_completion_summary_config
+        runtime_doc_cli_contract
+        threat_fixture
+        write_stride_progress
     """),
     "scripts/validate_intermediate.py": _tests("""
         config_iac_scanner
@@ -964,6 +1005,7 @@ SOURCE_TESTS = {
         architect_review_runtime
         build_architect_context
         calibrate_architect_review
+        refusal_aware_stride
     """),
     "AGENTS.md": _tests("""
         context_prompt_budgets
@@ -1869,6 +1911,7 @@ SOURCE_TESTS = {
         requirements_verification
         schema_integrity
         schemas
+        architect_review_runtime
     """),
     "agents/appsec-control-analyst.md": _tests("""
         agent_definitions
@@ -2749,6 +2792,7 @@ SOURCE_TESTS = {
         architect_review_runtime
         build_architect_context
         calibrate_architect_review
+        refusal_aware_stride
     """),
     "scripts/_slug.py": _tests("""
         analysis_version_upgrade
@@ -2937,6 +2981,8 @@ SOURCE_TESTS = {
         wait_agent_calls
         wait_stride_progress
         write_stride_progress
+        check_stride_dispatch
+        stage1_coverage_recovery_2026_07_20
     """),
     "scripts/agent_logger.py": _tests("""
         active_tool_calls
@@ -3200,6 +3246,7 @@ SOURCE_TESTS = {
         telemetry_consistency
         terminate_run
         verify_abuse_cases
+        refusal_aware_stride
     """),
     "scripts/build_abuse_case_contexts.py": _tests("""
         build_abuse_case_contexts
@@ -3485,6 +3532,7 @@ SOURCE_TESTS = {
         stage1_coverage_recovery_2026_08_02
         stride_dispatch_waves
         stride_outputs
+        refusal_aware_stride
     """),
     "scripts/completion_relay.py": _tests("""
         active_tool_calls
@@ -3515,6 +3563,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
         telemetry_consistency
+        refusal_aware_stride
     """),
     "scripts/context_window_report.py": _tests("""
         check_target_specificity
@@ -3757,6 +3806,7 @@ SOURCE_TESTS = {
         requirements_verification
         run_path_guard
         stride_outputs
+        architect_review_runtime
     """),
     "scripts/emit_known_bad_libs.py": _tests("""
         check_target_specificity
@@ -3896,6 +3946,7 @@ SOURCE_TESTS = {
         severity_policy
         stride_outputs
         triage_compute_ranking
+        architect_review_runtime
     """),
     "scripts/ensure_output_gitignore.py": _tests("""
         check_target_specificity
@@ -3983,6 +4034,7 @@ SOURCE_TESTS = {
         terminate_run
         verify_run_costs
         write_stride_progress
+        refusal_aware_stride
     """),
     "scripts/extract_data_relations.py": _tests("""
         check_target_specificity
@@ -4133,6 +4185,7 @@ SOURCE_TESTS = {
         stage1_coverage_recovery_2026_08_02
         stride_outputs
         terminate_run
+        refusal_aware_stride
     """),
     "scripts/hydrate_mitigation_details.py": _tests("""
         agent_config_checks
@@ -4245,6 +4298,13 @@ SOURCE_TESTS = {
         architect_review
         architect_review_runtime
         build_architect_context
+        check_stride_dispatch
+        refusal_aware_stride
+        run_diagnostics_recovery_2026_07_20
+        stage1_coverage_recovery_2026_07_20
+        stage1_coverage_recovery_2026_08_02
+        wait_stride_progress
+        write_stride_progress
     """),
     "scripts/model_lineup.py": _tests("""
         check_target_specificity
@@ -5232,6 +5292,9 @@ SOURCE_TESTS = {
         stride_serial_dispatch_detection
         threat_fixture
         write_stride_progress
+        actor_presentation
+        architect_review_runtime
+        refusal_aware_stride
     """),
     "scripts/stride_progress.py": _tests("""
         check_target_specificity
@@ -5347,6 +5410,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
         validate_evidence_lines
+        architect_review_runtime
     """),
     "scripts/validate_finding_refs.py": _tests("""
         check_target_specificity
@@ -5460,6 +5524,7 @@ SOURCE_TESTS = {
         stride_outputs
         thin_runtime_regressions_2026_07_20
         wait_agent_calls
+        refusal_aware_stride
     """),
     "scripts/wait_stride_progress.py": _tests("""
         check_target_specificity
