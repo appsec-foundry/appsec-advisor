@@ -31,7 +31,7 @@ pregeneration and the filesystem-authoritative compose handoff.
      Quick. The deterministic security-architecture scaffold remains on disk.
    - `parallel`: issue both calls in one message. Call
      `appsec-advisor:appsec-secarch-renderer`, description
-     `Render: §7 Security Architecture`; call
+     `Render: §6 Security Architecture`; call
      `appsec-advisor:appsec-ms-renderer`, description
      `Render: Management Summary`.
    - `full`: call `appsec-advisor:appsec-threat-renderer`, description

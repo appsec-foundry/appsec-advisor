@@ -161,7 +161,8 @@ def test_thin_runtime_uses_bounded_stage_reads():
     assert "ORG_PROFILE_PATH = org_profile_path" in text
     assert "▶ Stage 1a/<TOTAL_STAGES>" in text
     assert "secret gate is never optional" in text
-    assert "There is no legacy range or fallback" in text
+    assert "SKILL-impl.md" not in text
+    assert "SKILL-thin-stage1.md" not in text
 
 
 def test_thin_full_cumulative_stage2_context_is_bounded():
@@ -223,7 +224,8 @@ def test_thin_rerender_runtime_starts_at_stage2():
     assert "SKILL-thin-stage3.md" in text
     assert "SKILL-thin-stage4.md" in text
     assert "SKILL-thin-completion.md" in text
-    assert "There is no legacy slice" in text
+    assert "SKILL-impl.md" not in text
+    assert "SKILL-thin-stage1.md" not in text
 
 
 def test_context_v2_stage1_runtime_is_bounded():

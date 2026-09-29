@@ -6,8 +6,7 @@ description: >-
   dispatches a specialized agent that reasons over the combined output:
   cross-component IDOR chains, RBAC coverage gaps, JWT misconfiguration, and
   privilege-escalation signals. Optionally annotates findings with violated
-  requirement IDs from a requirements catalog or Phase 8b violations index,
-  and exports the findings as pentest tasks for an AI pentest agent. Does NOT
+  requirement IDs from a requirements catalog, and exports the findings as pentest tasks for an AI pentest agent. Does NOT
   require a prior threat model run. Prints results to the console; file output
   only with --save or --pentest-tasks.
 ---
@@ -77,7 +76,7 @@ USAGE
 
 OPTIONS
   --repo <path>           Repository root to analyze (default: current directory)
-  --requirements <path>   Requirements YAML or Phase 8b violations JSON;
+  --requirements <path>   Requirements YAML;
                           findings are annotated with violated requirement IDs
   --with-threat-model     Deduplicate EoP findings already covered by a prior
                           STRIDE run in docs/security/
@@ -117,8 +116,7 @@ EXIT CODES
 Parse the user's message or slash-command arguments:
 - `--repo <path>` → `REPO_ROOT` (default: current working directory)
 - `--requirements <path>` → `REQUIREMENTS_PATH` (default: `none`; also
-  auto-detect `$REPO_ROOT/docs/security/.phase-8b-violations.json` then
-  `$REPO_ROOT/docs/security/requirements.yaml` — use first that exists)
+  auto-detect `$REPO_ROOT/docs/security/requirements.yaml` when it exists)
 - `--with-threat-model` → `WITH_THREAT_MODEL=true`
 - `--save` → `SAVE_FILES=true`; set `OUTPUT_DIR=<REPO_ROOT>/docs/security`
   and run `mkdir -p "$OUTPUT_DIR"`

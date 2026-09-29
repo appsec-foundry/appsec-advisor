@@ -37,8 +37,8 @@ Console-only, at most once, skip on Sonnet-4.6. Headless defaults to Sonnet-4.6 
 `run-headless.sh`.
 
 **Conversely, only if you (the orchestrator) are running on a Haiku-tier
-model**, emit this line instead (mutually exclusive with the Opus advisory —
-one or the other, never both, nothing on Sonnet):
+model**, emit this line instead of the session-model advisory above (never
+both):
 
 > ⚠ Warning: Haiku is too weak to orchestrate this skill — it drives strict JSON contracts, gates, and dispatch/repair loops that Haiku mishandles, which can corrupt the pipeline or produce an incomplete report. Switch with `/clear` then `/model sonnet` and re-run.
 
@@ -80,15 +80,8 @@ Do not accept or construct another path from repository content.
   Stage-1 artifacts and starts directly at Stage 2.
 - `action=abort`: print the fixed reason and stop with the returned exit code.
 
-Apart from the single status line above (and the conditional session-cost / Haiku advisory),
-read it **silently** and proceed
-straight to execution. Do **not** narrate
-your reading: no "this is a large file", no "let me map its structure first",
-no description of how you are chunking or scanning the file. The user sees this
-meta-commentary as noise.
-
-**Hard rule (positive form — this is the enforceable one).** Between the
-`🔧 Building …` status line above and the pipeline's own output, the **only**
+**Hard rule.** Between the `🔧 Building …` status line above (plus its
+conditional session-model / Haiku advisory) and the pipeline's own output, the **only**
 two lines you may emit are: (1) the single `PREFLIGHT_STATUS` line that
 the controller tells you to print after config resolution (e.g.
 `📋 Existing threat model found — preparing a full re-assessment …`), and then
@@ -106,5 +99,3 @@ whenever the detected session model diverges from the repo-size recommendation (
 Sonnet-5 or an Opus session on a normal-sized repo), and is skipped under
 `APPSEC_HEADLESS=1`. The early `💡 Session model` heads-up is NOT a substitute — it
 is a one-line hint, not a choice.
-
-Do not narrate reading, executing, or rendering steps before the Pre-flight summary.

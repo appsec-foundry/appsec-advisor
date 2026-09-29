@@ -52,7 +52,8 @@ def test_full_runtime_loads_only_controller_returned_stage_surfaces():
         "SKILL-thin-completion.md",
     ):
         assert name in runtime
-    assert "There is no legacy range or fallback" in runtime
+    assert "SKILL-impl.md" not in runtime
+    assert "SKILL-thin-stage1.md" not in runtime
 
 
 def test_rerender_runtime_uses_the_same_release_tail():
@@ -63,7 +64,8 @@ def test_rerender_runtime_uses_the_same_release_tail():
     assert "SKILL-thin-stage4.md" in runtime
     assert "SKILL-thin-completion.md" in runtime
     assert "secret gate is never optional" in runtime
-    assert "There is no legacy slice" in runtime
+    assert "SKILL-impl.md" not in runtime
+    assert "SKILL-thin-stage1.md" not in runtime
 
 
 def test_stage3_preserves_the_secret_gate_and_canonical_mutation_order():

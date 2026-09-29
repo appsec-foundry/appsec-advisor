@@ -177,4 +177,4 @@ Emit `AGENT_END` log entry with the completion counts.
 - **Do NOT read source code** to verify threats. Trust the upstream analyzers.
 - **Do NOT emit new threats or rewrite existing ones** — only decide how to group them.
 
-This agent is intentionally narrow. Its entire job is the dedup judgment that Sonnet tends to get subtly wrong under the orchestrator's 75-turn load, and which Opus 4.7 handles materially better. Anything else is scope creep.
+This agent is intentionally narrow: its entire job is the dedup judgment. Anything else is scope creep.

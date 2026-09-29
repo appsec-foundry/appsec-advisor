@@ -91,9 +91,9 @@ Repeated occurrences of the same flag are allowed; the last value wins.
 
 ```bash
 if [ -z "$CLAUDE_PLUGIN_ROOT" ]; then
-  CLAUDE_PLUGIN_ROOT=$(find /root /home /opt -maxdepth 6 \
-    -path "*/appsec-advisor/skills/threat-model-health/SKILL.md" \
-    2>/dev/null | head -1 | xargs -r dirname | xargs -r dirname | xargs -r dirname)
+  # <base-dir> from the invocation line. Never search the filesystem: several
+  # checkouts may exist and the first hit is arbitrary.
+  CLAUDE_PLUGIN_ROOT=$(cd "<base-dir>/../.." && pwd)
 fi
 export CLAUDE_PLUGIN_ROOT
 if [ -z "$CLAUDE_PLUGIN_ROOT" ] || [ ! -d "$CLAUDE_PLUGIN_ROOT" ]; then

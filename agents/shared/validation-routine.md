@@ -1,6 +1,6 @@
 # Shared Validation Routine for Intermediate Files
 
-Use this routine to validate `.stride-*.json` files immediately after writing them. (The `.dep-scan.json` validation pathway was removed in 2026-05 alongside the in-tree SCA producer.)
+Use this routine to validate `.stride-*.json` files immediately after writing them.
 
 ## Step 1 — Run validation
 

@@ -13,12 +13,8 @@ user-visible output is, in order: the `AppSec Requirements Audit` title +
 requirements (Step 3), and the saved-file lines (Step 4). Between those, scan
 the repository **silently**.
 
-Do **not** narrate reasoning or step transitions. Forbidden filler includes
-lines like "Now load threat model context…", "Banner first, then I'll grade",
-"Let me scan systematically", "Now gathering codebase evidence". Tool calls run
-without a running commentary. Between the banner and the results the **only**
-permitted output is the batch progress line specified in Step 2 — one per
-batch, nothing else. Internal caveats (e.g. an empty `violated_requirements`
+Between the banner and the results the only permitted output is the batch
+progress line specified in Step 2 — one per batch. Internal caveats (e.g. an empty `violated_requirements`
 map) are not surfaced as prose — they simply produce empty cross-links.
 
 **No prose summary of the verdict.** The result is exactly two things: the fixed
@@ -61,8 +57,7 @@ USAGE
   CATEGORY_FILTER is an optional substring matched against requirement IDs and
   category IDs (e.g. "SEC-AUTH" or "AUTH"). When given, ONLY matching
   requirements are graded — the filter narrows scope for a focused review of
-  one area. (It no longer force-includes every MUST; an unfiltered run grades
-  the whole catalog.)
+  one area. An unfiltered run grades the whole catalog.
 
 WHERE REQUIREMENTS COME FROM (highest priority first)
   1. --requirements <src>      explicit source for this run (no cache fallback)
@@ -129,7 +124,7 @@ After printing, exit. Do not read any files or perform any other action.
 
 The user may pass arguments after the skill name. Parse them now:
 
-- **Category filter** — any word that does not start with `--` (e.g. `AUTH`, `SQL`) — grade ONLY requirements whose ID or category contains this string. It narrows scope; it does not force-include other priorities. An unfiltered run grades the whole catalog.
+- **Category filter** — any word that does not start with `--` (e.g. `AUTH`, `SQL`) — grade ONLY requirements whose ID or category contains this string. It narrows scope. An unfiltered run grades the whole catalog.
 - `--md` — save results as `docs/security/appsec-requirements-report.md` after rendering
 - `--pdf` — save `docs/security/appsec-requirements-report.pdf` (converted from the Markdown report, which is written too)
 - `--json` — save results as `docs/security/appsec-requirements-report.json` after rendering
@@ -211,12 +206,9 @@ Find the plugin root:
 
 ```bash
 if [ -z "$CLAUDE_PLUGIN_ROOT" ]; then
-  SKILL_MD_PATH=$(find /root /home /opt -maxdepth 6 \
-    -path "*/appsec-advisor/skills/audit-security-requirements/SKILL.md" \
-    2>/dev/null | head -1)
-  if [ -n "$SKILL_MD_PATH" ]; then
-    CLAUDE_PLUGIN_ROOT=$(dirname "$(dirname "$(dirname "$SKILL_MD_PATH")")")
-  fi
+  # <base-dir> from the invocation line. Never search the filesystem: several
+  # checkouts may exist and the first hit is arbitrary.
+  CLAUDE_PLUGIN_ROOT=$(cd "<base-dir>/../.." && pwd)
 fi
 export CLAUDE_PLUGIN_ROOT
 if [ -z "$CLAUDE_PLUGIN_ROOT" ] || [ ! -d "$CLAUDE_PLUGIN_ROOT" ]; then
@@ -359,7 +351,7 @@ REQUIREMENTS_YAML="$AUDIT_OUTPUT_DIR/.requirements.yaml"
 exit 2 only when requirements were requested but nothing loaded — no configured
 source, and an empty cache. This is the genuine first-run case. Do not proceed
 to scan. Print the guidance below, then **offer to run against the packaged demo
-catalog** (decision A). When running interactively you may ask the user with
+catalog**. When running interactively you may ask the user with
 `AskUserQuestion` whether to re-run with `--demo`; otherwise just print the hint
 and exit 2:
 
@@ -446,24 +438,6 @@ blueprint_map[ref.id] → { bp_id, bp_title, section_title, section_url }
 ```
 
 This map is used in Step 3b to show relevant blueprint guidance alongside violations.
-
-### 1d — Scan for inline requirement references (optional, non-essential)
-
-Some teams annotate code with their requirement IDs; one common convention is
-the bracket form `[<ID>]` (e.g. `[SEC-CSP-1]`). Many teams use a **different
-convention or none at all** — that is expected. This scan is a convenience that
-surfaces such references when they exist; the audit does **not** depend on it,
-and finding zero references is normal and fine. Requirement IDs come from the
-loaded catalog (Step 1c) and may use any naming scheme.
-
-```bash
-# Optional — only meaningful if this repo uses the [<ID>] tag convention.
-grep -rn "\[<ID>\]" --include="*.{ts,js,py,go,java,kt,rb,cs,php,md,yaml,yml}"
-```
-
-Run for every known requirement ID (or a combined regex) if you scan at all.
-Grading in Step 2 searches for actual implementation evidence per requirement
-and is independent of any inline tag.
 
 ---
 
@@ -655,11 +629,9 @@ verdict. **Counts:** if Step 2.5 ran (an artifact/gate was requested), use the
 `requirements_report.py` stats line verbatim. Otherwise (plain run) tally them
 directly from your grading.
 
-Render this as a **fixed block — never as a prose sentence or paragraph.** This
-is the single biggest formatting rule: do NOT write "Of 64: 28 FAIL, 8 PARTIAL,
-…" as a sentence, do NOT explain the NOT_APPLICABLE/PASS items in prose here, do
-NOT list "notable passes". One header line, then one aligned count row per
-status, each led by its colour circle:
+Render this as a fixed block (see "No prose summary of the verdict" above): one
+header line, then one aligned count row per status, each led by its colour
+circle:
 
 ```
 Results · <Project Name> · <total> requirements<, filter: <filter> if set>

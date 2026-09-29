@@ -103,9 +103,9 @@ wins.
 
 ```bash
 if [ -z "$CLAUDE_PLUGIN_ROOT" ]; then
-  CLAUDE_PLUGIN_ROOT=$(find /root /home /opt -maxdepth 6 \
-    -path "*/appsec-advisor/skills/clean-run-state/SKILL.md" \
-    2>/dev/null | head -1 | xargs -r dirname | xargs -r dirname | xargs -r dirname)
+  # <base-dir> from the invocation line. Never search the filesystem: several
+  # checkouts may exist and the first hit is arbitrary.
+  CLAUDE_PLUGIN_ROOT=$(cd "<base-dir>/../.." && pwd)
 fi
 export CLAUDE_PLUGIN_ROOT
 if [ -z "$CLAUDE_PLUGIN_ROOT" ] || [ ! -d "$CLAUDE_PLUGIN_ROOT" ]; then
@@ -157,10 +157,9 @@ The skill MUST:
    ⚠ --force requested — removing lock regardless of PID liveness.
       Any still-running assessment will lose its lock and may crash.
    ```
-2. Invoke the cleaner with the `--force` flag supplemented by a direct
-   `rm -f` on the lock files. The Python helper refuses to clean active
-   state by design (the state machine is the guarantor of correctness);
-   the skill layer owns the escape hatch:
+2. Remove the run-state files directly. `check_state.py` has no `--force`
+   flag and refuses to clean active state by design (the state machine is
+   the guarantor of correctness); the skill layer owns the escape hatch:
    ```bash
    rm -f "$OUTPUT_DIR/.appsec-lock"
    rm -f "$OUTPUT_DIR/.appsec-checkpoint"

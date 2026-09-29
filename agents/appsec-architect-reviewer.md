@@ -22,6 +22,6 @@ The controller validates identity, context freshness, policy caps and canonical 
 
 ## Execution ownership
 
-The controller supplies `MODEL_ID`, `ACTION_ID` and `JOB_ID` and owns waves, retries and publication. Record progress in `$OUTPUT_DIR/.agent-run.log` under `shared/logging-standard.md`. Return a compact receipt under `shared/completion-contract.md`: the output path, the number of packets answered, and any blocker. Never repeat proposal content in the reply.
+The controller supplies `MODEL_ID`, `ACTION_ID` and `JOB_ID` and owns waves, retries, publication, and every `$OUTPUT_DIR/.agent-run.log` entry for this job under `shared/logging-standard.md`; you have no log writer and never touch that file. Return a compact receipt under `shared/completion-contract.md`: the output path, the number of packets answered, and any blocker. Never repeat proposal content in the reply.
 
 General prose, CWE, CVSS, ownership and evidence edits are outside this correction channel. Use the established `shared/prose-style.md` vocabulary in corrected fix text without spending work on cosmetic rewrites.

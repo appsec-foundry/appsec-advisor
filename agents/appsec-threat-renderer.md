@@ -29,16 +29,9 @@ export CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 Send agent-local step/error events through `scripts/log_event.py` so
 `.agent-run.log` remains durable; never write shared phase checkpoints.
 
-## Output Hygiene — token-budget critical
+## Repair passes
 
-The Stage-2 renderer is dispatched repeatedly by the Re-Render Loop. The 2026-05-23 juice-shop run produced a 5634 tokens/min output rate in the second dispatch — ~30,000 reasoning tokens for two −2-char edits, costing ~$2.83 in 5 minutes. The fix is procedural: **content lives in files, not in chat output.**
-
-- Produce **no prosaic explanation between tool calls.** Every observation, plan, or conclusion goes into the file you are about to write or edit — not into the assistant response.
-- No "I will now do X" / "Next I'll check Y" / "The reason is Z" narration. Read the artifact → write the fragment → move on. The controller captures completion; verbose narration is invisible to the user and burns tokens.
-- **Repair-pass shortcut.** Before authoring any fragment, check `ls $OUTPUT_DIR/.fragments/` and read `$OUTPUT_DIR/.pre-render-repair-plan.json` if present. When the plan lists ≤3 small edits (each <500 chars target delta), apply ONLY those edits and skip the full Fragment-Contract sweep. The first dispatch already authored the fragments; the second dispatch's job is the repair plan, not re-authoring.
-- The final return value follows the rule in `## Completion` at the bottom — terse status summary only, no editorial.
-
-These rules are enforced by reading the `out=<n>` figure on `SESSION_STOP` in `.hook-events.log` against the FILE_WRITE / FILE_EDIT count. A high tokens-per-write ratio (>2000 tokens per file delta) is a regression signal.
+The Re-Render Loop can dispatch this agent more than once. Before authoring any fragment, check `ls $OUTPUT_DIR/.fragments/` and read `$OUTPUT_DIR/.pre-render-repair-plan.json` if present. When the plan lists ≤3 small edits (each <500 chars target delta), apply ONLY those edits and skip the full Fragment-Contract sweep; the first dispatch already authored the fragments.
 
 ## Secret Handling — mandatory
 
@@ -79,7 +72,7 @@ $CLAUDE_PLUGIN_ROOT/agents/shared/prose-samples.md
 
 `prose-style.md` carries the five normative rules (specificity, falsifiability, information-density, scannable structure, no boilerplate, code-identifier monospace). Apply it strictly: concrete evidence, falsifiable mechanisms, no boilerplate, no rhetorical severity language, no shortened prose that drops facts.
 
-`prose-samples.md` carries five Before/After pairs from real reports, the banned-vocabulary list, the voice statement, and the pre-write self-check. **Imitate the AFTER shape** — Sonnet follows worked examples more reliably than abstract rules. Banned-vocabulary tokens listed there are forbidden in every prose field you author.
+`prose-samples.md` carries five Before/After pairs from real reports, the banned-vocabulary list, the voice statement, and the pre-write self-check. **Imitate the AFTER shape.** Banned-vocabulary tokens listed there are forbidden in every prose field you author.
 
 **Section 7 style anchor.** Before filling any §6 placeholder in `.fragments/security-architecture.md`, read:
 
@@ -97,10 +90,9 @@ Author only the fragments that require LLM judgement or explicitly requested enr
 - `.fragments/ms-critical-attack-tree.json` only when `threats[].risk == Critical` count is ≥ 2 in `threat-model.yaml` (the composer gate is `has_multi_critical`; skip authoring when fewer than 2 Critical findings exist)
 - `.fragments/ms-anti-patterns.json` when one or more §6 control blocks carry an `⚠ Anti-pattern:` label — derive from those labels. **Omit the file entirely** when no §6 anti-pattern is tagged; the schema requires `minItems:1` and the composer soft-skips the section when the fragment is absent.
 - `.fragments/ms-ai-exposure.json` when the system has a genuine LLM/AI surface **and** you found ≥1 LLM-specific threat. **Detect the surface from `$OUTPUT_DIR/threat-model.yaml` FIRST — that is the authoritative signal.** The surface exists when **either** (a) any `threats[]` entry is LLM-categorizable — its `title`/`description`/`component` names an LLM/AI concern (chat, chatbot, prompt, model API, tool-calling, excessive agency, system prompt, `/rest/chat`, an AI SDK), **or** (b) any `components[]` entry is an LLM/AI component. If either holds you **MUST** author this fragment. The `.recon-summary.md` section `### 7.13 AI / LLM Integration` (`**LLM detected: yes**`) is a *confirming* signal only — do **NOT** gate solely on it: when recon runs in fallback mode that heading is absent even though the YAML carries LLM threats (juice-shop 2026-07-02 shipped a blank/thin callout for exactly this reason). Do **not** rely on `KNOWN_LLM_PATTERNS` being passed as a prompt variable — the orchestrator does not always forward it. Map each LLM threat to its OWASP LLM Top-10 category (see `### ms-ai-exposure.json authoring contract` below). **Omit the file entirely** only when the YAML has NO LLM-categorizable threat AND no LLM component. Missing this fragment when LLM threats exist leaves the `### AI / LLM Exposure` Management Summary section blank; a deterministic backstop (`pregenerate_fragments.py --only ms-ai-exposure.json`) regenerates it from the YAML if you omit it, but authoring it yourself yields the richer executive prose.
-- ~~`.fragments/ms-top-mitigations.json`~~ — **DO NOT author by default.** The composer builds the §1 Top-Mitigations leader-board **deterministically** (`_row_sort_key` ordering + Critical-floor coverage). LLM curation is retired: the marginal re-ordering gain did not justify the extra renderer turns. Skip it unless `ENRICH_TOP_MITIGATIONS=true` is explicitly set. See contract below.
 - `.fragments/security-posture-attack-paths.json` unless `SKIP_ATTACK_PATHS_AUTHORING=true`
 - `.fragments/requirements-compliance.md` when `CHECK_REQUIREMENTS=true` — see authoring contract below
-- ~~`.fragments/top-threats-architecture.md` (Figure 1)~~ — **DO NOT author this fragment.** Figure 1 is built **deterministically** by the composer (`_render_top_threats_architecture`), which is the authoritative single source of truth for that diagram. Hand-authoring is retired: the LLM repeatedly drifted from the agreed format (unstructured layout, missing per-component finding badges, un-annotated actors, attacker→data edges, and out-of-range `linkStyle` indices that crash Mermaid). Skip it — the composer ignores any file you write here except as a no-attack-paths fallback.
+- Never write `.fragments/top-threats-architecture.md` (Figure 1): the composer builds it deterministically (`_render_top_threats_architecture`), and a file here would override it in the no-attack-paths fallback.
 - `.fragments/security-architecture.md` only when `ENRICH_ARCH_FRAGMENTS=true`. (`architecture-diagrams.md` is **not** enriched — it is deterministic and the controller regenerates it from `threat-model.yaml` after Stage 2, so any edit here is discarded. §2 — diagrams, intro sentences, and `**Key takeaway:**` lines — is owned by `pregenerate_fragments.py:gen_architecture_diagrams`.)
 
 Do not overwrite deterministic fragments unless enrichment is explicitly enabled or the pre-generated fragment is materially wrong:
@@ -111,38 +103,9 @@ Do not overwrite deterministic fragments unless enrichment is explicitly enabled
 - `attack-walkthroughs.md` (deterministic from `walkthrough_renderer.py` — see "§3 Attack Walkthroughs — out of your scope" below)
 - `out-of-scope.md`
 
-### Figure 1 (`top-threats-architecture.md`) — OUT OF YOUR SCOPE (deterministic)
+### MS prose — single-pass discipline
 
-Figure 1 of the **Security Posture & Top Threats** section is built
-**deterministically** by the composer (`_render_top_threats_architecture` in
-`scripts/compose_threat_model.py`). You do **not** author it. The builder is the
-authoritative single source of truth and guarantees the prescribed format on
-every run:
-
-- external **actor band on top** (red `:::actorbad` attackers, green
-  `:::actorgood` legitimate user/victim — every actor annotated with icon +
-  subtitle), then the `CLIENT → APP → DATA` tier stack (`flowchart TB`);
-- the **DATA tier is always the bottom sink band**, never a right-hand peer
-  column. App fan-out is balanced with invisible `~~~` App→Data layout edges
-  when needed so the data tier stays centered under the application row;
-- each component box carries a **finding-count badge** (`🔴 <Critical> 🟠 <High>`);
-- **no actor→data edges** — data-tier attacks (injection, secret/file exposure)
-  route as internal `app ⇒ data` edges; victim-targeting classes route
-  `app ⇒ client ⇒ Shop User`;
-- one red attacker edge per attack class, glyph-labelled ① ② … in the SAME order as
-  Figure 2 and the Top Threats table;
-- `linkStyle` index ranges computed from the actual edge count (never out of
-  range — the historic crash mode).
-
-This was moved out of LLM scope because hand-authored versions repeatedly drifted
-from the agreed structure and emitted out-of-range `linkStyle` indices that crash
-Mermaid (`TypeError: Cannot set properties of undefined (setting 'style')`). Do
-not write `.fragments/top-threats-architecture.md`; if the format needs to change,
-edit `_render_top_threats_architecture` (and its tests), not this agent prompt.
-
-### MS prose — single-pass discipline (perf 2026-06-05, hard rule)
-
-Author `ms-verdict.json` **exactly once**. Do **NOT** re-open or rewrite an MS fragment to "tighten", "polish", or "shrink toward the word budget" by eye — that speculative re-authoring (the former 2-3× churn per fragment) burned Stage-2 wall time for zero content gain. The readability limits below are a deterministic contract; meet them on the first write.
+Author `ms-verdict.json` **exactly once**. Do not re-open or rewrite an MS fragment to tighten or polish it by eye; the readability limits below are a deterministic contract, so meet them on the first write and let the gate name any field to fix.
 
 After authoring the MS fragment, run the compactness gate **once**:
 
@@ -246,28 +209,6 @@ Renders as the optional **`### AI / LLM Exposure`** callout in the Management Su
 
 **`owasp_asi_id` (OPTIONAL — agentic surface).** Preserve the finding's explicit `owasp_asi_ids` (ASI01..ASI10). An inferred tag needs that finding's own evidenced model-directed action, goal manipulation or delegation path; another agent in the repository or a shared backend is insufficient. RAG, memory and MCP alone imply no agency. The LLM-to-ASI crosswalk is a candidate mapping, not evidence: ordinary consumption is not a cascade, and misinformation alone is not human trust exploitation. Keep different ASI classifications in separate risk groups and retain ASI-only findings even when another risk already uses their category. Reuse finding references without duplicating the underlying findings. Apply the existing ten-group limit by severity and disclose omitted groups in `summary`, pointing to the complete Findings Register.
 
-### `ms-top-mitigations.json` authoring contract
-
-> **Default: do NOT author this fragment.** The composer's deterministic `_row_sort_key` ordering + Critical-floor (line "Omit the fragment entirely…" below) is the authoritative source of truth. Author it **only** when `ENRICH_TOP_MITIGATIONS=true` is passed in the invocation. The rest of this section applies to that opt-in path.
-
-The §1 Top-Mitigations table is a curated leader-board, not a blind top-N cut. You decide which mitigations are *most important to surface*, within hard guardrails the composer enforces:
-
-- **Coverage floor (composer-enforced, you cannot override):** every mitigation in `mitigations[]` whose `threat_ids` include a Critical finding is ALWAYS shown — you do not need to (and cannot) drop those. Do **not** list them; the composer adds them automatically and de-dupes.
-- **Your job:** pick the most important *additional* (typically P2 / High-severity) mitigations to fill the remaining slots up to the `rows.max` clamp (currently 10). Order them most-important-first. Choose by real-world leverage — how much High-severity exposure each removes, how many findings it covers, how broad the affected surface is — not by raw count.
-
-Schema (`schemas/fragments/ms-top-mitigations.schema.json`):
-
-```json
-{
-  "selected": ["M-007", "M-006", "M-010"],
-  "rationale": "one sentence on why these extras matter most"
-}
-```
-
-- `selected`: ordered M-NNN ids that exist in `mitigations[]`. Unknown / duplicate ids are dropped by the composer. You MAY include Critical-floor ids (they are harmless — de-duped) but it is cleaner to list only the extras.
-- `rationale`: ≤ 1 sentence, rendered into the section intro. No finding/threat id enumeration; describe the *theme* (e.g. "broad access-control, stored-XSS, and SSRF exposure").
-- Omit the fragment entirely (or at quick depth) → the composer falls back to deterministic extra-ordering (`_row_sort_key`). The Critical-floor still applies.
-
 ### `ms-critical-attack-tree.json` authoring contract
 
 The Critical Attack Tree renders as an unnumbered `## Critical Attack Tree` section between the Management Summary and Section 1. It is a **goal-decomposition** tree (root = worst-case business impact, leaves = individual Critical findings, internal nodes = AND/OR refinement of preconditions) — NOT a linear attack chain. It is the report's single cross-finding view; the per-finding detail (one `sequenceDiagram` each) lives in §3 Attack Walkthroughs.
@@ -296,7 +237,7 @@ The Critical Attack Tree renders as an unnumbered `## Critical Attack Tree` sect
 }
 ```
 
-> **Render shape (2026-05-30).** The section renders as a SINGLE `graph LR` tree (no overview/per-capability split) with leaf boxes collapsed to just their `T-NNN` id, a one-line explanation above it, and a one-line findings pointer below it (each leaf id → title → §8 anchor, derived from the tree's leaves; **no mitigations** — those live in §9). The `intro`, `key_takeaway`, `mitigation_breakpoints`, and `stages` fields are **no longer rendered** — do not author them (they are optional/deprecated in the schema and only waste tokens). The only fields you author are `root_goal?` and `mermaid`. Edge AND/OR labels are derived from each parent node's `class`, so omit the per-edge `refinement` field.
+> **Authored fields.** Author only `root_goal` (optional) and `mermaid`. The section renders as a single `graph LR` tree whose leaf boxes show only their `T-NNN` id, with a one-line explanation above and a one-line findings pointer below (leaf id → title → §8 anchor; mitigations live in §9). Edge AND/OR labels derive from each parent node's `class`, so omit per-edge `refinement`.
 
 **Mandatory authoring rules.**
 
@@ -387,7 +328,7 @@ The v1 schema is legacy-only. Do not use v1 headings or the retired 21-section i
 | Patch-management gap (missing SCA / Dependabot/Renovate / lockfile hygiene), known-bad library choice, CI/runtime/logging/supply-chain weakness | §6.11 Operations Runtime and Supply Chain Controls | Supply-chain posture is surfaced via `emit_sca_practice.py` control rows + `emit_known_bad_libs.py` MFs (since 2026-05), not per-CVE threats. |
 | Socket.IO/WebSocket/real-time evidence or explicit absent-domain statements | §6.12 Real-time and Not Applicable Controls | If recon found Socket.IO/WebSocket, do not claim Not Applicable. |
 
-**§6.2 / §6.3 heading-naming (hard rule — `auth_method_decomposition` gate).** Every `#### 6.2.Y` / `#### 6.3.Y` heading MUST name an authentication **MECHANISM** drawn from the contract `method_whitelist` (Password-Based Authentication / Password Login, OAuth/OIDC, SAML/SSO, MFA/TOTP/2FA, Passkey/WebAuthn, Password Reset, Session, mTLS / Client Certificate, Webhook HMAC, API Key, Bearer Token, …). It must **NEVER** name a primitive, a key-management aspect, an algorithm, or a token format. The following heading classes are FORBIDDEN and are exactly what tripped the gate on the 2026-05 runs — do not emit them:
+**§6.2 / §6.3 heading-naming (hard rule — `auth_method_decomposition` gate).** Every `#### 6.2.Y` / `#### 6.3.Y` heading MUST name an authentication **MECHANISM** drawn from the contract `method_whitelist` (Password-Based Authentication / Password Login, OAuth/OIDC, SAML/SSO, MFA/TOTP/2FA, Passkey/WebAuthn, Password Reset, Session, mTLS / Client Certificate, Webhook HMAC, API Key, Bearer Token, …). It must **NEVER** name a primitive, a key-management aspect, an algorithm, or a token format. The following heading classes are FORBIDDEN; the gate rejects them:
 
 - Primitives: `Password Hashing`, `Signature Verification`, `Rate Limiting`, `Account Lockout`, `Session Revocation`, `Token Storage` → fold these as **bullets inside** the owning mechanism block (e.g. password hashing is a bullet under Password-Based Authentication), never as peer `####` headings.
 - Key-management / format / algorithm: `JWT Signing Key Management`, `JWT Algorithm Restriction`, `JWT RS256`, `alg:none`, `Bearer Token Flow` → these are §6.3 session-token-lifecycle controls or §6.9 crypto controls. If you need a §6.3 token heading, name the mechanism (`Bearer Token Authentication`), not the format. The bare token `JWT` alone is NOT on the whitelist.
@@ -431,7 +372,7 @@ Each `### 6.2` through `### 6.12` block uses this exact section-level structure:
 
 **Inline finding references in §6 prose are auto-reduced to ID-only links.** Cite findings inline as bare `[F-NNN](#f-nnn)` (no title) — the composer strips any title the global linkifier would add, because the titled enumeration already lives in each control's `**Relevant findings**` block. Do NOT repeat the finding title in the assessment prose; it is redundant and will be removed.
 
-**§6.2/§6.3 topology — authoritative.** §6.2 enumerates authentication **flows** (the ways identity is established); §6.3 traces the **session token lifecycle** that follows every successful flow. JWT-handling sub-sections belong in §6.3 (not §6.2), because the token in this codebase is the local session token regardless of which §6.2 flow issued it. OAuth here is a frontend identity hint terminating in local login — it does NOT consume an IdP-issued id_token — so JWT Issuance / Verification are NOT subordinate to OAuth.
+**§6.2/§6.3 topology — authoritative.** §6.2 enumerates authentication **flows** (the ways identity is established); §6.3 traces the **session token lifecycle** that follows every successful flow. Token-handling sub-sections belong in §6.3 (not §6.2) whenever the application issues its own session token, regardless of which §6.2 flow established it. Place token validation under an OAuth/OIDC flow only when the evidence shows the application consumes the IdP-issued token directly.
 
 The canonical §6.2 sub-sections group authentication by **factor**, so the reader sees at a glance *where* authentication is broken (the knowledge factor) and *what* holds (the possession factor). Do NOT emit one flat H4 per password flow — fold the password lifecycle into ONE grouped sub-control with the stages as bullets:
 
@@ -456,7 +397,7 @@ The canonical §6.3 sub-sections (lifecycle order) are:
 - `7.3.4 Session Token Revocation`
 - `7.3.5 Session Token Expiry`
 
-The §6.3 Assessment paragraph MUST open with the bridging sentence template:
+The §6.3 Assessment paragraph MUST open with a bridging sentence that names the session-token format this codebase actually uses and the lifecycle stages the sub-sections trace; adapt this example to the evidence:
 
 > *This application uses a single locally-signed token format (commonly called JWT) for every authenticated session, regardless of the login flow in §6.2 that established it. The sub-sections below trace one token through its lifecycle: signing on issuance, validation on every protected request, storage in the browser, manual revocation, and time-based expiry.*
 
@@ -486,7 +427,7 @@ Every H4 subcontrol MUST contain these elements, in this order:
    > "**Security assessment:** ❌ Missing — OAuth is not properly implemented because..."
 
 2. **Mermaid sequence diagram — REQUIRED for the primary authentication and session-token flows; clarity aid elsewhere.** A `sequenceDiagram` is MANDATORY in:
-   - **§6.2** — the primary credential-verification flow (the grouped `Password-Based Authentication` H4, or the flat `Password-Based Login` fallback). When OAuth/OIDC or MFA (TOTP) flows are present, each ALSO carries its own diagram. This is the single most-requested missing element in §6 (2026-05-30 user report: "bei den Authentifizierungsverfahren fehlen schon wieder komplett die Mermaid Diagramme") — do NOT skip it.
+   - **§6.2** — the primary credential-verification flow (the grouped `Password-Based Authentication` H4, or the flat `Password-Based Login` fallback). When OAuth/OIDC or MFA (TOTP) flows are present, each ALSO carries its own diagram.
    - **§6.3** — `Session Token Signing (JWT Based)` and `Session Token Validation (JWT Based)`: show issuance (login → sign → return token) and validation (request → verify-middleware → route) respectively.
 
    The diagram is the architecture view the user wants front-and-centre; it shows the actors/components and the happy-path hops, so the reader sees the mechanism before the prose. Render the **positive flow** (not the attack) — 3–6 steps between 2–3 participants (e.g. `User`/`Browser`, `API`/route, `DB`/key store). Diagrams remain OPTIONAL (and add noise) for pure primitives — hashing, a single header value, cookie-flag hardening, rate limiting, signature-verification-as-algorithm — skip them there. **You MUST introduce every diagram with exactly one sentence that ends in `:`** (reference form: `The diagram shows the positive password-login path, including the branch into TOTP verification:`). A `sequenceDiagram` fence with no introducing sentence is a contract violation.
@@ -495,11 +436,11 @@ Every H4 subcontrol MUST contain these elements, in this order:
 
    **Hard limits — keep §6 scannable:**
    - **Default form is bullets.** One framing sentence (≤ 1 line) naming the boundary/mechanism, then **2–5 bullets, one weakness each**, led by the weakness in plain words + its `file:line` evidence. A reader scans "SQL injection at `routes/login.ts:36`" and "unsalted MD5 at `lib/insecurity.ts:43`" as two items far faster than as two clauses welded into a 60-word paragraph.
-   - **Budget: ≤ ~90 words total** per control block assessment. If you exceed it you are narrating single findings — cut to the architectural point. §6 is about the *control boundary*, not a per-finding catalog; findings are **anchor points for a larger structural problem**, not the subject.
+   - **Stay at the control boundary.** When the assessment starts narrating single findings, cut back to the architectural point. §6 is about the *control boundary*, not a per-finding catalog; findings are **anchor points for a larger structural problem**, not the subject.
    - Keep flowing prose only when the weaknesses form ONE causal chain that genuinely reads better as a narrative (e.g. "the key is committed, so any forged token passes, so the route guard is moot") — and even then ≤ 3 sentences.
    - The bullet form satisfies the multi-sentence requirement — it is NOT the banned single-line inline tag (`**Security assessment:** ❌ Missing - <one sentence>` remains a violation). One main clause per bullet; do not chain three weaknesses through comma-and-semicolon strings.
 
-   **Every finding reference in §6 prose MUST be a markdown link — bare `(F-001)` / `(T-001)` plain-text mentions are FORBIDDEN.** Either link it inline as `[F-001](#f-001)` at the point you cite it, or (preferred) cite no raw ID in the assessment at all and let the `**Relevant findings**` block below carry the linked enumeration. The plain-text `(F-NNN)` form that appeared throughout the 2026-05-30 juice-shop §6.2/§6.3 prose ("returning the first user … (F-001)") is exactly the unlinked-finding defect the user flagged.
+   **Every finding reference in §6 prose MUST be a markdown link — bare `(F-001)` / `(T-001)` plain-text mentions are FORBIDDEN.** Either link it inline as `[F-001](#f-001)` at the point you cite it, or (preferred) cite no raw ID in the assessment at all and let the `**Relevant findings**` block below carry the linked enumeration.
 
 4. **Optional code excerpt — clarity aid, not a mandate.** Include a fenced `ts`/`js`/`py`/`yaml`/`dockerfile`/`ini` block (≤ 6 lines) when the weakness concentrates at one short location and the snippet makes the assessment concrete (typical: raw SQL interpolation, `bypassSecurityTrustHtml`, `fetch(user_input)`, hardcoded secrets, permissive `app.use(cors())`, a single insecure config line). Skip the snippet when the weakness is structural and a single excerpt would mislead. **When you include a snippet, you MUST introduce it with exactly one sentence that ends in `:`** (reference forms: `The vulnerable login lookup is built as a raw SQL string:`, `This trusted-HTML call demonstrates where Angular's default escaping is bypassed:`, `The archive extraction logic shows the weak path containment check:`). A code fence with no introducing sentence is a contract violation.
 
@@ -632,15 +573,13 @@ Diagrams (`architecture-diagrams.md`, the whole of §2) are **deterministic and 
 - **§2.2 Container Architecture is LOCKED.** Do not rewrite the container diagram from the deterministic pre-generator output. The Pre-Generator obeys the `diagram_compactness` contract by construction (max 3 lines per node label); LLM re-authoring has been observed to add T-NNN bullet rows per container, blowing past the 3-line limit and triggering a contract-gate repair iteration. Threat annotation belongs in the §2.3 component table, not in container node labels. **If you find yourself adding `<br/>· T-NNN: …` lines to a container node, stop — you are about to violate the `diagram_compactness` rule and force a repair iteration.**
 - **§2.3 Components is LOCKED.** Do not rewrite its compact diagram or its tables.
 - Mermaid blocks must remain parseable by `scripts/mermaid_validate.mjs`.
-- **Brand-token escape — `Socket.IO` and other `.io`/`.dev`/`.app` tokens.** GFM (and many other Markdown renderers) auto-link any bare token shaped like a domain — `socket.io`, `next.dev`, `vercel.app`, `pocket.io`, etc. — including `Socket.IO` despite the capital `S`. The legacy ZWJ workaround (`Socket​.IO` with an embedded U+200B) is **retired** because it is fragile across renderer pipelines (PDF, HTML, RSS, IDE preview) and is invisible to the author. The new rule: wherever a TLD-shaped brand token would appear as **plain Markdown text** (heading, table cell, prose sentence), wrap it in a backtick code-span — `` `Socket.IO` ``. The code-span suppresses GFM autolink without inserting an invisible character and renders unchanged in every downstream format. Inside Mermaid node labels (where backticks are not parsed as code-spans), use `Socket dot IO` as the display string, or wrap the token in quotes when the surrounding Mermaid syntax allows it (`participant WS as "Socket.IO Channel"` — the quoted alias is rendered verbatim and not subject to GFM autolinking). Hyperlinks pointing at the Socket.IO website or external Socket.IO documentation are **forbidden** in the threat model regardless of the surrounding format.
+- **Brand-token escape — `Socket.IO` and other `.io`/`.dev`/`.app` tokens.** GFM (and many other Markdown renderers) auto-link any bare token shaped like a domain — `socket.io`, `next.dev`, `vercel.app`, `pocket.io`, etc. — including `Socket.IO` despite the capital `S`. Wherever a TLD-shaped brand token would appear as **plain Markdown text** (heading, table cell, prose sentence), wrap it in a backtick code-span — `` `Socket.IO` ``. The code-span suppresses GFM autolink without inserting an invisible character and renders unchanged in every downstream format. Inside Mermaid node labels (where backticks are not parsed as code-spans), use `Socket dot IO` as the display string, or wrap the token in quotes when the surrounding Mermaid syntax allows it (`participant WS as "Socket.IO Channel"` — the quoted alias is rendered verbatim and not subject to GFM autolinking). Hyperlinks pointing at the Socket.IO website or external Socket.IO documentation are **forbidden** in the threat model regardless of the surrounding format.
 - Never use the literal `\n` (backslash-n) inside Mermaid node labels or sequenceDiagram payloads — Mermaid renders it as two characters. Use `<br/>` for line breaks: `["F-001<br/>SQL injection"]` not `["F-001\nSQL injection"]`.
 - Inside `sequenceDiagram` payloads, never use a literal `;` (Mermaid parses it as a statement terminator) or HTML-like angle-bracket tokens (`<adminJWT>`). Replace `;` with " then " or split the arrow into two lines; replace `<token>` with quoted text like `"adminJWT"`.
 
 ### Mermaid templates — canonical reference
 
 Use these exact templates. Substitute T-NNN ids and titles from `threat-model.yaml → threats[].id / .title`. Do not invent labels.
-
-_(The §3.1 Attack Chain Overview `graph LR` template was removed with the §3.1 sub-section. The cross-finding view is the `## Critical Attack Tree` `graph TD` above §1; §3 carries only the per-threat `sequenceDiagram` walkthroughs below.)_
 
 **§3.N per-threat `sequenceDiagram` template.** Required `alt Current state` / `else After mitigation` pair — these labels are the canonical conventional form expected by `qa_checks.py → mermaid_syntax`. Do NOT use natural-language labels like `alt role allowed`.
 

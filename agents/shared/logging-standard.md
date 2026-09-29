@@ -132,16 +132,9 @@ assign in one call is gone in the next. Repeat the assignment line in every
 command that references the path; `agents/shared/validation-routine.md` states
 the same rule for the validators.
 
-An earlier version of this rule forbade the assignment outright, which made
-agents improvise `mkdir -p "$OUTPUT_DIR"` on an empty variable and append to
-`/.agent-run.log` at filesystem root (juice-shop 2026-08-18). The correction
-mandated an `export` as the "very first Bash call", which does not survive to
-the second one and so failed the same way: on the 2026-08-21
-insecure-large-spring-app run the export succeeded at 19:13:13 and `log_event.py`
-refused an empty `<output_dir>` four seconds later in the very next block. Both
-failures are usually silent, because the `2>/dev/null` on the echo discards the
-error and the agent's own log lines are simply lost — which also unpairs
-AGENT_START/AGENT_END and drops that dispatch from the run's cost figures.
+A missing assignment usually fails silently: the `2>/dev/null` on the echo
+discards the error, the agent's log lines are lost, AGENT_START/AGENT_END become
+unpaired, and the dispatch drops out of the run's cost figures.
 
 Never derive, guess, or default the path, and never `mkdir` it — `acquire_lock.py`
 already created `$OUTPUT_DIR` before any sub-agent is dispatched. If the variable
@@ -165,7 +158,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-end   "<me
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info <EVENT> "<message>" --agent <AGENT>
 ```
 
-**⚠ NEVER hand-roll the line via `python3 -c` calling `event_log.format_line` directly.** `format_line`'s `level` / `component` / `sid` parameters are **keyword-only** — a positional call (`format_line(ts, sid, event, detail)`) or an invented kwarg (`event_type=`) raises `TypeError: format_line() takes from 1 to 2 positional arguments…` and leaves `LOG_ERR` / traceback noise in `.agent-run.log` (observed on the 2026-06-20 Sonnet run). Always go through `log_event.py` above. If — and only if — that script is unavailable, fall back to a plain `echo` (never `python3 -c`):
+**⚠ NEVER hand-roll the line via `python3 -c` calling `event_log.format_line` directly.** `format_line`'s `level` / `component` / `sid` parameters are **keyword-only** — a positional call (`format_line(ts, sid, event, detail)`) or an invented kwarg (`event_type=`) raises `TypeError: format_line() takes from 1 to 2 positional arguments…` and leaves `LOG_ERR` / traceback noise in `.agent-run.log`. Always go through `log_event.py` above. If — and only if — that script is unavailable, fall back to a plain `echo` (never `python3 -c`):
 
 ```bash
 OUTPUT_DIR="<the OUTPUT_DIR value from your prompt>"
@@ -194,7 +187,7 @@ Use a `python3` call to compute the elapsed duration and write the final log ent
 OUTPUT_DIR="<the OUTPUT_DIR value from your prompt>"
 CLAUDE_PLUGIN_ROOT="<the CLAUDE_PLUGIN_ROOT value from your prompt>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_agent_end.py" \
-  "$OUTPUT_DIR" "<AGENT>" "<MODEL>" "$START_EPOCH"
+  "$OUTPUT_DIR" "<AGENT>" "<MODEL>" "<START_EPOCH: the literal number your startup date +%s printed>"
 ```
 
 The helper script `scripts/log_agent_end.py` takes four positional arguments: output_dir, agent_name, model_id, start_epoch (unix timestamp). It computes the elapsed time and appends a properly-formatted `AGENT_END` line to `.agent-run.log`.
@@ -237,7 +230,7 @@ Use `AGENT_DONE` when the dispatched sub-agent returns. `AGENT_DISPATCH` marks a
 This plugin runs on systems with **Python 3.10** (Ubuntu/WSL LTS default). Python ≤ 3.11 **forbids backslashes inside an f-string's `{...}` expression** — that restriction was lifted in 3.12 (PEP 701) but is not safe to assume here. The trap appears whenever an agent constructs inline Python via `python3 -c "..."` at runtime and uses `\"` to embed double quotes inside an f-string interpolation:
 
 ```python
-# ❌ SyntaxError on Python 3.10 — 2026-04-25 juice-shop QA-reviewer hit this
+# ❌ SyntaxError on Python 3.10
 print(f"  {status} {k}: {v.get(\"issue_count\", 0)} issues, {v.get(\"fix_count\", 0)} auto-fixes")
 ```
 
@@ -275,7 +268,7 @@ File "<string>", line 7
 SyntaxError: unexpected character after line continuation character
 ```
 
-Observed in production: 2026-04-26 juice-shop run, qa-reviewer Step 1 heredoc. The qa-reviewer recovered (the next check ran 19 s later) but the comment-strip step silently no-op'd.
+The failing block exits without doing its work, and the step can silently no-op.
 
 **Prevention rules:**
 

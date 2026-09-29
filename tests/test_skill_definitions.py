@@ -109,3 +109,6 @@ def test_plugin_root_is_not_discovered_by_filesystem_search():
         "CLAUDE_PLUGIN_ROOT must not come from a filesystem search — use the skill base directory"
     )
     assert 'CLAUDE_PLUGIN_ROOT=$(cd "<base-dir>/../.." && pwd)' in router
+
+    searching = [p.parent.name for p in SKILL_FILES if "find /root /home /opt" in p.read_text(encoding="utf-8")]
+    assert not searching, f"skills resolve CLAUDE_PLUGIN_ROOT by filesystem search: {searching}"

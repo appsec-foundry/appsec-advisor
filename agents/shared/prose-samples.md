@@ -8,13 +8,8 @@
 > Loaded by the renderer and finalization agents before authoring
 > `ms-verdict.json`, `ms-architecture-assessment.json`, **and the §6
 > Security Architecture control narratives** (H4 intro paragraphs and
-> `**Security assessment**` blocks) — Claude Sonnet imitates worked
-> examples more reliably than it follows abstract rules. Pairs A–E
-> target Management-Summary fields; Pairs F–G target §6 control prose.
->
-> When a new AI-tell shows up in a real run, add it here as a pair —
-> not as a new rule in `prose-style.md`. Rules without examples drift;
-> examples don't.
+> `**Security assessment**` blocks). Pairs A–E and H target
+> Management-Summary fields; Pairs F–G target §6 control prose.
 
 ---
 
@@ -54,14 +49,14 @@
 - triple-parallel "replacing... switching... upgrading..." — symmetric triplet, classic AI
 - "are prerequisites for any production readiness evaluation" — bureaucratic prose; nominalizes "prerequisite"
 
-### AFTER (40 words, 3 sentences, human)
+### AFTER (28 words, 3 sentences, human)
 
-> Nineteen mitigations follow. Three matter most: move secrets out of source, switch raw SQL to parameterized queries, replace MD5 password hashes. Without those three, production readiness is not on the table.
+> Nineteen mitigations follow. Three matter most: move secrets out of source, switch raw SQL to parameterized queries, replace MD5 password hashes. Those three close the evidenced admin-takeover paths.
 
 ### Rule
 5. **Active over passive** in the opener
 6. **Colon list instead of gerund triplet**: "X, Y, and Z" with `-ing` forms → "X. Y. Z." with imperative verbs
-7. **Punchline close**: a concrete image ("not on the table") instead of a cliché ("are prerequisites for any production readiness evaluation")
+7. **Punchline close**: a concrete consequence ("close the evidenced admin-takeover paths") instead of a cliché ("are prerequisites for any production readiness evaluation")
 8. **Shorter sentences**: 1 sentence → 3 sentences, same content, more readable
 
 ---
@@ -251,7 +246,7 @@ Five questions to ask about each prose field you just wrote:
 
 ---
 
-## Pair G — MS Verdict bullet ALTITUDE (`ms-verdict.json::bullets[].body`)
+## Pair H — MS Verdict bullet ALTITUDE (`ms-verdict.json::bullets[].body`)
 
 The Verdict is the one block the **product owner / project lead** reads. Bullets must state the *business consequence* and the *class* of weakness. The `refs` field is audit provenance only; engineers find the detail in §8/§6. Config-level detail (config keys, library versions, CVE numbers, file:line, framework symbols, ports) belongs there, never here.
 
@@ -272,7 +267,7 @@ The Verdict is the one block the **product owner / project lead** reads. Bullets
 > - **Attackers can read or change customer data** — missing ownership checks (IDOR) let any signed-in customer read or change another customer's records.
 > - **A normal account can gain administrator access** — the account update accepts a role field (mass assignment), so any customer can make themselves an administrator.
 
-### Regel
+### Rule
 1. **Lead with the business outcome** ("anyone can use the app without signing in"), not the mechanism.
 2. **Describe the missing control as a class** ("no authentication layer", "skips several standard practices"), not a config key.
 3. **Name the weakness class in plain words**, with its standard term in parentheses when it helps ("missing ownership checks (IDOR)"), but **no config keys / versions / CVE / file:line / framework symbols / technology identifiers** in `body` — that detail belongs in §6 and §8.

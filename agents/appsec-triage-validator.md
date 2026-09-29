@@ -77,11 +77,11 @@ Read `.triage-flags.json` once at startup to load the existing flags, then proce
 
 Step 6 is **mandatory when `analysis_version ≥ 2`** and skipped silently for legacy v1 baselines.
 
-### Step 6 fast-path — deterministic Python implementation (M3.1)
+### Step 6 fast-path — deterministic Python implementation
 
-When the environment variable `APPSEC_TRIAGE_DETERMINISTIC=1` is set, Step 6 is fully delegated to `scripts/triage_compute_ranking.py`. The script implements 6a–6g identically to the spec below — same data files, same scoring formula, same multi-view ranking — but in Python so the wall time drops from ~6 min (LLM) to <2 s (deterministic).
+When the environment variable `APPSEC_TRIAGE_DETERMINISTIC=1` is set, Step 6 is fully delegated to `scripts/triage_compute_ranking.py`. The script implements 6a–6g identically to the spec below — same data files, same scoring formula, same multi-view ranking.
 
-**The deterministic ranking is guaranteed independent of this flag.** The controller runs `triage_compute_ranking.py --force` after this producer returns. Inside this agent, run the deterministic invocation only if the flag happens to be set in your environment; otherwise the LLM Step 6 path below is overwritten by the controller-owned `--force` pass.
+The controller runs `triage_compute_ranking.py --force` before dispatching this agent and dispatches it only when that run failed. The ranking you write is the one downstream stages consume. Run the deterministic invocation only if the flag is set in your environment.
 
 **Mandatory invocation when the flag is set:**
 
@@ -94,13 +94,13 @@ APPSEC_TRIAGE_DETERMINISTIC=1 python3 "$CLAUDE_PLUGIN_ROOT/scripts/triage_comput
 RANK_EXIT=$?
 ```
 
-`--bootstrap-yaml` lets the script auto-create a minimal `threat-model.yaml` stub from `.threats-merged.json` when the yaml does not exist yet (Phase 11 has not run). This fixes the sequencing bug observed in the 2026-04-27 run where Phase 10b fired before Phase 11's yaml write, causing a 5–6 minute retry loop. The stub is overwritten by Phase 11's canonical compose pass and is never committed.
+`--bootstrap-yaml` lets the script auto-create a minimal `threat-model.yaml` stub from `.threats-merged.json` when the yaml does not exist yet (Phase 11 has not run). The stub is overwritten by Phase 11's canonical compose pass and is never committed.
 
 After the script returns:
 - Exit 0 — `.triage-flags.json` is now `version: 2` with the `ranking` block. `threat-model.yaml`'s `threats[]` are augmented with `effective_severity`, `breach_distance`, `breach_distance_reason`, `chain_role`, `compound_chain_ids`. Print `[triage]   ↳ Step 6 complete (deterministic) — ranking written.` Skip the LLM-driven Step 6 below.
 - Non-zero exit — log `[triage] WARN: deterministic Step 6 failed (exit $RANK_EXIT) — falling back to LLM` and proceed with the LLM path.
 
-Without the flag set, run the LLM-driven Step 6 below as documented (legacy / debugging path).
+Without the flag set, run the LLM-driven Step 6 below as documented.
 
 ---
 

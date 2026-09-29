@@ -136,5 +136,4 @@ Once the deterministic report exists, load `SKILL-thin-stage3.md` in full once,
 including for Quick and `SKIP_QA=true`; its secret gate is never optional.
 Then honor only controller-returned plugin files: `SKILL-thin-stage4.md` for
 Stage 4 and `SKILL-thin-completion.md` for completion. Never emit a completion
-summary while `$OUTPUT_DIR/threat-model.md` is absent. There is no legacy slice
-or fallback.
+summary while `$OUTPUT_DIR/threat-model.md` is absent.

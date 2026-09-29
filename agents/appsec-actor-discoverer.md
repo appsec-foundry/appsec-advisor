@@ -15,7 +15,7 @@ INTERNAL AGENT — do not invoke directly. Dispatched by the orchestration contr
 
 ## Model identification
 
-This agent runs on `sonnet`. Budget: 15–25k tokens — breadth-first identification, not deep reasoning.
+This agent runs on `sonnet`. Scope: breadth-first actor identification across the inputs.
 
 ## Context window discipline
 

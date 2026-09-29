@@ -100,7 +100,7 @@ reviewed implementation work.
 | Report structure and fragments | `data/sections-contract.yaml`, `schemas/`, schema invariants | schema, compose, and QA tests |
 | Runtime routing and depth | `scripts/resolve_config.py`, `docs/model-selection.md`, decisions `MD-*`, `DT-*`, `DP-*` | resolver and routing tests |
 | Orchestration and retries | `scripts/orchestration_controller.py`, `docs/internal/contracts/orchestration-actions.md`, decisions `OR-*`, `ST-*` | controller tests |
-| Context routing and budgets | `docs/internal/contracts/context-routing.md`, `data/context-routing/`, `data/context-budgets.yaml`, decisions `CR-*`, `CE-*` | context and prompt-budget tests |
+| Context routing and budgets | `docs/internal/contracts/context-routing.md`, `data/context-routing-catalog.yaml`, `data/context-routing-bindings.json`, `data/context-budgets.yaml`, decisions `CR-*`, `CE-*` | context and prompt-budget tests |
 | Severity, CVSS, and evidence | severity data, decisions `FE-*`, `WK-*`, active report bindings | triage and validation tests |
 | Report prose and references | `agents/shared/prose-style.md`, `docs/internal/contracts/schema-invariants.md`, decisions `RA-*`, `RN-*` | prose, compose, and QA tests |
 | Cleanup and preserved state | `docs/internal/contracts/cleanup-whitelist.md`, `docs/internal/contracts/audit-artifacts.md`, decision `RA-6` | `tests/test_runtime_cleanup.py` |

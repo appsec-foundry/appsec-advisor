@@ -13,10 +13,8 @@ Canonical form for every threat's `title` field. Read this before authoring titl
 > `via/using/through <impl>`, parentheticals, parameters, payloads, and embedded
 > file tokens. So a drifted title is corrected at render time — but author it
 > correctly anyway so the normalizer has clean input. Pinned by
-> `tests/test_emit_clean_finding_titles.py`; registered in
-> `AGENTS.md → Non-obvious Runtime Invariants → Deliverable presentation
-> invariants`. Do not "fix" a title defect in the deliverable — fix the
-> normalizer.
+> `tests/test_emit_clean_finding_titles.py`. Do not "fix" a title defect in
+> the deliverable — fix the normalizer.
 
 ## Format
 

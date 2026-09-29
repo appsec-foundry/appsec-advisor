@@ -65,7 +65,7 @@ EXIT CODES
   2  usage / requirements-load / verdict error
 
 See `/appsec-advisor:audit-security-requirements` for the full-repo audit and
-`docs/configuration.md` → "Security Requirements Management" for source rules.
+`docs/dev-security-helper-usage.md` → "Requirements source" for source rules.
 ```
 
 After printing, exit. Do not read any files or perform any other action.
@@ -106,12 +106,9 @@ Resolve the plugin root (same block as the audit skill):
 
 ```bash
 if [ -z "$CLAUDE_PLUGIN_ROOT" ]; then
-  SKILL_MD_PATH=$(find /root /home /opt -maxdepth 6 \
-    -path "*/appsec-advisor/skills/verify-requirements/SKILL.md" \
-    2>/dev/null | head -1)
-  if [ -n "$SKILL_MD_PATH" ]; then
-    CLAUDE_PLUGIN_ROOT=$(dirname "$(dirname "$(dirname "$SKILL_MD_PATH")")")
-  fi
+  # <base-dir> from the invocation line. Never search the filesystem: several
+  # checkouts may exist and the first hit is arbitrary.
+  CLAUDE_PLUGIN_ROOT=$(cd "<base-dir>/../.." && pwd)
 fi
 export CLAUDE_PLUGIN_ROOT
 if [ -z "$CLAUDE_PLUGIN_ROOT" ] || [ ! -d "$CLAUDE_PLUGIN_ROOT" ]; then
@@ -213,7 +210,7 @@ dispatch the subagent** — an empty diff costs nothing.
 
 ## Step 4 — Dispatch the verifier subagent
 
-Use the Task tool to launch the `appsec-reviewer` subagent. Pass
+Use the Agent tool to launch the `appsec-reviewer` subagent. Pass
 inputs in Group A → B → C order (stable → scalars → volatile paths):
 
 ```

@@ -60,8 +60,6 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/security_score.py" [--repo <path|https-gi
 
 Use exactly `Calculating the repository's security score` as the tool call's description. It is the only thing the user sees for the 15 to 30 seconds the scan takes, so it names the work, not the mechanism: not "Running the security score script", not "Executing security_score.py".
 
-Do not announce the run in prose beside it. "Running the security score script now", "Let me calculate the score" and their kin are forbidden even though they are true — the description line already says it. Just run it.
-
 A failed, missing or invalid required scanner result produces `incomplete` with a null score. Findings and warnings remain visible for both `incomplete` and `undetermined`. JSON and YAML conform to `schemas/security-score.schema.yaml`.
 
 The script writes its scanner sidecars to a temporary directory and removes them, so the target repository is untouched.
@@ -70,15 +68,7 @@ The script writes its scanner sidecars to a temporary directory and removes them
 
 Reprint the script's stdout **verbatim**, in a fenced code block, every line of it, and stop. The user does not see the tool output; what you print is the whole report they get. It is already finished: headline, one indicator per line with its detail line under it, the tally, and any note the run produced.
 
-Summarising it is the failure this rule exists for. All of the following are forbidden, even though each is true:
-
-```
-Security Score: 2 / 100 — dominated by Access Control (68 findings), Dependencies
-(22 findings), and Authentication (21 findings), all near zero.
-
-For findings with severity, exposure, and mitigations, run
-/appsec-advisor:create-threat-model.
-```
+Summarising it is the failure this rule exists for.
 
 Nothing may be added after the block either: no summary of the number, no repetition of a note it already carries, no verdict such as "secure" or "at risk", no severities or mitigations of your own. None of that is in the data, and prose beside the block undoes the layout it was given.
 

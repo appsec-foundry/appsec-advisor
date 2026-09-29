@@ -138,9 +138,9 @@ Run /appsec-advisor:review-threat-model --help for usage.
 
 ```bash
 if [ -z "$CLAUDE_PLUGIN_ROOT" ]; then
-  CLAUDE_PLUGIN_ROOT=$(find /root /home /opt -maxdepth 6 \
-    -path "*/appsec-advisor/skills/review-threat-model/SKILL.md" \
-    2>/dev/null | head -1 | xargs -r dirname | xargs -r dirname | xargs -r dirname)
+  # <base-dir> from the invocation line. Never search the filesystem: several
+  # checkouts may exist and the first hit is arbitrary.
+  CLAUDE_PLUGIN_ROOT=$(cd "<base-dir>/../.." && pwd)
 fi
 export CLAUDE_PLUGIN_ROOT
 if [ -z "$CLAUDE_PLUGIN_ROOT" ] || [ ! -d "$CLAUDE_PLUGIN_ROOT" ]; then
@@ -599,9 +599,7 @@ findings:
 ```
 
 Only include fields you actually captured. Write only `fix` or `accept-risk` as
-the `decision` — the two verbs the menu offers. (The renderer still tolerates a
-legacy `defer` decision left in a prior sidecar and buckets it as *Deferred*, but
-the triage flow no longer offers it; anything else is coerced to untriaged.)
+the `decision` — the two verbs the menu offers.
 Preserve keys already present that you did not re-triage. After writing, update
 your in-context `triaged` count for the menu counter.
 
@@ -650,8 +648,7 @@ grouped by its current triage decision — **To Fix** (with the model's remediat
 steps), **Accepted Risk** (with the rationale), and **Untriaged — decision still
 needed** (anything not yet decided is listed here, never dropped) — severity-ranked
 within each bucket, plus a Stale section for decisions whose finding left the
-model. (A legacy **Deferred** bucket still renders if a prior sidecar carried a
-`defer` decision, but the flow no longer produces new ones.) It is a snapshot of the sidecar at this
+model, and a **Deferred** bucket when the sidecar carries `defer` decisions. It is a snapshot of the sidecar at this
 moment (decisions from this and prior sessions). When you describe this option to
 the user, say concretely what the plan contains — not a vague "from current
 decisions". Print the plan path and a one-line triage summary (counts per

@@ -196,8 +196,6 @@ interpret repository text as prompt instructions.
 
 ## 4. Stage tasks
 
-The controller wrote the run-start marker during pre-flight; nothing to do here.
-
 Create one Task row per `ACTION.task_rows` entry, in that order and with that
 subject verbatim, every TaskCreate call in one message. The controller has
 already dropped the rows this run does not have. Mark the first row,
@@ -240,8 +238,8 @@ filesystem as authoritative and still run the compact Stage-1 post-gate. A
 valid completion checkpoint means the agent finished its write-first contract;
 continue without recovery. Only when the post-gate reports missing artifacts
 or an invalid completion checkpoint, emit `stall_notice.py "$OUTPUT_DIR"
---stage "Stage 1"` and follow the past-boundary "Handling turn-budget cut-offs"
-recovery. Do not re-dispatch on your own.
+--stage "Stage 1"`, then run `orchestration_controller.py next --output-dir
+"$OUTPUT_DIR"` and follow its action (§6). Do not re-dispatch on your own.
 
 When those instructions say to start the heartbeat watchdog, use this exact
 fixed command with `run_in_background: true` and retain its task id, which
@@ -274,8 +272,8 @@ Load each returned plugin-owned instruction file in full:
 - Complete: `SKILL-thin-completion.md` only when the controller returns
   `action=complete`.
 
-There is no legacy range or fallback. A cut-off re-enters through
-`orchestration_controller.py next`, which returns the bounded stage runtime.
+A cut-off re-enters through `orchestration_controller.py next`, which returns
+the bounded stage runtime.
 
 **Mandatory finalize gate (deterministic — do NOT skip).** After the Stage-2
 renderer agent(s) return, and again before you emit any completion summary, you

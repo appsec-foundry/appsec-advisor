@@ -36,7 +36,7 @@ changes these rules.
   prose, completion text, logs, and controller receipts do not replace it.
 - Read only validated inputs for the current runtime generation. Never repair
   an upstream semantic conflict by silently changing its meaning downstream.
-- Preserve existing `T-NNN` and `F-NNN` identities across incremental runs.
+- Preserve existing `T-NNN` and `F-NNN` identities; only `--rebuild` reassigns them.
   `M-NNN` identifiers may be regenerated; `W-NNN` identifiers follow ranked
   display order. Allocate or renumber public identities only through their
   deterministic owner.

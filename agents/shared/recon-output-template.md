@@ -1,6 +1,6 @@
 # Recon Scanner Output Template
 
-Used by `appsec-recon-scanner` Step 4. Defines the exact Markdown structure that gets written to `$OUTPUT_DIR/.recon-summary.md`. The orchestrator's Phase 5 reads this file every turn, so the template targets **200 lines** total output without dropping required headings.
+Used by `appsec-recon-scanner` Step 4. Defines the exact Markdown structure that gets written to `$OUTPUT_DIR/.recon-summary.md`. Downstream analyst agents load this file into their context, so keep it compact without dropping required headings.
 
 ## Template
 
@@ -566,15 +566,4 @@ A first-pass asset inventory derived from manifests, schemas, config files, and 
 - For categories with matches: write **only the key files table and 1-2 bullet observations**. Omit lengthy code excerpts — file:line references are sufficient for the orchestrator to read source when needed.
 - Section 8 (Dangerous Sinks & Secrets) is a **deduplicated** extract of the most critical findings from 7.8 and 7.12. All Critical-severity secrets from 7.12 **must** appear here. Cap at 10 rows.
 - Section 9 is a best-effort component list. The orchestrator will refine it.
-- **Target 200 lines.** This file is loaded into the orchestrator's context for all remaining turns — every extra line costs tokens across 50+ turns. Be maximally concise, but never omit required headings to hit the target.
-
-## Numbering history (for cross-references in existing reports)
-
-Older recon-summaries used a different sub-section ordering. The current canonical numbering is:
-
-- **7.27** — GitHub Actions Workflow Security (merged: was split as "7.27 Workflow Hardening" + a duplicate "7.27 Workflow Security").
-- **7.28** — Container Runtime Hardening (was previously the second "7.28" alongside an unrelated AI Coding Assistant section).
-- **7.31** — Service-to-Service & Cloud-IAM Authentication (merged: detection-pattern catalogue + output-table example were two separately-numbered "7.31" blocks).
-- **7.32** — AI Coding Assistant & IDE Agent Configurations (was misnumbered as "7.28" alongside Container Runtime).
-
-Old reports may reference `§6.27 Workflow Hardening` or `§6.28 AI Coding Assistant`. Map them to the canonical 7.x numbers when reading historical artefacts.
+- **Keep it compact.** Downstream analysts load the whole file, and the validator rejects more than 1,000 lines. Never omit required headings to save space.

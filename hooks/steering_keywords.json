@@ -99,7 +99,7 @@
         "prompt injection", "jailbreak", "model input",
         "llm output", "owasp llm"
       ],
-      "guidance": "LLM surface guidance (OWASP LLM Top 10): treat model input as untrusted (LLM01); never exec/eval model output unchecked (LLM02); filter PII/secrets before sending to the model (LLM06).",
+      "guidance": "LLM surface guidance (OWASP LLM Top 10 2025): treat model input as untrusted (LLM01); never exec/eval model output unchecked (LLM05); filter PII/secrets before sending to the model (LLM02).",
       "requirements": []
     }
   },
