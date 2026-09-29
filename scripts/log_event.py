@@ -230,6 +230,63 @@ _USAGE_LINES = (
 )
 
 
+_STRIDE_CATEGORY_NAMES = (
+    "Spoofing",
+    "Tampering",
+    "Repudiation",
+    "Information Disclosure",
+    "Denial of Service",
+    "Elevation of Privilege",
+)
+_COMPLETION_CLAIM_RE = re.compile(r"\bcategor(?:y|ies)\b.*\b(?:complete[d]?|analy[sz]ed|done|finished)\b", re.I)
+_ALL_CATEGORIES_RE = re.compile(
+    r"\ball\s+(?:six|6|stride)?\s*categories\b|\b(?:six|6)\s+(?:stride\s+)?categories\b", re.I
+)
+
+
+def claimed_categories(detail: str) -> list[str]:
+    """STRIDE categories a step-end line claims as finished; empty for any other line."""
+    if not _COMPLETION_CLAIM_RE.search(detail):
+        return []
+    if _ALL_CATEGORIES_RE.search(detail):
+        return list(_STRIDE_CATEGORY_NAMES)
+    lowered = detail.lower()
+    return [name for name in _STRIDE_CATEGORY_NAMES if name.lower() in lowered]
+
+
+def unpersisted_categories_error(output_dir: Path, component_id: str, attempt: int, categories: list[str]) -> str:
+    """Why a category-complete claim is refused, or ``""`` when the attempt file carries it.
+
+    The analyzer contract writes the attempt file after every category, but in
+    72 of 98 historical runs the analyzer logged completions and wrote once at
+    the end; a declined final write then lost all six (run 5a9d03be). Holding
+    the claim to the file makes every logged category a persisted one.
+    """
+    if not categories:
+        return ""
+    from stride_dispatch_waves import attempt_artifact  # noqa: PLC0415
+
+    path = output_dir / attempt_artifact(component_id, attempt)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        problem = f"attempt file {path.name} is unreadable ({exc.__class__.__name__})"
+    else:
+        skipped = data.get("skipped_categories") if isinstance(data, dict) else None
+        if not isinstance(data, dict):
+            problem = f"attempt file {path.name} is not a JSON object"
+        elif data.get("seed_only") is True:
+            problem = f"attempt file {path.name} is still the write-first pre-seed"
+        elif isinstance(skipped, list) and (pending := [c for c in categories if c in skipped]):
+            problem = f"attempt file {path.name} still lists {', '.join(pending)} in skipped_categories"
+        else:
+            return ""
+    return (
+        f"category completion refused: {problem}. Overwrite $STRIDE_OUTPUT_PATH with the "
+        "finished categories (remove them from skipped_categories, clear seed_only) before logging them."
+    )
+
+
 def _reject(prog: str, message: str) -> int:
     """Reject malformed argv *and* state the contract that was violated.
 
@@ -340,6 +397,13 @@ def main(argv: list[str]) -> int:
             # telemetry over a guess of our own.
             detail = re.sub(r"\s{2,}", " ", _DEPTH_TOKEN_RE.sub("", detail)).strip(" ,;()")
         else:
+            if agent == "stride-analyzer-v2" and not inferred_component and event == "STEP_END":
+                unpersisted = unpersisted_categories_error(
+                    output_dir, component_id, call["attempt"], claimed_categories(detail)
+                )
+                if unpersisted:
+                    print(f"{argv[0]}: {unpersisted}", file=sys.stderr)
+                    return 2
             detail = _DEPTH_TOKEN_RE.sub("", detail)
             detail = re.sub(r"\s{2,}", " ", detail).strip(" ,;()")
             detail = (

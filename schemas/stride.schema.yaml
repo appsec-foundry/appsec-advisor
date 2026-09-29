@@ -115,6 +115,26 @@ $defs:
       # starting" from "honestly found nothing" -- and the retry budget burns on
       # a component that needs a bigger budget, not another identical attempt.
       seed_only:      { type: boolean }
+      # Written by the wave gate on a retry pre-seeded from an earlier partial
+      # attempt; the analyzer keeps its threats and works only the skipped
+      # categories (scripts/stride_dispatch_waves.py::seed_resumed_attempt).
+      resumed_from_attempt: { type: integer, minimum: 1 }
+      # Analyzer's own count of its turns the model declined. Self-reported, so
+      # it only words the gate's diagnosis when no transcript can confirm it;
+      # it never declares a coverage gap.
+      declined_turns: { type: integer, minimum: 1 }
+      # Written only by the wave gate when the model declined the component's
+      # analysis through the whole retry budget; the report states it as a
+      # coverage gap (scripts/stride_dispatch_waves.py::_declare_declined).
+      coverage_declined:
+        type: object
+        required: [reason, attempts, categories]
+        properties:
+          reason:     { type: string, enum: [model_refusal] }
+          attempts:   { type: integer, minimum: 1 }
+          categories:
+            type: array
+            items: { $ref: "#/$defs/stride_category" }
       skipped_categories:
         type: array
         items: { $ref: "#/$defs/stride_category" }

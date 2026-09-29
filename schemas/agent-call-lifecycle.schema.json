@@ -46,6 +46,8 @@
         "child_active_at": {"type": "integer", "minimum": 0},
         "finished_at": {"type": "integer", "minimum": 1},
         "failure_reason": {"type": "string", "maxLength": 512},
+        "refused_turns": {"type": "integer", "minimum": 1},
+        "truncated_turns": {"type": "integer", "minimum": 1},
         "usage_recorded_at": {"type": "integer", "minimum": 1},
         "usage": {
           "type": "object",

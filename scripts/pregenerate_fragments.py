@@ -206,10 +206,15 @@ def component_coverage(meta: dict) -> dict | None:
         return None
     selected = [e for e in cs.get("selected") or [] if isinstance(e, dict)]
     excluded = [e for e in cs.get("excluded") or [] if isinstance(e, dict)]
+    # A component whose analysis the model declined after the retry budget is a
+    # declared gap, never full or screened coverage, whatever its depth.
+    declined = [e for e in selected if isinstance(e.get("coverage_declined"), dict)]
+    counted = [e for e in selected if not isinstance(e.get("coverage_declined"), dict)]
     return {
         "total": cs.get("total") or len(selected) + len(excluded),
-        "full": [e for e in selected if e.get("analysis_depth") != "screening"],
-        "screened": [e for e in selected if e.get("analysis_depth") == "screening"],
+        "full": [e for e in counted if e.get("analysis_depth") != "screening"],
+        "screened": [e for e in counted if e.get("analysis_depth") == "screening"],
+        "declined": declined,
         "excluded": excluded,
     }
 
@@ -240,6 +245,26 @@ def screening_clause(screened: list[dict], bold: bool = False) -> str:
     return f"{_component_names(screened, bold)} {verb} only screened, a shorter pass without follow-up code checks per finding"
 
 
+def declined_clause(declined: list[dict], bold: bool = False) -> str:
+    """`<names> was/were only partly analysed, …` — components whose analysis the model declined.
+
+    Names the STRIDE categories left uncovered per component, so a reader never
+    takes the absence of findings there for a clean result.
+    """
+    parts = []
+    for row in declined:
+        name = row.get("name") or row.get("id")
+        categories = [c for c in (row.get("coverage_declined") or {}).get("categories") or [] if isinstance(c, str)]
+        label = f"**{name}**" if bold else str(name)
+        parts.append(f"{label} ({', '.join(categories)} not covered)" if categories else label)
+    joined = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+    verb = "was" if len(declined) == 1 else "were"
+    return (
+        f"{joined} {verb} only partly analysed: the model declined part of the analysis, "
+        "so missing findings there are not evidence of absence"
+    )
+
+
 def business_context_clause(meta: dict) -> str | None:
     """The business-context source as the report states it: one of two fixed labels, never a raw path."""
     source = meta.get("business_context_source") if isinstance(meta, dict) else None
@@ -267,7 +292,11 @@ def method_and_limits(meta: dict) -> str:
     coverage = component_coverage(meta)
     gaps = []
     if coverage:
-        for key, state in (("screened", "only screened"), ("excluded", "not analysed")):
+        for key, state in (
+            ("screened", "only screened"),
+            ("declined", "only partly analysed (model declined)"),
+            ("excluded", "not analysed"),
+        ):
             if coverage[key]:
                 verb = "was" if len(coverage[key]) == 1 else "were"
                 gaps.append(f"{_component_names(coverage[key], False)} {verb} {state}")
@@ -359,6 +388,7 @@ def gen_system_overview(yaml_data: dict) -> str:
     coverage = component_coverage(meta)
     excluded = (coverage or {}).get("excluded") or []
     screened = (coverage or {}).get("screened") or []
+    declined = (coverage or {}).get("declined") or []
     if cs and excluded:
         # Components were narrowed to a STRIDE-analyzed subset — make the coverage
         # and the selection rationale explicit instead of implying every modeled
@@ -384,6 +414,9 @@ def gen_system_overview(yaml_data: dict) -> str:
         if screened:
             lines.append(screening_clause(screened, bold=True) + ".")
             lines.append("")
+        if declined:
+            lines.append(declined_clause(declined, bold=True) + ".")
+            lines.append("")
         lines.append(
             "Not analysed at this depth: " + ", ".join(exc_names) + "; a higher `--assessment-depth` covers them."
         )
@@ -394,11 +427,14 @@ def gen_system_overview(yaml_data: dict) -> str:
             + ", ".join(f"**{c.get('name', c.get('id', '?'))}**" for c in components)
             + "."
         )
-        if cs and screened:
+        if cs and (screened or declined):
+            clauses = ([screening_clause(screened, bold=True)] if screened else []) + (
+                [declined_clause(declined, bold=True)] if declined else []
+            )
             lines.append("")
             lines.append(
                 f"**{len(coverage['full'])} of {coverage['total'] or len(components)}** modeled components "
-                "were analysed with full STRIDE; " + screening_clause(screened, bold=True) + "."
+                "were analysed with full STRIDE; " + "; ".join(clauses) + "."
             )
         elif cs:
             lines.append("")

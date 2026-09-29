@@ -39,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A component whose analysis the model declines no longer aborts the run: it is reported as only partly analysed, retries name the refusal instead of a turn budget and continue from the categories already saved, and waits end as soon as every analyzer has stopped.
 - Findings and abuse cases use consistent, policy-capped ratings, and abuse cases are ordered by verification status and risk; a code-verified attack chain raises its findings only to the goal impact its case declares, also when evidence sampling left a step ambiguous.
 - Config and IaC findings reach the report again, and rejected configuration scans appear in Run Issues.
 - Route authentication checks resolve imported handlers and reject misleading neighbouring-route or decoded-token signals, with findings on authenticated routes attributed to authenticated attackers.

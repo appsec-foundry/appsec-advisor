@@ -218,6 +218,7 @@ GROUPS = {
         recon_dispatch_contract
         record_component_durations
         record_stage_stats
+        refusal_aware_stride
         render_completion_summary
         render_completion_summary_config
         render_completion_summary_verdict
@@ -895,6 +896,7 @@ SOURCE_TESTS = {
         lens_coverage
         log_shape_contract
         orchestration_controller
+        refusal_aware_stride
         requirements_verification
         run_diagnostics_recovery_2026_07_20
         run_path_guard
@@ -1616,6 +1618,7 @@ SOURCE_TESTS = {
         qa_checks_cov_band2
         qa_checks_cov_band4
         reference_format
+        refusal_aware_stride
         render_integrity
         render_properties
         requirements_mapping
@@ -1785,6 +1788,7 @@ SOURCE_TESTS = {
         orchestration_controller
         prepare_trust_boundary_context
         promote_verified_abuse_cases
+        refusal_aware_stride
         requirements_catalog_predicate
         requirements_trace
         requirements_verification
@@ -2918,6 +2922,7 @@ SOURCE_TESTS = {
         integration
         model_release_pricing
         orchestration_controller
+        refusal_aware_stride
         requirements_verification
         run_defect_fixes_2026_07_24
         run_diagnostics_recovery_2026_07_20
@@ -2949,6 +2954,7 @@ SOURCE_TESTS = {
         hook_payload_contract
         integration
         orchestration_controller
+        refusal_aware_stride
         requirements_verification
         run_defect_fixes_2026_07_24
         run_diagnostics_recovery_2026_07_20
@@ -4196,6 +4202,7 @@ SOURCE_TESTS = {
         check_target_specificity
         gate_preconditions
         log_event
+        refusal_aware_stride
         requirements_verification
         run_path_guard
         stride_outputs
@@ -5248,6 +5255,7 @@ SOURCE_TESTS = {
         check_target_specificity
         gate_preconditions
         orchestration_controller
+        refusal_aware_stride
         requirements_verification
         run_path_guard
         stride_outputs
@@ -5432,6 +5440,7 @@ SOURCE_TESTS = {
     "scripts/wait_abuse_progress.py": _tests("""
         check_target_specificity
         gate_preconditions
+        refusal_aware_stride
         requirements_verification
         run_path_guard
         runtime_doc_cli_contract
@@ -5455,6 +5464,7 @@ SOURCE_TESTS = {
     "scripts/wait_stride_progress.py": _tests("""
         check_target_specificity
         gate_preconditions
+        refusal_aware_stride
         requirements_verification
         run_path_guard
         runtime_doc_cli_contract

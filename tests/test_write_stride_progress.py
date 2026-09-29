@@ -388,3 +388,90 @@ def test_status_never_shows_old_v2_progress_as_the_new_attempts(
     out = capsys.readouterr().out
     assert "API [starting]" in out
     assert "1/9" not in out
+
+
+_ALL_SIX = [
+    "Spoofing",
+    "Tampering",
+    "Repudiation",
+    "Information Disclosure",
+    "Denial of Service",
+    "Elevation of Privilege",
+]
+
+
+def _attempt(output_dir: Path, body: object) -> None:
+    path = output_dir / ".stride-attempts" / "api.attempt-1.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body if isinstance(body, str) else json.dumps(body), encoding="utf-8")
+
+
+def _log_step_end(output_dir: Path, detail: str) -> int:
+    return log_event.main(
+        ["log_event.py", str(output_dir), "step-end", detail, "--agent", "stride-analyzer-v2", "--component-id", "api"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("attempt_body", "detail", "accepted"),
+    [
+        (None, "category complete: Spoofing", False),
+        (
+            {"component_id": "api", "seed_only": True, "skipped_categories": _ALL_SIX, "threats": []},
+            "category complete: Spoofing",
+            False,
+        ),
+        ("{not json", "category complete: Spoofing", False),
+        (
+            {"component_id": "api", "skipped_categories": _ALL_SIX[1:], "threats": []},
+            "category complete: Tampering",
+            False,
+        ),
+        (
+            {"component_id": "api", "skipped_categories": _ALL_SIX[1:], "threats": []},
+            "category complete: Spoofing",
+            True,
+        ),
+        (
+            {"component_id": "api", "skipped_categories": _ALL_SIX[1:], "threats": []},
+            "all six categories complete",
+            False,
+        ),
+        ({"component_id": "api", "skipped_categories": [], "threats": []}, "all six categories complete", True),
+        (None, "source reads complete: focus paths and slices", True),
+        (None, "Spoofing", True),
+    ],
+    ids=[
+        "no-file",
+        "seed-only",
+        "malformed",
+        "other-category-still-skipped",
+        "persisted",
+        "all-claimed-some-skipped",
+        "all-persisted",
+        "non-category-step",
+        "category-start-label",
+    ],
+)
+def test_category_completion_is_logged_only_after_it_is_persisted(
+    tmp_path: Path, attempt_body, detail: str, accepted: bool, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _plan(tmp_path, "full")
+    _claim(tmp_path, "full")
+    if attempt_body is not None:
+        _attempt(tmp_path, attempt_body)
+
+    rc = _log_step_end(tmp_path, detail)
+
+    log = tmp_path / ".agent-run.log"
+    logged = log.read_text(encoding="utf-8") if log.exists() else ""
+    if accepted:
+        assert rc == 0 and detail in logged
+    else:
+        assert rc == 2 and detail not in logged
+        assert "category completion refused" in capsys.readouterr().err
+
+
+def test_category_claims_from_other_agents_are_not_policed(tmp_path: Path) -> None:
+    rc = log_event.main(["log_event.py", str(tmp_path), "step-end", "category complete: Spoofing"])
+    assert rc == 0

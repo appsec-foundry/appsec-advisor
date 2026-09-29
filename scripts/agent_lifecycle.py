@@ -136,11 +136,16 @@ def validate_state(state: object) -> dict[str, Any]:
             "child_active_at",
             "finished_at",
             "failure_reason",
+            "refused_turns",
+            "truncated_turns",
             "usage_recorded_at",
             "usage",
         }
         if not set(call).issubset(allowed):
             raise LifecycleError("agent lifecycle call has unknown fields")
+        for key in ("refused_turns", "truncated_turns"):
+            if key in call and (isinstance(call[key], bool) or not isinstance(call[key], int) or call[key] < 1):
+                raise LifecycleError(f"agent lifecycle {key} is invalid")
         if "handback_at_turn_limit" in call and not isinstance(call["handback_at_turn_limit"], bool):
             raise LifecycleError("agent lifecycle handback turn-limit flag is invalid")
         call_id = call.get("agent_call_id")
@@ -795,6 +800,96 @@ def latest_call_for_component(output_dir: str | Path, component_id: str) -> dict
     return max(calls, key=lambda call: (call.get("spawned_at") or 0, call.get("attempt") or 0))
 
 
+STOP_CAUSE_REFUSAL = "refusal"
+STOP_CAUSE_TURN_LIMIT = "turn_limit"
+
+
+_WARN_EVENTS = {"AGENT_FAILED", "AGENT_LIFECYCLE_REJECTED", "AGENT_TURNS_DECLINED", "AGENT_OUTPUT_TRUNCATED"}
+
+
+def record_lossy_turns(output_dir: str | Path, call_id: str, *, refused: int, truncated: int) -> list[LifecycleEvent]:
+    """Keep the child's declined and truncated turns on its call, whatever its final state.
+
+    A declined turn persists nothing, but the child may recover and finish, so
+    it is evidence for a later gate rejection rather than a failure on its own.
+    A truncated turn (``max_tokens``) lost its output the same way. Recording
+    is idempotent per count, so a repeated stop event logs nothing new.
+    """
+    if refused < 1 and truncated < 1:
+        return []
+    events: list[LifecycleEvent] = []
+    with _locked(output_dir):
+        state = _read_state_unlocked(output_dir)
+        call = next((row for row in state["calls"] if row.get("agent_call_id") == call_id), None)
+        if call is None:
+            return []
+        for key, count, event in (
+            ("refused_turns", refused, "AGENT_TURNS_DECLINED"),
+            ("truncated_turns", truncated, "AGENT_OUTPUT_TRUNCATED"),
+        ):
+            if count > 0 and call.get(key) != count:
+                call[key] = count
+                events.append(LifecycleEvent(event, dict(call), f"turns={count}"))
+        if events:
+            _write_state_unlocked(output_dir, state)
+    return events
+
+
+def _latest_job_call(state: dict[str, Any], job_id: str) -> dict[str, Any] | None:
+    calls = [call for call in state["calls"] if call.get("job_id") == job_id]
+    return max(calls, key=lambda row: row.get("spawned_at") or 0) if calls else None
+
+
+def job_stop_cause(output_dir: str | Path, job_id: str) -> str | None:
+    """Why the latest call of one dispatched job produced no accepted output.
+
+    Output gates see only the artifact, and a write-first pre-seed looks the
+    same whether the child ran out of turns, crashed, or had its turns declined
+    by the model. Retry and abort text must name the actual cause: ``refusal``
+    when any turn was declined, ``turn_limit``, another recorded failure reason
+    without its ``subagent_stop:`` prefix, or ``None`` when nothing is known —
+    including after cleanup removed the lifecycle state. Only meaningful for a
+    job whose output the gate already rejected.
+    """
+    try:
+        with _locked(output_dir):
+            state = _read_state_unlocked(output_dir)
+    except (LifecycleError, OSError):
+        return None
+    call = _latest_job_call(state, job_id)
+    if call is None:
+        return None
+    cause = str(call.get("failure_reason") or "").removeprefix("subagent_stop:")
+    if call.get("refused_turns") or cause == STOP_CAUSE_REFUSAL:
+        return STOP_CAUSE_REFUSAL
+    if cause == "max_turns" or call.get("handback_at_turn_limit"):
+        return STOP_CAUSE_TURN_LIMIT
+    if call.get("state") == "failed" and cause:
+        return cause
+    return None
+
+
+def jobs_settled(output_dir: str | Path, job_ids: list[str], now: float | None = None) -> bool:
+    """True once every job has a registered call and none of them takes further turns.
+
+    A job without a call has not been spawned yet, so its wave is not settled.
+    """
+    if not job_ids:
+        return False
+    try:
+        with _locked(output_dir):
+            state = _read_state_unlocked(output_dir)
+    except (LifecycleError, OSError):
+        return False
+    for job_id in job_ids:
+        call = _latest_job_call(state, job_id)
+        if call is None:
+            return False
+        if call.get("state") == "running" and not child_has_stopped(call, now):
+            return False
+    return True
+
+
 def claim_is_authoritative(output_dir: str | Path, call: dict[str, Any]) -> bool:
     """Return whether a call's action and attempt still own the current claim.
 
@@ -886,7 +981,7 @@ def append_events(output_dir: str | Path, events: list[LifecycleEvent]) -> None:
     root = Path(output_dir)
     for item in events:
         call = item.call
-        level = "WARN" if item.event in {"AGENT_FAILED", "AGENT_LIFECYCLE_REJECTED"} else "INFO"
+        level = "WARN" if item.event in _WARN_EVENTS else "INFO"
         detail = event_detail(item)
         try:
             with (root / ".hook-events.log").open("a", encoding="utf-8") as handle:
