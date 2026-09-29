@@ -2461,7 +2461,7 @@ def test_route_simplification_keeps_payload_labels_visible(prefix):
     for flow, label in zip(model["data_flows"], labels):
         flow["label"] = label
     svg, state = F._build(model, [], [], detail=False)
-    assert not state["d"].get("_label_notes")
+    assert _gap_label_notes(state) == []
     assert all(label in svg for label in labels)
     assert F.check_diagram(model, {}, {}, detail=False)[1] == []
 
@@ -2610,9 +2610,10 @@ def test_payload_layout_selection_respects_geometry_rejection(monkeypatch):
     assert state["d"].get("_label_notes")
     note = ET.fromstring(svg).find("{*}g[@data-legend-section='flow-notes']")
     text = " ".join(note.itertext())
-    assert any("df-007" in ids for ids, _ in state["d"]["_label_notes"])
+    # An intra-column flow keeps its note; a gap fallback cannot give it a longer run.
+    assert any("df-001" in ids for ids, _ in state["d"]["_label_notes"])
     assert "Credential lookup" in text
-    assert "df-007" not in text
+    assert "df-001" not in text
     assert F.check_diagram(model, {}, {}, detail=False)[1] == ["blocked alternative"]
 
 
@@ -2935,7 +2936,7 @@ def test_multiline_payload_labels_keep_content_and_protocol_outside_notes():
     model = _routing_model(["application", "data"], [(0, 1)], "gateway")
     model["data_flows"][0].update(label="Product queries", protocol="SQLite in-process")
     svg, state = F._build(model, [], [], detail=False)
-    assert not state["d"].get("_label_notes")
+    assert _gap_label_notes(state) == []
     root = ET.fromstring(svg)
     for legend in root.findall("{*}g[@data-legend-section]"):
         root.remove(legend)
@@ -3704,3 +3705,73 @@ def test_ai_capabilities_preserve_topology_and_require_evidence(capability, labe
     model["components"][1]["capabilities"][0]["evidence"] = []
     svg, problems = F.check_diagram(model, paths, taxonomy)
     assert problems == [] and f'data-capability="{capability}"' not in svg
+
+
+def _gap_label_notes(state):
+    crossing = {fid for e in state["edges"] if e["kind"] != "intra" and not e.get("attack") for fid in e["ids"]}
+    return [ids for ids, _ in state["d"].get("_label_notes", []) if crossing & set(ids)]
+
+
+def _gap_geometry(model, paths, taxonomy, detail):
+    scenarios, actors = F.scenarios_from_attack_paths(model, paths, taxonomy)
+    svg, state = F._build(model, scenarios, actors, detail=detail)
+    columns = state["columns"]
+    rights = [x + w for x, w in columns]
+    gaps = [columns[g + 1][0] - rights[g] for g in range(len(columns) - 1)]
+    offsets = [state["boundaries"][g] - rights[g] for g in range(len(gaps))]
+    return svg, state, gaps, offsets
+
+
+@pytest.mark.parametrize("names", [("app0", "db0"), ("app1", "db0")])
+def test_gaps_without_boundary_chips_are_sized_by_their_routes_and_labels(names):
+    model, paths, taxonomy = _model()
+    model["trust_boundaries"] = [_resolved("external", "spa"), _resolved(*names, 2)]
+    svg, state, gaps, offsets = _gap_geometry(model, paths, taxonomy, detail=False)
+    # The overview draws no boundary chips, so no gap keeps the chip reserve.
+    assert state["chips"] == []
+    assert offsets == [F.BARE_OFF] * len(gaps)
+    assert all(gap < F.B_OFF + F.LANE0 + 52 for gap in gaps)
+    assert _gap_label_notes(state) == []
+    assert F.check_diagram(model, paths, taxonomy, detail=False)[1] == []
+    width = ET.fromstring(svg).get("width")
+    assert float(width).is_integer()
+
+
+def test_a_longer_payload_label_widens_only_its_own_gap():
+    model, paths, taxonomy = _model()
+    _, _, short, _ = _gap_geometry(copy.deepcopy(model), paths, taxonomy, detail=False)
+    store_flow = next(f for f in model["data_flows"] if f["to"] == "db0")
+    store_flow["label"] = "Customer order history and payment reconciliation records"
+    _, state, wide, _ = _gap_geometry(model, paths, taxonomy, detail=False)
+    assert wide[0] == short[0]
+    assert wide[1] > short[1]
+    assert _gap_label_notes(state) == []
+    assert F.check_diagram(model, paths, taxonomy, detail=False)[1] == []
+
+
+def test_a_gap_with_boundary_chips_keeps_the_chip_reserve():
+    model, paths, taxonomy = _model()
+    model["trust_boundaries"] = [_resolved("app0", "db0")]
+    _, state, gaps, offsets = _gap_geometry(model, paths, taxonomy, detail=True)
+    chip_gaps = {
+        g for g, (x, _) in enumerate(zip(state["boundaries"], gaps)) if any(c["bx"] == x for c in state["chips"])
+    }
+    assert chip_gaps == {1}
+    assert offsets[1] == F.B_OFF and gaps[1] >= F.GAP
+    assert F.check_diagram(model, paths, taxonomy, detail=True)[1] == []
+
+
+@pytest.mark.parametrize("store", ["db0", "db1"])
+def test_a_gap_that_would_displace_a_payload_label_keeps_the_full_reserve(store, monkeypatch):
+    model, paths, taxonomy = _model(stores=2)
+    model["trust_boundaries"] = [_resolved("app0", store)]
+    scenarios, actors = F.scenarios_from_attack_paths(model, paths, taxonomy)
+    crowded_gaps = F._crowded_gaps
+    with monkeypatch.context() as patch:
+        patch.setattr(F, "_crowded_gaps", lambda state: frozenset())
+        _, compact = F._build(model, scenarios, actors, detail=True)
+    assert crowded_gaps(compact) == {0}
+    _, state, _, offsets = _gap_geometry(model, paths, taxonomy, detail=True)
+    assert offsets[0] == F.B_OFF
+    assert _gap_label_notes(state) == []
+    assert F.check_diagram(model, paths, taxonomy, detail=True)[1] == []

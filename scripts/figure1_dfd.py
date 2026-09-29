@@ -43,6 +43,7 @@ from __future__ import annotations
 import collections
 import copy
 import html
+import math
 import re
 import sys
 import xml.etree.ElementTree as ET
@@ -107,6 +108,10 @@ COL_W = NODE_W + 2 * ZONE_PAD
 GAP, MARGIN, TOP = 150, 20, 66
 B_OFF = 100  # boundary line offset inside a gap (from gap left)
 LANE0, LANE_STEP = 40, 10  # first lane offset right of the boundary (clear of the chips)
+# A gap without boundary chips is only a routing channel: a short margin before the line,
+# a short one before the first lane, and room for the shortest form of its widest label.
+# The first lane keeps the geometry gate's 14-unit clearance from the gap coordinate.
+BARE_OFF, BARE_LANE0, BARE_LABEL_PAD = 32, 16, 60
 LEGEND_W = 350
 LEGEND_GAP = 20
 LEGEND_HEAD = 26
@@ -1989,7 +1994,7 @@ def _improve_routes(nodes, edges, boundaries, zones, *, straight_only=False):
             )
 
 
-def _layout(nodes, edges, dropped, tb_threats, ncols=3, *, optimize=True):
+def _layout(nodes, edges, dropped, tb_threats, ncols=3, *, optimize=True, roomy_gaps=frozenset()):
     # 1. sides: L = entering from the left, R = leaving right / intra-column channel
     for e in edges:
         s, t = nodes[e["src"]], nodes[e["dst"]]
@@ -2022,18 +2027,37 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3, *, optimize=True):
         k = max(_nports(sides[n["id"]]["L"]), _nports(sides[n["id"]]["R"]))
         n["tagspace"] = 20 * len(n.get("tags", []))
         n["h"] = n["tagspace"] + max(n["h"], PORT_STEP * (k + 1))
-    # 3. column widths (right-side channel for intra edges), gap widths (one lane per edge)
+    # 3. column widths (right-side channel for intra edges), gap widths (one lane per edge);
+    # the multi-method port reserve applies only where such an edge runs
     intra_per_col = collections.Counter(nodes[e["src"]]["col"] for e in edges if e["kind"] == "intra")
-    port_extra = 32 if any(len(e.get("auth_keys", [])) > 1 for e in edges) else 0
-    col_w = [COL_W + _intra_channel(intra_per_col[c]) + (port_extra if intra_per_col[c] else 0) for c in range(ncols)]
+    multi_auth = lambda e: len(e.get("auth_keys", [])) > 1  # noqa: E731
+    col_extra = [
+        32 if any(multi_auth(e) for e in edges if e["kind"] == "intra" and nodes[e["src"]]["col"] == c) else 0
+        for c in range(ncols)
+    ]
+    col_w = [COL_W + _intra_channel(intra_per_col[c]) + col_extra[c] for c in range(ncols)]
     n_lanes = collections.Counter()
+    gap_members = collections.defaultdict(list)
     for e in edges:
         if e["kind"] == "intra":
             continue
         g1, g2 = sorted((nodes[e["src"]]["col"], nodes[e["dst"]]["col"]))
         for g in range(g1, g2):
             n_lanes[g] += 1
-    gap_w = [max(GAP, B_OFF + LANE0 + n_lanes[g] * LANE_STEP + 52 + port_extra) for g in range(ncols - 1)]
+            gap_members[g].append(e)
+    # Boundary chips, and a gap whose compact layout displaced a payload label, keep the fixed
+    # reserve; every other gap is sized by its lanes and labels.
+    left = [0.0] * (ncols - 1)
+    lane0 = [0.0] * (ncols - 1)
+    gap_w = []
+    for g in range(ncols - 1):
+        extra = 32 if any(multi_auth(e) for e in gap_members[g]) else 0
+        need = max([e.get("min_label_w", 0) for e in gap_members[g] if not e.get("attack")] + [0])
+        if g in roomy_gaps or any(len(e.get("tb") or []) == 1 for e in gap_members[g]):
+            left[g], lane0[g], floor = B_OFF, LANE0, GAP
+        else:
+            left[g], lane0[g], floor = BARE_OFF, BARE_LANE0, need + BARE_LABEL_PAD
+        gap_w.append(math.ceil(max(floor, left[g] + lane0[g] + n_lanes[g] * LANE_STEP + 52 + extra)))
     col_x = [MARGIN]
     for c in range(1, ncols):
         col_x.append(col_x[-1] + col_w[c - 1] + gap_w[c - 1])
@@ -2134,7 +2158,7 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3, *, optimize=True):
     _align_flow_ports(nodes, edges, sides)
 
     # 6. routes
-    boundaries = [col_x[g] + col_w[g] + B_OFF for g in range(ncols - 1)]
+    boundaries = [col_x[g] + col_w[g] + left[g] for g in range(ncols - 1)]
     gap_edges = collections.defaultdict(list)
     detour_y = bottom + 16
     for e in edges:
@@ -2145,18 +2169,18 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3, *, optimize=True):
         ge.sort(key=lambda e: (abs(e["yd"] - e["ys"]), e["ys"], e["ids"]))
         flows = _flow_lane_order([e for e in ge if not e.get("attack")])
         for i, e in enumerate(flows):
-            lanes[id(e)] = boundaries[g] + LANE0 + i * LANE_STEP
+            lanes[id(e)] = boundaries[g] + lane0[g] + i * LANE_STEP
         buses = list(dict.fromkeys(e["src"] for e in ge if e.get("attack")))  # one bus per attacker, right of the flows
         for e in ge:
             if e.get("attack"):
-                lanes[id(e)] = boundaries[g] + LANE0 + (len(flows) + buses.index(e["src"])) * LANE_STEP
+                lanes[id(e)] = boundaries[g] + lane0[g] + (len(flows) + buses.index(e["src"])) * LANE_STEP
     chan_used = collections.Counter()
     for e in edges:
         s, t = nodes[e["src"]], nodes[e["dst"]]
         if e["kind"] == "intra":
             j = chan_used[s["col"]]
             chan_used[s["col"]] += 1
-            cx = col_x[s["col"]] + ZONE_PAD + NODE_W + INTRA_STUB + port_extra + j * INTRA_STEP
+            cx = col_x[s["col"]] + ZONE_PAD + NODE_W + INTRA_STUB + col_extra[s["col"]] + j * INTRA_STEP
             e["pts"] = [(s["x"] + s["w"], e["ys"]), (cx, e["ys"]), (cx, e["yd"]), (t["x"] + t["w"], e["yd"])]
             if e in ui_entries[e["dst"]]:
                 entries = ui_entries[e["dst"]]
@@ -2176,8 +2200,8 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3, *, optimize=True):
             e["bx"] = boundaries[t["col"]]
         else:  # skips a column: detour below the diagram
             g1, g2 = sorted((s["col"], t["col"]))
-            l1 = boundaries[g1] + LANE0 + len(gap_edges[g1]) * LANE_STEP
-            l2 = boundaries[g2 - 1] + LANE0 + len(gap_edges[g2 - 1]) * LANE_STEP
+            l1 = boundaries[g1] + lane0[g1] + len(gap_edges[g1]) * LANE_STEP
+            l2 = boundaries[g2 - 1] + lane0[g2 - 1] + len(gap_edges[g2 - 1]) * LANE_STEP
             gap_edges[g1].append(e)
             gap_edges[g2 - 1].append(e)
             if e["kind"] == "forward":
@@ -2438,6 +2462,26 @@ def _label_gaps(a, b, width, offset, occupied, segments, *, lines=1):
         yield x, y, rect, abs(center - middle)
 
 
+def _label_texts(edge, flows):
+    """Label candidates for one edge, longest first."""
+    entries = [flows[fid] for fid in edge["ids"] if fid in flows]
+    texts = _flow_label_candidates(entries, edge.get("interaction"))
+    if edge.get("access_group"):
+        # Access labels can express conditions or a sequence. Keep those
+        # words intact rather than abbreviating away an optional step.
+        label = edge["access_group"]["label"]
+        protocol = " / ".join(dict.fromkeys(f["protocol"] for f in entries if f.get("protocol")))
+        part = _protocol_part(protocol) if protocol else ""
+        line = _protocol_part(protocol, own_line=True) if protocol else ""
+        texts = [label + (f" {part}" if part else "")]
+        if part:
+            texts.append(label + f"\n{line}")
+        wrapped = _legend_wrap(label, 110, FS)
+        if len(wrapped) <= 3:
+            texts.append("\n".join([*wrapped, *([line] if line else [])]))
+    return texts
+
+
 def _flow_labels(canvas, model, nodes, edges, boundaries, zones):
     """Place actual payload labels on clear runs; retain overflow in compact notes."""
     segments = [(a, b, e) for e in edges for a, b in zip(e.get("draw_pts", e["pts"]), e.get("draw_pts", e["pts"])[1:])]
@@ -2480,23 +2524,9 @@ def _flow_labels(canvas, model, nodes, edges, boundaries, zones):
     for edge in edges:
         if edge.get("attack"):
             continue
-        entries = [flows[fid] for fid in edge["ids"]]
         points = edge.get("draw_pts", edge["pts"])
         candidates = []
-        texts = _flow_label_candidates(entries, edge.get("interaction"))
-        if edge.get("access_group"):
-            # Access labels can express conditions or a sequence. Keep those
-            # words intact rather than abbreviating away an optional step.
-            label = edge["access_group"]["label"]
-            protocol = " / ".join(dict.fromkeys(f["protocol"] for f in entries if f.get("protocol")))
-            part = _protocol_part(protocol) if protocol else ""
-            line = _protocol_part(protocol, own_line=True) if protocol else ""
-            texts = [label + (f" {part}" if part else "")]
-            if part:
-                texts.append(label + f"\n{line}")
-            wrapped = _legend_wrap(label, 110, FS)
-            if len(wrapped) <= 3:
-                texts.append("\n".join([*wrapped, *([line] if line else [])]))
+        texts = _label_texts(edge, flows)
         for index, text in enumerate(texts):
             for a, b in zip(points, points[1:]):
                 length = abs(a[0] - b[0]) + abs(a[1] - b[1])
@@ -3056,7 +3086,7 @@ def _render(
                     c.text(px + dx * 26, y + 3, separator, size=9, fill=MUTED)
             if e.get("access_group"):
                 c.add("</g>")
-    _flow_labels(c, d, nodes, edges, boundaries, zone_boxes)
+    _flow_labels(c, d, nodes, edges, [boundaries[g] for g in sorted(d.get("_boundary_gaps") or {})], zone_boxes)
 
     blocks = _legend_blocks(
         d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dropped, unattached_assets, actor_groups
@@ -3707,6 +3737,7 @@ def _build(
     component_numbers=None,
     authentication_catalog=None,
     projected_victim=None,
+    _roomy_gaps=frozenset(),
 ):
     if projected_victim is None:
         d, victim_target, _role_notes = _project_legitimate_roles(yaml_data)
@@ -3753,7 +3784,15 @@ def _build(
             edge["tb"] = []
         d["_overview_tbs"] = [t["id"] for t in tbs]
     d["_boundary_gaps"] = _boundary_gaps(d, nodes, tbs)
-    col_x, col_w, zone_boxes, boundaries, chips, height = _layout(nodes, edges, dropped, tb_threats, optimize=_optimize)
+    flow_rows = {f["id"]: f for f in d.get("data_flows") or [] if isinstance(f, dict) and f.get("id")}
+    for edge in edges:
+        if edge.get("attack"):
+            continue
+        texts = _label_texts(edge, flow_rows)
+        edge["min_label_w"] = min((max(_tw(x, FS) for x in t.split("\n")) for t in texts), default=0)
+    col_x, col_w, zone_boxes, boundaries, chips, height = _layout(
+        nodes, edges, dropped, tb_threats, optimize=_optimize, roomy_gaps=_roomy_gaps
+    )
     attached = {a.get("id") for n in nodes.values() for a in n.get("assets", [])}
     unattached = sorted(
         [a for a in d.get("assets") or [] if isinstance(a, dict) and a.get("id") not in attached],
@@ -3777,6 +3816,7 @@ def _build(
         actor_groups,
     )
     state = {"d": d, "nodes": nodes, "edges": edges, "chips": chips, "boundaries": boundaries, "canvas": canvas}
+    state["columns"] = list(zip(col_x, col_w))
     if _optimize and d.get("_label_notes"):
         # Fewer bends must not displace readable payloads. Compare complete layouts
         # once, since endpoint markers and earlier labels also consume label space.
@@ -3790,6 +3830,7 @@ def _build(
             component_numbers=component_numbers,
             authentication_catalog=authentication_catalog,
             projected_victim=projected_victim,
+            _roomy_gaps=_roomy_gaps,
         )
         missing = {fid for ids, _ in d["_label_notes"] for fid in ids}
         alternative_missing = {fid for ids, _ in alternative["d"].get("_label_notes", []) for fid in ids}
@@ -3810,8 +3851,36 @@ def _build(
                 alternative["canvas"],
             )
         ):
-            return alternative_svg, alternative
+            svg, state = alternative_svg, alternative
+    crowded = _crowded_gaps(state) - _roomy_gaps
+    if crowded:
+        # A compact gap must never cost a payload label: retry those gaps with the full reserve.
+        roomy_svg, roomy = _build(
+            yaml_data,
+            scenarios,
+            actors,
+            actor_groups,
+            detail=detail,
+            _optimize=_optimize,
+            component_numbers=component_numbers,
+            authentication_catalog=authentication_catalog,
+            projected_victim=projected_victim,
+            _roomy_gaps=_roomy_gaps | crowded,
+        )
+        if len(roomy["d"].get("_label_notes", [])) < len(state["d"].get("_label_notes", [])):
+            return roomy_svg, roomy
     return svg, state
+
+
+def _crowded_gaps(state):
+    """Column gaps crossed by an edge whose payload label found no room."""
+    nodes, missing = state["nodes"], {fid for ids, _ in state["d"].get("_label_notes", []) for fid in ids}
+    gaps = set()
+    for e in state["edges"]:
+        if e["kind"] != "intra" and not e.get("attack") and missing & set(e["ids"]):
+            g1, g2 = sorted((nodes[e["src"]]["col"], nodes[e["dst"]]["col"]))
+            gaps.update(range(g1, g2))
+    return frozenset(gaps)
 
 
 def build_figure1_dfd_svg(yaml_data, attack_paths_data, attack_taxonomy, meta=None, actor_labels=None, *, detail=True):
