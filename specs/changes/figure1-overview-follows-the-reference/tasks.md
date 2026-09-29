@@ -18,5 +18,6 @@
 - [ ] Confirm with a fresh juice-shop run that the analyst now emits the login sequence, the public/authenticated API alternative, `none` for the Socket.IO handler, and the OAuth profile call's scheme. These are prompt rules, so only a run shows their effect.
 - [ ] The report changelog row counts `threats[]` itself (a run showed "56→50" while the reports led with 54 and 48); it should take its tally from `_severity_rollup` like the other reader-facing totals (`RA-7`).
 - [ ] Per-component `.dispatch-context/<component>/` directories from an earlier run survive a full run with `--keep-runtime-files`, and the run-issue aggregator reports evidence coverage for components that no longer exist.
-- [ ] Long flow labels still move into "Additional flow labels" when a boundary line splits their straight segment.
+- [x] Long flow labels still move into "Additional flow labels" when a boundary line splits their straight segment. A gap that would displace a payload label now keeps the full reserve (`RA-26`); no flow that crosses a gap lost its label on the neutral fixture topologies or on five recorded runs.
+- [ ] Labels of flows inside one column still move into "Additional flow labels" when the channel stubs are shorter than the label and the channel is crowded (40 on the neutral fixture topologies, one in a recorded juice-shop run).
 - [ ] `discover_identity_providers.py` could assign the service role of the identity providers it generates.
