@@ -24,11 +24,25 @@ from jsonschema import Draft202012Validator
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / "schemas/architect-corrections.schema.json"
 MAX_PROPOSAL_BYTES = 131_072
+# Legitimate proposals nest a few levels; the bound must not depend on the interpreter's recursion limit.
+MAX_PROPOSAL_DEPTH = 32
 _RATING_KEYS = ("risk", "likelihood", "impact")
 
 
 class ReviewError(ValueError):
     """Required canonical input or caller-owned review scope is invalid."""
+
+
+def _within_depth(value: Any, limit: int) -> bool:
+    """Check container nesting iteratively, so no input depth can exhaust the stack."""
+    stack = [(value, 1)]
+    while stack:
+        item, depth = stack.pop()
+        if isinstance(item, (dict, list)):
+            if depth > limit:
+                return False
+            stack.extend((child, depth + 1) for child in (item.values() if isinstance(item, dict) else item))
+    return True
 
 
 def fingerprint(value: Any) -> str:
@@ -127,6 +141,8 @@ def apply_corrections(
         report["outcomes"] = [_outcome(tid, "rejected", reason) for tid in finding_ids]
         return result, report
 
+    if not _within_depth(proposal, MAX_PROPOSAL_DEPTH):
+        return reject_packet("invalid_json_value")
     try:
         size = len(json.dumps(proposal, ensure_ascii=False, allow_nan=False).encode("utf-8"))
     except (TypeError, ValueError, RecursionError):

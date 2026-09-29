@@ -1,5 +1,6 @@
 """Review core: corrections survive consumers without trusting proposals."""
 
+import sys
 from copy import deepcopy
 
 import architect_review as review
@@ -84,14 +85,30 @@ def apply(source, decisions, *, scope=None, **overrides):
     )
 
 
-def test_deeply_nested_proposal_is_rejected_without_mutation():
+@pytest.mark.parametrize("levels", [review.MAX_PROPOSAL_DEPTH, 2000])
+@pytest.mark.parametrize("recursion_limit", [None, 20_000])
+def test_deeply_nested_proposal_is_rejected_without_mutation(levels, recursion_limit):
     source = merged()
     nested = []
-    for _ in range(2000):
+    for _ in range(levels):
         nested = [nested]
-    result, report = apply(source, nested)
+    # A raised limit reproduces interpreters whose JSON encoder does not raise RecursionError.
+    previous = sys.getrecursionlimit()
+    sys.setrecursionlimit(recursion_limit or previous)
+    try:
+        result, report = apply(source, nested)
+    finally:
+        sys.setrecursionlimit(previous)
     assert result == source
     assert report["outcomes"][0]["reason"] == "invalid_json_value"
+
+
+def test_proposal_at_the_depth_bound_reaches_ordinary_validation():
+    nested = {}
+    for _ in range(review.MAX_PROPOSAL_DEPTH - 3):
+        nested = {"x": nested}
+    result, report = apply(merged(), [nested])
+    assert report["outcomes"][0]["reason"] == "foreign_or_unidentified_finding"
 
 
 @pytest.mark.parametrize("before_projection", [True, False])
