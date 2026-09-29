@@ -622,15 +622,13 @@ def test_prepasses_restore_canonical_audit_events(monkeypatch, tmp_path):
         json.dumps({"routes": [{"path": "/a"}, {"path": "/b"}]}),
         encoding="utf-8",
     )
-    (output / ".source-auth-findings.json").write_text(
-        json.dumps({"violations": 3}),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(
-        controller,
-        "_run_script",
-        lambda *args, **kwargs: _completed(),
-    )
+
+    def _scanner(name, args, **kwargs):
+        if name == "source_auth_scanner.py":
+            (output / ".source-auth-findings.json").write_text(json.dumps({"violations": 3}), encoding="utf-8")
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", _scanner)
     receipts: list[str] = []
     controller._prepasses(cfg, receipts)
     log = (output / ".agent-run.log").read_text(encoding="utf-8")
@@ -639,7 +637,36 @@ def test_prepasses_restore_canonical_audit_events(monkeypatch, tmp_path):
     assert ".route-inventory.json ready (2 routes)" in log
     assert "SOURCE_AUTH_PREPASS" in log
     assert "(3 authz finding(s))" in log
-    assert len(receipts) == 3
+    assert len(receipts) == 5
+
+
+def test_prepasses_confirm_authz_after_the_inventory_and_drop_stale_sidecars(monkeypatch, tmp_path):
+    """merge_threats ingests every authz sidecar it finds. The confirmers run in
+    each pre-pass, after the route inventory they read, and a copy from an
+    earlier run never survives a scanner that writes nothing this time."""
+    output = tmp_path / "out"
+    output.mkdir()
+    cfg = _cfg(tmp_path)
+    cfg["output_dir"] = str(output)
+    for name in (".authz-confirm-findings.json", ".mass-assignment-findings.json", ".source-auth-findings.json"):
+        (output / name).write_text('{"findings": [{"check_id": "STALE"}]}', encoding="utf-8")
+    (output / ".route-inventory.json").write_text('{"routes": []}', encoding="utf-8")
+    calls: list[str] = []
+    monkeypatch.setattr(
+        controller,
+        "_run_script",
+        lambda name, args, **kwargs: (
+            calls.append(name) or subprocess.CompletedProcess(["test"], 2, stdout="", stderr="")
+        ),
+    )
+    controller._prepasses(cfg, [])
+    assert calls.index("route_inventory.py") < calls.index("authz_confirm.py")
+    assert "mass_assignment_scanner.py" in calls
+    assert not (output / ".authz-confirm-findings.json").exists()
+    assert not (output / ".mass-assignment-findings.json").exists()
+    assert not (output / ".source-auth-findings.json").exists()
+    # The inventory is an input, not a finding sidecar: it is left alone.
+    assert (output / ".route-inventory.json").is_file()
 
 
 def test_prepasses_run_database_separation_only_at_thorough_depth(monkeypatch, tmp_path):
@@ -4847,7 +4874,7 @@ def test_prepasses_warns_when_route_inventory_missing(monkeypatch, tmp_path):
     log = (output / ".agent-run.log").read_text(encoding="utf-8")
     assert "Phase 6 fallback remains active" in log
     assert "WARN" in log
-    assert len(receipts) == 3
+    assert len(receipts) == 5
 
 
 # --- _duration_estimate fallbacks ----------------------------------------------

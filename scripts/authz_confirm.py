@@ -17,9 +17,11 @@ confirm the gap:
   * `missing_authz_suspect` (authn present, no authz signal, `:id` path param —
     the BOLA/IDOR primitive) → emit **AUTHZ-301** (CWE-639) UNLESS the handler
     body contains an ownership / tenant / policy predicate.
-  * `missing_auth_suspect` (state-changing / management route, authn unknown) →
-    emit **AUTHZ-302** (CWE-862) UNLESS the body contains an authentication
-    check.
+  * `missing_auth_suspect` on a route whose authentication the inventory proved
+    `absent` (every chain element resolved, no credential read — FE-14) → emit
+    **AUTHZ-302** (CWE-862) UNLESS the body contains an authentication check.
+    An `unknown` route stays a hypothesis: a guard the inventory cannot see
+    (another file, a framework security config) is not evidence of absence.
 
 A suspect the reader cannot resolve (no handler file/line, file missing, body
 not extractable) is deliberately NOT emitted — it stays a design-level
@@ -219,7 +221,7 @@ def confirm_instances(repo_root: Path, inventory: dict) -> list[dict]:
                 f"predicate in the handler body, so any authenticated user can access "
                 f"another user's object."
             )
-        elif r.get("missing_auth_suspect") and not has_auth_check(body):
+        elif r.get("missing_auth_suspect") and r.get("authn_signal") == "absent" and not has_auth_check(body):
             check_id, cwe, ft = "AUTHZ-302", "CWE-862", "FT-042"
             title = f"Missing authorization on sensitive route — {method} {route_path}"
             scenario = (
@@ -243,7 +245,8 @@ def confirm_instances(repo_root: Path, inventory: dict) -> list[dict]:
                 "severity": "High",
                 "cwe": [cwe],
                 "finding_type_id": ft,
-                "breach_vector": "Internet Anon",
+                # AUTHZ-301's attacker holds an account; AUTHZ-302's needs none.
+                "breach_vector": "Internet User" if check_id == "AUTHZ-301" else "Internet Anon",
                 "evidence_snippet": _snippet(body),
             }
         )

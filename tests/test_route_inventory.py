@@ -638,3 +638,132 @@ def test_llm_sdk_signal_covers_proxy_and_gateway_libraries(tmp_path: Path) -> No
     (tmp_path / "app.py").write_text("@app.post('/v1/completions')\ndef complete():\n    pass\n")
     (tmp_path / "requirements.txt").write_text("fastapi==0.115.0\nlitellm==1.52.0\n")
     assert "llm" in _route(_run(tmp_path), "POST", "/v1/completions")["relevance_tags"]
+
+
+# ---------------------------------------------------------------------------
+# A guard is code: literals, comments and handler bodies never count as one
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/privacy-policy", "/docs/authorize-help", "/api/authenticate-info"],
+)
+def test_a_path_literal_is_not_a_guard(tmp_path: Path, path: str) -> None:
+    (tmp_path / "app.js").write_text(f"app.post('{path}', saveItem)\n")
+    (row,) = _run(tmp_path)["routes"]
+    assert (row["authn_signal"], row["authz_signal"]) == ("unknown", "unknown")
+
+
+def test_a_guard_call_still_counts_beside_a_literal(tmp_path: Path) -> None:
+    (tmp_path / "app.js").write_text("app.post('/privacy-policy', requireAuth, authorize('editor'), saveItem)\n")
+    (row,) = _run(tmp_path)["routes"]
+    assert (row["authn_signal"], row["authz_signal"]) == ("middleware_present", "middleware_present")
+
+
+@pytest.mark.parametrize(
+    ("annotation", "mapping"),
+    [
+        ('@Secured("ROLE_ADMIN")', '@DeleteMapping("/items/{id}")'),
+        ('@RolesAllowed({"auditor"})', '@PutMapping("/ledgers/{ledgerId}")'),
+        ("@PreAuthorize(\"hasRole('OPS')\")", '@PostMapping("/jobs")'),
+    ],
+)
+def test_method_security_annotations_authenticate_and_authorize(tmp_path: Path, annotation: str, mapping: str) -> None:
+    (tmp_path / "Ctrl.java").write_text(
+        "import org.springframework.web.bind.annotation.*;\n"
+        "@RestController\n"
+        "public class Ctrl {\n"
+        f"    {annotation}\n"
+        f"    {mapping}\n"
+        "    public void act() { service.run(); }\n"
+        "}\n"
+    )
+    (row,) = _run(tmp_path)["routes"]
+    assert row["authn_signal"] == "middleware_present"
+    assert row["authz_signal"] == "decorator_present"
+
+
+def test_a_mapping_without_method_security_stays_unknown(tmp_path: Path) -> None:
+    (tmp_path / "Ctrl.java").write_text(
+        "import org.springframework.web.bind.annotation.*;\n"
+        "@RestController\n"
+        "public class Ctrl {\n"
+        '    @DeleteMapping("/items/{id}")\n'
+        "    public void remove(Long id) { repo.deleteById(id); }\n"
+        "}\n"
+    )
+    (row,) = _run(tmp_path)["routes"]
+    assert (row["authn_signal"], row["authz_signal"]) == ("unknown", "unknown")
+
+
+def test_a_bare_authorize_attribute_authenticates_and_roles_authorize() -> None:
+    assert ri._scan_auth_text("[Authorize]\npublic IActionResult Get()") == ("middleware_present", "unknown")
+    assert ri._scan_auth_text('[Authorize(Roles = "Admin")]') == ("middleware_present", "middleware_present")
+    assert ri._scan_auth_text('[Authorize(Policy = "Billing")]') == ("middleware_present", "middleware_present")
+
+
+@pytest.mark.parametrize(
+    "commented",
+    [
+        "// app.put('/api/items/:id', requireAuth, updateItem)\n",
+        "/* app.put('/api/items/:id', requireAuth, updateItem) */\n",
+        "/*\n  app.put('/api/items/:id',\n    requireAuth, updateItem)\n*/\n",
+    ],
+)
+def test_a_commented_out_registration_is_not_a_route_or_a_guard(tmp_path: Path, commented: str) -> None:
+    (tmp_path / "server.js").write_text(commented + "app.get('/api/items/:id', showItem)\n")
+    (tmp_path / "snippet.js").write_text("// app.use('/api/items', requireAuth)\n")
+    inv = _run(tmp_path)
+    assert [(r["method"], r["path"], r["authn_signal"]) for r in inv["routes"]] == [
+        ("GET", "/api/items/:id", "unknown")
+    ]
+
+
+def test_a_url_inside_a_string_does_not_start_a_comment(tmp_path: Path) -> None:
+    (tmp_path / "server.js").write_text(
+        "const docs = 'https://example.test'; app.post('/api/items', requireAuth, add)\n"
+    )
+    (row,) = _run(tmp_path)["routes"]
+    assert row["authn_signal"] == "middleware_present"
+
+
+@pytest.mark.parametrize(
+    ("mount", "field"),
+    [
+        ("app.use('/api/items', rateLimit({ windowMs: 60000, max: f(10) }), requireAuth)\n", "authn_signal"),
+        ("router.use('/api/items', cors({ origin: allow() }), requireRole('admin'))\n", "authz_signal"),
+    ],
+)
+def test_a_mount_guard_after_a_nested_call_protects_the_prefix(tmp_path: Path, mount: str, field: str) -> None:
+    (tmp_path / "server.js").write_text(mount)
+    (tmp_path / "items.js").write_text("app.delete('/api/items/:id', removeItem)\n")
+    row = next(r for r in _run(tmp_path)["routes"] if r["path"] == "/api/items/:id")
+    assert row[field] == "middleware_present"
+
+
+@pytest.mark.parametrize(
+    "mount",
+    [
+        "app.use('/api/items', serveDocs('requireAuth'))\n",
+        "app.use('/api/items', (req, res, next) => { audit('requireRole'); next() })\n",
+        "app.use('/api/items', function (req, res, next) { log(authorize); next() })\n",
+    ],
+)
+def test_a_literal_or_handler_body_is_not_a_mount_guard(tmp_path: Path, mount: str) -> None:
+    (tmp_path / "server.js").write_text(mount)
+    (tmp_path / "items.js").write_text("app.delete('/api/items/:id', removeItem)\n")
+    row = next(r for r in _run(tmp_path)["routes"] if r["path"] == "/api/items/:id")
+    assert (row["authn_signal"], row["authz_signal"]) == ("unknown", "unknown")
+
+
+def test_a_commented_python_decorator_is_not_a_route(tmp_path: Path) -> None:
+    (tmp_path / "views.py").write_text(
+        "from flask import Flask\n"
+        "app = Flask(__name__)\n"
+        "# @app.route('/admin/purge', methods=['POST'])\n"
+        "@app.route('/items/<int:item_id>')\n"
+        "def show(item_id):\n"
+        "    return ''\n"
+    )
+    assert [r["path"] for r in _run(tmp_path)["routes"]] == ["/items/<int:item_id>"]

@@ -89,21 +89,22 @@ _PY_GLOBAL_HOOK_RE = re.compile(r"\bbefore_request\b|\badd_middleware\s*\(|\bmid
 _TEST_PATH_RE = re.compile(r"(?:^|/)(?:tests?|__tests__|spec)(?:/|$)|(?:^|/)test_[^/]*\.py$|\.(?:spec|test)\.[jt]sx?$")
 
 # --- JavaScript / TypeScript signals -----------------------------------------
+# `?.` (optional chaining) reads a member exactly like `.`.
 _JS_CREDENTIAL_RE = re.compile(
-    r"\breq(?:uest)?\s*\.\s*(?:signed)?[cC]ookies\s*(?:\.\s*|\[\s*['\"`])"
+    r"\breq(?:uest)?\s*\??\.\s*(?:signed)?[cC]ookies\s*(?:\??\.\s*|(?:\?\.)?\[\s*['\"`])"
     r"(?:token|jwt|session\w*|sid|auth\w*|access\w*|id_?token|connect\.sid)\b"
-    r"|\bheaders\s*(?:\.\s*authorization\b|\[\s*['\"`]authorization['\"`])"
-    r"|\.get\(\s*['\"`]authorization['\"`]"
+    r"|\bheaders\s*(?:\??\.\s*authorization\b|(?:\?\.)?\[\s*['\"`]authorization['\"`])"
+    r"|\??\.get\(\s*['\"`]authorization['\"`]"
     r"|\b[\w$]*(?:jwt|Jwt|JWT|[tT]oken)[\w$]*\s*\(\s*req(?:uest)?\b"
-    r"|\breq(?:uest)?\s*\.\s*(?:user|session|auth)\b"
+    r"|\breq(?:uest)?\s*\??\.\s*(?:user|session|auth)\b"
     r"|\bisAuthenticated\s*\("
 )
 _JS_VERIFY_RE = re.compile(
     r"(?:\.|\b)verify(?:Token|Jwt|JWT|IdToken|Signature|Session|Credentials)?\s*\("
-    r"|\.get\(\s*req(?:uest)?\s*\.\s*(?:signed)?(?:[cC]ookies|headers)\b"
+    r"|\.get\(\s*req(?:uest)?\s*\??\.\s*(?:signed)?(?:[cC]ookies|headers)\b"
     r"|\bisAuthenticated\s*\(\s*\)"
     r"|\bgetServerSession\s*\("
-    r"|\bif\s*\(\s*!\s*req(?:uest)?\s*\.\s*(?:user|session)\b"
+    r"|\bif\s*\(\s*!\s*req(?:uest)?\s*\??\.\s*(?:user|session)\b"
 )
 _JS_DECODE_RE = re.compile(
     r"\b(?:jwt|jws|jose)\s*\.\s*decode\w*\s*\(|\bjwt_?[dD]ecode\s*\(|\.decode\w*\s*\(\s*[\w$.]*(?:[tT]oken|jwt|JWT)"

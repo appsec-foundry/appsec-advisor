@@ -1784,6 +1784,13 @@ def _deactivate_markers(output_dir: Path) -> None:
             pass
 
 
+_PREPASS_FINDING_SIDECARS = (
+    ".source-auth-findings.json",
+    ".authz-confirm-findings.json",
+    ".mass-assignment-findings.json",
+)
+
+
 def _prepasses(cfg: dict[str, Any], receipts: list[str]) -> None:
     repo_root = str(cfg["repo_root"])
     output_dir = str(cfg["output_dir"])
@@ -1815,8 +1822,16 @@ def _prepasses(cfg: dict[str, Any], receipts: list[str]) -> None:
                 "source_auth_scanner.py",
                 ["--repo-root", repo_root, "--output-dir", output_dir, "--quiet"],
             ),
+            # Reads .route-inventory.json, so it runs after route_inventory.py.
+            ("authz_confirm.py", ["--repo-root", repo_root, "--output-dir", output_dir]),
+            ("mass_assignment_scanner.py", ["--repo-root", repo_root, "--output-dir", output_dir, "--quiet"]),
         ]
     )
+    # merge_threats ingests these sidecars whenever they exist. A copy left by an
+    # earlier run, or by authnz-review --save into the same directory, must not
+    # stand in for a scanner that fails in this run.
+    for stale in _PREPASS_FINDING_SIDECARS:
+        (Path(output_dir) / stale).unlink(missing_ok=True)
     for name, args in calls:
         completed = _run_script(name, args, acceptable=(0, 1, 2))
         receipts.append(f"{name}: exit {completed.returncode}")

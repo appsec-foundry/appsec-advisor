@@ -131,6 +131,7 @@ def test_missing_route_auth_confirmed(tmp_path: Path) -> None:
                 "handler_file": "admin.go",
                 "handler_line": 1,
                 "missing_auth_suspect": True,
+                "authn_signal": "absent",
             }
         ]
     )
@@ -157,10 +158,71 @@ def test_missing_route_auth_suppressed_when_auth_present(tmp_path: Path) -> None
                 "handler_file": "admin.go",
                 "handler_line": 1,
                 "missing_auth_suspect": True,
+                "authn_signal": "absent",
             }
         ]
     )
     assert ac.confirm_instances(tmp_path, inv) == []
+
+
+def _unguarded_handler(tmp_path: Path, name: str) -> None:
+    _write(
+        tmp_path,
+        name,
+        "function removeItem(req, res) {\n"
+        "  Items.destroy({ where: { id: req.params.id } })\n"
+        "  res.sendStatus(204)\n"
+        "}\n",
+    )
+
+
+def _suspect(name: str, path: str, authn_signal: str) -> dict:
+    return {
+        "method": "DELETE",
+        "path": path,
+        "handler_file": name,
+        "handler_line": 1,
+        "missing_auth_suspect": True,
+        "authn_signal": authn_signal,
+    }
+
+
+def test_missing_route_auth_needs_proven_absence(tmp_path: Path) -> None:
+    """FE-14: only a fully resolved chain without a credential read is `absent`.
+    An `unknown` route may sit behind a guard the inventory cannot see, so the
+    handler body alone never confirms it as reachable without authentication."""
+    _unguarded_handler(tmp_path, "items.js")
+    _unguarded_handler(tmp_path, "records.js")
+    inv = _inv(
+        [
+            _suspect("items.js", "/items/:id", "absent"),
+            _suspect("records.js", "/v2/records/:recordId", "absent"),
+            _suspect("items.js", "/items/:id/archive", "unknown"),
+            _suspect("records.js", "/v2/records/:recordId/tags", "unknown"),
+        ]
+    )
+    findings = ac.confirm_instances(tmp_path, inv)
+    assert [(f["check_id"], f["file"]) for f in findings] == [("AUTHZ-302", "items.js"), ("AUTHZ-302", "records.js")]
+    assert {f["breach_vector"] for f in findings} == {"Internet Anon"}
+
+
+def test_idor_attacker_is_an_authenticated_user(tmp_path: Path) -> None:
+    _write(tmp_path, "Ctrl.java", "public Order get(Long id) {\n    return repo.findById(id);\n}\n")
+    inv = _inv(
+        [
+            {
+                "method": "GET",
+                "path": "/orders/{id}",
+                "handler_file": "Ctrl.java",
+                "handler_line": 1,
+                "missing_authz_suspect": True,
+                "authn_signal": "present",
+            }
+        ]
+    )
+    (finding,) = ac.confirm_instances(tmp_path, inv)
+    assert finding["check_id"] == "AUTHZ-301"
+    assert finding["breach_vector"] == "Internet User"
 
 
 def test_missing_handler_file_skipped(tmp_path: Path) -> None:

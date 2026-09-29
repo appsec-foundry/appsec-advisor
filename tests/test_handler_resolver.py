@@ -255,3 +255,39 @@ def test_authz_confirm_reads_the_resolved_handler_not_the_registration_window(tm
 
     write(tmp_path, {"routes/avatar.ts": SESSION_HANDLER.format(name="storeAvatar", cookie="token")})
     assert ac.confirm_instances(tmp_path, ri.build_inventory(tmp_path)) == []
+
+
+HEADER_HANDLER = (
+    "export function {name} () {{\n"
+    "  return async (req, res) => {{\n"
+    "    const who = tokens.get({read})\n"
+    "    if (!who) {{\n"
+    "      res.status(401).end()\n"
+    "      return\n"
+    "    }}\n"
+    "    res.json({{ ok: true }})\n"
+    "  }}\n"
+    "}}\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("name", "read"),
+    [
+        ("loadOrders", "req.headers?.authorization"),
+        ("listInvoices", "req?.headers?.['authorization']"),
+        ("showProfile", "req.headers.authorization"),
+    ],
+)
+def test_optional_chaining_reads_the_credential_like_member_access(tmp_path, name, read):
+    write(
+        tmp_path,
+        {
+            "server.ts": express_app("handlers/h", name, "/records"),
+            "handlers/h.ts": HEADER_HANDLER.format(name=name, read=read),
+        },
+    )
+    row = route(ri.build_inventory(tmp_path), "/records")
+    assert row["authn_handler_signal"] == "verified"
+    assert row["authn_signal"] == "present"
+    assert not row["missing_auth_suspect"]

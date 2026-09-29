@@ -62,6 +62,8 @@ except Exception:  # pragma: no cover
     _scan_is_oversize = None
 
 
+_JS_EXTS = {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"}
+
 _SOURCE_EXTS = {
     ".js",
     ".jsx",
@@ -278,13 +280,15 @@ _AUTHN_PATTERNS = re.compile(
     r"authenticate|requireAuth|requireUser|isAuthenticated|ensureAuthenticated|"
     r"passport\.authenticate|verifyToken|"
     r"@?login_required|IsAuthenticated|AuthenticationFilter|"
-    r"\[Authorize\]|@Secured|@PreAuthorize|requires_auth|"
-    r"middleware\(['\"]auth['\"]\)|auth_required|"
+    r"requires_auth|auth_required|"
     # Common Express/Juice-Shop-style gate names (the gate is named for the
     # authZ check but is the de-facto authN boundary — without a session it
     # rejects). Including these fixes the "every route auth=unknown" miss.
     r"isAuthorized|isLoggedIn|ensureLoggedIn|requireLogin|restrictToLoggedIn|denyAll"
     r")\b"
+    # Annotations and attributes start with a non-word character, so they
+    # cannot sit behind the `\b` above. Any `[Authorize]` form requires a user.
+    r"|(?<![\w@])@(?:Secured|PreAuthorize|RolesAllowed)\b|\[Authorize\b"
     # jwt{Auth,Verify,Middleware} only when invoked as a function call or
     # passed as a middleware argument — not when it appears as a TypeScript
     # parameter declaration (e.g. `jwtMiddleware: ExpressMiddleware`).
@@ -297,12 +301,42 @@ _AUTHN_PATTERNS = re.compile(
 # Many Express apps protect routes this way, separately from where the handler
 # is defined. build_inventory collects them globally: `use` (and a wildcard
 # `all`) guards a prefix, any other verb guards only its own method and path.
-_GUARD_MOUNT_RE = re.compile(
-    r"""\b\w+\.(?P<verb>use|all|get|post|put|delete|patch|head|options)\(\s*"""
-    r"""['"](?P<path>/[^'"]*)['"]\s*,[^)]*?\b(?:isAuthorized|isAuthenticated|"""
-    r"""authenticate|requireAuth|requireLogin|ensureLoggedIn|isLoggedIn|"""
-    r"""restrictToLoggedIn|denyAll|passport\.authenticate)\b"""
+# The guard is searched in the call's middleware arguments (`_mount_middleware`),
+# so a guard with nested parentheses such as `rateLimit({..}), requireAuth` counts.
+_MOUNT_HEAD_RE = re.compile(
+    r"""\b\w+\.(?P<verb>use|all|get|post|put|delete|patch|head|options)(?P<open>\()\s*"""
+    r"""['"](?P<path>/[^'"]*)['"]\s*,"""
 )
+_GUARD_NAME_RE = re.compile(
+    r"""\b(?:isAuthorized|isAuthenticated|authenticate|requireAuth|requireLogin|"""
+    r"""ensureLoggedIn|isLoggedIn|restrictToLoggedIn|denyAll|passport\.authenticate)\b"""
+)
+#: A registration call is short; the cap only bounds an unbalanced one.
+_MOUNT_SCOPE_CAP = 4000
+
+
+def _mount_middleware(text: str, head: re.Match) -> str:
+    """The middleware arguments of one guard registration, literals emptied.
+
+    The scan stops at an inline handler (`=>` or a `{` body at argument level),
+    because a check inside the handler body is not a mount guard.
+    """
+    open_paren = head.start("open")
+    scope = _strip_literals(
+        _call_scope(text, open_paren, open_paren, min(len(text), open_paren + _MOUNT_SCOPE_CAP), "//")
+    )
+    depth = 0
+    for i, ch in enumerate(scope):
+        if ch in "([{":
+            if ch == "{" and depth == 1:
+                return scope[:i]
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif depth == 1 and scope.startswith("=>", i):
+            return scope[:i]
+    return scope
+
 
 # HTTP verbs that change state — an unauthenticated one is a missing-auth
 # suspect worth a review warning (not an assertion).
@@ -433,27 +467,27 @@ _MAX_MANIFEST_BYTES = 512_000
 
 _AUTHZ_PATTERNS = re.compile(
     r"(?i)\b("
-    r"requireRole|hasPermission|hasRole|checkPermission|authorize|"
-    r"@PreAuthorize|@Secured|@RolesAllowed|"
+    r"requireRole|hasPermission|hasRole|checkPermission|(?<!\[)authorize|"
     r"@?permission_required|@?has_role|"
-    r"\[Authorize\(Roles|policy|RoleBasedAccess|Casbin|Oso|"
+    r"policy|RoleBasedAccess|Casbin|Oso|"
     r"can\?|ability\.can|enforce\("
     r")\b"
+    # A bare `[Authorize]` only authenticates; roles or a policy authorize.
+    r"|(?<![\w@])@(?:PreAuthorize|Secured|RolesAllowed)\b"
+    r"|\[Authorize\s*\(\s*(?:Roles|Policy)\b"
 )
 
 # Path-prefix middleware mounting that carries an authoriZation guard (role /
 # permission / policy), e.g.
 #   app.use('/api/admin', requireRole('admin'))
 #   router.use('/billing', authorize('billing:write'))
-# Mirrors _GUARD_MOUNT_RE (which only resolves authN) so a centralised authZ
+# Mirrors _GUARD_NAME_RE (which only resolves authN) so a centralised authZ
 # layer mounted away from the handler is not mis-read as "no authz". Without
 # this lift, every route under a central RBAC mount stays authz=unknown and
 # floods the BOLA hypothesis with false positives.
-_AUTHZ_GUARD_MOUNT_RE = re.compile(
-    r"""\b\w+\.(?P<verb>use|all|get|post|put|delete|patch)\(\s*"""
-    r"""['"](?P<path>/[^'"]*)['"]\s*,[^)]*?\b(?:requireRole|hasPermission|hasRole|"""
-    r"""checkPermission|authorize|RolesAllowed|requirePermission|enforce|"""
-    r"""casbin|oso|opa|can|ability)\b"""
+_AUTHZ_GUARD_NAME_RE = re.compile(
+    r"""\b(?:requireRole|hasPermission|hasRole|checkPermission|authorize|RolesAllowed|"""
+    r"""requirePermission|enforce|casbin|oso|opa|can|ability)\b"""
 )
 
 # A route path that addresses a specific object by id — the BOLA/IDOR surface.
@@ -498,7 +532,46 @@ def _detect_management_surface(path: str) -> bool:
     return bool(_MANAGEMENT_PATH_PATTERN.search(path))
 
 
+_STRING_LITERAL_RE = re.compile(r'"(?:[^"\\\n]|\\.)*"|\'(?:[^\'\\\n]|\\.)*\'|`(?:[^`\\]|\\.)*`')
+
+
+def _strip_literals(text: str) -> str:
+    """Empty every string literal: a guard is code, never a path such as `/privacy-policy`."""
+    return _STRING_LITERAL_RE.sub('""', text)
+
+
+def _mask_comments(text: str, line_comment: str) -> str:
+    """Blank comments with spaces, keeping offsets and newlines, so a commented-out
+    registration or guard is not code. String literals are skipped as a unit."""
+    out = list(text)
+    i, n = 0, len(text)
+    block = line_comment == "//"
+    while i < n:
+        ch = text[i]
+        if ch in "'\"`":
+            end = i + 1
+            while end < n and text[end] != ch and (ch == "`" or text[end] != "\n"):
+                end += 2 if text[end] == "\\" else 1
+            i = end + 1
+            continue
+        if text.startswith(line_comment, i):
+            end = text.find("\n", i)
+            end = n if end < 0 else end
+        elif block and text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            end = n if end < 0 else end + 2
+        else:
+            i += 1
+            continue
+        for j in range(i, end):
+            if out[j] != "\n":
+                out[j] = " "
+        i = end
+    return "".join(out)
+
+
 def _scan_auth_text(text: str) -> tuple[str, str]:
+    text = _strip_literals(text)
     authn = "middleware_present" if _AUTHN_PATTERNS.search(text) else "unknown"
     authz = "unknown"
     if _AUTHZ_PATTERNS.search(text):
@@ -564,7 +637,8 @@ _JS_PATHLESS_USE_RE = re.compile(r"""\b(?P<obj>\w+)\s*\.\s*use\s*(?P<open>\()\s*
 
 def _extract_javascript(path: Path, lines: list[str]) -> list[RouteCandidate]:
     out: list[RouteCandidate] = []
-    text = "".join(lines)
+    text = _mask_comments("".join(lines), "//")
+    lines = text.splitlines(keepends=True)
 
     nestjs = bool(re.search(r"@(Controller|Module|Injectable)\s*\(", text)) and bool(_JS_DECORATOR_RE.search(text))
     fastify = "fastify" in text.lower()
@@ -637,7 +711,8 @@ def _extract_javascript(path: Path, lines: list[str]) -> list[RouteCandidate]:
 
 def _extract_python(path: Path, lines: list[str]) -> list[RouteCandidate]:
     out: list[RouteCandidate] = []
-    text = "".join(lines)
+    text = _mask_comments("".join(lines), "#")
+    lines = text.splitlines(keepends=True)
 
     if "fastapi" in text.lower() or "APIRouter" in text:
         framework = "fastapi"
@@ -705,7 +780,8 @@ def _extract_python(path: Path, lines: list[str]) -> list[RouteCandidate]:
 
 def _extract_java(path: Path, lines: list[str]) -> list[RouteCandidate]:
     out: list[RouteCandidate] = []
-    text = "".join(lines)
+    text = _mask_comments("".join(lines), "//")
+    lines = text.splitlines(keepends=True)
 
     if re.search(r"\borg\.springframework\b|@RestController|@SpringBootApplication", text):
         framework = "spring"
@@ -767,6 +843,7 @@ def _extract_java(path: Path, lines: list[str]) -> list[RouteCandidate]:
 
 def _extract_aspnet(path: Path, lines: list[str]) -> list[RouteCandidate]:
     out: list[RouteCandidate] = []
+    lines = _mask_comments("".join(lines), "//").splitlines(keepends=True)
 
     for n, line in enumerate(lines, start=1):
         for m in _ASPNET_MAP_RE.finditer(line):
@@ -899,7 +976,7 @@ def _extract_file(repo_root: Path, path: Path) -> list[RouteCandidate]:
 
     routes: list[RouteCandidate] = []
 
-    if suffix in {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"}:
+    if suffix in _JS_EXTS:
         routes = _extract_javascript(rel, lines)
     elif suffix == ".py":
         routes = _extract_python(rel, lines)
@@ -945,13 +1022,17 @@ def build_inventory(repo_root: Path) -> dict:
         except OSError:
             lines = []
         blob = "".join(lines)
+        if src.suffix.lower() in _JS_EXTS:
+            blob = _mask_comments(blob, "//")
         # Collect path prefixes mounted with an auth guard (cross-file: a guard
-        # in server.ts protects handlers defined in routes/*.ts).
-        for gm in _GUARD_MOUNT_RE.finditer(blob):
-            _record_mount(gm, guarded_prefixes, guarded_exact)
-        # Same, for authoriZation guards (role/permission/policy middleware).
-        for gm in _AUTHZ_GUARD_MOUNT_RE.finditer(blob):
-            _record_mount(gm, authz_guarded_prefixes, authz_guarded_exact)
+        # in server.ts protects handlers defined in routes/*.ts), and the same
+        # for authoriZation guards (role/permission/policy middleware).
+        for gm in _MOUNT_HEAD_RE.finditer(blob):
+            middleware = _mount_middleware(blob, gm)
+            if _GUARD_NAME_RE.search(middleware):
+                _record_mount(gm, guarded_prefixes, guarded_exact)
+            if _AUTHZ_GUARD_NAME_RE.search(middleware):
+                _record_mount(gm, authz_guarded_prefixes, authz_guarded_exact)
         try:
             extracted = _extract_file(repo_root, src)
         except Exception:  # pragma: no cover
