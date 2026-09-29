@@ -5224,6 +5224,13 @@ def _context_v2_stride_wave_action(
         )
         if details:
             _append_event(output_dir, "CONTEXT_V2_STRIDE_RETRY", details)
+    resumed = wave.get("resumed_from_attempt") if isinstance(wave, dict) else None
+    if isinstance(resumed, dict) and resumed:
+        _append_event(
+            output_dir,
+            "CONTEXT_V2_STRIDE_RESUMED",
+            "; ".join(f"{component_id}=attempt-{source}" for component_id, source in sorted(resumed.items())),
+        )
 
     repository_registry = output_dir / ".stride-repository-registry.json"
     run_llm_policy = _run_llm_policy(output_dir)

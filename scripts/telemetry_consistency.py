@@ -125,6 +125,28 @@ def _usage_was_expected(call: dict[str, Any]) -> bool:
     return not call.get("background") or bool(call.get("background_promoted"))
 
 
+#: Failure reasons the controller itself records when it closes a join whose
+#: output it will reject; such a call failing is the outcome, not a disagreement.
+_CONTROLLER_CLOSE_REASONS = {"join_deadline_expired", "settled_incomplete"}
+
+
+def _failure_is_explained(output_dir: Path, call: dict[str, Any]) -> bool:
+    """A failed call whose cause is recorded agrees with a rejected output.
+
+    This check runs before the boundary validates anything, so "dispatched" is
+    all it knows; a declined or turn-limited child, or a join the controller
+    closed, fails for a reason the boundary will confirm. Only an unexplained
+    failure (``subagent_stop:unknown``, the postfix6 shape) is a mismatch.
+    """
+    if call.get("failure_reason") in _CONTROLLER_CLOSE_REASONS:
+        return True
+    job_id = str(call.get("job_id") or "")
+    return bool(job_id) and agent_lifecycle.job_stop_cause(output_dir, job_id) in {
+        agent_lifecycle.STOP_CAUSE_REFUSAL,
+        agent_lifecycle.STOP_CAUSE_TURN_LIMIT,
+    }
+
+
 def _mismatch(call: dict[str, Any], code: str, detail: str) -> dict[str, str]:
     return {
         "job_id": str(call.get("job_id") or "?"),
@@ -194,7 +216,7 @@ def check_returned_calls(output_dir: str | Path) -> list[dict[str, str]]:
             findings.append(
                 _mismatch(call, "lifecycle_not_terminal", "output was accepted while the call is still running")
             )
-        elif state_name == "failed":
+        elif state_name == "failed" and not _failure_is_explained(output_dir, call):
             findings.append(
                 _mismatch(
                     call,

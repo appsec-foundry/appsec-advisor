@@ -39,6 +39,7 @@ import budget_watchdog
 from event_log import format_line
 from jsonschema import Draft202012Validator
 from merge_threats import (
+    _STRIDE_ORDER,
     backfill_threat_attack_steps,
     backfill_threat_boundary_leg,
     backfill_threat_category_id,
@@ -321,6 +322,17 @@ def _canonicalize_discovery_escape_aliases(data: dict[str, Any]) -> bool:
     return changed
 
 
+STRIDE_CATEGORIES = tuple(sorted(_STRIDE_ORDER, key=_STRIDE_ORDER.get))
+
+#: Every gate reason for an attempt whose turns the model declined starts with
+#: this, so retry, abort and declared-gap text all name the same cause.
+REFUSAL_REASON_PREFIX = "model refusal: "
+
+
+def attempt_job_id(component_id: str, attempt: int) -> str:
+    return f"stride:{component_id}:attempt-{attempt}"
+
+
 def attempt_artifact(component_id: str, attempt: int) -> str:
     """Return the output-relative path owned by one STRIDE attempt."""
     if not _COMPONENT_ID_RE.fullmatch(component_id) or not 1 <= attempt <= MAX_ATTEMPTS_CEILING:
@@ -383,6 +395,10 @@ def completion_error(
         return "output root is not an object"
     if data.get("component_id") != component_id:
         return f"component_id mismatch: {data.get('component_id')!r}"
+    if attempt is None and isinstance(data.get("coverage_declined"), dict):
+        # Only `_declare_declined` writes this, after the retry budget ended on
+        # a model refusal; the gap is declared, not incomplete.
+        return None
     if data.get("partial") is not False:
         # Separate "never got past the write-first pre-seed" from "ran and
         # honestly reported partial coverage". Both are identical on the
@@ -391,7 +407,35 @@ def completion_error(
         # never-started component reproduces the same result until its turn
         # budget grows. Conflating them sent the 2026-07-20 run through two
         # identical 40-turn failures into a dead end.
-        if data.get("seed_only") is True:
+        #
+        # The file cannot say WHY the analyzer stopped; the lifecycle can. A
+        # declined turn (run 5a9d03be) left the same pre-seed as a turn-limit
+        # death and was diagnosed as one, so the retry grew a budget that was
+        # never the problem. The cause decides the wording, and `claim` reads
+        # the same cause to turn an exhausted refusal into a declared gap.
+        cause = agent_lifecycle.job_stop_cause(output_dir, attempt_job_id(component_id, attempt)) if attempt else None
+        seed_only = data.get("seed_only") is True
+        if cause == agent_lifecycle.STOP_CAUSE_REFUSAL:
+            return REFUSAL_REASON_PREFIX + (
+                "no STRIDE category was persisted before the declined turn"
+                if seed_only
+                else "categories persisted before the declined turn are kept; the rest are skipped"
+            )
+        reported = data.get("declined_turns")
+        if cause is None and isinstance(reported, int) and not isinstance(reported, bool) and reported > 0:
+            # Without a transcript (headless hosts persist none) the analyzer's
+            # own report is the only sign of a declined turn. It words the
+            # diagnosis but carries no REFUSAL_REASON_PREFIX, so it can never
+            # turn an exhausted budget into a declared gap on its say-so.
+            return f"analyzer reports {reported} declined turn(s) (self-reported, not confirmed by a transcript); " + (
+                "no STRIDE category was persisted" if seed_only else "persisted categories are kept"
+            )
+        if seed_only:
+            if cause and cause != agent_lifecycle.STOP_CAUSE_TURN_LIMIT:
+                return (
+                    f"analyzer stopped ({cause}) before persisting any STRIDE category — "
+                    "the write-first pre-seed is all that landed"
+                )
             return (
                 "analyzer never progressed past the write-first pre-seed (no STRIDE "
                 "category completed) — an unchanged retry will repeat this; the "
@@ -738,6 +782,120 @@ def _overlay_attempt_reasons(current: dict[str, Any], attempt_incomplete: list[d
             row["reason"] = reasons[row["component_id"]]
 
 
+def _declined_by_model(output_dir: Path, plan: dict[str, Any], current: dict[str, Any], component_id: str) -> bool:
+    """Whether the component's last attempt ended on a model refusal.
+
+    The lifecycle is the authority; the joined attempt's gate reason carries the
+    same verdict when the lifecycle state is no longer readable.
+    """
+    job_id = attempt_job_id(component_id, plan["attempts"][component_id])
+    if agent_lifecycle.job_stop_cause(output_dir, job_id) == agent_lifecycle.STOP_CAUSE_REFUSAL:
+        return True
+    return any(
+        row.get("component_id") == component_id and str(row.get("reason") or "").startswith(REFUSAL_REASON_PREFIX)
+        for row in current.get("incomplete") or []
+        if isinstance(row, dict)
+    )
+
+
+def best_persisted_attempt(output_dir: Path, component_id: str, upto: int) -> tuple[int, dict[str, Any]] | None:
+    """The attempt up to ``upto`` that persisted the most STRIDE categories, or ``None``.
+
+    Only a partial attempt that finished at least one category counts, and only
+    after the gate's lossless repair leaves it schema-valid: carrying a broken
+    threat forward would cost the next attempt its gate. Returns a normalized
+    copy (``partial: true``, no ``seed_only``, categories in canonical order);
+    the attempt files themselves are never rewritten.
+    """
+    best: tuple[int, dict[str, Any]] | None = None
+    for attempt in range(1, upto + 1):
+        try:
+            data = json.loads((output_dir / attempt_artifact(component_id, attempt)).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if (
+            not isinstance(data, dict)
+            or data.get("component_id") != component_id
+            or data.get("seed_only") is True
+            or data.get("partial") is not True
+            or not isinstance(data.get("threats"), list)
+            or not isinstance(data.get("skipped_categories"), list)
+        ):
+            continue
+        skipped = [category for category in STRIDE_CATEGORIES if category in data["skipped_categories"]]
+        if len(skipped) == len(STRIDE_CATEGORIES):
+            continue
+        data = copy.deepcopy(data)
+        data["skipped_categories"] = skipped
+        _repair_in_place(output_dir, component_id, data, log_pruned=False)
+        if _gate_validation_errors(output_dir, data):
+            continue
+        if best is None or len(skipped) <= len(best[1]["skipped_categories"]):
+            best = (attempt, data)
+    return best
+
+
+def seed_resumed_attempt(output_dir: Path, component_id: str, attempt: int) -> int | None:
+    """Pre-write attempt ``attempt`` from the best earlier partial; return its source attempt.
+
+    A retry used to start from a fresh pre-seed, so categories an earlier
+    attempt had persisted before a declined or cut-off turn were analysed
+    again — and lost again on the next decline. The retry now continues from
+    them: the analyzer contract reads an existing file carrying
+    ``resumed_from_attempt`` and works only its ``skipped_categories``. A
+    complete-but-rejected attempt is not partial and goes to ``rejection_brief``
+    instead, so the two retry forms never overlap.
+    """
+    found = best_persisted_attempt(output_dir, component_id, attempt - 1)
+    if found is None:
+        return None
+    source, data = found
+    data["resumed_from_attempt"] = source
+    data["started_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    target = output_dir / attempt_artifact(component_id, attempt)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write_json(target, data)
+    return source
+
+
+def _declare_declined(output_dir: Path, component_id: str, attempts: int) -> None:
+    """Publish the best persisted attempt of a declined component as a declared gap.
+
+    Keeps the categories any attempt persisted, provided they still pass the
+    gate's schema check; everything else is listed as not covered. The report
+    reads ``coverage_declined`` and says so, so an empty category is never
+    presented as a clean result.
+    """
+    found = best_persisted_attempt(output_dir, component_id, attempts)
+    if found is None:
+        best = {
+            "component_id": component_id,
+            "component_name": component_id,
+            "analyzed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "partial": True,
+            "threats": [],
+            "skipped_categories": list(STRIDE_CATEGORIES),
+        }
+    else:
+        best = found[1]
+    skipped = best["skipped_categories"]
+    best["coverage_declined"] = {"reason": "model_refusal", "attempts": attempts, "categories": skipped}
+    _atomic_write_json(output_dir / f".stride-{component_id}.json", best)
+    try:
+        with (output_dir / ".agent-run.log").open("a", encoding="utf-8") as handle:
+            handle.write(
+                format_line(
+                    "STRIDE_COVERAGE_DECLINED",
+                    f"{component_id}: model declined the analysis in {attempts} attempt(s); "
+                    f"not covered: {', '.join(skipped) or 'none'}",
+                    level="WARN ",
+                    component="stride-waves",
+                )
+            )
+    except OSError:
+        pass
+
+
 def claim(plan: dict[str, Any], manifest: dict[str, Any], output_dir: Path) -> tuple[dict[str, Any], bool]:
     """Reserve the next incomplete wave and persist per-component attempts.
 
@@ -775,6 +933,16 @@ def claim(plan: dict[str, Any], manifest: dict[str, Any], output_dir: Path) -> t
         for component in next_wave["components"]
         if plan["attempts"][component["component_id"]] >= budget
     ]
+    declined = [component_id for component_id in blocked if _declined_by_model(output_dir, plan, current, component_id)]
+    if declined:
+        # A declined analysis stays declined however often it is retried, and
+        # aborting discards every other component's paid-for analysis. It
+        # becomes a declared coverage gap the report states; any other cause of
+        # an exhausted budget still aborts below.
+        for component_id in declined:
+            _declare_declined(output_dir, component_id, plan["attempts"][component_id])
+        payload, _ = claim(plan, manifest, output_dir)
+        return payload, True
     if blocked:
         return {
             "status": "blocked",
@@ -792,6 +960,7 @@ def claim(plan: dict[str, Any], manifest: dict[str, Any], output_dir: Path) -> t
     }
     claimed_components: list[dict[str, Any]] = []
     retry_reasons: dict[str, str] = {}
+    resumed: dict[str, int] = {}
     for component in next_wave["components"]:
         component_id = component["component_id"]
         if plan["attempts"][component_id] > 0:
@@ -807,6 +976,9 @@ def claim(plan: dict[str, Any], manifest: dict[str, Any], output_dir: Path) -> t
         # byte attempt 1). The escalation returns a copy; see _escalated_component.
         if plan["attempts"][component_id] > 1:
             component = _escalated_component(component)
+            source = seed_resumed_attempt(output_dir, component_id, plan["attempts"][component_id])
+            if source is not None:
+                resumed[component_id] = source
         claimed_components.append(component)
     next_wave["components"] = claimed_components
     next_wave["attempts"] = {
@@ -818,6 +990,8 @@ def claim(plan: dict[str, Any], manifest: dict[str, Any], output_dir: Path) -> t
     }
     if retry_reasons:
         next_wave["retry_reasons"] = retry_reasons
+    if resumed:
+        next_wave["resumed_from_attempt"] = resumed
     return {
         "status": "claimed",
         "complete": current["complete"],
@@ -900,8 +1074,21 @@ def wait_status(
     started_at = min(starts)
     elapsed = max(0, current - started_at)
     deadline = wave_deadline_seconds(manifest, component_ids)
+    incomplete_jobs = [
+        attempt_job_id(row["component_id"], plan["active_claim"]["attempts"][row["component_id"]]) for row in incomplete
+    ]
+    # The deadline only frees a wave that never lands (OR-17). When every
+    # incomplete component's current-attempt call has stopped, nothing more
+    # can land, and waiting out the deadline idled 25+ minutes per attempt on
+    # run 5a9d03be. A call that was never registered keeps the wave pending.
+    if elapsed >= deadline:
+        wave_state = "expired"
+    elif agent_lifecycle.jobs_settled(output_dir, incomplete_jobs, now=current):
+        wave_state = "settled"
+    else:
+        wave_state = "pending"
     result = {
-        "status": "expired" if elapsed >= deadline else "pending",
+        "status": wave_state,
         "component_ids": component_ids,
         "incomplete": incomplete,
         "wait_started_at": started_at,
@@ -909,15 +1096,12 @@ def wait_status(
         "deadline_seconds": deadline,
         "remaining_seconds": max(0, deadline - elapsed),
     }
-    if result["status"] == "expired":
+    if wave_state != "pending":
         _close_agent_jobs(
             output_dir,
-            [
-                f"stride:{row['component_id']}:attempt-{plan['active_claim']['attempts'][row['component_id']]}"
-                for row in incomplete
-            ],
+            incomplete_jobs,
             success=False,
-            reason="join_deadline_expired",
+            reason="join_deadline_expired" if wave_state == "expired" else "settled_incomplete",
         )
     return result
 
@@ -1017,7 +1201,7 @@ def main(argv: list[str] | None = None) -> int:
                 payload, changed = claim(plan, manifest, output_dir)
                 if changed:
                     _atomic_write_json(plan_path, plan)
-                elif payload["status"] == "blocked":
+                if payload["status"] == "blocked":
                     print(json.dumps(payload, indent=2))
                     reasons = {
                         row["component_id"]: row["reason"]

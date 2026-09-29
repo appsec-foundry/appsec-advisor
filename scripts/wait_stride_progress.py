@@ -55,7 +55,7 @@ def _wave_status(output_dir: Path, component_ids: list[str]) -> str | None:
     except (OSError, ValueError, stride_dispatch_waves.WavePlanError) as exc:
         print(f"invalid STRIDE wave state: {exc}", file=sys.stderr)
         return "invalid"
-    return status if status in {"complete", "pending", "expired"} else "invalid"
+    return status if status in {"complete", "pending", "settled", "expired"} else "invalid"
 
 
 def _live_wave_calls(output_dir: Path, component_ids: list[str]) -> list[dict]:
@@ -133,6 +133,14 @@ def main(argv: list[str] | None = None) -> int:
             if last_wave_status == "expired":
                 print(
                     "BASH_WARN STRIDE wave join deadline reached — returning to controller retry ownership",
+                    file=sys.stderr,
+                )
+                return 1
+            if last_wave_status == "settled":
+                # Every analyzer of this attempt has stopped and its output still
+                # fails the gate; waiting out the deadline cannot change that.
+                print(
+                    "BASH_WARN STRIDE wave settled with incomplete components — returning to controller retry ownership",
                     file=sys.stderr,
                 )
                 return 1

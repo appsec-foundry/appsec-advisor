@@ -84,6 +84,10 @@ def main(argv: list[str] | None = None) -> int:
             reported = complete
         if not pending:
             return 0
+        # Verifiers that all stopped cannot finish their files later; the
+        # remaining rounds would only idle before the same end-of-slice exit.
+        if agent_lifecycle.jobs_settled(args.output_dir, [f"phase10c-abuse-{candidate}" for candidate in pending]):
+            break
         if round_no in {12, 24, 36}:
             print("BASH_WARN abuse verifier polling slow — still waiting", file=sys.stderr)
         if round_no < args.rounds:
@@ -100,11 +104,19 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return PENDING_EXIT_CODE
+    settled = agent_lifecycle.jobs_settled(args.output_dir, sorted(pending_jobs))
     print(
-        "BASH_WARN abuse verifier poll cap reached; unfinished: " + ", ".join(pending),
+        (
+            "BASH_WARN abuse verifiers stopped without finalizing: "
+            if settled
+            else "BASH_WARN abuse verifier poll cap reached; unfinished: "
+        )
+        + ", ".join(pending),
         file=sys.stderr,
     )
-    _close_jobs(args.output_dir, pending, success=False, reason="join_deadline_expired")
+    _close_jobs(
+        args.output_dir, pending, success=False, reason="settled_incomplete" if settled else "join_deadline_expired"
+    )
     return 1
 
 

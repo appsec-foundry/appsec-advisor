@@ -86,12 +86,14 @@ suppress bundle evidence, citations, deterministic signals, receipts, or
 another dispatch job.
 When the component plan sets `analysis.sampling_required` to `true`, sample
 entry, auth, data, configuration, and error paths. Batch 8–12 slices and
-reserve two turns for writes.
+reserve one write turn per category.
 
 ## Write-first guarantee
 
-At the end of context loading and before source reads, write a schema-valid
-`$STRIDE_OUTPUT_PATH` with:
+At the end of context loading, Read `$STRIDE_OUTPUT_PATH`. If it exists with
+`resumed_from_attempt`, it is this retry's start: keep its threats and local
+IDs, analyze only its `skipped_categories`, and write no pre-seed. Otherwise,
+before source reads, write a schema-valid `$STRIDE_OUTPUT_PATH` with:
 
 ```json
 {
@@ -110,10 +112,13 @@ At the end of context loading and before source reads, write a schema-valid
 }
 ```
 
-Overwrite it after every completed category. Clear `seed_only` on the first
-overwrite containing real analysis. If budget pressure stops the pass, retain
-`partial:true` and list only categories never started. A missing file causes a
-costly retry; a valid partial file preserves completed work.
+Overwrite it after every completed category, clearing `seed_only` on the
+first; a budget stop keeps `partial:true` with only unstarted categories
+skipped. `log_event.py step-end "category complete: <Category>"` is refused
+until the file no longer skips that category: write, then log.
+
+A declined turn persists nothing. Do not resend its content: record
+`declined_turns` (count) in the file, keep that category skipped, and continue.
 
 ## Prior, actor, and boundary handling
 
@@ -168,7 +173,7 @@ For identity spoofing, cite the executable consumer that trusts the attacker-con
 
 All six are mandatory. `analysis.estimated_threat_count: low` or
 `analysis.depth: light` changes pacing only: skip optional verification,
-finish the categories within six reasoning turns, and reserve two for writes.
+finish the categories within six reasoning turns, each followed by its write.
 `max_threats_per_category` trims only lower-ranked Medium and Low findings;
 it never removes a Critical or High finding, a category, or a mandatory
 evidence-backed finding.
@@ -236,10 +241,10 @@ v4 derivation in `agents/shared/cvss-metrics.md`; otherwise write
 `cvss_v4:null`. Architectural, requirements, and coverage-gap findings remain
 unscored.
 
-## Final output
+## Output shape
 
-Overwrite the seed with the version-1 `schemas/stride.schema.yaml` shape and
-these exact threat fields:
+Every category write uses the version-1 `schemas/stride.schema.yaml` shape and
+these exact threat fields; the last one sets `partial:false`:
 
 ```json
 {

@@ -71,7 +71,7 @@ from _boundary_criticality import tier_of as _boundary_tier_of  # noqa: E402
 from _severity_policy import normalize_risks  # noqa: E402
 from load_business_context import project_answered_questions  # noqa: E402
 from merge_threats import normalize_cvss_v4 as _normalize_cvss_v4  # noqa: E402
-from stride_outputs import is_stride_output  # noqa: E402
+from stride_outputs import is_stride_output, stride_output_files  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _path_guard import run_path_arg  # noqa: E402
@@ -903,7 +903,29 @@ def reconcile_incremental_threats(
 # ─── Field builders ───────────────────────────────────────────────────────
 
 
-def build_component_selection(sel: dict | None, components: list) -> dict | None:
+def declined_components(output_dir: Path) -> dict[str, dict]:
+    """``coverage_declined`` of every canonical STRIDE output, keyed by component id.
+
+    The wave gate writes it when the model declined a component's analysis
+    through the whole retry budget; the report states it as a coverage gap.
+    """
+    out: dict[str, dict] = {}
+    for path in stride_output_files(Path(output_dir)):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, dict) or not isinstance(data.get("coverage_declined"), dict):
+            continue
+        cid = data.get("component_id")
+        if isinstance(cid, str) and cid:
+            out[cid] = data["coverage_declined"]
+    return out
+
+
+def build_component_selection(
+    sel: dict | None, components: list, declined: dict[str, dict] | None = None
+) -> dict | None:
     """Summarise `.stride-selection.json` into a reader-facing scope block.
 
     Returns ``{mode, analyzed, total, selected:[{id,name,reasons}],
@@ -930,8 +952,13 @@ def build_component_selection(sel: dict | None, components: list) -> dict | None
             # say screened instead of implying a full STRIDE pass.
             if e.get("analysis_depth"):
                 row["analysis_depth"] = e["analysis_depth"]
+            if cid in (declined or {}):
+                row["coverage_declined"] = declined[cid]
             return row
-        return {"id": e, "name": _name(e), "reasons": []}
+        row = {"id": e, "name": _name(e), "reasons": []}
+        if e in (declined or {}):
+            row["coverage_declined"] = declined[e]
+        return row
 
     def _norm_exc(e: object) -> dict:
         if isinstance(e, dict):
@@ -3098,7 +3125,9 @@ def main() -> int:
 
     # Scope transparency: surface which components received full STRIDE analysis
     # and why, and which were not analyzed and why (from .stride-selection.json).
-    component_selection = build_component_selection(_load_json(od / ".stride-selection.json"), components)
+    component_selection = build_component_selection(
+        _load_json(od / ".stride-selection.json"), components, declined_components(od)
+    )
     if component_selection:
         meta["component_selection"] = component_selection
     boundary_selection = _load_json(od / ".dispatch-context" / "trust-boundary-selection.json")

@@ -108,6 +108,8 @@ def _strip_ids(detail: str, *keys: str) -> str:
 _REASON_PROSE = {
     "outer_session_terminal": "the run ended while it was still working",
     "join_deadline_expired": "did not return before the wave's join window closed",
+    "settled_incomplete": "stopped without an output the gate accepts",
+    "subagent_stop:refusal": "the model declined its turn",
     "superseded_without_return": "replaced by a newer dispatch of the same job",
     "agent_tool_error": "the Agent tool returned an error",
     "terminal_before_spawn": "its end arrived before its start (hook events out of order)",

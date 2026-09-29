@@ -2860,6 +2860,40 @@ def _stop_reason_from_transcript(transcript_path: str) -> str:
     return last
 
 
+def _lossy_turns_from_transcript(transcript_path: str) -> tuple[int, int]:
+    """Count assistant turns anywhere in the transcript that lost their output.
+
+    Returns ``(refused, truncated)`` for ``stop_reason`` ``refusal`` and
+    ``max_tokens``. The terminal reason above reads only the last turn, and a
+    child whose turn was declined usually hands back afterwards and ends on
+    ``end_turn``, so a declined final write was invisible (run 5a9d03be).
+    """
+    refused = truncated = 0
+    if not transcript_path:
+        return 0, 0
+    try:
+        with open(transcript_path, encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if not line.startswith("{"):
+                    continue
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                msg = obj.get("message") or obj
+                if not isinstance(msg, dict) or msg.get("role") != "assistant":
+                    continue
+                reason = msg.get("stop_reason")
+                if reason == "refusal":
+                    refused += 1
+                elif reason == "max_tokens":
+                    truncated += 1
+    except Exception:
+        return 0, 0
+    return refused, truncated
+
+
 def _tool_uses_from_transcript(transcript_path: str) -> int:
     """Count distinct tool-use blocks in one agent transcript."""
     if not transcript_path:
@@ -3084,6 +3118,17 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
     runtime_call = (
         agent_lifecycle.call_by_runtime_agent_id(_output_dir(), runtime_agent_id) if runtime_agent_id else None
     )
+    if runtime_call is not None and transcript:
+        try:
+            refused, truncated = _lossy_turns_from_transcript(transcript)
+            agent_lifecycle.append_events(
+                _output_dir(),
+                agent_lifecycle.record_lossy_turns(
+                    _output_dir(), runtime_call["agent_call_id"], refused=refused, truncated=truncated
+                ),
+            )
+        except agent_lifecycle.LifecycleError:
+            pass
     if runtime_call is not None:
         try:
             from budget_watchdog import format_detail, observe_tool_uses
