@@ -728,6 +728,23 @@ requirements:
       - tests/test_export_threat_dragon.py::test_traceability_is_folded_into_bounded_text
       - tests/test_validate_intermediate.py::test_export_trace_cross_references_fail_closed
 
+  REQ-RPT-007:
+    applies_to:
+      - scripts/figure1_dfd.py
+      - docs/images/figure1-example.svg
+    decisions:
+      - RA-26
+    documents:
+      - specs/changes/figure1-stays-readable-at-page-width/proposal.md
+    coverage: direct
+    guards:
+      - tests/test_figure1_dfd.py::test_gaps_without_boundary_chips_are_sized_by_their_routes_and_labels
+      - tests/test_figure1_dfd.py::test_a_longer_payload_label_widens_only_its_own_gap
+      - tests/test_figure1_dfd.py::test_a_gap_with_boundary_chips_keeps_the_chip_reserve
+      - tests/test_figure1_dfd.py::test_a_gap_that_would_displace_a_payload_label_keeps_the_full_reserve
+      - tests/test_figure1_dfd.py::test_overview_of_neutral_topologies_stays_within_the_width_budget
+      - tests/test_figure1_dfd.py::test_readme_example_is_legible_at_page_width_and_names_the_scanned_project
+
   REQ-USE-001:
     applies_to:
       - skills/ask-threat-model/**

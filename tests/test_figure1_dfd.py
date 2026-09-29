@@ -11,8 +11,10 @@ placement rules.
 from __future__ import annotations
 
 import copy
+import json
 import re
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import figure1_dfd as F
 import pytest
@@ -3775,3 +3777,32 @@ def test_a_gap_that_would_displace_a_payload_label_keeps_the_full_reserve(store,
     assert offsets[0] == F.B_OFF
     assert _gap_label_notes(state) == []
     assert F.check_diagram(model, paths, taxonomy, detail=True)[1] == []
+
+
+# RA-26: the overview of the neutral topologies measured 1000-1100 wide after gaps were sized
+# to their content and 1184-1274 before; the budget fails a return to the fixed reserve.
+OVERVIEW_WIDTH_BUDGET = 1120
+# README rendering width and the smallest legible size of the payload font at that width.
+README_WIDTH, README_MIN_FONT_PX = 880, 6.0
+REPO = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize("app", [1, 3, 9])
+@pytest.mark.parametrize("stores", [0, 2])
+@pytest.mark.parametrize("xss", [False, True])
+@pytest.mark.parametrize("intra", [False, True])
+def test_overview_of_neutral_topologies_stays_within_the_width_budget(app, stores, xss, intra):
+    model, paths, taxonomy = _model(app=app, stores=stores, xss=xss, intra=intra)
+    svg, problems = F.check_diagram(model, paths, taxonomy, detail=False)
+    assert problems == []
+    assert float(ET.fromstring(svg).get("width")) <= OVERVIEW_WIDTH_BUDGET
+
+
+def test_readme_example_is_legible_at_page_width_and_names_the_scanned_project():
+    root = ET.parse(REPO / "docs/images/figure1-example.svg").getroot()
+    width = float(root.get("width"))
+    assert width.is_integer()
+    assert F.FS * README_WIDTH / width >= README_MIN_FONT_PX
+    plugin = json.loads((REPO / ".claude-plugin/plugin.json").read_text(encoding="utf-8"))["name"]
+    header = next(t.text for t in root.iter(f"{_SVG}text") if t.text and " components · " in t.text)
+    assert re.sub(r"[^a-z0-9]", "", plugin.lower()) not in re.sub(r"[^a-z0-9]", "", header.lower())

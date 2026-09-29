@@ -1003,7 +1003,7 @@ SOURCE_TESTS = {
     """),
     "docs/harvester.md": _tests("requirements_verification"),
     "docs/headless-mode.md": _tests("requirements_verification"),
-    "docs/images/figure1-example.svg": _tests("requirements_verification"),
+    "docs/images/figure1-example.svg": _tests("figure1_dfd requirements_verification"),
     "docs/internal/contracts/orchestration-actions.md": _tests("requirements_verification"),
     "docs/internal/contracts/schema-invariants.md": _tests("""
         report_plugin_issue

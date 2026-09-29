@@ -147,6 +147,10 @@ and a way to verify the result without inventing source examples.
 
 The canonical YAML records abuse-case outcomes, the use and provenance of business context without copying its prose, and the complete configured requirements assessment. Narrower exports retain applicable requirement, abuse-case, and business-context traces as native fields or bounded text and identify semantics they cannot represent.
 
+### REQ-RPT-007 — Figure 1 stays readable at page width
+
+Figure 1 shows each column only as wide as its content needs, so its labels stay legible when the figure is scaled to the width of a report page or README. Making the figure more compact never removes a data-flow label from the drawing.
+
 ## Quick security score
 
 ### REQ-SCO-001 — A comparable score requires complete scanner evidence
