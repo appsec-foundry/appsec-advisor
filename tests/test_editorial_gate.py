@@ -1,11 +1,12 @@
 """Accepted QA observations survive editorial edits; new defects do not."""
 
 import json
+import os
 from pathlib import Path
 
-import build_editorial_context as builder
-import editorial_gate as gate
+import contexts.build_editorial_context as builder
 import pytest
+import validators.editorial_gate as gate
 import yaml
 
 
@@ -126,12 +127,12 @@ def test_missing_stage3_receipt_is_blocking(run):
 def test_runtime_replaces_editorial_dispatch_with_correction_preservation_gate():
     root = Path(__file__).resolve().parents[1]
     runtime = (root / "skills/create-threat-model/SKILL-thin-stage4.md").read_text()
-    assert "editorial_gate.py" not in runtime
-    assert "apply_editorial_plan.py" not in runtime
+    assert "validators/editorial_gate.py" not in runtime
+    assert "repairs/apply_editorial_plan.py" not in runtime
     assert (
-        runtime.index("validate_intermediate.py")
+        runtime.index("validators/validate_intermediate.py")
         < runtime.index("unmasked_secrets")
-        < runtime.index("architect_review_runtime.py")
+        < runtime.index("analyzers/architect_review_runtime.py")
     )
 
 
@@ -156,5 +157,9 @@ def test_close_rejects_a_fragment_changed_after_the_gates(run, monkeypatch):
     (run / ".qa-secret-scan.json").write_text(json.dumps({"check": "unmasked_secrets", "ok": 1, "issues": []}))
     fragments = run / ".fragments"
     fragments.mkdir()
-    (fragments / "security-architecture.md").write_text("Later fragment mutation.")
+    fragment = fragments / "security-architecture.md"
+    fragment.write_text("Later fragment mutation.")
+    # Consecutive writes can share one filesystem timestamp; this case needs a later edit.
+    later = fragment.stat().st_mtime_ns + 1_000_000_000
+    os.utime(fragment, ns=(later, later))
     assert gate.main(_argv("close", run)) == 2

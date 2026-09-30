@@ -18,7 +18,7 @@
 2026-08-16T07:10:39Z  [aa40ceb8]  INFO   stride-analyzer-v2  AGENT_USAGE         agent_call_id=toolu_ci  component_id=ci-cd-pipeline  attempt=1  in=33  out=17449  cache_write=90242  cache_read=1272250  tool_uses=22
 2026-08-16T07:13:50Z  [aa40ceb8]  INFO   stride-analyzer-v2  AGENT_USAGE         agent_call_id=toolu_api  component_id=api-server  attempt=1  in=5023  out=35335  cache_write=172509  cache_read=2211434  tool_uses=36
 2026-08-16T07:16:20Z  [aa40ceb8]  INFO   stride-analyzer-v2  AGENT_USAGE         agent_call_id=toolu_wf  component_id=web-frontend  attempt=1  in=48  out=67284  cache_write=133025  cache_read=2126193  tool_uses=33
-2026-08-16T07:19:38Z  [--------]  WARN   skill-controller    RUN_ABORTED         validate_dispatch_manifest.py failed with exit 1
+2026-08-16T07:19:38Z  [--------]  WARN   skill-controller    RUN_ABORTED         validators/validate_dispatch_manifest.py failed with exit 1
 2026-08-16T07:20:39Z  [--------]  INFO   shared-session      SESSION_STOP        stop_reason=end_turn  in=165  out=81909  cache_write=348672  cache_read=8351764  cost=$5.0422
 2026-08-16T07:11:02Z  [aa40ceb8]  WARN   BUDGET_WARN         agent=stride-analyzer-v2  agent_call_id=toolu_wf  turns=26/31  pct=83%
 2026-08-16T07:14:41Z  [aa40ceb8]  WARN   BUDGET_CRITICAL     agent=ms-renderer  agent_call_id=toolu_ms  turns=29/32  pct=90%

@@ -1,4 +1,4 @@
-"""Tests for scripts/match_abuse_cases.py — the deterministic matcher.
+"""Tests for scripts/model/match_abuse_cases.py — the deterministic matcher.
 
 Covers sink/control matching, scope-qualifier gating, and the structural
 verdict (candidate / partial_candidate / not_applicable).
@@ -15,15 +15,15 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "match_abuse_cases.py"
+SCRIPT = REPO_ROOT / "scripts" / "model/match_abuse_cases.py"
 
 
 def _load():
-    if "match_abuse_cases" in sys.modules:
-        return sys.modules["match_abuse_cases"]
-    spec = importlib.util.spec_from_file_location("match_abuse_cases", SCRIPT)
+    if "model.match_abuse_cases" in sys.modules:
+        return sys.modules["model.match_abuse_cases"]
+    spec = importlib.util.spec_from_file_location("model.match_abuse_cases", SCRIPT)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["match_abuse_cases"] = mod
+    sys.modules["model.match_abuse_cases"] = mod
     assert spec.loader is not None
     spec.loader.exec_module(mod)
     return mod

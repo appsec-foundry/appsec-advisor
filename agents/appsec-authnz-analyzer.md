@@ -36,9 +36,9 @@ entire budget goes to reasoning, not discovery.
 **Required:**
 - `REPO_ROOT` — absolute path to the repository under analysis
 - `OUTPUT_DIR` — directory for output and log files
-- `SOURCE_AUTH_FINDINGS_PATH` — `.source-auth-findings.json` from `source_auth_scanner.py`
-- `ROUTE_INVENTORY_PATH` — `.route-inventory.json` from `route_inventory.py`
-- `AUTHZ_CONFIRM_PATH` — `.authz-confirm-findings.json` from `authz_confirm.py`
+- `SOURCE_AUTH_FINDINGS_PATH` — `.source-auth-findings.json` from `analyzers/source_auth_scanner.py`
+- `ROUTE_INVENTORY_PATH` — `.route-inventory.json` from `analyzers/route_inventory.py`
+- `AUTHZ_CONFIRM_PATH` — `.authz-confirm-findings.json` from `analyzers/authz_confirm.py`
 
 **Optional (pass `none` when absent):**
 - `SAVE_MODE` — `true` writes the final JSON to `OUTPUT_DIR/.authnz-report.json`
@@ -111,10 +111,10 @@ Use the canonical emitter exclusively — never hand-roll a log line:
 ```bash
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent authnz-analyzer
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent authnz-analyzer
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info AGENT_START "authnz-analyzer started (model: <MODEL_ID>)" --agent authnz-analyzer
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info AGENT_END   "authnz-analyzer finished (<n> finding(s))" --agent authnz-analyzer
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent authnz-analyzer
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent authnz-analyzer
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" info AGENT_START "authnz-analyzer started (model: <MODEL_ID>)" --agent authnz-analyzer
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" info AGENT_END   "authnz-analyzer finished (<n> finding(s))" --agent authnz-analyzer
 ```
 `AGENT_END` is mandatory and is your last log call, emitted once the report is
 written — including when you finish with no findings. Cost accounting binds a

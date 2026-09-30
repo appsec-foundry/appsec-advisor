@@ -7,10 +7,10 @@ Target run reference: juice-shop `docs/security/threat-model.yaml`.
 
 | Rule | Status | Files |
 |---|---|---|
-| A — Consolidation | ✅ | `data/consolidation-groups.yaml`, `schemas/consolidation-groups.schema.yaml`, `merge_threats.py` (`_load_consolidation_groups`, `_match_consolidation_group`, `_consolidate_by_group`, wired in `cmd_collect`) |
-| B — Mitigation dedup | ✅ | `build_threat_model_yaml.py` (`dedupe_mitigation_controls`, called after `apply_mitigation_overrides`) |
-| C1/C2 — Instance delta | ✅ | `build_threat_model_yaml.py` (`_instance_fingerprints`, changelog `instance_fingerprints`/`added.instances`/`resolved.instances`) |
-| C4 — Renderer | ✅ (per-instance severity dots) | `compose_threat_model.py` (instances_card) |
+| A — Consolidation | ✅ | `data/consolidation-groups.yaml`, `schemas/consolidation-groups.schema.yaml`, `model/merge_threats.py` (`_load_consolidation_groups`, `_match_consolidation_group`, `_consolidate_by_group`, wired in `cmd_collect`) |
+| B — Mitigation dedup | ✅ | `model/build_threat_model_yaml.py` (`dedupe_mitigation_controls`, called after `apply_mitigation_overrides`) |
+| C1/C2 — Instance delta | ✅ | `model/build_threat_model_yaml.py` (`_instance_fingerprints`, changelog `instance_fingerprints`/`added.instances`/`resolved.instances`) |
+| C4 — Renderer | ✅ (per-instance severity dots) | `renderers/compose_threat_model.py` (instances_card) |
 | C3 — Affirmation-path reconciler | ⏸ deliberately deferred | see below |
 
 **C3 deferred rationale:** The self-contained instance-fingerprint diff (C2) already
@@ -123,7 +123,7 @@ F-004 (798) / F-001 (922) are outside the jwt-verification CWE set → stay sepa
 Validates the catalog (unique `id`, valid regex, known `scope` enum). Wired into
 the pipeline's existing schema check (analogous to `source-auth-findings.schema.yaml`).
 
-### A3. Group resolver — NEW in `scripts/merge_threats.py`
+### A3. Group resolver — NEW in `scripts/model/merge_threats.py`
 
 ```python
 def _load_consolidation_groups() -> list[dict]: ...   # reads data/consolidation-groups.yaml (cache)
@@ -177,7 +177,7 @@ and `evidence.file/line` — sufficient for the resolver. **No** mandatory field
 
 ## Rule B — Mitigation control dedup
 
-### B1. Dedup in `derive_mitigations` (`build_threat_model_yaml.py:634`)
+### B1. Dedup in `derive_mitigations` (`model/build_threat_model_yaml.py:634`)
 
 Today: 1 entry per **M-ID string**; the same control text under M-004/M-022 stays duplicated.
 New: after building the `by_mid` table, a dedup pass that merges via `_mitigation_fp(m)`
@@ -206,7 +206,7 @@ Today: everything is finding-granular (`_threat_fingerprint :153`, `_fp_str :162
 `:1194-1196`, reconciler `:278-343`). A consolidated 17-member group would be ONE ID — without C
 you lose the per-location resolvability that exists today.
 
-### C1. Per-instance fingerprint — NEW `build_threat_model_yaml.py`
+### C1. Per-instance fingerprint — NEW `model/build_threat_model_yaml.py`
 
 ```python
 def _instance_fingerprints(t: dict) -> list[str]:
@@ -236,7 +236,7 @@ def _instance_fingerprints(t: dict) -> list[str]:
 - The `resolved_prior_findings` path (`merge_threats.py:1219`) optionally extended by an
   `instance_ref` so a single affirmed fix closes an instance rather than the whole finding.
 
-### C4. Renderer (`compose_threat_model.py:12918-12938`)
+### C4. Renderer (`renderers/compose_threat_model.py:12918-12938`)
 - `instances_card` exists (cap 8 + "+N more"). Extend: per instance a status marker
   (✅ fixed / 🆕 new / open) + severity dot, fed from C2/C3.
 - Ensure consolidated findings run through this path (the check is already

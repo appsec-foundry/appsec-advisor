@@ -11,7 +11,7 @@ effective routing **visible** — especially warn when a scan silently inherits 
 
 ## Key facts the executor needs (verified this session)
 
-**Model routing today** (`scripts/resolve_config.py`):
+**Model routing today** (`scripts/runtime/resolve_config.py`):
 - `MODEL_MATRIX` pins **stride / triage / merger**. Under `sonnet-economy` (default for quick/standard)
   they are pinned to explicit `claude-sonnet-4-6` (a 2026-07-04 uncommitted change — see Prerequisite).
 - `EXTENDED_MODEL_MATRIX` routes context_resolver/recon_scanner/config_scanner → `haiku`;
@@ -55,7 +55,7 @@ session model. Must be fail-safe (internal artifact; silent-skip on miss, never 
 ## Plan (grouped, prioritized)
 
 ### A — Transparency & session detection (build first; high value, low risk, independent)
-1. `scripts/detect_session_model.py` — glob `~/.claude/projects/*/<sid>.jsonl`, return last assistant
+1. `scripts/analyzers/detect_session_model.py` — glob `~/.claude/projects/*/<sid>.jsonl`, return last assistant
    model id; always exit 0; empty on miss.
 2. Explicit **warning at skill start** (Configuration Resolution phase) when the detected session model
    is a Sonnet-4.6 id.
@@ -97,12 +97,12 @@ session model. Must be fail-safe (internal artifact; silent-skip on miss, never 
 - ❌ Touching STRIDE: stays 4.6 (win/win), already pinned.
 
 ## Contract touchpoints (per AGENTS.md — bidirectional)
-Each knob: `resolve_config.py` (matrix + arg-parse + env map) + `SKILL-impl.md` (resolution +
+Each knob: `runtime/resolve_config.py` (matrix + arg-parse + env map) + `SKILL-impl.md` (resolution +
 dispatch `model:` wiring + config summary) + tests (`test_resolve_config`, `test_agent_definitions`)
 + `data/required-permissions.yaml` + AGENTS.md Editing-Guidance row. Run targeted subset + `make lint`.
 
 ## Prerequisite
-`scripts/resolve_config.py` currently has UNCOMMITTED changes (the 4.6 pin for stride/triage/merger,
+`scripts/runtime/resolve_config.py` currently has UNCOMMITTED changes (the 4.6 pin for stride/triage/merger,
 citing this A/B's cost numbers). Build on top of it; confirm with the user before mutating, or have
 them commit it first.
 

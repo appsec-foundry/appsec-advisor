@@ -39,7 +39,7 @@ internal-appsec-advisor/
   appsec-advisor/                       # upstream core, not forked
     config.json                         # sets organization_profile.path
     schemas/org-profile.schema.yaml     # core-owned
-    scripts/validate_org_profile.py     # core-owned
+    scripts/validators/validate_org_profile.py     # core-owned
   org-profile/
     org-profile.yaml
     context/
@@ -347,7 +347,7 @@ A custom source replaces the default baseline in the banner, verification, and i
 Refresh it from the source the same profile declares:
 
 ```bash
-python3 <plugin>/scripts/sync_baseline.py --profile org-profile/org-profile.yaml [--dry-run]
+python3 <plugin>/scripts/baseline/sync_baseline.py --profile org-profile/org-profile.yaml [--dry-run]
 ```
 
 The refresh fetches, refuses anything without a `baseline-id:` marker, writes the copy, and reports what changed. It never falls back to the copy it is refreshing, so an unreachable source is an error rather than a silent success. Run it with `--dry-run` on a schedule to be told about drift before you cut a package; run it without to commit the new text.

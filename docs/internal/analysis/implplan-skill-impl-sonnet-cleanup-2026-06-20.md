@@ -28,7 +28,7 @@ Full suite green, each workstream its own commit.
 |---|---|
 | **P1** Abuse-Verifier-MUST block | **DONE** `cf7c13a` — buried "ONE message" contract into a local HARD-CONSTRAINT block; the STRIDE block was already ideal (no churn) |
 | **P5** Mode-routing table | **DONE** `6bcf2bd` — additive navigation table, per-section conditions stay authoritative |
-| **format_line bug** (surfaced by the live run) | **DONE** `007f4be` — step logging mandated onto `log_event.py`, inline `format_line` forbidden; guard test |
+| **format_line bug** (surfaced by the live run) | **DONE** `007f4be` — step logging mandated onto `runtime/log_event.py`, inline `format_line` forbidden; guard test |
 | **P8** Lazy-load (pattern) | **PARTIAL** `d3a1d4f` — re-render branch → `modes/rerender.md`, JIT load; guard test |
 | **P3** Shell→`.sh` (largest block) | **PARTIAL** `df36584` — auto-emitter (139 lines) → `scripts/auto_emitter_pass.sh`, characterization tests |
 | **P4** Marker-lifecycle dedup | **DONE** `e8fd2c1` — divergent early `$VERBOSE_REPORT` duplicate (verbose+tracing) removed, authoritative `RESOLVED_JSON` section + EXIT trap stays; guard test; live re-validated |

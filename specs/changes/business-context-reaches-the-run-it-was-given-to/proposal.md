@@ -4,7 +4,7 @@
 
 `--context` supplies business context for one run. The value is validated,
 captured to `<output>/.business-context-input.md`, and read by
-`build_threat_modeling_context.py`. That builder runs only under the context-v2
+`contexts/build_threat_modeling_context.py`. That builder runs only under the context-v2
 producer, which `resolve_runtime_generation` selects for `full` and `rebuild`
 inside the compact runtime. Every other run — `--incremental`, a dry run, a
 `--deadline` or `--max-cost` run, `APPSEC_THIN_ORCHESTRATOR=0`,

@@ -10,7 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import pytest
-import team_questions as tq  # noqa: E402
+import renderers.team_questions as tq  # noqa: E402
 
 
 def finding(number: int, *, cwe: str = "CWE-639", **overrides) -> dict:
@@ -109,8 +109,8 @@ def test_model_anchor_inventory_normalizes_public_finding_ids() -> None:
 def test_disputed_registration_is_shared_without_invented_finding_links(source):
     from types import SimpleNamespace
 
-    import compose_threat_model as composer
-    import render_completion_summary as completion
+    import renderers.compose_threat_model as composer
+    import renderers.render_completion_summary as completion
 
     model = {
         "meta": {

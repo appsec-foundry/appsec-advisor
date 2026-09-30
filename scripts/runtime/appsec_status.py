@@ -1,0 +1,1189 @@
+#!/usr/bin/env python3
+"""
+runtime/appsec_status.py — Read-only status dump for the AppSec plugin.
+
+Prints:
+  * plugin version + analysis_version
+  * package, core and baseline versions (with --check-updates: whether current)
+  * available capsules (skills + hook)
+  * every skill this build ships, and what the skill policy says about it
+  * last-run identity (if $OUTPUT_DIR has a baseline)
+  * organization profile and configuration source state (external context,
+    org context documents, requirements URL, steering)
+  * fast-path preview (would the next run short-circuit?)
+
+Invoked by the `/appsec-advisor:status` skill. No analysis is performed and
+no files are written. The output is formatted for human reading; pass
+`--json` to get a machine-readable structure instead.
+"""
+
+from __future__ import annotations
+
+# Direct CLI execution must resolve the same packages as imports from scripts/.
+import sys as _sys
+from pathlib import Path as _Path
+
+if not __package__:
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
+
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parents[1]
+PLUGIN_ROOT = HERE.parent
+HOOK_SCRIPT_IDS = {
+    "agent_logger.py": "agent-logger",
+    "security_steering.py": "security-coach",
+}
+
+# Phase budgets for the live-view age cutoff. Falls back to 300 s when the
+# loader is unavailable.
+sys.path.insert(0, str(HERE))
+try:
+    import runtime.phase_budgets as phase_budgets  # type: ignore
+except Exception:  # pragma: no cover
+    phase_budgets = None  # type: ignore[assignment]
+
+import runtime.check_skill_enabled as check_skill_enabled  # noqa: E402
+import runtime.version_status as version_status  # noqa: E402
+from runtime.stride_outputs import stride_output_files  # noqa: E402
+
+# Skills a person never invokes: they exist because an agent loads them.
+INTERNAL_SKILLS = {"internal-threat-analysis-kernel"}
+
+# What ``check_skill_enabled.check`` answers, as a word for the status table.
+SKILL_STATE_BY_EXIT = {
+    check_skill_enabled.EXIT_ENABLED: "enabled",
+    check_skill_enabled.EXIT_DISABLED_HELP_OK: "disabled — --help still renders",
+    check_skill_enabled.EXIT_DISABLED_SOFT: "disabled (warns only — operational skill)",
+    check_skill_enabled.EXIT_DISABLED_HARD: "disabled",
+}
+
+
+def _emit_table(title: str, rows: list[tuple[str, str]]) -> str:
+    out = [f"\n{title}"]
+    out.append("-" * len(title))
+    max_key = max((len(k) for k, _ in rows), default=0)
+    for k, v in rows:
+        out.append(f"  {k.ljust(max_key)}  {v}")
+    return "\n".join(out)
+
+
+def _run_helper(script: str, *args: str) -> tuple[int, str, str]:
+    try:
+        r = subprocess.run(
+            [sys.executable, str(HERE / script), *args],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        return r.returncode, r.stdout, r.stderr
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+        return 2, "", str(e)
+
+
+def _load_plugin_json() -> dict:
+    path = PLUGIN_ROOT / ".claude-plugin" / "plugin.json"
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _load_json(path: Path) -> dict | None:
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _effective_config_path() -> Path:
+    """The config file that is actually in effect.
+
+    ``config.local.json`` wins over ``config.json`` for every other consumer in
+    the plugin. Status reporting the file that is *not* read would show an
+    organization the banner, baseline and profile of a build they overrode.
+    """
+    local = PLUGIN_ROOT / "config.local.json"
+    return local if local.is_file() else PLUGIN_ROOT / "config.json"
+
+
+def _display_name(plugin_json: dict) -> str:
+    """The name this build answers to on the identity line.
+
+    An organization build is not "the AppSec Plugin" to the people running it:
+    it carries its own package name and, when the profile declared one, a
+    ``banner.headline``. The precedence is runtime/session_banner.py's, so the banner
+    and the status header cannot disagree about whose build this is. An
+    upstream build keeps the product name.
+    """
+    banner = (_load_json(_effective_config_path()) or {}).get("banner") or {}
+    headline = banner.get("headline")
+    if isinstance(headline, str) and headline.strip():
+        return headline.strip()
+    name = plugin_json.get("name")
+    if plugin_json.get("appsec_advisor_core_version") and isinstance(name, str) and name.strip():
+        return name.strip()
+    return "AppSec Plugin"
+
+
+def _skill_exists(skill: str) -> bool:
+    return (PLUGIN_ROOT / "skills" / skill / "SKILL.md").is_file()
+
+
+def _installed_skills() -> list[str]:
+    """Every skill directory this build ships, by the convention Claude Code uses."""
+    skills_dir = PLUGIN_ROOT / "skills"
+    if not skills_dir.is_dir():
+        return []
+    return sorted(path.parent.name for path in skills_dir.glob("*/SKILL.md") if path.is_file())
+
+
+def _skills_status(output_dir: Path) -> dict:
+    """Every skill this build ships, plus what the skill policy says about it.
+
+    The verdict per skill comes from ``check_skill_enabled.check`` — the same
+    call the ``skill-policy-gate`` hook makes — rather than from a second
+    reading of the toggles here. A status view that re-derived the policy could
+    report a skill as usable that the gate refuses.
+
+    A skill the package policy removed is not on disk, so it can only be named
+    from ``package-surface.json``. It is listed anyway: "the command is gone"
+    and "this build never had it" are different answers to the same question.
+    """
+    toggles, source = check_skill_enabled.resolve_toggles(output_dir)
+    surface = _load_json(PLUGIN_ROOT / ".claude-plugin" / "package-surface.json") or {}
+    surface_skills = surface.get("skills")
+    if not isinstance(surface_skills, dict):
+        surface_skills = {}
+    org_added = {name for name in (surface_skills.get("org_added") or []) if isinstance(name, str)}
+    removed = sorted({name for name in (surface_skills.get("removed") or []) if isinstance(name, str)})
+
+    def _reason(name: str) -> str | None:
+        cfg = toggles.get(name)
+        return cfg.get("reason") if isinstance(cfg, dict) else None
+
+    def _origin(name: str) -> str:
+        if name in org_added:
+            return "organization"
+        return "internal" if name in INTERNAL_SKILLS else "plugin"
+
+    entries: list[dict] = []
+    for name in _installed_skills():
+        code, _ = check_skill_enabled.check(name, output_dir, help_only=False)
+        entries.append(
+            {
+                "name": name,
+                "state": SKILL_STATE_BY_EXIT.get(code, "unknown"),
+                "enabled": code == check_skill_enabled.EXIT_ENABLED,
+                "reason": _reason(name),
+                "origin": _origin(name),
+            }
+        )
+    for name in removed:
+        entries.append(
+            {
+                "name": name,
+                "state": "removed by package policy",
+                "enabled": False,
+                "reason": _reason(name),
+                "origin": _origin(name),
+            }
+        )
+    return {
+        "policy_source": source if toggles else None,
+        "installed_count": len(entries) - len(removed),
+        "removed_count": len(removed),
+        "entries": entries,
+    }
+
+
+def _hook_id(command: str) -> str | None:
+    if "/scripts/" not in command and "\\scripts\\" not in command:
+        return None
+    script_name = command.replace("\\", "/").split("/scripts/", 1)[1].split()[0]
+    script_name = Path(script_name).name
+    return HOOK_SCRIPT_IDS.get(script_name, Path(script_name).stem.replace("_", "-"))
+
+
+def _registered_hook_ids() -> set[str]:
+    hooks_cfg = _load_json(PLUGIN_ROOT / "hooks" / "hooks.json") or {}
+    ids: set[str] = set()
+    for entries in (hooks_cfg.get("hooks") or {}).values():
+        if not isinstance(entries, list):
+            continue
+        for outer in entries:
+            if not isinstance(outer, dict):
+                continue
+            for hook in outer.get("hooks") or []:
+                if not isinstance(hook, dict):
+                    continue
+                command = hook.get("command")
+                if isinstance(command, str):
+                    hook_id = _hook_id(command)
+                    if hook_id:
+                        ids.add(hook_id)
+    return ids
+
+
+def _organization_label(org: dict) -> str:
+    """How the active organization is named on the Org Profile line.
+
+    The profile carries both a slug (`id`) and the organization's own name;
+    a reader recognises the name, while the id is what every configuration
+    path and error message uses. Printing only the id makes the build look
+    like it belongs to someone else's example.
+    """
+    name = str(org.get("name") or "").strip()
+    ident = str(org.get("id") or "").strip()
+    if name and ident and name != ident:
+        return f"{name} ({ident})"
+    return name or ident or "?"
+
+
+def _org_profile_status(output_dir: Path) -> dict:
+    """Read ``.org-profile-effective.json`` if present.
+
+    Returns ``{"active": False}`` when no resolver has been run yet; the
+    status view falls back to the static ``config.json`` pointer.
+    """
+    eff = _load_json(output_dir / ".org-profile-effective.json")
+    if eff and eff.get("org_profile", {}).get("active"):
+        return {
+            "active": True,
+            "id": eff["org_profile"].get("id"),
+            "name": eff["org_profile"].get("name"),
+            "version": eff["org_profile"].get("version"),
+            "path": eff["org_profile"].get("path"),
+            "source": eff["org_profile"].get("source"),
+            "preset": (eff.get("preset") or {}).get("name"),
+            "base_mode": (eff.get("preset") or {}).get("base_mode"),
+            "requirements_label": (eff.get("requirements_source") or {}).get("label"),
+            "requirements_url": (eff.get("requirements_source") or {}).get("requirements_yaml_url"),
+            "context_documents": [d["id"] for d in (eff.get("llm_context_documents") or []) if d.get("loaded")],
+            "disabled_skills": [
+                name
+                for name, cfg in (eff.get("skill_toggles") or {}).items()
+                if isinstance(cfg, dict) and cfg.get("enabled") is False
+            ],
+        }
+
+    # Fall back to the static config.json pointer so users see that a
+    # profile is *configured* even before the first resolver run.
+    cfg = _load_json(_effective_config_path())
+    if cfg is None:
+        return {"active": False, "configured": False}
+    block = cfg.get("organization_profile") or {}
+    if block.get("enabled") and block.get("path"):
+        return {
+            "active": False,
+            "configured": True,
+            "path": block["path"],
+            "default_preset": block.get("default_preset"),
+            "note": "configured via config.json — run create-threat-model to resolve",
+        }
+    return {"active": False, "configured": False}
+
+
+def _coach_status() -> tuple[str, str]:
+    """Return (state, note) — 'active' / 'inactive' / 'unknown'."""
+    if "security-coach" not in _registered_hook_ids():
+        return "not packaged", "security-coach hook is not registered in this package"
+    env = os.environ.get("APPSEC_COACH", "").strip().lower()
+    steering_cfg = _load_json(PLUGIN_ROOT / "hooks" / "steering_keywords.json") or {}
+    cfg_enabled = bool(steering_cfg.get("enabled", False))
+    truthy = {"1", "true", "yes", "on", "enable", "enabled"}
+    falsy = {"0", "false", "no", "off", "disable", "disabled"}
+    if env in truthy:
+        return "active", "via APPSEC_COACH environment variable"
+    if env in falsy:
+        return "inactive", "forced off via APPSEC_COACH"
+    if cfg_enabled:
+        return "active", "via steering_keywords.json (enabled: true)"
+    return "inactive", 'opt-in — set APPSEC_COACH=1 or flip "enabled": true in steering_keywords.json'
+
+
+def _config_summary(req_cfg_path: Path, plugin_cfg_path: Path) -> list[tuple[str, str]]:
+    rows: list[tuple[str, str]] = []
+    plug_cfg = _load_json(plugin_cfg_path) or {}
+
+    # Which file the values below came from. A local override changes every
+    # answer in this table, and it is git-ignored — invisible in a diff.
+    if plugin_cfg_path.name == "config.local.json":
+        rows.append(("Config file", "config.local.json (local override of config.json)"))
+    else:
+        rows.append(("Config file", "config.json (no local override)"))
+
+    # External context endpoint
+    ctx = plug_cfg.get("external_context") or {}
+    if ctx.get("enabled") and ctx.get("rest_url"):
+        rows.append(("External context", f"REST endpoint -> {ctx['rest_url']}"))
+    elif ctx.get("enabled") is False:
+        rows.append(("External context", "disabled"))
+    else:
+        rows.append(("External context", "not configured (repo-files only)"))
+
+    # Requirements YAML
+    if not _skill_exists("audit-security-requirements"):
+        rows.append(("Requirements YAML", "not packaged (requirements audit skill removed)"))
+    else:
+        req_cfg = _load_json(req_cfg_path) or {}
+        req_src = req_cfg.get("requirements_source") or {}
+        url = req_src.get("requirements_yaml_url")
+        enabled = bool(req_src.get("enabled", False))
+        if url:
+            cache = PLUGIN_ROOT / ".cache" / "requirements.yaml"
+            cache_state = "cache present" if cache.is_file() else "no cache yet"
+            mode = "auto-load " if enabled else "on-demand "
+            rows.append(("Requirements YAML", f"{mode}-> {url} ({cache_state})"))
+        else:
+            fallback = PLUGIN_ROOT / "data" / "appsec-bestpractices-baseline.yaml"
+            fallback_state = "present" if fallback.is_file() else "missing"
+            rows.append(("Requirements YAML", f"vendor-neutral baseline ({fallback_state})"))
+
+    # Steering keywords
+    if "security-coach" not in _registered_hook_ids():
+        rows.append(("Steering topics", "not packaged (security coach hook removed)"))
+    else:
+        steering_cfg = _load_json(PLUGIN_ROOT / "hooks" / "steering_keywords.json") or {}
+        topic_count = len(steering_cfg.get("topics") or {})
+        rows.append(("Steering topics", f"{topic_count} configured"))
+
+    return rows
+
+
+def _fast_path_preview(output_dir: Path, repo_root: Path) -> dict | None:
+    """Run check-changes against the current working tree, then refine the
+    verdict via dirty-set when the fast-path classified files as
+    security-relevant.
+
+    The two-step sequence mirrors the create-threat-model skill so the
+    /appsec-advisor:status fast-path-preview prediction is exactly what
+    the next run would do — no separate "would it short-circuit?"
+    heuristic that drifts away from the actual decision tree.
+
+    Returns None if no baseline yaml exists yet.
+    """
+    yaml_path = output_dir / "threat-model.yaml"
+    if not yaml_path.is_file():
+        return None
+    code, out, _ = _run_helper(
+        "baseline/baseline_state.py",
+        "check-changes",
+        "--output-dir",
+        str(output_dir),
+        "--repo-root",
+        str(repo_root),
+    )
+    try:
+        payload = json.loads(out)
+    except (ValueError, json.JSONDecodeError):
+        return None
+    payload["exit"] = code
+
+    # Refine via dirty-set when relevant files were detected (exit=1) —
+    # SKILL would only spawn agents when at least one component glob
+    # matches. Top-level globals (package.json, Dockerfile at repo root)
+    # produce exit=2 from dirty-set and would fast-abort the SKILL run.
+    if code == 1:
+        rel_files = payload.get("security_relevant_changes", []) or []
+        if rel_files:
+            ds_code, ds_out, _ = _run_helper(
+                "baseline/baseline_state.py",
+                "dirty-set",
+                "--output-dir",
+                str(output_dir),
+                "--no-stdin",
+                "--files",
+                *rel_files,
+            )
+            try:
+                payload["dirty_set"] = json.loads(ds_out) if ds_out.strip() else None
+            except (ValueError, json.JSONDecodeError):
+                payload["dirty_set"] = None
+            payload["dirty_set_exit"] = ds_code
+        else:
+            payload["dirty_set"] = None
+            payload["dirty_set_exit"] = None
+    return payload
+
+
+_CUTOFF_ONELINE = {
+    "api_stall": "API stream stall (server-side) — NOT a plugin, repository, or configuration fault.",
+    "session_death": "the Claude Code session ended mid-run (window closed / OOM / network) — NOT a plugin fault.",
+    "interrupted": "the run stopped before report composition completed.",
+    "controller_abort": "the controller stopped at an authoritative validation gate.",
+    "budget": "turn budget exhausted before final compose — threats merged, only rendering is missing.",
+}
+
+_HEADLESS_STARTUP_GRACE_SECONDS = 120
+
+
+def _recent_empty_headless_result(output_dir: Path, *, now: float | None = None) -> bool:
+    """Recognize the wrapper's bounded pre-lock startup window.
+
+    ``run-headless.sh`` creates the capture file before Claude acquires the
+    plugin lock.  A recent empty file is therefore a startup marker, while an
+    old empty file remains evidence of an interrupted wrapper.
+    """
+    path = output_dir / ".headless-result.json"
+    try:
+        stat = path.stat()
+    except OSError:
+        return False
+    age = (time.time() if now is None else now) - stat.st_mtime
+    return stat.st_size == 0 and 0 <= age <= _HEADLESS_STARTUP_GRACE_SECONDS
+
+
+def _snapshot_has_recent_activity(snapshot: dict | None) -> bool:
+    """Return whether a live snapshot contains a recent in-flight signal."""
+    if not isinstance(snapshot, dict):
+        return False
+    threshold = max(int(snapshot.get("threshold_seconds") or 0), 1)
+    current = snapshot.get("current")
+    if isinstance(current, dict):
+        status = str(current.get("status") or "").lower()
+        terminal_statuses = {"aborted", "error", "failed"}
+        if status not in terminal_statuses and int(current.get("age_s") or 0) <= threshold * 2:
+            return True
+    now = int(snapshot.get("ts") or time.time())
+    for entry in snapshot.get("active_tool_calls") or []:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("tool_use_id") and int(entry.get("age_s") or 0) <= threshold * 2:
+            return True
+        registrations = [
+            value
+            for key, value in entry.items()
+            if isinstance(key, str) and key.startswith("agent:") and isinstance(value, (int, float))
+        ]
+        if registrations and now - int(max(registrations)) <= threshold * 2:
+            return True
+    return False
+
+
+def _cutoff_verdict(output_dir: Path, *, live_snapshot: dict | None = None) -> dict | None:
+    """Post-hoc last-run verdict when a run ended without a ``threat-model.md``.
+
+    The in-run cut-off banners only print while the orchestrator turn is alive;
+    a stall severe enough to kill that turn leaves the user with no verdict. This
+    surfaces the SAME ``cutoff_cause`` classification in the next live status
+    turn — the one channel the user reliably reads.
+
+    Returns ``None`` (nothing to warn about) when:
+      * the run completed (``threat-model.md`` on disk), or
+      * there is no evidence of a run at all, or
+      * a scan is currently live (a fresh heartbeat, or a live PID for a
+        legacy lock) — never false-alarm an in-progress run.
+
+    Otherwise returns ``{"kind": ..., "block": ...}`` from ``cutoff_cause``.
+    """
+    if (output_dir / "threat-model.md").is_file():
+        return None
+    if not ((output_dir / ".agent-run.log").is_file() or (output_dir / ".appsec-checkpoint").is_file()):
+        return None
+    try:
+        import runtime.cutoff_cause as cutoff_cause  # type: ignore
+
+        explicitly_aborted = cutoff_cause.detect_abort(output_dir)
+    except Exception:
+        explicitly_aborted = False
+    if not explicitly_aborted:
+        if _recent_empty_headless_result(output_dir):
+            return None
+        if _snapshot_has_recent_activity(live_snapshot):
+            return None
+    # Suppress while a scan is genuinely running.  The heartbeat is
+    # authoritative for v2 locks because the stored PID belongs to a short-lived
+    # launcher subprocess and is commonly dead while the parent session remains
+    # active.  Keep this aligned with check_state.classify instead of
+    # reinterpreting its raw lock fields here.
+    if not explicitly_aborted:
+        try:
+            from runtime.check_state import classify  # type: ignore
+
+            if classify(output_dir).get("state") == "active":
+                return None
+        except Exception:
+            pass
+    try:
+        import runtime.cutoff_cause as cutoff_cause  # type: ignore
+
+        # A STRIDE file only proves that one analyzer returned.  It does not
+        # prove that Phase 9 merged the findings or that the run reached the
+        # render-only recovery boundary.  Claim budget exhaustion only from
+        # the authoritative merged artifact plus a late checkpoint.
+        checkpoint: dict[str, str] = {}
+        try:
+            checkpoint = {
+                key: value
+                for token in (output_dir / ".appsec-checkpoint").read_text(encoding="utf-8").split()
+                if "=" in token
+                for key, value in [token.split("=", 1)]
+            }
+        except OSError:
+            pass
+        render_ready = (output_dir / ".threats-merged.json").is_file() and (
+            checkpoint.get("phase") == "11"
+            or (
+                checkpoint.get("phase") == "10b"
+                and checkpoint.get("status") == "completed"
+                and checkpoint.get("need_render") == "true"
+            )
+        )
+        default = "budget" if render_ready else "interrupted"
+        kind, block = cutoff_cause.cause_for(output_dir, default)
+        return {"kind": kind, "block": block}
+    except Exception:
+        return None
+
+
+def _render_cutoff(verdict: dict) -> str:
+    """One-line lead, the cause block, and the compact-runtime restart hint."""
+    lead = _CUTOFF_ONELINE.get(verdict["kind"], "run ended without producing a threat model.")
+    recovery = "  → Restart: repeat the original --full/--rebuild invocation in a fresh session.\n"
+    return (
+        f"⚠ Last run incomplete — no threat-model.md was produced.\n  Cause: {lead}\n{recovery}\n{verdict['block']}\n"
+    )
+
+
+def _completed_stride_count(output_dir: Path) -> int:
+    """Count final component outputs, excluding write-first seed artifacts."""
+    completed = 0
+    for path in stride_output_files(output_dir):
+        value = _load_json(path)
+        if not isinstance(value, dict):
+            continue
+        if value.get("seed_only") is True or value.get("partial") is not False:
+            continue
+        completed += 1
+    return completed
+
+
+def _last_run_info(output_dir: Path) -> dict:
+    code, out, _ = _run_helper(
+        "baseline/baseline_state.py",
+        "last-run-info",
+        "--output-dir",
+        str(output_dir),
+    )
+    if code != 0:
+        return {"has_baseline": False}
+    try:
+        return json.loads(out)
+    except (ValueError, json.JSONDecodeError):
+        return {"has_baseline": False}
+
+
+def _skills_title(skills: dict) -> str:
+    """Header line for the skills table — the counts a reader checks first."""
+    parts = [f"{skills['installed_count']} installed"]
+    disabled = sum(
+        1 for entry in skills["entries"] if not entry["enabled"] and entry["state"] != "removed by package policy"
+    )
+    if disabled:
+        parts.append(f"{disabled} disabled by {skills['policy_source'] or 'skill policy'}")
+    if skills["removed_count"]:
+        parts.append(f"{skills['removed_count']} removed by package policy")
+    return f"Skills ({' · '.join(parts)})"
+
+
+def _skills_rows(skills: dict) -> list[tuple[str, str]]:
+    """One line per skill: its state, why, and whose skill it is."""
+    rows: list[tuple[str, str]] = []
+    for entry in skills["entries"]:
+        value = entry["state"]
+        if entry["reason"]:
+            value += f" — {entry['reason']}"
+        if entry["origin"] != "plugin":
+            value += f"  [{entry['origin']}]"
+        rows.append((entry["name"], value))
+    return rows
+
+
+def render_text(data: dict) -> str:
+    meta = data["plugin"]
+    buf: list[str] = []
+
+    verdict = data.get("cutoff")
+    if verdict:
+        buf.append(_render_cutoff(verdict))
+
+    cleaned = data.get("auto_clean", {}).get("removed", [])
+    if cleaned:
+        buf.append(f"⚠ Stale run-state cleaned automatically: {', '.join(cleaned)}")
+        buf.append("")
+
+    buf.append(
+        f"{meta.get('display_name') or 'AppSec Plugin'} v{meta.get('plugin_version', '?')}"
+        f"  (analysis_version={meta.get('analysis_version', '?')})"
+    )
+    buf.append("=" * 72)
+
+    buf.append(
+        _emit_table(
+            "Environment",
+            [
+                ("Plugin root", str(data["paths"]["plugin_root"])),
+                ("Repo root", str(data["paths"]["repo_root"])),
+                ("Output dir", str(data["paths"]["output_dir"])),
+            ],
+        )
+    )
+
+    versions = data.get("versions")
+    if versions:
+        buf.append(_emit_table("Versions", version_status.rows(versions)))
+
+    capsules = data["capsules"]
+    threat_assessment = capsules.get("threat_assessment", {}).get("command", "not packaged")
+    requirements_audit = capsules.get("requirements_audit", {}).get("command", "not packaged")
+    threat_row = f"{threat_assessment}   [--help]" if threat_assessment != "not packaged" else threat_assessment
+    requirements_row = (
+        f"{requirements_audit}   [--help]" if requirements_audit != "not packaged" else requirements_audit
+    )
+    buf.append(
+        _emit_table(
+            "Capsules",
+            [
+                ("1. Threat Assessment", threat_row),
+                ("2. Requirements Audit", requirements_row),
+                (
+                    "3. Security Coach",
+                    f"{capsules['coach']['state']} — {capsules['coach']['note']}",
+                ),
+            ],
+        )
+    )
+
+    skills = data.get("skills")
+    if skills:
+        buf.append(_emit_table(_skills_title(skills), _skills_rows(skills)))
+
+    lr = data["last_run"]
+    if lr.get("has_baseline"):
+        buf.append(
+            _emit_table(
+                "Last run",
+                [
+                    ("Plugin version", str(lr.get("plugin_version") or "?")),
+                    ("Analysis version", str(lr.get("analysis_version") or "?")),
+                    ("Commit SHA", (lr.get("commit_sha") or "?")[:12]),
+                    ("Run at (UTC)", str(lr.get("last_run_at") or "?")),
+                ],
+            )
+        )
+    else:
+        buf.append("\nLast run\n--------\n  (no baseline — first run will be a full assessment)")
+
+    org = data.get("org_profile") or {}
+    if org.get("active"):
+        rows = [
+            ("Status", "active"),
+            ("Organization", _organization_label(org)),
+            ("Version", str(org.get("version") or "?")),
+            ("Path", str(org.get("path") or "?")),
+            (
+                "Preset",
+                f"{org.get('preset') or '?'} (base: {org.get('base_mode') or '?'})",
+            ),
+        ]
+        # Unconditional from here down: "no organization context is loaded" is
+        # the answer someone is looking for as often as the list of documents,
+        # and a row that vanishes reads as "nothing to report".
+        rows.append(
+            (
+                "Requirements",
+                str(org.get("requirements_label") or org.get("requirements_url") or "none from this profile"),
+            )
+        )
+        rows.append(
+            (
+                "Org context",
+                ", ".join(org["context_documents"]) if org.get("context_documents") else "no documents loaded",
+            )
+        )
+        rows.append(
+            (
+                "Disabled skills",
+                ", ".join(org["disabled_skills"]) if org.get("disabled_skills") else "none",
+            )
+        )
+        buf.append(_emit_table("Org Profile", rows))
+    elif org.get("configured"):
+        buf.append(
+            _emit_table(
+                "Org Profile",
+                [
+                    ("Status", "configured (not yet resolved)"),
+                    ("Path", str(org.get("path") or "?")),
+                    ("Default preset", str(org.get("default_preset") or "(from profile)")),
+                    ("Note", str(org.get("note") or "")),
+                ],
+            )
+        )
+    else:
+        buf.append(
+            _emit_table(
+                "Org Profile",
+                [("Status", "none configured — plugin defaults are in effect")],
+            )
+        )
+
+    buf.append(_emit_table("Configuration sources", data["config"]))
+
+    fp = data.get("fast_path")
+    if fp:
+        rows = [
+            ("Baseline SHA", (fp.get("baseline_sha") or "?")[:12]),
+            ("HEAD SHA", (fp.get("head_sha") or "?")[:12]),
+            (
+                "Git diff",
+                f"{fp.get('committed_change_count', 0)} committed, "
+                f"{fp.get('working_tree_change_count', 0)} working-tree",
+            ),
+            ("Fingerprint", "match" if fp.get("fingerprint_match") else "changed"),
+            ("Plugin drift", f"{fp['plugin_version']['tier']}"),
+        ]
+        excluded = fp.get("excluded_pre_filter_count", 0)
+        if excluded:
+            rows.append(("Excluded", f"{excluded} (plugin output / scan-excludes)"))
+        sec_count = fp.get("security_relevant_change_count", 0)
+        noise_count = len(fp.get("noise_only_changes", []) or [])
+        if sec_count or noise_count:
+            rows.append(("Files (filtered)", f"{sec_count} relevant, {noise_count} noise"))
+
+        # Decision text: factor in the dirty-set refinement when present
+        # (matches the create-threat-model SKILL decision tree exactly).
+        cc_exit = fp.get("exit")
+        ds_exit = fp.get("dirty_set_exit")
+        ds = fp.get("dirty_set") or {}
+        if cc_exit == 0:
+            decision = "fast-abort — no source changes; SKILL would skip Stage 1+2+3"
+        elif cc_exit == 2:
+            decision = "fast-abort — only noise/non-security changes"
+        elif cc_exit == 10:
+            tier = fp.get("plugin_version", {}).get("tier", "?")
+            sev = "STRONGLY recommend" if tier == "major" else "recommend"
+            decision = f"plugin-drift ({tier}) — {sev} --full"
+        elif cc_exit == 1 and ds_exit == 0:
+            if ds.get("decision") == "boundary_recompose":
+                decision = "boundary declaration changed — deterministic recomposition, zero STRIDE dispatches"
+            else:
+                ids = ds.get("dirty_component_ids") or []
+                decision = f"changes detected — {len(ids)} component(s) dirty: " + ", ".join(ids[:3])
+        elif cc_exit == 1 and ds_exit == 2:
+            decision = (
+                "changes detected but only top-level globals — SKILL would "
+                "fast-abort before Stage 1 (no component dirty)"
+            )
+        elif cc_exit == 1 and ds_exit == 3:
+            unmapped = ds.get("unmapped_files") or []
+            decision = (
+                "changes detected, paths not in any component — possible "
+                "new component (Stage 1 will run conservatively)"
+            )
+            if unmapped:
+                decision += f"; unmapped: {', '.join(unmapped[:3])}"
+        elif cc_exit == 1:
+            decision = "changes detected — incremental run will re-analyze"
+        else:
+            decision = "unknown"
+        rows.append(("Decision", decision))
+        buf.append(_emit_table("Fast-path preview (vs. current working tree)", rows))
+    else:
+        buf.append("\nFast-path preview\n----------------\n  (no baseline yet — not applicable)")
+
+    buf.append("")  # trailing newline
+    return "\n".join(buf)
+
+
+def _live_snapshot(output_dir: Path) -> dict:
+    """Snapshot of the in-flight run state (M3.6 #4).
+
+    Reads four sources, all best-effort and silent on failure:
+
+      * ``.appsec-progress.json`` — latest phase/step/agent state from
+        ``scripts/runtime/log_event.py``.
+      * ``.appsec-lock`` — heartbeat freshness via ``check_state.classify``.
+      * ``.active-tool-calls/*.json`` — per-call markers written by
+        ``agent_logger.handle_pre_tool_use`` (M3.6 #2). Entries older than
+        the phase-aware stall threshold are filtered out — sub-agent calls
+        whose PostToolUse never propagates would otherwise show forever.
+      * ``.progress/*.json`` — per-component substep state from
+        STRIDE-analyzer sub-agents (and any other agent that adopts the
+        same protocol).
+
+    Returned dict shape (always present):
+      * ``ts``                — wall-clock at snapshot time
+      * ``has_run``           — bool; False = clean state, no live data
+      * ``lock``              — classify-style summary or None
+      * ``checkpoint``        — phase / status from ``.appsec-checkpoint``
+      * ``current``           — latest structured progress state or None
+      * ``phase``             — freshest phase from progress, then checkpoint
+      * ``threshold_seconds`` — phase-aware stall window applied to filtering
+      * ``active_tool_calls`` — list of {tool_use_id, agent, tool, age_s,
+                                input_summary} sorted oldest-first
+      * ``progress``          — list of {component, step, label, age_s}
+      * ``stride_files``      — count of completed ``.stride-*.json`` files
+    """
+    lock_path = output_dir / ".appsec-lock"
+    progress_state_path = output_dir / ".appsec-progress.json"
+    cp_path = output_dir / ".appsec-checkpoint"
+    active_dir = output_dir / ".active-tool-calls"
+    progress_dir = output_dir / ".progress"
+
+    has_lock = lock_path.is_file()
+    has_progress_state = progress_state_path.is_file()
+    has_active = active_dir.is_dir()
+    has_progress = progress_dir.is_dir()
+    if not (has_lock or has_progress_state or has_active or has_progress):
+        return {
+            "ts": int(time.time()),
+            "has_run": False,
+            "lock": None,
+            "checkpoint": None,
+            "current": None,
+            "phase": None,
+            "threshold_seconds": 0,
+            "active_tool_calls": [],
+            "progress": [],
+            "stride_files": 0,
+        }
+
+    # Lock + checkpoint via check_state.classify (re-uses heartbeat parsing).
+    try:
+        from runtime.check_state import classify  # type: ignore
+
+        report = classify(output_dir)
+    except Exception:
+        report = {"state": "unknown", "lock": None, "checkpoint": None, "reasons": []}
+    cp = report.get("checkpoint") or {}
+
+    # Structured progress advances at semantic phase boundaries where the
+    # coarse checkpoint can legitimately remain behind. Use the freshest
+    # progress phase for both display and phase-aware liveness thresholds.
+    now = int(time.time())
+    current = _load_json(progress_state_path)
+    if current:
+        try:
+            current["age_s"] = max(0, now - int(progress_state_path.stat().st_mtime))
+        except OSError:
+            current["age_s"] = 0
+    phase = (current or {}).get("phase") or cp.get("phase")
+
+    # Resolve threshold: phase from checkpoint, depth from skill-config.
+    depth = "standard"
+    sk = output_dir / ".skill-config.json"
+    if sk.is_file():
+        try:
+            depth = json.loads(sk.read_text(encoding="utf-8")).get("assessment_depth") or depth
+        except (OSError, ValueError):
+            pass
+    if phase_budgets is not None:
+        threshold = phase_budgets.threshold_for_phase(phase, depth)
+    else:
+        threshold = 300
+
+    # Active tool calls — per-file scan, age-filtered.
+    active: list[dict] = []
+    if has_active:
+        for f in sorted(active_dir.glob("*.json")):
+            try:
+                entry = json.loads(f.read_text(encoding="utf-8"))
+                # The directory also carries hook bookkeeping such as
+                # dispatch-times.json. Only a structurally valid PreToolUse
+                # marker represents a live call.
+                if not isinstance(entry, dict):
+                    continue
+                if not str(entry.get("tool_use_id") or "").strip():
+                    continue
+                if not str(entry.get("tool") or "").strip():
+                    continue
+                started = int(entry.get("started_at") or 0)
+                if started <= 0:
+                    continue
+                age = max(0, now - started) if started else 0
+                if started and age > threshold * 2:
+                    # Stale Pre-only entry (sub-agent without propagating
+                    # Post). Filter from the live view; do not delete —
+                    # the next agent_logger Post may still arrive.
+                    continue
+                entry["age_s"] = age
+                active.append(entry)
+            except (OSError, ValueError):
+                continue
+    active.sort(key=lambda e: e.get("age_s", 0), reverse=True)
+
+    # Progress files — same age treatment so a hung component is visible
+    # but not eternally listed.
+    progress: list[dict] = []
+    if has_progress:
+        for f in sorted(progress_dir.glob("*.json")):
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            try:
+                age = max(0, now - int(f.stat().st_mtime))
+            except OSError:
+                age = 0
+            step = data.get("step")
+            total = data.get("total")
+            try:
+                completed = int(step) >= int(total) if step is not None and total is not None else False
+            except (TypeError, ValueError):
+                completed = False
+            if completed or str(data.get("status") or "").lower() in {"complete", "completed"}:
+                continue
+            progress.append(
+                {
+                    "component": data.get("component_name") or data.get("component_id") or f.stem,
+                    "step": step,
+                    "total": total,
+                    "label": (data.get("label") or "").strip(),
+                    "age_s": age,
+                }
+            )
+    progress.sort(key=lambda e: e.get("age_s", 0), reverse=True)
+
+    stride_count = _completed_stride_count(output_dir)
+
+    return {
+        "ts": now,
+        "has_run": True,
+        "lock": report.get("lock"),
+        "checkpoint": cp or None,
+        "current": current,
+        "phase": phase,
+        "threshold_seconds": threshold,
+        "active_tool_calls": active,
+        "progress": progress,
+        "stride_files": stride_count,
+    }
+
+
+def _render_live(snap: dict) -> str:
+    """Human-readable rendering of ``_live_snapshot`` output."""
+    if not snap.get("has_run"):
+        return "  (no run in progress — output dir has no lock / progress / active-tool markers)\n"
+
+    cp = snap.get("checkpoint") or {}
+    phase = snap.get("phase") or cp.get("phase", "?")
+    status = cp.get("status", "?")
+    lock = snap.get("lock") or {}
+    hb_age = lock.get("heartbeat_age")
+    threshold = snap.get("threshold_seconds", 0)
+    hb_str = f"{int(hb_age)}s" if hb_age is not None else "?"
+    head = (
+        f"  Phase {phase} (status={status})  "
+        f"heartbeat_age={hb_str}  "
+        f"stall_threshold={threshold}s  "
+        f"stride_files={snap.get('stride_files', 0)}"
+    )
+    lines = [head]
+
+    current = snap.get("current") or {}
+    if current:
+        phase_bits = []
+        if current.get("phase"):
+            total = f"/{current['phase_total']}" if current.get("phase_total") else ""
+            phase_bits.append(f"Phase {current['phase']}{total}")
+        if current.get("step") and current.get("step_total"):
+            phase_bits.append(f"step {current['step']}/{current['step_total']}")
+        prefix = " · ".join(phase_bits) if phase_bits else current.get("event", "progress")
+        label = current.get("label") or current.get("detail") or "?"
+        agent = current.get("agent") or "?"
+        age = current.get("age_s", 0)
+        lines.append("")
+        lines.append("  Current progress (.appsec-progress.json):")
+        lines.append(f"    {prefix} · {agent} · {label}  age={age}s")
+
+    progress = snap.get("progress") or []
+    if progress:
+        lines.append("")
+        lines.append("  In-flight components (.progress/):")
+        for p in progress:
+            step = p.get("step")
+            total = p.get("total")
+            label = p.get("label") or "?"
+            step_str = f"[{step}/{total}]" if step and total else "[?]"
+            lines.append(f"    {p.get('component', '?'):<24} {step_str:>10} {label:<24} idle={p.get('age_s', 0)}s")
+
+    active = snap.get("active_tool_calls") or []
+    if active:
+        lines.append("")
+        lines.append("  Active tool calls (.active-tool-calls/):")
+        for a in active:
+            agent = a.get("agent") or "?"
+            tool = a.get("tool") or "?"
+            age = a.get("age_s", 0)
+            summary = a.get("input_summary") or ""
+            lines.append(f"    [{age:>4}s] {agent:<22} {tool:<8} {summary}")
+    elif progress:
+        lines.append("")
+        lines.append("  (no live tool-use markers — sub-agent activity may still be in flight; check .progress above)")
+
+    return "\n".join(lines) + "\n"
+
+
+HELP_TEXT = """/appsec-advisor:status — Read-only plugin & repo status.
+
+USAGE
+  /appsec-advisor:status [--repo <path>] [--output <path>] [--json] [--live]
+                         [--check-updates]
+
+FLAGS
+  --repo <path>     Repository to inspect (default: current working dir)
+  --output <path>   Output directory to inspect (default: <repo>/docs/security)
+  --json            Emit the status as machine-readable JSON
+  --live            Print only the in-flight run snapshot (active tool calls,
+                    per-component progress, heartbeat freshness). Honours --json.
+                    Intended for fast, cron-style polling in a second terminal.
+  --check-updates   Also report whether the configured secure-coding baseline
+                    and the packaged appsec-advisor core are still the current
+                    ones. Fetches the baseline document and the upstream
+                    manifest; without the flag the command stays offline.
+
+The command is safe to run at any time. It never writes files or dispatches
+any agent.
+"""
+
+ARGUMENT_ERROR = """Error: unknown argument '{token}'
+
+/appsec-advisor:status accepts only:
+  --repo <path>     Repository to inspect (default: current working dir)
+  --output <path>   Output directory to inspect (default: <repo>/docs/security)
+  --json            Emit the status as machine-readable JSON
+  --live            Print only the in-flight run snapshot (cron-style polling)
+  --check-updates   Check the baseline and core versions against their sources
+  --help, -h        Show full help and exit
+
+Run `/appsec-advisor:status --help` for details.
+"""
+
+
+def _offending_token(message: str) -> str:
+    """The argument a reader has to correct, out of argparse's error message."""
+    if message.startswith("unrecognized arguments: "):
+        return message.removeprefix("unrecognized arguments: ").split()[0]
+    if message.startswith("argument ") and ": expected one argument" in message:
+        # A flag whose value is missing counts as the offending token itself.
+        return message.removeprefix("argument ").split(":", 1)[0].split("/")[0]
+    return message
+
+
+class _Parser(argparse.ArgumentParser):
+    """Argument handling belongs to this script, not to the skill's prose.
+
+    The skill is a prompt: every rule it states about parsing, rejecting, and
+    printing is a rule a model can drift from. Keeping the flag surface, the
+    help text, and the rejection message here means one behaviour on every
+    machine, and one place to change it.
+    """
+
+    def error(self, message: str):  # noqa: D102 — argparse hook
+        sys.stderr.write(ARGUMENT_ERROR.format(token=_offending_token(message)))
+        raise SystemExit(2)
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = _Parser(prog="appsec_status.py", description="Read-only plugin status dump.", add_help=False)
+    p.add_argument("-h", "--help", action="store_true", help="Show the skill's help text and exit.")
+    p.add_argument("--repo", "--repo-root", dest="repo_root", default=os.getcwd())
+    p.add_argument(
+        "--output",
+        "--output-dir",
+        dest="output_dir",
+        default=None,
+        help="Override output directory (default: <repo>/docs/security).",
+    )
+    p.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    p.add_argument(
+        "--check-updates",
+        action="store_true",
+        help="Also fetch the published baseline document and the upstream "
+        "manifest, and report whether the configured baseline and the "
+        "packaged core are still current. Off by default: without it, "
+        "status stays offline.",
+    )
+    p.add_argument(
+        "--live",
+        action="store_true",
+        help="Print only the in-flight run snapshot (active tool "
+        "calls, per-component progress, heartbeat freshness). "
+        "Honours --json. Skips the plugin / config / fast-path "
+        "tables — intended for fast cron-style polling.",
+    )
+    args = p.parse_args(argv if argv is not None else sys.argv[1:])
+    if args.help:
+        print(HELP_TEXT, end="")
+        return 0
+
+    repo_root = Path(args.repo_root).resolve()
+    output_dir = Path(args.output_dir).resolve() if args.output_dir else (repo_root / "docs" / "security")
+
+    if args.live:
+        snap = _live_snapshot(output_dir)
+        snap["cutoff"] = _cutoff_verdict(output_dir, live_snapshot=snap)
+        if args.json:
+            print(json.dumps(snap, indent=2, sort_keys=True))
+        else:
+            if snap["cutoff"]:
+                print(_render_cutoff(snap["cutoff"]))
+            print(_render_live(snap), end="")
+        return 0
+
+    plugin_json = _load_plugin_json()
+    coach_state, coach_note = _coach_status()
+    capsules = {
+        "coach": {"state": coach_state, "note": coach_note},
+    }
+    if _skill_exists("create-threat-model"):
+        capsules["threat_assessment"] = {"command": "/appsec-advisor:create-threat-model"}
+    if _skill_exists("audit-security-requirements"):
+        capsules["requirements_audit"] = {"command": "/appsec-advisor:audit-security-requirements"}
+
+    live_snapshot = _live_snapshot(output_dir)
+    data = {
+        "plugin": {
+            "plugin_version": plugin_json.get("version", "unknown"),
+            "analysis_version": plugin_json.get("analysis_version"),
+            "compatible_analysis_versions": plugin_json.get("compatible_analysis_versions", []),
+            "display_name": _display_name(plugin_json),
+        },
+        "paths": {
+            "plugin_root": str(PLUGIN_ROOT),
+            "repo_root": str(repo_root),
+            "output_dir": str(output_dir),
+        },
+        "capsules": capsules,
+        "skills": _skills_status(output_dir),
+        "last_run": _last_run_info(output_dir),
+        "config": _config_summary(
+            PLUGIN_ROOT / "skills" / "audit-security-requirements" / "config.json",
+            _effective_config_path(),
+        ),
+        "fast_path": _fast_path_preview(output_dir, repo_root),
+        "org_profile": _org_profile_status(output_dir),
+        "versions": version_status.collect(repo=repo_root, check_updates=args.check_updates),
+        "cutoff": _cutoff_verdict(output_dir, live_snapshot=live_snapshot),
+    }
+
+    if args.json:
+        print(json.dumps(data, indent=2, sort_keys=True))
+    else:
+        print(render_text(data))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

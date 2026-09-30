@@ -12,7 +12,7 @@ unchanged.` The run is healthy and continues.
 
 ## What actually happens
 
-`scripts/wait_stride_progress.py` joins the STRIDE analyzers of the current
+`scripts/orchestrator/wait_stride_progress.py` joins the STRIDE analyzers of the current
 dispatch action. It polls in slices that stay below the host's Bash execution
 ceiling instead of blocking for the full wave:
 
@@ -20,7 +20,7 @@ ceiling instead of blocking for the full wave:
   (`skills/create-threat-model/SKILL-thin-stage1-v2.md:52-56`).
 - The persisted wave deadline is 15 minutes and is *not* reset per slice.
 - A slice that ends with the wave still pending returns
-  `PENDING_EXIT_CODE = 75` (`scripts/wait_stride_progress.py:18,105`).
+  `PENDING_EXIT_CODE = 75` (`scripts/orchestrator/wait_stride_progress.py:18,105`).
 
 The exit code is a four-way branch signal for the orchestrator, documented in
 `skills/create-threat-model/SKILL-thin-stage1-v2.md:58` and
@@ -57,9 +57,9 @@ the run-issue aggregation, so it does not surface in the report's Run Issues
 section. Evidence is one run, not a guard test.
 
 The waiter's own stderr line on the pending path starts with the literal token
-`BASH_WARN` (`scripts/wait_stride_progress.py:100-103`). That token is *not*
-what `agent_logger.py` keys on — its Bash detection matches anchored CLI
-diagnostics and a fixed keyword list (`scripts/agent_logger.py:3155-3210`),
+`BASH_WARN` (`scripts/orchestrator/wait_stride_progress.py:100-103`). That token is *not*
+what `runtime/agent_logger.py` keys on — its Bash detection matches anchored CLI
+diagnostics and a fixed keyword list (`scripts/runtime/agent_logger.py:3155-3210`),
 none of which the message contains. The prefix is misleading to a human reading
 the red box and buys nothing.
 
@@ -74,7 +74,7 @@ line. Benefit: zero risk. The stderr text already explains the condition.
 
 Two prose changes, no contract change, no behavior change:
 
-1. `scripts/wait_stride_progress.py:100-103` — drop the `BASH_WARN` prefix and
+1. `scripts/orchestrator/wait_stride_progress.py:100-103` — drop the `BASH_WARN` prefix and
    state the condition plainly, e.g. `STRIDE wave still running after <elapsed>
    — expected. Exit 75 means: repeat the identical waiter call.`
 2. `skills/create-threat-model/SKILL-thin-stage1-v2.md:58` — pin the narration
@@ -102,7 +102,7 @@ Design:
 - `docs/internal/contracts/orchestration-actions.md:369-371` is rewritten: the
   waiter slice no longer carries its outcome in the exit status.
 
-Change surface: `scripts/wait_stride_progress.py`,
+Change surface: `scripts/orchestrator/wait_stride_progress.py`,
 `skills/create-threat-model/SKILL-thin-stage1-v2.md`,
 `docs/internal/contracts/orchestration-actions.md`,
 `tests/test_wait_stride_progress.py` (six exit-code assertions),
@@ -118,7 +118,7 @@ Risk — this is the reason O2 is not the recommendation:
   `complete` calls `context-v2-post-stride` while analyzers are still running.
 - The contract states that a persisted active claim prevents a premature
   boundary call from re-claiming a running component
-  (`scripts/stride_dispatch_waves.py:590-630`). Whether
+  (`scripts/orchestrator/stride_dispatch_waves.py:590-630`). Whether
   `context-v2-post-stride` itself *fails closed* on an incomplete wave is not
   established here and is the decisive question for O2. If it does, O2 is
   cheap; if it does not, O2 trades a cosmetic annoyance for a run-corruption

@@ -1,5 +1,5 @@
 """
-Tests for scripts/session_banner.py
+Tests for scripts/runtime/session_banner.py
 
 The script is a SessionStart hook: it reads JSON from stdin and writes a
 ``systemMessage`` payload to stdout. The end-to-end cases run it as a
@@ -16,10 +16,10 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).parent.parent / "scripts" / "session_banner.py"
+SCRIPT = Path(__file__).parent.parent / "scripts" / "runtime/session_banner.py"
 sys.path.insert(0, str(SCRIPT.parent))
 
-import session_banner  # noqa: E402
+import runtime.session_banner as session_banner  # noqa: E402
 
 MODEL_YAML = """\
 meta:
@@ -46,8 +46,8 @@ mitigations:
 """
 
 
-MANIFEST = json.loads((SCRIPT.parent.parent / ".claude-plugin" / "plugin.json").read_text())
-CONFIG = json.loads((SCRIPT.parent.parent / "config.json").read_text(encoding="utf-8"))
+MANIFEST = json.loads((SCRIPT.parents[2] / ".claude-plugin" / "plugin.json").read_text())
+CONFIG = json.loads((SCRIPT.parents[2] / "config.json").read_text(encoding="utf-8"))
 # The banner heads the baseline line with the configured name, so the tests read
 # it from the same place the hook does rather than pinning this build's wording.
 BASELINE_NAME = CONFIG["baseline"]["name"]
@@ -83,7 +83,7 @@ def _tmp_path_is_a_repository(tmp_path, monkeypatch):
 
 def baseline_text() -> str:
     """The plugin's own bundled baseline, carrying the configured id."""
-    plugin_root = SCRIPT.parent.parent
+    plugin_root = SCRIPT.parents[2]
     config = json.loads((plugin_root / "config.json").read_text(encoding="utf-8"))["baseline"]
     return (plugin_root / config["fallback_file"]).read_text(encoding="utf-8")
 
@@ -625,7 +625,7 @@ def test_installed_baseline_carries_no_command(tmp_path):
 def test_a_baseline_in_the_repo_that_nothing_imports_is_reported_missing(tmp_path):
     """Presence on disk is not loading — the banner must not claim otherwise."""
     write_model(tmp_path)
-    plugin_root = SCRIPT.parent.parent
+    plugin_root = SCRIPT.parents[2]
     config = json.loads((plugin_root / "config.json").read_text(encoding="utf-8"))["baseline"]
     (tmp_path / "secure-coding-baseline.md").write_text(
         (plugin_root / config["fallback_file"]).read_text(encoding="utf-8"), encoding="utf-8"
@@ -639,7 +639,7 @@ def test_a_baseline_in_the_repo_that_nothing_imports_is_reported_missing(tmp_pat
 def test_a_baseline_the_repo_carries_for_another_tool_is_named(tmp_path):
     """It changes the next step from "install" to "connect what is there"."""
     write_model(tmp_path)
-    plugin_root = SCRIPT.parent.parent
+    plugin_root = SCRIPT.parents[2]
     config = json.loads((plugin_root / "config.json").read_text(encoding="utf-8"))["baseline"]
     (tmp_path / "AGENTS.md").write_text(
         (plugin_root / config["fallback_file"]).read_text(encoding="utf-8"), encoding="utf-8"
@@ -813,13 +813,13 @@ def test_examples_live_on_the_help_page_not_in_the_banner(tmp_path):
     message = run_hook(str(tmp_path))
     assert "/appsec-advisor:help" in message
     assert "ask-threat-model" not in message
-    help_page = SCRIPT.parent.parent / "skills" / "help" / "SKILL.md"
+    help_page = SCRIPT.parents[2] / "skills" / "help" / "SKILL.md"
     assert "what are the critical findings?" in help_page.read_text(encoding="utf-8")
 
 
 def test_example_question_is_taken_from_the_ask_skill(tmp_path):
     """A question the skill does not advertise could route somewhere else."""
-    skill = SCRIPT.parent.parent / "skills" / "ask-threat-model" / "SKILL.md"
+    skill = SCRIPT.parents[2] / "skills" / "ask-threat-model" / "SKILL.md"
     description = " ".join(skill.read_text(encoding="utf-8").split())
     assert '"what are the critical findings?"' in description
 
@@ -965,7 +965,7 @@ def test_packaged_build_uses_full_refresh_for_stale_model(tmp_path, monkeypatch)
 
 def test_create_threat_model_is_always_available(tmp_path, monkeypatch):
     """apply_skill_policy pins create-threat-model, so the fallbacks are safe."""
-    policy_source = (SCRIPT.parent / "package_internal_plugin.py").read_text(encoding="utf-8")
+    policy_source = (SCRIPT.parents[1] / "package_internal_plugin.py").read_text(encoding="utf-8")
     assert 'required={"create-threat-model"}' in policy_source
 
 
@@ -983,7 +983,7 @@ def test_no_information_line_in_the_banner(tmp_path):
     assert "more information" not in message
     assert len(message.splitlines()) == 3  # identity, threat model, baseline
     assert not any(line.startswith("http") for line in message.splitlines())
-    help_page = SCRIPT.parent.parent / "skills" / "help" / "SKILL.md"
+    help_page = SCRIPT.parents[2] / "skills" / "help" / "SKILL.md"
     assert "Documentation: https://" in help_page.read_text(encoding="utf-8")
 
 
@@ -1129,8 +1129,8 @@ def test_scan_running_ignores_missing_lock(tmp_path):
 
 
 def test_hook_is_registered_for_startup():
-    hooks = json.loads((SCRIPT.parent.parent / "hooks" / "hooks.json").read_text())
+    hooks = json.loads((SCRIPT.parents[2] / "hooks" / "hooks.json").read_text())
     entries = hooks["hooks"]["SessionStart"]
     assert [e.get("matcher") for e in entries] == ["startup"]
     commands = [h["command"] for e in entries for h in e["hooks"]]
-    assert commands == ["python3 ${CLAUDE_PLUGIN_ROOT}/scripts/session_banner.py"]
+    assert commands == ["python3 ${CLAUDE_PLUGIN_ROOT}/scripts/runtime/session_banner.py"]

@@ -68,7 +68,7 @@ def test_unrelated_pattern_matches_do_not_elevate(tmp_path, names):
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = PLUGIN_ROOT / "scripts" / "triage_compute_ranking.py"
+SCRIPT = PLUGIN_ROOT / "scripts" / "model/triage_compute_ranking.py"
 
 
 def _write_yaml(path: Path, data: dict) -> None:
@@ -124,11 +124,11 @@ def test_empty_threats_emits_empty_block(tmp_path: Path) -> None:
 
 def test_create_fallback_is_schema_valid(tmp_path: Path) -> None:
     """When compute_ranking is the create-owner (the pre-flight writer
-    triage_validate_ratings.py never ran, so no .triage-flags.json exists), the
+    validators/triage_validate_ratings.py never ran, so no .triage-flags.json exists), the
     file it writes must still satisfy schemas/triage-flags.schema.yaml — i.e.
     carry root `generated_at` and a populated `summary`. Regression for the
     2026-06-28 e2e failure where the fallback emitted an empty `summary` / no
-    `generated_at`, so validate_intermediate.py rejected it."""
+    `generated_at`, so validators/validate_intermediate.py rejected it."""
     threats = [
         {
             "t_id": "F-001",
@@ -156,7 +156,7 @@ def test_create_fallback_is_schema_valid(tmp_path: Path) -> None:
     val = subprocess.run(
         [
             sys.executable,
-            str(PLUGIN_ROOT / "scripts" / "validate_intermediate.py"),
+            str(PLUGIN_ROOT / "scripts" / "validators/validate_intermediate.py"),
             "triage_flags",
             str(tmp_path / ".triage-flags.json"),
         ],
@@ -414,7 +414,7 @@ def test_stale_reconciliation_removal_reindexes_later_preflight_flags(tmp_path: 
                         "severity": "info",
                         "threat_ids": ["T-001"],
                         "message": "stale elevation",
-                        "source": "triage_compute_ranking.py",
+                        "source": "model/triage_compute_ranking.py",
                     },
                     {
                         "flag_id": "TF-003",
@@ -447,7 +447,7 @@ def test_stale_reconciliation_removal_reindexes_later_preflight_flags(tmp_path: 
     validation = subprocess.run(
         [
             sys.executable,
-            str(PLUGIN_ROOT / "scripts" / "validate_intermediate.py"),
+            str(PLUGIN_ROOT / "scripts" / "validators/validate_intermediate.py"),
             "triage_flags",
             str(tmp_path / ".triage-flags.json"),
         ],
@@ -538,7 +538,7 @@ def test_refuted_keystone_not_elevated() -> None:
     cited weakness exists.
     """
     sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
-    import triage_compute_ranking as tcr  # type: ignore[import-not-found]
+    import model.triage_compute_ranking as tcr  # type: ignore[import-not-found]
 
     caps = {"contributor_cap": {"default": "High"}}
     criteria = {
@@ -564,7 +564,7 @@ def test_ambiguous_keystone_not_elevated() -> None:
     like refuted for chain elevation: no promotion, raw risk preserved.
     """
     sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
-    import triage_compute_ranking as tcr  # type: ignore[import-not-found]
+    import model.triage_compute_ranking as tcr  # type: ignore[import-not-found]
 
     caps = {"contributor_cap": {"default": "High"}}
     criteria = {"never_individual_critical": [], "always_critical_cwes": [], "conditional_critical": {}}
@@ -589,7 +589,7 @@ def test_always_critical_cwe_promotes_under_context() -> None:
     de-escalated an already-Critical finding, so this stayed High forever.
     """
     sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
-    import triage_compute_ranking as tcr  # type: ignore[import-not-found]
+    import model.triage_compute_ranking as tcr  # type: ignore[import-not-found]
 
     caps = {"contributor_cap": {"default": "High"}}
     criteria = {
@@ -620,7 +620,7 @@ def test_mass_assignment_override_pins_distance_1_against_real_config() -> None:
     heuristic that otherwise re-raised it to 2 and defeated the Critical promotion.
     """
     sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
-    import triage_compute_ranking as tcr  # type: ignore[import-not-found]
+    import model.triage_compute_ranking as tcr  # type: ignore[import-not-found]
 
     bd_patterns = tcr._load_yaml(PLUGIN_ROOT / "data" / "breach-distance-patterns.yaml", {})
     crit = tcr._load_yaml(PLUGIN_ROOT / "data" / "critical-criteria.yaml", {})
@@ -653,7 +653,7 @@ def test_mass_assignment_override_pins_distance_1_against_real_config() -> None:
 def test_refuted_contributor_not_elevated() -> None:
     """Contributor refutation suppression — mirror of the keystone case."""
     sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
-    import triage_compute_ranking as tcr  # type: ignore[import-not-found]
+    import model.triage_compute_ranking as tcr  # type: ignore[import-not-found]
 
     caps = {"contributor_cap": {"default": "High"}}
     criteria = {
@@ -686,7 +686,7 @@ def test_force_flag_overrides_env_gate(tmp_path: Path) -> None:
 
 def _tcr():
     sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
-    import triage_compute_ranking as tcr  # type: ignore[import-not-found]
+    import model.triage_compute_ranking as tcr  # type: ignore[import-not-found]
 
     return tcr
 
@@ -810,7 +810,7 @@ def test_capped_cwe_outside_a_chain_stays_high():
 
 
 def _policy():
-    from _severity_policy import load_policy
+    from shared._severity_policy import load_policy
 
     return load_policy()
 
@@ -1600,7 +1600,7 @@ def test_write_outputs_creates_flags_when_absent(tmp_path: Path):
 def test_design_risk_weakness_enters_findings_ranked(tmp_path: Path) -> None:
     """P1.4 / §9.3 — a design-risk weakness (zero confirmed instances) is folded
     into findings_ranked as a W-NNN entry so it can top the ranking."""
-    import triage_compute_ranking as tcr  # type: ignore[import-not-found]
+    import model.triage_compute_ranking as tcr  # type: ignore[import-not-found]
 
     data = _minimal_yaml(
         [
@@ -1644,7 +1644,7 @@ def test_design_risk_weakness_enters_findings_ranked(tmp_path: Path) -> None:
 def test_confirmed_weakness_not_double_ranked(tmp_path: Path) -> None:
     """A `confirmed`-basis weakness is represented by its instances already —
     it must NOT be added as a separate W-NNN ranked entry."""
-    import triage_compute_ranking as tcr  # type: ignore[import-not-found]
+    import model.triage_compute_ranking as tcr  # type: ignore[import-not-found]
 
     data = _minimal_yaml(
         [

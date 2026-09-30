@@ -18,22 +18,22 @@ misuse of a working feature counts as a threat. Blocks A and C exist for that.
 ## What "category complete" means today
 
 STRIDE per component is dispatched with all six letters mandatory, including in
-the cheap-stride tier (`scripts/build_stride_dispatch_manifest.py:1251`). What
+the cheap-stride tier (`scripts/orchestrator/build_stride_dispatch_manifest.py:1251`). What
 "complete" means is asserted by the analyzer, not established:
 
 - The analyzer pre-seeds `.stride-<COMPONENT_ID>.json` with all six letters in
   `skipped_categories` and clears them on completion
   (`agents/appsec-stride-analyzer.md:213`, `agents/appsec-stride-analyzer-v2.md:262`).
 - The wave gate accepts a component on the artifact's own word: `partial: false`,
-  no `seed_only`, empty `skipped_categories` (`scripts/stride_dispatch_waves.py:292`).
+  no `seed_only`, empty `skipped_categories` (`scripts/orchestrator/stride_dispatch_waves.py:292`).
   Every one of those fields is written by the analyzer being judged.
 - The literal log line `All six STRIDE categories complete`
-  (`scripts/check_stride_dispatch.py:321`) is not that gate. It feeds
+  (`scripts/orchestrator/check_stride_dispatch.py:321`) is not that gate. It feeds
   serial-dispatch detection, sits there as an alternative to `AGENT_END`, and no
   producer emits the string — the analyzer logs `Completed all six STRIDE
   categories for <COMPONENT_NAME>` (`agents/appsec-stride-analyzer-v2.md:264`).
 - Per-category coverage is judged post-hoc and only in the dev-only eval skill
-  (`scripts/eval_threat_model.py:64`, `:310`; `agents/appsec-eval-judge.md:56`).
+  (`scripts/validators/eval_threat_model.py:64`, `:310`; `agents/appsec-eval-judge.md:56`).
 
 So a component can produce zero Repudiation threats because nothing is wrong,
 because the model ran out of turns, or because it never looked — and the
@@ -139,7 +139,7 @@ more trustworthy. Use a distinct prefix (`STR-T01`).
 **2. Applicability is a manifest decision, not a prompt decision.** If the agent
 decides which of the 24 block-B checks apply, the receipt is another self-report
 and the whole prompt has to carry all of them.
-`build_stride_dispatch_manifest.py` already
+`orchestrator/build_stride_dispatch_manifest.py` already
 computes per-component predicates (`_is_auth:250`, `_is_frontend:255`,
 `_is_llm:335`, `_is_exposed:420`, combined in `_in_scope:544`). Deriving
 applicability there bounds the
@@ -182,7 +182,7 @@ check must not mean editing an agent. Who may edit it and how is the next
 section.
 
 **Applicability is resolved in the manifest.**
-`scripts/build_stride_dispatch_manifest.py` evaluates each check's predicate
+`scripts/orchestrator/build_stride_dispatch_manifest.py` evaluates each check's predicate
 against the per-component flags it already computes (`_is_auth:250`,
 `_is_frontend:255`, `_is_llm:335`, `_is_exposed:420`, zone derivation) and writes
 `applicable_checks: ["STR-T01", …]` into the component's manifest entry. The
@@ -207,8 +207,8 @@ manifest, catalogue and receipts and enforces the coupling: `failed` needs
 evidence or a linked threat, `passed` needs the evidence the catalogue demands,
 `not_applicable` needs a false predicate or a stated reason, `not_verifiable`
 needs a reason. It becomes what "category complete" means in
-`scripts/stride_dispatch_waves.py:292`, beside the `partial` and `seed_only`
-checks that stay. The log-line branch in `scripts/check_stride_dispatch.py:321`
+`scripts/orchestrator/stride_dispatch_waves.py:292`, beside the `partial` and `seed_only`
+checks that stay. The log-line branch in `scripts/orchestrator/check_stride_dispatch.py:321`
 belongs to serial-dispatch detection and is out of scope.
 
 **Failure must not kill the run.** A component with an incomplete receipt gets
@@ -221,8 +221,8 @@ already handled.
 **Outcomes reach the report through paths that exist.** A `failed` check
 produces a threat through the normal merge contract. `not_verifiable` becomes a
 coverage-gap entry with no CVSS. Per-component, per-category coverage is the
-threat-model-shaped output; `scripts/arch_coverage_to_threats.py` and
-`scripts/qa_arch_coverage.py` are the precedent for turning coverage into report
+threat-model-shaped output; `scripts/analyzers/arch_coverage_to_threats.py` and
+`scripts/validators/qa_arch_coverage.py` are the precedent for turning coverage into report
 content rather than leaving it in an artifact.
 
 **Sequencing.** Each step is shippable and reversible on its own.
@@ -276,8 +276,8 @@ so there is no second wording to keep in sync.
 ```
 
 **Four layers, the same shape the plugin already uses.**
-`scripts/resolve_threat_checks.py` merges them the way `resolve_abuse_cases.py`
-and `resolve_actors.py` merge theirs, stamps `_provenance.source_file` per entry
+`scripts/resolve_threat_checks.py` merges them the way `model/resolve_abuse_cases.py`
+and `model/resolve_actors.py` merge theirs, stamps `_provenance.source_file` per entry
 and writes one resolved set:
 
 1. the plugin catalogue, unless `threat_checks.inherit_defaults: false`;
@@ -290,7 +290,7 @@ and writes one resolved set:
 
 **Readable from the outside.** `resolve_threat_checks.py --list` prints the
 active questions with their block, id and provenance — the precedent is
-`resolve_abuse_cases.py --list-ids`. `docs/threat-checks.md` carries the shipped
+`model/resolve_abuse_cases.py --list-ids`. `docs/threat-checks.md` carries the shipped
 catalogue as a table, and the org-profile block is documented in
 `docs/org-profiles.md` next to `abuse_cases` and `actors`.
 
@@ -324,10 +324,10 @@ quality argument and the largest single saving in prompt cost.
 
 | Check | Existing owner |
 |---|---|
-| STR-I01 secrets in code and configuration | `scripts/secret_scan.py`, `scripts/postscan_secret_check.py` |
-| STR-T03 pinning and integrity of dependencies and artifacts | `scripts/assess_supply_chain_controls.py`; `scripts/config_iac_scanner.py` for the configuration half |
-| STR-E01 object and function authorization | `scripts/source_auth_scanner.py` |
-| STR-T02 manipulation of persisted objects | `scripts/mass_assignment_scanner.py` (partial) |
+| STR-I01 secrets in code and configuration | `scripts/validators/secret_scan.py`, `scripts/validators/postscan_secret_check.py` |
+| STR-T03 pinning and integrity of dependencies and artifacts | `scripts/analyzers/assess_supply_chain_controls.py`; `scripts/analyzers/config_iac_scanner.py` for the configuration half |
+| STR-E01 object and function authorization | `scripts/analyzers/source_auth_scanner.py` |
+| STR-T02 manipulation of persisted objects | `scripts/analyzers/mass_assignment_scanner.py` (partial) |
 
 The rest have no deterministic owner today and fall to the agent. Three worked
 examples, spanning the range:
@@ -442,7 +442,7 @@ missing security engineering to STRIDE itself.
 Two consequences. PHANTOM-B needs no third lens file next to
 `agents/shared/owasp-llm-top10.md` and `owasp-asi-top10.md`, so the context cost
 is four conditional checks rather than a parallel catalogue. And applicability is
-already computable: `_is_llm` (`scripts/build_stride_dispatch_manifest.py:335`)
+already computable: `_is_llm` (`scripts/orchestrator/build_stride_dispatch_manifest.py:335`)
 and `KNOWN_LLM_PATTERNS` decide who gets them, with the agentic subset gated the
 way the ASI lens is gated today.
 
@@ -450,7 +450,7 @@ LLM-D3 is the most useful of the four, and the pipeline currently works against
 it. AC-T-007 step 1 lists `guardrail` and `instruction.?hierarch` among its
 `probe.control_patterns` with `control_sufficiency: any`, so a prompt saying
 "never reveal the API key" marks the step control-guarded
-(`scripts/match_abuse_cases.py:33`). LLM-D3 is the check that disputes exactly
+(`scripts/model/match_abuse_cases.py:33`). LLM-D3 is the check that disputes exactly
 that: a prompt instruction is not an enforced boundary. Adding it means deciding
 what happens to that pattern list. LLM-D2 is the one that needs block A
 — whether a delegated decision is consequential is a business question, not a
@@ -463,7 +463,7 @@ buildable at all; the rest are design work that has to happen before step 3.
 
 **1. The receipt asks for more verdicts than the budget has turns.** A component
 at standard/moderate gets 22 turns, a screened one gets 8
-(`build_stride_dispatch_manifest.py:78`, `:701`), against 24 block-B checks plus
+(`orchestrator/build_stride_dispatch_manifest.py:78`, `:701`), against 24 block-B checks plus
 up to four conditional ones. The precedent is recorded in
 `classify_component._footprint_turn_floor:229`: on 2026-07-20 juice-shop's
 `data-persistence` needed 24 model file reads plus 8 mandatory context reads, and
@@ -518,7 +518,7 @@ anchors and deep links hang off that list. `STR-…` and `ORG-…` in the report
 touching that contract, the sections contract and the QA cross-reference checks
 in one change.
 
-**9. Attempt accounting.** `stride_dispatch_waves.py:94` allows two attempts per
+**9. Attempt accounting.** `orchestrator/stride_dispatch_waves.py:94` allows two attempts per
 component, and the wave plan persists attempt counts strictly enough to raise on
 a mismatch. The targeted re-dispatch for an incomplete receipt is a third attempt
 unless it is planned inside that budget.

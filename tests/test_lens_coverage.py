@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from validate_intermediate import LENS_CHECKLISTS, lens_coverage_errors
+from validators.validate_intermediate import LENS_CHECKLISTS, lens_coverage_errors
 
 ROOT = Path(__file__).resolve().parent.parent
 

@@ -128,7 +128,7 @@ The local file is not a partial merge over `config.json`. If one local file shou
 After changing the committed plugin configuration, validate it from the plugin root:
 
 ```bash
-python3 scripts/validate_config.py .
+python3 scripts/validators/validate_config.py .
 ```
 
 The validator checks `config.json` and, when the skill is present, `skills/audit-security-requirements/config.json`. It rejects unknown root keys and invalid field types. It does not currently validate `config.local.json`.

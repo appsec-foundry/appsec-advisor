@@ -135,7 +135,7 @@ $defs:
       check_slug:
         # Stable kebab-case identifier for a synthesised finding not covered by
         # config-iac-checks.yaml (e.g. cors-wildcard, secrets-in-dockerfile);
-        # set when check_id is null so emit_config_scan_mitigations.py can
+        # set when check_id is null so model/emit_config_scan_mitigations.py can
         # resolve a remediation from its slug map.
         type: ["string", "null"]
         pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"

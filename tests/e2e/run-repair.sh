@@ -76,12 +76,12 @@ else
 fi
 
 # Prove deterministically that fixture drift has not invalidated the trigger.
-python3 "$PLUGIN_ROOT/scripts/compose_threat_model.py" \
+python3 "$PLUGIN_ROOT/scripts/renderers/compose_threat_model.py" \
     --output-dir "$OUTPUT_DIR" --strict >/dev/null 2>&1 || {
   echo "ERROR: corruption no longer composes; expected a post-render QA defect" >&2
   exit 3
 }
-python3 "$PLUGIN_ROOT/scripts/qa_checks.py" \
+python3 "$PLUGIN_ROOT/scripts/validators/qa_checks.py" \
     repair_plan "$OUTPUT_DIR/threat-model.md" "$OUTPUT_DIR" >/dev/null 2>&1 || true
 python3 - "$OUTPUT_DIR/.qa-repair-plan.json" <<'PY' || exit 3
 import json
@@ -146,7 +146,7 @@ chk "fragment-fixer dispatched after corruption" "[ \"$FIXER_AFTER\" -gt \"$FIXE
 chk "§7 Controls covered label restored" "grep -q '^\\*\\*Controls covered:\\*\\*' '$FRAG'"
 
 # (c) final document is contract-clean with respect to the seeded defect
-CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" python3 "$PLUGIN_ROOT/scripts/qa_checks.py" repair_plan "$OUTPUT_DIR/threat-model.md" "$OUTPUT_DIR" >/dev/null 2>&1
+CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" python3 "$PLUGIN_ROOT/scripts/validators/qa_checks.py" repair_plan "$OUTPUT_DIR/threat-model.md" "$OUTPUT_DIR" >/dev/null 2>&1
 CONTROL_AFTER=$(python3 -c "import json,sys;
 try:
   p=json.load(open('$OUTPUT_DIR/.qa-repair-plan.json'));

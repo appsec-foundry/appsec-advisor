@@ -1,5 +1,5 @@
 """
-Tests for scripts/apply_editorial_plan.py — the deterministic applier for the
+Tests for scripts/repairs/apply_editorial_plan.py — the deterministic applier for the
 Stage-4 editorial plan.
 
 Covers:
@@ -24,7 +24,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import apply_editorial_plan as applier  # noqa: E402
+import repairs.apply_editorial_plan as applier  # noqa: E402
 
 MODEL = {
     "threats": [
@@ -321,7 +321,7 @@ def test_dry_run_writes_nothing(output_dir: Path) -> None:
 
 def test_local_rejection_and_global_guard_both_protect_evidence(output_dir: Path) -> None:
     """Reject an unsafe action locally; retain the global guard against other writers."""
-    import check_editorial_diff as guard
+    import validators.check_editorial_diff as guard
 
     (output_dir / "threat-model.yaml").write_text(
         yaml.safe_dump(
@@ -362,7 +362,7 @@ def test_field_path_parsing_rejects_junk() -> None:
 
 
 def _packets(output_dir):
-    import build_editorial_context as builder
+    import contexts.build_editorial_context as builder
 
     assert builder.main([str(output_dir)]) == 0
     return json.loads((output_dir / builder.CONTEXT_DIR / builder.BLOCKS_NAME).read_text())
@@ -429,7 +429,7 @@ def test_invalid_packet_cannot_write_the_model(output_dir, defect, tmp_path):
 
 
 def test_completed_packet_survives_missing_sibling(output_dir, capsys):
-    import build_editorial_context as builder
+    import contexts.build_editorial_context as builder
 
     model = _model(output_dir)
     model["threats"] = [{**model["threats"][0], "id": f"F-{i:03d}"} for i in range(1, 16)]

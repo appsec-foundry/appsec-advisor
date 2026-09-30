@@ -12,17 +12,17 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import agent_lifecycle
-import build_abuse_case_contexts as abuse_contexts
-import build_architecture_analysis_context as architecture_context
-import build_post_stride_contexts as post_stride_contexts
-import build_stride_evidence_bundles as evidence_bundles
-import context_routing
-import cutoff_cause
-import orchestration_controller as controller
+import contexts.build_abuse_case_contexts as abuse_contexts
+import contexts.build_architecture_analysis_context as architecture_context
+import contexts.build_post_stride_contexts as post_stride_contexts
+import contexts.build_stride_evidence_bundles as evidence_bundles
+import contexts.context_routing as context_routing
+import orchestrator.orchestration_controller as controller
+import orchestrator.stride_dispatch_waves as stride_waves
+import orchestrator.wait_agent_calls as wait_agent_calls
 import pytest
-import stride_dispatch_waves as stride_waves
-import wait_agent_calls
+import runtime.agent_lifecycle as agent_lifecycle
+import runtime.cutoff_cause as cutoff_cause
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -624,7 +624,7 @@ def test_prepasses_restore_canonical_audit_events(monkeypatch, tmp_path):
     )
 
     def _scanner(name, args, **kwargs):
-        if name == "source_auth_scanner.py":
+        if name == "analyzers/source_auth_scanner.py":
             (output / ".source-auth-findings.json").write_text(json.dumps({"violations": 3}), encoding="utf-8")
         return _completed()
 
@@ -660,8 +660,8 @@ def test_prepasses_confirm_authz_after_the_inventory_and_drop_stale_sidecars(mon
         ),
     )
     controller._prepasses(cfg, [])
-    assert calls.index("route_inventory.py") < calls.index("authz_confirm.py")
-    assert "mass_assignment_scanner.py" in calls
+    assert calls.index("analyzers/route_inventory.py") < calls.index("analyzers/authz_confirm.py")
+    assert "analyzers/mass_assignment_scanner.py" in calls
     assert not (output / ".authz-confirm-findings.json").exists()
     assert not (output / ".mass-assignment-findings.json").exists()
     assert not (output / ".source-auth-findings.json").exists()
@@ -678,13 +678,16 @@ def test_prepasses_run_database_separation_only_at_thorough_depth(monkeypatch, t
         lambda name, args, **kwargs: (calls.append((name, args)) or _completed()),
     )
     controller._prepasses(cfg, [])
-    assert "database_privilege_separation.py" not in [name for name, _ in calls]
+    assert "analyzers/database_privilege_separation.py" not in [name for name, _ in calls]
 
     calls.clear()
     cfg["assessment_depth"] = "thorough"
     controller._prepasses(cfg, [])
-    assert [name for name, _ in calls][:2] == ["route_inventory.py", "database_privilege_separation.py"]
-    architecture_args = next(args for name, args in calls if name == "architecture_coverage_checks.py")
+    assert [name for name, _ in calls][:2] == [
+        "analyzers/route_inventory.py",
+        "analyzers/database_privilege_separation.py",
+    ]
+    architecture_args = next(args for name, args in calls if name == "analyzers/architecture_coverage_checks.py")
     assert architecture_args[-2:] == ["--assessment-depth", "thorough"]
 
 
@@ -744,7 +747,7 @@ def test_lock_failure_happens_before_intermediate_cleanup(monkeypatch, tmp_path)
     monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
 
     def fail_lock(name, args, **kwargs):
-        if name == "acquire_lock.py":
+        if name == "runtime/acquire_lock.py":
             raise controller.ControllerError("LOCK_BLOCKED", 3)
         return _completed()
 
@@ -957,7 +960,7 @@ def test_prepare_abuse_returns_bounded_parallel_action(tmp_path, monkeypatch):
     def fake_script(name, args, **kwargs):
         if "list-candidates" in args:
             return _completed("AC-T-001\nAC-T-002\ninvalid/id\n")
-        if name == "build_abuse_case_contexts.py":
+        if name == "contexts/build_abuse_case_contexts.py":
             _write_abuse_projections(output, candidates)
         return _completed()
 
@@ -1013,13 +1016,13 @@ def test_context_v2_prepare_abuse_dispatches_receipted_candidate_projections(tmp
     }
 
     def fake_script(name, args, **kwargs):
-        if name == "match_abuse_cases.py" and "match" in args:
+        if name == "model/match_abuse_cases.py" and "match" in args:
             (output / ".abuse-case-matches.json").write_text(
                 json.dumps({"schema_version": 1, "matches": [match_row]}), encoding="utf-8"
             )
-        if name == "match_abuse_cases.py" and "list-candidates" in args:
+        if name == "model/match_abuse_cases.py" and "list-candidates" in args:
             return _completed("AC-T-001\n")
-        if name == "build_abuse_case_contexts.py":
+        if name == "contexts/build_abuse_case_contexts.py":
             abuse_contexts.write_candidate(output, "AC-T-001")
         return _completed()
 
@@ -1069,7 +1072,7 @@ def test_prepare_abuse_carries_candidate_titles_for_dispatch_labels(tmp_path, mo
     def fake_script(name, args, **kwargs):
         if "list-candidates" in args:
             return _completed("AC-T-001\nAC-T-002\n")
-        if name == "build_abuse_case_contexts.py":
+        if name == "contexts/build_abuse_case_contexts.py":
             _write_abuse_projections(output, candidates)
         return _completed()
 
@@ -1093,7 +1096,7 @@ def test_prepare_abuse_uses_the_receipted_match_title(tmp_path, monkeypatch):
     def fake_script(name, args, **kwargs):
         if "list-candidates" in args:
             return _completed("AC-T-001\n")
-        if name == "build_abuse_case_contexts.py":
+        if name == "contexts/build_abuse_case_contexts.py":
             _write_abuse_projections(output, ["AC-T-001"])
         return _completed()
 
@@ -1147,7 +1150,7 @@ def test_prepare_abuse_never_redispatches_a_finalized_verdict(tmp_path, monkeypa
     def fake_script(name, args, **kwargs):
         if "list-candidates" in args:
             return _completed("AC-T-001\nAC-T-002\n")
-        if name == "build_abuse_case_contexts.py":
+        if name == "contexts/build_abuse_case_contexts.py":
             _write_abuse_projections(output, ["AC-T-002"])
         return _completed()
 
@@ -1188,7 +1191,7 @@ def test_prepare_abuse_still_dispatches_a_partially_finalized_verdict(tmp_path, 
     def fake_script(name, args, **kwargs):
         if "list-candidates" in args:
             return _completed("AC-T-001\n")
-        if name == "build_abuse_case_contexts.py":
+        if name == "contexts/build_abuse_case_contexts.py":
             _write_abuse_projections(output, ["AC-T-001"])
         return _completed()
 
@@ -1249,7 +1252,7 @@ def _finalize_with_empty_wave(output: Path, monkeypatch, candidates: list[str]):
     def fake_script(name, args, **kwargs):
         if "list-candidates" in args:
             return _completed("\n".join(candidates) + "\n")
-        if name == "build_abuse_case_contexts.py":
+        if name == "contexts/build_abuse_case_contexts.py":
             _write_abuse_projections(output, candidates)
         return _completed()
 
@@ -1362,13 +1365,13 @@ def test_prepare_abuse_still_degrades_a_matcher_failure_without_a_selection(tmp_
 
 
 def test_finalize_abuse_aborts_when_yaml_rebuild_fails_schema_validation(tmp_path, monkeypatch):
-    # build_threat_model_yaml.py writes the yaml BEFORE validating it, so exit 5
+    # model/build_threat_model_yaml.py writes the yaml BEFORE validating it, so exit 5
     # leaves an invalid model on disk — it must not degrade to a receipt.
     output = _abuse_output(tmp_path)
     (output / ".abuse-case-verdicts.json").write_text("{}", encoding="utf-8")
 
     def fake_script(name, args, **kwargs):
-        if name == "build_threat_model_yaml.py":
+        if name == "model/build_threat_model_yaml.py":
             raise controller.ControllerError(
                 "build_threat_model_yaml.py failed with exit 5: FATAL: schema validation failed\n"
                 "INVALID: threats[3].cvss.scope\nINVALID: mitigations[7].priority",
@@ -1393,7 +1396,7 @@ def test_finalize_abuse_tolerates_a_soft_yaml_rebuild_failure(tmp_path, monkeypa
     (output / ".abuse-case-verdicts.json").write_text("{}", encoding="utf-8")
 
     def fake_script(name, args, **kwargs):
-        if name == "build_threat_model_yaml.py":
+        if name == "model/build_threat_model_yaml.py":
             raise controller.ControllerError(
                 "build_threat_model_yaml.py failed with exit 3: FATAL: required intermediate missing",
                 3,
@@ -1403,7 +1406,7 @@ def test_finalize_abuse_tolerates_a_soft_yaml_rebuild_failure(tmp_path, monkeypa
     monkeypatch.setattr(controller, "_run_script", fake_script)
     action = controller.finalize_abuse(output)
     assert action["action"] == "run_gate"
-    assert "build_threat_model_yaml.py: best-effort failure" in action["receipts"]
+    assert "model/build_threat_model_yaml.py: best-effort failure" in action["receipts"]
     controller._validate_action(action)
 
 
@@ -1418,7 +1421,7 @@ def test_finalize_abuse_renders_section9_before_the_release_gate_can_abort(tmp_p
 
     def fake_script(name, args, **kwargs):
         order.append(name)
-        if name == "abuse_case_gate.py":
+        if name == "validators/abuse_case_gate.py":
             return subprocess.CompletedProcess(
                 ["test"], 2, stdout="", stderr="ABUSE_CASE_GATE: violation AC-T-001 (fully_viable) — X"
             )
@@ -1430,8 +1433,8 @@ def test_finalize_abuse_renders_section9_before_the_release_gate_can_abort(tmp_p
         controller.finalize_abuse(output)
     assert exc.value.exit_code == 2
     assert "violation AC-T-001" in str(exc.value)
-    assert order.index("render_abuse_cases.py") < order.index("abuse_case_gate.py")
-    assert order.index("triage_compute_ranking.py") < order.index("abuse_case_gate.py")
+    assert order.index("renderers/render_abuse_cases.py") < order.index("validators/abuse_case_gate.py")
+    assert order.index("model/triage_compute_ranking.py") < order.index("validators/abuse_case_gate.py")
     assert "ABUSE_GATE_VIOLATION" in (output / ".agent-run.log").read_text(encoding="utf-8")
 
 
@@ -1440,7 +1443,7 @@ def test_finalize_abuse_blocks_when_canonical_analysis_cannot_be_persisted(tmp_p
     (output / ".abuse-case-verdicts.json").write_text("{}", encoding="utf-8")
 
     def fake_script(name, args, **kwargs):
-        if name == "render_abuse_cases.py":
+        if name == "renderers/render_abuse_cases.py":
             raise controller.ControllerError("render_abuse_cases.py failed with exit 1: invalid canonical trace", 1)
         return _completed()
 
@@ -1461,10 +1464,10 @@ def test_abuse_rebuild_reapplies_enrichment_and_quality_gates(tmp_path, monkeypa
 
     controller.finalize_abuse(output)
 
-    assert calls.index("build_threat_model_yaml.py") < calls.index("auto_emitter_pass.sh")
-    assert calls.index("auto_emitter_pass.sh") < calls.index("validate_mitigation_quality.py")
-    assert calls.index("validate_mitigation_quality.py") < calls.index("assert_completeness.py")
-    assert calls.index("assert_completeness.py") < calls.index("abuse_case_gate.py")
+    assert calls.index("model/build_threat_model_yaml.py") < calls.index("auto_emitter_pass.sh")
+    assert calls.index("auto_emitter_pass.sh") < calls.index("validators/validate_mitigation_quality.py")
+    assert calls.index("validators/validate_mitigation_quality.py") < calls.index("validators/assert_completeness.py")
+    assert calls.index("validators/assert_completeness.py") < calls.index("validators/abuse_case_gate.py")
 
 
 def test_abuse_without_rebuild_does_not_run_emitters(tmp_path, monkeypatch):
@@ -1582,7 +1585,7 @@ def test_prepare_stage2_returns_stage1d_before_preparing_fragments(tmp_path, mon
 
     def no_preparation(name, args, **kwargs):
         # The duration estimate belongs to every action's dispatch values.
-        if name != "estimate_duration.py":
+        if name != "runtime/estimate_duration.py":
             raise AssertionError(f"{name} ran while Stage 1d was still pending")
         return _completed()
 
@@ -1683,9 +1686,9 @@ def test_next_action_composes_report_when_fragments_ready(tmp_path, monkeypatch)
     commands = []
 
     def fake_run(cmd, **kwargs):
-        # Simulate compose_threat_model.py writing the report; all steps succeed.
+        # Simulate renderers/compose_threat_model.py writing the report; all steps succeed.
         commands.append(cmd)
-        if any("compose_threat_model.py" in str(c) for c in cmd):
+        if any("renderers/compose_threat_model.py" in str(c) for c in cmd):
             md.write_text("# Threat Model\n", encoding="utf-8")
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
@@ -1695,19 +1698,25 @@ def test_next_action_composes_report_when_fragments_ready(tmp_path, monkeypatch)
     assert md.is_file()  # composed deterministically
     assert action["stage"] == "stage3"  # routed to QA, NOT re-dispatched as stage2
     rendered_scripts = " ".join(" ".join(map(str, cmd)) for cmd in commands)
-    assert "emit_general_mitigation_titles.py" in rendered_scripts
-    assert "hydrate_mitigation_details.py" in rendered_scripts
-    assert "validate_mitigation_quality.py" in rendered_scripts
+    assert "model/emit_general_mitigation_titles.py" in rendered_scripts
+    assert "model/hydrate_mitigation_details.py" in rendered_scripts
+    assert "validators/validate_mitigation_quality.py" in rendered_scripts
     ordered_tail = [
-        next(i for i, item in enumerate(commands) if any("validate_fragment.py" in str(part) for part in item)),
-        next(i for i, item in enumerate(commands) if any("compose_threat_model.py" in str(part) for part in item)),
+        next(
+            i for i, item in enumerate(commands) if any("validators/validate_fragment.py" in str(part) for part in item)
+        ),
         next(
             i
             for i, item in enumerate(commands)
-            if any("emit_requirement_trace_to_model.py" in str(part) for part in item)
+            if any("renderers/compose_threat_model.py" in str(part) for part in item)
         ),
-        next(i for i, item in enumerate(commands) if any("apply_prose_fixes.py" in str(part) for part in item)),
-        next(i for i, item in enumerate(commands) if any("qa_checks.py" in str(part) for part in item)),
+        next(
+            i
+            for i, item in enumerate(commands)
+            if any("model/emit_requirement_trace_to_model.py" in str(part) for part in item)
+        ),
+        next(i for i, item in enumerate(commands) if any("repairs/apply_prose_fixes.py" in str(part) for part in item)),
+        next(i for i, item in enumerate(commands) if any("validators/qa_checks.py" in str(part) for part in item)),
     ]
     assert ordered_tail == sorted(ordered_tail)
     checkpoint = (output / ".appsec-checkpoint").read_text(encoding="utf-8")
@@ -1722,15 +1731,15 @@ def test_compose_if_ready_blocks_when_requirements_export_fails(tmp_path, monkey
     (fragments / "security-architecture.md").write_text("## 6. Security Architecture\n", encoding="utf-8")
 
     def fake_run(cmd, **_kwargs):
-        if any("compose_threat_model.py" in str(part) for part in cmd):
+        if any("renderers/compose_threat_model.py" in str(part) for part in cmd):
             (output / "threat-model.md").write_text("# Threat Model\n", encoding="utf-8")
-        returncode = 1 if any("emit_requirement_trace_to_model.py" in str(part) for part in cmd) else 0
+        returncode = 1 if any("model/emit_requirement_trace_to_model.py" in str(part) for part in cmd) else 0
         return subprocess.CompletedProcess(cmd, returncode, "", "incomplete requirements assessment")
 
     monkeypatch.setattr(controller.subprocess, "run", fake_run)
     assert controller._compose_if_ready(output, "") is False
     blocked = json.loads((output / ".compose-blocked.json").read_text(encoding="utf-8"))
-    assert blocked["step"] == "emit_requirement_trace_to_model.py"
+    assert blocked["step"] == "model/emit_requirement_trace_to_model.py"
 
 
 def test_next_action_recomposes_stale_report_when_checkpoint_needs_render(tmp_path, monkeypatch):
@@ -1751,7 +1760,7 @@ def test_next_action_recomposes_stale_report_when_checkpoint_needs_render(tmp_pa
     (output / ".abuse-case-matches.json").write_text('{"schema_version": 1, "matches": []}\n', encoding="utf-8")
 
     def fake_run(cmd, **kwargs):
-        if any("compose_threat_model.py" in str(item) for item in cmd):
+        if any("renderers/compose_threat_model.py" in str(item) for item in cmd):
             (output / "threat-model.md").write_text("# fresh report\n", encoding="utf-8")
         return subprocess.CompletedProcess(cmd, 0, "", "")
 
@@ -2711,9 +2720,9 @@ def test_context_v2_post_stride_dispatches_merger_only_for_ambiguous_groups(tmp_
 
     def fake_script(name, args, **kwargs):
         calls.append((name, args))
-        if name == "stride_dispatch_waves.py" and args[0] == "claim":
+        if name == "orchestrator/stride_dispatch_waves.py" and args[0] == "claim":
             return _completed(json.dumps({"status": "complete"}))
-        if name == "merge_threats.py" and args[0] == "collect":
+        if name == "model/merge_threats.py" and args[0] == "collect":
             (output / ".merge-candidates.json").write_text(
                 json.dumps(_merge_candidates("G-aaaaaaaa")),
                 encoding="utf-8",
@@ -2724,12 +2733,12 @@ def test_context_v2_post_stride_dispatches_merger_only_for_ambiguous_groups(tmp_
     action = controller.context_v2_post_stride(output)
     names = [name for name, _ in calls]
     assert names[:4] == [
-        "validate_dispatch_manifest.py",
-        "stride_dispatch_waves.py",
-        "stride_dispatch_waves.py",
-        "merge_threats.py",
+        "validators/validate_dispatch_manifest.py",
+        "orchestrator/stride_dispatch_waves.py",
+        "orchestrator/stride_dispatch_waves.py",
+        "model/merge_threats.py",
     ]
-    assert names.count("merge_threats.py") == 1
+    assert names.count("model/merge_threats.py") == 1
     assert action["action"] == "dispatch_agent"
     assert action["semantic_role"] == "threat_merger"
     assert action["unresolved_decision_keys"] == ["G-aaaaaaaa"]
@@ -2749,7 +2758,7 @@ def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeyp
 
     def fake_script(name, args, **kwargs):
         calls.append((name, args))
-        if name == "build_stride_dispatch_manifest.py":
+        if name == "orchestrator/build_stride_dispatch_manifest.py":
             components = []
             for component_id in ("api", "worker"):
                 bundle_dir = output / ".dispatch-context" / component_id
@@ -2813,7 +2822,7 @@ def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeyp
                 json.dumps({"context_version": 2, "components": components}),
                 encoding="utf-8",
             )
-        elif name == "stride_dispatch_waves.py" and args[0] == "claim":
+        elif name == "orchestrator/stride_dispatch_waves.py" and args[0] == "claim":
             components = json.loads((output / ".stride-dispatch-manifest.json").read_text(encoding="utf-8"))[
                 "components"
             ]
@@ -2908,7 +2917,7 @@ def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeyp
         assert "focus_paths" not in component_plan and "exclude_paths" not in component_plan
         assert job.get("repository_projection_path") is None
         assert ".stride-repository-registry.json" not in job["input_artifacts"]
-    wave_calls = [args[0] for name, args in calls if name == "stride_dispatch_waves.py"]
+    wave_calls = [args[0] for name, args in calls if name == "orchestrator/stride_dispatch_waves.py"]
     assert wave_calls == ["init", "claim"]
 
     assert controller._emit(action) == 0
@@ -3307,7 +3316,7 @@ def test_context_v2_post_stride_claims_retry_before_verify_or_merge(tmp_path, mo
 
     def fake_script(name, args, **kwargs):
         calls.append((name, args))
-        if name == "stride_dispatch_waves.py" and args[0] == "claim":
+        if name == "orchestrator/stride_dispatch_waves.py" and args[0] == "claim":
             return _completed(
                 json.dumps({"status": "claimed", "wave": {"components": [component], "attempts": {"api": 2}}})
             )
@@ -3325,8 +3334,11 @@ def test_context_v2_post_stride_claims_retry_before_verify_or_merge(tmp_path, mo
     assert action["action"] == "dispatch_parallel"
     assert action["dispatch_jobs"][0]["component_id"] == "api"
     assert action["dispatch_jobs"][0]["output_artifacts"] == [".stride-attempts/api.attempt-2.json"]
-    assert [name for name, _ in calls[:2]] == ["validate_dispatch_manifest.py", "stride_dispatch_waves.py"]
-    assert all(name not in {"merge_threats.py"} for name, _ in calls)
+    assert [name for name, _ in calls[:2]] == [
+        "validators/validate_dispatch_manifest.py",
+        "orchestrator/stride_dispatch_waves.py",
+    ]
+    assert all(name not in {"model/merge_threats.py"} for name, _ in calls)
 
 
 def _gate_rejected_attempt(output: Path, component_id: str, attempt: int) -> dict:
@@ -3360,7 +3372,7 @@ def test_stride_retry_plan_carries_the_gate_rejection_only_when_there_is_one(tmp
             (output / ".stride-attempts" / "api.attempt-1.json").write_text(json.dumps(rejected), encoding="utf-8")
 
     def fake_script(name, args, **kwargs):
-        if name == "stride_dispatch_waves.py" and args[0] == "claim":
+        if name == "orchestrator/stride_dispatch_waves.py" and args[0] == "claim":
             return _completed(
                 json.dumps({"status": "claimed", "wave": {"components": [component], "attempts": {"api": 2}}})
             )
@@ -3514,11 +3526,11 @@ def test_context_v2_prepare_stride_twice_repeats_one_wave_without_clearing_it(tm
     real_run_script = controller._run_script
 
     def fake_script(name, args, **kwargs):
-        if name == "build_stride_dispatch_manifest.py":
+        if name == "orchestrator/build_stride_dispatch_manifest.py":
             # Byte-stable, as the real builder now is for unchanged inputs.
             (output / ".stride-dispatch-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
             return _completed()
-        if name == "stride_dispatch_waves.py":
+        if name == "orchestrator/stride_dispatch_waves.py":
             return real_run_script(name, args, **kwargs)
         return _completed()
 
@@ -3577,9 +3589,9 @@ def active_stride_wave(tmp_path, monkeypatch):
     real_run_script = controller._run_script
 
     def run_script(name, args, **kwargs):
-        if name == "stride_dispatch_waves.py":
+        if name == "orchestrator/stride_dispatch_waves.py":
             return real_run_script(name, args, **kwargs)
-        if name == "validate_dispatch_manifest.py":
+        if name == "validators/validate_dispatch_manifest.py":
             return _completed()
         pytest.fail(f"unexpected downstream script: {name}")
 
@@ -3635,7 +3647,7 @@ def test_post_stride_rejects_unjoined_wave_without_redispatch(
     assert controller.main() == 3
     result = json.loads(capsys.readouterr().out)
     assert result["action"] == "reject"
-    assert "wait_stride_progress.py" in result["reason"]
+    assert "orchestrator/wait_stride_progress.py" in result["reason"]
     assert "dispatch_jobs" not in result
     assert (output / stride_waves.PLAN_NAME).read_bytes() == plan_before
     assert {path.name: path.read_bytes() for path in (output / ".stride-attempts").iterdir()} == attempts_before
@@ -3701,7 +3713,7 @@ def test_a_boundary_called_before_its_producer_stopped_rejects_without_abort(
     result = json.loads(capsys.readouterr().out)
     assert result["action"] == "reject"
     assert job_id in result["reason"]
-    assert "wait_agent_calls.py" in result["reason"]
+    assert "orchestrator/wait_agent_calls.py" in result["reason"]
     log = output / ".agent-run.log"
     assert not log.exists() or "RUN_ABORTED" not in log.read_text(encoding="utf-8")
 
@@ -3820,7 +3832,7 @@ def test_context_v2_prepare_stride_rejects_bundle_escape_after_external_gate(tmp
     outside.write_text(json.dumps({"component": {"id": "api"}, "source_slices": []}), encoding="utf-8")
 
     def fake_script(name, args, **kwargs):
-        if name == "build_stride_dispatch_manifest.py":
+        if name == "orchestrator/build_stride_dispatch_manifest.py":
             (output / ".stride-dispatch-manifest.json").write_text(
                 json.dumps(
                     {
@@ -3835,7 +3847,7 @@ def test_context_v2_prepare_stride_rejects_bundle_escape_after_external_gate(tmp
                 ),
                 encoding="utf-8",
             )
-        elif name == "stride_dispatch_waves.py" and args[0] == "claim":
+        elif name == "orchestrator/stride_dispatch_waves.py" and args[0] == "claim":
             return _completed(
                 json.dumps(
                     {
@@ -3866,24 +3878,24 @@ def test_context_v2_candidate_free_success_runs_to_stage2_handoff_without_agent(
 
     def fake_script(name, args, **kwargs):
         calls.append(name)
-        if name == "stride_dispatch_waves.py" and args[0] == "claim":
+        if name == "orchestrator/stride_dispatch_waves.py" and args[0] == "claim":
             return _completed(json.dumps({"status": "complete"}))
-        if name == "merge_threats.py" and args[0] == "collect":
+        if name == "model/merge_threats.py" and args[0] == "collect":
             (output / ".merge-candidates.json").write_text(
                 json.dumps(_merge_candidates()),
                 encoding="utf-8",
             )
-        elif name == "merge_threats.py" and args[0] == "finalize":
+        elif name == "model/merge_threats.py" and args[0] == "finalize":
             (output / ".threats-merged.json").write_text(
                 json.dumps({"version": 1, "generated_at": "2026-08-06T00:00:00Z", "threats": []}),
                 encoding="utf-8",
             )
-        elif name == "triage_validate_ratings.py":
+        elif name == "validators/triage_validate_ratings.py":
             (output / ".triage-flags.json").write_text(
                 json.dumps({"version": 1, "flags": []}),
                 encoding="utf-8",
             )
-        elif name == "build_threat_model_yaml.py":
+        elif name == "model/build_threat_model_yaml.py":
             (output / "threat-model.yaml").write_text("meta: {}\n", encoding="utf-8")
         return _completed()
 
@@ -3899,17 +3911,17 @@ def test_context_v2_candidate_free_success_runs_to_stage2_handoff_without_agent(
     assert action["task_progress"] == {"completed_rows": list(controller.STAGE1_TASK_ROWS)}
     assert "semantic_role" not in action
     assert calls[:5] == [
-        "validate_dispatch_manifest.py",
-        "stride_dispatch_waves.py",
-        "stride_dispatch_waves.py",
-        "merge_threats.py",
-        "merge_threats.py",
+        "validators/validate_dispatch_manifest.py",
+        "orchestrator/stride_dispatch_waves.py",
+        "orchestrator/stride_dispatch_waves.py",
+        "model/merge_threats.py",
+        "model/merge_threats.py",
     ]
-    assert "triage_validate_ratings.py" in calls
-    assert "triage_compute_ranking.py" in calls
-    assert "build_threat_model_yaml.py" in calls
-    assert calls.index("validate_intermediate.py") < calls.index("auto_emitter_pass.sh")
-    assert calls.index("auto_emitter_pass.sh") < calls.index("validate_mitigation_quality.py")
+    assert "validators/triage_validate_ratings.py" in calls
+    assert "model/triage_compute_ranking.py" in calls
+    assert "model/build_threat_model_yaml.py" in calls
+    assert calls.index("validators/validate_intermediate.py") < calls.index("auto_emitter_pass.sh")
+    assert calls.index("auto_emitter_pass.sh") < calls.index("validators/validate_mitigation_quality.py")
     assert "appsec-threat-analyst" not in json.dumps(action)
     assert "runtime_generation=context-v2" in (output / ".appsec-checkpoint").read_text(encoding="utf-8")
 
@@ -3919,7 +3931,7 @@ def test_context_v2_after_merge_dispatches_evidence_only_when_sample_has_work(tm
     _write_post_stride_sources(tmp_path, output, [_post_stride_threat()])
 
     def fake_script(name, args, **kwargs):
-        if name == "build_post_stride_contexts.py":
+        if name == "contexts/build_post_stride_contexts.py":
             post_stride_contexts.write_evidence_context(output, tmp_path / "repo", "standard", 30)
         return _completed()
 
@@ -4132,12 +4144,12 @@ def test_context_v2_after_evidence_skips_triage_agent_and_dispatches_only_root_c
 
     def fake_script(name, args, **kwargs):
         calls.append((name, list(args)))
-        if name == "triage_validate_ratings.py":
+        if name == "validators/triage_validate_ratings.py":
             (output / ".triage-flags.json").write_text(
                 json.dumps({"version": 2, "flags": []}),
                 encoding="utf-8",
             )
-        if name == "build_post_stride_contexts.py":
+        if name == "contexts/build_post_stride_contexts.py":
             post_stride_contexts.write_synthesis_contexts(output)
         return _completed()
 
@@ -4152,8 +4164,8 @@ def test_context_v2_after_evidence_skips_triage_agent_and_dispatches_only_root_c
     assert action["unresolved_decision_keys"] == ["tier_root_causes"]
     assert all(job["semantic_role"] != "triage_validator" for job in action["dispatch_jobs"])
     names = [name for name, _args in calls]
-    assert names.index("reclassify_components.py") < names.index("triage_validate_ratings.py")
-    reclassify_call = next(args for name, args in calls if name == "reclassify_components.py")
+    assert names.index("model/reclassify_components.py") < names.index("validators/triage_validate_ratings.py")
+    reclassify_call = next(args for name, args in calls if name == "model/reclassify_components.py")
     assert reclassify_call == ["--merged-only", "--strict", str(output)]
 
 
@@ -4296,7 +4308,7 @@ def test_context_v2_invalid_evidence_summary_is_nonfatal_enrichment(tmp_path, mo
     assert controller._context_v2_after_evidence(output, _cfg(tmp_path)) == {"action": "sentinel"}
     assert guard_calls == [
         (
-            "guard_evidence_verification.py",
+            "validators/guard_evidence_verification.py",
             [str(output), "--ignore-summary"],
             ["evidence verification rejected: invalid contract"],
         )
@@ -4337,7 +4349,7 @@ def test_context_v2_applies_receipted_evidence_verdicts_controller_side(tmp_path
     )
 
     def fake_script(name, args, **kwargs):
-        if name == "triage_validate_ratings.py":
+        if name == "validators/triage_validate_ratings.py":
             (output / ".triage-flags.json").write_text(json.dumps({"version": 2, "flags": []}), encoding="utf-8")
         return _completed()
 
@@ -4390,7 +4402,7 @@ def test_context_v2_rejected_evidence_application_preserves_canonical_merge(tmp_
         raise controller.ControllerError("staged evidence correspondence failed")
 
     def fake_script(name, args, **kwargs):
-        if name == "triage_validate_ratings.py":
+        if name == "validators/triage_validate_ratings.py":
             (output / ".triage-flags.json").write_text(json.dumps({"version": 2, "flags": []}), encoding="utf-8")
         return _completed()
 
@@ -4412,12 +4424,12 @@ def test_context_v2_dispatches_triage_only_when_deterministic_ranking_fails(tmp_
     )
 
     def fake_script(name, args, **kwargs):
-        if name == "triage_validate_ratings.py":
+        if name == "validators/triage_validate_ratings.py":
             (output / ".triage-flags.json").write_text(
                 json.dumps({"version": 1, "flags": []}),
                 encoding="utf-8",
             )
-        if name == "triage_compute_ranking.py":
+        if name == "model/triage_compute_ranking.py":
             raise controller.ControllerError("semantic ranking fallback required")
         return _completed()
 
@@ -4573,7 +4585,7 @@ def test_duration_estimate_forwards_resolved_profile(monkeypatch, tmp_path):
     captured: list[str] = []
 
     def fake_run(name, args, **kwargs):
-        assert name == "estimate_duration.py"
+        assert name == "runtime/estimate_duration.py"
         captured.extend(args)
         return _completed(
             json.dumps(
@@ -4729,10 +4741,10 @@ def test_post_lock_controller_error_releases_lock(monkeypatch, tmp_path):
     monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
 
     def run(name, args, **kwargs):
-        if name == "acquire_lock.py":
+        if name == "runtime/acquire_lock.py":
             (output / ".appsec-lock").write_text("pid=1\n", encoding="utf-8")
             return _completed("LOCK_ACQUIRED\n")
-        if name == "validate_cache.py":
+        if name == "validators/validate_cache.py":
             raise controller.ControllerError("validate boom", 4)
         return _completed()
 
@@ -4752,10 +4764,10 @@ def test_post_lock_oserror_is_wrapped_and_releases_lock(monkeypatch, tmp_path):
     monkeypatch.setattr(controller, "_activate_markers", lambda cfg, output_dir: None)
 
     def run(name, args, **kwargs):
-        if name == "acquire_lock.py":
+        if name == "runtime/acquire_lock.py":
             (output / ".appsec-lock").write_text("pid=1\n", encoding="utf-8")
             return _completed("LOCK_ACQUIRED\n")
-        if name == "validate_cache.py":
+        if name == "validators/validate_cache.py":
             raise OSError("disk full")
         return _completed()
 
@@ -5066,7 +5078,7 @@ def test_orchestrator_prompt_needed_signal(monkeypatch, tmp_path, session, headl
 
 
 # --- Bootstrap-stub recovery (2026-07-19) -----------------------------------
-# `triage_compute_ranking.py --bootstrap-yaml` leaves a `meta._bootstrap` stub
+# `model/triage_compute_ranking.py --bootstrap-yaml` leaves a `meta._bootstrap` stub
 # when Phase 11 is cut off. Every gate in `next` only tested that
 # threat-model.yaml EXISTS, so the stub passed as canonical and the run
 # continued on an empty model.
@@ -5113,7 +5125,7 @@ def test_bootstrap_stub_is_upgraded_when_rebuild_succeeds(tmp_path, monkeypatch)
 
     def _fake_script(name, args, **kwargs):
         calls.append(name)
-        if name == "build_threat_model_yaml.py":
+        if name == "model/build_threat_model_yaml.py":
             assert kwargs["timeout"] == 600
             assert kwargs["cwd"] == controller.SCRIPT_DIR
             yaml_path.write_text(
@@ -5125,9 +5137,9 @@ def test_bootstrap_stub_is_upgraded_when_rebuild_succeeds(tmp_path, monkeypatch)
     monkeypatch.setattr(controller, "_run_script", _fake_script)
     monkeypatch.setattr(controller, "_run_external", lambda cmd, **kw: calls.append(Path(cmd[1]).name) or _completed())
     assert controller._upgrade_bootstrap_yaml(tmp_path, {"repo_root": str(tmp_path)}) is True
-    assert calls.index("build_threat_model_yaml.py") < calls.index("auto_emitter_pass.sh")
-    assert calls.index("auto_emitter_pass.sh") < calls.index("validate_mitigation_quality.py")
-    assert "assert_completeness.py" in calls
+    assert calls.index("model/build_threat_model_yaml.py") < calls.index("auto_emitter_pass.sh")
+    assert calls.index("auto_emitter_pass.sh") < calls.index("validators/validate_mitigation_quality.py")
+    assert "validators/assert_completeness.py" in calls
     assert "_bootstrap" not in yaml.safe_load(yaml_path.read_text(encoding="utf-8"))["meta"]
 
 
@@ -5215,7 +5227,7 @@ def test_export_backstop_needs_a_model_to_derive_from(tmp_path):
 
 
 def test_next_action_exports_before_stamping(tmp_path):
-    """Ordering matters: stamp_threat_model.py copies the export, so the export
+    """Ordering matters: model/stamp_threat_model.py copies the export, so the export
     must exist by the time the stamp runs."""
     output, cfg = _export_run_dir(tmp_path, write_threatdragon=True, slug="s1")
     (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
@@ -5235,7 +5247,7 @@ def _context_v2_run(tmp_path: Path, **overrides) -> Path:
 
 def _context_v2_prepass_stub(output: Path):
     def run(name, _args, **_kwargs):
-        if name == "build_threat_modeling_context.py":
+        if name == "contexts/build_threat_modeling_context.py":
             (output / ".threat-modeling-context.md").write_text(_valid_threat_modeling_context(), encoding="utf-8")
         return _completed("{}")
 
@@ -5244,7 +5256,7 @@ def _context_v2_prepass_stub(output: Path):
 
 class TestContextV2ReconWave:
     def test_recon_reuses_the_validated_early_overview(self, tmp_path, monkeypatch, capsys):
-        import business_context_preview
+        import contexts.business_context_preview as business_context_preview
 
         output = _context_v2_run(tmp_path)
         repo = tmp_path / "repo"
@@ -5295,7 +5307,7 @@ class TestContextV2ReconWave:
         output = _context_v2_run(tmp_path)
 
         def fake_script(name, _args, **_kwargs):
-            if name == "build_threat_modeling_context.py":
+            if name == "contexts/build_threat_modeling_context.py":
                 (output / ".threat-modeling-context.md").write_text(_valid_threat_modeling_context(), encoding="utf-8")
             return _completed("{}")
 
@@ -5352,9 +5364,9 @@ class TestContextV2ReconWave:
         (output / ".recon-summary.md").write_text("prior\n", encoding="utf-8")
 
         def fake_script(name, args, **kwargs):
-            if name == "baseline_state.py":
+            if name == "baseline/baseline_state.py":
                 raise controller.ControllerError("fingerprint changed")
-            if name == "build_threat_modeling_context.py":
+            if name == "contexts/build_threat_modeling_context.py":
                 (output / ".threat-modeling-context.md").write_text(_valid_threat_modeling_context(), encoding="utf-8")
             return _completed("{}")
 
@@ -5397,8 +5409,10 @@ class TestContextV2PostRecon:
         def run_script(name, args, **_kwargs):
             calls.append((name, args))
             if failing and (name, args[0]) == failing:
-                raise controller.ControllerError(f"{name} failed with exit 1: INVALID: first\nINVALID: second", 1)
-            if name == "config_iac_scanner.py":
+                raise controller.ControllerError(
+                    f"{Path(name).name} failed with exit 1: INVALID: first\nINVALID: second", 1
+                )
+            if name == "analyzers/config_iac_scanner.py":
                 (output / ".config-scan-findings.json").write_text(scan_bytes, encoding="utf-8")
             return _completed()
 
@@ -5413,7 +5427,9 @@ class TestContextV2PostRecon:
     def test_invalid_config_scan_is_withheld_with_its_reason_not_as_no_surface(self, tmp_path, monkeypatch):
         output = self._prepare(tmp_path)
         (tmp_path / "repo" / "Dockerfile").write_text("FROM runtime:latest\n", encoding="utf-8")
-        self._config_scripts(monkeypatch, output, failing=("validate_intermediate.py", "config_scan_findings"))
+        self._config_scripts(
+            monkeypatch, output, failing=("validators/validate_intermediate.py", "config_scan_findings")
+        )
 
         controller.context_v2_post_recon(output)
 
@@ -5446,7 +5462,7 @@ class TestContextV2PostRecon:
 
         controller.context_v2_post_recon(output)
 
-        config_call = next(args for name, args in calls if name == "config_iac_scanner.py")
+        config_call = next(args for name, args in calls if name == "analyzers/config_iac_scanner.py")
         assert config_call == [
             "--repo-root",
             str(repo),
@@ -5455,10 +5471,10 @@ class TestContextV2PostRecon:
             "--assessment-depth",
             "standard",
         ]
-        assert calls.index(("config_iac_scanner.py", config_call)) < next(
+        assert calls.index(("analyzers/config_iac_scanner.py", config_call)) < next(
             index
             for index, (name, args) in enumerate(calls)
-            if name == "validate_intermediate.py" and args[0] == "config_scan_findings"
+            if name == "validators/validate_intermediate.py" and args[0] == "config_scan_findings"
         )
 
     def test_post_recon_does_not_reuse_config_bytes_when_fresh_scan_fails(self, tmp_path, monkeypatch):
@@ -5467,7 +5483,7 @@ class TestContextV2PostRecon:
         (repo / "Dockerfile").write_text("FROM runtime:latest\n", encoding="utf-8")
         config_path = output / ".config-scan-findings.json"
         config_path.write_text('{"version": 1, "checks_run": 24, "violations": 0, "findings": []}\n')
-        self._config_scripts(monkeypatch, output, failing=("config_iac_scanner.py", "--repo-root"))
+        self._config_scripts(monkeypatch, output, failing=("analyzers/config_iac_scanner.py", "--repo-root"))
 
         controller.context_v2_post_recon(output)
 
@@ -5674,8 +5690,8 @@ class TestContextV2PostRecon:
         )
         action = controller.context_v2_post_recon(output)
         assert action["semantic_role"] == "architecture_analyst"
-        assert not any(name == "actor_discovery_cache.py" for name, _ in calls)
-        resolver = [args for name, args in calls if name == "resolve_actors.py"]
+        assert not any(name == "contexts/actor_discovery_cache.py" for name, _ in calls)
+        resolver = [args for name, args in calls if name == "model/resolve_actors.py"]
         assert resolver and "--quick" in resolver[0]
 
     def test_thorough_depth_runs_the_database_separation_scan(self, tmp_path, monkeypatch):
@@ -5683,14 +5699,14 @@ class TestContextV2PostRecon:
         calls: list[str] = []
         monkeypatch.setattr(controller, "_run_script", lambda name, args, **k: (calls.append(name), _completed())[1])
         controller.context_v2_post_recon(output)
-        assert "database_privilege_separation.py" in calls
+        assert "analyzers/database_privilege_separation.py" in calls
 
     def test_standard_depth_omits_the_database_separation_scan(self, tmp_path, monkeypatch):
         output = self._prepare(tmp_path)
         calls: list[str] = []
         monkeypatch.setattr(controller, "_run_script", lambda name, args, **k: (calls.append(name), _completed())[1])
         controller.context_v2_post_recon(output)
-        assert "database_privilege_separation.py" not in calls
+        assert "analyzers/database_privilege_separation.py" not in calls
 
     def test_discovery_disabled_by_repo_config_goes_straight_to_architecture(self, tmp_path, monkeypatch):
         output = self._prepare(tmp_path)
@@ -5698,14 +5714,14 @@ class TestContextV2PostRecon:
         monkeypatch.setattr(controller, "_run_script", lambda name, args, **k: (calls.append(name), _completed())[1])
         action = controller.context_v2_post_recon(output)
         assert action["semantic_role"] == "architecture_analyst"
-        assert "actor_discovery_cache.py" not in calls
+        assert "contexts/actor_discovery_cache.py" not in calls
 
     def test_discovery_cache_miss_dispatches_the_discoverer(self, tmp_path, monkeypatch):
         output = self._prepare(tmp_path)
         _write_architecture_receipt_inputs(output, discovery_enabled=True)
 
         def fake_script(name, args, **kwargs):
-            if name == "actor_discovery_cache.py":
+            if name == "contexts/actor_discovery_cache.py":
                 return _completed("cache-key-1" if args[0] == "compute" else "miss")
             return _completed()
 
@@ -5733,7 +5749,7 @@ class TestContextV2PostRecon:
         _write_architecture_receipt_inputs(output, discovery_enabled=True)
 
         def fake_script(name, args, **kwargs):
-            if name == "actor_discovery_cache.py":
+            if name == "contexts/actor_discovery_cache.py":
                 return _completed("cache-key-1" if args[0] == "compute" else "miss")
             return _completed()
 
@@ -5766,7 +5782,7 @@ class TestContextV2PostRecon:
         _write_architecture_receipt_inputs(output, discovery_enabled=True)
 
         def fake_script(name, args, **kwargs):
-            if name == "actor_discovery_cache.py":
+            if name == "contexts/actor_discovery_cache.py":
                 return _completed("cache-key-1" if args[0] == "compute" else "hit")
             return _completed()
 
@@ -5785,9 +5801,9 @@ class TestContextV2PostActors:
     def _script(calls: list[tuple[str, list[str]]], *, invalid_discovery: bool = False):
         def fake_script(name, args, **kwargs):
             calls.append((name, args))
-            if name == "actor_discovery_cache.py" and args[0] == "compute":
+            if name == "contexts/actor_discovery_cache.py" and args[0] == "compute":
                 return _completed("cache-key-1")
-            if invalid_discovery and name == "validate_intermediate.py" and args[0] == "actors_discovered":
+            if invalid_discovery and name == "validators/validate_intermediate.py" and args[0] == "actors_discovered":
                 raise controller.ControllerError("invalid discovery contract")
             return _completed()
 
@@ -5856,10 +5872,10 @@ class TestContextV2PostActors:
         monkeypatch.setattr(controller, "_run_script", self._script(calls))
         action = controller.context_v2_post_actors(output)
         assert action["semantic_role"] == "architecture_analyst"
-        resolver = [args for name, args in calls if name == "resolve_actors.py"]
+        resolver = [args for name, args in calls if name == "model/resolve_actors.py"]
         assert resolver and "--discovery-output" in resolver[0]
         # Valid output is never overwritten with the empty-discovery stub.
-        assert not any(name == "actor_discovery_cache.py" and args[0] == "write-empty" for name, args in calls)
+        assert not any(name == "contexts/actor_discovery_cache.py" and args[0] == "write-empty" for name, args in calls)
 
     def test_invalid_discovery_degrades_to_the_static_actor_set(self, tmp_path, monkeypatch):
         output = self._prepare(tmp_path)
@@ -5867,7 +5883,9 @@ class TestContextV2PostActors:
         monkeypatch.setattr(controller, "_run_script", self._script(calls, invalid_discovery=True))
         action = controller.context_v2_post_actors(output)
         assert action["semantic_role"] == "architecture_analyst"
-        write_empty = [args for name, args in calls if name == "actor_discovery_cache.py" and args[0] == "write-empty"]
+        write_empty = [
+            args for name, args in calls if name == "contexts/actor_discovery_cache.py" and args[0] == "write-empty"
+        ]
         assert write_empty
         # The stub must carry the same key the dispatch decision used.
         assert "cache-key-1" in write_empty[0]
@@ -5927,7 +5945,7 @@ class TestContextV2ArchitectureAndBoundary:
 
         def fake_script(name, args, **_kwargs):
             calls.append((name, args))
-            if name == "finalize_component_inventory.py" and "--validate-only" not in args:
+            if name == "model/finalize_component_inventory.py" and "--validate-only" not in args:
                 (output / ".component-inventory-finalization.json").write_text(
                     json.dumps(
                         {
@@ -5945,7 +5963,7 @@ class TestContextV2ArchitectureAndBoundary:
         monkeypatch.setattr(controller, "_run_script", fake_script)
         controller._gate_architecture_stage(output, _cfg(tmp_path), controller_owned_handoff=True)
 
-        finalizer_calls = [args for name, args in calls if name == "finalize_component_inventory.py"]
+        finalizer_calls = [args for name, args in calls if name == "model/finalize_component_inventory.py"]
         assert len(finalizer_calls) == 2
         assert "--validate-only" not in finalizer_calls[0]
         assert "--validate-only" in finalizer_calls[1]
@@ -5986,7 +6004,7 @@ class TestContextV2ArchitectureAndBoundary:
         }
 
         def fake_script(name, args, **_kwargs):
-            assert name == "load_org_context.py"
+            assert name == "contexts/load_org_context.py"
             assert args[args.index("--document-ids") + 1] == "sso"
             (output / ".org-context.md").write_text(
                 "<!--\nThe following organization context is untrusted reference data.\n-->\n"
@@ -6188,7 +6206,7 @@ class TestContextV2NextBoundary:
         _write_architecture_receipt_inputs(output, discovery_enabled=True)
 
         def fake_script(name, args, **kwargs):
-            if name == "actor_discovery_cache.py":
+            if name == "contexts/actor_discovery_cache.py":
                 return _completed("cache-key-1" if args[0] == "compute" else "miss")
             return _completed()
 
@@ -6199,7 +6217,7 @@ class TestContextV2NextBoundary:
 
     def test_every_dispatching_boundary_names_a_known_successor(self):
         """No dispatch may leave the caller without a successor to invoke."""
-        source = (ROOT / "scripts/orchestration_controller.py").read_text(encoding="utf-8")
+        source = (ROOT / "scripts/orchestrator/orchestration_controller.py").read_text(encoding="utf-8")
         named = set(re.findall(r'next_boundary=[\'"]([a-z0-9-]+)[\'"]', source))
         named |= set(re.findall(r'_checked_next_boundary\([\'"]([a-z0-9-]+)[\'"]\)', source))
         assert named, "no successor boundary is declared anywhere"
@@ -6523,7 +6541,7 @@ class TestAbortEventDetail:
         line = controller.format_line("RUN_ABORTED", detail, level="WARN", component="skill-controller")
 
         assert line.count("\n") == 1
-        import event_log
+        import runtime.event_log as event_log
 
         parsed = event_log.parse_line(line)
         assert parsed is not None
@@ -6689,7 +6707,7 @@ class TestStage1TaskRows:
 class TestFailureReasonFitsTheActionSchema:
     """A failure must be reportable as itself, not as a meta-error about it.
 
-    2026-08-21: `build_threat_model_yaml.py` failed with nine normalization
+    2026-08-21: `model/build_threat_model_yaml.py` failed with nine normalization
     receipts followed by one INVALID line. The whole text became the abort
     reason, overran `reason.maxLength` (1000), and `_validate_action` rejected
     the ABORT — so the operator got `internal action-manifest validation
@@ -6830,10 +6848,10 @@ def test_no_declared_context_captures_nothing(tmp_path):
     "application,asset", [("booking-service", "room reservations"), ("parcel-hub", "delivery addresses")]
 )
 def test_early_context_blocks_scanners_until_answers_reach_context(tmp_path, monkeypatch, application, asset):
-    import build_threat_modeling_context
-    import business_context_preview
-    import load_business_context
-    import triage_compute_ranking
+    import contexts.build_threat_modeling_context as build_threat_modeling_context
+    import contexts.business_context_preview as business_context_preview
+    import contexts.load_business_context as load_business_context
+    import model.triage_compute_ranking as triage_compute_ranking
     import yaml
 
     cfg = _cfg(tmp_path)
@@ -6851,7 +6869,7 @@ def test_early_context_blocks_scanners_until_answers_reach_context(tmp_path, mon
 
     def script(name, args, **kwargs):
         calls.append(name)
-        if name == "acquire_lock.py":
+        if name == "runtime/acquire_lock.py":
             return real_script(name, args, **kwargs)
         return _completed()
 
@@ -6971,7 +6989,7 @@ def test_early_context_bypass_never_waits(tmp_path, monkeypatch, headless, skip)
 
 @pytest.mark.parametrize("fault", ["wrong_run", "wrong_lock", "missing", "symlink", "large", "credential"])
 def test_early_context_rejects_invalid_answers_before_scanning(tmp_path, monkeypatch, fault):
-    import acquire_lock
+    import runtime.acquire_lock as acquire_lock
 
     cfg = _cfg(tmp_path)
     out = Path(cfg["output_dir"])
@@ -7000,7 +7018,7 @@ def test_early_context_rejects_invalid_answers_before_scanning(tmp_path, monkeyp
 
 @pytest.mark.parametrize("decision", ["skip", "unchanged"])
 def test_early_context_skipping_preserves_supplied_source(tmp_path, monkeypatch, decision):
-    import acquire_lock
+    import runtime.acquire_lock as acquire_lock
 
     cfg = _cfg(tmp_path)
     out = Path(cfg["output_dir"])
@@ -7031,7 +7049,7 @@ def test_early_context_skipping_preserves_supplied_source(tmp_path, monkeypatch,
 
 @pytest.mark.parametrize("existing", [None, "docs/business-context.md", "docs/security/business-context.md"])
 def test_early_context_persists_answers_without_persisting_run_only_import(tmp_path, monkeypatch, existing):
-    import acquire_lock
+    import runtime.acquire_lock as acquire_lock
 
     cfg = _cfg(tmp_path)
     repo, out = Path(cfg["repo_root"]), Path(cfg["output_dir"])
@@ -7068,7 +7086,7 @@ def test_early_context_persists_answers_without_persisting_run_only_import(tmp_p
 
 @pytest.mark.parametrize("fault", ["symlink", "parent_escape", "oversized", "credential"])
 def test_early_context_rejects_unsafe_persistence_before_writes(tmp_path, monkeypatch, fault):
-    import acquire_lock
+    import runtime.acquire_lock as acquire_lock
 
     cfg = _cfg(tmp_path)
     repo, out = Path(cfg["repo_root"]), Path(cfg["output_dir"])
@@ -7245,7 +7263,7 @@ class TestReceiptVerificationIsEnforced:
             controller.verify_receipt_hashes(output, [], action_id=bound["context_plan"]["action_id"])
 
     def test_pending_marker_write_failure_aborts_the_emission(self, tmp_path, monkeypatch):
-        import _atomic_io
+        import shared._atomic_io as _atomic_io
 
         output = _write_context_v2_config(tmp_path)
         cfg = json.loads((output / ".skill-config.json").read_text(encoding="utf-8"))
@@ -7415,8 +7433,8 @@ def test_the_boundary_gate_is_reachable_from_the_command_line(tmp_path, monkeypa
 
 def test_an_agent_spawn_verifies_its_dispatch_receipts(tmp_path, monkeypatch):
     """The Agent hook re-hashes at spawn, so no orchestrator turn is spent on it."""
-    import agent_logger
-    import hook_payload
+    import runtime.agent_logger as agent_logger
+    import runtime.hook_payload as hook_payload
 
     output, bound = _bound_stage1_dispatch(tmp_path)
     action_id = bound["context_plan"]["action_id"]
@@ -7467,13 +7485,13 @@ def test_stage2_attempt_budget_is_per_cause_not_per_transition(tmp_path, monkeyp
 
     # A different cause starts with its own full budget instead of inheriting
     # the exhausted one.
-    _stage2_blocked(output, "emit_requirement_trace_to_model.py")
+    _stage2_blocked(output, "model/emit_requirement_trace_to_model.py")
     receipt = controller.next_action(output)["receipts"][0]
-    assert "emit_requirement_trace_to_model.py" in receipt
+    assert "model/emit_requirement_trace_to_model.py" in receipt
     assert "attempt 1/2" in receipt
 
     ledger = json.loads((output / ".inline-shortcut-retry-count").read_text(encoding="utf-8"))
-    assert ledger == {"required-fragments": 2, "emit_requirement_trace_to_model.py": 1}
+    assert ledger == {"required-fragments": 2, "model/emit_requirement_trace_to_model.py": 1}
 
 
 def test_stage2_abort_names_the_step_that_actually_blocked(tmp_path, monkeypatch):
@@ -7483,7 +7501,7 @@ def test_stage2_abort_names_the_step_that_actually_blocked(tmp_path, monkeypatch
     (output / "threat-model.yaml").write_text("meta: {}\n")
     monkeypatch.setattr(controller, "_compose_if_ready", lambda *_args, **_kwargs: False)
 
-    _stage2_blocked(output, "emit_requirement_trace_to_model.py")
+    _stage2_blocked(output, "model/emit_requirement_trace_to_model.py")
     controller.next_action(output)
     controller.next_action(output)
 
@@ -7491,7 +7509,7 @@ def test_stage2_abort_names_the_step_that_actually_blocked(tmp_path, monkeypatch
         controller.next_action(output)
 
     message = str(excinfo.value)
-    assert "emit_requirement_trace_to_model.py" in message
+    assert "model/emit_requirement_trace_to_model.py" in message
     assert "render fragments" not in message, "the abort must not blame a cause it never observed"
 
 
@@ -7615,7 +7633,7 @@ def test_preflight_writes_the_run_start_marker(tmp_path, monkeypatch):
 
 
 def _logged_events(output: Path, name: str) -> list:
-    import event_log
+    import runtime.event_log as event_log
 
     lines = (output / ".agent-run.log").read_text(encoding="utf-8").splitlines(keepends=True)
     return [event for event in map(event_log.parse_line, lines) if event and event.event == name]
@@ -7680,10 +7698,10 @@ def test_post_triage_refreshes_weaknesses_before_synthesis(tmp_path, monkeypatch
     monkeypatch.setattr(controller, "_context_v2_finalize", lambda *args: {"action": "done"})
     assert controller._context_v2_after_triage(tmp_path, {}) == {"action": "done"}
     assert [name for name, _ in calls] == [
-        "validate_intermediate.py",
-        "merge_threats.py",
-        "validate_intermediate.py",
-        "validate_intermediate.py",
+        "validators/validate_intermediate.py",
+        "model/merge_threats.py",
+        "validators/validate_intermediate.py",
+        "validators/validate_intermediate.py",
     ]
     assert calls[1][1] == ["refresh-weaknesses", "--output-dir", str(tmp_path)]
     assert calls[0][1][0] == calls[2][1][0] == "threats_merged"
@@ -7814,7 +7832,7 @@ def test_permission_abort_respects_prompt_free_default_mode(monkeypatch, tmp_pat
     ids=["blocked-chrome", "missing-tool", "ready", "not-requested"],
 )
 def test_requested_exports_are_probed_before_the_analysis(monkeypatch, cfg, probe, expected):
-    import export_pdf
+    import exporters.export_pdf as export_pdf
 
     monkeypatch.delenv("APPSEC_SKIP_EXPORT_CHECK", raising=False)
     calls = []
@@ -7825,3 +7843,56 @@ def test_requested_exports_are_probed_before_the_analysis(monkeypatch, cfg, prob
     else:
         assert expected in advisory and "run the export step unsandboxed" in advisory
     assert calls == ([] if probe is None else [True])
+
+
+@pytest.mark.parametrize("failed_step", [None, "resolve_action", "bind_action_to_plan"])
+def test_cli_dispatch_binding_preserves_verification_and_failure_scope(tmp_path, monkeypatch, capsys, failed_step):
+    """Emission opens verification only after binding; its failures do not aggregate an abort."""
+    output = _write_context_v2_config(tmp_path)
+    cfg = json.loads((output / ".skill-config.json").read_text(encoding="utf-8"))
+    action = controller._context_v2_dispatch(
+        output,
+        cfg,
+        role="context_resolver",
+        job_id="phase1-context",
+        next_boundary="context-v2-post-recon",
+        input_artifacts=[".skill-config.json"],
+        output_artifacts=[".threat-modeling-context.md"],
+        decision_keys=[],
+        receipts=[],
+    )
+    monkeypatch.setattr(controller, "context_v2_begin", lambda _output: action)
+    monkeypatch.setattr(
+        controller,
+        "_aggregate_issues_on_abort",
+        lambda *args: pytest.fail("emission failure entered command abort aggregation"),
+    )
+    if failed_step:
+
+        def fail_binding(*args, **kwargs):
+            raise context_routing.ContextRoutingError("binding unavailable")
+
+        monkeypatch.setattr(context_routing, failed_step, fail_binding)
+
+    code = controller.main(["context-v2-begin", "--output-dir", str(output)])
+    stdout = capsys.readouterr().out
+    assert stdout.count("\n") == 1
+    emitted = json.loads(stdout)
+    if failed_step:
+        assert code == 2
+        assert emitted["action"] == "abort"
+        expected = "validation failed" if failed_step == "resolve_action" else "action binding failed"
+        assert emitted["reason"] == f"context routing {expected}: binding unavailable"
+        assert not (output / controller.PENDING_DISPATCH_NAME).exists()
+        assert not (output / controller.RECEIPT_VERIFICATION_NAME).exists()
+        return
+
+    assert code == 0
+    assert emitted["action"] == "dispatch_agent"
+    assert emitted["dispatch_jobs"]
+    pending = controller._pending_dispatch(output)
+    assert pending["action_id"] == emitted["context_plan"]["action_id"]
+    with pytest.raises(controller.CallError):
+        controller._require_receipt_verification(output)
+    controller.verify_receipt_hashes(output, [], action_id=pending["action_id"])
+    controller._require_receipt_verification(output)

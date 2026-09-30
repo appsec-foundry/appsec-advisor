@@ -133,12 +133,12 @@ Mirror the crypto pattern: a catalog/heuristic that emits an
   (`home-grown`/`none` from `detect_impl_strategy`) does **not** by itself create
   a weakness — it needs an absent-control signal or a practice site. So the new
   work is an **emitter**, not just a classifier.
-- New deterministic check (extend `detect_impl_strategy.py` or a sibling that
+- New deterministic check (extend `analyzers/detect_impl_strategy.py` or a sibling that
   writes into the design-signals stream `_load_design_signals` consumes,
   merge_threats:1895): for each domain, emit `{weakness_class, statement,
   absent_control_signal[], affected_components[], implementation_strategy}` when:
   - **InputValidation (injection / output_xss_csp):** the repo exposes request
-    handlers/routes (from `recon_patterns.py` route inventory) **AND** no vetted
+    handlers/routes (from `analyzers/recon_patterns.py` route inventory) **AND** no vetted
     validation library is detected (`security-libraries.yaml` injection domain:
     zod/joi/express-validator/class-validator, :23) **AND** no central validation
     middleware pattern → `absent_control_signal: ["no central input-validation
@@ -168,7 +168,7 @@ Mirror the crypto pattern: a catalog/heuristic that emits an
   - Gate the absence emitter on the **detected primary language(s)** from recon;
     only assert "no validation library" for a language the detector actually
     inventories. For un-inventoried languages, emit **nothing** (silent, not a
-    false positive) and `log()` the coverage gap via `scripts/event_log.py` (no
+    false positive) and `log()` the coverage gap via `scripts/runtime/event_log.py` (no
     silent cap — AGENTS.md).
   - File a follow-up to extend the manifest/lib inventory beyond JS (out of
     scope here; note it in the risk register).
@@ -230,7 +230,7 @@ Mirror the crypto pattern: a catalog/heuristic that emits an
 renders as the `### Security Principles` subsection *inside* the Management
 Summary (between the anti-patterns callout and the Security-Posture heatmap),
 not §8. §8 keeps only a back-reference line. Changes:
-- `compose_threat_model.py`: `_render_security_principles` reworked to emit the
+- `renderers/compose_threat_model.py`: `_render_security_principles` reworked to emit the
   `### Security Principles` MS section (heading + a lead that *names the
   VIOLATED principles* + verdict table); new `systemic_posture` branch in
   `_render_management_summary`; §8 call replaced with a back-ref; new eval-context
@@ -252,11 +252,11 @@ self-gating by language, since the evidence IS JS/TS source). Changes:
   four centralizable domains (injection, output_xss_csp, missing_authz,
   broken_auth). `weak_crypto`/`server_side_exposure` intentionally omitted
   (crypto is covered by `crypto-checks.yaml`; avoids double-surfacing).
-- `detect_impl_strategy.py`: `_scan_bespoke` now also returns up to 5
+- `analyzers/detect_impl_strategy.py`: `_scan_bespoke` now also returns up to 5
   `{file,line}` sink sites; `build_strategy_map` carries `bespoke_evidence`; new
   `build_impl_design_signals` emits a design signal per home-grown/misused
   central control; `_main` writes `.impl-design-signals.json`.
-- `merge_threats.py`: `_load_design_signals` merges `.impl-design-signals.json`
+- `model/merge_threats.py`: `_load_design_signals` merges `.impl-design-signals.json`
   with the arch-coverage stream (both fold into the same class buckets → one
   weakness per class; component spread = distinct sink dirs, so ≥2 dirs → systemic
   → VIOLATED).

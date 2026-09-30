@@ -56,7 +56,7 @@ OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 REPO_ROOT="<REPO_ROOT from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 ASSESSMENT_DEPTH="<ASSESSMENT_DEPTH from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/config_iac_scanner.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/analyzers/config_iac_scanner.py" \
   --repo-root "$REPO_ROOT" \
   --output "$OUTPUT_DIR/.config-scan-findings.json" \
   --assessment-depth "$ASSESSMENT_DEPTH"
@@ -125,8 +125,8 @@ The script applies every check matching each target file's `iac_type`:
 1. **`expect: present`** — file must contain a match for `pattern`. Violation when no match.
 2. **`expect: absent`** — file must NOT contain `pattern`. Violation when match is found.
 3. **`expect: structured`** — the named `evaluator` in
-   `scripts/agent_config_checks.py` (coding-agent settings) or
-   `scripts/iac_resource_checks.py` (Compose, Kubernetes, Terraform) parses the
+   `scripts/runtime/agent_config_checks.py` (coding-agent settings) or
+   `scripts/analyzers/iac_resource_checks.py` (Compose, Kubernetes, Terraform) parses the
    document and decides. Used where a regex cannot tell an enabled sandbox from
    an absent one, or a literal secret from a reference. Secret evidence names
    the key and masks the value.
@@ -167,11 +167,11 @@ The script writes `$OUTPUT_DIR/.config-scan-findings.json`:
 }
 ```
 
-**Write protocol:** only `scripts/config_iac_scanner.py` may emit this artifact. Deterministic inputs produce the same rule/file selection and findings.
+**Write protocol:** only `scripts/analyzers/config_iac_scanner.py` may emit this artifact. Deterministic inputs produce the same rule/file selection and findings.
 
 **Mandatory fields per finding.** The downstream pipeline depends on every emitted finding carrying the full field set above — **not the leaner `{id, check, severity, file, line, detail}` shape** that some earlier prototype versions of this agent produced. Specifically:
 
-- `check_id` MUST be the canonical `IAC-NNN` / `CFG-NNN` from `data/config-iac-checks.yaml` when the violation maps to an entry there. When the agent synthesises a finding for a runtime-config issue NOT covered by the yaml (e.g. CORS wildcard, missing CSP, missing HSTS, public directory listing, hardcoded secrets in Express runtime code), set `check_id: null` AND populate `check_slug` with a stable kebab-case identifier (`cors-wildcard`, `csp-missing`, `hsts-missing`, `ftp-directory-listing`, `secrets-in-source`, …) so the downstream auto-emitter (`scripts/emit_config_scan_mitigations.py`) can resolve a remediation from its built-in slug map.
+- `check_id` MUST be the canonical `IAC-NNN` / `CFG-NNN` from `data/config-iac-checks.yaml` when the violation maps to an entry there. When the agent synthesises a finding for a runtime-config issue NOT covered by the yaml (e.g. CORS wildcard, missing CSP, missing HSTS, public directory listing, hardcoded secrets in Express runtime code), set `check_id: null` AND populate `check_slug` with a stable kebab-case identifier (`cors-wildcard`, `csp-missing`, `hsts-missing`, `ftp-directory-listing`, `secrets-in-source`, …) so the downstream auto-emitter (`scripts/model/emit_config_scan_mitigations.py`) can resolve a remediation from its built-in slug map.
 - `recommended_mitigation_title` MUST be populated on every finding. Use the canonical `remediation` text from the matched IAC entry when available; otherwise author a short imperative title yourself (`"Restrict CORS to an explicit origin allow-list"`, `"Configure a strict Content-Security-Policy header"`). Never emit `null` or an empty string — the downstream Mitigation Register `**Fix:**` column reads from this field.
 - `cwe` MUST be a list of canonical `CWE-NNN` strings (even when it contains a single CWE). Copy `check.cwe` verbatim; never strip the `CWE-` prefix.
 - `generated_at` MUST use whole-second UTC as `%Y-%m-%dT%H:%M:%SZ`; never emit fractional seconds.
@@ -213,8 +213,8 @@ Immediately after writing `.config-scan-findings.json`, run:
 set -e
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/normalize_config_scan.py" "$OUTPUT_DIR/.config-scan-findings.json"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/normalize_config_scan.py" "$OUTPUT_DIR/.config-scan-findings.json"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_intermediate.py" \
   config_scan_findings "$OUTPUT_DIR/.config-scan-findings.json"
 ```
 

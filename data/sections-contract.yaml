@@ -1,7 +1,7 @@
 # sections-contract.yaml — declarative structure of threat-model.md
 #
 # This file is the SINGLE SOURCE OF TRUTH for the shape of the rendered
-# Markdown report. The renderer (`scripts/compose_threat_model.py`) reads it
+# Markdown report. The renderer (`scripts/renderers/compose_threat_model.py`) reads it
 # and emits `threat-model.md` deterministically from:
 #
 #   * `threat-model.yaml`            → threats, mitigations, components,
@@ -116,7 +116,7 @@ document:
     - { id: composition_notes, condition: "compose_warned" }  # M2.14 — only when prior compose warned
     # M3.3 — `run_issues` is no longer rendered into threat-model.md. The
     # observability data still lives in $OUTPUT_DIR/.run-issues.json
-    # (written by aggregate_run_issues.py) and the terminal completion
+    # (written by runtime/aggregate_run_issues.py) and the terminal completion
     # summary still surfaces a `-- Run Issues --` block. Inlining the
     # appendix into the persisted document was noisy in PR diffs and
     # mixed run-meta with the threat content. To re-enable the appendix
@@ -423,7 +423,7 @@ sections:
     # Skipped when there are 0 or 1 Critical findings — a single-node
     # decomposition tree adds noise without insight. The condition
     # grammar only supports bare names, so the >=2 check is computed
-    # in compose_threat_model.py and exposed as `has_multi_critical`.
+    # in renderers/compose_threat_model.py and exposed as `has_multi_critical`.
     conditional: "has_multi_critical"
 
   # -- MS sub-sections ------------------------------------------------------
@@ -480,7 +480,7 @@ sections:
   # Security Principles — the P4 systemic posture verdict (Layer-2). Per
   # security principle, a deterministic VIOLATED / WEAK / ADEQUATE row fused
   # from the weakness register + confirmed findings + implementation strategy
-  # (scripts/build_posture_verdict.py). Hoisted 2026-07-13 from §8 into the
+  # (scripts/model/build_posture_verdict.py). Hoisted 2026-07-13 from §8 into the
   # Management Summary so a systemically-violated principle (e.g. Access
   # Control, Input Validation) is loud at executive level even absent a concrete
   # instance; §8 carries a back-reference. COMPUTED — no LLM fragment; rendered
@@ -536,15 +536,15 @@ sections:
     # Low-severity findings are tracked in §8 but omitted from the
     # heatmap (intro paragraph mentions this explicitly).
     tier_severity_floor: medium
-    # Layout invariants — enforced by `qa_checks.py
+    # Layout invariants — enforced by `validators/qa_checks.py
     # check_security_posture_structure`. Each invariant ID is referenced
     # in the QA repair-plan when violated, so adding/removing/renaming
     # an entry here changes the QA gate semantics.
     # Categories (must match the checks implemented in
-    # `qa_checks.py check_security_posture_structure`):
+    # `validators/qa_checks.py check_security_posture_structure`):
     #   A     = Figure 1 architecture stack (Data bottom / sink-band rules)
     #   D-SVG = Figure 2 PRIMARY form: a portable hand-built SVG image
-    #           (`figure2_svg.py`) — file exists + glyph parity via `data-glyphs`;
+    #           (`renderers/figure2_svg.py`) — file exists + glyph parity via `data-glyphs`;
     #           version 2 also validates scenario data, visible references and geometry
     #   T     = Top Threats table below Figure 2 (glyph parity, links)
     #   D/E/C/F/G = Figure 2 FALLBACK form only (inline ELK Mermaid heatmap,
@@ -746,12 +746,12 @@ sections:
     # tables and in §6/§8 — not in the diagram label. The rules below pin a compact
     # 4-tier layout (orientation: top-down) and are consumed by:
     #
-    #   * scripts/pregenerate_fragments.py — generates scaffolds that
+    #   * scripts/renderers/pregenerate_fragments.py — generates scaffolds that
     #     obey the limits by construction.
-    #   * scripts/compose_threat_model.py — when `skip_phase11_enrichment`
+    #   * scripts/renderers/compose_threat_model.py — when `skip_phase11_enrichment`
     #     is true, the Phase-11 LLM is forbidden from re-authoring the
     #     listed sub-sections (Pre-Gen output is canonical).
-    #   * scripts/qa_checks.py — `check_diagram_compactness` parses every
+    #   * scripts/validators/qa_checks.py — `check_diagram_compactness` parses every
     #     Mermaid block in §2, counts subgraphs / nodes / label-lines,
     #     verifies the required classDef block is present, and runs the
     #     threat-traceability cross-check. Violations raise a repair-plan
@@ -800,7 +800,7 @@ sections:
         # a browser SPA executes on the user's device, on the attacker's side
         # of every server-side control, so it is NOT a trust zone of its own.
         # Figure 1 draws the client device INSIDE the untrusted Internet zone
-        # (`figure1_dfd.py`; the `figure1_svg.py::_zone_rank` fallback collapses
+        # (`renderers/figure1_dfd.py`; the `renderers/figure1_svg.py::_zone_rank` fallback collapses
         # actors + client the same way), so §2.3 must not contradict that. Four zone-looking columns that marked
         # nothing invited the reader to place the boundary between EXT and
         # CLIENT, where trust does not change — the parallel titles say the
@@ -886,13 +886,13 @@ sections:
     # coverage is enforced by `per_critical_subsection` + check_walkthrough_coverage.
     required_subsections: []
     # required_patterns applies only when §3 actually carries per-Critical
-    # walkthroughs. walkthrough_renderer.py emits one `sequenceDiagram` block
+    # walkthroughs. renderers/walkthrough_renderer.py emits one `sequenceDiagram` block
     # per effective Critical finding (none for effective Highs), so the
     # diagram is present iff walkthroughs are NOT skipped AND ≥1 Critical exists.
     # A `--quick` run (skip notice, no diagrams) OR a clean report with zero
     # Criticals (intro-only stub) must NOT trip the missing-pattern check. The
     # contract grammar has no `and`/numeric ops, so this is gated on the
-    # precomputed `has_authored_walkthroughs` flag (compose_threat_model.py
+    # precomputed `has_authored_walkthroughs` flag (renderers/compose_threat_model.py
     # eval_context). per_critical coverage is enforced separately by
     # qa_checks.check_walkthrough_coverage, which independently no-ops on zero
     # Criticals.
@@ -914,7 +914,7 @@ sections:
     # Walkthrough quality — guard against trivial-stub renderings (added
     # 2026-05 after a Stage-2 re-render produced 3 stub chains of the form
     # `attacker --> threat --> "Privileged access"`, defeating the point of
-    # §3). Consumed by qa_checks.py:
+    # §3). Consumed by validators/qa_checks.py:
     #
     #   * check_walkthrough_coverage — one §3.x sub-section per Critical
     #     threat in `threat-model.yaml`. When N Criticals exist, exactly
@@ -943,7 +943,7 @@ sections:
       require_alt_else_block: false
       # Per-§3.x section structure — every walkthrough MUST carry these
       # labelled-form blocks in this order. Consumed by
-      # `qa_checks.py:check_walkthrough_structure`.
+      # `validators/qa_checks.py:check_walkthrough_structure`.
       #
       # 2026-05 iteration 3: reduced from 8 → 3. Attacker Profile (folded
       # into the intro sentence), Prerequisites (mostly boilerplate),
@@ -987,8 +987,8 @@ sections:
   # §6 Use Cases removed (2026-05). The numbering gap (§5 → §6) is
   # intentional. Re-introduction would require: (1) re-adding this section
   # block, (2) restoring `use_cases` to all `order:` lists above,
-  # (3) reinstating `gen_use_cases` in scripts/pregenerate_fragments.py,
-  # (4) restoring `use_cases` in scripts/compose_threat_model.py
+  # (3) reinstating `gen_use_cases` in scripts/renderers/pregenerate_fragments.py,
+  # (4) restoring `use_cases` in scripts/renderers/compose_threat_model.py
   # FRAGMENT_PATHS / dispatcher / has_use_cases condition.
 
   skipped_sections_placeholder:
@@ -1008,18 +1008,18 @@ sections:
     # M6 (2026-05) — The v1 15-section layout (7.1 Overview, 7.2 Key
     # Architectural Risks, 7.3 Identity & Access Management, …) was retired
     # when schema_v2 became the single source of truth for §6. Both
-    # `compose_threat_model.py:_section_required_subs` and
-    # `qa_checks.py:_resolve_section_overlay` already prefer
+    # `renderers/compose_threat_model.py:_section_required_subs` and
+    # `validators/qa_checks.py:_resolve_section_overlay` already prefer
     # `schema_v2.required_subsections` over a section-level
     # `required_subsections` when both exist (see the explicit overlay at
-    # compose_threat_model.py:1427-1431 and qa_checks.py:287-289). Removing
+    # renderers/compose_threat_model.py:1427-1431 and validators/qa_checks.py:287-289). Removing
     # the top-level v1 list ensures there is exactly one authoritative
     # subsection set — drift between the two was the 2026-05 failure mode
     # that allowed legacy fragments to claim contract pass while the
     # rendered §6 used v2 anchors.
 
     # §6 clarity guards — enforced by dedicated runtime checks in
-    # scripts/qa_checks.py rather than as YAML patterns, because the
+    # scripts/validators/qa_checks.py rather than as YAML patterns, because the
     # generic contract pattern matcher does not currently scan the
     # rendered §6 body. The relevant checks (added 2026-05) are:
     #
@@ -1072,7 +1072,7 @@ sections:
       # explicit category (when set on the threat). The renderer uses
       # this to know where to PRIMARILY list a finding; cross-references
       # in other sections are still allowed but the primary listing is
-      # deterministic. qa_checks.py:check_v2_finding_mapping enforces it.
+      # deterministic. validators/qa_checks.py:check_v2_finding_mapping enforces it.
       finding_routing:
         "6.2 Identity and Authentication Controls":
           cwes: [CWE-287, CWE-307, CWE-294, CWE-345, CWE-347, CWE-620, CWE-640, CWE-916]
@@ -1220,7 +1220,7 @@ sections:
               - "oidc"
               - "openid"
               # "Social Login" is the user-facing name for an OAuth/OIDC social
-              # provider mechanism. emit_auth_coverage.py writes the control as
+              # provider mechanism. model/emit_auth_coverage.py writes the control as
               # "Social Login (OAuth / OIDC)"; the renderer legitimately
               # simplifies the §6.2 heading to "Social Login", dropping the
               # parenthetical that carries the oauth/oidc token. Whitelist the
@@ -1462,7 +1462,7 @@ sections:
     # 2026-05 CARD layout (replaces the flat table). Findings are grouped by
     # severity under `### <emoji> <Severity> (n)` headers (mirroring the §9
     # Mitigation-Register block style); each finding is one card built by
-    # `_build_threat_card` in `compose_threat_model.py` with a fixed field
+    # `_build_threat_card` in `renderers/compose_threat_model.py` with a fixed field
     # skeleton, every card identical:
     #   #### F-NNN · <Title>
     #   **Severity:** … · **Component:** [C-NN] … · **Location:** `file:line`
@@ -1476,10 +1476,10 @@ sections:
     card_fields: [severity, component, location, issue, root_cause, evidence, fix, classification]
 
   # -------------------------------------------------------------------------
-  # E2. Abuse Cases — 100% computed; body authored by render_abuse_cases.py
+  # E2. Abuse Cases — 100% computed; body authored by renderers/render_abuse_cases.py
   # -------------------------------------------------------------------------
   # The §9 body is produced deterministically by
-  # `scripts/render_abuse_cases.py` (from `.abuse-case-verdicts.json` +
+  # `scripts/renderers/render_abuse_cases.py` (from `.abuse-case-verdicts.json` +
   # `threat-model.yaml`) and dropped at `.fragments/abuse-cases.md`. The
   # `_render_abuse_cases` handler inlines that fragment when present and
   # otherwise emits a single italic placeholder line, so the §8 → §10
@@ -1555,7 +1555,7 @@ sections:
   # completion summary still surfaces a `-- Run Issues --` block, but
   # the persisted document stays focused on threat content. To re-enable:
   # add the section def below, register `_render_run_issues` in the
-  # section-handler dict in scripts/compose_threat_model.py (the
+  # section-handler dict in scripts/renderers/compose_threat_model.py (the
   # function body is preserved), and reinstate the document.order entry
   # `{ id: run_issues, condition: "run_warned" }`.
 
@@ -1584,8 +1584,8 @@ invariants:
 # ── Depth-downgrade preservation (2026-06-26) ─────────────────────────────────
 # THE single source of truth for which deep-only sections survive a shallower
 # re-run (e.g. standard → quick). Read by scripts/preserve_lib.py; consumed by
-# snapshot_preserved_sections.py (capture), restore_preserved_sections.py
-# (restore + provenance) and compose_threat_model.py (§6 verbatim carry). Adding
+# repairs/snapshot_preserved_sections.py (capture), repairs/restore_preserved_sections.py
+# (restore + provenance) and renderers/compose_threat_model.py (§6 verbatim carry). Adding
 # a section to preserve is an edit here — no code change.
 #
 #   substrate: fragment   → the section renders from a .fragments/<file>; the

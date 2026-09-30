@@ -7,10 +7,9 @@ import sys
 from pathlib import Path
 
 import pytest
+import validators.validate_recon_summary as validator
 
-from scripts import validate_recon_summary as validator
-
-SCRIPT = Path(__file__).parent.parent / "scripts" / "validate_recon_summary.py"
+SCRIPT = Path(__file__).parent.parent / "scripts" / "validators/validate_recon_summary.py"
 
 
 def _valid_summary() -> str:

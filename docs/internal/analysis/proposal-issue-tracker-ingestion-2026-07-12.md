@@ -8,7 +8,7 @@
 ## TL;DR
 
 - **No context input affects `threats[]` deterministically today.** Every route from context → finding is soft STRIDE-LLM influence. Issues would be no exception. (verified — see §1)
-- A deterministic issue loader is feasible and mirrors existing patterns (`load_related_repos.py`, `emit_dep_update_activity.py`, `load_org_context.py`).
+- A deterministic issue loader is feasible and mirrors existing patterns (`contexts/load_related_repos.py`, `model/emit_dep_update_activity.py`, `contexts/load_org_context.py`).
 - The clean route (`docs/known-threats.yaml`) **cannot be fed deterministically**: its schema hard-requires `stride`, `component`, `severity`, `status` — exactly the 4 fields an issue does not carry — and validates fail-loud at Phase 1. (verified — §2)
 - **Option 1 (separate context section)** = deterministic, small, soft effect. Recommended MVP.
 - **Option 2 (known-threats integration)** = full finding integration, but requires a new LLM classifier sub-agent (post-recon) *and* a STRIDE-analyzer prompt change for evidence-less entries. (verified couplings — §4)
@@ -22,11 +22,11 @@ No context input deterministically seeds a `threats[]` row or adjusts severity/s
 
 | Input | Deterministic effect | Finding creation |
 |-------|---------------------|------------------|
-| `docs/known-threats.yaml` | `accepted` → `meta.accepted_risks[]` → §11 table (`pregenerate_fragments.py:gen_out_of_scope`, `threat-analyst.md:1224`) | soft STRIDE-LLM only |
-| `CROSS_REPO_CONTEXT` | `_compute_expectation_mismatch` detection (`load_related_repos.py:425`), self-labelled "hypothesis seed" | soft (`stride-analyzer.md:108`) |
+| `docs/known-threats.yaml` | `accepted` → `meta.accepted_risks[]` → §11 table (`renderers/pregenerate_fragments.py:gen_out_of_scope`, `threat-analyst.md:1224`) | soft STRIDE-LLM only |
+| `CROSS_REPO_CONTEXT` | `_compute_expectation_mismatch` detection (`contexts/load_related_repos.py:425`), self-labelled "hypothesis seed" | soft (`stride-analyzer.md:108`) |
 | `.threat-modeling-context.md` prose | none | soft — all consumers are LLM agents |
 
-Provenance fields that *do* exist (set by the STRIDE **LLM**, preserved through merge): `threats[].prior_finding_ref` (`threat-model.output.schema.yaml:651`), `threats[].source` enum incl. `known-threats` (`_shared_sources.py:104`). No `known_threat_id` field.
+Provenance fields that *do* exist (set by the STRIDE **LLM**, preserved through merge): `threats[].prior_finding_ref` (`threat-model.output.schema.yaml:651`), `threats[].source` enum incl. `known-threats` (`shared/_shared_sources.py:104`). No `known_threat_id` field.
 
 ## 2. Why issues cannot feed known-threats deterministically (verified)
 
@@ -66,7 +66,7 @@ IssueRecord:
   secret_scan: clean | redacted         # reuse scripts/secret_scan.scan_text (canonical, NOT load_org_context dup)
 ```
 
-- GitHub fetch: `gh api repos/:o/:r/issues` — NOT `gh issue list --json` (verified: `authorAssociation` is not a supported json field on gh 2.4.0). Mirror `emit_dep_update_activity.py` (`shutil.which("gh")` guard, subprocess timeout, `None` when unavailable).
+- GitHub fetch: `gh api repos/:o/:r/issues` — NOT `gh issue list --json` (verified: `authorAssociation` is not a supported json field on gh 2.4.0). Mirror `model/emit_dep_update_activity.py` (`shutil.which("gh")` guard, subprocess timeout, `None` when unavailable).
 - Config gate in `config.json`: `issue_context: {enabled:false, provider, labels, states:[open], max_issues:20, author_associations:[OWNER,MEMBER,COLLABORATOR]}` (default off, like `external_context`).
 - Security: issue bodies are attacker-controllable on public repos → prime prompt-injection vector. Default-on member/author-association filter; secret-scan; `<untrusted-data>` wrap (mandatory).
 
@@ -103,7 +103,7 @@ Phase 9  existing slicing + STRIDE re-verification fires unchanged
 
 **Two confirmed extra couplings (not optional):**
 1. **status ambiguity** → mitigate with **open-only** ingest (closed can't map cleanly to mitigated/accepted/false-positive).
-2. **STRIDE requires an evidence pointer** (verified `stride-analyzer.md:144` "read cited evidence at the exact line", `:149` "Do not re-search the repo"). Issues have no `evidence.file` → needs a **STRIDE-analyzer prompt change**: an evidence-less branch. ⚠ **Anti-cheat constraint (non-negotiable):** the branch must be `evidence:null` → *search the component for the described weakness and anchor a real `evidence.file:line`*; **if no code sink is found, DROP the item — never raise a finding from issue prose.** The issue is a search hint, not evidence. This keeps Option 2 aligned with the code-evidence spine (`evidence_integrity` `qa_checks.py:3059`; the `challenges.yml` loophole is already closed by `validate_evidence_lines.py:144-153`). Without this constraint, Option 2 becomes an answer-key importer for test apps like Juice Shop. Real contract change on a core agent.
+2. **STRIDE requires an evidence pointer** (verified `stride-analyzer.md:144` "read cited evidence at the exact line", `:149` "Do not re-search the repo"). Issues have no `evidence.file` → needs a **STRIDE-analyzer prompt change**: an evidence-less branch. ⚠ **Anti-cheat constraint (non-negotiable):** the branch must be `evidence:null` → *search the component for the described weakness and anchor a real `evidence.file:line`*; **if no code sink is found, DROP the item — never raise a finding from issue prose.** The issue is a search hint, not evidence. This keeps Option 2 aligned with the code-evidence spine (`evidence_integrity` `validators/qa_checks.py:3059`; the `challenges.yml` loophole is already closed by `validators/validate_evidence_lines.py:144-153`). Without this constraint, Option 2 becomes an answer-key importer for test apps like Juice Shop. Real contract change on a core agent.
 
 **Files (= Option 1 +):** `agents/appsec-issue-classifier.md` (NEW LLM sub-agent) · `agents/appsec-threat-analyst.md` (EDIT: dispatch classifier post-recon, merge into `.known-threats-index.json` `:1193`) · `agents/appsec-stride-analyzer.md` (EDIT: evidence-less branch `:144-149`) · `schemas/known-threats.schema.yaml` (maybe: `origin: github-issue` provenance). Drift-guard is harder (LLM → fixture-based). Sub-agent dispatch: per AGENTS.md §7 a checkpoint, but the plugin records no Task/Agent entries (dispatch runs under Bash(*)/orchestrator, verified) → doc, not permission, work.
 
@@ -129,14 +129,14 @@ Feasible via a provider-pluggable loader (`--provider github|gitlab`); normalize
 
 1. **No `glab` installed** (verified: not on PATH) → prefer GitLab REST API + `GITLAB_TOKEN` over the CLI.
 2. **No `author_association` equivalent** — member restriction needs a separate `/projects/:id/members/all` call → weaker/costlier hardening.
-3. **Self-hosted base-URL** (`gitlab.example.com`) → real SSRF surface → `_url_guard.validate_target_url` (`load_related_repos.py:191`) is mandatory, unlike the fixed github.com host.
+3. **Self-hosted base-URL** (`gitlab.example.com`) → real SSRF surface → `_url_guard.validate_target_url` (`contexts/load_related_repos.py:191`) is mandatory, unlike the fixed github.com host.
 
 ---
 
 ## Verified evidence index
 
-- Context→finding effect: `appsec-context-resolver.md:319-330,690-693,733` · `appsec-stride-analyzer.md:108,143-166` · `load_related_repos.py:425-470` · `pregenerate_fragments.py:2934-3010` · `threat-model.output.schema.yaml:77-99,651-654` · `_shared_sources.py:104-114`
-- known-threats schema/validation: `schemas/known-threats.schema.yaml:21,51,9-10` · `validate_intermediate.py:455,1083` · `threat-analyst.md:1193-1224` · `canonicalize_component_id.py:143-161`
+- Context→finding effect: `appsec-context-resolver.md:319-330,690-693,733` · `appsec-stride-analyzer.md:108,143-166` · `contexts/load_related_repos.py:425-470` · `renderers/pregenerate_fragments.py:2934-3010` · `threat-model.output.schema.yaml:77-99,651-654` · `shared/_shared_sources.py:104-114`
+- known-threats schema/validation: `schemas/known-threats.schema.yaml:21,51,9-10` · `validators/validate_intermediate.py:455,1083` · `threat-analyst.md:1193-1224` · `model/canonicalize_component_id.py:143-161`
 - STRIDE evidence requirement: `appsec-stride-analyzer.md:144,149`
 - permissions: `data/required-permissions.yaml:81,133` (Bash(*), Write(OUTPUT_DIR/.*), no Task/Agent entries)
-- gh/glab: `gh 2.4.0` — `authorAssociation` not a `gh issue list --json` field; `glab` absent · blueprint `emit_dep_update_activity.py:172`
+- gh/glab: `gh 2.4.0` — `authorAssociation` not a `gh issue list --json` field; `glab` absent · blueprint `model/emit_dep_update_activity.py:172`

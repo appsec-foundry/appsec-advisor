@@ -1,7 +1,7 @@
 # QA re-render: severity gating (blocking vs cosmetic)
 
 **Date:** 2026-06-22
-**Status:** IMPLEMENTED 2026-06-22 (qa_checks.py + SKILL-impl.md + tests + CHANGELOG; uncommitted)
+**Status:** IMPLEMENTED 2026-06-22 (validators/qa_checks.py + SKILL-impl.md + tests + CHANGELOG; uncommitted)
 **Goal:** Trigger the re-render loop only on genuine defects, not on cosmetic
 findings. Cosmetics are still surfaced (warnings), but burn
 no loop iterations (fragment-fixer dispatch + recompose, LLM, ~minutes).
@@ -13,11 +13,11 @@ no loop iterations (fragment-fixer dispatch + recompose, LLM, ~minutes).
 Before each agent dispatch, this runs deterministically:
 
 ```bash
-python3 scripts/qa_checks.py repair_plan threat-model.md $OUTPUT_DIR
+python3 scripts/validators/qa_checks.py repair_plan threat-model.md $OUTPUT_DIR
 GATE_EXIT=$?
 ```
 
-`cmd_repair_plan` (qa_checks.py:2413) → the exit code drives the skill flow
+`cmd_repair_plan` (validators/qa_checks.py:2413) → the exit code drives the skill flow
 (SKILL-impl.md ~3280–3550):
 
 | Exit | `status`        | Skill action |
@@ -27,7 +27,7 @@ GATE_EXIT=$?
 | 2    | (tool error)    | QA agent as fallback |
 | 3    | `manual_review` | loop skipped, QA agent once (no fragment can fix it) |
 
-**The only threshold** (`_classify_plan_status`, qa_checks.py:2405):
+**The only threshold** (`_classify_plan_status`, validators/qa_checks.py:2405):
 
 ```python
 actionable = any(a.get("fragments_to_rewrite") for a in actions)
@@ -77,7 +77,7 @@ the subject of this change.**
 - **#15 `chain_tid_consistency` → blocking** (user: a wrong T-ID reference is critical).
 - **#19 `recon_iam_bridge` → cosmetic** (user).
 
-**`COSMETIC_ACTION_TYPES` (code, qa_checks.py):** `diagram_compactness`,
+**`COSMETIC_ACTION_TYPES` (code, validators/qa_checks.py):** `diagram_compactness`,
 `chain_compactness`, `walkthrough_depth`, `relevant_findings_bullet_list`,
 `recon_iam_bridge`. Everything else = blocking.
 
@@ -85,7 +85,7 @@ the subject of this change.**
 
 ## 3. Implementation (severity field + loop gate — chosen approach)
 
-### 3a. Producer: `qa_checks.py`
+### 3a. Producer: `validators/qa_checks.py`
 
 1. **Central map** instead of scattered strings:
    ```python
@@ -138,7 +138,7 @@ runtime, i.e. old behavior (everything blocking). Default = new behavior.
 
 ### 3d. Contract obligations (AGENTS.md §4 — bidirectional)
 
-- [ ] `qa_checks.py` — severity field + gate + exit 4 (producer)
+- [ ] `validators/qa_checks.py` — severity field + gate + exit 4 (producer)
 - [ ] `SKILL-impl.md` — exit-4 branch (consumer)
 - [ ] `data/required-permissions.yaml` — check whether a new path/command is needed (probably not)
 - [ ] Repair-plan schema (if present) — allow `severity` + `status: cosmetic_advisory`

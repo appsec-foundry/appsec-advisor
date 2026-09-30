@@ -1,7 +1,7 @@
 # Implementation plan: Opus as default for STRIDE reasoning (except `quick`)
 
 Status: **PLAN — NOT implemented. Code claims verified 2026-06-21** (file:line +
-consumers checked against `scripts/resolve_config.py`; corrections incorporated). Follows
+consumers checked against `scripts/runtime/resolve_config.py`; corrections incorporated). Follows
 the recommendation from
 [`analysis-model-placement-orchestrator-vs-stride-2026-06-21.md`](analysis-model-placement-orchestrator-vs-stride-2026-06-21.md).
 
@@ -48,7 +48,7 @@ Phase 2; then Phase 3 with a conservative estimate instead of a measurement.
 
 ---
 
-## 2. Core change (producer: `scripts/resolve_config.py`)
+## 2. Core change (producer: `scripts/runtime/resolve_config.py`)
 
 ### 2a. Change the default tier
 `resolve_reasoning_model` (~line 498-501): `standard`/`thorough` default
@@ -76,13 +76,13 @@ with the wrong philosophy.
 - **Verified: `repo_size_capped` has 3 consumers, ALL display-only** (no
   behavior) → removing B2d is behavior-safe. BUT both display notes say
   "→ economy reasoning tier" and become **wrong** after the change → change the text too:
-  - `scripts/resolve_config.py:2196` (config summary note)
-  - `scripts/resolve_config.py:2536` (post-summary note) ← *overlooked in the first plan*
+  - `scripts/runtime/resolve_config.py:2196` (config summary note)
+  - `scripts/runtime/resolve_config.py:2536` (post-summary note) ← *overlooked in the first plan*
   - `skills/create-threat-model/SKILL-impl.md:1171` (label string)
   New wording e.g.: "Large repo (<N> source files) → longer run expected; reasoning
   stays on the default Opus tier (all criteria-selected components analyzed)."
 - `reasoning_auto_switched`: no longer set (only in B2d, line 471). The only reader
-  is **`scripts/resolve_config.py:2359`** (display-only, `_format_reasoning_summary`) →
+  is **`scripts/runtime/resolve_config.py:2359`** (display-only, `_format_reasoning_summary`) →
   becomes a dead branch → remove along with it.
 - **Existing "all→Sonnet" opt-out is preserved:** `--no-opus` / `opus_disabled`
   (resolver ~line 609 "Opus→Sonnet ceiling", display line 2358). After the change this is
@@ -116,7 +116,7 @@ Affected files with **verified** hit counts (2026-06-21, regex
 Choose the direction per cluster deliberately (test-vs-code): default flip = code leads, tests
 follow; but check whether a test protects an *invariant* (then the test leads).
 
-### 3b. Duration/cost estimation (`scripts/estimate_duration.py`)
+### 3b. Duration/cost estimation (`scripts/runtime/estimate_duration.py`)
 - Anchor comments line 63-64 to the new default (`opus` instead of `sonnet-economy`/`opus-cheap`).
 - `_MODEL_FACTOR`: leave `opus: 1.40` for **duration** for now (Opus latency is real;
   recalibrate exactly after the Stage-0 wall measurement). Note: the *cost* assumption behind
@@ -132,7 +132,7 @@ follow; but check whether a test protects an *invariant* (then the test leads).
 - `docs/threat-modeler.md`: cost table (standard ~$17.37 etc. rises), default-model
   description; the already-added Opus reasoning TIP becomes consistent with it.
 - `scripts/run-headless.sh` + `HELP.txt`: `--reasoning-model` default/help text.
-- `scripts/render_completion_summary.py`: reasoning-label choices/display.
+- `scripts/renderers/render_completion_summary.py`: reasoning-label choices/display.
 
 ### 3d. Permissions
 `data/required-permissions.yaml`: **no change** — model routing adds no new

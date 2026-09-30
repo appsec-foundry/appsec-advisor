@@ -4,7 +4,7 @@
 # This is pure orchestration: a fixed sequence of deterministic Python emitters,
 # each best-effort so an enrichment failure preserves the validated input model.
 #
-# Usage (called from orchestration_controller.py after the YAML integrity gate
+# Usage (called from orchestrator/orchestration_controller.py after the YAML integrity gate
 # and before Stage-2 fragment pregeneration):
 #
 #   bash "$CLAUDE_PLUGIN_ROOT/scripts/auto_emitter_pass.sh" \
@@ -56,10 +56,10 @@ if [ "$DRY_RUN" = "false" ]; then
     # treated as unverified-neutral; emit_review then emits no review cards,
     # emit_finding_fix produces real P1 fixes; the evidence backstop below
     # re-derives per-line verdicts before any emitter consumes threats[].
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/guard_evidence_verification.py" "$OUTPUT_DIR" 2>&1 || true
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_evidence_lines.py" "$OUTPUT_DIR" --repo-root "$REPO_ROOT" 2>&1 || true
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_meta_findings.py" "$OUTPUT_DIR" 2>&1 || true
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_review_mitigations.py" "$OUTPUT_DIR" 2>&1 || true
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/guard_evidence_verification.py" "$OUTPUT_DIR" 2>&1 || true
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_evidence_lines.py" "$OUTPUT_DIR" --repo-root "$REPO_ROOT" 2>&1 || true
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/emit_meta_findings.py" "$OUTPUT_DIR" 2>&1 || true
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/emit_review_mitigations.py" "$OUTPUT_DIR" 2>&1 || true
     # M-RCA-2026-05 — `kind: fix` mitigations for config-scan threats.
     # Stage 1's appsec-config-scanner emits findings without remediation
     # prose (the agent's actual output schema is leaner than its docs imply)
@@ -72,7 +72,7 @@ if [ "$DRY_RUN" = "false" ]; then
     # checks → generic fallback), allocates a new M-NNN per threat, and
     # links it back via threats[].mitigation_ids. Idempotent: prior
     # auto_source="config-scan" cards are cleared before re-computing.
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_config_scan_mitigations.py" "$OUTPUT_DIR" 2>&1 || true
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/emit_config_scan_mitigations.py" "$OUTPUT_DIR" 2>&1 || true
     # M-RCA-2026-06 — `kind: fix` mitigations for CODE findings the LLM left
     # uncovered. build_mitigations only emits an M-NNN card when the threat
     # already carries mitigation_ids[]; when Phase-11's LLM yaml-write
@@ -84,14 +84,14 @@ if [ "$DRY_RUN" = "false" ]; then
     # back-references it via threats[].mitigation_ids. Idempotent; runs AFTER
     # emit_config_scan_mitigations so config-scan threats are already linked
     # and skipped.
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_finding_fix_mitigations.py" "$OUTPUT_DIR" 2>&1 || true
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/emit_finding_fix_mitigations.py" "$OUTPUT_DIR" 2>&1 || true
     # Clean finding TITLES (2026-06-12) — normalize threats[].title to
     # `<weakness class> — <file:line>` for one location, or class-only for
     # consolidated findings (strip `via <impl>`, parens, params, embedded files).
     # The verbose code-laden titles otherwise render into every xref cell
     # (§2/§4/§2.3/§8). Idempotent (_title_source). Runs before the
     # mitigation-title pass (independent; that keys on CWE, not title).
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_clean_finding_titles.py" "$OUTPUT_DIR" 2>&1 || true
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/emit_clean_finding_titles.py" "$OUTPUT_DIR" 2>&1 || true
     # General mitigation TITLES (2026-06-12) — runs AFTER all mitigation
     # emitters so it generalizes the full set. Stage 1 authors detailed
     # remediation instructions as mitigation_title ("Replace `.decode(token)`
@@ -99,7 +99,7 @@ if [ "$DRY_RUN" = "false" ]; then
     # rewrites the §10 register/index TITLE to a clear class-level label keyed
     # on the addressed CWE (the actionable detail stays in the block body's
     # How/steps/code). Idempotent (stashes _title_source).
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_general_mitigation_titles.py" "$OUTPUT_DIR" 2>&1 || true
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/emit_general_mitigation_titles.py" "$OUTPUT_DIR" 2>&1 || true
     # Backfill a structured remediation block (steps + verification) on
     # scanner-derived threats that carry only a one-line mitigation_title. The
     # source/crypto/config scanners never author remediation.steps; without this
@@ -107,13 +107,13 @@ if [ "$DRY_RUN" = "false" ]; then
     # cards synthesised for those Critical/High findings. Sourced deterministically
     # from the check library by id (falling back to the mitigation_title). MUST run
     # BEFORE hydrate so the promoted card inherits real steps.
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/backfill_scanner_remediation.py" "$OUTPUT_DIR" 2>&1 || true
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/backfill_scanner_remediation.py" "$OUTPUT_DIR" 2>&1 || true
     # Promote the analyzer's concrete remediation from addressed findings onto
     # the canonical mitigation cards. This keeps YAML/SARIF consumers aligned
     # with the rendered register and supplies the P1/P2 quality gate below.
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/hydrate_mitigation_details.py" "$OUTPUT_DIR" 2>&1 || true
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/sanitize_perimeter_claims.py" "$OUTPUT_DIR" 2>&1 || true
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/reclassify_components.py" "$OUTPUT_DIR" 2>&1 || true
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/hydrate_mitigation_details.py" "$OUTPUT_DIR" 2>&1 || true
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/sanitize_perimeter_claims.py" "$OUTPUT_DIR" 2>&1 || true
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/reclassify_components.py" "$OUTPUT_DIR" 2>&1 || true
     # RC-1 + RC-6 (2026-05): canonicalise security_controls[].control names
     # against forbidden_heading_patterns + alias rewrites, and re-route
     # security_controls[].domain when token-match against a §7 method_whitelist
@@ -121,7 +121,7 @@ if [ "$DRY_RUN" = "false" ]; then
     # in §7.12 Real-time and Not Applicable Controls). Closes the cascade
     # of §7.2.1 heading-rename / §7.1 overview-table inconsistencies that
     # surfaced in the 2026-05-23 juice-shop run. Idempotent.
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/enforce_control_taxonomy.py" "$OUTPUT_DIR" 2>&1 || true
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/enforce_control_taxonomy.py" "$OUTPUT_DIR" 2>&1 || true
     # Auth-coverage completeness (2026-06-06): §7.2 must ALWAYS identify,
     # describe and rate every authentication variant the app exposes — password
     # login, MFA, social/OAuth login — plus the password-credential lifecycle
@@ -135,24 +135,24 @@ if [ "$DRY_RUN" = "false" ]; then
     # that is genuinely absent under password auth as effectiveness:Missing.
     # Runs AFTER enforce_control_taxonomy (so the coverage check sees canonical
     # control names) and BEFORE pregenerate_fragments. Idempotent.
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_auth_coverage.py" "$OUTPUT_DIR" --repo-root "$REPO_ROOT" 2>&1 || true
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/emit_auth_coverage.py" "$OUTPUT_DIR" --repo-root "$REPO_ROOT" 2>&1 || true
     # Issue-1: deterministic vektor field per threat (CWE + attack_surface
     # auth_required → repo-read / victim-required / internet-anon /
     # internet-user) so §8 Vektor column reflects real reachability rather
     # than the renderer's `"internet-user"` default. Idempotent — preserves
     # any hand-set values.
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_threat_vektors.py" "$OUTPUT_DIR" 2>&1 || true
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/emit_threat_vektors.py" "$OUTPUT_DIR" 2>&1 || true
     # Surface WHY a rating sits above its class baseline (public-repo secret,
     # unauth privileged endpoint, attack-chain keystone) as a short inline
     # severity_rationale the §8 card renders. Runs AFTER emit_threat_vektors
     # because the rationale keys on threats[].vektor. Idempotent.
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_severity_rationale.py" "$OUTPUT_DIR" 2>&1 || true
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/emit_severity_rationale.py" "$OUTPUT_DIR" 2>&1 || true
     # Issue-1: detect open user self-registration; sets
     # meta.open_user_registration which the §6 heatmap renderer reads to
     # collapse internet-user / internet-priv-user actor cards into
     # internet-anon (registration is one POST away, the spectrum is
     # misleading on the at-a-glance view).
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/detect_open_registration.py" "$OUTPUT_DIR" 2>&1 || true
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/analyzers/detect_open_registration.py" "$OUTPUT_DIR" 2>&1 || true
     # Public-repo detection (2026-06): sets meta.public_source_repo only on
     # high-confidence LOCAL signals (OSI license file + public-host github/
     # gitlab/bitbucket source URL). When true, compose collapses the repo-read
@@ -161,23 +161,23 @@ if [ "$DRY_RUN" = "false" ]; then
     # insufficient the flag is left UNSET and the Internal Developer actor is
     # kept — never guess public on a repo we cannot confirm. Honors the operator
     # override meta.public_source_repo_pinned. Needs --repo-root.
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/detect_public_repo.py" "$OUTPUT_DIR" --repo-root "$REPO_ROOT" 2>&1 || true
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/analyzers/detect_public_repo.py" "$OUTPUT_DIR" --repo-root "$REPO_ROOT" 2>&1 || true
     # R-3 (2026-05): rebuild assets[].linked_threats from CWE-class affinity +
     # keyword overlap. Stage 1 Phase 5 is LLM-authored and routinely produces
     # links that have nothing to do with the asset (e.g. session-tokens linked
     # to YAML bomb / CORS / mass assignment instead of XSS + JWT storage).
     # Idempotent. Hand-set entries preserved via assets[].linked_threats_manual.
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/enrich_asset_links.py" "$OUTPUT_DIR" 2>&1 || true
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/enrich_asset_links.py" "$OUTPUT_DIR" 2>&1 || true
     # Mask committed secrets in Stage-1 evidence excerpts (e.g. raw
     # `password: 'admin123'`, PEM private-key markers) so the Stage-3
     # unmasked_secrets gate — which scans threat-model.yaml as well as the
     # rendered markdown — cannot trip on author-supplied excerpts. Uses the
-    # SAME secret_scan.py pattern set as the gate, so detector⇔masker symmetry
+    # SAME validators/secret_scan.py pattern set as the gate, so detector⇔masker symmetry
     # guarantees the yaml passes. The composer applies the identical mask to the
     # rendered markdown (it re-reads real source files for §8 evidence), so both
     # artifacts are clean by construction. Idempotent and best-effort.
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/secret_scan.py" --mask "$OUTPUT_DIR/threat-model.yaml" 2>&1 || true
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/enrichment_pass.py" "$OUTPUT_DIR" 2>&1 || exit "$?"
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/secret_scan.py" --mask "$OUTPUT_DIR/threat-model.yaml" 2>&1 || true
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/enrichment_pass.py" "$OUTPUT_DIR" 2>&1 || exit "$?"
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   skill  AUTO_EMITTER_END"
   } | tee -a "$OUTPUT_DIR/.agent-run.log" >&2
 fi

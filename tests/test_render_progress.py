@@ -19,7 +19,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-import render_progress as rp  # noqa: E402
+import renderers.render_progress as rp  # noqa: E402
 
 
 def _render(lines: list[str]) -> str:
@@ -444,7 +444,7 @@ def test_session_aborted_midrun_event_renders():
 
 
 def test_mirrored_phase_boundary_renders_once():
-    """`log_event.py` writes PHASE_START/PHASE_END to `.agent-run.log` and
+    """`runtime/log_event.py` writes PHASE_START/PHASE_END to `.agent-run.log` and
     mirrors it to `.hook-events.log` from the same formatted line; run-headless
     tails both, so the identical line arrives twice and must render once."""
     line = "2026-08-31T08:55:57Z  [--------]  INFO   threat-renderer  PHASE_START  [Phase 11/11] Finalization"
@@ -644,7 +644,7 @@ def test_a_non_stride_agent_gets_no_tally():
 
 
 def test_step_line_drops_the_injected_correlation_ids_but_keeps_the_component():
-    """`log_event.py` prepends `component= depth= action_id= job_id= attempt=`
+    """`runtime/log_event.py` prepends `component= depth= action_id= job_id= attempt=`
     to a component-scoped event. The two ids repeat what `component=` and
     `attempt=` already say and are dropped from the view."""
     out = _render(

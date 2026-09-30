@@ -1,4 +1,4 @@
-"""Tests for scripts/deployment_inventory.py — the scan-time input of the §2.2 deployment figure.
+"""Tests for scripts/analyzers/deployment_inventory.py — the scan-time input of the §2.2 deployment figure.
 
 Every source reader gets a neutral repository, a variant with different names and a negative case. Repository
 content is untrusted: values from `environment:` blocks, secret files and anything outside the root never reach
@@ -11,7 +11,7 @@ import json
 import os
 from pathlib import Path
 
-import deployment_inventory as DI
+import analyzers.deployment_inventory as DI
 import pytest
 
 SHA = "0123456789abcdef0123456789abcdef01234567"

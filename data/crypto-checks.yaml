@@ -2,7 +2,7 @@
 # (docs/internal/analysis/implplan-weakness-class-evidence-model.md §P3.1).
 #
 # Run through the SAME engine as data/source-auth-checks.yaml (see
-# scripts/source_auth_scanner.py DEFAULT_EXTRA_CHECKS_REL) — NO new Python.
+# scripts/analyzers/source_auth_scanner.py DEFAULT_EXTRA_CHECKS_REL) — NO new Python.
 # Closes the largest deterministic gap: before this pack, `weak_crypto` was
 # detectable only via the STRIDE LLM. Each rule carries counter_patterns so a
 # legitimate non-security use (cache keys, checksums, ETags, jitter) is

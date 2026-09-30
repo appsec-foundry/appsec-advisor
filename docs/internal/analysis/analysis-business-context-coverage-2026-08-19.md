@@ -18,23 +18,23 @@ higher technical score.
 
 ## End-to-end path
 
-1. `scripts/load_business_context.py` captures either persistent
+1. `scripts/contexts/load_business_context.py` captures either persistent
    `docs/business-context.md` or run-only `.business-context-input.md`. A supplied
    source is capped at 64 KiB, scanned for credentials, and recorded with
    provenance.
-2. `scripts/build_threat_modeling_context.py` includes the effective source as
+2. `scripts/contexts/build_threat_modeling_context.py` includes the effective source as
    fenced untrusted data in `.threat-modeling-context.md`, limited to 200 lines.
 3. The `control_analyst` is the only analysis agent that receives project and
    optional organization business context. It maps relevant facts onto known
    component IDs in `.stride-analyst-context.json` as `business_purpose`,
    `impact_if_compromised`, `sensitive_assets`, `security_obligations`, and
    `security_assumptions`.
-4. `scripts/build_stride_evidence_bundles.py` emits the component projection as
+4. `scripts/contexts/build_stride_evidence_bundles.py` emits the component projection as
    `.dispatch-context/<component>/business-context.json`. Receipt and fingerprint
    checks reject stale or mismatched dispatch context.
 5. Each STRIDE analyzer receives only its component projection. Shared context is
    not routed directly to STRIDE, merge, triage, or trust-boundary agents.
-6. `scripts/triage_compute_ranking.py` now consumes the validated component map
+6. `scripts/model/triage_compute_ranking.py` now consumes the validated component map
    after analysis and uses only the presence of material mapped fields as a final
    deterministic tie-break.
 
@@ -64,7 +64,7 @@ lift.
 
 ### Rating review
 
-`scripts/triage_validate_ratings.py` emits an informational review flag when a
+`scripts/validators/triage_validate_ratings.py` emits an informational review flag when a
 Low-impact finding belongs to a component with declared compromise harm or
 sensitive assets. The flag is skipped in quick mode, proposes no rating, and
 leaves severity caps authoritative.
@@ -93,7 +93,7 @@ component association remains omitted or incorrect.
 
 Two earlier conclusions were too strong:
 
-- The prior business-context digest is read by `scripts/resolve_config.py` during
+- The prior business-context digest is read by `scripts/runtime/resolve_config.py` during
   incremental configuration. A changed or missing effective source produces a
   recommendation to run a full scan. The remaining observability gap is a
   declared context that maps to zero components, not absent digest comparison.

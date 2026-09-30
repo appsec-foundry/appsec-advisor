@@ -19,7 +19,7 @@ copy, never the original.
 3. Remove the routing ledger and its projections — `.context-routing-plan.json`,
    its receipt, `.dispatch-context/` — so the replay guard does not reject a
    reconstruction whose content differs from the recorded action.
-4. `orchestration_controller.py context-v2-prepare-stride --output-dir <copy>`,
+4. `orchestrator/orchestration_controller.py context-v2-prepare-stride --output-dir <copy>`,
    and measure stdout.
 
 `dispatch_jobs` rebuild from the untouched `.stride-dispatch-manifest.json`, so
@@ -58,7 +58,7 @@ of tokens.
 **C is not what forced the compactions.** In the 20:35–20:53 window the session
 added 92,806 output tokens and 15,204,420 cache reads for nineteen seconds of
 productive work, at a cost of $7.04. What it did in that window was read
-`walkthrough_renderer.py` at three offsets, grep it twice, and run four ad-hoc
+`renderers/walkthrough_renderer.py` at three offsets, grep it twice, and run four ad-hoc
 `python3 -c` probes against `scripts/`. That file is ~1,900 lines: one full read
 is larger than the largest action of the entire run, and it was read three
 times. The cause was reading implementation, not returning payloads.
@@ -82,7 +82,7 @@ call answering with identical bytes.
 
 ## Landed instead
 
-`scripts/plugin_read_gate.py` — a PreToolUse hook denying `Read`/`Grep`/`Glob`
+`scripts/runtime/plugin_read_gate.py` — a PreToolUse hook denying `Read`/`Grep`/`Glob`
 against `$CLAUDE_PLUGIN_ROOT/scripts/**`, lifted by `APPSEC_PLUGIN_DEV=1`. Only
 `scripts/` is closed; `agents/`, `skills/`, `data/` and `schemas/` stay open
 because the pipeline lazy-loads them at phase boundaries and agents are pointed

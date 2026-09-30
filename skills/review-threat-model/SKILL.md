@@ -45,7 +45,7 @@ at a time, with the user reviewing each change. The triage/console flow itself
 never edits source, and you never touch code the user did not select.
 
 The deterministic work (verdict roll-up, rank, group, merge, render) lives in
-`scripts/review_threat_model.py`. Your job is the interactive layer: run an
+`scripts/validators/review_threat_model.py`. Your job is the interactive layer: run an
 **overview-first triage console** — show the user where they stand, let them
 drill into top findings / top mitigations / a security domain, act on a
 free-text selection (bulk), and hand the decisions to that script. Do **not**
@@ -156,9 +156,9 @@ model still matches the code. Do not set `pipefail`: the meaningful exit code is
 `console`'s, not the health probe's CI exit code.
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/threat_model_health.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/threat_model_health.py" \
     --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" --json 2>/dev/null \
-| python3 "$CLAUDE_PLUGIN_ROOT/scripts/review_threat_model.py" console \
+| python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/review_threat_model.py" console \
     --output-dir "$OUTPUT_DIR" --triage "$TRIAGE" --health-json -
 ```
 
@@ -242,7 +242,7 @@ console reuses the *same* visual language so it stays consistent with
 - **Measures / mitigations** (`M-NNN`) — a **monochrome priority fill-ramp**
   whose grey tone encodes rollout priority (dark→light): ● P1 · ◕ P2 · ◑ P3 ·
   ○ P4. This matches the report's measure annotation (`_PRIO_RAMP_TBL` in
-  `compose_threat_model.py`) — measures are **never** coloured by severity; the
+  `renderers/compose_threat_model.py`) — measures are **never** coloured by severity; the
   ramp glyph is their marker.
 
 Never invent other glyphs or colours, and never colour a measure — a measure's
@@ -411,7 +411,7 @@ sidecar, no plan, no code) and returns to the level it was opened from
    `ask-threat-model` skill uses, so ids and cross-links match exactly (do **not**
    build a second resolver here):
    ```bash
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/query_threat_model.py" \
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/query_threat_model.py" \
        --output-dir "$OUTPUT_DIR" --id "<id>" --json
    ```
    Accepts the report-facing `F-NNN` (what the user sees), the raw `T-NNN` (same
@@ -624,7 +624,7 @@ rationale; evidence = the finding's `file:line`), and **merges** into the file,
 preserving any team-authored entries and deduping by id:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/review_threat_model.py" promote-accepted \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/review_threat_model.py" promote-accepted \
     --output-dir "$OUTPUT_DIR" --triage "$TRIAGE" \
     --known-threats "$REPO_ROOT/docs/known-threats.yaml"
 ```
@@ -639,7 +639,7 @@ never touches `threat-model.yaml`. Do not commit the file — leave that to the 
 ## Step 7 — Write the plan (menu "Done — write plan & exit" / when the user is done)
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/review_threat_model.py" render \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/review_threat_model.py" render \
     --output-dir "$OUTPUT_DIR" --triage "$TRIAGE" --plan "$PLAN"
 ```
 

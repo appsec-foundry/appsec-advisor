@@ -1,4 +1,4 @@
-"""Tests for scripts/remove_baseline.py.
+"""Tests for scripts/baseline/remove_baseline.py.
 
 Three properties carry the weight here.
 
@@ -26,12 +26,12 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "remove_baseline.py"
+SCRIPT = REPO_ROOT / "scripts" / "baseline/remove_baseline.py"
 sys.path.insert(0, str(SCRIPT.parent))
 
-import baseline_check as bc  # noqa: E402
-import install_baseline as ib  # noqa: E402
-import remove_baseline as rb  # noqa: E402
+import baseline.baseline_check as bc  # noqa: E402
+import baseline.install_baseline as ib  # noqa: E402
+import baseline.remove_baseline as rb  # noqa: E402
 
 BASELINE_TEXT = "# Test Baseline\n\n`baseline-id: test-1.0`\n\n- Do the secure thing.\n"
 OTHER_TEXT = "# Other Baseline\n\n`baseline-id: other-9.9`\n\n- Something else.\n"

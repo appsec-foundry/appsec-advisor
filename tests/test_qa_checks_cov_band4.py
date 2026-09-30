@@ -1,4 +1,4 @@
-"""Coverage band 4 for scripts/qa_checks.py.
+"""Coverage band 4 for scripts/validators/qa_checks.py.
 
 Targets functions roughly between lines 7698-9750 plus the main() CLI
 dispatcher (9750-10068). Tests are real and passing — they exercise the
@@ -17,15 +17,15 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "qa_checks.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "validators/qa_checks.py"
 
 
 def _load_qa_checks():
-    if "qa_checks" in sys.modules:
-        return sys.modules["qa_checks"]
-    spec = importlib.util.spec_from_file_location("qa_checks", SCRIPT_PATH)
+    if "validators.qa_checks" in sys.modules:
+        return sys.modules["validators.qa_checks"]
+    spec = importlib.util.spec_from_file_location("validators.qa_checks", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["qa_checks"] = module
+    sys.modules["validators.qa_checks"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module

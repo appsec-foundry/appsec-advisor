@@ -1,4 +1,4 @@
-"""Tests for scripts/emit_verdict_to_model.py.
+"""Tests for scripts/model/emit_verdict_to_model.py.
 
 The emitter exists because the assessment's own verdict lived only in the
 rendered Markdown and in `.fragments/ms-verdict.json`, which cleanup deletes —
@@ -15,7 +15,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-import emit_verdict_to_model as emitter  # noqa: E402,I001
+import model.emit_verdict_to_model as emitter  # noqa: E402,I001
 
 FRAGMENT = {
     "severity": "red",

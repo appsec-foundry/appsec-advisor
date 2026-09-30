@@ -1,4 +1,4 @@
-"""Unit tests for scripts/agent_logger.py: Stop-hook checkpoint-abort logic."""
+"""Unit tests for scripts/runtime/agent_logger.py: Stop-hook checkpoint-abort logic."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "agent_logger.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "runtime/agent_logger.py"
 
 
 @pytest.fixture
@@ -18,9 +18,9 @@ def agent_logger(tmp_path, monkeypatch):
     """Import agent_logger with OUTPUT_DIR pointed at the tmp dir."""
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
 
-    spec = importlib.util.spec_from_file_location("agent_logger", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("runtime.agent_logger", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["agent_logger"] = module
+    sys.modules["runtime.agent_logger"] = module
     assert spec.loader is not None
     # Swallow stdin-JSON warning that fires at import time
     import contextlib
@@ -126,9 +126,9 @@ def test_empty_checkpoint_is_left_alone(tmp_path: Path, agent_logger):
 def test_never_raises_on_missing_dir(tmp_path: Path, monkeypatch):
     """Called from a hook — must be exception-safe."""
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "does-not-exist"))
-    spec = importlib.util.spec_from_file_location("agent_logger", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("runtime.agent_logger", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["agent_logger"] = module
+    sys.modules["runtime.agent_logger"] = module
     import contextlib
     import io
 

@@ -5,7 +5,7 @@ budget/lazy-load/wave files) did not catch. See
 docs/internal/analysis/analysis-thin-runtime-regressions-2026-07-20.md
 
   D3  instruction files describe script calls in prose the CLI cannot satisfy
-  D6  aggregate_run_issues.py drops AGENT_ERROR / RENDER_FAILED despite promising them
+  D6  runtime/aggregate_run_issues.py drops AGENT_ERROR / RENDER_FAILED despite promising them
   D8  agent_logger wall_secs is unresolvable across hook process boundaries
 """
 
@@ -26,7 +26,7 @@ THIN_RUNTIMES = [
 
 
 # --------------------------------------------------------------------------
-# D6 — aggregate_run_issues.py error matcher vs its own documented contract
+# D6 — runtime/aggregate_run_issues.py error matcher vs its own documented contract
 # --------------------------------------------------------------------------
 
 
@@ -38,7 +38,7 @@ def test_error_extractor_matches_documented_event_list() -> None:
     AGENT_ERROR ("evidence-verifier: all sampled findings unchecked") was parsed
     and silently dropped, so the run reported 0 issues.
     """
-    src = (SCRIPTS / "aggregate_run_issues.py").read_text(encoding="utf-8")
+    src = (SCRIPTS / "runtime/aggregate_run_issues.py").read_text(encoding="utf-8")
 
     doc = re.search(r"``error``\s+—\s+(.+)", src)
     assert doc, "error-category docstring line not found"
@@ -50,7 +50,7 @@ def test_error_extractor_matches_documented_event_list() -> None:
 
     missing = promised - accepted
     assert not missing, (
-        f"aggregate_run_issues.py promises {sorted(promised)} as error events but "
+        f"runtime/aggregate_run_issues.py promises {sorted(promised)} as error events but "
         f"_extract_errors only accepts {sorted(accepted)}; dropped: {sorted(missing)}"
     )
 
@@ -63,12 +63,12 @@ def test_error_extractor_matches_documented_event_list() -> None:
 def test_dispatch_times_survive_hook_process_boundary() -> None:
     """wall_secs must not depend on in-process state.
 
-    hooks.json runs `python3 agent_logger.py` as a FRESH PROCESS per event, so a
+    hooks.json runs `python3 runtime/agent_logger.py` as a FRESH PROCESS per event, so a
     module-level dict written during dispatch is always empty by the time the
     Stop hook reads it. Observed 2026-07-20: wall_secs=? on 211/211 AGENT_COMPLETE
     trace lines — the trace can never report agent wall-time.
     """
-    src = (SCRIPTS / "agent_logger.py").read_text(encoding="utf-8")
+    src = (SCRIPTS / "runtime/agent_logger.py").read_text(encoding="utf-8")
 
     assert "_DISPATCH_TIMES" in src, "dispatch-time bookkeeping not found"
 
@@ -95,6 +95,11 @@ def test_dispatch_times_survive_hook_process_boundary() -> None:
 # --------------------------------------------------------------------------
 
 
+def _referenced_scripts(text: str) -> set[str]:
+    """Keep domain directories when resolving CLI references in skill text."""
+    return {path.removeprefix("scripts/") for path in re.findall(r"(?:[a-z_]+/)*[a-z_]+\.py", text)}
+
+
 def _argparse_contract(script: str) -> tuple[set[str], list[str]]:
     """Return (accepted option strings, required-looking positionals) for a script."""
     src = (SCRIPTS / script).read_text(encoding="utf-8")
@@ -108,18 +113,18 @@ def test_thin_runtime_names_every_script_it_depends_on() -> None:
 
     SKILL-thin-stage1d.md and SKILL-thin-stage2.md describe recording stats
     ("record the aggregated stats as stage 1, variant abuse-verification") without
-    ever naming record_stage_stats.py — unguessable from the prose alone.
+    ever naming runtime/record_stage_stats.py — unguessable from the prose alone.
     """
     offenders = []
     for path in THIN_RUNTIMES:
         text = path.read_text(encoding="utf-8")
         mentions_stats_work = re.search(r"record .{0,40}stats|stage stats", text, re.I)
-        if mentions_stats_work and "record_stage_stats.py" not in text:
+        if mentions_stats_work and "runtime/record_stage_stats.py" not in text:
             offenders.append(path.name)
 
     assert not offenders, (
         f"{offenders} instruct the orchestrator to record stage stats but never name "
-        "record_stage_stats.py — the orchestrator cannot derive the script name"
+        "runtime/record_stage_stats.py — the orchestrator cannot derive the script name"
     )
 
 
@@ -128,7 +133,7 @@ def test_thin_runtime_flags_exist_in_target_cli() -> None:
     bad: list[str] = []
     for path in THIN_RUNTIMES:
         text = path.read_text(encoding="utf-8")
-        for script in re.findall(r"([a-z_]+\.py)", text):
+        for script in _referenced_scripts(text):
             if not (SCRIPTS / script).is_file():
                 continue
             options, _ = _argparse_contract(script)
@@ -138,7 +143,7 @@ def test_thin_runtime_flags_exist_in_target_cli() -> None:
                 # Only judge flags that plausibly belong to this script: a flag is
                 # a violation when NO referenced script in the file accepts it.
                 all_opts: set[str] = set()
-                for s2 in set(re.findall(r"([a-z_]+\.py)", text)):
+                for s2 in set(_referenced_scripts(text)):
                     if (SCRIPTS / s2).is_file():
                         all_opts |= _argparse_contract(s2)[0]
                 if flag not in all_opts:
@@ -149,7 +154,7 @@ def test_thin_runtime_flags_exist_in_target_cli() -> None:
 def test_record_stage_stats_pairing_rule_is_stated_where_prescribed() -> None:
     """--subagent-type and --since-iso must be passed together; say so.
 
-    record_stage_stats.py warns and silently skips dispatch derivation when only
+    runtime/record_stage_stats.py warns and silently skips dispatch derivation when only
     one is supplied. SKILL-impl.md's pre-compaction version used
     ${VAR:+--subagent-type ... --since-iso "$VAR"} which made the violation
     structurally impossible; the compacted prose dropped that guard rail and the
@@ -176,20 +181,20 @@ def test_abuse_stats_bind_dispatch_window_to_verifier_role() -> None:
 def test_log_event_invocation_is_reproducible_from_instructions() -> None:
     """A stage that tells the orchestrator to log an event must show the kind.
 
-    log_event.py rejects an event name in the kind position; `info` additionally
+    runtime/log_event.py rejects an event name in the kind position; `info` additionally
     requires <output_dir> info <event-name> <detail>. The compacted instruction
     named only the event, costing three failed invocations on 2026-07-20.
     """
     text = (SKILL_DIR / "SKILL-thin-stage1-v2.md").read_text(encoding="utf-8")
-    if "log_event.py" not in text:
+    if "runtime/log_event.py" not in text:
         return
 
-    src = (SCRIPTS / "log_event.py").read_text(encoding="utf-8")
+    src = (SCRIPTS / "runtime/log_event.py").read_text(encoding="utf-8")
     kinds = set(re.findall(r'"(phase-start|phase-end|step-start|step-end|info)"', src))
     assert kinds, "log_event kinds not discoverable"
 
     assert any(k in text for k in kinds), (
-        "SKILL-thin-stage1-v2.md tells the orchestrator to call log_event.py but never "
+        "SKILL-thin-stage1-v2.md tells the orchestrator to call runtime/log_event.py but never "
         f"states a valid kind (one of {sorted(kinds)}); the event name alone is "
         "rejected by the CLI"
     )
@@ -200,7 +205,7 @@ def test_referenced_scripts_positional_output_dir_not_shown_as_flag() -> None:
     bad = []
     for path in THIN_RUNTIMES:
         text = path.read_text(encoding="utf-8")
-        for script in set(re.findall(r"([a-z_]+\.py)", text)):
+        for script in set(_referenced_scripts(text)):
             if not (SCRIPTS / script).is_file():
                 continue
             options, positionals = _argparse_contract(script)

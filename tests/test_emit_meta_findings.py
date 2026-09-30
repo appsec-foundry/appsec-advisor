@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import emit_meta_findings as emf
+import model.emit_meta_findings as emf
 import yaml
 
 

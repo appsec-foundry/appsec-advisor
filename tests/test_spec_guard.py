@@ -193,7 +193,7 @@ def test_spec_guard_registration_and_decisions():
         "deny": [
             "Edit(.claude/settings.json)",
             "Edit(scripts/spec_guard.py)",
-            "Edit(scripts/requirements_hook.py)",
+            "Edit(scripts/requirements/requirements_hook.py)",
         ],
     }
     groups = settings["hooks"]["PreToolUse"]

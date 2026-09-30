@@ -13,7 +13,7 @@ frozen-run/
 ├── .triage-flags.json         # Phase 10b flags
 ├── .recon-summary.md          # Phase 2 recon summary
 ├── .appsec-cache/baseline.json  # baseline state (for incremental tests)
-└── .fragments/                  # Jinja2 fragments for compose_threat_model.py
+└── .fragments/                  # Jinja2 fragments for renderers/compose_threat_model.py
 ```
 
 Note: `.dep-scan.json` was removed in 2026-05 along with the in-tree SCA

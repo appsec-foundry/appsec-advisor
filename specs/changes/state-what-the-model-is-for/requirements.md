@@ -65,7 +65,7 @@ Source: decisions `SA-1`, `SA-2`, `SA-3`, `FE-2`.
 
 ## ACTION-001 A finding carries a fix a developer can execute
 
-Source: `agents/shared/prose-style.md`, `scripts/validate_mitigation_quality.py`;
+Source: `agents/shared/prose-style.md`, `scripts/validators/validate_mitigation_quality.py`;
 decision `RQ-5`.
 
 - The reader is the engineer who owns the code.

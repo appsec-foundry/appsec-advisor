@@ -1,6 +1,6 @@
 // scripts/mermaid_validate.mjs — authoritative Mermaid syntax validator.
 //
-// The Python regex checks in qa_checks.py (check_mermaid_syntax) catch a
+// The Python regex checks in validators/qa_checks.py (check_mermaid_syntax) catch a
 // handful of known-bad patterns (unbalanced quotes, parens in aliases,
 // literal semicolons) but they are NOT a substitute for the actual Mermaid
 // grammar. Real-world diagram breakages in the field came from patterns our
@@ -16,7 +16,7 @@
 // ESM. There is no maintained Python port. Running the official parser is
 // the only ground truth that stays in step with Mermaid's grammar.
 //
-// Runtime requirements (optional — qa_checks.py degrades gracefully if
+// Runtime requirements (optional — validators/qa_checks.py degrades gracefully if
 // absent):
 //   * Node 20+ (already required by @mermaid-js/mermaid-cli)
 //   * `mermaid` core package — bundled inside @mermaid-js/mermaid-cli's

@@ -1,6 +1,6 @@
 """Integration tests for the M2.15 Sprint-7 run-issues pipeline.
 
-Covers aggregate_run_issues.py + recommend_fixes.py + the rendered
+Covers runtime/aggregate_run_issues.py + runtime/recommend_fixes.py + the rendered
 §Run Issues appendix and -- Run Issues -- completion-summary block.
 """
 
@@ -29,8 +29,8 @@ def _load(name: str, path: Path):
     return mod
 
 
-agg = _load("aggregate_run_issues", SCRIPTS / "aggregate_run_issues.py")
-rec = _load("recommend_fixes", SCRIPTS / "recommend_fixes.py")
+agg = _load("runtime.aggregate_run_issues", SCRIPTS / "runtime/aggregate_run_issues.py")
+rec = _load("runtime.recommend_fixes", SCRIPTS / "runtime/recommend_fixes.py")
 
 
 # ---------------------------------------------------------------------------
@@ -309,7 +309,7 @@ class TestCli:
         )
         _write_log(output_dir, ".hook-events.log", [])
         result = subprocess.run(
-            [sys.executable, str(SCRIPTS / "aggregate_run_issues.py"), str(output_dir), "--depth", "standard"],
+            [sys.executable, str(SCRIPTS / "runtime/aggregate_run_issues.py"), str(output_dir), "--depth", "standard"],
             capture_output=True,
             text=True,
             timeout=30,
@@ -323,7 +323,7 @@ class TestCli:
     def test_aggregator_handles_missing_logs(self, output_dir):
         # No .agent-run.log, no .hook-events.log — must succeed cleanly
         result = subprocess.run(
-            [sys.executable, str(SCRIPTS / "aggregate_run_issues.py"), str(output_dir), "--depth", "quick"],
+            [sys.executable, str(SCRIPTS / "runtime/aggregate_run_issues.py"), str(output_dir), "--depth", "quick"],
             capture_output=True,
             text=True,
             timeout=30,
@@ -336,7 +336,7 @@ class TestCli:
         result = subprocess.run(
             [
                 sys.executable,
-                str(SCRIPTS / "aggregate_run_issues.py"),
+                str(SCRIPTS / "runtime/aggregate_run_issues.py"),
                 str(tmp_path / "no-such-dir"),
                 "--depth",
                 "standard",

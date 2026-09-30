@@ -35,13 +35,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = REPO_ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-import orchestration_controller as oc  # noqa: E402
+import orchestrator.orchestration_controller as oc  # noqa: E402
 
 # gate script -> producers that must have run as hard steps before it.
 GATE_PRODUCERS = {
-    "validate_mitigation_quality.py": (
-        "backfill_scanner_remediation.py",
-        "hydrate_mitigation_details.py",
+    "validators/validate_mitigation_quality.py": (
+        "model/backfill_scanner_remediation.py",
+        "model/hydrate_mitigation_details.py",
     ),
 }
 
@@ -68,7 +68,7 @@ def _hard_step_names(node: ast.AST) -> list[str]:
 
 @pytest.mark.parametrize("gate", sorted(GATE_PRODUCERS))
 def test_every_hard_gate_is_preceded_by_its_producers(gate):
-    tree = ast.parse((SCRIPTS / "orchestration_controller.py").read_text(encoding="utf-8"))
+    tree = ast.parse((SCRIPTS / "orchestrator/orchestration_controller.py").read_text(encoding="utf-8"))
     call_sites = 0
     for node in ast.walk(tree):
         if not isinstance(node, ast.FunctionDef):
@@ -155,23 +155,26 @@ def _unguarded_fail_closed_sets(tree: ast.AST) -> list[tuple[str, str, int]]:
 # Dedup lists and exclusion sets, where an empty set correctly means "nothing
 # excluded". Each entry is (script, function, name) and must stay justified.
 KNOWN_FAIL_OPEN_SETS = {
-    ("build_stride_dispatch_manifest.py", "_detect_cicd", "paths"),
-    ("merge_threats.py", "_select_boundary_refs", "origins"),
+    ("orchestrator/build_stride_dispatch_manifest.py", "_detect_cicd", "paths"),
+    ("model/merge_threats.py", "_select_boundary_refs", "origins"),
     ("smoke_test_package.py", "check_surface_manifest", "declared"),
 }
 
 
 def test_no_resolution_set_rejects_everything_when_its_authority_is_absent():
     offenders = []
-    for script in sorted(SCRIPTS.glob("*.py")):
+    for script in sorted(SCRIPTS.rglob("*.py")):
+        if {"node_modules", "__pycache__"} & set(script.relative_to(SCRIPTS).parts):
+            continue
         try:
             tree = ast.parse(script.read_text(encoding="utf-8"))
         except (OSError, SyntaxError):
             continue
+        relative = script.relative_to(SCRIPTS).as_posix()
         for function, name, lineno in _unguarded_fail_closed_sets(tree):
-            if (script.name, function, name) in KNOWN_FAIL_OPEN_SETS:
+            if (relative, function, name) in KNOWN_FAIL_OPEN_SETS:
                 continue
-            offenders.append(f"{script.name}:{lineno} {function}() tests membership against '{name}'")
+            offenders.append(f"{relative}:{lineno} {function}() tests membership against '{name}'")
     assert not offenders, (
         "A set that is empty because its authority never loaded rejects every value. "
         "Guard the membership test on the set being populated, or add the entry to "

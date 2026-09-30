@@ -1,4 +1,4 @@
-"""Tests for scripts/render_abuse_cases.py — the deterministic §9 renderer.
+"""Tests for scripts/renderers/render_abuse_cases.py — the deterministic §9 renderer.
 
 Verifies the fragment structure (summary table, per-case blocks, 5-column
 chain table with verdict-derived status icons, blocking-mitigation links) and
@@ -17,7 +17,7 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "render_abuse_cases.py"
+SCRIPT = REPO_ROOT / "scripts" / "renderers/render_abuse_cases.py"
 VALID_MODEL = REPO_ROOT / "tests" / "fixtures" / "schema" / "threat-model.valid.yaml"
 
 # The sidecar (.fragments/abuse-cases.json) is an internal machine-readable
@@ -35,11 +35,11 @@ _SIDECAR_REQUIRED_CASE_KEYS = {
 
 
 def _load():
-    if "render_abuse_cases" in sys.modules:
-        return sys.modules["render_abuse_cases"]
-    spec = importlib.util.spec_from_file_location("render_abuse_cases", SCRIPT)
+    if "renderers.render_abuse_cases" in sys.modules:
+        return sys.modules["renderers.render_abuse_cases"]
+    spec = importlib.util.spec_from_file_location("renderers.render_abuse_cases", SCRIPT)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["render_abuse_cases"] = mod
+    sys.modules["renderers.render_abuse_cases"] = mod
     assert spec.loader is not None
     spec.loader.exec_module(mod)
     return mod

@@ -2,7 +2,7 @@
 #
 # Used by: appsec-stride-analyzer-v2 (match detected controls to canonical names),
 # appsec-threat-merger (dedup identically-named controls across components),
-# scripts/pregenerate_fragments.py / agents/appsec-threat-renderer.md (render Operational
+# scripts/renderers/pregenerate_fragments.py / agents/appsec-threat-renderer.md (render Operational
 # Strengths + Section 6 with consistent terminology).
 #
 # Each entry:
@@ -226,7 +226,7 @@ controls:
       SAML 2.0 federated identity. The Service Provider receives a signed
       XML assertion from the IdP at the AssertionConsumerService endpoint
       and verifies the XML-DSig signature on the assertion. The pre-generator
-      (scripts/pregenerate_fragments.py) already renders a canonical
+      (scripts/renderers/pregenerate_fragments.py) already renders a canonical
       SP/IdP/ACS sequence diagram when `saml` appears in the control name or
       implementation string. Threat-class is distinct from OAuth/OIDC —
       XML Signature Wrapping (XSW1-8), comment-truncation, and RelayState

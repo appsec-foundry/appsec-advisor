@@ -1,12 +1,12 @@
-"""Unit tests for scripts/slice_actors.py — per-component actor slicing."""
+"""Unit tests for scripts/contexts/slice_actors.py — per-component actor slicing."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
+import contexts.slice_actors as slice_actors
 import pytest
-import slice_actors
 import yaml
 
 
@@ -184,7 +184,7 @@ def test_cli_main_success(run_plugin_script, plugin_lib: Path, tmp_path: Path):
         ]
     )
     res = run_plugin_script(
-        "slice_actors.py",
+        "contexts/slice_actors.py",
         "--plugin-root",
         str(plugin_lib),
         "--repo-root",
@@ -209,7 +209,7 @@ def test_cli_main_missing_resolved(run_plugin_script, plugin_lib: Path, tmp_path
     repo = tmp_path / "repo"
     repo.mkdir()
     res = run_plugin_script(
-        "slice_actors.py",
+        "contexts/slice_actors.py",
         "--plugin-root",
         str(plugin_lib),
         "--repo-root",
@@ -230,7 +230,7 @@ def test_cli_main_bad_components_json(run_plugin_script, plugin_lib: Path, tmp_p
     repo = tmp_path / "repo"
     repo.mkdir()
     res = run_plugin_script(
-        "slice_actors.py",
+        "contexts/slice_actors.py",
         "--plugin-root",
         str(plugin_lib),
         "--repo-root",
@@ -252,7 +252,7 @@ def test_cli_main_component_missing_id(run_plugin_script, plugin_lib: Path, tmp_
     repo.mkdir()
     components = json.dumps([{"component_type": "web", "deployment_zones": ["dmz"]}])
     res = run_plugin_script(
-        "slice_actors.py",
+        "contexts/slice_actors.py",
         "--plugin-root",
         str(plugin_lib),
         "--repo-root",
@@ -290,7 +290,7 @@ def test_cli_components_file_uses_canonical_inventory(run_plugin_script, plugin_
         )
     )
     res = run_plugin_script(
-        "slice_actors.py",
+        "contexts/slice_actors.py",
         "--plugin-root",
         str(plugin_lib),
         "--repo-root",

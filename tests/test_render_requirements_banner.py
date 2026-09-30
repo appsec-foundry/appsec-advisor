@@ -14,11 +14,11 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "render_requirements_banner.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "renderers/render_requirements_banner.py"
 
-spec = importlib.util.spec_from_file_location("render_requirements_banner", SCRIPT_PATH)
+spec = importlib.util.spec_from_file_location("renderers.render_requirements_banner", SCRIPT_PATH)
 banner = importlib.util.module_from_spec(spec)
-sys.modules["render_requirements_banner"] = banner
+sys.modules["renderers.render_requirements_banner"] = banner
 assert spec.loader is not None
 spec.loader.exec_module(banner)
 

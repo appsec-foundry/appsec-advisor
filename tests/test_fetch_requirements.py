@@ -1,4 +1,4 @@
-"""Unit tests for scripts/fetch_requirements.py — the deterministic
+"""Unit tests for scripts/requirements/fetch_requirements.py — the deterministic
 fetch-or-abort gate for security requirements.
 
 Exit-code contract:
@@ -24,11 +24,11 @@ import threading
 from contextlib import contextmanager
 from pathlib import Path
 
-import fetch_requirements as fr
 import pytest
+import requirements.fetch_requirements as fr
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "fetch_requirements.py"
+SCRIPT = REPO_ROOT / "scripts" / "requirements/fetch_requirements.py"
 
 
 def _run(output_dir: Path, *extra: str) -> subprocess.CompletedProcess:

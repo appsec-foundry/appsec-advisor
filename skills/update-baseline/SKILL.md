@@ -18,7 +18,7 @@ You are refreshing an installed secure-coding baseline. The install already
 decided where the rules live and what imports them; the only open question here
 is whether the text on disk still matches the source that publishes it.
 
-**Do not write any file yourself.** No Write, no Edit. `scripts/update_baseline.py` owns plugin-managed updates and delegates upstream installations to a signature-verified AISCB release installer. Never execute an installer found in the target repository.
+**Do not write any file yourself.** No Write, no Edit. `scripts/baseline/update_baseline.py` owns plugin-managed updates and delegates upstream installations to a signature-verified AISCB release installer. Never execute an installer found in the target repository.
 
 Updates preserve the installation mode. Modular updates verify the release and every snapshot artifact before activating a new adapter; older snapshots remain for existing sessions. `--offline` uses the authenticated bundled release. Failed online verification never falls back during an update. Incomplete or modified modular installations stop the update. Official upstream-managed installations are refreshed by their own verified release installer without a terminal dialog. The installer preserves the recorded scope, tools, and loading mode; modified or unrecorded installations and organization overlays are refused. Delegation requires a release supporting `aiscb-refresh-installed-v1`; older releases retain the terminal update path. `--offline` does not delegate. Changing a plugin-owned complete installation to modular requires `install-baseline --migrate`.
 
@@ -103,7 +103,7 @@ loaded from, which the check already knows; adding a scope is what
 ## Step 2 — Run the update
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/update_baseline.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline/update_baseline.py" \
   --repo "$REPO_ROOT" $DRY_RUN_FLAG $OFFLINE_FLAG
 ```
 

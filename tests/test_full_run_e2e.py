@@ -13,7 +13,7 @@ avoid byte-equality (LLM output drifts) and check structural invariants only:
   * threat-model.yaml validates against its schema
   * compose.render() reproduces the markdown cleanly (zero warnings)
   * every Stage-2 fragment is on disk
-  * qa_checks.py exits 0 across the full check set
+  * validators/qa_checks.py exits 0 across the full check set
   * the inline-shortcut Hard-Gate did not trigger
   * the report contains at least one threat and avoids placeholder leakage
   * the hook log records the expected sub-agent dispatches
@@ -201,16 +201,16 @@ INTERMEDIATE_ARTIFACTS = [
 
 @pytest.mark.parametrize("subcommand,filename", INTERMEDIATE_ARTIFACTS)
 def test_validate_intermediate_artifact(out_dir: Path, subcommand: str, filename: str) -> None:
-    """validate_intermediate.py <kind> <file> — per-artifact schema check."""
+    """validators/validate_intermediate.py <kind> <file> — per-artifact schema check."""
     path = out_dir / filename
     assert path.is_file(), f"missing intermediate artifact: {path}"
     result = subprocess.run(
-        [sys.executable, str(SCRIPTS / "validate_intermediate.py"), subcommand, str(path)],
+        [sys.executable, str(SCRIPTS / "validators/validate_intermediate.py"), subcommand, str(path)],
         capture_output=True,
         text=True,
     )
     assert result.returncode == 0, (
-        f"validate_intermediate.py {subcommand} failed (exit {result.returncode}):\n"
+        f"validators/validate_intermediate.py {subcommand} failed (exit {result.returncode}):\n"
         f"stdout: {result.stdout}\nstderr: {result.stderr}"
     )
 
@@ -229,7 +229,7 @@ def test_validate_optional_intermediate_artifact(out_dir: Path, subcommand: str,
     data = json.loads(path.read_text(encoding="utf-8"))
     assert "parse_error" not in data, f"{filename} is an error stub: {data.get('parse_error')}"
     result = subprocess.run(
-        [sys.executable, str(SCRIPTS / "validate_intermediate.py"), subcommand, str(path)],
+        [sys.executable, str(SCRIPTS / "validators/validate_intermediate.py"), subcommand, str(path)],
         capture_output=True,
         text=True,
     )
@@ -249,7 +249,7 @@ def test_every_dispatched_stride_artifact_is_complete_and_schema_valid(out_dir: 
         assert "parse_error" not in data, f"STRIDE result for {cid} is an error stub: {data.get('parse_error')}"
         assert data.get("partial") is not True, f"STRIDE result for {cid} is marked partial"
         result = subprocess.run(
-            [sys.executable, str(SCRIPTS / "validate_intermediate.py"), "stride", str(path)],
+            [sys.executable, str(SCRIPTS / "validators/validate_intermediate.py"), "stride", str(path)],
             capture_output=True,
             text=True,
         )
@@ -261,7 +261,7 @@ def test_pre_render_fragment_gate_passes_without_mutating_run(out_dir: Path, tmp
     copied.mkdir()
     shutil.copytree(out_dir / ".fragments", copied / ".fragments")
     result = subprocess.run(
-        [sys.executable, str(SCRIPTS / "validate_fragment.py"), "pre-render-gate", str(copied), "--json"],
+        [sys.executable, str(SCRIPTS / "validators/validate_fragment.py"), "pre-render-gate", str(copied), "--json"],
         capture_output=True,
         text=True,
     )
@@ -278,7 +278,7 @@ def test_compose_render_is_clean(out_dir: Path, tmp_path: Path) -> None:
     that's the contract the deterministic renderer enforces."""
     copied = tmp_path / "compose-clean"
     shutil.copytree(out_dir, copied)
-    compose = _load_module("compose_threat_model", SCRIPTS / "compose_threat_model.py")
+    compose = _load_module("renderers.compose_threat_model", SCRIPTS / "renderers/compose_threat_model.py")
     rendered, warnings = compose.render(CONTRACT, copied)
     assert warnings == [], f"compose returned warnings: {warnings}"
     assert "## Management Summary\n" in rendered, "MS heading missing"
@@ -290,7 +290,7 @@ def test_compose_is_byte_idempotent(out_dir: Path, tmp_path: Path) -> None:
     byte-for-byte. Catches non-determinism that crept into the renderer."""
     copied = tmp_path / "compose-idempotent"
     shutil.copytree(out_dir, copied)
-    compose = _load_module("compose_threat_model", SCRIPTS / "compose_threat_model.py")
+    compose = _load_module("renderers.compose_threat_model", SCRIPTS / "renderers/compose_threat_model.py")
     r1, _ = compose.render(CONTRACT, copied)
     r2, _ = compose.render(CONTRACT, copied)
     assert r1 == r2, "compose.render() is not deterministic"
@@ -302,11 +302,17 @@ def test_compose_is_byte_idempotent(out_dir: Path, tmp_path: Path) -> None:
 
 
 def test_inline_shortcut_gate_did_not_trigger(out_dir: Path, assessment_depth: str) -> None:
-    """check_inline_shortcut.py exits 0 only if Stage 2 routed through
-    compose_threat_model.py instead of writing threat-model.md directly.
+    """validators/check_inline_shortcut.py exits 0 only if Stage 2 routed through
+    renderers/compose_threat_model.py instead of writing threat-model.md directly.
     CLI: positional `output_dir`, optional `--depth`."""
     result = subprocess.run(
-        [sys.executable, str(SCRIPTS / "check_inline_shortcut.py"), "--depth", assessment_depth, str(out_dir)],
+        [
+            sys.executable,
+            str(SCRIPTS / "validators/check_inline_shortcut.py"),
+            "--depth",
+            assessment_depth,
+            str(out_dir),
+        ],
         capture_output=True,
         text=True,
     )
@@ -318,7 +324,7 @@ def test_inline_shortcut_gate_did_not_trigger(out_dir: Path, assessment_depth: s
 def test_full_qa_battery_passes_and_is_idempotent(out_dir: Path, target_repo: Path, tmp_path: Path) -> None:
     """Run the same complete detector battery used by the pipeline.
 
-    Work on a copy because ``qa_checks.py all`` owns several safe autofixes.
+    Work on a copy because ``validators/qa_checks.py all`` owns several safe autofixes.
     A completed E2E run must already contain those fixes, so the copied final
     Markdown must remain byte-identical.
     """
@@ -327,14 +333,14 @@ def test_full_qa_battery_passes_and_is_idempotent(out_dir: Path, target_repo: Pa
     md = copied / "threat-model.md"
     before = md.read_bytes()
     result = subprocess.run(
-        [sys.executable, str(SCRIPTS / "qa_checks.py"), "all", str(md), str(target_repo)],
+        [sys.executable, str(SCRIPTS / "validators/qa_checks.py"), "all", str(md), str(target_repo)],
         capture_output=True,
         text=True,
     )
     assert result.returncode == 0, (
-        f"qa_checks.py all failed (exit {result.returncode}):\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        f"validators/qa_checks.py all failed (exit {result.returncode}):\nstdout: {result.stdout}\nstderr: {result.stderr}"
     )
-    assert md.read_bytes() == before, "qa_checks.py all mutated the supposedly-final threat-model.md"
+    assert md.read_bytes() == before, "validators/qa_checks.py all mutated the supposedly-final threat-model.md"
 
 
 @pytest.mark.parametrize("phase", ["build", "render"])
@@ -342,7 +348,7 @@ def test_completeness_contract_passes(out_dir: Path, phase: str) -> None:
     result = subprocess.run(
         [
             sys.executable,
-            str(SCRIPTS / "assert_completeness.py"),
+            str(SCRIPTS / "validators/assert_completeness.py"),
             str(out_dir),
             "--phase",
             phase,
@@ -508,7 +514,7 @@ def test_sarif_is_schema_valid_and_has_no_silent_drops(out_dir: Path, threat_mod
     valid, errors = validate_sarif(sarif)
     assert valid, f"SARIF validation failed: {errors}"
 
-    exporter = _load_module("export_sarif_e2e", SCRIPTS / "export_sarif.py")
+    exporter = _load_module("export_sarif_e2e", SCRIPTS / "exporters/export_sarif.py")
     expected = {
         threat.get("id")
         for threat in threat_model_yaml.get("threats") or []
@@ -540,7 +546,7 @@ def test_meta_block_populated(threat_model_yaml: dict) -> None:
 def test_pentest_tasks_structure(out_dir: Path) -> None:
     """pentest-tasks.yaml must parse and carry meta (with schema_version) + a
     tasks list. (Top-level keys are meta/tasks/endpoints; schema_version lives
-    under meta — see render_pentest_tasks.py:763 and the canonical
+    under meta — see renderers/render_pentest_tasks.py:763 and the canonical
     test_pentest_tasks.py:187.) The file's existence is covered by REQUIRED_FILES;
     this asserts its shape so a malformed export is caught."""
     doc = yaml.safe_load((out_dir / "pentest-tasks.yaml").read_text())

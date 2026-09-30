@@ -26,7 +26,7 @@ SCRIPTS = REPO / "scripts"
 
 
 def _qa() -> object:
-    # Import lazily — the module is at scripts/qa_checks.py. We must register
+    # Import lazily — the module is at scripts/validators/qa_checks.py. We must register
     # the loaded module in sys.modules before executing it, otherwise
     # dataclasses (`@dataclass class Report`) fail with AttributeError when
     # resolving forward-ref annotations because sys.modules[cls.__module__]
@@ -34,12 +34,12 @@ def _qa() -> object:
     import importlib.util
     import sys
 
-    if "qa_checks" in sys.modules:
-        return sys.modules["qa_checks"]
-    spec = importlib.util.spec_from_file_location("qa_checks", SCRIPTS / "qa_checks.py")
+    if "validators.qa_checks" in sys.modules:
+        return sys.modules["validators.qa_checks"]
+    spec = importlib.util.spec_from_file_location("validators.qa_checks", SCRIPTS / "validators/qa_checks.py")
     mod = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
-    sys.modules["qa_checks"] = mod
+    sys.modules["validators.qa_checks"] = mod
     spec.loader.exec_module(mod)
     return mod
 

@@ -1,4 +1,4 @@
-"""Tests for scripts/baseline_check.py — is the secure-coding baseline loaded?
+"""Tests for scripts/baseline/baseline_check.py — is the secure-coding baseline loaded?
 
 The distinction this module exists to make is *present on disk* versus *loaded
 into context*. A baseline file sitting in a repository that nothing imports is
@@ -20,10 +20,10 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "baseline_check.py"
+SCRIPT = REPO_ROOT / "scripts" / "baseline/baseline_check.py"
 sys.path.insert(0, str(SCRIPT.parent))
 
-import baseline_check as bc  # noqa: E402
+import baseline.baseline_check as bc  # noqa: E402
 
 BASELINE_TEXT = """\
 # Test Baseline

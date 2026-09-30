@@ -86,7 +86,7 @@ changes these rules.
 - A focused role owns its `AGENT_START`, `AGENT_END`, semantic step events,
   artifact writes, and semantic failure details. Use the repository's event
   writers; never invent a log format. Call the event writer as
-  `python3 <plugin-root>/scripts/log_event.py <output-dir> <kind> "<detail>" [<event>]`;
+  `python3 <plugin-root>/scripts/runtime/log_event.py <output-dir> <kind> "<detail>" [<event>]`;
   do not spend a turn probing its help output. `<kind>` is a closed set —
   `step-start`, `step-end`, `phase-start`, `phase-end`, `info` — written
   literally. A catalog event name reaches the log only as `info <EVENT_NAME>`,

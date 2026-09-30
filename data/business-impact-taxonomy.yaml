@@ -2,11 +2,11 @@
 # by the **Security Posture at a Glance** section.
 #
 # Consumed by:
-#   - scripts/compose_threat_model.py (renderer for the IMPACT subgraph
+#   - scripts/renderers/compose_threat_model.py (renderer for the IMPACT subgraph
 #     of the heatmap and the per-attack-class `Impact:` line)
 #   - schemas/fragments/security-posture-attack-paths.schema.json (the
 #     `impact` field is enum-validated against the labels below)
-#   - agents/appsec-threat-renderer.md and scripts/compose_threat_model.py
+#   - agents/appsec-threat-renderer.md and scripts/renderers/compose_threat_model.py
 #     (choose and render impacts only from this list)
 #
 # Each entry describes ONE business-outcome category. Add new entries

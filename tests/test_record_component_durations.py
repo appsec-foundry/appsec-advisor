@@ -1,4 +1,4 @@
-"""Tests for scripts/record_component_durations.py.
+"""Tests for scripts/runtime/record_component_durations.py.
 
 Pins where a per-component STRIDE duration may come from. The measurement the
 controller stamps outranks anything the measured agent reports about itself.
@@ -11,11 +11,11 @@ import json
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "record_component_durations.py"
+SCRIPT = REPO_ROOT / "scripts" / "runtime/record_component_durations.py"
 
 
 def _load_module():
-    spec = importlib.util.spec_from_file_location("record_component_durations", SCRIPT)
+    spec = importlib.util.spec_from_file_location("runtime.record_component_durations", SCRIPT)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)

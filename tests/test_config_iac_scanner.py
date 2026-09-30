@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import config_iac_scanner as scanner
+import analyzers.config_iac_scanner as scanner
 import pytest
 import yaml
 
@@ -239,7 +239,7 @@ def _iac_repo(tmp_path: Path) -> Path:
 
 
 def test_shipped_catalog_covers_compose_kubernetes_and_terraform_and_masks_secrets(tmp_path):
-    import validate_intermediate as vi
+    import validators.validate_intermediate as vi
 
     result = scanner.scan(_iac_repo(tmp_path), scanner.DEFAULT_CHECKS, depth="standard", output=tmp_path / "r.json")
 
@@ -263,7 +263,7 @@ def test_shipped_catalog_covers_compose_kubernetes_and_terraform_and_masks_secre
 
 
 def test_recognised_surface_without_checks_is_reported_not_silent(tmp_path):
-    import validate_intermediate as vi
+    import validators.validate_intermediate as vi
 
     repo = tmp_path / "repo"
     chart = repo / "charts" / "api"

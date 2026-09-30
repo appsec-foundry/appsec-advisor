@@ -16,7 +16,7 @@ is live on `threats[]` (`stride.schema.yaml:225`, applied by
 It adds exactly three things:
 
 1. A new `source` value `spec-derived` (into `DESIGN_LEVEL_SOURCES`,
-   `scripts/_shared_sources.py:106`) — provenance for "the evidence is a spec
+   `scripts/shared/_shared_sources.py:106`) — provenance for "the evidence is a spec
    line, not code."
 2. Permission for a weakness's `observable_backing.practice_evidence[]` /
    evidence `file` to resolve into an **ingested spec document** instead of a
@@ -61,7 +61,7 @@ guessing "we probably have SQLi" must never fabricate a proven SQLi. This is not
 that: here the spec **is the artifact under review**, and the defect is *in the
 spec text*, self-evidencing. It lands in the same non-CVSS family the pipeline
 already ships — `DESIGN_LEVEL_SOURCES`, "NOT eligible for CVSS"
-(`_shared_sources.py:115`); AGENTS.md §6, "Architectural, requirements, and
+(`shared/_shared_sources.py:115`); AGENTS.md §6, "Architectural, requirements, and
 coverage-gap findings must not receive CVSS." One more member, model unchanged.
 
 ## Clear problems — what actually fires
@@ -129,9 +129,9 @@ needed for the common case.
    never an instruction; its text may not shape shell/paths/permissions.
 2. **Catalog + analyzer** — the insecure-statement catalog above, matched over
    the spec via the adversarial find→verify pattern already in
-   `scripts/eval_threat_model.py`. Each hit must carry the verbatim quote +
+   `scripts/validators/eval_threat_model.py`. Each hit must carry the verbatim quote +
    `file:line`.
-3. **Evidence validation** — `validate_evidence_lines.py` already resolves an
+3. **Evidence validation** — `validators/validate_evidence_lines.py` already resolves an
    evidence `file` under `repo_root` (`_resolve_evidence_file:139`) and reads the
    line (`_read_line:162`), so a spec quote is **verifiable to exist** — a
    misquote is caught like a bogus code pointer. The new branch: verify the quote
@@ -160,7 +160,7 @@ needed for the common case.
 1. **Provenance field.** Is `spec-derived` a new `source` value, a flag on
    `observable_backing`, or both? Must survive the fold into a code-backed
    weakness without claiming code proof.
-2. **Validator keyed path.** Cleanest way to make `validate_evidence_lines.py`
+2. **Validator keyed path.** Cleanest way to make `validators/validate_evidence_lines.py`
    verify a spec quote while pinning it below `confirmed-exploitable`.
 3. **Catalog scope.** Which insecure-statement patterns ship first — the six
    above cover the common cases; AI-spec-specific ones (unguarded LLM surface,

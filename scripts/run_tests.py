@@ -33,6 +33,7 @@ GROUPS = {
         contract_integrity
         new_schemas
         run_tests
+        script_layout
         runtime_cleanup
         schema_integrity
         taxonomy_coverage
@@ -244,6 +245,7 @@ GROUPS = {
         skill_watchdog
         stage1_coverage_recovery_2026_07_20
         stage1_coverage_recovery_2026_08_02
+        stage2_state
         stage3_runtime_contract
         stall_notice
         stamp_threat_model
@@ -515,10 +517,10 @@ MANUAL_TESTS = {
 # These sources retain the full suite until their behavior has measured coverage.
 # A file-content scan alone does not establish a bounded consumer route.
 FULL_SUITE_SOURCES = {
-    "scripts/_yaml_io.py": "Shared YAML I/O has an unmeasured consumer in migrate_v3_to_v4.py.",
-    "scripts/migrate_v3_to_v4.py": "Legacy migration has no measured behavioral tests.",
+    "scripts/shared/_yaml_io.py": "Shared YAML I/O has an unmeasured consumer in model/migrate_v3_to_v4.py.",
+    "scripts/model/migrate_v3_to_v4.py": "Legacy migration has no measured behavioral tests.",
     "scripts/mock-server.py": "Manual server behavior has no measured behavioral tests.",
-    "scripts/render_threat_model_schema.py": "Schema-document generation has no measured behavioral tests.",
+    "scripts/renderers/render_threat_model_schema.py": "Schema-document generation has no measured behavioral tests.",
 }
 
 # Each route lists every test module that executes the file, uses its
@@ -534,6 +536,42 @@ FULL_SUITE_SOURCES = {
 # build_threat_model_yaml and compose_threat_model, so modules they import
 # route to it.
 SOURCE_TESTS = {
+    "scripts/analyzers/__init__.py": _tests(
+        "script_layout check_target_specificity gate_preconditions requirements_verification stride_outputs"
+    ),
+    "scripts/baseline/__init__.py": _tests(
+        "script_layout check_target_specificity gate_preconditions requirements_verification stride_outputs"
+    ),
+    "scripts/contexts/__init__.py": _tests(
+        "script_layout check_target_specificity gate_preconditions requirements_verification stride_outputs"
+    ),
+    "scripts/exporters/__init__.py": _tests(
+        "script_layout check_target_specificity gate_preconditions requirements_verification stride_outputs"
+    ),
+    "scripts/model/__init__.py": _tests(
+        "script_layout check_target_specificity gate_preconditions requirements_verification stride_outputs"
+    ),
+    "scripts/orchestrator/__init__.py": _tests(
+        "script_layout check_target_specificity gate_preconditions requirements_verification stride_outputs"
+    ),
+    "scripts/renderers/__init__.py": _tests(
+        "script_layout check_target_specificity gate_preconditions requirements_verification stride_outputs"
+    ),
+    "scripts/repairs/__init__.py": _tests(
+        "script_layout check_target_specificity gate_preconditions requirements_verification stride_outputs"
+    ),
+    "scripts/requirements/__init__.py": _tests(
+        "script_layout check_target_specificity gate_preconditions requirements_verification stride_outputs"
+    ),
+    "scripts/runtime/__init__.py": _tests(
+        "script_layout check_target_specificity gate_preconditions requirements_verification stride_outputs"
+    ),
+    "scripts/shared/__init__.py": _tests(
+        "script_layout check_target_specificity gate_preconditions requirements_verification stride_outputs"
+    ),
+    "scripts/validators/__init__.py": _tests(
+        "script_layout check_target_specificity gate_preconditions requirements_verification stride_outputs"
+    ),
     "agents/appsec-architect-reviewer.md": _tests("""
         agent_logger
         completion_contract
@@ -556,7 +594,7 @@ SOURCE_TESTS = {
         context_prompt_budgets
         prompt_token_bounds
     """),
-    "scripts/architect_review_runtime.py": _tests("""
+    "scripts/analyzers/architect_review_runtime.py": _tests("""
         actor_presentation
         incremental_two_run_e2e
         runtime_doc_cli_contract
@@ -583,7 +621,7 @@ SOURCE_TESTS = {
         render_completion_summary_config
         requirements_verification
     """),
-    "scripts/architect_review.py": _tests("""
+    "scripts/analyzers/architect_review.py": _tests("""
         orchestration_controller
         actor_presentation
         build_threat_model_yaml
@@ -604,7 +642,7 @@ SOURCE_TESTS = {
         render_completion_summary_config
         requirements_verification
     """),
-    "scripts/build_architect_context.py": _tests("""
+    "scripts/contexts/build_architect_context.py": _tests("""
         build_architect_context
         architect_review_runtime
         calibrate_architect_review
@@ -673,7 +711,7 @@ SOURCE_TESTS = {
         schemas
         requirements_verification
     """),
-    "scripts/_severity_policy.py": _tests("""
+    "scripts/shared/_severity_policy.py": _tests("""
         actor_attribution
         actor_presentation
         build_threat_model_yaml
@@ -702,7 +740,7 @@ SOURCE_TESTS = {
         build_architect_context
         calibrate_architect_review
     """),
-    "scripts/match_abuse_cases.py": _tests("""
+    "scripts/model/match_abuse_cases.py": _tests("""
         abuse_case_verdicts
         build_threat_model_yaml
         check_target_specificity
@@ -718,7 +756,7 @@ SOURCE_TESTS = {
         stride_outputs
         thin_runtime_regressions_2026_07_20
     """),
-    "scripts/render_abuse_cases.py": _tests("""
+    "scripts/renderers/render_abuse_cases.py": _tests("""
         check_target_specificity
         compose_threat_model_cov2
         gate_preconditions
@@ -771,7 +809,7 @@ SOURCE_TESTS = {
         stride_outputs
         validate_ms_compactness
     """),
-    "scripts/dispatch_window.py": _tests("""
+    "scripts/orchestrator/dispatch_window.py": _tests("""
         check_target_specificity
         context_routing
         gate_preconditions
@@ -895,7 +933,7 @@ SOURCE_TESTS = {
         build_architect_context
         calibrate_architect_review
     """),
-    "scripts/build_post_stride_contexts.py": _tests("""
+    "scripts/contexts/build_post_stride_contexts.py": _tests("""
         build_post_stride_contexts
         check_target_specificity
         gate_preconditions
@@ -904,7 +942,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/schema_canonicalize.py": _tests("""
+    "scripts/model/schema_canonicalize.py": _tests("""
         topology_workloads
         check_stride_dispatch
         check_target_specificity
@@ -919,7 +957,7 @@ SOURCE_TESTS = {
         validate_fragment
         refusal_aware_stride
     """),
-    "scripts/stride_dispatch_waves.py": _tests("""
+    "scripts/orchestrator/stride_dispatch_waves.py": _tests("""
         check_stride_dispatch
         check_target_specificity
         gate_preconditions
@@ -948,7 +986,7 @@ SOURCE_TESTS = {
         threat_fixture
         write_stride_progress
     """),
-    "scripts/validate_intermediate.py": _tests("""
+    "scripts/validators/validate_intermediate.py": _tests("""
         config_iac_scanner
         actor_attribution
         actor_presentation
@@ -1065,7 +1103,7 @@ SOURCE_TESTS = {
         requirements_hook
         requirements_verification
     """),
-    "scripts/apply_prose_fixes.py": _tests("""
+    "scripts/repairs/apply_prose_fixes.py": _tests("""
         actor_presentation
         analysis_version_upgrade
         apply_prose_fixes
@@ -1092,7 +1130,7 @@ SOURCE_TESTS = {
         threat_fixture
         walkthrough_renderer
     """),
-    "scripts/actor_attribution.py": _tests("""
+    "scripts/analyzers/actor_attribution.py": _tests("""
         actor_attribution
         check_target_specificity
         emit_threat_vektors
@@ -1125,7 +1163,7 @@ SOURCE_TESTS = {
         requirements_verification
         weakness_class_config_consistency
     """),
-    "scripts/reconcile_privileged_roles.py": _tests("""
+    "scripts/model/reconcile_privileged_roles.py": _tests("""
         check_target_specificity
         discover_identity_providers
         embedded_store_access
@@ -1139,7 +1177,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/reconcile_role_access.py": _tests("""
+    "scripts/model/reconcile_role_access.py": _tests("""
         figure1_security
         validate_fragment
         check_target_specificity
@@ -1156,7 +1194,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/actor_presentation.py": _tests("""
+    "scripts/renderers/actor_presentation.py": _tests("""
         actor_attribution
         actor_presentation
         analysis_version_upgrade
@@ -1206,7 +1244,8 @@ SOURCE_TESTS = {
         team_questions
         threat_fixture
     """),
-    "scripts/export_sarif.py": _tests("""
+    "scripts/exporters/export_sarif.py": _tests("""
+        script_layout
         check_target_specificity
         e2e_pipeline
         export_sarif
@@ -1222,7 +1261,7 @@ SOURCE_TESTS = {
         architect_review_runtime
         build_architect_context
     """),
-    "scripts/export_html.py": _tests("""
+    "scripts/exporters/export_html.py": _tests("""
         check_target_specificity
         e2e_pipeline
         export_html
@@ -1233,7 +1272,7 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stride_outputs
     """),
-    "scripts/export_pdf.py": _tests("""
+    "scripts/exporters/export_pdf.py": _tests("""
         check_target_specificity
         e2e_pipeline
         export_html
@@ -1245,7 +1284,7 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stride_outputs
     """),
-    "scripts/export_threat_dragon.py": _tests("""
+    "scripts/exporters/export_threat_dragon.py": _tests("""
         check_target_specificity
         export_threat_dragon
         export_threat_model_skill
@@ -1257,7 +1296,7 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stride_outputs
     """),
-    "scripts/figure1_dfd.py": _tests("""
+    "scripts/renderers/figure1_dfd.py": _tests("""
         actor_presentation
         analysis_version_upgrade
         check_target_specificity
@@ -1291,7 +1330,7 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
     """),
-    "scripts/figure2_svg.py": _tests("""
+    "scripts/renderers/figure2_svg.py": _tests("""
         actor_presentation
         analysis_version_upgrade
         check_target_specificity
@@ -1312,7 +1351,7 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
     """),
-    "scripts/finalize_component_inventory.py": _tests("""
+    "scripts/model/finalize_component_inventory.py": _tests("""
         build_trust_boundary_assessment_input
         check_target_specificity
         discover_identity_providers
@@ -1324,7 +1363,7 @@ SOURCE_TESTS = {
         stride_outputs
         topology_workloads
     """),
-    "scripts/inline_code_formatter.py": _tests("""
+    "scripts/renderers/inline_code_formatter.py": _tests("""
         analysis_version_upgrade
         apply_prose_fixes
         apply_prose_fixes_coverage
@@ -1370,7 +1409,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/walkthrough_renderer.py": _tests("""
+    "scripts/renderers/walkthrough_renderer.py": _tests("""
         architect_structural_checks
         attack_step_quality
         check_target_specificity
@@ -1389,7 +1428,8 @@ SOURCE_TESTS = {
         stride_outputs
         walkthrough_renderer
     """),
-    "scripts/repo_scan.py": _tests("""
+    "scripts/analyzers/repo_scan.py": _tests("""
+        script_layout
         check_target_specificity
         gate_preconditions
         repo_scan
@@ -1398,7 +1438,7 @@ SOURCE_TESTS = {
         scanner_review_regressions
         stride_outputs
     """),
-    "scripts/config_iac_scanner.py": _tests("""
+    "scripts/analyzers/config_iac_scanner.py": _tests("""
         agent_config_checks
         check_target_specificity
         config_iac_scanner
@@ -1412,7 +1452,7 @@ SOURCE_TESTS = {
         stride_outputs
         validate_intermediate
     """),
-    "scripts/iac_resource_checks.py": _tests("""
+    "scripts/analyzers/iac_resource_checks.py": _tests("""
         agent_config_checks
         check_target_specificity
         gate_preconditions
@@ -1427,7 +1467,7 @@ SOURCE_TESTS = {
         iac_resource_checks
         validate_intermediate
     """),
-    "scripts/deployment_inventory.py": _tests("""
+    "scripts/analyzers/deployment_inventory.py": _tests("""
         iac_resource_checks
         check_permissions
         check_target_specificity
@@ -1442,7 +1482,7 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
     """),
-    "scripts/figure_deployment.py": _tests("""
+    "scripts/renderers/figure_deployment.py": _tests("""
         analysis_version_upgrade
         check_target_specificity
         compose_threat_model
@@ -1462,7 +1502,7 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
     """),
-    "scripts/figure_details.py": _tests("""
+    "scripts/renderers/figure_details.py": _tests("""
         analysis_version_upgrade
         check_target_specificity
         compose_threat_model
@@ -1482,7 +1522,7 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
     """),
-    "scripts/compose_services.py": _tests("""
+    "scripts/renderers/compose_services.py": _tests("""
         iac_resource_checks
         analysis_version_upgrade
         check_target_specificity
@@ -1526,17 +1566,18 @@ SOURCE_TESTS = {
         schemas
         threat_fixture
     """),
-    "scripts/mass_assignment_scanner.py": _tests("""
+    "scripts/analyzers/mass_assignment_scanner.py": _tests("""
         check_target_specificity
         gate_preconditions
         mass_assignment_scanner
+        orchestration_controller
         repo_scan
         requirements_verification
         run_path_guard
         scanner_review_regressions
         stride_outputs
     """),
-    "scripts/handler_resolver.py": _tests("""
+    "scripts/analyzers/handler_resolver.py": _tests("""
         actor_attribution
         arch_coverage_bridge
         architecture_coverage_checks
@@ -1554,7 +1595,7 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
     """),
-    "scripts/flow_route_auth.py": _tests("""
+    "scripts/analyzers/flow_route_auth.py": _tests("""
         architect_review_runtime
         check_target_specificity
         discover_identity_providers
@@ -1573,7 +1614,7 @@ SOURCE_TESTS = {
         build_threat_model_yaml
         incremental_two_run_e2e
     """),
-    "scripts/source_auth_scanner.py": _tests("""
+    "scripts/analyzers/source_auth_scanner.py": _tests("""
         authz_confirm
         build_architecture_analysis_context
         build_trust_boundary_assessment_input
@@ -1599,7 +1640,7 @@ SOURCE_TESTS = {
         validate_fragment
         weakness_signals
     """),
-    "scripts/aggregate_run_issues.py": _tests("""
+    "scripts/runtime/aggregate_run_issues.py": _tests("""
         actor_attribution
         aggregate_run_issues
         check_target_specificity
@@ -1620,7 +1661,7 @@ SOURCE_TESTS = {
         thin_runtime_regressions_2026_07_20
         topology_workloads
     """),
-    "scripts/harvest_requirements.py": _tests("""
+    "scripts/requirements/harvest_requirements.py": _tests("""
         check_target_specificity
         gate_preconditions
         harvest_requirements
@@ -1628,7 +1669,8 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/pregenerate_fragments.py": _tests("""
+    "scripts/renderers/pregenerate_fragments.py": _tests("""
+        script_layout
         actor_presentation
         analysis_version_upgrade
         assert_completeness
@@ -1677,7 +1719,7 @@ SOURCE_TESTS = {
         team_questions
         threat_fixture
     """),
-    "scripts/recommend_fixes.py": _tests("""
+    "scripts/runtime/recommend_fixes.py": _tests("""
         aggregate_run_issues
         check_target_specificity
         gate_preconditions
@@ -1693,7 +1735,7 @@ SOURCE_TESTS = {
         stride_outputs
         terminate_run
     """),
-    "scripts/render_completion_summary.py": _tests("""
+    "scripts/renderers/render_completion_summary.py": _tests("""
         architect_review_runtime
         actor_presentation
         check_target_specificity
@@ -1713,7 +1755,7 @@ SOURCE_TESTS = {
         stride_outputs
         team_questions
     """),
-    "scripts/verify_run_costs.py": _tests("""
+    "scripts/runtime/verify_run_costs.py": _tests("""
         aggregate_run_issues
         check_target_specificity
         context_window_report
@@ -1736,7 +1778,7 @@ SOURCE_TESTS = {
         terminate_run
         verify_run_costs
     """),
-    "scripts/render_progress.py": _tests("""
+    "scripts/renderers/render_progress.py": _tests("""
         check_target_specificity
         gate_preconditions
         render_progress
@@ -1745,7 +1787,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/security_score.py": _tests("""
+    "scripts/analyzers/security_score.py": _tests("""
         check_target_specificity
         gate_preconditions
         repo_scan
@@ -1755,7 +1797,7 @@ SOURCE_TESTS = {
         security_score
         stride_outputs
     """),
-    "scripts/version_status.py": _tests("""
+    "scripts/runtime/version_status.py": _tests("""
         appsec_status
         check_target_specificity
         gate_preconditions
@@ -1764,7 +1806,7 @@ SOURCE_TESTS = {
         stride_outputs
         version_status
     """),
-    "scripts/load_business_context.py": _tests("""
+    "scripts/contexts/load_business_context.py": _tests("""
         aggregate_run_issues
         build_threat_model_yaml
         build_threat_modeling_context
@@ -1784,7 +1826,7 @@ SOURCE_TESTS = {
         threat_fixture
         validate_intermediate
     """),
-    "scripts/team_questions.py": _tests("""
+    "scripts/renderers/team_questions.py": _tests("""
         architect_review_runtime
         analysis_version_upgrade
         build_threat_model_yaml
@@ -1818,7 +1860,7 @@ SOURCE_TESTS = {
         team_questions
         threat_fixture
     """),
-    "scripts/build_threat_model_yaml.py": _tests("""
+    "scripts/model/build_threat_model_yaml.py": _tests("""
         actor_presentation
         build_threat_model_yaml
         check_target_specificity
@@ -1844,7 +1886,8 @@ SOURCE_TESTS = {
         architect_review_runtime
         build_architect_context
     """),
-    "scripts/orchestration_controller.py": _tests("""
+    "scripts/orchestrator/orchestration_controller.py": _tests("""
+        script_layout
         architect_review_runtime
         agent_logger_cov
         auto_emitter_pass
@@ -1880,7 +1923,15 @@ SOURCE_TESTS = {
         telemetry_consistency
         thin_runtime_regressions_2026_07_20
     """),
-    "scripts/_business_relevance.py": _tests("""
+    "scripts/orchestrator/stage2_state.py": _tests("""
+        requirements_verification
+        check_target_specificity
+        gate_preconditions
+        orchestration_controller
+        stage2_state
+        stride_outputs
+    """),
+    "scripts/renderers/_business_relevance.py": _tests("""
         analysis_version_upgrade
         business_relevance
         check_target_specificity
@@ -2104,7 +2155,7 @@ SOURCE_TESTS = {
         architect_review_runtime
         calibrate_architect_review
     """),
-    "scripts/_severity_rollup.py": _tests("""
+    "scripts/renderers/_severity_rollup.py": _tests("""
         actor_presentation
         analysis_version_upgrade
         architect_structural_checks
@@ -2156,7 +2207,8 @@ SOURCE_TESTS = {
         architect_review
         architect_review_runtime
     """),
-    "scripts/compose_threat_model.py": _tests("""
+    "scripts/renderers/compose_threat_model.py": _tests("""
+        script_layout
         incremental_two_run_e2e
         architect_review_runtime
         actor_presentation
@@ -2206,7 +2258,7 @@ SOURCE_TESTS = {
         team_questions
         threat_fixture
     """),
-    "scripts/runtime_cleanup.py": _tests("""
+    "scripts/runtime/runtime_cleanup.py": _tests("""
         architect_review_runtime
         check_target_specificity
         context_routing
@@ -2220,7 +2272,7 @@ SOURCE_TESTS = {
         stride_outputs
         threat_model_health
     """),
-    "scripts/summarize_threat_model.py": _tests("""
+    "scripts/renderers/summarize_threat_model.py": _tests("""
         check_target_specificity
         gate_preconditions
         render_completion_summary
@@ -2233,7 +2285,7 @@ SOURCE_TESTS = {
         stride_outputs
         summarize_threat_model
     """),
-    "scripts/triage_compute_ranking.py": _tests("""
+    "scripts/model/triage_compute_ranking.py": _tests("""
         architect_review_runtime
         actor_presentation
         build_threat_model_yaml
@@ -2249,7 +2301,8 @@ SOURCE_TESTS = {
         triage_compute_ranking
         triage_validate_ratings
     """),
-    "scripts/validate_fragment.py": _tests("""
+    "scripts/validators/validate_fragment.py": _tests("""
+        script_layout
         architect_review_runtime
         actor_presentation
         build_threat_model_yaml
@@ -2361,7 +2414,7 @@ SOURCE_TESTS = {
         e2e_pipeline
         requirements_verification
     """),
-    "scripts/_artifact_stamp.py": _tests("""
+    "scripts/shared/_artifact_stamp.py": _tests("""
         actor_attribution
         artifact_stamp
         check_target_specificity
@@ -2374,7 +2427,7 @@ SOURCE_TESTS = {
         stride_outputs
         weakness_signals
     """),
-    "scripts/_atomic_io.py": _tests("""
+    "scripts/shared/_atomic_io.py": _tests("""
         topology_workloads
         architect_review_runtime
         actor_attribution
@@ -2465,7 +2518,7 @@ SOURCE_TESTS = {
         weakness_signals
         calibrate_architect_review
     """),
-    "scripts/_boundary_adjacency.py": _tests("""
+    "scripts/shared/_boundary_adjacency.py": _tests("""
         check_target_specificity
         gate_preconditions
         prepare_trust_boundary_context
@@ -2477,7 +2530,8 @@ SOURCE_TESTS = {
         threat_fixture
         validate_intermediate
     """),
-    "scripts/_boundary_criticality.py": _tests("""
+    "scripts/shared/_boundary_criticality.py": _tests("""
+        script_layout
         actor_presentation
         analysis_version_upgrade
         build_threat_model_yaml
@@ -2527,7 +2581,7 @@ SOURCE_TESTS = {
         team_questions
         threat_fixture
     """),
-    "scripts/_critical_findings_sync.py": _tests("""
+    "scripts/shared/_critical_findings_sync.py": _tests("""
         agent_config_checks
         auto_emitter_pass
         check_target_specificity
@@ -2541,7 +2595,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/_lib_manifest.py": _tests("""
+    "scripts/shared/_lib_manifest.py": _tests("""
         iac_resource_checks
         check_target_specificity
         compose_threat_model_cov2
@@ -2561,7 +2615,7 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
     """),
-    "scripts/_manifest_readers.py": _tests("""
+    "scripts/shared/_manifest_readers.py": _tests("""
         build_threat_model_yaml
         incremental_two_run_e2e
         architect_review_runtime
@@ -2587,7 +2641,7 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
     """),
-    "scripts/_ms_component_refs.py": _tests("""
+    "scripts/shared/_ms_component_refs.py": _tests("""
         analysis_version_upgrade
         check_target_specificity
         compose_threat_model
@@ -2610,7 +2664,8 @@ SOURCE_TESTS = {
         validate_fragment
         validate_ms_compactness
     """),
-    "scripts/_path_guard.py": _tests("""
+    "scripts/shared/_path_guard.py": _tests("""
+        section_integrity
         architect_review_runtime
         actor_presentation
         aggregate_run_issues
@@ -2661,7 +2716,7 @@ SOURCE_TESTS = {
         threat_fixture
         weakness_signals
     """),
-    "scripts/_requirements_gate.py": _tests("""
+    "scripts/shared/_requirements_gate.py": _tests("""
         aggregate_run_issues
         check_target_specificity
         gate_preconditions
@@ -2673,7 +2728,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/_safe_cond.py": _tests("""
+    "scripts/shared/_safe_cond.py": _tests("""
         analysis_version_upgrade
         check_target_specificity
         compose_threat_model
@@ -2699,7 +2754,8 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
     """),
-    "scripts/_shared_sources.py": _tests("""
+    "scripts/shared/_shared_sources.py": _tests("""
+        script_layout
         config_iac_scanner
         abuse_case_verdicts
         actor_attribution
@@ -2794,7 +2850,7 @@ SOURCE_TESTS = {
         calibrate_architect_review
         refusal_aware_stride
     """),
-    "scripts/_slug.py": _tests("""
+    "scripts/shared/_slug.py": _tests("""
         analysis_version_upgrade
         apply_prose_fixes
         apply_prose_fixes_coverage
@@ -2828,7 +2884,7 @@ SOURCE_TESTS = {
         threat_fixture
         walkthrough_renderer
     """),
-    "scripts/_source_lex.py": _tests("""
+    "scripts/shared/_source_lex.py": _tests("""
         assess_supply_chain_controls
         check_target_specificity
         credential_lifecycle_checks
@@ -2848,7 +2904,7 @@ SOURCE_TESTS = {
         supply_chain_config
         threat_fixture
     """),
-    "scripts/_supply_chain_config.py": _tests("""
+    "scripts/shared/_supply_chain_config.py": _tests("""
         assess_supply_chain_controls
         check_target_specificity
         emit_sca_practice
@@ -2859,7 +2915,7 @@ SOURCE_TESTS = {
         stride_outputs
         supply_chain_config
     """),
-    "scripts/_threat_model_fields.py": _tests("""
+    "scripts/shared/_threat_model_fields.py": _tests("""
         build_cross_repo_register
         check_target_specificity
         gate_preconditions
@@ -2869,7 +2925,7 @@ SOURCE_TESTS = {
         stride_outputs
         threat_model_fields
     """),
-    "scripts/_url_guard.py": _tests("""
+    "scripts/shared/_url_guard.py": _tests("""
         appsec_status
         baseline_modular
         build_threat_modeling_context
@@ -2886,7 +2942,7 @@ SOURCE_TESTS = {
         threat_fixture
         url_guard
     """),
-    "scripts/abuse_case_gate.py": _tests("""
+    "scripts/validators/abuse_case_gate.py": _tests("""
         abuse_case_gate
         check_target_specificity
         gate_preconditions
@@ -2902,7 +2958,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/acquire_lock.py": _tests("""
+    "scripts/runtime/acquire_lock.py": _tests("""
         acquire_lock_heartbeat
         active_tool_calls
         agent_lifecycle
@@ -2926,7 +2982,7 @@ SOURCE_TESTS = {
         stride_outputs
         terminate_run
     """),
-    "scripts/actor_discovery_cache.py": _tests("""
+    "scripts/contexts/actor_discovery_cache.py": _tests("""
         actor_discovery_cache
         check_target_specificity
         gate_preconditions
@@ -2934,7 +2990,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/agent_config_checks.py": _tests("""
+    "scripts/runtime/agent_config_checks.py": _tests("""
         iac_resource_checks
         agent_config_checks
         check_target_specificity
@@ -2948,7 +3004,7 @@ SOURCE_TESTS = {
         security_score
         stride_outputs
     """),
-    "scripts/agent_lifecycle.py": _tests("""
+    "scripts/runtime/agent_lifecycle.py": _tests("""
         active_tool_calls
         agent_lifecycle
         agent_logger
@@ -2984,7 +3040,7 @@ SOURCE_TESTS = {
         check_stride_dispatch
         stage1_coverage_recovery_2026_07_20
     """),
-    "scripts/agent_logger.py": _tests("""
+    "scripts/runtime/agent_logger.py": _tests("""
         active_tool_calls
         agent_lifecycle
         agent_logger
@@ -3011,7 +3067,7 @@ SOURCE_TESTS = {
         terminate_run
         thin_runtime_regressions_2026_07_20
     """),
-    "scripts/aggregate_threat_summary.py": _tests("""
+    "scripts/model/aggregate_threat_summary.py": _tests("""
         aggregate_threat_summary
         check_target_specificity
         gate_preconditions
@@ -3020,7 +3076,7 @@ SOURCE_TESTS = {
         single_repo_no_cross_repo_regression
         stride_outputs
     """),
-    "scripts/annotate_architecture.py": _tests("""
+    "scripts/renderers/annotate_architecture.py": _tests("""
         annotate_architecture
         check_target_specificity
         e2e_pipeline
@@ -3029,7 +3085,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/annotate_sequences.py": _tests("""
+    "scripts/renderers/annotate_sequences.py": _tests("""
         annotate_sequences
         check_target_specificity
         e2e_pipeline
@@ -3038,7 +3094,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/apply_content_repair.py": _tests("""
+    "scripts/repairs/apply_content_repair.py": _tests("""
         apply_content_repair
         apply_content_repair_coverage
         check_target_specificity
@@ -3047,7 +3103,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/apply_editorial_plan.py": _tests("""
+    "scripts/repairs/apply_editorial_plan.py": _tests("""
         apply_editorial_plan
         build_editorial_context
         check_target_specificity
@@ -3057,7 +3113,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/apply_finding_refs_repair.py": _tests("""
+    "scripts/repairs/apply_finding_refs_repair.py": _tests("""
         apply_finding_refs_repair
         check_target_specificity
         gate_preconditions
@@ -3066,7 +3122,7 @@ SOURCE_TESTS = {
         stride_outputs
         validate_finding_refs
     """),
-    "scripts/apply_repair_plan.py": _tests("""
+    "scripts/repairs/apply_repair_plan.py": _tests("""
         apply_repair_plan
         check_target_specificity
         gate_preconditions
@@ -3074,7 +3130,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/appsec_status.py": _tests("""
+    "scripts/runtime/appsec_status.py": _tests("""
         appsec_status
         appsec_status_live
         check_target_specificity
@@ -3084,7 +3140,7 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stride_outputs
     """),
-    "scripts/arch_coverage_to_threats.py": _tests("""
+    "scripts/analyzers/arch_coverage_to_threats.py": _tests("""
         arch_coverage_bridge
         arch_coverage_bridge_coverage
         check_target_specificity
@@ -3094,7 +3150,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/architect_structural_checks.py": _tests("""
+    "scripts/analyzers/architect_structural_checks.py": _tests("""
         architect_structural_checks
         check_target_specificity
         gate_preconditions
@@ -3103,7 +3159,7 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stride_outputs
     """),
-    "scripts/architecture_coverage_checks.py": _tests("""
+    "scripts/analyzers/architecture_coverage_checks.py": _tests("""
         arch_coverage_bridge
         architecture_coverage_checks
         check_target_specificity
@@ -3116,7 +3172,7 @@ SOURCE_TESTS = {
         security_score
         stride_outputs
     """),
-    "scripts/assert_completeness.py": _tests("""
+    "scripts/validators/assert_completeness.py": _tests("""
         assert_completeness
         check_target_specificity
         gate_preconditions
@@ -3125,7 +3181,7 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stride_outputs
     """),
-    "scripts/assess_supply_chain_controls.py": _tests("""
+    "scripts/analyzers/assess_supply_chain_controls.py": _tests("""
         assess_supply_chain_controls
         check_target_specificity
         gate_preconditions
@@ -3135,17 +3191,18 @@ SOURCE_TESTS = {
         scanner_review_regressions
         stride_outputs
     """),
-    "scripts/authz_confirm.py": _tests("""
+    "scripts/analyzers/authz_confirm.py": _tests("""
         authz_confirm
         check_target_specificity
         gate_preconditions
         handler_resolver
+        orchestration_controller
         requirements_verification
         run_path_guard
         runtime_doc_cli_contract
         stride_outputs
     """),
-    "scripts/backfill_scanner_remediation.py": _tests("""
+    "scripts/model/backfill_scanner_remediation.py": _tests("""
         agent_config_checks
         auto_emitter_pass
         backfill_scanner_remediation
@@ -3157,7 +3214,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/baseline_check.py": _tests("""
+    "scripts/baseline/baseline_check.py": _tests("""
         appsec_status
         baseline_check
         baseline_modular
@@ -3175,7 +3232,7 @@ SOURCE_TESTS = {
         update_baseline
         version_status
     """),
-    "scripts/baseline_modular.py": _tests("""
+    "scripts/baseline/baseline_modular.py": _tests("""
         appsec_status
         baseline_check
         baseline_modular
@@ -3191,7 +3248,7 @@ SOURCE_TESTS = {
         update_baseline
         version_status
     """),
-    "scripts/baseline_release.py": _tests("""
+    "scripts/baseline/baseline_release.py": _tests("""
         baseline_modular
         baseline_release
         check_target_specificity
@@ -3204,7 +3261,7 @@ SOURCE_TESTS = {
         update_baseline
         version_status
     """),
-    "scripts/baseline_state.py": _tests("""
+    "scripts/baseline/baseline_state.py": _tests("""
         analysis_version_upgrade
         baseline_content_unchanged
         baseline_state_coverage
@@ -3217,7 +3274,7 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stride_outputs
     """),
-    "scripts/batch_checkpoint.py": _tests("""
+    "scripts/orchestrator/batch_checkpoint.py": _tests("""
         check_target_specificity
         gate_preconditions
         requirements_verification
@@ -3225,7 +3282,7 @@ SOURCE_TESTS = {
         runtime_helper_batch
         stride_outputs
     """),
-    "scripts/budget_watchdog.py": _tests("""
+    "scripts/runtime/budget_watchdog.py": _tests("""
         active_tool_calls
         agent_lifecycle
         agent_logger
@@ -3248,7 +3305,7 @@ SOURCE_TESTS = {
         verify_abuse_cases
         refusal_aware_stride
     """),
-    "scripts/build_abuse_case_contexts.py": _tests("""
+    "scripts/contexts/build_abuse_case_contexts.py": _tests("""
         build_abuse_case_contexts
         check_target_specificity
         gate_preconditions
@@ -3257,7 +3314,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/build_architecture_analysis_context.py": _tests("""
+    "scripts/contexts/build_architecture_analysis_context.py": _tests("""
         build_trust_boundary_assessment_input
         finalize_component_inventory
         fragment_invariant_parity
@@ -3270,7 +3327,7 @@ SOURCE_TESTS = {
         stride_outputs
         topology_workloads
     """),
-    "scripts/build_cross_repo_register.py": _tests("""
+    "scripts/contexts/build_cross_repo_register.py": _tests("""
         build_cross_repo_register
         build_threat_modeling_context
         check_target_specificity
@@ -3281,7 +3338,7 @@ SOURCE_TESTS = {
         single_repo_no_cross_repo_regression
         stride_outputs
     """),
-    "scripts/build_editorial_context.py": _tests("""
+    "scripts/contexts/build_editorial_context.py": _tests("""
         apply_editorial_plan
         build_editorial_context
         check_target_specificity
@@ -3291,7 +3348,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/build_posture_verdict.py": _tests("""
+    "scripts/model/build_posture_verdict.py": _tests("""
         actor_presentation
         build_posture_verdict
         check_target_specificity
@@ -3301,7 +3358,7 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
     """),
-    "scripts/build_requirements_contexts.py": _tests("""
+    "scripts/contexts/build_requirements_contexts.py": _tests("""
         check_target_specificity
         gate_preconditions
         requirements_trace
@@ -3309,7 +3366,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/build_stride_dispatch_manifest.py": _tests("""
+    "scripts/orchestrator/build_stride_dispatch_manifest.py": _tests("""
         topology_workloads
         build_architecture_analysis_context
         build_trust_boundary_assessment_input
@@ -3326,7 +3383,7 @@ SOURCE_TESTS = {
         stage1_coverage_recovery_2026_08_02
         stride_outputs
     """),
-    "scripts/build_stride_evidence_bundles.py": _tests("""
+    "scripts/contexts/build_stride_evidence_bundles.py": _tests("""
         build_stride_evidence_bundles
         check_target_specificity
         dispatch_manifest
@@ -3338,7 +3395,7 @@ SOURCE_TESTS = {
         validate_dispatch_manifest
         validate_intermediate
     """),
-    "scripts/build_threat_modeling_context.py": _tests("""
+    "scripts/contexts/build_threat_modeling_context.py": _tests("""
         build_threat_model_yaml
         build_threat_modeling_context
         check_target_specificity
@@ -3349,7 +3406,7 @@ SOURCE_TESTS = {
         stride_outputs
         validate_intermediate
     """),
-    "scripts/build_trust_boundary_assessment_input.py": _tests("""
+    "scripts/contexts/build_trust_boundary_assessment_input.py": _tests("""
         build_trust_boundary_assessment_input
         check_target_specificity
         discover_identity_providers
@@ -3372,7 +3429,7 @@ SOURCE_TESTS = {
         schemas
         stride_outputs
     """),
-    "scripts/build_verify_diff.py": _tests("""
+    "scripts/repairs/build_verify_diff.py": _tests("""
         build_verify_diff
         check_target_specificity
         gate_preconditions
@@ -3380,7 +3437,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/business_context_preview.py": _tests("""
+    "scripts/contexts/business_context_preview.py": _tests("""
         business_context_preview
         check_target_specificity
         gate_preconditions
@@ -3389,7 +3446,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/canonicalize_component_id.py": _tests("""
+    "scripts/model/canonicalize_component_id.py": _tests("""
         canonicalize_component_id
         check_target_specificity
         gate_preconditions
@@ -3397,7 +3454,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/check_editorial_diff.py": _tests("""
+    "scripts/validators/check_editorial_diff.py": _tests("""
         apply_editorial_plan
         build_editorial_context
         check_editorial_diff
@@ -3410,7 +3467,7 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stride_outputs
     """),
-    "scripts/check_fragment_registry.py": _tests("""
+    "scripts/validators/check_fragment_registry.py": _tests("""
         check_fragment_registry
         check_target_specificity
         fragment_registry
@@ -3419,7 +3476,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/check_inline_shortcut.py": _tests("""
+    "scripts/validators/check_inline_shortcut.py": _tests("""
         check_inline_shortcut
         check_inline_shortcut_coverage
         check_target_specificity
@@ -3443,7 +3500,7 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stride_outputs
     """),
-    "scripts/check_reference_format.py": _tests("""
+    "scripts/validators/check_reference_format.py": _tests("""
         check_target_specificity
         e2e_pipeline
         gate_preconditions
@@ -3466,7 +3523,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/check_skill_enabled.py": _tests("""
+    "scripts/runtime/check_skill_enabled.py": _tests("""
         appsec_status
         appsec_status_live
         check_skill_enabled
@@ -3488,7 +3545,7 @@ SOURCE_TESTS = {
         run_tests
         stride_outputs
     """),
-    "scripts/check_state.py": _tests("""
+    "scripts/runtime/check_state.py": _tests("""
         appsec_status
         appsec_status_live
         check_state
@@ -3503,7 +3560,7 @@ SOURCE_TESTS = {
         stride_outputs
         threat_model_health
     """),
-    "scripts/check_stride_dispatch.py": _tests("""
+    "scripts/orchestrator/check_stride_dispatch.py": _tests("""
         check_stride_dispatch
         check_target_specificity
         gate_preconditions
@@ -3520,7 +3577,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/classify_component.py": _tests("""
+    "scripts/analyzers/classify_component.py": _tests("""
         check_target_specificity
         classify_component
         dispatch_manifest
@@ -3534,7 +3591,7 @@ SOURCE_TESTS = {
         stride_outputs
         refusal_aware_stride
     """),
-    "scripts/completion_relay.py": _tests("""
+    "scripts/runtime/completion_relay.py": _tests("""
         active_tool_calls
         agent_logger
         agent_logger_branches
@@ -3551,7 +3608,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/context_routing.py": _tests("""
+    "scripts/contexts/context_routing.py": _tests("""
         build_abuse_case_contexts
         build_architecture_analysis_context
         build_post_stride_contexts
@@ -3565,7 +3622,7 @@ SOURCE_TESTS = {
         telemetry_consistency
         refusal_aware_stride
     """),
-    "scripts/context_window_report.py": _tests("""
+    "scripts/runtime/context_window_report.py": _tests("""
         check_target_specificity
         context_window_report
         gate_preconditions
@@ -3573,7 +3630,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/cost_running_total.py": _tests("""
+    "scripts/runtime/cost_running_total.py": _tests("""
         check_target_specificity
         cost_running_total
         gate_preconditions
@@ -3586,7 +3643,7 @@ SOURCE_TESTS = {
         skill_watchdog
         stride_outputs
     """),
-    "scripts/coverage_checks.py": _tests("""
+    "scripts/analyzers/coverage_checks.py": _tests("""
         check_target_specificity
         coverage_checks
         gate_preconditions
@@ -3595,7 +3652,7 @@ SOURCE_TESTS = {
         single_repo_no_cross_repo_regression
         stride_outputs
     """),
-    "scripts/cutoff_cause.py": _tests("""
+    "scripts/runtime/cutoff_cause.py": _tests("""
         active_tool_calls
         agent_logger
         agent_logger_branches
@@ -3611,7 +3668,7 @@ SOURCE_TESTS = {
         stride_outputs
         terminate_run
     """),
-    "scripts/database_privilege_separation.py": _tests("""
+    "scripts/analyzers/database_privilege_separation.py": _tests("""
         check_target_specificity
         database_privilege_separation
         gate_preconditions
@@ -3619,7 +3676,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/detect_impl_strategy.py": _tests("""
+    "scripts/analyzers/detect_impl_strategy.py": _tests("""
         check_target_specificity
         detect_impl_strategy
         gate_preconditions
@@ -3628,7 +3685,7 @@ SOURCE_TESTS = {
         stride_outputs
         weakness_signals
     """),
-    "scripts/detect_open_registration.py": _tests("""
+    "scripts/analyzers/detect_open_registration.py": _tests("""
         actor_attribution
         actor_presentation
         analysis_version_upgrade
@@ -3646,6 +3703,7 @@ SOURCE_TESTS = {
         export_pdf
         figure1_detail
         figure1_dfd
+        figure1_layout_harness
         figure1_svg
         figure2_svg
         gate_preconditions
@@ -3664,7 +3722,7 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
     """),
-    "scripts/detect_public_repo.py": _tests("""
+    "scripts/analyzers/detect_public_repo.py": _tests("""
         auto_emitter_pass
         check_target_specificity
         detect_public_repo
@@ -3674,7 +3732,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/detect_session_model.py": _tests("""
+    "scripts/analyzers/detect_session_model.py": _tests("""
         check_target_specificity
         detect_session_model
         gate_preconditions
@@ -3683,7 +3741,8 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/diagnostic_bundle.py": _tests("""
+    "scripts/runtime/diagnostic_bundle.py": _tests("""
+        script_layout
         check_target_specificity
         diagnostic_bundle
         gate_preconditions
@@ -3693,7 +3752,7 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stride_outputs
     """),
-    "scripts/discover_identity_providers.py": _tests("""
+    "scripts/analyzers/discover_identity_providers.py": _tests("""
         check_target_specificity
         discover_identity_providers
         embedded_store_access
@@ -3707,7 +3766,7 @@ SOURCE_TESTS = {
         stride_outputs
         validate_fragment
     """),
-    "scripts/editorial_gate.py": _tests("""
+    "scripts/validators/editorial_gate.py": _tests("""
         check_target_specificity
         editorial_gate
         gate_preconditions
@@ -3716,7 +3775,7 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stride_outputs
     """),
-    "scripts/embedded_store_access.py": _tests("""
+    "scripts/analyzers/embedded_store_access.py": _tests("""
         check_target_specificity
         discover_identity_providers
         embedded_store_access
@@ -3729,7 +3788,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/emit_auth_coverage.py": _tests("""
+    "scripts/model/emit_auth_coverage.py": _tests("""
         auto_emitter_pass
         check_target_specificity
         detect_public_repo
@@ -3740,7 +3799,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/emit_clean_finding_titles.py": _tests("""
+    "scripts/model/emit_clean_finding_titles.py": _tests("""
         actor_presentation
         auto_emitter_pass
         build_threat_model_yaml
@@ -3762,7 +3821,7 @@ SOURCE_TESTS = {
         architect_review_runtime
         build_architect_context
     """),
-    "scripts/emit_config_scan_mitigations.py": _tests("""
+    "scripts/model/emit_config_scan_mitigations.py": _tests("""
         agent_config_checks
         auto_emitter_pass
         check_target_specificity
@@ -3775,7 +3834,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/emit_dep_update_activity.py": _tests("""
+    "scripts/model/emit_dep_update_activity.py": _tests("""
         check_target_specificity
         emit_dep_update_activity
         gate_preconditions
@@ -3783,7 +3842,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/emit_finding_fix_mitigations.py": _tests("""
+    "scripts/model/emit_finding_fix_mitigations.py": _tests("""
         architect_review
         auto_emitter_pass
         check_target_specificity
@@ -3796,7 +3855,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/emit_general_mitigation_titles.py": _tests("""
+    "scripts/model/emit_general_mitigation_titles.py": _tests("""
         auto_emitter_pass
         check_target_specificity
         detect_public_repo
@@ -3808,7 +3867,7 @@ SOURCE_TESTS = {
         stride_outputs
         architect_review_runtime
     """),
-    "scripts/emit_known_bad_libs.py": _tests("""
+    "scripts/model/emit_known_bad_libs.py": _tests("""
         check_target_specificity
         emit_known_bad_libs
         gate_preconditions
@@ -3816,7 +3875,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/emit_meta_findings.py": _tests("""
+    "scripts/model/emit_meta_findings.py": _tests("""
         auto_emitter_pass
         check_target_specificity
         detect_public_repo
@@ -3827,7 +3886,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/emit_requirement_trace_to_model.py": _tests("""
+    "scripts/model/emit_requirement_trace_to_model.py": _tests("""
         check_target_specificity
         gate_preconditions
         requirements_catalog_predicate
@@ -3836,7 +3895,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/emit_review_mitigations.py": _tests("""
+    "scripts/model/emit_review_mitigations.py": _tests("""
         architect_review
         auto_emitter_pass
         check_target_specificity
@@ -3849,7 +3908,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/emit_sca_practice.py": _tests("""
+    "scripts/model/emit_sca_practice.py": _tests("""
         check_target_specificity
         emit_sca_practice
         gate_preconditions
@@ -3858,7 +3917,7 @@ SOURCE_TESTS = {
         scanner_review_regressions
         stride_outputs
     """),
-    "scripts/emit_severity_rationale.py": _tests("""
+    "scripts/model/emit_severity_rationale.py": _tests("""
         auto_emitter_pass
         check_target_specificity
         detect_public_repo
@@ -3871,7 +3930,7 @@ SOURCE_TESTS = {
         stride_outputs
         triage_compute_ranking
     """),
-    "scripts/emit_threat_vektors.py": _tests("""
+    "scripts/model/emit_threat_vektors.py": _tests("""
         actor_attribution
         auto_emitter_pass
         check_target_specificity
@@ -3883,7 +3942,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/emit_verdict_to_model.py": _tests("""
+    "scripts/model/emit_verdict_to_model.py": _tests("""
         check_target_specificity
         compose_threat_model
         emit_verdict_to_model
@@ -3893,7 +3952,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/enforce_control_taxonomy.py": _tests("""
+    "scripts/model/enforce_control_taxonomy.py": _tests("""
         auto_emitter_pass
         check_target_specificity
         detect_public_repo
@@ -3905,7 +3964,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/enforce_yaml_invariants.py": _tests("""
+    "scripts/model/enforce_yaml_invariants.py": _tests("""
         check_target_specificity
         enforce_yaml_invariants
         gate_preconditions
@@ -3913,7 +3972,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/enrich_asset_links.py": _tests("""
+    "scripts/model/enrich_asset_links.py": _tests("""
         auto_emitter_pass
         check_target_specificity
         detect_public_repo
@@ -3924,7 +3983,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/enrichment_pass.py": _tests("""
+    "scripts/model/enrichment_pass.py": _tests("""
         agent_config_checks
         apply_editorial_plan
         assert_completeness
@@ -3948,7 +4007,7 @@ SOURCE_TESTS = {
         triage_compute_ranking
         architect_review_runtime
     """),
-    "scripts/ensure_output_gitignore.py": _tests("""
+    "scripts/runtime/ensure_output_gitignore.py": _tests("""
         check_target_specificity
         ensure_output_gitignore
         gate_preconditions
@@ -3957,7 +4016,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/estimate_duration.py": _tests("""
+    "scripts/runtime/estimate_duration.py": _tests("""
         check_target_specificity
         dispatch_model_and_diagnostics
         dispatch_values_stage
@@ -3971,7 +4030,7 @@ SOURCE_TESTS = {
         skill_watchdog
         stride_outputs
     """),
-    "scripts/eval_threat_model.py": _tests("""
+    "scripts/validators/eval_threat_model.py": _tests("""
         check_target_specificity
         eval_threat_model
         gate_preconditions
@@ -3980,7 +4039,7 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stride_outputs
     """),
-    "scripts/event_log.py": _tests("""
+    "scripts/runtime/event_log.py": _tests("""
         render_completion_summary
         architect_review_runtime
         acquire_lock_heartbeat
@@ -4036,7 +4095,7 @@ SOURCE_TESTS = {
         write_stride_progress
         refusal_aware_stride
     """),
-    "scripts/extract_data_relations.py": _tests("""
+    "scripts/analyzers/extract_data_relations.py": _tests("""
         check_target_specificity
         extract_data_relations
         gate_preconditions
@@ -4045,7 +4104,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/extract_report_section.py": _tests("""
+    "scripts/runtime/extract_report_section.py": _tests("""
         check_target_specificity
         extract_report_section
         gate_preconditions
@@ -4053,7 +4112,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/fetch_requirements.py": _tests("""
+    "scripts/requirements/fetch_requirements.py": _tests("""
         check_target_specificity
         fetch_requirements
         gate_preconditions
@@ -4063,7 +4122,7 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stride_outputs
     """),
-    "scripts/figure1_detail.py": _tests("""
+    "scripts/renderers/figure1_detail.py": _tests("""
         actor_presentation
         check_target_specificity
         compose_threat_model
@@ -4080,7 +4139,7 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
     """),
-    "scripts/figure1_harness.py": _tests("""
+    "scripts/renderers/figure1_harness.py": _tests("""
         check_target_specificity
         figure1_layout_harness
         gate_preconditions
@@ -4088,7 +4147,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/figure1_security.py": _tests("""
+    "scripts/renderers/figure1_security.py": _tests("""
         architect_review_runtime
         actor_presentation
         analysis_version_upgrade
@@ -4128,7 +4187,7 @@ SOURCE_TESTS = {
         validate_fragment
         validate_intermediate
     """),
-    "scripts/figure1_svg.py": _tests("""
+    "scripts/renderers/figure1_svg.py": _tests("""
         check_target_specificity
         compose_threat_model
         e2e_pipeline
@@ -4139,7 +4198,7 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
     """),
-    "scripts/guard_evidence_verification.py": _tests("""
+    "scripts/validators/guard_evidence_verification.py": _tests("""
         auto_emitter_pass
         check_target_specificity
         detect_public_repo
@@ -4150,7 +4209,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/headless_usage.py": _tests("""
+    "scripts/runtime/headless_usage.py": _tests("""
         check_target_specificity
         gate_preconditions
         headless_usage
@@ -4161,7 +4220,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/hook_payload.py": _tests("""
+    "scripts/runtime/hook_payload.py": _tests("""
         active_tool_calls
         agent_lifecycle
         agent_logger
@@ -4187,7 +4246,7 @@ SOURCE_TESTS = {
         terminate_run
         refusal_aware_stride
     """),
-    "scripts/hydrate_mitigation_details.py": _tests("""
+    "scripts/model/hydrate_mitigation_details.py": _tests("""
         agent_config_checks
         auto_emitter_pass
         check_target_specificity
@@ -4201,7 +4260,7 @@ SOURCE_TESTS = {
         architect_review
         architect_review_runtime
     """),
-    "scripts/install_baseline.py": _tests("""
+    "scripts/baseline/install_baseline.py": _tests("""
         baseline_modular
         check_target_specificity
         gate_preconditions
@@ -4222,7 +4281,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/load_org_context.py": _tests("""
+    "scripts/contexts/load_org_context.py": _tests("""
         check_target_specificity
         gate_preconditions
         load_org_context
@@ -4230,7 +4289,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/load_related_repos.py": _tests("""
+    "scripts/contexts/load_related_repos.py": _tests("""
         build_threat_modeling_context
         check_target_specificity
         gate_preconditions
@@ -4241,7 +4300,7 @@ SOURCE_TESTS = {
         single_repo_no_cross_repo_regression
         stride_outputs
     """),
-    "scripts/log_agent_end.py": _tests("""
+    "scripts/runtime/log_agent_end.py": _tests("""
         check_target_specificity
         gate_preconditions
         log_agent_end
@@ -4249,7 +4308,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/log_event.py": _tests("""
+    "scripts/runtime/log_event.py": _tests("""
         agent_logger
         agent_logger_cov
         check_target_specificity
@@ -4261,7 +4320,7 @@ SOURCE_TESTS = {
         stride_outputs
         write_stride_progress
     """),
-    "scripts/measure_run.py": _tests("""
+    "scripts/runtime/measure_run.py": _tests("""
         check_target_specificity
         gate_preconditions
         measure_run
@@ -4269,7 +4328,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/merge_threats.py": _tests("""
+    "scripts/model/merge_threats.py": _tests("""
         actor_attribution
         agent_config_checks
         arch_coverage_bridge
@@ -4306,7 +4365,7 @@ SOURCE_TESTS = {
         wait_stride_progress
         write_stride_progress
     """),
-    "scripts/model_lineup.py": _tests("""
+    "scripts/runtime/model_lineup.py": _tests("""
         check_target_specificity
         gate_preconditions
         model_lineup
@@ -4315,7 +4374,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/normalize_config_scan.py": _tests("""
+    "scripts/model/normalize_config_scan.py": _tests("""
         check_target_specificity
         gate_preconditions
         normalize_config_scan
@@ -4323,7 +4382,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/normalize_security_architecture.py": _tests("""
+    "scripts/model/normalize_security_architecture.py": _tests("""
         analysis_version_upgrade
         check_target_specificity
         compose_threat_model
@@ -4354,7 +4413,7 @@ SOURCE_TESTS = {
         smoke_test_package
         stride_outputs
     """),
-    "scripts/perimeter_patterns.py": _tests("""
+    "scripts/analyzers/perimeter_patterns.py": _tests("""
         apply_prose_fixes
         apply_prose_fixes_coverage
         auto_emitter_pass
@@ -4373,7 +4432,7 @@ SOURCE_TESTS = {
         sanitize_perimeter_claims
         stride_outputs
     """),
-    "scripts/persist_run_baseline.py": _tests("""
+    "scripts/model/persist_run_baseline.py": _tests("""
         check_target_specificity
         gate_preconditions
         persist_run_baseline
@@ -4382,7 +4441,8 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stride_outputs
     """),
-    "scripts/phase_budgets.py": _tests("""
+    "scripts/runtime/phase_budgets.py": _tests("""
+        script_layout
         topology_workloads
         architect_review_runtime
         acquire_lock_heartbeat
@@ -4439,7 +4499,7 @@ SOURCE_TESTS = {
         watch_run
         runtime_cleanup
     """),
-    "scripts/phase_elapsed.py": _tests("""
+    "scripts/runtime/phase_elapsed.py": _tests("""
         check_target_specificity
         gate_preconditions
         requirements_verification
@@ -4447,7 +4507,7 @@ SOURCE_TESTS = {
         runtime_helper_batch
         stride_outputs
     """),
-    "scripts/plugin_meta.py": _tests("""
+    "scripts/runtime/plugin_meta.py": _tests("""
         analysis_version_upgrade
         baseline_content_unchanged
         baseline_state_coverage
@@ -4466,7 +4526,7 @@ SOURCE_TESTS = {
         stride_outputs
         triage_compute_ranking
     """),
-    "scripts/plugin_read_gate.py": _tests("""
+    "scripts/runtime/plugin_read_gate.py": _tests("""
         check_target_specificity
         gate_preconditions
         plugin_read_gate
@@ -4474,7 +4534,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/plugin_write_gate.py": _tests("""
+    "scripts/runtime/plugin_write_gate.py": _tests("""
         check_target_specificity
         gate_preconditions
         plugin_write_gate
@@ -4482,7 +4542,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/postscan_secret_check.py": _tests("""
+    "scripts/validators/postscan_secret_check.py": _tests("""
         check_target_specificity
         gate_preconditions
         postscan_secret_check
@@ -4490,7 +4550,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/preflight_untrusted.py": _tests("""
+    "scripts/validators/preflight_untrusted.py": _tests("""
         check_target_specificity
         gate_preconditions
         preflight_untrusted
@@ -4499,7 +4559,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/prepare_trust_boundary_context.py": _tests("""
+    "scripts/contexts/prepare_trust_boundary_context.py": _tests("""
         architect_review_runtime
         actor_attribution
         actor_presentation
@@ -4531,6 +4591,8 @@ SOURCE_TESTS = {
         weakness_signals
     """),
     "scripts/preserve_lib.py": _tests("""
+        compose_threat_model
+        orchestration_controller
         check_target_specificity
         gate_preconditions
         requirements_verification
@@ -4538,7 +4600,7 @@ SOURCE_TESTS = {
         section_integrity
         stride_outputs
     """),
-    "scripts/project_run_cost.py": _tests("""
+    "scripts/runtime/project_run_cost.py": _tests("""
         check_target_specificity
         gate_preconditions
         orchestration_controller
@@ -4549,7 +4611,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/promote_verified_abuse_cases.py": _tests("""
+    "scripts/model/promote_verified_abuse_cases.py": _tests("""
         check_target_specificity
         gate_preconditions
         promote_verified_abuse_cases
@@ -4557,7 +4619,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/publish_threat_model.py": _tests("""
+    "scripts/model/publish_threat_model.py": _tests("""
         check_target_specificity
         ensure_output_gitignore
         gate_preconditions
@@ -4567,7 +4629,7 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stride_outputs
     """),
-    "scripts/qa_arch_coverage.py": _tests("""
+    "scripts/validators/qa_arch_coverage.py": _tests("""
         check_target_specificity
         gate_preconditions
         qa_arch_coverage
@@ -4576,7 +4638,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/qa_checks.py": _tests("""
+    "scripts/validators/qa_checks.py": _tests("""
         actor_presentation
         analysis_version_upgrade
         check_fragment_registry
@@ -4614,7 +4676,7 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
     """),
-    "scripts/qa_release_gate.py": _tests("""
+    "scripts/validators/qa_release_gate.py": _tests("""
         check_target_specificity
         editorial_gate
         gate_preconditions
@@ -4623,7 +4685,7 @@ SOURCE_TESTS = {
         runtime_helper_batch
         stride_outputs
     """),
-    "scripts/query_threat_model.py": _tests("""
+    "scripts/model/query_threat_model.py": _tests("""
         check_target_specificity
         gate_preconditions
         query_threat_model
@@ -4632,7 +4694,7 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stride_outputs
     """),
-    "scripts/reclassify_components.py": _tests("""
+    "scripts/model/reclassify_components.py": _tests("""
         topology_workloads
         architect_review_runtime
         actor_attribution
@@ -4664,7 +4726,7 @@ SOURCE_TESTS = {
         validate_fragment
         validate_intermediate
     """),
-    "scripts/recon_patterns.py": _tests("""
+    "scripts/analyzers/recon_patterns.py": _tests("""
         check_target_specificity
         discover_identity_providers
         embedded_store_access
@@ -4679,7 +4741,7 @@ SOURCE_TESTS = {
         stride_outputs
         validate_fragment
     """),
-    "scripts/record_component_durations.py": _tests("""
+    "scripts/runtime/record_component_durations.py": _tests("""
         check_target_specificity
         gate_preconditions
         log_shape_contract
@@ -4689,7 +4751,7 @@ SOURCE_TESTS = {
         runtime_helper_batch
         stride_outputs
     """),
-    "scripts/record_stage_stats.py": _tests("""
+    "scripts/runtime/record_stage_stats.py": _tests("""
         check_target_specificity
         gate_preconditions
         model_release_pricing
@@ -4700,7 +4762,7 @@ SOURCE_TESTS = {
         stride_outputs
         thin_runtime_regressions_2026_07_20
     """),
-    "scripts/redact_known_secrets.py": _tests("""
+    "scripts/validators/redact_known_secrets.py": _tests("""
         check_target_specificity
         enrichment_pass
         gate_preconditions
@@ -4710,7 +4772,7 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stride_outputs
     """),
-    "scripts/remove_baseline.py": _tests("""
+    "scripts/baseline/remove_baseline.py": _tests("""
         baseline_modular
         check_target_specificity
         gate_preconditions
@@ -4720,7 +4782,7 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stride_outputs
     """),
-    "scripts/render_changelog_audit.py": _tests("""
+    "scripts/renderers/render_changelog_audit.py": _tests("""
         check_target_specificity
         compose_threat_model
         compose_threat_model_cov2
@@ -4732,7 +4794,7 @@ SOURCE_TESTS = {
         threat_fixture
         runtime_cleanup
     """),
-    "scripts/render_editorial_receipt.py": _tests("""
+    "scripts/renderers/render_editorial_receipt.py": _tests("""
         check_target_specificity
         gate_preconditions
         render_completion_summary_config
@@ -4741,7 +4803,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/render_pentest_tasks.py": _tests("""
+    "scripts/renderers/render_pentest_tasks.py": _tests("""
         render_completion_summary
         authnz_review_skill
         check_target_specificity
@@ -4755,7 +4817,7 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stride_outputs
     """),
-    "scripts/render_qa_receipt.py": _tests("""
+    "scripts/renderers/render_qa_receipt.py": _tests("""
         check_target_specificity
         gate_preconditions
         render_qa_receipt
@@ -4764,7 +4826,7 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stride_outputs
     """),
-    "scripts/render_requirements_banner.py": _tests("""
+    "scripts/renderers/render_requirements_banner.py": _tests("""
         check_target_specificity
         gate_preconditions
         render_requirements_banner
@@ -4772,7 +4834,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/render_review_report.py": _tests("""
+    "scripts/renderers/render_review_report.py": _tests("""
         check_target_specificity
         gate_preconditions
         render_review_report
@@ -4780,7 +4842,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/render_run_diagnosis.py": _tests("""
+    "scripts/renderers/render_run_diagnosis.py": _tests("""
         check_target_specificity
         gate_preconditions
         render_run_diagnosis
@@ -4789,7 +4851,7 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stride_outputs
     """),
-    "scripts/render_threat_model.py": _tests("""
+    "scripts/renderers/render_threat_model.py": _tests("""
         check_target_specificity
         gate_preconditions
         render_threat_model
@@ -4797,7 +4859,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/repo_profile.py": _tests("""
+    "scripts/analyzers/repo_profile.py": _tests("""
         topology_workloads
         build_trust_boundary_assessment_input
         check_target_specificity
@@ -4811,7 +4873,7 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stride_outputs
     """),
-    "scripts/report_plugin_issue.py": _tests("""
+    "scripts/runtime/report_plugin_issue.py": _tests("""
         check_target_specificity
         gate_preconditions
         report_plugin_issue
@@ -4820,7 +4882,7 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stride_outputs
     """),
-    "scripts/requirements_gate.py": _tests("""
+    "scripts/requirements/requirements_gate.py": _tests("""
         check_target_specificity
         gate_preconditions
         requirements_gate
@@ -4829,7 +4891,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/requirements_hook.py": _tests("""
+    "scripts/requirements/requirements_hook.py": _tests("""
         check_target_specificity
         gate_preconditions
         requirements_hook
@@ -4837,7 +4899,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/requirements_report.py": _tests("""
+    "scripts/requirements/requirements_report.py": _tests("""
         check_target_specificity
         gate_preconditions
         requirements_report
@@ -4846,7 +4908,7 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stride_outputs
     """),
-    "scripts/requirements_state.py": _tests("""
+    "scripts/requirements/requirements_state.py": _tests("""
         build_threat_model_yaml
         check_target_specificity
         fetch_requirements
@@ -4862,7 +4924,8 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
     """),
-    "scripts/requirements_trace.py": _tests("""
+    "scripts/requirements/requirements_trace.py": _tests("""
+        script_layout
         architect_review_runtime
         actor_presentation
         analysis_version_upgrade
@@ -4906,7 +4969,7 @@ SOURCE_TESTS = {
         team_questions
         threat_fixture
     """),
-    "scripts/reserve_ids.py": _tests("""
+    "scripts/model/reserve_ids.py": _tests("""
         check_target_specificity
         fragment_invariant_parity
         gate_preconditions
@@ -4916,7 +4979,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/resolve_abuse_cases.py": _tests("""
+    "scripts/model/resolve_abuse_cases.py": _tests("""
         check_target_specificity
         compose_threat_model_cov2
         gate_preconditions
@@ -4929,7 +4992,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/resolve_actors.py": _tests("""
+    "scripts/model/resolve_actors.py": _tests("""
         check_target_specificity
         gate_preconditions
         requirements_verification
@@ -4937,7 +5000,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/resolve_config.py": _tests("""
+    "scripts/runtime/resolve_config.py": _tests("""
         architect_review_runtime
         agent_config_checks
         agent_logger_cov
@@ -4962,7 +5025,7 @@ SOURCE_TESTS = {
         stride_outputs
         stride_quick_profile
     """),
-    "scripts/resolve_org_profile.py": _tests("""
+    "scripts/runtime/resolve_org_profile.py": _tests("""
         authnz_review_skill
         check_target_specificity
         gate_preconditions
@@ -4977,7 +5040,7 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stride_outputs
     """),
-    "scripts/resolve_requirements_source.py": _tests("""
+    "scripts/requirements/resolve_requirements_source.py": _tests("""
         check_target_specificity
         fetch_requirements
         gate_preconditions
@@ -4987,7 +5050,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/restore_preserved_sections.py": _tests("""
+    "scripts/repairs/restore_preserved_sections.py": _tests("""
         check_target_specificity
         compose_threat_model
         gate_preconditions
@@ -4996,7 +5059,7 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
     """),
-    "scripts/review_threat_model.py": _tests("""
+    "scripts/validators/review_threat_model.py": _tests("""
         check_target_specificity
         gate_preconditions
         requirements_verification
@@ -5005,7 +5068,7 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         stride_outputs
     """),
-    "scripts/route_inventory.py": _tests("""
+    "scripts/analyzers/route_inventory.py": _tests("""
         actor_attribution
         arch_coverage_bridge
         architecture_coverage_checks
@@ -5024,7 +5087,7 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
     """),
-    "scripts/run_summary.py": _tests("""
+    "scripts/runtime/run_summary.py": _tests("""
         check_target_specificity
         gate_preconditions
         requirements_verification
@@ -5032,7 +5095,7 @@ SOURCE_TESTS = {
         run_summary
         stride_outputs
     """),
-    "scripts/run_timing.py": _tests("""
+    "scripts/runtime/run_timing.py": _tests("""
         analysis_version_upgrade
         check_target_specificity
         compose_threat_model
@@ -5055,7 +5118,7 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
     """),
-    "scripts/sanitize_perimeter_claims.py": _tests("""
+    "scripts/model/sanitize_perimeter_claims.py": _tests("""
         auto_emitter_pass
         check_target_specificity
         detect_public_repo
@@ -5069,7 +5132,7 @@ SOURCE_TESTS = {
         sanitize_perimeter_claims
         stride_outputs
     """),
-    "scripts/scan_excludes.py": _tests("""
+    "scripts/analyzers/scan_excludes.py": _tests("""
         arch_coverage_bridge
         architecture_coverage_checks
         baseline_content_unchanged
@@ -5101,7 +5164,7 @@ SOURCE_TESTS = {
         threat_fixture
         validate_fragment
     """),
-    "scripts/secret_scan.py": _tests("""
+    "scripts/validators/secret_scan.py": _tests("""
         actor_presentation
         analysis_version_upgrade
         auto_emitter_pass
@@ -5142,7 +5205,7 @@ SOURCE_TESTS = {
         architect_review_runtime
         calibrate_architect_review
     """),
-    "scripts/section_integrity.py": _tests("""
+    "scripts/validators/section_integrity.py": _tests("""
         check_target_specificity
         gate_preconditions
         requirements_verification
@@ -5151,7 +5214,7 @@ SOURCE_TESTS = {
         section_integrity
         stride_outputs
     """),
-    "scripts/security_relevance_filter.py": _tests("""
+    "scripts/analyzers/security_relevance_filter.py": _tests("""
         baseline_content_unchanged
         baseline_state_coverage
         check_target_specificity
@@ -5161,7 +5224,7 @@ SOURCE_TESTS = {
         security_relevance_filter
         stride_outputs
     """),
-    "scripts/security_steering.py": _tests("""
+    "scripts/analyzers/security_steering.py": _tests("""
         check_target_specificity
         gate_preconditions
         integration
@@ -5171,7 +5234,7 @@ SOURCE_TESTS = {
         security_steering_units
         stride_outputs
     """),
-    "scripts/session_banner.py": _tests("""
+    "scripts/runtime/session_banner.py": _tests("""
         check_target_specificity
         gate_preconditions
         requirements_verification
@@ -5179,7 +5242,7 @@ SOURCE_TESTS = {
         session_banner
         stride_outputs
     """),
-    "scripts/skill_policy_gate.py": _tests("""
+    "scripts/runtime/skill_policy_gate.py": _tests("""
         check_target_specificity
         gate_preconditions
         requirements_verification
@@ -5187,7 +5250,7 @@ SOURCE_TESTS = {
         skill_policy_gate
         stride_outputs
     """),
-    "scripts/skill_watchdog.py": _tests("""
+    "scripts/runtime/skill_watchdog.py": _tests("""
         check_target_specificity
         gate_preconditions
         requirements_verification
@@ -5196,7 +5259,7 @@ SOURCE_TESTS = {
         skill_watchdog
         stride_outputs
     """),
-    "scripts/slice_actors.py": _tests("""
+    "scripts/contexts/slice_actors.py": _tests("""
         check_target_specificity
         dispatch_manifest
         gate_preconditions
@@ -5205,7 +5268,7 @@ SOURCE_TESTS = {
         slice_actors
         stride_outputs
     """),
-    "scripts/slice_cross_repo_for_component.py": _tests("""
+    "scripts/contexts/slice_cross_repo_for_component.py": _tests("""
         check_target_specificity
         gate_preconditions
         requirements_verification
@@ -5214,7 +5277,7 @@ SOURCE_TESTS = {
         slice_cross_repo_for_component
         stride_outputs
     """),
-    "scripts/slice_taxonomy.py": _tests("""
+    "scripts/contexts/slice_taxonomy.py": _tests("""
         check_target_specificity
         gate_preconditions
         orchestration_controller
@@ -5232,7 +5295,7 @@ SOURCE_TESTS = {
         smoke_test_package
         stride_outputs
     """),
-    "scripts/snapshot_preserved_sections.py": _tests("""
+    "scripts/repairs/snapshot_preserved_sections.py": _tests("""
         check_target_specificity
         gate_preconditions
         orchestration_controller
@@ -5248,7 +5311,7 @@ SOURCE_TESTS = {
         spec_guard
         stride_outputs
     """),
-    "scripts/stall_notice.py": _tests("""
+    "scripts/runtime/stall_notice.py": _tests("""
         check_target_specificity
         gate_preconditions
         requirements_verification
@@ -5256,7 +5319,7 @@ SOURCE_TESTS = {
         stall_notice
         stride_outputs
     """),
-    "scripts/stamp_threat_model.py": _tests("""
+    "scripts/model/stamp_threat_model.py": _tests("""
         export_threat_model_skill
         check_target_specificity
         gate_preconditions
@@ -5267,7 +5330,7 @@ SOURCE_TESTS = {
         stamp_threat_model
         stride_outputs
     """),
-    "scripts/stride_outputs.py": _tests("""
+    "scripts/runtime/stride_outputs.py": _tests("""
         actor_attribution
         aggregate_run_issues
         appsec_status
@@ -5296,7 +5359,7 @@ SOURCE_TESTS = {
         architect_review_runtime
         refusal_aware_stride
     """),
-    "scripts/stride_progress.py": _tests("""
+    "scripts/runtime/stride_progress.py": _tests("""
         check_target_specificity
         gate_preconditions
         requirements_verification
@@ -5305,7 +5368,7 @@ SOURCE_TESTS = {
         stride_progress
         write_stride_progress
     """),
-    "scripts/sync_baseline.py": _tests("""
+    "scripts/baseline/sync_baseline.py": _tests("""
         check_target_specificity
         gate_preconditions
         requirements_verification
@@ -5314,7 +5377,7 @@ SOURCE_TESTS = {
         sync_baseline
         update_baseline
     """),
-    "scripts/telemetry_consistency.py": _tests("""
+    "scripts/runtime/telemetry_consistency.py": _tests("""
         check_target_specificity
         gate_preconditions
         orchestration_controller
@@ -5324,7 +5387,7 @@ SOURCE_TESTS = {
         stride_outputs
         telemetry_consistency
     """),
-    "scripts/terminate_run.py": _tests("""
+    "scripts/runtime/terminate_run.py": _tests("""
         check_target_specificity
         gate_preconditions
         requirements_verification
@@ -5341,7 +5404,7 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
     """),
-    "scripts/threat_model_health.py": _tests("""
+    "scripts/model/threat_model_health.py": _tests("""
         check_target_specificity
         gate_preconditions
         requirements_verification
@@ -5350,7 +5413,7 @@ SOURCE_TESTS = {
         stride_outputs
         threat_model_health
     """),
-    "scripts/triage_validate_ratings.py": _tests("""
+    "scripts/validators/triage_validate_ratings.py": _tests("""
         check_target_specificity
         gate_preconditions
         qa_checks
@@ -5360,7 +5423,7 @@ SOURCE_TESTS = {
         stride_outputs
         triage_validate_ratings
     """),
-    "scripts/update_baseline.py": _tests("""
+    "scripts/baseline/update_baseline.py": _tests("""
         baseline_modular
         baseline_release
         check_target_specificity
@@ -5371,7 +5434,7 @@ SOURCE_TESTS = {
         stride_outputs
         update_baseline
     """),
-    "scripts/validate_cache.py": _tests("""
+    "scripts/validators/validate_cache.py": _tests("""
         check_target_specificity
         gate_preconditions
         orchestration_controller
@@ -5380,7 +5443,7 @@ SOURCE_TESTS = {
         stride_outputs
         validate_cache
     """),
-    "scripts/validate_config.py": _tests("""
+    "scripts/validators/validate_config.py": _tests("""
         check_target_specificity
         gate_preconditions
         integration
@@ -5390,7 +5453,7 @@ SOURCE_TESTS = {
         stride_outputs
         validate_config
     """),
-    "scripts/validate_dispatch_manifest.py": _tests("""
+    "scripts/validators/validate_dispatch_manifest.py": _tests("""
         check_target_specificity
         dispatch_manifest
         gate_preconditions
@@ -5399,7 +5462,7 @@ SOURCE_TESTS = {
         stride_outputs
         validate_dispatch_manifest
     """),
-    "scripts/validate_evidence_lines.py": _tests("""
+    "scripts/validators/validate_evidence_lines.py": _tests("""
         auto_emitter_pass
         check_target_specificity
         detect_public_repo
@@ -5412,7 +5475,7 @@ SOURCE_TESTS = {
         validate_evidence_lines
         architect_review_runtime
     """),
-    "scripts/validate_finding_refs.py": _tests("""
+    "scripts/validators/validate_finding_refs.py": _tests("""
         check_target_specificity
         gate_preconditions
         requirements_verification
@@ -5420,7 +5483,7 @@ SOURCE_TESTS = {
         stride_outputs
         validate_finding_refs
     """),
-    "scripts/validate_mitigation_quality.py": _tests("""
+    "scripts/validators/validate_mitigation_quality.py": _tests("""
         agent_config_checks
         check_target_specificity
         gate_preconditions
@@ -5430,7 +5493,7 @@ SOURCE_TESTS = {
         stride_outputs
         validate_mitigation_quality
     """),
-    "scripts/validate_ms_compactness.py": _tests("""
+    "scripts/validators/validate_ms_compactness.py": _tests("""
         check_target_specificity
         gate_preconditions
         pregenerate_fragments
@@ -5439,7 +5502,7 @@ SOURCE_TESTS = {
         stride_outputs
         validate_ms_compactness
     """),
-    "scripts/validate_org_profile.py": _tests("""
+    "scripts/validators/validate_org_profile.py": _tests("""
         authnz_review_skill
         check_target_specificity
         gate_preconditions
@@ -5452,7 +5515,7 @@ SOURCE_TESTS = {
         stride_outputs
         sync_baseline
     """),
-    "scripts/validate_recon_summary.py": _tests("""
+    "scripts/validators/validate_recon_summary.py": _tests("""
         check_target_specificity
         gate_preconditions
         orchestration_controller
@@ -5461,7 +5524,8 @@ SOURCE_TESTS = {
         stride_outputs
         validate_recon_summary
     """),
-    "scripts/validate_threat_modeling_context.py": _tests("""
+    "scripts/validators/validate_threat_modeling_context.py": _tests("""
+        script_layout
         architect_review_runtime
         agent_logger_cov
         build_threat_modeling_context
@@ -5491,7 +5555,7 @@ SOURCE_TESTS = {
         validate_threat_modeling_context
         runtime_cleanup
     """),
-    "scripts/verify_abuse_cases.py": _tests("""
+    "scripts/validators/verify_abuse_cases.py": _tests("""
         check_target_specificity
         gate_preconditions
         orchestration_controller
@@ -5501,7 +5565,7 @@ SOURCE_TESTS = {
         verify_abuse_cases
         wait_abuse_progress
     """),
-    "scripts/wait_abuse_progress.py": _tests("""
+    "scripts/orchestrator/wait_abuse_progress.py": _tests("""
         check_target_specificity
         gate_preconditions
         refusal_aware_stride
@@ -5512,7 +5576,7 @@ SOURCE_TESTS = {
         thin_runtime_regressions_2026_07_20
         wait_abuse_progress
     """),
-    "scripts/wait_agent_calls.py": _tests("""
+    "scripts/orchestrator/wait_agent_calls.py": _tests("""
         wait_abuse_progress
         agent_lifecycle
         check_target_specificity
@@ -5526,7 +5590,7 @@ SOURCE_TESTS = {
         wait_agent_calls
         refusal_aware_stride
     """),
-    "scripts/wait_stride_progress.py": _tests("""
+    "scripts/orchestrator/wait_stride_progress.py": _tests("""
         check_target_specificity
         gate_preconditions
         refusal_aware_stride
@@ -5537,7 +5601,7 @@ SOURCE_TESTS = {
         thin_runtime_regressions_2026_07_20
         wait_stride_progress
     """),
-    "scripts/watch_run.py": _tests("""
+    "scripts/runtime/watch_run.py": _tests("""
         check_target_specificity
         gate_preconditions
         requirements_verification
@@ -5545,7 +5609,7 @@ SOURCE_TESTS = {
         stride_outputs
         watch_run
     """),
-    "scripts/weakness_classifier.py": _tests("""
+    "scripts/analyzers/weakness_classifier.py": _tests("""
         actor_attribution
         actor_presentation
         analysis_version_upgrade
@@ -5581,7 +5645,7 @@ SOURCE_TESTS = {
         threat_fixture
         weakness_signals
     """),
-    "scripts/weakness_signals.py": _tests("""
+    "scripts/analyzers/weakness_signals.py": _tests("""
         actor_attribution
         arch_coverage_bridge
         check_target_specificity
@@ -5594,7 +5658,7 @@ SOURCE_TESTS = {
         stride_outputs
         weakness_signals
     """),
-    "scripts/write_stride_progress.py": _tests("""
+    "scripts/runtime/write_stride_progress.py": _tests("""
         check_target_specificity
         gate_preconditions
         requirements_verification

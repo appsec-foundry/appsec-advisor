@@ -1,4 +1,4 @@
-"""Unit tests for scripts/verify_run_costs.py.
+"""Unit tests for scripts/runtime/verify_run_costs.py.
 
 Covers parsing (SESSION_STOP, ASSESSMENT_TOKENS, AGENT_SPAWN), run-window
 detection, delta aggregation, cross-check, sub-agent estimate signals,
@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 import pytest
-import verify_run_costs as vrc
+import runtime.verify_run_costs as vrc
 
 SONNET = vrc.PRICING_MODELS["sonnet-4-6"]
 
@@ -852,27 +852,27 @@ class TestCLI:
     def test_cli_not_a_directory(self, run_plugin_script, tmp_path):
         f = tmp_path / "file.txt"
         f.write_text("x")
-        r = run_plugin_script("verify_run_costs.py", str(f), check=False)
+        r = run_plugin_script("runtime/verify_run_costs.py", str(f), check=False)
         assert r.returncode == 2
         assert "is not a directory" in r.stderr
 
     def test_cli_error_json(self, run_plugin_script, tmp_path):
         # empty dir -> no hook log -> error path with --json
-        r = run_plugin_script("verify_run_costs.py", str(tmp_path), "--json", check=False)
+        r = run_plugin_script("runtime/verify_run_costs.py", str(tmp_path), "--json", check=False)
         assert r.returncode == 2
         out = json.loads(r.stdout)
         assert "error" in out
 
     def test_cli_default_output(self, run_plugin_script, tmp_path):
         self._setup_good(tmp_path)
-        r = run_plugin_script("verify_run_costs.py", str(tmp_path), check=False)
+        r = run_plugin_script("runtime/verify_run_costs.py", str(tmp_path), check=False)
         assert r.returncode == 0
         assert "Tokens:" in r.stdout
         assert "Sub-agent estimate" in r.stdout
 
     def test_cli_json_output(self, run_plugin_script, tmp_path):
         self._setup_good(tmp_path)
-        r = run_plugin_script("verify_run_costs.py", str(tmp_path), "--json", check=False)
+        r = run_plugin_script("runtime/verify_run_costs.py", str(tmp_path), "--json", check=False)
         assert r.returncode == 0
         out = json.loads(r.stdout)
         assert out["totals"]["cross_check"] == "OK"
@@ -880,13 +880,13 @@ class TestCLI:
 
     def test_cli_verbose(self, run_plugin_script, tmp_path):
         self._setup_good(tmp_path)
-        r = run_plugin_script("verify_run_costs.py", str(tmp_path), "--verbose", check=False)
+        r = run_plugin_script("runtime/verify_run_costs.py", str(tmp_path), "--verbose", check=False)
         assert r.returncode == 0
         assert "Run window:" in r.stderr
 
     def test_cli_actual_cost_host_path(self, run_plugin_script, tmp_path):
         self._setup_good(tmp_path)
-        r = run_plugin_script("verify_run_costs.py", str(tmp_path), "--actual-cost", "50.0", check=False)
+        r = run_plugin_script("runtime/verify_run_costs.py", str(tmp_path), "--actual-cost", "50.0", check=False)
         assert r.returncode == 0
         assert "Calibration recorded" in r.stderr
         cal = json.loads((tmp_path / ".appsec-cache" / vrc._CALIBRATION_FILE).read_text())
@@ -898,7 +898,7 @@ class TestCLI:
         agent = "2026-01-01T00:00:00Z INFO ASSESSMENT_START\n2026-01-01T00:40:00Z INFO ASSESSMENT_END\n"
         (tmp_path / ".hook-events.log").write_text(hook)
         (tmp_path / ".agent-run.log").write_text(agent)
-        r = run_plugin_script("verify_run_costs.py", str(tmp_path), "--actual-cost", "20.0", check=False)
+        r = run_plugin_script("runtime/verify_run_costs.py", str(tmp_path), "--actual-cost", "20.0", check=False)
         assert r.returncode == 0
         assert "per-minute rate" in r.stderr
         cal = json.loads((tmp_path / ".appsec-cache" / vrc._CALIBRATION_FILE).read_text())

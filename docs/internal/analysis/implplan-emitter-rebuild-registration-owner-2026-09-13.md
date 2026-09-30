@@ -17,13 +17,13 @@ Internet-Angreifer. Dieselben Ursachen verwerfen weitere Report-Inhalte, siehe R
 ### Root Cause 1: Der YAML-Rebuild in Stage 1d verwirft den deterministischen Emitter-Pass (plugin-weit)
 
 - `auto_emitter_pass.sh` läuft im Stage-1-Finalizer `_context_v2_finalize`
-  (`scripts/orchestration_controller.py:5512`, YAML-Build davor bei `:5494`). Seit `74846143` (2026-08-07) bzw.
+  (`scripts/orchestrator/orchestration_controller.py:5512`, YAML-Build davor bei `:5494`). Seit `74846143` (2026-08-07) bzw.
   `c240a276` (2026-08-19).
 - Die Emitter schreiben direkt in `threat-model.yaml`.
 - Danach baut `finalize_abuse` die YAML neu, sobald Abuse-Verdicts existieren
-  (`scripts/orchestration_controller.py:6220`, `if verdicts.is_file()`; Rebuild seit `eb264882`, 2026-08-01).
+  (`scripts/orchestrator/orchestration_controller.py:6220`, `if verdicts.is_file()`; Rebuild seit `eb264882`, 2026-08-01).
   Ein Emitter-Pass folgt dort nicht.
-- `build_meta` in `scripts/build_threat_model_yaml.py` übernimmt aus der alten YAML nur `project`; Threats,
+- `build_meta` in `scripts/model/build_threat_model_yaml.py` übernimmt aus der alten YAML nur `project`; Threats,
   Assets und Controls kommen aus Sidecars. Alles, was der Pass in die YAML geschrieben hat, ist danach weg.
 - Weiterer Rebuild-Pfad: `_upgrade_bootstrap_yaml` (`:6414`, aufgerufen bei `:6803`). Prüfen, ob dort ein Pass folgt.
 
@@ -46,10 +46,10 @@ Warum kein Test anschlug: `tests/test_auto_emitter_pass.py:76` prüft nur, dass 
 
 - Recon (LLM) setzte `has_open_self_registration: false`, `signal_evidence.status: "none"`, keine Locations
   (`.recon-signals.json`). Die Route wurde nicht einmal als `candidate` erfasst.
-- Der Resolver faltet nur bei wahrem Signal (`scripts/resolve_actors.py:390` → keine `collapse_reason`).
-- `scripts/build_threat_model_yaml.py:2934-2938` schreibt daraus `open_user_registration: false` und immer
+- Der Resolver faltet nur bei wahrem Signal (`scripts/model/resolve_actors.py:390` → keine `collapse_reason`).
+- `scripts/model/build_threat_model_yaml.py:2934-2938` schreibt daraus `open_user_registration: false` und immer
   `open_registration_source: actor-resolution` (seit `89b51eed`, 2026-09-12).
-- `detect()` in `scripts/detect_open_registration.py:170` vertraut dem und überspringt die Routen-Prüfung.
+- `detect()` in `scripts/analyzers/detect_open_registration.py:170` vertraut dem und überspringt die Routen-Prüfung.
   Log: `detect_open_registration: open_user_registration=False (validated actor reach equivalence)` (Z. 324).
   Ohne die Early-Return liefert `detect()` für dieselben Daten `True` (`POST /api/Users`).
 - Gleichzeitig sagen drei deterministische Quellen „Registrierung existiert“:
@@ -71,9 +71,9 @@ Warum kein Test anschlug: `tests/test_auto_emitter_pass.py:76` prüft nur, dass 
 ### Figure 1: Rollen und Angreifer kommen aus zwei unverbundenen Modellen
 
 - Grüne Karten: `external_entities` mit `kind: legitimate-role` aus `.data-flows.json` (Architektur-Agent).
-  `scripts/figure1_dfd.py:600` zeichnet jede Rolle einzeln; es gibt keinen Fold für Rollen.
+  `scripts/renderers/figure1_dfd.py:600` zeichnet jede Rolle einzeln; es gibt keinen Fold für Rollen.
 - Angreifer A1–A3: Pfad-Akteure aus `.fragments/security-posture-attack-paths.json`, gefaltet über
-  `overview_actor_slug()` (`scripts/detect_open_registration.py:100`) anhand von `meta.open_user_registration`
+  `overview_actor_slug()` (`scripts/analyzers/detect_open_registration.py:100`) anhand von `meta.open_user_registration`
   und `meta.public_source_repo`. Beide Flags fehlen bzw. sind falsch (Root Cause 1 und 2).
 - Die Entity-Schemas erlauben nur `id/name/kind/description/evidence` bei `additionalProperties: false`:
   `schemas/fragments/data-flows.schema.json`, `schemas/trust-boundary-assessment-input.schema.json`,
@@ -83,7 +83,7 @@ Warum kein Test anschlug: `tests/test_auto_emitter_pass.py:76` prüft nur, dass 
 
 - `auto_emitter_pass.sh` ist verdrahtet (siehe oben). Eine frühere Aussage „kein Aufrufer“ war ein Suchfehler.
 - `equivalent_to`, `equivalent_when`, `collapse_primary` liest außer dem YAML-Builder niemand; an die STRIDE-Slices
-  geht nur das statische `severity_modulation` (`scripts/slice_actors.py:182`). Ein Fix für Root Cause 2 ändert
+  geht nur das statische `severity_modulation` (`scripts/contexts/slice_actors.py:182`). Ein Fix für Root Cause 2 ändert
   also keine STRIDE-Bewertungen.
 - `detect_public_repo.detect()` liefert für juice-shop2 korrekt `True` („OSI license file + public-host source URL“).
 
@@ -95,7 +95,7 @@ Reihenfolge: AP1 → AP2 → AP4 (Verifikation) → AP3.
 
 1. In `finalize_abuse` nach dem erfolgreichen Rebuild `_run_auto_emitter_pass(output_dir, cfg, receipts)` aufrufen,
    dazu die Gates, die in `_context_v2_finalize` auf den Pass folgen (Zeilen nach `:5512` prüfen, u. a.
-   `validate_mitigation_quality.py`). Den Pass im Stage-1-Finalizer belassen: Gates hängen davon ab
+   `validators/validate_mitigation_quality.py`). Den Pass im Stage-1-Finalizer belassen: Gates hängen davon ab
    (`tests/test_gate_preconditions.py`, P1/P2-Actionability).
 2. `_upgrade_bootstrap_yaml` (`:6414`) genauso behandeln, falls dort ohne Pass neu gebaut wird.
 3. Idempotenz prüfen: Die neu gebaute YAML ist frisch, aber Emitter, die zusätzlich Sidecars schreiben
@@ -103,9 +103,9 @@ Reihenfolge: AP1 → AP2 → AP4 (Verifikation) → AP3.
    `hydrate_mitigation_details`, `emit_general_mitigation_titles`), dürfen beim zweiten Lauf nichts doppelt anhängen.
 4. Absicherungen:
    - Der Pass stempelt am Ende `meta` mit einem Marker (z. B. `enrichment_pass: {completed_at, yaml_sha256}`);
-     `scripts/assert_completeness.py` (Phase `render`) schlägt fehl, wenn der Marker fehlt oder nicht zur finalen
+     `scripts/validators/assert_completeness.py` (Phase `render`) schlägt fehl, wenn der Marker fehlt oder nicht zur finalen
      YAML passt. Eintrag in `data/completeness-contract.yaml`.
-   - Controller-Test: Jeder Pfad, der `build_threat_model_yaml.py` ausführt, führt danach den Pass aus
+   - Controller-Test: Jeder Pfad, der `model/build_threat_model_yaml.py` ausführt, führt danach den Pass aus
      (Aufrufe per gemocktem `_run_script` aufzeichnen, inkl. `finalize_abuse` mit vorhandener Verdict-Datei).
 5. Langfristig (nicht in diesem AP): Emitter schreiben in Sidecars, der Builder ist einziger YAML-Writer.
 
@@ -113,7 +113,7 @@ Abnahme auf einer Kopie des Referenzlaufs:
 
 ```bash
 cp -a /home/mrohr/juice-shop2/docs/security "$TMPDIR/ref"
-python3 scripts/build_threat_model_yaml.py "$TMPDIR/ref" --repo-root /home/mrohr/juice-shop2 --plugin-root .
+python3 scripts/model/build_threat_model_yaml.py "$TMPDIR/ref" --repo-root /home/mrohr/juice-shop2 --plugin-root .
 # erwartet: vektor fehlt (Ist-Zustand reproduziert)
 bash scripts/auto_emitter_pass.sh "$TMPDIR/ref" /home/mrohr/juice-shop2 "$PWD" false
 # erwartet: vektor auf allen Threats, meta.public_source_repo=true, 4 Auth-Coverage-Controls, linked_threats > 0
@@ -122,10 +122,10 @@ bash scripts/auto_emitter_pass.sh "$TMPDIR/ref" /home/mrohr/juice-shop2 "$PWD" f
 ### AP2: Ein Owner für die offene Registrierung (Root Cause 2)
 
 1. Eine Funktion, z. B. `resolve_open_registration(signal_doc, routes, source_auth_findings) -> (bool, reason,
-   evidence)` in `scripts/detect_open_registration.py`. Aufruf in `resolve()` beim Laden der Signale
-   (`scripts/resolve_actors.py:422-432`, `output_dir` ist verfügbar), bevor `apply_reach_equivalence` läuft (`:587`).
+   evidence)` in `scripts/analyzers/detect_open_registration.py`. Aufruf in `resolve()` beim Laden der Signale
+   (`scripts/model/resolve_actors.py:422-432`, `output_dir` ist verfügbar), bevor `apply_reach_equivalence` läuft (`:587`).
    Nur das Signal im Speicher setzen, `.recon-signals.json` nicht ändern: Der Validator verlangt für `true`
-   `status: supporting` (`scripts/validate_intermediate.py:1730`), außerdem hängen Receipts am Hash.
+   `status: supporting` (`scripts/validators/validate_intermediate.py:1730`), außerdem hängen Receipts am Hash.
    Reihenfolge ist garantiert: Route-Inventur (`:4320`) vor Resolver (`:4346`) in `_context_v2_after_recon`;
    Source-Auth läuft schon in den Prepasses (`:1749`).
 2. Regel:
@@ -137,11 +137,11 @@ bash scripts/auto_emitter_pass.sh "$TMPDIR/ref" /home/mrohr/juice-shop2 "$PWD" f
      oder meldet Recon `candidate`: als strittig vermerken und als offene Frage fürs Team ausgeben (baut auf
      `2e8298ec` auf, siehe Abschnitt 5), nicht still als geschlossen.
 3. Route und `AUTHZ-008` zusammenführen: Das Finding hat `file`/`line`, aber keinen Pfad; die Inventur hat den
-   Pfad, aber `file`/`line` leer. Bevorzugt `scripts/route_inventory.py` so erweitern, dass Route-Registrierungen
+   Pfad, aber `file`/`line` leer. Bevorzugt `scripts/analyzers/route_inventory.py` so erweitern, dass Route-Registrierungen
    file:line tragen, und dann darüber matchen. Notlösung: Methode und Pfad aus `evidence_snippet` parsen.
-4. Beleg in `.actors-resolved.json` ablegen; `build_threat_model_yaml.py:2934-2938` schreibt ihn mit ins `meta`.
+4. Beleg in `.actors-resolved.json` ablegen; `model/build_threat_model_yaml.py:2934-2938` schreibt ihn mit ins `meta`.
    Die Early-Return in `detect()` bleibt, weil der Resolver jetzt deterministische Eingaben hat;
-   `detect_open_registration.py` im Emitter-Pass nutzt dieselbe Funktion oder protokolliert nur Abweichungen.
+   `analyzers/detect_open_registration.py` im Emitter-Pass nutzt dieselbe Funktion oder protokolliert nur Abweichungen.
    `tests/test_detect_open_registration.py:225` bleibt gültig.
 5. Nebenbei: `emit_auth_coverage` erkennt „User Registration“ über `GET /api/Users`; Methode korrigieren.
 6. Erwartete Wirkung: Figure 1 faltet A2 in A1 und zeigt den Gruppierungshinweis; Heatmap und MS-Akteure folgen;
@@ -156,19 +156,19 @@ bash scripts/auto_emitter_pass.sh "$TMPDIR/ref" /home/mrohr/juice-shop2 "$PWD" f
    Go/.NET/Ruby/PHP-Handler, GraphQL-Mutationen, Self-Sign-up über externe IdPs (Cognito, Keycloak, Auth0,
    Firebase; `data/config-iac-checks.yaml` hat dafür keinen Check). Dort bleibt das Recon-Urteil plus Teamfrage.
 
-Abnahme: `resolve_actors.py --plugin-root . --repo-root /home/mrohr/juice-shop2 --output-dir "$TMPDIR/ref"
+Abnahme: `model/resolve_actors.py --plugin-root . --repo-root /home/mrohr/juice-shop2 --output-dir "$TMPDIR/ref"
 --signals "$TMPDIR/ref/.recon-signals.json"` → ACT-D-01/02 mit `collapse_reason: open-self-registration`;
-Builder → `meta.open_user_registration: true`; `match_abuse_cases.py` → AC-T-004 anwendbar.
+Builder → `meta.open_user_registration: true`; `model/match_abuse_cases.py` → AC-T-004 anwendbar.
 
 ### AP3: Rollen in Figure 1 zusammenlegen
 
 1. Optionales Feld `access` für `kind: legitimate-role` in den drei Entity-Schemas (siehe 2.), Werte aus dem
    Akteursvokabular: `internet-anon`, `internet-user`, `internet-priv-user`.
 2. `agents/appsec-architecture-analyst.md:90`: `access` aus Belegen setzen.
-3. Durchreichen prüfen: `scripts/build_threat_model_yaml.py:2966` und
-   `scripts/build_trust_boundary_assessment_input.py:561` kopieren Entities; sicherstellen, dass nichts Felder
+3. Durchreichen prüfen: `scripts/model/build_threat_model_yaml.py:2966` und
+   `scripts/contexts/build_trust_boundary_assessment_input.py:561` kopieren Entities; sicherstellen, dass nichts Felder
    filtert.
-4. `scripts/figure1_dfd.py:598ff`: Rollen über `overview_actor_slug(access, meta)` abbilden; Rollen mit gleichem
+4. `scripts/renderers/figure1_dfd.py:598ff`: Rollen über `overview_actor_slug(access, meta)` abbilden; Rollen mit gleichem
    Ziel-Slug zu einer Karte zusammenführen (Label aus dem Vokabular, z. B. „User (anonymous or self-registered)“),
    `from_entity`-Flows umhängen; privilegierte Rollen bleiben getrennt. Ohne `access` keine Zusammenlegung.
 5. Tests: Figure-1-Unit-Tests mit/ohne offene Registrierung und mit/ohne `access`; Schema-Tests.
@@ -177,7 +177,7 @@ Builder → `meta.open_user_registration: true`; `match_abuse_cases.py` → AC-T
 
 ### AP4: Öffentliches Repo (A3)
 
-1. Mit AP1 überlebt das Ergebnis von `detect_public_repo.py`. Abnahme: nach dem Replay `meta.public_source_repo:
+1. Mit AP1 überlebt das Ergebnis von `analyzers/detect_public_repo.py`. Abnahme: nach dem Replay `meta.public_source_repo:
    true`; Figure 1 faltet A3 in A1. Fachlich richtig: Der A3-Pfad ist `sensitive-data-exposure` über Secrets im
    Quellcode (T-006, T-008, T-013, T-019, T-034); Lesezugriff genügt.
 2. Overrides `open_user_registration_pinned` / `public_source_repo_pinned` haben keine Konfigurationsquelle, sie
@@ -202,5 +202,5 @@ das Write-Gate.
   `git -C /home/mrohr/appsec-advisor fetch <scratch-pfad> fix/team-questions:fix/team-questions`.
   Cherry-Pick auf `70c5804c` konfliktet nur in `CHANGELOG.md`.
 - Next Steps: Laut Nutzer gab es früher konkrete Beispielfragen für ask-threat-model; der aktuelle Code
-  (`build_next_steps` in `scripts/render_completion_summary.py`, aus `50b9b2de`/`2e7c8ca9`, 2026-08-31) zeigt zwei
+  (`build_next_steps` in `scripts/renderers/render_completion_summary.py`, aus `50b9b2de`/`2e7c8ca9`, 2026-08-31) zeigt zwei
   generische. Nicht untersucht.

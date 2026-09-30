@@ -24,7 +24,7 @@ schemas, stable-ID rules, evidence requirements, severity caps, redaction,
 deterministic renderer, and QA gates.
 
 The target command is (`--assessment-depth`, not `--depth`;
-`scripts/resolve_config.py:1477`):
+`scripts/runtime/resolve_config.py:1477`):
 
 ```text
 /create-threat-model --assessment-depth standard --yaml --sarif
@@ -84,7 +84,7 @@ directly.
 - Incremental analysis and carry-forward state.
 - Abuse-case fan-out and architect-review repair loops.
 - The sampled LLM evidence verifier of Phase 10a. Its deterministic floor,
-  `scripts/validate_evidence_lines.py`, stays mandatory, so no finding ships
+  `scripts/validators/validate_evidence_lines.py`, stays mandatory, so no finding ships
   with an unresolved evidence pointer.
 - Per-phase cost routing and exact Sonnet/Opus selection parity.
 - PDF, Threat Dragon, and pentest-task exports.
@@ -186,13 +186,13 @@ that list for complete coverage. Review it when it grows.
    `.threats-merged.json`, triage sidecars, fragments, and QA status.
 2. Preserve public `T-NNN` / `F-NNN` identity behavior. Incremental behavior
    is out of scope, but a new host must not alter full-run allocation.
-3. `compose_threat_model.py --strict` remains the only composer of
+3. `renderers/compose_threat_model.py --strict` remains the only composer of
    `threat-model.md`, and no agent may write that file. Deterministic passes
-   still mutate it afterwards in the order AGENTS.md pins: `apply_prose_fixes.py`,
-   then `qa_checks.py autofix`, then `render_completion_summary.py
+   still mutate it afterwards in the order AGENTS.md pins: `repairs/apply_prose_fixes.py`,
+   then `validators/qa_checks.py autofix`, then `renderers/render_completion_summary.py
    --patch-placeholders` as the only post-review mutation. A Copilot render
    state that stops after the composer ships unpatched placeholders.
-4. `build_threat_model_yaml.py` remains the only builder of
+4. `model/build_threat_model_yaml.py` remains the only builder of
    `threat-model.yaml`, and no agent may write that file. The auto-emitters run
    after it and enrich the built document; rebuilding the YAML discards their
    output, so the emitter pass must follow every build.
@@ -317,27 +317,27 @@ path discovery.
 
 The following current seams require explicit design changes:
 
-1. `orchestration_controller.py:_missing_permissions_action()` currently calls
+1. `orchestrator/orchestration_controller.py:_missing_permissions_action()` currently calls
    the Claude-specific `check_permissions.effective_allow()` unconditionally
    on both full and rerender preparation paths. Introduce an explicit
    permission-provider/capability input. Preserve the current Claude gate
    exactly; require a tested Copilot provider that validates the documented
    skill tool policy and never treats an absent `.claude/settings.json` as a
    successful Claude configuration.
-2. `build_threat_model_yaml.py:_plugin_version()` reads
-   `.claude-plugin/plugin.json` directly and does not import `plugin_meta.py`;
-   the two are independent readers. Generalize the `plugin_meta.py` seam and
+2. `model/build_threat_model_yaml.py:_plugin_version()` reads
+   `.claude-plugin/plugin.json` directly and does not import `runtime/plugin_meta.py`;
+   the two are independent readers. Generalize the `runtime/plugin_meta.py` seam and
    route `_plugin_version()` through it, so both hosts emit consistent product
    and analysis version metadata without requiring Copilot to ship a fake
-   Claude manifest. Generalizing `plugin_meta.py` alone changes nothing in the
+   Claude manifest. Generalizing `runtime/plugin_meta.py` alone changes nothing in the
    YAML builder.
 3. Three agent-consumed command strings embed `$CLAUDE_PLUGIN_ROOT` today:
-   `qa_checks.py:2458`, `qa_checks.py:2738`, and `compose_threat_model.py:18258`.
+   `validators/qa_checks.py:2458`, `validators/qa_checks.py:2738`, and `renderers/compose_threat_model.py:18258`.
    Replace all three with an explicit asset-root value or a structured
    remediation action resolved by the host adapter. A Copilot repair consumer
    must never expand an unset Claude variable into a relative `/scripts/...`
    path. The `${CLAUDE_PLUGIN_ROOT}/org-profile/` marker in
-   `validate_org_profile.py:338` is not one of these; it is the org-profile
+   `validators/validate_org_profile.py:338` is not one of these; it is the org-profile
    hook contract and belongs to Phase 5.
 4. The baseline checker currently proves that a baseline is loaded through
    Claude instruction discovery. Copilot CLI loads `AGENTS.md` and related
@@ -475,7 +475,7 @@ fixture; schema failures stop the pipeline before the next stage.
 
 Decide extend-versus-companion before writing the state machine; it is the most
 structural choice in the MVP and must not fall to whoever implements first.
-Extend `orchestration_controller.py` when the MVP states fit the existing
+Extend `orchestrator/orchestration_controller.py` when the MVP states fit the existing
 `action` vocabulary in `schemas/orchestration-action.schema.json` — `abort`,
 `dispatch_agent`, `run_gate`, `complete` and the rest already cover the shape.
 Add a companion only when Phase 0 forces a dispatch model the Claude action
@@ -510,7 +510,7 @@ The controller must persist an explicit state record with:
 - terminal result.
 
 A failed run must leave a diagnosable artifact, not only a non-zero exit:
-`scripts/aggregate_run_issues.py` and `scripts/render_run_diagnosis.py` already
+`scripts/runtime/aggregate_run_issues.py` and `scripts/renderers/render_run_diagnosis.py` already
 produce one from the event log, so the Copilot path feeds the same writers
 rather than inventing a second failure format.
 
@@ -533,11 +533,11 @@ Wire the existing AI Secure Coding Baseline and requirements flow into Copilot:
 
 1. Resolve organization/profile configuration through the shared resolver.
 2. Install or load the baseline only through existing guarded commands.
-3. Run `baseline_check.py` before analysis where existing configuration
+3. Run `baseline/baseline_check.py` before analysis where existing configuration
    requires it, after extending it with the host-specific instruction
    discovery contract from Phase 1.
 4. Fetch and validate requirements through the existing guarded source path.
-5. Run `requirements_gate.py` at the same logical gate point as the MVP
+5. Run `requirements/requirements_gate.py` at the same logical gate point as the MVP
    controller.
 
 Do not port Claude-specific `setup-target` behavior. The controller permission
@@ -553,7 +553,7 @@ For the MVP, profiles declaring `hooks`, Claude package-surface policy, or
 Claude-only skill-toggle behavior must be rejected with an explicit
 unsupported-feature error or have those blocks omitted through a separately
 validated host projection. Do not silently accept a profile while dropping its
-security-relevant policy. `validate_org_profile.py` currently requires
+security-relevant policy. `validators/validate_org_profile.py` currently requires
 `${CLAUDE_PLUGIN_ROOT}/org-profile/` for profile hooks and reads
 `.claude-plugin/package-surface.json`; leave those semantics unchanged for the
 Claude host.
@@ -574,13 +574,13 @@ MVP hook responsibilities:
 - user prompt submitted: non-authoritative guidance or telemetry;
 - pre/post tool use: structured telemetry only.
 
-Port `agent_logger.py` through a dedicated adapter that normalizes Copilot event
-payloads into the existing `scripts/event_log.py` format. Do not make a hook
+Port `runtime/agent_logger.py` through a dedicated adapter that normalizes Copilot event
+payloads into the existing `scripts/runtime/event_log.py` format. Do not make a hook
 failure fatal unless the equivalent deterministic command would already be
 fatal. Do not use a hook to inject untrusted repository text into an agent
 prompt.
 
-`security_steering.py` and `skill_policy_gate.py` require separate design
+`analyzers/security_steering.py` and `runtime/skill_policy_gate.py` require separate design
 validation. If Copilot cannot safely provide their semantics, keep the MVP
 policy in skill instructions plus deterministic gates and mark automatic
 steering unsupported.
@@ -656,29 +656,29 @@ Existing files this MVP changes:
 
 | File | Change |
 |---|---|
-| `scripts/orchestration_controller.py` | permission-provider input, MVP states |
-| `scripts/build_threat_model_yaml.py` | route `_plugin_version` through `plugin_meta` |
-| `scripts/plugin_meta.py` | host-neutral metadata resolution |
-| `scripts/qa_checks.py` | two agent-consumed command strings |
-| `scripts/compose_threat_model.py` | one agent-consumed command string |
-| `scripts/baseline_check.py` | host-specific instruction discovery |
-| `scripts/validate_org_profile.py` | host projection, explicit unsupported-feature error |
-| `scripts/resolve_config.py` | asset-root and host input |
+| `scripts/orchestrator/orchestration_controller.py` | permission-provider input, MVP states |
+| `scripts/model/build_threat_model_yaml.py` | route `_plugin_version` through `plugin_meta` |
+| `scripts/runtime/plugin_meta.py` | host-neutral metadata resolution |
+| `scripts/validators/qa_checks.py` | two agent-consumed command strings |
+| `scripts/renderers/compose_threat_model.py` | one agent-consumed command string |
+| `scripts/baseline/baseline_check.py` | host-specific instruction discovery |
+| `scripts/validators/validate_org_profile.py` | host projection, explicit unsupported-feature error |
+| `scripts/runtime/resolve_config.py` | asset-root and host input |
 | `schemas/threat-model.output.schema.yaml` | `meta.host` field |
 | `schemas/orchestration-action.schema.json` | MVP states, unless a companion owns its own schema |
 | `tests/test_agent_definitions.py` | shared-reference and inline-copy guards cover both agent sets |
 | `CHANGELOG.md`, `AGENTS.md` | one bullet, one change-map row |
 
-`scripts/resolve_config.py` is listed in ruff's `extend-exclude`; never run
+`scripts/runtime/resolve_config.py` is listed in ruff's `extend-exclude`; never run
 `ruff format` against it.
 
 Asset-root plumbing reaches further only where a reachable command lacks the
 argument. Twenty-two scripts already accept `--plugin-root`, including the
-controller, the YAML builder, `fetch_requirements.py`, and
-`resolve_requirements_source.py`. Reachable and still missing it:
-`scan_excludes.py`, `coverage_checks.py`, `architecture_coverage_checks.py`,
-`canonicalize_component_id.py`, `validate_config.py`, `source_auth_scanner.py`,
-`mass_assignment_scanner.py`, `agent_logger.py`. Twenty-three scripts read
+controller, the YAML builder, `requirements/fetch_requirements.py`, and
+`requirements/resolve_requirements_source.py`. Reachable and still missing it:
+`analyzers/scan_excludes.py`, `analyzers/coverage_checks.py`, `analyzers/architecture_coverage_checks.py`,
+`model/canonicalize_component_id.py`, `validators/validate_config.py`, `analyzers/source_auth_scanner.py`,
+`analyzers/mass_assignment_scanner.py`, `runtime/agent_logger.py`. Twenty-three scripts read
 `CLAUDE_PLUGIN_ROOT` from the environment; the Claude-runtime half — watchdogs,
 budget, steering, banner — stays out of the MVP graph.
 
@@ -719,7 +719,7 @@ repeated branching; otherwise the provider input stays inside the controller.
 | Mandatory Claude permission gate blocks Copilot | Every controller preparation aborts before analysis | Add and test an explicit host-specific permission provider; preserve the current Claude provider and failure text. |
 | Model selection differs by host | Cost, quality, or review-depth drift | Treat model routing as host-specific; record the actual model in run metadata; do not claim Claude model parity. |
 | A weaker report is indistinguishable from a Claude one | Readers trust an analysis at a depth it does not have | Emit `meta.host` and show it in the report; measure the gap with the semantic evaluation before Phase 2. |
-| Claude metadata leaks into Copilot reports | `plugin_version` and `analysis_version` silently become wrong, affecting compatibility decisions | Generalize `plugin_meta.py`; test YAML metadata for both hosts. |
+| Claude metadata leaks into Copilot reports | `plugin_version` and `analysis_version` silently become wrong, affecting compatibility decisions | Generalize `runtime/plugin_meta.py`; test YAML metadata for both hosts. |
 | Claude paths in repair sidecars | Copilot repair steps execute invalid or unintended paths | Emit host-resolved structured remediation; test all agent-consumed command strings. |
 | Architecture stages read as part of recon | Sections 1–6, trust boundaries, and the STRIDE component manifest never get produced | Give architecture and trust boundaries their own states and agent profiles; assert their sidecars before STRIDE starts. |
 | Render state stops after the composer | Placeholders and unenriched YAML ship as a finished report | Model the post-compose chain as its own state; test the pinned mutation order. |
@@ -772,7 +772,7 @@ hosts actually differ. Close that before Phase 2, not after Phase 7.
 
 1. **Measure the difference, do not estimate it.** Run both hosts over the
    same fixture and compare with the existing semantic evaluation,
-   `scripts/eval_threat_model.py` and its `eval-threat-model` skill. Report
+   `scripts/validators/eval_threat_model.py` and its `eval-threat-model` skill. Report
    findings found by one host and missed by the other, severity disagreement,
    and evidence quality — not counts alone.
 2. **Fix the threshold before the number exists.** Name the miss rate, the
@@ -823,20 +823,20 @@ indefinitely instead of decided.
   `phase-group-architecture.md`, `phase-group-threats.md`,
   `phase-group-finalization.md`, `schemas/fragments/`
 - Deterministic report contracts: `data/sections-contract.yaml`, `schemas/`,
-  `scripts/compose_threat_model.py`, `scripts/build_threat_model_yaml.py`,
-  `scripts/qa_checks.py`
-- Post-compose mutation chain: `scripts/apply_prose_fixes.py`,
-  `scripts/qa_checks.py autofix`, `scripts/render_completion_summary.py`,
-  `scripts/validate_evidence_lines.py`
-- Host seams named in Phase 1: `scripts/orchestration_controller.py:783`,
-  `scripts/check_permissions.py:134`, `scripts/build_threat_model_yaml.py:117`,
-  `scripts/plugin_meta.py:64`, `scripts/qa_checks.py:2458` and `:2738`,
-  `scripts/compose_threat_model.py:18258`, `scripts/baseline_check.py:111`,
-  `scripts/validate_org_profile.py:338`, `scripts/resolve_config.py:3276`
-- Baseline: `scripts/install_baseline.py`, `scripts/baseline_check.py`,
+  `scripts/renderers/compose_threat_model.py`, `scripts/model/build_threat_model_yaml.py`,
+  `scripts/validators/qa_checks.py`
+- Post-compose mutation chain: `scripts/repairs/apply_prose_fixes.py`,
+  `scripts/validators/qa_checks.py autofix`, `scripts/renderers/render_completion_summary.py`,
+  `scripts/validators/validate_evidence_lines.py`
+- Host seams named in Phase 1: `scripts/orchestrator/orchestration_controller.py:783`,
+  `scripts/check_permissions.py:134`, `scripts/model/build_threat_model_yaml.py:117`,
+  `scripts/runtime/plugin_meta.py:64`, `scripts/validators/qa_checks.py:2458` and `:2738`,
+  `scripts/renderers/compose_threat_model.py:18258`, `scripts/baseline/baseline_check.py:111`,
+  `scripts/validators/validate_org_profile.py:338`, `scripts/runtime/resolve_config.py:3276`
+- Baseline: `scripts/baseline/install_baseline.py`, `scripts/baseline/baseline_check.py`,
   `config.json`
-- Requirements: `scripts/fetch_requirements.py`,
-  `scripts/requirements_report.py`, `scripts/requirements_gate.py`
+- Requirements: `scripts/requirements/fetch_requirements.py`,
+  `scripts/requirements/requirements_report.py`, `scripts/requirements/requirements_gate.py`
 - Existing packaging behavior: `scripts/package_internal_plugin.py:34`
   (`.github` top-level exclude), `docs/internal-plugin-packaging.md`
 - Repair-loop path refusal: `.github/workflows/repair-agent.yml:362`

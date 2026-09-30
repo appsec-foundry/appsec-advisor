@@ -31,10 +31,10 @@ architectures), not a single green checkmark.
 
 | Layer | Checks | Exists | Automatic? | Gap |
 |---|---|---|---|---|
-| **A** | Structure, determinism, schema, completeness contract | `tests/test_e2e_pipeline.py` (frozen-run), `compose_threat_model.render()` against `data/sections-contract.yaml`, `scripts/validate_intermediate.py`, completeness contract (commit `5b8a9db`) | ✅ `make test` | Export chain + byte-golden + fixture diversity missing |
-| **B** | every `file:line` exists, absence-grep-replay | `check_evidence_integrity` (`scripts/qa_checks.py:2929–3051`) | ✅ in the manual `e2e-full` via `qa_checks.py all` | Language/architecture breadth stays limited to the external fixture suite |
+| **A** | Structure, determinism, schema, completeness contract | `tests/test_e2e_pipeline.py` (frozen-run), `compose_threat_model.render()` against `data/sections-contract.yaml`, `scripts/validators/validate_intermediate.py`, completeness contract (commit `5b8a9db`) | ✅ `make test` | Export chain + byte-golden + fixture diversity missing |
+| **B** | every `file:line` exists, absence-grep-replay | `check_evidence_integrity` (`scripts/validators/qa_checks.py:2929–3051`) | ✅ in the manual `e2e-full` via `validators/qa_checks.py all` | Language/architecture breadth stays limited to the external fixture suite |
 | **C** | "these N vulns MUST appear" | `scripts/e2e_fixture.sh` + `<oracle>/verify_threat_model.py` + `expected-signals.json` | ✅ in-tree for `e2e-full`; external suite still manual | Nightly matrix across all language fixtures missing |
-| **D** | Plausibility/coverage/severity/actionability/missed-surface | `skills/eval-threat-model/`, `scripts/eval_threat_model.py`, `agents/appsec-eval-judge.md` (5 dims, refute-by-default, exit 0/1) | ❌ purely manual/dev | No gate — exit-1 could ship |
+| **D** | Plausibility/coverage/severity/actionability/missed-surface | `skills/eval-threat-model/`, `scripts/validators/eval_threat_model.py`, `agents/appsec-eval-judge.md` (5 dims, refute-by-default, exit 0/1) | ❌ purely manual/dev | No gate — exit-1 could ship |
 
 **Key finding:** For C and D everything is built (oracle patterns, judge loop, exit codes) —
 it just runs in no automatic run. B is built **and deliberately disabled**, because
@@ -43,8 +43,8 @@ the tiny `synthetic-repo` produces noise citations.
 ### Deterministic "green but broken" holes verified today (layer A)
 
 1. **Export chain in no CI E2E.** `test_e2e_pipeline.py` runs compose → annotate →
-   pentest, but **not** `export_sarif.py` / `export_pdf.py` / `export_html.py` /
-   `render_review_report.py`. These have only isolated unit tests with **their own**
+   pentest, but **not** `exporters/export_sarif.py` / `exporters/export_pdf.py` / `exporters/export_html.py` /
+   `renderers/render_review_report.py`. These have only isolated unit tests with **their own**
    hand-built YAML fixtures (`tests/test_export_sarif.py` etc.) — decoupled from the real
    generator output. Otherwise SARIF is only checked structurally in the manual LLM
    `make e2e-full`. ⇒ Schema break in the generator → export contract breaks → `make test` green.
@@ -80,7 +80,7 @@ LLM layers cost budget, therefore not per-PR.
   Register-not-empty, placeholder-leak check. Closes hole A.2 + the completeness gap.
 - **M3 — reactivate evidence_integrity in E2E. ✅ DONE 2026-06-27.**
   `synthetic-repo` contains real source files; `test_full_run_e2e.py` runs the
-  full `qa_checks.py all` battery against the retained `_last-repo/`
+  full `validators/qa_checks.py all` battery against the retained `_last-repo/`
   and requires idempotency.
 
 ### Tier 2 — Nightly / release gate, with LLM budget
@@ -93,7 +93,7 @@ LLM layers cost budget, therefore not per-PR.
   Go, Node/TypeScript, Python/LangChain) with their external recall oracles.
   The scheduled execution still needs CI credentials and the
   separate fixture checkout.
-- **M6 — `eval_threat_model.py` as release soft-gate. ✅ DONE 2026-06-27.**
+- **M6 — `validators/eval_threat_model.py` as release soft-gate. ✅ DONE 2026-06-27.**
   `make e2e-full-eval` runs the five-part judge/verify loop after a fresh
   quick E2E and fails on confirmed High/Critical model defects.
 

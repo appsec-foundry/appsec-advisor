@@ -15,7 +15,7 @@ description: >-
 
 You are installing a secure-coding baseline into Claude Code's instruction files.
 
-The default official aiscb installation loads the core and catalog first and verifies selected module bodies through a local Python loader. `--complete` installs all rules as one compatibility file. Custom organization baselines remain complete. `scripts/install_baseline.py` owns installation and verification; your job is to explain its result.
+The default official aiscb installation loads the core and catalog first and verifies selected module bodies through a local Python loader. `--complete` installs all rules as one compatibility file. Custom organization baselines remain complete. `scripts/baseline/install_baseline.py` owns installation and verification; your job is to explain its result.
 
 Modular project installations use repository-relative loader paths. Commit the baseline carrier, its import, and `.appsec-baseline/releases/`; run the loader from the repository root. The `project-rules` scope stores snapshots outside `.claude/rules/` so unselected modules are not automatically loaded. User installations keep snapshots under `~/.claude/.appsec-baseline/`. The loader needs permitted Python execution; if unavailable, choose complete mode explicitly.
 
@@ -111,7 +111,7 @@ An unknown value for `--scope` is rejected the same way. Reject simultaneous `--
 ## Step 2 — Report what is loaded now
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline_check.py" --repo "$REPO_ROOT" --json
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline/baseline_check.py" --repo "$REPO_ROOT" --json
 ```
 
 Nothing is installed twice, so read the result before offering anything.
@@ -187,7 +187,7 @@ the rules, not a file path.
 ## Step 4 — Show the plan
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/install_baseline.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline/install_baseline.py" \
   --scope "$SCOPE" --repo "$REPO_ROOT" --dry-run $REFRESH_FLAG $OFFLINE_FLAG $MODE_FLAG $MIGRATE_FLAG $REUSE_FLAG
 ```
 
@@ -199,7 +199,7 @@ If the user passed `--dry-run`, stop here and exit with the script's status.
 ## Step 5 — Install
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/install_baseline.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline/install_baseline.py" \
   --scope "$SCOPE" --repo "$REPO_ROOT" $REFRESH_FLAG $OFFLINE_FLAG $MODE_FLAG $MIGRATE_FLAG $REUSE_FLAG
 ```
 

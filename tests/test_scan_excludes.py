@@ -1,5 +1,5 @@
 """
-Tests for scripts/scan_excludes.py — the centralised scan-exclusion loader
+Tests for scripts/analyzers/scan_excludes.py — the centralised scan-exclusion loader
 (Sprint 1 Item F).
 
 Three responsibilities covered:
@@ -19,11 +19,11 @@ import pytest
 import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-import scan_excludes  # noqa: E402
+import analyzers.scan_excludes as scan_excludes  # noqa: E402
 
 PLUGIN_ROOT = Path(__file__).parent.parent
 YAML_FILE = PLUGIN_ROOT / "data" / "scan-excludes.yaml"
-SCRIPT = PLUGIN_ROOT / "scripts" / "scan_excludes.py"
+SCRIPT = PLUGIN_ROOT / "scripts" / "analyzers/scan_excludes.py"
 
 
 def _minimal_excludes(**overrides):

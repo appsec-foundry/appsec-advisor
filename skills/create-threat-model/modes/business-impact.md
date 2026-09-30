@@ -19,7 +19,7 @@ For a substantive answer, use **Write** to add the exact English question and ve
 Use decision `answered` when the raw file contains either substantive answer, `unchanged` when existing context answered both topics, otherwise `skip`. A skipped worst-case question still saves a substantive use-case answer. Call:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" \
   complete-preflight --output-dir "$OUTPUT_DIR" --run-id "$APPSEC_RUN_ID" \
   --context-answer <decision>
 ```

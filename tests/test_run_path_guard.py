@@ -7,7 +7,7 @@ writers were reproducing their artifacts there: `.agent-run.log`,
 a foreign working directory when the variable was empty. Two of them carried an
 `is_dir()` check that cannot help, because `'.'` is always a directory.
 
-`scripts/log_event.py` had the right guard since f6183f85 (2026-08-16), but it
+`scripts/runtime/log_event.py` had the right guard since f6183f85 (2026-08-16), but it
 was written inline and never generalised, so every writer added after it
 shipped without one. This test is the generalisation: it drives each script's
 real CLI with an empty path in an empty directory and asserts the two
@@ -36,16 +36,16 @@ SCRIPTS = REPO_ROOT / "scripts"
 # script -> extra args that make the CLI otherwise valid, so the run reaches
 # the guard instead of failing on a missing required flag.
 INVOCATIONS: dict[str, list[str]] = {
-    "log_event.py": ["info", "EVENT", "detail"],
-    "log_agent_end.py": ["agent", "model", "0"],
-    "batch_checkpoint.py": ["--phase", "p", "--step", "s", "--status", "x"],
-    "aggregate_run_issues.py": [],
-    "measure_run.py": [],
-    "skill_watchdog.py": [],
-    "runtime_cleanup.py": [],
-    "stall_notice.py": [],
-    "render_editorial_receipt.py": [],
-    "render_qa_receipt.py": [],
+    "runtime/log_event.py": ["info", "EVENT", "detail"],
+    "runtime/log_agent_end.py": ["agent", "model", "0"],
+    "orchestrator/batch_checkpoint.py": ["--phase", "p", "--step", "s", "--status", "x"],
+    "runtime/aggregate_run_issues.py": [],
+    "runtime/measure_run.py": [],
+    "runtime/skill_watchdog.py": [],
+    "runtime/runtime_cleanup.py": [],
+    "runtime/stall_notice.py": [],
+    "renderers/render_editorial_receipt.py": [],
+    "renderers/render_qa_receipt.py": [],
 }
 
 _POSITIONAL_OUTPUT_DIR = re.compile(r"""add_argument\(\s*["']output_dir["']""")
@@ -105,9 +105,9 @@ def test_no_script_writes_into_the_cwd_on_an_empty_output_dir(script, tmp_path):
     required flag also writes nothing and passes here; INVOCATIONS above adds
     the stronger check that the guard itself is reached for the writers.
 
-    Found this way and fixed with it: assess_supply_chain_controls.py
-    (.supply-chain-assessment.json), build_stride_dispatch_manifest.py
-    (.stride-selection.json) and section_integrity.py (.section-integrity.json)
+    Found this way and fixed with it: analyzers/assess_supply_chain_controls.py
+    (.supply-chain-assessment.json), orchestrator/build_stride_dispatch_manifest.py
+    (.stride-selection.json) and validators/section_integrity.py (.section-integrity.json)
     all created their artifact in the working directory.
     """
     proc = subprocess.run(

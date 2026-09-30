@@ -1,4 +1,4 @@
-"""Contract for scripts/extract_report_section.py.
+"""Contract for scripts/runtime/extract_report_section.py.
 
 The extractor feeds the GitHub Actions job summary, so a silent truncation
 would show a plausible-looking but incomplete report to whoever reads the run
@@ -18,10 +18,10 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).parent.parent
-SCRIPT = ROOT / "scripts" / "extract_report_section.py"
+SCRIPT = ROOT / "scripts" / "runtime/extract_report_section.py"
 
 sys.path.insert(0, str(ROOT / "scripts"))
-from extract_report_section import extract_section  # noqa: E402
+from runtime.extract_report_section import extract_section  # noqa: E402
 
 REPORT = """\
 # Threat Model - demo

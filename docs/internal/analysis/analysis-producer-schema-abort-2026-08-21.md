@@ -21,7 +21,7 @@ vorn, weil sie die Maßnahmenpriorität umkehren.
 | K2 | Controller-Retry (M1/M2) sei die kritische Maßnahme | **Unvollständig.** Das ist die *Auffangschicht*, nicht die Ursache. Der früheste mechanische Eingriffspunkt liegt beim **Schreibvorgang im Producer**. | Prioritäten invertiert: P2 vor P4. |
 | K3 | Der fehlende Retry-Pfad sei eine offene Lücke | **Schärfer.** Commit `1acafffb` (15.08.) hat die Absicht bereits implementiert — nur auf die semantische Hälfte derselben Funktion. Der heutige Abbruch ist eine **Regression gegen einen sechs Tage alten, erklärten Design-Intent**. | Kein Neubau nötig, nur korrekte Granularität. |
 | K4 | M3 sei als `except ControllerError` an der Aufrufstelle umsetzbar | **Falsch und gefährlich.** `_validate_json_artifact` wirft `ControllerError` aus fünf Ursachen, zwei davon ohne Producer-Schuld (`:1965` fehlende jsonschema-Dependency, `:1970` unlesbare Schema-Datei). Ein pauschaler `except` verwandelte einen Plugin-Defekt in einen verschwendeten Redispatch. | Klassenwahl muss an den **Erkennungsort** (`:1956`/`:1958`/`:1974`), nicht an den Aufrufort. Siehe M3. |
-| K5 | M1 sei ein einfaches Löschen der Felder | **Migrationsklippe.** `additionalProperties: false` an Wurzel und in `component_hints.items`, und `.recon-signals.json` steht auf der NEVER-delete-Liste (`runtime_cleanup.py:262-266`) — erhaltene Artefakte eines Vorlaufs würden ungültig. | M1 wird **zweistufig**: erst `required` lösen, Properties später mit Schema-Version-Bump. Siehe M1a. |
+| K5 | M1 sei ein einfaches Löschen der Felder | **Migrationsklippe.** `additionalProperties: false` an Wurzel und in `component_hints.items`, und `.recon-signals.json` steht auf der NEVER-delete-Liste (`runtime/runtime_cleanup.py:262-266`) — erhaltene Artefakte eines Vorlaufs würden ungültig. | M1 wird **zweistufig**: erst `required` lösen, Properties später mit Schema-Version-Bump. Siehe M1a. |
 
 ---
 
@@ -63,7 +63,7 @@ tests/… (5 Fixtures)                     # nur zur Schema-Erfüllung
 ```
 
 **Null Produktivkonsumenten.** Dasselbe gilt für `component_hints[].classification`
-(`grep`: nur `validate_intermediate.py:1569-1573`, und dort wird ausschließlich
+(`grep`: nur `validators/validate_intermediate.py:1569-1573`, und dort wird ausschließlich
 `component_id` auf Duplikate geprüft, nie `classification`). Beide Felder sind
 `required` (`schemas/recon-signals.schema.json:10` bzw. `items.required`).
 
@@ -103,14 +103,14 @@ geprüft.
 
 **D2 — Der „HARD GATE" des Agenten ist unerzwungene Prosa.**
 `agents/appsec-recon-scanner.md:797-805` schreibt vor, dass der *nächste*
-Tool-Call nach dem Schreiben `validate_intermediate.py recon_signals` sein muss
+Tool-Call nach dem Schreiben `validators/validate_intermediate.py recon_signals` sein muss
 und der Completion-Banner erst nach Exit 0 gedruckt werden darf.
 
 **Empirisch verifiziert — der Gate hätte den Fehler gefangen.** Defekt
 rekonstruiert und der vorgeschriebene Validator darauf angesetzt:
 
 ```
-$ python3 scripts/validate_intermediate.py recon_signals bad-signals.json --repo-root /home/mrohr/juice-shop
+$ python3 scripts/validators/validate_intermediate.py recon_signals bad-signals.json --repo-root /home/mrohr/juice-shop
 INVALID: signal_classification.has_open_self_registration: 'candidate' is not one of ['deterministic', 'llm-fallback']
 EXIT=1
 ```
@@ -131,7 +131,7 @@ Das Modell hat den vorgeschriebenen Validator durch eine selbst erfundene
 `actor-discoverer`, `config-scanner`, `context-resolver`, `control-analyst`,
 `evidence-verifier`, `triage-validator`). **Kein Hook prüft, ob er lief.** Die
 Durchsetzung existiert als Bitte an das schwächste Modell der Pipeline — und
-`resolve_config.py:135,158,169,187` zeigt: `recon_scanner: HAIKU` in **allen vier**
+`runtime/resolve_config.py:135,158,169,187` zeigt: `recon_scanner: HAIKU` in **allen vier**
 Reasoning-Tiers. Es gibt keine Konfiguration, in der dieses Artefakt von einem
 starken Modell geschrieben wird.
 
@@ -141,7 +141,7 @@ starken Modell geschrieben wird.
 
 | Klasse | Semantik | Stelle |
 |---|---|---|
-| `ControllerError` | terminal, schreibt `RUN_ABORTED` | `orchestration_controller.py:445` |
+| `ControllerError` | terminal, schreibt `RUN_ABORTED` | `orchestrator/orchestration_controller.py:445` |
 | `ProducerContractError` | **einmalig reparierbar** via Redispatch | `:469` |
 
 Commit `1acafffb` („Let a run survive a producer's contract slip", 15.08.)
@@ -181,13 +181,13 @@ Ohne jeden Pfad: `merger`, `triage-validator`, `evidence-verifier`,
 **D4a — kein Weiterlaufen nach Reparatur.** `cutoff_cause.detect_abort()` scannt
 `.agent-run.log` nach `RUN_ABORTED` mit Epoch ≥ `.scan-start-epoch`.
 `_context_v2_guard` (`:2174-2177`) verweigert danach jede Fortsetzung. Kein
-Skript löscht den Latch: `check_state.py:465` schont `.agent-run.log` explizit,
+Skript löscht den Latch: `runtime/check_state.py:465` schont `.agent-run.log` explizit,
 `clean-run-state` kennt `RUN_ABORTED` nicht. Einziger Ausweg: neuer Lauf →
 Totalverlust von Stage 1.
 
 **D4b — der Latch blockiert die eigene Diagnose-Empfehlung.** Die Meldung sagt
 *„preserve the runtime artifacts for diagnosis"*, und der Docstring von
-`_context_v2_terminal_abort_reason` (`agent_logger.py:2170-2179`) behauptet
+`_context_v2_terminal_abort_reason` (`runtime/agent_logger.py:2170-2179`) behauptet
 ausdrücklich, Lesen/Diagnose/Recovery-Skills blieben erlaubt. Die Implementierung
 prüft nur `event.is_agent_call` (`:2287-2291`) und verweigert **jeden**
 Agent-Dispatch im Output-Verzeichnis — auch `general-purpose`, auch
@@ -203,7 +203,7 @@ die 13 context-v2-Agenten — der Abort-Guard nicht. Docstring-Absicht ≠ Code.
 Nichts an der Kette ist juice-shop-spezifisch:
 
 1. `signal_classification` wird für **jedes** Repo verlangt.
-2. Der Recon-Scanner läuft in **allen** Tiers auf Haiku (`resolve_config.py:135,158,169,187`).
+2. Der Recon-Scanner läuft in **allen** Tiers auf Haiku (`runtime/resolve_config.py:135,158,169,187`).
 3. Die Kollisionshäufigkeit **wächst mit der Repo-Größe** (1 + N Vorkommen des
    selteneren Vokabulars, N = Zahl der Deployable Units).
 4. Der Prosa-Gate ist in **sieben** Agenten unerzwungen.
@@ -223,8 +223,8 @@ Ein größeres Monorepo mit 10 Component-Hints hat die Kollisionsgelegenheit
 
 Leitlinie: **Mechanismus vor Prosa, Ableitung vor Selbstauskunft, Reparatur vor
 Abbruch.** Precedent im eigenen Code: `.recon-summary.md` besitzt bereits einen
-*normalize-then-warn*-Pfad statt Abbruch (`validate_recon_summary.py:135`,
-aufgerufen `orchestration_controller.py:3536-3547`, Event
+*normalize-then-warn*-Pfad statt Abbruch (`validators/validate_recon_summary.py:135`,
+aufgerufen `orchestrator/orchestration_controller.py:3536-3547`, Event
 `RECON_KEY_FILES_NORMALIZED`). Die Doktrin existiert — sie wurde beim
 Signals-Artefakt nicht durchgezogen.
 
@@ -237,7 +237,7 @@ Modell nach seiner eigenen Zuverlässigkeit.
 > **Korrektur aus der Verifikation — Migrationsklippe.** Das Schema setzt
 > `additionalProperties: false` an der Wurzel **und** in `component_hints.items`.
 > `.recon-signals.json` steht zugleich auf der **NEVER-delete**-Liste
-> (`runtime_cleanup.py:262-266`), überlebt also Läufe. Ein sofortiges Löschen der
+> (`runtime/runtime_cleanup.py:262-266`), überlebt also Läufe. Ein sofortiges Löschen der
 > Properties machte jedes erhaltene Artefakt eines Vorlaufs ungültig
 > (`Additional properties are not allowed`).
 
@@ -249,9 +249,9 @@ erhaltene Artefakte weiter validieren. Neue Artefakte ohne die Felder validieren
 ebenfalls. Fünf Test-Fixtures dürfen sie behalten — beide Formen müssen grün sein.
 
 *Stufe 2 (nächstes Release):* Properties löschen und `recon-signals` in
-`CONTEXT_V2_ARTIFACT_SCHEMA_VERSIONS` (`resolve_config.py:459`) von 2 auf 3
+`CONTEXT_V2_ARTIFACT_SCHEMA_VERSIONS` (`runtime/resolve_config.py:459`) von 2 auf 3
 heben. Die Versionserhöhung lässt laufende Invocations mit *„incompatible
-context-v2 artifact schema versions"* abbrechen (`orchestration_controller.py:2168-2172`)
+context-v2 artifact schema versions"* abbrechen (`orchestrator/orchestration_controller.py:2168-2172`)
 — gewolltes Verhalten, gehört aber an eine Release-Grenze, nicht in einen Hotfix.
 
 Wird die Provenienz später gebraucht, gehört sie deterministisch abgeleitet: der
@@ -270,7 +270,7 @@ Fehlt er → Feld ist optional oder wird gelöscht.
 Der Kern der Korrektur K2. Statt Prosa („der nächste Tool-Call muss …") ein
 **PostToolUse-Hook auf `Write|Edit`**, der den geschriebenen Pfad gegen eine
 Artefakt→Contract-Tabelle nachschlägt und bei Treffer sofort
-`validate_intermediate.py` fährt. Bei Verstoß wird das Ergebnis als
+`validators/validate_intermediate.py` fährt. Bei Verstoß wird das Ergebnis als
 Block-Reason an den *schreibenden Subagenten* zurückgegeben.
 
 Warum das der richtige Punkt ist:
@@ -282,10 +282,10 @@ Warum das der richtige Punkt ist:
   zu alleiniger Absicherung.
 
 Infrastruktur ist vollständig vorhanden:
-* `PostToolUse` ist bereits registriert und auf `agent_logger.py` geroutet
+* `PostToolUse` ist bereits registriert und auf `runtime/agent_logger.py` geroutet
   (`hooks/hooks.json:71-79`); `FILE_WRITE`-Events des Subagenten belegen, dass
   der Hook in Subagent-Sessions feuert.
-* `validate_intermediate.py:70-83` hat bereits eine `kind → schema`-Tabelle.
+* `validators/validate_intermediate.py:70-83` hat bereits eine `kind → schema`-Tabelle.
 * **Einzige Lücke:** eine `artefaktpfad → kind`-Tabelle
   (`.recon-signals.json → recon_signals`, `.actors-discovered.json →
   actors_discovered`, `.evidence-verification.json → evidence_verification`,
@@ -381,12 +381,12 @@ Konsistenztest sollte ihn ergänzen, nicht kopieren.
 ### M6 · P5 — Latch verengen und reversibel machen
 
 **M6a — Guard auf context-v2-Producer verengen.** Der Abort-Guard
-(`agent_logger.py:2287-2291`) muss dieselbe Allowlist verwenden wie der
+(`runtime/agent_logger.py:2287-2291`) muss dieselbe Allowlist verwenden wie der
 Identitäts-Guard darunter (`:2139-2153`). Stellt die im Docstring behauptete
 Semantik her und macht die eigene Empfehlung („preserve for diagnosis")
 befolgbar.
 
-**M6b — expliziter Clear-Pfad.** `orchestration_controller.py clear-abort` bzw.
+**M6b — expliziter Clear-Pfad.** `orchestrator/orchestration_controller.py clear-abort` bzw.
 `clean-run-state`: **keine** Log-Zeilen löschen, sondern ein
 `RUN_ABORT_CLEARED`-Event mit Begründung anhängen; `detect_abort()` wertet das
 jüngste Abort/Clear-Paar aus. Audit-Historie bleibt vollständig, Reversibilität
@@ -449,8 +449,8 @@ koste einen Redispatch. Solange M3 fehlt, ist diese Aussage im Repo unwahr.
 
 `grep` über alle Hook-Skripte: **kein einziger Hook dieses Plugins nutzt eine
 PostToolUse-Block-Entscheidung.** Jeder entscheidende Hook
-(`plugin_write_gate.py`, `plugin_read_gate.py`, `skill_policy_gate.py`,
-`agent_logger.py`) hängt an **PreToolUse**. Dass ein PostToolUse-Block an einen
+(`runtime/plugin_write_gate.py`, `runtime/plugin_read_gate.py`, `runtime/skill_policy_gate.py`,
+`runtime/agent_logger.py`) hängt an **PreToolUse**. Dass ein PostToolUse-Block an einen
 *Subagenten* zurückgespielt wird und ihn zur Korrektur zwingt, ist in diesem
 Codebase unerprobt und hier nicht verifiziert.
 
@@ -483,7 +483,7 @@ tragen, solange sein Mechanismus unbelegt ist.
 
 | Datei | Änderung |
 |---|---|
-| `scripts/orchestration_controller.py` | `_document_fault()` wählt die Fehlerklasse am Erkennungsort; `producer`-Parameter (Default `deterministic`) an `_load_json_object` / `_validate_json_artifact`; `_validate_recon_signals` übergibt `producer="llm"` und macht Stat-/Byte-Cap-Fehler reparierbar; `_schema_error_path()` benennt die Fundstelle im Repair-Brief |
+| `scripts/orchestrator/orchestration_controller.py` | `_document_fault()` wählt die Fehlerklasse am Erkennungsort; `producer`-Parameter (Default `deterministic`) an `_load_json_object` / `_validate_json_artifact`; `_validate_recon_signals` übergibt `producer="llm"` und macht Stat-/Byte-Cap-Fehler reparierbar; `_schema_error_path()` benennt die Fundstelle im Repair-Brief |
 | `schemas/recon-signals.schema.json` | `signal_classification` und `component_hints[].classification` aus `required`; Properties bleiben deklariert (Migrationspfad), `$comment` dokumentiert die Rücknahme |
 | `agents/appsec-recon-scanner.md` | beide Felder aus dem JSON-Template entfernt; drei Prosastellen, die `llm-fallback` lehrten, auf die Boolean-Regel umgeschrieben |
 | `tests/test_orchestration_controller.py` | +4 Tests M3, +4 Tests M1 (`TestRetiredSelfReportedProvenance`); `test_post_recon_rejects_invalid_signal_contract` auf die neue Semantik gehoben |
@@ -512,7 +512,7 @@ verschoben. Die Liste ist daher eine Bewertung, keine Warteschlange.
 ### Empfohlen
 
 **M6a — Abort-Guard verengen.** Verifizierter Defekt, reproduziert: der Guard
-prüft nur `event.is_agent_call` (`agent_logger.py:2287-2291`) und verweigert
+prüft nur `event.is_agent_call` (`runtime/agent_logger.py:2287-2291`) und verweigert
 jeden Agent-Dispatch im Output-Verzeichnis, auch rein diagnostische. Die
 Verengung stellt die im Docstring behauptete Semantik her, weicht also nichts
 auf.

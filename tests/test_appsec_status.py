@@ -1,4 +1,4 @@
-"""Unit tests for ``appsec_status.py`` — the non-live status-dump paths.
+"""Unit tests for ``runtime/appsec_status.py`` — the non-live status-dump paths.
 
 The ``--live`` snapshot machinery is covered in ``test_appsec_status_live.py``.
 This file targets the plugin/config/fast-path/org-profile/render/main code
@@ -16,14 +16,14 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "appsec_status.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "runtime/appsec_status.py"
 
 
 @pytest.fixture
 def appsec_status():
-    spec = importlib.util.spec_from_file_location("appsec_status", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("runtime.appsec_status", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["appsec_status"] = module
+    sys.modules["runtime.appsec_status"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
@@ -56,7 +56,7 @@ class TestEmitTable:
 class TestRunHelper:
     def test_runs_real_script(self, appsec_status):
         # check_skill_enabled prints a message and exits 0 with no profile
-        code, out, err = appsec_status._run_helper("check_skill_enabled.py", "status")
+        code, out, err = appsec_status._run_helper("runtime/check_skill_enabled.py", "status")
         assert code == 0
         assert "status" in out
 
@@ -141,11 +141,11 @@ class TestHookId:
         assert appsec_status._hook_id("echo hello") is None
 
     def test_known_mapping(self, appsec_status):
-        cmd = "python3 $ROOT/scripts/agent_logger.py --foo"
+        cmd = "python3 $ROOT/scripts/runtime/agent_logger.py --foo"
         assert appsec_status._hook_id(cmd) == "agent-logger"
 
     def test_security_steering_mapping(self, appsec_status):
-        cmd = "python3 /x/scripts/security_steering.py"
+        cmd = "python3 /x/scripts/analyzers/security_steering.py"
         assert appsec_status._hook_id(cmd) == "security-coach"
 
     def test_unknown_script_derives_stem(self, appsec_status):
@@ -153,7 +153,7 @@ class TestHookId:
         assert appsec_status._hook_id(cmd) == "my-custom-hook"
 
     def test_windows_path_separators(self, appsec_status):
-        cmd = "python3 C:\\plugin\\scripts\\agent_logger.py"
+        cmd = "python3 C:\\plugin\\scripts\\runtime/agent_logger.py"
         assert appsec_status._hook_id(cmd) == "agent-logger"
 
 
@@ -173,7 +173,7 @@ class TestRegisteredHookIds:
             "hooks": {
                 "PreToolUse": [
                     "not-a-dict",
-                    {"hooks": ["not-a-dict", {"command": 123}, {"command": "x/scripts/agent_logger.py"}]},
+                    {"hooks": ["not-a-dict", {"command": 123}, {"command": "x/scripts/runtime/agent_logger.py"}]},
                 ],
                 "Bad": "not-a-list",
             }

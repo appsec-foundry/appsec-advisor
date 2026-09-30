@@ -8,7 +8,7 @@ Vergleich zweier Full-Runs auf demselben Commit (`33518f5a0`):
 | Plugin | 0.5.1-dev | 0.5.0-beta |
 | Kosten (ground truth) | **~$34** (User-`/cost`) | **$43.71** (`cost.txt`) |
 | Kosten (Hook-Log, Haupt-Session) | $10.60 | $12.55 |
-| Net-Wall (`run_timing.py`) | 6444 s (1h47) | 8187 s (2h16) |
+| Net-Wall (`runtime/run_timing.py`) | 6444 s (1h47) | 8187 s (2h16) |
 | Komponenten analysiert | 11 (5 davon `screening`) | 8 (alle volle Tiefe) |
 | Σ Dispatch-Turn-Budget | **214** | **180** |
 | Threats | 74 | 68 |
@@ -22,7 +22,7 @@ vs. $5.46 (standard) → **−43 %**, die fairere Messung des Hebels.
 
 ## Was cheap tatsächlich gescreent hat
 
-`_cheap_stride_target` (`build_stride_dispatch_manifest.py:451-461`) screent
+`_cheap_stride_target` (`orchestrator/build_stride_dispatch_manifest.py:451-461`) screent
 `_priority(c) > 2` außer File-Upload/Realtime. `_priority` gibt 3 für
 crown-jewel/data-store — und `_is_exposed` hängt an kanonischen Zone-Tokens.
 Im Run trugen 7 Backend-Units `['server']` (ZONE_DRIFT, siehe

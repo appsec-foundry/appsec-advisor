@@ -1,4 +1,4 @@
-"""Tests for scripts/resolve_config.py.
+"""Tests for scripts/runtime/resolve_config.py.
 
 Validates each resolver individually plus the end-to-end CLI contract.
 """
@@ -15,15 +15,15 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "resolve_config.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "runtime/resolve_config.py"
 
 
 def _load_module():
-    if "resolve_config" in sys.modules:
-        return sys.modules["resolve_config"]
-    spec = importlib.util.spec_from_file_location("resolve_config", SCRIPT_PATH)
+    if "runtime.resolve_config" in sys.modules:
+        return sys.modules["runtime.resolve_config"]
+    spec = importlib.util.spec_from_file_location("runtime.resolve_config", SCRIPT_PATH)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["resolve_config"] = mod
+    sys.modules["runtime.resolve_config"] = mod
     assert spec.loader is not None
     spec.loader.exec_module(mod)
     return mod
@@ -502,7 +502,7 @@ class TestOrchestratorRecommendation:
 
     def test_cli_flag_renders(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        rc_path = str(REPO_ROOT / "scripts" / "resolve_config.py")
+        rc_path = str(REPO_ROOT / "scripts" / "runtime/resolve_config.py")
         res = subprocess.run(
             [
                 "python3",

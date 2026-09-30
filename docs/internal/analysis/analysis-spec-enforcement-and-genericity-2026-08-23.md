@@ -18,7 +18,7 @@ and those tests run in `make check` regardless of the spec layer.
 | `check_specs.py` | `make check`, CI (every push/PR) | binding schema, duplicate/malformed IDs, requirement without binding, binding without requirement, active-and-retired ID, `applies_to` pattern matching nothing, unknown decision ID, missing document, coverage/guard mismatch, guard node that does not exist |
 | `check_specs.py --changed-against <base>` | CI, pull requests only | `specs/requirements.md` or `docs/internal/decisions.md` changed with no `specs/changes/*/proposal.md` in the same diff |
 | `scripts/spec_guard.py` | `PreToolUse`, local dev only | asks before Write/Edit/MultiEdit/NotebookEdit, recognizable shell writes, and MCP mutations that target `specs/requirements.md` |
-| `scripts/requirements_hook.py` | `PreToolUse`, local dev only | asks before edits to `docs/internal/decisions.md`; otherwise injects the governing requirements as context |
+| `scripts/requirements/requirements_hook.py` | `PreToolUse`, local dev only | asks before edits to `docs/internal/decisions.md`; otherwise injects the governing requirements as context |
 | guard tests (65 distinct nodes, 33 files) | `make check`, CI | the actual product behavior |
 
 `check_specs.py` never asserts that an implementation still satisfies a
@@ -59,13 +59,13 @@ exporters, repair, logging, and orchestration plumbing.
 Two bindings are genuinely short of what their requirement promises:
 
 - **REQ-RPT-002** promises anchors stay consistent "across the reports,
-  **exports**, and follow-on tools". `applies_to` names `merge_threats.py`,
-  `build_threat_model_yaml.py`, `query_threat_model.py`, `review_threat_model.py`
-  — none of `export_sarif.py`, `export_threat_dragon.py`, `export_html.py`,
-  `export_pdf.py`, all four of which emit anchors.
+  **exports**, and follow-on tools". `applies_to` names `model/merge_threats.py`,
+  `model/build_threat_model_yaml.py`, `model/query_threat_model.py`, `validators/review_threat_model.py`
+  — none of `exporters/export_sarif.py`, `exporters/export_threat_dragon.py`, `exporters/export_html.py`,
+  `exporters/export_pdf.py`, all four of which emit anchors.
 - **REQ-FLW-003** promises invalid data "stops the run instead of producing an
-  apparently complete report". `applies_to` names `orchestration_controller.py`,
-  `validate_intermediate.py`, `schemas/**`. `compose_threat_model.py` is the
+  apparently complete report". `applies_to` names `orchestrator/orchestration_controller.py`,
+  `validators/validate_intermediate.py`, `schemas/**`. `renderers/compose_threat_model.py` is the
   publishing step and is bound only to REQ-REQ-001, although a failed
   `compose --strict` is exactly this requirement's failure mode.
 
@@ -110,12 +110,12 @@ catalog claims the central behavior is proven by one assertion.
 ## Status
 
 Gaps 1, 4, and the `--for` no-op were closed in the same commit that added this
-document: the four exporters and `compose_threat_model.py` joined the two short
+document: the four exporters and `renderers/compose_threat_model.py` joined the two short
 bindings, REQ-RPT-002 moved from `advisory` to `partial` with its two existing
 anchor guards, and `--for` now prints `No requirement is bound to <path>.`
 Coverage went from 15/7/3 to 15/8/2.
 
-Gap 2 was closed next: `requirements_hook.py` now extracts the repository files
+Gap 2 was closed next: `requirements/requirements_hook.py` now extracts the repository files
 a write-shaped shell command names and surfaces their requirements, capped at
 five files per command.
 

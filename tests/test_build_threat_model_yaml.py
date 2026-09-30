@@ -1,4 +1,4 @@
-"""Unit tests for scripts/build_threat_model_yaml.py field normalizers
+"""Unit tests for scripts/model/build_threat_model_yaml.py field normalizers
 (2026-06-02): title/affected_parameter clamps + cvss_v4 shape coercion, so the
 deterministic Phase-11-Substep-2 builder always yields a schema-valid yaml even
 when STRIDE analyzers emit verbose titles or a non-canonical cvss_v4."""
@@ -15,18 +15,18 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = ROOT / "scripts" / "build_threat_model_yaml.py"
+SCRIPT = ROOT / "scripts" / "model/build_threat_model_yaml.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("build_threat_model_yaml", SCRIPT)
+    spec = importlib.util.spec_from_file_location("model.build_threat_model_yaml", SCRIPT)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
 
 
 b = _load()
-import emit_clean_finding_titles as ecf  # noqa: E402  (scripts/ is on sys.path via the builder)
+import model.emit_clean_finding_titles as ecf  # noqa: E402  (scripts/ is on sys.path via the builder)
 
 
 def test_clamp_title_short_passthrough():
@@ -746,7 +746,7 @@ def test_cli_merges_supply_chain_sidecars_into_meta_findings(tmp_path: Path):
 
 
 def _write_min_intermediates(out: Path) -> None:
-    """Minimal sidecar set so build_threat_model_yaml.py main() runs cleanly."""
+    """Minimal sidecar set so model/build_threat_model_yaml.py main() runs cleanly."""
     _write_json(
         out / ".skill-config.json",
         {
@@ -866,7 +866,7 @@ def test_cli_persists_validated_data_flow_sidecar_into_yaml(tmp_path: Path):
 def test_changelog_recovers_history_from_cache_mirror_when_yaml_lost(tmp_path: Path):
     """A lost/deleted threat-model.yaml must not silently reset the changelog to
     'first full scan'. main() rehydrates the prior history from the
-    .appsec-cache/baseline.json changelog_mirror (written by baseline_state.py
+    .appsec-cache/baseline.json changelog_mirror (written by baseline/baseline_state.py
     cmd_update). Regression for the 2026-06-26 juice-shop "--full reset my
     changelog" report."""
     repo = tmp_path / "repo"
@@ -1032,7 +1032,7 @@ def test_component_selection_none_when_absent():
 #
 # build_changelog historically read the prior history from
 # $CLAUDE_PLUGIN_ROOT/.appsec-cache/baseline.json — a file that the writer
-# (baseline_state.py) puts in $OUTPUT_DIR and that never carries a `changelog`
+# (baseline/baseline_state.py) puts in $OUTPUT_DIR and that never carries a `changelog`
 # key. So `existing` was always [] and every run reset changelog to a single
 # entry. The fix seeds `existing` from the prior threat-model.yaml's
 # changelog[] (the committed, accumulating store). These tests pin "extend".
@@ -1972,7 +1972,7 @@ def _copy_run(src: Path, tmp_path: Path) -> Path:
 
 
 def _run_main(monkeypatch, argv):
-    monkeypatch.setattr(sys, "argv", ["build_threat_model_yaml.py", *argv])
+    monkeypatch.setattr(sys, "argv", ["model/build_threat_model_yaml.py", *argv])
     return b.main()
 
 
@@ -2008,7 +2008,7 @@ def test_main_writes_and_schema_validates(tmp_path, monkeypatch, capsys):
     real_run = b.subprocess.run
 
     def fake_run(cmd, *a, **k):
-        if any("validate_intermediate.py" in str(c) for c in cmd):
+        if any("validators/validate_intermediate.py" in str(c) for c in cmd):
             return _OkProc()
         return real_run(cmd, *a, **k)
 
@@ -2059,8 +2059,8 @@ def test_main_schema_validation_failure_returns_5(tmp_path, monkeypatch, capsys)
     real_run = b.subprocess.run
 
     def fake_run(cmd, *a, **k):
-        # Only intercept the validate_intermediate.py invocation.
-        if any("validate_intermediate.py" in str(c) for c in cmd):
+        # Only intercept the validators/validate_intermediate.py invocation.
+        if any("validators/validate_intermediate.py" in str(c) for c in cmd):
             return _FakeProc()
         return real_run(cmd, *a, **k)
 
@@ -2077,7 +2077,7 @@ def test_main_schema_validation_failure_returns_5(tmp_path, monkeypatch, capsys)
 def test_main_fails_closed_when_validator_absent(tmp_path, monkeypatch, capsys):
     """No validator means no canonical output publication."""
     run = _copy_run(_LAST_RUN, tmp_path)
-    # Point plugin-root at an empty dir lacking scripts/validate_intermediate.py.
+    # Point plugin-root at an empty dir lacking scripts/validators/validate_intermediate.py.
     fake_plugin = tmp_path / "empty_plugin"
     fake_plugin.mkdir()
     prior = (run / "threat-model.yaml").read_bytes()
@@ -2943,7 +2943,7 @@ def test_main_delivers_contiguous_boundary_ids_from_a_sparse_ledger(tmp_path, mo
         b.subprocess,
         "run",
         lambda cmd, *a, **k: (
-            _OkProc() if any("validate_intermediate.py" in str(c) for c in cmd) else real_run(cmd, *a, **k)
+            _OkProc() if any("validators/validate_intermediate.py" in str(c) for c in cmd) else real_run(cmd, *a, **k)
         ),
     )
     assert _run_main(monkeypatch, [str(run), "--plugin-root", str(ROOT)]) == 0
@@ -3303,7 +3303,7 @@ def test_trace_names_the_model_assets_the_context_describes(tmp_path):
 
 @pytest.mark.parametrize("name", ["Shipment Ledger", "Dispatch Schedule"])
 def test_sourced_asset_answer_reaches_stride_and_settles_only_its_question(tmp_path, name):
-    import team_questions
+    import renderers.team_questions as team_questions
 
     repo, output = _business_meta(tmp_path)
     quote = f"{name} manipulation can interrupt scheduled deliveries for one day."
@@ -3456,7 +3456,7 @@ def test_meta_reports_no_business_context_when_the_run_skipped_it(tmp_path):
 #
 # The Markdown report carried the full §7b table while the YAML carried
 # nothing, so a consumer of the export saw no requirements dimension at all and
-# render_completion_summary.py reported "0 checked" for a run that had assessed
+# renderers/render_completion_summary.py reported "0 checked" for a run that had assessed
 # 73 of them (run a2a0e355).
 # ---------------------------------------------------------------------------
 
@@ -3674,7 +3674,7 @@ def test_builder_preserves_named_entities_and_resolved_registration_equivalence(
     assert model["actors"] == []  # Unused automatic roles are analysis input, not report conclusions.
     if owner is not None:
         assert model["meta"]["open_registration_resolution"] == actors["open_registration_resolution"]
-        import match_abuse_cases
+        import model.match_abuse_cases as match_abuse_cases
 
         signals = match_abuse_cases._effective_registration_signal({"has_auth_surface"}, tmp_path)
         assert ("has_open_self_registration" in signals) is owner

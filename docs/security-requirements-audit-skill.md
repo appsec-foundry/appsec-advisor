@@ -92,7 +92,7 @@ The audit needs a requirements catalog in YAML format.
 
 | Where | How |
 |-------|-----|
-| Internal pages (Confluence, Antora, HTML) | Convert them with `scripts/harvest_requirements.py`; see the [harvester guide](harvester.md) |
+| Internal pages (Confluence, Antora, HTML) | Convert them with `scripts/requirements/harvest_requirements.py`; see the [harvester guide](harvester.md) |
 | Reference baseline | Adapt `data/appsec-requirements-fallback.yaml` and publish it over HTTP or a raw Git URL |
 | Local repo file | Drop `docs/security/requirements.yaml` into the repo |
 | Packaged org profile | Included in your organization's plugin and selected automatically |
@@ -131,7 +131,7 @@ Minimum contract: a YAML mapping with a `categories[]` array, each category and 
 Invalid structure, such as a downloaded 404 page or truncated file, stops the run. Missing recommended fields and duplicate IDs produce warnings. Validate a catalog with:
 
 ```text
-python3 scripts/requirements_state.py --validate path/to/catalog.yaml [--strict]
+python3 scripts/requirements/requirements_state.py --validate path/to/catalog.yaml [--strict]
 ```
 
 The harvester validates its output the same way.

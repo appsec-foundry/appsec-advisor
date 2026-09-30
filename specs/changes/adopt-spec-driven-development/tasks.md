@@ -6,7 +6,7 @@
       business context, cost, report, trust, and configuration.
 - [x] `scripts/check_specs.py` — validation and the `--for <path>` lookup.
 - [x] `tests/test_check_specs.py` — one test per rejected reference.
-- [x] `scripts/requirements_hook.py` — requires user approval for the catalog
+- [x] `scripts/requirements/requirements_hook.py` — requires user approval for the catalog
       and register through direct write tools and recognized shell writes, and
       attaches the governing requirements to every other edit.
 - [x] `check_specs.py --changed-against <ref>` — a held file changed with no

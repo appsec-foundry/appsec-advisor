@@ -17,7 +17,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-import detect_open_registration as D  # noqa: E402
+import analyzers.detect_open_registration as D  # noqa: E402
 
 detect = D.detect
 

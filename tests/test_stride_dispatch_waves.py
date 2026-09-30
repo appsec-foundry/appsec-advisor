@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import orchestrator.stride_dispatch_waves as waves
 import pytest
-import resolve_config
-import stride_dispatch_waves as waves
+import runtime.resolve_config as resolve_config
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

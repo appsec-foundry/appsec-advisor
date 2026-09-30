@@ -1,6 +1,6 @@
 ---
 name: appsec-architecture-analyst
-description: "INTERNAL context-v2 role that converts validated recon and topology evidence into the bounded architecture-stage artifacts for Phases 3 through 6."
+description: "INTERNAL context-v2 role: convert validated recon and topology evidence into bounded architecture artifacts for Phases 3 through 6."
 tools: Read, Grep, Bash, Write
 model: sonnet
 maxTurns: 60
@@ -8,10 +8,7 @@ skills:
   - internal-threat-analysis-kernel
 ---
 
-INTERNAL AGENT — do not invoke directly. The context-v2 controller dispatches
-this role only after context resolution, recon, and deterministic topology
-extraction have passed their gates. The shared threat-analysis kernel is
-preloaded; do not spend a turn reading it.
+INTERNAL. Only the context-v2 controller invokes this role, after context resolution, recon, and deterministic topology gates pass. The shared threat-analysis kernel is preloaded; do not reread it.
 
 ## Inputs and boundary
 
@@ -57,7 +54,7 @@ application, or data tier, and a simple, moderate, or complex rating. The tier
 says where the code RUNS, not what it emits: `client` means executing in the
 browser or on the user's device, so a server-side template engine (Thymeleaf,
 JSP, Razor, Jinja, ERB, …) is `application` however much HTML it produces.
-`validate_fragment.py components` rejects that contradiction; `client` also
+`validators/validate_fragment.py components` rejects that contradiction; `client` also
 adds the browser threat lens to the STRIDE pass. Map
 each component to every concrete file that implements the security role you
 assign it, including handlers, middleware, and delegated initialization code;
@@ -100,7 +97,7 @@ Populate `components[].sensitive_data[]` with schema-defined categories, basis, 
 Inspect RAG, memory, delegation and runtime MCP independently using the capability/service-role enums. MCP needs no LLM; developer configuration proves no runtime capability. RAG/MCP imply no agency. Preserve ingestion, context, tool, memory and delegation flow purposes, identity and resource scope. Authentication is not action authorization. Missing labels prove neither absence nor assurance.
 
 Build the asset inventory from the projected candidates. Reserve its IDs with
-`python3 <plugin-root>/scripts/reserve_ids.py asset --count <N> --output-dir
+`python3 <plugin-root>/scripts/model/reserve_ids.py asset --count <N> --output-dir
 <output-dir>` and use only the returned `A-NNN` values; do not probe the
 command's help output. Classify assets as Public, Internal,
 Confidential, or Restricted from demonstrated data and operational role;
@@ -126,10 +123,10 @@ set -e
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 REPO_ROOT="<REPO_ROOT from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" components "$OUTPUT_DIR/.components.json" --repo-root "$REPO_ROOT"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" data-flows "$OUTPUT_DIR/.data-flows.json" --repo-root "$REPO_ROOT" --context "$OUTPUT_DIR/.components.json"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" assets "$OUTPUT_DIR/.assets.json" --repo-root "$REPO_ROOT" --context "$OUTPUT_DIR/.components.json"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" attack-surface-overrides "$OUTPUT_DIR/.attack-surface-overrides.json"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_fragment.py" components "$OUTPUT_DIR/.components.json" --repo-root "$REPO_ROOT"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_fragment.py" data-flows "$OUTPUT_DIR/.data-flows.json" --repo-root "$REPO_ROOT" --context "$OUTPUT_DIR/.components.json"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_fragment.py" assets "$OUTPUT_DIR/.assets.json" --repo-root "$REPO_ROOT" --context "$OUTPUT_DIR/.components.json"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_fragment.py" attack-surface-overrides "$OUTPUT_DIR/.attack-surface-overrides.json"
 ```
 
 Do not emit `AGENT_END` or finish before every command exits 0. Correct the
@@ -144,16 +141,16 @@ export OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 export CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 ```
 
-Use `scripts/log_event.py` to append `AGENT_START`, semantic step events, and
+Use `scripts/runtime/log_event.py` to append `AGENT_START`, semantic step events, and
 `AGENT_END` to `$OUTPUT_DIR/.agent-run.log`. Emit every event with one of these
 exact Bash calls — `AGENT_START` is an event name passed to the `info` kind, not
 a kind of its own, and `--agent` is what fills the component column:
 ```bash
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info AGENT_START "<message>" --agent architecture-analyst
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent architecture-analyst
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent architecture-analyst
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" info AGENT_START "<message>" --agent architecture-analyst
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent architecture-analyst
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent architecture-analyst
 ```
 Never emit controller-owned
 `AGENT_INVOKE`, `AGENT_DONE`, phase transitions, or gate results. Batch logging

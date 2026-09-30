@@ -31,7 +31,7 @@ that needs both needs both mechanisms.
 
 ## Row set
 
-The controller already publishes the sequence. `orchestration_controller.py`
+The controller already publishes the sequence. `orchestrator/orchestration_controller.py`
 drives eleven boundaries, and the orchestrator receives the next one as
 `next_boundary` and invokes it verbatim:
 
@@ -148,7 +148,7 @@ Everything below describes the code as written. It is not committed.
 
 ## What was built
 
-The row labels live in `orchestration_controller.py` as
+The row labels live in `orchestrator/orchestration_controller.py` as
 `STAGE1_TASK_ROWS_CONTEXT_V2` / `_LEGACY`, and the prepare action carries the
 right set as `stage1_task_rows`. The session creates one row per entry and
 never authors a label.

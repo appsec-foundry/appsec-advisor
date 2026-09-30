@@ -15,7 +15,7 @@ import pytest
 
 PLUGIN_SCRIPTS = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(PLUGIN_SCRIPTS))
-from validate_intermediate import validate_threats_merged  # noqa: E402
+from validators.validate_intermediate import validate_threats_merged  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

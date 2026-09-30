@@ -30,7 +30,7 @@ Files that runtime cleanup MUST preserve. Deleting them breaks post-run audit, S
 | `.appsec-cache/` | Carry-forward cache directory |
 | `.appsec-cache/baseline.json` | **Critical** — incremental anchor; deleting forces cold full scan and breaks T-ID stability |
 
-Canonical enforcement: `scripts/runtime_cleanup.py` (the cleanup script must never list these), drift-guarded by `tests/test_runtime_cleanup.py`.
+Canonical enforcement: `scripts/runtime/runtime_cleanup.py` (the cleanup script must never list these), drift-guarded by `tests/test_runtime_cleanup.py`.
 
 ## The `.stride-` prefix is shared
 
@@ -40,7 +40,7 @@ Four sidecars share the prefix and are written **before** the Phase-9 fan-out:
 | Path | What it really is |
 |------|-------------------|
 | `.stride-dispatch-manifest.json` | Dispatch plan (`schemas/stride-dispatch-manifest.schema.yaml`) |
-| `.stride-selection.json` | Component-selection report (`build_stride_dispatch_manifest.py`) |
+| `.stride-selection.json` | Component-selection report (`orchestrator/build_stride_dispatch_manifest.py`) |
 | `.stride-analyst-context.json` | Analyst-A per-component context |
 | `.stride-repository-registry.json` | Controller-only context-v2 mapping from declared local related repositories to validated roots; component projections under `.dispatch-context/` are the only mappings sent to STRIDE analyzers, and runtime cleanup removes both |
 | `.dispatch-context/post-stride/` | Receipted evidence-sample, generated-threat, and proposed-mitigation projections; each binds exact canonical sources and is removed by normal runtime cleanup |
@@ -48,7 +48,7 @@ Four sidecars share the prefix and are written **before** the Phase-9 fan-out:
 
 Cleanup and never-publish lists keep the broad `.stride-*.json` pattern on
 purpose. Anything that **reads or counts** per-component results must go
-through `scripts/stride_outputs.py` — a bare glob counts the sidecars as
+through `scripts/runtime/stride_outputs.py` — a bare glob counts the sidecars as
 finished components (it disabled the watchdog's Phase-9 canary, inflated the
 progress widget, and put `dispatch-manifest` / `analyst-context` into the
 merge audit trail and the incremental baseline). A new sidecar must be added

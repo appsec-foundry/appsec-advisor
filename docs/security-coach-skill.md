@@ -211,7 +211,7 @@ Edit `hooks/steering_keywords.json`:
 After edits, validate the file:
 
 ```bash
-python3 scripts/validate_config.py
+python3 scripts/validators/validate_config.py
 pytest tests/test_security_steering.py
 ```
 

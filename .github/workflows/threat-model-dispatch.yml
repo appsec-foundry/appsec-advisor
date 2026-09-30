@@ -198,7 +198,7 @@ jobs:
 
       # 4) Sanitize the untrusted checkout: strip repo-owned Claude Code / IDE
       #    config that the host tool would load before the plugin runs. These are
-      #    exactly the injection vectors preflight_untrusted.py refuses on — remove
+      #    exactly the injection vectors validators/preflight_untrusted.py refuses on — remove
       #    them so the untrusted preflight passes, and flag any escaping symlinks.
       - name: Sanitize untrusted checkout
         run: |
@@ -337,7 +337,7 @@ jobs:
           {
             echo "# Threat Model — ${{ steps.preset.outputs.use_case }}"
             echo
-            python3 scripts/extract_report_section.py "$REPORT" \
+            python3 scripts/runtime/extract_report_section.py "$REPORT" \
                 --section "Management Summary" \
                 --section "Critical Attack Tree" \
                 --skip-missing \

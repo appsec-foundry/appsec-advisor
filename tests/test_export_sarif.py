@@ -1,5 +1,5 @@
 """
-Tests for `scripts/export_sarif.py` — deterministic SARIF v2.1.0 generation
+Tests for `scripts/exporters/export_sarif.py` — deterministic SARIF v2.1.0 generation
 from a `threat-model.yaml` export.
 
 Reuses the structural validator from `tests/test_sarif_validation.py` and the
@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "tests"))
 
-import export_sarif  # noqa: E402
+import exporters.export_sarif as export_sarif  # noqa: E402
 from test_sarif_validation import _RISK_TO_LEVEL, validate_sarif  # noqa: E402
 
 FIXTURES = ROOT / "tests" / "fixtures"
@@ -427,7 +427,7 @@ class TestCli:
         result = subprocess.run(
             [
                 sys.executable,
-                str(ROOT / "scripts" / "export_sarif.py"),
+                str(ROOT / "scripts" / "exporters/export_sarif.py"),
                 "--threat-model",
                 str(yaml_path),
                 "--output",
@@ -448,7 +448,7 @@ class TestCli:
         result = subprocess.run(
             [
                 sys.executable,
-                str(ROOT / "scripts" / "export_sarif.py"),
+                str(ROOT / "scripts" / "exporters/export_sarif.py"),
                 "--threat-model",
                 str(tmp_path / "nope.yaml"),
                 "--output",

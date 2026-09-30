@@ -1,4 +1,4 @@
-"""Unit tests for scripts/secret_scan.py — strict-format leaks, loose-pattern
+"""Unit tests for scripts/validators/secret_scan.py — strict-format leaks, loose-pattern
 credential assignments, and the masking-marker exemption."""
 
 from __future__ import annotations
@@ -10,13 +10,13 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "secret_scan.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "validators/secret_scan.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("secret_scan", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("validators.secret_scan", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["secret_scan"] = module
+    sys.modules["validators.secret_scan"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
@@ -471,21 +471,21 @@ def test_scan_file_missing_returns_empty(secret_scan, tmp_path):
 def test_main_clean_exit_0(secret_scan, tmp_path, capsys):
     p = tmp_path / "clean.md"
     p.write_text("All secrets are masked here: `AIza****`.\n")
-    rc = secret_scan.main(["secret_scan.py", str(p)])
+    rc = secret_scan.main(["validators/secret_scan.py", str(p)])
     assert rc == 0
 
 
 def test_main_leak_exit_1(secret_scan, tmp_path, capsys):
     p = tmp_path / "leak.md"
     p.write_text("Leaked: AKIAIOSFODNN7EXAMPLE\n")
-    rc = secret_scan.main(["secret_scan.py", str(p)])
+    rc = secret_scan.main(["validators/secret_scan.py", str(p)])
     assert rc == 1
     out = capsys.readouterr().out
     assert "aws_access_key" in out
 
 
 def test_main_bad_args_exit_2(secret_scan, capsys):
-    rc = secret_scan.main(["secret_scan.py"])
+    rc = secret_scan.main(["validators/secret_scan.py"])
     assert rc == 2
 
 
@@ -599,7 +599,7 @@ def test_main_mask_mode_masks_and_reports(secret_scan, tmp_path, capsys):
     clean.write_text("password: **** (8 chars)\n", encoding="utf-8")
     leak.write_text("AKIAIOSFODNN7EXAMPLE\n", encoding="utf-8")
 
-    rc = secret_scan.main(["secret_scan.py", "--mask", str(clean), str(leak)])
+    rc = secret_scan.main(["validators/secret_scan.py", "--mask", str(clean), str(leak)])
 
     assert rc == 0
     out = capsys.readouterr().out

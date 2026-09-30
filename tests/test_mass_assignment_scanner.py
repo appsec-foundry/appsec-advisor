@@ -1,5 +1,5 @@
 """P1 (STRIDE bespoke-recall) — entity-aware Spring mass-assignment detector
-(scripts/mass_assignment_scanner.py + data/mass-assignment-signatures.yaml,
+(scripts/analyzers/mass_assignment_scanner.py + data/mass-assignment-signatures.yaml,
 CWE-915 / AUTHZ-202 / FT-041).
 
 The two-pass detector correlates a privileged @Entity (Pass 1) with a write
@@ -13,7 +13,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
-import mass_assignment_scanner as M  # noqa: E402
+import analyzers.mass_assignment_scanner as M  # noqa: E402
 
 CATALOG = M.load_catalog(REPO_ROOT / "data" / "mass-assignment-signatures.yaml")
 

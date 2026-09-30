@@ -14,7 +14,7 @@ in `proposal-stride-check-catalogue-2026-08-14.md` and belongs there.
 ## Verified state
 
 Findings Register card, `_build_threat_card`
-(`scripts/compose_threat_model.py:14973`, layout comment at `:15011`):
+(`scripts/renderers/compose_threat_model.py:14973`, layout comment at `:15011`):
 
 ```
 **Classification:** Insecure Client-Side Storage · [CWE-922](…) · [OWASP A04:2025](…) · walkthrough [Walkthrough §3.5](#…)
@@ -27,27 +27,27 @@ Where STRIDE does appear:
 
 | Place | Form | Producer |
 |---|---|---|
-| §3 walkthrough closing line | `STRIDE: Information Disclosure` | `scripts/walkthrough_renderer.py:1598` |
-| §7 weakness rows | `(T·I)` | `scripts/compose_threat_model.py:9284` |
+| §3 walkthrough closing line | `STRIDE: Information Disclosure` | `scripts/renderers/walkthrough_renderer.py:1598` |
+| §7 weakness rows | `(T·I)` | `scripts/renderers/compose_threat_model.py:9284` |
 | §8 header | `**STRIDE Coverage:** Spoofing: 11 · …` | `data/sections-contract.yaml:1489` |
-| SARIF | `stride` tag | `scripts/export_sarif.py:127` |
-| Threat Dragon | threat type | `scripts/export_threat_dragon.py:388` |
+| SARIF | `stride` tag | `scripts/exporters/export_sarif.py:127` |
+| Threat Dragon | threat type | `scripts/exporters/export_threat_dragon.py:388` |
 
 So a finding shows its STRIDE category only when it happens to have a
 walkthrough or to sit in a §7 weakness row. The value itself is enum-controlled
-title case (`Spoofing` … `Elevation of Privilege`, `triage_validate_ratings.py:53`),
+title case (`Spoofing` … `Elevation of Privilege`, `validators/triage_validate_ratings.py:53`),
 with a legacy `stride_category` fallback that compose already handles.
 
 Where the OWASP LLM ID appears: `owasp_llm_ids` / `owasp_asi_ids`
 (`schemas/stride.schema.yaml:192`) survive merge, YAML and SARIF (as
 `owasp-llm:` tags), and in Markdown they are used **only** as the grouping key
 of the Management-Summary callout "AI/LLM Exposure"
-(`scripts/pregenerate_fragments.py:6220`). They are never printed on the finding
+(`scripts/renderers/pregenerate_fragments.py:6220`). They are never printed on the finding
 itself.
 
 One more fact that matters for part A: an LLM-surface threat carrying no
 `owasp_llm_ids` and matching no title rule triggers a diagnostic on stderr
-(`scripts/pregenerate_fragments.py:6249`). It is stderr only — no Run Issue, no
+(`scripts/renderers/pregenerate_fragments.py:6249`). It is stderr only — no Run Issue, no
 gate — but its wording states an analyzer contract violation.
 
 ## Part A — what the four questions may claim
@@ -128,11 +128,11 @@ consults on its own, so the repetition is acceptable.
 
 | Step | File | Change |
 |---|---|---|
-| Producer | `scripts/compose_threat_model.py` `_build_threat_card` (`:14939` block 7) | Read `t.get("stride") or t.get("stride_category")`, insert as `refs_parts[1]` when non-empty |
+| Producer | `scripts/renderers/compose_threat_model.py` `_build_threat_card` (`:14939` block 7) | Read `t.get("stride") or t.get("stride_category")`, insert as `refs_parts[1]` when non-empty |
 | Layout comment | same file `:15011` and `:14546` | Add the field to both skeleton comments |
 | Contract | `data/sections-contract.yaml:1502` | Update the card skeleton comment and add `stride` to `card_fields` |
 | Consumer | none | `card_fields` has no code consumer today; it is documentation |
-| Validation | none required | No QA check parses the Classification line; `Classification` is already in the QA label allowlist (`scripts/qa_checks.py:8273`) |
+| Validation | none required | No QA check parses the Classification line; `Classification` is already in the QA label allowlist (`scripts/validators/qa_checks.py:8273`) |
 | Tests | `tests/test_compose_threat_model.py` | Assert the rendered card carries `STRIDE: <category>` after the category name, and that a threat without `stride` renders the line unchanged |
 
 ### Edge cases

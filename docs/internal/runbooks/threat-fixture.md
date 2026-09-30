@@ -82,10 +82,10 @@ The deterministic tail and the source scanners, all offline:
 
 | Layer | Stage | Re-runnable offline |
 |---|---|---|
-| `build_threat_model_yaml.py` | `yaml` | ✅ from frozen sidecars |
-| `compose_threat_model.py` | `md` | ✅ from golden yaml + `.fragments/` |
-| `export_sarif.py` | `sarif` | ✅ from golden yaml |
-| `route_inventory.py`, `source_auth_scanner.py` | `scanner` | ✅ against the pinned repo |
+| `model/build_threat_model_yaml.py` | `yaml` | ✅ from frozen sidecars |
+| `renderers/compose_threat_model.py` | `md` | ✅ from golden yaml + `.fragments/` |
+| `exporters/export_sarif.py` | `sarif` | ✅ from golden yaml |
+| `analyzers/route_inventory.py`, `analyzers/source_auth_scanner.py` | `scanner` | ✅ against the pinned repo |
 
 It does **not** cover the LLM layer (recon synthesis, STRIDE analysis, triage,
 §7/MS narrative). Those are frozen as *fixed inputs*; you are testing everything
@@ -94,7 +94,7 @@ model output, see the `eval-threat-model` path instead.
 
 ## Volatile fields (scrubbed before every diff)
 
-Verified against `build_threat_model_yaml.py`:
+Verified against `model/build_threat_model_yaml.py`:
 
 - `meta.generated` (`datetime.now`) → sentinel timestamp
 - `meta.git.*` (read from the scanned repo's git) → sentinels

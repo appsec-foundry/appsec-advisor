@@ -15,11 +15,11 @@ import re
 import sys
 from pathlib import Path
 
-from _atomic_io import atomic_write_json
-from architect_review import ReviewError, fingerprint
-from build_architect_context import SCHEMA_ROOT, _contracts, build_context
+from analyzers.architect_review import ReviewError, fingerprint
+from contexts.build_architect_context import SCHEMA_ROOT, _contracts, build_context
 from jsonschema import Draft202012Validator
 from referencing import Resource
+from shared._atomic_io import atomic_write_json
 
 DEFAULT_FIXTURE = Path(__file__).resolve().parent.parent / "tests/fixtures/architect-review/calibration.json"
 SCHEMA_NAME = "architect-review-calibration.schema.json"

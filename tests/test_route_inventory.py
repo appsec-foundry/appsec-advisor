@@ -1,4 +1,4 @@
-"""Tests for scripts/route_inventory.py (arch.md §Route Inventory MVP)."""
+"""Tests for scripts/analyzers/route_inventory.py (arch.md §Route Inventory MVP)."""
 
 from __future__ import annotations
 
@@ -11,12 +11,12 @@ import jsonschema
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "route_inventory.py"
+SCRIPT = REPO_ROOT / "scripts" / "analyzers/route_inventory.py"
 SCHEMA = json.loads((REPO_ROOT / "schemas" / "route-inventory.schema.json").read_text())
 
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
-import route_inventory as ri  # noqa: E402
+import analyzers.route_inventory as ri  # noqa: E402
 
 
 def _run(repo_root: Path) -> dict:

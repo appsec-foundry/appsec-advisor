@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import context_window_report as report
+import runtime.context_window_report as report
 
 
 def _write(path: Path, entries: list[dict]) -> Path:

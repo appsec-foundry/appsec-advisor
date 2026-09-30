@@ -1,5 +1,5 @@
 """
-Tests for annotate_sequences.py — post-Phase-9 Mermaid sequence-diagram annotator.
+Tests for renderers/annotate_sequences.py — post-Phase-9 Mermaid sequence-diagram annotator.
 """
 
 import json
@@ -8,7 +8,7 @@ from pathlib import Path
 
 PLUGIN_SCRIPTS = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(PLUGIN_SCRIPTS))
-from annotate_sequences import annotate_markdown, main  # noqa: E402
+from renderers.annotate_sequences import annotate_markdown, main  # noqa: E402
 
 
 def _threat(

@@ -33,7 +33,7 @@ pipeline, `PHASE_END … controller compose` through the QA gate result:
 | | run 4 | run 5 |
 |---|---|---|
 | elapsed | 20 min | 4.5 min |
-| `qa_checks.py` misinvocations | 3 | 0 |
+| `validators/qa_checks.py` misinvocations | 3 | 0 |
 | reads under `scripts/` | 3 files, 2 greps, 4 probes | 0 |
 | context compactions | 2 | 0 |
 | QA outcome | fail + repair plan | pass |
@@ -59,7 +59,7 @@ independent reasons, both confirmed:
 
 The "0 reads under `scripts/`" in the table above is therefore not the gate's
 doing. At 04:23, near the end of the run, the orchestrator read
-`build_post_stride_contexts.py` and `orchestration_controller.py` unimpeded —
+`contexts/build_post_stride_contexts.py` and `orchestrator/orchestration_controller.py` unimpeded —
 exactly the behaviour P1 exists to stop.
 
 Proving it needs a session started *after* the hook is registered, and either
@@ -91,7 +91,7 @@ agent. Worth a look because a full budget produced nothing.
 
 **4. `ORCHESTRATION_GATE_WARN: evidence context is stale for
 .threats-merged.json`.** A best-effort gate failed and the run continued
-(`orchestration_controller.py:1897`). All 54 threats carry evidence, cwe and
+(`orchestrator/orchestration_controller.py:1897`). All 54 threats carry evidence, cwe and
 component, so nothing obvious was lost — but the event carries only `str(exc)`
 and not the script name, so what was skipped is unknown. Name the step in the
 event.
@@ -122,7 +122,7 @@ time: `.evidence-verification.json` carried `2026-08-16T00:00:00Z` in run 4 and
 - `TELEMETRY_MISMATCH … terminal call carries no child output tokens` fired
   once as a race that resolved four seconds later (`angular-spa`) and once for
   a genuine absence (`web3-nft`). Indistinguishable at the time.
-- `qa_checks.py` reporting an unknown flag as a missing file — fixed in
+- `validators/qa_checks.py` reporting an unknown flag as a missing file — fixed in
   `f7530e65`, but the same shape may exist in other positional CLIs.
 
 **9. `refuted: 0`.** Across two runs the evidence verifier sampled 77 threats,
@@ -131,7 +131,7 @@ rejects. Either the findings are uniformly sound or the role has no effective
 path to reject one.
 
 **10. Agents probe their own tooling.** Seven `--help` or bare invocations in
-run 5, across `log_event.py`, `budget_watchdog.py` and `qa_checks.py`. Each
+run 5, across `runtime/log_event.py`, `runtime/budget_watchdog.py` and `validators/qa_checks.py`. Each
 costs a turn where the message is clear and a misdiagnosis where it is not. The
 prompts could carry the exact invocation line.
 
@@ -139,8 +139,8 @@ prompts could carry the exact invocation line.
 correct — `## 6. Security Architecture`, and zero occurrences of
 `§7 Security Architecture` in the text. But the literal survives in
 `SKILL-thin-stage2.md:31`, `SKILL-impl.md:2977`,
-`snapshot_preserved_sections.py:8`, `walkthrough_renderer.py:1491` and three
-places in `compose_threat_model.py`, and it reaches the console through the
+`repairs/snapshot_preserved_sections.py:8`, `renderers/walkthrough_renderer.py:1491` and three
+places in `renderers/compose_threat_model.py`, and it reaches the console through the
 dispatch description. A compose pass normalizes the output; the sources
 mislead a reader.
 

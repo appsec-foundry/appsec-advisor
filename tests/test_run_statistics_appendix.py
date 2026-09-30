@@ -1,6 +1,6 @@
 """Unit tests for the M3.3 Appendix: Run Statistics enhancements:
 
-• _read_stage_stats reads JSONL written by record_stage_stats.py
+• _read_stage_stats reads JSONL written by runtime/record_stage_stats.py
 • _read_skill_config falls back when meta lacks paths
 • _fmt_ms / _fmt_seconds duration formatting
 • _scrape_phase_durations now handles seconds-only [Xs] suffix and
@@ -15,17 +15,17 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "compose_threat_model.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "renderers/compose_threat_model.py"
 
-# compose_threat_model imports `from _atomic_io import …` (sibling module
+# compose_threat_model imports `from shared._atomic_io import …` (sibling module
 # in scripts/), so make scripts/ resolvable on sys.path before exec.
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("compose_threat_model", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("renderers.compose_threat_model", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["compose_threat_model"] = module
+    sys.modules["renderers.compose_threat_model"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module

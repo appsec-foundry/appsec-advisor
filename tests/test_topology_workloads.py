@@ -12,10 +12,10 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import aggregate_run_issues  # noqa: E402
-import build_architecture_analysis_context as context  # noqa: E402
-import finalize_component_inventory as finalize  # noqa: E402
-from validate_fragment import workload_coverage_errors  # noqa: E402
+import contexts.build_architecture_analysis_context as context  # noqa: E402
+import model.finalize_component_inventory as finalize  # noqa: E402
+import runtime.aggregate_run_issues as aggregate_run_issues  # noqa: E402
+from validators.validate_fragment import workload_coverage_errors  # noqa: E402
 
 SCHEMA = json.loads((ROOT / "schemas" / "architecture-topology-context.schema.json").read_text(encoding="utf-8"))
 
@@ -116,7 +116,7 @@ def test_coverage_is_not_enforced_without_a_topology() -> None:
 
 @pytest.mark.parametrize("with_topology", [False, True])
 def test_the_unchanged_self_check_finds_the_runs_topology_beside_the_inventory(tmp_path, with_topology) -> None:
-    import validate_fragment
+    import validators.validate_fragment as validate_fragment
 
     doc = {"schema_version": 1, "components": [_component("app", ["src/app.py"])]}
     path = tmp_path / ".components.json"

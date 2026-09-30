@@ -4,22 +4,22 @@
 
 **Trigger:** operator review of the juice-shop2 Figure 1 (run 2026-09-26, rendered before `96c919ba`) and of the same model rendered with the current code.
 
-**Replay set:** juice-shop2, VulnerableApp, insecure-ai-app, insecure-spring-app (local runs), plus the published v0.6.0b4 examples in `appsec-advisor-examples/threat-modeler/`. Replays copy each output directory to a scratch location and run `compose_threat_model.py` with the measure simulated by monkeypatching; manifests are copied next to the copy so the display name resolves as in a real run.
+**Replay set:** juice-shop2, VulnerableApp, insecure-ai-app, insecure-spring-app (local runs), plus the published v0.6.0b4 examples in `appsec-advisor-examples/threat-modeler/`. Replays copy each output directory to a scratch location and run `renderers/compose_threat_model.py` with the measure simulated by monkeypatching; manifests are copied next to the copy so the display name resolves as in a real run.
 
 ## 1. Observed symptoms and verified causes
 
 | # | Symptom | Cause | Class | Anchor |
 |---|---|---|---|---|
-| S1 | Actors scattered in the left column; build attacker not beside CI | `_overview_groups` runs only for the overview; `96c919ba` made the detail rendering Figure 1 for in-cap models | regression | `figure1_dfd.py:3728`, `compose_threat_model.py:_render_figure1_svg` |
+| S1 | Actors scattered in the left column; build attacker not beside CI | `_overview_groups` runs only for the overview; `96c919ba` made the detail rendering Figure 1 for in-cap models | regression | `renderers/figure1_dfd.py:3728`, `renderers/compose_threat_model.py:_render_figure1_svg` |
 | S2 | Boundary IDs, boundary legend and "internal interfaces" count back in Figure 1 | same commit rewrote RA-15 from "overview shows no boundary IDs" to "Figure 1 is the detail rendering with boundary IDs" | regression | `docs/internal/decisions.md` RA-15 |
-| S3 | One boundary shows one crossing although eight flows cross the line (juice-shop2 `tb-1`) | chips bind only to flows with identical `from`/`to`, and only when exactly one drawn edge matches; boundary-stage signal→flow mapping and `covers_components` are ignored | defect | `figure1_dfd.py:1500-1520`, `prepare_trust_boundary_context.py:1153`, `:2400-2476` |
-| S4 | Second boundary line between application and data layer looks like a database boundary | overview moves backend-only third parties to the data column (`_overview_groups`), so egress `tb-5` gets its own full-height line. Overview only: the current detail rendering draws one line, so the symptom returns with M1 | design gap | `figure1_dfd.py:2244-2270` |
-| S5 | Two cards for the same people ("Juice Shop User", "End User (Browser)") | analyst wrote one catch-all role without `access`; RA-11 keeps the generic victim beside an unclassified role | producer gap, no guard | `.data-flows.json` `ext-001`; `figure1_dfd.py:1031-1058` |
-| S6 | Admin role without any flow | `reconcile_privileged_roles` needs a regular role's `interaction` flow as template; none exists | producer gap, no guard | `reconcile_privileged_roles.py:_interaction_template` |
-| S7 | CI component isolated; supply-chain inputs and published artifact absent | no producer models build inputs/outputs although `.deployment-inventory.json` holds them | coverage gap | `deployment_inventory.py` output unused by Figure 1 |
+| S3 | One boundary shows one crossing although eight flows cross the line (juice-shop2 `tb-1`) | chips bind only to flows with identical `from`/`to`, and only when exactly one drawn edge matches; boundary-stage signal→flow mapping and `covers_components` are ignored | defect | `renderers/figure1_dfd.py:1500-1520`, `contexts/prepare_trust_boundary_context.py:1153`, `:2400-2476` |
+| S4 | Second boundary line between application and data layer looks like a database boundary | overview moves backend-only third parties to the data column (`_overview_groups`), so egress `tb-5` gets its own full-height line. Overview only: the current detail rendering draws one line, so the symptom returns with M1 | design gap | `renderers/figure1_dfd.py:2244-2270` |
+| S5 | Two cards for the same people ("Juice Shop User", "End User (Browser)") | analyst wrote one catch-all role without `access`; RA-11 keeps the generic victim beside an unclassified role | producer gap, no guard | `.data-flows.json` `ext-001`; `renderers/figure1_dfd.py:1031-1058` |
+| S6 | Admin role without any flow | `reconcile_privileged_roles` needs a regular role's `interaction` flow as template; none exists | producer gap, no guard | `model/reconcile_privileged_roles.py:_interaction_template` |
+| S7 | CI component isolated; supply-chain inputs and published artifact absent | no producer models build inputs/outputs although `.deployment-inventory.json` holds them | coverage gap | `analyzers/deployment_inventory.py` output unused by Figure 1 |
 | S8 | Build attacker labelled with "Bypass or Forge Authentication" / "Bypass Authorization" | attack-class taxonomy has no supply-chain class; 12 of 14 build findings map to no class, the two that do (CWE-347, CWE-732) define the A2 scenarios | taxonomy gap | `data/attack-class-taxonomy.yaml` |
-| S9 | "juice-shop2 User" instead of "Juice Shop User" when the output directory is not `<repo>/docs/security` | display name resolved from a manifest found via `OUTPUT_DIR.parent.parent`; fallback is `meta.project` (directory name) | fragile fallback | `_manifest_readers.py:45`, `compose_threat_model.py:5882` |
-| — | No boundary line to SQLite/MarsDB | embedded stores are internal interfaces (RA-15); correct | intended | `figure1_dfd.py:_internal_interface` |
+| S9 | "juice-shop2 User" instead of "Juice Shop User" when the output directory is not `<repo>/docs/security` | display name resolved from a manifest found via `OUTPUT_DIR.parent.parent`; fallback is `meta.project` (directory name) | fragile fallback | `shared/_manifest_readers.py:45`, `renderers/compose_threat_model.py:5882` |
+| — | No boundary line to SQLite/MarsDB | embedded stores are internal interfaces (RA-15); correct | intended | `renderers/figure1_dfd.py:_internal_interface` |
 
 Evidence for S5/S6 (juice-shop2, patched copies of `.data-flows.json`, reconciled with `reconcile_privileged_roles.reconcile`, composed):
 
@@ -36,7 +36,7 @@ Both conditions are necessary; neither alone fixes both symptoms.
 
 Change `_render_figure1_svg` so Figure 1 always renders with `detail=False`; render the paged detail sibling only when `needs_views` is true. Keep the other half of `96c919ba`: an in-cap model writes no `figure1-detail.svg`.
 
-Touch: `scripts/compose_threat_model.py`, RA-15 (§8), `docs/internal/contracts/schema-invariants.md` (Figure 1 paragraph), `docs/threat-modeler.md`, the unreleased `CHANGELOG.md` bullet added by `96c919ba`, `data/requirement-bindings.yaml` test selector, `tests/test_compose_threat_model.py`, `tests/test_figure1_dfd.py`.
+Touch: `scripts/renderers/compose_threat_model.py`, RA-15 (§8), `docs/internal/contracts/schema-invariants.md` (Figure 1 paragraph), `docs/threat-modeler.md`, the unreleased `CHANGELOG.md` bullet added by `96c919ba`, `data/requirement-bindings.yaml` test selector, `tests/test_compose_threat_model.py`, `tests/test_figure1_dfd.py`.
 
 Verified (current code, overview forced):
 
@@ -69,15 +69,15 @@ Listing the crossing flows in the §1 Trust Boundaries catalogue was considered 
 
 The design below stays as the verified starting point.
 
-The boundary stage already knows which flows each boundary covers: every signal in `.trust-boundary-assessment-input.json` carries `flow_ids`, and `.trust-boundary-coverage.json` assigns `boundary_ids` per signal. Persist the union per boundary as `crossing_flow_ids` on each `.trust-boundaries.json` row, carry it into the canonical YAML, and let the detail renderer place chips only from that list, falling back to exact `from`/`to` for models without the field. The coverage file survives cleanup (`runtime_cleanup.py:292` is in the `NEVER` set), but the assessment input that holds the `flow_ids` is removed (`runtime_cleanup.py:173`), and a published model ships without either; the field must live in the model.
+The boundary stage already knows which flows each boundary covers: every signal in `.trust-boundary-assessment-input.json` carries `flow_ids`, and `.trust-boundary-coverage.json` assigns `boundary_ids` per signal. Persist the union per boundary as `crossing_flow_ids` on each `.trust-boundaries.json` row, carry it into the canonical YAML, and let the detail renderer place chips only from that list, falling back to exact `from`/`to` for models without the field. The coverage file survives cleanup (`runtime/runtime_cleanup.py:292` is in the `NEVER` set), but the assessment input that holds the `flow_ids` is removed (`runtime/runtime_cleanup.py:173`), and a published model ships without either; the field must live in the model.
 
-The coverage `boundary_ids` are the IDs before delivery renumbering (`build_threat_model_yaml.py:3333` writes `.trust-boundary-renumber.json`). The field is therefore attached to the row in the boundary stage and travels with the row through renumbering; nothing joins by boundary ID after that point.
+The coverage `boundary_ids` are the IDs before delivery renumbering (`model/build_threat_model_yaml.py:3333` writes `.trust-boundary-renumber.json`). The field is therefore attached to the row in the boundary stage and travels with the row through renumbering; nothing joins by boundary ID after that point.
 
-The renderer change is more than a new source for the flow list: today a chip is placed only when exactly one drawn edge matches (`figure1_dfd.py:1513`), otherwise the node tag is used. With `crossing_flow_ids` the renderer places the chip on every drawn edge that carries a mapped flow.
+The renderer change is more than a new source for the flow list: today a chip is placed only when exactly one drawn edge matches (`renderers/figure1_dfd.py:1513`), otherwise the node tag is used. With `crossing_flow_ids` the renderer places the chip on every drawn edge that carries a mapped flow.
 
 Verified derivation (pre-renumber IDs, identical to canonical IDs only for juice-shop2, whose mapping is empty): juice-shop2 `tb-1` → df-001, df-002, df-003, df-004, df-005, df-006, df-007, df-012; `tb-3` → df-008; `tb-4` → df-009; `tb-5` → df-010; `tb-2` → none (see M4). The derivation also resolves on VulnerableApp, insecure-ai-app and insecure-spring-app, whose mappings are not empty (VulnerableApp: `tb-10` → `tb-4`); there it yields the same flows as exact endpoint matching, and the build boundary has none.
 
-Touch: `scripts/prepare_trust_boundary_context.py` (coverage block `:2400-2476`), `schemas/fragments/trust-boundaries.schema.json` and `schemas/threat-model.output.schema.yaml` (both `additionalProperties: false`), YAML builder passthrough, `figure1_dfd.py:1500-1520`, schema invariants. After M1 this affects only paged detail views and any catalogue that lists crossing flows.
+Touch: `scripts/contexts/prepare_trust_boundary_context.py` (coverage block `:2400-2476`), `schemas/fragments/trust-boundaries.schema.json` and `schemas/threat-model.output.schema.yaml` (both `additionalProperties: false`), YAML builder passthrough, `renderers/figure1_dfd.py:1500-1520`, schema invariants. After M1 this affects only paged detail views and any catalogue that lists crossing flows.
 
 Guard: an SPA fixture whose client-tier flows are mapped to an `external → server` boundary shows the chip on each mapped flow in the detail view, including several edges of one boundary; a variant with different component names behaves identically; a fixture whose boundaries are renumbered keeps each list on its own boundary; a boundary without mapped flows keeps the node tag (negative case). Extend the self-check: every drawn flow that crosses a boundary line in a detail view carries a chip or belongs to an internal interface.
 
@@ -98,7 +98,7 @@ Verified rule matrix:
 
 Both positive cases are Juice Shop models. The neutral SPA fixture and its renamed variant supply the positive case outside Juice Shop; no replayed non-Juice-Shop run has the defect.
 
-**M3b deterministic access classification, unambiguous paths only.** In `reconcile_role_access.py`, classify an unclassified, undeclared regular role from its own request path (`request_path`) only when the path is unambiguous: every counted hop with a known scheme authenticates → `internet-user`; every counted hop is `none` → `internet-anon`. A mixed path (`none` beside an authenticating scheme) leaves the role unclassified and becomes an architecture validator error that names the role and the hops of each kind, so the analyst splits it into one role per privilege level. An unknown-only path leaves the role unclassified without an error.
+**M3b deterministic access classification, unambiguous paths only.** In `model/reconcile_role_access.py`, classify an unclassified, undeclared regular role from its own request path (`request_path`) only when the path is unambiguous: every counted hop with a known scheme authenticates → `internet-user`; every counted hop is `none` → `internet-anon`. A mixed path (`none` beside an authenticating scheme) leaves the role unclassified and becomes an architecture validator error that names the role and the hops of each kind, so the analyst splits it into one role per privilege level. An unknown-only path leaves the role unclassified without an error.
 
 The first draft classified any path with one authenticating hop as `internet-user`. It was rejected: `request_path` includes every hop reachable behind the client, so a single authenticated API endpoint would make every role behind an SPA `internet-user`, including a purely anonymous visitor. A requirement that the analyst always sets `access` was rejected too: it fires on the VulnerableApp scanner role, which is legitimately unauthenticated.
 
@@ -125,7 +125,7 @@ Open design points: entity `kind` for artifact sources and registries (extend th
 **M5.** Two causes, both generic:
 
 1. The taxonomy has no supply-chain class, so 12 of 14 juice-shop2 build findings map to no class (VulnerableApp 11 of 13, insecure-spring-app 5 of 7, same CWE pattern).
-2. A finding takes the first class whose `cwes` contains its CWE (`compose_threat_model.py:2988-3003`); the attributed actor plays no part. CWE-347 and CWE-732 on build components therefore become "Bypass or Forge Authentication" and "Bypass Authorization", and exactly these two findings define the A2 scenarios today. A new class alone would leave both wrong titles in place.
+2. A finding takes the first class whose `cwes` contains its CWE (`renderers/compose_threat_model.py:2988-3003`); the attributed actor plays no part. CWE-347 and CWE-732 on build components therefore become "Bypass or Forge Authentication" and "Bypass Authorization", and exactly these two findings define the A2 scenarios today. A new class alone would leave both wrong titles in place.
 
 Change: add a supply-chain class with default actor `build-time`, and assign a finding whose attribution is the `build-time` group to that class before the CWE lookup. The class takes its CWE list from `restricted_groups.build-time.cwes` in `data/actor-attribution-rules.yaml` (494, 506, 829, 830, 1104, 1357, 1395) instead of a second list, so attribution and classification cannot drift. A finding without a build-time attribution keeps the CWE lookup. CWE-250 (container runs as root) stays in its current class, because the actor rule decides, not the CWE.
 
@@ -135,7 +135,7 @@ This changes scenario numbering, Figure 2, top threats and Management Summary co
 
 Guards: a build-time-attributed CWE-347 finding lands in the supply-chain class; the same CWE on an internet-attributed finding stays in `auth-bypass` (negative case); a renamed build component behaves identically; the class list and the attribution rule cannot diverge (one source).
 
-**M6.** Resolve the display name once in the YAML builder from the manifest under its `repo_root` argument (`build_threat_model_yaml.py`, `--repo-root` or `.skill-config.json`) and persist it as `meta.project_name`; the renderer never derives it from the output directory. No producer writes `meta.repository_root` today, so the renderer cannot find the repository itself. The readers of `meta.project_name` already exist (`figure1_dfd.py:_project_name`, `compose_threat_model.py:_figure1_display_data`); only the writer is missing. Without a manifest, fall back to the role noun alone. Verified: a copy outside `<repo>/docs/security` renders "juice-shop2 User"; with the manifest beside it, "Juice Shop User".
+**M6.** Resolve the display name once in the YAML builder from the manifest under its `repo_root` argument (`model/build_threat_model_yaml.py`, `--repo-root` or `.skill-config.json`) and persist it as `meta.project_name`; the renderer never derives it from the output directory. No producer writes `meta.repository_root` today, so the renderer cannot find the repository itself. The readers of `meta.project_name` already exist (`renderers/figure1_dfd.py:_project_name`, `renderers/compose_threat_model.py:_figure1_display_data`); only the writer is missing. Without a manifest, fall back to the role noun alone. Verified: a copy outside `<repo>/docs/security` renders "juice-shop2 User"; with the manifest beside it, "Juice Shop User".
 
 ## 8. Decision edits
 

@@ -1,30 +1,13 @@
-"""Unit tests for scripts/_atomic_io.py — crash-safe file writes."""
+"""Unit tests for scripts/shared/_atomic_io.py — crash-safe file writes."""
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
-import sys
 from pathlib import Path
 
 import pytest
-
-REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "_atomic_io.py"
-
-
-def _load():
-    spec = importlib.util.spec_from_file_location("_atomic_io", SCRIPT_PATH)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["_atomic_io"] = module
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
-
-
-atomic_io = _load()
-
+import shared._atomic_io as atomic_io
 
 # ---------------------------------------------------------------------------
 # Baseline behaviour

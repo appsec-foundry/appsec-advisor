@@ -1,4 +1,4 @@
-"""Tests for scripts/publish_threat_model.py."""
+"""Tests for scripts/model/publish_threat_model.py."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-import publish_threat_model as ptm
+import model.publish_threat_model as ptm
 
 # ---------------------------------------------------------------------------
 # Secret scanning
@@ -539,7 +539,7 @@ class TestPreflightScansEveryPublishableFile:
 
 
 def test_support_drafts_and_reproductions_are_never_published():
-    from publish_threat_model import NEVER_PUBLISH
+    from model.publish_threat_model import NEVER_PUBLISH
 
     assert ".plugin-issue-*.json" in NEVER_PUBLISH
     assert ".plugin-issue-repro/" in NEVER_PUBLISH

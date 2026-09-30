@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-import build_stride_dispatch_manifest as manifest  # noqa: E402
-import finalize_component_inventory as finalizer  # noqa: E402
+import model.finalize_component_inventory as finalizer  # noqa: E402
+import orchestrator.build_stride_dispatch_manifest as manifest  # noqa: E402
 
 PLUGIN_ROOT = Path(__file__).parent.parent
 

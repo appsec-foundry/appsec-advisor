@@ -1,5 +1,5 @@
 """
-Tests for validate_intermediate.py — JSON schema validation of appsec-advisor
+Tests for validators/validate_intermediate.py — JSON schema validation of appsec-advisor
 intermediate files (.stride-*.json). The dep_scan validator and its fixtures
 were removed in 2026-05 alongside the in-tree SCA producer.
 """
@@ -15,7 +15,7 @@ import pytest
 # Resolve the module under test without installing the package
 PLUGIN_SCRIPTS = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(PLUGIN_SCRIPTS))
-from validate_intermediate import validate_stride  # noqa: E402
+from validators.validate_intermediate import validate_stride  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -39,7 +39,7 @@ def stride_without(field: str) -> dict:
 # ===========================================================================
 # validate_dep_scan tests removed 2026-05 — the in-tree SCA producer and its
 # schema were removed. Supply-chain posture is now produced by
-# emit_sca_practice.py / emit_known_bad_libs.py / emit_dep_update_activity.py
+# model/emit_sca_practice.py / model/emit_known_bad_libs.py / model/emit_dep_update_activity.py
 # (Phase 10); their sidecars follow simpler shapes covered by their own tests.
 # ===========================================================================
 
@@ -157,7 +157,7 @@ class TestValidStride:
 # CLI interface
 # ===========================================================================
 
-VALIDATE_CLI = PLUGIN_SCRIPTS / "validate_intermediate.py"
+VALIDATE_CLI = PLUGIN_SCRIPTS / "validators/validate_intermediate.py"
 
 
 class TestCLI:

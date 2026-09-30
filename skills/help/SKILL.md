@@ -23,7 +23,7 @@ Without arguments, print the *Quick start* below. When the arguments contain `--
 Print what is actually in effect, not what the plugin could do elsewhere. Read the state from one read-only call before printing:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/appsec_status.py" --repo-root <repo> --json
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/appsec_status.py" --repo-root <repo> --json
 ```
 
 Adjust the *Quick start* with it:

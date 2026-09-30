@@ -1,4 +1,4 @@
-"""Unit tests for scripts/check_state.py — assessment run-state classifier."""
+"""Unit tests for scripts/runtime/check_state.py — assessment run-state classifier."""
 
 from __future__ import annotations
 
@@ -11,13 +11,13 @@ import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "check_state.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "runtime/check_state.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("check_state", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("runtime.check_state", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["check_state"] = module
+    sys.modules["runtime.check_state"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
@@ -121,7 +121,7 @@ class TestClassifyStale:
 
     def test_old_mtime_live_pid_is_still_stale(self, tmp_path):
         # Even when the PID is alive, an mtime older than STALE_SECONDS is
-        # treated as stale — matches the pre-existing acquire_lock.py rule.
+        # treated as stale — matches the pre-existing runtime/acquire_lock.py rule.
         _write_lock(
             tmp_path,
             pid=os.getpid(),

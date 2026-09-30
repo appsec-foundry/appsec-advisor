@@ -1,4 +1,4 @@
-"""Tests for scripts/_business_relevance.py."""
+"""Tests for scripts/renderers/_business_relevance.py."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-import _business_relevance as br  # noqa: E402
+import renderers._business_relevance as br  # noqa: E402
 
 
 def _model(**trace) -> dict:
@@ -79,7 +79,7 @@ def test_note_names_at_most_two_assets_and_strips_markup():
 
 @pytest.mark.parametrize("status", ["absent", "skipped", "not_applied"])
 def test_verdict_does_not_promote_unused_context_to_no_harm(status):
-    from _business_relevance import verdict_context_note
+    from renderers._business_relevance import verdict_context_note
 
     assert (
         verdict_context_note(
@@ -96,7 +96,7 @@ def test_verdict_does_not_promote_unused_context_to_no_harm(status):
 
 
 def test_verdict_no_harm_requires_a_current_component_and_explicit_boolean():
-    from _business_relevance import verdict_context_note
+    from renderers._business_relevance import verdict_context_note
 
     for row in [
         {"component_id": "stale-component", "impact_is_material": False},

@@ -10,7 +10,7 @@ import pytest
 from jsonschema import Draft202012Validator
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-import validate_intermediate  # noqa: E402
+import validators.validate_intermediate as validate_intermediate  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = ROOT / "schemas" / "recon-signals.schema.json"

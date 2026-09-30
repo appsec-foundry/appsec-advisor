@@ -1,11 +1,11 @@
-"""Unit tests for scripts/_manifest_readers.py — polyglot infobox readers."""
+"""Unit tests for scripts/shared/_manifest_readers.py — polyglot infobox readers."""
 
 from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
 
-import _manifest_readers as R
+import shared._manifest_readers as R
 
 
 def ctx_for(repo_root: Path) -> SimpleNamespace:

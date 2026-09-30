@@ -167,7 +167,7 @@
         "authn_handler_signal": {
           "type": "string",
           "enum": ["verified", "decode_only", "none", "unresolved"],
-          "description": "What the resolved handler chain (registration arguments and mounted middlewares) proves: a checked credential with a rejecting branch, a token decoded without signature verification, no credential read in a fully resolved chain, or unresolved. Absent for stacks handler_resolver.py does not cover."
+          "description": "What the resolved handler chain (registration arguments and mounted middlewares) proves: a checked credential with a rejecting branch, a token decoded without signature verification, no credential read in a fully resolved chain, or unresolved. Absent for stacks analyzers/handler_resolver.py does not cover."
         },
         "authn_handler_scheme": {
           "type": "string",

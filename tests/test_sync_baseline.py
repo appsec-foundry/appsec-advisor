@@ -1,4 +1,4 @@
-"""Tests for scripts/sync_baseline.py.
+"""Tests for scripts/baseline/sync_baseline.py.
 
 Three properties carry the weight.
 
@@ -28,12 +28,12 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "sync_baseline.py"
+SCRIPT = REPO_ROOT / "scripts" / "baseline/sync_baseline.py"
 sys.path.insert(0, str(SCRIPT.parent))
 
-import baseline_check as bc  # noqa: E402
-import install_baseline as ib  # noqa: E402
-import sync_baseline as sb  # noqa: E402
+import baseline.baseline_check as bc  # noqa: E402
+import baseline.install_baseline as ib  # noqa: E402
+import baseline.sync_baseline as sb  # noqa: E402
 
 PUBLISHED = "# Test Baseline\n\n`baseline-id: test-1.0`\n\n- Do the secure thing.\n"
 VENDORED = "# Test Baseline\n\n`baseline-id: test-1.0`\n\n- Do the older thing.\n"
@@ -445,8 +445,8 @@ def test_shipped_readme_row_matches_the_configured_id():
 def test_modular_sync_moves_verified_bundle_and_id_together(tmp_path, monkeypatch):
     import shutil
 
-    import baseline_modular as bm
-    import baseline_release as br
+    import baseline.baseline_modular as bm
+    import baseline.baseline_release as br
 
     root = tmp_path / "plugin"
     root.mkdir()

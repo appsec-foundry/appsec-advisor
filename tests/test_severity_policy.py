@@ -4,13 +4,12 @@ import json
 from copy import deepcopy
 from types import SimpleNamespace
 
-import _severity_policy as policy
 import pytest
+import shared._severity_policy as policy
 import yaml
-from _severity_rollup import register_severity, risk_distribution_counts
-from build_threat_model_yaml import build_threats
-from export_sarif import _build_rule
-from triage_compute_ranking import (
+from exporters.export_sarif import _build_rule
+from model.build_threat_model_yaml import build_threats
+from model.triage_compute_ranking import (
     _bootstrap_yaml_from_merged,
     _compute_effective,
     _detect_verified_abuse_chains,
@@ -18,7 +17,12 @@ from triage_compute_ranking import (
     compute_ranking,
     write_outputs,
 )
-from validate_intermediate import _check_cvss_eligibility, validate_threat_model_output, validate_threats_merged
+from renderers._severity_rollup import register_severity, risk_distribution_counts
+from validators.validate_intermediate import (
+    _check_cvss_eligibility,
+    validate_threat_model_output,
+    validate_threats_merged,
+)
 
 
 @pytest.mark.parametrize("cwe, expected", [("CWE-778", "High"), ("CWE-548", "High"), ("CWE-601", "Medium")])
@@ -254,7 +258,7 @@ def test_category_keeps_the_highest_scored_finding_identity(tmp_path, id_key):
 
 @pytest.mark.parametrize("filename", ["src/events.py", "handlers/trace.go"])
 def test_merge_caps_before_capturing_instance_severity(tmp_path, filename):
-    import merge_threats
+    import model.merge_threats as merge_threats
 
     threats = [
         {

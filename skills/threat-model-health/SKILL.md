@@ -30,7 +30,7 @@ CHECKS
                     Verdict: FRESH | STALE | NO_MODEL | UNKNOWN
   2. Artifacts      Are intermediate artifacts present that should be cleaned?
                     Tier 1: run-state orphans → /appsec-advisor:clean-run-state
-                    Tier 2: post-run intermediates → runtime_cleanup.py --stage all
+                    Tier 2: post-run intermediates → runtime/runtime_cleanup.py --stage all
                     Special: needs_stage2 (Stage 1 done, Stage 2 never dispatched)
 
 EXIT CODES
@@ -107,7 +107,7 @@ fi
 ```bash
 ARGS="--repo-root $REPO_ROOT --output-dir $OUTPUT_DIR"
 [ "$JSON_MODE" = "true" ] && ARGS="$ARGS --json"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/threat_model_health.py" $ARGS
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/threat_model_health.py" $ARGS
 EXIT=$?
 ```
 

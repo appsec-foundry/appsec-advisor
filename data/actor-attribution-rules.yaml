@@ -1,7 +1,7 @@
 # Finding attribution rules for the access groups of data/posture-actor-labels.yaml.
 #
 # A STRIDE finding names the actors that can exploit it (`actor_ids`). After the
-# merge, scripts/actor_attribution.py applies these rules in order:
+# merge, scripts/analyzers/actor_attribution.py applies these rules in order:
 #
 # 0. A finding whose CWE is in `no_attacker_cwes` has no attacker: every
 #    attribution is removed and rules 2 and 3 add none.

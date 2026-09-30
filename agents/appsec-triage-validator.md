@@ -9,7 +9,7 @@ maxTurns: 20
 INTERNAL AGENT — do not invoke directly. Dispatched by the orchestration
 controller after scan synthesis and before rendering.
 
-**Steps 1–5 are handled by `scripts/triage_validate_ratings.py` (deterministic Python, runs before this agent is dispatched). This agent performs only Step 6 (breach-distance inference, compound-chain detection, effective-severity computation, ranking).**
+**Steps 1–5 are handled by `scripts/validators/triage_validate_ratings.py` (deterministic Python, runs before this agent is dispatched). This agent performs only Step 6 (breach-distance inference, compound-chain detection, effective-severity computation, ranking).**
 
 ## Model identification
 
@@ -30,7 +30,7 @@ Every print statement uses the prefix `[triage]`. Print each line immediately be
 [triage] ▶ Starting triage ranking  (model: <MODEL_ID>)
   ↳ Repo: <REPO_ROOT>
   ↳ Threats file: <OUTPUT_DIR>/.threats-merged.json
-  ↳ Pre-flight flags already written by triage_validate_ratings.py
+  ↳ Pre-flight flags already written by validators/triage_validate_ratings.py
 ```
 
 ## Inputs (provided in the invocation prompt)
@@ -41,7 +41,7 @@ Every print statement uses the prefix `[triage]`. Print each line immediately be
 
 ## Preservation constraint — CRITICAL
 
-This agent reviews rating consistency. Deterministic producers enforce individual-risk ceilings through `scripts/_severity_policy.py` and retain a corrected analyst rating in `risk_before_policy`. Only the deterministic ranking owner derives `effective_severity` from verified chains, exposure and policy caps. The agent must not bypass those ceilings or restore a pre-policy rating.
+This agent reviews rating consistency. Deterministic producers enforce individual-risk ceilings through `scripts/shared/_severity_policy.py` and retain a corrected analyst rating in `risk_before_policy`. Only the deterministic ranking owner derives `effective_severity` from verified chains, exposure and policy caps. The agent must not bypass those ceilings or restore a pre-policy rating.
 
 **MUST NOT:**
 
@@ -69,7 +69,7 @@ This agent reviews rating consistency. Deterministic producers enforce individua
 
 ## Task — Step 6 only (Ranking & Effective Severity)
 
-After startup logging, perform **only Step 6**. Steps 1–5 (cross-component consistency, severity plausibility, priority validation, rating completeness, CVSS scope) and Step 5b (`business_impact` alignment) have already been executed by `scripts/triage_validate_ratings.py` before this agent was dispatched. Their flags are already written into `.triage-flags.json`. Carry those flags through **verbatim** — every `type` value is a schema enum member and is spelled with `_`, never `-`.
+After startup logging, perform **only Step 6**. Steps 1–5 (cross-component consistency, severity plausibility, priority validation, rating completeness, CVSS scope) and Step 5b (`business_impact` alignment) have already been executed by `scripts/validators/triage_validate_ratings.py` before this agent was dispatched. Their flags are already written into `.triage-flags.json`. Carry those flags through **verbatim** — every `type` value is a schema enum member and is spelled with `_`, never `-`.
 
 Read `.triage-flags.json` once at startup to load the existing flags, then proceed to Step 6.
 
@@ -79,9 +79,9 @@ Step 6 is **mandatory when `analysis_version ≥ 2`** and skipped silently for l
 
 ### Step 6 fast-path — deterministic Python implementation
 
-When the environment variable `APPSEC_TRIAGE_DETERMINISTIC=1` is set, Step 6 is fully delegated to `scripts/triage_compute_ranking.py`. The script implements 6a–6g identically to the spec below — same data files, same scoring formula, same multi-view ranking.
+When the environment variable `APPSEC_TRIAGE_DETERMINISTIC=1` is set, Step 6 is fully delegated to `scripts/model/triage_compute_ranking.py`. The script implements 6a–6g identically to the spec below — same data files, same scoring formula, same multi-view ranking.
 
-The controller runs `triage_compute_ranking.py --force` before dispatching this agent and dispatches it only when that run failed. The ranking you write is the one downstream stages consume. Run the deterministic invocation only if the flag is set in your environment.
+The controller runs `model/triage_compute_ranking.py --force` before dispatching this agent and dispatches it only when that run failed. The ranking you write is the one downstream stages consume. Run the deterministic invocation only if the flag is set in your environment.
 
 **Mandatory invocation when the flag is set:**
 
@@ -89,7 +89,7 @@ The controller runs `triage_compute_ranking.py --force` before dispatching this 
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 REPO_ROOT="<REPO_ROOT from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-APPSEC_TRIAGE_DETERMINISTIC=1 python3 "$CLAUDE_PLUGIN_ROOT/scripts/triage_compute_ranking.py" \
+APPSEC_TRIAGE_DETERMINISTIC=1 python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/triage_compute_ranking.py" \
     "$OUTPUT_DIR" --repo-root "$REPO_ROOT" --bootstrap-yaml 2>&1
 RANK_EXIT=$?
 ```
@@ -128,9 +128,9 @@ CWE and title matches in `data/compound-chain-patterns.yaml` identify candidates
 
 #### 6c — Policy-constrained severity
 
-`scripts/_severity_policy.py` owns individual-risk ceilings from `data/severity-caps.yaml` and the per-entry `max_severity_individual` in `data/critical-criteria.yaml`. Merge and YAML construction apply those ceilings before downstream registers and exports. `risk_before_policy` retains the original analyst rating only when corrected; it is never a ranking input. Artifact validation rejects an over-cap risk rather than repairing it.
+`scripts/shared/_severity_policy.py` owns individual-risk ceilings from `data/severity-caps.yaml` and the per-entry `max_severity_individual` in `data/critical-criteria.yaml`. Merge and YAML construction apply those ceilings before downstream registers and exports. `risk_before_policy` retains the original analyst rating only when corrected; it is never a ranking input. Artifact validation rejects an over-cap risk rather than repairing it.
 
-`scripts/triage_compute_ranking.py` owns effective severity. It applies verified chain roles, evidence-backed external ingress, Critical criteria, and the final CWE ceiling. A Critical exception requires a keystone in a verified Critical chain, not merely a keystone role in another chain. `refuted` and `ambiguous` evidence never earns chain elevation. Policy ceilings take precedence over the input rating. `conditional_critical` remains advisory until its context predicates have deterministic evidence contracts.
+`scripts/model/triage_compute_ranking.py` owns effective severity. It applies verified chain roles, evidence-backed external ingress, Critical criteria, and the final CWE ceiling. A Critical exception requires a keystone in a verified Critical chain, not merely a keystone role in another chain. `refuted` and `ambiguous` evidence never earns chain elevation. Policy ceilings take precedence over the input rating. `conditional_critical` remains advisory until its context predicates have deterministic evidence contracts.
 
 Only validated `boundary_refs[]` to resolved, confirmed `external → origin_component_id` crossings can raise effective severity by one band, capped at High. Component adjacency, inferred or outbound crossings, and refuted or ambiguous finding evidence grant no elevation. Multiple valid crossings still cause one step.
 
@@ -309,7 +309,7 @@ The orchestrator (Phase 11) MUST read from the view that matches the section bei
 
 - **Use a single `python3 -c` Bash call** that loads `threat-model.yaml`, the two data files, applies 6a–6f, and writes both the updated yaml (with additive fields on findings and categories) AND the `.triage-flags.json` with the new `ranking` block. Do not hand-write this — the logic is deterministic and must be reproducible across re-runs.
 - The ranking is **advisory**: Phase 11 reads it to drive rendering (Top Threats table, Section 8.A sort, Prioritized Mitigations order), but individual severity fields on findings remain the policy-constrained `risk` rating.
-- The scoring implementation in `scripts/triage_compute_ranking.py` owns weights and tie-breaking. The formulas here describe its terms; corrections to their implementation must retain regression evidence.
+- The scoring implementation in `scripts/model/triage_compute_ranking.py` owns weights and tie-breaking. The formulas here describe its terms; corrections to their implementation must retain regression evidence.
 
 **Print when done:** `[triage]   ↳ Ranking: <n> categories ranked, <n> findings ranked, <n> compound chains detected (<n> members elevated to effective Critical)`
 
@@ -383,8 +383,8 @@ After the final write and before the console summary, use one Bash tool call:
 set -e
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" triage_flags "$OUTPUT_DIR/.triage-flags.json"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" threats_merged "$OUTPUT_DIR/.threats-merged.json"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_intermediate.py" triage_flags "$OUTPUT_DIR/.triage-flags.json"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_intermediate.py" threats_merged "$OUTPUT_DIR/.threats-merged.json"
 ```
 
 Do not print completion before both commands exit 0. Correct only the ranking
@@ -396,9 +396,9 @@ command fails.
 **Print when done:**
 ```
 [triage] ✓ Ranking complete — <n> categories ranked, <n> findings ranked, <n> compound chains detected
-  ↳ Pre-flight flags (Steps 1–5): see .triage-flags.json (written by triage_validate_ratings.py)
+  ↳ Pre-flight flags (Steps 1–5): see .triage-flags.json (written by validators/triage_validate_ratings.py)
 ```
 
 ## Depth-Dependent Behavior
 
-Steps 1–5 are controlled by the `--depth` flag passed to `scripts/triage_validate_ratings.py` (called before this agent). This agent always runs Step 6 at full depth regardless of `ASSESSMENT_DEPTH`.
+Steps 1–5 are controlled by the `--depth` flag passed to `scripts/validators/triage_validate_ratings.py` (called before this agent). This agent always runs Step 6 at full depth regardless of `ASSESSMENT_DEPTH`.

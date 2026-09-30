@@ -1,4 +1,4 @@
-"""Additive coverage tests for scripts/compose_threat_model.py.
+"""Additive coverage tests for scripts/renderers/compose_threat_model.py.
 
 Focus: stable pure-function / string-rendering helpers. Avoids the
 brand-new --slug/stamp code paths (concurrently modified). All tests are
@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT_PATH = REPO_ROOT / "scripts" / "compose_threat_model.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "renderers/compose_threat_model.py"
 
 
 def _load_module(name: str, path: Path):
@@ -25,7 +25,7 @@ def _load_module(name: str, path: Path):
     return mod
 
 
-compose = _load_module("compose_threat_model", SCRIPT_PATH)
+compose = _load_module("renderers.compose_threat_model", SCRIPT_PATH)
 
 
 # ---------------------------------------------------------------------------

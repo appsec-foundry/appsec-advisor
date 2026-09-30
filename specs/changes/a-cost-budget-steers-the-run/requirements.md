@@ -18,7 +18,7 @@ Source: operator request, 2026-09-05; measured cost shape in `proposal.md`.
 
 ## BUDGET-003 Coverage is not a budget lever, scope is
 
-Source: `specs/requirements.md` → `REQ-FLW-002`, `REQ-FLW-003`; `scripts/stride_dispatch_waves.py` → `claim`; `scripts/build_stride_dispatch_manifest.py` → `select_stride_components`.
+Source: `specs/requirements.md` → `REQ-FLW-002`, `REQ-FLW-003`; `scripts/orchestrator/stride_dispatch_waves.py` → `claim`; `scripts/orchestrator/build_stride_dispatch_manifest.py` → `select_stride_components`.
 
 - Every analyzed component keeps complete STRIDE coverage in every depth mode.
 - A component whose output is incomplete stays a failure; a budget never accepts it.
@@ -37,14 +37,14 @@ Source: operator request, 2026-09-05.
 
 ## BUDGET-004 A budget that cannot be met is refused before it is spent
 
-Source: operator request, 2026-09-05; `scripts/orchestration_controller.py` → `_unsupported_runtime_reason`.
+Source: operator request, 2026-09-05; `scripts/orchestrator/orchestration_controller.py` → `_unsupported_runtime_reason`.
 
 - A projected cost above the budget stops the run at admission, before any output directory, run state, or dispatch exists.
 - The refusal names the shortfall and what would fit.
 
 ## BUDGET-005 Cost figures state what they are
 
-Source: `docs/internal/cost-model.md`; `scripts/cost_running_total.py` → `cost_is_floor`.
+Source: `docs/internal/cost-model.md`; `scripts/runtime/cost_running_total.py` → `cost_is_floor`.
 
 - Under subscription billing the figures are price-table valuations of token counts, not money billed.
 - A run with unmetered agents reports its total as a lower bound, and a budget decision taken on a lower bound says so.

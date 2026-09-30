@@ -6,9 +6,9 @@ import json
 import shutil
 from pathlib import Path
 
-import baseline_state
-import compose_threat_model as compose
-import plugin_meta
+import baseline.baseline_state as baseline_state
+import renderers.compose_threat_model as compose
+import runtime.plugin_meta as plugin_meta
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]

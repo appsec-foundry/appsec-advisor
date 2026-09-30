@@ -1,4 +1,4 @@
-"""Tests for scripts/figure_details.py and its §2 composition (Figure 3 deployment, the §2.3 controls table).
+"""Tests for scripts/renderers/figure_details.py and its §2 composition (Figure 3 deployment, the §2.3 controls table).
 
 A neutral model and repository: an edge gateway, an orders service with an
 in-process billing module, an admin console that publishes its own port, a
@@ -15,13 +15,13 @@ import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-import compose_threat_model as compose
-import deployment_inventory as DI
-import figure_details as FD
+import analyzers.deployment_inventory as DI
 import pytest
-import qa_checks
+import renderers.compose_threat_model as compose
+import renderers.figure_details as FD
+import validators.qa_checks as qa_checks
 import yaml
-from pregenerate_fragments import gen_architecture_diagrams
+from renderers.pregenerate_fragments import gen_architecture_diagrams
 
 CONTRACT = Path(__file__).resolve().parents[1] / "data" / "sections-contract.yaml"
 

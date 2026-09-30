@@ -1,6 +1,6 @@
-"""Unit tests for scripts/validate_intermediate.py.
+"""Unit tests for scripts/validators/validate_intermediate.py.
 
-validate_intermediate.py is the schema + invariant gate for all intermediate
+validators/validate_intermediate.py is the schema + invariant gate for all intermediate
 JSON artifacts (stride, threats_merged, triage_flags, …). These tests
 exercise the public API and CLI contract directly. The dep_scan validator
 was removed in 2026-05 alongside the in-tree SCA producer.
@@ -17,7 +17,7 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "validate_intermediate.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "validators/validate_intermediate.py"
 SCHEMAS_DIR = REPO_ROOT / "schemas"
 
 
@@ -29,7 +29,7 @@ def _load_module(name: str, path: Path):
     return module
 
 
-vi = _load_module("validate_intermediate", SCRIPT_PATH)
+vi = _load_module("validators.validate_intermediate", SCRIPT_PATH)
 
 
 @pytest.mark.parametrize("scope", ["valid", "unknown-component", "unknown-asset", "skipped", "wrong-field"])
@@ -69,7 +69,7 @@ def test_business_answer_trace_requires_matching_coverage_and_asset(scope):
 def test_analyst_gate_rejects_an_answer_without_source_provenance(tmp_path, monkeypatch, skip_context):
     import json
 
-    import load_business_context
+    import contexts.load_business_context as load_business_context
 
     (tmp_path / ".components.json").write_text(json.dumps({"components": [{"id": "service", "paths": ["src"]}]}))
     overlay = {
@@ -723,7 +723,7 @@ def _model_two_components(threat_component: str, evidence_file: str) -> dict:
 
 
 def test_glob_advisory_suppressed_for_single_sibling_match():
-    """The case reclassify_components.py self-heals (evidence matches exactly
+    """The case model/reclassify_components.py self-heals (evidence matches exactly
     one OTHER component) must NOT emit an advisory — it is pure noise."""
     data = _model_two_components("data-persistence", "routes/search.ts")
     advisories = vi._check_component_path_glob_consistency(data)
@@ -1747,7 +1747,7 @@ def test_main_threat_model_output_with_advisory(tmp_path):
 
 
 def _main_exit(monkeypatch, argv):
-    monkeypatch.setattr(vi.sys, "argv", ["validate_intermediate.py", *argv])
+    monkeypatch.setattr(vi.sys, "argv", ["validators/validate_intermediate.py", *argv])
     with pytest.raises(SystemExit) as ei:
         vi.main()
     code = ei.value.code
@@ -1812,14 +1812,14 @@ def test_main_inproc_invalid_stride_prints_errors(monkeypatch, tmp_path, capsys)
 
 def test_main_inproc_invalid_threats_merged_names_its_producer(monkeypatch, tmp_path, capsys):
     """`.threats-merged.json` is deterministic Python output, so a rejected
-    artifact must point at `merge_threats.py`. Without it a reader blames the
+    artifact must point at `model/merge_threats.py`. Without it a reader blames the
     analysis agents and hand-edits the file (juice-shop thorough abort)."""
     p = tmp_path / ".threats-merged.json"
     p.write_text(_json.dumps({"threats": [], "weaknesses": [{"id": "W-001", "mechanism_id": "bad_id"}]}))
     assert _main_exit(monkeypatch, ["threats_merged", str(p)]) == 1
     out = capsys.readouterr().out
     assert "INVALID:" in out
-    assert "merge_threats.py" in out
+    assert "model/merge_threats.py" in out
 
 
 def test_main_inproc_stride_failure_does_not_claim_a_python_producer(monkeypatch, tmp_path, capsys):

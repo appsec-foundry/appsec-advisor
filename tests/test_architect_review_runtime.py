@@ -3,12 +3,12 @@
 import json
 from copy import deepcopy
 
-import architect_review_runtime as runtime
+import analyzers.architect_review_runtime as runtime
 import pytest
 import yaml
-from architect_review import ReviewError
-from build_threat_model_yaml import build_mitigations, build_threats
-from hydrate_mitigation_details import hydrate
+from analyzers.architect_review import ReviewError
+from model.build_threat_model_yaml import build_mitigations, build_threats
+from model.hydrate_mitigation_details import hydrate
 
 from tests.test_architect_review import decision, finding, merged
 
@@ -291,7 +291,7 @@ def test_non_object_yaml_fails_without_a_stale_success(tmp_path):
 
 
 def test_controller_dispatches_review_then_applies_corrections_before_triage(tmp_path, monkeypatch):
-    import orchestration_controller as controller
+    import orchestrator.orchestration_controller as controller
 
     cfg, _, calls = setup_run(tmp_path)
     cfg["output_dir"] = str(tmp_path)
@@ -299,7 +299,7 @@ def test_controller_dispatches_review_then_applies_corrections_before_triage(tmp
 
     def script(name, args, **kwargs):
         observed.append(name)
-        if name == "triage_validate_ratings.py":
+        if name == "validators/triage_validate_ratings.py":
             assert json.loads((tmp_path / ".threats-merged.json").read_text())["threats"][0]["risk"] == "High"
             assert len(calls) == 1
 
@@ -310,7 +310,7 @@ def test_controller_dispatches_review_then_applies_corrections_before_triage(tmp
     action = controller._context_v2_after_evidence(tmp_path, cfg)
     assert action["action"] == "dispatch_parallel"
     assert action["next_boundary"] == "context-v2-post-architect-review"
-    assert "triage_validate_ratings.py" not in observed
+    assert "validators/triage_validate_ratings.py" not in observed
     job = action["dispatch_jobs"][0]
     assert job["semantic_role"] == "architect_reviewer"
     assert job["agent_type"] == "appsec-advisor:appsec-architect-reviewer"
@@ -327,13 +327,13 @@ def test_controller_dispatches_review_then_applies_corrections_before_triage(tmp
         calls=calls,
     )
     assert controller._context_v2_architect_review(tmp_path, cfg) == {"action": "synthesis"}
-    assert observed.index("reclassify_components.py") < observed.index("triage_validate_ratings.py")
+    assert observed.index("model/reclassify_components.py") < observed.index("validators/triage_validate_ratings.py")
     assert runtime.load_review(tmp_path)["application"]["accepted"]
     assert "ARCHITECT_REVIEW_COMPLETE" in events and "ORCHESTRATION_GATE_WARN" not in events
 
 
 def test_controller_warns_when_the_review_decided_nothing(tmp_path, monkeypatch):
-    import orchestration_controller as controller
+    import orchestrator.orchestration_controller as controller
 
     cfg, _, _ = setup_run(tmp_path)
     cfg["output_dir"] = str(tmp_path)
@@ -347,7 +347,7 @@ def test_controller_warns_when_the_review_decided_nothing(tmp_path, monkeypatch)
 
 
 def test_controller_skips_dispatch_when_review_is_disabled(tmp_path, monkeypatch):
-    import orchestration_controller as controller
+    import orchestrator.orchestration_controller as controller
 
     cfg, _, _ = setup_run(tmp_path)
     cfg.update(architect_review=False, output_dir=str(tmp_path))
@@ -375,7 +375,7 @@ def test_concurrent_boundary_cannot_spend_or_consume_inflight_work(tmp_path, mon
 
 
 def test_scoring_opt_out_is_preserved_through_context_application_and_replay(tmp_path, monkeypatch):
-    from architect_review import _canonical_valid
+    from analyzers.architect_review import _canonical_valid
 
     cfg, source, _ = setup_run(tmp_path)
     source["threats"][0]["source"] = "known-vuln"
@@ -388,7 +388,7 @@ def test_scoring_opt_out_is_preserved_through_context_application_and_replay(tmp
     result = review(tmp_path, cfg)
     assert result["application"]["accepted"]
     assert runtime.load_review(tmp_path) == result
-    import runtime_cleanup
+    import runtime.runtime_cleanup as runtime_cleanup
 
     runtime_cleanup.run_cleanup(tmp_path, "all", keep_runtime_files=False, force=True)
     assert not (tmp_path / ".skill-config.json").exists()
@@ -414,8 +414,8 @@ def test_scoring_profile_change_during_review_blocks_publication(tmp_path):
 
 
 def test_required_review_is_preserved_by_cleanup_and_removed_by_fresh_preflight(tmp_path, monkeypatch):
-    import orchestration_controller as controller
-    import runtime_cleanup
+    import orchestrator.orchestration_controller as controller
+    import runtime.runtime_cleanup as runtime_cleanup
 
     cfg, _, _ = setup_run(tmp_path)
     review(tmp_path, cfg)
@@ -431,8 +431,8 @@ def test_required_review_is_preserved_by_cleanup_and_removed_by_fresh_preflight(
 def test_real_yaml_builder_publishes_schema_valid_reviewed_ratings_and_fixes(tmp_path, monkeypatch):
     import sys
 
-    import build_threat_model_yaml as builder
-    from validate_intermediate import validate_threat_model_output
+    import model.build_threat_model_yaml as builder
+    from validators.validate_intermediate import validate_threat_model_output
 
     cfg, source, _ = setup_run(tmp_path)
     source["threats"][0]["scenario"] = (
@@ -456,7 +456,7 @@ def test_real_yaml_builder_publishes_schema_valid_reviewed_ratings_and_fixes(tmp
         )
     )
     review(tmp_path, cfg)
-    monkeypatch.setattr(sys, "argv", ["build_threat_model_yaml.py", str(tmp_path), "--repo-root", str(tmp_path)])
+    monkeypatch.setattr(sys, "argv", ["model/build_threat_model_yaml.py", str(tmp_path), "--repo-root", str(tmp_path)])
     assert builder.main() == 0
     model = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
     valid, errors = validate_threat_model_output(model)
@@ -467,7 +467,7 @@ def test_real_yaml_builder_publishes_schema_valid_reviewed_ratings_and_fixes(tmp
 
 
 def test_completion_reports_assessment_and_mitigation_corrections_independently(tmp_path, monkeypatch):
-    from render_completion_summary import _summary_architect
+    from renderers.render_completion_summary import _summary_architect
 
     cfg, _, _ = setup_run(tmp_path)
     result = review(tmp_path, cfg)
@@ -488,7 +488,7 @@ def test_completion_reports_assessment_and_mitigation_corrections_independently(
 
 
 def test_generic_mitigation_titles_leave_an_accepted_fix_title_alone(tmp_path):
-    import emit_general_mitigation_titles as titles
+    import model.emit_general_mitigation_titles as titles
 
     cfg, _, _ = setup_run(tmp_path)
     result = review(tmp_path, cfg)
@@ -510,7 +510,7 @@ def _unsampled_run(tmp_path):
 
 
 def test_evidence_floor_may_fill_the_verdict_of_an_unsampled_reviewed_finding(tmp_path):
-    from validate_evidence_lines import persist_to_merged
+    from validators.validate_evidence_lines import persist_to_merged
 
     _, model = _unsampled_run(tmp_path)
     model["threats"][0]["evidence_check"] = "verified"

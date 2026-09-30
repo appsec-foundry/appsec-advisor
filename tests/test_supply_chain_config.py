@@ -1,6 +1,6 @@
 """Configuration parsing preserves scope and excludes non-executable evidence."""
 
-from _supply_chain_config import ci_steps, renovate_configs
+from shared._supply_chain_config import ci_steps, renovate_configs
 
 
 def test_job_advisory_is_inherited_by_scanner():

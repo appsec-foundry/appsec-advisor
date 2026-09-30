@@ -13,12 +13,12 @@ a file.
 
 | Piece | Where |
 |---|---|
-| Business-context input file `docs/business-context.md`, first 200 lines, untrusted-fenced | `scripts/build_threat_modeling_context.py:381` (context-v2), `agents/appsec-context-resolver.md:220` (legacy) |
-| URL-sourced context over a POST endpoint, SSRF-guarded, 64 KiB cap, redirect re-validation | `build_threat_modeling_context.py:122` `_external_context`, config key `external_context.rest_url` |
-| URL policy incl. org-profile `policy.url_allowlist` | `scripts/_url_guard.py:123` `validate_target_url` |
-| Canonical secret scanner for ingested text | `scripts/secret_scan.py` (`load_org_context.py:70` is a weaker duplicate) |
-| Untrusted-data wrapper for org markdown | `scripts/load_org_context.py:57` |
-| Per-component projection of business context into STRIDE bundles, schema- and fingerprint-validated | `scripts/build_stride_evidence_bundles.py:625,673`, `schemas/stride-component-business-context.schema.json` |
+| Business-context input file `docs/business-context.md`, first 200 lines, untrusted-fenced | `scripts/contexts/build_threat_modeling_context.py:381` (context-v2), `agents/appsec-context-resolver.md:220` (legacy) |
+| URL-sourced context over a POST endpoint, SSRF-guarded, 64 KiB cap, redirect re-validation | `contexts/build_threat_modeling_context.py:122` `_external_context`, config key `external_context.rest_url` |
+| URL policy incl. org-profile `policy.url_allowlist` | `scripts/shared/_url_guard.py:123` `validate_target_url` |
+| Canonical secret scanner for ingested text | `scripts/validators/secret_scan.py` (`contexts/load_org_context.py:70` is a weaker duplicate) |
+| Untrusted-data wrapper for org markdown | `scripts/contexts/load_org_context.py:57` |
+| Per-component projection of business context into STRIDE bundles, schema- and fingerprint-validated | `scripts/contexts/build_stride_evidence_bundles.py:625,673`, `schemas/stride-component-business-context.schema.json` |
 | Pre-flight `AskUserQuestion` with a headless guard | `skills/create-threat-model/SKILL-impl.md:1025-1055` (session-model prompt) |
 | Opt-in write into a target-repo input file | `data/required-permissions.yaml:113` (`docs/known-threats.yaml`, review-threat-model) |
 | Documented contract for the file | `docs/threat-modeler.md:437` |
@@ -49,7 +49,7 @@ question.
 
 ## Write order matters
 
-`repository_fingerprint` (`build_stride_evidence_bundles.py:163`) hashes HEAD plus the
+`repository_fingerprint` (`contexts/build_stride_evidence_bundles.py:163`) hashes HEAD plus the
 bytes of every modified or untracked file, excluding only `OUTPUT_DIR`. Writing
 `docs/business-context.md` sits inside that hash. It must therefore be written before
 Stage 1 starts, i.e. in the same pre-flight window as the prompt. A write after a
@@ -100,26 +100,26 @@ context already gets:
 ## Headless parameter
 
 One flag, two forms, as requested — for example `--context <value>`, resolved
-deterministically in `resolve_config.py`: `http(s)://` prefix → URL, otherwise a file
+deterministically in `runtime/resolve_config.py`: `http(s)://` prefix → URL, otherwise a file
 path.
 
 Inline free text as a third form is possible but fragile in this pipeline:
 `run-headless.sh:610-623` assembles the skill invocation as a single prompt string
 (`PROMPT="$PROMPT --repo $REPO_PATH"`), and the skill layer parses its arguments out of
-that string before `resolve_config.py` sees them. Multi-line text, quotes and newlines
+that string before `runtime/resolve_config.py` sees them. Multi-line text, quotes and newlines
 do not survive that reliably. A file path covers the same use case without the quoting
 risk, which is why the recommendation is URL-or-path, and inline text only at the
 interactive prompt.
 
 The flag has to be threaded through `run-headless.sh` argument parsing, the prompt
-assembly, `resolve_config.py` (argparse, resolved JSON, conflict rules) and
-`orchestration_controller.py` if the value needs to reach a stage beyond pre-flight.
+assembly, `runtime/resolve_config.py` (argparse, resolved JSON, conflict rules) and
+`orchestrator/orchestration_controller.py` if the value needs to reach a stage beyond pre-flight.
 
 ## Incremental behaviour
 
 Changing the business context changes the analysis inputs, not the code. Today nothing
 maps a business-context change onto the incremental dirty set — the criteria in
-`docs/internal/decisions.md` and `scripts/baseline_state.py` key off source changes.
+`docs/internal/decisions.md` and `scripts/baseline/baseline_state.py` key off source changes.
 A refreshed context in an incremental run would therefore be picked up by the context
 producers but would not by itself re-open components whose code did not change. Whether
 that is acceptable, or whether a changed context hash should recommend a full run (the
@@ -132,9 +132,9 @@ take before implementing, not an implementation detail.
   headless guard, write step; possibly a lazy-loaded mode file to keep the prompt
   budget flat (`tests/test_context_prompt_budgets.py`).
 - `skills/create-threat-model/SKILL.md` — flag row.
-- `scripts/resolve_config.py` — `--context` parsing, form detection, resolved JSON key.
-- New `scripts/load_business_context.py` — fetch/validate/secret-scan/write, mirroring
-  `load_org_context.py`, with `tests/test_load_business_context.py`.
+- `scripts/runtime/resolve_config.py` — `--context` parsing, form detection, resolved JSON key.
+- New `scripts/contexts/load_business_context.py` — fetch/validate/secret-scan/write, mirroring
+  `contexts/load_org_context.py`, with `tests/test_load_business_context.py`.
 - `scripts/run-headless.sh` — flag parsing and prompt assembly.
 - `data/required-permissions.yaml` + `tests/test_check_permissions.py`.
 - `docs/threat-modeler.md` §Business context, `docs/internal/decisions.md` if the
@@ -150,8 +150,8 @@ output, or use the context for the current run only.
 Recommendation: one persistent location, `<repo>/docs/business-context.md`, written
 only on explicit confirmation. When the repo is not writable, or the user declines to
 persist, fall back to a transient `<output>/.business-context-input.md` that
-`build_threat_modeling_context.py` reads in addition to the repo file, and that
-`runtime_cleanup.py` removes as an always-cleanup artifact.
+`contexts/build_threat_modeling_context.py` reads in addition to the repo file, and that
+`runtime/runtime_cleanup.py` removes as an always-cleanup artifact.
 
 Reason: a second *persistent* location would become a second place the analysis loads
 context from, which is the one property this feature should not add. The transient

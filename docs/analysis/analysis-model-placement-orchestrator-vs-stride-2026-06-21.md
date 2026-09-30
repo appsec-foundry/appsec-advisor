@@ -239,7 +239,7 @@ already-reduced STRIDE depth) + explicit `--reasoning-model sonnet-economy` /
 
 ---
 
-## 7. Current behavior in the code (`scripts/resolve_config.py`)
+## 7. Current behavior in the code (`scripts/runtime/resolve_config.py`)
 
 - **Default `standard`/`thorough`** = `opus-cheap` (`resolve_reasoning_model`, ~line 498) →
   `MODEL_MATRIX["opus-cheap"]` = **stride: sonnet, triage: sonnet, merger: opus**.

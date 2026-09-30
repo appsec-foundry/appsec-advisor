@@ -1,4 +1,4 @@
-"""Property tests for compose_threat_model.py.
+"""Property tests for renderers/compose_threat_model.py.
 
 These tests pin *invariants* of the rendered Markdown — properties that must
 hold for ANY valid (yaml + fragments) input, not just the specific fixture.
@@ -20,7 +20,7 @@ Properties verified:
     will render the H4 at the wrong nesting level).
   * Risk Distribution counts equal Threat-Register row count (cross-invariant
     the QA check already tests; replicated here as pytest so local dev
-    catches regressions without invoking qa_checks.py).
+    catches regressions without invoking validators/qa_checks.py).
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ from pathlib import Path
 import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "compose_threat_model.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "renderers/compose_threat_model.py"
 CONTRACT = REPO_ROOT / "data" / "sections-contract.yaml"
 FIXTURE = Path(__file__).parent / "fixtures" / "compose"
 
@@ -49,7 +49,7 @@ def _load_module(name: str, path: Path):
     return module
 
 
-compose = _load_module("compose_threat_model", SCRIPT_PATH)
+compose = _load_module("renderers.compose_threat_model", SCRIPT_PATH)
 
 
 def _prepare(tmp_path: Path) -> Path:
@@ -125,7 +125,7 @@ def _anchors_declared(md: str) -> set[str]:
       1. Explicit `<a id="foo"></a>` tags.
       2. GitHub auto-generated slugs from headings.
     """
-    from compose_threat_model import _anchor_from_heading
+    from renderers.compose_threat_model import _anchor_from_heading
 
     ids = set(re.findall(r'<a id="([^"]+)"></a>', md))
     for m in re.finditer(r"^(#{1,6})\s+(.+?)\s*$", md, re.MULTILINE):

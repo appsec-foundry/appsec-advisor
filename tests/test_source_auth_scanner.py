@@ -1,5 +1,5 @@
 """Tests for the deterministic access-control, injection, and direct LLM-flow
-checks in scripts/source_auth_scanner.py and their pipeline wiring.
+checks in scripts/analyzers/source_auth_scanner.py and their pipeline wiring.
 
 The scanner produces `.source-auth-findings.json`, ingested by
 `merge_threats.py:_load_source_auth_findings`. The producer is run by the
@@ -20,14 +20,14 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "source_auth_scanner.py"
+SCRIPT = REPO_ROOT / "scripts" / "analyzers/source_auth_scanner.py"
 CHECKS = REPO_ROOT / "data" / "source-auth-checks.yaml"
-CONTROLLER = REPO_ROOT / "scripts" / "orchestration_controller.py"
+CONTROLLER = REPO_ROOT / "scripts" / "orchestrator/orchestration_controller.py"
 SCHEMA = REPO_ROOT / "schemas" / "source-auth-findings.schema.yaml"
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import source_auth_scanner as S  # noqa: E402
+import analyzers.source_auth_scanner as S  # noqa: E402
 
 
 def _check(
@@ -146,7 +146,7 @@ def test_persisted_expression_requires_verification_and_keeps_condition(tmp_path
     assert all("config.allowExpressions" in f.scenario for f in findings)
     from dataclasses import asdict
 
-    import merge_threats
+    import model.merge_threats as merge_threats
 
     assert merge_threats._source_auth_finding_to_threat(asdict(findings[0]))["evidence_tier"] == "insecure-practice"
 
@@ -1053,7 +1053,12 @@ def test_emitted_sidecar_validates_against_schema(tmp_path: Path) -> None:
     sidecar = out / ".source-auth-findings.json"
     assert sidecar.is_file()
     rc2 = subprocess.run(
-        [sys.executable, str(REPO_ROOT / "scripts" / "validate_intermediate.py"), "source_auth_findings", str(sidecar)],
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts" / "validators/validate_intermediate.py"),
+            "source_auth_findings",
+            str(sidecar),
+        ],
         capture_output=True,
         text=True,
     ).returncode
@@ -1168,7 +1173,7 @@ def test_main_writes_sidecar_and_non_quiet_tally(tmp_path: Path, capsys) -> None
 
 def test_merge_threats_ingests_findings(tmp_path: Path) -> None:
     """The producer↔consumer contract: a sidecar on disk becomes merged threats."""
-    import merge_threats as M
+    import model.merge_threats as M
 
     repo = tmp_path / "repo"
     out = tmp_path / "out"
@@ -1188,7 +1193,7 @@ def test_merge_threats_ingests_findings(tmp_path: Path) -> None:
 
 
 def test_no_sidecar_is_non_fatal(tmp_path: Path) -> None:
-    import merge_threats as M
+    import model.merge_threats as M
 
     assert M._load_source_auth_findings(tmp_path) == []
 
@@ -1202,12 +1207,12 @@ def test_controller_invokes_scanner_in_prepass() -> None:
     text = CONTROLLER.read_text(encoding="utf-8")
     start = text.index("def _prepasses(")
     block = text[start : text.index("\ndef ", start + 1)]
-    assert "source_auth_scanner.py" in block, (
-        "the controller must invoke source_auth_scanner.py in the deterministic "
+    assert "analyzers/source_auth_scanner.py" in block, (
+        "the controller must invoke analyzers/source_auth_scanner.py in the deterministic "
         "pre-pass — otherwise .source-auth-findings.json is never produced and "
         "the AUTHZ-001..008 checks are dead (merge_threats only reads the file)."
     )
-    assert "route_inventory.py" in block
+    assert "analyzers/route_inventory.py" in block
 
 
 def test_all_eight_checks_load() -> None:
@@ -1336,7 +1341,7 @@ def test_discover_plugin_root_prefers_env_and_returns_none_when_unresolved(tmp_p
     assert S._discover_plugin_root() == tmp_path
 
     monkeypatch.delenv("CLAUDE_PLUGIN_ROOT")
-    script = tmp_path / "elsewhere" / "scripts" / "source_auth_scanner.py"
+    script = tmp_path / "elsewhere" / "scripts" / "analyzers/source_auth_scanner.py"
     script.parent.mkdir(parents=True)
     script.write_text("", encoding="utf-8")
     monkeypatch.setattr(S, "__file__", str(script))
@@ -1409,7 +1414,7 @@ def test_python_test_files_excluded(tmp_path: Path) -> None:
 
 
 def test_expression_checks_exclude_quoted_request_names_and_numeric_input(tmp_path):
-    from source_auth_scanner import _scan_expression_inputs
+    from analyzers.source_auth_scanner import _scan_expression_inputs
 
     path = tmp_path / "handler.ts"
     path.write_text("eval('req.body.expression')\nstore.find({ $where: 'this.id === ' + Number(req.params.id) })\n")
@@ -1417,7 +1422,7 @@ def test_expression_checks_exclude_quoted_request_names_and_numeric_input(tmp_pa
 
 
 def test_executable_predicate_excludes_whole_numeric_or_constrained_values(tmp_path):
-    from source_auth_scanner import _scan_expression_inputs
+    from analyzers.source_auth_scanner import _scan_expression_inputs
 
     path = tmp_path / "handler.ts"
     for conversion in ["parseInt(raw, 10)", "raw.replace(/[^\\w-]+/g, '')"]:
@@ -1430,9 +1435,9 @@ def test_executable_predicate_excludes_whole_numeric_or_constrained_values(tmp_p
 def test_template_source_practice_reaches_the_injection_overview(tmp_path):
     from dataclasses import asdict
 
-    from merge_threats import _source_auth_finding_to_threat
-    from source_auth_scanner import _scan_expression_inputs
-    from weakness_classifier import classify_threat, load_weakness_classes
+    from analyzers.source_auth_scanner import _scan_expression_inputs
+    from analyzers.weakness_classifier import classify_threat, load_weakness_classes
+    from model.merge_threats import _source_auth_finding_to_threat
 
     path = tmp_path / "profile.ts"
     path.write_text("const record = await Account.findByPk(id)\npug.compile(record.template)\n")

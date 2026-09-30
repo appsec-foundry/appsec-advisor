@@ -27,13 +27,13 @@ This agent runs on `sonnet`. Scope: breadth-first actor identification across th
 
 ## Operational signals (print + log)
 
-Every status line uses prefix `[actor-discoverer]`. Append `STEP_START`/`STEP_END` events to `$OUTPUT_DIR/.agent-run.log` only through `scripts/log_event.py`; the log is shared with the controller and watchdog, so never write it with the `Write` tool, a `>` redirect, or a hand-rolled line:
+Every status line uses prefix `[actor-discoverer]`. Append `STEP_START`/`STEP_END` events to `$OUTPUT_DIR/.agent-run.log` only through `scripts/runtime/log_event.py`; the log is shared with the controller and watchdog, so never write it with the `Write` tool, a `>` redirect, or a hand-rolled line:
 
 ```bash
 export OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 export CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent actor-discoverer
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent actor-discoverer
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent actor-discoverer
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent actor-discoverer
 ```
 
 Follow the completion contract in `shared/completion-contract.md` — your final message is `Wrote <N> <unit> to <path>. <one-sentence outcome>.` only.
@@ -109,7 +109,7 @@ When `miss` or file absent: continue to Step 2.
 **Print:** `[actor-discoverer] Step 2/3 — Loading context…`
 
 Read these files once:
-1. `$OUTPUT_DIR/.actors-merged-static.json` — merged actor set from Plugin + Enterprise + Repo layers (written by `resolve_actors.py`). Extract `catalog_actors[]` so dormant static classes still prevent duplicate discovery proposals; `resolved_actors[]` contains only currently active classes.
+1. `$OUTPUT_DIR/.actors-merged-static.json` — merged actor set from Plugin + Enterprise + Repo layers (written by `model/resolve_actors.py`). Extract `catalog_actors[]` so dormant static classes still prevent duplicate discovery proposals; `resolved_actors[]` contains only currently active classes.
 2. `$OUTPUT_DIR/.recon-signals.json` — boolean signals. Extract `signals` map and `component_hints[]`.
 3. `$OUTPUT_DIR/.dispatch-context/architecture/recon-summary-context.json` —
    bounded evidence source. Read `sections[]` and honor its omission metadata.
@@ -243,7 +243,7 @@ Immediately after writing `.actors-discovered.json`, run:
 ```bash
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_intermediate.py" \
   actors_discovered "$OUTPUT_DIR/.actors-discovered.json"
 ```
 

@@ -101,9 +101,9 @@ disk; nothing lives only in orchestrator memory:
 | Trust boundaries | `.trust-boundaries.json` |
 | Security controls (13 domains) | `.security-controls.json` |
 | Attack surface | `.attack-surface-overrides.json` |
-| C4 diagrams | not inline — regenerated in Stage 2 from `threat-model.yaml` by `pregenerate_fragments.py` |
+| C4 diagrams | not inline — regenerated in Stage 2 from `threat-model.yaml` by `renderers/pregenerate_fragments.py` |
 
-`build_threat_model_yaml.py`, the Phase-9 dispatch-prep, and `compose_threat_model.py`
+`model/build_threat_model_yaml.py`, the Phase-9 dispatch-prep, and `renderers/compose_threat_model.py`
 all read **only disk files**. A fresh process given only the sidecars continues
 correctly from the Stage-1→Stage-2 boundary (single edge: if yaml AND prior-yaml AND a
 required sidecar are all missing → `exit 4`; recover by re-running the producing phase).

@@ -6,7 +6,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
 RENDERER = REPO_ROOT / "agents" / "appsec-threat-renderer.md"
-CONTROLLER = REPO_ROOT / "scripts" / "orchestration_controller.py"
+CONTROLLER = REPO_ROOT / "scripts" / "orchestrator/orchestration_controller.py"
 
 
 def test_security_architecture_v2_authoring_contract_is_active():
@@ -26,7 +26,7 @@ def test_quick_skips_actor_discovery_but_not_static_resolution():
     assert 'if depth == "quick"' in block
     assert '"--quick"' in block
     assert '"actors_resolved"' in block
-    assert "actor_discovery_cache.py" in block
+    assert "contexts/actor_discovery_cache.py" in block
 
 
 def test_actor_discovery_output_is_validated_at_both_boundaries():

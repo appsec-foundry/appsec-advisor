@@ -1,4 +1,4 @@
-"""Tests for scripts/_path_guard.py — symlink-escape detection."""
+"""Tests for scripts/shared/_path_guard.py — symlink-escape detection."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import _path_guard as guard  # noqa: E402
+import shared._path_guard as guard  # noqa: E402
 
 
 def test_is_within_repo_true_for_nested_path(tmp_path):

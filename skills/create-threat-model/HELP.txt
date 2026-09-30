@@ -188,7 +188,7 @@ CLEANUP
 TRUST MODE (untrusted by default — see SECURITY.md → Known issues)
   --trust-mode <mode>          untrusted (default) | trusted
                                In untrusted mode the run will:
-                                 - run preflight_untrusted.py first and abort
+                                 - run validators/preflight_untrusted.py first and abort
                                    if the repo contains its own Claude Code
                                    hooks/settings, out-of-repo symlinks, or
                                    suspicious docs/related-repos.yaml URLs;

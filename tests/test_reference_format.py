@@ -3,7 +3,7 @@
 Locks in the canonical F-/T-/M- reference format (one full form, one short
 form) so the producer can never silently drift back to the mixed variants it
 historically shipped (juice-shop 2026-06-29 RC). See
-project-threatmodel-ref-link-format memory + scripts/check_reference_format.py.
+project-threatmodel-ref-link-format memory + scripts/validators/check_reference_format.py.
 """
 
 from __future__ import annotations
@@ -22,16 +22,16 @@ if str(SCRIPTS) not in sys.path:
 
 
 def _load(name: str):
-    spec = importlib.util.spec_from_file_location(name, SCRIPTS / f"{name}.py")
+    spec = importlib.util.spec_from_file_location(name, SCRIPTS / (name.replace(".", "/") + ".py"))
     mod = importlib.util.module_from_spec(spec)
     sys.modules[name] = mod
     spec.loader.exec_module(mod)
     return mod
 
 
-compose = _load("compose_threat_model")
-linter = _load("check_reference_format")
-rac = _load("render_abuse_cases")
+compose = _load("renderers.compose_threat_model")
+linter = _load("validators.check_reference_format")
+rac = _load("renderers.render_abuse_cases")
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +223,7 @@ def test_normalize_is_idempotent():
 
 
 # ---------------------------------------------------------------------------
-# §9 Abuse Cases (render_abuse_cases.py) — same canonical form
+# §9 Abuse Cases (renderers/render_abuse_cases.py) — same canonical form
 # ---------------------------------------------------------------------------
 
 

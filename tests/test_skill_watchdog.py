@@ -1,4 +1,4 @@
-"""Unit tests for scripts/skill_watchdog.py — the M3.6 Python rewrite."""
+"""Unit tests for scripts/runtime/skill_watchdog.py — the M3.6 Python rewrite."""
 
 from __future__ import annotations
 
@@ -13,13 +13,13 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "skill_watchdog.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "runtime/skill_watchdog.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("skill_watchdog", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("runtime.skill_watchdog", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["skill_watchdog"] = module
+    sys.modules["runtime.skill_watchdog"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
@@ -349,7 +349,7 @@ class TestSubstep2IdleDetection:
         assert issues[0]["severity"] == "defect"
         assert issues[0]["type"] == "substep2_idle"
         assert issues[0]["source"] == "skill-watchdog"
-        assert "remedy" in issues[0] and "build_threat_model_yaml.py" in issues[0]["remedy"]
+        assert "remedy" in issues[0] and "model/build_threat_model_yaml.py" in issues[0]["remedy"]
 
     def test_does_not_fire_when_substep2_completed(self, out_dir, silent_heartbeat):
         """STEP_START + FILE_WRITE both present → substep is done, no alarm."""
@@ -376,7 +376,7 @@ class TestSubstep2IdleDetection:
         exists on disk (fresh mtime) → Substep 2 is done, no alarm.
 
         Regression for the 2026-06-04 juice-shop pstride-e2e false-positive:
-        the analyst writes the yaml via build_threat_model_yaml.py, which does
+        the analyst writes the yaml via model/build_threat_model_yaml.py, which does
         not emit the FILE_WRITE marker the log-only check keyed on, so the
         watchdog kept measuring idle and mis-flagged the Stage-2 renderer's
         long compose turn (no interim logs) as a Substep-2 stall.
@@ -649,7 +649,7 @@ class TestMainCli:
         # max-iterations cap so the loop terminates without a real lock removal.
         rc = sw.main(
             [
-                "skill_watchdog.py",
+                "runtime/skill_watchdog.py",
                 str(out_dir),
                 "--plugin-root",
                 str(REPO_ROOT),
@@ -675,7 +675,7 @@ class TestMainCli:
     def test_main_missing_output_dir_returns_2(self, tmp_path, monkeypatch):
         sw = _load()
         monkeypatch.setattr(sw, "_refresh_heartbeat", lambda *_a, **_k: None)
-        rc = sw.main(["skill_watchdog.py", str(tmp_path / "ghost"), "--max-iterations", "1"])
+        rc = sw.main(["runtime/skill_watchdog.py", str(tmp_path / "ghost"), "--max-iterations", "1"])
         assert rc == 2
 
     def test_main_defaults_plugin_root_when_blank(self, out_dir, monkeypatch):
@@ -685,7 +685,7 @@ class TestMainCli:
         # No --plugin-root and empty env → falls back to __file__-relative root.
         rc = sw.main(
             [
-                "skill_watchdog.py",
+                "runtime/skill_watchdog.py",
                 str(out_dir),
                 "--heartbeat-interval",
                 "0",
@@ -724,7 +724,7 @@ class TestRefreshHeartbeat:
 
         monkeypatch.setattr(subprocess, "run", _fake_run)
         sw._refresh_heartbeat(REPO_ROOT, tmp_path / ".appsec-lock")
-        assert "acquire_lock.py" in " ".join(str(c) for c in calls["cmd"])
+        assert "runtime/acquire_lock.py" in " ".join(str(c) for c in calls["cmd"])
         assert "--heartbeat" in calls["cmd"]
         assert calls["kwargs"]["check"] is False
 
@@ -952,7 +952,7 @@ def test_progress_snapshot_percent_is_completed_lower_bound(out_dir):
 
 
 def test_progress_snapshot_mid_run_completed_is_not_terminal(out_dir):
-    """`status=completed` is a per-phase marker (batch_checkpoint.py writes it
+    """`status=completed` is a per-phase marker (orchestrator/batch_checkpoint.py writes it
     at every phase end). Reading it as run-terminal pinned the live progress
     line at ~100% from Phase 3 onward for the whole run."""
     sw = _load()

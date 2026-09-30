@@ -214,7 +214,7 @@ plugin_surface:
                             "hooks": [
                                 {
                                     "type": "command",
-                                    "command": ("python3 ${CLAUDE_PLUGIN_ROOT}/scripts/security_steering.py"),
+                                    "command": ("python3 ${CLAUDE_PLUGIN_ROOT}/scripts/analyzers/security_steering.py"),
                                 }
                             ]
                         }
@@ -224,7 +224,7 @@ plugin_surface:
                             "hooks": [
                                 {
                                     "type": "command",
-                                    "command": ("python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_logger.py"),
+                                    "command": ("python3 ${CLAUDE_PLUGIN_ROOT}/scripts/runtime/agent_logger.py"),
                                 }
                             ]
                         }

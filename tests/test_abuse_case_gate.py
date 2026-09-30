@@ -8,13 +8,13 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-SCRIPT = ROOT / "scripts" / "abuse_case_gate.py"
+SCRIPT = ROOT / "scripts" / "validators/abuse_case_gate.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("abuse_case_gate", SCRIPT)
+    spec = importlib.util.spec_from_file_location("validators.abuse_case_gate", SCRIPT)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["abuse_case_gate"] = mod
+    sys.modules["validators.abuse_case_gate"] = mod
     assert spec.loader is not None
     spec.loader.exec_module(mod)
     return mod

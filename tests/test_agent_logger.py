@@ -1,5 +1,5 @@
 """
-Tests for scripts/agent_logger.py
+Tests for scripts/runtime/agent_logger.py
 
 The logger reads a hook event JSON from stdin and appends a line to
 docs/security/.hook-events.log in the current working directory.
@@ -14,14 +14,14 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).parent.parent / "scripts" / "agent_logger.py"
+SCRIPT = Path(__file__).parent.parent / "scripts" / "runtime/agent_logger.py"
 PLUGIN_ROOT = Path(__file__).parent.parent
 
 # Import internals for direct unit testing
 PLUGIN_SCRIPTS = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(PLUGIN_SCRIPTS))
-import agent_lifecycle  # noqa: E402
-from agent_logger import (  # noqa: E402
+import runtime.agent_lifecycle as agent_lifecycle  # noqa: E402
+from runtime.agent_logger import (  # noqa: E402
     _agent_model,
     _clip,
     _extract_param,
@@ -341,7 +341,7 @@ class TestAgentSpawn:
         """Regression (2026-06-05): the PreToolUse hook runs as a separate
         process that does NOT inherit the skill's OUTPUT_DIR env, so AGENT_SPAWN
         used to land in cwd/docs/security instead of the run's $OUTPUT_DIR —
-        blinding check_stride_dispatch.py's count-based gate in headless. The
+        blinding orchestrator/check_stride_dispatch.py's count-based gate in headless. The
         dispatch prompt carries OUTPUT_DIR=<abs>, so the spawn line must be
         written THERE, not in the cwd/docs/security default."""
         run_out = tmp_path / "run-out"
@@ -382,8 +382,8 @@ class TestAgentSpawn:
 class TestPhaseSnapshotRefresh:
     """Regression (2026-06-13 juice-shop run): the orchestrator emits most
     PHASE_START/PHASE_END events via raw ``echo … >> .agent-run.log`` writes,
-    which bypass ``log_event.py`` — the only writer of ``.appsec-progress.json``
-    besides ``stride_progress.py``. As a result the live-status snapshot froze
+    which bypass ``runtime/log_event.py`` — the only writer of ``.appsec-progress.json``
+    besides ``runtime/stride_progress.py``. As a result the live-status snapshot froze
     on the Phase 1 context-resolver STEP_START for the entire ~44-min run while
     the pipeline silently advanced to Phase 11. The PostToolUse hook's
     phase-boundary mirror now also refreshes the snapshot so the live view keeps
@@ -419,12 +419,12 @@ class TestPhaseSnapshotRefresh:
         assert snap["status"] == "phase_completed"
 
     def test_log_event_invocation_does_not_double_fire(self, tmp_path, monkeypatch):
-        """A ``log_event.py … phase-start`` call already updates the snapshot
+        """A ``runtime/log_event.py … phase-start`` call already updates the snapshot
         in-band; the boundary mirror must not also fire for it (the kebab-case
         ``phase-start`` arg carries no literal PHASE_START keyword)."""
         monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
         cmd = (
-            'python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" '
+            'python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" '
             'phase-start "[Phase 3/11] Architecture Modeling"'
         )
         _mirror_phase_events_to_hook_log(cmd, "4c575d1b")
@@ -1743,7 +1743,7 @@ class TestHighSignalMirror:
 # Direct-write guard for threat-model.md (added 2026-04-25)
 #
 # AGENTS.md invariant: the only legal writer of threat-model.md is
-# scripts/compose_threat_model.py. The PreToolUse hook denies any Write/Edit/
+# scripts/renderers/compose_threat_model.py. The PreToolUse hook denies any Write/Edit/
 # MultiEdit tool call targeting that filename. Tests verify the deny
 # semantics, the Read-allowed semantics, and that other files are unaffected.
 # ---------------------------------------------------------------------------
@@ -1780,7 +1780,7 @@ class TestDirectWriteGuard:
         assert payload["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
         assert payload["hookSpecificOutput"]["permissionDecision"] == "deny"
         reason = payload["hookSpecificOutput"]["permissionDecisionReason"]
-        assert "compose_threat_model.py" in reason
+        assert "renderers/compose_threat_model.py" in reason
         assert "forbidden" in reason.lower()
 
     def test_edit_threat_model_md_denied(self, tmp_path):
@@ -1904,7 +1904,7 @@ class TestAssessmentSummaryDuration:
     def test_duration_spans_full_run_across_repeated_scan_start(self, tmp_path, monkeypatch):
         monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(PLUGIN_ROOT))
-        from agent_logger import _write_assessment_summary
+        from runtime.agent_logger import _write_assessment_summary
 
         self._write_log(tmp_path)
         _write_assessment_summary("cb7b5188")
@@ -1920,7 +1920,7 @@ class TestAssessmentSummaryDuration:
         different-session run (in=9,999) stays out of the token rollup."""
         monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(PLUGIN_ROOT))
-        from agent_logger import _write_assessment_summary
+        from runtime.agent_logger import _write_assessment_summary
 
         self._write_log(tmp_path)
         _write_assessment_summary("cb7b5188")
@@ -1938,7 +1938,7 @@ class TestAssessmentSummaryDuration:
     def test_compact_runtime_epoch_excludes_prior_hook_events(self, tmp_path, monkeypatch):
         monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(PLUGIN_ROOT))
-        from agent_logger import _write_assessment_summary
+        from runtime.agent_logger import _write_assessment_summary
 
         lines = [
             "2026-06-03T01:00:00Z  [aaaaaaaa]  INFO   SESSION_STOP        "
@@ -1989,7 +1989,7 @@ class TestAssessmentSummaryIdle:
     def test_resolved_stall_subtracted_from_active(self, tmp_path, monkeypatch):
         monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(PLUGIN_ROOT))
-        from agent_logger import _write_assessment_summary
+        from runtime.agent_logger import _write_assessment_summary
 
         self._write_run(
             tmp_path,
@@ -2010,7 +2010,7 @@ class TestAssessmentSummaryIdle:
     def test_unresolved_trailing_run_idle_counted(self, tmp_path, monkeypatch):
         monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(PLUGIN_ROOT))
-        from agent_logger import _write_assessment_summary
+        from runtime.agent_logger import _write_assessment_summary
 
         # RUN_IDLE with no following RUN_RESUMED → watchdog killed mid-stall;
         # its last reported idle is added as a conservative floor.
@@ -2029,7 +2029,7 @@ class TestAssessmentSummaryIdle:
     def test_no_idle_field_on_clean_run(self, tmp_path, monkeypatch):
         monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(PLUGIN_ROOT))
-        from agent_logger import _write_assessment_summary
+        from runtime.agent_logger import _write_assessment_summary
 
         self._write_run(tmp_path, [])
         _write_assessment_summary("cb7b5188")
@@ -2046,7 +2046,7 @@ class TestAsyncLaunchIsNotACompletion:
     `run_in_background` flag therefore finished every call at dispatch: all six
     STRIDE calls went SPAWN → RUNNING → DONE within one second while the agents
     ran for minutes, which silently disabled every per-component progress write
-    and all `log_event.py` calls that resolve an authoritative running call.
+    and all `runtime/log_event.py` calls that resolve an authoritative running call.
     """
 
     def test_async_shaped_return_is_a_launch(self):
@@ -2091,16 +2091,16 @@ class TestBashWarnUsesProvenanceNotKeywordSoup:
 
     def test_self_emitted_usage_on_stdout_warns_despite_exit_zero(self, tmp_path):
         """The `2>&1 | tail; echo AUDIT_EXIT:$?` shape — a real argparse failure."""
-        out = "usage: render_changelog_audit.py [-h]\nrender_changelog_audit.py: error: unrecognized arguments: /p\nAUDIT_EXIT:0\n"
+        out = "usage: renderers/render_changelog_audit.py [-h]\nrender_changelog_audit.py: error: unrecognized arguments: /p\nAUDIT_EXIT:0\n"
         log = self._run(
-            tmp_path, 'python3 render_changelog_audit.py /p 2>&1 | tail -5; echo "AUDIT_EXIT:$?"', stdout=out
+            tmp_path, 'python3 renderers/render_changelog_audit.py /p 2>&1 | tail -5; echo "AUDIT_EXIT:$?"', stdout=out
         )
         assert "BASH_WARN" in log
 
     def test_hand_rolled_program_diagnostic_warns(self, tmp_path):
-        """`log_event.py: unknown kind 'agent_start'` carries no keyword at all."""
-        out = "/p/scripts/log_event.py: unknown kind 'agent_start' (expected one of ['info'])\n"
-        log = self._run(tmp_path, "python3 /p/scripts/log_event.py info agent_start x 2>&1", stdout=out)
+        """`runtime/log_event.py: unknown kind 'agent_start'` carries no keyword at all."""
+        out = "/p/scripts/runtime/log_event.py: unknown kind 'agent_start' (expected one of ['info'])\n"
+        log = self._run(tmp_path, "python3 /p/scripts/runtime/log_event.py info agent_start x 2>&1", stdout=out)
         assert "BASH_WARN" in log
 
     def test_stderr_keyword_warns_at_any_position(self, tmp_path):

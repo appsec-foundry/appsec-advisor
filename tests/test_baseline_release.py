@@ -1,4 +1,4 @@
-"""Tests for scripts/baseline_release.py.
+"""Tests for scripts/baseline/baseline_release.py.
 
 One property carries the weight: nothing a release serves reaches the caller
 unless a configured key signed its manifest and the baseline matches that
@@ -28,7 +28,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import baseline_release as br  # noqa: E402
+import baseline.baseline_release as br  # noqa: E402
 
 REPOSITORY = "example-org/baseline"
 TAG = "aiscb-0.2.0"
@@ -238,7 +238,7 @@ def test_a_redirect_away_from_the_api_host_is_refused():
 
 @pytest.mark.parametrize("name", ["service with spaces", "neutral-worker"])
 def test_signed_updater_delegation_previews_then_activates_without_running_local_code(key, tmp_path, monkeypatch, name):
-    import update_baseline as ub
+    import baseline.update_baseline as ub
 
     repo = tmp_path / name
     repo.mkdir()

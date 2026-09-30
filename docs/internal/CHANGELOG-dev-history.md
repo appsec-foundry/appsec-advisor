@@ -4,13 +4,13 @@
 
 ### QA pre-pass performance — defer the detector battery off the clean path
 
-The Stage-3 deterministic QA pass ran `qa_checks.py all` (≈50 checks) on **every** run to populate `.qa-prepass.json`. But the dispatch gate is driven solely by `qa_checks.py repair_plan`; the `all` exit code is discarded, and on the clean fast path the QA agent is skipped — so `.qa-prepass.json` was written and never read. The detector battery ran for nobody.
+The Stage-3 deterministic QA pass ran `validators/qa_checks.py all` (≈50 checks) on **every** run to populate `.qa-prepass.json`. But the dispatch gate is driven solely by `validators/qa_checks.py repair_plan`; the `all` exit code is discarded, and on the clean fast path the QA agent is skipped — so `.qa-prepass.json` was written and never read. The detector battery ran for nobody.
 
-- **New `qa_checks.py autofix` subcommand** — runs only the five in-place mutating passes (links, anchors, MS structure, cell-format, heading-attribute strip), no detector battery, no JSON. The skill now calls `autofix` at the gate (always) and defers the full `all` → `.qa-prepass.json` to the agent-dispatch branch, where the JSON is actually consumed. Clean runs no longer execute ~45 detector checks. (`scripts/qa_checks.py`, `skills/create-threat-model/SKILL-impl.md`)
+- **New `validators/qa_checks.py autofix` subcommand** — runs only the five in-place mutating passes (links, anchors, MS structure, cell-format, heading-attribute strip), no detector battery, no JSON. The skill now calls `autofix` at the gate (always) and defers the full `all` → `.qa-prepass.json` to the agent-dispatch branch, where the JSON is actually consumed. Clean runs no longer execute ~45 detector checks. (`scripts/validators/qa_checks.py`, `skills/create-threat-model/SKILL-impl.md`)
 - **Retired nine no-actuator checks from the `all` pre-pass** — `summary_bullets`, `hypothesis_validation_objective`, `attack_tree_node_id_leak`, `section_713_no_table`, and the §7 clarity group `section7_narrative_placeholders` / `section7_h4_positive_intro` / `section7_fence_intro_sentence` / `section7_finding_link_duplicate` / `section7_finding_reference_semantic`. None reached a consumer (absent from `build_repair_plan`, absent from the QA-reviewer handoff table); the underlying authoring rules are enforced at the renderer. All nine remain callable as standalone subcommands for CI / manual regression use (three new subcommands added for the previously subcommand-less guards).
 - **`check_invariants` numeric battery removed** — the Risk-Distribution sum, STRIDE-Coverage sum, and §8 heading-count parity were guaranteed by construction (the composer renders all three from one `threats[]` grouping; the output-schema gate enums `stride`/`risk` before Stage 2) and the §8-heading branch matched a stale `### 8.1 Critical (N)` format the card-layout composer no longer emits. The guarantee is now pinned by `tests/test_compose_threat_model.py::test_section8_counts_equal_threat_total`. The live PHASE_BURST log diagnostic is unchanged. The orphaned `STRIDE_COVERAGE_RE` / `SECTION_8_SUB_RE` constants are deleted; the QA-reviewer Check 7c handoff is updated accordingly.
-- **Retired eight warning-only §7 prose checks from the `all` pre-pass** — `paragraph_density`, `finding_range_homogeneous`, `dependency_cross_ref`, `na_against_recon`, `architectural_prose`, `generic_phrases`, `rhetorical_severity`, `section_opener_restates_heading`. None reached an actuator (absent from `build_repair_plan`, no agent handoff action) and the underlying authoring rules are enforced at the renderer. Each gains a standalone subcommand for CI / manual use. (`rhetorical_severity`'s one-phrase auto-rewrite in `apply_prose_fixes.py` is independent and unaffected.)
-- **Secret-leak detection promoted to a hard, always-on gate** — the deferral of the `all` battery off the clean path meant `check_unmasked_secrets` would no longer populate `.qa-prepass.json` on clean runs, and its `all` exit code was already discarded (the documented release-block was toothless on the automated path). The skill now runs the dedicated `unmasked_secrets` subcommand on every gate pass, writes `.qa-secret-scan.json`, and **aborts with exit 2** on a hit. To make fail-closing safe, `secret_scan.py` gains a precision fix: the loose `generic_credential_assignment` pattern now skips unquoted code-identifier references (camelCase / PascalCase / dotted attribute paths such as `secret: publicKey`, `password: security.hash`) — these are variable names in code excerpts, not literal secrets. Quoted literals, opaque tokens, and digit-bearing values still flag. (`scripts/secret_scan.py`, `tests/test_secret_scan.py` +2 parametrized cases.) Note: a doc carrying a genuinely unmasked value (e.g. a quoted hardcoded password or a `-----BEGIN … PRIVATE KEY-----` evidence excerpt) is now correctly blocked until masked per `agents/shared/secret-handling.md`.
+- **Retired eight warning-only §7 prose checks from the `all` pre-pass** — `paragraph_density`, `finding_range_homogeneous`, `dependency_cross_ref`, `na_against_recon`, `architectural_prose`, `generic_phrases`, `rhetorical_severity`, `section_opener_restates_heading`. None reached an actuator (absent from `build_repair_plan`, no agent handoff action) and the underlying authoring rules are enforced at the renderer. Each gains a standalone subcommand for CI / manual use. (`rhetorical_severity`'s one-phrase auto-rewrite in `repairs/apply_prose_fixes.py` is independent and unaffected.)
+- **Secret-leak detection promoted to a hard, always-on gate** — the deferral of the `all` battery off the clean path meant `check_unmasked_secrets` would no longer populate `.qa-prepass.json` on clean runs, and its `all` exit code was already discarded (the documented release-block was toothless on the automated path). The skill now runs the dedicated `unmasked_secrets` subcommand on every gate pass, writes `.qa-secret-scan.json`, and **aborts with exit 2** on a hit. To make fail-closing safe, `validators/secret_scan.py` gains a precision fix: the loose `generic_credential_assignment` pattern now skips unquoted code-identifier references (camelCase / PascalCase / dotted attribute paths such as `secret: publicKey`, `password: security.hash`) — these are variable names in code excerpts, not literal secrets. Quoted literals, opaque tokens, and digit-bearing values still flag. (`scripts/validators/secret_scan.py`, `tests/test_secret_scan.py` +2 parametrized cases.) Note: a doc carrying a genuinely unmasked value (e.g. a quoted hardcoded password or a `-----BEGIN … PRIVATE KEY-----` evidence excerpt) is now correctly blocked until masked per `agents/shared/secret-handling.md`.
 
 Net test delta: zero new failures (verified against the pre-change baseline).
 
@@ -18,10 +18,10 @@ Net test delta: zero new failures (verified against the pre-change baseline).
 
 The report gains a new **§9 Abuse Cases** section between §8 Threat Register and the mitigation register. Abuse cases (`AC-NNN`) are narrative, end-to-end attack scenarios that chain individual findings into a verified exploitation path, each carrying a deterministic chain verdict (`⚠ Fully viable` / `◐ Partially blocked` / `✓ Mitigated` / `? Inconclusive`). Cases are either **mandatory** (a plugin standard library plus org-profile definitions, evaluated on every run) or **discovered** from the finding register.
 
-- **Section numbering shift** — inserting §9 Abuse Cases renumbers **Mitigation Register §9 → §10** and **Out of Scope §10 → §11**. `data/sections-contract.yaml`, `compose_threat_model.py` (anchors + new `_render_abuse_cases` handler), `pregenerate_fragments.py`, the QA-reviewer heading contract, and the affected fixtures/tests are updated atomically. §8 Threat Register and `T-NNN`/`F-NNN` finding ids are unchanged.
-- **Data model** — `schemas/abuse-cases.schema.yaml` (case definition + chain steps with `grants`/`requires` and code `probe`s), `data/abuse-cases/default-library.yaml` (Account Takeover, Bulk Exfiltration, Privilege Escalation), and an `abuse_cases` block in `schemas/org-profile.schema.yaml` (`inherit_defaults` / `disable` / `add`). Resolution + validation in `scripts/resolve_abuse_cases.py` and `validate_org_profile.py`.
-- **Matching + verification** — `scripts/match_abuse_cases.py` (deterministic matcher + chain-verdict finalizer), `scripts/verify_abuse_cases.py` (verdict merge + budget guard), and a new Phase-10c parallel fan-out (`agents/appsec-abuse-case-verifier.md`, Haiku, one agent per candidate) that confirms each chain step against the code. The chain verdict is computed deterministically from per-step verdicts — never rated by the LLM — so §9 is auditable and diff-stable.
-- **Rendering** — `scripts/render_abuse_cases.py` produces the deterministic §9 fragment (summary table, per-case attack-chain table with verdict-derived status icons, combined-risk rationale, blocking-mitigation table) from `.abuse-case-verdicts.json`; `reserve_ids.py` gains the `AC` id type.
+- **Section numbering shift** — inserting §9 Abuse Cases renumbers **Mitigation Register §9 → §10** and **Out of Scope §10 → §11**. `data/sections-contract.yaml`, `renderers/compose_threat_model.py` (anchors + new `_render_abuse_cases` handler), `renderers/pregenerate_fragments.py`, the QA-reviewer heading contract, and the affected fixtures/tests are updated atomically. §8 Threat Register and `T-NNN`/`F-NNN` finding ids are unchanged.
+- **Data model** — `schemas/abuse-cases.schema.yaml` (case definition + chain steps with `grants`/`requires` and code `probe`s), `data/abuse-cases/default-library.yaml` (Account Takeover, Bulk Exfiltration, Privilege Escalation), and an `abuse_cases` block in `schemas/org-profile.schema.yaml` (`inherit_defaults` / `disable` / `add`). Resolution + validation in `scripts/model/resolve_abuse_cases.py` and `validators/validate_org_profile.py`.
+- **Matching + verification** — `scripts/model/match_abuse_cases.py` (deterministic matcher + chain-verdict finalizer), `scripts/validators/verify_abuse_cases.py` (verdict merge + budget guard), and a new Phase-10c parallel fan-out (`agents/appsec-abuse-case-verifier.md`, Haiku, one agent per candidate) that confirms each chain step against the code. The chain verdict is computed deterministically from per-step verdicts — never rated by the LLM — so §9 is auditable and diff-stable.
+- **Rendering** — `scripts/renderers/render_abuse_cases.py` produces the deterministic §9 fragment (summary table, per-case attack-chain table with verdict-derived status icons, combined-risk rationale, blocking-mitigation table) from `.abuse-case-verdicts.json`; `model/reserve_ids.py` gains the `AC` id type.
 
 Net test delta: zero new failures (verified against the pre-change baseline).
 
@@ -29,15 +29,15 @@ Net test delta: zero new failures (verified against the pre-change baseline).
 
 The report narrated attack paths in three places: the top-level `## Critical Attack Tree` (AND/OR goal decomposition), the §3.1 Attack Chain Overview (linear `graph LR` kill-chains), and the §3.2+ per-finding walkthroughs. §3.1 was the redundant middle layer — it re-expressed the tree's cross-finding logic in a weaker linear form (the tree already carries a "Path to admin" table), it did not have the per-finding exploit steps of §3.2+, and it was the most error-prone surface (false causal edges between independent findings, mirror-duplicate chains, cryptic node labels). **§3.1 is removed.** §3 is now a flat list of per-Critical walkthroughs (`### 3.1`, `### 3.2`, …); the single cross-finding/strategic view is the `## Critical Attack Tree`.
 
-- **`scripts/walkthrough_renderer.py`** — `render_attack_walkthroughs_md` no longer emits §3.1; walkthroughs renumber from `### 3.1`; the §3 intro points to the Critical Attack Tree. The deterministic chain catalogue (`derive_attack_chains`), the per-chain renderer, the chain label helpers, the `MAX_CHAINS`/`CHAIN_CLASSDEFS` constants, and the now-orphaned `VEKTOR_ACTOR_LABEL` table are deleted.
+- **`scripts/renderers/walkthrough_renderer.py`** — `render_attack_walkthroughs_md` no longer emits §3.1; walkthroughs renumber from `### 3.1`; the §3 intro points to the Critical Attack Tree. The deterministic chain catalogue (`derive_attack_chains`), the per-chain renderer, the chain label helpers, the `MAX_CHAINS`/`CHAIN_CLASSDEFS` constants, and the now-orphaned `VEKTOR_ACTOR_LABEL` table are deleted.
 - **`data/sections-contract.yaml`** — the §3.1 required subsection, the `graph LR` required pattern, the entire `chain_compactness` block, and the chain-specific `walkthrough_depth` keys (`min_chain_overview_nodes_per_block`, `require_chain_key_takeaway`, `require_chain_subsection_heading`) are removed. §3 coverage is enforced solely by `per_critical_subsection` + the `sequenceDiagram` required pattern.
-- **`scripts/compose_threat_model.py`** — `_build_finding_to_chain_map` drops the `#### Chain N` parser and now reads each walkthrough's owner from its `**Source:** [T-NNN]` line (robust to the deterministic renderer keeping headings T-NNN-free); the §3 default intro and `_inject_attack_walkthroughs_intros` lose their §3.1 branch.
-- **`scripts/qa_checks.py`** — `check_walkthrough_coverage` / `check_walkthrough_depth` no longer skip §3.1 (every §3.N is a walkthrough now); the Critical-Attack-Tree presence check (Check 4) no longer accepts §3.1 as a substitute. `check_chain_compactness` / `check_chain_tid_consistency` degrade to no-ops once the contract block is gone.
+- **`scripts/renderers/compose_threat_model.py`** — `_build_finding_to_chain_map` drops the `#### Chain N` parser and now reads each walkthrough's owner from its `**Source:** [T-NNN]` line (robust to the deterministic renderer keeping headings T-NNN-free); the §3 default intro and `_inject_attack_walkthroughs_intros` lose their §3.1 branch.
+- **`scripts/validators/qa_checks.py`** — `check_walkthrough_coverage` / `check_walkthrough_depth` no longer skip §3.1 (every §3.N is a walkthrough now); the Critical-Attack-Tree presence check (Check 4) no longer accepts §3.1 as a substitute. `check_chain_compactness` / `check_chain_tid_consistency` degrade to no-ops once the contract block is gone.
 - **Agent prompts / schemas** — the §3.1 authoring section in `phase-group-architecture.md`, the §3.1 chain palette/keyword rules in `appsec-threat-analyst.md`, the §3.1 `graph LR` template + mentions in `appsec-threat-renderer.md`, the §3 contract row in `phase-group-finalization.md`, and the §3.1 references in `phase-group-threats.md` and the fragment schemas are all updated to describe the per-finding-only §3 and point cross-finding analysis at the Critical Attack Tree.
 
 Net test delta: zero new failures (verified against the pre-change baseline).
 
-**Critical Attack Tree residual** — the authoring example in `agents/appsec-threat-renderer.md` referenced an internal node id (`AND_JWT subtree`) in prose, which the model imitated (`… subtree (OR_FORGE)`). The example is corrected, a "never expose a node id in prose" rule added, and `scripts/qa_checks.py` gains `check_attack_tree_node_id_leak` (warning-only) to catch regressions.
+**Critical Attack Tree residual** — the authoring example in `agents/appsec-threat-renderer.md` referenced an internal node id (`AND_JWT subtree`) in prose, which the model imitated (`… subtree (OR_FORGE)`). The example is corrected, a "never expose a node id in prose" rule added, and `scripts/validators/qa_checks.py` gains `check_attack_tree_node_id_leak` (warning-only) to catch regressions.
 
 ### §7 control-narrative readability — concrete openers, no purpose-padding, multi-issue bullets
 
@@ -46,7 +46,7 @@ Generated §7 Security Architecture narratives drifted into a recognisable AI sh
 - **`agents/appsec-threat-renderer.md`** — the §7.X authoring pattern now requires each H4 intro to lead with the concrete artifact (route / file / library / component), caps the `The application/system/server …` stem at ≤1 per §7.X section, and bans textbook-purpose padding clauses. `**Security assessment**` blocks covering ≥2 discrete weaknesses should use a short bullet list (one weakness per bullet) instead of one dense paragraph. Self-check item 4 and the banned-vocabulary list updated; the §7.5.1 worked example re-led with a concrete subject.
 - **`agents/shared/prose-style.md`** — new Rule 7 (*Lead with the concrete thing; cut the textbook purpose*) with before/after pairs, plus a rejection-list entry.
 - **`agents/shared/prose-samples.md`** — new worked Pairs F (H4 intro opener) and G (dense assessment → framing sentence + bullets); loader scope note widened to cover §7 narratives; banned-vocabulary list extended with the opener stems and padding clauses.
-- **`scripts/qa_checks.py` → `check_architectural_prose`** — `_ARCH_PROSE_BANNED_PATTERNS` gains the padding clauses; a new aggregated warning fires when ≥3 H4 intros across §7 share the formulaic stem. Documented in `agents/shared/sec7-quality-bar-rules.md` as `qb7_concrete_openers` / extended `qb7_no_floskeln`. Warnings only — flows through the existing QA pipeline, no new hard-fail gate.
+- **`scripts/validators/qa_checks.py` → `check_architectural_prose`** — `_ARCH_PROSE_BANNED_PATTERNS` gains the padding clauses; a new aggregated warning fires when ≥3 H4 intros across §7 share the formulaic stem. Documented in `agents/shared/sec7-quality-bar-rules.md` as `qb7_concrete_openers` / extended `qb7_no_floskeln`. Warnings only — flows through the existing QA pipeline, no new hard-fail gate.
 
 ### Supply-chain scope refactor (sca.md) — **Breaking change**
 
@@ -56,9 +56,9 @@ The pre-2026-05 `scripts/dep_scan.py` SCA producer is **removed**. The plugin no
 
 **Three new deterministic emitters run in Phase 10:**
 
-- `scripts/emit_dep_update_activity.py` — passive `git log` over a 90-day window on dependency manifests. Classifies cadence as `active` / `sporadic` / `inactive` / `unknown` based on commit count + bot-authored commit count (`dependabot[bot]` / `renovate[bot]`). Optional `gh pr list` count when GitHub CLI is on PATH.
-- `scripts/emit_sca_practice.py` — three §7.11 *Operations Runtime and Supply Chain Controls* rows: **Automated SCA scanning** / **Automated dependency updates** / **Lockfile hygiene**. Each is rated `Adequate` / `Partial` / `Missing` by walking `.github/workflows/*.yml`, `.gitlab-ci.yml`, `azure-pipelines.yml`, `.circleci/config.yml`, `Jenkinsfile`, `.github/dependabot.yml`, `renovate.json*`, and the per-ecosystem lockfiles. **The dep-update activity sidecar lifts the "Automated dependency updates" rating** for repos that patch on cadence without Dependabot / Renovate config files — covers Renovate hosted-app mode, Dependabot security-updates-only, and disciplined manual updates. When any row is `Missing` / `Partial`, MF-NNN candidates are written to `.sca-practice-findings.json` with severity scaled by `asset_tier` via `data/sca-practice-severity.yaml`.
-- `scripts/emit_known_bad_libs.py` — matches manifest dependencies against `data/known-bad-libs.yaml` (curated 30-entry initial list across npm / pip / go / maven / gem / composer; track-record framing — abandoned, protestware incidents, unfixed critical CVEs, sandboxed-deprecated). Each hit emits an MF-NNN architectural-choice finding routed to §7.11. Names are keyed by `(ecosystem, package)` tuple — `request` (npm) does not collide with `requests` (python). Severity capped by asset tier.
+- `scripts/model/emit_dep_update_activity.py` — passive `git log` over a 90-day window on dependency manifests. Classifies cadence as `active` / `sporadic` / `inactive` / `unknown` based on commit count + bot-authored commit count (`dependabot[bot]` / `renovate[bot]`). Optional `gh pr list` count when GitHub CLI is on PATH.
+- `scripts/model/emit_sca_practice.py` — three §7.11 *Operations Runtime and Supply Chain Controls* rows: **Automated SCA scanning** / **Automated dependency updates** / **Lockfile hygiene**. Each is rated `Adequate` / `Partial` / `Missing` by walking `.github/workflows/*.yml`, `.gitlab-ci.yml`, `azure-pipelines.yml`, `.circleci/config.yml`, `Jenkinsfile`, `.github/dependabot.yml`, `renovate.json*`, and the per-ecosystem lockfiles. **The dep-update activity sidecar lifts the "Automated dependency updates" rating** for repos that patch on cadence without Dependabot / Renovate config files — covers Renovate hosted-app mode, Dependabot security-updates-only, and disciplined manual updates. When any row is `Missing` / `Partial`, MF-NNN candidates are written to `.sca-practice-findings.json` with severity scaled by `asset_tier` via `data/sca-practice-severity.yaml`.
+- `scripts/model/emit_known_bad_libs.py` — matches manifest dependencies against `data/known-bad-libs.yaml` (curated 30-entry initial list across npm / pip / go / maven / gem / composer; track-record framing — abandoned, protestware incidents, unfixed critical CVEs, sandboxed-deprecated). Each hit emits an MF-NNN architectural-choice finding routed to §7.11. Names are keyed by `(ecosystem, package)` tuple — `request` (npm) does not collide with `requests` (python). Severity capped by asset tier.
 
 A single derived **patch-management posture** row is rendered in §7.13 Defense-in-Depth Summary as the worst-of-three across the new control rows.
 
@@ -83,10 +83,10 @@ A single derived **patch-management posture** row is rendered in §7.13 Defense-
 
 - `data/sca-practice-severity.yaml`
 - `data/known-bad-libs.yaml`
-- `scripts/_lib_manifest.py`
-- `scripts/emit_sca_practice.py`
-- `scripts/emit_known_bad_libs.py`
-- `scripts/emit_dep_update_activity.py`
+- `scripts/shared/_lib_manifest.py`
+- `scripts/model/emit_sca_practice.py`
+- `scripts/model/emit_known_bad_libs.py`
+- `scripts/model/emit_dep_update_activity.py`
 
 **Renovate parity (related):** `data/config-iac-checks.yaml` ships three Renovate config-detection rules (IAC-033 / IAC-034 / IAC-035) covering `renovate.json`, `.github/renovate.json`, and `.renovaterc.json`. Renovate is now first-class peer of Dependabot for the auto-updates indicator. Hosted-app mode (no file in repo) remains a known false-negative — flagged in the IAC rule's `rationale`.
 
@@ -130,7 +130,7 @@ New actor modeling layer adds structured threat-actor attribution to every findi
 
 **Architect review Check 15 — Actor Coverage** — five sub-checks validate activated-but-unused actors, disabled-without-rationale actors, components without actor attribution, discovery proposals without findings, and unreviewed `inputs_questioned` flags.
 
-**New scripts:** `scripts/resolve_actors.py`, `scripts/slice_actors.py`.
+**New scripts:** `scripts/model/resolve_actors.py`, `scripts/contexts/slice_actors.py`.
 
 **New agent:** `agents/appsec-actor-discoverer.md` (Phase 2.7 LLM-discovery step).
 
@@ -138,7 +138,7 @@ New actor modeling layer adds structured threat-actor attribution to every findi
 
 **Repo-layer overrides:** `<repo>/.appsec/actors.yaml` now honors `inherit_org: false` (excludes enterprise actors with an `info` run-issue), accepts `disable:` as either a flat ID list or `{id, reason}` objects (missing `disable_reason` emits a `defect` run-issue per actors.md §6/§7), and exposes `renamed_from` aliases through `_provenance.aliases` plus a top-level `alias_map` in `.actors-resolved.json`.
 
-**Incremental cache fingerprint:** `scripts/resolve_actors.py` now writes `.actor-fingerprints.json` with `actors_inputs_fingerprint` (sha256 over plugin default-library + enterprise actor files + repo `.appsec/actors.yaml`). Re-runs without input drift produce identical fingerprints; any input file edit flips the fingerprint — foundation for the §13 incremental scan behaviour.
+**Incremental cache fingerprint:** `scripts/model/resolve_actors.py` now writes `.actor-fingerprints.json` with `actors_inputs_fingerprint` (sha256 over plugin default-library + enterprise actor files + repo `.appsec/actors.yaml`). Re-runs without input drift produce identical fingerprints; any input file edit flips the fingerprint — foundation for the §13 incremental scan behaviour.
 
 **Discovery cache key — five-input composition (actors.md §8):** Phase 2.7 Step 2 now hashes recon-summary + config-scan + `actors_inputs_fingerprint` + sha(discoverer agent file) + explicit `DISCOVERY_PROMPT_VERSION` semver marker. Bumping any of the five invalidates the discovery cache and forces re-discovery on the next run.
 
@@ -150,14 +150,14 @@ New actor modeling layer adds structured threat-actor attribution to every findi
 
 **Threat schema hardening:** `schemas/threat-model.output.schema.yaml` now declares the actor fields explicitly (`actor_ids`, `primary_actor`, `base_likelihood`, `actor_adjusted_likelihood`, `_status`) with `ACT-[A-Z]-\d+` pattern enforcement and `_status` enum constrained to `[active, dormant, null]`. STRIDE outputs that previously slipped through `additionalProperties: true` now validate explicitly.
 
-**Per-component slice-diff STRIDE re-dispatch (actors.md §13):** `baseline_state.py` now hashes `.actors-for-*.json` into `baseline.json.slice_files`. `phase-group-threats.md` and `appsec-threat-analyst.md` extend the incremental decision tree with a 5th condition: components whose actor slice changed are re-dispatched even when no code diff exists — pure actor-input edits now trigger surgical per-component STRIDE re-runs instead of either full-scan or stale carry-forward.
+**Per-component slice-diff STRIDE re-dispatch (actors.md §13):** `baseline/baseline_state.py` now hashes `.actors-for-*.json` into `baseline.json.slice_files`. `phase-group-threats.md` and `appsec-threat-analyst.md` extend the incremental decision tree with a 5th condition: components whose actor slice changed are re-dispatched even when no code diff exists — pure actor-input edits now trigger surgical per-component STRIDE re-runs instead of either full-scan or stale carry-forward.
 
 > **Note:** the §13 edge-case "split `profile_fingerprint` into core+actors" is already addressed: actor files were never part of `profile_fingerprint` (it covers only the profile YAML and `llm_context_documents`), so `actors_inputs_fingerprint` (new in this release) is the de-facto independent actor fingerprint the spec asks for.
 
 ### Triage validator downgraded from Opus to Sonnet at `opus-cheap`
 
 `MODEL_MATRIX["opus-cheap"]["triage"]` is now `claude-sonnet-4-6` (was
-`claude-opus-4-7`). Rationale: `scripts/triage_validate_ratings.py`
+`claude-opus-4-7`). Rationale: `scripts/validators/triage_validate_ratings.py`
 provides the deterministic floor (outlier thresholds, completeness
 counts, CVSS eligibility, P1/P2 prioritisation rules) — the agent only
 does judgment-call validation on top of structured input. Opus
@@ -168,7 +168,7 @@ reasoning). Triage still lifts to Opus at `--reasoning-model opus`.
 
 Cost impact: at default `standard` / `thorough` runs, triage tokens
 shift from Opus pricing to Sonnet pricing. `_MODEL_FACTOR["opus-cheap"]`
-in `scripts/estimate_duration.py` lowered from 1.10 → 1.05.
+in `scripts/runtime/estimate_duration.py` lowered from 1.10 → 1.05.
 
 ### Documentation: flat stage numbering
 
@@ -234,10 +234,10 @@ under normal load. Test ceiling raised from 80 to 120 in
 
 ### M2.10 — Hard inline-shortcut gate as standalone script
 
-New `scripts/check_inline_shortcut.py` (218 lines) replaces the old
+New `scripts/validators/check_inline_shortcut.py` (218 lines) replaces the old
 ~50-line inline Bash detector in `SKILL-impl.md`. The script:
 
-- Re-uses `qa_checks.py fragments` as one indicator (REQUIRED_FRAGMENTS
+- Re-uses `validators/qa_checks.py fragments` as one indicator (REQUIRED_FRAGMENTS
   list stays the source of truth).
 - Adds three skill-level indicators (A1: dir missing; A2: dir present
   but `< MIN_FRAGMENTS`; B: `.threats-merged.json` missing while MD
@@ -252,7 +252,7 @@ codes, banner contents, and repair-plan schema.
 
 ### M2.11 — Deterministic pre-generation of structural fragments
 
-New `scripts/pregenerate_fragments.py` (~400 lines) generates 6 of the
+New `scripts/renderers/pregenerate_fragments.py` (~400 lines) generates 6 of the
 8 REQUIRED_FRAGMENTS deterministically from `threat-model.yaml` and the
 Phase-3-8 outputs:
 
@@ -278,8 +278,8 @@ Now `STAGE1_PHASE_LIMIT=10b` makes Stage 1 stop cleanly after Phase 10b
 (`agents/appsec-threat-analyst.md` new branch), and the skill always
 dispatches a separate `Stage 1b — Composition` agent with `RENDER_ONLY=true`
 and a fresh 120-turn budget. Stage 1b authors only the 2 mandatory LLM
-fragments, then runs `compose_threat_model.py --strict` +
-`render_completion_summary.py --patch-placeholders` + `qa_checks.py all`.
+fragments, then runs `renderers/compose_threat_model.py --strict` +
+`renderers/render_completion_summary.py --patch-placeholders` + `validators/qa_checks.py all`.
 
 The Stage 1b task is pre-created in the bootstrap (no longer a
 recovery-only conditional). 14 doc-drift tests in
@@ -288,16 +288,16 @@ across `SKILL-impl.md` and the orchestrator agent.
 
 ### M2.13 — Auto-Retry Loop on hard-gate trip
 
-If `check_inline_shortcut.py` returns exit 2 (despite M2.9–M2.12
+If `validators/check_inline_shortcut.py` returns exit 2 (despite M2.9–M2.12
 reducing the probability), the skill enters a recovery loop with
 `MAX_INLINE_RETRIES=2`. Each iteration:
 
 1. Recovery sequence — best-effort reconstruction of any missing
    Phase-9/10b artefacts:
-   - `merge_threats.py collect` → `merge_threats.py finalize` if
+   - `model/merge_threats.py collect` → `model/merge_threats.py finalize` if
      `.threats-merged.json` is missing and `.stride-*.json` exist.
-   - `triage_validate_ratings.py` if `.triage-flags.json` is missing.
-   - `pregenerate_fragments.py` (idempotent) for any structural gaps.
+   - `validators/triage_validate_ratings.py` if `.triage-flags.json` is missing.
+   - `renderers/pregenerate_fragments.py` (idempotent) for any structural gaps.
 2. Re-dispatch Stage 1b (`RENDER_ONLY=true`) with a fresh 120-turn
    budget.
 3. Re-run the hard gate.
@@ -305,7 +305,7 @@ reducing the probability), the skill enters a recovery loop with
 Exit conditions: gate passes → break, proceed to Stage 2. Counter
 exhausted → exhausted-retries banner + exit 2 (preserves repair plan
 on disk for inspection). Counter file (`.inline-shortcut-retry-count`)
-is reaped on success via `runtime_cleanup.py POST_QA_FILES_IF_PASS`.
+is reaped on success via `runtime/runtime_cleanup.py POST_QA_FILES_IF_PASS`.
 23 tests in `tests/test_skill_auto_retry.py` cover the loop contract,
 recovery scripts, and runtime-cleanup integration.
 
@@ -325,7 +325,7 @@ retries, or a single auto-retry-loop firing all collapse into "it
 worked" with no trail. Sprint 6 closes that observability gap by
 persisting composition health in three coordinated places:
 
-1. **`scripts/compose_threat_model.py` writes `.compose-stats.json`**
+1. **`scripts/renderers/compose_threat_model.py` writes `.compose-stats.json`**
    on every successful render. Records soft warnings (categorized via a
    heuristic mapper), per-section compose-retry counts (read from the
    pre-render repair plan before deletion), and a clean/warned status
@@ -342,7 +342,7 @@ persisting composition health in three coordinated places:
    and PR reviews.
 
 3. **`-- Composition Health --` block in the completion summary** —
-   `render_completion_summary.py` reads the same sources and emits a
+   `renderers/render_completion_summary.py` reads the same sources and emits a
    conditional CLI block between Run Statistics and Next Steps. Shows
    warnings/retries/auto-retries with up to 2 inline warning previews
    plus a pointer to the MD appendix for the full picture.
@@ -351,7 +351,7 @@ When the pipeline runs cleanly (default case), all three artefacts are
 either absent (`.compose-stats.json`) or omitted (the MD appendix and
 the CLI block) — no extra noise on successful runs.
 
-`runtime_cleanup.py` reaps `.compose-stats.json` along with the other
+`runtime/runtime_cleanup.py` reaps `.compose-stats.json` along with the other
 QA bookkeeping at successful completion.
 
 ### M2.15 — Run Issues + auto-fix engine (Sprint 7)
@@ -368,7 +368,7 @@ The 2026-04-25 juice-shop runaway (Phase 1 ran 8 hours, cost $51, no
 visible alarm) was the canonical motivating incident — Sprint 7 ensures
 that class of issue is impossible to miss in any future run.
 
-1. **`scripts/aggregate_run_issues.py`** parses the three log files plus
+1. **`scripts/runtime/aggregate_run_issues.py`** parses the three log files plus
    `.compose-stats.json` and `.inline-shortcut-retry-count`. Produces
    `.run-issues.json` with categorized issues:
      * `error` (TOOL_ERROR, MAX_TURNS, RENDER_FAILED)
@@ -380,7 +380,7 @@ that class of issue is impossible to miss in any future run.
    Tolerant against missing PHASE_END events (uses next PHASE_START as
    approximate end timestamp).
 
-2. **`scripts/recommend_fixes.py`** reads `.run-issues.json` and adds a
+2. **`scripts/runtime/recommend_fixes.py`** reads `.run-issues.json` and adds a
    structured `fix_recommendation` per issue:
    ```
    category         agent_def | config_tune | yaml_edit | skill_spec
@@ -422,7 +422,7 @@ maxTurns by 50% on first MAX_TURNS event, mirroring the M2.8/M2.9
 manual fixes). Additional categories are opt-in as patterns prove safe
 through repeated production runs.
 
-`runtime_cleanup.py` reaps `.run-issues.json` and `.run-issues-fixes.json`
+`runtime/runtime_cleanup.py` reaps `.run-issues.json` and `.run-issues-fixes.json`
 on successful completion — the canonical persistence is the §Run Issues
 appendix in `threat-model.md`.
 
@@ -444,7 +444,7 @@ in CI overnight.
 - Prompt-caching contract for Phase 9 dispatches — stable payload first, volatile last.
 - Schema/contract enforcement on every intermediate artefact.
 - Default reasoning model is now `opus-cheap` (Opus for triage + merger, Sonnet for the rest).
-- Rendering went single-source: agents emit fragments, `compose_threat_model.py` writes the report.
+- Rendering went single-source: agents emit fragments, `renderers/compose_threat_model.py` writes the report.
 
 ### Known issues
 

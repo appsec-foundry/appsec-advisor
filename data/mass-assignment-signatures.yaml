@@ -1,8 +1,8 @@
 # mass-assignment-signatures.yaml — declarative catalog for the entity-aware
-# two-pass mass-assignment detector (scripts/mass_assignment_scanner.py, CWE-915).
+# two-pass mass-assignment detector (scripts/analyzers/mass_assignment_scanner.py, CWE-915).
 #
 # WHY A SEPARATE SCANNER (not source-auth-checks.yaml):
-#   source_auth_scanner.py is a single-line regex engine. It already covers the
+#   analyzers/source_auth_scanner.py is a single-line regex engine. It already covers the
 #   cases a single regex *can* express — JS/TS `req.body.*` (AUTHZ-003/004) and
 #   Python `request.data` (AUTHZ-101/102), both CWE-915/FT-041. What no single
 #   regex can express is the Spring case: `@RequestBody <T>` is only unsafe when
@@ -14,7 +14,7 @@
 #   AUTHZ-* checks above or deferred to Phase 2. Keeping the surface Java-only is
 #   the FP-precision decision from the implementation plan §8/§9.
 #
-# Consumed by scripts/mass_assignment_scanner.py — the field names below are that
+# Consumed by scripts/analyzers/mass_assignment_scanner.py — the field names below are that
 # script's contract, not the generic source_auth_scanner engine's.
 
 version: 1

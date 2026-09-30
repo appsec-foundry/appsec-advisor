@@ -884,13 +884,13 @@ def check_namespace_leaks(build: Path) -> None:
 
 def run_validation(build: Path) -> None:
     subprocess.run(
-        [sys.executable, str(build / "scripts" / "validate_config.py"), str(build)],
+        [sys.executable, str(build / "scripts" / "validators/validate_config.py"), str(build)],
         check=True,
     )
     subprocess.run(
         [
             sys.executable,
-            str(build / "scripts" / "validate_org_profile.py"),
+            str(build / "scripts" / "validators/validate_org_profile.py"),
             str(build / "org-profile" / "org-profile.yaml"),
         ],
         check=True,

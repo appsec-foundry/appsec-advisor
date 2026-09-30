@@ -55,10 +55,10 @@ EXIT CODES
 Run the script from the plugin root, passing the user's `--repo`, `--json`, or `--yaml` through unchanged. The output flags are mutually exclusive. An HTTPS Git URL explicitly requests a shallow network clone; the script scans the temporary checkout and removes it afterwards. Local paths cause no clone:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/security_score.py" [--repo <path|https-git-url>] [--json|--yaml]
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/analyzers/security_score.py" [--repo <path|https-git-url>] [--json|--yaml]
 ```
 
-Use exactly `Calculating the repository's security score` as the tool call's description. It is the only thing the user sees for the 15 to 30 seconds the scan takes, so it names the work, not the mechanism: not "Running the security score script", not "Executing security_score.py".
+Use exactly `Calculating the repository's security score` as the tool call's description. It is the only thing the user sees for the 15 to 30 seconds the scan takes, so it names the work, not the mechanism: not "Running the security score script", not "Executing analyzers/security_score.py".
 
 A failed, missing or invalid required scanner result produces `incomplete` with a null score. Findings and warnings remain visible for both `incomplete` and `undetermined`. JSON and YAML conform to `schemas/security-score.schema.yaml`.
 

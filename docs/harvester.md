@@ -1,12 +1,12 @@
 # Requirements harvester
 
-The requirements audit and threat modeler read a YAML requirements catalog. `scripts/harvest_requirements.py` can build that catalog from Confluence, Antora, or other HTML pages. It can also render selected functional sources as one OpenSpec Markdown file, one SpecDD `.sdd` file, or both.
+The requirements audit and threat modeler read a YAML requirements catalog. `scripts/requirements/harvest_requirements.py` can build that catalog from Confluence, Antora, or other HTML pages. It can also render selected functional sources as one OpenSpec Markdown file, one SpecDD `.sdd` file, or both.
 
 ## The flow
 
 ```mermaid
 flowchart LR
-    A["Your requirements pages<br/>(Confluence, Antora, wiki…)"] --> B["harvest_requirements.py<br/><i>crawls + parses</i>"]
+    A["Your requirements pages<br/>(Confluence, Antora, wiki…)"] --> B["requirements/harvest_requirements.py<br/><i>crawls + parses</i>"]
     B --> C[("appsec-requirements.yaml")]
     B --> I[("application-requirements.openspec.md")]
     B --> J[("application-requirements.sdd")]
@@ -27,7 +27,7 @@ The script crawls configured pages and writes the catalog. Publish that file at 
 
 The bundled mock server lets you test the audit before connecting an internal catalog. Its requirement text is a curated baseline informed by OWASP ASVS 5.0.0, the OWASP Top 10:2025, and the OWASP Cheat Sheets, rather than an official OWASP standard or a claim of complete coverage.
 
-Its links model an organization's own portal at `appsec.int.example.com`, with a requirement page per category, each requirement anchored on that page, and a page per blueprint. That is the shape `harvest_requirements.py` writes from your own sources. The links are placeholders and do not resolve.
+Its links model an organization's own portal at `appsec.int.example.com`, with a requirement page per category, each requirement anchored on that page, and a page per blueprint. That is the shape `requirements/harvest_requirements.py` writes from your own sources. The links are placeholders and do not resolve.
 
 ```bash
 # Serve the bundled example requirements YAML on 127.0.0.1:4444
@@ -69,13 +69,13 @@ $EDITOR scripts/harvest-config.json
 pip install -r scripts/requirements.txt
 
 # Dry-run first to verify reachability and parsing
-python3 scripts/harvest_requirements.py --dry-run --verbose
+python3 scripts/requirements/harvest_requirements.py --dry-run --verbose
 
 # Write every output any source's `outputs` field names
-HARVEST_AUTH_TOKEN=<token> python3 scripts/harvest_requirements.py
+HARVEST_AUTH_TOKEN=<token> python3 scripts/requirements/harvest_requirements.py
 
 # Or restrict a run to just the catalog, e.g. for a CI job that only publishes it
-HARVEST_AUTH_TOKEN=<token> python3 scripts/harvest_requirements.py --format yaml
+HARVEST_AUTH_TOKEN=<token> python3 scripts/requirements/harvest_requirements.py --format yaml
 ```
 
 The `output` setting controls the catalog destination and defaults to `data/appsec-requirements-fallback.yaml`. The `openspec.output` and `specdd.output` settings control the optional functional-spec files. The `sources_meta` block records the source page for each catalog section.
@@ -85,7 +85,7 @@ The `output` setting controls the catalog destination and defaults to `data/apps
 The output follows [`schemas/requirements-catalog.schema.yaml`](../schemas/requirements-catalog.schema.yaml) and is validated before the command exits. Invalid structure returns exit code 2; incomplete fields and duplicate IDs produce warnings. Validate a catalog manually with:
 
 ```bash
-python3 scripts/requirements_state.py --validate data/appsec-requirements-fallback.yaml [--strict]
+python3 scripts/requirements/requirements_state.py --validate data/appsec-requirements-fallback.yaml [--strict]
 ```
 
 Every written file opens with two comment lines naming the document and the page it was harvested from. A blueprint section keeps one line per paragraph, list item, and table row of the source page, so the section reads like the page it came from; a table row keeps its cells apart with an em dash, and a definition stays on the line of its term. Short lists such as `topics` and `references` stay on one line.
@@ -128,13 +128,13 @@ Selection is explicit rather than based on requirement wording. This keeps a sec
 A plain run writes the catalog and both functional-spec files, since the config above declares sources for all three:
 
 ```bash
-python3 scripts/harvest_requirements.py
+python3 scripts/requirements/harvest_requirements.py
 ```
 
 Pass `--format` to narrow a run to specific outputs, for example to test one format on its own:
 
 ```bash
-python3 scripts/harvest_requirements.py --format openspec
+python3 scripts/requirements/harvest_requirements.py --format openspec
 ```
 
 The harvester never derives output paths, SpecDD ownership, or SpecDD modification permissions from crawled text. A generated `.sdd` file contains behavior and scenarios only; an operator decides where it belongs and what code it governs.
@@ -252,7 +252,7 @@ jobs:
         with: { python-version: '3.11' }
       - run: pip install -r scripts/requirements.txt
       - env: { HARVEST_AUTH_TOKEN: "${{ secrets.HARVEST_AUTH_TOKEN }}" }
-        run: python3 scripts/harvest_requirements.py
+        run: python3 scripts/requirements/harvest_requirements.py
       - name: Commit if changed
         run: |
           if ! git diff --quiet data/appsec-requirements-fallback.yaml; then
@@ -295,4 +295,4 @@ The plugin caches the fetched catalog. An explicit `--requirements <url>` overri
 
 **`--requirements` on the CLI is ignored.** The resolution order is: explicit `--requirements <url>` > config `requirements_yaml_url` (when `enabled: true`) > cache. If you passed `--no-requirements` earlier, it wins regardless.
 
-**`ModuleNotFoundError: requirements_state` outside this repository.** The harvester is not a single file. Running it from another repository or a CI job needs `scripts/requirements_state.py` in the same directory as `harvest_requirements.py`; it holds the catalog schema validation that runs over the written output. The module is standard library only, so no extra install is needed for it. The schema itself is read from `<script directory>/../schemas/requirements-catalog.schema.yaml`; copy that file along to keep full schema validation, otherwise a reduced structural check runs instead. Full validation also needs `jsonschema` on top of `scripts/requirements.txt`.
+**`ModuleNotFoundError: requirements_state` outside this repository.** The harvester is not a single file. Running it from another repository or a CI job needs `scripts/requirements/requirements_state.py` in the same directory as `requirements/harvest_requirements.py`; it holds the catalog schema validation that runs over the written output. The module is standard library only, so no extra install is needed for it. The schema itself is read from `<script directory>/../schemas/requirements-catalog.schema.yaml`; copy that file along to keep full schema validation, otherwise a reduced structural check runs instead. Full validation also needs `jsonschema` on top of `scripts/requirements.txt`.

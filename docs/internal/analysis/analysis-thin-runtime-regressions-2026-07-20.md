@@ -23,7 +23,7 @@ tests/test_prompt_token_bounds.py` → **72 passed**. Every defect below is gree
 
 ## D1 — Gate deadlock: `post_stage1` demands what the wave gate forbids (BLOCKER)
 
-`scripts/orchestration_controller.py:1122-1125` requires `.threats-merged.json`,
+`scripts/orchestrator/orchestration_controller.py:1122-1125` requires `.threats-merged.json`,
 `.triage-flags.json`, `threat-model.yaml` — all **Analyst-B outputs**:
 
 ```python
@@ -33,10 +33,10 @@ if missing:
     raise ControllerError(f"Stage 1 did not produce required artifacts: ...")
 ```
 
-`scripts/orchestration_controller.py:1131` then runs the coverage gate:
+`scripts/orchestrator/orchestration_controller.py:1131` then runs the coverage gate:
 
 ```python
-_run_script("check_stride_dispatch.py", [str(output_dir)])   # exit 4 on incomplete coverage
+_run_script("orchestrator/check_stride_dispatch.py", [str(output_dir)])   # exit 4 on incomplete coverage
 ```
 
 Meanwhile `SKILL-thin-stage1.md:68` and `:85-86` instruct the orchestrator: *"status=blocked
@@ -50,11 +50,11 @@ Observed exactly this: stopped before Analyst-B → missing-artifacts abort → 
 documented cut-off recovery → merge+triage ran (~20 min, $5.75) → killed by exit 4.
 
 `post_stage1` **never reads the wave-plan state**. `.dispatch-waves.json` appears in
-`orchestration_controller.py` only at lines 70 and 106 — cleanup name lists. The two gates
+`orchestrator/orchestration_controller.py` only at lines 70 and 106 — cleanup name lists. The two gates
 are mutually blind, so the controller cannot report "legitimately blocked" instead of
 "you failed to produce artifacts".
 
-The `check_stride_dispatch.py` call site at :1131 pre-dates `3482778`; what `3482778` added
+The `orchestrator/check_stride_dispatch.py` call site at :1131 pre-dates `3482778`; what `3482778` added
 (+38 lines) is the new exit-4 condition that now fires there. The cheap pre-merge gate is
 **LLM-prose only, never code-enforced** — the only deterministic coverage gate sits strictly
 *after* the expensive stage it exists to prevent.
@@ -70,7 +70,7 @@ The `check_stride_dispatch.py` call site at :1131 pre-dates `3482778`; what `348
 `partial: true`, all six `skipped_categories`, `threats: []`. Category overwrites happen
 only *as each category completes* (`:244`) — granularity is per-category, not continuous.
 
-`scripts/stride_dispatch_waves.py:138-159`:
+`scripts/orchestrator/stride_dispatch_waves.py:138-159`:
 
 ```python
 if data.get("partial") is not False:
@@ -83,7 +83,7 @@ An agent that dies **before its first completed category** leaves a file byte-id
 genuine zero-coverage partial. The gate cannot tell "never started" from "honestly reported".
 No `seed_only` sentinel, no turn-stamp, no freshness field.
 
-Retry budget is hardcoded `>= 2` at `stride_dispatch_waves.py:225` and again at `:115-116`.
+Retry budget is hardcoded `>= 2` at `orchestrator/stride_dispatch_waves.py:225` and again at `:115-116`.
 No env var, no flag, no force mode (`--manifest` / `--concurrency` are the only CLI options).
 Attempts **persist across parent-session resume**, so restarting does not help.
 
@@ -123,13 +123,13 @@ Stage-1 instructions went from ~57KB of literal, runnable commands to a 6800-byt
 
 What was lost is **syntax**, while **intent** was kept:
 
-**`log_event.py`** — real contract: kinds are `phase-start|phase-end|step-start|step-end|info`
-(`log_event.py:61-67`); `info` needs 5 positionals `<dir> info <event> <detail>` (`:222-228`).
+**`runtime/log_event.py`** — real contract: kinds are `phase-start|phase-end|step-start|step-end|info`
+(`runtime/log_event.py:61-67`); `info` needs 5 positionals `<dir> info <event> <detail>` (`:222-228`).
 `SKILL-thin-stage1.md:17-18` says only *"Log `PARALLEL_STRIDE_RESOLVED` via
-`scripts/log_event.py`"* — names a payload, never the kind. Took 3 attempts to get right.
+`scripts/runtime/log_event.py`"* — names a payload, never the kind. Took 3 attempts to get right.
 `SKILL-impl.md:2158-2161` **still contains the correct runnable command.**
 
-**`record_stage_stats.py`** — `output_dir` is positional (`:264-269`), there is no
+**`runtime/record_stage_stats.py`** — `output_dir` is positional (`:264-269`), there is no
 `--output-dir`. `--subagent-type`/`--since-iso` must be passed together (`:409-413`) or
 dispatch derivation is silently skipped — this warned on *every* accumulate call in the run.
 `--model` defaults to `"—"` (`:281`), which the deterministic heuristic (`:377-389`) reads as
@@ -144,7 +144,7 @@ states *"do not read Stage 1 from `SKILL-impl.md`"* — the file holding the cor
 
 **Why CI is green:** `tests/test_context_prompt_budgets.py:11-100` asserts byte sizes;
 `:103-136` does literal substring checks for a hand-picked phrase list — none referencing
-`log_event.py`'s kinds or `record_stage_stats.py`'s flags. `tests/test_log_event.py` and
+`runtime/log_event.py`'s kinds or `runtime/record_stage_stats.py`'s flags. `tests/test_log_event.py` and
 `tests/test_record_stage_stats.py` test the scripts in isolation and contain **zero**
 references to any `.md`. Nothing validates that instruction files remain *executable*.
 A compaction pass optimized against a byte-budget test has no signal that it is deleting
@@ -153,31 +153,31 @@ the only copy of a working command line.
 ### Predicted next failures (same class, not yet fired)
 
 1. `SKILL-thin-stage1c.md:52-55` and `SKILL-thin-stage2.md:38-41` **never name
-   `record_stage_stats.py` at all** — the script is unguessable from the prose.
+   `runtime/record_stage_stats.py` at all** — the script is unguessable from the prose.
 2. `SKILL-thin-stage2.md:38-41` says *"pass both specialist subagent types"*. `--subagent-type`
-   takes **one comma-separated value** (`record_stage_stats.py:143`). Repeating the flag makes
+   takes **one comma-separated value** (`runtime/record_stage_stats.py:143`). Repeating the flag makes
    argparse keep only the last → Stage-2 dispatch count and wall-time silently under-report.
    **Silent wrong data, not a loud error** — worse than the two failures already observed.
-3. `SKILL-thin-stage1.md:126` references `stall_notice.py` with no output_dir and no `--stage`
-   value; only `output_dir` is positional (`stall_notice.py:92-96`).
+3. `SKILL-thin-stage1.md:126` references `runtime/stall_notice.py` with no output_dir and no `--stage`
+   value; only `output_dir` is positional (`runtime/stall_notice.py:92-96`).
 
 ---
 
 ## D4 — False `SESSION_ABORTED_MIDRUN` alarms (7× in one run)
 
-`scripts/agent_logger.py:1921`: `reason = data.get("stop_reason", "unknown")` — `unknown` is
+`scripts/runtime/agent_logger.py:1921`: `reason = data.get("stop_reason", "unknown")` — `unknown` is
 the **absent-key default**, not an abort signal.
 
-`scripts/aggregate_run_issues.py:710-713` already documents this:
+`scripts/runtime/aggregate_run_issues.py:710-713` already documents this:
 > *"the Claude Code Agent tool returns `stop_reason=unknown` for every successful sub-agent
 > dispatch in Subscription mode … a transport limitation, not a problem"*
 
-But `agent_logger.py:210` `_CLEAN_STOP_REASONS = {"end_turn", "stop_sequence"}` omits
+But `runtime/agent_logger.py:210` `_CLEAN_STOP_REASONS = {"end_turn", "stop_sequence"}` omits
 `unknown`, so `_mark_checkpoint_aborted_if_dirty` (`:213-270`) rewrites the checkpoint to
 `status=aborted` and `handle_stop` (`:2002-2018`) emits the WARN. **Two modules disagree on
 what `unknown` means.**
 
-The Stop hook fires **per checkpoint, not once per session** (`agent_logger.py:728-730`);
+The Stop hook fires **per checkpoint, not once per session** (`runtime/agent_logger.py:728-730`);
 one session logged 13 `SESSION_STOP` lines with monotonically growing cumulative usage.
 
 Proof it was a false alarm: `SESSION_ABORTED_MIDRUN phase=11` fired at 16:24:12, yet the same
@@ -194,7 +194,7 @@ user that the agent had died. It had not. This mislabel actively misleads operat
 
 - `agents/appsec-stride-analyzer.md:6` frontmatter `maxTurns: 40` — hard harness ceiling.
 - `:116` `MAX_TURNS` from the manifest (22 for moderate) — soft in-prompt pacing target only.
-- `scripts/budget_watchdog.py:43` keys thresholds off the **frontmatter 40**, not the manifest 22.
+- `scripts/runtime/budget_watchdog.py:43` keys thresholds off the **frontmatter 40**, not the manifest 22.
 
 `data-persistence` (manifest `max_turns: 22`) burned both attempts against the real 40-turn
 ceiling without completing one category. Retries restart from turn 0 with no resumption of
@@ -213,7 +213,7 @@ explicit single-read constraints.
 
 The real driver is pre-existing and self-documented at `SKILL-impl.md:648-654`: a long-lived
 orchestrator session re-serves a growing prefix on every dispatch, and `_usage_from_transcript`
-(`agent_logger.py:1861-1917`) **sums usage across every assistant turn**, so the figure is
+(`runtime/agent_logger.py:1861-1917`) **sums usage across every assistant turn**, so the figure is
 cumulative, not per-turn.
 
 **Real gap:** the `SESSION_BLOAT` guard (`SKILL-impl.md:631`, 8M threshold) never fired despite
@@ -250,10 +250,10 @@ Full suite after all changes: **10031 passed, 93 skipped, 0 failed.**
 
 | Defect | Fix |
 |---|---|
-| D6 `AGENT_ERROR`/`RENDER_FAILED` dropped despite docstring | `aggregate_run_issues.py:521-556` match tuple + category map |
-| D8 `wall_secs=?` on 211/211 | `agent_logger.py` disk-backed dispatch times via the existing `_active_tool_path` sidecar idiom |
-| D3 `log_event.py` kind never stated | exact command restored in `SKILL-thin-stage1.md` |
-| D3 `record_stage_stats.py` prose-only | exact commands in all three stage runtimes, incl. the `${VAR:+...}` pairing guard |
+| D6 `AGENT_ERROR`/`RENDER_FAILED` dropped despite docstring | `runtime/aggregate_run_issues.py:521-556` match tuple + category map |
+| D8 `wall_secs=?` on 211/211 | `runtime/agent_logger.py` disk-backed dispatch times via the existing `_active_tool_path` sidecar idiom |
+| D3 `runtime/log_event.py` kind never stated | exact command restored in `SKILL-thin-stage1.md` |
+| D3 `runtime/record_stage_stats.py` prose-only | exact commands in all three stage runtimes, incl. the `${VAR:+...}` pairing guard |
 | D3 `--subagent-type` repeated-flag trap | comma-joined form documented in `SKILL-thin-stage2.md` |
 | D3 compaction pressure | budgets raised; a **band** (ceiling + ≥10% headroom floor) replaces the bare ceiling |
 
@@ -296,7 +296,7 @@ over-provisioning that case.
 `tests/test_run_diagnostics_recovery_2026_07_20.py` — 13 tests. Full suite: **10044 passed**.
 
 **D6 evidence-verifier.** Three separate causes, all closed:
-- *Wrong layer.* `guard_evidence_verification.py` plus an inline content check now run at
+- *Wrong layer.* `validators/guard_evidence_verification.py` plus an inline content check now run at
   the Phase-10a→10b boundary in `phase-group-threats.md`, where the consumer is — not in the
   Stage-2 emitter pass minutes later. The gate now also forbids compound-chain elevation of
   `effective_severity` when the refutation signal is missing, instead of rating on evidence
@@ -315,7 +315,7 @@ over-provisioning that case.
   90-minute sliding window assumed "the longest thorough run is ~40 min"; the run spanned
   **147 min**, so its own `AGENT_ERROR` (93 min before the last entry) was discarded before
   any extractor ran. Scoping now uses `.scan-start-epoch`, the exact per-invocation boundary
-  (`cutoff_cause.py` already read it for this purpose), falling back to the heuristic only
+  (`runtime/cutoff_cause.py` already read it for this purpose), falling back to the heuristic only
   when the marker is absent.
 - *Never invoked on abort* — `_aggregate_issues_on_abort` hooks the single choke point every
   controller abort passes through, so `.run-issues.json` is populated for the runs that need
@@ -334,7 +334,7 @@ structural cause first — an override is not a licence to retry the same thing 
 **D5 complexity drift → evidence floor.** The first attempt at this was symptomatic: it
 replaced the `auth-*` enumeration in `classify_component._to_canonical` with a prefix rule.
 Tracing further showed `classify_component` **is not called on this path at all** —
-`build_stride_dispatch_manifest.py:1032` reads the complexity straight out of
+`orchestrator/build_stride_dispatch_manifest.py:1032` reads the complexity straight out of
 `.components.json`:
 
 ```python
@@ -361,7 +361,7 @@ value the original failing component needed.
 
 ### Diagnosed, not fixed: per-dispatch timing has the wrong key
 
-`wall_secs` cannot be repaired by persistence alone. `agent_logger.py` keys dispatch times
+`wall_secs` cannot be repaired by persistence alone. `runtime/agent_logger.py` keys dispatch times
 by `sid[:8]`, but **every dispatch in a run shares one sid** — verified on both runs
 (`9617b066`, `6f373f38`: 23 dispatches, 1 distinct sid; 211 completes, 1 distinct sid). The
 key is per-session while the measurement is per-dispatch, so a parallel wave of eight STRIDE
@@ -370,11 +370,11 @@ analyzers overwrites one slot, and the first `AGENT_COMPLETE` pops it while the 
 
 The same root cause explains the 211-vs-23 mismatch: `AGENT_COMPLETE` is emitted from
 `handle_stop`, and the Stop hook fires per checkpoint, not per dispatch
-(`agent_logger.py:728-730`).
+(`runtime/agent_logger.py:728-730`).
 
 Both would be fixed by emitting `AGENT_COMPLETE` from `PostToolUse(Agent)` keyed on
 `tool_use_id` — the correlation idiom the codebase already uses for
-`_active_tool_path`. It was **not** done here: `agent_logger.py:39-49` documents that
+`_active_tool_path`. It was **not** done here: `runtime/agent_logger.py:39-49` documents that
 PostToolUse does not propagate through nested agent sessions, which is why both hooks exist,
 and restructuring that while a scan was running was the wrong risk to take.
 
@@ -390,7 +390,7 @@ number nobody would recognise as wrong. `?` is the honest answer until the key i
   coverage of the highest-severity findings, with the remainder reported as `unchecked`. It
   is a real limitation, not a silent one — but a joint (Critical-inclusive) cap would be the
   principled fix.
-- **`aggregate_run_issues.py` docstring** still claims `.appsec-trace.log` is an input; it
+- **`runtime/aggregate_run_issues.py` docstring** still claims `.appsec-trace.log` is an input; it
   has never been read (0 references). The trace log is where the 23-dispatch / 211-complete
   mismatch and the `wall_secs` data live, so wiring it in would add real signal.
 
@@ -437,7 +437,7 @@ deterministically, never trusted to the LLM.
 The abort listed `web3-nft: missing output` and hypothesised "turn budget too small for its
 file footprint". Both misleading. `.dispatch-waves.json`: 9 components at concurrency 8 →
 wave 1 = 8, **wave 2 = `[web3-nft]` alone**. `status()` only advances `next_wave` past a wave
-with zero incomplete (`stride_dispatch_waves.py:245`), so wave 2 never dispatched while wave 1
+with zero incomplete (`orchestrator/stride_dispatch_waves.py:245`), so wave 2 never dispatched while wave 1
 was blocked by express-backend's `TH-UNCLASSIFIED` (R1). `all_incomplete` collects across
 *all* waves (`:237`), so a never-dispatched wave-2 component reads as "missing output",
 indistinguishable from a real failure. Proof: `attempts.web3-nft == 1` — one dispatch,

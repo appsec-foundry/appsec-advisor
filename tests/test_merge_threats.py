@@ -1,4 +1,4 @@
-"""Unit tests for scripts/merge_threats.py.
+"""Unit tests for scripts/model/merge_threats.py.
 
 Covers the collect → finalize round-trip, the mechanical exact-dedup, the
 candidate grouping, and the deterministic T-NNN sort. Does NOT exercise the
@@ -17,20 +17,20 @@ import pytest
 import yaml
 from jsonschema import Draft202012Validator
 
-SCRIPT_PATH = Path(__file__).parent.parent / "scripts" / "merge_threats.py"
+SCRIPT_PATH = Path(__file__).parent.parent / "scripts" / "model/merge_threats.py"
 
 
 @pytest.fixture(scope="module")
 def mt():
-    # merge_threats.py imports `_atomic_io` as a sibling module; that resolution
+    # model/merge_threats.py imports `_atomic_io` as a sibling module; that resolution
     # only works if scripts/ is on sys.path. CLI invocation gets this for free
     # via Python's script-dir injection, but spec_from_file_location does not.
     scripts_dir = str(SCRIPT_PATH.parent)
     if scripts_dir not in sys.path:
         sys.path.insert(0, scripts_dir)
-    spec = importlib.util.spec_from_file_location("merge_threats", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("model.merge_threats", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["merge_threats"] = module
+    sys.modules["model.merge_threats"] = module
     spec.loader.exec_module(module)
     return module
 
@@ -56,7 +56,7 @@ def _stride_threat_schema() -> dict:
     pre-gate repairs in merge_threats have to agree with exactly."""
     import yaml
 
-    schema = yaml.safe_load((SCRIPT_PATH.parent.parent / "schemas" / "stride.schema.yaml").read_text(encoding="utf-8"))
+    schema = yaml.safe_load((SCRIPT_PATH.parents[2] / "schemas" / "stride.schema.yaml").read_text(encoding="utf-8"))
     return schema["$defs"]["normal"]["properties"]["threats"]["items"]["properties"]
 
 
@@ -668,7 +668,7 @@ class TestMergerReviewRegressions:
     @pytest.mark.parametrize("path", ["src/handler.py", "lib/query.rb"])
     @pytest.mark.parametrize("risks", [("Low", "High"), ("High", "Low"), ("High", "High")])
     def test_exact_duplicate_retains_high_risk_through_yaml(self, mt, tmp_path, path, risks):
-        from build_threat_model_yaml import build_threats
+        from model.build_threat_model_yaml import build_threats
 
         records = [
             _threat(
@@ -1089,7 +1089,7 @@ class TestFinalizeRevalidatesBoundaryRefs:
         ],
     )
     def test_finalize_writes_only_references_the_gate_accepts(self, mt, tmp_path, refs, kept):
-        import validate_intermediate as vi
+        import validators.validate_intermediate as vi
 
         (tmp_path / ".components.json").write_text(json.dumps({"components": [{"id": "api"}, {"id": "store"}]}))
         (tmp_path / ".trust-boundaries.json").write_text(
@@ -1244,7 +1244,7 @@ class TestEndToEnd:
 class TestInvalidStrideJSONDiagnostics:
     """A 2026-05-07 juice-shop run lost ~5 minutes after one STRIDE analyzer
     emitted invalid JSON: the agent inline-rebuilt the merge in Python instead
-    of fixing the single file and re-invoking merge_threats.py. The error path
+    of fixing the single file and re-invoking model/merge_threats.py. The error path
     must now print enough context that the orchestrator can make the correct
     fix locally — and an explicit "do NOT inline-rebuild" instruction."""
 
@@ -1810,7 +1810,7 @@ class TestCweTaxonomyMap:
         # the module __file__ to a child of tmp_path so parent.parent == tmp_path.
         scripts_dir = tmp_path / "scripts"
         scripts_dir.mkdir()
-        monkeypatch.setattr(mt, "__file__", str(scripts_dir / "merge_threats.py"))
+        monkeypatch.setattr(mt, "__file__", str(scripts_dir / "model/merge_threats.py"))
         mt._load_cwe_to_th_map.cache_clear()
         result = mt._load_cwe_to_th_map()
         assert result["CWE-1"] == "TH-01"
@@ -1822,7 +1822,7 @@ class TestCweTaxonomyMap:
         # lines 76-77: unreadable / missing file → {}
         scripts_dir = tmp_path / "no_data_here" / "scripts"
         scripts_dir.mkdir(parents=True)
-        monkeypatch.setattr(mt, "__file__", str(scripts_dir / "merge_threats.py"))
+        monkeypatch.setattr(mt, "__file__", str(scripts_dir / "model/merge_threats.py"))
         mt._load_cwe_to_th_map.cache_clear()
         assert mt._load_cwe_to_th_map() == {}
         mt._load_cwe_to_th_map.cache_clear()
@@ -2249,7 +2249,7 @@ class TestBackfillBoundaryLeg:
     def test_vocabulary_matches_the_schema_enum(self, mt):
         """The drop rule reads the crossing vocabulary; a leg the schema accepts
         but the vocabulary omits would be silently deleted from every finding."""
-        from prepare_trust_boundary_context import CROSSING_TYPE_LEGS
+        from contexts.prepare_trust_boundary_context import CROSSING_TYPE_LEGS
 
         enum = _stride_threat_schema()["boundary_refs"]["items"]["properties"]["leg"]["enum"]
         assert {leg for legs in CROSSING_TYPE_LEGS.values() for leg in legs} == set(enum)
@@ -2313,7 +2313,7 @@ class TestConsolidationInternals:
         # lines 828-829: missing catalog → ().
         scripts_dir = tmp_path / "x" / "scripts"
         scripts_dir.mkdir(parents=True)
-        monkeypatch.setattr(mt, "__file__", str(scripts_dir / "merge_threats.py"))
+        monkeypatch.setattr(mt, "__file__", str(scripts_dir / "model/merge_threats.py"))
         mt._load_consolidation_groups.cache_clear()
         assert mt._load_consolidation_groups() == ()
         mt._load_consolidation_groups.cache_clear()

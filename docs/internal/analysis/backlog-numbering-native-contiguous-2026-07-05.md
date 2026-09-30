@@ -4,7 +4,7 @@
 
 ## Problem
 
-Section numbering is **not natively contiguous**. `compose_threat_model.py`
+Section numbering is **not natively contiguous**. `renderers/compose_threat_model.py`
 still emits the legacy scheme where §6 (Use Cases) was retired, so the composed
 document runs §1–§5, §7–§11 with a gap. Contiguous §1–§10 (Security
 Architecture = §6, Findings = §7, Abuse = §8, Mitigation = §9, Out of Scope =
@@ -17,7 +17,7 @@ That workaround (landed 2026-07-05, commit `39dfd41`) makes the delivered
 everywhere internally:
 
 - the section contract (`data/sections-contract.yaml`) keys on §7.x titles;
-- `qa_checks.py` matches §7.x subsection titles verbatim (method_whitelist,
+- `validators/qa_checks.py` matches §7.x subsection titles verbatim (method_whitelist,
   domain_required_rules, finding_routing, control_subsection_coverage);
 - the architect LLM authors §7.x headings;
 - the composer's quick-depth carry-forward extracts `## 7.` verbatim;
@@ -61,21 +61,21 @@ and must land as one atomic change (AGENTS.md §4):
 1. `data/sections-contract.yaml` — renumber §7.x → §6.x, §8→§7 … §11→§10;
    confirm the retired-§6 gap machinery (preserve block, `md_section_number`)
    is updated.
-2. `qa_checks.py` — every literal §7.x / §N title match, anchor regex
+2. `validators/qa_checks.py` — every literal §7.x / §N title match, anchor regex
    (`#7-security-architecture`), and posture/section-integrity check.
-3. `compose_threat_model.py` — heading emission, `_extract_section_verbatim`
+3. `renderers/compose_threat_model.py` — heading emission, `_extract_section_verbatim`
    (quick-carry top_level_number), cross-ref emitters
    (`#7-security-architecture`, "See §7"), Figure back-links.
 4. Agent prompts — `agents/**` that author or reference §7.x headings.
-5. Snapshot / preserve chain — `snapshot_preserved_sections.py`,
-   `preserve_lib.py`, `restore_preserved_sections.py`.
+5. Snapshot / preserve chain — `repairs/snapshot_preserved_sections.py`,
+   `preserve_lib.py`, `repairs/restore_preserved_sections.py`.
 6. `SKILL-impl.md` — drop the mirror + renumber steps entirely.
 7. Tests + golden fixtures — ~90 references; regenerate
    `tests/fixtures/e2e/golden/threat-model.md` to native §6.
 
 ## Acceptance criteria
 
-- `compose_threat_model.py` output has no numbering gap and no "numbering is
+- `renderers/compose_threat_model.py` output has no numbering gap and no "numbering is
   non-contiguous" note — with **no** post-compose relabel step.
 - `renumber_sections_display.py` and the `.canonical7.md` mirror are removed.
 - Full suite + e2e golden green; a standard → quick incremental re-run

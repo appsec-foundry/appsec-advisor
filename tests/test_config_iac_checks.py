@@ -5,8 +5,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import build_threat_model_yaml as b
-import merge_threats as mt
+import model.build_threat_model_yaml as b
+import model.merge_threats as mt
 import yaml
 
 CHECKS_PATH = Path(__file__).parent.parent / "data" / "config-iac-checks.yaml"

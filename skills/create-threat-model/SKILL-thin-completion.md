@@ -1,7 +1,7 @@
 # Compact Thin Completion
 
 Completion is deterministic. Do not dispatch analysis or repair agents here.
-Run each fenced block as one Bash call. First run `orchestration_controller.py next --output-dir "$OUTPUT_DIR"` and
+Run each fenced block as one Bash call. First run `orchestrator/orchestration_controller.py next --output-dir "$OUTPUT_DIR"` and
 require `action=complete`, `stage=complete`, and this instruction file. Never
 announce completion while the report is absent or a QA/architect status is
 still `repair_required`.
@@ -12,18 +12,18 @@ Require `threat-model.md`, `threat-model.yaml`, and `.qa-secret-scan.json`.
 Run the final pre-export checks read-only:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/reclassify_components.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/reclassify_components.py" \
   --check --strict "$OUTPUT_DIR"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" toc_closure \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/qa_checks.py" toc_closure \
   "$OUTPUT_DIR/threat-model.md"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/aggregate_run_issues.py" "$OUTPUT_DIR" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/aggregate_run_issues.py" "$OUTPUT_DIR" \
   --repo-root "$REPO_ROOT" --depth "$ASSESSMENT_DEPTH" || true
 ```
 
 Compute `.scan-wall-seconds` from `.scan-start-epoch` when available, then run exactly:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_completion_summary.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/renderers/render_completion_summary.py" \
   --output-dir "$OUTPUT_DIR" --patch-placeholders --no-print
 ```
 
@@ -32,11 +32,11 @@ The script reads repository, mode, depth, reasoning model, deliverable switches 
 Immediately certify the persisted bytes:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" final_structure \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/qa_checks.py" final_structure \
   "$OUTPUT_DIR/threat-model.md"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/assert_completeness.py" "$OUTPUT_DIR" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/assert_completeness.py" "$OUTPUT_DIR" \
   --phase render --plugin-root "$CLAUDE_PLUGIN_ROOT"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/section_integrity.py" "$OUTPUT_DIR" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/section_integrity.py" "$OUTPUT_DIR" \
   --plugin-root "$CLAUDE_PLUGIN_ROOT"
 ```
 
@@ -49,40 +49,40 @@ unreleased until these gates pass. Do not repair in completion.
 Run each export whose `WRITE_PDF` / `WRITE_HTML` switch is true, unsandboxed so headless Chrome can render every diagram. Export failures are non-fatal but must remain visible; never weaken them with `--no-mermaid`.
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/export_pdf.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/exporters/export_pdf.py" \
   --input "$OUTPUT_DIR/threat-model.md" --output "$OUTPUT_DIR/threat-model.pdf"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/export_html.py" --require-mermaid \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/exporters/export_html.py" --require-mermaid \
   --input "$OUTPUT_DIR/threat-model.md" --output "$OUTPUT_DIR/threat-model.html"
 ```
 
-Do **not** call `stamp_threat_model.py` yourself: `render_completion_summary.py` backfills missing SARIF, Threat Dragon and pentest-task exports, then stamps, but never exports PDF or HTML, so run those first. Keep stamped-copy paths out of the response.
+Do **not** call `model/stamp_threat_model.py` yourself: `renderers/render_completion_summary.py` backfills missing SARIF, Threat Dragon and pentest-task exports, then stamps, but never exports PDF or HTML, so run those first. Keep stamped-copy paths out of the response.
 
-Run `python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_completion_summary.py" --output-dir "$OUTPUT_DIR"` once more. Capture stdout for the final response;
+Run `python3 "$CLAUDE_PLUGIN_ROOT/scripts/renderers/render_completion_summary.py" --output-dir "$OUTPUT_DIR"` once more. Capture stdout for the final response;
 do not rewrite or summarize it. The script owns missing-deliverable warnings,
 verdict, timing, cost, output paths, and next steps.
 
 Before cleanup, run these best-effort baseline writers; the first records the recon fingerprint a later depth increase reuses:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline_state.py" update \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline/baseline_state.py" update \
   --output-dir "$OUTPUT_DIR" --repo-root "$REPO_ROOT" --mode full || true
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/persist_run_baseline.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/persist_run_baseline.py" \
   --output-dir "$OUTPUT_DIR" --mode "$MODE" --depth "$ASSESSMENT_DEPTH" \
   --plugin-root "$CLAUDE_PLUGIN_ROOT" || true
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_component_durations.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/record_component_durations.py" \
   "$OUTPUT_DIR" || true
 ```
 
 ## 3. Cleanup and response
 
-Mark the final task complete. Unless `KEEP_RUNTIME_FILES=true`, run `python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime_cleanup.py" "$OUTPUT_DIR" --stage post-qa --keep-run-issues` and, when enabled, the same call with `--stage post-architect --keep-run-issues`. The stage is a `--stage` flag with its own vocabulary (`all`, `pre-qa`, `post-qa`, `post-architect`) — neither a positional argument nor the `stageN` labels used elsewhere in this pipeline. Cleanup must preserve canonical deliverables, audit artifacts, and `.appsec-cache/baseline.json`. Always release the run lock, kept runtime files included: `rm -f "$OUTPUT_DIR/.appsec-lock"`. Leave `.appsec-verbose` and `.appsec-tracing` alone: the closing Stop hook still reads them and removes them.
+Mark the final task complete. Unless `KEEP_RUNTIME_FILES=true`, run `python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/runtime_cleanup.py" "$OUTPUT_DIR" --stage post-qa --keep-run-issues` and, when enabled, the same call with `--stage post-architect --keep-run-issues`. The stage is a `--stage` flag with its own vocabulary (`all`, `pre-qa`, `post-qa`, `post-architect`) — neither a positional argument nor the `stageN` labels used elsewhere in this pipeline. Cleanup must preserve canonical deliverables, audit artifacts, and `.appsec-cache/baseline.json`. Always release the run lock, kept runtime files included: `rm -f "$OUTPUT_DIR/.appsec-lock"`. Leave `.appsec-verbose` and `.appsec-tracing` alone: the closing Stop hook still reads them and removes them.
 
 After releasing the lock, run:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/report_plugin_issue.py" offer --output-dir "$OUTPUT_DIR"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/report_plugin_issue.py" offer --output-dir "$OUTPUT_DIR"
 ```
 
 Then send the captured completion-summary stdout as your message, exactly as printed: no text of your own before, inside or after it. Only for `offer=true`, follow `skills/report-error/SKILL.md` with `--offer` and the run paths after that message.
 
-On failure, first call `terminate_run.py --outcome failure` with run identity and reason. After termination, follow the same `report-error --offer` entry; skip preflight and foreign-lock refusals.
+On failure, first call `runtime/terminate_run.py --outcome failure` with run identity and reason. After termination, follow the same `report-error --offer` entry; skip preflight and foreign-lock refusals.

@@ -8,9 +8,9 @@ Resolve the script and run it in **one** Bash call. Shell variables do not survi
 
 ```bash
 CLAUDE_PLUGIN_ROOT="<the CLAUDE_PLUGIN_ROOT value from your prompt>"
-VALIDATE_SCRIPT="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py}"
+VALIDATE_SCRIPT="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_intermediate.py}"
 [ -f "$VALIDATE_SCRIPT" ] || VALIDATE_SCRIPT=$(find /root /home /opt -maxdepth 6 \
-  -path "*/appsec-advisor/scripts/validate_intermediate.py" 2>/dev/null | head -1)
+  -path "*/appsec-advisor/scripts/validators/validate_intermediate.py" 2>/dev/null | head -1)
 python3 "$VALIDATE_SCRIPT" <schema_type> "<output_file>"
 ```
 

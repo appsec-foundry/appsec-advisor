@@ -6,8 +6,8 @@ import importlib.util
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-SCRIPT = ROOT / "scripts" / "hydrate_mitigation_details.py"
-GATE_SCRIPT = ROOT / "scripts" / "validate_mitigation_quality.py"
+SCRIPT = ROOT / "scripts" / "model/hydrate_mitigation_details.py"
+GATE_SCRIPT = ROOT / "scripts" / "validators/validate_mitigation_quality.py"
 
 
 def _load(name: str, path: Path):
@@ -18,8 +18,8 @@ def _load(name: str, path: Path):
     return mod
 
 
-hydrate = _load("hydrate_mitigation_details", SCRIPT)
-gate = _load("validate_mitigation_quality", GATE_SCRIPT)
+hydrate = _load("model.hydrate_mitigation_details", SCRIPT)
+gate = _load("validators.validate_mitigation_quality", GATE_SCRIPT)
 
 
 def test_hydrate_promotes_details_from_addressed_findings():

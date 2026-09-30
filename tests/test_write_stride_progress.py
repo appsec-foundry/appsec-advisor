@@ -12,10 +12,10 @@ ROOT = Path(__file__).parent.parent
 SCRIPTS = ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-import agent_lifecycle  # noqa: E402
-import log_event  # noqa: E402
-import stride_progress  # noqa: E402
-import write_stride_progress as progress  # noqa: E402
+import runtime.agent_lifecycle as agent_lifecycle  # noqa: E402
+import runtime.log_event as log_event  # noqa: E402
+import runtime.stride_progress as stride_progress  # noqa: E402
+import runtime.write_stride_progress as progress  # noqa: E402
 
 
 def _plan(output_dir: Path, depth: str) -> Path:
@@ -97,7 +97,7 @@ def test_depth_claim_is_validated_even_without_the_stride_agent_flag(tmp_path: P
     _plan(tmp_path, "light")
     _claim(tmp_path, "light")
 
-    rc = log_event.main(["log_event.py", str(tmp_path), "info", "AGENT_START", "component=api depth=full"])
+    rc = log_event.main(["runtime/log_event.py", str(tmp_path), "info", "AGENT_START", "component=api depth=full"])
 
     assert rc == 0
     logged = (tmp_path / ".agent-run.log").read_text(encoding="utf-8")
@@ -106,7 +106,9 @@ def test_depth_claim_is_validated_even_without_the_stride_agent_flag(tmp_path: P
 
 
 def test_a_depth_line_naming_no_dispatched_component_is_left_alone(tmp_path: Path) -> None:
-    rc = log_event.main(["log_event.py", str(tmp_path), "info", "ORCHESTRATION_READY", "mode=full depth=standard"])
+    rc = log_event.main(
+        ["runtime/log_event.py", str(tmp_path), "info", "ORCHESTRATION_READY", "mode=full depth=standard"]
+    )
 
     assert rc == 0
     assert "depth=standard" in (tmp_path / ".agent-run.log").read_text(encoding="utf-8")
@@ -151,7 +153,7 @@ def test_cli_reports_invalid_step_without_writing(tmp_path: Path) -> None:
     result = subprocess.run(
         [
             sys.executable,
-            str(SCRIPTS / "write_stride_progress.py"),
+            str(SCRIPTS / "runtime/write_stride_progress.py"),
             str(tmp_path),
             "api",
             "API",
@@ -177,7 +179,7 @@ def test_agent_log_and_status_use_the_same_authoritative_depth(
     claim = _claim(tmp_path, depth)
     rc = log_event.main(
         [
-            "log_event.py",
+            "runtime/log_event.py",
             str(tmp_path),
             "step-start",
             "[Phase 9/11] [2/9] depth=TBD Spoofing",
@@ -196,7 +198,7 @@ def test_agent_log_and_status_use_the_same_authoritative_depth(
     assert f"component=api depth={depth}" in appsec_progress["detail"]
 
     progress.write_progress(tmp_path, "api", "API", 2, 9, "Spoofing", ROOT)
-    assert stride_progress.main(["stride_progress.py", str(tmp_path), "1", "--force"]) == 1
+    assert stride_progress.main(["runtime/stride_progress.py", str(tmp_path), "1", "--force"]) == 1
     status = capsys.readouterr().out
     assert f"({depth}) API" in status
     assert "TBD" not in status
@@ -213,7 +215,7 @@ def test_status_rejects_progress_that_contradicts_the_context_plan(
     value["analysis_depth"] = "light"
     path.write_text(json.dumps(value), encoding="utf-8")
 
-    assert stride_progress.main(["stride_progress.py", str(tmp_path), "1", "--force"]) == 2
+    assert stride_progress.main(["runtime/stride_progress.py", str(tmp_path), "1", "--force"]) == 2
     assert "contradicts current context plan" in capsys.readouterr().err
 
 
@@ -288,7 +290,7 @@ def test_depth_guard_still_applies_after_the_component_call_closed(tmp_path: Pat
     _claim(tmp_path, "light")
     agent_lifecycle.finish_call(tmp_path, "toolu_api_1")
 
-    rc = log_event.main(["log_event.py", str(tmp_path), "info", "AGENT_STEP", "component=api depth=full"])
+    rc = log_event.main(["runtime/log_event.py", str(tmp_path), "info", "AGENT_STEP", "component=api depth=full"])
 
     assert rc == 0
     logged = (tmp_path / ".agent-run.log").read_text(encoding="utf-8")
@@ -309,7 +311,7 @@ def test_an_unvalidatable_inferred_claim_drops_the_depth_and_keeps_the_line(tmp_
     waves["active_claim"]["attempts"]["api"] = 2
     (tmp_path / ".dispatch-waves.json").write_text(json.dumps(waves), encoding="utf-8")
 
-    rc = log_event.main(["log_event.py", str(tmp_path), "info", "AGENT_STEP", "component=api depth=full"])
+    rc = log_event.main(["runtime/log_event.py", str(tmp_path), "info", "AGENT_STEP", "component=api depth=full"])
 
     assert rc == 0
     logged = (tmp_path / ".agent-run.log").read_text(encoding="utf-8")
@@ -327,7 +329,7 @@ def test_an_explicit_component_claim_is_still_rejected_when_unvalidatable(tmp_pa
 
     rc = log_event.main(
         [
-            "log_event.py",
+            "runtime/log_event.py",
             str(tmp_path),
             "step-start",
             "[1/9] depth=full Spoofing",
@@ -352,7 +354,7 @@ def test_runtime_failure_is_reported_without_an_argparse_usage_block(tmp_path: P
     result = subprocess.run(
         [
             sys.executable,
-            str(SCRIPTS / "write_stride_progress.py"),
+            str(SCRIPTS / "runtime/write_stride_progress.py"),
             str(tmp_path),
             "api",
             "API",
@@ -384,7 +386,7 @@ def test_status_never_shows_old_v2_progress_as_the_new_attempts(
     waves["active_claim"]["attempts"]["api"] = 2
     (tmp_path / ".dispatch-waves.json").write_text(json.dumps(waves), encoding="utf-8")
 
-    assert stride_progress.main(["stride_progress.py", str(tmp_path), "1", "--force"]) == 1
+    assert stride_progress.main(["runtime/stride_progress.py", str(tmp_path), "1", "--force"]) == 1
     out = capsys.readouterr().out
     assert "API [starting]" in out
     assert "1/9" not in out
@@ -408,7 +410,16 @@ def _attempt(output_dir: Path, body: object) -> None:
 
 def _log_step_end(output_dir: Path, detail: str) -> int:
     return log_event.main(
-        ["log_event.py", str(output_dir), "step-end", detail, "--agent", "stride-analyzer-v2", "--component-id", "api"]
+        [
+            "runtime/log_event.py",
+            str(output_dir),
+            "step-end",
+            detail,
+            "--agent",
+            "stride-analyzer-v2",
+            "--component-id",
+            "api",
+        ]
     )
 
 
@@ -473,5 +484,5 @@ def test_category_completion_is_logged_only_after_it_is_persisted(
 
 
 def test_category_claims_from_other_agents_are_not_policed(tmp_path: Path) -> None:
-    rc = log_event.main(["log_event.py", str(tmp_path), "step-end", "category complete: Spoofing"])
+    rc = log_event.main(["runtime/log_event.py", str(tmp_path), "step-end", "category complete: Spoofing"])
     assert rc == 0

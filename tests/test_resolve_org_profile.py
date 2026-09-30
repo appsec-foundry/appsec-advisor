@@ -1,4 +1,4 @@
-"""Tests for scripts/resolve_org_profile.py.
+"""Tests for scripts/runtime/resolve_org_profile.py.
 
 Covers discovery (CLI > env > config.json), preset resolution, target.repo
 rules, output_dir template expansion, fingerprint stability, and the
@@ -17,17 +17,17 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "resolve_org_profile.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "runtime/resolve_org_profile.py"
 FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "org-profiles" / "acme"
 FIXTURE_PATH = FIXTURE_DIR / "org-profile.yaml"
 
 
 def _load_module():
-    if "resolve_org_profile" in sys.modules:
-        return sys.modules["resolve_org_profile"]
-    spec = importlib.util.spec_from_file_location("resolve_org_profile", SCRIPT_PATH)
+    if "runtime.resolve_org_profile" in sys.modules:
+        return sys.modules["runtime.resolve_org_profile"]
+    spec = importlib.util.spec_from_file_location("runtime.resolve_org_profile", SCRIPT_PATH)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["resolve_org_profile"] = mod
+    sys.modules["runtime.resolve_org_profile"] = mod
     assert spec.loader is not None
     spec.loader.exec_module(mod)
     return mod

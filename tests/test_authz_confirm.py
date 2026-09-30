@@ -1,4 +1,4 @@
-"""Tests for scripts/authz_confirm.py — route-inventory-driven IDOR/BOLA +
+"""Tests for scripts/analyzers/authz_confirm.py — route-inventory-driven IDOR/BOLA +
 missing-route-auth instance confirmer."""
 
 from __future__ import annotations
@@ -9,8 +9,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
-import authz_confirm as ac  # noqa: E402
-import validate_intermediate as vi  # noqa: E402
+import analyzers.authz_confirm as ac  # noqa: E402
+import validators.validate_intermediate as vi  # noqa: E402
 
 
 def _write(tmp: Path, name: str, body: str) -> None:
@@ -278,7 +278,7 @@ def test_output_document_is_schema_valid(tmp_path: Path) -> None:
 
 
 def test_merge_ingests_and_folds_into_missing_authz(tmp_path: Path) -> None:
-    import merge_threats as mt
+    import model.merge_threats as mt
 
     doc = {
         "version": 1,

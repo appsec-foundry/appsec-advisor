@@ -16,10 +16,10 @@ import pytest
 SCRIPTS = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-import agent_lifecycle as lifecycle  # noqa: E402
-import cost_running_total as crt  # noqa: E402
-import record_stage_stats as rec  # noqa: E402
-import verify_run_costs as vrc  # noqa: E402
+import runtime.agent_lifecycle as lifecycle  # noqa: E402
+import runtime.cost_running_total as crt  # noqa: E402
+import runtime.record_stage_stats as rec  # noqa: E402
+import runtime.verify_run_costs as vrc  # noqa: E402
 
 _AGENT_TYPE = "appsec-advisor:appsec-stride-analyzer-v2"
 
@@ -150,7 +150,7 @@ def test_the_logged_usage_line_is_priced_by_its_release(tmp_path: Path) -> None:
 
 def _record_stats(output_dir: Path, *extra: str) -> dict:
     argv = [
-        "record_stage_stats.py",
+        "runtime/record_stage_stats.py",
         str(output_dir),
         "--stage",
         "1",

@@ -1,10 +1,10 @@
-"""Tests for scripts/persist_run_baseline.py — the run-end baseline writer.
+"""Tests for scripts/model/persist_run_baseline.py — the run-end baseline writer.
 
 Context: the writer used to be inline bash in SKILL-impl.md that the
 orchestrator reproduced by hand, including four exact JSON key names. On
 2026-07-27 it resumed after a context compaction, read the descriptive
 paragraph but not the bash block below it, and wrote `last_wall_seconds` /
-`last_mode` / `last_depth`. `estimate_duration.py` reads only
+`last_mode` / `last_depth`. `runtime/estimate_duration.py` reads only
 `last_run_seconds`, so the estimator silently fell back to the parametric
 formula. `test_written_cache_is_consumed_by_estimator` is the guard that would
 have caught it.
@@ -18,17 +18,17 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "persist_run_baseline.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "model/persist_run_baseline.py"
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 
 def _load():
-    if "persist_run_baseline" in sys.modules:
-        return sys.modules["persist_run_baseline"]
-    spec = importlib.util.spec_from_file_location("persist_run_baseline", SCRIPT_PATH)
+    if "model.persist_run_baseline" in sys.modules:
+        return sys.modules["model.persist_run_baseline"]
+    spec = importlib.util.spec_from_file_location("model.persist_run_baseline", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["persist_run_baseline"] = module
+    sys.modules["model.persist_run_baseline"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
@@ -52,7 +52,7 @@ def test_written_cache_is_consumed_by_estimator(tmp_path: Path):
     This is the test whose absence let the 2026-07-27 key-name drift through —
     writer and reader agreed on nothing and neither side complained.
     """
-    import estimate_duration
+    import runtime.estimate_duration as estimate_duration
 
     (tmp_path / ".scan-start-epoch").write_text("1000", encoding="utf-8")
     prb.persist(tmp_path, "full", "standard", now_epoch=1000 + 6000)
@@ -67,9 +67,9 @@ def test_written_cache_is_consumed_by_estimator(tmp_path: Path):
 
 def test_field_names_match_what_the_estimator_reads(tmp_path: Path):
     """Pin the four canonical names against the reader's literals."""
-    src = (REPO_ROOT / "scripts" / "estimate_duration.py").read_text(encoding="utf-8")
+    src = (REPO_ROOT / "scripts" / "runtime/estimate_duration.py").read_text(encoding="utf-8")
     for key in (prb.KEY_SECONDS, prb.KEY_MODE, prb.KEY_DEPTH):
-        assert f'"{key}"' in src, f"{key} is not read by estimate_duration.py"
+        assert f'"{key}"' in src, f"{key} is not read by runtime/estimate_duration.py"
     assert prb.KEY_SECONDS == "last_run_seconds"
     assert prb.KEY_MODE == "last_run_mode"
     assert prb.KEY_DEPTH == "last_run_depth"
@@ -77,9 +77,9 @@ def test_field_names_match_what_the_estimator_reads(tmp_path: Path):
 
 
 def test_field_names_match_baseline_state_carry_forward():
-    """`baseline_state.py` carries these forward on rewrite; a name that drifts
+    """`baseline/baseline_state.py` carries these forward on rewrite; a name that drifts
     apart from that list gets silently wiped by the next baseline write."""
-    src = (REPO_ROOT / "scripts" / "baseline_state.py").read_text(encoding="utf-8")
+    src = (REPO_ROOT / "scripts" / "baseline/baseline_state.py").read_text(encoding="utf-8")
     for key in (prb.KEY_SECONDS, prb.KEY_MODE, prb.KEY_DEPTH, prb.KEY_ISO, prb.KEY_COST):
         assert f'"{key}"' in src, f"{key} missing from baseline_state carry-forward"
 
@@ -209,7 +209,7 @@ def test_the_written_cost_is_consumed_by_the_projection(tmp_path: Path, monkeypa
     """Writer and reader have to agree on the key, the same way they already do
     for the duration. A misspelled name would leave the projection silently
     falling back to the parametric floor."""
-    import project_run_cost
+    import runtime.project_run_cost as project_run_cost
 
     monkeypatch.setattr(
         prb,
@@ -226,7 +226,7 @@ def test_the_written_cost_is_consumed_by_the_projection(tmp_path: Path, monkeypa
 def test_a_total_that_is_only_a_lower_bound_is_not_written(tmp_path: Path, monkeypatch):
     """A floor total cannot be told apart from a complete one once it is in the
     cache, and the next run would refuse or admit on a number it misreads."""
-    import cost_running_total
+    import runtime.cost_running_total as cost_running_total
 
     monkeypatch.setattr(
         cost_running_total,
@@ -325,7 +325,7 @@ def test_the_written_cost_is_what_the_projection_reads(tmp_path: Path):
     """The key name is the whole contract: a misspelled one is indistinguishable
     from a missing one, which is how the duration cache silently died once."""
     prb = _load()
-    import project_run_cost
+    import runtime.project_run_cost as project_run_cost
 
     (tmp_path / ".scan-start-epoch").write_text("1000", encoding="utf-8")
     prb.persist(tmp_path, "full", "standard", now_epoch=1000 + 6000)

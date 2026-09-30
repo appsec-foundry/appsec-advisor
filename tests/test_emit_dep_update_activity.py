@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-import emit_dep_update_activity as dep
+import model.emit_dep_update_activity as dep
 import pytest
 
 

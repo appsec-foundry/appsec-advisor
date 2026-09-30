@@ -24,7 +24,7 @@
 #                     readability constraint.
 #   stride          — informational; not used by the heat-map renderer.
 #
-# Rendering rule (see scripts/compose_threat_model.py:_build_tier_cluster_lines):
+# Rendering rule (see scripts/renderers/compose_threat_model.py:_build_tier_cluster_lines):
 #   - Count == 1     → "<icon> <label>"
 #   - Count >= 2 and all same variant → "<icon> Multiple <plural_label>"
 #   - Count >= 2 and mixed variants   → "<icon> Multiple <plural_label> (e.g. <first variant>)"

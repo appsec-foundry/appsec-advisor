@@ -80,7 +80,7 @@ was `verify-receipts`** — echoing hashes back.
 
 ## 2. The receipt round-trip is unenforced and near-redundant
 
-`verify_receipt_hashes` (`scripts/orchestration_controller.py`) is a genuine
+`verify_receipt_hashes` (`scripts/orchestrator/orchestration_controller.py`) is a genuine
 TOCTOU guard: it re-hashes an action's admitted artefacts immediately before
 dispatch. Three things are true about it:
 
@@ -127,8 +127,8 @@ Every `BP-xxx ↔ REQ-ID` pairing in the report is backed by the catalog's own
 cross-reference.
 
 **YAML export — was broken, now fixed (`b0cd06ef`).** `threat-model.yaml` had
-no `requirements_compliance` key at all; `build_threat_model_yaml.py` never
-emitted it, and `render_completion_summary.py` reads its counts from there —
+no `requirements_compliance` key at all; `model/build_threat_model_yaml.py` never
+emitted it, and `renderers/render_completion_summary.py` reads its counts from there —
 hence `0 checked | 0 pass | 0 fail | 0 partial` on a run that assessed 73.
 
 ## 4. Open: is the thin evidence routing costing findings?
@@ -141,7 +141,7 @@ Three components were analysed from under 5% of their in-scope files:
 | database | 1 | 26 |
 | frontend-spa | 19 | 426 |
 
-`aggregate_run_issues.py` flags this, but only in the completion stage — after
+`runtime/aggregate_run_issues.py` flags this, but only in the completion stage — after
 the report is written. The controller now also reports it as an advisory
 receipt at STRIDE dispatch time (`5c7dff30`), sharing one threshold function
 with the aggregator.
@@ -167,7 +167,7 @@ Each of these was invisible in a run that reported success:
 - `requirements_compliance` missing from the YAML → summary said 0, report said 73
 - the TOCTOU check unenforced, with no signal if skipped
 
-`aggregate_run_issues.py` is the designed channel and caught only part of it
+`runtime/aggregate_run_issues.py` is the designed channel and caught only part of it
 (7 issues, 2 of them noise). All four substantive findings were deterministically
 detectable:
 
@@ -206,7 +206,7 @@ opinion.
   during this analysis.
 - `tests/test_e2e_pipeline.py::test_compose_matches_golden` fails against
   in-flight prose/code-formatter work.
-- `scripts/redact_known_secrets.py:47` has an unsorted import block (ruff I001).
+- `scripts/validators/redact_known_secrets.py:47` has an unsorted import block (ruff I001).
 
 ## Corrections
 
@@ -216,7 +216,7 @@ Two claims in the first draft were wrong and were caught by re-measuring:
    The 46-byte file was `.requirements.yaml` in the **repo root**; the real
    78 KB catalog is in the output directory. The parser also looked for a
    top-level `requirements` key, but they are nested under `categories[]`.
-2. *"`record_stage_stats.py` emits 4.7 KB per call."* False. The 23.9 KB
+2. *"`runtime/record_stage_stats.py` emits 4.7 KB per call."* False. The 23.9 KB
    outlier was a boundary action JSON from a Bash call that had chained
    several commands together.
 

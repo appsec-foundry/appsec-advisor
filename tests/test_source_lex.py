@@ -1,7 +1,7 @@
 """Offset-preserving lexical contracts used by passive scanners."""
 
 import pytest
-from _source_lex import call_end, rejecting_check, without_comments
+from shared._source_lex import call_end, rejecting_check, without_comments
 
 
 @pytest.mark.parametrize("marker", ["// guard(x)", "/* guard(x) */"])

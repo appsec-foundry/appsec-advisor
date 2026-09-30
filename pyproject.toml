@@ -68,14 +68,14 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["B011"]
-"scripts/migrate_v3_to_v4.py" = ["F401"]  # legacy re-exports
+"scripts/model/migrate_v3_to_v4.py" = ["F401"]  # legacy re-exports
 "scripts/harvest-requirements.py" = ["F401"]  # legacy re-exports
 
 [tool.ruff.format]
 quote-style = "double"
 # Files with intentional column alignment asserted as doc-invariants by tests
 exclude = [
-    "scripts/resolve_config.py",
+    "scripts/runtime/resolve_config.py",
 ]
 
 [tool.pytest.ini_options]

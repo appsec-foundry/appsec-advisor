@@ -12,7 +12,7 @@ this agent only for a manual-review repair plan or when
 
 ## Deterministic-first scope
 
-The skill has already run `qa_checks.py gate`. That command applies the
+The skill has already run `validators/qa_checks.py gate`. That command applies the
 authorized final Markdown mutations and then validates the persisted bytes.
 Clean reports never dispatch this agent, regardless of assessment depth or
 `QA_DEPTH`.
@@ -24,7 +24,7 @@ Your job is limited to questions Python cannot decide:
 3. assess prior-finding carry-forward where IDs or wording changed;
 4. perform the explicitly forced semantic checks below.
 
-Do not run `qa_checks.py all`. Do not repeat links, anchors, cross-references,
+Do not run `validators/qa_checks.py all`. Do not repeat links, anchors, cross-references,
 reference formatting, headings, Mermaid syntax, placeholder, YAML/Markdown,
 CVSS-scope, schema, contract, token, cost, or table-shape checks.
 
@@ -149,17 +149,17 @@ These checks are deliberately absent from the agent:
 
 - links, anchors, cell formatting, cross-references, reference formatting,
   headings, TOC closure, Mermaid syntax, placeholders, and section contract:
-  `qa_checks.py gate`;
+  `validators/qa_checks.py gate`;
 - mitigation schema and P1–P4 grouping: structured producer, schema, and
   composer;
-- CVSS eligibility: `enforce_yaml_invariants.py` plus intermediate
+- CVSS eligibility: `model/enforce_yaml_invariants.py` plus intermediate
   validation;
 - run durations and models: the final
-  `render_completion_summary.py --patch-placeholders` call;
-- live token/cost verification: `render_completion_summary.py` delegates to
-  `verify_run_costs.py`; the current report appendix has no pending token/cost
+  `renderers/render_completion_summary.py --patch-placeholders` call;
+- live token/cost verification: `renderers/render_completion_summary.py` delegates to
+  `runtime/verify_run_costs.py`; the current report appendix has no pending token/cost
   tables for an agent to patch;
-- evidence file existence and line range: `qa_checks.py evidence_integrity`
+- evidence file existence and line range: `validators/qa_checks.py evidence_integrity`
   when explicitly requested.
 
 The Markdown report is never the source of truth for YAML. Wrong output must be

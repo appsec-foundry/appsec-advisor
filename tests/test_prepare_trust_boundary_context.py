@@ -13,7 +13,7 @@ from jsonschema import Draft202012Validator
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-import prepare_trust_boundary_context as prep  # noqa: E402
+import contexts.prepare_trust_boundary_context as prep  # noqa: E402
 
 
 def _write_json(path: Path, value: object) -> None:
@@ -1841,7 +1841,9 @@ def test_cross_run_identity_survives_contiguous_delivery_renumbering(tmp_path: P
     """
     import importlib.util
 
-    spec = importlib.util.spec_from_file_location("build_threat_model_yaml", SCRIPTS / "build_threat_model_yaml.py")
+    spec = importlib.util.spec_from_file_location(
+        "model.build_threat_model_yaml", SCRIPTS / "model/build_threat_model_yaml.py"
+    )
     builder = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(builder)
 
@@ -1937,7 +1939,7 @@ def test_cross_run_identity_survives_contiguous_delivery_renumbering(tmp_path: P
 # Client-side code is not a trust zone
 # ---------------------------------------------------------------------------
 
-from _boundary_adjacency import is_adjacent  # noqa: E402
+from shared._boundary_adjacency import is_adjacent  # noqa: E402
 
 _TIERED_COMPONENTS = {
     "api": {"id": "api", "tier": "application", "paths": ["server.ts", "routes/**"]},

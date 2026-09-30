@@ -31,7 +31,7 @@ def test_shell_invokes_compose_backstop_when_md_missing() -> None:
     """A yaml-present / md-absent run must invoke the controller `next`
     backstop from the shell, not depend on an LLM finalize turn."""
     body = _body()
-    assert 'orchestration_controller.py" \\\n        next --output-dir "$RESULT_DIR"' in body
+    assert 'orchestrator/orchestration_controller.py" \\\n        next --output-dir "$RESULT_DIR"' in body
     # The backstop must be gated on yaml-present AND md-absent so it is a no-op
     # for a normally-composed run.
     assert '[ -s "$RESULT_DIR/threat-model.yaml" ] \\' in body
@@ -56,14 +56,16 @@ def test_failure_branch_surfaces_run_issues() -> None:
     regenerate .run-issues.json from the logs and render it deterministically so
     the operator sees WHAT failed, not just `exited with code N`.
 
-    The refresh is now one step of ``terminate_run.py``, which also closes the
+    The refresh is now one step of ``runtime/terminate_run.py``, which also closes the
     lock and checkpoint the failed run left open. The invariant is unchanged:
     the file is regenerated before it is rendered.
     """
     body = _body()
     assert "--issues-only" in body, "failure branch must render the Run Issues block"
-    assert "terminate_run.py" in body, "failure branch must refresh .run-issues.json from the logs before rendering"
-    assert body.index("terminate_run.py") < body.index("--issues-only"), (
+    assert "runtime/terminate_run.py" in body, (
+        "failure branch must refresh .run-issues.json from the logs before rendering"
+    )
+    assert body.index("runtime/terminate_run.py") < body.index("--issues-only"), (
         "the run issues must be regenerated before they are rendered"
     )
     # Gated on the log existing so it is a no-op for pre-dispatch failures.
@@ -112,7 +114,7 @@ def test_unsupported_modes_fail_before_output_path_mutation() -> None:
 
 def test_effective_mode_is_admitted_before_output_creation_and_dispatch() -> None:
     body = _body()
-    admission = 'ADMISSION_RESULT="$(python3 "$PLUGIN_DIR/scripts/orchestration_controller.py"'
+    admission = 'ADMISSION_RESULT="$(python3 "$PLUGIN_DIR/scripts/orchestrator/orchestration_controller.py"'
     assert admission in body
     assert body.index(admission) < body.index('mkdir -p "$OUTPUT_PATH"')
     assert body.index(admission) < body.index('"$@" < /dev/null')
@@ -354,7 +356,7 @@ def test_configured_claude_executable_is_not_evaluated_as_shell(
 
 # ── Untrusted-preflight abort message ───────────────────────────────────
 # 2026-07-20: the abort named the problem ("preflight findings present") and
-# pointed at preflight_untrusted.py for details, but never mentioned that
+# pointed at validators/preflight_untrusted.py for details, but never mentioned that
 # --trust-mode trusted exists. An operator whose own .claude/ setup tripped the
 # check was left to hunt for an override with no guidance on when it is
 # appropriate — the failure mode that guidance is supposed to prevent.
@@ -446,7 +448,7 @@ def _stub_claude(path: Path, sleep_seconds: int, marker: Path) -> Path:
     run id the wrapper minted — and heartbeats it once, so the lock the
     terminator meets afterwards looks exactly like a killed run's: fresh.
     """
-    lock = str(ROOT / "scripts" / "acquire_lock.py")
+    lock = str(ROOT / "scripts" / "runtime/acquire_lock.py")
     path.write_text(
         "#!/bin/sh\n"
         'if [ "$1" = "auth" ] && [ "$2" = "status" ]; then\n'

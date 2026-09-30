@@ -42,8 +42,8 @@ def _load(name: str, path: Path):
     return mod
 
 
-rc = _load("resolve_config", _SCRIPTS / "resolve_config.py")
-compose = _load("compose_threat_model", _SCRIPTS / "compose_threat_model.py")
+rc = _load("runtime.resolve_config", _SCRIPTS / "runtime/resolve_config.py")
+compose = _load("renderers.compose_threat_model", _SCRIPTS / "renderers/compose_threat_model.py")
 
 
 # ---------------------------------------------------------------------------

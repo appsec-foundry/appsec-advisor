@@ -1,4 +1,4 @@
-"""Tests for scripts/render_completion_summary.py.
+"""Tests for scripts/renderers/render_completion_summary.py.
 
 Drives the module via its public API plus a handful of CLI smoke tests.
 Fixtures build minimal fake OUTPUT_DIR layouts on disk so each test
@@ -17,15 +17,15 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "render_completion_summary.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "renderers/render_completion_summary.py"
 
 
 def _load_module():
-    if "render_completion_summary" in sys.modules:
-        return sys.modules["render_completion_summary"]
-    spec = importlib.util.spec_from_file_location("render_completion_summary", SCRIPT_PATH)
+    if "renderers.render_completion_summary" in sys.modules:
+        return sys.modules["renderers.render_completion_summary"]
+    spec = importlib.util.spec_from_file_location("renderers.render_completion_summary", SCRIPT_PATH)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["render_completion_summary"] = mod
+    sys.modules["renderers.render_completion_summary"] = mod
     assert spec.loader is not None
     spec.loader.exec_module(mod)
     return mod
@@ -212,7 +212,7 @@ class TestSeverityBasisMatchesTheReport:
     )
     def test_tally_is_the_shared_rollup_basis(self, model):
         """Whatever the model's shape, the console tally is the rollup's."""
-        import _severity_rollup
+        import renderers._severity_rollup as _severity_rollup
 
         counts = _severity_rollup.risk_distribution_counts(model)
         m = rcs.extract_metrics(model, "")
@@ -570,12 +570,12 @@ class TestCostExtraction:
     def test_extract_costs_skips_subprocess_without_usage_signal(self, tmp_path: Path, monkeypatch):
         plugin_root = tmp_path / "plugin"
         scripts = plugin_root / "scripts"
-        scripts.mkdir(parents=True)
-        (scripts / "verify_run_costs.py").write_text("# exists\n")
+        (scripts / "runtime").mkdir(parents=True)
+        (scripts / "runtime/verify_run_costs.py").write_text("# exists\n")
         (tmp_path / ".hook-events.log").write_text("AGENT_SPAWN model=sonnet\n")
 
         def fail_run(*args, **kwargs):
-            raise AssertionError("verify_run_costs.py should not be called")
+            raise AssertionError("runtime/verify_run_costs.py should not be called")
 
         monkeypatch.setattr(rcs.subprocess, "run", fail_run)
         assert rcs.extract_costs(tmp_path, plugin_root)["error_kind"] == "no_usage_data"
@@ -583,8 +583,8 @@ class TestCostExtraction:
     def test_extract_costs_runs_when_usage_signal_exists(self, tmp_path: Path, monkeypatch):
         plugin_root = tmp_path / "plugin"
         scripts = plugin_root / "scripts"
-        scripts.mkdir(parents=True)
-        (scripts / "verify_run_costs.py").write_text("# exists\n")
+        (scripts / "runtime").mkdir(parents=True)
+        (scripts / "runtime/verify_run_costs.py").write_text("# exists\n")
         (tmp_path / ".hook-events.log").write_text("ASSESSMENT_TOKENS input=1 output=2\n")
 
         class Result:
@@ -597,8 +597,8 @@ class TestCostExtraction:
     def test_a_failed_measurement_keeps_its_reason_for_the_summary(self, tmp_path: Path, monkeypatch):
         plugin_root = tmp_path / "plugin"
         scripts = plugin_root / "scripts"
-        scripts.mkdir(parents=True)
-        (scripts / "verify_run_costs.py").write_text("# exists\n")
+        (scripts / "runtime").mkdir(parents=True)
+        (scripts / "runtime/verify_run_costs.py").write_text("# exists\n")
         (tmp_path / ".hook-events.log").write_text("SESSION_STOP in=1 out=2\n")
 
         class Result:
@@ -1673,7 +1673,7 @@ class TestRenderRunStatistics:
     def test_net_compute_is_labelled_partial_when_dispatches_are_unrecorded(self):
         """A net compute covering some agents must not read as the whole run.
 
-        `record_stage_stats.py` runs per wave and fails non-blocking, so a run
+        `runtime/record_stage_stats.py` runs per wave and fails non-blocking, so a run
         can lose the call and report a fraction of its real compute. The
         2026-08-15 juice-shop run recorded 5 of 23 dispatches and presented the
         partial sum as its net compute.
@@ -1881,7 +1881,7 @@ class TestRenderRunStatistics:
             "timing": {"net_compute_secs": 10, "wall_secs": 10, "standby_secs": 0, "stages": []},
         }
         out = "\n".join(rcs.render_run_statistics(stats, None, verbose=True))
-        assert "verify_run_costs.py failed" in out
+        assert "runtime/verify_run_costs.py failed" in out
 
 
 class TestRenderFiles:
@@ -1917,7 +1917,7 @@ class TestRenderFiles:
         impl = (
             Path(__file__).resolve().parents[1] / "skills" / "create-threat-model" / "SKILL-thin-completion.md"
         ).read_text(encoding="utf-8")
-        calls = re.findall(r"scripts/render_completion_summary\.py\"?((?:\\\n|[^\n`])*)", impl)
+        calls = re.findall(r"scripts/renderers/render_completion_summary\.py\"?((?:\\\n|[^\n`])*)", impl)
         assert len(calls) == 2, calls
         for args in calls:
             flags = set(re.findall(r"--[a-z-]+", args))
@@ -2208,7 +2208,7 @@ class TestSummaryHelpers:
         assert rcs._summary_duration({"timing": {"wall_secs": 90}}) == "1m 30s"
 
     def test_summary_cost_variants(self):
-        assert rcs._summary_cost(None) == "unavailable (verify_run_costs.py failed)"
+        assert rcs._summary_cost(None) == "unavailable (runtime/verify_run_costs.py failed)"
         assert rcs._summary_cost({"error": "x"}) == "unavailable (x)"
         assert rcs._summary_cost({"billing": "subscription", "totals": {}}) == "subscription"
         assert rcs._summary_cost({"billing": "api", "totals": {"cost": 1.5}}) == "$1.50"
@@ -2426,7 +2426,7 @@ class TestStampSlugBackstop:
         monkeypatch.setattr(rcs.subprocess, "run", lambda *a, **k: calls.append(a[0]) or None)
         rcs._stamp_slug_if_configured(tmp_path)
         assert len(calls) == 1
-        assert "stamp_threat_model.py" in " ".join(calls[0])
+        assert "model/stamp_threat_model.py" in " ".join(calls[0])
         assert "my-slug" in calls[0]
 
     def test_noop_when_no_slug(self, tmp_path: Path, monkeypatch):
@@ -2581,7 +2581,7 @@ class TestExportDeliverablesBackstop:
         and not the other reintroduces the silent-drop for that flag."""
         import importlib.util
 
-        path = Path(__file__).resolve().parents[1] / "scripts" / "orchestration_controller.py"
+        path = Path(__file__).resolve().parents[1] / "scripts" / "orchestrator/orchestration_controller.py"
         spec = importlib.util.spec_from_file_location("_oc_for_export_parity", path)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
@@ -2628,7 +2628,7 @@ class TestRequestedDeliverablesAreReported:
         body = "\n".join(mod.render_files(tmp_path, {"write_pdf": True, "write_html": True, "write_sarif": True}))
         commands = [line.strip() for line in body.splitlines() if line.strip().startswith("python3 ")]
         assert len(commands) == 1
-        assert "export_html.py --require-mermaid --input" in commands[0]
+        assert "exporters/export_html.py --require-mermaid --input" in commands[0]
         assert commands[0].endswith(str(tmp_path / "threat-model.html"))
         assert "--no-mermaid" not in body
 
@@ -2650,7 +2650,7 @@ class TestRequestedDeliverablesAreReported:
         """A future `--foo` flag cannot ship a deliverable with no producer."""
         mod = _load_module()
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-        import orchestration_controller as oc
+        import orchestrator.orchestration_controller as oc
 
         produced = {k for k, _s, _b in oc._YAML_DERIVED_EXPORTS} | {oc._PENTEST_TASKS_EXPORT[0]}
         # PDF/HTML need an unsandboxed shell, so they stay skill-owned by design.

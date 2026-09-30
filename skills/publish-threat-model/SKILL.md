@@ -73,7 +73,7 @@ Delegate to the Python helper with `--check-only` first. The helper:
 3. Scans `threat-model.md` for secret-like patterns — blocks if found
 
 ```bash
-PREFLIGHT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/publish_threat_model.py" \
+PREFLIGHT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/publish_threat_model.py" \
     --output-dir "$OUTPUT_DIR" \
     --repo-root  "$REPO_ROOT" \
     --check-only \
@@ -103,7 +103,7 @@ If the user answers anything other than `y` or `yes` (case-insensitive), stop.
 Run the helper in commit mode:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/publish_threat_model.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/publish_threat_model.py" \
     --output-dir "$OUTPUT_DIR" \
     --repo-root  "$REPO_ROOT" \
     $( [ "$NO_COMMIT" = "true" ] && echo "" || echo "--commit" )

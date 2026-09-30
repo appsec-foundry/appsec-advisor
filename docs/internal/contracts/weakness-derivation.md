@@ -4,7 +4,7 @@ The merger owns the weakness register. Architecture observations, reviewed sourc
 
 ## Producer and consumer boundaries
 
-`arch_coverage_to_threats.py` preserves control names and source locations and classifies specific CWEs through the canonical weakness vocabulary. `detect_impl_strategy.py` records dependency inventory and bounded JS/TS implementation observations. `weakness_signals.py` corroborates catalogued mechanisms at verified finding locations. `merge_threats.py` validates those observations, reconciles their scopes, and rebuilds the register after evidence verification and triage, before synthesis consumes it.
+`analyzers/arch_coverage_to_threats.py` preserves control names and source locations and classifies specific CWEs through the canonical weakness vocabulary. `analyzers/detect_impl_strategy.py` records dependency inventory and bounded JS/TS implementation observations. `analyzers/weakness_signals.py` corroborates catalogued mechanisms at verified finding locations. `model/merge_threats.py` validates those observations, reconciles their scopes, and rebuilds the register after evidence verification and triage, before synthesis consumes it.
 
 | Artifact | Contract | Use |
 |---|---|---|

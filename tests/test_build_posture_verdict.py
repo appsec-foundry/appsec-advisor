@@ -1,4 +1,4 @@
-"""P4 — Layer-2 systemic posture verdict (build_posture_verdict.py)."""
+"""P4 — Layer-2 systemic posture verdict (model/build_posture_verdict.py)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
-import build_posture_verdict as bpv  # noqa: E402
+import model.build_posture_verdict as bpv  # noqa: E402
 
 
 def _weakness(

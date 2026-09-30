@@ -1,10 +1,10 @@
-"""Tests for scripts/compose_services.py — the bounded docker-compose reader."""
+"""Tests for scripts/renderers/compose_services.py — the bounded docker-compose reader."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import compose_services as C
+import renderers.compose_services as C
 
 COMPOSE = """\
 version: "3.9"

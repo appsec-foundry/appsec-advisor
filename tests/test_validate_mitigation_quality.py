@@ -6,11 +6,11 @@ import importlib.util
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-SCRIPT = ROOT / "scripts" / "validate_mitigation_quality.py"
+SCRIPT = ROOT / "scripts" / "validators/validate_mitigation_quality.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("validate_mitigation_quality", SCRIPT)
+    spec = importlib.util.spec_from_file_location("validators.validate_mitigation_quality", SCRIPT)
     mod = importlib.util.module_from_spec(spec)
     assert spec.loader
     spec.loader.exec_module(mod)

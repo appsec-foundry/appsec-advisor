@@ -4,14 +4,14 @@
 # in the **Attack paths** list below the diagram.
 #
 # Consumed by:
-#   - scripts/compose_threat_model.py (renderer assigns each finding to
+#   - scripts/renderers/compose_threat_model.py (renderer assigns each finding to
 #     a class via `cwes` membership, picks the canonical actor + tier
 #     for each class, and emits the class as one labelled arrow + one
 #     narrative bullet)
 #   - schemas/fragments/security-posture-attack-paths.schema.json
 #     (the `class` field is enum-validated against the ids below)
 #   - agents/appsec-threat-renderer.md (authors the optional attack-path
-#     fragment) and scripts/compose_threat_model.py (deterministic fallback)
+#     fragment) and scripts/renderers/compose_threat_model.py (deterministic fallback)
 #
 # A finding is assigned to the FIRST class whose `cwes` list contains
 # the finding's CWE. That makes ordering load-bearing — keep

@@ -1,4 +1,4 @@
-"""Tests for ``scripts/build_cross_repo_register.py`` — unified cross-repo
+"""Tests for ``scripts/contexts/build_cross_repo_register.py`` — unified cross-repo
 register builder.
 
 Covers:
@@ -23,10 +23,10 @@ from pathlib import Path
 import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-import build_cross_repo_register as bcrr  # noqa: E402
+import contexts.build_cross_repo_register as bcrr  # noqa: E402
 
 PLUGIN_ROOT = Path(__file__).parent.parent
-SCRIPT = PLUGIN_ROOT / "scripts" / "build_cross_repo_register.py"
+SCRIPT = PLUGIN_ROOT / "scripts" / "contexts/build_cross_repo_register.py"
 SCHEMA = PLUGIN_ROOT / "schemas" / "cross-repo-register.schema.json"
 
 

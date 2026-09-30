@@ -1,4 +1,4 @@
-"""Tests for scripts/load_business_context.py."""
+"""Tests for scripts/contexts/load_business_context.py."""
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ import pytest
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-import load_business_context as lbc  # noqa: E402
-from _url_guard import ValidationResult  # noqa: E402
+import contexts.load_business_context as lbc  # noqa: E402
+from shared._url_guard import ValidationResult  # noqa: E402
 
 
 def _repo(tmp_path: Path) -> Path:

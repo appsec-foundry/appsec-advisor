@@ -1,10 +1,8 @@
 # Compact Thin Stage 1 — context-v2
 
-`prepare` selects this runtime; no other Stage-1 runtime is supported.
+`prepare` selects this sole Stage-1 runtime.
 
-**No meta-narration.** This runtime emits no console text at all; the task row
-carries progress. Only an abort speaks, and a command, boundary, or id never
-reaches console text, an Agent description, or a task row.
+**No meta-narration.** This runtime emits no console text at all; the task row carries progress. Only an abort speaks, and a command, boundary, or id never reaches console text, an Agent description, or a task row.
 
 ## Invariants
 
@@ -23,15 +21,14 @@ reaches console text, an Agent description, or a task row.
 
 ## Lifecycle
 
-Before the first boundary command, start the fixed heartbeat watchdog from the parent runtime
-with `run_in_background: true`; retain its task id, never printed.
+Before the first boundary command, start the fixed heartbeat watchdog from the parent runtime with `run_in_background: true`; retain its task id, never printed.
 
 ## Boundary loop
 
 Bash timeout `600000`: boundaries may run architect review. Never retry an in-flight boundary.
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" \
   <command> --output-dir "$OUTPUT_DIR"
 ```
 
@@ -41,19 +38,19 @@ each spawn; it re-hashes that action's artifacts and taxonomy slices. Run it
 yourself only when a boundary rejects with "was not verified", then repeat it.
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" \
   verify-receipts --output-dir "$OUTPUT_DIR" --action-id <context_plan.action_id>
 ```
 
 Join each dispatch (Bash timeout `600000`, no `run_in_background`). A STRIDE wave:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/wait_stride_progress.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/wait_stride_progress.py" \
   "$OUTPUT_DIR" <dispatch_jobs count> \
   --component <dispatch_jobs[0].component_id> [...]
 ```
 
-Exit `75`: repeat unchanged; `2`: abort; else call `context-v2-post-stride`. Any other dispatch: `python3 "$CLAUDE_PLUGIN_ROOT/scripts/wait_agent_calls.py" "$OUTPUT_DIR"`, repeating `75`. On an in-flight `reject`, join again before repeating the boundary. Never re-dispatch, poll, or end here.
+Exit `75`: repeat unchanged; `2`: abort; else call `context-v2-post-stride`. Any other dispatch: `python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/wait_agent_calls.py" "$OUTPUT_DIR"`, repeating `75`. On an in-flight `reject`, join again before repeating the boundary. Never re-dispatch, poll, or end here.
 
 `context-v2-begin` opens the chain. After the join, invoke the
 action's `next_boundary` verbatim. Never derive it from run shape or re-invoke
@@ -62,9 +59,7 @@ a boundary whose dispatch already ran.
 
 ## Dispatch prompt
 
-Invoke Agent with `subagent_type=dispatch_jobs[].agent_type`,
-`model=dispatch_jobs[].model`, and this prefix. The job model is already the
-bare alias; do not use a full id from `dispatch_values`.
+Invoke Agent with `subagent_type=dispatch_jobs[].agent_type`, `model=dispatch_jobs[].model` (already a bare alias), and this prefix. Never use a full `dispatch_values` id.
 
 ```text
 REPO_ROOT=<REPO_ROOT>
@@ -112,7 +107,7 @@ Apply `ACTION.task_progress` before dispatch or Stage-1 exit. With `TaskList`, m
 The controller stamps each dispatch window; capture no timestamp. After return,
 group the returned jobs by `semantic_role`, `agent_type`, and `model`; sum
 `<usage>`: `total_tokens`, `tool_uses`, and `duration_ms`. For each group run
-`record_stage_stats.py "$OUTPUT_DIR" --stage 1 --variant "<semantic_role>"
+`runtime/record_stage_stats.py "$OUTPUT_DIR" --stage 1 --variant "<semantic_role>"
 --name "<semantic_role>" --agent "<agent_type>" --model
 "<model>" --duration-ms <sum> --tool-uses <sum> --tokens <sum> --accumulate
 --accumulation-id "<semantic_role>:<agent_type>:<model>:<context_plan.action_id>"

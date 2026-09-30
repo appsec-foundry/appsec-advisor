@@ -5,9 +5,9 @@ import itertools
 import re
 import xml.etree.ElementTree as ET
 
-import figure1_detail as D
-import figure1_dfd as F
 import pytest
+import renderers.figure1_detail as D
+import renderers.figure1_dfd as F
 
 
 def model(count, topology="chain", prefix="dispatch"):

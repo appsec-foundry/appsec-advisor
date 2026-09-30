@@ -1,5 +1,5 @@
 """
-Tests for stride_progress.py — progress line dedup, heartbeat cadence,
+Tests for runtime/stride_progress.py — progress line dedup, heartbeat cadence,
 and TTY-aware marker fallback.
 """
 
@@ -17,7 +17,7 @@ PLUGIN_SCRIPTS = Path(__file__).parent.parent / "scripts"
 def _run(
     output_dir: Path, expected: int, force: bool = False, env_extra: dict | None = None
 ) -> subprocess.CompletedProcess:
-    cmd = [sys.executable, str(PLUGIN_SCRIPTS / "stride_progress.py"), str(output_dir), str(expected)]
+    cmd = [sys.executable, str(PLUGIN_SCRIPTS / "runtime/stride_progress.py"), str(output_dir), str(expected)]
     if force:
         cmd.append("--force")
     env = {**os.environ, "PATH": "/usr/bin:/bin", "PYTHONPATH": str(PLUGIN_SCRIPTS)}
@@ -107,7 +107,7 @@ def test_completion_exits_zero(tmp_path):
 
 def test_bridges_into_appsec_progress_json(tmp_path):
     # When a line is emitted, the collapsed state must be mirrored into
-    # .appsec-progress.json so the streaming watcher (watch_run.py) shows it.
+    # .appsec-progress.json so the streaming watcher (runtime/watch_run.py) shows it.
     _write_progress(tmp_path, "auth", "Auth Service", 4, 9, "Tampering")
     _run(tmp_path, expected=2)
     bridged = tmp_path / ".appsec-progress.json"
@@ -139,9 +139,9 @@ def test_bridge_marks_completed_when_ready(tmp_path):
 import importlib.util  # noqa: E402
 import time  # noqa: E402
 
-_SPEC = importlib.util.spec_from_file_location("stride_progress", PLUGIN_SCRIPTS / "stride_progress.py")
+_SPEC = importlib.util.spec_from_file_location("runtime.stride_progress", PLUGIN_SCRIPTS / "runtime/stride_progress.py")
 sp = importlib.util.module_from_spec(_SPEC)
-sys.modules["stride_progress"] = sp
+sys.modules["runtime.stride_progress"] = sp
 assert _SPEC.loader is not None
 _SPEC.loader.exec_module(sp)
 
@@ -282,7 +282,7 @@ def test_tier_reaches_console_and_progress_bridge(tmp_path):
     assert "(light) CI/CD Pipeline [3/9" in res.stdout
     # Both tiers are named, so the block reads as a depth column.
     assert "(full) Auth Service [3/9" in res.stdout
-    # The tier must survive into the file watch_run.py tails.
+    # The tier must survive into the file runtime/watch_run.py tails.
     bridged = json.loads((tmp_path / ".appsec-progress.json").read_text())
     assert "(light) CI/CD Pipeline" in bridged["label"]
 
@@ -319,24 +319,24 @@ def test_write_appsec_progress_swallows_oserror(monkeypatch, tmp_path):
 
 
 def test_main_wrong_arg_count_returns_2(capsys):
-    assert sp.main(["stride_progress.py", "only-one"]) == 2
+    assert sp.main(["runtime/stride_progress.py", "only-one"]) == 2
     assert "usage" in capsys.readouterr().err
 
 
 def test_main_invalid_expected_returns_2(capsys):
-    assert sp.main(["stride_progress.py", "/tmp", "notanint"]) == 2
+    assert sp.main(["runtime/stride_progress.py", "/tmp", "notanint"]) == 2
     assert "invalid expected count" in capsys.readouterr().err
 
 
 def test_main_force_flag_stripped_and_emits(tmp_path):
     _write_progress(tmp_path, "auth", "Auth Service", 3, 9, "Tampering")
-    rc = sp.main(["stride_progress.py", str(tmp_path), "2", "--force"])
+    rc = sp.main(["runtime/stride_progress.py", str(tmp_path), "2", "--force"])
     assert rc == 1  # 0/2 ready
 
 
 def test_main_no_entries_prints_no_progress_line(tmp_path, capsys):
     # No .progress dir and no .stride files → entries empty → "(no progress reported yet)".
-    rc = sp.main(["stride_progress.py", str(tmp_path), "1"])
+    rc = sp.main(["runtime/stride_progress.py", str(tmp_path), "1"])
     assert rc == 1
     assert "(no progress reported yet)" in capsys.readouterr().out
 
@@ -348,7 +348,7 @@ def test_main_ready_without_progress_file_stale(tmp_path, capsys):
     f.write_text("{}")
     old = time.time() - 1000
     os.utime(f, (old, old))
-    rc = sp.main(["stride_progress.py", str(tmp_path), "1"])
+    rc = sp.main(["runtime/stride_progress.py", str(tmp_path), "1"])
     assert rc == 0  # 1/1 ready
     out = capsys.readouterr().out
     assert "ghost" in out
@@ -359,7 +359,7 @@ def test_main_ready_without_progress_file_fresh(tmp_path, capsys):
     # Same as above but fresh mtime → done marker without the stale suffix.
     f = tmp_path / ".stride-fresh.json"
     f.write_text("{}")
-    rc = sp.main(["stride_progress.py", str(tmp_path), "1"])
+    rc = sp.main(["runtime/stride_progress.py", str(tmp_path), "1"])
     assert rc == 0
     out = capsys.readouterr().out
     assert "fresh" in out
@@ -407,7 +407,7 @@ def test_previous_attempt_record_reads_as_retry_starting_not_as_contradiction(tm
     old = time.time() - 1000
     os.utime(path, (old, old))
     _write_active_claim(tmp_path, "db", attempt=2)
-    rc = sp.main(["stride_progress.py", str(tmp_path), "1", "--force"])
+    rc = sp.main(["runtime/stride_progress.py", str(tmp_path), "1", "--force"])
     out = capsys.readouterr().out
     assert rc == 1
     assert "db [starting]" in out
@@ -418,7 +418,7 @@ def test_previous_attempt_record_reads_as_retry_starting_not_as_contradiction(tm
 def test_current_attempt_record_shows_its_step(tmp_path, capsys):
     _write_claim_bound_progress(tmp_path, "db", attempt=2, step=4)
     _write_active_claim(tmp_path, "db", attempt=2)
-    rc = sp.main(["stride_progress.py", str(tmp_path), "1", "--force"])
+    rc = sp.main(["runtime/stride_progress.py", str(tmp_path), "1", "--force"])
     assert rc == 1
     assert "db [4/9 Tampering]" in capsys.readouterr().out
 
@@ -426,6 +426,6 @@ def test_current_attempt_record_shows_its_step(tmp_path, capsys):
 def test_record_from_an_attempt_not_yet_claimed_is_still_rejected(tmp_path, capsys):
     _write_claim_bound_progress(tmp_path, "db", attempt=3, step=4)
     _write_active_claim(tmp_path, "db", attempt=2)
-    rc = sp.main(["stride_progress.py", str(tmp_path), "1", "--force"])
+    rc = sp.main(["runtime/stride_progress.py", str(tmp_path), "1", "--force"])
     assert rc == 2
     assert "contradicts current dispatch claim" in capsys.readouterr().err

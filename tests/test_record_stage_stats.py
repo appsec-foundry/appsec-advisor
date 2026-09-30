@@ -1,4 +1,4 @@
-"""Tests for scripts/record_stage_stats.py — JSONL append + idempotency."""
+"""Tests for scripts/runtime/record_stage_stats.py — JSONL append + idempotency."""
 
 from __future__ import annotations
 
@@ -10,13 +10,13 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "record_stage_stats.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "runtime/record_stage_stats.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("record_stage_stats", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("runtime.record_stage_stats", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["record_stage_stats"] = module
+    sys.modules["runtime.record_stage_stats"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
@@ -36,7 +36,7 @@ def _argv(output_dir: Path, **overrides) -> list[str]:
         "--tokens": "93066",
     }
     base.update({k: str(v) for k, v in overrides.items()})
-    args = ["record_stage_stats.py", str(output_dir)]
+    args = ["runtime/record_stage_stats.py", str(output_dir)]
     for k, v in base.items():
         args.extend([k, v])
     return args
@@ -89,7 +89,7 @@ def test_multiple_stages_append_in_order(tmp_path):
 def test_missing_output_dir_errors(tmp_path):
     """Required positional arg + no env fallback → exit 2 from argparse."""
     argv = [
-        "record_stage_stats.py",
+        "runtime/record_stage_stats.py",
         "--stage",
         "1",
         "--name",
@@ -111,7 +111,7 @@ def test_missing_output_dir_errors(tmp_path):
 def test_output_dir_via_env(tmp_path, monkeypatch):
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
     argv = [
-        "record_stage_stats.py",
+        "runtime/record_stage_stats.py",
         "--stage",
         "1",
         "--name",

@@ -136,7 +136,7 @@ The user may pass arguments after the skill name. Parse them now:
 - `--demo` — audit against the packaged example catalog. The report is stamped **DEMO**.
 - `--status` — **mode flag**: print the resolution banner (source, date, count, freshness) and exit. Do not scan the repository.
 - `--clear-requirements` — **mode flag**: forget the remembered source and delete the cached catalog, then exit. Do not scan the repository.
-- `--gate` — enforce a CI gate: exit non-zero when a gating requirement fails (default advisory, always exit 0). Decided deterministically by `scripts/requirements_gate.py`, not by the model.
+- `--gate` — enforce a CI gate: exit non-zero when a gating requirement fails (default advisory, always exit 0). Decided deterministically by `scripts/requirements/requirements_gate.py`, not by the model.
 - `--gate-on <fail|partial>` — what gates: `fail` (default) or `fail`+`partial`.
 - `--priority-floor <MUST|SHOULD|MAY>` — lowest priority eligible to gate (default `MUST`).
 - `--org-profile <path>` — use this org profile for source resolution instead of the packaged default.
@@ -232,7 +232,7 @@ ORG_ARGS=()
 [ -n "$PRESET_OVERRIDE" ] && ORG_ARGS+=(--preset "$PRESET_OVERRIDE")
 [ "$NO_ORG_PROFILE" = "true" ] && ORG_ARGS+=(--no-org-profile)
 
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_org_profile.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/resolve_org_profile.py" \
   --output-dir "$AUDIT_OUTPUT_DIR" \
   --emit-file \
   "${ORG_ARGS[@]}" >/dev/null
@@ -278,7 +278,7 @@ exit; the skill does not audit on this invocation:
 
 ```bash
 if [ "$CLEAR_REQUIREMENTS" = "true" ]; then
-  python3 "$CLAUDE_PLUGIN_ROOT/scripts/fetch_requirements.py" \
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/requirements/fetch_requirements.py" \
     --caller audit-security-requirements --output-dir "$AUDIT_OUTPUT_DIR" \
     --plugin-root "$CLAUDE_PLUGIN_ROOT" --clear-requirements
   exit 0
@@ -299,7 +299,7 @@ REQ_SOURCE_ARGS=(--caller audit-security-requirements --output-dir "$AUDIT_OUTPU
 [ -n "$REQUIREMENTS_URL_OVERRIDE" ] && REQ_SOURCE_ARGS+=(--requirements "$REQUIREMENTS_URL_OVERRIDE")
 [ "$DEMO" = "true" ] && REQ_SOURCE_ARGS+=(--demo)
 
-REQ_SOURCE_JSON=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_requirements_source.py" "${REQ_SOURCE_ARGS[@]}")
+REQ_SOURCE_JSON=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/requirements/resolve_requirements_source.py" "${REQ_SOURCE_ARGS[@]}")
 REQ_SOURCE_KIND=$(printf '%s' "$REQ_SOURCE_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('source') or '')")
 ORG_AUDIT_DISABLED=$(printf '%s' "$REQ_SOURCE_JSON" | python3 -c "import json,sys;print(str(json.load(sys.stdin).get('org_audit_disabled',False)).lower())")
 
@@ -340,7 +340,7 @@ fi
 [ "$CACHE_ONLY" = "true" ] && FETCH_ARGS+=(--cache-only)
 [ "$STATUS_MODE" = "true" ] && FETCH_ARGS+=(--status)
 
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/fetch_requirements.py" "${FETCH_ARGS[@]}"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/requirements/fetch_requirements.py" "${FETCH_ARGS[@]}"
 REQ_FETCH_EXIT=$?
 
 REQ_RESOLUTION="$AUDIT_OUTPUT_DIR/.requirements-resolution.json"
@@ -381,7 +381,7 @@ fi
 #### Render the startup banner (always, before scanning)
 
 The banner tells the user **which catalog is in effect, how current it is, and
-which requirements are about to be graded**. `render_requirements_banner.py`
+which requirements are about to be graded**. `renderers/render_requirements_banner.py`
 composes it from the run state; run it now and print its stdout **verbatim** as
 the first user-visible output of the skill — nothing precedes it, no preamble,
 no "loading…" narration, and nothing is re-derived or reworded here.
@@ -390,7 +390,7 @@ no "loading…" narration, and nothing is re-derived or reworded here.
 BANNER_ARGS=(--output-dir "$AUDIT_OUTPUT_DIR")
 [ -n "$CATEGORY_FILTER" ] && BANNER_ARGS+=(--filter "$CATEGORY_FILTER")
 [ -n "$PRESET_GATE_LINE" ] && BANNER_ARGS+=(--gate-line "$PRESET_GATE_LINE")
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_requirements_banner.py" "${BANNER_ARGS[@]}"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/renderers/render_requirements_banner.py" "${BANNER_ARGS[@]}"
 ```
 
 Set `PRESET_GATE_LINE` beforehand to `<enforce|advisory> · gate-on=<fail|partial>
@@ -554,7 +554,7 @@ requested, but the plain run must never reach this step.
 recompute the summary deterministically:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/requirements_report.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/requirements/requirements_report.py" \
   --audit "$AUDIT_OUTPUT_DIR/.requirements-audit.json" --write
 REPORT_EXIT=$?
 ```
@@ -626,7 +626,7 @@ text and glyphs without escapes.
 The catalog source/provenance was already shown in the Step 1b banner, so the
 results header does **not** repeat the title or the `Source` line — it opens the
 verdict. **Counts:** if Step 2.5 ran (an artifact/gate was requested), use the
-`requirements_report.py` stats line verbatim. Otherwise (plain run) tally them
+`requirements/requirements_report.py` stats line verbatim. Otherwise (plain run) tally them
 directly from your grading.
 
 Render this as a fixed block (see "No prose summary of the verdict" above): one
@@ -875,7 +875,7 @@ no Mermaid diagrams, so pass `--no-mermaid` (skips mmdc/Chrome; needs only
 pandoc + weasyprint):
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/export_pdf.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/exporters/export_pdf.py" \
   --input "$AUDIT_OUTPUT_DIR/appsec-requirements-report.md" \
   --output "$AUDIT_OUTPUT_DIR/appsec-requirements-report.pdf" \
   --no-mermaid
@@ -911,7 +911,7 @@ GATE_ARGS=(--verdict "$AUDIT_OUTPUT_DIR/.requirements-audit.json"
            --priority-floor "$PRIORITY_FLOOR" --gate-on "$GATE_ON")
 [ "$GATE_MODE" = "true" ] && GATE_ARGS+=(--gate)
 
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/requirements_gate.py" "${GATE_ARGS[@]}"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/requirements/requirements_gate.py" "${GATE_ARGS[@]}"
 GATE_EXIT=$?
 ```
 

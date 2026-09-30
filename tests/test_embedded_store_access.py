@@ -4,11 +4,11 @@ import copy
 import json
 from pathlib import Path
 
-import embedded_store_access as access
+import analyzers.embedded_store_access as access
 import jsonschema
-import orchestration_controller as controller
+import orchestrator.orchestration_controller as controller
 import pytest
-from validate_fragment import repository_path_errors
+from validators.validate_fragment import repository_path_errors
 
 ROOT = Path(__file__).resolve().parents[1]
 

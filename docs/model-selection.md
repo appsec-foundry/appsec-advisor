@@ -1,7 +1,7 @@
 <a id="model-selection-cost--context-window"></a>
 # Model selection, cost, and context window
 
-Model selection differs between the main Claude Code session and the subagents it dispatches. This guide describes the defaults, overrides, and measured cost trade-offs for `create-threat-model`. The routing implementation is in [`scripts/resolve_config.py`](../scripts/resolve_config.py).
+Model selection differs between the main Claude Code session and the subagents it dispatches. This guide describes the defaults, overrides, and measured cost trade-offs for `create-threat-model`. The routing implementation is in [`scripts/runtime/resolve_config.py`](../scripts/runtime/resolve_config.py).
 
 ## The two halves of a run
 
@@ -70,7 +70,7 @@ The preflight recommendation uses the repository's source-file count:
 | Fewer than 2500 source files | `claude-sonnet-4-6` | Lower measured cost; the context window usually covers the run. |
 | At least 2500 source files | `claude-sonnet-5` | The larger context window reduces the risk of mid-run compaction and incomplete finalization. |
 
-When the detected interactive session differs from the recommendation, the skill asks whether to keep it or switch. Keeping the current model is allowed. The threshold is defined by `ORCHESTRATOR_SONNET5_FILE_THRESHOLD` in `resolve_config.py`.
+When the detected interactive session differs from the recommendation, the skill asks whether to keep it or switch. Keeping the current model is allowed. The threshold is defined by `ORCHESTRATOR_SONNET5_FILE_THRESHOLD` in `runtime/resolve_config.py`.
 
 <a id="context-window-caveat--dont-cheap-out-the-orchestrator"></a>
 ## Context window

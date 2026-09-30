@@ -313,7 +313,7 @@ level signal entirely.
 > links → `**Implemented controls:**` → `**Assessment:**` → H4 subcontrol
 > blocks with `**Security assessment**` and `**Relevant findings**`.
 > Structural requirements are enforced by
-> `qa_checks.py check_control_subsection_coverage`.
+> `validators/qa_checks.py check_control_subsection_coverage`.
 
 | # | Rule | Heuristic check |
 |---|---|---|
@@ -321,7 +321,7 @@ level signal entirely.
 | §6-2 | **Concrete implementation evidence.** Implementation claims cite a verifiable artifact: file path, route, library, IaC resource, platform API, or generated evidence excerpt. | At least one artifact token from recon/YAML/evidence appears in the block. |
 | §6-3 | **Findings live under the affected control.** Finding bullets appear in the relevant H4 block, not as a detached domain-level dump. | `**Relevant findings**` is a standalone label followed by bullets; finding-to-section routing follows `schema_v2.finding_routing`. |
 | §6-4 | **Dense issue lists become bullets.** Two or more discrete weaknesses in one assessment block use bullets instead of one long paragraph. | Paragraphs with 3+ finding/mitigation refs are flagged for bullet formatting. |
-| §6-5 | **No AI-typical filler.** Avoid `leverages`, `robust`, `comprehensive`, `ensures`, `facilitates`, `in essence`, `seamless`, `cutting-edge`, `state-of-the-art`, and renderer-specific banned vocabulary such as `mechanism layer` or `codified rule`. | Enforced by `qa_checks.py check_architectural_prose`. |
+| §6-5 | **No AI-typical filler.** Avoid `leverages`, `robust`, `comprehensive`, `ensures`, `facilitates`, `in essence`, `seamless`, `cutting-edge`, `state-of-the-art`, and renderer-specific banned vocabulary such as `mechanism layer` or `codified rule`. | Enforced by `validators/qa_checks.py check_architectural_prose`. |
 
 **How to apply across architectures.** None of the §6 rules assume a
 specific application class. They work as written for:
@@ -346,7 +346,7 @@ When emitting a count of an inflected noun, branch on the count: "1 component" v
 **Prefer:**
 > This threat model covers 5 components; 3 findings trace to outdated dependencies.
 
-The pluralize helper in `scripts/compose_threat_model.py:pluralize()` exists for generator code; LLM-authored prose should branch inline.
+The pluralize helper in `scripts/renderers/compose_threat_model.py:pluralize()` exists for generator code; LLM-authored prose should branch inline.
 
 ---
 

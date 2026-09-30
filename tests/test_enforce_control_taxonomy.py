@@ -1,4 +1,4 @@
-"""Unit tests for scripts/enforce_control_taxonomy.py — RC-1 + RC-6 (2026-05)."""
+"""Unit tests for scripts/model/enforce_control_taxonomy.py — RC-1 + RC-6 (2026-05)."""
 
 from __future__ import annotations
 
@@ -9,15 +9,15 @@ from pathlib import Path
 import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "enforce_control_taxonomy.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "model/enforce_control_taxonomy.py"
 
 
 def _load():
-    if "enforce_control_taxonomy" in sys.modules:
-        return sys.modules["enforce_control_taxonomy"]
-    spec = importlib.util.spec_from_file_location("enforce_control_taxonomy", SCRIPT_PATH)
+    if "model.enforce_control_taxonomy" in sys.modules:
+        return sys.modules["model.enforce_control_taxonomy"]
+    spec = importlib.util.spec_from_file_location("model.enforce_control_taxonomy", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["enforce_control_taxonomy"] = module
+    sys.modules["model.enforce_control_taxonomy"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module

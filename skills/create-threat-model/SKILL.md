@@ -66,7 +66,7 @@ if [ -z "$CLAUDE_PLUGIN_ROOT" ] || [ ! -d "$CLAUDE_PLUGIN_ROOT" ]; then
   echo "Error: CLAUDE_PLUGIN_ROOT could not be resolved." >&2
   exit 2
 fi
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" \
   route -- <invocation-arguments>
 ```
 

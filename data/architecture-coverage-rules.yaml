@@ -1,4 +1,4 @@
-# architecture-coverage-rules.yaml — rule catalog for scripts/architecture_coverage_checks.py
+# architecture-coverage-rules.yaml — rule catalog for scripts/analyzers/architecture_coverage_checks.py
 #
 # Two rule families:
 #   * hard_rules         — 5 high-confidence rules (arch.md §Erste Lieferung)
@@ -574,7 +574,7 @@ hypothesis_rules:
       - kind: route_inventory_signal
         description: "Route inventory exists with per-route auth signals."
     positive_signals:
-      # Consumes route_inventory.py's missing_auth_suspect flag (state-changing
+      # Consumes analyzers/route_inventory.py's missing_auth_suspect flag (state-changing
       # or management route, authn=unknown, not public-by-design). Previously
       # computed but unconsumed — dead signal.
       inventory_pattern:
@@ -614,7 +614,7 @@ hypothesis_rules:
       - kind: route_inventory_signal
         description: "Route inventory exists with per-route auth signals."
     positive_signals:
-      # Consumes route_inventory.py's missing_authz_suspect flag (authenticated,
+      # Consumes analyzers/route_inventory.py's missing_authz_suspect flag (authenticated,
       # object-addressing route or GraphQL operation — path/arguments carry an
       # id — with no detected role/ownership gate). The canonical BOLA/IDOR
       # primitive.

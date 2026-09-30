@@ -1,4 +1,4 @@
-"""Pin the canonical event-log line format produced by scripts/event_log.py.
+"""Pin the canonical event-log line format produced by scripts/runtime/event_log.py.
 
 The format is the single source of truth shared by every emitter
 (agent_logger, log_event, log_agent_end, security_steering, acquire_lock,
@@ -9,9 +9,9 @@ edit to any one emitter cannot silently re-introduce format drift.
 
 import re
 
-import event_log
 import pytest
-from event_log import format_line
+import runtime.event_log as event_log
+from runtime.event_log import format_line
 
 _TS_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 SEP = "  "  # canonical two-space field separator

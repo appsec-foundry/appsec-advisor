@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-import inline_code_formatter as formatter  # noqa: E402
+import renderers.inline_code_formatter as formatter  # noqa: E402
 
 
 def _format(token: str, *, known_tokens: tuple[str, ...] = ()) -> str:

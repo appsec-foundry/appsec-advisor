@@ -12,12 +12,12 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-BRIDGE = REPO_ROOT / "scripts" / "arch_coverage_to_threats.py"
-VALIDATOR = REPO_ROOT / "scripts" / "validate_intermediate.py"
+BRIDGE = REPO_ROOT / "scripts" / "analyzers/arch_coverage_to_threats.py"
+VALIDATOR = REPO_ROOT / "scripts" / "validators/validate_intermediate.py"
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
-import arch_coverage_to_threats as bridge  # noqa: E402
-import validate_intermediate as vi  # noqa: E402
+import analyzers.arch_coverage_to_threats as bridge  # noqa: E402
+import validators.validate_intermediate as vi  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Validator: new sources, CVSS-forbidden, rule_id discipline
@@ -464,7 +464,7 @@ def test_end_to_end_bridge_via_cli(tmp_path: Path) -> None:
     subprocess.run(
         [
             sys.executable,
-            str(REPO_ROOT / "scripts" / "route_inventory.py"),
+            str(REPO_ROOT / "scripts" / "analyzers/route_inventory.py"),
             "--repo-root",
             str(repo),
             "--output-dir",
@@ -476,7 +476,7 @@ def test_end_to_end_bridge_via_cli(tmp_path: Path) -> None:
     subprocess.run(
         [
             sys.executable,
-            str(REPO_ROOT / "scripts" / "architecture_coverage_checks.py"),
+            str(REPO_ROOT / "scripts" / "analyzers/architecture_coverage_checks.py"),
             "--repo-root",
             str(repo),
             "--output-dir",
@@ -880,7 +880,7 @@ def test_control_names_preserve_source_provenance_and_explicit_mechanism():
     ],
 )
 def test_specific_cwe_preserves_mechanism_instances(cwe, theme, mechanism, file, expected_class):
-    from merge_threats import build_weakness_register
+    from model.merge_threats import build_weakness_register
 
     coverage = {
         "rules_evaluated": [{"rule_id": "R1", "weakness_mechanism": mechanism}],

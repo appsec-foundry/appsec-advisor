@@ -1,5 +1,5 @@
 """
-Tests for scripts/coverage_checks.py — Sprint 2 Item #6.
+Tests for scripts/analyzers/coverage_checks.py — Sprint 2 Item #6.
 
 Covers:
   - OWASP Top 10 coverage (Check A): set-membership of CWEs in threats[]
@@ -24,11 +24,11 @@ import pytest
 import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-import coverage_checks  # noqa: E402
+import analyzers.coverage_checks as coverage_checks  # noqa: E402
 
 PLUGIN_ROOT = Path(__file__).parent.parent
 OWASP_YAML = PLUGIN_ROOT / "data" / "owasp-top10-cwes.yaml"
-SCRIPT = PLUGIN_ROOT / "scripts" / "coverage_checks.py"
+SCRIPT = PLUGIN_ROOT / "scripts" / "analyzers/coverage_checks.py"
 
 
 def _write_yaml(path: Path, data: dict) -> Path:

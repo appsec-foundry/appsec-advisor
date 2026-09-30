@@ -29,7 +29,7 @@ The third agent-authored stamp got it right:
 .merge-decisions.json          generated_at = 2026-08-16T20:02:07Z   model = sonnet
 ```
 
-`agents/appsec-threat-merger.md` templates both fields, `merge_threats.py` only
+`agents/appsec-threat-merger.md` templates both fields, `model/merge_threats.py` only
 reads the file, and the merger has `Bash` — so it ran a clock. A wrong stamp is
 therefore not a reliable signature of agent authorship, and the two failing
 producers are not failing for want of a clock they cannot reach. Nothing tells
@@ -88,7 +88,7 @@ the two failing agents to run `date` the way the merger does would work today
 and break again on the next prompt that forgets to.
 
 Removing it is not a one-line change. Both schemas list `generated_at` as
-required, and the verifier runs `validate_intermediate.py` as its own producer
+required, and the verifier runs `validators/validate_intermediate.py` as its own producer
 gate before the controller ever sees the file — so dropping the field from the
 prompt fails the agent's gate. The field has to become optional at the source
 and required only after the stamping step, the enrich-then-gate order the

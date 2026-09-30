@@ -1,4 +1,4 @@
-"""Tests for the full change-log audit export (`render_changelog_audit.py`).
+"""Tests for the full change-log audit export (`renderers/render_changelog_audit.py`).
 
 The module renders the COMPLETE, uncapped change history beside the report from
 `threat-model.yaml`'s `changelog[]`. Unlike the report's own `## Changelog`
@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 
 import pytest
-import render_changelog_audit as rca
+import renderers.render_changelog_audit as rca
 import yaml
 
 

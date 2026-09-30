@@ -15,12 +15,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import check_permissions as permissions  # noqa: E402
-import check_state  # noqa: E402
-import context_routing as routing  # noqa: E402
-import diagnostic_bundle  # noqa: E402
-import orchestration_controller as controller  # noqa: E402
+import contexts.context_routing as routing  # noqa: E402
+import orchestrator.orchestration_controller as controller  # noqa: E402
 import package_internal_plugin as packager  # noqa: E402
-import runtime_cleanup  # noqa: E402
+import runtime.check_state as check_state  # noqa: E402
+import runtime.diagnostic_bundle as diagnostic_bundle  # noqa: E402
+import runtime.runtime_cleanup as runtime_cleanup  # noqa: E402
 
 
 def _contracts() -> tuple[dict, dict]:
@@ -992,6 +992,6 @@ def test_catalog_runtime_bindings_and_schemas_are_packaged(tmp_path):
         "schemas/context-effective-plan.schema.json",
         "schemas/context-effective-plan-receipt.schema.json",
         "schemas/stride-component-context-plan.schema.json",
-        "scripts/context_routing.py",
+        "scripts/contexts/context_routing.py",
     ):
         assert (build / relative).is_file()

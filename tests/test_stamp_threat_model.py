@@ -1,4 +1,4 @@
-"""Tests for scripts/stamp_threat_model.py — postfix-stamped copy-ready sets."""
+"""Tests for scripts/model/stamp_threat_model.py — postfix-stamped copy-ready sets."""
 
 import re
 import subprocess
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "stamp_threat_model.py"
+SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "model/stamp_threat_model.py"
 sys.path.insert(0, str(SCRIPT.parent))
 
 
@@ -203,7 +203,7 @@ def test_a_stamped_figure_the_report_no_longer_has_is_removed(tmp_path, dropped)
     assert stamped.is_file()
 
     (tmp_path / dropped).unlink()
-    from stamp_threat_model import stamped_set_is_current
+    from model.stamp_threat_model import stamped_set_is_current
 
     assert not stamped_set_is_current(tmp_path, "keep")
     r = _run("--output-dir", str(tmp_path), "--slug", "keep")

@@ -1,4 +1,4 @@
-"""Exit-code matrix for scripts/requirements_gate.py.
+"""Exit-code matrix for scripts/requirements/requirements_gate.py.
 
 The gate is the single authority on whether a change blocks. It must recompute
 the gating set from results[] and NEVER trust the agent's advisory `gating` /
@@ -14,7 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import requirements_gate  # noqa: E402
+import requirements.requirements_gate as requirements_gate  # noqa: E402
 
 
 def _result(rid, priority, status, in_scope=True, gating=None):

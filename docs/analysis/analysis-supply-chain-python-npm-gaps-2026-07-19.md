@@ -2,7 +2,7 @@
 
 > **Status: implemented 2026-07-19.** All findings below were reproduced against
 > synthetic fixtures before any edit, then fixed in
-> `scripts/assess_supply_chain_controls.py` with paired regression tests in
+> `scripts/analyzers/assess_supply_chain_controls.py` with paired regression tests in
 > `tests/test_assess_supply_chain_controls.py` (102 pass).
 >
 > Read this document together with the two sections at the end. **"Implementation
@@ -16,9 +16,9 @@
 > sub-controls) would change the nine-row contract, and **Y5** (Python `iac_type`)
 > belongs to the IAC layer.
 
-Scope: the **deterministic §8 scorecard** (`scripts/assess_supply_chain_controls.py`, 9
+Scope: the **deterministic §8 scorecard** (`scripts/analyzers/assess_supply_chain_controls.py`, 9
 sub-controls) and the **IAC layer** (`data/config-iac-checks.yaml`). The recon/LLM layer
-(`recon_patterns.py` Cat 14/15/17/26/27/28) is out of scope except where the scorecard
+(`analyzers/recon_patterns.py` Cat 14/15/17/26/27/28) is out of scope except where the scorecard
 under-uses what recon already detects.
 
 Every finding below was verified against code, not inferred. Line refs are to HEAD.
@@ -29,7 +29,7 @@ Every finding below was verified against code, not inferred. Line refs are to HE
 
 ### S1. `ADEQUATE` is unreachable for the whole domain
 
-`_eval_dep_management` (`assess_supply_chain_controls.py:350-356`) returns only `PARTIAL`
+`_eval_dep_management` (`analyzers/assess_supply_chain_controls.py:350-356`) returns only `PARTIAL`
 or `MISSING` — there is no `ADEQUATE` branch. `_derive_overall:430` requires *all* nine
 sub-controls `ADEQUATE`, so the `overall_effectiveness == Adequate` branch is dead code.
 A perfectly-hardened repo caps at `Partial`.
@@ -182,7 +182,7 @@ gets no IAC dependabot credit, and the two `npm_config` checks (`:324`, `:336`) 
 5. Y1, N4, Y4, C1 — remaining false negatives
 6. C2 (G1 cooldown first), Y5, C3
 
-Each is producer-side in `assess_supply_chain_controls.py` / `config-iac-checks.yaml` with
+Each is producer-side in `analyzers/assess_supply_chain_controls.py` / `config-iac-checks.yaml` with
 paired tests in `tests/test_assess_supply_chain_controls.py`. No contract change: the
 `.supply-chain-assessment.json` shape (`schema_version: 1`, nine named sub-controls) stays
 as-is — unless C2 adds controls, which *would* be a contract change (schema + consumer +

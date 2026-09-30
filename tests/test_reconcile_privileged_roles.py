@@ -10,8 +10,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from reconcile_privileged_roles import reconcile  # noqa: E402
-from validate_fragment import (  # noqa: E402
+from model.reconcile_privileged_roles import reconcile  # noqa: E402
+from validators.validate_fragment import (  # noqa: E402
     architecture_reference_errors,
     interaction_evidence_errors,
     repository_path_errors,
@@ -173,7 +173,7 @@ def test_a_citation_without_leading_directories_resolves_to_its_one_repository_f
 
 @pytest.mark.parametrize("cited", ["admin.guard.ts:3", "other/admin.guard.ts:3", "missing.ts:3"])
 def test_an_ambiguous_or_foreign_citation_adds_no_role_and_is_reported(tmp_path, cited):
-    from reconcile_privileged_roles import unevidenced_privileged_actors
+    from model.reconcile_privileged_roles import unevidenced_privileged_actors
 
     root = repo(tmp_path, "web/app/admin.guard.ts")
     if cited == "admin.guard.ts:3":
@@ -187,7 +187,7 @@ def test_an_ambiguous_or_foreign_citation_adds_no_role_and_is_reported(tmp_path,
 
 
 def test_a_modelled_privileged_role_needs_no_report(tmp_path):
-    from reconcile_privileged_roles import unevidenced_privileged_actors
+    from model.reconcile_privileged_roles import unevidenced_privileged_actors
 
     root = repo(tmp_path, "web/app/admin.guard.ts")
     components, flows = model()
@@ -205,7 +205,7 @@ def test_a_modelled_privileged_role_needs_no_report(tmp_path):
     ],
 )
 def test_a_file_header_citation_is_no_evidence_of_an_access_check(tmp_path, header, source):
-    from reconcile_privileged_roles import unevidenced_privileged_actors
+    from model.reconcile_privileged_roles import unevidenced_privileged_actors
 
     root = repo(tmp_path, "web/guards/admin.guard.ts")
     (root / source).parent.mkdir(parents=True, exist_ok=True)

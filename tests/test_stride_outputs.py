@@ -1,4 +1,4 @@
-"""Guards for the per-component STRIDE output glob (scripts/stride_outputs.py).
+"""Guards for the per-component STRIDE output glob (scripts/runtime/stride_outputs.py).
 
 `.stride-dispatch-manifest.json`, `.stride-selection.json`,
 `.stride-analyst-context.json`, and `.stride-repository-registry.json` share the `.stride-` prefix with the
@@ -23,7 +23,7 @@ REPO_ROOT = Path(__file__).parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-import stride_outputs  # noqa: E402
+import runtime.stride_outputs as stride_outputs  # noqa: E402
 
 
 def _make_run(tmp_path: Path, component_ids: list[str], with_sidecars: bool = True) -> Path:
@@ -74,21 +74,21 @@ def test_is_stride_output_rejects_each_reserved_name():
 
 
 def test_watchdog_scan_counts_only_components(tmp_path):
-    import skill_watchdog
+    import runtime.skill_watchdog as skill_watchdog
 
     out = _make_run(tmp_path, ["auth"])
     assert skill_watchdog._scan_stride(out)["stride_count"] == 1
 
 
 def test_merge_loader_yields_only_component_ids(tmp_path):
-    import merge_threats
+    import model.merge_threats as merge_threats
 
     out = _make_run(tmp_path, ["auth", "data-layer"])
     assert [cid for cid, _ in merge_threats._load_stride_outputs(out)] == ["auth", "data-layer"]
 
 
 def test_baseline_hashes_only_components(tmp_path):
-    import baseline_state
+    import baseline.baseline_state as baseline_state
 
     out = _make_run(tmp_path, ["auth"])
     assert list(baseline_state._hash_stride_files(out)) == ["auth"]
@@ -97,7 +97,7 @@ def test_baseline_hashes_only_components(tmp_path):
 def test_reanalyzed_ids_ignore_legacy_sidecar_keys(tmp_path):
     """A baseline written before the fix carries sidecar ids. Their content
     changes nearly every run, so they must not surface as changed components."""
-    import build_threat_model_yaml
+    import model.build_threat_model_yaml as build_threat_model_yaml
 
     out = _make_run(tmp_path, ["auth"])
     cache = out / ".appsec-cache"
@@ -122,7 +122,7 @@ def test_reanalyzed_ids_ignore_legacy_sidecar_keys(tmp_path):
 
 
 def test_durations_ignore_sidecars(tmp_path):
-    import record_component_durations
+    import runtime.record_component_durations as record_component_durations
 
     out = _make_run(tmp_path, ["auth"])
     # Legacy mtime fallback path — the sidecars must not appear as components.
@@ -138,23 +138,33 @@ def test_durations_ignore_sidecars(tmp_path):
 # publish-block or JSON-lint every matching file; sweeping the sidecars in
 # with the results is the correct behaviour there.
 _BROAD_GLOB_ALLOWED = {
-    "stride_outputs.py",  # defines the pattern
-    "orchestration_controller.py",  # full/rebuild cleanup
-    "runtime_cleanup.py",  # cleanup whitelist (docstring)
-    "publish_threat_model.py",  # never-publish list
-    "validate_cache.py",  # JSON-validity sweep
+    "runtime/stride_outputs.py",  # defines the pattern
+    "orchestrator/orchestration_controller.py",  # full/rebuild cleanup
+    "runtime/runtime_cleanup.py",  # cleanup whitelist (docstring)
+    "model/publish_threat_model.py",  # never-publish list
+    "validators/validate_cache.py",  # JSON-validity sweep
 }
 
 _GLOB_CALL_RE = re.compile(r"""glob\(\s*["']\.stride-\*\.json["']""")
 
 
+def _script_sources():
+    """Inspect public scripts and nested internal modules, excluding vendored files."""
+    return sorted(
+        path
+        for path in SCRIPTS.rglob("*.py")
+        if not {"node_modules", "__pycache__"} & set(path.relative_to(SCRIPTS).parts)
+    )
+
+
 def test_no_new_inline_stride_glob():
     offenders = []
-    for path in sorted(SCRIPTS.glob("*.py")):
-        if path.name in _BROAD_GLOB_ALLOWED:
+    for path in _script_sources():
+        relative = path.relative_to(SCRIPTS).as_posix()
+        if relative in _BROAD_GLOB_ALLOWED:
             continue
         if _GLOB_CALL_RE.search(path.read_text(encoding="utf-8")):
-            offenders.append(path.name)
+            offenders.append(relative)
     assert not offenders, (
         f"{offenders} glob '.stride-*.json' directly — use "
         "stride_outputs.stride_output_files() so the `.stride-` sidecars "
@@ -168,7 +178,7 @@ def test_every_reserved_sidecar_is_a_real_artifact():
     entry would silently hide a real component id from every consumer."""
     haystack = "\n".join(
         p.read_text(encoding="utf-8", errors="ignore")
-        for p in list(SCRIPTS.glob("*.py")) + list((REPO_ROOT / "agents").rglob("*.md"))
+        for p in _script_sources() + list((REPO_ROOT / "agents").rglob("*.md"))
     )
     for name in stride_outputs.RESERVED_SIDECARS:
         assert name in haystack, f"{name} is registered as a sidecar but nothing writes it"

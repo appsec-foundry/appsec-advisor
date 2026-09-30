@@ -3,7 +3,7 @@
 A non-actionable ``repair_required`` plan has nothing a repair can apply, so it
 reaches the release gate without a loop iteration; the release receipt after a
 reviewer dispatch keeps the source the reviewer wrote; and every Stage-3 stats
-row carries its own ``--variant``, or ``record_stage_stats.py`` skips the later
+row carries its own ``--variant``, or ``runtime/record_stage_stats.py`` skips the later
 row as a replay of the first.
 """
 

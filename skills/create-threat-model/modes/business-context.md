@@ -15,7 +15,7 @@ For a substantive answer, use **Write** to create `$OUTPUT_DIR/.business-context
 After the answer, or when the use case is already declared, always call:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" \
   review-business-impact --output-dir "$OUTPUT_DIR" --run-id "$APPSEC_RUN_ID"
 ```
 

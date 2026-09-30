@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import emit_threat_vektors as etv
+import model.emit_threat_vektors as etv
 import pytest
 import yaml
 

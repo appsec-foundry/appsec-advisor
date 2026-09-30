@@ -4,7 +4,7 @@ import json
 
 import calibrate_architect_review as calibration
 import pytest
-from architect_review import ReviewError
+from analyzers.architect_review import ReviewError
 
 
 def fixture():

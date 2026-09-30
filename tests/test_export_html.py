@@ -1,4 +1,4 @@
-"""Unit tests for scripts/export_html.py.
+"""Unit tests for scripts/exporters/export_html.py.
 
 Covers preflight (pandoc present/missing/broken, mmdc present/missing/
 require-mermaid render-ok/render-bad/skip), export_html (with and without
@@ -15,14 +15,14 @@ import base64
 import shutil
 import xml.etree.ElementTree as ET
 
-import export_html
-import export_pdf  # noqa: E402
+import exporters.export_html as export_html
+import exporters.export_pdf as export_pdf  # noqa: E402
 import pytest
 
 
 @pytest.mark.parametrize("embedded", [True, False])
 def test_paged_architecture_expands_into_inert_self_contained_views(tmp_path, embedded):
-    import figure1_dfd
+    import renderers.figure1_dfd as figure1_dfd
 
     from tests.test_figure1_detail import model
 
@@ -296,7 +296,7 @@ def test_main_css_missing(monkeypatch, tmp_path):
     inp.write_text("# t\n", encoding="utf-8")
     monkeypatch.setattr(export_html, "preflight", lambda require_mermaid: (True, []))
     # Point __file__-derived css lookup at a dir with no assets/print.css
-    monkeypatch.setattr(export_html, "__file__", str(tmp_path / "export_html.py"))
+    monkeypatch.setattr(export_html, "__file__", str(tmp_path / "exporters/export_html.py"))
     rc = export_html.main(["--input", str(inp), "--output", str(tmp_path / "o.html")])
     assert rc == 3
 
@@ -351,7 +351,7 @@ def test_cli_input_not_found_exit_2(run_plugin_script, tmp_path):
     # accept exit 1, otherwise input-not-found gives exit 2. Either way the
     # __main__ wrapper + argparse path is exercised.
     result = run_plugin_script(
-        "export_html.py",
+        "exporters/export_html.py",
         "--input",
         str(tmp_path / "does-not-exist.md"),
         check=False,
@@ -360,6 +360,6 @@ def test_cli_input_not_found_exit_2(run_plugin_script, tmp_path):
 
 
 def test_cli_help_exit_0(run_plugin_script):
-    result = run_plugin_script("export_html.py", "--help", check=False)
+    result = run_plugin_script("exporters/export_html.py", "--help", check=False)
     assert result.returncode == 0
     assert "export_html.py" in result.stdout

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import assert_completeness as completeness
+import validators.assert_completeness as completeness
 
 
 def _write_yaml(output_dir: Path, content: str) -> None:
@@ -130,7 +130,7 @@ mitigations: []
 
 def _stamp_yaml(output_dir):
     import yaml
-    from enrichment_pass import stamp
+    from model.enrichment_pass import stamp
 
     path = output_dir / "threat-model.yaml"
     data = yaml.safe_load(path.read_text())

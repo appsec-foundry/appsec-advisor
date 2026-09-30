@@ -13,15 +13,12 @@ INTERNAL. Kernel preloads `shared/prose-style.md` and
 
 ## First command and ownership
 
-Each Bash call is a fresh shell, so an `export` does not reach the next one:
-start every command that uses these paths with their exports
-(`agent_progress.sh` reads both from the environment). Log and report
-progress this way, before any Read, Glob, or Grep:
+Each Bash call starts a fresh shell. Export these paths in every command that uses them (`agent_progress.sh` reads both from the environment). Log and report progress before any Read, Glob, or Grep:
 
 ```bash
 export OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 export CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info AGENT_START \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" info AGENT_START \
   "stride-analyzer-v2 started (model: <MODEL_ID>)" --agent stride-analyzer-v2 --component-id "<COMPONENT_ID literal>"
 bash "$CLAUDE_PLUGIN_ROOT/scripts/agent_progress.sh" "<COMPONENT_ID literal>" "<COMPONENT_NAME from bundle>" <STEP> 9 "<LABEL>"
 ```
@@ -29,7 +26,7 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/agent_progress.sh" "<COMPONENT_ID literal>" "<
 Log start/end with `MODEL_ID` and exact plan `analysis.depth` (`full` or
 `light`); never infer it from profile, budget, or another component. Log
 `AGENT_START`, steps (`step-start`/`step-end "<message>"`), and `AGENT_END` to
-`.agent-run.log` with `log_event.py` as above; it appends validated `component`
+`.agent-run.log` with `runtime/log_event.py` as above; it appends validated `component`
 and `depth`, so never author depth. Report progress with `agent_progress.sh`
 for context, source reads, six categories and output;
 never invoke that shell script with Python.
@@ -78,7 +75,7 @@ question that could change a finding. Before searching, append one bounded
 (the selected fixed lens or `null`).
 
 Then obtain `EXCLUDE_GLOB` from
-`scripts/scan_excludes.py glob --repo-root "$REPO_ROOT"` and combine it
+`scripts/analyzers/scan_excludes.py glob --repo-root "$REPO_ROOT"` and combine it
 with `path_routing.exclude_paths` for this component's optional broad discovery
 only. Use at most one batched Glob/Grep turn, stay within `component.paths`, and
 prefilter candidates rather than search an excluded subtree. Excludes never
@@ -114,7 +111,7 @@ before source reads, write a schema-valid `$STRIDE_OUTPUT_PATH` with:
 
 Overwrite it after every completed category, clearing `seed_only` on the
 first; a budget stop keeps `partial:true` with only unstarted categories
-skipped. `log_event.py step-end "category complete: <Category>"` is refused
+skipped. `runtime/log_event.py step-end "category complete: <Category>"` is refused
 until the file no longer skips that category: write, then log.
 
 A declined turn persists nothing. Do not resend its content: record
@@ -294,7 +291,7 @@ After each category, check your dispatch IDs:
 ```bash
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/budget_watchdog.py" active-job-critical --output-dir "$OUTPUT_DIR" --action-id "<ACTION_ID>" --job-id "<JOB_ID>"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/budget_watchdog.py" active-job-critical --output-dir "$OUTPUT_DIR" --action-id "<ACTION_ID>" --job-id "<JOB_ID>"
 ```
 
 If it returns zero, finish the current category, flush its valid findings, mark

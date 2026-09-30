@@ -1,4 +1,4 @@
-"""Unit tests for the Figure 1 data-flow-diagram generator (``scripts/figure1_dfd.py``).
+"""Unit tests for the Figure 1 data-flow-diagram generator (``scripts/renderers/figure1_dfd.py``).
 
 The generator is pure (yaml + attack paths + taxonomy → SVG string). The tests
 build synthetic models and assert on the returned markup and on the generator's
@@ -16,8 +16,8 @@ import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-import figure1_dfd as F
 import pytest
+import renderers.figure1_dfd as F
 
 _GLYPHS = ["①", "②", "③", "④", "⑤", "⑥", "⑦"]
 
@@ -2012,7 +2012,7 @@ def test_annotation_catalog_rejects_unrelated_cwe_qualifiers(monkeypatch):
 def test_report_composer_publishes_compact_annotations_without_fallback(tmp_path):
     from types import SimpleNamespace
 
-    import compose_threat_model as composer
+    import renderers.compose_threat_model as composer
 
     model, paths, taxonomy = _model()
     model["threats"].append(
@@ -2362,7 +2362,7 @@ def test_legend_content_has_clearance_below_header():
 def test_composer_keeps_dfd_for_opposing_routes(tmp_path, prefix):
     from types import SimpleNamespace
 
-    import compose_threat_model as composer
+    import renderers.compose_threat_model as composer
 
     model = _routing_model(
         ["client", "application", "application", "application", "data", "data"],
@@ -2536,7 +2536,7 @@ def test_human_interaction_edges_describe_use_not_the_authored_payload(payload, 
 
 @pytest.mark.parametrize("server_file", ["routes/static.ts", "app/views/assets.py"])
 def test_existing_model_with_server_evidenced_interaction_still_exports_and_renders(server_file):
-    from validate_intermediate import _check_export_trace_invariants
+    from validators.validate_intermediate import _check_export_trace_invariants
 
     model = _routing_model(["client", "application"], [(0, 1)], "shop")
     model["components"][0]["paths"] = ["web/**"]
@@ -3209,7 +3209,7 @@ def test_a_single_attacker_needs_no_code_on_badges_or_arrowheads():
 def test_figure1_tallies_follow_the_report_basis(shape):
     import collections
 
-    from _severity_rollup import register_severity, register_threats, risk_distribution_counts
+    from renderers._severity_rollup import register_severity, register_threats, risk_distribution_counts
 
     model, paths, taxonomy = _model()
     first = model["threats"][0]

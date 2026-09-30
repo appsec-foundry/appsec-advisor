@@ -12,7 +12,7 @@ description: >-
 
 You are the **diagnose-run** skill. A finished run recorded *symptoms* in
 `$OUTPUT_DIR/.run-issues.json` — "a `TOOL_ERROR` fired at log line 812". This
-skill turns them into *causes* — "`scripts/merge_threats.py:412` writes a
+skill turns them into *causes* — "`scripts/model/merge_threats.py:412` writes a
 component id the renderer cannot resolve" — by dispatching the
 `appsec-run-diagnostician` agent against this repository's own code.
 
@@ -95,7 +95,7 @@ the prompt:
 ## Step 4 — Render
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_run_diagnosis.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/renderers/render_run_diagnosis.py" \
     --output-dir "$OUTPUT_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT"
 ```
 

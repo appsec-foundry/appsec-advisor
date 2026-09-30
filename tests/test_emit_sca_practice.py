@@ -4,7 +4,7 @@ import ast
 import json
 from pathlib import Path
 
-import emit_sca_practice as sca
+import model.emit_sca_practice as sca
 import pytest
 
 
@@ -89,7 +89,7 @@ def test_active_dependency_update_cadence_lifts_updates_to_partial(tmp_path: Pat
 
 
 def test_emitter_does_not_execute_package_manager_or_network_tools() -> None:
-    tree = ast.parse((Path.cwd() / "scripts" / "emit_sca_practice.py").read_text(encoding="utf-8"))
+    tree = ast.parse((Path.cwd() / "scripts" / "model/emit_sca_practice.py").read_text(encoding="utf-8"))
     forbidden_imports = {"subprocess", "urllib", "requests", "httpx"}
     forbidden_module_calls = {
         ("os", "system"),

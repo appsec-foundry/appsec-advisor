@@ -74,33 +74,33 @@ def test_stage3_preserves_the_secret_gate_and_canonical_mutation_order():
     assert "unmasked_secrets" in stage3
     assert "Never skip this" in stage3 and "Quick" in stage3
     assert "SKIP_QA=true" in stage3
-    assert "compose --strict → apply_prose_fixes → qa_checks.py gate" in stage3
+    assert "compose --strict → apply_prose_fixes → validators/qa_checks.py gate" in stage3
     assert "MAX_REPAIR_ITERATIONS" in stage3
     assert "appsec-advisor:appsec-fragment-fixer" in stage3
-    assert stage3.rindex("unmasked_secrets") > stage3.index('qa_checks.py" gate')
+    assert stage3.rindex("unmasked_secrets") > stage3.index('validators/qa_checks.py" gate')
 
 
 def test_completion_owns_cross_path_release_gates_in_order():
     completion = _read(SKILL_DIR / "SKILL-thin-completion.md")
 
     patch = completion.index("--patch-placeholders --no-print")
-    final_structure = completion.index('qa_checks.py" final_structure')
-    completeness = completion.index("assert_completeness.py")
-    integrity = completion.index("section_integrity.py")
+    final_structure = completion.index('validators/qa_checks.py" final_structure')
+    completeness = completion.index("validators/assert_completeness.py")
+    integrity = completion.index("validators/section_integrity.py")
     exports = completion.index("## 2. Exports and summary")
     assert patch < final_structure < completeness < integrity < exports
-    assert "reclassify_components.py" in completion
+    assert "model/reclassify_components.py" in completion
     assert "toc_closure" in completion
-    assert "runtime_cleanup.py" in completion
+    assert "runtime/runtime_cleanup.py" in completion
 
 
 def test_stage4_preserves_semantic_corrections_without_a_second_review():
     stage4 = _read(SKILL_DIR / "SKILL-thin-stage4.md")
     assert ".architect-status.json" in stage4
-    assert "architect_review_runtime.py" in stage4
+    assert "analyzers/architect_review_runtime.py" in stage4
     assert "Do not dispatch another review" in stage4
-    assert "apply_editorial_plan.py" not in stage4
-    assert "build_editorial_context.py" not in stage4
+    assert "repairs/apply_editorial_plan.py" not in stage4
+    assert "contexts/build_editorial_context.py" not in stage4
     assert "unmasked_secrets" in stage4
     assert "Every non-zero exit blocks completion" in stage4
     assert "MAX_REPAIR_ITERATIONS" not in stage4

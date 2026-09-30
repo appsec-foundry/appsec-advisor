@@ -7,9 +7,9 @@ import ast
 import re
 from pathlib import Path
 
-import config_iac_scanner as scanner
-import deployment_inventory as di
-import iac_resource_checks as irc
+import analyzers.config_iac_scanner as scanner
+import analyzers.deployment_inventory as di
+import analyzers.iac_resource_checks as irc
 import pytest
 import yaml
 
@@ -577,7 +577,7 @@ WEAK_ENTRIES = CATALOG["inventory_weak_facts"]
 
 
 def _weak_templates() -> list[str]:
-    """Every fact text scripts/deployment_inventory.py can emit with the weak tone; interpolations read as X."""
+    """Every fact text scripts/analyzers/deployment_inventory.py can emit with the weak tone; interpolations read as X."""
 
     def text(node: ast.expr) -> str | None:
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
@@ -595,7 +595,7 @@ def _weak_templates() -> list[str]:
             return next((text(m) for m, t in pairs if t.value == "weak"), "")
         return None
 
-    tree = ast.parse((ROOT / "scripts" / "deployment_inventory.py").read_text(encoding="utf-8"))
+    tree = ast.parse((ROOT / "scripts" / "analyzers/deployment_inventory.py").read_text(encoding="utf-8"))
     out = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "_fact" and len(node.args) >= 2:

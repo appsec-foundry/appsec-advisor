@@ -8,12 +8,12 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "database_privilege_separation.py"
-CONTROLLER = REPO_ROOT / "scripts" / "orchestration_controller.py"
+SCRIPT = REPO_ROOT / "scripts" / "analyzers/database_privilege_separation.py"
+CONTROLLER = REPO_ROOT / "scripts" / "orchestrator/orchestration_controller.py"
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
-import database_privilege_separation as dbsep  # noqa: E402
-import validate_intermediate as vi  # noqa: E402
+import analyzers.database_privilege_separation as dbsep  # noqa: E402
+import validators.validate_intermediate as vi  # noqa: E402
 
 
 def _run(repo: Path, output: Path, depth: str = "thorough") -> dict:
@@ -132,5 +132,5 @@ def test_runtime_wiring_keeps_database_separation_thorough_only() -> None:
     start = text.index("def _prepasses(")
     block = text[start : text.index("\ndef ", start + 1)]
     assert 'if depth == "thorough"' in block
-    assert "database_privilege_separation.py" in block
+    assert "analyzers/database_privilege_separation.py" in block
     assert '"--assessment-depth",\n                    "thorough"' in block

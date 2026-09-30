@@ -9,8 +9,8 @@ from types import SimpleNamespace
 
 import jsonschema
 import pytest
-import report_plugin_issue as support
-import runtime_cleanup
+import runtime.report_plugin_issue as support
+import runtime.runtime_cleanup as runtime_cleanup
 
 
 def write(path, data):
@@ -42,7 +42,7 @@ def run(tmp_path, monkeypatch):
                 "rationale": "PRIVATE RATIONALE",
                 "evidence": ["PRIVATE SOURCE"],
                 "root_cause": {
-                    "location": "scripts/diagnostic_bundle.py:1",
+                    "location": "scripts/runtime/diagnostic_bundle.py:1",
                     "description": "PRIVATE CAUSE",
                     "causal_path": "PRIVATE PATH",
                 },
@@ -74,7 +74,7 @@ def test_prepare_excludes_original_diagnostics_and_requires_review(run, monkeypa
     draft = support.prepare(run.output, run.repo)
     assert "PRIVATE" not in draft["body"]
     assert "not independently reproduced" in draft["body"]
-    assert "diagnostic_bundle.py:1" in draft["body"]
+    assert "runtime/diagnostic_bundle.py:1" in draft["body"]
     preview = support.preview(run.output)
     assert draft["body"] in preview and draft["title"] in preview
     assert support._digest(draft) in preview
@@ -133,7 +133,8 @@ def test_public_payload_rejects_common_disclosures(run, secret):
 
 
 @pytest.mark.parametrize(
-    "location", ["../outside.py", "/tmp/example.py", "scripts/missing.py", "scripts/diagnostic_bundle.py:999999"]
+    "location",
+    ["../outside.py", "/tmp/example.py", "scripts/missing.py", "scripts/runtime/diagnostic_bundle.py:999999"],
 )
 def test_root_cause_cannot_select_external_or_invented_source(run, location):
     run.diagnosis["diagnoses"][0]["root_cause"]["location"] = location
@@ -339,10 +340,10 @@ def test_normal_cleanup_preserves_support_draft_and_deferred_input(run):
 
 
 def test_skill_wires_two_consents_and_failure_offer():
-    root = Path(support.__file__).resolve().parent.parent
+    root = Path(support.__file__).resolve().parents[2]
     skill = (root / "skills/report-error/SKILL.md").read_text()
     assert "REPORT_ERROR_CONSENT=true" in skill
-    assert "wait_agent_calls.py" in skill
+    assert "orchestrator/wait_agent_calls.py" in skill
     assert "Repeat the identical command on exit 75" in skill
     assert "On exit 1 or any other error, stop" in skill
     assert "Earlier investigation consent does not answer this question" in skill

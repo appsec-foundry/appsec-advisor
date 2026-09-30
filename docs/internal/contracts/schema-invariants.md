@@ -11,10 +11,10 @@ Reader-facing references normally render as `[ID](#anchor) — <short-title>`. T
 Three things must stay aligned for the invariant to hold:
 
 1. **Schema source of truth.** `schemas/threat-model.output.schema.yaml`
-   declares `title` as **required** on `threats[]` (`minLength: 10`, `maxLength: 60`) and on `mitigations[]`. Do NOT make it optional or raise the 60-char ceiling; longer titles wrap in tables. `scripts/build_threat_model_yaml.py` MUST copy `.threats-merged.json[].title` verbatim or the report degrades into `(untitled)` cross-references.
+   declares `title` as **required** on `threats[]` (`minLength: 10`, `maxLength: 60`) and on `mitigations[]`. Do NOT make it optional or raise the 60-char ceiling; longer titles wrap in tables. `scripts/model/build_threat_model_yaml.py` MUST copy `.threats-merged.json[].title` verbatim or the report degrades into `(untitled)` cross-references.
 
-2. **Deterministic link owners.** `scripts/qa_checks.py:linkify_anchors` is the
-   only legal normalizer for T/F/M/TH/C cross-references. It runs from `qa_checks.py all` and is idempotent. `scripts/compose_threat_model.py` owns the context-specific full, compact, and inline forms and emits titled W-NNN references directly from `weaknesses[]`; QA does not infer W-NNN labels. Their invariants:
+2. **Deterministic link owners.** `scripts/validators/qa_checks.py:linkify_anchors` is the
+   only legal normalizer for T/F/M/TH/C cross-references. It runs from `validators/qa_checks.py all` and is idempotent. `scripts/renderers/compose_threat_model.py` owns the context-specific full, compact, and inline forms and emits titled W-NNN references directly from `weaknesses[]`; QA does not infer W-NNN labels. Their invariants:
    - `_load_label_index` builds T-NNN and F-NNN aliases for the same numeric suffix.
    - `_load_th_label_index` parses TH-NN titles from §8 / §7.2 declarations (`<a id="th-NN"></a>TH-NN — Title`); TH titles do not live in yaml.
    - The bare-ref pass covers `sub_t`, `sub_f`, `sub_m`, `sub_th`; a new ID class needs its own substitution function.
@@ -54,9 +54,9 @@ Figure 1 may combine explicitly classified regular roles with equivalent access,
 
 ## §4b. Mitigation synthesis invariant
 
-Every successful canonical YAML rebuild is followed by the deterministic emitter pass and the shared schema, mitigation-quality, and build-completeness gates. The final render-completeness gate requires `meta.enrichment_pass` to match the current model. Canonical writers after enrichment may carry forward only a receipt verified before their mutation; missing or stale receipts remain invalid. The marker is optional in the export schema so prior reports remain readable, but it is mandatory for run completion. Its shape lives in the output schema and its hash algorithm in `scripts/enrichment_pass.py`.
+Every successful canonical YAML rebuild is followed by the deterministic emitter pass and the shared schema, mitigation-quality, and build-completeness gates. The final render-completeness gate requires `meta.enrichment_pass` to match the current model. Canonical writers after enrichment may carry forward only a receipt verified before their mutation; missing or stale receipts remain invalid. The marker is optional in the export schema so prior reports remain readable, but it is mandatory for run completion. Its shape lives in the output schema and its hash algorithm in `scripts/model/enrichment_pass.py`.
 
-When P1/P2/P3 threats exist in `threat-model.yaml`, `mitigations[]` MUST be non-empty. An empty register means the model builder skipped mandatory synthesis. `scripts/validate_intermediate.py:validate_threat_model_output` enforces this; a non-zero post-write self-check MUST block Stage 2.
+When P1/P2/P3 threats exist in `threat-model.yaml`, `mitigations[]` MUST be non-empty. An empty register means the model builder skipped mandatory synthesis. `scripts/validators/validate_intermediate.py:validate_threat_model_output` enforces this; a non-zero post-write self-check MUST block Stage 2.
 
 **Canonical field names** — deviating causes silent data loss:
 
@@ -68,7 +68,7 @@ When P1/P2/P3 threats exist in `threat-model.yaml`, `mitigations[]` MUST be non-
 | `mitigations[].priority` | P1/P2/P3/P4 — NEVER severity words (Critical/High/…) |
 | `threats[].mitigation_ids` | ~~`threats[].mitigations`~~ |
 
-The last row is critical: `scripts/compose_threat_model.py` reads `t.get("mitigation_ids")` for §8 Primary Mitigations and §1 Top Findings. `threats[].mitigations` makes those columns render `—`.
+The last row is critical: `scripts/renderers/compose_threat_model.py` reads `t.get("mitigation_ids")` for §8 Primary Mitigations and §1 Top Findings. `threats[].mitigations` makes those columns render `—`.
 
 ## §4c. `components[].threat_ids[]` directionality
 
@@ -76,7 +76,7 @@ After Phase 11, `components[i].threat_ids[]` MUST be the reverse index of `threa
 
 ## §4d. Flag-conditional QA/contract gates (`skip_attack_walkthroughs`)
 
-`scripts/qa_checks.py` and `scripts/check_inline_shortcut.py` read `.skill-config.json` before applying gates that only matter when attack walkthroughs were authored:
+`scripts/validators/qa_checks.py` and `scripts/validators/check_inline_shortcut.py` read `.skill-config.json` before applying gates that only matter when attack walkthroughs were authored:
 
 - **`check_ms_structure` Check 4** (Attack Chain Overview required when
   Critical ≥ 2) — skipped when `SKIP_ATTACK_WALKTHROUGHS=true`.
@@ -87,7 +87,7 @@ When `SKIP_ATTACK_WALKTHROUGHS=true`, `attack-walkthroughs.md` contains only a s
 
 ## §4e. §8 Threat Register — source locations
 
-When a threat carries `evidence.file` (and optionally `evidence.line`), §8 must surface that exact source location in the finding card's `**Location:**` meta field. `scripts/compose_threat_model.py:_build_threat_card` renders it as one backticked token, for example `` `lib/insecurity.ts:58` ``, while the component remains a separate `C-NN` anchor in the same meta line. Do not collapse the location back into the component anchor or split the line number outside the code span.
+When a threat carries `evidence.file` (and optionally `evidence.line`), §8 must surface that exact source location in the finding card's `**Location:**` meta field. `scripts/renderers/compose_threat_model.py:_build_threat_card` renders it as one backticked token, for example `` `lib/insecurity.ts:58` ``, while the component remains a separate `C-NN` anchor in the same meta line. Do not collapse the location back into the component anchor or split the line number outside the code span.
 
 When the merger folds multiple members, it MUST retain every member as an
 `instances[]` record with its file, line, severity and available scenario /
@@ -100,15 +100,15 @@ Five maps across three Python files implicitly encode the fragment ↔ schema �
 
 | Map | File | Purpose |
 |---|---|---|
-| `_SECTION_FRAGMENT_MAP` | `scripts/compose_threat_model.py:131` | section_id → ordered list of fragment ids the composer pastes for that section |
-| `_KNOWN_JSON_FRAGMENT_SCHEMAS` | `scripts/compose_threat_model.py:148` | fragment filename → (schema name, schema file) for composer-side JSON validation |
-| `FRAGMENT_SCHEMAS` | `scripts/validate_fragment.py:39` | fragment id → schema file used by `validate_fragment.py` (the producer-facing validator the LLM is told to run) |
-| `_FRAGMENT_FILENAMES` | `scripts/validate_fragment.py:55` | fragment id → on-disk filename under `.fragments/` |
-| `CONTRACT_SECTION_FRAGMENTS` | `scripts/qa_checks.py:1163` | section_id → fragment ids that `qa_checks` emits in `fragments_to_rewrite` repair plans |
+| `_SECTION_FRAGMENT_MAP` | `scripts/renderers/compose_threat_model.py:131` | section_id → ordered list of fragment ids the composer pastes for that section |
+| `_KNOWN_JSON_FRAGMENT_SCHEMAS` | `scripts/renderers/compose_threat_model.py:148` | fragment filename → (schema name, schema file) for composer-side JSON validation |
+| `FRAGMENT_SCHEMAS` | `scripts/validators/validate_fragment.py:39` | fragment id → schema file used by `validators/validate_fragment.py` (the producer-facing validator the LLM is told to run) |
+| `_FRAGMENT_FILENAMES` | `scripts/validators/validate_fragment.py:55` | fragment id → on-disk filename under `.fragments/` |
+| `CONTRACT_SECTION_FRAGMENTS` | `scripts/validators/qa_checks.py:1163` | section_id → fragment ids that `qa_checks` emits in `fragments_to_rewrite` repair plans |
 
-> Line numbers drift as the files evolve; the canonical match is on the symbol name, not the number. ``scripts/check_fragment_registry.py`` extracts each map by name via AST, so the gate keeps working even when the line numbers go stale.
+> Line numbers drift as the files evolve; the canonical match is on the symbol name, not the number. ``scripts/validators/check_fragment_registry.py`` extracts each map by name via AST, so the gate keeps working even when the line numbers go stale.
 
-`data/sections-contract.yaml` is the human-edited declaration that every other map should align with; the maps duplicate fragments of it because each consumer reads only the slice it needs. Adding a new fragment means touching all five maps + the contract + the schema + the fragment's `.j2` template under `templates/fragments/` when it renders via one (the `_render_template` call in `docs/internal/runbooks/adding-a-section.md`). The mechanical sequence is documented in `docs/internal/runbooks/adding-a-section.md`. The automated drift gate lives in `scripts/check_fragment_registry.py` (see Phase A1 of the refactoring plan) — when present it MUST stay green in CI.
+`data/sections-contract.yaml` is the human-edited declaration that every other map should align with; the maps duplicate fragments of it because each consumer reads only the slice it needs. Adding a new fragment means touching all five maps + the contract + the schema + the fragment's `.j2` template under `templates/fragments/` when it renders via one (the `_render_template` call in `docs/internal/runbooks/adding-a-section.md`). The mechanical sequence is documented in `docs/internal/runbooks/adding-a-section.md`. The automated drift gate lives in `scripts/validators/check_fragment_registry.py` (see Phase A1 of the refactoring plan) — when present it MUST stay green in CI.
 
 ## §4g. Systemic weakness evidence invariant
 
@@ -117,7 +117,7 @@ unnumbered **Systemic Weaknesses** chapter. A W-NNN may cite confirmed F-NNN
 findings, unsafe-practice locations, or absent-control evidence. Its
 `severity_basis` is therefore `confirmed`, `observed-practice`, or
 `design-risk`; only the linked findings may carry CVSS. A CWE family is never a
-weakness scope: `scripts/merge_threats.py` may group evidence only when it
+weakness scope: `scripts/model/merge_threats.py` may group evidence only when it
 shares one concrete control scope. Management Summary and §7 links point to W,
 while W links to its supporting findings.
 
@@ -133,7 +133,7 @@ Before the architecture analyst runs, the controller projects the role-bearing u
 
 When `.deployment-inventory.json` carries a topology, the controller also projects its workloads into `.dispatch-context/architecture/topology.json` (`schemas/architecture-topology-context.schema.json`): one row per workload name, zones qualified by platform (`compose:<network>`, `kubernetes:<namespace>`), bound to the inventory bytes by the dispatch receipt. Without a topology the file is absent and the analyst's inputs are unchanged. Every projected workload is named in exactly one place: a component's `workloads` or top-level `unmodelled_workloads` with a reason (OR-32). Finalization derives `workload_zones` and `deployment_evidence` from `workloads`; they are separate from the canonical `deployment_zones` vocabulary.
 
-At the controller-owned architecture handoff, `scripts/discover_identity_providers.py` reconciles concrete outbound OAuth/OIDC/SAML client calls and declarative client endpoints with finalized components and data flows. Generated entities and flows carry contained source evidence and satisfy the existing data-flow schema before publication. Explicit internal identity-server topology takes precedence. An authored outbound flow of the same owner already represents a request when its evidence calls the function that makes it, and gains the request's evidence instead of a generated duplicate; callers that name different entities leave the request generated. Ambiguous component ownership blocks the handoff; dependency names, unused URLs, disabled configuration blocks, and unknown dynamic addresses do not create external entities. Deployment activation remains qualified, and discovery never fetches an endpoint or emits a security finding. The renderer consumes the reconciled inventory without performing discovery.
+At the controller-owned architecture handoff, `scripts/analyzers/discover_identity_providers.py` reconciles concrete outbound OAuth/OIDC/SAML client calls and declarative client endpoints with finalized components and data flows. Generated entities and flows carry contained source evidence and satisfy the existing data-flow schema before publication. Explicit internal identity-server topology takes precedence. An authored outbound flow of the same owner already represents a request when its evidence calls the function that makes it, and gains the request's evidence instead of a generated duplicate; callers that name different entities leave the request generated. Ambiguous component ownership blocks the handoff; dependency names, unused URLs, disabled configuration blocks, and unknown dynamic addresses do not create external entities. Deployment activation remains qualified, and discovery never fetches an endpoint or emits a security finding. The renderer consumes the reconciled inventory without performing discovery.
 
 `components[].sensitive_data[]` provides category, observed or declared basis, handling, and contained repository evidence. The legacy `handles_sensitive_data` Boolean remains a conservative analysis-selection signal. Figure 1 does not display a sensitive-data-handling marker. `assets[].component_refs[]` records an evidenced storage, processing, or transmission relation to a known component. Classification and a single-store topology do not establish where an asset is stored. Optional `components[].capabilities[]` and `external_entities[].service_roles[]` name evidenced security-relevant functions from `data/security-capabilities.yaml`, each with contained repository evidence; legitimate roles carry no service role. Component finalization replaces `llm-calls` with `llm-tools` when a file that capability cites passes tools to a model call. Figure 1 shows up to three known labels per participant, those with the most severe linked finding first, without a risk rating; a missing label does not mean the function is absent. Optional `components[].framework` names the primary framework, or for a data component the storage engine and never the ORM. Component finalization sets `components[].language` from file extensions to the implementation language holding most bytes under the component's own paths, replaces any producer value, and sets none for data components. Figure 1 shows framework and language under the component name and leaves out a value that the name or the framework already contains.
 
@@ -249,17 +249,17 @@ The field ownership matrix is:
 
 | Contract surface | Producer / owner | Validation | Semantic consumers |
 |---|---|---|---|
-| Final component identity | `finalize_component_inventory.py` after Phase 3 | components schema, contained repository path/glob resolution, and finalization receipt/fingerprint | data-flow producer, Stage-1b input builder, manifest drift gate |
+| Final component identity | `model/finalize_component_inventory.py` after Phase 3 | components schema, contained repository path/glob resolution, and finalization receipt/fingerprint | data-flow producer, Stage-1b input builder, manifest drift gate |
 | Persisted topology | Phase-3 `.data-flows.json` producer | data-flow schema plus existing repository evidence, dynamic endpoint, and fingerprint checks | Stage-1b input builder and YAML builder |
-| Deterministic crossing signals | `build_trust_boundary_assessment_input.py` | assessment-input schema and bounded source validation | dedicated boundary agent only |
-| Untrusted boundary candidates | `appsec-trust-boundary-analyst` | candidate schema plus disposition/foreign-key gate | `prepare_trust_boundary_context.py promote` only |
+| Deterministic crossing signals | `contexts/build_trust_boundary_assessment_input.py` | assessment-input schema and bounded source validation | dedicated boundary agent only |
+| Untrusted boundary candidates | `appsec-trust-boundary-analyst` | candidate schema plus disposition/foreign-key gate | `contexts/prepare_trust_boundary_context.py promote` only |
 | Repository declarations | Repository author | `schemas/trust-boundaries-repo.schema.yaml` plus whole-file rejection | Normalizer merge only |
-| Canonical sidecar, stable IDs, resolution diagnostics, and signal coverage | `prepare_trust_boundary_context.py promote/normalize`, `reserve_ids.py`, `baseline_state.py` | canonical, diagnostics, and coverage schemas | YAML builder, context selector, cross-repo slicer, run-issue aggregator |
-| Component candidate slices | `prepare_trust_boundary_context.py contexts` after final component selection | Structural cap and canonical-source checks | STRIDE analyzer through a Group-C path |
-| Finding references | STRIDE analyzer; merge/builder/reclassifier preserve or remove | STRIDE/merged/output schemas plus the shared boundary-reference validator and `validate_intermediate.py` post-checks | Composer, deterministic triage, query, SARIF |
-| Canonical YAML catalogue | `build_threat_model_yaml.py` | `schemas/threat-model.output.schema.yaml` | Composer, Figure 1, query, SARIF, rerender |
-| Report catalogue and cards | `compose_threat_model.py` | compose/QA anchor and cross-reference tests | Human readers |
-| Runtime and permissions | `runtime_cleanup.py`, `data/required-permissions.yaml` | cleanup and permission tests | `.dispatch-context/**`, sidecars, optional repository input |
+| Canonical sidecar, stable IDs, resolution diagnostics, and signal coverage | `contexts/prepare_trust_boundary_context.py promote/normalize`, `model/reserve_ids.py`, `baseline/baseline_state.py` | canonical, diagnostics, and coverage schemas | YAML builder, context selector, cross-repo slicer, run-issue aggregator |
+| Component candidate slices | `contexts/prepare_trust_boundary_context.py contexts` after final component selection | Structural cap and canonical-source checks | STRIDE analyzer through a Group-C path |
+| Finding references | STRIDE analyzer; merge/builder/reclassifier preserve or remove | STRIDE/merged/output schemas plus the shared boundary-reference validator and `validators/validate_intermediate.py` post-checks | Composer, deterministic triage, query, SARIF |
+| Canonical YAML catalogue | `model/build_threat_model_yaml.py` | `schemas/threat-model.output.schema.yaml` | Composer, Figure 1, query, SARIF, rerender |
+| Report catalogue and cards | `renderers/compose_threat_model.py` | compose/QA anchor and cross-reference tests | Human readers |
+| Runtime and permissions | `runtime/runtime_cleanup.py`, `data/required-permissions.yaml` | cleanup and permission tests | `.dispatch-context/**`, sidecars, optional repository input |
 
 Legacy pregenerators may display unresolved rows for compatibility but must not
 mint IDs or feed semantic consumers. Both Figure-1 implementations,
@@ -282,9 +282,9 @@ locally and fail-closed without network access.
 
 ## §4i. Requirements compliance export invariant
 
-When `.requirements.yaml` is configured, strict Stage-2 composition must assess every catalog requirement exactly once before publication completes. `emit_requirement_trace_to_model.py` is the post-compose producer for both `requirements_compliance` and the completed mitigation requirement trace; missing, malformed, incomplete, or schema-invalid input blocks the compose tail without rewriting `threat-model.yaml`.
+When `.requirements.yaml` is configured, strict Stage-2 composition must assess every catalog requirement exactly once before publication completes. `model/emit_requirement_trace_to_model.py` is the post-compose producer for both `requirements_compliance` and the completed mitigation requirement trace; missing, malformed, incomplete, or schema-invalid input blocks the compose tail without rewriting `threat-model.yaml`.
 
-The exported status vocabulary is `PASS`, `FAIL`, `PARTIAL`, `UNVERIFIABLE`, and `N/A`; `ANTI-PATTERN` normalizes to `FAIL` and `NOT OBSERVABLE` normalizes to `UNVERIFIABLE`. The five counters must sum to `total`, the row count must equal `total`, requirement IDs must be unique, and row priority comes from the configured catalog rather than the LLM-authored table. `schemas/threat-model.output.schema.yaml` owns the row shape and `validate_intermediate.py` owns the cross-field reconciliation.
+The exported status vocabulary is `PASS`, `FAIL`, `PARTIAL`, `UNVERIFIABLE`, and `N/A`; `ANTI-PATTERN` normalizes to `FAIL` and `NOT OBSERVABLE` normalizes to `UNVERIFIABLE`. The five counters must sum to `total`, the row count must equal `total`, requirement IDs must be unique, and row priority comes from the configured catalog rather than the LLM-authored table. `schemas/threat-model.output.schema.yaml` owns the row shape and `validators/validate_intermediate.py` owns the cross-field reconciliation.
 
 ## §4j. Export traceability invariant
 
@@ -294,7 +294,7 @@ An optional boolean `impact_is_material` accompanies declared `impact_if_comprom
 
 The canonical verdict optionally carries `business_context_note`, a deterministic disclosure of the component scope with explicitly declared no material business harm. The Management Summary renders the same note. It does not lower technical finding severity or the verdict concern level, and unknown context never produces it.
 
-Every finding, mitigation, requirement, and abuse-case reference inside those blocks must resolve against the same YAML document. `validate_intermediate.py` owns this reconciliation, and a producer that adds or changes canonical trace data validates the updated document before replacing the last valid model.
+Every finding, mitigation, requirement, and abuse-case reference inside those blocks must resolve against the same YAML document. `validators/validate_intermediate.py` owns this reconciliation, and a producer that adds or changes canonical trace data validates the updated document before replacing the last valid model.
 
 Threat Dragon has no native structures for these dimensions. Its exporter attaches applicable trace to the existing finding and mitigation text fields and reports counted omissions; it never creates a second threat merely to represent an abuse chain or requirement.
 

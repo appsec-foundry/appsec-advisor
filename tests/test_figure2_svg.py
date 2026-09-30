@@ -3,8 +3,8 @@
 import copy
 import xml.etree.ElementTree as ET
 
-import figure2_svg as figure2
 import pytest
+import renderers.figure2_svg as figure2
 
 SVG = "http://www.w3.org/2000/svg"
 
@@ -358,7 +358,7 @@ def _grouped(groups, open_registration=False, actor="internet-anon", target="app
 
 
 def _legend_attackers(data, ap):
-    import compose_threat_model as composer
+    import renderers.compose_threat_model as composer
 
     legend = composer._build_security_posture_actor_legend(ap, TAXONOMY, data.get("meta"), data)
     return {line.split("**")[1] for line in legend.splitlines() if line.startswith("- **") and " drives " in line}
@@ -399,7 +399,7 @@ def test_each_actor_group_of_a_path_gets_its_own_row_and_example(groups, open_re
 )
 @pytest.mark.parametrize("open_registration", [False, True])
 def test_figure2_draws_every_attacker_the_legend_names(groups, open_registration):
-    import compose_threat_model as composer
+    import renderers.compose_threat_model as composer
 
     data, ap = _grouped(groups, open_registration)
     labels = (composer._load_posture_actor_labels() or {}).get("actors") or {}

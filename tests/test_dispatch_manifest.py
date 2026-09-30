@@ -1,5 +1,5 @@
 """Unit tests for the Full-M1 STRIDE dispatch manifest validator
-(scripts/validate_dispatch_manifest.py) + its schema."""
+(scripts/validators/validate_dispatch_manifest.py) + its schema."""
 
 from __future__ import annotations
 
@@ -10,11 +10,11 @@ import json
 from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = PLUGIN_ROOT / "scripts" / "validate_dispatch_manifest.py"
+SCRIPT = PLUGIN_ROOT / "scripts" / "validators/validate_dispatch_manifest.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("validate_dispatch_manifest", SCRIPT)
+    spec = importlib.util.spec_from_file_location("validators.validate_dispatch_manifest", SCRIPT)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -133,14 +133,14 @@ def test_missing_manifest_file_fails(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Builder (scripts/build_stride_dispatch_manifest.py)
+# Builder (scripts/orchestrator/build_stride_dispatch_manifest.py)
 # ---------------------------------------------------------------------------
 
-BUILDER = PLUGIN_ROOT / "scripts" / "build_stride_dispatch_manifest.py"
+BUILDER = PLUGIN_ROOT / "scripts" / "orchestrator/build_stride_dispatch_manifest.py"
 
 
 def _load_builder():
-    spec = importlib.util.spec_from_file_location("build_stride_dispatch_manifest", BUILDER)
+    spec = importlib.util.spec_from_file_location("orchestrator.build_stride_dispatch_manifest", BUILDER)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -702,7 +702,7 @@ def test_depth_params_in_sync_with_resolve_config(tmp_path):
     """The builder's fallback max_turns table must match resolve_config.DEPTH_PARAMS."""
     import importlib.util as _ilu
 
-    spec = _ilu.spec_from_file_location("resolve_config", PLUGIN_ROOT / "scripts" / "resolve_config.py")
+    spec = _ilu.spec_from_file_location("runtime.resolve_config", PLUGIN_ROOT / "scripts" / "runtime/resolve_config.py")
     rc_mod = _ilu.module_from_spec(spec)
     spec.loader.exec_module(rc_mod)
     for depth, vals in bm._FALLBACK_DEPTH_PARAMS.items():
@@ -714,7 +714,7 @@ def test_depth_params_falls_back_when_resolve_config_import_fails(monkeypatch):
     real_import = builtins.__import__
 
     def fake_import(name, *args, **kwargs):
-        if name == "resolve_config":
+        if name == "runtime.resolve_config":
             raise RuntimeError("import failed")
         return real_import(name, *args, **kwargs)
 
@@ -861,7 +861,7 @@ def test_renderer_delegates_every_export_to_the_controller_tail():
     completion_md = (PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-completion.md").read_text(
         encoding="utf-8"
     )
-    controller = (PLUGIN_ROOT / "scripts" / "orchestration_controller.py").read_text(encoding="utf-8")
+    controller = (PLUGIN_ROOT / "scripts" / "orchestrator/orchestration_controller.py").read_text(encoding="utf-8")
     assert "controller owns validation, composition" in renderer_md
     assert "Do not compose" in renderer_md
     assert "## 2. Exports and summary" in completion_md
@@ -1642,13 +1642,13 @@ def test_selection_report_flows_into_scope_rendering():
     import importlib.util as _ilu
 
     def _load(name):
-        s = _ilu.spec_from_file_location(name, PLUGIN_ROOT / "scripts" / f"{name}.py")
+        s = _ilu.spec_from_file_location(name, PLUGIN_ROOT / "scripts" / (name.replace(".", "/") + ".py"))
         m = _ilu.module_from_spec(s)
         s.loader.exec_module(m)
         return m
 
-    btm = _load("build_threat_model_yaml")
-    pf = _load("pregenerate_fragments")
+    btm = _load("model.build_threat_model_yaml")
+    pf = _load("renderers.pregenerate_fragments")
 
     comps = [
         _c("express-backend", zones=["internet", "dmz"], sensitive=True, name="Express Backend"),

@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-import build_trust_boundary_assessment_input as builder  # noqa: E402
-import finalize_component_inventory as finalizer  # noqa: E402
+import contexts.build_trust_boundary_assessment_input as builder  # noqa: E402
+import model.finalize_component_inventory as finalizer  # noqa: E402
 
 SIGNAL_KEYS = (
     "has_public_routes",

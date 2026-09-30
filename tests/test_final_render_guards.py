@@ -6,11 +6,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-import qa_checks as qa
+import validators.qa_checks as qa
 import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
-QA_SCRIPT = REPO_ROOT / "scripts" / "qa_checks.py"
+QA_SCRIPT = REPO_ROOT / "scripts" / "validators/qa_checks.py"
 
 
 def _contract(tmp_path: Path) -> Path:

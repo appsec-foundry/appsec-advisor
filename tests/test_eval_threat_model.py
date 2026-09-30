@@ -1,4 +1,4 @@
-"""Tests for scripts/eval_threat_model.py — the deterministic halves of the
+"""Tests for scripts/validators/eval_threat_model.py — the deterministic halves of the
 eval-threat-model dev skill (prepare signals + aggregate find->verify merge).
 
 The LLM JUDGE/VERIFY pass is not unit-testable; here we pin everything around it:
@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-import eval_threat_model as ev  # noqa: E402
+import validators.eval_threat_model as ev  # noqa: E402
 
 FROZEN = Path(__file__).resolve().parent / "fixtures" / "e2e" / "frozen-run"
 

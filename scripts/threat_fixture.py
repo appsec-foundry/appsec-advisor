@@ -21,7 +21,7 @@ change needs the producer's INPUTS (sidecars + .fragments/) to re-run, plus the
 golden OUTPUTS to diff against. A report-only snapshot cannot be replayed.
 
 Volatile fields scrubbed before every comparison (verified against
-build_threat_model_yaml.py): meta.generated (datetime.now), meta.git.* (read
+model/build_threat_model_yaml.py): meta.generated (datetime.now), meta.git.* (read
 from the scanned repo's git), and changelog[].date / time_local / current_sha / previous_date
 (date.today / datetime.now / repo HEAD). Everything downstream (compose, export_sarif) inherits
 its determinism from the scrubbed yaml, so it needs no separate scrubbing.
@@ -62,7 +62,7 @@ SENTINEL_DATE = "2000-01-01"
 SENTINEL_SHA = "0" * 40
 
 # Fixed work-dir parent name. compose's last-resort project-name fallback is
-# `output_dir.parent.name` (compose_threat_model.py); building under a stable
+# `output_dir.parent.name` (renderers/compose_threat_model.py); building under a stable
 # parent makes that fallback deterministic across freeze and replay instead of
 # leaking the random TemporaryDirectory name. Real project names (yaml /
 # package.json) still win over the fallback, so this only neutralises the leak.
@@ -74,7 +74,7 @@ _WORK_PARENT = "threat-fixture-work"
 # stable across both, so it needs no placeholder.)
 _NO_REPO_NAME = "no-repo"
 
-# Volatile keys emitted by scanners (e.g. route_inventory.py): a wall-clock
+# Volatile keys emitted by scanners (e.g. analyzers/route_inventory.py): a wall-clock
 # stamp and the absolute repo path. Scrubbed before comparison.
 _SCANNER_VOLATILE_TS = ("generated_at", "scanned_at", "timestamp")
 _SCANNER_VOLATILE_PATH = ("repo_root",)
@@ -133,8 +133,8 @@ def _is_noise_top(name: str) -> bool:
 # Maps a scanner's output sidecar to the script that produces it. Both follow
 # the `--repo-root <repo> --output-dir <dir>` convention.
 SCANNER_REGISTRY = {
-    ".route-inventory.json": "route_inventory.py",
-    ".source-auth-findings.json": "source_auth_scanner.py",
+    ".route-inventory.json": "analyzers/route_inventory.py",
+    ".source-auth-findings.json": "analyzers/source_auth_scanner.py",
 }
 
 
@@ -275,7 +275,7 @@ def _build_yaml(work: Path, repo_root: Path) -> None:
     cp = _run(
         [
             "python3",
-            str(_SCRIPT_DIR / "build_threat_model_yaml.py"),
+            str(_SCRIPT_DIR / "model/build_threat_model_yaml.py"),
             str(work),
             "--repo-root",
             str(repo_root),
@@ -291,7 +291,7 @@ def _compose(work: Path) -> None:
     cp = _run(
         [
             "python3",
-            str(_SCRIPT_DIR / "compose_threat_model.py"),
+            str(_SCRIPT_DIR / "renderers/compose_threat_model.py"),
             "--output-dir",
             str(work),
             "--strict",
@@ -305,7 +305,7 @@ def _export_sarif(yaml_path: Path, out_path: Path) -> None:
     cp = _run(
         [
             "python3",
-            str(_SCRIPT_DIR / "export_sarif.py"),
+            str(_SCRIPT_DIR / "exporters/export_sarif.py"),
             "--threat-model",
             str(yaml_path),
             "--output",

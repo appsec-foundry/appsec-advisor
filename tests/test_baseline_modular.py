@@ -13,11 +13,11 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-import baseline_check as bc
-import baseline_modular as bm
-import install_baseline as ib
-import remove_baseline as rb
-import update_baseline as ub
+import baseline.baseline_check as bc
+import baseline.baseline_modular as bm
+import baseline.install_baseline as ib
+import baseline.remove_baseline as rb
+import baseline.update_baseline as ub
 
 
 @pytest.fixture
@@ -263,7 +263,7 @@ def test_upstream_modular_owner_and_new_update_path(owner_scope, locations, conf
 
 
 def test_failed_update_preserves_adapter_and_snapshot(locations, config, monkeypatch):
-    import baseline_release as br
+    import baseline.baseline_release as br
 
     repo, home = locations
     ib.install("project", repo, home, config, offline=True)
@@ -279,7 +279,7 @@ def test_failed_update_preserves_adapter_and_snapshot(locations, config, monkeyp
 
 
 def test_install_fallback_remains_modular(locations, config, monkeypatch):
-    import baseline_release as br
+    import baseline.baseline_release as br
 
     repo, home = locations
 
@@ -356,7 +356,7 @@ def test_bundled_modular_loader_has_no_implicit_command_permission(config):
 def test_signed_modular_update_activates_new_snapshot_and_retains_old(locations, config, tmp_path, monkeypatch):
     import ast
 
-    import baseline_release as br
+    import baseline.baseline_release as br
 
     from tests.test_baseline_release import REPOSITORY, FakeGitHub, make_key, sign
 

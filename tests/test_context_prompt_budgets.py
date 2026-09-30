@@ -33,7 +33,7 @@ SURFACE_MAX_BYTES_RATCHET = {
     # replaces. See the note in data/context-budgets.yaml.
     "thin_stage1d_runtime": 4000,
     # 3600 -> 3800, 8000 -> 8200, 3600 -> 3800 (2026-09-12): the post-Stage-1d
-    # runtimes join their asynchronous agent calls with wait_agent_calls.py.
+    # runtimes join their asynchronous agent calls with orchestrator/wait_agent_calls.py.
     # See the notes in data/context-budgets.yaml.
     "thin_stage2_runtime": 3800,
     "thin_stage3_runtime": 8200,
@@ -199,7 +199,7 @@ def test_compact_stage_contracts_preserve_level0_dispatch_and_gates():
     # dispatch in the wave.
     assert "Pass no `run_in_background`" in stage1d
     assert "launching the wave" in stage1d and "in ONE message" in stage1d
-    assert "wait_abuse_progress.py" in stage1d
+    assert "orchestrator/wait_abuse_progress.py" in stage1d
     assert "model alias" in stage1d
     assert "without reproducing evidence or artifact content" in stage1d
     assert "must not silently drop candidates" in stage1d
@@ -244,7 +244,7 @@ def test_context_v2_stage1_runtime_preserves_dispatch_and_boundary_contract():
     # removed parameter voided every dispatch in the wave.
     assert "in ONE assistant message" in flat
     assert "Pass no `run_in_background`" in text
-    assert "wait_stride_progress.py" in text
+    assert "orchestrator/wait_stride_progress.py" in text
     assert "Never wait for one STRIDE job before launching the next" in flat
     assert "Do not end your turn after dispatching" in text
     assert "Never re-dispatch an agent that already returned" in text

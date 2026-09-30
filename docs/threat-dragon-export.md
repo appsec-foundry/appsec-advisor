@@ -21,7 +21,7 @@ Or from an existing assessment, without re-scanning:
 Or directly:
 
 ```bash
-python3 scripts/export_threat_dragon.py \
+python3 scripts/exporters/export_threat_dragon.py \
   --threat-model docs/security/threat-model.yaml \
   --output       docs/security/threat-model.threatdragon.json
 ```

@@ -15,7 +15,7 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "compose_threat_model.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "renderers/compose_threat_model.py"
 CAT_TAX = REPO_ROOT / "data" / "threat-category-taxonomy.yaml"
 VEK_TAX = REPO_ROOT / "data" / "breach-vector-taxonomy.yaml"
 
@@ -29,7 +29,7 @@ def _load_module(name: str, path: Path):
     return module
 
 
-compose = _load_module("compose_threat_model", SCRIPT_PATH)
+compose = _load_module("renderers.compose_threat_model", SCRIPT_PATH)
 
 
 @pytest.fixture(scope="module")

@@ -14,10 +14,10 @@ Use the second form only when the invocation contains the skill-only `--force`
 flag:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" \
   prepare -- <invocation-arguments>
 
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" \
   prepare --force -- <invocation-arguments>
 ```
 
@@ -118,16 +118,16 @@ Emit this handoff banner:
 
 Read `SKILL-thin-stage2.md` in full and follow it. Do not load any Stage-1
 runtime. When a stage runtime says to start the heartbeat, run `python3
-"$CLAUDE_PLUGIN_ROOT/scripts/skill_watchdog.py" "$OUTPUT_DIR" --plugin-root
+"$CLAUDE_PLUGIN_ROOT/scripts/runtime/skill_watchdog.py" "$OUTPUT_DIR" --plugin-root
 "$CLAUDE_PLUGIN_ROOT" --heartbeat-interval 60` with `run_in_background: true`
 and keep its task id. The final heartbeat is `python3
-"$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock"
+"$CLAUDE_PLUGIN_ROOT/scripts/runtime/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock"
 --heartbeat --phase=skill`; then stop the watchdog with `TaskStop`.
 
 After the renderer returns, and again before the completion summary, run:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" \
   next --output-dir "$OUTPUT_DIR"
 ```
 

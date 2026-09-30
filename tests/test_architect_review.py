@@ -3,13 +3,13 @@
 import sys
 from copy import deepcopy
 
-import architect_review as review
+import analyzers.architect_review as review
 import pytest
-from _severity_rollup import risk_distribution_counts
-from build_threat_model_yaml import apply_mitigation_overrides, build_mitigations, build_threats
-from export_sarif import _build_rule
-from hydrate_mitigation_details import hydrate
-from validate_intermediate import validate_threats_merged
+from exporters.export_sarif import _build_rule
+from model.build_threat_model_yaml import apply_mitigation_overrides, build_mitigations, build_threats
+from model.hydrate_mitigation_details import hydrate
+from renderers._severity_rollup import risk_distribution_counts
+from validators.validate_intermediate import validate_threats_merged
 
 
 def finding(tid="T-001", component="gateway", filename="routes/orders.py"):
@@ -113,7 +113,7 @@ def test_proposal_at_the_depth_bound_reaches_ordinary_validation():
 
 @pytest.mark.parametrize("before_projection", [True, False])
 def test_review_tasks_survive_corrected_fixes(before_projection):
-    from emit_review_mitigations import _synthesize_evidence_review
+    from model.emit_review_mitigations import _synthesize_evidence_review
 
     source = merged()
     source["threats"][0]["evidence_check"] = "ambiguous"

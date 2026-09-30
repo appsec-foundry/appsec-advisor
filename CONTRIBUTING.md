@@ -164,8 +164,8 @@ A test that also fails at the merge base is a pre-existing failure. A test that 
 ### Validation scripts
 
 ```bash
-python3 scripts/validate_config.py .              # config schema validation
-python3 scripts/validate_intermediate.py <file.json>  # intermediate file schema
+python3 scripts/validators/validate_config.py .              # config schema validation
+python3 scripts/validators/validate_intermediate.py <file.json>  # intermediate file schema
 ```
 
 ### Development utilities
@@ -173,16 +173,16 @@ python3 scripts/validate_intermediate.py <file.json>  # intermediate file schema
 ```bash
 python3 scripts/mock-server.py [port]             # mock REST endpoints: context + requirements (default 4444)
 ./scripts/run-headless.sh --repo /path --output /out --yaml --sarif
-python3 scripts/harvest_requirements.py           # regenerate fallback requirements YAML (use --format all for spec exports)
+python3 scripts/requirements/harvest_requirements.py           # regenerate fallback requirements YAML (use --format all for spec exports)
 python3 scripts/threat_fixture.py freeze --run /out --into tests/fixtures/golden/<name> --repo /path
 python3 scripts/threat_fixture.py replay --fixture tests/fixtures/golden/<name> --repo /path
-python3 scripts/diagnostic_bundle.py collect --run /out --into . --repo-root /path  # user → maintainer
-python3 scripts/diagnostic_bundle.py inspect --bundle appsec-diag-<id>.tgz          # maintainer triage
+python3 scripts/runtime/diagnostic_bundle.py collect --run /out --into . --repo-root /path  # user → maintainer
+python3 scripts/runtime/diagnostic_bundle.py inspect --bundle appsec-diag-<id>.tgz          # maintainer triage
 ```
 
 `threat_fixture.py` captures and replays completed runs without another scan. See the [threat fixture runbook](docs/internal/runbooks/threat-fixture.md).
 
-`diagnostic_bundle.py` creates a scrubbed bundle for maintainer triage. Inspect every bundle before sharing it.
+`runtime/diagnostic_bundle.py` creates a scrubbed bundle for maintainer triage. Inspect every bundle before sharing it.
 
 ## Repository layout
 
@@ -197,7 +197,7 @@ python3 scripts/diagnostic_bundle.py inspect --bundle appsec-diag-<id>.tgz      
 | `schemas/` | YAML/JSON schemas for intermediate files and output |
 | `templates/` | Report templates (management summary, sections) |
 | `data/` | Requirements, policy, and rule data |
-| `scripts/` | Python helpers used by agents/hooks plus user-facing CLI wrappers (`run-headless.sh`, `harvest_requirements.py`, `mock-server.py`) |
+| `scripts/` | Domain packages plus maintainer tools and shell entry points; see the [script layout](scripts/README.md). |
 | `tests/` | Pytest suite: agent definitions, integration, steering, SARIF, schemas |
 | `examples/` | Example requirements catalogs, blueprints, abuse cases, and audit outputs |
 | `docs/` | User and maintainer documentation |

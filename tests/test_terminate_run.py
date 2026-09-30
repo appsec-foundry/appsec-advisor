@@ -1,4 +1,4 @@
-"""Tests for scripts/terminate_run.py — one terminal result per exit class.
+"""Tests for scripts/runtime/terminate_run.py — one terminal result per exit class.
 
 The operator-interrupt case is the one that had no owner: the shell wrapper
 cleared the live markers and exited, leaving the lock held, the checkpoint
@@ -19,9 +19,9 @@ import pytest
 SCRIPTS = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-import acquire_lock  # noqa: E402
-import agent_lifecycle as lifecycle  # noqa: E402
-import terminate_run  # noqa: E402
+import runtime.acquire_lock as acquire_lock  # noqa: E402
+import runtime.agent_lifecycle as lifecycle  # noqa: E402
+import runtime.terminate_run as terminate_run  # noqa: E402
 
 
 def _run_dir(tmp_path: Path, *, phase: str = "9", status: str = "started") -> Path:

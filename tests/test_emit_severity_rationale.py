@@ -1,4 +1,4 @@
-"""Tests for emit_severity_rationale.py — the deterministic above-baseline
+"""Tests for model/emit_severity_rationale.py — the deterministic above-baseline
 severity-rationale annotator."""
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import yaml
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
 
-import emit_severity_rationale as esr  # type: ignore[import-not-found]
+import model.emit_severity_rationale as esr  # type: ignore[import-not-found]
 
 
 def _write(tmp_path: Path, threats: list[dict]) -> Path:
@@ -406,7 +406,7 @@ def _flag(threat_id: str, reasons: str) -> dict:
         "type": "severity_reconciliation",
         "threat_ids": [threat_id],
         "message": f"Assessed risk High; policy risk High; effective severity Critical ({reasons}).",
-        "source": "triage_compute_ranking.py",
+        "source": "model/triage_compute_ranking.py",
     }
 
 

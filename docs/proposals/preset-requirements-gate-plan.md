@@ -11,7 +11,7 @@ Status quo (verified):
   hard defaults `false` / `fail` / `MUST`
   (`skills/audit-security-requirements/SKILL.md` Step 1a,
   `skills/verify-requirements/SKILL.md:74-76`).
-- `scripts/requirements_gate.py:61-69` takes `--priority-floor`/`--gate-on` as args,
+- `scripts/requirements/requirements_gate.py:61-69` takes `--priority-floor`/`--gate-on` as args,
   default `MUST`/`fail`.
 - `resolve_org_profile.flatten_preset()` (`:183-230`) today surfaces only
   `check_requirements = requirements.enabled` from the requirements preset.
@@ -72,7 +72,7 @@ No required fields → v1 profiles and presets without `gate` stay unchanged
 (behavior: advisory/fail/MUST). No `api_version` bump needed (purely additive,
 optional).
 
-### 2. Producer — `scripts/resolve_org_profile.py`
+### 2. Producer — `scripts/runtime/resolve_org_profile.py`
 
 In `flatten_preset()` (after `:217 check_requirements`) add a **nested** block
 to `defaults` — only when the preset sets it, otherwise `None`, so the
@@ -93,7 +93,7 @@ The key lands in `.org-profile-effective.json` under `defaults.requirements_gate
 ### 3. Consumer — both SKILL.md (Step 1a gate resolution)
 
 Both skills already emit `.org-profile-effective.json` via
-`resolve_org_profile.py --emit-file` and know `$AUDIT_OUTPUT_DIR` /
+`runtime/resolve_org_profile.py --emit-file` and know `$AUDIT_OUTPUT_DIR` /
 output dir. **After** the emit and **before** the gate call, read the preset
 defaults and apply them only where the CLI flag was **not** set:
 
@@ -122,7 +122,7 @@ Optional (recommended for transparency): show a line in the startup banner
 `Gate     : enforce · gate-on=partial · floor=SHOULD (from preset ci-standard)`
 when a preset provides the policy — otherwise omit it.
 
-The gate call itself (`requirements_gate.py "${GATE_ARGS[@]}"`) stays unchanged;
+The gate call itself (`requirements/requirements_gate.py "${GATE_ARGS[@]}"`) stays unchanged;
 it receives the already-resolved values.
 
 ---
@@ -166,7 +166,7 @@ it receives the already-resolved values.
 ## `data/required-permissions.yaml`
 
 No new Bash command / write target / sub-agent dispatch — the skills already call
-`resolve_org_profile.py`, `requirements_gate.py`, etc. **No
+`runtime/resolve_org_profile.py`, `requirements/requirements_gate.py`, etc. **No
 change** (double-check during implementation).
 
 ## Order & verify

@@ -1,4 +1,4 @@
-"""Unit tests for scripts/pregenerate_fragments.py.
+"""Unit tests for scripts/renderers/pregenerate_fragments.py.
 
 The pre-generator produces 7 deterministic structural fragments from
 threat-model.yaml. Tests verify per-generator output shape (heading
@@ -19,15 +19,15 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "pregenerate_fragments.py"
+SCRIPT = REPO_ROOT / "scripts" / "renderers/pregenerate_fragments.py"
 
 
 def _load_module():
-    if "pregenerate_fragments" in sys.modules:
-        return sys.modules["pregenerate_fragments"]
-    spec = importlib.util.spec_from_file_location("pregenerate_fragments", SCRIPT)
+    if "renderers.pregenerate_fragments" in sys.modules:
+        return sys.modules["renderers.pregenerate_fragments"]
+    spec = importlib.util.spec_from_file_location("renderers.pregenerate_fragments", SCRIPT)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["pregenerate_fragments"] = module
+    sys.modules["renderers.pregenerate_fragments"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
@@ -755,7 +755,7 @@ class TestVerdict:
         ],
     )
     def test_floor_passes_the_verdict_gate_it_backs_up(self, tmp_path, threats):
-        import validate_fragment
+        import validators.validate_fragment as validate_fragment
 
         model = {
             "threats": [
@@ -831,7 +831,7 @@ class TestAttackSurface:
         assert "/api/bar" in md
 
     # M3.2 — schema-tolerance regression tests. The 2026-04-26 19:55 run
-    # crashed pregenerate_fragments.py with `'str' object has no attribute
+    # crashed renderers/pregenerate_fragments.py with `'str' object has no attribute
     # 'get'` because the orchestrator emitted attack_surface as a
     # dict-with-entries (v1.1 schema) rather than a flat list. These tests
     # lock in tolerance for all three valid shapes plus an explicit
@@ -2762,7 +2762,7 @@ class TestCli:
         result = _run_cli(str(output_dir), "--force", "--only", "security-architecture.md")
         assert result.returncode == 2
         assert "refusing to --force overwrite security-architecture.md" in result.stderr
-        assert "apply_content_repair.py" in result.stderr
+        assert "repairs/apply_content_repair.py" in result.stderr
         assert filled.read_text() == before, "fragment must be untouched on refusal"
 
     def test_force_allow_narrative_loss_overwrites(self, output_dir):
@@ -2856,7 +2856,7 @@ class TestCli:
         _run_cli(str(output_dir))
         # Hard gate must still trip on the 2 LLM fragments + Phase-9/10b artifacts
         gate = subprocess.run(
-            [sys.executable, str(REPO_ROOT / "scripts" / "check_inline_shortcut.py"), str(output_dir)],
+            [sys.executable, str(REPO_ROOT / "scripts" / "validators/check_inline_shortcut.py"), str(output_dir)],
             capture_output=True,
             text=True,
         )
@@ -3929,11 +3929,13 @@ class TestContainerDiagramNodeCap:
 
 
 def _load_qa():
-    if "qa_checks" in sys.modules:
-        return sys.modules["qa_checks"]
-    spec = importlib.util.spec_from_file_location("qa_checks", REPO_ROOT / "scripts" / "qa_checks.py")
+    if "validators.qa_checks" in sys.modules:
+        return sys.modules["validators.qa_checks"]
+    spec = importlib.util.spec_from_file_location(
+        "validators.qa_checks", REPO_ROOT / "scripts" / "validators/qa_checks.py"
+    )
     module = importlib.util.module_from_spec(spec)
-    sys.modules["qa_checks"] = module
+    sys.modules["validators.qa_checks"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
@@ -4135,7 +4137,7 @@ def test_ai_summary_discloses_bounded_risk_group_selection():
 )
 def test_verdict_fallback_never_infers_system_takeover_from_privilege_category(tmp_path, tid, title):
     import jsonschema
-    import validate_ms_compactness
+    import validators.validate_ms_compactness as validate_ms_compactness
 
     model = {"threats": [{"id": tid, "title": title, "risk": "High", "stride": "Elevation of Privilege"}]}
     data = json.loads(pf.gen_verdict(model))
@@ -4168,7 +4170,7 @@ def test_verdict_schema_still_rejects_empty_or_oversized_scenario_lists(count):
 @pytest.mark.parametrize("offset,prefix", [(0, "T"), (200, "F")])
 def test_ranked_verdict_floor_matches_the_gate(tmp_path, offset, prefix):
     """A neutral reproduction and renamed variant of the >8-Critical ranking defect."""
-    import validate_fragment
+    import validators.validate_fragment as validate_fragment
 
     ids = [f"{prefix}-{offset + i:03d}" for i in range(1, 13)]
     model = {"threats": [{"id": tid, "risk": "Critical", "stride": "Tampering"} for tid in ids]}
@@ -4184,8 +4186,8 @@ def test_ranked_verdict_floor_matches_the_gate(tmp_path, offset, prefix):
 
 @pytest.mark.parametrize("wid,risk", [("W-031", "Critical"), ("W-204", "High")])
 def test_verdict_design_risk_has_its_own_evidence(tmp_path, wid, risk):
-    import validate_fragment
-    import validate_ms_compactness
+    import validators.validate_fragment as validate_fragment
+    import validators.validate_ms_compactness as validate_ms_compactness
 
     model = {
         "threats": [{"id": "T-071", "risk": "Medium", "stride": "Repudiation"}],

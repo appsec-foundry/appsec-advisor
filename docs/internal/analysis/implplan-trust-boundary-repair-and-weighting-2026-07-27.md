@@ -213,7 +213,7 @@ ordering.
 
 ### 1.2 Canonicalize in-place and recompute status
 
-Refactor `scripts/prepare_trust_boundary_context.py` so normalization:
+Refactor `scripts/contexts/prepare_trust_boundary_context.py` so normalization:
 
 - loads component IDs and names, not IDs alone;
 - resolves endpoints with the conservative algorithm above;
@@ -279,9 +279,9 @@ Requirements:
 - write it atomically;
 - overwrite stale diagnostics on every normalize pass;
 - emit issues for unresolved, conflicted, ambiguous, and invalid-resolved rows;
-- teach `aggregate_run_issues.py` to create a dedicated run issue from it;
+- teach `runtime/aggregate_run_issues.py` to create a dedicated run issue from it;
 - do not invent a new log format; any emitted log event uses
-  `scripts/event_log.py`;
+  `scripts/runtime/event_log.py`;
 - update permissions and permission tests if the new target is not already
   covered; and
 - test that the latest juice-shop fixture would have produced a visible run
@@ -458,7 +458,7 @@ trust boundaries.
 
 ### 5.1 Persist derived fields for every finding
 
-Refactor `triage_compute_ranking.py` so the display cap on
+Refactor `model/triage_compute_ranking.py` so the display cap on
 `views.top_findings.findings_ranked` does not cap YAML persistence.
 
 - Compute an internal update record for every finding.
@@ -483,7 +483,7 @@ eligible `tb-N` IDs for external-boundary elevation.
 Do not rely on the local `_compute_effective(...).reasons` list unless it is
 explicitly persisted through this contract.
 
-Update `emit_severity_rationale.py` to render an external-boundary rationale only
+Update `model/emit_severity_rationale.py` to render an external-boundary rationale only
 from the validated reconciliation data. It must not claim that exposure caused
 an elevation when a CWE cap or another rule prevented the effective value from
 changing.
@@ -669,12 +669,12 @@ Suggested commits:
 
 The current working tree already changes:
 
-- `scripts/apply_prose_fixes.py` and its tests to recognize dot-directory paths
+- `scripts/repairs/apply_prose_fixes.py` and its tests to recognize dot-directory paths
   and format Markdown prose inside styled blockquotes;
-- `scripts/arch_coverage_to_threats.py` and its tests to emit the required
+- `scripts/analyzers/arch_coverage_to_threats.py` and its tests to emit the required
   deterministic `scenario`; and
 - `skills/create-threat-model/SKILL-impl.md`,
-  `scripts/persist_run_baseline.py`, and
+  `scripts/model/persist_run_baseline.py`, and
   `tests/test_persist_run_baseline.py` to move run-duration persistence from an
   inline shell block into a tested deterministic writer.
 

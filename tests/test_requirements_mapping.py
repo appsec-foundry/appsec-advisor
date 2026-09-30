@@ -1,5 +1,5 @@
 """Tests for the deterministic requirement → finding → mitigation traceability
-mapping in scripts/compose_threat_model.py.
+mapping in scripts/renderers/compose_threat_model.py.
 
 These pin the behaviour of the §7b "Requirements Traceability" table and the
 compact Management-Summary compliance table. Compliance statuses and counts
@@ -25,7 +25,7 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "compose_threat_model.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "renderers/compose_threat_model.py"
 CONTRACT = REPO_ROOT / "data" / "sections-contract.yaml"
 FIXTURE = Path(__file__).parent / "fixtures" / "compose"
 
@@ -39,7 +39,7 @@ def _load_module(name: str, path: Path):
     return module
 
 
-compose = _load_module("compose_threat_model", SCRIPT_PATH)
+compose = _load_module("renderers.compose_threat_model", SCRIPT_PATH)
 
 
 def _ctx(threats: list[dict], mitigations: list[dict] | None = None):

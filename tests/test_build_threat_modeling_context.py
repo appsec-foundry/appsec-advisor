@@ -10,9 +10,9 @@ import pytest
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-import _url_guard  # noqa: E402
-import build_threat_modeling_context as builder  # noqa: E402
-from validate_threat_modeling_context import validate_threat_modeling_context  # noqa: E402
+import contexts.build_threat_modeling_context as builder  # noqa: E402
+import shared._url_guard as _url_guard  # noqa: E402
+from validators.validate_threat_modeling_context import validate_threat_modeling_context  # noqa: E402
 
 
 def _plugin(tmp_path: Path, external: dict | None = None) -> Path:

@@ -7,8 +7,8 @@ attribution falls back to the CWE map when a link carries no `leg`. Deviations
 from the design as written are recorded in "Deviations" at the end.
 **Date:** 2026-08-01
 **Basis:** juice-shop run (51 threats, 7 boundaries) read against
-`compose_threat_model.py`, `prepare_trust_boundary_context.py`,
-`triage_compute_ranking.py`, `agents/appsec-trust-boundary-analyst.md`.
+`renderers/compose_threat_model.py`, `contexts/prepare_trust_boundary_context.py`,
+`model/triage_compute_ranking.py`, `agents/appsec-trust-boundary-analyst.md`.
 **Relation to `proposal-boundary-scoring-impact-2026-08-01.md`:** orthogonal and
 downstream-compatible. That proposal fixes *how findings reach boundaries*
 (mech 1 shipped: derived adjacency lives on the boundary row as
@@ -143,12 +143,12 @@ documented in the agent spec; this makes them enforced instead of advisory.
 ## Steps
 
 0. ✅ Renderer dedup: one link per boundary in the §8 card
-   (`compose_threat_model.py` `seen_boundary_ids`, test
+   (`renderers/compose_threat_model.py` `seen_boundary_ids`, test
    `test_finding_boundary_gap_dedups_refs_to_the_same_boundary`).
    → verify: `pytest -k boundary_gap` green (done, 5 passed).
 1. Schema + validation: `assumption_legs` on boundary rows, `leg` on refs,
    promotion validates leg names against the crossing type
-   (`prepare_trust_boundary_context.py`).
+   (`contexts/prepare_trust_boundary_context.py`).
    → verify: unit tests for each crossing type; unknown leg name rejected.
 2. CWE→leg map + `boundary_assumption_state` per-leg extension; row rollup
    unchanged for legless rows (backward compatible).

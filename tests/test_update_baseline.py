@@ -1,4 +1,4 @@
-"""Tests for scripts/update_baseline.py.
+"""Tests for scripts/baseline/update_baseline.py.
 
 Three properties carry the weight here.
 
@@ -30,12 +30,12 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "update_baseline.py"
+SCRIPT = REPO_ROOT / "scripts" / "baseline/update_baseline.py"
 sys.path.insert(0, str(SCRIPT.parent))
 
-import baseline_check as bc  # noqa: E402
-import install_baseline as ib  # noqa: E402
-import update_baseline as ub  # noqa: E402
+import baseline.baseline_check as bc  # noqa: E402
+import baseline.install_baseline as ib  # noqa: E402
+import baseline.update_baseline as ub  # noqa: E402
 
 BASELINE_TEXT = "# Test Baseline\n\n`baseline-id: test-1.0`\n\n- Do the secure thing.\n"
 EDITED_TEXT = "# Test Baseline\n\n`baseline-id: test-1.0`\n\n- Do the secure thing, carefully.\n"
@@ -118,7 +118,7 @@ def test_upstream_target_resolution_never_selects_repository_executables(tmp_pat
 
 
 def test_delegation_refuses_offline_old_protocol_and_failed_verification(monkeypatch, repo):
-    import baseline_release as br
+    import baseline.baseline_release as br
 
     config = {"id": "aiscb-0.1.17", "release": {"repository": "example/baseline"}}
     monkeypatch.setattr(ub.subprocess, "run", lambda *a, **kw: pytest.fail("unverified installer executed"))
@@ -509,7 +509,7 @@ def test_cli_updates_an_offline_install(repo: Path, home: Path):
     installed = subprocess.run(
         [
             sys.executable,
-            str(REPO_ROOT / "scripts" / "install_baseline.py"),
+            str(REPO_ROOT / "scripts" / "baseline/install_baseline.py"),
             "--scope",
             "project",
             "--repo",

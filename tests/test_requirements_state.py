@@ -1,4 +1,4 @@
-"""Unit tests for scripts/requirements_state.py — shared source-state helpers."""
+"""Unit tests for scripts/requirements/requirements_state.py — shared source-state helpers."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-import requirements_state as rs
+import requirements.requirements_state as rs
 
 REPO_ROOT = Path(__file__).parent.parent
 

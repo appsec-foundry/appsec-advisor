@@ -84,7 +84,7 @@ def _run_triage(tmp_path: Path) -> dict[str, str]:
 
 
 def _issues(errors: int = 0, recovery: int = 0, warnings: int = 0) -> dict:
-    """Shape written by aggregate_run_issues.py."""
+    """Shape written by runtime/aggregate_run_issues.py."""
     return {
         "run_status": "issues" if (errors or recovery or warnings) else "clean",
         "summary": {"errors": errors, "recovery_events": recovery, "warnings": warnings},

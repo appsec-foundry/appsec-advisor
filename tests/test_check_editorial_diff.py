@@ -1,5 +1,5 @@
 """
-Tests for scripts/check_editorial_diff.py — the Stage-4 editorial guard.
+Tests for scripts/validators/check_editorial_diff.py — the Stage-4 editorial guard.
 
 Covers:
   * a clean rewrite of prose passes;
@@ -23,7 +23,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import check_editorial_diff as guard  # noqa: E402
+import validators.check_editorial_diff as guard  # noqa: E402
 
 BASE_MODEL = {
     "meta": {"version": "1"},
@@ -278,7 +278,7 @@ def test_only_existing_guarded_files_are_snapshotted(output_dir: Path) -> None:
 
 
 def test_uncertainty_removal_and_negation_changes_are_rejected():
-    import check_editorial_diff as guard
+    import validators.check_editorial_diff as guard
 
     assert guard.prose_violations(
         "The endpoint may allow unauthorized access.", "The endpoint prevents unauthorized access."
@@ -290,7 +290,7 @@ def test_uncertainty_removal_and_negation_changes_are_rejected():
 
 
 def test_lexical_guard_does_not_claim_general_semantic_equivalence():
-    import check_editorial_diff as guard
+    import validators.check_editorial_diff as guard
 
     # Document the boundary: preserving tokens alone cannot prove meaning.
     assert not guard.prose_violations(

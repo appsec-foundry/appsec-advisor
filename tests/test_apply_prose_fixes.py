@@ -1,4 +1,4 @@
-"""Unit tests for scripts/apply_prose_fixes.py."""
+"""Unit tests for scripts/repairs/apply_prose_fixes.py."""
 
 from __future__ import annotations
 
@@ -9,15 +9,15 @@ import textwrap
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "apply_prose_fixes.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "repairs/apply_prose_fixes.py"
 
 
 def _load_apply_prose_fixes():
-    if "apply_prose_fixes" in sys.modules:
-        return sys.modules["apply_prose_fixes"]
-    spec = importlib.util.spec_from_file_location("apply_prose_fixes", SCRIPT_PATH)
+    if "repairs.apply_prose_fixes" in sys.modules:
+        return sys.modules["repairs.apply_prose_fixes"]
+    spec = importlib.util.spec_from_file_location("repairs.apply_prose_fixes", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["apply_prose_fixes"] = module
+    sys.modules["repairs.apply_prose_fixes"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module

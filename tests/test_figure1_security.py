@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 import yaml
-from figure1_security import authentication_profile, flow_bundle_key, profile_catalog
 from jsonschema import Draft202012Validator
+from renderers.figure1_security import authentication_profile, flow_bundle_key, profile_catalog
 
 
 def auth(scheme, **kwargs):
@@ -77,7 +77,7 @@ def test_catalog_numbers_follow_semantic_order_with_other_before_unknown():
 
 
 def test_legend_rows_differ_in_what_they_show():
-    from figure1_security import SCHEMES
+    from renderers.figure1_security import SCHEMES
 
     flows = [
         {"authentication": auth(scheme, transport=transport, **extras)}
@@ -162,7 +162,7 @@ def test_authentication_schema_matches_across_handoffs_and_rejects_false_claims(
 
 
 def test_authentication_evidence_is_checked_against_repository(tmp_path):
-    from validate_fragment import repository_path_errors
+    from validators.validate_fragment import repository_path_errors
 
     flow = {"id": "df-001", "authentication": auth("none")}
     errors = repository_path_errors("data-flows", {"data_flows": [flow]}, tmp_path)
@@ -171,8 +171,8 @@ def test_authentication_evidence_is_checked_against_repository(tmp_path):
 
 @pytest.mark.parametrize("receiver", ["catalog-gateway", "sensor-controller"])
 def test_access_groups_reject_ambiguous_or_unevidenced_relationships(receiver):
-    from figure1_security import access_groups
-    from validate_fragment import architecture_reference_errors
+    from renderers.figure1_security import access_groups
+    from validators.validate_fragment import architecture_reference_errors
 
     flows = [
         {
@@ -211,7 +211,7 @@ def test_access_groups_reject_ambiguous_or_unevidenced_relationships(receiver):
 
 @pytest.mark.parametrize("client", ["operator-console", "handheld-ui"])
 def test_human_interaction_is_not_an_api_or_provider_exchange(client):
-    from validate_fragment import architecture_reference_errors
+    from validators.validate_fragment import architecture_reference_errors
 
     flow = {"id": "df-001", "from": "external", "from_entity": "ext-reader", "to": client, "interaction": True}
     model = {
@@ -246,7 +246,7 @@ def test_human_interaction_is_not_an_api_or_provider_exchange(client):
     ],
 )
 def test_human_interaction_cites_the_client_it_uses(client_paths, client_file, server_file):
-    from validate_fragment import fragment_invariant_errors, interaction_evidence_errors
+    from validators.validate_fragment import fragment_invariant_errors, interaction_evidence_errors
 
     components = [
         {"id": "ui", "tier": "client", "paths": client_paths},
@@ -271,7 +271,7 @@ def test_human_interaction_cites_the_client_it_uses(client_paths, client_file, s
 
 @pytest.mark.parametrize("group", ["federation-session", "device-handshake"])
 def test_reference_selection_keeps_security_relevant_connections(group):
-    from figure1_security import select_references
+    from renderers.figure1_security import select_references
 
     nodes = {
         "browser": {"zone": "client", "h": 100},
@@ -299,7 +299,7 @@ def test_reference_selection_keeps_security_relevant_connections(group):
 
 @pytest.mark.parametrize("bidirectional", [False, True])
 def test_reference_directions_preserve_exchange_without_spreading_receiving_auth(bidirectional):
-    from figure1_security import select_references
+    from renderers.figure1_security import select_references
 
     nodes = {"console": {"zone": "client"}, "identity": {"zone": "third-party"}}
     model = {"data_flows": [{"id": f"df-{i:03d}", "protocol_group": "Login exchange"} for i in (1, 2)]}

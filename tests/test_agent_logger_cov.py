@@ -1,4 +1,4 @@
-"""Additional coverage tests for scripts/agent_logger.py.
+"""Additional coverage tests for scripts/runtime/agent_logger.py.
 
 Targets the helper functions and handler branches that the existing
 test_agent_logger.py / test_agent_logger_checkpoint_abort.py suites do not
@@ -22,21 +22,21 @@ import threading
 import time
 from pathlib import Path
 
-import budget_watchdog
-import orchestration_controller
+import orchestrator.orchestration_controller as orchestration_controller
 import pytest
+import runtime.budget_watchdog as budget_watchdog
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "agent_logger.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "runtime/agent_logger.py"
 
 
 @pytest.fixture
 def al(tmp_path, monkeypatch):
     """Import agent_logger fresh with OUTPUT_DIR -> tmp_path."""
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
-    spec = importlib.util.spec_from_file_location("agent_logger", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("runtime.agent_logger", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["agent_logger"] = module
+    sys.modules["runtime.agent_logger"] = module
     assert spec.loader is not None
     with contextlib.redirect_stderr(io.StringIO()):
         spec.loader.exec_module(module)
@@ -816,7 +816,7 @@ class TestHandleStop:
 
     def _register_bound_call(self, tmp_path, call_id="toolu_stopcase", agent_id="agentabc123"):
         sys.path.insert(0, str(SCRIPT_PATH.parent))
-        import agent_lifecycle
+        import runtime.agent_lifecycle as agent_lifecycle
 
         agent_lifecycle.register_call(
             tmp_path,

@@ -12,8 +12,8 @@
       `REQ-MOD-003`, `REQ-MOD-004`, and `REQ-INC-002`. Coverage of
       `scripts/*.py` moves from 23 to 45 of 228.
 - [x] `python3 scripts/check_specs.py` passes: 44 requirements, 4 advisory.
-- [x] Spot-check `--for scripts/normalize_security_architecture.py` and
-      `--for scripts/_url_guard.py`.
+- [x] Spot-check `--for scripts/model/normalize_security_architecture.py` and
+      `--for scripts/shared/_url_guard.py`.
 - [ ] Amend decision `FE-4` so operator-supplied reference documentation is
       separated from repository-pointed context. Needs operator approval.
 - [ ] Give evidence a shape that can cite a supplied document, then write the

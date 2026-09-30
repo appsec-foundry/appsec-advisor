@@ -1,4 +1,4 @@
-# Vocabulary for the §2 Deployment and Technology figure (scripts/deployment_inventory.py).
+# Vocabulary for the §2 Deployment and Technology figure (scripts/analyzers/deployment_inventory.py).
 #
 # frameworks: the model's component `framework` value (lower-case) -> package names whose declared version the
 #   figure shows next to that framework. The first package found in the component's nearest manifest wins.

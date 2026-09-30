@@ -1,4 +1,4 @@
-"""Unit tests for scripts/extract_data_relations.py.
+"""Unit tests for scripts/analyzers/extract_data_relations.py.
 
 Covers ORM detection, model extraction (Sequelize/Mongoose/TypeORM), raw-query
 collection, association linking, route→model linking, source-file gathering with
@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import extract_data_relations as edr
+import analyzers.extract_data_relations as edr
 
 
 # ---------------------------------------------------------------------------
@@ -267,7 +267,7 @@ class TestCli:
         (tmp_path / "app.ts").write_text("import {x} from 'mongoose'\n")
         out = tmp_path / "cli.json"
         res = run_plugin_script(
-            "extract_data_relations.py",
+            "analyzers/extract_data_relations.py",
             str(tmp_path),
             "--output",
             str(out),

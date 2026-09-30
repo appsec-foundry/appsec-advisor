@@ -20,14 +20,14 @@ def test_e2e_cross_repo_fixture_script_exists_and_documents_defaults():
     assert "--depth <level>" in text
     assert "--clean-output" in text
     assert "docs/related-repos.yaml" in text
-    assert "load_related_repos.py" in text
+    assert "contexts/load_related_repos.py" in text
     assert "verify_threat_model.py" in text
 
 
 def test_e2e_cross_repo_fixture_scans_consumer_only_and_runs_oracle_after_pipeline():
     text = SCRIPT.read_text()
 
-    preflight_idx = text.index('python3 "$PLUGIN_ROOT/scripts/load_related_repos.py"')
+    preflight_idx = text.index('python3 "$PLUGIN_ROOT/scripts/contexts/load_related_repos.py"')
     run_headless_idx = text.index('"$PLUGIN_ROOT/scripts/run-headless.sh" \\')
     verifier_idx = text.index('python3 "$ORACLE/verify_threat_model.py"')
     assert preflight_idx < run_headless_idx < verifier_idx

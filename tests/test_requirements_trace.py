@@ -1,5 +1,5 @@
 """Guards for the shared requirement-traceability and blueprint-selection rules
-in ``scripts/requirements_trace.py`` and the surfaces bound by them.
+in ``scripts/requirements/requirements_trace.py`` and the surfaces bound by them.
 
 Both rules previously had one implementation per surface and drifted:
 
@@ -29,7 +29,7 @@ import yaml
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import requirements_trace as rt  # noqa: E402
+import requirements.requirements_trace as rt  # noqa: E402
 
 
 def _load_module(name: str, path: Path):
@@ -253,7 +253,9 @@ class TestModelAndReportAgree:
     different set. It may show fewer (the §7b status filter), never others."""
 
     def test_the_yaml_derivation_covers_every_threat_side_source(self, tmp_path):
-        build_yaml = _load_module("build_threat_model_yaml", REPO_ROOT / "scripts" / "build_threat_model_yaml.py")
+        build_yaml = _load_module(
+            "model.build_threat_model_yaml", REPO_ROOT / "scripts" / "model/build_threat_model_yaml.py"
+        )
         (tmp_path / ".requirements.yaml").write_text(yaml.safe_dump(CATALOG), encoding="utf-8")
         threats = [
             {"id": "T-001", "title": "Mass assignment", "scenario": "attacker sets role", "mitigation_ids": ["M-001"]},
@@ -270,7 +272,9 @@ class TestModelAndReportAgree:
         assert mitigations[0]["blueprint"]["section_url"] == "https://example.test/validation.html"
 
     def test_a_run_without_a_catalog_gets_neither_field(self, tmp_path):
-        build_yaml = _load_module("build_threat_model_yaml", REPO_ROOT / "scripts" / "build_threat_model_yaml.py")
+        build_yaml = _load_module(
+            "model.build_threat_model_yaml", REPO_ROOT / "scripts" / "model/build_threat_model_yaml.py"
+        )
         threats = [{"id": "T-001", "violated_requirements": ["AC-002"], "mitigation_ids": ["M-001"]}]
         mitigations = [{"id": "M-001", "title": "Fix it", "threat_ids": ["T-001"]}]
         build_yaml.annotate_requirements_and_blueprints(threats, mitigations, tmp_path)
@@ -279,7 +283,9 @@ class TestModelAndReportAgree:
         assert mitigations[0]["fulfills_requirements"] == ["AC-002"]
 
     def test_sidecar_authored_requirements_are_extended_not_replaced(self, tmp_path):
-        build_yaml = _load_module("build_threat_model_yaml", REPO_ROOT / "scripts" / "build_threat_model_yaml.py")
+        build_yaml = _load_module(
+            "model.build_threat_model_yaml", REPO_ROOT / "scripts" / "model/build_threat_model_yaml.py"
+        )
         (tmp_path / ".requirements.yaml").write_text(yaml.safe_dump(CATALOG), encoding="utf-8")
         threats = [{"id": "T-001", "violated_requirements": ["AC-002"], "mitigation_ids": ["M-001"]}]
         mitigations = [{"id": "M-001", "title": "Fix it", "threat_ids": ["T-001"], "fulfills_requirements": ["IV-001"]}]
@@ -295,7 +301,9 @@ class TestModelAndReportAgree:
         on the threat side. It matters at Stage-1 finalize, where no compliance
         section exists for the export-trace check to catch it against.
         """
-        build_yaml = _load_module("build_threat_model_yaml", REPO_ROOT / "scripts" / "build_threat_model_yaml.py")
+        build_yaml = _load_module(
+            "model.build_threat_model_yaml", REPO_ROOT / "scripts" / "model/build_threat_model_yaml.py"
+        )
         (tmp_path / ".requirements.yaml").write_text(yaml.safe_dump(CATALOG), encoding="utf-8")
         threats = [{"id": "T-001", "violated_requirements": ["AC-002"], "mitigation_ids": ["M-001"]}]
         mitigations = [
@@ -310,7 +318,9 @@ class TestAnalystSlice:
     remediation steps, not only the renderer that prints them."""
 
     def test_each_requirement_carries_the_section_that_prescribes_it(self):
-        contexts = _load_module("build_requirements_contexts", REPO_ROOT / "scripts" / "build_requirements_contexts.py")
+        contexts = _load_module(
+            "contexts.build_requirements_contexts", REPO_ROOT / "scripts" / "contexts/build_requirements_contexts.py"
+        )
         rows = contexts.build_rows(CATALOG)
         by_id = {r["id"]: r for row in rows for r in row["requirements"]}
         assert by_id["IV-001"]["blueprint_guidance"][0]["blueprint"] == "BP-VALIDATION"
@@ -319,7 +329,9 @@ class TestAnalystSlice:
         assert "blueprint_guidance" not in by_id["LM-001"]
 
     def test_guidance_never_pushes_a_row_past_the_projection_cap(self):
-        contexts = _load_module("build_requirements_contexts", REPO_ROOT / "scripts" / "build_requirements_contexts.py")
+        contexts = _load_module(
+            "contexts.build_requirements_contexts", REPO_ROOT / "scripts" / "contexts/build_requirements_contexts.py"
+        )
         # A category whose requirements each attract guidance, sized so the
         # unsplit row would exceed the cap the projection truncates at.
         catalog = json.loads(json.dumps(CATALOG))
@@ -331,7 +343,9 @@ class TestAnalystSlice:
             assert contexts._row_chars(row) <= contexts.MAX_ROW_CHARS
 
     def test_a_catalog_without_blueprints_produces_the_same_rows_as_before(self):
-        contexts = _load_module("build_requirements_contexts", REPO_ROOT / "scripts" / "build_requirements_contexts.py")
+        contexts = _load_module(
+            "contexts.build_requirements_contexts", REPO_ROOT / "scripts" / "contexts/build_requirements_contexts.py"
+        )
         catalog = {"categories": CATALOG["categories"]}
         for row in contexts.build_rows(catalog):
             for req in row["requirements"]:
@@ -342,7 +356,7 @@ class TestPostComposeRequirementsExport:
     def _run(self, tmp_path: Path, monkeypatch, *, fragment: str | None) -> tuple[object, Path]:
         emitter = _load_module(
             "emit_requirement_trace_to_model_test",
-            REPO_ROOT / "scripts" / "emit_requirement_trace_to_model.py",
+            REPO_ROOT / "scripts" / "model/emit_requirement_trace_to_model.py",
         )
         (tmp_path / ".requirements.yaml").write_text(yaml.safe_dump(CATALOG), encoding="utf-8")
         if fragment is not None:
@@ -355,7 +369,7 @@ class TestPostComposeRequirementsExport:
 
     @pytest.mark.parametrize("receipt_state", ["valid", "missing", "stale"])
     def test_complete_stage2_assessment_is_persisted_in_the_yaml(self, tmp_path, monkeypatch, receipt_state):
-        from enrichment_pass import stamp, valid_receipt
+        from model.enrichment_pass import stamp, valid_receipt
 
         fragment = """\
 | Requirement | Status | Priority | Evidence |

@@ -1,4 +1,4 @@
-"""Unit tests for scripts/validate_ms_compactness.py."""
+"""Unit tests for scripts/validators/validate_ms_compactness.py."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ import re
 from pathlib import Path
 
 import pytest
-import validate_fragment
-import validate_ms_compactness as mod
+import validators.validate_fragment as validate_fragment
+import validators.validate_ms_compactness as mod
 
 # --- helpers ---------------------------------------------------------------
 
@@ -204,7 +204,7 @@ _CLEAN_VERDICT = {
 
 
 def test_main_fragment_absent_passes(tmp_path, capsys, monkeypatch):
-    monkeypatch.setattr("sys.argv", ["validate_ms_compactness.py", str(tmp_path)])
+    monkeypatch.setattr("sys.argv", ["validators/validate_ms_compactness.py", str(tmp_path)])
     rc = mod.main()
     assert rc == 0
     assert "PASS" in capsys.readouterr().out
@@ -212,7 +212,7 @@ def test_main_fragment_absent_passes(tmp_path, capsys, monkeypatch):
 
 def test_main_clean_passes(tmp_path, capsys, monkeypatch):
     _write_verdict(tmp_path, _CLEAN_VERDICT)
-    monkeypatch.setattr("sys.argv", ["validate_ms_compactness.py", str(tmp_path)])
+    monkeypatch.setattr("sys.argv", ["validators/validate_ms_compactness.py", str(tmp_path)])
     rc = mod.main()
     assert rc == 0
     assert "PASS" in capsys.readouterr().out
@@ -221,7 +221,7 @@ def test_main_clean_passes(tmp_path, capsys, monkeypatch):
 def test_main_violation_fails(tmp_path, capsys, monkeypatch):
     long_opening = " ".join(["word"] * (mod.VERDICT_OPENING_MAX_WORDS + 5))
     _write_verdict(tmp_path, {"opening": long_opening})
-    monkeypatch.setattr("sys.argv", ["validate_ms_compactness.py", str(tmp_path)])
+    monkeypatch.setattr("sys.argv", ["validators/validate_ms_compactness.py", str(tmp_path)])
     rc = mod.main()
     assert rc == 1
     out = capsys.readouterr().out
@@ -232,7 +232,7 @@ def test_main_violation_fails(tmp_path, capsys, monkeypatch):
 def test_main_malformed_fragment_does_not_block(tmp_path, capsys, monkeypatch):
     (tmp_path / ".fragments").mkdir()
     (tmp_path / ".fragments" / "ms-verdict.json").write_text("{ broken", encoding="utf-8")
-    monkeypatch.setattr("sys.argv", ["validate_ms_compactness.py", str(tmp_path)])
+    monkeypatch.setattr("sys.argv", ["validators/validate_ms_compactness.py", str(tmp_path)])
     rc = mod.main()
     assert rc == 0  # parse error warned, not blocked
     err = capsys.readouterr()
@@ -303,7 +303,7 @@ def _ai_exposure(components: list) -> dict:
 
 
 def _run(tmp_path: Path, monkeypatch) -> int:
-    monkeypatch.setattr("sys.argv", ["validate_ms_compactness.py", str(tmp_path)])
+    monkeypatch.setattr("sys.argv", ["validators/validate_ms_compactness.py", str(tmp_path)])
     return mod.main()
 
 

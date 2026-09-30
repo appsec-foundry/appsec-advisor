@@ -11,8 +11,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import build_architecture_analysis_context as context  # noqa: E402
-import context_routing as routing  # noqa: E402
+import contexts.build_architecture_analysis_context as context  # noqa: E402
+import contexts.context_routing as routing  # noqa: E402
 
 
 def _schema(name: str) -> dict:
@@ -301,7 +301,7 @@ ROLE_UNIT_SHAPES = [
 
 @pytest.mark.parametrize("units", ROLE_UNIT_SHAPES, ids=lambda units: "+".join(sorted(units)) or "none")
 def test_role_units_name_exactly_what_finalization_would_add(tmp_path: Path, units: set[str]) -> None:
-    import build_stride_dispatch_manifest as manifest
+    import orchestrator.build_stride_dispatch_manifest as manifest
 
     repo = _role_repo(tmp_path, units)
     projected = context.project_role_units(repo)
@@ -332,7 +332,7 @@ def test_role_units_name_exactly_what_finalization_would_add(tmp_path: Path, uni
 
 
 def test_role_unit_projection_bounds_units_and_paths_with_disclosure(tmp_path: Path, monkeypatch) -> None:
-    import build_stride_dispatch_manifest as manifest
+    import orchestrator.build_stride_dispatch_manifest as manifest
 
     card = {"name": "Unit", "role": "realtime", "tier": "application", "framework": None}
     cards = [dict(card, id=f"unit-{i}", paths=[f"src/unit{i}/file{j}.ts" for j in range(30)]) for i in range(15)]

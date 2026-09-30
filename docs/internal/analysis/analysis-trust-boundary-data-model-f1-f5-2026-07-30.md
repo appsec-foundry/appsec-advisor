@@ -13,10 +13,10 @@ Abweichungen bzw. Präzisierungen:
    Bestandsartefakten nicht brechen" existiert nirgends im Repo. Das Feld wurde
    in `f5cd00a5` („Consolidate trust boundaries at the enforcement point")
    von Anfang an als optional eingeführt; `grep -rn resume` über
-   `prepare_trust_boundary_context.py`, `build_trust_boundary_assessment_input.py`
+   `contexts/prepare_trust_boundary_context.py`, `contexts/build_trust_boundary_assessment_input.py`
    und das Analyst-Agentfile liefert null Treffer. Die tatsächlich dokumentierte
    Begründung ist eine Modellierungsentscheidung
-   (`prepare_trust_boundary_context.py:1333-1339`):
+   (`contexts/prepare_trust_boundary_context.py:1333-1339`):
    > "Separation must be justified, not consolidation. A declared
    > `enforcement_point` IS the justification … Candidates that name none fall
    > back to grouping by the crossing itself."
@@ -45,11 +45,11 @@ Weitere für die Fragen relevante, verifizierte Randbefunde:
 
 - `enforcement_point` ist **write-only**: bei der Promotion wird nur
   `("name","from","to","kind","assumption","evidence","confidence")` kopiert
-  (`prepare_trust_boundary_context.py:1535-1550`), und das kanonische Schema
+  (`contexts/prepare_trust_boundary_context.py:1535-1550`), und das kanonische Schema
   (`schemas/fragments/trust-boundaries.schema.json`, `additionalProperties:false`)
   kennt das Feld nicht. Die Gruppierungsentscheidung ist im fertigen Modell
   nicht nachvollziehbar und bei Re-Runs nicht rekonstruierbar.
-- `kind` wird **ausschließlich** in `prepare_trust_boundary_context.py`
+- `kind` wird **ausschließlich** in `contexts/prepare_trust_boundary_context.py`
   behavioral konsumiert (Focus-Tier `:861-873`, Dispatch-Ranking `:981-983`,
   Same-Deployable-Coercion `:1326,1331`, Privilege-Re-Anchoring `:660`,
   Ingress-Folding `:676`, Normalisierungs-Fallback auf `network` `:230`).
@@ -102,7 +102,7 @@ Begründung:
      containment-bewusst wird („origin ⊆ deployable(to)").
    - Die Adjacency-Auswahl für den STRIDE-Dispatch und die
      `validate_finding_boundary_refs`-Kette (non-adjacent origin → Ref wird
-     verworfen, `prepare_trust_boundary_context.py:1105-1180`): auth-service
+     verworfen, `contexts/prepare_trust_boundary_context.py:1105-1180`): auth-service
      wäre nicht mehr adjazent und dürfte die Boundary gar nicht referenzieren.
    - Die `from`/`to`-Pattern aller drei Schemata plus Rendering/Figure-1, die
      Komponenten-IDs erwarten.
@@ -161,7 +161,7 @@ Begründung:
 4. Was fehlt, ist Ehrlichkeit im Artefakt: der §1-Katalog zeigt tb-2
    gleichrangig als „Trust Boundary". Konkret: process-Rows im Katalog als
    „internal enforcement interface — no trust transition" kennzeichnen
-   (Render-Detail, eine Stelle: `compose_threat_model.py` §1-Tabelle). Mit der
+   (Render-Detail, eine Stelle: `renderers/compose_threat_model.py` §1-Tabelle). Mit der
    F4-Migration löst sich das terminologisch von selbst: `surface: in-process`
    plus leere Transition-Achse *ist* die explizite Aussage „Schnittstelle ohne
    Trust-Übergang".
@@ -222,7 +222,7 @@ Begründung:
    Analyst muss bei jeder Mehrfachzutreffung eine undokumentierte
    Präzedenzentscheidung raten.
 2. Die Migrationskosten sind klein, weil der Konsum zentralisiert ist: **jede**
-   behaviorale Verzweigung auf kind liegt in `prepare_trust_boundary_context.py`
+   behaviorale Verzweigung auf kind liegt in `contexts/prepare_trust_boundary_context.py`
    (Focus-Tier, Dispatch-Ranking, Coercion, Re-Anchoring, Folding); Rendering,
    Triage, QA und Exporte reichen den String nur durch. Zwei Felder —
    `surface: network | in-process | build-pipeline` und
@@ -308,19 +308,19 @@ Begründung:
 | Gegenstand | Ort |
 |---|---|
 | Boundary-Definition („crossing/enforcement question, not a zone container") | `agents/appsec-trust-boundary-analyst.md:50-51`; `agents/phases/phase-group-architecture.md:1398-1400` |
-| Konsolidierung, Schlüsselkonstruktion | `scripts/prepare_trust_boundary_context.py:1340-1347` |
-| „Separation must be justified"-Rationale | `scripts/prepare_trust_boundary_context.py:1333-1339` |
-| crossing_class | `scripts/prepare_trust_boundary_context.py:1267-1272` |
-| Same-Deployable via Glob-Containment (Zonen abgelehnt) | `scripts/prepare_trust_boundary_context.py:1217-1238` |
-| Richtungskorrektur (zeilengranular) | `scripts/prepare_trust_boundary_context.py:1303-1311, 1431-1443` |
-| Confidence-Aufwertung (dateigranular, 512 KB) | `scripts/prepare_trust_boundary_context.py:1312-1320, 1387-1428` |
-| Promotion, Feld-Kopierliste (enforcement_point fällt weg) | `scripts/prepare_trust_boundary_context.py:1535-1550` |
-| Elevation-Eligibility (3 Konjunkte) | `scripts/triage_compute_ranking.py:591-626` |
-| Elevation (+1, Cap High, nur effektive Severity) | `scripts/triage_compute_ranking.py:477-492` |
-| boundary_refs-Validierungskette (fail-open) | `scripts/prepare_trust_boundary_context.py:1105-1180`; `scripts/merge_threats.py:341-379`; `scripts/build_threat_model_yaml.py:2145-2171` |
+| Konsolidierung, Schlüsselkonstruktion | `scripts/contexts/prepare_trust_boundary_context.py:1340-1347` |
+| „Separation must be justified"-Rationale | `scripts/contexts/prepare_trust_boundary_context.py:1333-1339` |
+| crossing_class | `scripts/contexts/prepare_trust_boundary_context.py:1267-1272` |
+| Same-Deployable via Glob-Containment (Zonen abgelehnt) | `scripts/contexts/prepare_trust_boundary_context.py:1217-1238` |
+| Richtungskorrektur (zeilengranular) | `scripts/contexts/prepare_trust_boundary_context.py:1303-1311, 1431-1443` |
+| Confidence-Aufwertung (dateigranular, 512 KB) | `scripts/contexts/prepare_trust_boundary_context.py:1312-1320, 1387-1428` |
+| Promotion, Feld-Kopierliste (enforcement_point fällt weg) | `scripts/contexts/prepare_trust_boundary_context.py:1535-1550` |
+| Elevation-Eligibility (3 Konjunkte) | `scripts/model/triage_compute_ranking.py:591-626` |
+| Elevation (+1, Cap High, nur effektive Severity) | `scripts/model/triage_compute_ranking.py:477-492` |
+| boundary_refs-Validierungskette (fail-open) | `scripts/contexts/prepare_trust_boundary_context.py:1105-1180`; `scripts/model/merge_threats.py:341-379`; `scripts/model/build_threat_model_yaml.py:2145-2171` |
 | STRIDE-Emissionsregel (nur confirmed) | `agents/appsec-stride-analyzer.md:151-157` |
 | kind-Enum (8 Werte), enforcement_point optional | `schemas/fragments/trust-boundary-candidates.schema.json:32-81` |
 | Kanonisches Schema ohne enforcement_point | `schemas/fragments/trust-boundaries.schema.json` |
 | Repo-declared Schema (Nutzer-Eingabe, gleiches Enum) | `schemas/trust-boundaries-repo.schema.yaml` |
-| kind-Konsumenten (alle in einer Datei) | `scripts/prepare_trust_boundary_context.py:230, 431, 648, 660, 676, 861-873, 981-983, 1326, 1331` |
+| kind-Konsumenten (alle in einer Datei) | `scripts/contexts/prepare_trust_boundary_context.py:230, 431, 648, 660, 676, 861-873, 981-983, 1326, 1331` |
 | Lauf-Belege (19→6→6, Dispositionen, tb-Katalog, 0 Boundary-Elevations) | `/home/mrohr/juice-shop/docs/security/.trust-boundary-*.json`, `.triage-flags.json`, `threat-model.yaml:1569` |

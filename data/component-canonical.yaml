@@ -19,7 +19,7 @@
 #                          data-persistence | file-handling | admin |
 #                          messaging | ci-cd | external-dep
 #
-# Loaded by: scripts/canonicalize_component_id.py
+# Loaded by: scripts/model/canonicalize_component_id.py
 # Consumed by: the compact architecture producer and deterministic normalizers
 # Tested by: tests/test_canonicalize_component_id.py
 

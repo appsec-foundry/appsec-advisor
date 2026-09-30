@@ -4,9 +4,9 @@ import argparse
 import copy
 import json
 
-import merge_threats as merger
+import model.merge_threats as merger
 import pytest
-from weakness_signals import finding_signals, validate_document
+from analyzers.weakness_signals import finding_signals, validate_document
 
 
 @pytest.mark.parametrize(

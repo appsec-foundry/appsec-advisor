@@ -11,7 +11,7 @@ Every org-profile field must have a declared layer and follow that layer's compl
 Blocks that change the packaged plugin surface span:
 
 - `schemas/org-profile.schema.yaml`
-- `scripts/validate_org_profile.py`
+- `scripts/validators/validate_org_profile.py`
 - `scripts/package_internal_plugin.py`
 - `scripts/smoke_test_package.py`
 - `tests/test_package_internal_plugin.py`
@@ -21,7 +21,7 @@ For example, org-declared `hooks` are merged into the built `hooks/hooks.json`, 
 
 ### Preset fields
 
-Fields consumed as preset defaults span the schema, `scripts/resolve_org_profile.py::flatten_preset`, every consuming skill or runtime, and `tests/test_org_profile_schema.py` / `tests/test_resolve_org_profile.py`.
+Fields consumed as preset defaults span the schema, `scripts/runtime/resolve_org_profile.py::flatten_preset`, every consuming skill or runtime, and `tests/test_org_profile_schema.py` / `tests/test_resolve_org_profile.py`.
 
 For example, `requirements.gate` is seeded into both requirements skills and remains CLI-overridable.
 
@@ -29,7 +29,7 @@ For example, `requirements.gate` is seeded into both requirements skills and rem
 
 Profile-level policy consumed by a hook or guard bypasses `flatten_preset`. It flows through `resolve()` into `.org-profile-effective.json` under `defaults` and is read directly by the consumer.
 
-Examples include `security_coach.topics` consumed by `scripts/security_steering.py` and `policy.url_allowlist` consumed by `scripts/_url_guard.py`. Relevant guards include `tests/test_security_steering_units.py` and `tests/test_url_guard.py`.
+Examples include `security_coach.topics` consumed by `scripts/analyzers/security_steering.py` and `policy.url_allowlist` consumed by `scripts/shared/_url_guard.py`. Relevant guards include `tests/test_security_steering_units.py` and `tests/test_url_guard.py`.
 
 `llm_policy` is the one profile-level field consumed by an agent rather than by Python: `resolve()` carries it into `.org-profile-effective.json`, `resolve_config` exposes it as `org_profile_llm_policy`, the skill emits it as `LLM_POLICY_JSON`, and Phase-9 dispatch forwards it in Group A. It stays in Group A because it is identical for every component; moving it to Group B would pay for it once per dispatch.
 

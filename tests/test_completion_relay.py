@@ -14,14 +14,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-import acquire_lock
-import completion_relay as relay
-import hook_payload
 import pytest
-import render_completion_summary as rcs
+import renderers.render_completion_summary as rcs
+import runtime.acquire_lock as acquire_lock
+import runtime.completion_relay as relay
+import runtime.hook_payload as hook_payload
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-AGENT_LOGGER = REPO_ROOT / "scripts" / "agent_logger.py"
+AGENT_LOGGER = REPO_ROOT / "scripts" / "runtime/agent_logger.py"
 RUN_IDENTITY_VARS = ("APPSEC_RUN_ID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID", "OUTPUT_DIR")
 RUN_ID = "run-1788592678-3277507"
 
@@ -112,10 +112,10 @@ class TestTrailingLines:
 
     def test_a_note_after_the_summary_is_trailing_text(self):
         text = _summary("/srv/app")
-        note = "---\nHTML export note: run export_html.py from your terminal."
+        note = "---\nHTML export note: run exporters/export_html.py from your terminal."
         assert relay.trailing_lines(text, text + note) == [
             "---",
-            "HTML export note: run export_html.py from your terminal.",
+            "HTML export note: run exporters/export_html.py from your terminal.",
         ]
 
     def test_an_appended_note_is_returned_once(self, run_dir):

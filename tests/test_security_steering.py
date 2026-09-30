@@ -1,5 +1,5 @@
 """
-Tests for scripts/security_steering.py
+Tests for scripts/analyzers/security_steering.py
 
 The script reads JSON from stdin and writes JSON to stdout.
 We test it as a subprocess to match its real execution context.
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).parent.parent / "scripts" / "security_steering.py"
+SCRIPT = Path(__file__).parent.parent / "scripts" / "analyzers/security_steering.py"
 
 
 def run_steering(prompt: str, env_override: dict | None = None) -> dict:

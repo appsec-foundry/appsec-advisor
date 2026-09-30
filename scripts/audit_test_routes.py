@@ -154,10 +154,18 @@ def measure(tests: list[str], root: Path, workdir: Path, jobs: int, timeout: flo
 
 
 def _script_trees(root: Path) -> dict[str, ast.Module]:
+    scripts = root / "scripts"
     return {
         path.relative_to(root).as_posix(): ast.parse(path.read_text(encoding="utf-8"))
-        for path in sorted((root / "scripts").glob("*.py"))
+        for path in sorted(scripts.rglob("*.py"))
+        if not {"node_modules", "__pycache__"} & set(path.relative_to(scripts).parts)
     }
+
+
+def _script_module(path: str) -> str:
+    """Import name of a source file relative to the scripts search path."""
+    parts = PurePosixPath(path).with_suffix("").parts[1:]
+    return ".".join(parts[:-1] if parts[-1] == "__init__" else parts)
 
 
 def _function_lines(tree: ast.Module) -> set[int]:
@@ -212,7 +220,7 @@ def dependents(path: str, measurements: dict[str, Measurement], trees: dict[str,
     readers = {test for test, measured in measurements.items() if path in measured.reads}
     if path not in trees:
         return readers
-    module = PurePosixPath(path).stem
+    module = _script_module(path)
     tree = trees[path]
     functions = {node.name for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
     targets = {path: _function_lines(tree)}
@@ -250,7 +258,7 @@ def audit(
         if missing:
             problems.append(f"route {path} misses dependent tests: {', '.join(missing)}")
         if path in trees:
-            module = PurePosixPath(path).stem
+            module = _script_module(path)
             for importer, tree in trees.items():
                 if importer == path or not _imports(tree, module):
                     continue

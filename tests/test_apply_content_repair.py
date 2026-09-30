@@ -1,4 +1,4 @@
-"""Unit tests for scripts/apply_content_repair.py — Sprint 3A (M3.5)."""
+"""Unit tests for scripts/repairs/apply_content_repair.py — Sprint 3A (M3.5)."""
 
 from __future__ import annotations
 
@@ -10,15 +10,15 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "apply_content_repair.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "repairs/apply_content_repair.py"
 
 
 def _load():
-    if "apply_content_repair" in sys.modules:
-        return sys.modules["apply_content_repair"]
-    spec = importlib.util.spec_from_file_location("apply_content_repair", SCRIPT_PATH)
+    if "repairs.apply_content_repair" in sys.modules:
+        return sys.modules["repairs.apply_content_repair"]
+    spec = importlib.util.spec_from_file_location("repairs.apply_content_repair", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["apply_content_repair"] = module
+    sys.modules["repairs.apply_content_repair"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module

@@ -404,7 +404,7 @@ class TestFragmentFixerFinalizationTail:
     LAST, else repaired runs ship regressed §4/§5 tables. Recurring regression
     class — see AGENTS.md "Critical ordering rule".
 
-    `qa_checks.py gate` satisfies the autofix half: `cmd_gate` runs
+    `validators/qa_checks.py gate` satisfies the autofix half: `cmd_gate` runs
     `_run_autofix` and only then validates the resulting bytes. It is the
     preferred form because it is also the command the thin Stage-3 runtime uses —
     see tests/test_repair_self_verification.py for why the fixer must not
@@ -412,14 +412,14 @@ class TestFragmentFixerFinalizationTail:
 
     def test_fragment_fixer_reruns_autofix_after_prose_fixes(self):
         body = (AGENTS_DIR / "appsec-fragment-fixer.md").read_text(encoding="utf-8")
-        prose_idx = body.find("apply_prose_fixes.py")
+        prose_idx = body.find("repairs/apply_prose_fixes.py")
         # `gate` = `_run_autofix` + `cmd_repair_plan`; either form re-applies
         # the autofix-exclusive passes. Quoting/line continuations vary.
         autofix_match = re.search(r'qa_checks\.py"?\s*\\?\s*(?:autofix|gate)\b', body)
-        compose_idx = body.find("compose_threat_model.py")
+        compose_idx = body.find("renderers/compose_threat_model.py")
         assert prose_idx != -1, "fragment-fixer must re-run apply_prose_fixes after recompose"
         assert autofix_match is not None, (
-            "fragment-fixer must re-run `qa_checks.py autofix` (or `gate`, which "
+            "fragment-fixer must re-run `validators/qa_checks.py autofix` (or `gate`, which "
             "subsumes it) after recompose — it owns the §4/§5 GFM→HTML table "
             "conversion that compose drops"
         )
@@ -536,25 +536,27 @@ class TestBodyContentConsistency:
         and the run was reported as unmonitored although its watchdog ran.
         """
         _, body = parse_frontmatter(agent_file)
-        assert "log_event.py" in body or "logging-standard.md" in body, (
-            f"{agent_file.name}: name scripts/log_event.py or shared/logging-standard.md as the log writer"
+        assert "runtime/log_event.py" in body or "logging-standard.md" in body, (
+            f"{agent_file.name}: name scripts/runtime/log_event.py or shared/logging-standard.md as the log writer"
         )
 
     def test_step_logging_guidance_forbids_inline_format_line(self):
         """Regression guard (2026-06-20 Sonnet run): step/check logging must route
-        through log_event.py, and the shared standard must explicitly forbid calling
+        through runtime/log_event.py, and the shared standard must explicitly forbid calling
         event_log.format_line via `python3 -c`. format_line's level/component/sid are
         keyword-only, so a hand-rolled positional/`event_type=` call TypeErrors and
         leaves LOG_ERR noise in .agent-run.log. The agents that already carried this
         local prohibition (abuse-case-verifier, eval-judge) did not crash; the
         stride-analyzer, which lacked it, did."""
         shared = (AGENTS_DIR / "shared" / "logging-standard.md").read_text(encoding="utf-8")
-        assert "log_event.py" in shared, "logging-standard.md must mandate log_event.py for step/check logging"
+        assert "runtime/log_event.py" in shared, (
+            "logging-standard.md must mandate runtime/log_event.py for step/check logging"
+        )
         assert "format_line" in shared and "python3 -c" in shared, (
             "logging-standard.md must explicitly forbid calling format_line via python3 -c"
         )
         _, stride = parse_frontmatter(AGENTS_DIR / "appsec-stride-analyzer-v2.md")
-        assert "log_event.py" in stride
+        assert "runtime/log_event.py" in stride
 
     def test_context_v2_logging_ownership_is_explicit(self):
         shared = (AGENTS_DIR / "shared" / "logging-standard.md").read_text(encoding="utf-8")
@@ -572,12 +574,12 @@ class TestBodyContentConsistency:
         KERNEL_PRELOAD_ROLES, so any agent outside that set could open a
         lifecycle and never close it without a test noticing. The abuse-case
         verifier did exactly that: 11 dispatches logged AGENT_START and none
-        logged AGENT_END, leaving verify_run_costs.py unable to bind their
+        logged AGENT_END, leaving runtime/verify_run_costs.py unable to bind their
         usage. Scope this to every agent definition so it cannot rot again for
         the next role added outside the kernel set.
 
         Closing counts either way — a literal AGENT_END emitted through
-        log_event.py, or a delegated call to log_agent_end.py.
+        runtime/log_event.py, or a delegated call to runtime/log_agent_end.py.
         """
         for path in sorted(AGENTS_DIR.glob("appsec-*.md")):
             _, body = parse_frontmatter(path)
@@ -585,7 +587,7 @@ class TestBodyContentConsistency:
                 continue
             assert "AGENT_END" in body or "log_agent_end" in body, (
                 f"{path.name} documents AGENT_START but never closes the lifecycle — "
-                "add an AGENT_END emission (or a log_agent_end.py call)"
+                "add an AGENT_END emission (or a runtime/log_agent_end.py call)"
             )
 
     def test_context_v2_control_analyst_does_not_author_stride_profile(self):
@@ -619,7 +621,7 @@ class TestBodyContentConsistency:
         assert "hard cap of **200 lines**" not in template
         assert "The 200-line cap is blocking" not in body
         assert "never omit required headings to meet the target" in body
-        assert "scripts/validate_recon_summary.py" in body
+        assert "scripts/validators/validate_recon_summary.py" in body
         assert "the **next tool call**" in body
         assert "Do not write `.recon-signals.json`" in body
         assert "--normalize-key-files" in body
@@ -641,7 +643,7 @@ class TestBodyContentConsistency:
 
     def test_context_resolver_self_validates_before_completion(self):
         meta, body = parse_frontmatter(AGENTS_DIR / "appsec-context-resolver.md")
-        assert "scripts/validate_threat_modeling_context.py" in body
+        assert "scripts/validators/validate_threat_modeling_context.py" in body
         assert "--repair-missing-headings" in body
         assert "the **next tool call**" in body
         assert "Do not log completion or print the final summary before this exits 0" in " ".join(body.split())
@@ -679,47 +681,47 @@ class TestBodyContentConsistency:
 
     def test_context_v2_producers_gate_outputs_before_controller_handoff(self):
         expected_tokens = {
-            "appsec-actor-discoverer.md": ("validate_intermediate.py", "actors_discovered"),
+            "appsec-actor-discoverer.md": ("validators/validate_intermediate.py", "actors_discovered"),
             "appsec-architecture-analyst.md": (
-                "validate_fragment.py",
+                "validators/validate_fragment.py",
                 "components",
                 "data-flows",
                 "assets",
                 "attack-surface-overrides",
             ),
             "appsec-config-scanner.md": (
-                "normalize_config_scan.py",
-                "validate_intermediate.py",
+                "model/normalize_config_scan.py",
+                "validators/validate_intermediate.py",
                 "config_scan_findings",
             ),
-            "appsec-context-resolver.md": ("validate_threat_modeling_context.py",),
+            "appsec-context-resolver.md": ("validators/validate_threat_modeling_context.py",),
             "appsec-control-analyst.md": (
-                "validate_fragment.py",
+                "validators/validate_fragment.py",
                 "security-controls",
-                "validate_intermediate.py",
+                "validators/validate_intermediate.py",
                 "stride_analyst_context",
             ),
             "appsec-evidence-verifier.md": (
-                "validate_intermediate.py",
+                "validators/validate_intermediate.py",
                 "evidence_verification",
             ),
             "appsec-post-stride-synthesizer.md": (
-                "validate_fragment.py",
+                "validators/validate_fragment.py",
                 "mitigation-overrides",
                 "tier-root-causes",
             ),
             "appsec-recon-scanner.md": (
-                "validate_recon_summary.py",
-                "validate_intermediate.py",
+                "validators/validate_recon_summary.py",
+                "validators/validate_intermediate.py",
                 "recon_signals",
             ),
-            "appsec-threat-merger.md": ("merge_threats.py", "validate-decisions", "$CANDIDATES_FILE"),
+            "appsec-threat-merger.md": ("model/merge_threats.py", "validate-decisions", "$CANDIDATES_FILE"),
             "appsec-triage-validator.md": (
-                "validate_intermediate.py",
+                "validators/validate_intermediate.py",
                 "triage_flags",
                 "threats_merged",
             ),
-            "appsec-trust-boundary-analyst.md": ("validate_fragment.py", "trust-boundary-candidates"),
+            "appsec-trust-boundary-analyst.md": ("validators/validate_fragment.py", "trust-boundary-candidates"),
         }
         for filename, tokens in expected_tokens.items():
             _, body = parse_frontmatter(AGENTS_DIR / filename)
@@ -750,7 +752,7 @@ class TestBodyContentConsistency:
         _, stride = parse_frontmatter(AGENTS_DIR / "appsec-stride-analyzer-v2.md")
         assert 'export OUTPUT_DIR="' in stride, (
             "stride-analyzer must mandate `export OUTPUT_DIR=` as its first Bash call "
-            "so agent_progress.sh / log_event.py see the path (RC-3)"
+            "so agent_progress.sh / runtime/log_event.py see the path (RC-3)"
         )
 
     def test_every_log_event_caller_mandates_output_dir_export(self):
@@ -758,7 +760,7 @@ class TestBodyContentConsistency:
 
         The 2026-06-21 fix only covered stride-analyzer-v2, so the same defect
         recurred for the abuse-case verifiers on 2026-08-21: their doc handed
-        the model a copy-paste `log_event.py "$OUTPUT_DIR" …` block while the
+        the model a copy-paste `runtime/log_event.py "$OUTPUT_DIR" …` block while the
         dispatch supplies OUTPUT_DIR as prompt TEXT, never as a shell variable.
         Nothing in the plugin exports it — agent_logger's mutation lives in the
         hook process — so log_event refused to write and the run silently lost
@@ -768,14 +770,14 @@ class TestBodyContentConsistency:
         missing = []
         for path in sorted(AGENTS_DIR.glob("appsec-*.md")):
             _, body = parse_frontmatter(path)
-            if "log_event.py" not in body:
+            if "runtime/log_event.py" not in body:
                 continue
             # eval-judge is dispatched with OUT_DIR by its own dev-only skill.
             if 'export OUTPUT_DIR="' in body or 'export OUT_DIR="' in body:
                 continue
             missing.append(path.name)
         assert not missing, (
-            "these agents invoke log_event.py but never mandate the export, so "
+            "these agents invoke runtime/log_event.py but never mandate the export, so "
             f"$OUTPUT_DIR is unset in their shell: {missing}"
         )
 
@@ -791,7 +793,7 @@ class TestBodyContentConsistency:
 
         The 2026-08-21 insecure-large-spring-app run shows both halves: the
         export succeeded at 19:13:13 and 19:47:44, and 4s resp. 68s later
-        log_event.py refused an empty <output_dir> in the very next block. That
+        runtime/log_event.py refused an empty <output_dir> in the very next block. That
         cost the run its recon-scanner AGENT_START and left AGENT_START/END
         unpaired, which is what makes a dispatch drop out of cost accounting.
 
@@ -807,7 +809,7 @@ class TestBodyContentConsistency:
             body = path.read_text(encoding="utf-8")
             if path.name.startswith("appsec-"):
                 _, body = parse_frontmatter(path)
-            if "log_event.py" not in body:
+            if "runtime/log_event.py" not in body:
                 continue
             for block in _BASH_BLOCKS.findall(body):
                 if not _RUN_PATH_USE.search(block):
@@ -1001,7 +1003,7 @@ class TestLoggingCentralization:
 # Scan-exclude centralization (Sprint 1 Item F)
 #
 # The two grep-heavy agents must NOT carry a hardcoded exclusion glob. Their
-# excludes come from `data/scan-excludes.yaml` via `scripts/scan_excludes.py`.
+# excludes come from `data/scan-excludes.yaml` via `scripts/analyzers/scan_excludes.py`.
 # ---------------------------------------------------------------------------
 
 # The prior hardcoded glob string — must no longer appear in either agent.
@@ -1018,7 +1020,7 @@ AGENT_FILES_USING_EXCLUDE_GLOB = [
 
 class TestScanExcludesCentralization:
     """Drift guard for Sprint 1 Item F — the recon-scanner and stride-analyzer
-    agents must delegate directory exclusions to scripts/scan_excludes.py
+    agents must delegate directory exclusions to scripts/analyzers/scan_excludes.py
     instead of carrying a hardcoded glob string."""
 
     @pytest.mark.parametrize(
@@ -1031,7 +1033,7 @@ class TestScanExcludesCentralization:
         assert _LEGACY_HARDCODED_GLOB_FRAGMENT not in text, (
             f"{agent_file.relative_to(AGENTS_DIR.parent)} still contains the "
             f"legacy hardcoded exclusion glob. Replace it with the "
-            f"`scan_excludes.py glob` call documented in Step 2 / Step 3."
+            f"`analyzers/scan_excludes.py glob` call documented in Step 2 / Step 3."
         )
 
     @pytest.mark.parametrize(
@@ -1041,9 +1043,9 @@ class TestScanExcludesCentralization:
     )
     def test_references_scan_excludes_script(self, agent_file):
         text = agent_file.read_text(encoding="utf-8")
-        assert "scripts/scan_excludes.py" in text, (
+        assert "scripts/analyzers/scan_excludes.py" in text, (
             f"{agent_file.relative_to(AGENTS_DIR.parent)} must instruct the "
-            f"agent to call `scripts/scan_excludes.py glob` to obtain "
+            f"agent to call `scripts/analyzers/scan_excludes.py glob` to obtain "
             f"$EXCLUDE_GLOB at runtime."
         )
         assert "EXCLUDE_GLOB" in text, (
@@ -1228,20 +1230,20 @@ def test_context_v2_architecture_agent_uses_bounded_data_classification_vocabula
     assert "Use only `Public`, `Internal`, `Confidential`, or" in text
     assert "`Restricted` as the data classification" in text
     assert re.search(r"replaces the\s+provisional fingerprint", text)
-    assert "reserve_ids.py asset --count <N> --output-dir" in text
+    assert "model/reserve_ids.py asset --count <N> --output-dir" in text
 
 
 def test_recon_signal_prompt_states_the_coupling_the_validator_enforces():
     """The producer prompt must carry both directions of the signal/status rule.
 
-    `validate_intermediate.py` gained `true => supporting` on 2026-08-09 while
+    `validators/validate_intermediate.py` gained `true => supporting` on 2026-08-09 while
     the prompt kept stating only `supporting => true`. A producer that followed
     the prompt literally could set a boolean true with `status: "none"`, which
     the controller gate then rejected — one aborted run per occurrence, six
     minutes in. Whenever the enforced coupling changes, this test fails until
     the prompt says the same thing.
     """
-    validator = (AGENTS_DIR.parent / "scripts" / "validate_intermediate.py").read_text(encoding="utf-8")
+    validator = (AGENTS_DIR.parent / "scripts" / "validators/validate_intermediate.py").read_text(encoding="utf-8")
     forward = "must be 'supporting' when the signal is true"
     reverse = "cannot be 'supporting' when the signal is false"
     assert forward in validator and reverse in validator, (
@@ -1266,7 +1268,7 @@ def test_agent_budget_queries_require_their_controller_job_identity():
     queries = []
     for path in AGENTS_DIR.rglob("*.md"):
         for block in _BASH_BLOCKS.findall(path.read_text(encoding="utf-8")):
-            if "budget_watchdog.py" not in block:
+            if "runtime/budget_watchdog.py" not in block:
                 continue
             queries.append(path)
             assert "active-job-critical" in block, path

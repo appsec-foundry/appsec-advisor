@@ -95,7 +95,7 @@ Run `/appsec-advisor:verify-baseline --help` for details.
 ## Step 2 — Run the check
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline_check.py" --repo "$REPO_ROOT" $JSON_FLAG $ENFORCE_FLAG
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline/baseline_check.py" --repo "$REPO_ROOT" $JSON_FLAG $ENFORCE_FLAG
 ```
 
 The helper's output is the deliverable. Print it as-is and propagate the exit

@@ -3,7 +3,7 @@
 **Date:** 2026-07-28
 **Status:** implemented — see "Resolution" at the end for what shipped and what
 was deliberately left alone
-**Surface:** `skills/show-threat-model/SKILL.md` → `scripts/summarize_threat_model.py`
+**Surface:** `skills/show-threat-model/SKILL.md` → `scripts/renderers/summarize_threat_model.py`
 **Reference run:** juice-shop, `docs/security/` (67 threats, 8 components, standard/full)
 
 ## Summary
@@ -25,18 +25,18 @@ already decided.
 
 ## D1 — Finding IDs do not exist in the report
 
-`_threat_id()` (`summarize_threat_model.py:80`) returns the raw yaml id `T-NNN`.
+`_threat_id()` (`renderers/summarize_threat_model.py:80`) returns the raw yaml id `T-NNN`.
 Every user-facing label in `threat-model.md` is `F-NNN`; the composer rewrites
 the visible label in `_normalize_finding_label`
-(`compose_threat_model.py:900-909`, `T-NNN → F-NNN`).
+(`renderers/compose_threat_model.py:900-909`, `T-NNN → F-NNN`).
 
 `T-NNN` survives in the report only as a *hidden* HTML anchor
 (`<a id="t-062">`). The only visible `T-` tokens are `AC-T-001…` — abuse-case
 ids, a **different namespace**. So a reader who greps the report for `T-001`
 either finds nothing or lands on an unrelated abuse case.
 
-`query_threat_model.py:68-75` already solved this with `_display_id()` and
-documents why. `summarize_threat_model.py` never adopted it.
+`model/query_threat_model.py:68-75` already solved this with `_display_id()` and
+documents why. `renderers/summarize_threat_model.py` never adopted it.
 
 **Fix:** apply the same `T-NNN → F-NNN` mapping in `_worst_case`, `criticals`,
 and `threats_by_severity`. Keep the raw yaml id in the `--json` payload under a
@@ -54,14 +54,14 @@ Measured on juice-shop:
 | Report §8 Findings Register | **15** | 40 | 12 | 67 |
 | Report Management Summary "Risk distribution" | **14** | 39 | 12 | 65 |
 
-Cause: `_severity_label()` (`summarize_threat_model.py:56-67`) ranks by
+Cause: `_severity_label()` (`renderers/summarize_threat_model.py:56-67`) ranks by
 `effective_severity → risk → severity`. The composer does the opposite for the
 finding inventory:
 
 - §8 Findings Register buckets on `risk` only
-  (`compose_threat_model.py:15918` — `t.get("risk") or t.get("severity")`).
+  (`renderers/compose_threat_model.py:15918` — `t.get("risk") or t.get("severity")`).
 - The MS "Risk distribution" line uses `_risk_distribution_counts()`
-  (`compose_threat_model.py:2664-2691`), also `risk`-based, minus folded
+  (`renderers/compose_threat_model.py:2664-2691`), also `risk`-based, minus folded
   `insecure-practice` sites, plus `design-risk` weaknesses once at their heading
   severity.
 
@@ -75,7 +75,7 @@ Critical count a reader sees anywhere else. The docstring's justification
 Two further divergences in the same tally:
 
 - The register drops `evidence_check == "refuted"` threats
-  (`compose_threat_model.py:15901`); the summarizer counts them.
+  (`renderers/compose_threat_model.py:15901`); the summarizer counts them.
 - The register/MS fold `insecure-practice` sites into their weakness; the
   summarizer counts them as standalone findings.
 
@@ -130,7 +130,7 @@ markdown.
 
 | # | Approach | Assessment |
 |---|---|---|
-| A | Persist the verdict into `threat-model.yaml` from a post-compose emitter (precedent: the existing auto-emitters that enrich the yaml after `build_threat_model_yaml.py`) | **Recommended.** Fixes the gap at the producer; every consumer benefits; survives cleanup; schema-checkable |
+| A | Persist the verdict into `threat-model.yaml` from a post-compose emitter (precedent: the existing auto-emitters that enrich the yaml after `model/build_threat_model_yaml.py`) | **Recommended.** Fixes the gap at the producer; every consumer benefits; survives cleanup; schema-checkable |
 | B | Read `.fragments/ms-verdict.json` when present | Rejected — cleanup deletes it; works only on `--keep-runtime-files` runs |
 | C | Parse `### Verdict` out of `threat-model.md` | Fallback only — text scraping of a rendered artifact, exactly the pattern the repo avoids elsewhere |
 
@@ -184,7 +184,7 @@ heading (it currently over-promises) and to stop treating an uncurated
 ## D5 — Hand-off to the other skills
 
 The renderer does emit the hand-off (`_NEXT_STEP_HINT`,
-`summarize_threat_model.py:302-306`):
+`renderers/summarize_threat_model.py:302-306`):
 
 ```
 Ask        a question about a specific finding, coverage, or what to fix first
@@ -213,7 +213,7 @@ it exists for only works if it is actually shown.
 | 4 | Verdict + `bullets` rendered in the block, replacing the pseudo worst-case (D3/D4) | render test against the fixture |
 | 5 | Hand-off placement + `SKILL.md` wording (D5) | existing `test_render_text_names_the_ask_and_review_lanes` extended |
 
-Steps 1, 2 and 5 are self-contained in `summarize_threat_model.py` (+ one shared
+Steps 1, 2 and 5 are self-contained in `renderers/summarize_threat_model.py` (+ one shared
 helper). Steps 3 and 4 touch the schema and the render pipeline and should be a
 separate change.
 
@@ -227,7 +227,7 @@ and `::test_worst_case_from_curated_critical_findings`.
 
 All five steps landed.
 
-**New shared module `scripts/_severity_rollup.py`.** Owns `display_id`
+**New shared module `scripts/renderers/_severity_rollup.py`.** Owns `display_id`
 (`T-NNN → F-NNN`), `register_severity` (`risk → severity`, never
 `effective_severity`), `register_threats`, and the Management-Summary tally.
 `compose_threat_model._risk_distribution_counts` and
@@ -257,7 +257,7 @@ v2 baseline must not mutate the semantic model, and the test asserts byte
 equality to pin that.
 
 What shipped instead follows the house pattern for yaml enrichment
-(`scripts/emit_*.py`): `scripts/emit_verdict_to_model.py` runs after compose
+(`scripts/emit_*.py`): `scripts/model/emit_verdict_to_model.py` runs after compose
 and writes the block. `compose._build_verdict_export` still resolves the
 payload — it sits next to the code that renders the same bullets, so the
 persisted and rendered verdicts cannot disagree — but the composer only stashes

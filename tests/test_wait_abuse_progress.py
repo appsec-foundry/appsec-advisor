@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-import wait_abuse_progress as wap
+import orchestrator.wait_abuse_progress as wap
 
 
 def _write_verdict(path, candidate_id: str, *, state: str, reason: str) -> None:

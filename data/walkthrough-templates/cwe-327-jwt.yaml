@@ -3,7 +3,7 @@ category: broken_crypto_jwt
 human_label: "JWT algorithm confusion (HS256 ↔ RS256, alg=none)"
 
 # Content-aware variant of the cwe-327 template. Dispatched by
-# _template_for() in walkthrough_renderer.py when the threat title
+# _template_for() in renderers/walkthrough_renderer.py when the threat title
 # contains "JWT" / "algorithm confusion" / "alg confusion". The
 # default cwe-327.yaml assumes a password-hashing flow (dump → crack)
 # which is wrong-narrative for algorithm-confusion JWT attacks.

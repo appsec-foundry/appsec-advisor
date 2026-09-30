@@ -73,6 +73,34 @@ def test_execution_constant_use_and_reads_are_dependencies_but_imports_are_not(r
     }
 
 
+def test_nested_script_import_and_constant_use_are_routed(repo):
+    _write(
+        repo,
+        "scripts/orchestrator/stage2_state.py",
+        """\
+        RETRY_MARKER = ".stage2-dispatched"
+        """,
+    )
+    _write(
+        repo,
+        "scripts/consumer.py",
+        """\
+        from orchestrator.stage2_state import RETRY_MARKER
+
+
+        def marker():
+            return RETRY_MARKER
+        """,
+    )
+    trees = audit_routes._script_trees(repo)
+    source = "scripts/orchestrator/stage2_state.py"
+    measurements = {"tests/test_consumer.py": _run({"scripts/consumer.py": {1, 4, 5}})}
+    assert source in trees
+    assert audit_routes.dependents(source, measurements, trees) == {"tests/test_consumer.py"}
+    report = audit_routes.audit(measurements, repo, {source: ("tests/test_consumer.py",)})
+    assert report.problems == ()
+
+
 def test_module_level_constant_use_makes_every_function_of_the_user_dependent(repo):
     _write(
         repo,

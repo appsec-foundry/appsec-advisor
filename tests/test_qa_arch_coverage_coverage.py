@@ -1,4 +1,4 @@
-"""Coverage-focused tests for scripts/qa_arch_coverage.py.
+"""Coverage-focused tests for scripts/validators/qa_arch_coverage.py.
 
 Targets non-dict skip branches, _load_json / _load_yaml error paths, the
 CLI output-dir-not-found and skip-JSON branches, and the human FAIL print
@@ -14,7 +14,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import qa_arch_coverage as qa  # noqa: E402
+import validators.qa_arch_coverage as qa  # noqa: E402
 
 # ---------- non-dict skip branches (73, 92, 103, 128, 169, 195) ----------
 

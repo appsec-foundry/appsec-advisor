@@ -1,7 +1,7 @@
 # Rollout Plan: Thin/Compact Orchestrator as Default
 
 **Status:** verified against the code (2026-07-03), not yet implemented.
-**Goal:** Switch the compact runtime (`SKILL-full-runtime.md`, via `orchestration_controller.py`) from **opt-in** (`APPSEC_THIN_ORCHESTRATOR=1`) to **default with opt-out** (`=0`) — but only if parity is proven.
+**Goal:** Switch the compact runtime (`SKILL-full-runtime.md`, via `orchestrator/orchestration_controller.py`) from **opt-in** (`APPSEC_THIN_ORCHESTRATOR=1`) to **default with opt-out** (`=0`) — but only if parity is proven.
 
 **Execution:** new branch off `dev` (not `main`/`dev` directly), targeted test suite + `make check`, **stop before push/merge** → summary + diff. Read `AGENTS.md` before non-trivial changes (contract/drift rules). Working directory: `/home/user/appsec-advisor`.
 
@@ -9,7 +9,7 @@
 
 ## Phase 1 — Verify headless completion *(first)*
 
-Commit `6241798` (2026-07-03) added a deterministic compose backstop `_compose_if_ready()` in `scripts/orchestration_controller.py`: when render fragments are present (`ms-verdict.json` + `security-architecture.md`) but `threat-model.md` is missing, it composes deterministically (pregenerate → `compose_threat_model.py --strict` → `apply_prose_fixes` → `qa_checks autofix`). Invoked via the finalize `next` call (mandatory in `SKILL-full-runtime.md §6` before every completion summary).
+Commit `6241798` (2026-07-03) added a deterministic compose backstop `_compose_if_ready()` in `scripts/orchestrator/orchestration_controller.py`: when render fragments are present (`ms-verdict.json` + `security-architecture.md`) but `threat-model.md` is missing, it composes deterministically (pregenerate → `renderers/compose_threat_model.py --strict` → `apply_prose_fixes` → `qa_checks autofix`). Invoked via the finalize `next` call (mandatory in `SKILL-full-runtime.md §6` before every completion summary).
 
 **RESOLVED (2026-07-20):** `_compose_if_ready` does **not** cover the bg-ceiling PROCESS-KILL case — but not for the reason assumed here. The kill lands in **Stage 1** (Analyst-A, phases 1–8), far earlier than the render stage: no `threat-model.yaml` and no render fragments ever exist, so the backstop's own gate is false and it correctly no-ops. Evidence: fixture-e2e runs 29704358601 / 29700135164 / 29696937786 all die at wall-time 767–775s with `Background tasks still running after 600s; terminating`; the artifact of 29704358601 contains `.trust-boundaries.json` (phase 7 done) but no yaml, no md, and a `.fragments/` holding only `data-relations.json`.
 
@@ -33,8 +33,8 @@ Already ~parity (comparison thin `docs/security-thin` vs baseline `docs/security
 
 ## Phase 2 — Flip the gate *(only if Phase 0 holds; ~10 lines in 4 places)*
 
-1. `scripts/orchestration_controller.py:238` — gate `APPSEC_THIN_ORCHESTRATOR == "1"` → **`!= "0"`** (opt-in → opt-out).
-2. `scripts/orchestration_controller.py:260,262` — update the `route()` reason strings.
+1. `scripts/orchestrator/orchestration_controller.py:238` — gate `APPSEC_THIN_ORCHESTRATOR == "1"` → **`!= "0"`** (opt-in → opt-out).
+2. `scripts/orchestrator/orchestration_controller.py:260,262` — update the `route()` reason strings.
 3. `skills/create-threat-model/SKILL.md:68` — docs "only with `=1`" → "**Default; opt-out via `=0`**".
 4. `skills/create-threat-model/SKILL-impl.md:579` — analogous docs adjustment.
 
@@ -53,5 +53,5 @@ Keep the escape hatch; optional canary phase before the opt-out note disappears 
 
 **Context references (as of 2026-07-03):**
 - Thin prompt `SKILL-full-runtime.md` = 263 lines vs legacy `SKILL-impl.md` = 4441 lines (~17× smaller → less cache_read/turn = the cost lever).
-- Router logic: `orchestration_controller.py:_runtime_for()` (`:236-245`) + `route()` (`:250-269`).
+- Router logic: `orchestrator/orchestration_controller.py:_runtime_for()` (`:236-245`) + `route()` (`:250-269`).
 - Only 2 commits have ever touched the thin files (most recent `6241798`) → beta, still hardening.

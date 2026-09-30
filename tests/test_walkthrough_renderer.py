@@ -1,4 +1,4 @@
-r"""Regression tests for scripts/walkthrough_renderer.py.
+r"""Regression tests for scripts/renderers/walkthrough_renderer.py.
 
 These guard the per-finding §3 Attack Walkthroughs render pipeline against
 regressions that previously shipped to production:
@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "walkthrough_renderer.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "renderers/walkthrough_renderer.py"
 
 
 def _load_module(name: str, path: Path):
@@ -34,7 +34,7 @@ def _load_module(name: str, path: Path):
     return module
 
 
-renderer = _load_module("walkthrough_renderer", SCRIPT_PATH)
+renderer = _load_module("renderers.walkthrough_renderer", SCRIPT_PATH)
 
 
 def _make_threat(scenario: str, file_: str = "lib/insecurity.ts", line: int = 54) -> dict:
@@ -73,7 +73,7 @@ class TestAttackStepsPlaceholderSubstitution:
 
     def test_cwe_template_attack_steps_substitute_placeholders(self):
         # User-supplied template (e.g. cwe-89.yaml) also goes through the same
-        # mapping. The fix in walkthrough_renderer.py applies
+        # mapping. The fix in renderers/walkthrough_renderer.py applies
         # _format_template_string to BOTH template_steps and generic_padding
         # before appending.
         threat = _make_threat("Only one sentence.", file_="routes/login.ts", line=34)
@@ -909,7 +909,7 @@ class TestAttackTargetLabel:
         # github_slug (single hyphen) diverge from the rendered github_render_slug
         # (double hyphen) — an unresolvable anchor that hard-failed the broken-link
         # gate. The label must be sanitized so both sluggers agree.
-        from scripts._slug import github_render_slug, github_slug
+        from shared._slug import github_render_slug, github_slug
 
         for comp_name in ("Authentication & Session Surface", "Web3 / Wallet / NFT Surface"):
             threat = {"component": "c1", "evidence": [{"file": "models/index.ts", "line": 1}]}
@@ -960,7 +960,7 @@ class TestAttackTargetLabel:
         weakness clipped. This also keeps the heading anchor stable (the trailing
         "-…" made github_slug and github_render_slug diverge and orphaned the
         §3 ToC link)."""
-        from scripts._slug import github_render_slug, github_slug
+        from shared._slug import github_render_slug, github_slug
 
         ydata = {
             "threats": [

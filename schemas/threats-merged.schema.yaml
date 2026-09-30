@@ -38,7 +38,7 @@ properties:
     # Incremental re-scan only. Union of every analyzed component's
     # `resolved_prior_findings[]` (stride.schema.yaml) — prior findings the
     # re-scan affirmatively confirmed FIXED. Consumed by the deterministic
-    # reconciler in build_threat_model_yaml.py to resolve (vs carry) a dropped
+    # reconciler in model/build_threat_model_yaml.py to resolve (vs carry) a dropped
     # prior threat. Optional; absent on full/first runs.
     type: array
     items:
@@ -205,7 +205,7 @@ properties:
             - architecture-coverage
             - threat-hypothesis
             - config-scan
-            # Static source-auth scanner output (source_auth_scanner.py →
+            # Static source-auth scanner output (analyzers/source_auth_scanner.py →
             # AUTHZ-001..008). Ingested by merge_threats.py:443 with file/line
             # evidence. Lock-step with _shared_sources.CODE_LEVEL_SOURCES and
             # threat-model.output.schema.yaml.
@@ -219,8 +219,8 @@ properties:
             # ratings.
             - configuration-defect
             # NOTE: `dep-scan` was removed in 2026-05. Supply-chain posture
-            # is surfaced as §7.11 control rows (emit_sca_practice.py) and
-            # meta-findings (emit_known_bad_libs.py + sca-practice), not as
+            # is surfaced as §7.11 control rows (model/emit_sca_practice.py) and
+            # meta-findings (model/emit_known_bad_libs.py + sca-practice), not as
             # per-CVE threats. Persisted threats from prior runs with
             # `source: dep-scan` are no longer valid — see CHANGELOG for
             # the migration path.
@@ -283,7 +283,7 @@ properties:
           # in effective_severity decisions (a refuted finding is not
           # elevated by compound-chain membership).
           # `carried-unverified-shallower-depth` — set by the deterministic
-          # incremental reconciler (build_threat_model_yaml.py) or the analyzer
+          # incremental reconciler (model/build_threat_model_yaml.py) or the analyzer
           # at reduced depth on a prior threat carried forward because the
           # current scan was too shallow to re-confirm it. Triage must NOT
           # elevate it; QA must NOT demand fresh evidence for it.
@@ -297,7 +297,7 @@ properties:
           # CVSS-eligible, appears as a weakness instances[] entry;
           # `insecure-practice` = definite bad-practice site, exploit chain
           # unproven, no CVSS, folded as the weakness's practice_evidence[].
-          # Default (applied by merge_threats.py): confirmed-exploitable when a
+          # Default (applied by model/merge_threats.py): confirmed-exploitable when a
           # sink is proven, else insecure-practice.
           type: [string, "null"]
           enum: [confirmed-exploitable, insecure-practice, null]
@@ -310,14 +310,14 @@ properties:
           type: array
         controls_absent_evidence:
           # Passed through from .stride-*.json. Records the absence-grep
-          # that supports a "control X is not present" claim. qa_checks.py
+          # that supports a "control X is not present" claim. validators/qa_checks.py
           # re-runs each grep deterministically during the pre-pass and
           # flags drift via evidence_integrity.issues. See stride.schema.
           type: [array, "null"]
         cvss_v4:
           # Optional CVSS v4.0 score. Eligibility (which threats may carry
           # this field) is enforced as a post-check in
-          # validate_intermediate.py against
+          # validators/validate_intermediate.py against
           # data/cvss-eligible-cwes.yaml; the structural shape is
           # defined here.
           oneOf:
@@ -366,7 +366,7 @@ properties:
 
   weaknesses:
     # P1 (weakness-class evidence model) — the unified register's PARENT rows.
-    # Produced by the merge_threats.py reconciler: grouping key
+    # Produced by the model/merge_threats.py reconciler: grouping key
     # (weakness_class × scope), with the weakness as the heading and confirmed
     # threats folded in as instances[] (proposal §4a/§4d-bis). Arch-coverage
     # design signals (formerly threat_hypotheses[]) collapse into the matching
@@ -475,7 +475,7 @@ properties:
               poc_hint: { type: [string, "null"] }
 
 # Additional invariants enforced by Python post-checks in
-# validate_intermediate.py (not expressible in Draft 2020-12):
+# validators/validate_intermediate.py (not expressible in Draft 2020-12):
 #   - t_id values are unique within threats[]
 #   - t_id values form a contiguous sequence starting at T-001
 #   - cvss_v4 eligibility per source/cwe/evidence (see cvss-eligible-cwes.yaml):

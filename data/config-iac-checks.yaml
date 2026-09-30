@@ -373,7 +373,7 @@ checks:
   # Note: Renovate's hosted-app mode can enable updates without any file
   # in the repo (the GitHub App reads config from a central location).
   # Detection is therefore best-effort — file absence is a "warning"
-  # severity, not "missing". emit_sca_practice.py also surfaces this as
+  # severity, not "missing". model/emit_sca_practice.py also surfaces this as
   # the §6.11 "Automated dependency updates" control row.
 
   - id: IAC-033
@@ -907,7 +907,7 @@ checks:
 # by the checks named here on the same file, or listed with `exception` and its
 # reason when no file-level check can express it. `fact` is a full-match regex
 # on the fact text. tests/test_iac_resource_checks.py fails when a weak fact of
-# scripts/deployment_inventory.py has no entry, so a weakness never appears
+# scripts/analyzers/deployment_inventory.py has no entry, so a weakness never appears
 # only in a figure.
 inventory_weak_facts:
   - fact: "privileged container"

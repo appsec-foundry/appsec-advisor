@@ -300,14 +300,14 @@ class TestRequirementsFixture:
 
 
 class TestConfigValidation:
-    """validate_config.py must flag enabled=true with no URL."""
+    """validators/validate_config.py must flag enabled=true with no URL."""
 
     def test_enabled_true_without_url_produces_error(self):
         """Import and call the validator directly."""
         import sys
 
         sys.path.insert(0, str(PLUGIN_DIR / "scripts"))
-        from validate_config import _validate_requirements_config
+        from validators.validate_config import _validate_requirements_config
 
         config = {
             "requirements_source": {
@@ -324,7 +324,7 @@ class TestConfigValidation:
         import sys
 
         sys.path.insert(0, str(PLUGIN_DIR / "scripts"))
-        from validate_config import _validate_requirements_config
+        from validators.validate_config import _validate_requirements_config
 
         config = {
             "requirements_source": {
@@ -339,7 +339,7 @@ class TestConfigValidation:
         import sys
 
         sys.path.insert(0, str(PLUGIN_DIR / "scripts"))
-        from validate_config import _validate_requirements_config
+        from validators.validate_config import _validate_requirements_config
 
         config = {
             "requirements_source": {
@@ -433,9 +433,9 @@ class TestSkillApplicability:
         resolution by reading only its legacy config.json."""
         skill_md = PLUGIN_DIR / "skills" / "audit-security-requirements" / "SKILL.md"
         content = skill_md.read_text()
-        assert "resolve_org_profile.py" in content
-        assert "resolve_requirements_source.py" in content
-        assert "fetch_requirements.py" in content
+        assert "runtime/resolve_org_profile.py" in content
+        assert "requirements/resolve_requirements_source.py" in content
+        assert "requirements/fetch_requirements.py" in content
         assert "standalone_audit.enabled" in content
 
     def test_audit_console_and_markdown_share_the_open_status_contract(self):

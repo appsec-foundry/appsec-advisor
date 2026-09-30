@@ -11,13 +11,13 @@ import jsonschema
 import yaml
 
 ROOT = Path(__file__).parent.parent
-SCRIPT = ROOT / "scripts" / "promote_verified_abuse_cases.py"
+SCRIPT = ROOT / "scripts" / "model/promote_verified_abuse_cases.py"
 
 
 def _load_module():
-    spec = importlib.util.spec_from_file_location("promote_verified_abuse_cases", SCRIPT)
+    spec = importlib.util.spec_from_file_location("model.promote_verified_abuse_cases", SCRIPT)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["promote_verified_abuse_cases"] = mod
+    sys.modules["model.promote_verified_abuse_cases"] = mod
     assert spec.loader is not None
     spec.loader.exec_module(mod)
     return mod
@@ -129,7 +129,7 @@ def test_confirmed_source_probe_becomes_normal_bound_finding(tmp_path: Path) -> 
         {"version": 1, "generated_at": "2026-07-14T00:00:00Z", "threats": [created]}
     )
     sys.path.insert(0, str(ROOT / "scripts"))
-    import build_threat_model_yaml as builder  # type: ignore[import-not-found]
+    import model.build_threat_model_yaml as builder  # type: ignore[import-not-found]
 
     yaml_threats, warnings = builder.build_threats({"threats": [created]})
     assert not warnings

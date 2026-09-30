@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://appsec-advisor/schemas/requirements-audit.schema.json",
   "title": "Full-repo requirements audit verdict",
-  "description": "Structured output of audit-security-requirements. The skill writes this every run (docs/security/.requirements-audit.json); scripts/requirements_report.py recomputes the summary + renders, and scripts/requirements_gate.py reads results[] for the deterministic CI exit code. Full-repo counterpart to the diff-scoped requirements-verification.schema.json: same results[] field contract (so the shared gate reads both), envelope reflects the full-repo mode (no base_ref/changed_files).",
+  "description": "Structured output of audit-security-requirements. The skill writes this every run (docs/security/.requirements-audit.json); scripts/requirements/requirements_report.py recomputes the summary + renders, and scripts/requirements/requirements_gate.py reads results[] for the deterministic CI exit code. Full-repo counterpart to the diff-scoped requirements-verification.schema.json: same results[] field contract (so the shared gate reads both), envelope reflects the full-repo mode (no base_ref/changed_files).",
   "type": "object",
   "required": ["version", "generated_at", "repository", "priority_floor", "summary", "results"],
   "additionalProperties": false,
@@ -27,7 +27,7 @@
     "priority_floor": {
       "type": "string",
       "enum": ["MUST", "SHOULD", "MAY"],
-      "description": "Lowest priority eligible to gate (echoed for requirements_gate.py)."
+      "description": "Lowest priority eligible to gate (echoed for requirements/requirements_gate.py)."
     },
     "summary": {
       "type": "object",

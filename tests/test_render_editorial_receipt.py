@@ -1,5 +1,5 @@
 """
-Tests for scripts/render_editorial_receipt.py — the Stage-4 record.
+Tests for scripts/renderers/render_editorial_receipt.py — the Stage-4 record.
 
 Covers:
   * the outcome reaches `.architect-status.json`, which the controller gate and
@@ -20,7 +20,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import render_editorial_receipt as receipt  # noqa: E402
+import renderers.render_editorial_receipt as receipt  # noqa: E402
 
 
 @pytest.fixture()

@@ -1,4 +1,4 @@
-"""Tests for scripts/render_review_report.py — the appsec-reviewer-cli Markdown artifact."""
+"""Tests for scripts/renderers/render_review_report.py — the appsec-reviewer-cli Markdown artifact."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import render_review_report as rr  # noqa: E402
+import renderers.render_review_report as rr  # noqa: E402
 
 
 def _verdict(results, source="bundled-bestpractices"):

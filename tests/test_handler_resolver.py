@@ -12,9 +12,9 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import authz_confirm as ac  # noqa: E402
-import route_inventory as ri  # noqa: E402
-from handler_resolver import DECODE_ONLY_SCOPE, HandlerResolver  # noqa: E402
+import analyzers.authz_confirm as ac  # noqa: E402
+import analyzers.route_inventory as ri  # noqa: E402
+from analyzers.handler_resolver import DECODE_ONLY_SCOPE, HandlerResolver  # noqa: E402
 
 SCHEMA = json.loads((ROOT / "schemas/route-inventory.schema.json").read_text())
 

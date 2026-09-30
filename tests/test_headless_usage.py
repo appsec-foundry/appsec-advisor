@@ -1,4 +1,4 @@
-"""Tests for scripts/headless_usage.py and its run-headless.sh wiring.
+"""Tests for scripts/runtime/headless_usage.py and its run-headless.sh wiring.
 
 The readout has one job: show the run's real token spend per model, or show
 nothing. Most of these tests therefore pin the *negative* path — a truncated,
@@ -20,7 +20,7 @@ SHELL = ROOT / "scripts" / "run-headless.sh"
 
 
 def _load_module():
-    spec = importlib.util.spec_from_file_location("_hu", ROOT / "scripts" / "headless_usage.py")
+    spec = importlib.util.spec_from_file_location("_hu", ROOT / "scripts" / "runtime/headless_usage.py")
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -270,7 +270,7 @@ class TestCli:
     def test_table_exit_zero(self, tmp_path, run_plugin_script):
         f = tmp_path / "c.json"
         f.write_text(json.dumps(_result_obj()), encoding="utf-8")
-        r = run_plugin_script("headless_usage.py", str(f))
+        r = run_plugin_script("runtime/headless_usage.py", str(f))
         assert r.returncode == 0
         assert "claude-sonnet-4-6" in r.stdout
 
@@ -278,14 +278,14 @@ class TestCli:
         """Exit 1 is the caller's signal to fall back to a labelled estimate."""
         f = tmp_path / "c.json"
         f.write_text("", encoding="utf-8")
-        r = run_plugin_script("headless_usage.py", str(f))
+        r = run_plugin_script("runtime/headless_usage.py", str(f))
         assert r.returncode == 1
         assert r.stdout.strip() == ""
 
     def test_json_format(self, tmp_path, run_plugin_script):
         f = tmp_path / "c.json"
         f.write_text(json.dumps(_result_obj()), encoding="utf-8")
-        r = run_plugin_script("headless_usage.py", str(f), "--format", "json")
+        r = run_plugin_script("runtime/headless_usage.py", str(f), "--format", "json")
         assert r.returncode == 0
         payload = json.loads(r.stdout)
         assert payload["total_cost_usd"] == 3.41
@@ -294,14 +294,14 @@ class TestCli:
     def test_result_text(self, tmp_path, run_plugin_script):
         f = tmp_path / "c.json"
         f.write_text(json.dumps(_result_obj(result="Assessment complete.")), encoding="utf-8")
-        r = run_plugin_script("headless_usage.py", str(f), "--result-text")
+        r = run_plugin_script("runtime/headless_usage.py", str(f), "--result-text")
         assert r.returncode == 0
         assert r.stdout.strip() == "Assessment complete."
 
     def test_result_text_prints_nothing_when_absent(self, tmp_path, run_plugin_script):
         f = tmp_path / "c.json"
         f.write_text(json.dumps(_result_obj()), encoding="utf-8")
-        r = run_plugin_script("headless_usage.py", str(f), "--result-text")
+        r = run_plugin_script("runtime/headless_usage.py", str(f), "--result-text")
         assert r.returncode == 0
         assert r.stdout.strip() == ""
 
@@ -351,7 +351,7 @@ class TestShellWiring:
     def test_fallback_is_labelled_an_estimate(self, body):
         """The hook-log figure is host-session-only. Presenting it unlabelled
         next to the exact readout would make a lower bound look like the cost."""
-        assert "cost_running_total.py" in body
+        assert "runtime/cost_running_total.py" in body
         assert "ESTIMATE" in body
         assert "lower bound" in body
 

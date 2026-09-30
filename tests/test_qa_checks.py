@@ -1,6 +1,6 @@
-"""Unit tests for scripts/qa_checks.py.
+"""Unit tests for scripts/validators/qa_checks.py.
 
-qa_checks.py runs 11 deterministic checks on threat-model.md. These tests
+validators/qa_checks.py runs 11 deterministic checks on threat-model.md. These tests
 exercise the CLI subcommands and the key check logic directly using minimal
 fixtures — they do not run the full pipeline.
 """
@@ -18,17 +18,17 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "qa_checks.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "validators/qa_checks.py"
 
 
 def _load_qa_checks():
     # Must register in sys.modules before exec so @dataclass forward-ref
     # resolution via sys.modules[cls.__module__] does not get None.
-    if "qa_checks" in sys.modules:
-        return sys.modules["qa_checks"]
-    spec = importlib.util.spec_from_file_location("qa_checks", SCRIPT_PATH)
+    if "validators.qa_checks" in sys.modules:
+        return sys.modules["validators.qa_checks"]
+    spec = importlib.util.spec_from_file_location("validators.qa_checks", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["qa_checks"] = module
+    sys.modules["validators.qa_checks"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
@@ -465,7 +465,7 @@ def test_control_subsection_coverage_matches_code_spanned_control_name(monkeypat
     """Regression: a control whose name carries a backtick-wrapped token must
     match between the `**Controls covered:**` link and its `####` heading.
 
-    apply_prose_fixes.py code-spans tokens like `Socket.IO` in BOTH the link
+    repairs/apply_prose_fixes.py code-spans tokens like `Socket.IO` in BOTH the link
     text and the heading. The link text is `_strip_md`-normalized before the
     lookup, so the heading must be normalized identically — otherwise the
     backtick-asymmetric comparison raises a false-positive
@@ -505,7 +505,7 @@ def test_control_subsection_coverage_matches_code_spanned_control_name(monkeypat
 
 
 def test_control_subsection_coverage_matches_backslash_escaped_dot(monkeypatch, tmp_path: Path):
-    r"""Regression: compose_threat_model.py's TLD-escape pass turns `Socket.IO`
+    r"""Regression: renderers/compose_threat_model.py's TLD-escape pass turns `Socket.IO`
     into `Socket\.IO` in the `####` heading text but leaves the
     `**Controls covered:**` link label un-escaped (link spans are exempt from
     the escape pass). `_heading_matches` must tolerate the one-backslash
@@ -1814,23 +1814,23 @@ class TestSummaryBullets:
 
 
 # ---------------------------------------------------------------------------
-# bullet_list Jinja filter — rendering helper in compose_threat_model.py
+# bullet_list Jinja filter — rendering helper in renderers/compose_threat_model.py
 # ---------------------------------------------------------------------------
 
 
 class TestBulletListFilter:
     @pytest.fixture
     def bullet_list(self):
-        """Module-level ``bullet_list`` from compose_threat_model.py."""
+        """Module-level ``bullet_list`` from renderers/compose_threat_model.py."""
         import importlib.util
 
-        compose_path = REPO_ROOT / "scripts" / "compose_threat_model.py"
-        if "compose_threat_model" in sys.modules:
-            mod = sys.modules["compose_threat_model"]
+        compose_path = REPO_ROOT / "scripts" / "renderers/compose_threat_model.py"
+        if "renderers.compose_threat_model" in sys.modules:
+            mod = sys.modules["renderers.compose_threat_model"]
         else:
-            spec = importlib.util.spec_from_file_location("compose_threat_model", compose_path)
+            spec = importlib.util.spec_from_file_location("renderers.compose_threat_model", compose_path)
             mod = importlib.util.module_from_spec(spec)
-            sys.modules["compose_threat_model"] = mod
+            sys.modules["renderers.compose_threat_model"] = mod
             assert spec.loader is not None
             spec.loader.exec_module(mod)
         return mod.bullet_list
@@ -2012,7 +2012,7 @@ class TestSecurityPostureStructureRegexes:
         assert report.issues == [], report.issues
         assert report.ok == 1
 
-    # ---- Figure 2 SVG form (figure2_svg.py) — primary since 2026-07 ----------
+    # ---- Figure 2 SVG form (renderers/figure2_svg.py) — primary since 2026-07 ----------
     # Figure 2 is a portable hand-built SVG image, not an inline ELK Mermaid
     # block. The D/E/F/C Mermaid-markup rules do not apply; the surviving
     # invariants are the SVG-file existence + T1/T2/T3 (table present, glyph
@@ -2066,7 +2066,7 @@ class TestSecurityPostureStructureRegexes:
     def test_svg_route_references_are_checked_for_files_and_embedded_images(self, tmp_path, embedded, tamper):
         import base64
 
-        from figure2_svg import build_figure2_data, build_figure2_svg
+        from renderers.figure2_svg import build_figure2_data, build_figure2_svg
 
         threats = [{"id": f"T-{n:03d}", "title": "Untrusted input", "risk": "High"} for n in range(1, 4)]
         paths = {
@@ -2515,7 +2515,7 @@ class TestCanonicalQaGate:
 # ---------------------------------------------------------------------------
 # Triage CLI defensive defaults (Sprint 1B / M3.5)
 #
-# The orchestrator has historically called `triage_validate_ratings.py` with
+# The orchestrator has historically called `validators/triage_validate_ratings.py` with
 # typo'd flags (e.g. `--threats-file …`), which under stock argparse exits
 # with a `usage:` line and code 2. The orchestrator interpreted that as a
 # successful no-op and burnt 5+ min of session budget waiting. The fix uses
@@ -2526,9 +2526,9 @@ class TestCanonicalQaGate:
 
 
 class TestTriageCliDefensiveDefaults:
-    """Pin the orchestrator-resilience hardening on triage_validate_ratings.py."""
+    """Pin the orchestrator-resilience hardening on validators/triage_validate_ratings.py."""
 
-    SCRIPT = REPO_ROOT / "scripts" / "triage_validate_ratings.py"
+    SCRIPT = REPO_ROOT / "scripts" / "validators/triage_validate_ratings.py"
 
     def _make_threats_file(self, output_dir: Path, threats: list | None = None):
         merged = {
@@ -3511,9 +3511,11 @@ class TestStrengthsRendererExcludesTacticalHygiene:
     def test_excluded_names_includes_http_security_headers(self):
         import importlib.util as _ilu
 
-        spec = _ilu.spec_from_file_location("compose_threat_model", REPO_ROOT / "scripts" / "compose_threat_model.py")
+        spec = _ilu.spec_from_file_location(
+            "renderers.compose_threat_model", REPO_ROOT / "scripts" / "renderers/compose_threat_model.py"
+        )
         compose = _ilu.module_from_spec(spec)
-        sys.modules["compose_threat_model"] = compose
+        sys.modules["renderers.compose_threat_model"] = compose
         scripts = str(REPO_ROOT / "scripts")
         if scripts not in sys.path:
             sys.path.insert(0, scripts)
@@ -3534,7 +3536,7 @@ class TestWalkthroughCoverageSourceLineMatch:
     sub-section by the T-NNN on its `**Source:** [T-NNN]` line, NOT by the
     heading.
 
-    Regression for the 2026-05-28 juice-shop run: walkthrough_renderer.py
+    Regression for the 2026-05-28 juice-shop run: renderers/walkthrough_renderer.py
     deliberately emits short, T-NNN-free headings (`### 3.2 <title>`) to stay
     under check_heading_hygiene's length limit and puts the T-NNN on the
     `**Source:**` line. The previous heading-only match reported all 12
@@ -3650,7 +3652,7 @@ class TestWalkthroughCoverageCapped:
 
     def test_top_n_coverage_passes_overflow_not_flagged(self, output_dir):
         qa = _load_qa_checks()
-        import walkthrough_renderer as wr
+        import renderers.walkthrough_renderer as wr
 
         self._write_yaml_n_criticals(output_dir, 12)
         # Walk through exactly the top-N selection; T-009..T-012 must NOT be flagged.
@@ -3662,7 +3664,7 @@ class TestWalkthroughCoverageCapped:
 
     def test_missing_top_n_critical_is_flagged(self, output_dir):
         qa = _load_qa_checks()
-        import walkthrough_renderer as wr
+        import renderers.walkthrough_renderer as wr
 
         self._write_yaml_n_criticals(output_dir, 12)
         # Cover 7 of the top-8 — drop T-008 (a top-N pick) → must be flagged.
@@ -4078,15 +4080,17 @@ def test_trust_boundary_header_is_identical_in_all_three_modules():
     def _load(name: str):
         if name in sys.modules:
             return sys.modules[name]
-        spec = _ilu.spec_from_file_location(name, Path(__file__).parent.parent / "scripts" / f"{name}.py")
+        spec = _ilu.spec_from_file_location(
+            name, Path(__file__).parent.parent / "scripts" / (name.replace(".", "/") + ".py")
+        )
         module = _ilu.module_from_spec(spec)
         sys.modules[name] = module
         assert spec.loader is not None
         spec.loader.exec_module(module)
         return module
 
-    compose = _load("compose_threat_model")
-    prose = _load("apply_prose_fixes")
+    compose = _load("renderers.compose_threat_model")
+    prose = _load("repairs.apply_prose_fixes")
     header = compose._BOUNDARY_ASSUMPTION_HEADER
     assert all(header in form for form in prose._TRUST_BOUNDARY_TABLE_HEADERS)
     assert all(header in form for form in compose._FIXED_LAYOUT_TABLE_HEADERS if form[0] == "ID")
@@ -4421,7 +4425,7 @@ def test_mermaid_owner_returns_none_without_fragments_dir(tmp_path: Path):
     assert qa._fragment_owning_mermaid_block(tmp_path / "threat-model.md", raw) is None
 
 
-# --- CLI argument guard (mirrors log_event.py's guard, same failure class) ---
+# --- CLI argument guard (mirrors runtime/log_event.py's guard, same failure class) ---
 
 
 def test_option_in_a_positional_slot_is_named_as_an_option(tmp_path: Path):
@@ -4511,7 +4515,7 @@ class TestWalkthroughCoverageReplaysTheRendererPool:
     def _md_from_actual_picks(self, output_dir: Path) -> Path:
         """Render §3 from what the renderer really selects for this yaml."""
         sys.path.insert(0, str(REPO_ROOT / "scripts"))
-        import walkthrough_renderer as wr
+        import renderers.walkthrough_renderer as wr
         import yaml as _yaml
 
         data = _yaml.safe_load((output_dir / "threat-model.yaml").read_text(encoding="utf-8"))

@@ -1,4 +1,4 @@
-"""Tests for scripts/figure_deployment.py — the §2.2 Deployment and Technology figure.
+"""Tests for scripts/renderers/figure_deployment.py — the §2.2 Deployment and Technology figure.
 
 The figure is drawn from the model and the scan's deployment inventory. Each environment kind gets a neutral and a
 renamed variant; every rendered figure must also be drawn cleanly: no line segment runs through a box that contains
@@ -13,10 +13,10 @@ import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-import deployment_inventory as DI
-import figure_deployment as FDEP
+import analyzers.deployment_inventory as DI
 import pytest
-from figure_details import tw
+import renderers.figure_deployment as FDEP
+from renderers.figure_details import tw
 
 from tests.test_deployment_inventory import MANIFESTS, SHA, TF
 

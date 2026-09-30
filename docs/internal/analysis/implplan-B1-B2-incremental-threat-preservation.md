@@ -11,8 +11,8 @@ threats now get a fresh, collision-free id continuing after the current max. Als
 runs **before** `build_mitigations` (not just before the threat_ids loop) so carried threats get a
 §10 Mitigation Register entry.
 
-Files: `schemas/{stride,threats-merged,threat-model.output}.schema.yaml`, `scripts/merge_threats.py`,
-`scripts/build_threat_model_yaml.py`, `scripts/compose_threat_model.py`,
+Files: `schemas/{stride,threats-merged,threat-model.output}.schema.yaml`, `scripts/model/merge_threats.py`,
+`scripts/model/build_threat_model_yaml.py`, `scripts/renderers/compose_threat_model.py`,
 `agents/phases/phase-group-threats.md`, `agents/appsec-stride-analyzer.md`, tests in
 `tests/test_{build_threat_model_yaml,merge_threats,compose_threat_model}.py`.
 
@@ -24,7 +24,7 @@ Files: `schemas/{stride,threats-merged,threat-model.output}.schema.yaml`, `scrip
 **Bug:** A DIRTY component re-scanned at a shallower depth (`thorough/standard → quick --incremental`)
 overwrites `.stride-<id>.json`; prior threats the shallow scan doesn't re-emit vanish.
 The analyzer's disposition is depth-blind (`appsec-stride-analyzer.md:124`) and the
-changelog builder *treats incremental as full* (`build_threat_model_yaml.py:947-948`),
+changelog builder *treats incremental as full* (`model/build_threat_model_yaml.py:947-948`),
 so there is no deterministic reconciliation — `resolved.threats` only ever fills on
 component **removal** (`phase-group-threats.md:62`).
 
@@ -37,7 +37,7 @@ component **removal** (`phase-group-threats.md:62`).
   **affirmatively** show to be fixed is **carried** (emitted) instead of dropped.
   Also emit an explicit `resolved_prior_findings[]` list when it *does* confirm a fix.
 - **B2 (deterministic, authoritative):** a Python reconciler in
-  `build_threat_model_yaml.py` that, for **re-analyzed** components, diffs prior
+  `model/build_threat_model_yaml.py` that, for **re-analyzed** components, diffs prior
   threats against the freshly-merged threats and **re-injects** any prior threat that
   (a) did not survive by fingerprint, (b) is not in the analyzer's affirmed-fix list,
   and (c) was found at a deeper depth than the current run. Records honest
@@ -53,9 +53,9 @@ Python; make the LLM do less). **B2 alone fixes the bug**; B1 improves precision
 ### Signals already on disk (no new producers needed)
 | Need | Source | Verified at |
 |---|---|---|
-| prior threats (id, component, cwe, title, full verdict) | `prior_yaml = _load_yaml(od/"threat-model.yaml")` | `build_threat_model_yaml.py:1029` |
+| prior threats (id, component, cwe, title, full verdict) | `prior_yaml = _load_yaml(od/"threat-model.yaml")` | `model/build_threat_model_yaml.py:1029` |
 | new merged threats (id, component, cwe, title) | `build_threats(merged)` output | `:365-396` |
-| which components were re-analyzed | `baseline.json.stride_files[cid].sha256` vs current `.stride-<cid>.json` sha | `baseline_state.py:199,334` |
+| which components were re-analyzed | `baseline.json.stride_files[cid].sha256` vs current `.stride-<cid>.json` sha | `baseline/baseline_state.py:199,334` |
 | current depth | `skill_cfg["assessment_depth"]` | used `:953` |
 | prior depth | `baseline.json.last_run_depth` | consumed by §7 override `compose:1319` |
 
@@ -90,9 +90,9 @@ is schema-valid).
 > Also check (Editing Guidance → "Schema, fragment, or report structure"):
 > `docs/internal/contracts/schema-invariants.md` — add the new enum value to any
 > documented evidence_check invariant. Triage consumers
-> (`triage_compute_ranking.py`, `severity-caps.yaml` logic): confirm the new value
+> (`model/triage_compute_ranking.py`, `severity-caps.yaml` logic): confirm the new value
 > is treated like `unchecked`/`ambiguous` (never elevated). QA
-> (`qa_checks.py` evidence-integrity check): treat it as a valid non-fresh state,
+> (`validators/qa_checks.py` evidence-integrity check): treat it as a valid non-fresh state,
 > not a missing-evidence failure.
 
 ---
@@ -189,7 +189,7 @@ sibling array. Mirror in `schemas/stride.schema.yaml` (top-level optional array)
 
 ---
 
-## DIFF 4 — `scripts/build_threat_model_yaml.py`: deterministic reconciler (the authoritative fix)
+## DIFF 4 — `scripts/model/build_threat_model_yaml.py`: deterministic reconciler (the authoritative fix)
 
 ### 4a. New helpers (module scope, near `_carry_forward` at `:126`)
 ```python
@@ -285,7 +285,7 @@ def reconcile_incremental_threats(
 ### 4c. Collect the analyzers' affirmed-fix list
 Add a loader (sibling to the `.stride-*.json` reads merge already does) that unions
 every `resolved_prior_findings[]` into `{prior_id: reason, fingerprint: reason}`.
-Cleanest home: emit it from `merge_threats.py` into `.threats-merged.json` under a new
+Cleanest home: emit it from `model/merge_threats.py` into `.threats-merged.json` under a new
 top-level key `resolved_prior_findings` (merge already globs every stride file), then
 read `merged.get("resolved_prior_findings")` here. **This keeps the builder reading one
 file, consistent with the existing merge→build contract.**
@@ -333,12 +333,12 @@ and a baseline exists, populate real buckets instead of the full-run stub:
 Pass `_recon_resolved`, `_carried_ids`, the `reanalyzed` set, and
 (`all_components − reanalyzed`) as `carried_forward_ids` from `main()` into the
 `build_changelog(...)` call at `:1083`. This finally populates the
-`carried_forward_components` field that `render_completion_summary.py:300,323`
+`carried_forward_components` field that `renderers/render_completion_summary.py:300,323`
 already reads (today always empty).
 
 ### 4f. Imports
 `reconcile_incremental_threats` and helpers use `hashlib` and `re` — confirm both are
-already imported at the top of `build_threat_model_yaml.py` (re is; verify hashlib,
+already imported at the top of `model/build_threat_model_yaml.py` (re is; verify hashlib,
 add if missing).
 
 ---
@@ -369,7 +369,7 @@ with a reason, (d) changelog `resolved`/`carried_forward_components` populated.
    injection, so it picks up carried ids. ✔
 3. **Post-triage injection:** carried threat keeps the prior run's triage verdict;
    we intentionally do not re-rank at shallow depth (matches "only change what you
-   verified"). Confirm `triage_compute_ranking.py` runs before the builder (it does —
+   verified"). Confirm `model/triage_compute_ranking.py` runs before the builder (it does —
    triage writes `.threats-merged.json`, builder reads it). ✔
 4. **Genuine fixes still resolve:** disposition #2 + `resolved_prior_findings`; and at
    equal/deeper depth non-reproduction → resolved (4b else-branch). Over-preserve only
@@ -380,7 +380,7 @@ with a reason, (d) changelog `resolved`/`carried_forward_components` populated.
 6. **Full/first run unaffected:** `_reanalyzed_component_ids` returns None (no baseline)
    → reconciler is a no-op; `build_changelog` falls back to current full-run stub when
    incremental params are None. ✔
-7. **Requirements-drop hard-abort** (`resolve_config.py:976`) is orthogonal — untouched. ✔
+7. **Requirements-drop hard-abort** (`runtime/resolve_config.py:976`) is orthogonal — untouched. ✔
 8. **Permissions:** new file reads are `baseline.json` + `.stride-*.json`, both already
    in Phase 9 / builder scope. Re-check `data/required-permissions.yaml` +
    `tests/test_check_permissions.py` only if the analyzer gains a NEW write (it does:

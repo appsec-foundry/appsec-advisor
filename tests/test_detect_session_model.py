@@ -1,4 +1,4 @@
-"""Tests for scripts/detect_session_model.py.
+"""Tests for scripts/analyzers/detect_session_model.py.
 
 The detector is a fail-safe transparency helper: it must ALWAYS exit 0 and print
 either a model id or an empty string, and must survive missing dirs, missing
@@ -14,15 +14,15 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "detect_session_model.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "analyzers/detect_session_model.py"
 
 
 def _load_module():
-    if "detect_session_model" in sys.modules:
-        return sys.modules["detect_session_model"]
-    spec = importlib.util.spec_from_file_location("detect_session_model", SCRIPT_PATH)
+    if "analyzers.detect_session_model" in sys.modules:
+        return sys.modules["analyzers.detect_session_model"]
+    spec = importlib.util.spec_from_file_location("analyzers.detect_session_model", SCRIPT_PATH)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["detect_session_model"] = mod
+    sys.modules["analyzers.detect_session_model"] = mod
     assert spec.loader is not None
     spec.loader.exec_module(mod)
     return mod

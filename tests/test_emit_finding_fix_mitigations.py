@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import emit_finding_fix_mitigations as effm
+import model.emit_finding_fix_mitigations as effm
 import yaml
 
 
@@ -16,7 +16,7 @@ def _read_yaml(output_dir: Path) -> dict:
 
 
 def _run(output_dir: Path, monkeypatch) -> int:
-    monkeypatch.setattr(sys, "argv", ["emit_finding_fix_mitigations.py", str(output_dir)])
+    monkeypatch.setattr(sys, "argv", ["model/emit_finding_fix_mitigations.py", str(output_dir)])
     return effm.main()
 
 
@@ -261,7 +261,7 @@ def test_invalid_inputs_are_best_effort_noops(tmp_path: Path, monkeypatch, capsy
 
 
 def test_usage_error_is_best_effort_success(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(sys, "argv", ["emit_finding_fix_mitigations.py"])
+    monkeypatch.setattr(sys, "argv", ["model/emit_finding_fix_mitigations.py"])
 
     assert effm.main() == 0
 

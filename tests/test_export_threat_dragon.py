@@ -1,5 +1,5 @@
 """
-Tests for `scripts/export_threat_dragon.py` — deterministic OWASP Threat
+Tests for `scripts/exporters/export_threat_dragon.py` — deterministic OWASP Threat
 Dragon v2 export from a `threat-model.yaml`.
 
 Two contracts are guarded here:
@@ -26,9 +26,9 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import export_threat_dragon as etd  # noqa: E402
+import exporters.export_threat_dragon as etd  # noqa: E402
 
-SCRIPT = ROOT / "scripts" / "export_threat_dragon.py"
+SCRIPT = ROOT / "scripts" / "exporters/export_threat_dragon.py"
 FIXTURES = ROOT / "tests" / "fixtures"
 COMPOSE_YAML = FIXTURES / "compose" / "threat-model.yaml"
 # The schema owners' canonical example — the same file `tests/test_schemas.py`

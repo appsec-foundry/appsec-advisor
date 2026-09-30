@@ -1,4 +1,4 @@
-"""Tests for scripts/_severity_rollup.py — the shared finding-severity rules.
+"""Tests for scripts/renderers/_severity_rollup.py — the shared finding-severity rules.
 
 The module exists because two surfaces disagreed about the same model: the
 report bucketed findings on `risk` while the show-threat-model overview ranked
@@ -14,7 +14,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-import _severity_rollup as sr  # noqa: E402,I001
+import renderers._severity_rollup as sr  # noqa: E402,I001
 
 
 # ---------------------------------------------------------------------------
@@ -194,7 +194,7 @@ def test_weakness_basis_breakdown_excludes_design_sources_and_bad_evidence():
 def test_composer_delegates_to_this_module():
     """The composer's Management-Summary tally and this module must not drift
     apart again — they are the same function."""
-    import compose_threat_model as compose
+    import renderers.compose_threat_model as compose
 
     data = _model(
         [{"risk": "Critical"}, {"risk": "High", "evidence_tier": "insecure-practice"}],
@@ -252,8 +252,8 @@ _DISPLAY_SHAPES = [
 @pytest.mark.parametrize("shape", _DISPLAY_SHAPES)
 def test_every_per_finding_surface_shows_the_register_severity(tmp_path, shape):
     """A finding's dot, index entry and walkthrough phrase all equal its §8 heading."""
-    import compose_threat_model as compose
-    import walkthrough_renderer as wr
+    import renderers.compose_threat_model as compose
+    import renderers.walkthrough_renderer as wr
 
     threat = {"id": "T-001", "title": "X", **shape}
     expected = sr.register_severity(threat)

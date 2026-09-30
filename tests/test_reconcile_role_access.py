@@ -8,7 +8,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from reconcile_role_access import (  # noqa: E402
+from model.reconcile_role_access import (  # noqa: E402
     apply_declared,
     classify,
     declared_roles,
@@ -246,7 +246,7 @@ def test_classification_leaves_classified_and_declared_roles_alone():
 def _handoff(tmp_path, declaration=None, access="internet-user"):
     import json
 
-    import orchestration_controller as controller
+    import orchestrator.orchestration_controller as controller
 
     repo, out = tmp_path / "repo", tmp_path / "out"
     (repo / "server").mkdir(parents=True)

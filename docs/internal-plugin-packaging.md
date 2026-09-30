@@ -270,8 +270,8 @@ Supported hook IDs today:
 
 | Hook ID | Registered script | Effect when removed |
 |---|---|---|
-| `security-coach` | `scripts/security_steering.py` | Removes prompt-time security coaching; `hooks/steering_keywords.json` is also omitted. |
-| `agent-logger` | `scripts/agent_logger.py` | Removes Claude hook event logging for tool/use/stop events. Run summaries may have less timing and token context. |
+| `security-coach` | `scripts/analyzers/security_steering.py` | Removes prompt-time security coaching; `hooks/steering_keywords.json` is also omitted. |
+| `agent-logger` | `scripts/runtime/agent_logger.py` | Removes Claude hook event logging for tool/use/stop events. Run summaries may have less timing and token context. |
 
 `create-threat-model` and its internal `internal-threat-analysis-kernel` dependency are required and cannot be removed by package policy. The kernel is preloaded only by focused core agents and is not advertised as a user command. Unknown names fail the build so typos do not silently produce the wrong internal artifact.
 

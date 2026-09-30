@@ -1,4 +1,4 @@
-"""Additional coverage tests for scripts/compose_threat_model.py.
+"""Additional coverage tests for scripts/renderers/compose_threat_model.py.
 
 Targets the largest still-uncovered blocks after test_compose_threat_model.py
 and test_compose_threat_model_cov.py: the CLI ``main()`` paths (argparse,
@@ -24,7 +24,7 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT_PATH = REPO_ROOT / "scripts" / "compose_threat_model.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "renderers/compose_threat_model.py"
 CONTRACT = REPO_ROOT / "data" / "sections-contract.yaml"
 FIXTURE = Path(__file__).parent / "fixtures" / "compose"
 
@@ -38,7 +38,7 @@ def _load_module(name: str, path: Path):
     return mod
 
 
-compose = _load_module("compose_threat_model", SCRIPT_PATH)
+compose = _load_module("renderers.compose_threat_model", SCRIPT_PATH)
 
 
 def _prepare_output_dir(tmp_path: Path) -> Path:
@@ -68,7 +68,7 @@ class TestComposeOptimizationFlags:
         calls: list[Path] = []
         fake_qa = ModuleType("qa_checks")
         fake_qa.check_mermaid_syntax = lambda path: (calls.append(path) or SimpleNamespace(issues=[]))
-        monkeypatch.setitem(sys.modules, "qa_checks", fake_qa)
+        monkeypatch.setitem(sys.modules, "validators.qa_checks", fake_qa)
         monkeypatch.setattr(compose, "render", lambda *args, **kwargs: ("# Report\n", []))
 
         assert compose.main(["--output-dir", str(out), "--defer-mermaid-validation", "--skip-changelog-audit"]) == 0
@@ -77,10 +77,10 @@ class TestComposeOptimizationFlags:
     def test_skip_changelog_audit_omits_only_the_auxiliary_export(self, tmp_path, monkeypatch):
         out = tmp_path / "out"
         out.mkdir()
-        fake_audit = ModuleType("render_changelog_audit")
+        import renderers.render_changelog_audit as audit
+
         audit_calls: list[Path] = []
-        fake_audit.write_audit = lambda output_dir: audit_calls.append(output_dir)
-        monkeypatch.setitem(sys.modules, "render_changelog_audit", fake_audit)
+        monkeypatch.setattr(audit, "write_audit", lambda output_dir: audit_calls.append(output_dir))
         monkeypatch.setattr(compose, "render", lambda *args, **kwargs: ("# Report\n", []))
 
         assert compose.main(["--output-dir", str(out), "--defer-mermaid-validation", "--skip-changelog-audit"]) == 0

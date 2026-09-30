@@ -121,7 +121,7 @@ generation.
 
 ### P1.2 — Use the Management Summary specialist for default Quick Stage 2
 
-**Evidence.** `orchestration_controller.py` selects parallel specialists only
+**Evidence.** `orchestrator/orchestration_controller.py` selects parallel specialists only
 when `enrich_arch_fragments` is true, parallel rendering is enabled, and no retry
 is pending. Quick depth sets `enrich_arch_fragments` to false by default. The
 fallback consequently dispatches the complete 93.5 KB threat renderer even though
@@ -168,7 +168,7 @@ equivalent gate outcomes. No required validator or cleanup action becomes option
 
 ### P1.4 — Remove `_chain-skeleton.md`
 
-**Evidence.** `pregenerate_fragments.py` states that no agent consumes this file.
+**Evidence.** `renderers/pregenerate_fragments.py` states that no agent consumes this file.
 `gen_attack_walkthroughs_skeleton` returns the normal deterministic walkthrough
 output before its historical body, leaving the old body unreachable. The registry
 still exposes `_chain-skeleton.md`, and the legacy Stage-3 and recovery slices still
@@ -185,7 +185,7 @@ contract for the live Critical Attack Tree.
 
 ### P1.5 — Retire the `--qa-scan-repo` no-op
 
-**Location.** The parser and summary handling live in `scripts/resolve_config.py`;
+**Location.** The parser and summary handling live in `scripts/runtime/resolve_config.py`;
 the user-facing claim is in `skills/create-threat-model/HELP.txt`; the compatibility
 description is in `SKILL-impl.md`; and `tests/test_qa_depth_profile.py` confirms the
 old Pass 2c producer is retired.
@@ -244,7 +244,7 @@ must reject it clearly instead of invoking legacy code.
   `signal_patterns`, or implement them under an explicit Phase-9 gating decision.
 - Remove the reserved `additional_components` schema field only through the
   structured-artifact compatibility process.
-- Decide whether `scripts/migrate_v3_to_v4.py` is a supported manual tool. If it
+- Decide whether `scripts/model/migrate_v3_to_v4.py` is a supported manual tool. If it
   is supported, document and test it; otherwise remove it.
 - Update or remove `tests/HAIKU_COVERAGE_TEST.md`, which uses the deprecated
   `haiku-economy` alias and has no live test role.

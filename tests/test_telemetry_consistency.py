@@ -1,4 +1,4 @@
-"""Tests for scripts/telemetry_consistency.py and its controller boundary.
+"""Tests for scripts/runtime/telemetry_consistency.py and its controller boundary.
 
 The check exists because four locally correct producers can still disagree
 about one call. Each case below makes exactly one surface contradict the
@@ -15,10 +15,10 @@ from pathlib import Path
 SCRIPTS = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-import agent_lifecycle as lifecycle  # noqa: E402
-import budget_watchdog as budget  # noqa: E402
-import orchestration_controller as controller  # noqa: E402
-import telemetry_consistency as telemetry  # noqa: E402
+import orchestrator.orchestration_controller as controller  # noqa: E402
+import runtime.agent_lifecycle as lifecycle  # noqa: E402
+import runtime.budget_watchdog as budget  # noqa: E402
+import runtime.telemetry_consistency as telemetry  # noqa: E402
 
 ACTION_ID = "stage1c:b078fb4269a6b5c5"
 CALL_ID = "toolu_recon"
@@ -279,7 +279,7 @@ def test_every_semantic_return_command_is_gated() -> None:
     """Every boundary that runs after a producer returned goes through the
     check — a new one must be added deliberately, not forgotten."""
     assert "context-v2-begin" not in controller._SEMANTIC_RETURN_COMMANDS
-    source = (SCRIPTS / "orchestration_controller.py").read_text(encoding="utf-8")
+    source = (SCRIPTS / "orchestrator/orchestration_controller.py").read_text(encoding="utf-8")
     commands = {
         line.split('sub.add_parser("')[1].split('"')[0]
         for line in source.splitlines()

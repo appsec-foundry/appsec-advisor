@@ -1,4 +1,4 @@
-"""Tests for scripts/redact_known_secrets.py — deterministic exact-value secret
+"""Tests for scripts/validators/redact_known_secrets.py — deterministic exact-value secret
 redaction. The key property is that a secret VALUE copied into PROSE (which the
 pattern-based masker cannot catch) is still scrubbed, because the value is
 discovered in the source via a matchable assignment form and then exact-string
@@ -15,7 +15,7 @@ import yaml
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import redact_known_secrets as R  # noqa: E402
+import validators.redact_known_secrets as R  # noqa: E402
 
 SECRET = "e2e-fixture-jwt-secret-7f4c91"
 

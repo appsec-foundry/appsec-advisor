@@ -14,9 +14,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-import agent_config_checks as checks
-import config_iac_scanner as scanner
+import analyzers.config_iac_scanner as scanner
 import pytest
+import runtime.agent_config_checks as checks
 import yaml
 
 CATALOG = Path(__file__).parent.parent / "data" / "config-iac-checks.yaml"
@@ -324,7 +324,7 @@ def test_agent_checks_carry_the_coding_agent_finding_types():
 def test_agent_findings_reach_the_weakness_register_via_their_finding_type():
     """CWE-250/732 are absent from or deliberately unmapped in cwe_to_th, so the
     register grouping has to come from the catalog's finding type."""
-    import merge_threats
+    import model.merge_threats as merge_threats
 
     for finding_type, cwe in (("FT-180", "CWE-250"), ("FT-181", "CWE-732")):
         threat = merge_threats._config_finding_to_threat(
@@ -358,8 +358,8 @@ def test_the_fix_card_carries_the_catalog_remediation_and_a_verification(tmp_pat
     """End-to-end wiring for one agent finding: merge assigns the weakness
     category, the config-scan emitter creates the fix card, and the scanner
     backfill plus hydrate give the P2 card the steps and verification that
-    `validate_mitigation_quality.py` requires."""
-    import merge_threats
+    `validators/validate_mitigation_quality.py` requires."""
+    import model.merge_threats as merge_threats
 
     threat = merge_threats._config_finding_to_threat(
         {
@@ -385,9 +385,9 @@ def test_the_fix_card_carries_the_catalog_remediation_and_a_verification(tmp_pat
 
     scripts_dir = Path(__file__).parent.parent / "scripts"
     for step in (
-        "emit_config_scan_mitigations.py",
-        "backfill_scanner_remediation.py",
-        "hydrate_mitigation_details.py",
+        "model/emit_config_scan_mitigations.py",
+        "model/backfill_scanner_remediation.py",
+        "model/hydrate_mitigation_details.py",
     ):
         subprocess.run([sys.executable, str(scripts_dir / step), str(tmp_path)], check=True, capture_output=True)
 
@@ -401,7 +401,7 @@ def test_the_fix_card_carries_the_catalog_remediation_and_a_verification(tmp_pat
     assert card["steps"] and "IAC-063" in card["verification"]
 
     gate = subprocess.run(
-        [sys.executable, str(scripts_dir / "validate_mitigation_quality.py"), str(tmp_path)],
+        [sys.executable, str(scripts_dir / "validators/validate_mitigation_quality.py"), str(tmp_path)],
         capture_output=True,
         text=True,
     )
@@ -429,7 +429,7 @@ def test_quick_depth_keeps_every_agent_settings_file(repo):
 def test_every_agent_config_target_triggers_the_phase_2_5_surface_gate():
     """A repository with agent settings and no IaC file must still reach the
     config scan; otherwise the controller skips it and the checks never run."""
-    import orchestration_controller
+    import orchestrator.orchestration_controller as orchestration_controller
 
     catalog = yaml.safe_load(CATALOG.read_text(encoding="utf-8"))["checks"]
     globs = set(orchestration_controller._IAC_SURFACE_GLOBS)
@@ -542,7 +542,7 @@ def test_narrow_permission_rules_are_not_reported(repo):
 def test_recon_and_the_catalog_grade_one_signal_the_same_way():
     """The graders moved out of recon_patterns so an evidence row and a finding
     cannot disagree. Pin that both consumers reach the same function."""
-    import recon_patterns
+    import analyzers.recon_patterns as recon_patterns
 
     assert recon_patterns.classify_permission_rule is checks.classify_permission_rule
     assert recon_patterns.classify_hook_command is checks.classify_hook_command

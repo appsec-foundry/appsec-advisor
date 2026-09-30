@@ -391,7 +391,7 @@ actors:
       source_file: data/actors/default-library.yaml
 
 # Reach-equivalence rules.
-#   - resolve_actors.py annotates severity (max() over the class) when the
+#   - model/resolve_actors.py annotates severity (max() over the class) when the
 #     rule's condition_signal is emitted by recon.
 #   - the Identified Actors table (compose_threat_model._build_identified_actors)
 #     FOLDS non-primary members into `primary_actor` so the inventory stays

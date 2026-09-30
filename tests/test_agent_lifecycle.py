@@ -10,10 +10,10 @@ from jsonschema import Draft202012Validator
 SCRIPTS = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-import agent_lifecycle as lifecycle  # noqa: E402
-import agent_logger  # noqa: E402
-import budget_watchdog as budget  # noqa: E402
-import wait_agent_calls  # noqa: E402
+import orchestrator.wait_agent_calls as wait_agent_calls  # noqa: E402
+import runtime.agent_lifecycle as lifecycle  # noqa: E402
+import runtime.agent_logger as agent_logger  # noqa: E402
+import runtime.budget_watchdog as budget  # noqa: E402
 
 
 def _identity(

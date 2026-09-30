@@ -1,4 +1,4 @@
-"""Tests for scripts/cost_running_total.py — running token + cost
+"""Tests for scripts/runtime/cost_running_total.py — running token + cost
 aggregation since the assessment start.
 
 Verifies:
@@ -21,11 +21,11 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).parent.parent
-SCRIPT = ROOT / "scripts" / "cost_running_total.py"
+SCRIPT = ROOT / "scripts" / "runtime/cost_running_total.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("_crt", ROOT / "scripts" / "cost_running_total.py")
+    spec = importlib.util.spec_from_file_location("_crt", ROOT / "scripts" / "runtime/cost_running_total.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod

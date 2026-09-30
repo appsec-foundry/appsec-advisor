@@ -1,8 +1,8 @@
 """
 Integration tests for the `export-threat-model` skill.
 
-The skill is a Bash wrapper over three Python helpers (export_sarif.py,
-render_pentest_tasks.py, export_pdf.py). These tests exercise the helpers
+The skill is a Bash wrapper over three Python helpers (exporters/export_sarif.py,
+renderers/render_pentest_tasks.py, exporters/export_pdf.py). These tests exercise the helpers
 end-to-end on a synthetic threat-model.yaml + .md pair to confirm the three
 exports are produced and validate cleanly. The Bash skill body itself is not
 shell-executed here — it is straightforward delegation with no logic the
@@ -105,7 +105,7 @@ def test_sarif_helper_runs_standalone(tmp_path: Path):
     result = subprocess.run(
         [
             sys.executable,
-            str(SCRIPTS / "export_sarif.py"),
+            str(SCRIPTS / "exporters/export_sarif.py"),
             "--threat-model",
             str(output_dir / "threat-model.yaml"),
             "--output",
@@ -129,7 +129,7 @@ def test_pentest_helper_runs_yaml_only(tmp_path: Path):
     result = subprocess.run(
         [
             sys.executable,
-            str(SCRIPTS / "render_pentest_tasks.py"),
+            str(SCRIPTS / "renderers/render_pentest_tasks.py"),
             "--threat-model",
             str(output_dir / "threat-model.yaml"),
             "--output",
@@ -154,7 +154,7 @@ def test_pentest_helper_with_target_url(tmp_path: Path):
     result = subprocess.run(
         [
             sys.executable,
-            str(SCRIPTS / "render_pentest_tasks.py"),
+            str(SCRIPTS / "renderers/render_pentest_tasks.py"),
             "--threat-model",
             str(output_dir / "threat-model.yaml"),
             "--output",
@@ -188,11 +188,11 @@ def test_skill_file_exists():
         "sarif",
         "pentest",
         "threatdragon",
-        "export_sarif.py",
-        "render_pentest_tasks.py",
-        "export_pdf.py",
-        "export_html.py",
-        "export_threat_dragon.py",
+        "exporters/export_sarif.py",
+        "renderers/render_pentest_tasks.py",
+        "exporters/export_pdf.py",
+        "exporters/export_html.py",
+        "exporters/export_threat_dragon.py",
     ):
         assert keyword in content, f"SKILL.md missing keyword: {keyword}"
 
@@ -214,7 +214,7 @@ def test_threat_dragon_helper_runs_standalone(tmp_path: Path):
     result = subprocess.run(
         [
             sys.executable,
-            str(SCRIPTS / "export_threat_dragon.py"),
+            str(SCRIPTS / "exporters/export_threat_dragon.py"),
             "--threat-model",
             str(output_dir / "threat-model.yaml"),
             "--output",
@@ -233,9 +233,9 @@ def test_threat_dragon_helper_runs_standalone(tmp_path: Path):
 
 
 def test_html_helper_cli_present():
-    """export_html.py exposes --check-only and propagates exit codes
+    """exporters/export_html.py exposes --check-only and propagates exit codes
     consistent with the skill's preflight contract."""
-    script = SCRIPTS / "export_html.py"
+    script = SCRIPTS / "exporters/export_html.py"
     assert script.is_file()
     # --help should print without invoking pandoc.
     result = subprocess.run(
@@ -256,15 +256,15 @@ def test_html_helper_reuses_pdf_helpers():
     sys.path.insert(0, str(SCRIPTS))
     import importlib
 
-    if "export_html" in sys.modules:
-        importlib.reload(sys.modules["export_html"])
-    import export_html  # noqa: E402
+    if "exporters.export_html" in sys.modules:
+        importlib.reload(sys.modules["exporters.export_html"])
+    import exporters.export_html as export_html  # noqa: E402
 
     # Functions imported from export_pdf should be reachable.
-    assert export_html.md_to_html.__module__ == "export_pdf"
-    assert export_html.probe_mmdc.__module__ == "export_pdf"
-    assert export_html.render_mermaid_blocks.__module__ == "export_pdf"
-    assert export_html.rewrite_vscode_links.__module__ == "export_pdf"
+    assert export_html.md_to_html.__module__ == "exporters.export_pdf"
+    assert export_html.probe_mmdc.__module__ == "exporters.export_pdf"
+    assert export_html.render_mermaid_blocks.__module__ == "exporters.export_pdf"
+    assert export_html.rewrite_vscode_links.__module__ == "exporters.export_pdf"
 
 
 def test_html_require_mermaid_probes_real_renderer():
@@ -272,9 +272,9 @@ def test_html_require_mermaid_probes_real_renderer():
     sys.path.insert(0, str(SCRIPTS))
     import importlib
 
-    if "export_html" in sys.modules:
-        importlib.reload(sys.modules["export_html"])
-    import export_html  # noqa: E402
+    if "exporters.export_html" in sys.modules:
+        importlib.reload(sys.modules["exporters.export_html"])
+    import exporters.export_html as export_html  # noqa: E402
 
     with (
         patch.object(export_html, "check_tool", return_value="/usr/bin/fake"),
@@ -296,9 +296,9 @@ def test_html_does_not_probe_mmdc_when_not_required():
     sys.path.insert(0, str(SCRIPTS))
     import importlib
 
-    if "export_html" in sys.modules:
-        importlib.reload(sys.modules["export_html"])
-    import export_html  # noqa: E402
+    if "exporters.export_html" in sys.modules:
+        importlib.reload(sys.modules["exporters.export_html"])
+    import exporters.export_html as export_html  # noqa: E402
 
     with (
         patch.object(export_html, "check_tool", return_value="/usr/bin/fake"),
@@ -319,7 +319,7 @@ def test_html_helper_missing_input_exits_two(tmp_path: Path):
     result = subprocess.run(
         [
             sys.executable,
-            str(SCRIPTS / "export_html.py"),
+            str(SCRIPTS / "exporters/export_html.py"),
             "--input",
             str(tmp_path / "nope.md"),
             "--output",
@@ -335,7 +335,7 @@ def test_slug_names_every_export_like_the_create_stamp():
     """`--slug` must name each export the way `create-threat-model --slug`
     stamps it, so both skills put the same file into a shared directory."""
     sys.path.insert(0, str(SCRIPTS))
-    import stamp_threat_model
+    import model.stamp_threat_model as stamp_threat_model
 
     content = (ROOT / "skills" / "export-threat-model" / "SKILL.md").read_text()
     outputs = re.findall(r"\$EXPORTS_DIR/([\w.$-]+)", content.split("## Step 4")[1])
@@ -349,7 +349,7 @@ def test_slug_names_every_export_like_the_create_stamp():
 
 def test_slug_validation_matches_the_create_stamp():
     sys.path.insert(0, str(SCRIPTS))
-    import stamp_threat_model
+    import model.stamp_threat_model as stamp_threat_model
 
     content = (ROOT / "skills" / "export-threat-model" / "SKILL.md").read_text()
     pattern = re.search(r"grep -Eqx '([^']+)'", content).group(1)

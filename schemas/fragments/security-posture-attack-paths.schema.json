@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://appsec-advisor/schemas/fragments/security-posture-attack-paths.schema.json",
   "title": "Security Posture — Attack Paths Fragment",
-  "description": "LLM-authored data driving the seven numbered attack-path bullets that follow the Security Posture heatmap. Each entry maps one canonical attack class (defined in data/attack-class-taxonomy.yaml) to the findings, AFs, compound chains, and business impacts that aggregate under it. The renderer (scripts/compose_threat_model.py) emits one bullet per non-empty class in fixed order; classes with no findings are skipped, NOT emitted as empty placeholders.",
+  "description": "LLM-authored data driving the seven numbered attack-path bullets that follow the Security Posture heatmap. Each entry maps one canonical attack class (defined in data/attack-class-taxonomy.yaml) to the findings, AFs, compound chains, and business impacts that aggregate under it. The renderer (scripts/renderers/compose_threat_model.py) emits one bullet per non-empty class in fixed order; classes with no findings are skipped, NOT emitted as empty placeholders.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "actors", "attack_paths"],
@@ -89,7 +89,7 @@
             "minItems": 1,
             "maxItems": 12,
             "uniqueItems": true,
-            "description": "Concrete F-NNN or T-NNN findings that belong to this class. Required: at least 1 — empty classes must be omitted from the array entirely (not emitted with zero findings). Both id namespaces are accepted because the composer (compose_threat_model.py `_render_finding_ref`) renders T-NNN refs as F-NNN visible labels at MD-emission time; the renderer may legitimately emit either form.",
+            "description": "Concrete F-NNN or T-NNN findings that belong to this class. Required: at least 1 — empty classes must be omitted from the array entirely (not emitted with zero findings). Both id namespaces are accepted because the composer (renderers/compose_threat_model.py `_render_finding_ref`) renders T-NNN refs as F-NNN visible labels at MD-emission time; the renderer may legitimately emit either form.",
             "items": {
               "type": "string",
               "pattern": "^[FT]-[0-9]{3}$"

@@ -8,14 +8,14 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-import agent_lifecycle
+import orchestrator.wait_agent_calls as wac
 import pytest
-import wait_agent_calls as wac
+import runtime.agent_lifecycle as agent_lifecycle
 
 SKILL_DIR = Path(__file__).resolve().parents[1] / "skills" / "create-threat-model"
 # Runtimes whose dispatches this join owns (OR-24). Stage 1 joins its STRIDE
-# waves with wait_stride_progress.py and every other dispatch here; Stage 1d
-# dispatches only the abuse wave, which wait_abuse_progress.py joins.
+# waves with orchestrator/wait_stride_progress.py and every other dispatch here; Stage 1d
+# dispatches only the abuse wave, which orchestrator/wait_abuse_progress.py joins.
 LIFECYCLE_JOINED_RUNTIMES = (
     "SKILL-thin-stage1-v2.md",
     "SKILL-thin-stage2.md",
@@ -236,7 +236,7 @@ def test_every_runtime_that_dispatches_agents_joins_them(runtime):
     """
     text = (SKILL_DIR / runtime).read_text(encoding="utf-8")
     if re.search(r"appsec-advisor:appsec-[a-z-]+|dispatch_jobs\[\]", text):
-        assert "scripts/wait_agent_calls.py" in text, f"{runtime} dispatches agents but never joins them"
+        assert "scripts/orchestrator/wait_agent_calls.py" in text, f"{runtime} dispatches agents but never joins them"
 
 
 @pytest.mark.parametrize(
@@ -264,4 +264,4 @@ def test_runtime_join_commands_use_real_flags(runtime):
     text = (SKILL_DIR / runtime).read_text(encoding="utf-8")
     for command in re.findall(r"wait_agent_calls\.py[^`\n]*", text):
         for flag in re.findall(r"--[a-z-]+", command):
-            assert flag in accepted, f"{runtime}: {flag} is not a wait_agent_calls.py flag"
+            assert flag in accepted, f"{runtime}: {flag} is not a orchestrator/wait_agent_calls.py flag"

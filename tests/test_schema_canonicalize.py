@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from jsonschema import Draft202012Validator
-from schema_canonicalize import canonicalize_lossless
+from model.schema_canonicalize import canonicalize_lossless
 
 SCHEMA = {
     "type": "object",

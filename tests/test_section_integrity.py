@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import section_integrity as integrity
+import validators.section_integrity as integrity
 import yaml
 
 

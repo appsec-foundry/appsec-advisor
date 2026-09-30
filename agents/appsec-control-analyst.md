@@ -144,8 +144,8 @@ set -e
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 REPO_ROOT="<REPO_ROOT from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" security-controls "$OUTPUT_DIR/.security-controls.json"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" stride_analyst_context "$OUTPUT_DIR/.stride-analyst-context.json" --repo-root "$REPO_ROOT"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_fragment.py" security-controls "$OUTPUT_DIR/.security-controls.json"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_intermediate.py" stride_analyst_context "$OUTPUT_DIR/.stride-analyst-context.json" --repo-root "$REPO_ROOT"
 ```
 
 Do not emit `AGENT_END` or finish before both commands exit 0. Correct the
@@ -160,16 +160,16 @@ export OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 export CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 ```
 
-Use `scripts/log_event.py` for `AGENT_START`, semantic step events, and
+Use `scripts/runtime/log_event.py` for `AGENT_START`, semantic step events, and
 `AGENT_END` in `$OUTPUT_DIR/.agent-run.log`. Emit every event with one of these
 exact Bash calls — `AGENT_START` is an event name passed to the `info` kind, not
 a kind of its own, and `--agent` is what fills the component column:
 ```bash
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info AGENT_START "<message>" --agent control-analyst
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent control-analyst
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent control-analyst
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" info AGENT_START "<message>" --agent control-analyst
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent control-analyst
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent control-analyst
 ```
 Never emit controller-owned
 `AGENT_INVOKE`, `AGENT_DONE`, dispatch, phase, gate, or workflow events. Batch

@@ -1,4 +1,4 @@
-"""Tests for scripts/render_run_diagnosis.py.
+"""Tests for scripts/renderers/render_run_diagnosis.py.
 
 Covers the contract the SKILL layer relies on: a valid sidecar renders the
 developer block, an invalid or absent one degrades to silence, and no input
@@ -14,7 +14,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
-import render_run_diagnosis as rrd  # noqa: E402
+import renderers.render_run_diagnosis as rrd  # noqa: E402
 
 PLUGIN_ROOT = Path(__file__).parent.parent
 
@@ -34,9 +34,9 @@ def _diagnosis(**overrides) -> dict:
                 "verdict": "plugin_bug",
                 "confidence": "high",
                 "rationale": "The dispatch manifest grants 8 turns to a component with 41 source files.",
-                "evidence": ["scripts/build_stride_dispatch_manifest.py:210", ".agent-run.log:812"],
+                "evidence": ["scripts/orchestrator/build_stride_dispatch_manifest.py:210", ".agent-run.log:812"],
                 "root_cause": {
-                    "location": "scripts/build_stride_dispatch_manifest.py:210",
+                    "location": "scripts/orchestrator/build_stride_dispatch_manifest.py:210",
                     "component": "stride dispatch",
                     "description": "The cheap-stride target check classifies the component as spare.",
                     "causal_path": "Spare classification pins max_turns to 8, the analyzer stops mid-category.",
@@ -124,7 +124,7 @@ class TestRender:
         assert "1 plugin bug" in out and "1 environment" in out and "2 expected" in out
         assert "inconclusive" not in out  # zero counts are omitted
         assert "[ISSUE-001]" in out and "(high confidence)" in out
-        assert "scripts/build_stride_dispatch_manifest.py:210" in out
+        assert "scripts/orchestrator/build_stride_dispatch_manifest.py:210" in out
         assert "Causal path" in out and "Suggested fix" in out
 
     def test_non_bug_verdicts_are_counted_not_detailed(self, tmp_path):

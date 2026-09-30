@@ -20,10 +20,10 @@ import sys
 from pathlib import Path
 
 SCRIPTS = Path(__file__).parent.parent / "scripts"
-SCRIPT = SCRIPTS / "agent_logger.py"
+SCRIPT = SCRIPTS / "runtime/agent_logger.py"
 sys.path.insert(0, str(SCRIPTS))
 
-import agent_lifecycle  # noqa: E402
+import runtime.agent_lifecycle as agent_lifecycle  # noqa: E402
 
 RUN_IDENTITY_VARS = ("APPSEC_RUN_ID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID", "OUTPUT_DIR")
 RUN_ID = "run-1788592678-3277507"
@@ -271,7 +271,7 @@ def test_a_call_closed_before_its_subagent_stop_still_gets_its_usage(tmp_path: P
         "transcript_path": str(session),
         "tool_name": "Bash",
         "tool_use_id": "toolu_wait1",
-        "tool_input": {"command": "python3 wait_abuse_progress.py"},
+        "tool_input": {"command": "python3 orchestrator/wait_abuse_progress.py"},
         "tool_response": {"stdout": "done", "stderr": ""},
     }
     first = [line for line in _run(event, tmp_path).splitlines() if "toolu_capped1" in line and "AGENT_USAGE " in line]

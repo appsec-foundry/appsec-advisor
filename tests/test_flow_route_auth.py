@@ -4,13 +4,13 @@ import copy
 import json
 from pathlib import Path
 
+import analyzers.route_inventory as ri
 import jsonschema
-import orchestration_controller as controller
+import orchestrator.orchestration_controller as controller
 import pytest
-import route_inventory as ri
-import validate_fragment
-from flow_route_auth import fill_from_verified_findings, mixed_route_auth_errors, reconcile
-from handler_resolver import DECODE_ONLY_SCOPE
+import validators.validate_fragment as validate_fragment
+from analyzers.flow_route_auth import fill_from_verified_findings, mixed_route_auth_errors, reconcile
+from analyzers.handler_resolver import DECODE_ONLY_SCOPE
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = json.loads((ROOT / "schemas/fragments/data-flows.schema.json").read_text())

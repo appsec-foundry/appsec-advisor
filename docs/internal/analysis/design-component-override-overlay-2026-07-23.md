@@ -7,7 +7,7 @@
 STRIDE selection is parametrized by component attributes — `deployment_zones`
 (→ `_is_exposed`), `handles_sensitive_data` (→ crown-jewel), type (→ `_is_datastore`
 / `_is_cicd`). These are **recon-authored** and land in `.components.json`, which is a
-**derived artifact regenerated every full run** (`build_stride_dispatch_manifest.py`
+**derived artifact regenerated every full run** (`orchestrator/build_stride_dispatch_manifest.py`
 writes it from Analyst-A). When recon mis-tags a component — e.g. an internal SQL DB
 marked non-sensitive — the wrong component gets analyzed, and a user hand-edit to
 `.components.json` is **silently wiped** on the next run. There is no supported way for
@@ -20,7 +20,7 @@ one under-tagging heuristically; the overlay lets the user catch *any* mis-taggi
 
 A thin, separate **input** file merged *over* the recon output, never editing the derived
 artifact. Mirror the existing 3-layer override pattern of `.appsec/actors.yaml`
-(`resolve_actors.py`).
+(`model/resolve_actors.py`).
 
 - **File:** `<repo>/.appsec/components.yaml` — per component: overridable `exposed` /
   `deployment_zones` / `sensitive` / `component_type`.
@@ -29,7 +29,7 @@ artifact. Mirror the existing 3-layer override pattern of `.appsec/actors.yaml`
 - **Match key:** `canonical_id` (`classify_component._to_canonical`), **not** the raw
   LLM-authored id — ids drift between runs. **Warn on any overlay entry that matches no
   component**, or the override rots silently.
-- **Logging:** every applied override emitted via `scripts/event_log.py`.
+- **Logging:** every applied override emitted via `scripts/runtime/event_log.py`.
 
 ## The one hard rule — override direction (fail-safe)
 

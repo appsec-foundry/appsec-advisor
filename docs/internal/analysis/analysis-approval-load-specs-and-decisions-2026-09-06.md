@@ -1,6 +1,6 @@
 # Why specification approvals keep firing, and what actually earns one
 
-Read-only audit of `specs/requirements.md`, `docs/internal/decisions.md`, `scripts/spec_guard.py`, `scripts/requirements_hook.py`, and `scripts/check_specs.py`. Measured at `522ab9a6`. It follows `analysis-spec-enforcement-and-genericity-2026-08-23.md`, whose genericity verdict was measured over a window in which the catalog did not change at all.
+Read-only audit of `specs/requirements.md`, `docs/internal/decisions.md`, `scripts/spec_guard.py`, `scripts/requirements/requirements_hook.py`, and `scripts/check_specs.py`. Measured at `522ab9a6`. It follows `analysis-spec-enforcement-and-genericity-2026-08-23.md`, whose genericity verdict was measured over a window in which the catalog did not change at all.
 
 ## Summary
 
@@ -13,7 +13,7 @@ The second problem is the register's entry criterion: it has none. `decisions.md
 | Gate | Where | Fires on |
 |---|---|---|
 | `spec_guard.py` | `PreToolUse`, local dev | any recognizable write to `specs/requirements.md` |
-| `requirements_hook.py` | `PreToolUse`, local dev | any recognizable write to `docs/internal/decisions.md` |
+| `requirements/requirements_hook.py` | `PreToolUse`, local dev | any recognizable write to `docs/internal/decisions.md` |
 | `check_specs.py --changed-against` | CI, pull requests | either held file changed with no `specs/changes/*/proposal.md` in the same diff |
 
 None of the three can distinguish adding an entry from weakening one. A `PreToolUse` hook sees the tool input before the write, and both hooks use the target path alone — although an `Edit` payload carries `old_string` and `new_string`, which is enough to tell a pure insertion from a rewrite. The CI gate compares against a base ref and could read the diff outright; it only checks which paths appear in it.
@@ -64,6 +64,6 @@ A and B are independent. C is only worth doing after B, because B is what decide
 
 ## Status
 
-A and B landed with this document, recorded in `specs/changes/gate-the-change-not-the-path/`. The CI gate compares register entries against the base revision, the register carries an entry rule, `OR-16` through `OR-22` are trimmed to the pointer their own header asks for, and the Orchestration table is one table again. The hook half of A ships as `requirements-hook.patch` in the same directory: `scripts/requirements_hook.py` and `scripts/spec_guard.py` are `Edit`-denied so the guard cannot rewrite itself, so an operator applies it from an ordinary terminal.
+A and B landed with this document, recorded in `specs/changes/gate-the-change-not-the-path/`. The CI gate compares register entries against the base revision, the register carries an entry rule, `OR-16` through `OR-22` are trimmed to the pointer their own header asks for, and the Orchestration table is one table again. The hook half of A ships as `requirements-hook.patch` in the same directory: `scripts/requirements/requirements_hook.py` and `scripts/spec_guard.py` are `Edit`-denied so the guard cannot rewrite itself, so an operator applies it from an ordinary terminal.
 
 C is open, and so is the question of whether the three requirement texts named above are trimmed. Both remove or change normative text, which is the case the operator approves.

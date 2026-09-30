@@ -1,4 +1,4 @@
-"""Tests for detect_impl_strategy.py (P2 implementation-strategy axis) and the
+"""Tests for analyzers/detect_impl_strategy.py (P2 implementation-strategy axis) and the
 merge_threats reconciler's use of the strategy signal."""
 
 from __future__ import annotations
@@ -11,8 +11,8 @@ import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
-import detect_impl_strategy as dis  # noqa: E402
-import merge_threats as mt  # noqa: E402
+import analyzers.detect_impl_strategy as dis  # noqa: E402
+import model.merge_threats as mt  # noqa: E402
 
 
 def _repo(tmp_path: Path, deps: dict, files: dict) -> Path:

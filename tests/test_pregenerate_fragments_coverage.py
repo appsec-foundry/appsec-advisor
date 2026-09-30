@@ -1,4 +1,4 @@
-"""Coverage-extension tests for scripts/pregenerate_fragments.py.
+"""Coverage-extension tests for scripts/renderers/pregenerate_fragments.py.
 
 Focus: in-process exercise of main() (the CLI driver) plus helper /
 render branches that the subprocess-based suite in
@@ -18,15 +18,15 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "pregenerate_fragments.py"
+SCRIPT = REPO_ROOT / "scripts" / "renderers/pregenerate_fragments.py"
 
 
 def _load_module():
-    if "pregenerate_fragments" in sys.modules:
-        return sys.modules["pregenerate_fragments"]
-    spec = importlib.util.spec_from_file_location("pregenerate_fragments", SCRIPT)
+    if "renderers.pregenerate_fragments" in sys.modules:
+        return sys.modules["renderers.pregenerate_fragments"]
+    spec = importlib.util.spec_from_file_location("renderers.pregenerate_fragments", SCRIPT)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["pregenerate_fragments"] = module
+    sys.modules["renderers.pregenerate_fragments"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module

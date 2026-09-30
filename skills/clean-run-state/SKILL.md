@@ -123,7 +123,7 @@ Branch on the `--dry-run` / `--force` flags:
 ```bash
 ARGS="$OUTPUT_DIR"
 [ "$JSON_MODE" = "true" ] && ARGS="$ARGS --json"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/check_state.py" $ARGS
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/check_state.py" $ARGS
 ```
 
 The script's exit code propagates — 0 when clean / active, 1 when stale
@@ -135,7 +135,7 @@ is informational ("run without `--dry-run` to clean").
 ```bash
 ARGS="$OUTPUT_DIR --clean"
 [ "$JSON_MODE" = "true" ] && ARGS="$ARGS --json"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/check_state.py" $ARGS
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/check_state.py" $ARGS
 EXIT=$?
 ```
 
@@ -157,7 +157,7 @@ The skill MUST:
    ⚠ --force requested — removing lock regardless of PID liveness.
       Any still-running assessment will lose its lock and may crash.
    ```
-2. Remove the run-state files directly. `check_state.py` has no `--force`
+2. Remove the run-state files directly. `runtime/check_state.py` has no `--force`
    flag and refuses to clean active state by design (the state machine is
    the guarantor of correctness); the skill layer owns the escape hatch:
    ```bash
@@ -169,7 +169,7 @@ The skill MUST:
 3. Re-run the inspector (without `--clean`) so the user sees the final
    state:
    ```bash
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/check_state.py" "$OUTPUT_DIR"
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/check_state.py" "$OUTPUT_DIR"
    ```
 
 ## Step 4 — (No step 4)

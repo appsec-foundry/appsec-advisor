@@ -11,7 +11,7 @@ pins the list and the safety gates so that:
     AGENT_ERROR check) cannot silently disappear.
 
 The suite pins the documentation contract and also executes the standalone
-runtime_cleanup.py behavior directly. The behavior tests cover the safety
+runtime/runtime_cleanup.py behavior directly. The behavior tests cover the safety
 gates and stage-specific cleanup waves so the text guards do not drift away
 from the script's actual deletion decisions.
 """
@@ -24,13 +24,13 @@ import sys
 from pathlib import Path
 
 import pytest
-import runtime_cleanup as rc
+import runtime.runtime_cleanup as rc
 
 PLUGIN_ROOT = Path(__file__).parent.parent
 
 
 def test_cleanup_preserves_persistent_business_context(tmp_path):
-    import orchestration_controller
+    import orchestrator.orchestration_controller as orchestration_controller
 
     output = tmp_path / "docs/security"
     output.mkdir(parents=True)
@@ -61,11 +61,11 @@ SKILL_MD = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL.md"
 FULL_RUNTIME_MD = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md"
 COMPLETION_RUNTIME_MD = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-completion.md"
 HELP_MD = PLUGIN_ROOT / "skills" / "create-threat-model" / "HELP.txt"
-RUNTIME_CLEANUP_PY = PLUGIN_ROOT / "scripts" / "runtime_cleanup.py"
+RUNTIME_CLEANUP_PY = PLUGIN_ROOT / "scripts" / "runtime/runtime_cleanup.py"
 
 # ---------------------------------------------------------------------------
 # Whitelist — pinned. To add a new transient artifact:
-#   1) add it to the cleanup contract and runtime_cleanup.py
+#   1) add it to the cleanup contract and runtime/runtime_cleanup.py
 #   2) add it here
 # The live-fire implementation and contract checks become test failures
 # until the lists are in sync.
@@ -86,7 +86,7 @@ EXPECTED_WHITELIST_FILES = {
     # M3.3: added to clean up state files left behind by crashed runs.
     ".skill-config.json",
     ".recon-patterns.json",
-    # Pre-existing additions visible in scripts/runtime_cleanup.py:
+    # Pre-existing additions visible in scripts/runtime/runtime_cleanup.py:
     ".context-resolver.stdout",
     ".ctx-resolver.pid",
     ".recon-scanner.pid",
@@ -101,7 +101,7 @@ EXPECTED_WHITELIST_FILES = {
     ".qa-prepass.json",
     # Latest live-progress snapshot; .agent-run.log is the durable audit trail.
     ".appsec-progress.json",
-    # M3.6 — self-liveness counter from skill_watchdog.py.
+    # M3.6 — self-liveness counter from runtime/skill_watchdog.py.
     ".skill-watchdog.tick",
     # Architecture-coverage delivery (arch.md) — deterministic intermediates.
     ".route-inventory.json",
@@ -127,7 +127,7 @@ EXPECTED_WHITELIST_DIRS = {
     ".active-tool-calls",
 }
 
-# Post-QA wave — removed by ``runtime_cleanup.py --stage post-qa`` once the
+# Post-QA wave — removed by ``runtime/runtime_cleanup.py --stage post-qa`` once the
 # QA reviewer has written ``.qa-status.json`` with ``status=pass`` and an
 # empty (or absent) ``.qa-repair-plan.json``. Pinned here so shrinking the
 # list is a deliberate edit.
@@ -238,7 +238,7 @@ class TestFinalizationWhitelist:
 
     @pytest.mark.parametrize("never", sorted(NEVER_CLEANUP))
     def test_audit_artifact_not_in_script_whitelist(self, cleanup_py_text, never):
-        """Audit artifacts must not appear in any of runtime_cleanup.py's
+        """Audit artifacts must not appear in any of runtime/runtime_cleanup.py's
         removal lists. The script defines them as ``ALWAYS_FILES``,
         ``ALWAYS_DIRS``, ``POST_QA_FILES_IF_PASS``, ``POST_QA_DIRS``, and
         ``POST_ARCH_FILES_IF_PASS`` — grep every list for each NEVER path."""
@@ -257,9 +257,11 @@ class TestFinalizationWhitelist:
                 cleanup_py_text,
                 _re.DOTALL | _re.MULTILINE,
             )
-            assert m, f"{name} list not found in runtime_cleanup.py"
+            assert m, f"{name} list not found in runtime/runtime_cleanup.py"
             body = m.group(1)
-            assert f'"{never}"' not in body, f"Audit artifact {never!r} must NOT appear in runtime_cleanup.py → {name}"
+            assert f'"{never}"' not in body, (
+                f"Audit artifact {never!r} must NOT appear in runtime/runtime_cleanup.py → {name}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -269,20 +271,24 @@ class TestFinalizationWhitelist:
 
 class TestCleanupGates:
     def test_keep_runtime_files_gate(self, cleanup_py_text):
-        assert "KEEP_RUNTIME_FILES" in cleanup_py_text, "runtime_cleanup.py must honor the KEEP_RUNTIME_FILES env var"
-        assert "keep_runtime_files" in cleanup_py_text, "runtime_cleanup.py must accept --keep-runtime-files"
+        assert "KEEP_RUNTIME_FILES" in cleanup_py_text, (
+            "runtime/runtime_cleanup.py must honor the KEEP_RUNTIME_FILES env var"
+        )
+        assert "keep_runtime_files" in cleanup_py_text, "runtime/runtime_cleanup.py must accept --keep-runtime-files"
 
     def test_threat_model_md_existence_gate(self, cleanup_py_text):
         assert "threat-model.md" in cleanup_py_text, (
-            "runtime_cleanup.py gate must require threat-model.md to exist before deleting"
+            "runtime/runtime_cleanup.py gate must require threat-model.md to exist before deleting"
         )
 
     def test_agent_error_grep_gate(self, cleanup_py_text):
-        assert "AGENT_ERROR" in cleanup_py_text, "runtime_cleanup.py gate must scan .agent-run.log for AGENT_ERROR"
+        assert "AGENT_ERROR" in cleanup_py_text, (
+            "runtime/runtime_cleanup.py gate must scan .agent-run.log for AGENT_ERROR"
+        )
 
     def test_cleanup_logs_outcome(self, cleanup_py_text):
         assert "RUNTIME_CLEANUP" in cleanup_py_text, (
-            "runtime_cleanup.py must append a RUNTIME_CLEANUP line to .agent-run.log "
+            "runtime/runtime_cleanup.py must append a RUNTIME_CLEANUP line to .agent-run.log "
             "so the user can audit what was removed"
         )
 
@@ -504,19 +510,19 @@ class TestSkillMdFlag:
         Completion Summary — this is the fallback that runs even when the
         orchestrator skipped its own Phase 11 cleanup due to turn-budget
         pressure."""
-        assert "runtime_cleanup.py" in skill_text, (
-            "SKILL.md Completion Summary must invoke scripts/runtime_cleanup.py "
+        assert "runtime/runtime_cleanup.py" in skill_text, (
+            "SKILL.md Completion Summary must invoke scripts/runtime/runtime_cleanup.py "
             "so cleanup runs deterministically at the end of every successful run"
         )
 
     def test_skill_invokes_post_qa_stage(self, skill_text):
-        assert "runtime_cleanup.py" in skill_text and "post-qa" in skill_text, (
-            "SKILL.md must invoke runtime_cleanup.py with --stage post-qa after Stage 3 (QA reviewer) completes"
+        assert "runtime/runtime_cleanup.py" in skill_text and "post-qa" in skill_text, (
+            "SKILL.md must invoke runtime/runtime_cleanup.py with --stage post-qa after Stage 3 (QA reviewer) completes"
         )
 
     def test_skill_invokes_post_architect_stage(self, skill_text):
         assert "post-architect" in skill_text, (
-            "SKILL.md must invoke runtime_cleanup.py with --stage post-architect when ARCHITECT_REVIEW=true"
+            "SKILL.md must invoke runtime/runtime_cleanup.py with --stage post-architect when ARCHITECT_REVIEW=true"
         )
 
 

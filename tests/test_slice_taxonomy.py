@@ -1,4 +1,4 @@
-"""Unit tests for scripts/slice_taxonomy.py.
+"""Unit tests for scripts/contexts/slice_taxonomy.py.
 
 Covers profile detection, the per-taxonomy slicing helpers, data-dir discovery,
 YAML load/write round-tripping, and the CLI (main) for both passthrough and
@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import contexts.slice_taxonomy as st
 import pytest
-import slice_taxonomy as st
 import yaml
 
 
@@ -205,7 +205,7 @@ class TestFindDataDir:
 
     def test_missing_raises(self, monkeypatch, tmp_path):
         # Point __file__ at an isolated location with no data/ ancestor.
-        fake = tmp_path / "a" / "b" / "c" / "d" / "scripts" / "slice_taxonomy.py"
+        fake = tmp_path / "a" / "b" / "c" / "d" / "scripts" / "contexts/slice_taxonomy.py"
         fake.parent.mkdir(parents=True)
         monkeypatch.setattr(st.os.path, "abspath", lambda _p: str(fake))
         with pytest.raises(FileNotFoundError):
@@ -254,7 +254,7 @@ def _seed_data_dir(root: Path) -> Path:
 
 class TestMainDirect:
     def _run(self, monkeypatch, argv):
-        monkeypatch.setattr(st.sys, "argv", ["slice_taxonomy.py", *argv])
+        monkeypatch.setattr(st.sys, "argv", ["contexts/slice_taxonomy.py", *argv])
         return st.main()
 
     def test_profile_match_writes_slices(self, monkeypatch, tmp_path, capsys):
@@ -338,7 +338,7 @@ class TestMainDirect:
 
     def test_bad_data_dir_returns_2(self, monkeypatch, tmp_path):
         # No data/ ancestor + no explicit dir → find_data_dir raises → exit 2
-        fake = tmp_path / "x" / "y" / "z" / "w" / "scripts" / "slice_taxonomy.py"
+        fake = tmp_path / "x" / "y" / "z" / "w" / "scripts" / "contexts/slice_taxonomy.py"
         fake.parent.mkdir(parents=True)
         monkeypatch.setattr(st.os.path, "abspath", lambda _p: str(fake))
         rc = self._run(monkeypatch, ["auth", str(tmp_path / "o")])
@@ -353,7 +353,7 @@ class TestCli:
         data_dir = _seed_data_dir(tmp_path)
         out_dir = tmp_path / "cliout"
         res = run_plugin_script(
-            "slice_taxonomy.py",
+            "contexts/slice_taxonomy.py",
             "mystery-thing",
             str(out_dir),
             "--data-dir",
@@ -366,7 +366,7 @@ class TestCli:
         data_dir = _seed_data_dir(tmp_path)
         out_dir = tmp_path / "cliout2"
         res = run_plugin_script(
-            "slice_taxonomy.py",
+            "contexts/slice_taxonomy.py",
             "database",
             str(out_dir),
             "--data-dir",

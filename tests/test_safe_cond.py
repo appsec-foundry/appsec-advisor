@@ -1,4 +1,4 @@
-"""Tests for scripts/_safe_cond.py — deterministic condition resolver."""
+"""Tests for scripts/shared/_safe_cond.py — deterministic condition resolver."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ SCRIPTS = REPO_ROOT / "scripts"
 
 
 def _import(name: str, file_name: str | None = None):
-    spec = importlib.util.spec_from_file_location(name, SCRIPTS / (file_name or f"{name}.py"))
+    spec = importlib.util.spec_from_file_location(name, SCRIPTS / (file_name or (name.replace(".", "/") + ".py")))
     mod = importlib.util.module_from_spec(spec)
     sys.modules[name] = mod
     spec.loader.exec_module(mod)
@@ -22,7 +22,7 @@ def _import(name: str, file_name: str | None = None):
 
 @pytest.fixture(scope="module")
 def safe_cond():
-    return _import("_safe_cond")
+    return _import("shared._safe_cond")
 
 
 # ---------------------------------------------------------------------------
@@ -119,23 +119,23 @@ def test_unknown_name_is_false(safe_cond):
 
 def test_eval_condition_adapter_raises_contract_error_on_bad_input():
     # eval_condition wraps SafeCondError in ContractError for the composer
-    sys.modules.pop("compose_threat_model", None)
-    ctm = _import("compose_threat_model")
+    sys.modules.pop("renderers.compose_threat_model", None)
+    ctm = _import("renderers.compose_threat_model")
     with pytest.raises(ctm.ContractError):
         ctm.eval_condition("__import__('os').system('id')", {})
 
 
 def test_eval_condition_adapter_handles_supported_patterns():
-    sys.modules.pop("compose_threat_model", None)
-    ctm = _import("compose_threat_model")
+    sys.modules.pop("renderers.compose_threat_model", None)
+    ctm = _import("renderers.compose_threat_model")
     assert ctm.eval_condition("check_requirements", {"check_requirements": True}) is True
     assert ctm.eval_condition("not skip_attack_walkthroughs", {"skip_attack_walkthroughs": True}) is False
     assert ctm.eval_condition("v in [a, b]", {"v": "a"}) is True
 
 
 def test_qa_safe_eval_cond_returns_false_on_malformed():
-    sys.modules.pop("qa_checks", None)
-    qa = _import("qa_checks")
+    sys.modules.pop("validators.qa_checks", None)
+    qa = _import("validators.qa_checks")
     # qa side wraps SafeCondError → False (robust against typo'd YAML)
     assert qa._safe_eval_cond("().__class__.__bases__", {}) is False
     assert qa._safe_eval_cond("check_requirements", {"check_requirements": True}) is True

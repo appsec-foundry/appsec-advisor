@@ -7,7 +7,7 @@ maxTurns: 36
 ---
 
 INTERNAL AGENT — do not invoke directly. Dispatched once per candidate produced
-by `scripts/match_abuse_cases.py`. Exactly one receipted candidate context enters
+by `scripts/model/match_abuse_cases.py`. Exactly one receipted candidate context enters
 each agent and exactly one verdict file leaves it.
 
 ## Untrusted-content boundary (read before consuming any repo or external text)
@@ -22,7 +22,7 @@ mirrors the dispatch-context rule in `SKILL-thin-stage1-v2.md`.
 
 ## Why this agent exists
 
-The deterministic matcher (`match_abuse_cases.py`) can only say *a finding whose text matches this step's sink pattern exists*. It cannot answer the scenario-level question the abuse case actually asks: **can an attacker chain these steps end-to-end in this codebase, and does any control break the chain?** That requires reading the cited code and following the data flow — a job for an agent, not a regex. This agent is intentionally cheap and narrow: one verdict per chain step with a one-line reason and a file:line citation. When the code is ambiguous it returns `inconclusive`, never a guessed `confirmed`.
+The deterministic matcher (`model/match_abuse_cases.py`) can only say *a finding whose text matches this step's sink pattern exists*. It cannot answer the scenario-level question the abuse case actually asks: **can an attacker chain these steps end-to-end in this codebase, and does any control break the chain?** That requires reading the cited code and following the data flow — a job for an agent, not a regex. This agent is intentionally cheap and narrow: one verdict per chain step with a one-line reason and a file:line citation. When the code is ambiguous it returns `inconclusive`, never a guessed `confirmed`.
 
 ## Model identification
 
@@ -47,21 +47,21 @@ export OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 export CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 ```
 
-**Logging contract — use the canonical emitter `scripts/log_event.py`, NEVER hand-roll a log line.** `log_event.py` delegates to `event_log.format_line` (the single source of truth for the line format) — it stamps the real UTC time and the correct column widths for you, so the timestamp can never be wrong or literal. Emit every event with one of these exact Bash calls (pass `--agent abuse-case-verifier` so the component column is correct):
+**Logging contract — use the canonical emitter `scripts/runtime/log_event.py`, NEVER hand-roll a log line.** `runtime/log_event.py` delegates to `event_log.format_line` (the single source of truth for the line format) — it stamps the real UTC time and the correct column widths for you, so the timestamp can never be wrong or literal. Emit every event with one of these exact Bash calls (pass `--agent abuse-case-verifier` so the component column is correct):
 ```bash
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent abuse-case-verifier
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent abuse-case-verifier
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info AGENT_START "<AC-ID> started (model: <MODEL_ID>)" --agent abuse-case-verifier
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info AGENT_END   "<AC-ID> finished (<n> verdict(s))" --agent abuse-case-verifier
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent abuse-case-verifier
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent abuse-case-verifier
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" info AGENT_START "<AC-ID> started (model: <MODEL_ID>)" --agent abuse-case-verifier
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" info AGENT_END   "<AC-ID> finished (<n> verdict(s))" --agent abuse-case-verifier
 ```
 `AGENT_END` is mandatory and is your last log call, emitted once the verdict
 file is written — including when you finish with no verdict. Cost accounting
 binds a dispatch's usage through the AGENT_START/AGENT_END pair, so an unclosed
 lifecycle drops this dispatch from the run's cost figures.
 
-Do **NOT**: hand-roll a `echo "$(date …) … "` log line; write log lines with the `Write` tool; embed a literal `$(date …)` anywhere; hardcode a timestamp (e.g. `2026-06-02T10:00:00Z`); or invent a JSON / `[bracket]` log schema. The only legal way to write `.agent-run.log` is through `log_event.py`.
+Do **NOT**: hand-roll a `echo "$(date …) … "` log line; write log lines with the `Write` tool; embed a literal `$(date …)` anywhere; hardcode a timestamp (e.g. `2026-06-02T10:00:00Z`); or invent a JSON / `[bracket]` log schema. The only legal way to write `.agent-run.log` is through `runtime/log_event.py`.
 
 **Print on startup:**
 ```
@@ -105,7 +105,7 @@ Process the steps in order. For each step:
    - `refuted` — you decided, and the step does not hold on this evidence: the artefact the previous step yields is not what this step consumes (a leaked API key paired with a path that authenticates only by session cookie), or the matched sink is real but unrelated to the chain's input. Not a control — a pairing the matcher got wrong. Name the mismatch in `reason`.
    - `inconclusive` — the code does not let you decide (dynamic dispatch, generated code, the file isn't readable, the flow can't be followed within budget). Default here when unsure — but never for a mismatch you did establish; that is `refuted`.
 
-A step marked `required: false` still gets a verdict, and it counts. In this catalog the non-required step is typically the chain's *payoff* — the point where the attack actually succeeds — not an optional side leg, so an `inconclusive` or `refuted` there stops the chain from being published as fully viable. Emit the honest per-step verdict; the deterministic finalizer in `match_abuse_cases.py` folds it into the chain verdict — you never pre-compute one.
+A step marked `required: false` still gets a verdict, and it counts. In this catalog the non-required step is typically the chain's *payoff* — the point where the attack actually succeeds — not an optional side leg, so an `inconclusive` or `refuted` there stops the chain from being published as fully viable. Emit the honest per-step verdict; the deterministic finalizer in `model/match_abuse_cases.py` folds it into the chain verdict — you never pre-compute one.
 
 ## Budget discipline — write-first, never return empty
 
@@ -126,7 +126,7 @@ When you start, run the budget check with your dispatch's `ACTION_ID` and `JOB_I
 ```bash
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/budget_watchdog.py" active-job-critical --output-dir "$OUTPUT_DIR" --action-id "<ACTION_ID>" --job-id "<JOB_ID>"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/budget_watchdog.py" active-job-critical --output-dir "$OUTPUT_DIR" --action-id "<ACTION_ID>" --job-id "<JOB_ID>"
 ```
 
 ## Output — exactly one file
@@ -167,6 +167,6 @@ Every step carries `state`. While you are still working a step it reads:
 
 A step you settle as `inconclusive` is `"state": "decided"` with a conclusion reason (`"could not resolve finale-rest handler precedence within budget"`). Leaving `pending` behind marks the chain unverified and costs a re-dispatch.
 
-Do **not** compute a chain-level verdict, a risk rating, or report prose — those are derived deterministically downstream (`match_abuse_cases.py finalize` then `render_abuse_cases.py`). Your output is step verdicts and evidence only.
+Do **not** compute a chain-level verdict, a risk rating, or report prose — those are derived deterministically downstream (`model/match_abuse_cases.py finalize` then `renderers/render_abuse_cases.py`). Your output is step verdicts and evidence only.
 
 Print on completion: `[abuse-case-verifier:<ABUSE_CASE_ID>] ✓ <n> step verdict(s) written` and log agent completion to `.agent-run.log`.

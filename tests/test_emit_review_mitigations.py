@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import emit_review_mitigations as erm
+import model.emit_review_mitigations as erm
 import yaml
 
 

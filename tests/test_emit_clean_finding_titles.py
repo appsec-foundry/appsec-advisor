@@ -1,4 +1,4 @@
-"""Regression tests for scripts/emit_clean_finding_titles.py (2026-06-12).
+"""Regression tests for scripts/model/emit_clean_finding_titles.py (2026-06-12).
 
 Finding titles must read `<weakness class> — <file:line>` — not the verbose,
 code-laden, parameter-suffixed form Stage-1 authors.
@@ -12,13 +12,13 @@ from pathlib import Path
 
 import yaml
 
-SCRIPT = Path(__file__).parent.parent / "scripts" / "emit_clean_finding_titles.py"
+SCRIPT = Path(__file__).parent.parent / "scripts" / "model/emit_clean_finding_titles.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("emit_clean_finding_titles", SCRIPT)
+    spec = importlib.util.spec_from_file_location("model.emit_clean_finding_titles", SCRIPT)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["emit_clean_finding_titles"] = mod
+    sys.modules["model.emit_clean_finding_titles"] = mod
     spec.loader.exec_module(mod)
     return mod
 

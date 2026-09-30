@@ -227,9 +227,9 @@ An exit code of `0` means the requested supported operation completed and the re
 Use these deterministic status tools against the selected output directory:
 
 ```bash
-python3 scripts/appsec_status.py --live --repo /path/to/repository
-python3 scripts/check_state.py /path/to/output
-python3 scripts/render_completion_summary.py \
+python3 scripts/runtime/appsec_status.py --live --repo /path/to/repository
+python3 scripts/runtime/check_state.py /path/to/output
+python3 scripts/renderers/render_completion_summary.py \
   --issues-only --output-dir /path/to/output --repo-root /path/to/repository
 ```
 

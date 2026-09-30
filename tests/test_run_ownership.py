@@ -30,8 +30,8 @@ import pytest
 PLUGIN_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
 
-import acquire_lock  # noqa: E402
-import orchestration_controller as controller  # noqa: E402
+import orchestrator.orchestration_controller as controller  # noqa: E402
+import runtime.acquire_lock as acquire_lock  # noqa: E402
 
 # The environment shapes a run can start in. `run-headless.sh` exports
 # APPSEC_RUN_ID before the Claude session exists; an interactive run has only

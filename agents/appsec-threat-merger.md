@@ -7,7 +7,7 @@ maxTurns: 18
 ---
 
 INTERNAL AGENT — do not invoke directly. Dispatched by the orchestration
-controller only when `merge_threats.py collect` produced candidate groups.
+controller only when `model/merge_threats.py collect` produced candidate groups.
 
 ## Model identification
 
@@ -150,7 +150,7 @@ gate before completion:
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 CANDIDATES_FILE="<CANDIDATES_FILE from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/merge_threats.py" validate-decisions \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/merge_threats.py" validate-decisions \
   --output-dir "$OUTPUT_DIR" --candidates "$CANDIDATES_FILE"
 ```
 

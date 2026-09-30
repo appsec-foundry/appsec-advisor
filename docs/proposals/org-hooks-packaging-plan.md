@@ -57,7 +57,7 @@ Schema rules (`schemas/org-profile.schema.yaml`, new top-level `hooks`):
 ### 1. Schema — `schemas/org-profile.schema.yaml`
 New `hooks` block as above.
 
-### 2. Validation — `scripts/validate_org_profile.py` (new `_check_hooks`, mirror `_check_mcp`)
+### 2. Validation — `scripts/validators/validate_org_profile.py` (new `_check_hooks`, mirror `_check_mcp`)
 Structural checks that JSON Schema cannot express:
 - `command` **must** start with `${CLAUDE_PLUGIN_ROOT}/org-profile/` (org script
   in the profile folder) — reject host paths, absolute paths, `..`.
@@ -65,7 +65,7 @@ Structural checks that JSON Schema cannot express:
   (reuse `_resolve_under`, against the path remainder after `${CLAUDE_PLUGIN_ROOT}/org-profile/`).
 - `matcher` only for `PreToolUse`/`PostToolUse`.
 - ID must not collide with the upstream IDs (`security-coach`, `agent-logger` reserved).
-- Add a line to the doc listing above (`validate_org_profile.py:8-16`).
+- Add a line to the doc listing above (`validators/validate_org_profile.py:8-16`).
 
 ### 3. Packager — `scripts/package_internal_plugin.py`
 - **`_org_profile_hooks(build) -> dict`** — reads `hooks` from the overlaid profile

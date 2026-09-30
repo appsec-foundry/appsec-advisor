@@ -2,10 +2,15 @@
 
 from copy import deepcopy
 
-import build_architect_context as context
+import contexts.build_architect_context as context
 import pytest
-from architect_review import ReviewError, apply_review, project_reviewed_mitigations, reviewed_mitigation_errors
-from build_threat_model_yaml import build_mitigations, build_threats
+from analyzers.architect_review import (
+    ReviewError,
+    apply_review,
+    project_reviewed_mitigations,
+    reviewed_mitigation_errors,
+)
+from model.build_threat_model_yaml import build_mitigations, build_threats
 
 from tests.test_architect_review import decision, finding, merged
 

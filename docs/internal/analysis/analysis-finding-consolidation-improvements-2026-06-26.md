@@ -32,7 +32,7 @@ Effect on thorough scan: 78 → 71. Larger under standard (Sonnet consolidates l
 up front). **Not** consolidated: CWE-798 hardcoded secrets (RSA/HMAC/CI creds =
 different fix owners, Critical not buried under something lower).
 
-### 2. Family-keyed evidence dedup (`merge_threats.py`)
+### 2. Family-keyed evidence dedup (`model/merge_threats.py`)
 `_evidence_identity_key` now keys on the **exploitation family** (`_cwe_family`)
 instead of the exact CWE, with an `other`→CWE fallback. This reunifies the same
 object under sibling CWEs:
@@ -47,7 +47,7 @@ traceability.
 Effect: 78 → 76 before catalog consolidation; **Criticals 10 → 9** (RSA double
 count removed).
 
-### 3. Fix: GE- apply bug (`merge_threats.py`)
+### 3. Fix: GE- apply bug (`model/merge_threats.py`)
 `_apply_decisions` reconstructed groups only via `(CWE,STRIDE)` → `G-` IDs.
 Merge decisions from the secondary pass (`GE-` endpoint groups, RC.G.2) ran
 into `gid_to_key.get("GE-…") → None → continue` and were **silently

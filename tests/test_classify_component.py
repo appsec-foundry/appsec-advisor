@@ -1,10 +1,10 @@
-"""Unit tests for scripts/classify_component.py (M8 + M18 classifier)."""
+"""Unit tests for scripts/analyzers/classify_component.py (M8 + M18 classifier)."""
 
 from __future__ import annotations
 
 import json
 
-import classify_component as cc
+import analyzers.classify_component as cc
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +224,7 @@ class TestMain:
 
 
 def test_run_via_subprocess(run_plugin_script):
-    proc = run_plugin_script("classify_component.py", "backend-api", "--interfaces", "5", check=True)
+    proc = run_plugin_script("analyzers/classify_component.py", "backend-api", "--interfaces", "5", check=True)
     out = json.loads(proc.stdout)
     assert out["complexity"] == "moderate"
     assert out["max_turns"] == 22

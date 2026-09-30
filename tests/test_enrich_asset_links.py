@@ -1,10 +1,10 @@
-"""Unit tests for scripts/enrich_asset_links.py (deterministic linked_threats)."""
+"""Unit tests for scripts/model/enrich_asset_links.py (deterministic linked_threats)."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import enrich_asset_links as eal
+import model.enrich_asset_links as eal
 import yaml
 
 
@@ -313,6 +313,6 @@ def test_cli_subprocess(run_plugin_script, output_dir):
         "threats": [{"id": "T-XSS", "cwe": "CWE-79", "title": "xss"}],
     }
     (output_dir / "threat-model.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
-    res = run_plugin_script("enrich_asset_links.py", str(output_dir), check=False)
+    res = run_plugin_script("model/enrich_asset_links.py", str(output_dir), check=False)
     assert res.returncode == 0
     assert "asset(s) processed" in res.stdout

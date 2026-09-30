@@ -27,8 +27,8 @@ the user to re-run `make release-check` — the next stage (if any) surfaces the
 | Stage (in order) | What failed | Recommended fix |
 |---|---|---|
 | `ruff check` / `ruff format --check` | lint / formatting | Mechanical → `make fix` (auto-repairs). Do **not** hand-edit. |
-| `validate_config.py` | a config field is invalid | Correct the offending field. **Never** relax the schema to pass (AGENTS.md → "Fix the source, not the symptom"). |
-| `check_fragment_registry.py` | registry maps out of sync | Align the registry maps — see `docs/internal/runbooks/adding-a-section.md`. |
+| `validators/validate_config.py` | a config field is invalid | Correct the offending field. **Never** relax the schema to pass (AGENTS.md → "Fix the source, not the symptom"). |
+| `validators/check_fragment_registry.py` | registry maps out of sync | Align the registry maps — see `docs/internal/runbooks/adding-a-section.md`. |
 | `check_target_specificity.py` | fixture-specific name outside fixtures | Move it into fixtures or scoped tests; vocabulary lives in `data/test-target-vocabulary.yaml`. |
 | `check_specs.py` | requirement bindings out of sync | Update `data/requirement-bindings.yaml`; changing a normative requirement needs operator approval. |
 | `run_tests.py --check-groups` | unassigned test or stale route | Update groups and routes in `scripts/run_tests.py`. |

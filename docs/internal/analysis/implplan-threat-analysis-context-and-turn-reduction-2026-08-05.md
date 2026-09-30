@@ -97,17 +97,17 @@ was:
 
 The current architecture already provides the foundation for this plan:
 
-- `scripts/orchestration_controller.py` validates every action against
+- `scripts/orchestrator/orchestration_controller.py` validates every action against
   `schemas/orchestration-action.schema.json` and already owns many post-stage
   gates.
 - `skills/create-threat-model/SKILL-thin-stage1.md` already dispatches Stage 1a,
   Stage 1b, Analyst A, bounded STRIDE waves, and Analyst B as separate contexts.
-- `scripts/build_stride_dispatch_manifest.py` already builds a schema-validated
+- `scripts/orchestrator/build_stride_dispatch_manifest.py` already builds a schema-validated
   component manifest and references per-component `.dispatch-context/` files.
-- `scripts/stride_dispatch_waves.py` already owns bounded scheduling and retry
+- `scripts/orchestrator/stride_dispatch_waves.py` already owns bounded scheduling and retry
   state.
-- `merge_threats.py`, `triage_validate_ratings.py`,
-  `triage_compute_ranking.py`, and `build_threat_model_yaml.py` already own much
+- `model/merge_threats.py`, `validators/triage_validate_ratings.py`,
+  `model/triage_compute_ranking.py`, and `model/build_threat_model_yaml.py` already own much
   of the post-STRIDE deterministic progression.
 - `agents/shared/completion-contract.md` already prevents artifact prose from
   being copied into the parent conversation.
@@ -198,7 +198,7 @@ Every measured model turn receives one primary diagnostic category:
 | `status_or_logging` | Python event writers | Zero dedicated model turns |
 | `workflow_routing` | Controller | At most one parent turn per semantic boundary |
 
-Extend `scripts/context_window_report.py` rather than adding a production
+Extend `scripts/runtime/context_window_report.py` rather than adding a production
 sidecar. Before classification, aggregate every JSONL content block with the
 same assistant `message.id`; deduplicating by retaining only the first block can
 drop a later `tool_use` block from the same model response. Its optional JSON
@@ -273,7 +273,7 @@ required tool schemas do not fit in the remaining 1k.
 Extend, do not replace:
 
 ```text
-scripts/orchestration_controller.py
+scripts/orchestrator/orchestration_controller.py
 schemas/orchestration-action.schema.json
 docs/internal/contracts/orchestration-actions.md
 ```
@@ -330,7 +330,7 @@ Add:
 
 ```text
 schemas/stride-evidence-bundle.schema.json
-scripts/build_stride_evidence_bundles.py
+scripts/contexts/build_stride_evidence_bundles.py
 $OUTPUT_DIR/.dispatch-context/<component-id>/evidence-bundle.json
 ```
 
@@ -367,9 +367,9 @@ stale and requires deterministic regeneration; it never degrades to an
 unverified Agent read.
 
 Extend `schemas/stride-dispatch-manifest.schema.yaml` and
-`build_stride_dispatch_manifest.py` with the bundle path and fingerprint. Keep
+`orchestrator/build_stride_dispatch_manifest.py` with the bundle path and fingerprint. Keep
 the existing individual index paths during the migration for compatibility.
-`validate_dispatch_manifest.py` must validate the bundle and its component ID
+`validators/validate_dispatch_manifest.py` must validate the bundle and its component ID
 before dispatch.
 
 On the context-v2 path, the validator must also apply the same canonical
@@ -424,11 +424,11 @@ producer map before a focused agent is selectable:
 | Phase 7 / Stage 1b | Existing trust-boundary analyst | Existing assessment-input builder, promotion, normalization, coverage gate, and checkpoint remain authoritative |
 | Phases 8 and 8b | Control analyst | Controller validates `.security-controls.json`, requirements violations, STRIDE-context inputs, early structural artifacts, and the Phase-8 checkpoint |
 | Phase 9 dispatch | Per-component STRIDE analyzers | Controller builds and validates bundles and the manifest; skill issues the bounded Agent wave; wave controller owns attempts and completion |
-| Phase 9 merge | Existing threat merger only for ambiguous candidate groups | `merge_threats.py` owns collect/finalize, ordering, and IDs |
+| Phase 9 merge | Existing threat merger only for ambiguous candidate groups | `model/merge_threats.py` owns collect/finalize, ordering, and IDs |
 | Phase 10 | None | Existing deterministic posture emitters own their outputs |
 | Phase 10a | Existing evidence verifier only when its sampling contract selects findings | Controller validates the verification artifact and applies existing failure semantics |
 | Phase 10b | Existing triage validator only for unresolved semantic flags; post-STRIDE synthesizer only for contracted qualitative outputs | Existing rating validation and ranking scripts remain authoritative; controller validates `.mitigation-overrides.json` and `.tier-root-causes.json` |
-| YAML handoff | None | `build_threat_model_yaml.py`, `validate_intermediate.py`, completeness gates, and the Phase-10b checkpoint own the Stage-2 handoff |
+| YAML handoff | None | `model/build_threat_model_yaml.py`, `validators/validate_intermediate.py`, completeness gates, and the Phase-10b checkpoint own the Stage-2 handoff |
 
 For every row, the implementation patch must name exact input and output schema
 versions, allowed writers, validator commands, exit-code classes, checkpoint
@@ -451,17 +451,17 @@ existing scripts:
 
 ```text
 STRIDE verify
-  -> merge_threats.py collect
+  -> model/merge_threats.py collect
   -> focused merger only when ambiguous groups exist
-  -> merge_threats.py finalize
+  -> model/merge_threats.py finalize
   -> deterministic Phase-10 posture emitters
   -> evidence-verifier dispatch only when its sampling contract selects work
-  -> triage_validate_ratings.py
+  -> validators/triage_validate_ratings.py
   -> focused triage validator
-  -> triage_compute_ranking.py
+  -> model/triage_compute_ranking.py
   -> focused post-STRIDE synthesis only when required
-  -> build_threat_model_yaml.py
-  -> validate_intermediate.py and completeness gates
+  -> model/build_threat_model_yaml.py
+  -> validators/validate_intermediate.py and completeness gates
 ```
 
 Each controller command runs until the next semantic dispatch or a blocker. A
@@ -536,9 +536,9 @@ That analysis is subordinate to this plan; it is not a separate rollout plan.
 
 Change:
 
-- `scripts/context_window_report.py`;
+- `scripts/runtime/context_window_report.py`;
 - `tests/test_context_window_report.py`;
-- `scripts/verify_run_costs.py` and `tests/test_verify_run_costs.py` for the
+- `scripts/runtime/verify_run_costs.py` and `tests/test_verify_run_costs.py` for the
   separately identified Haiku 4.5 pricing correction; and
 - the benchmark command in the related analysis.
 
@@ -588,7 +588,7 @@ creation is rejected at consumption.
 
 ### WP2 — build and validate evidence bundles
 
-Implement `build_stride_evidence_bundles.py` with its mandatory
+Implement `contexts/build_stride_evidence_bundles.py` with its mandatory
 `tests/test_build_stride_evidence_bundles.py`. Wire it into manifest production
 and validation behind a temporary internal rollout switch. In Slice B this is a
 shadow/fixture path only: it may build and compare receipts, but it must not
@@ -596,8 +596,8 @@ change the live Agent dispatch or artifact producer.
 
 Update:
 
-- `scripts/build_stride_dispatch_manifest.py`;
-- `scripts/validate_dispatch_manifest.py`;
+- `scripts/orchestrator/build_stride_dispatch_manifest.py`;
+- `scripts/validators/validate_dispatch_manifest.py`;
 - `schemas/stride-dispatch-manifest.schema.yaml`;
 - `tests/test_dispatch_manifest.py`;
 - `tests/test_validate_dispatch_manifest.py`; and
@@ -622,7 +622,7 @@ parallel state machine.
 
 Change:
 
-- `scripts/orchestration_controller.py`;
+- `scripts/orchestrator/orchestration_controller.py`;
 - `skills/create-threat-model/SKILL-thin-stage1.md`;
 - `docs/internal/contracts/orchestration-actions.md`;
 - `agents/shared/logging-standard.md`;
@@ -911,7 +911,7 @@ producer, schema, manifest, component plan, action, exact-byte receipt,
 consumer reconstruction, permission, cleanup, and resume-version surfaces. It
 also covers shared-budget reconstruction, wrapper-shaped known-threat input,
 empty and truncated projections, stale sources and hashes, duplicate and
-cross-role admission, and symlinked output paths. `context_routing.py validate`,
+cross-role admission, and symlinked output paths. `contexts/context_routing.py validate`,
 `make lint`, `make test`, and `make check` pass. The final test runs each report
 11,783 passed and 95 skipped; `make test` reports 91.68% coverage.
 
@@ -963,7 +963,7 @@ The implemented WP0-WP5 scope includes:
 Context-v2 is now the branch default for compact-runtime full and rebuild runs;
 `APPSEC_CONTEXT_V2=0` selects legacy for a new invocation. Deadline,
 cost-limited, live-phase, incremental, resume, and compact-runtime opt-out
-invocations stay on `legacy`. `resolve_config.py` persists that generation and
+invocations stay on `legacy`. `runtime/resolve_config.py` persists that generation and
 its artifact schema versions; the controller reads them from durable state,
 refuses a cross-generation continuation, and hands the skill
 `SKILL-thin-stage1-v2.md` instead of the legacy Stage-1 runtime.
@@ -1142,7 +1142,7 @@ at least ten publication and validation calls, and retains four calls as
 failure headroom. Deterministic scans, finding lists, tree output, and source
 reads remain bounded, so a larger repository may extend deterministic scan
 runtime but cannot consume the model-turn publication reserve. The producer
-must run `validate_recon_summary.py` immediately after the summary write and
+must run `validators/validate_recon_summary.py` immediately after the summary write and
 before the signal write. That validator and the controller share the exact
 template-heading contract, including titles and order; the prompt and template
 also disambiguate Cat 28 from canonical Section 7.32 and require explicit
@@ -1440,7 +1440,7 @@ STRIDE-selected count from the modeled inventory, combines its report reading
 path, exposes read-only threat-model Q&A as a numbered action, and no longer
 recommends a requirements rerun without user intent. Stage 1 records one
 aggregated usage row per semantic role, Stage 1d binds its row to the verifier
-dispatch window, and `measure_run.py` preserves stage variants, reports
+dispatch window, and `runtime/measure_run.py` preserves stage variants, reports
 role-record coverage, and imports exact headless totals.
 
 The line-limit audit found no remaining semantic-versus-physical unit mismatch
@@ -1592,7 +1592,7 @@ The live run proves three committed changes:
    a detected `docs/security*` assessment directory.
 3. Terminal cleanup works on a session-limit failure with runtime preservation:
    `.active-tool-calls` is absent after wrapper exit. The retained lock is a
-   preserved diagnostic and `appsec_status.py --live` reports it as not alive.
+   preserved diagnostic and `runtime/appsec_status.py --live` reports it as not alive.
 
 The recon correction is not a latency fix. The raw postfix summary has 520
 physical lines and 30,075 bytes, compared with 499 lines and 25,648 bytes in
@@ -1725,13 +1725,13 @@ live invocation or an unsupported resume.
 1. Preserve the postfix directory as read-only evidence. Do not resume it,
    rebuild into it, or treat its partial YAML as an accepted report.
 2. Trace component production through `agents/appsec-architecture-analyst.md`,
-   `scripts/finalize_component_inventory.py`, architecture coverage, and
-   `scripts/build_stride_dispatch_manifest.py`. Define a repository-neutral
+   `scripts/model/finalize_component_inventory.py`, architecture coverage, and
+   `scripts/orchestrator/build_stride_dispatch_manifest.py`. Define a repository-neutral
    rule for when a security-distinct LLM surface remains separate instead of
    being folded into a general backend. Add producer, finalization, selection,
    and Completion Summary regression tests.
 3. Trace focus and signal ordering through
-   `scripts/build_stride_evidence_bundles.py` and its schemas. A bounded bundle
+   `scripts/contexts/build_stride_evidence_bundles.py` and its schemas. A bounded bundle
    must preserve independently relevant mechanisms rather than letting earlier
    same-class paths consume all source windows. Add neutral tests where a
    later focus path carries a distinct source-to-sink mechanism. Keep byte,
@@ -1742,19 +1742,19 @@ live invocation or an unsupported resume.
    trigger, false-positive exclusions, CWE, severity cap, finding type, and
    required file-and-line evidence. Trace the output through recon schemas,
    component projection, analyzer input, and deterministic gates.
-5. Reconcile abuse scope through `scripts/match_abuse_cases.py`, the canonical
-   recon signal schema, `scripts/detect_open_registration.py`, and
+5. Reconcile abuse scope through `scripts/model/match_abuse_cases.py`, the canonical
+   recon signal schema, `scripts/analyzers/detect_open_registration.py`, and
    `scripts/auto_emitter_pass.sh`. Select one authoritative registration signal
    or a deterministic mapping; do not maintain two independently derived facts.
    Add positive, negative, stale, and missing-signal tests.
-6. Trace abuse finding identity through `scripts/match_abuse_cases.py`,
-   `merge_threats.py`, evidence annotation and refutation, final ID allocation,
-   `scripts/build_abuse_case_contexts.py`, and
-   `scripts/promote_verified_abuse_cases.py`. Bind only stable final IDs or
+6. Trace abuse finding identity through `scripts/model/match_abuse_cases.py`,
+   `model/merge_threats.py`, evidence annotation and refutation, final ID allocation,
+   `scripts/contexts/build_abuse_case_contexts.py`, and
+   `scripts/model/promote_verified_abuse_cases.py`. Bind only stable final IDs or
    remap by a contracted identity key after finalization. Add tests for ID gaps,
    refuted findings, reordered findings, inactive cases, and partial verifier
    output.
-7. Correct multi-wave telemetry in `scripts/record_stage_stats.py`. Preserve
+7. Correct multi-wave telemetry in `scripts/runtime/record_stage_stats.py`. Preserve
    the number of distinct dispatches across non-overlapping waves instead of
    taking the maximum wave width, while retaining idempotency on repeated stats
    writes. Record every returned Agent usage block before another semantic turn
@@ -2074,7 +2074,7 @@ file used to support their assigned security role, including delegated
 initialization and middleware; co-located semantic components may share a file
 when evidence supports both roles. Control analysis may not repair or broaden
 that ownership. It must retain an out-of-scope fact as semantic context and
-omit the routing hint. `validate_intermediate.py` now applies the bundle's
+omit the routing hint. `validators/validate_intermediate.py` now applies the bundle's
 canonical path and glob semantics to `.stride-analyst-context.json` against
 the finalized `.components.json` and repository at the producer gate. The
 controller repeats that cross-artifact validation before manifest construction,
@@ -2117,7 +2117,7 @@ returned success because it recognized only legacy `stride-analyzer`
 The correction launches every context-v2 STRIDE job as a non-blocking Agent
 call before waiting. The PreToolUse hook denies a foreground context-v2 STRIDE
 call before it creates an active-call marker, making parallel dispatch
-mechanical rather than prompt-only. `wait_stride_progress.py` now consults the
+mechanical rather than prompt-only. `orchestrator/wait_stride_progress.py` now consults the
 deterministic wave validator, so a write-first seed cannot release the boundary,
 and the controller retains retry and abort ownership. The v2 producer emits
 canonical component-tagged boundary events. The serial detector consumes the
@@ -2129,7 +2129,7 @@ The completed run exposed the same defect in Stage 1d: the six verifier starts
 at `11:18:44Z`, `11:21:25Z`, `11:25:20Z`, `11:28:05Z`, `11:29:52Z`, and
 `11:31:35Z` were serial despite `dispatch_parallel`. Context-v2 now backgrounds
 the complete abuse-verifier wave, mechanically rejects foreground verifier
-calls, and blocks in `wait_abuse_progress.py` until every declared verdict has
+calls, and blocks in `orchestrator/wait_abuse_progress.py` until every declared verdict has
 decided all steps. Missing, malformed, or write-first pending verdicts cannot
 release the boundary.
 
@@ -2267,7 +2267,7 @@ component remains unresolved. A replay on a copy of the postfix4 artifacts
 reassigned nine threats, validated all 58 merged threats, and built both
 synthesis projections successfully.
 
-The same run exposed three status defects. `appsec_status.py --live` treated
+The same run exposed three status defects. `runtime/appsec_status.py --live` treated
 `dispatch-times.json` as an active call, retained completed component progress,
 and used the older checkpoint phase instead of the newer structured progress
 phase for display and timeout filtering. Those reads now require a valid tool

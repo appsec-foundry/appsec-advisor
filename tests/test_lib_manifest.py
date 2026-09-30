@@ -1,10 +1,10 @@
-"""Unit tests for scripts/_lib_manifest.py — manifest dependency enumerator."""
+"""Unit tests for scripts/shared/_lib_manifest.py — manifest dependency enumerator."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import _lib_manifest as M
+import shared._lib_manifest as M
 
 # ---------------------------------------------------------------------------
 # discover_manifests

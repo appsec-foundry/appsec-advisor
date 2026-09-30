@@ -1,4 +1,4 @@
-"""Tests for scripts/compose_threat_model.py — the contract-driven renderer.
+"""Tests for scripts/renderers/compose_threat_model.py — the contract-driven renderer.
 
 These tests pin the invariants that make LLM structural drift impossible:
 
@@ -25,7 +25,7 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "compose_threat_model.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "renderers/compose_threat_model.py"
 CONTRACT = REPO_ROOT / "data" / "sections-contract.yaml"
 FIXTURE = Path(__file__).parent / "fixtures" / "compose"
 
@@ -40,13 +40,13 @@ def _load_module(name: str, path: Path):
     return module
 
 
-compose = _load_module("compose_threat_model", SCRIPT_PATH)
+compose = _load_module("renderers.compose_threat_model", SCRIPT_PATH)
 # The §1 catalogue is delivered as fixed-layout HTML, so a few tests assert the
 # composer's cells survive qa's inline-markdown → HTML conversion unchanged.
-qa = _load_module("qa_checks", REPO_ROOT / "scripts" / "qa_checks.py")
+qa = _load_module("validators.qa_checks", REPO_ROOT / "scripts" / "validators/qa_checks.py")
 # The §1 exposure rating comes from this shared contract; the tests read the
 # scale from it rather than restating it.
-criticality = _load_module("_boundary_criticality", REPO_ROOT / "scripts" / "_boundary_criticality.py")
+criticality = _load_module("shared._boundary_criticality", REPO_ROOT / "scripts" / "shared/_boundary_criticality.py")
 
 
 def test_inline_code_vocabulary_ignores_model_selected_repository(tmp_path: Path, monkeypatch) -> None:
@@ -770,7 +770,7 @@ def test_component_type_column_agrees_with_the_diagram() -> None:
     be a hand-kept copy of the pre-generator's and drifted: bare-substring hints
     matched `ui` inside `build-service` and `juiceshop.sqlite`.
     """
-    import pregenerate_fragments as pregen
+    import renderers.pregenerate_fragments as pregen
 
     for comp in (
         {"id": "build-service", "name": "Build Service", "paths": ["src/build/pipeline.ts"]},
@@ -1012,7 +1012,7 @@ def test_quick_depth_rerun_hints_name_only_accepted_flags(tmp_path: Path) -> Non
     must be one the run's argument parser accepts, or following the hint aborts
     the next run with `unrecognized arguments`."""
     resolve_config = sys.modules.get("resolve_config") or _load_module(
-        "resolve_config", REPO_ROOT / "scripts" / "resolve_config.py"
+        "runtime.resolve_config", REPO_ROOT / "scripts" / "runtime/resolve_config.py"
     )
     accepted = {s for a in resolve_config.build_parser()._actions for s in a.option_strings}
     out = _prepare_output_dir(tmp_path)
@@ -1544,7 +1544,7 @@ def test_verdict_matches_the_shared_state_helper(tmp_path: Path) -> None:
     pins the mapping so a reworded cell cannot drift away from the state that
     decides whether a crossing counts as standing open.
     """
-    import prepare_trust_boundary_context as prep
+    import contexts.prepare_trust_boundary_context as prep
 
     rows = [
         _canonical_boundary(1),
@@ -3135,7 +3135,7 @@ def test_changelog_truncates_overly_long_note_prose(tmp_path: Path) -> None:
     prose = (
         "Full scan re-assessment with enhanced frontend analysis, SSRF "
         "identified, WebSocket trust boundary TB-6 added, fragment pipeline "
-        "written for compose_threat_model.py renderer. All 28 threats and "
+        "written for renderers/compose_threat_model.py renderer. All 28 threats and "
         "21 mitigations carried forward."
     )
     _rewrite_changelog(
@@ -3836,7 +3836,7 @@ class TestSecurityPostureV2:
         assert out == ""
 
     def test_v2_figure2_is_portable_svg(self, tmp_path):
-        # Figure 2 is now a deterministic hand-built SVG image (figure2_svg.py),
+        # Figure 2 is now a deterministic hand-built SVG image (renderers/figure2_svg.py),
         # not an inline ELK Mermaid block — so it renders in Markdown viewers
         # that lack the ELK layout engine (GitHub, VS Code preview).
         ctx, env = self._build_ctx(tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes())
@@ -4305,7 +4305,7 @@ class TestActorCellGuard:
             or bool(prov.get("previous_actor_ids"))
         )
         assert had_actor_history is False, "fixture must have no prior attribution"
-        # Render expectation: the renderer code under test (compose_threat_model.py
+        # Render expectation: the renderer code under test (renderers/compose_threat_model.py
         # circa line 9311) must NOT emit the Fall-2 marker for this state.
         # Read the renderer source and assert the precondition guard exists.
         src = Path(ns.__file__).read_text(encoding="utf-8")
@@ -5217,7 +5217,7 @@ def test_verdict_scope_coverage_line(tmp_path: Path) -> None:
     env = compose._build_jinja_env(ctx)
     section = {"fragment": "ms-verdict.json", "schema": "verdict.schema.json", "template": "verdict.md.j2"}
     out = compose._render_verdict(ctx, env, section)
-    import pregenerate_fragments as pregen
+    import renderers.pregenerate_fragments as pregen
 
     assert pregen.method_and_limits(yaml_data["meta"]) in out
     assert "; Worker and DB were not analysed — see [§1 Scope](#scope)" in out
@@ -5258,7 +5258,7 @@ def test_verdict_basis_line_is_unconditional(tmp_path: Path) -> None:
     env = compose._build_jinja_env(ctx)
     section = {"fragment": "ms-verdict.json", "schema": "verdict.schema.json", "template": "verdict.md.j2"}
     out = compose._render_verdict(ctx, env, section)
-    import pregenerate_fragments as pregen
+    import renderers.pregenerate_fragments as pregen
 
     assert "**Scope:**" not in out and "**Basis:**" not in out
     assert f"**Method and limits:** {pregen.METHOD_SHORT} — see [§11 Out of Scope](#11-out-of-scope)." in out
@@ -5357,7 +5357,7 @@ def test_components_table_scope_column_marks_screened(tmp_path: Path) -> None:
 )
 def test_scope_surfaces_state_one_coverage_rule(tmp_path: Path, depths: list[str], n_excluded: int) -> None:
     """§1 Scope, the verdict scope line and the component table count full and screened components alike."""
-    import pregenerate_fragments as pregen
+    import renderers.pregenerate_fragments as pregen
 
     total = len(depths) + n_excluded
     names = [f"Unit {i}" for i in range(total)]
@@ -5983,7 +5983,7 @@ def test_figure1_role_grouping_explanation_follows_image_only_when_drawn(
         for key, name, slug in (("ext-reader", "Reader", "internet-anon"), ("ext-editor", "Editor", "internet-user"))
     ]
     if fallback:
-        monkeypatch.setattr("figure1_dfd.check_diagram", lambda *a, **kw: ("", ["cannot route"]))
+        monkeypatch.setattr("renderers.figure1_dfd.check_diagram", lambda *a, **kw: ("", ["cannot route"]))
     md = compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX)
     note = "Anonymous and authenticated regular users share one card because self-registration is open."
     assert (note in md) is (registration and access and not fallback)
@@ -6006,7 +6006,7 @@ def test_render_figure1_svg_writes_file_and_image_ref(tmp_path: Path) -> None:
 
 
 def test_model_within_overview_caps_renders_only_the_overview_figure(tmp_path, monkeypatch):
-    import figure1_dfd
+    import renderers.figure1_dfd as figure1_dfd
 
     render = figure1_dfd.check_diagram
     modes = []
@@ -6030,7 +6030,7 @@ def test_model_within_overview_caps_renders_only_the_overview_figure(tmp_path, m
 
 
 def test_large_detail_uses_existing_sibling_and_removes_it_on_view_failure(tmp_path, monkeypatch):
-    import figure1_detail
+    import renderers.figure1_detail as figure1_detail
 
     from tests.test_figure1_detail import model
 
@@ -6176,7 +6176,7 @@ def test_render_figure1_svg_falls_back_to_tier_stack_when_dfd_raises(tmp_path: P
     def boom(*_a, **_k):
         raise KeyError("pts")
 
-    monkeypatch.setattr("figure1_dfd.check_diagram", boom)
+    monkeypatch.setattr("renderers.figure1_dfd.check_diagram", boom)
     out = tmp_path / "out"
     out.mkdir()
     ctx = _fig1_ctx(out)
@@ -6188,7 +6188,7 @@ def test_render_figure1_svg_falls_back_to_tier_stack_when_dfd_raises(tmp_path: P
 
 def test_render_figure1_svg_falls_back_when_dfd_fails_its_self_check(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "figure1_dfd.check_diagram", lambda *_a, **_k: ("<svg>bad</svg>", ["edge df-001 crosses node api"])
+        "renderers.figure1_dfd.check_diagram", lambda *_a, **_k: ("<svg>bad</svg>", ["edge df-001 crosses node api"])
     )
     out = tmp_path / "out"
     out.mkdir()
@@ -6874,7 +6874,7 @@ def test_control_domain_leg_map_matches_the_contract_headings() -> None:
     report the loss. Fail here instead."""
     import yaml as _yaml
 
-    contract = _yaml.safe_load((Path(compose.__file__).parent.parent / "data" / "sections-contract.yaml").read_text())
+    contract = _yaml.safe_load((Path(compose.__file__).parents[2] / "data" / "sections-contract.yaml").read_text())
     routing = contract["sections"]["security_architecture"]["schema_v2"]["finding_routing"]
     unknown = sorted(set(compose._SECTION7_DOMAIN_LEG) - set(routing))
     assert not unknown, f"domain headings no longer in the contract: {unknown}"
@@ -6985,7 +6985,7 @@ def test_every_condition_the_table_can_render_is_explained(tmp_path: Path) -> No
     `CROSSING_TYPE_LEGS` closes that by construction; this pins it so a new leg
     cannot reach a cell without reaching the legend.
     """
-    import prepare_trust_boundary_context as prep
+    import contexts.prepare_trust_boundary_context as prep
 
     legend = compose._boundary_condition_legend()
     for legs in prep.CROSSING_TYPE_LEGS.values():
@@ -7028,7 +7028,7 @@ def test_exposure_and_kind_legends_define_their_vocabulary(tmp_path: Path) -> No
     "Internal" as same-host (user 2026-08-02). Each tier now carries the rule
     `exposure_of` actually applies, and every tier the module can rate has one.
     """
-    import _boundary_criticality as crit
+    import shared._boundary_criticality as crit
 
     legend = compose._boundary_exposure_legend()
     for exposure in compose._BOUNDARY_EXPOSURES:
@@ -7174,8 +7174,8 @@ def test_verdict_badge_claims_participation_not_whole_scenario(refs, fmap):
 
 @pytest.mark.parametrize("wid", ["W-031", "W-204"])
 def test_verdict_direct_design_reference_survives_render_and_export(tmp_path, wid):
-    import emit_verdict_to_model
-    import pregenerate_fragments
+    import model.emit_verdict_to_model as emit_verdict_to_model
+    import renderers.pregenerate_fragments as pregenerate_fragments
 
     model = {
         "threats": [],
@@ -7278,7 +7278,7 @@ def test_verdict_discloses_no_harm_without_hiding_critical_findings(tmp_path, co
 @pytest.mark.parametrize("fold", [False, True], ids=["same-basis", "folded-practice"])
 def test_section8_names_its_basis_when_it_differs_from_the_summary(tmp_path: Path, fold: bool) -> None:
     """RA-7: a register tally on another basis than the Management Summary says so."""
-    import _severity_rollup
+    import renderers._severity_rollup as _severity_rollup
 
     out = _prepare_output_dir(tmp_path)
     model_path = out / "threat-model.yaml"

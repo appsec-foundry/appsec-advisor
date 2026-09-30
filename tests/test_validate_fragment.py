@@ -1,6 +1,6 @@
-"""Unit tests for scripts/validate_fragment.py.
+"""Unit tests for scripts/validators/validate_fragment.py.
 
-validate_fragment.py is a hard gate: it runs between LLM fragment output and
+validators/validate_fragment.py is a hard gate: it runs between LLM fragment output and
 the renderer. These tests verify the CLI contract (exit codes, stdout/stderr)
 and the FRAGMENT_SCHEMAS registry directly.
 """
@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "validate_fragment.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "validators/validate_fragment.py"
 SCHEMAS_DIR = REPO_ROOT / "schemas" / "fragments"
 
 
@@ -26,7 +26,7 @@ def _load_module(name: str, path: Path):
     return module
 
 
-vf = _load_module("validate_fragment", SCRIPT_PATH)
+vf = _load_module("validators.validate_fragment", SCRIPT_PATH)
 
 
 def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -692,7 +692,7 @@ def test_repair_plan_is_actionable_on_schema_violation(tmp_path: Path):
 
 
 def test_repair_plan_not_actionable_when_only_required_fragments_missing(tmp_path: Path):
-    """Missing required fragments are owned by pregenerate_fragments.py — the
+    """Missing required fragments are owned by renderers/pregenerate_fragments.py — the
     fixer must not hand-author them, so the plan stays non-actionable."""
     frag = tmp_path / ".fragments"
     frag.mkdir()
@@ -730,7 +730,7 @@ def test_repair_plan_only_written_when_flag_passed(tmp_path: Path):
 
 
 def test_repair_plan_shares_composes_attempt_counter(tmp_path: Path):
-    """The gate and compose_threat_model.py write the SAME plan file, so the
+    """The gate and renderers/compose_threat_model.py write the SAME plan file, so the
     three-attempt cap has to count both producers. A gate that reset the
     counter would hand the repair agent an unbounded loop."""
     frag = _complete_fragment_set(tmp_path)
@@ -806,7 +806,7 @@ def test_client_side_capable_engines_are_not_on_the_deny_list():
 def test_tier_contradiction_fails_the_cli_gate(tmp_path):
     """The check must be reachable from the real CLI, not just importable.
 
-    `scripts/canonicalize_component_id.py` is the cautionary case: fully
+    `scripts/model/canonicalize_component_id.py` is the cautionary case: fully
     implemented and unit-tested, but called from nowhere in the pipeline. A
     validator nothing invokes protects nothing, so this drives the actual
     entry point and asserts the run stops.
@@ -843,7 +843,7 @@ def test_tier_contradiction_fails_the_cli_gate(tmp_path):
 # compose_threat_model repairs that before it validates. This gate runs FIRST
 # and did not, so it hard-failed fragments compose accepts and consumed both
 # repair retries while a direct compose run succeeded. Both now share
-# scripts/_ms_component_refs.py.
+# scripts/shared/_ms_component_refs.py.
 # ---------------------------------------------------------------------------
 
 import yaml  # noqa: E402

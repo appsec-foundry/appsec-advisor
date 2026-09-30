@@ -137,7 +137,7 @@ same `outputs` block `create-threat-model` honours, so both skills answer to
 one profile:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_org_profile.py" --repo "$REPO_ROOT"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/resolve_org_profile.py" --repo "$REPO_ROOT"
 ```
 
 The resolver prints JSON and writes nothing. Read `defaults.write_pentest_tasks`,
@@ -187,7 +187,7 @@ Phase 1/5 · Route inventory                             [  0%]
 
 Run:
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/route_inventory.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/analyzers/route_inventory.py" \
   --repo-root "$REPO_ROOT" \
   --output-dir "$OUTPUT_DIR"
 ```
@@ -220,7 +220,7 @@ Phase 2/5 · Auth-check scan                             [ 20%]
 
 Run:
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/source_auth_scanner.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/analyzers/source_auth_scanner.py" \
   --repo-root "$REPO_ROOT" \
   --output-dir "$OUTPUT_DIR"
 ```
@@ -253,7 +253,7 @@ Phase 3/5 · IDOR/BOLA confirmation                      [ 40%]
 
 Run:
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/authz_confirm.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/analyzers/authz_confirm.py" \
   --repo-root "$REPO_ROOT" \
   --output-dir "$OUTPUT_DIR"
 ```
@@ -555,7 +555,7 @@ Print:
 Only when `PENTEST_TASKS=true`. Run:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_pentest_tasks.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/renderers/render_pentest_tasks.py" \
   --authnz "$OUTPUT_DIR/.authnz-report.json" \
   --route-inventory "$OUTPUT_DIR/.route-inventory.json" \
   --output "$REPO_ROOT/docs/security/$PENTEST_FILE" \

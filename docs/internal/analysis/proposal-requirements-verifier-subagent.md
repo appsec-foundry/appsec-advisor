@@ -55,7 +55,7 @@ Three new artifacts + small edits to existing contracts:
 ```
 agents/appsec-reviewer.md      # NEW — the subagent (executor)
 skills/verify-requirements/SKILL.md         # NEW — thin entry point (dev-facing)
-scripts/requirements_gate.py                # NEW — deterministic exit-code computer
+scripts/requirements/requirements_gate.py                # NEW — deterministic exit-code computer
 schemas/fragments/requirements-verification.schema.json   # NEW — verdict schema
 data/required-permissions.yaml              # edit — only if new commands appear (see §9)
 AGENTS.md (roster)                          # edit — register the agent (drift-guarded)
@@ -67,21 +67,21 @@ Data flow:
 ```
 dev / CI ──▶ /appsec-advisor:verify-requirements [--gate] [--base <ref>]
                 │
-                │ 1. resolve_requirements_source.py + fetch_requirements.py  (fail-closed gate)
+                │ 1. requirements/resolve_requirements_source.py + requirements/fetch_requirements.py  (fail-closed gate)
                 │    → $OUTPUT_DIR/.requirements.yaml
                 │ 2. git diff <base>..HEAD  (or --cached)  → $OUTPUT_DIR/.verify-diff.json  (untrusted data)
                 │ 3. dispatch ────────────────────────────────────────────────┐
                 ▼                                                              ▼
         deterministic Python                                   appsec-reviewer
                 │                                              reads diff + .requirements.yaml,
-                │ 4. requirements_gate.py reads JSON           selects in-scope reqs, verifies each,
+                │ 4. requirements/requirements_gate.py reads JSON           selects in-scope reqs, verifies each,
                 │    → exit code (advisory|gate)               writes .requirements-verification.json
                 ▼                                              + prints readable console summary
         exit 0 / 1 / 2
 ```
 
 The LLM (subagent) produces **structured findings only**. The gate decision and
-exit code are **deterministic Python** (`requirements_gate.py`) — never the LLM.
+exit code are **deterministic Python** (`requirements/requirements_gate.py`) — never the LLM.
 This follows AGENTS.md §1/§12 ("agents write fragments; scripts validate/decide")
 and "prefer deterministic Python for final artifacts."
 
@@ -172,7 +172,7 @@ drift guard, runtime override via dispatch `MODEL_ID`):
 ```yaml
 ---
 name: appsec-reviewer
-description: "Verifies a code change (diff) against the in-scope security requirements. Reads .verify-diff.json + .requirements.yaml, selects the triggered requirement subset, grades each PASS/PARTIAL/FAIL/UNVERIFIABLE/NOT_APPLICABLE against the post-change code with file:line evidence + code-aware fix, and writes .requirements-verification.json. Does not decide the gate — that is requirements_gate.py."
+description: "Verifies a code change (diff) against the in-scope security requirements. Reads .verify-diff.json + .requirements.yaml, selects the triggered requirement subset, grades each PASS/PARTIAL/FAIL/UNVERIFIABLE/NOT_APPLICABLE against the post-change code with file:line evidence + code-aware fix, and writes .requirements-verification.json. Does not decide the gate — that is requirements/requirements_gate.py."
 tools: Read, Grep, Bash, Write
 model: sonnet
 maxTurns: 40
@@ -243,11 +243,11 @@ New schema `schemas/fragments/requirements-verification.schema.json`:
 ```
 
 `gating` is `true` when `in_scope && status == FAIL && priority >= floor`.
-The agent sets it per its own assessment; `requirements_gate.py`
+The agent sets it per its own assessment; `requirements/requirements_gate.py`
 **recomputes it deterministically** from `status`/`priority`/`in_scope` and is
 the authority — the agent's value is advisory/diagnostic only.
 
-Validation wired into `validate_fragment.py` (or a dedicated
+Validation wired into `validators/validate_fragment.py` (or a dedicated
 `scripts/validate_requirements_verification.py`), per the schema-change
 bidirectional rule (AGENTS.md §4).
 
@@ -275,7 +275,7 @@ Open (in-scope) Requirements
   ...
 ```
 
-### 6c. Gate / exit codes — `scripts/requirements_gate.py`
+### 6c. Gate / exit codes — `scripts/requirements/requirements_gate.py`
 
 Deterministic, LLM-free:
 
@@ -326,10 +326,10 @@ Thin orchestrator (no inline grading — it dispatches the subagent):
    `--staged`, `--priority-floor`, requirements-source flags (reused), `--md/--json/--save`,
    reject unknown flags (hard fail, exit 2) — same discipline as the audit skill.
 3. Resolve plugin root + org profile + requirements source; run
-   `fetch_requirements.py` fail-closed gate → `.requirements.yaml`.
+   `requirements/fetch_requirements.py` fail-closed gate → `.requirements.yaml`.
 4. Compute the diff sidecar `.verify-diff.json` (git). Empty diff → exit 0, no dispatch.
 5. Dispatch `appsec-reviewer` with the Group A/B/C input ordering.
-6. Run `requirements_gate.py` → exit code. In `--gate` mode propagate; in
+6. Run `requirements/requirements_gate.py` → exit code. In `--gate` mode propagate; in
    advisory mode always exit 0 but still print the gating count.
 7. Optional `--md/--json/--save` writes under `docs/security/` reusing the audit
    skill's report format (open + gating requirements only).
@@ -342,10 +342,10 @@ Thin orchestrator (no inline grading — it dispatches the subagent):
 |---|---|
 | **New agent** `appsec-reviewer.md` | add; register in AGENTS.md **roster** (drift-guarded by `tests/test_agent_definitions.py::TestAgentsMdDocDrift`) — note it is **standalone**, *not* in the create-threat-model Phase map |
 | **Agent-definitions drift test** | `tests/test_agent_definitions.py` pins `model: sonnet` + turn budget for every agent → add the new file's expected row |
-| **New schema** | `requirements-verification.schema.json` → register in `check_fragment_registry.py`, add to `docs/internal/contracts/schema-invariants.md`, wire a validator |
+| **New schema** | `requirements-verification.schema.json` → register in `validators/check_fragment_registry.py`, add to `docs/internal/contracts/schema-invariants.md`, wire a validator |
 | **New skill** | `skills/verify-requirements/` (+ `config.json` if needed); confirm skill-discovery tests pick it up |
-| **`requirements_gate.py`** | new script; add to `data/required-permissions.yaml` **only if** it introduces a command not already under `Bash(*)` — it does not (pure Python + git). Read/Write of `$OUTPUT_DIR/**` + Read `$REPO_ROOT/**` are already permitted. **Net: no new permission entries expected** — re-verify at implementation. |
-| **Logging** | route all log lines through `scripts/event_log.py` (agent id `requirements-verifier`); no hand-rolled f-strings (§13) |
+| **`requirements/requirements_gate.py`** | new script; add to `data/required-permissions.yaml` **only if** it introduces a command not already under `Bash(*)` — it does not (pure Python + git). Read/Write of `$OUTPUT_DIR/**` + Read `$REPO_ROOT/**` are already permitted. **Net: no new permission entries expected** — re-verify at implementation. |
+| **Logging** | route all log lines through `scripts/runtime/event_log.py` (agent id `requirements-verifier`); no hand-rolled f-strings (§13) |
 | **Tests** | `tests/test_requirements_verification_schema.py` (schema round-trip), `tests/test_requirements_gate.py` (exit-code matrix: advisory always-0, gate fail on MUST FAIL, exit 2 on malformed), `tests/test_verify_requirements_skill.py` (flag parsing / unknown-flag fail / empty-diff no-dispatch) |
 | **Stage-A signal table** | finalize category mappings against the **live** catalog category IDs (see `data/appsec-requirements-fallback.yaml`) — the §4 table is illustrative |
 
@@ -374,8 +374,8 @@ Thin orchestrator (no inline grading — it dispatches the subagent):
 - `agents/appsec-reviewer.md` — subagent (Sonnet, 40 turns, INTERNAL).
 - `skills/verify-requirements/SKILL.md` — thin entry point (--help, flag parse,
   shared requirements fetch, diff build, dispatch, gate).
-- `scripts/build_verify_diff.py` — deterministic diff sidecar builder.
-- `scripts/requirements_gate.py` — deterministic exit-code authority.
+- `scripts/repairs/build_verify_diff.py` — deterministic diff sidecar builder.
+- `scripts/requirements/requirements_gate.py` — deterministic exit-code authority.
 - `schemas/requirements-verification.schema.json` — verdict schema (top-level,
   **not** a render fragment → not in the fragment registry).
 - Drift guards updated: AGENTS.md roster + `tests/test_agent_definitions.py`

@@ -22,26 +22,26 @@ This is the documented env-var-doesn't-reach-skill-Bash gotcha in a new form.
 3b2 call; better: gate on an artifact marker instead of an env var (e.g.
 `.triage-flags.json` ranking block).
 
-## P2 — Perf HIGH: export_pdf.py spawns mmdc/Chrome per diagram, serially
+## P2 — Perf HIGH: exporters/export_pdf.py spawns mmdc/Chrome per diagram, serially
 
-`scripts/export_pdf.py:315-345`: every ```mermaid``` block →
+`scripts/exporters/export_pdf.py:315-345`: every ```mermaid``` block →
 `subprocess.run(["mmdc", ...])` = Node+Puppeteer+Chrome boot (~2–5 s) per
 diagram. 26 diagrams ≈ **1–2+ min** of serial Chrome starts per export.
 The batch pattern already exists: `scripts/mermaid_validate.mjs --batch-json`
-(qa_checks.py:4175 does ONE Node spawn for all blocks).
+(validators/qa_checks.py:4175 does ONE Node spawn for all blocks).
 **Fix:** batch the diagrams through one Puppeteer session (or a 4-way pool ≈ 4×).
 
 ## P3 — Token/wall-clock waste: ms-architecture-assessment.json is authored every run but never rendered
 
-The render path is dead (the MS compose loop `compose_threat_model.py:8191-8210` does
+The render path is dead (the MS compose loop `renderers/compose_threat_model.py:8191-8210` does
 not include `architecture_assessment`; the contract `sections-contract.yaml:523-528` says
 "merged"). **But** the producer side is fully live:
 
 - Renderer agent contractually obligated (`appsec-threat-renderer.md:31,:123,:170,:267`)
 - both Stage-2 dispatch paths (`SKILL-impl.md:2578,:2624`)
-- `qa_checks.py:8497-8499` REQUIRED_FRAGMENTS **unconditional**
-- `validate_ms_compactness.py:83-119` word-limit gate on a never-rendered fragment
-- schema + `validate_fragment.py:75,:179`
+- `validators/qa_checks.py:8497-8499` REQUIRED_FRAGMENTS **unconditional**
+- `validators/validate_ms_compactness.py:83-119` word-limit gate on a never-rendered fragment
+- schema + `validators/validate_fragment.py:75,:179`
 
 LLM tokens every Stage-2 + 3 gates for zero output bytes. Removal must be
 bidirectional (AGENTS.md §4) across: agent def, SKILL-impl (2×), qa_checks
@@ -49,7 +49,7 @@ bidirectional (AGENTS.md §4) across: agent def, SKILL-impl (2×), qa_checks
 validate_fragment, schema, compose mappings (:135,:154-156,:6309-6336,:13748),
 templates. A deliberate cleanup task, not a drive-by.
 
-**Related:** `qa_checks.py:~2118-2127` `forbidden_ms_heading` remediation names the
+**Related:** `validators/qa_checks.py:~2118-2127` `forbidden_ms_heading` remediation names the
 outdated MS order ("…/ Architecture Assessment /…") and points
 `fragments_to_rewrite` at the dead fragment → can send the fragment-fixer astray
 (family bug_stage2_repair_loop_wrong_fragment).
@@ -74,7 +74,7 @@ a small agent (the seam exists: appsec-threat-merger).
 
 ## P6 — Perf MED: agent_logger hook ~48 ms × Pre+Post on every tool call
 
-`hooks/hooks.json`: 4 events → `python3 scripts/agent_logger.py`; 48 ms median
+`hooks/hooks.json`: 4 events → `python3 scripts/runtime/agent_logger.py`; 48 ms median
 (12 ms interpreter + ~35 ms imports). Real run: 1246 PostToolUse → ≥2500 spawns
 ≈ **~2 min cumulative per scan** (3–5 % of a 40–60-min run), also fires in every
 dev session. **Fix:** lazy imports (hashlib/re/datetime in branches) + an early exit
@@ -93,16 +93,16 @@ adopted it. ~1.2 s × 2–6 invocations/pipeline. Trivial, risk-free.
 
 `make lint` FAILS: 44 F401, 37 I001, 17 UP037, 6 F541, **3 F821**, 2 E702, 2 B033;
 108 auto-fixable. F821 highlights:
-- `compose_threat_model.py:3293` — `... if False else None # late init below`,
+- `renderers/compose_threat_model.py:3293` — `... if False else None # late init below`,
   an undefined name behind a dead guard (pure confusion)
-- `pregenerate_fragments.py:3103,:3267` — `Optional` without an import (saved only by
+- `renderers/pregenerate_fragments.py:3103,:3267` — `Optional` without an import (saved only by
   `from __future__ import annotations`)
 
 pytest collection clean (3751 tests, 4.85 s, no collection errors).
 
 ## P9 — Latent: qa_checks `_replay_absence_grep` without a cache, default path `["."]`
 
-`qa_checks.py:2552-2611`: per absence claim a full `os.walk`+read of the
+`validators/qa_checks.py:2552-2611`: per absence claim a full `os.walk`+read of the
 search_paths, no cache across claims. OK today (tight paths, 1.06 s total), but
 empty `search_paths` default to `["."]` = N full-repo scans on monorepos.
 **Fix:** memoize (base→filelist, path→text) per check_evidence_integrity call.
@@ -135,7 +135,7 @@ empty `search_paths` default to `["."]` = N full-repo scans on monorepos.
 
 - Dead template pair `templates/fragments/management-summary.md.j2`
   (0 references, includes the dead architecture-assessment path).
-- Stale docstring `pregenerate_fragments.py:21` (lists ms-architecture-assessment as
+- Stale docstring `renderers/pregenerate_fragments.py:21` (lists ms-architecture-assessment as
   "pregenerated" — it is LLM-authored).
 - §7 unbundling still open: the secarch role authors all 13 subsections in
   ONE dispatch (single stall point, ~5 min); split 2–3 sub-roles per the

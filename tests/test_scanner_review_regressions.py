@@ -2,11 +2,11 @@
 
 from pathlib import Path
 
-import assess_supply_chain_controls as A
-import emit_sca_practice as E
-import mass_assignment_scanner as M
+import analyzers.assess_supply_chain_controls as A
+import analyzers.mass_assignment_scanner as M
+import analyzers.source_auth_scanner as S
+import model.emit_sca_practice as E
 import pytest
-import source_auth_scanner as S
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -260,8 +260,8 @@ def test_fully_hashed_requirements_and_prior_docker_stage_stay_adequate(tmp_path
 
 @pytest.mark.parametrize("name", ["service.py", "nested/routes.ts"])
 def test_route_and_architecture_walkers_skip_external_source(tmp_path, name):
-    import architecture_coverage_checks as architecture
-    import route_inventory as routes
+    import analyzers.architecture_coverage_checks as architecture
+    import analyzers.route_inventory as routes
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -278,7 +278,7 @@ def test_route_and_architecture_walkers_skip_external_source(tmp_path, name):
 
 @pytest.mark.parametrize("name", ["linked.py", "nested/symlink.js"])
 def test_repo_scan_rejects_local_escaping_symlink(monkeypatch, tmp_path, capsys, name):
-    import repo_scan
+    import analyzers.repo_scan as repo_scan
 
     repo = tmp_path / "repo"
     repo.mkdir()

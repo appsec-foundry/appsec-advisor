@@ -1,6 +1,6 @@
 # QA Management Summary format — residual semantic rules
 
-Referenced by `appsec-qa-reviewer` Check 7b. The deterministic helper `qa_checks.py check_ms_structure` is the authoritative validator for MS layout (numeric-prefix stripping, legacy renames, forbidden-heading detection, sub-section presence + order). This file documents only the residual semantic rules the helper cannot decide.
+Referenced by `appsec-qa-reviewer` Check 7b. The deterministic helper `validators/qa_checks.py check_ms_structure` is the authoritative validator for MS layout (numeric-prefix stripping, legacy renames, forbidden-heading detection, sub-section presence + order). This file documents only the residual semantic rules the helper cannot decide.
 
 ## 1. Presence (critical defect)
 
@@ -12,7 +12,7 @@ If `## Management Summary` is **entirely missing**, `check_ms_structure` will su
 2. `### Top Findings` — 7-col table: `# | Criticality | Finding | Component | Threat | Vektor | Primary Mitigations`. 🔴 rows before 🟠. Legend line follows: `> 🔴 = Critical · 🟠 = High. **Vektor** values link to full definitions in [Appendix A — Vektor Taxonomy](#appendix-a-vektor-taxonomy).`
 3. `### Architecture Assessment` — 3-col table: `Defect | Description | Key Findings`. Bold short defect phrase. `Key Findings` cells carry `[F-NNN](#f-NNN) — <short label>` (multiple `<br/>`-separated). Closes with reference to `[§6 Security Architecture](#6-security-architecture)`. Preceded by 🔴/🟡/🟢 severity cue sentence + short framing.
 4. `### Mitigations` — two sub-tables under `#### Prioritized Mitigations` and `#### Follow-up Mitigations`. Both 5-col: `ID | Mitigation | Component | Addresses | Effort`. Sorted by effort asc, then findings-addressed desc. Every Critical finding from Top Findings appears at least once in Prioritized.
-5. `### Operational Strengths` — 3-col cluster table (`Strength | What's in Place | Effectiveness`). Closes with `**Bottom line:**` sentence. Truncation footnote `_+N additional controls — see [Section 7](#6-security-architecture)._` when > 8 rows qualify. Verdict 🟡/🔴 requires an intro framing sentence before the table. Detailed cluster validation belongs to `qa_checks.py check_strengths_row_quality` — this file only checks the column header.
+5. `### Operational Strengths` — 3-col cluster table (`Strength | What's in Place | Effectiveness`). Closes with `**Bottom line:**` sentence. Truncation footnote `_+N additional controls — see [Section 7](#6-security-architecture)._` when > 8 rows qualify. Verdict 🟡/🔴 requires an intro framing sentence before the table. Detailed cluster validation belongs to `validators/qa_checks.py check_strengths_row_quality` — this file only checks the column header.
 
 When `CHECK_REQUIREMENTS=true`, `### Requirements Compliance` sits between Mitigations and Operational Strengths.
 

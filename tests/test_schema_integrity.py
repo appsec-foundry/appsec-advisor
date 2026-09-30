@@ -3,7 +3,7 @@
 These tests enforce:
 
   * Every schema file is itself valid JSON-Schema (draft 2020-12).
-  * Every schema registered in `validate_fragment.py` has a file on disk, and
+  * Every schema registered in `validators/validate_fragment.py` has a file on disk, and
     every file on disk has a registry entry.
   * Cross-schema ID-pattern consistency (F-NNN, M-NNN, C-NN, TH-NN, CC-NN
     use identical regex shape).
@@ -27,7 +27,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 SCHEMAS_DIR = REPO_ROOT / "schemas" / "fragments"
-VALIDATE_PY = REPO_ROOT / "scripts" / "validate_fragment.py"
+VALIDATE_PY = REPO_ROOT / "scripts" / "validators/validate_fragment.py"
 
 
 def test_figure1_optional_labels_are_bounded_across_artifact_schemas():
@@ -159,9 +159,9 @@ def test_capability_vocabulary_matches_every_artifact_schema():
 
 
 def _load_validate_fragment_module():
-    spec = importlib.util.spec_from_file_location("validate_fragment", VALIDATE_PY)
+    spec = importlib.util.spec_from_file_location("validators.validate_fragment", VALIDATE_PY)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["validate_fragment"] = module
+    sys.modules["validators.validate_fragment"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
@@ -212,7 +212,7 @@ def test_every_schema_validates_against_json_schema_draft_2020_12(schema_files):
 def test_every_registered_schema_exists_on_disk(registry):
     missing = [(ft, fn) for ft, fn in registry.items() if not (SCHEMAS_DIR / fn).is_file()]
     assert not missing, (
-        f"validate_fragment.py registers schemas that don't exist: {missing}\n"
+        f"validators/validate_fragment.py registers schemas that don't exist: {missing}\n"
         "Add the schema file or remove the registry entry."
     )
 

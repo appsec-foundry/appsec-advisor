@@ -10,15 +10,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import agent_lifecycle as lifecycle
-import agent_logger
-import build_threat_model_yaml as tm_yaml
-import pregenerate_fragments as pregen
+import model.build_threat_model_yaml as tm_yaml
+import orchestrator.stride_dispatch_waves as waves
+import orchestrator.wait_abuse_progress as wap
+import orchestrator.wait_stride_progress as wsp
 import pytest
-import stride_dispatch_waves as waves
-import telemetry_consistency as telemetry
-import wait_abuse_progress as wap
-import wait_stride_progress as wsp
+import renderers.pregenerate_fragments as pregen
+import runtime.agent_lifecycle as lifecycle
+import runtime.agent_logger as agent_logger
+import runtime.telemetry_consistency as telemetry
 
 ALL = list(waves.STRIDE_CATEGORIES)
 

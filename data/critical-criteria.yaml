@@ -76,7 +76,7 @@ always_critical_cwes:
 #
 # ⚠ ENFORCEMENT STATUS (verified 2026-05):
 # This block is **NOT** evaluated by the deterministic triage path
-# (`scripts/triage_compute_ranking.py:_apply_critical_criteria`). That
+# (`scripts/model/triage_compute_ranking.py:_apply_critical_criteria`). That
 # function reads only `always_critical_cwes` and `never_individual_critical`.
 # The `conditional_critical:` block is therefore **spec-only** in the
 # default `APPSEC_TRIAGE_DETERMINISTIC=1` mode.

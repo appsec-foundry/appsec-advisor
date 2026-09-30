@@ -1,4 +1,4 @@
-"""Coverage band 2 for scripts/qa_checks.py (~lines 2971-5400).
+"""Coverage band 2 for scripts/validators/qa_checks.py (~lines 2971-5400).
 
 Targets §6 clarity checks, the §5/§4 fixed-layout HTML table emitter,
 cmd_autofix / cmd_all, heading hygiene, TOC closure, mermaid syntax,
@@ -14,15 +14,15 @@ import importlib.util
 import sys
 from pathlib import Path
 
-SCRIPT_PATH = Path(__file__).parent.parent / "scripts" / "qa_checks.py"
+SCRIPT_PATH = Path(__file__).parent.parent / "scripts" / "validators/qa_checks.py"
 
 
 def _load():
-    if "qa_checks" in sys.modules:
-        return sys.modules["qa_checks"]
-    spec = importlib.util.spec_from_file_location("qa_checks", SCRIPT_PATH)
+    if "validators.qa_checks" in sys.modules:
+        return sys.modules["validators.qa_checks"]
+    spec = importlib.util.spec_from_file_location("validators.qa_checks", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["qa_checks"] = module
+    sys.modules["validators.qa_checks"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module

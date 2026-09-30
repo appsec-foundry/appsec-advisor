@@ -1,5 +1,5 @@
 """
-Tests for scripts/architect_structural_checks.py — Sprint 2 Item #4.
+Tests for scripts/analyzers/architect_structural_checks.py — Sprint 2 Item #4.
 
 Covers the three deterministic architect-reviewer checks:
   - Check 1  Architecture ↔ Recon Consistency
@@ -22,10 +22,10 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-import architect_structural_checks as asc  # noqa: E402
+import analyzers.architect_structural_checks as asc  # noqa: E402
 
 PLUGIN_ROOT = Path(__file__).parent.parent
-SCRIPT = PLUGIN_ROOT / "scripts" / "architect_structural_checks.py"
+SCRIPT = PLUGIN_ROOT / "scripts" / "analyzers/architect_structural_checks.py"
 
 # A CVSS-eligible CWE with a concrete line: FE-1 lets such a finding carry a vector.
 _CVSS_ELIGIBLE = {"cwe": "CWE-89", "evidence": {"file": "src/db/query.py", "line": 12}}
@@ -1130,7 +1130,7 @@ class TestWalkthroughCoverageIsCapAware:
     def _render(self, out_dir, n_crit):
         _write_yaml(out_dir / "threat-model.yaml", self._model(n_crit))
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-        import walkthrough_renderer
+        import renderers.walkthrough_renderer as walkthrough_renderer
 
         data = asc._load_yaml(out_dir / "threat-model.yaml") or {}
         picks = walkthrough_renderer.select_walkthrough_picks(data)
@@ -1164,7 +1164,7 @@ class TestWalkthroughCoverageIsCapAware:
         """The real defect class stays enforceable."""
         picks = self._render(out_dir, 21)
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-        import walkthrough_renderer
+        import renderers.walkthrough_renderer as walkthrough_renderer
 
         dropped = walkthrough_renderer._to_fid(str(picks[0].get("id")))
         frag = out_dir / ".fragments" / "attack-walkthroughs.md"

@@ -1,4 +1,4 @@
-"""Tests for scripts/canonicalize_component_id.py (M4/M13).
+"""Tests for scripts/model/canonicalize_component_id.py (M4/M13).
 
 Verify:
   - historically-observed Juice-Shop IDs and client aliases map to canonical IDs
@@ -17,13 +17,13 @@ from pathlib import Path
 import pytest
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = PLUGIN_ROOT / "scripts" / "canonicalize_component_id.py"
+SCRIPT = PLUGIN_ROOT / "scripts" / "model/canonicalize_component_id.py"
 YAML_PATH = PLUGIN_ROOT / "data" / "component-canonical.yaml"
 
 # Insert the plugin scripts/ on sys.path so imports work
 sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
 
-import canonicalize_component_id as cci  # noqa: E402
+import model.canonicalize_component_id as cci  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Historical Juice-Shop names plus stable client aliases -> expected canonical

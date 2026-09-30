@@ -1,4 +1,4 @@
-"""Unit tests for scripts/aggregate_run_issues.py — phase pairing + run scoping.
+"""Unit tests for scripts/runtime/aggregate_run_issues.py — phase pairing + run scoping.
 
 These tests lock in the M3.2 fixes for the bugs surfaced during the
 2026-04-26 19:55 ``--rebuild --verbose`` run:
@@ -23,16 +23,16 @@ import json
 import sys
 from pathlib import Path
 
-from event_log import format_line
+from runtime.event_log import format_line
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "aggregate_run_issues.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "runtime/aggregate_run_issues.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("aggregate_run_issues", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("runtime.aggregate_run_issues", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["aggregate_run_issues"] = module
+    sys.modules["runtime.aggregate_run_issues"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
@@ -862,9 +862,11 @@ class TestSoftCrossingKeepsItsRecommender:
     def test_soft_crossing_still_gets_a_non_degraded_recommendation(self, tmp_path):
         import importlib.util as _ilu
 
-        spec = _ilu.spec_from_file_location("recommend_fixes", REPO_ROOT / "scripts" / "recommend_fixes.py")
+        spec = _ilu.spec_from_file_location(
+            "runtime.recommend_fixes", REPO_ROOT / "scripts" / "runtime/recommend_fixes.py"
+        )
         rf = _ilu.module_from_spec(spec)
-        sys.modules["recommend_fixes"] = rf
+        sys.modules["runtime.recommend_fixes"] = rf
         spec.loader.exec_module(rf)
 
         # Source column must carry the real emitter so the recommender can locate
@@ -887,7 +889,7 @@ class TestBashWarnFolding:
     attempts as findings made a single wrong invocation look systemic on the
     2026-08-23 insecure-large-spring-app run."""
 
-    def _warn(self, resp: str, cmd: str = "python3 /plugin/scripts/log_event.py --log-file /x") -> str:
+    def _warn(self, resp: str, cmd: str = "python3 /plugin/scripts/runtime/log_event.py --log-file /x") -> str:
         return _hline("2026-08-23T09:40:03Z", "BASH_WARN", f"cmd={cmd}  resp={{'stdout': \"{resp}\"}}  dur=0s")
 
     def test_same_cause_folds_to_one_issue_with_a_count(self):
@@ -908,8 +910,8 @@ class TestBashWarnFolding:
 
     def test_same_message_from_a_different_script_is_a_different_cause(self):
         log = [
-            (1, self._warn("boom", cmd="python3 /plugin/scripts/log_event.py x")),
-            (2, self._warn("boom", cmd="python3 /plugin/scripts/write_stride_progress.py x")),
+            (1, self._warn("boom", cmd="python3 /plugin/scripts/runtime/log_event.py x")),
+            (2, self._warn("boom", cmd="python3 /plugin/scripts/runtime/write_stride_progress.py x")),
         ]
         assert len(agg._extract_warnings(log)) == 2
 
@@ -1332,7 +1334,7 @@ class TestMainCLI:
 
     def test_recommend_enrichment_attempted(self, tmp_path, monkeypatch, capsys):
         # Force the import to fail so we hit the except branch (warning).
-        monkeypatch.setitem(sys.modules, "recommend_fixes", None)
+        monkeypatch.setitem(sys.modules, "runtime.recommend_fixes", None)
         rc = agg.main([str(tmp_path), "--depth", "standard"])
         # Either enrichment ran or warning printed — both return 0 & write file.
         assert rc == 0
@@ -1487,7 +1489,7 @@ def test_run_outcome_flags_external_stop_after_analysis_started(tmp_path):
 
 def test_run_outcome_preserves_authoritative_abort_reason(tmp_path):
     (tmp_path / ".threats-merged.json").write_text("{}", encoding="utf-8")
-    reason = "build_post_stride_contexts.py failed: threat 'T-007' references unknown component"
+    reason = "contexts/build_post_stride_contexts.py failed: threat 'T-007' references unknown component"
     log = [
         (41, _line("2026-08-14T18:06:41Z", "RUN_ABORTED", reason)),
     ]
@@ -1553,7 +1555,7 @@ def test_canary_fires_on_degraded_recommendation():
     assert canary["evidence"]["reasons"] == ["missing_recommender_input"]
     assert canary["evidence"]["degraded_issue_ids"] == ["ISSUE-001"]
     # It must point at the producing component, not at the scanned repository.
-    assert canary["fix_recommendation"]["actions"][0]["target"] == "scripts/recommend_fixes.py"
+    assert canary["fix_recommendation"]["actions"][0]["target"] == "scripts/runtime/recommend_fixes.py"
     assert data["summary"]["warnings"] == 1
 
 

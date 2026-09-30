@@ -1,11 +1,11 @@
-"""Tests for scripts/resolve_requirements_source.py."""
+"""Tests for scripts/requirements/resolve_requirements_source.py."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-import resolve_requirements_source as rrs
+import requirements.resolve_requirements_source as rrs
 
 REPO_ROOT = Path(__file__).parent.parent
 

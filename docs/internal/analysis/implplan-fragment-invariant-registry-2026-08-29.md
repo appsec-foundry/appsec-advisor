@@ -3,8 +3,8 @@
 Status: UMGESETZT (Schritte 1-5) · 2026-08-29
 Anlass: `juice-shop-standard-v0.6.0b2`, Stage-1b-Abbruch nach 4 Agenten (~276k Subagent-Tokens)
 
-Umgesetzt in `scripts/validate_fragment.py` (`fragment_invariant_errors`),
-`scripts/prepare_trust_boundary_context.py` (Gate delegiert),
+Umgesetzt in `scripts/validators/validate_fragment.py` (`fragment_invariant_errors`),
+`scripts/contexts/prepare_trust_boundary_context.py` (Gate delegiert),
 `agents/appsec-trust-boundary-analyst.md` (`--context`),
 `tests/test_fragment_invariant_parity.py` + `tests/fixtures/fragment_invariants/`.
 Zehn Regeln verschoben, alle Meldungstexte wortgleich, 11 Paritätsfälle grün.
@@ -25,33 +25,33 @@ Gate bricht ab):
 
 | Invariante | Gate | Agent-`.md` | Schema |
 |---|---|---|---|
-| Disposition↔Kandidat gegenseitig deckend | `prepare_trust_boundary_context.py:2298` | — | unmöglich |
+| Disposition↔Kandidat gegenseitig deckend | `contexts/prepare_trust_boundary_context.py:2298` | — | unmöglich |
 | Nicht-`boundary` ⇒ `candidate_keys` leer | `:2293` | nur `boundary`-Fall (md:45-51) | `required`, kein `if/then` |
 | Dispositionsmenge == mandatory-Menge | `:2272` | nur „for every mandatory" (md:45) | unmöglich |
 | `candidate_key` eindeutig | `:2263` | — | `uniqueItems` greift nicht |
 
-`validate_fragment.py:338-357` macht ausschließlich `jsonschema.validate` plus —
+`validators/validate_fragment.py:338-357` macht ausschließlich `jsonschema.validate` plus —
 nur bei übergebenem `--repo-root` — `repository_path_errors`. Keine semantische
 Prüfung, für keinen Fragmenttyp.
 
 ## 2. Zielarchitektur — der Erweiterungspunkt existiert bereits
 
-`validate_fragment.py:210` `repository_path_errors(fragment_type, data, repo_root)`
+`validators/validate_fragment.py:210` `repository_path_errors(fragment_type, data, repo_root)`
 
 - Docstring: *„Validate repository-backed paths that JSON Schema cannot resolve."*
 - bereits pro Fragmenttyp verzweigt (`:220` `components`, `:234` `data-flows`)
 - bereits über Pfade hinausgewachsen: `_tier_contradiction_errors` (`:226`) ist rein semantisch
 - bereits von deterministischen Konsumenten mitbenutzt:
-  `finalize_component_inventory.py:21`, `build_trust_boundary_assessment_input.py:19`
+  `model/finalize_component_inventory.py:21`, `contexts/build_trust_boundary_assessment_input.py:19`
 
 Das Muster „eine Prüffunktion pro Fragmenttyp für alles, was JSON Schema nicht
 kann, aufgerufen von Selbstcheck **und** Gate" ist etabliert. Die relationalen
 Invarianten stehen nur nicht drin — sie liegen privat im Prolog von
-`promote_candidates` (`prepare_trust_boundary_context.py:2226`, Prüfblock
+`promote_candidates` (`contexts/prepare_trust_boundary_context.py:2226`, Prüfblock
 `:2255-2303`).
 
-**Kein neues Modul.** Schwesterfunktion in `validate_fragment.py`, gleiche Form,
-gleiches Importziel. `prepare_trust_boundary_context.py` importiert bisher nichts
+**Kein neues Modul.** Schwesterfunktion in `validators/validate_fragment.py`, gleiche Form,
+gleiches Importziel. `contexts/prepare_trust_boundary_context.py` importiert bisher nichts
 aus `validate_fragment` (`:10-23`); `validate_fragment` importiert nur
 `_ms_component_refs` (`:34`) — kein Zirkelrisiko.
 
@@ -78,7 +78,7 @@ Abbruch, Heilung oder Report.
 
 ### CLI
 
-`validate_fragment.py` bekommt im Legacy-Pfad (`main`, `:617-665`) ein optionales
+`validators/validate_fragment.py` bekommt im Legacy-Pfad (`main`, `:617-665`) ein optionales
 `--context <pfad>`. `validate()` ruft `fragment_invariant_errors` **unbedingt**
 auf — anders als `repository_path_errors`, das an `--repo-root` hängt.
 
@@ -88,7 +88,7 @@ auf — anders als `repository_path_errors`, das an `--repo-root` hängt.
 
 ## 4. Migration der Invarianten
 
-Aus `prepare_trust_boundary_context.py:2255-2303`:
+Aus `contexts/prepare_trust_boundary_context.py:2255-2303`:
 
 | # | Invariante | Zeile | Ziel | Tier |
 |---|---|---|---|---|
@@ -181,5 +181,5 @@ ausgibt. Vorher: `VALIDATE_OK`.
 - **M2** (Inverse-Indizes abschaffen — betrifft nur
   `trust-boundary-candidates` und `mitigation-overrides`), **M3** (Heil-/Repair-
   Kontrakt für Stage-1-Gates, Muster aus `SKILL-thin-stage3.md:64-68`),
-  **M5** (`agent_logger.py:2322` nach Rollenfähigkeit statt `is_agent_call`).
+  **M5** (`runtime/agent_logger.py:2322` nach Rollenfähigkeit statt `is_agent_call`).
   Eigene Pläne.

@@ -17,10 +17,10 @@ Use the first form normally. Use the second only when the invocation contains
 the skill-only `--force` flag:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" \
   prepare --interactive-context -- <invocation-arguments>
 
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" \
   prepare --force --interactive-context -- <invocation-arguments>
 ```
 
@@ -237,8 +237,8 @@ If a Stage-1 dispatch returns as a stall/stream-watchdog failure, treat the
 filesystem as authoritative and still run the compact Stage-1 post-gate. A
 valid completion checkpoint means the agent finished its write-first contract;
 continue without recovery. Only when the post-gate reports missing artifacts
-or an invalid completion checkpoint, emit `stall_notice.py "$OUTPUT_DIR"
---stage "Stage 1"`, then run `orchestration_controller.py next --output-dir
+or an invalid completion checkpoint, emit `runtime/stall_notice.py "$OUTPUT_DIR"
+--stage "Stage 1"`, then run `orchestrator/orchestration_controller.py next --output-dir
 "$OUTPUT_DIR"` and follow its action (§6). Do not re-dispatch on your own.
 
 When those instructions say to start the heartbeat watchdog, use this exact
@@ -246,7 +246,7 @@ fixed command with `run_in_background: true` and retain its task id, which
 stays out of console text:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/skill_watchdog.py" "$OUTPUT_DIR" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/skill_watchdog.py" "$OUTPUT_DIR" \
   --plugin-root "$CLAUDE_PLUGIN_ROOT" \
   --heartbeat-interval 60 \
   --stride-stale-seconds 900 \
@@ -256,7 +256,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/skill_watchdog.py" "$OUTPUT_DIR" \
 
 Load `TaskStop` before its first use and pass `task_id`, never `taskId`.
 When they say to send the final heartbeat, run `python3
-"$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock"
+"$CLAUDE_PLUGIN_ROOT/scripts/runtime/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock"
 --run-id="$APPSEC_RUN_ID" --heartbeat --phase=skill`, then stop the watchdog.
 
 Do not repeat what §1 lists as already done by the controller.
@@ -272,7 +272,7 @@ Load each returned plugin-owned instruction file in full:
 - Complete: `SKILL-thin-completion.md` only when the controller returns
   `action=complete`.
 
-A cut-off re-enters through `orchestration_controller.py next`, which returns
+A cut-off re-enters through `orchestrator/orchestration_controller.py next`, which returns
 the bounded stage runtime.
 
 **Mandatory finalize gate (deterministic — do NOT skip).** After the Stage-2
@@ -280,7 +280,7 @@ renderer agent(s) return, and again before you emit any completion summary, you
 MUST run:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" \
   next --output-dir "$OUTPUT_DIR"
 ```
 

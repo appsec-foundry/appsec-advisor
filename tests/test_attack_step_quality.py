@@ -25,8 +25,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-import walkthrough_renderer as renderer  # noqa: E402
-from apply_prose_fixes import _merge_split_code_spans, _wrap_line  # noqa: E402
+import renderers.walkthrough_renderer as renderer  # noqa: E402
+from repairs.apply_prose_fixes import _merge_split_code_spans, _wrap_line  # noqa: E402
 
 
 def _fmt(text: str) -> str:

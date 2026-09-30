@@ -4,13 +4,13 @@ import copy
 import json
 from pathlib import Path
 
-import discover_identity_providers as discovery
-import figure1_dfd
+import analyzers.discover_identity_providers as discovery
 import jsonschema
-import orchestration_controller as controller
+import orchestrator.orchestration_controller as controller
 import pytest
-from build_trust_boundary_assessment_input import _semantic_flow_validation
-from validate_fragment import repository_path_errors
+import renderers.figure1_dfd as figure1_dfd
+from contexts.build_trust_boundary_assessment_input import _semantic_flow_validation
+from validators.validate_fragment import repository_path_errors
 
 
 def _write(root, rel, text):

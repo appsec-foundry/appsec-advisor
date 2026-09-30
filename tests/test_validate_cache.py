@@ -1,4 +1,4 @@
-"""Unit tests for scripts/validate_cache.py — pre-flight integrity + quarantine."""
+"""Unit tests for scripts/validators/validate_cache.py — pre-flight integrity + quarantine."""
 
 from __future__ import annotations
 
@@ -8,13 +8,13 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "validate_cache.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "validators/validate_cache.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("validate_cache", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("validators.validate_cache", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["validate_cache"] = module
+    sys.modules["validators.validate_cache"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module

@@ -1,6 +1,6 @@
 # source-auth-checks.yaml — deterministic source-code authorization + injection checks
 #
-# Used by `scripts/source_auth_scanner.py`. Each check targets a specific
+# Used by `scripts/analyzers/source_auth_scanner.py`. Each check targets a specific
 # privilege-escalation / broken-access-control pattern in source code
 # (Node/Express + TypeScript for AUTHZ-001..008; Python and Java for the
 # AUTHZ-1xx/2xx mass-assignment + JWT checks) and emits a finding when the
@@ -436,7 +436,7 @@ checks:
   # ===================================================================
   # Multi-language checks (Python, Java) — mass assignment + JWT.
   # BOLA/IDOR and missing-route-auth for non-Node stacks are covered
-  # deterministically by route_inventory.py + the architecture-coverage
+  # deterministically by analyzers/route_inventory.py + the architecture-coverage
   # ARCH-BOLA-001 / ARCH-AUTHN-001 hypotheses (multi-framework). These
   # checks add the patterns the route inventory cannot see: privileged
   # mass-assignment and unverified token handling.

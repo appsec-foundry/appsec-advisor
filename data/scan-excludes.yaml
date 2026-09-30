@@ -1,11 +1,11 @@
 # Single source of truth for scan exclusions across recon-scanner,
-# stride-analyzer, and security_relevance_filter.py.
+# stride-analyzer, and analyzers/security_relevance_filter.py.
 #
 # Consumers:
-#   - scripts/scan_excludes.py (Python loader; whitelist-wins logic)
+#   - scripts/analyzers/scan_excludes.py (Python loader; whitelist-wins logic)
 #   - agents/appsec-recon-scanner.md  (glob used in Step 3 Grep calls)
 #   - agents/appsec-stride-analyzer-v2.md (glob used for bounded component discovery)
-#   - scripts/security_relevance_filter.py (incremental mode file classification)
+#   - scripts/analyzers/security_relevance_filter.py (incremental mode file classification)
 #
 # Schema contract:
 #   always_include wins over every other rule. This is how AsciiDoc source

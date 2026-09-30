@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "scripts" / "cutoff_cause.py"
+SCRIPT = ROOT / "scripts" / "runtime/cutoff_cause.py"
 
 
 def _run(output_dir: Path, *args: str):
@@ -83,7 +83,7 @@ def test_missing_log_falls_back_to_default(tmp_path):
 def _import_cutoff_cause():
     import importlib.util
 
-    spec = importlib.util.spec_from_file_location("cutoff_cause", SCRIPT)
+    spec = importlib.util.spec_from_file_location("runtime.cutoff_cause", SCRIPT)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

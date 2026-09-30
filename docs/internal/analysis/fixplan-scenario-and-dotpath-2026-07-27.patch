@@ -1,7 +1,7 @@
-diff --git a/scripts/apply_prose_fixes.py b/scripts/apply_prose_fixes.py
+diff --git a/scripts/repairs/apply_prose_fixes.py b/scripts/repairs/apply_prose_fixes.py
 index 324a7b54..e061ef70 100644
---- a/scripts/apply_prose_fixes.py
-+++ b/scripts/apply_prose_fixes.py
+--- a/scripts/repairs/apply_prose_fixes.py
++++ b/scripts/repairs/apply_prose_fixes.py
 @@ -128,7 +128,18 @@ _EXTENSIONS = (
      "pub",
  )
@@ -78,10 +78,10 @@ index 324a7b54..e061ef70 100644
              continue
          if stripped.startswith("#"):  # headings stay clean (no backticks)
              out.append(raw)
-diff --git a/scripts/arch_coverage_to_threats.py b/scripts/arch_coverage_to_threats.py
+diff --git a/scripts/analyzers/arch_coverage_to_threats.py b/scripts/analyzers/arch_coverage_to_threats.py
 index 6ed6e670..0e409b8f 100644
---- a/scripts/arch_coverage_to_threats.py
-+++ b/scripts/arch_coverage_to_threats.py
+--- a/scripts/analyzers/arch_coverage_to_threats.py
++++ b/scripts/analyzers/arch_coverage_to_threats.py
 @@ -125,6 +125,56 @@ def _evidence_for_threat(evidence: list[dict] | None) -> dict | None:
      return {"file": file, "line": line}
 
@@ -106,7 +106,7 @@ index 6ed6e670..0e409b8f 100644
 +    ARCH-TLS-001 → T-070).
 +
 +    Synthesised the same way the sibling coverage emitter does it
-+    (`coverage_checks.py` suggested_threat.scenario): an f-string over fields
++    (`analyzers/coverage_checks.py` suggested_threat.scenario): an f-string over fields
 +    the record already carries. No LLM, no new YAML field to keep in sync.
 +
 +    The matched `signal` text is deliberately NOT interpolated: ARCH-SECRET-001

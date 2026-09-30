@@ -1,4 +1,4 @@
-"""Regression tests for scripts/emit_general_mitigation_titles.py (2026-06-12).
+"""Regression tests for scripts/model/emit_general_mitigation_titles.py (2026-06-12).
 
 Mitigation register/index titles must read as clear, general remediation
 labels — not the detailed remediation instruction Stage-1 authored into
@@ -14,13 +14,13 @@ from pathlib import Path
 import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "emit_general_mitigation_titles.py"
+SCRIPT = REPO_ROOT / "scripts" / "model/emit_general_mitigation_titles.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("emit_general_mitigation_titles", SCRIPT)
+    spec = importlib.util.spec_from_file_location("model.emit_general_mitigation_titles", SCRIPT)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["emit_general_mitigation_titles"] = mod
+    sys.modules["model.emit_general_mitigation_titles"] = mod
     spec.loader.exec_module(mod)
     return mod
 

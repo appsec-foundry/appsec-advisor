@@ -168,7 +168,7 @@ See the [developer tools guide](docs/dev-security-helper-usage.md) for commands 
 The score script checks a repository without building a threat model. It returns a score from 0 to 100, `undetermined` if too few checks apply, or `incomplete` without a score if a required scanner fails or emits invalid output. Findings and diagnostics remain visible in every verdict. You need Python 3.10+, PyYAML, jsonschema, and git.
 
 ```bash
-python3 /path/to/appsec-advisor/scripts/security_score.py --repo /path/to/project
+python3 /path/to/appsec-advisor/scripts/analyzers/security_score.py --repo /path/to/project
 ```
 
 Replace the example paths with your plugin checkout and project directory. `--repo` also accepts an HTTPS GitHub or GitLab Git URL. Use `--json` or `--yaml` for structured output validated against `schemas/security-score.schema.yaml`. Exit codes are 0 for a score, 2 for insufficient coverage, and 1 for incomplete execution or an error. Compare commits only with matching scoring versions, catalog fingerprints, and applicable coverage in `comparability`. Findings without a scored baseline and findings excluded by severity policy are disclosed separately.
@@ -178,7 +178,7 @@ Replace the example paths with your plugin checkout and project directory. `--re
 Run the scanner for findings, endpoints, and detected technologies without building a threat model. You need Python 3.10+, PyYAML, jsonschema, and git.
 
 ```bash
-python3 /path/to/appsec-advisor/scripts/repo_scan.py --repo /path/to/project
+python3 /path/to/appsec-advisor/scripts/analyzers/repo_scan.py --repo /path/to/project
 ```
 
 `--repo` accepts a local directory or an HTTPS GitHub or GitLab Git URL. Use `--high` to show only High and Critical findings, or `--json scan.json` to save a JSON report. See `--help` for scan selection.
@@ -258,7 +258,7 @@ Highlights from the 0.6.0 beta releases.
 
   ![Business impact question for OWASP Juice Shop](docs/images/business-context-impact.png)
 
-- `scripts/repo_scan.py` runs standalone checks with severity filtering and endpoint and technology inventories; both it and `/appsec-advisor:security-score` support local repositories and HTTPS GitHub/GitLab URLs, with YAML or JSON exports.
+- `scripts/analyzers/repo_scan.py` runs standalone checks with severity filtering and endpoint and technology inventories; both it and `/appsec-advisor:security-score` support local repositories and HTTPS GitHub/GitLab URLs, with YAML or JSON exports.
 - Architecture and attack-route diagrams show technology, authentication evidence, attacker prerequisites, weaknesses, impact, and linked findings, with detail views for large architectures. Existing models need a new analysis to populate missing authentication evidence.
 - Malicious insiders and attackers holding a user's device now require opt-in through `.appsec/actors.yaml` or the organization profile; otherwise, they are listed as not assessed.
 - `/appsec-advisor:report-error` investigates suspected plugin errors and prepares anonymised GitHub issue drafts for review and explicit publication approval; `--bundle-only` keeps diagnostics local.

@@ -22,17 +22,17 @@ import importlib.util
 import sys
 from pathlib import Path
 
-import agent_logger
-import orchestration_controller as controller
+import orchestrator.orchestration_controller as controller
+import runtime.agent_logger as agent_logger
 
 REPO_ROOT = Path(__file__).parent.parent
 
 
 def _load_aggregator():
-    path = REPO_ROOT / "scripts" / "aggregate_run_issues.py"
-    spec = importlib.util.spec_from_file_location("aggregate_run_issues", path)
+    path = REPO_ROOT / "scripts" / "runtime/aggregate_run_issues.py"
+    spec = importlib.util.spec_from_file_location("runtime.aggregate_run_issues", path)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["aggregate_run_issues"] = module
+    sys.modules["runtime.aggregate_run_issues"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
@@ -167,16 +167,16 @@ class TestDiagnosticExcerpt:
         # Verbatim from run a2a0e355, whose truncated form ended at "…depth: p…"
         # and left the defect unattributable.
         stdout = (
-            "/home/mrohr/appsec-advisor/scripts/log_event.py: cannot validate STRIDE "
+            "/home/mrohr/appsec-advisor/scripts/runtime/log_event.py: cannot validate STRIDE "
             "logging depth: precondition failed because the wave claim was already released"
         )
         out = agent_logger._diagnostic_excerpt("", stdout, {"stdout": stdout}, ERROR_KW)
-        assert out.startswith("/home/mrohr/appsec-advisor/scripts/log_event.py:")
+        assert out.startswith("/home/mrohr/appsec-advisor/scripts/runtime/log_event.py:")
         assert "already released" in out
         assert "{'stdout'" not in out
 
     def test_a_rejected_kind_keeps_the_vocabulary_it_names(self):
-        stdout = "/plugin/scripts/log_event.py: unknown kind 'STEP' (expected one of ['info', 'step-start'])"
+        stdout = "/plugin/scripts/runtime/log_event.py: unknown kind 'STEP' (expected one of ['info', 'step-start'])"
         out = agent_logger._diagnostic_excerpt("", stdout, {"stdout": stdout}, ERROR_KW)
         assert "step-start" in out
 
@@ -228,8 +228,8 @@ class TestEvidenceCoverageShortfall:
     def test_the_controller_uses_the_aggregator_threshold(self):
         # Two copies of this rule would drift, and the run would then warn at
         # the end about a shortfall the dispatch gate had already cleared.
-        source = (REPO_ROOT / "scripts" / "orchestration_controller.py").read_text(encoding="utf-8")
-        assert "from aggregate_run_issues import evidence_coverage_shortfall" in source
+        source = (REPO_ROOT / "scripts" / "orchestrator/orchestration_controller.py").read_text(encoding="utf-8")
+        assert "from runtime.aggregate_run_issues import evidence_coverage_shortfall" in source
 
 
 # ---------------------------------------------------------------------------
@@ -242,20 +242,22 @@ class TestKernelLoggingVocabulary:
         """A role told not to probe `--help` can only know what the skill says.
 
         The stride analyzer guessed `STEP` because the skill gave it `<kind>`
-        and nothing else. If a kind is ever added to log_event.py without being
+        and nothing else. If a kind is ever added to runtime/log_event.py without being
         named here, the next role is back to guessing.
         """
-        import log_event
+        import runtime.log_event as log_event
 
         skill = (REPO_ROOT / "skills" / "internal-threat-analysis-kernel" / "SKILL.md").read_text(encoding="utf-8")
         for kind in log_event._CANONICAL_EVENTS:
-            assert f"`{kind}`" in skill, f"kind {kind!r} accepted by log_event.py but absent from the kernel skill"
+            assert f"`{kind}`" in skill, (
+                f"kind {kind!r} accepted by runtime/log_event.py but absent from the kernel skill"
+            )
 
     def test_the_guessed_stem_is_still_rejected_rather_than_guessed_at(self):
         # `STEP` is ambiguous between step-start and step-end. Inventing a
         # winner would corrupt the timeline, so rejection is correct — the fix
         # belongs in the documentation, not in the normaliser.
-        import log_event
+        import runtime.log_event as log_event
 
         assert "step" not in log_event._CANONICAL_EVENTS
         assert log_event._EVENT_NAME_RE.fullmatch("STEP") is None

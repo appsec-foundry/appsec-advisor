@@ -3,8 +3,8 @@
 import copy
 
 import pytest
-from actor_presentation import path_groups
-from figure1_dfd import scenarios_from_attack_paths
+from renderers.actor_presentation import path_groups
+from renderers.figure1_dfd import scenarios_from_attack_paths
 
 from tests.test_figure2_svg import IMPACTS, TAXONOMY, model, paths
 
@@ -68,7 +68,7 @@ def test_unlinked_disabled_unmapped_and_legacy_roles_do_not_invent_attribution()
 def test_unused_automatic_roles_never_reappear_in_report_or_diagram(prefix, tmp_path, monkeypatch):
     from types import SimpleNamespace
 
-    import compose_threat_model as composer
+    import renderers.compose_threat_model as composer
 
     data = with_roles()
     for index, actor in enumerate(data["actors"], 1):
@@ -90,7 +90,7 @@ def test_unused_automatic_roles_never_reappear_in_report_or_diagram(prefix, tmp_
 
 
 def test_declared_override_keeps_its_source_and_does_not_become_an_automatic_role():
-    from actor_presentation import export_actors, inventory_actors
+    from renderers.actor_presentation import export_actors, inventory_actors
 
     actor = with_roles(1)["actors"][0]
     actor.update(id="ACT-D-04", _provenance={"layer": "repo"})
@@ -120,7 +120,7 @@ def test_path_projection_keeps_unattributed_findings_in_legacy_group():
 
 
 def test_figure2_example_uses_its_attributed_access():
-    from figure2_svg import build_figure2_data
+    from renderers.figure2_svg import build_figure2_data
 
     row = build_figure2_data(with_roles(), paths(), TAXONOMY, IMPACTS)["routes"][0]
     assert row["actor_slug"] == "internet-priv-user"
@@ -131,7 +131,7 @@ def test_figure2_example_uses_its_attributed_access():
 def test_grouped_roles_pass_svg_geometry_without_growing_with_role_count(tmp_path, detail):
     import xml.etree.ElementTree as ET
 
-    from figure1_dfd import check_diagram
+    from renderers.figure1_dfd import check_diagram
 
     from tests.test_figure1_dfd import _model
 
@@ -154,7 +154,7 @@ def test_grouped_roles_pass_svg_geometry_without_growing_with_role_count(tmp_pat
 def test_inventory_names_configured_roles_inside_their_drawn_group_and_escapes_them(monkeypatch, tmp_path, id_key):
     from types import SimpleNamespace
 
-    import compose_threat_model as composer
+    import renderers.compose_threat_model as composer
 
     data = with_roles()
     data["threats"][0][id_key] = data["threats"][0].pop("id")
@@ -173,7 +173,7 @@ def test_inventory_names_configured_roles_inside_their_drawn_group_and_escapes_t
 
 
 def test_canonical_actor_shape_rejects_unknown_groups():
-    from validate_intermediate import _schema_errors
+    from validators.validate_intermediate import _schema_errors
 
     data = with_roles(1)
     data["actors"][0]["heatmap_slug"] = "invented-access"
@@ -182,7 +182,7 @@ def test_canonical_actor_shape_rejects_unknown_groups():
 
 
 def test_prose_cleanup_preserves_inventory_identity_only():
-    from apply_prose_fixes import _humanize_actor_ids
+    from repairs.apply_prose_fixes import _humanize_actor_ids
 
     row = "| ACT-D-04 · insider-developer | internal-network |\n"
     source = "### Identified Actors\n\n" + row + "\n### Findings\n\nACT-D-04 can read the repository.\n"
@@ -193,7 +193,7 @@ def test_prose_cleanup_preserves_inventory_identity_only():
 
 
 def test_primary_actor_and_finding_prerequisites_remain_distinct():
-    from figure2_svg import build_figure2_data
+    from renderers.figure2_svg import build_figure2_data
 
     data = with_roles(2)
     data["actors"][1]["heatmap_slug"] = "build-time"
@@ -205,7 +205,7 @@ def test_primary_actor_and_finding_prerequisites_remain_distinct():
 
 
 def test_attribution_keeps_victim_interaction():
-    from figure2_svg import build_figure2_data
+    from renderers.figure2_svg import build_figure2_data
 
     row = build_figure2_data(with_roles(), paths(actor="victim-required"), TAXONOMY, IMPACTS)["routes"][0]
     assert row["victim"]
@@ -213,7 +213,7 @@ def test_attribution_keeps_victim_interaction():
 
 
 def test_composed_figures_legend_and_inventory_share_custom_roles(tmp_path):
-    import compose_threat_model as composer
+    import renderers.compose_threat_model as composer
 
     from tests.test_compose_threat_model import TestSecurityPostureV2
 
@@ -236,7 +236,7 @@ def test_builder_persists_custom_roles_without_runtime_sidecar_dependency(tmp_pa
     import json
     import sys
 
-    import build_threat_model_yaml as builder
+    import model.build_threat_model_yaml as builder
     import yaml
 
     from tests.test_build_threat_model_yaml import _write_min_intermediates
@@ -273,7 +273,7 @@ def test_builder_persists_custom_roles_without_runtime_sidecar_dependency(tmp_pa
     ],
 )
 def test_attacker_names_follow_the_projection_every_figure_uses(slug, meta, expected):
-    from actor_presentation import attacker_display
+    from renderers.actor_presentation import attacker_display
 
     assert attacker_display(slug, meta)[0] == expected
     # A caller's label vocabulary wins over the plugin one, except for the registration fold.
@@ -300,7 +300,7 @@ def _report(table_names, context_names=(), legend_names=()):
 
 @pytest.mark.parametrize("names", [("Web Attacker", "Portal Operator"), ("Clinic Intruder",)])
 def test_actor_name_check_accepts_the_table_set_and_rejects_any_other_name(tmp_path, names):
-    from qa_checks import check_actor_names
+    from validators.qa_checks import check_actor_names
 
     md = tmp_path / "threat-model.md"
     md.write_text(_report([f"A{i + 1} · {n}" for i, n in enumerate(names)], names, names[:1]), encoding="utf-8")
@@ -315,7 +315,7 @@ def test_actor_name_check_accepts_the_table_set_and_rejects_any_other_name(tmp_p
 
 @pytest.mark.parametrize("names", [("Web Attacker", "Portal User"), ("Clinic Intruder", "Clinic Patient")])
 def test_actor_name_check_covers_the_components_fallback_diagram(tmp_path, names):
-    from qa_checks import check_actor_names
+    from validators.qa_checks import check_actor_names
 
     def report(threat, legit):
         diagram = (
@@ -340,7 +340,7 @@ def test_actor_name_check_covers_the_components_fallback_diagram(tmp_path, names
 
 
 def test_actor_name_check_skips_reports_without_the_actor_table(tmp_path):
-    from qa_checks import check_actor_names
+    from validators.qa_checks import check_actor_names
 
     md = tmp_path / "threat-model.md"
     md.write_text(_report([], ["Anyone"]).replace("### Identified Actors", "### Something Else"), encoding="utf-8")
@@ -349,8 +349,8 @@ def test_actor_name_check_skips_reports_without_the_actor_table(tmp_path):
 
 def test_every_deterministic_section_names_the_figure1_actor_set(tmp_path):
     """The composed overview, legend, actor table and §2.1 pass the name check together."""
-    import compose_threat_model as composer
-    from qa_checks import check_actor_names
+    import renderers.compose_threat_model as composer
+    from validators.qa_checks import check_actor_names
 
     from tests.test_compose_threat_model import TestSecurityPostureV2
 
@@ -376,7 +376,7 @@ def test_every_deterministic_section_names_the_figure1_actor_set(tmp_path):
     ("project", "expected"), [({"project_name": "ledger-portal"}, "ledger-portal"), ({}, "the system")]
 )
 def test_actor_table_intro_names_the_project_like_figure1(tmp_path, project, expected):
-    import compose_threat_model as composer
+    import renderers.compose_threat_model as composer
 
     from tests.test_compose_threat_model import TestSecurityPostureV2
 

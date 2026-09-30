@@ -26,7 +26,7 @@ repository. This skill is **read-only** — it does **not** analyze code, does
 every claim traceable to the model, cited by F-id, never hallucinated,
 half-true, or inflated. When the model does not contain the answer, say so;
 that is a correct answer. Given that, keep it quick: the common case is **one**
-`query_threat_model.py` call (a pure YAML read, no network, no agents) and a
+`model/query_threat_model.py` call (a pure YAML read, no network, no agents) and a
 short reply — so don't run the freshness probe, re-read the big rendered report,
 or spawn anything unless the question actually needs it (see Step 3b). Speed
 never justifies guessing: if answering correctly needs another read, do it.
@@ -141,7 +141,7 @@ Recognized flags (everything else is the user's question, kept verbatim):
 ```bash
 if [ -z "${CLAUDE_PLUGIN_ROOT:-}" ] \
   || [ ! -f "$CLAUDE_PLUGIN_ROOT/.claude-plugin/plugin.json" ] \
-  || [ ! -f "$CLAUDE_PLUGIN_ROOT/scripts/query_threat_model.py" ]; then
+  || [ ! -f "$CLAUDE_PLUGIN_ROOT/scripts/model/query_threat_model.py" ]; then
   echo "Error: CLAUDE_PLUGIN_ROOT is missing or does not identify a valid appsec-advisor plugin." >&2
   exit 2
 fi
@@ -158,9 +158,9 @@ already names the follow-up lanes. Then stop — Step 3 is for questions the
 block cannot answer.
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/threat_model_health.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/threat_model_health.py" \
     --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" --json 2>/dev/null \
-| python3 "$CLAUDE_PLUGIN_ROOT/scripts/summarize_threat_model.py" \
+| python3 "$CLAUDE_PLUGIN_ROOT/scripts/renderers/summarize_threat_model.py" \
     --output-dir "$OUTPUT_DIR" --repo-root "$REPO_ROOT" --health-json -
 EXIT=$?
 ```
@@ -206,7 +206,7 @@ else
 fi
 [ "$JSON_MODE" = "true" ] && QUERY_ARGS+=(--json)
 
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/query_threat_model.py" "${QUERY_ARGS[@]}"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/query_threat_model.py" "${QUERY_ARGS[@]}"
 EXIT=$?
 ```
 
@@ -225,7 +225,7 @@ It is the slow path (git change-detection over the repo), so never run it for an
 ordinary content question.
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/threat_model_health.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/threat_model_health.py" \
     --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" --json 2>/dev/null
 ```
 

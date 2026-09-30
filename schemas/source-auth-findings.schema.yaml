@@ -2,7 +2,7 @@ $schema: https://json-schema.org/draft/2020-12/schema
 $id: https://appsec-advisor/schemas/source-auth-findings.schema.yaml
 title: Source-code authorization scan findings
 description: |
-  Output written by `scripts/source_auth_scanner.py` to
+  Output written by `scripts/analyzers/source_auth_scanner.py` to
   `$OUTPUT_DIR/.source-auth-findings.json`. Contains per-file
   violations of the rule catalogs `data/source-auth-checks.yaml`,
   `data/crypto-checks.yaml`, and `data/credential-lifecycle-checks.yaml`.

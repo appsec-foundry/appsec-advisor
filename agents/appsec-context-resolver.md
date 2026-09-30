@@ -127,7 +127,7 @@ Two variables are passed from the orchestrator:
 - `CHECK_REQUIREMENTS` — `true` or `false` (default `false` if not present). Determines whether requirements are needed.
 - `REQUIREMENTS_URL_OVERRIDE` — a URL string (optional). If set, this URL takes precedence over the configured `requirements_yaml_url`.
 
-**If `$OUTPUT_DIR/.requirements.yaml` already exists and is non-empty:** the skill's deterministic **Requirements pre-fetch gate** (`scripts/fetch_requirements.py`, run before Stage 1) already resolved the source — it fetched the remote (or fell back to cache, or wrote the `skipped` stub) and would have **aborted the whole run** if a requested source was unreachable. Trust it: record `requirements_status` as `"skipped"` when its content is the `{"source": "skipped"}` stub, otherwise `"provided"`, and **skip the rest of Step 2b** (do NOT re-fetch). This is the normal path; the fetch logic below is the fallback for older orchestrators that did not run the gate.
+**If `$OUTPUT_DIR/.requirements.yaml` already exists and is non-empty:** the skill's deterministic **Requirements pre-fetch gate** (`scripts/requirements/fetch_requirements.py`, run before Stage 1) already resolved the source — it fetched the remote (or fell back to cache, or wrote the `skipped` stub) and would have **aborted the whole run** if a requested source was unreachable. Trust it: record `requirements_status` as `"skipped"` when its content is the `{"source": "skipped"}` stub, otherwise `"provided"`, and **skip the rest of Step 2b** (do NOT re-fetch). This is the normal path; the fetch logic below is the fallback for older orchestrators that did not run the gate.
 
 **If `CHECK_REQUIREMENTS=false`:** write stub `{source: "skipped", categories: [], blueprints: []}` to `$OUTPUT_DIR/.requirements.yaml`, store `requirements_status: "skipped"`. Print: `↳ Requirements: skipped (not requested)`. **Skip the rest of Step 2b** and continue to Step 3.
 
@@ -352,7 +352,7 @@ Validate the complete input. Invalid team-provided threats are a blocking input 
 ```bash
 REPO_ROOT="<REPO_ROOT from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" known_threats "$REPO_ROOT/docs/known-threats.yaml"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_intermediate.py" known_threats "$REPO_ROOT/docs/known-threats.yaml"
 ```
 
 Print:
@@ -371,8 +371,8 @@ This step has two distinct sub-steps with different purposes:
 
 **Deterministic helpers (use these — do NOT re-implement the parsing in Bash + LLM):**
 
-- `scripts/load_related_repos.py` — validates `docs/related-repos.yaml` against `schemas/related-repos.schema.yaml`, fetches each `threat_model` reference, applies the documented severity/status/component filters, and writes `$OUTPUT_DIR/.related-repos-loaded.json`.
-- `scripts/build_cross_repo_register.py` — merges declared deps (output of the loader), sibling/submodule discovery, and Recon Section 7.25 into a single `$OUTPUT_DIR/.cross-repo-register.json` validated against `schemas/cross-repo-register.schema.json`.
+- `scripts/contexts/load_related_repos.py` — validates `docs/related-repos.yaml` against `schemas/related-repos.schema.yaml`, fetches each `threat_model` reference, applies the documented severity/status/component filters, and writes `$OUTPUT_DIR/.related-repos-loaded.json`.
+- `scripts/contexts/build_cross_repo_register.py` — merges declared deps (output of the loader), sibling/submodule discovery, and Recon Section 7.25 into a single `$OUTPUT_DIR/.cross-repo-register.json` validated against `schemas/cross-repo-register.schema.json`.
 
 Run them via Bash. Stage 1 builds the register from `docs/related-repos.yaml` (declared deep-read) + filesystem-sibling/`.gitmodules` discovery only — `--recon-summary` is intentionally **omitted** because `.recon-summary.md` does not exist yet. The controller rebuilds the register after recon to merge Category 25:
 
@@ -380,11 +380,11 @@ Run them via Bash. Stage 1 builds the register from `docs/related-repos.yaml` (d
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 REPO_ROOT="<REPO_ROOT from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/load_related_repos.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/contexts/load_related_repos.py" \
     --repo-root "$REPO_ROOT" \
     --output    "$OUTPUT_DIR/.related-repos-loaded.json"
 
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/build_cross_repo_register.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/contexts/build_cross_repo_register.py" \
     --repo-root      "$REPO_ROOT" \
     --declared-json  "$OUTPUT_DIR/.related-repos-loaded.json" \
     --output         "$OUTPUT_DIR/.cross-repo-register.json"
@@ -542,7 +542,7 @@ must be:
 ```bash
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_threat_modeling_context.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_threat_modeling_context.py" \
   --repair-missing-headings "$OUTPUT_DIR/.threat-modeling-context.md"
 ```
 

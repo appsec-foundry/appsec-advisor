@@ -171,7 +171,7 @@ def test_passes_with_matching_surface_manifest(tmp_path: Path) -> None:
                             "hooks": [
                                 {
                                     "type": "command",
-                                    "command": ("python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_logger.py"),
+                                    "command": ("python3 ${CLAUDE_PLUGIN_ROOT}/scripts/runtime/agent_logger.py"),
                                 }
                             ]
                         }
@@ -236,7 +236,7 @@ def test_fails_when_removed_hook_is_registered(tmp_path: Path) -> None:
                             "hooks": [
                                 {
                                     "type": "command",
-                                    "command": ("python3 ${CLAUDE_PLUGIN_ROOT}/scripts/security_steering.py"),
+                                    "command": ("python3 ${CLAUDE_PLUGIN_ROOT}/scripts/analyzers/security_steering.py"),
                                 }
                             ]
                         }
@@ -300,7 +300,7 @@ def test_hook_id_no_scripts_returns_none():
 
 
 def test_hook_id_known_mapping():
-    assert smk._hook_id("python3 /x/scripts/agent_logger.py --flag") == "agent-logger"
+    assert smk._hook_id("python3 /x/scripts/runtime/agent_logger.py --flag") == "agent-logger"
 
 
 def test_hook_id_windows_path_and_stem_fallback():
@@ -325,7 +325,7 @@ def test_registered_hook_ids_skips_non_dict_and_non_list(tmp_path):
                     "Mixed": [
                         "not-a-dict",
                         {"hooks": ["not-a-dict", {"command": 123}, {"no_command": "x"}]},
-                        {"hooks": [{"command": "python3 /a/scripts/agent_logger.py"}]},
+                        {"hooks": [{"command": "python3 /a/scripts/runtime/agent_logger.py"}]},
                     ],
                 }
             }
@@ -412,7 +412,11 @@ def test_check_surface_manifest_removed_hook_still_registered(tmp_path):
     hooks.parent.mkdir(parents=True, exist_ok=True)
     hooks.write_text(
         json.dumps(
-            {"hooks": {"UserPromptSubmit": [{"hooks": [{"command": "python3 /a/scripts/security_steering.py"}]}]}}
+            {
+                "hooks": {
+                    "UserPromptSubmit": [{"hooks": [{"command": "python3 /a/scripts/analyzers/security_steering.py"}]}]
+                }
+            }
         )
     )
     manifest = tmp_path / ".claude-plugin" / "package-surface.json"

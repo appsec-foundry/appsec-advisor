@@ -1,4 +1,4 @@
-"""Tests for scripts/qa_arch_coverage.py — completeness + semantic gates.
+"""Tests for scripts/validators/qa_arch_coverage.py — completeness + semantic gates.
 
 Per arch.md §Pipeline-Integration Punkt 7: applicable rule with
 {partial, weak, missing, anti_pattern} status MUST be visible downstream.
@@ -14,10 +14,10 @@ from pathlib import Path
 import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "qa_arch_coverage.py"
+SCRIPT = REPO_ROOT / "scripts" / "validators/qa_arch_coverage.py"
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
-import qa_arch_coverage as qa  # noqa: E402
+import validators.qa_arch_coverage as qa  # noqa: E402
 
 
 def _coverage(rule_status: str, rule_id: str = "ARCH-CORS-001", applies: bool = True) -> dict:

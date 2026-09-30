@@ -69,8 +69,8 @@ harness run against it before the paid run, not after.
 
 ## If a run ends badly
 
-`scripts/terminate_run.py` runs from the headless wrapper on every non-clean
+`scripts/runtime/terminate_run.py` runs from the headless wrapper on every non-clean
 exit and brings the lock, checkpoint, lifecycle, live markers, and run issues
-into one terminal state. Check with `scripts/appsec_status.py --live` against
+into one terminal state. Check with `scripts/runtime/appsec_status.py --live` against
 the run directory; it should report the abort immediately rather than an
 unknown phase.

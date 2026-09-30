@@ -15,7 +15,7 @@ The repository-root `.agent-run.log` may belong to an earlier run. Process names
 ## Snapshot: is it alive, and what is it doing right now?
 
 ```bash
-python3 scripts/appsec_status.py --repo /path/to/repo --live
+python3 scripts/runtime/appsec_status.py --repo /path/to/repo --live
 ```
 
 Prints the in-flight snapshot: current phase + checkpoint status,
@@ -30,12 +30,12 @@ Read it like this:
   checkpoint → **stalled or dead** (a run driven from another session that
   crashed leaves no process to find, so age is the signal, not `ps`).
 
-If the previous run produced no `threat-model.md` and no scan is active, the snapshot shows a last-run verdict and recovery hint. It uses the same `cutoff_cause.py` classifications as the in-run banner: `api_stall`, `session_death`, or `budget`. Unlike that banner, the verdict remains available after the orchestrator exits. It is suppressed while a live process holds the run lock. JSON output carries it under `cutoff` as `{kind, block}`, or `null`.
+If the previous run produced no `threat-model.md` and no scan is active, the snapshot shows a last-run verdict and recovery hint. It uses the same `runtime/cutoff_cause.py` classifications as the in-run banner: `api_stall`, `session_death`, or `budget`. Unlike that banner, the verdict remains available after the orchestrator exits. It is suppressed while a live process holds the run lock. JSON output carries it under `cutoff` as `{kind, block}`, or `null`.
 
 Add `--json` for cron-style polling from a second terminal or the IDE:
 
 ```bash
-python3 scripts/appsec_status.py --repo /path/to/repo --live --json
+python3 scripts/runtime/appsec_status.py --repo /path/to/repo --live --json
 ```
 
 Equivalent skill form (same helper underneath):
@@ -49,12 +49,12 @@ Without `--live`, `/appsec-advisor:status` shows the plugin version, available c
 ## Follow: watch phase transitions and stalls as they happen
 
 For a live, phase-aware tail (instead of repeated snapshots) point
-`watch_run.py` at the **OUTPUT_DIR**, not the repo root:
+`runtime/watch_run.py` at the **OUTPUT_DIR**, not the repo root:
 
 ```bash
-python3 scripts/watch_run.py /path/to/repo/docs/security
-python3 scripts/watch_run.py /path/to/repo/docs/security --depth thorough
-python3 scripts/watch_run.py /path/to/repo/docs/security --once   # snapshot, no follow
+python3 scripts/runtime/watch_run.py /path/to/repo/docs/security
+python3 scripts/runtime/watch_run.py /path/to/repo/docs/security --depth thorough
+python3 scripts/runtime/watch_run.py /path/to/repo/docs/security --once   # snapshot, no follow
 ```
 
 The watcher reads `.hook-events.log` and prints phase, step, agent, file, heartbeat, error, and assessment events. It emits one `STALL` line when a phase exceeds its silence threshold from `PHASE_DURATION_LIMITS_SECONDS`, multiplied by `--stall-multiplier` (default 1.5). Phase-specific thresholds allow for long LLM calls during triage and fragment authoring.
@@ -63,7 +63,7 @@ The watcher reads `.hook-events.log` and prints phase, step, agent, file, heartb
 
 | Need | Use |
 |---|---|
-| One-shot "is it alive / what now?" | `appsec_status.py --live` |
-| Same, machine-readable for polling | `appsec_status.py --live --json` |
-| Continuous follow + stall detection | `watch_run.py <output_dir>` |
-| Broader plugin/last-run overview | `appsec_status.py` (no `--live`) |
+| One-shot "is it alive / what now?" | `runtime/appsec_status.py --live` |
+| Same, machine-readable for polling | `runtime/appsec_status.py --live --json` |
+| Continuous follow + stall detection | `runtime/watch_run.py <output_dir>` |
+| Broader plugin/last-run overview | `runtime/appsec_status.py` (no `--live`) |

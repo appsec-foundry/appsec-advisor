@@ -1,11 +1,11 @@
-"""Unit tests for scripts/enforce_yaml_invariants.py (RC.G.3/RC.K gate)."""
+"""Unit tests for scripts/model/enforce_yaml_invariants.py (RC.G.3/RC.K gate)."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-import enforce_yaml_invariants as eyi
+import model.enforce_yaml_invariants as eyi
 import yaml
 
 
@@ -380,6 +380,6 @@ class TestMain:
 def test_cli_subprocess(run_plugin_script, output_dir):
     threat = {"id": "T-001", "stride": "S"}
     _write(output_dir, {"threats": [threat]}, {"threats": [dict(threat, t_id="T-001")]})
-    res = run_plugin_script("enforce_yaml_invariants.py", str(output_dir), check=False)
+    res = run_plugin_script("model/enforce_yaml_invariants.py", str(output_dir), check=False)
     assert res.returncode == 0
     assert "lock-step" in res.stdout

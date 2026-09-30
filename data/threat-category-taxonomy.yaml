@@ -3,7 +3,7 @@
 # Used by: appsec-stride-analyzer-v2 (assign threat_category_id per finding),
 # appsec-threat-merger (dedup findings under same category),
 # templates/fragments/threat-register.md.j2 (TH blocks with finding tables),
-# scripts/migrate_v3_to_v4.py (map legacy flat threats to categories).
+# scripts/model/migrate_v3_to_v4.py (map legacy flat threats to categories).
 #
 # Each entry:
 #   id                — stable TH-NN identifier, additive only
@@ -16,7 +16,7 @@
 #   owasp_top10_2025  — mapping to OWASP Top 10 2025 (A01–A10)
 #   owasp_api2023     — OPTIONAL cross-reference to OWASP API Security Top 10
 #                       2023 (API1–API10). Pure label field — does NOT drive
-#                       coverage-gap injection (`scripts/coverage_checks.py`
+#                       coverage-gap injection (`scripts/analyzers/coverage_checks.py`
 #                       reads only `owasp-top10-cwes.yaml`). Renderers can
 #                       surface it next to `owasp_top10_2025` in §8 headers.
 #   owasp_asvs        — chapter in OWASP ASVS v4.x
@@ -27,7 +27,7 @@
 #                       categories whose coverage-gap injection by Phase 9
 #                       SHOULD be gated on an upstream recon signal (e.g.
 #                       TH-20 needs a tenant_id/organization_id signal to
-#                       be considered relevant). Today, coverage_checks.py
+#                       be considered relevant). Today, analyzers/coverage_checks.py
 #                       reads only owasp-top10-cwes.yaml — TH-NN-level
 #                       gating is not yet implemented. Leave the field as a
 #                       hint for future gating work; do not rely on it for
@@ -407,7 +407,7 @@ categories:
     owasp_asvs: V4.3
     # NOTE (documentation-only, no current consumer): signal_required and
     # signal_patterns are kept as hints for a future Phase-9 gating change.
-    # Today, coverage_checks.py routes via owasp-top10-cwes.yaml only and
+    # Today, analyzers/coverage_checks.py routes via owasp-top10-cwes.yaml only and
     # ignores these fields. A STRIDE analyzer that picks up the tenant
     # signals from recon may still assign threat_category_id=TH-20 directly;
     # that pathway is what makes the category effective right now.

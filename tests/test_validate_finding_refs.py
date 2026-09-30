@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import apply_finding_refs_repair as repair
-import validate_finding_refs as vfr
+import repairs.apply_finding_refs_repair as repair
+import validators.validate_finding_refs as vfr
 
 
 def _write(path: Path, text: str) -> None:
@@ -17,7 +17,7 @@ def _write_yaml(path: Path, threats: list[dict]) -> None:
 
 
 def _run_main(monkeypatch, *args: object) -> int:
-    monkeypatch.setattr(vfr.sys, "argv", ["validate_finding_refs.py", *[str(a) for a in args]])
+    monkeypatch.setattr(vfr.sys, "argv", ["validators/validate_finding_refs.py", *[str(a) for a in args]])
     return vfr.main()
 
 

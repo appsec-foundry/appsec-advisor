@@ -1,4 +1,4 @@
-"""Tests for ``scripts/slice_cross_repo_for_component.py`` — per-component
+"""Tests for ``scripts/contexts/slice_cross_repo_for_component.py`` — per-component
 filter for STRIDE dispatch."""
 
 from __future__ import annotations
@@ -10,10 +10,10 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-import slice_cross_repo_for_component as slicer  # noqa: E402
+import contexts.slice_cross_repo_for_component as slicer  # noqa: E402
 
 PLUGIN_ROOT = Path(__file__).parent.parent
-SCRIPT = PLUGIN_ROOT / "scripts" / "slice_cross_repo_for_component.py"
+SCRIPT = PLUGIN_ROOT / "scripts" / "contexts/slice_cross_repo_for_component.py"
 
 
 def _register(*entries: dict[str, Any]) -> dict[str, Any]:

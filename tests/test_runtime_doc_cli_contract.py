@@ -4,7 +4,7 @@ The thin runtimes are executed by a model, not by a shell script, so a flag that
 drifted out of a script's parser fails at *run* time and nowhere earlier. On the
 2026-08-20 run `SKILL-thin-completion.md` described the final step in prose
 ("the resolved mode, model, and depth plus the true/false pairs for WRITE_YAML")
-while `render_completion_summary.py` had long since required `--repo-root` and
+while `renderers/render_completion_summary.py` had long since required `--repo-root` and
 renamed `--model`/`--depth` to `--reasoning-model`/`--assessment-depth`. The
 call aborted with exit 2 at the last step of a 151-minute assessment; only an
 interactive session could recover it.
@@ -46,7 +46,7 @@ _ARGPARSE_HELP = re.compile(r"^(?:options|optional arguments|positional argument
 
 
 # The script path is usually quoted, so the closing quote sits between the
-# path and the subcommand: `.../qa_checks.py" gate "$OUTPUT_DIR"`.
+# path and the subcommand: `.../validators/qa_checks.py" gate "$OUTPUT_DIR"`.
 _SUBCOMMAND = re.compile(r"^[\"']?\s*([a-z][a-z0-9-]*)(?![\w=/.-])")
 
 

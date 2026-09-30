@@ -3,7 +3,7 @@
 # complete", replacing the scattered presence-only gates that let a heading-only
 # §10 Mitigation Register ship at "17/17 sections".
 #
-# Each invariant maps to a NAMED check implemented in scripts/assert_completeness.py.
+# Each invariant maps to a NAMED check implemented in scripts/validators/assert_completeness.py.
 # The contract declares only which checks are active, at which pipeline phase, and
 # how loudly they fail — no embedded expression language (that would be fragile).
 #
@@ -40,7 +40,7 @@ invariants:
     phase: build
     severity: warn
     when: "threat.effective_severity/risk in {Critical, High} and source != config-scan"
-    fix_hint: "emit_finding_fix_mitigations.py / build_mitigations fallback should link every Critical/High finding"
+    fix_hint: "model/emit_finding_fix_mitigations.py / build_mitigations fallback should link every Critical/High finding"
 
   # ── render phase (threat-model.md) ───────────────────────────────────────
   - id: render_enrichment_current

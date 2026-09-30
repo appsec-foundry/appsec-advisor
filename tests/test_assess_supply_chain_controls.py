@@ -8,7 +8,7 @@ these scored MISSING despite a *good* posture.
 
 from __future__ import annotations
 
-import assess_supply_chain_controls as asc
+import analyzers.assess_supply_chain_controls as asc
 import pytest
 
 # --- F6: uv.lock is a valid lockfile -----------------------------------------
@@ -395,7 +395,7 @@ def test_assess_returns_nine_sub_controls(tmp_path):
 
 
 def test_main_writes_file(run_plugin_script, tmp_path):
-    res = run_plugin_script("assess_supply_chain_controls.py", str(tmp_path), check=False)
+    res = run_plugin_script("analyzers/assess_supply_chain_controls.py", str(tmp_path), check=False)
     assert res.returncode == 0
     out = tmp_path / ".supply-chain-assessment.json"
     assert out.exists()
@@ -406,7 +406,7 @@ def test_main_writes_file(run_plugin_script, tmp_path):
 
 
 def test_main_report_only_prints(run_plugin_script, tmp_path):
-    res = run_plugin_script("assess_supply_chain_controls.py", str(tmp_path), "--report-only", check=False)
+    res = run_plugin_script("analyzers/assess_supply_chain_controls.py", str(tmp_path), "--report-only", check=False)
     assert res.returncode == 0
     assert '"sub_controls"' in res.stdout
     assert not (tmp_path / ".supply-chain-assessment.json").exists()

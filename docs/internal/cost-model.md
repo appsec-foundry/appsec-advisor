@@ -7,7 +7,7 @@ the bottom; the sections above are rewritten when a measurement changes them.
 ## Measuring a run
 
 ```
-python3 scripts/cost_running_total.py <output-dir> --format json
+python3 scripts/runtime/cost_running_total.py <output-dir> --format json
 ```
 
 Three properties of the telemetry decide whether a figure is meaningful. Getting
@@ -44,7 +44,7 @@ could be priced.
 The exact figure for a headless run is the result object of `claude -p
 --output-format json`: `total_cost_usd` with sub-agents included, priced by the
 models actually billed. It exists only once the session has exited, so
-`run-headless.sh` writes it into the run baseline (`persist_run_baseline.py
+`run-headless.sh` writes it into the run baseline (`model/persist_run_baseline.py
 --cost-from-result`) after the run, and only for a run that delivered.
 
 Never compare figures across scopes. A run-to-run comparison is only valid when
@@ -56,13 +56,13 @@ The live progress line carries the running figure as `out=<tokens> cost≥$<usd>
 
 It is always a floor and says so with `≥`, because sub-agents report at completion and whatever is in flight is missing from it. It is left out entirely, rather than shown small, when the host has reported no session cost yet or when `usage_source_absent` was logged for the run — that state alone computes $0.19 for a run costing tens of dollars.
 
-Output tokens, not `total_tokens`: the total is ~94 % cache reads, which track context re-reads rather than work and are priced at a fiftieth of an output token. The split by model belongs at the end of the run, where `headless_usage.py` prints it from the exact result object.
+Output tokens, not `total_tokens`: the total is ~94 % cache reads, which track context re-reads rather than work and are priced at a fiftieth of an output token. The split by model belongs at the end of the run, where `runtime/headless_usage.py` prints it from the exact result object.
 
 A declared soft budget is shown beside the figure as `cost≥$15.96/$25.00 (≥64 %)`, read from `soft_budget_usd` in the resolved config. The hard cut is a `claude --max-budget-usd` launch flag and reaches no file, so `run-headless.sh` exports it as `APPSEC_HARD_BUDGET_USD`. Crossing 80 % or 100 % of the soft budget, or 80 % of the hard cut, logs `RUN_BUDGET_WARN` once per threshold.
 
 No threshold stops a run. The figure is a floor, so one it has not reached may already be behind us, and the soft budget steers rather than caps. Where nothing can be measured, a declared budget logs `RUN_BUDGET_UNWATCHED` once: from there only the host's cut applies, and it kills the session where it stands.
 
-Every checkpoint phase change writes `PHASE_COST` with that phase's duration and its share of the floor. `cost_running_total.py --format phases` turns those lines into the cost-by-phase table printed under the model table, which answers what the exact figure cannot: which phase spent it. The delta is omitted when nothing was metered as the phase opened, since the difference would then be the whole run so far charged to one phase.
+Every checkpoint phase change writes `PHASE_COST` with that phase's duration and its share of the floor. `runtime/cost_running_total.py --format phases` turns those lines into the cost-by-phase table printed under the model table, which answers what the exact figure cannot: which phase spent it. The delta is omitted when nothing was metered as the phase opened, since the difference would then be the whole run so far charged to one phase.
 
 ## Baseline
 
@@ -94,7 +94,7 @@ projection plus the ~3k agent definition.
 **The orchestrator is turn count, not context size.** Its 52,700 tokens per turn
 is the second-lowest of any role — the thin-orchestrator design holds. It is
 expensive because it takes ~556 tool calls in one session that never resets, of
-which 317 complete in under a second. At least 52 are standalone `log_event.py`
+which 317 complete in under a second. At least 52 are standalone `runtime/log_event.py`
 calls whose only product is a log line.
 
 **Idle time costs money.** A wait past the cache TTL forces the next turn to
@@ -109,7 +109,7 @@ re-prefill cold. In the baseline run, the first turn after a 5h09m standby wrote
 agents of half the turns each halve the quadratic term. The ceiling is $1.88,
 and $2.18 even if the fixed prelude were free. Against that it needs eight
 production files including the dispatch contract, the completeness gate in
-`stride_dispatch_waves.py` and the `local_id` allocation that `merge_threats.
+`orchestrator/stride_dispatch_waves.py` and the `local_id` allocation that `merge_threats.
 _remap_scenario_local_refs` depends on. The baseline run also contains the
 counter-experiment: `web3-nft` attempt-2 is a fresh agent on the same component
 and needed 31 turns for six categories against attempt-1's 33. A second agent
@@ -136,7 +136,7 @@ tokens.
 
 ### Open
 
-**Turns that produce nothing.** Every `log_event.py` call is a full model turn
+**Turns that produce nothing.** Every `runtime/log_event.py` call is a full model turn
 that re-reads the session context to append one line. Folding them into the
 adjacent script invocation is a local change with no effect on coverage.
 
@@ -155,8 +155,8 @@ lands in the downstream prompts the summary rides along in.
 
 **2026-08-17 — the reported cost was the orchestrator session only.** A run
 reported at $11.20 cost ≥$34.93. Nothing aggregated `AGENT_USAGE`:
-`agent_logger.py` writes it, four scripts read it for lifecycle and durations,
-none priced it. `cost_running_total.py` assumed one cumulative session per
+`runtime/agent_logger.py` writes it, four scripts read it for lifecycle and durations,
+none priced it. `runtime/cost_running_total.py` assumed one cumulative session per
 `session_id`, but every `SESSION_STOP` in `.hook-events.log` carries the same
 id — host snapshots and sub-agent one-shot totals interleaved under one
 identity.
@@ -164,7 +164,7 @@ identity.
 **2026-08-17 — the run window has no end marker.** `verify_run_costs.
 find_run_window` keys on `ASSESSMENT_START` / `ASSESSMENT_END` and reviewer end
 events; none of them fire on the thin-orchestrator pipeline, so it returns
-`(None, None)` and the whole path is dead. `cost_running_total.py` had a start
+`(None, None)` and the whole path is dead. `runtime/cost_running_total.py` had a start
 and no end. Measuring the baseline run while the host session continued working
 produced three different "final" figures — $12.80, $17.13, $22.53 — from the
 same log within twenty minutes.

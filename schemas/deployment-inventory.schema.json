@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "deployment-inventory.schema.json",
   "title": "Deployment inventory",
-  "description": "Written by scripts/deployment_inventory.py during the scan and read by the composer for the §2 Deployment and Technology figure. Facts are short statements about repository files; no environment value, secret or file content is ever recorded.",
+  "description": "Written by scripts/analyzers/deployment_inventory.py during the scan and read by the composer for the §2 Deployment and Technology figure. Facts are short statements about repository files; no environment value, secret or file content is ever recorded.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "runtime", "environments", "compose", "ci", "dependencies", "packages"],

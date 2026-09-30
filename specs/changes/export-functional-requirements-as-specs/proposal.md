@@ -27,7 +27,7 @@ file, or both without changing the existing catalog output.
 
 ## User-visible effect
 
-`harvest_requirements.py --format openspec`, `--format specdd`, or repeated
+`requirements/harvest_requirements.py --format openspec`, `--format specdd`, or repeated
 format flags emit the selected single-file specifications. `--format all`
 emits the catalog and both specifications.
 

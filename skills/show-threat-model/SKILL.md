@@ -38,8 +38,8 @@ The two skills are asymmetric on purpose: `ask-threat-model` can also produce
 this block, so a misroute in that direction costs nothing — a misroute *here*
 is a dead end unless you hand off.
 
-The freshness verdict comes from `threat_model_health.py --json`, which wraps
-`baseline_state.py check-changes` + `dirty-set` — the **same** change detection
+The freshness verdict comes from `model/threat_model_health.py --json`, which wraps
+`baseline/baseline_state.py check-changes` + `dirty-set` — the **same** change detection
 the pipeline uses to decide whether an incremental scan is needed. This skill
 does not re-implement that logic; it folds the verdict into the overview.
 
@@ -149,9 +149,9 @@ EXTRA=""
 [ "$ALL_MODE" = "true" ]  && EXTRA="$EXTRA --all"
 [ "$JSON_MODE" = "true" ] && EXTRA="$EXTRA --json"
 
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/threat_model_health.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/threat_model_health.py" \
     --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" --json 2>/dev/null \
-| python3 "$CLAUDE_PLUGIN_ROOT/scripts/summarize_threat_model.py" \
+| python3 "$CLAUDE_PLUGIN_ROOT/scripts/renderers/summarize_threat_model.py" \
     --output-dir "$OUTPUT_DIR" --repo-root "$REPO_ROOT" --health-json - $EXTRA
 EXIT=$?
 ```

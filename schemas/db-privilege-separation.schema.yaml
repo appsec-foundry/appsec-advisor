@@ -2,7 +2,7 @@ $schema: https://json-schema.org/draft/2020-12/schema
 $id: https://appsec-advisor/schemas/db-privilege-separation.schema.yaml
 title: Database principal separation assessment
 description: |
-  Thorough-only evidence produced by database_privilege_separation.py. The
+  Thorough-only evidence produced by analyzers/database_privilege_separation.py. The
   sidecar intentionally records configuration references and source locations,
   never credential values or connection strings.
 type: object

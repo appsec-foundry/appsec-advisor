@@ -1,4 +1,4 @@
-"""Tests for scripts/budget_watchdog.py.
+"""Tests for scripts/runtime/budget_watchdog.py.
 
 Watchdog is called from agent_logger.handle_post_tool_use once per tool
 call. These tests exercise the public API directly with a synthetic
@@ -15,7 +15,7 @@ PLUGIN_ROOT = Path(__file__).parent.parent
 PLUGIN_SCRIPTS = PLUGIN_ROOT / "scripts"
 sys.path.insert(0, str(PLUGIN_SCRIPTS))
 
-import budget_watchdog as bw  # noqa: E402
+import runtime.budget_watchdog as bw  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -628,7 +628,7 @@ def test_a_leaked_call_cannot_hold_a_budget_claim_forever(tmp_path: Path):
     """
     import time  # noqa: PLC0415
 
-    import agent_lifecycle  # noqa: PLC0415
+    import runtime.agent_lifecycle as agent_lifecycle  # noqa: PLC0415
 
     call_id = "toolu_leak"
     identity = {
@@ -676,7 +676,7 @@ def test_a_leaked_call_cannot_hold_a_budget_claim_forever(tmp_path: Path):
 
 
 def _job_call(output_dir, component, *, action="wave-a", attempt=1, call_id=None):
-    import agent_lifecycle
+    import runtime.agent_lifecycle as agent_lifecycle
 
     job = f"stride:{component}:attempt-{attempt}"
     plan_path = output_dir / ".context-routing-plan.json"
@@ -773,7 +773,7 @@ def test_job_budget_without_lifecycle_does_not_recreate_cleaned_state(tmp_path):
 def test_job_budget_keeps_existing_marker_retirement_rules(tmp_path, retirement):
     import time
 
-    import agent_lifecycle
+    import runtime.agent_lifecycle as agent_lifecycle
 
     call = _job_call(tmp_path, "api")
     bw.observe_tool_uses(call, 9, tmp_path)
@@ -840,7 +840,9 @@ def test_shipped_agent_budget_command_uses_only_its_dispatch_job(tmp_path, relat
     other = _job_call(tmp_path, "worker")
     bw.observe_tool_uses(critical, 9, tmp_path)
     text = (PLUGIN_ROOT / relative).read_text()
-    blocks = [block for block in re.findall(r"```bash\n(.*?)```", text, re.DOTALL) if "budget_watchdog.py" in block]
+    blocks = [
+        block for block in re.findall(r"```bash\n(.*?)```", text, re.DOTALL) if "runtime/budget_watchdog.py" in block
+    ]
     assert len(blocks) == 1
     for call, expected in ((other, 1), (critical, 0)):
         values = {

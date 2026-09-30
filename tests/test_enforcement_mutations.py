@@ -35,8 +35,8 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "compose_threat_model.py"
-QA_SCRIPT = REPO_ROOT / "scripts" / "qa_checks.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "renderers/compose_threat_model.py"
+QA_SCRIPT = REPO_ROOT / "scripts" / "validators/qa_checks.py"
 FIXTURE = Path(__file__).parent / "fixtures" / "compose"
 
 
@@ -49,7 +49,7 @@ def _load_module(name: str, path: Path):
     return module
 
 
-compose = _load_module("compose_threat_model", SCRIPT_PATH)
+compose = _load_module("renderers.compose_threat_model", SCRIPT_PATH)
 CONTRACT = REPO_ROOT / "data" / "sections-contract.yaml"
 
 
@@ -230,7 +230,7 @@ def test_mutation_triggers_enforcement(tmp_path: Path, name: str, mutate_fn, exp
 
 
 # ---------------------------------------------------------------------------
-# Post-render QA mutations — exercise qa_checks.py auto-repair + detect paths.
+# Post-render QA mutations — exercise validators/qa_checks.py auto-repair + detect paths.
 # ---------------------------------------------------------------------------
 
 
@@ -264,7 +264,7 @@ def test_qa_ms_structure_strips_numeric_prefix(tmp_path: Path) -> None:
 
 
 def test_qa_contract_detects_missing_section(tmp_path: Path) -> None:
-    """If §6 is deleted from the body, `qa_checks.py contract` must flag it."""
+    """If §6 is deleted from the body, `validators/qa_checks.py contract` must flag it."""
 
     def drop_section_7(p: Path):
         t = p.read_text()

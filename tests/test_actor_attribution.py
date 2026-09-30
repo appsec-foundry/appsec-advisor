@@ -9,10 +9,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from actor_attribution import reconcile_attribution  # noqa: E402
-from actor_presentation import path_groups  # noqa: E402
-from aggregate_run_issues import _extract_actor_model_corrections  # noqa: E402
-from detect_open_registration import overview_actor_slug  # noqa: E402
+from analyzers.actor_attribution import reconcile_attribution  # noqa: E402
+from analyzers.detect_open_registration import overview_actor_slug  # noqa: E402
+from renderers.actor_presentation import path_groups  # noqa: E402
+from runtime.aggregate_run_issues import _extract_actor_model_corrections  # noqa: E402
 
 ACTORS = [
     {"id": "ACT-D-01", "access": ["internet", "dmz"], "heatmap_slug": "internet-anon"},
@@ -246,7 +246,7 @@ def test_insider_reading_committed_content_projects_to_repository_read_but_keeps
 
 
 def test_merge_finalize_persists_schema_valid_corrections(tmp_path):
-    from validate_intermediate import validate_threats_merged
+    from validators.validate_intermediate import validate_threats_merged
 
     stride = {
         "component_id": "orders-api",
@@ -270,7 +270,7 @@ def test_merge_finalize_persists_schema_valid_corrections(tmp_path):
     (tmp_path / ".stride-orders-api.json").write_text(json.dumps(stride))
     (tmp_path / ".components.json").write_text(json.dumps({"components": components()}))
     (tmp_path / ".actors-resolved.json").write_text(json.dumps({"resolved_actors": ACTORS}))
-    import merge_threats
+    import model.merge_threats as merge_threats
 
     assert merge_threats.main(["collect", "--output-dir", str(tmp_path)]) == 0
     assert merge_threats.main(["finalize", "--output-dir", str(tmp_path)]) == 0
@@ -286,7 +286,7 @@ def test_fills_alone_are_no_run_issue_but_a_privileged_role_event_is(tmp_path):
     (tmp_path / ".threats-merged.json").write_text(
         json.dumps({"actor_attribution_corrections": [{"finding": "T-001", "removed": [], "added": ["ACT-D-06"]}]})
     )
-    from event_log import format_line
+    from runtime.event_log import format_line
 
     line = format_line(
         "PRIVILEGED_ROLE_ADDED", "actor=ACT-D-03 entity=ext-a", level="WARN", component="skill-controller"
@@ -341,7 +341,7 @@ def test_superseded_actors_are_no_evidence_correction_and_validate(tmp_path):
 
 
 def test_resolving_a_provisional_scanner_owner_reattributes_the_finding(tmp_path):
-    import reclassify_components
+    import model.reclassify_components as reclassify_components
 
     routes_doc = routes(tmp_path, 'app.get("/items", listItems)')
     (tmp_path / "src").mkdir()
@@ -367,7 +367,7 @@ def test_resolving_a_provisional_scanner_owner_reattributes_the_finding(tmp_path
 
 
 def test_a_later_pass_updates_the_finding_record_instead_of_adding_a_second_one():
-    from actor_attribution import merge_corrections
+    from analyzers.actor_attribution import merge_corrections
 
     first = [{"finding": "T-001", "removed": ["ACT-D-06"], "added": [], "actor_ids": ["ACT-D-01"]}]
     later = [{"finding": "T-001", "removed": [], "added": ["ACT-D-02"], "actor_ids": ["ACT-D-01", "ACT-D-02"]}]
@@ -377,7 +377,7 @@ def test_a_later_pass_updates_the_finding_record_instead_of_adding_a_second_one(
 
 
 def test_an_unevidenced_privileged_role_is_a_run_warning(tmp_path):
-    from event_log import format_line
+    from runtime.event_log import format_line
 
     line = format_line(
         "PRIVILEGED_ROLE_UNEVIDENCED", "actors=ACT-D-03 reason=x", level="WARN", component="skill-controller"

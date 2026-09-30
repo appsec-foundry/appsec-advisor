@@ -92,7 +92,7 @@ def test_resolver_supplies_the_three_pentest_defaults():
     out = subprocess.run(
         [
             sys.executable,
-            str(ROOT / "scripts" / "resolve_org_profile.py"),
+            str(ROOT / "scripts" / "runtime/resolve_org_profile.py"),
             "--org-profile",
             str(ORG_PROFILE),
             "--preset",
@@ -111,7 +111,7 @@ def test_resolver_supplies_the_three_pentest_defaults():
 def test_resolver_stays_silent_without_a_profile(tmp_path):
     """No profile must not enable the export: the skill falls back to off."""
     out = subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "resolve_org_profile.py"), "--no-org-profile"],
+        [sys.executable, str(ROOT / "scripts" / "runtime/resolve_org_profile.py"), "--no-org-profile"],
         capture_output=True,
         text=True,
         check=True,
@@ -137,7 +137,7 @@ def test_exporter_cli_writes_tasks_from_an_authnz_report(tmp_path):
     proc = subprocess.run(
         [
             sys.executable,
-            str(ROOT / "scripts" / "render_pentest_tasks.py"),
+            str(ROOT / "scripts" / "renderers/render_pentest_tasks.py"),
             "--authnz",
             str(report),
             "--route-inventory",
@@ -166,7 +166,7 @@ def test_exporter_cli_reports_an_unreadable_report(tmp_path):
     proc = subprocess.run(
         [
             sys.executable,
-            str(ROOT / "scripts" / "render_pentest_tasks.py"),
+            str(ROOT / "scripts" / "renderers/render_pentest_tasks.py"),
             "--authnz",
             str(tmp_path / "missing.json"),
             "--output",
@@ -192,8 +192,8 @@ def test_skill_documents_every_pentest_flag():
 
 def test_skill_calls_the_resolver_and_the_exporter():
     text = _skill_text()
-    assert "resolve_org_profile.py" in text
-    assert "render_pentest_tasks.py" in text
+    assert "runtime/resolve_org_profile.py" in text
+    assert "renderers/render_pentest_tasks.py" in text
     assert "--authnz" in text
     assert "--route-inventory" in text
 

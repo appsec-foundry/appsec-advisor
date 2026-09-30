@@ -18,7 +18,7 @@ defaults yourself. Quote each argument exactly as the user typed it, so a shell
 metacharacter inside one stays inert:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/appsec_status.py" "<arg1>" "<arg2>" …
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/appsec_status.py" "<arg1>" "<arg2>" …
 ```
 
 With no arguments, run the script with none. Capture the exit code and

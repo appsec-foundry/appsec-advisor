@@ -5,8 +5,8 @@ repository — without ``docs/related-repos.yaml``, without ``.gitmodules``,
 without sibling repos with threat models — must NOT see any cross-repo
 artifacts in the output. In particular, the deterministic helpers must:
 
-  * load_related_repos.py            → empty result, no errors
-  * build_cross_repo_register.py     → empty entries, ``skipped_sibling_discovery: true``
+  * contexts/load_related_repos.py            → empty result, no errors
+  * contexts/build_cross_repo_register.py     → empty entries, ``skipped_sibling_discovery: true``
                                        when the workspace has 0/1 sibling dirs or is $HOME
   * slice_cross_repo_for_component   → ``[]``
   * coverage_checks.check_cross_repo → no missing_tm, no uncovered_boundaries,
@@ -27,11 +27,11 @@ from pathlib import Path
 import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-import aggregate_threat_summary as ats  # noqa: E402
-import build_cross_repo_register as bcrr  # noqa: E402
-import coverage_checks as cc  # noqa: E402
-import load_related_repos as lrr  # noqa: E402
-import slice_cross_repo_for_component as slicer  # noqa: E402
+import analyzers.coverage_checks as cc  # noqa: E402
+import contexts.build_cross_repo_register as bcrr  # noqa: E402
+import contexts.load_related_repos as lrr  # noqa: E402
+import contexts.slice_cross_repo_for_component as slicer  # noqa: E402
+import model.aggregate_threat_summary as ats  # noqa: E402
 
 
 def _make_single_repo(tmp_path: Path, name: str = "myrepo") -> Path:

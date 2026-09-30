@@ -1,13 +1,13 @@
-"""Unit tests for scripts/recommend_fixes.py."""
+"""Unit tests for scripts/runtime/recommend_fixes.py."""
 
 import json
 import re
 from pathlib import Path
 
 import pytest
-import recommend_fixes as rf
+import runtime.recommend_fixes as rf
 
-SCRIPTS_DIR = Path(rf.__file__).parent
+SCRIPTS_DIR = Path(rf.__file__).parents[1]
 
 # Categories the aggregator emits that deliberately carry no recommender:
 # `plugin_bug` and `pipeline_self_diagnosis_degraded` ARE the self-diagnosis
@@ -34,8 +34,8 @@ _KNOWN_UNCOVERED_CATEGORIES = {
 
 
 def _emitted_categories() -> set[str]:
-    """Issue categories `aggregate_run_issues.py` can put on the wire."""
-    src = (SCRIPTS_DIR / "aggregate_run_issues.py").read_text(encoding="utf-8")
+    """Issue categories `runtime/aggregate_run_issues.py` can put on the wire."""
+    src = (SCRIPTS_DIR / "runtime/aggregate_run_issues.py").read_text(encoding="utf-8")
     literal = set(re.findall(r'"category":\s*"([a-z_]+)"', src))
     # `_extract_errors` maps log EVENT names to categories through a dict.
     mapped = set(re.findall(r'"[A-Z_]+":\s*"([a-z_]+)"', src))
@@ -58,7 +58,7 @@ def test_every_emitted_issue_category_has_a_recommender():
     uncovered = _emitted_categories() - set(rf.RECOMMENDERS) - _RECOMMENDER_EXEMPT_CATEGORIES
     new = sorted(uncovered - _KNOWN_UNCOVERED_CATEGORIES)
     assert not new, (
-        f"aggregate_run_issues.py emits {len(new)} NEW categories with no entry in "
+        f"runtime/aggregate_run_issues.py emits {len(new)} NEW categories with no entry in "
         f"recommend_fixes.RECOMMENDERS: {new}. Add a recommender, or add the category to "
         f"_RECOMMENDER_EXEMPT_CATEGORIES with the reason it is self-diagnosis."
     )
@@ -251,7 +251,7 @@ def test_tool_error(tmp_path):
     [
         ("orchestration_gate_warn", {"log_line": 12, "script": "enrichment_pass.sh", "occurrences": 2}),
         ("orchestration_gate_warn", {"log_line": 3}),
-        ("config_scan_invalid", {"log_line": 5, "script": "validate_intermediate.py"}),
+        ("config_scan_invalid", {"log_line": 5, "script": "validators/validate_intermediate.py"}),
     ],
 )
 def test_controller_gate_failures_point_at_the_producer_without_edits(tmp_path, category, evidence):
@@ -355,14 +355,14 @@ def test_enrich_no_summary_no_issues(tmp_path):
 
 
 def test_cli_missing_file(run_plugin_script, tmp_path):
-    res = run_plugin_script("recommend_fixes.py", str(tmp_path), check=False)
+    res = run_plugin_script("runtime/recommend_fixes.py", str(tmp_path), check=False)
     assert res.returncode == 1
     assert "not found" in res.stderr
 
 
 def test_cli_malformed_json(run_plugin_script, tmp_path):
     (tmp_path / ".run-issues.json").write_text("{not json")
-    res = run_plugin_script("recommend_fixes.py", str(tmp_path), check=False)
+    res = run_plugin_script("runtime/recommend_fixes.py", str(tmp_path), check=False)
     assert res.returncode == 1
     assert "cannot parse" in res.stderr
 
@@ -373,7 +373,7 @@ def test_cli_success(run_plugin_script, tmp_path):
         "issues": [{"category": "bash_warn", "evidence": {"log_line": 1}}],
     }
     (tmp_path / ".run-issues.json").write_text(json.dumps(data))
-    res = run_plugin_script("recommend_fixes.py", str(tmp_path), check=False)
+    res = run_plugin_script("runtime/recommend_fixes.py", str(tmp_path), check=False)
     assert res.returncode == 0
     assert "enriched 1 issue" in res.stdout
     out = json.loads((tmp_path / ".run-issues.json").read_text())

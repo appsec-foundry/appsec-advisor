@@ -33,7 +33,7 @@ host `tool_use_id` is the immutable call identity, and the host `agent_id`
 connects SubagentStart/SubagentStop usage to that call. Telemetry without either
 identity is labeled `shared-session` or `AGENT_USAGE_UNATTRIBUTED`; it must not
 use the most recently registered role. Hook payloads are read through
-`scripts/hook_payload.py` alone, and a payload missing a key this plugin
+`scripts/runtime/hook_payload.py` alone, and a payload missing a key this plugin
 depends on emits `HOOK_PAYLOAD_UNEXPECTED` instead of degrading silently.
 `.session-agent-map` is observational.
 
@@ -56,7 +56,7 @@ At each phase boundary, check your controller job using the dispatch's `ACTION_I
 ```bash
 OUTPUT_DIR="<the OUTPUT_DIR value from your prompt>"
 CLAUDE_PLUGIN_ROOT="<the CLAUDE_PLUGIN_ROOT value from your prompt>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/budget_watchdog.py" active-job-critical --output-dir "$OUTPUT_DIR" --action-id "<ACTION_ID>" --job-id "<JOB_ID>"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/budget_watchdog.py" active-job-critical --output-dir "$OUTPUT_DIR" --action-id "<ACTION_ID>" --job-id "<JOB_ID>"
 ```
 
 A zero exit means your job resolves to one running call with a current critical marker. Other jobs cannot trigger your wrap-up. Missing, ambiguous, stale, or malformed ownership supplies no wrap-up signal. The controller owns global budget gates.
@@ -136,7 +136,7 @@ A missing assignment usually fails silently: the `2>/dev/null` on the echo
 discards the error, the agent's log lines are lost, AGENT_START/AGENT_END become
 unpaired, and the dispatch drops out of the run's cost figures.
 
-Never derive, guess, or default the path, and never `mkdir` it — `acquire_lock.py`
+Never derive, guess, or default the path, and never `mkdir` it — `runtime/acquire_lock.py`
 already created `$OUTPUT_DIR` before any sub-agent is dispatched. If the variable
 is empty, **fail loudly** as the guard above does; a log line is never worth a
 write to an unknown location.
@@ -145,20 +145,20 @@ Run the echo and `date +%s` as two separate Bash calls (or combine only those tw
 
 ## Step/check logging
 
-Emit at the **start** and **end** of each step or check (see event catalog above for which event pair applies to each agent). **Use the canonical `log_event.py` helper** — it stamps the timestamp and the correct column widths for you, so the line can never be malformed:
+Emit at the **start** and **end** of each step or check (see event catalog above for which event pair applies to each agent). **Use the canonical `runtime/log_event.py` helper** — it stamps the timestamp and the correct column widths for you, so the line can never be malformed:
 
 ```bash
 # STEP_START / STEP_END pairs (stride-analyzer, context-resolver, triage-validator, orchestrator):
 OUTPUT_DIR="<the OUTPUT_DIR value from your prompt>"
 CLAUDE_PLUGIN_ROOT="<the CLAUDE_PLUGIN_ROOT value from your prompt>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent <AGENT>
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent <AGENT>
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent <AGENT>
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent <AGENT>
 
 # Any other event type (recon SCAN_START/SCAN_END, qa CHECK_START/CHECK_END, …) — use the `info` form:
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info <EVENT> "<message>" --agent <AGENT>
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" info <EVENT> "<message>" --agent <AGENT>
 ```
 
-**⚠ NEVER hand-roll the line via `python3 -c` calling `event_log.format_line` directly.** `format_line`'s `level` / `component` / `sid` parameters are **keyword-only** — a positional call (`format_line(ts, sid, event, detail)`) or an invented kwarg (`event_type=`) raises `TypeError: format_line() takes from 1 to 2 positional arguments…` and leaves `LOG_ERR` / traceback noise in `.agent-run.log`. Always go through `log_event.py` above. If — and only if — that script is unavailable, fall back to a plain `echo` (never `python3 -c`):
+**⚠ NEVER hand-roll the line via `python3 -c` calling `event_log.format_line` directly.** `format_line`'s `level` / `component` / `sid` parameters are **keyword-only** — a positional call (`format_line(ts, sid, event, detail)`) or an invented kwarg (`event_type=`) raises `TypeError: format_line() takes from 1 to 2 positional arguments…` and leaves `LOG_ERR` / traceback noise in `.agent-run.log`. Always go through `runtime/log_event.py` above. If — and only if — that script is unavailable, fall back to a plain `echo` (never `python3 -c`):
 
 ```bash
 OUTPUT_DIR="<the OUTPUT_DIR value from your prompt>"
@@ -186,11 +186,11 @@ Use a `python3` call to compute the elapsed duration and write the final log ent
 ```bash
 OUTPUT_DIR="<the OUTPUT_DIR value from your prompt>"
 CLAUDE_PLUGIN_ROOT="<the CLAUDE_PLUGIN_ROOT value from your prompt>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_agent_end.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_agent_end.py" \
   "$OUTPUT_DIR" "<AGENT>" "<MODEL>" "<START_EPOCH: the literal number your startup date +%s printed>"
 ```
 
-The helper script `scripts/log_agent_end.py` takes four positional arguments: output_dir, agent_name, model_id, start_epoch (unix timestamp). It computes the elapsed time and appends a properly-formatted `AGENT_END` line to `.agent-run.log`.
+The helper script `scripts/runtime/log_agent_end.py` takes four positional arguments: output_dir, agent_name, model_id, start_epoch (unix timestamp). It computes the elapsed time and appends a properly-formatted `AGENT_END` line to `.agent-run.log`.
 
 If the script is unavailable, fall back to a plain echo (no duration):
 ```bash
@@ -274,4 +274,4 @@ The failing block exits without doing its work, and the step can silently no-op.
 
 1. **Avoid the `!=` operator inside any `python3 -c` body or `python3 - <<EOF` heredoc.** Use `not (a == b)` for inequality. This also covers `if x != None`, `if status != "ok"`, etc. — the operator must not appear textually.
 2. **Single-quoted heredocs (`<<'EOF'`) are NOT sufficient** — history expansion happens at parse time of the outer Bash command, before the heredoc quote rules apply.
-3. **For non-trivial multi-line scripts**, save to a `.py` file via the Write tool and call `python3 path.py` — same pattern as `qa_checks.py`, `pregenerate_fragments.py`. This sidesteps both history expansion and quote escaping.
+3. **For non-trivial multi-line scripts**, save to a `.py` file via the Write tool and call `python3 path.py` — same pattern as `validators/qa_checks.py`, `renderers/pregenerate_fragments.py`. This sidesteps both history expansion and quote escaping.

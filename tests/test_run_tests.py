@@ -210,7 +210,13 @@ def test_shipped_inventory_and_source_routes_are_valid():
 
 
 def test_every_python_source_has_a_reviewed_route_or_full_suite_reason():
-    sources = {path.relative_to(runner.ROOT).as_posix() for path in (runner.ROOT / "scripts").glob("*.py")}
+    scripts = runner.ROOT / "scripts"
+    sources = {
+        path.relative_to(runner.ROOT).as_posix()
+        for path in scripts.rglob("*.py")
+        if not {"node_modules", "__pycache__"} & set(path.relative_to(scripts).parts)
+    }
+    assert "scripts/orchestrator/stage2_state.py" in sources
     assert sources <= runner.SOURCE_TESTS.keys() | runner.FULL_SUITE_SOURCES.keys()
     assert not runner.SOURCE_TESTS.keys() & runner.FULL_SUITE_SOURCES.keys()
     for path, reason in runner.FULL_SUITE_SOURCES.items():
@@ -562,7 +568,7 @@ def test_changed_cli_clean_selection_does_not_launch_pytest(selection_repo, monk
 
 
 def test_requirement_routes_load_real_bindings():
-    guards = runner.requirement_tests(["scripts/merge_threats.py"])
+    guards = runner.requirement_tests(["scripts/model/merge_threats.py"])
     assert any(guard.startswith("tests/test_merge_threats.py::") for guard in guards)
     assert all("::" in guard and (runner.ROOT / guard.split("::", 1)[0]).is_file() for guard in guards)
 
@@ -622,15 +628,15 @@ def test_group_validator_cli_stops_on_inventory_drift(monkeypatch, capsys):
     "source, required",
     [
         (
-            "scripts/config_iac_scanner.py",
+            "scripts/analyzers/config_iac_scanner.py",
             {"tests/test_config_iac_scanner.py", "tests/test_agent_config_checks.py", "tests/test_security_score.py"},
         ),
         (
-            "scripts/export_sarif.py",
+            "scripts/exporters/export_sarif.py",
             {"tests/test_export_sarif.py", "tests/test_threat_fixture.py", "tests/test_e2e_pipeline.py"},
         ),
         (
-            "scripts/figure1_dfd.py",
+            "scripts/renderers/figure1_dfd.py",
             {
                 "tests/test_figure1_dfd.py",
                 "tests/test_figure1_detail.py",
@@ -640,11 +646,11 @@ def test_group_validator_cli_stops_on_inventory_drift(monkeypatch, capsys):
             },
         ),
         (
-            "scripts/figure2_svg.py",
+            "scripts/renderers/figure2_svg.py",
             {"tests/test_figure2_svg.py", "tests/test_compose_threat_model.py", "tests/test_qa_checks.py"},
         ),
         (
-            "scripts/finalize_component_inventory.py",
+            "scripts/model/finalize_component_inventory.py",
             {
                 "tests/test_finalize_component_inventory.py",
                 "tests/test_fragment_invariant_parity.py",
@@ -652,7 +658,7 @@ def test_group_validator_cli_stops_on_inventory_drift(monkeypatch, capsys):
             },
         ),
         (
-            "scripts/inline_code_formatter.py",
+            "scripts/renderers/inline_code_formatter.py",
             {
                 "tests/test_inline_code_formatter.py",
                 "tests/test_apply_prose_fixes.py",
@@ -662,7 +668,7 @@ def test_group_validator_cli_stops_on_inventory_drift(monkeypatch, capsys):
             },
         ),
         (
-            "scripts/repo_scan.py",
+            "scripts/analyzers/repo_scan.py",
             {"tests/test_repo_scan.py", "tests/test_scanner_review_regressions.py"},
         ),
         (
@@ -670,7 +676,7 @@ def test_group_validator_cli_stops_on_inventory_drift(monkeypatch, capsys):
             {"tests/test_run_tests.py", "tests/test_audit_test_routes.py"},
         ),
         (
-            "scripts/aggregate_run_issues.py",
+            "scripts/runtime/aggregate_run_issues.py",
             {
                 "tests/test_aggregate_run_issues.py",
                 "tests/test_orchestration_controller.py",
@@ -679,7 +685,7 @@ def test_group_validator_cli_stops_on_inventory_drift(monkeypatch, capsys):
             },
         ),
         (
-            "scripts/pregenerate_fragments.py",
+            "scripts/renderers/pregenerate_fragments.py",
             {
                 "tests/test_pregenerate_fragments.py",
                 "tests/test_compose_threat_model.py",
@@ -688,7 +694,7 @@ def test_group_validator_cli_stops_on_inventory_drift(monkeypatch, capsys):
             },
         ),
         (
-            "scripts/render_completion_summary.py",
+            "scripts/renderers/render_completion_summary.py",
             {
                 "tests/test_render_completion_summary.py",
                 "tests/test_report_plugin_issue.py",
@@ -697,11 +703,11 @@ def test_group_validator_cli_stops_on_inventory_drift(monkeypatch, capsys):
             },
         ),
         (
-            "scripts/security_score.py",
+            "scripts/analyzers/security_score.py",
             {"tests/test_security_score.py", "tests/test_repo_scan.py"},
         ),
         (
-            "scripts/version_status.py",
+            "scripts/runtime/version_status.py",
             {"tests/test_version_status.py", "tests/test_appsec_status.py"},
         ),
         (
@@ -739,17 +745,17 @@ def test_shipped_source_routes_include_reviewed_producers_and_consumers(source, 
         ("docs/internal/contracts/cleanup-whitelist.md", "runtime_cleanup"),
         ("schemas/fragments/verdict.schema.json", "validate_fragment"),
         ("schemas/stride-analyst-context.schema.json", "schemas"),
-        ("scripts/_severity_rollup.py", "severity_rollup"),
-        ("scripts/_severity_policy.py", "compose_threat_model_cov2"),
-        ("scripts/_severity_policy.py", "reference_format"),
-        ("scripts/_business_relevance.py", "emit_verdict_to_model"),
-        ("scripts/business_context_preview.py", "requirements_verification"),
+        ("scripts/renderers/_severity_rollup.py", "severity_rollup"),
+        ("scripts/shared/_severity_policy.py", "compose_threat_model_cov2"),
+        ("scripts/shared/_severity_policy.py", "reference_format"),
+        ("scripts/renderers/_business_relevance.py", "emit_verdict_to_model"),
+        ("scripts/contexts/business_context_preview.py", "requirements_verification"),
         ("README.md", "business_context_preview"),
-        ("scripts/compose_threat_model.py", "threat_fixture"),
-        ("scripts/runtime_cleanup.py", "threat_model_health"),
-        ("scripts/summarize_threat_model.py", "render_completion_summary"),
-        ("scripts/triage_compute_ranking.py", "build_threat_model_yaml"),
-        ("scripts/validate_fragment.py", "validate_fragment"),
+        ("scripts/renderers/compose_threat_model.py", "threat_fixture"),
+        ("scripts/runtime/runtime_cleanup.py", "threat_model_health"),
+        ("scripts/renderers/summarize_threat_model.py", "render_completion_summary"),
+        ("scripts/model/triage_compute_ranking.py", "build_threat_model_yaml"),
+        ("scripts/validators/validate_fragment.py", "validate_fragment"),
         ("skills/create-threat-model/SKILL-full-runtime.md", "lazy_phase_group_loading"),
         ("skills/create-threat-model/SKILL-thin-stage1-v2.md", "context_prompt_budgets"),
         ("skills/create-threat-model/SKILL.md", "skill_definitions"),
@@ -771,7 +777,11 @@ def test_all_shipped_source_routes_remain_selective():
 
 def test_abuse_case_priority_change_selects_its_consumers_without_the_full_suite():
     result = runner.select_changed(
-        ["scripts/_severity_policy.py", "scripts/match_abuse_cases.py", "scripts/render_abuse_cases.py"]
+        [
+            "scripts/shared/_severity_policy.py",
+            "scripts/model/match_abuse_cases.py",
+            "scripts/renderers/render_abuse_cases.py",
+        ]
     )
     assert {
         "tests/test_severity_policy.py",
@@ -823,12 +833,12 @@ def test_renderer_prompts_select_their_contract_readers_without_full_suite(sourc
 
 def test_modules_on_the_golden_fixture_replay_route_to_it():
     """threat_fixture replays these producers, so every routed module they import must select it."""
-    replayed = ("scripts/compose_threat_model.py", "scripts/build_threat_model_yaml.py")
+    replayed = ("scripts/renderers/compose_threat_model.py", "scripts/model/build_threat_model_yaml.py")
     source = "\n".join((runner.ROOT / path).read_text(encoding="utf-8") for path in replayed)
-    imported = set(re.findall(r"^\s*(?:from|import)\s+([A-Za-z_]\w*)", source, re.M))
+    imported = set(re.findall(r"^\s*(?:from|import)\s+([A-Za-z_][\w.]*)", source, re.M))
     routed = [path for path in runner.SOURCE_TESTS if path.startswith("scripts/")]
-    on_replay = [path for path in routed if PurePosixPath(path).stem in imported]
-    assert "scripts/figure1_dfd.py" in on_replay
+    on_replay = [path for path in routed if ".".join(PurePosixPath(path).with_suffix("").parts[1:]) in imported]
+    assert "scripts/renderers/figure1_dfd.py" in on_replay
     for path in on_replay:
         assert "tests/test_threat_fixture.py" in runner.SOURCE_TESTS[path], path
 

@@ -1,12 +1,12 @@
-"""Unit tests for scripts/resolve_actors.py — 4-layer actor resolver."""
+"""Unit tests for scripts/model/resolve_actors.py — 4-layer actor resolver."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
+import model.resolve_actors as resolve_actors
 import pytest
-import resolve_actors
 import yaml
 
 SIGNAL_KEYS = (
@@ -1128,7 +1128,7 @@ def test_cli_main(run_plugin_script, plugin_lib: Path, tmp_path: Path):
     repo.mkdir()
     out = tmp_path / "out"
     res = run_plugin_script(
-        "resolve_actors.py",
+        "model/resolve_actors.py",
         "--plugin-root",
         str(plugin_lib),
         "--repo-root",
@@ -1147,7 +1147,7 @@ def test_cli_invalid_repo_actor_config_fails_without_traceback(run_plugin_script
     _write_yaml(repo / ".appsec" / "actors.yaml", {"discovery": {"enabled": "yes"}})
     out = tmp_path / "out"
     result = run_plugin_script(
-        "resolve_actors.py",
+        "model/resolve_actors.py",
         "--plugin-root",
         str(plugin_lib),
         "--repo-root",

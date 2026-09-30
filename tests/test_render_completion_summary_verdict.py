@@ -9,19 +9,19 @@ import sys
 from pathlib import Path
 
 import pytest
-import summarize_threat_model as stm
+import renderers.summarize_threat_model as stm
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "render_completion_summary.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "renderers/render_completion_summary.py"
 
 
 def _load_module():
-    if "render_completion_summary" in sys.modules:
-        return sys.modules["render_completion_summary"]
-    spec = importlib.util.spec_from_file_location("render_completion_summary", SCRIPT_PATH)
+    if "renderers.render_completion_summary" in sys.modules:
+        return sys.modules["renderers.render_completion_summary"]
+    spec = importlib.util.spec_from_file_location("renderers.render_completion_summary", SCRIPT_PATH)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["render_completion_summary"] = mod
+    sys.modules["renderers.render_completion_summary"] = mod
     assert spec.loader is not None
     spec.loader.exec_module(mod)
     return mod

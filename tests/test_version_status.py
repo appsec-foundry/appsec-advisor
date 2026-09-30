@@ -1,4 +1,4 @@
-"""Tests for scripts/version_status.py.
+"""Tests for scripts/runtime/version_status.py.
 
 Two properties carry the weight here.
 
@@ -21,10 +21,10 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "version_status.py"
+SCRIPT = REPO_ROOT / "scripts" / "runtime/version_status.py"
 sys.path.insert(0, str(SCRIPT.parent))
 
-import version_status as vs  # noqa: E402
+import runtime.version_status as vs  # noqa: E402
 
 BASELINE_DOCUMENT = "# Baseline\n\n`baseline-id: test-1.2`. When asked, answer.\n"
 

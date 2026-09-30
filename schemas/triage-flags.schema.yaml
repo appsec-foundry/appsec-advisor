@@ -3,8 +3,8 @@ $id: https://appsec-advisor/schemas/triage-flags.schema.yaml
 title: Triage validator flags
 description: |
   Output written by Phase 10b to `$OUTPUT_DIR/.triage-flags.json`.
-  `scripts/triage_validate_ratings.py` writes pre-flight flags, then
-  `scripts/triage_compute_ranking.py` upgrades the file to v2 by adding the
+  `scripts/validators/triage_validate_ratings.py` writes pre-flight flags, then
+  `scripts/model/triage_compute_ranking.py` upgrades the file to v2 by adding the
   deterministic `ranking` block consumed by Phase 11 rendering.
 
 type: object
@@ -174,7 +174,7 @@ properties:
           minimum: 0
 
 # Additional invariants enforced by Python post-checks in
-# validate_intermediate.py (not expressible in Draft 2020-12):
+# validators/validate_intermediate.py (not expressible in Draft 2020-12):
 #   - flag_id values are unique within flags[]
 #   - flag_id values form a contiguous sequence starting at TF-001
 #   - summary.total_flags == len(flags)

@@ -135,7 +135,7 @@
         "replace": {
           "type": "string",
           "minLength": 1,
-          "description": "The rewritten prose. Identifiers, links, code spans, paths, `file:line` locators and numbers must survive unchanged; check_editorial_diff.py reverts the run when they do not."
+          "description": "The rewritten prose. Identifiers, links, code spans, paths, `file:line` locators and numbers must survive unchanged; validators/check_editorial_diff.py reverts the run when they do not."
         },
         "rationale": {
           "type": "string",

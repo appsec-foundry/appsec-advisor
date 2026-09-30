@@ -69,7 +69,7 @@ trust-boundary duration, checkpoint, retry unit, or context budget.
 
 ### The component inventory changes after Phase 7
 
-`scripts/build_stride_dispatch_manifest.py` currently calls
+`scripts/orchestrator/build_stride_dispatch_manifest.py` currently calls
 `reconcile_inventory()` after Phase 7 normalization. It may inject
 security-relevant components or collapse duplicate component IDs, then persists
 the changed `.components.json`.
@@ -154,7 +154,7 @@ may read but may not expand silently.
 Create a deterministic finalization command, tentatively:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/finalize_component_inventory.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/finalize_component_inventory.py" \
   --repo-root "$REPO_ROOT" \
   --output-dir "$OUTPUT_DIR"
 ```
@@ -175,7 +175,7 @@ It must:
 - make later manifest construction fail visibly if it would change the
   component ID set after Stage 1b.
 
-`build_stride_dispatch_manifest.py` must import the shared reconciliation
+`orchestrator/build_stride_dispatch_manifest.py` must import the shared reconciliation
 implementation or validate the finalization marker. It must not maintain a
 second divergent injection algorithm.
 
@@ -225,7 +225,7 @@ be regenerated on a full run. Incremental runs should preserve them when the
 normalized endpoint/protocol/label identity is unchanged so coverage diffs
 remain readable.
 
-`build_threat_model_yaml.py` must consume this sidecar instead of depending on
+`model/build_threat_model_yaml.py` must consume this sidecar instead of depending on
 the analyst's working memory for `data_flows[]`.
 
 ### Contract C — deterministic assessment input
@@ -233,7 +233,7 @@ the analyst's working memory for `data_flows[]`.
 Add:
 
 ```text
-scripts/build_trust_boundary_assessment_input.py
+scripts/contexts/build_trust_boundary_assessment_input.py
 schemas/trust-boundary-assessment-input.schema.json
 $OUTPUT_DIR/.trust-boundary-assessment-input.json
 ```
@@ -330,7 +330,7 @@ outside the candidate artifact.
 
 ### Contract E — canonical catalog and coverage result
 
-Extend `prepare_trust_boundary_context.py` or add a narrow orchestration wrapper
+Extend `contexts/prepare_trust_boundary_context.py` or add a narrow orchestration wrapper
 so Phase 7b consumes the candidate sidecar and writes:
 
 - `.trust-boundaries.json`;
@@ -552,7 +552,7 @@ Files:
 
 - add `schemas/fragments/data-flows.schema.json`;
 - update `agents/phases/phase-group-architecture.md`;
-- update `scripts/build_threat_model_yaml.py`;
+- update `scripts/model/build_threat_model_yaml.py`;
 - update fragment registration and schema-drift guards;
 - update `docs/internal/contracts/schema-invariants.md`; and
 - add producer, schema, builder, and two-run tests.
@@ -571,9 +571,9 @@ Implementation requirements:
 
 Files:
 
-- add `scripts/finalize_component_inventory.py`;
+- add `scripts/model/finalize_component_inventory.py`;
 - add `tests/test_finalize_component_inventory.py`;
-- refactor `scripts/build_stride_dispatch_manifest.py`;
+- refactor `scripts/orchestrator/build_stride_dispatch_manifest.py`;
 - update `.components.json` producer tests;
 - add the finalization audit schema; and
 - update cleanup/audit contracts.
@@ -594,7 +594,7 @@ and serial-STRIDE runs.
 
 Files:
 
-- add `scripts/build_trust_boundary_assessment_input.py`;
+- add `scripts/contexts/build_trust_boundary_assessment_input.py`;
 - add `tests/test_build_trust_boundary_assessment_input.py`;
 - add `schemas/trust-boundary-assessment-input.schema.json`;
 - update `data/required-permissions.yaml`; and
@@ -649,11 +649,11 @@ for naming symmetry.
 
 Files:
 
-- extend `scripts/prepare_trust_boundary_context.py`;
+- extend `scripts/contexts/prepare_trust_boundary_context.py`;
 - add `schemas/trust-boundary-coverage.schema.json`;
 - update `schemas/trust-boundary-diagnostics.schema.json`;
-- update `scripts/aggregate_run_issues.py`;
-- update `scripts/validate_fragment.py`;
+- update `scripts/runtime/aggregate_run_issues.py`;
+- update `scripts/validators/validate_fragment.py`;
 - update trust-boundary tests; and
 - add coverage-gate tests.
 
@@ -688,7 +688,7 @@ Files:
 - update `agents/appsec-threat-analyst.md`;
 - update `agents/phases/phase-group-architecture.md`;
 - update `agents/phases/phase-group-threats.md`;
-- update `scripts/orchestration_controller.py`; and
+- update `scripts/orchestrator/orchestration_controller.py`; and
 - add runtime composition tests.
 
 Add:
@@ -725,15 +725,15 @@ The exact strings become contracts and require corresponding tests.
 
 Files likely affected:
 
-- `scripts/check_state.py`;
-- `scripts/acquire_lock.py`;
-- `scripts/skill_watchdog.py`;
-- `scripts/watch_run.py`;
-- `scripts/appsec_status.py`;
-- `scripts/render_progress.py`;
-- `scripts/estimate_duration.py`;
-- `scripts/record_stage_stats.py`;
-- `scripts/render_completion_summary.py`;
+- `scripts/runtime/check_state.py`;
+- `scripts/runtime/acquire_lock.py`;
+- `scripts/runtime/skill_watchdog.py`;
+- `scripts/runtime/watch_run.py`;
+- `scripts/runtime/appsec_status.py`;
+- `scripts/renderers/render_progress.py`;
+- `scripts/runtime/estimate_duration.py`;
+- `scripts/runtime/record_stage_stats.py`;
+- `scripts/renderers/render_completion_summary.py`;
 - orchestration action contracts; and
 - their tests.
 
@@ -792,7 +792,7 @@ Do not move downstream ownership:
 
 - component-scoped boundary context remains dispatch preparation;
 - `boundary_refs[]` remain STRIDE/finding output;
-- merge validation remains in `merge_threats.py`;
+- merge validation remains in `model/merge_threats.py`;
 - effective severity and reconciliation remain Phase 10b;
 - rationale remains downstream of persisted ranking;
 - canonical YAML remains the source for Stage-2 rendering;

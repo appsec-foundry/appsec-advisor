@@ -12,7 +12,7 @@ same Sonnet model throughout.
 ## 1. Current-state selection *is* the risk model (verified)
 
 Selection is **not** all-or-nothing. Two deterministic functions in
-`scripts/build_stride_dispatch_manifest.py` already encode a risk model:
+`scripts/orchestrator/build_stride_dispatch_manifest.py` already encode a risk model:
 
 ### 1a. `_in_scope(c, depth)` — who is analysed, per depth
 
@@ -113,7 +113,7 @@ the only saving available when the thin layer is off (e.g. standard monoliths).
 ## 6. Decisions to make
 
 ### D1 — Data-store / infrastructure type-anchor  · **DONE**
-> **Implemented.** `_is_datastore` added to `build_stride_dispatch_manifest.py`, wired into `_in_scope`
+> **Implemented.** `_is_datastore` added to `orchestrator/build_stride_dispatch_manifest.py`, wired into `_in_scope`
 > (standard+), `_priority` (3, crown-jewel-class), `_selection_reasons`, and the `_is_internal_only`
 > `not(...)` exclusion; tests in `test_dispatch_manifest.py`. **Deviation from the spec below:** the real
 > `.components.json` carries **no `component_type`/`type` field** (only `id/name/framework/tier/

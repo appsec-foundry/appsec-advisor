@@ -34,12 +34,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = REPO_ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-import build_trust_boundary_assessment_input as boundary_input  # noqa: E402
-import finalize_component_inventory as finalizer  # noqa: E402
-import orchestration_controller as controller  # noqa: E402
-import prepare_trust_boundary_context as prep  # noqa: E402
-from validate_fragment import fragment_invariant_errors  # noqa: E402
-from validate_intermediate import _check_export_trace_invariants  # noqa: E402
+import contexts.build_trust_boundary_assessment_input as boundary_input  # noqa: E402
+import contexts.prepare_trust_boundary_context as prep  # noqa: E402
+import model.finalize_component_inventory as finalizer  # noqa: E402
+import orchestrator.orchestration_controller as controller  # noqa: E402
+from validators.validate_fragment import fragment_invariant_errors  # noqa: E402
+from validators.validate_intermediate import _check_export_trace_invariants  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "fragment_invariants"
 

@@ -1,15 +1,15 @@
 # Analysis — Supply-Chain Coverage Improvement (package.json & friends)
 
 **Date:** 2026-06-06
-**Scope:** `scripts/assess_supply_chain_controls.py` (the 9-sub-control §7.11 scorecard) plus the
-recon detection layer (`scripts/recon_patterns.py`, `agents/appsec-recon-scanner.md`).
+**Scope:** `scripts/analyzers/assess_supply_chain_controls.py` (the 9-sub-control §7.11 scorecard) plus the
+recon detection layer (`scripts/analyzers/recon_patterns.py`, `agents/appsec-recon-scanner.md`).
 **Question that triggered this:** does the tool actually inspect `package.json` / `.npmrc` /
 lockfiles for *current* (2025/2026) supply-chain best practices — and where are the gaps?
 
 > **Implementation status (2026-06-06, branch `fix/supply-chain-ecosystem-false-negatives`):**
 > P0 bugfixes **F1** (GitLab CI image digest-pinning), **F6** (`uv.lock`/`requirements.lock`),
 > **F7** (Gradle `gradle.lockfile` / `verification-metadata.xml` + Maven/Gradle deterministic
-> CI-install flags) are **DONE** in `scripts/assess_supply_chain_controls.py`, covered by
+> CI-install flags) are **DONE** in `scripts/analyzers/assess_supply_chain_controls.py`, covered by
 > `tests/test_assess_supply_chain_controls.py` (13 tests). Remaining P0 (install-cooldown
 > control) and P1+ items below are open.
 
@@ -17,11 +17,11 @@ lockfiles for *current* (2025/2026) supply-chain best practices — and where ar
 
 ## 1. What is inspected today (verified at code level)
 
-The deterministic §7.11 scorecard (`assess_supply_chain_controls.py`) grades **9 sub-controls**:
+The deterministic §7.11 scorecard (`analyzers/assess_supply_chain_controls.py`) grades **9 sub-controls**:
 
 | # | Sub-control | Reads | Depth | File:line |
 |---|---|---|---|---|
-| 1 | CVE scanning | recon text | SCA tool present + blocking? | `assess_supply_chain_controls.py` |
+| 1 | CVE scanning | recon text | SCA tool present + blocking? | `analyzers/assess_supply_chain_controls.py` |
 | 2 | Lockfile pinning | recon + repo | **existence only** of `package-lock`/`Pipfile.lock`/`poetry.lock`/`uv.lock`/… | `:81` |
 | 3 | CI install integrity | recon | `npm ci`/`--frozen-lockfile`/`--require-hashes` vs mutable `npm install`/`pip install` | `:99` |
 | 4 | CI/CD action pinning | `.github/workflows/*` | `uses:@<sha>` vs `@v<n>`/`@latest` — **GitHub Actions only** | `:116` |
@@ -33,7 +33,7 @@ The deterministic §7.11 scorecard (`assess_supply_chain_controls.py`) grades **
 
 `package.json` is genuinely parsed (sub-control 7 + recon Cat 16/17), and the diff-relevance
 filter already *knows* the security-relevant keys —
-`security_relevance_filter.py:508` `_PKG_JSON_SEC_KEYS` =
+`analyzers/security_relevance_filter.py:508` `_PKG_JSON_SEC_KEYS` =
 `{dependencies, devDependencies, optionalDependencies, peerDependencies, bundledDependencies,
 overrides, resolutions, scripts, engines, type, bin, exports, imports, workspaces, config}`.
 
@@ -68,11 +68,11 @@ These came up while answering the user's GitHub-vs-GitLab and pip questions and 
 same improvement backlog.
 
 ### F1 — **BUG: GitLab pipelines mis-scored on action-pinning** (sub-control 4)
-`_eval_action_pinning` (`assess_supply_chain_controls.py:116-151`) globs **only**
+`_eval_action_pinning` (`analyzers/assess_supply_chain_controls.py:116-151`) globs **only**
 `.github/workflows/*.yml|yaml` and matches `uses:@<sha>`. For a repo whose CI lives in
 `.gitlab-ci.yml`, it returns `MISSING: "No GitHub Actions workflows detected."` **even when
 every `.gitlab-ci.yml` `image:` is digest-pinned.** GitLab image-pinning *is* detected
-informationally by `recon_patterns.py:381` (`_CAT14_GITLAB_IMAGE`, flags *unpinned* tags) but
+informationally by `analyzers/recon_patterns.py:381` (`_CAT14_GITLAB_IMAGE`, flags *unpinned* tags) but
 that signal is never fed into the scorecard verdict. → **false-negative score** for pure-GitLab
 repos. This is a concrete bug, not just a gap.
 
@@ -99,8 +99,8 @@ non-goal — too large — but `package.json` range hygiene is cheap and current
 (`:182`) is npm-`.npmrc`-centric. Python parity is recon-dependent, not guaranteed.
 
 ### F6 — **BUG: `uv.lock` not credited as a lockfile**
-`_eval_lockfile` (`assess_supply_chain_controls.py:84,90`) lists `Pipfile.lock`/`poetry.lock`
-but **not `uv.lock`** — even though `emit_sca_practice.py:129` and recon both recognize it. A
+`_eval_lockfile` (`analyzers/assess_supply_chain_controls.py:84,90`) lists `Pipfile.lock`/`poetry.lock`
+but **not `uv.lock`** — even though `model/emit_sca_practice.py:129` and recon both recognize it. A
 uv-only Python repo with a committed `uv.lock` is scored `MISSING` lockfile. False-negative.
 
 ### F7 — **BUG: Java dependency-locking/verification not credited**
@@ -120,7 +120,7 @@ upstream, but **not checked anywhere** in this tool (not recon, not scorecard, n
 
 Section 2 above is npm-centric. The same audit for Python and Java surfaces the **same
 structural pattern**: the recon/LLM layer is ecosystem-aware, but the *deterministic* scorecard
-(`assess_supply_chain_controls.py`) is hard-coded around npm/JS idioms and produces
+(`analyzers/assess_supply_chain_controls.py`) is hard-coded around npm/JS idioms and produces
 **false-negatives** for the other two.
 
 ### Python — strong in recon, thin (and one bug) in the scorecard
@@ -132,7 +132,7 @@ structural pattern**: the recon/LLM layer is ecosystem-aware, but the *determini
 | Pinned versions (`==`, no bare `>=`) in `requirements.txt` | manifest | no | yes (`:288`) |
 | Install cooldown — uv `--exclude-newer`, pip v26+ `--uploaded-prior-to` | CI / `uv.toml` / `pyproject.toml` | no | yes (`:322-323`) |
 | Dependency confusion — `--extra-index-url`, `PIP_INDEX_URL`, `.pypirc`/`pip.conf` | CI / config | **npm-`.npmrc`-centric only** (`:182`) | yes (`:199,310`) |
-| `setup.py` install-time shell escape | `setup.py` | no (recon only) | yes (`recon_patterns.py:566`) |
+| `setup.py` install-time shell escape | `setup.py` | no (recon only) | yes (`analyzers/recon_patterns.py:566`) |
 | Trusted publishing OIDC + PEP 740 provenance | publish workflow | no | yes (`:400`, Cat 27e) |
 
 **Net:** Python is *well covered in recon* (memory `project_supply_chain_coverage_map` confirms —
@@ -141,8 +141,8 @@ Python controls are graded, and `_eval_lockfile` has a **uv.lock false-negative*
 
 ### Java (Maven / Gradle) — the genuinely thin ecosystem
 
-Java manifests *are* parsed for inventory (`_lib_manifest.py:41` Maven/Gradle dep extraction,
-`_manifest_readers.py:237-309` pom/gradle metadata, `baseline_state.py:77-80` diff-relevance
+Java manifests *are* parsed for inventory (`shared/_lib_manifest.py:41` Maven/Gradle dep extraction,
+`shared/_manifest_readers.py:237-309` pom/gradle metadata, `baseline/baseline_state.py:77-80` diff-relevance
 incl. `gradle.lockfile`). But the **security scorecard does not understand Java at all**:
 
 | Best practice (Java 2026) | Exact artifact | Det. scorecard? | Recon/LLM? |
@@ -173,7 +173,7 @@ every false-negative in F1/F6/F7.
 
 ## 4. Prioritized improvement backlog
 
-Effort = rough; all are additive to `assess_supply_chain_controls.py` unless noted. "Det." =
+Effort = rough; all are additive to `analyzers/assess_supply_chain_controls.py` unless noted. "Det." =
 moves a control from the soft LLM layer into the deterministic scorecard.
 
 | Pri | Item | Why now | Effort | Type |
@@ -207,7 +207,7 @@ prevents the next false-negative.
 
 Several gaps (G1/G2/G5) exist because detection was added to the **recon/LLM layer** for speed,
 then never promoted to the **deterministic scorecard**. The recurring lesson: a control the
-user can *act on* belongs in `assess_supply_chain_controls.py` so it renders as a graded §7.11
+user can *act on* belongs in `analyzers/assess_supply_chain_controls.py` so it renders as a graded §7.11
 row with a stable verdict — not as prose that depends on recon attention. Each "→ Det."
 item above is exactly that promotion.
 

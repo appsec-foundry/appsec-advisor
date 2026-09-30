@@ -1,6 +1,6 @@
 """The completion summary describes the run the files on disk came from.
 
-Guards three rules of `render_completion_summary.py`:
+Guards three rules of `renderers/render_completion_summary.py`:
 
 * The switches that record what a run requested come from the resolved
   `.skill-config.json` whenever it exists — the file the exports and the slug
@@ -18,11 +18,11 @@ import re
 import types
 from pathlib import Path
 
-import orchestration_controller as oc
+import orchestrator.orchestration_controller as oc
 import pytest
-import render_completion_summary as rcs
+import renderers.render_completion_summary as rcs
 
-_RECEIPT = Path(__file__).resolve().parents[1] / "scripts" / "render_editorial_receipt.py"
+_RECEIPT = Path(__file__).resolve().parents[1] / "scripts" / "renderers/render_editorial_receipt.py"
 
 
 def _write_config(output_dir: Path, **values) -> None:
@@ -177,7 +177,10 @@ def test_backstop_covers_every_deliverable_the_controller_produces(tmp_path, mon
     monkeypatch.setattr(
         rcs.subprocess,
         "run",
-        lambda argv, **_kw: invoked.append(Path(argv[1]).name) or types.SimpleNamespace(returncode=1),
+        lambda argv, **_kw: invoked.append(
+            Path(argv[1]).relative_to(Path(rcs.__file__).resolve().parents[1]).as_posix()
+        )
+        or types.SimpleNamespace(returncode=1),
     )
 
     rcs._export_deliverables_if_configured(tmp_path)

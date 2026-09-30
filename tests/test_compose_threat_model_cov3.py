@@ -1,4 +1,4 @@
-"""Coverage-pushing tests for scripts/compose_threat_model.py (round 3).
+"""Coverage-pushing tests for scripts/renderers/compose_threat_model.py (round 3).
 
 Targets the largest still-uncovered render/helper branches. Test files ONLY;
 pins current behavior. Companion to test_compose_threat_model_cov{,2}.py.
@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT_PATH = REPO_ROOT / "scripts" / "compose_threat_model.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "renderers/compose_threat_model.py"
 
 
 def _load_module(name: str, path: Path):
@@ -26,7 +26,7 @@ def _load_module(name: str, path: Path):
     return mod
 
 
-compose = _load_module("compose_threat_model", SCRIPT_PATH)
+compose = _load_module("renderers.compose_threat_model", SCRIPT_PATH)
 
 
 def _mk_ctx(tmp_path, **kw):

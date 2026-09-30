@@ -3,7 +3,7 @@
 > **Status: implemented** as `/appsec-advisor:review-threat-model` (dev). This
 > document remains as a design record — it explains why the skill is a pure
 > consumer and how independence from the generation workflow was verified.
-> Delivered: `skills/review-threat-model/SKILL.md`, `scripts/review_threat_model.py`,
+> Delivered: `skills/review-threat-model/SKILL.md`, `scripts/validators/review_threat_model.py`,
 > `tests/test_review_threat_model.py`, one additive permissions entry, user docs
 > (README + `docs/threat-modeler.md`), and a next-steps hint in the completion summary.
 

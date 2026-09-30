@@ -2,7 +2,7 @@
 
 **Datum:** 2026-07-19
 **Auslöser:** User-Report an `insecure-python-app` Run (3 Screenshots, 3 Findings)
-**Betroffener Generator:** `scripts/walkthrough_renderer.py` → `render_attack_steps()` (Z. 905–1001)
+**Betroffener Generator:** `scripts/renderers/walkthrough_renderer.py` → `render_attack_steps()` (Z. 905–1001)
 **Status:** Umgesetzt 2026-07-19 (außer D5, siehe unten).
 
 ## Umgesetzt
@@ -11,8 +11,8 @@
 |---|---|
 | `schemas/threat-model.output.schema.yaml`, `schemas/stride.schema.yaml` | optionales `threats[].attack_steps` (2–5 Einträge) |
 | `agents/appsec-stride-analyzer.md` | Abschnitt „Authoring `attack_steps`" — 7 Regeln + Beispiel; Pflicht für Critical |
-| `scripts/walkthrough_renderer.py` | `attack_steps` bevorzugt; `_NON_STEP_LEAD_RE`-Filter; `_normalize_actor_voice`; Prepend-Gate mit Zwei-Schritt-Floor; lokale Call-Regex entfernt (halbformatierte Nester); Delegation an den zentralen Formatter |
-| `scripts/apply_prose_fixes.py` | `_merge_split_code_spans` (Subscript/Query/Call-Args/Range/Assign); neue Token-Klassen URL, IPv4, JSON-Literal, snake_case, SCREAMING_SNAKE, dunder, Call-mit-Argumenten; `_inside_bare_call`-Guard gegen Halbformatierung |
+| `scripts/renderers/walkthrough_renderer.py` | `attack_steps` bevorzugt; `_NON_STEP_LEAD_RE`-Filter; `_normalize_actor_voice`; Prepend-Gate mit Zwei-Schritt-Floor; lokale Call-Regex entfernt (halbformatierte Nester); Delegation an den zentralen Formatter |
+| `scripts/repairs/apply_prose_fixes.py` | `_merge_split_code_spans` (Subscript/Query/Call-Args/Range/Assign); neue Token-Klassen URL, IPv4, JSON-Literal, snake_case, SCREAMING_SNAKE, dunder, Call-mit-Argumenten; `_inside_bare_call`-Guard gegen Halbformatierung |
 | `scripts/assets/print.css` | Pandoc/Skylighting-Override — lange Fence-Zeilen brechen um statt zu scrollen |
 | `tests/test_attack_step_quality.py` | 38 Regressionstests, alle Strings verbatim aus dem gemeldeten Run |
 | `tests/test_prompt_token_bounds.py` | Bound für den Analyzer-Prompt 14.900 → 15.600 |
@@ -42,7 +42,7 @@ Zusätzlich end-to-end verifiziert statt angenommen:
 - **Merge-Durchreichung**: `attack_steps` in eine echte `.stride-*.json`
   injiziert, `collect` + `finalize` gefahren — Feld erreicht `T-002` in
   `.threats-merged.json`. (Vorher nur analog zu `evidence_summary` geschlossen.)
-- **CSS-Kaskade**: echter `export_html.py`-Lauf. Pandoc emittiert
+- **CSS-Kaskade**: echter `exporters/export_html.py`-Lauf. Pandoc emittiert
   `pre > code.sourceCode { white-space: pre }`, `code.sourceCode > span
   { display: inline-block }` und `div.sourceCode { overflow: auto }` bei
   Position 581–1074; unsere Overrides stehen bei 5041–5201, also *danach*, und
@@ -55,9 +55,9 @@ Zusätzlich end-to-end verifiziert statt angenommen:
   wiedereingeführtes „An attacker", keine unbalancierte Span. 0 Verstöße.
 
 **Nicht umgesetzt: D5** (Wort „password" wird vom Secret-Masker zerstört). Eigener
-Bug in `compose_threat_model.py:12516`, unabhängig von §3 — siehe unten.
+Bug in `renderers/compose_threat_model.py:12516`, unabhängig von §3 — siehe unten.
 
-Die Merge-Durchreichung von `attack_steps` brauchte keinen Code: `merge_threats.py`
+Die Merge-Durchreichung von `attack_steps` brauchte keinen Code: `model/merge_threats.py`
 reicht STRIDE-Felder unverändert durch (verifiziert an `evidence_summary`).
 Wirksam wird das Feld erst bei einem neuen Scan; bestehende Modelle laufen über
 den gehärteten Fallback-Pfad.
@@ -210,11 +210,11 @@ md:822   `hashlib.sha256(pass**** (9 chars)encode()).hexdigest()`
 md:1269  … exposes JWT signing key and database pass**** (9 chars)
 ```
 
-10+ Vorkommen, teils **innerhalb von Code-Spans**. Quelle: `compose_threat_model.py:12516`
+10+ Vorkommen, teils **innerhalb von Code-Spans**. Quelle: `renderers/compose_threat_model.py:12516`
 (`secret_scan.mask_text(md)` über das gesamte gerenderte Markdown). Der gelernte
 „Secret" ist das Seed-Passwort aus `db.py:124`; die Ersetzung läuft ohne
 Wortgrenzen- und ohne Wörterbuch-Guard über die Prosa.
-`redact_known_secrets.py:110` (`new_text.replace(value, mask)`) hat dieselbe Schwäche —
+`validators/redact_known_secrets.py:110` (`new_text.replace(value, mask)`) hat dieselbe Schwäche —
 hier war `total_redactions: 0`, der Schaden kam aus `mask_text`.
 **Eigenes Ticket wert.**
 
@@ -224,7 +224,7 @@ hier war `total_redactions: 0`, der Schaden kam aus `mask_text`.
 
 ### Stufe 1 — Renderer-lokal, deterministisch, testbar (schließt D1, D2, D4)
 
-Alles in `walkthrough_renderer.py`, keine Schema-/Agent-Änderung, snapshot-testbar.
+Alles in `renderers/walkthrough_renderer.py`, keine Schema-/Agent-Änderung, snapshot-testbar.
 
 **1a. Span-Merges (FP-Risiko ~0 — repariert nur bereits existierende Spans):**
 

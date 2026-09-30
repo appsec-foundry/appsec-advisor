@@ -11,10 +11,10 @@ import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = ROOT / "scripts" / "repo_scan.py"
+SCRIPT = ROOT / "scripts" / "analyzers/repo_scan.py"
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import repo_scan as scan  # noqa: E402
+import analyzers.repo_scan as scan  # noqa: E402
 
 
 def run(*args: str) -> subprocess.CompletedProcess[str]:

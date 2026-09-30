@@ -14,7 +14,7 @@ It pins the whole mapping byte for byte. Regenerate it deliberately, never to
 make a test pass:
 
 ```bash
-python3 scripts/export_threat_dragon.py \
+python3 scripts/exporters/export_threat_dragon.py \
   --threat-model tests/fixtures/threat-dragon/threat-model.source.yaml \
   --output       tests/fixtures/threat-dragon/threat-model.threatdragon.golden.json \
   --tool-version 0.0.0-test

@@ -54,7 +54,7 @@ Removing the entire receipt round-trip would have taken the window from 167,596 
 
 ### The "37% of a stage's compute" figure is dispatch count, not milliseconds
 
-Retracted from an earlier draft of this note, which said the figure did not reproduce. It does: `record_stage_stats.py` carries its provenance in the comment `e2670ccb` left behind — "silently discarded 3 of 8 STRIDE dispatches on run a2a0e355 — 37% of that stage's compute". 3 of 8 is 37.5% of *dispatches*. Reading it as milliseconds and finding 0.7%, 2% and 45% by three extraction methods measured the wrong quantity. The wording is loose, the number is sound, and the defect it names was fixed.
+Retracted from an earlier draft of this note, which said the figure did not reproduce. It does: `runtime/record_stage_stats.py` carries its provenance in the comment `e2670ccb` left behind — "silently discarded 3 of 8 STRIDE dispatches on run a2a0e355 — 37% of that stage's compute". 3 of 8 is 37.5% of *dispatches*. Reading it as milliseconds and finding 0.7%, 2% and 45% by three extraction methods measured the wrong quantity. The wording is loose, the number is sound, and the defect it names was fixed.
 
 What the same row does still show is a different, live defect. The persisted STRIDE row claims `dispatch_count: 37` while the hook log holds **8** `AGENT_SPAWN` events for `appsec-stride-analyzer-v2` — and every other variant in the run matches its spawn count exactly (1=1, 7=7). The cause is the `--since-iso` fallback: a window captured after the wave had spawned matches nothing, `_derive_dispatch_stats` degrades to deriving from the whole log, and the accumulate merge then *sums* that whole-log population once per call.
 
@@ -107,7 +107,7 @@ Verifying each recommendation before writing it changed two of them.
 
 **A source fix, not just a check.** `record_stage_stats._merge_accumulate` now takes a whole-log-derived `dispatch_count` instead of adding it, and caps the row at that population from then on. The provenance travels with the value: `_derive_dispatch_stats`'s fallback marks its result `dispatch_count_scope: "full_log"`. Two tests pin it — five accumulate calls against an eight-spawn log now record 8, and window-derived counts still sum.
 
-**Three reconciliations in `aggregate_run_issues.py`**, each fired against the real run before being written:
+**Three reconciliations in `runtime/aggregate_run_issues.py`**, each fired against the real run before being written:
 
 | Check | On run a2a0e355 |
 |---|---|
@@ -135,4 +135,4 @@ The wider-routing re-run. It is still worth doing and it is still a paid experim
 
 ## Reproduction
 
-Measurement scripts were written to the session scratchpad, not the repository. Each figure above is reproducible from `~/.claude/projects/-home-mrohr-juice-shop3/a2a0e355-….jsonl` (rows 0–657 are pre-boundary), `/home/mrohr/juice-shop3/docs/security/`, and `scripts/aggregate_run_issues.py`. The three numbers most worth re-deriving before acting on them are the 11.0% window share, the 42% outside-bundle citation share, and the 37 claimed dispatches against 8 spawn events.
+Measurement scripts were written to the session scratchpad, not the repository. Each figure above is reproducible from `~/.claude/projects/-home-mrohr-juice-shop3/a2a0e355-….jsonl` (rows 0–657 are pre-boundary), `/home/mrohr/juice-shop3/docs/security/`, and `scripts/runtime/aggregate_run_issues.py`. The three numbers most worth re-deriving before acting on them are the 11.0% window share, the 42% outside-bundle citation share, and the 37 claimed dispatches against 8 spawn events.

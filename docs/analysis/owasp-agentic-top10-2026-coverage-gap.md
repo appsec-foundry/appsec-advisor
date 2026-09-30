@@ -37,9 +37,9 @@ marginale** Abdeckung — genau die, die *agentisch* (nicht bloß LLM-basiert) s
 
 | Baustein | Ort | Wirkung |
 |---|---|---|
-| AI-Surface-Detektion (deterministisch) | `scripts/recon_patterns.py:2468` `scan_ai_integration` / `_CAT13_GROUPS` | erkennt LLM-SDKs, Vector-DBs, **Agent-Frameworks** (`AgentExecutor`, `ReActAgent`, `create_tool_calling_agent`), Prompt-Frameworks, Tokenizer, Modellnamen; **crewai/autogen** (Multi-Agent) als `llm-sdk` strong (Zeile 2510); weak: `tool-use`, `embedding` |
-| MCP-Config-Detektion | `scripts/recon_patterns.py:2184` **Cat-28** `scan_ai_assistant_configs` (`_MCP_CONFIG_NAMES`, `mcp-local/remote/registry-server`, `mcp-hardcoded-secret`) | erkennt `.mcp.json` etc. — **aber** als *Supply-Chain-Signal für die Dev-/IDE-Tooling*, **explizit von der App-AI-Surface ausgeschlossen** (Cat-13-local skip, Kommentar Z. 2555–2566) und **nicht** in `_is_llm`/LLM-Linse verdrahtet (verifiziert: kein Bezug) |
-| Role-Floor „AI/LLM mandatory" | `scripts/build_stride_dispatch_manifest.py` `_is_llm` | LLM-Komponente wird auf jeder Tiefe analysiert, nie als „internal-only" verworfen |
+| AI-Surface-Detektion (deterministisch) | `scripts/analyzers/recon_patterns.py:2468` `scan_ai_integration` / `_CAT13_GROUPS` | erkennt LLM-SDKs, Vector-DBs, **Agent-Frameworks** (`AgentExecutor`, `ReActAgent`, `create_tool_calling_agent`), Prompt-Frameworks, Tokenizer, Modellnamen; **crewai/autogen** (Multi-Agent) als `llm-sdk` strong (Zeile 2510); weak: `tool-use`, `embedding` |
+| MCP-Config-Detektion | `scripts/analyzers/recon_patterns.py:2184` **Cat-28** `scan_ai_assistant_configs` (`_MCP_CONFIG_NAMES`, `mcp-local/remote/registry-server`, `mcp-hardcoded-secret`) | erkennt `.mcp.json` etc. — **aber** als *Supply-Chain-Signal für die Dev-/IDE-Tooling*, **explizit von der App-AI-Surface ausgeschlossen** (Cat-13-local skip, Kommentar Z. 2555–2566) und **nicht** in `_is_llm`/LLM-Linse verdrahtet (verifiziert: kein Bezug) |
+| Role-Floor „AI/LLM mandatory" | `scripts/orchestrator/build_stride_dispatch_manifest.py` `_is_llm` | LLM-Komponente wird auf jeder Tiefe analysiert, nie als „internal-only" verworfen |
 | Analyse-Linse | `agents/shared/owasp-llm-top10.md` | **OWASP LLM Top-10 (2025)** als Zusatzlinse über STRIDE; LLM01–LLM10 mit Grep-Ankern + Fix-Patterns |
 | Executive-Surfacing + Referenz-Badge | `schemas/fragments/ai-exposure.schema.json`, `agents/appsec-threat-renderer.md:268` | MS-Callout „AI / LLM Exposure" mit `owasp_llm_id`-Badge (Enum LLM01–LLM10) |
 | CWE-Anker | `data/cwe-taxonomy.yaml:575` „Excessive Agency" | einzelner agentischer CWE bereits im Katalog |
@@ -141,10 +141,10 @@ Vollständigkeit suggeriert, die er nicht hat.
 
 | Katalog | Edition | Ref-Feld | Feld-Abdeckung | Auf Findings gerendert/verlinkt | Analyse-Linse | Deterministisches Completeness-Gate |
 |---|---|---|---|---|---|---|
-| **Web Top 10** | **2021** | `owasp_top10_2021` | **19/19 TH** ✅ | ✅ klickbar `[A0x:2021](owasp.org/…)` (`compose:14655`, §8-Cards `phase-group-finalization.md:1623+`) | über STRIDE→TH-Mapping (implizit) | ✅ **ja** — `coverage_checks.py` Check A: jede A01–A10 braucht ≥1 Threat, sonst `source: coverage-gap` (Basis: `owasp-top10-cwes.yaml`) |
-| **LLM Top 10** | **2025** | `owasp_llm_id` (LLM01–10) | Enum, MS-Fragment | ✅ Badge im MS-Callout „AI/LLM Exposure", an Findings verankert | ✅ **ja** — `agents/shared/owasp-llm-top10.md` (aktiv wenn `_is_llm` feuert) | ⚠️ **nein** — bleibt LLM-Judgement (`coverage_checks.py:20`: „C … conditional") |
+| **Web Top 10** | **2021** | `owasp_top10_2021` | **19/19 TH** ✅ | ✅ klickbar `[A0x:2021](owasp.org/…)` (`compose:14655`, §8-Cards `phase-group-finalization.md:1623+`) | über STRIDE→TH-Mapping (implizit) | ✅ **ja** — `analyzers/coverage_checks.py` Check A: jede A01–A10 braucht ≥1 Threat, sonst `source: coverage-gap` (Basis: `owasp-top10-cwes.yaml`) |
+| **LLM Top 10** | **2025** | `owasp_llm_id` (LLM01–10) | Enum, MS-Fragment | ✅ Badge im MS-Callout „AI/LLM Exposure", an Findings verankert | ✅ **ja** — `agents/shared/owasp-llm-top10.md` (aktiv wenn `_is_llm` feuert) | ⚠️ **nein** — bleibt LLM-Judgement (`analyzers/coverage_checks.py:20`: „C … conditional") |
 | **API Top 10** | **2023** | `owasp_api2023` | **nur 3/19 TH** ⚠️ | ❌ **nirgends gerendert** (Taxonomie-Kommentar: „Pure label field") | ❌ **keine** (kein `owasp-api-top10.md`) | ❌ **kein Gate** |
-| **ASVS** | v4 | `owasp_asvs` | 19/19 TH | ⚠️ nur §6-H4-Titel-*Vokabular*-Alignment (`pregenerate_fragments.py:4003`), **kein Ref-Link** | ❌ | ❌ |
+| **ASVS** | v4 | `owasp_asvs` | 19/19 TH | ⚠️ nur §6-H4-Titel-*Vokabular*-Alignment (`renderers/pregenerate_fragments.py:4003`), **kein Ref-Link** | ❌ | ❌ |
 | **Agentic (ASI)** | **2026** | — | **0** | ❌ | ❌ | ❌ |
 
 ### Befunde je Katalog

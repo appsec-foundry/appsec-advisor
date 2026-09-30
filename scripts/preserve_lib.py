@@ -7,7 +7,7 @@ Single source of truth for:
   * the set of PRESERVABLE sections, read from the declarative
     ``preserve_on_downgrade:`` block in ``data/sections-contract.yaml``.
 
-Both snapshot_preserved_sections.py and restore_preserved_sections.py enumerate
+Both repairs/snapshot_preserved_sections.py and repairs/restore_preserved_sections.py enumerate
 ``preservable_sections()`` instead of hard-coding which sections they handle, so
 adding a new deep-only section to preserve is a contract edit with zero code
 change. (2026-06-26)

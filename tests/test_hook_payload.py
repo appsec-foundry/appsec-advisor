@@ -1,4 +1,4 @@
-"""Tests for scripts/hook_payload.py — the one place a hook payload is read.
+"""Tests for scripts/runtime/hook_payload.py — the one place a hook payload is read.
 
 The adapter exists because the same assumption used to be restated at every
 consumer, and the tests restated it too. So these tests assert the two rules it
@@ -16,7 +16,7 @@ import pytest
 SCRIPTS = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-import hook_payload  # noqa: E402
+import runtime.hook_payload as hook_payload  # noqa: E402
 
 
 def test_subagent_stop_owner_is_the_child_transcript() -> None:
@@ -86,7 +86,7 @@ def test_identifiers_are_bounded() -> None:
 
 def test_transcript_diagnosis_names_why_nothing_was_read(tmp_path) -> None:
     """`no usage data` alone cannot be acted on; the reason can."""
-    import agent_logger
+    import runtime.agent_logger as agent_logger
 
     assert agent_logger._transcript_diagnosis("") == "reason=no_path_in_payload"
     assert "reason=unreadable" in agent_logger._transcript_diagnosis(str(tmp_path / "gone.jsonl"))
@@ -106,7 +106,7 @@ def test_transcript_diagnosis_names_why_nothing_was_read(tmp_path) -> None:
 def test_response_fields_names_shape_never_content() -> None:
     """The Agent return is the only per-call source left when no transcript
     exists — but its body is model output and must not reach a log."""
-    import agent_logger
+    import runtime.agent_logger as agent_logger
 
     rendered = agent_logger._response_fields(
         {"content": [{"type": "text", "text": "a secret the model wrote"}], "totalTokens": 105755}

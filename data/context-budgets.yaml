@@ -2,7 +2,7 @@ version: 1
 
 # Byte budgets are deterministic drift guards, not token-window assumptions.
 # The runtime acceptance test still measures real resident tokens from JSONL
-# with scripts/context_window_report.py.
+# with scripts/runtime/context_window_report.py.
 surfaces:
   contributor_instruction_loader:
     path: CLAUDE.md
@@ -64,7 +64,7 @@ surfaces:
   thin_stage2_runtime:
     path: skills/create-threat-model/SKILL-thin-stage2.md
     # 3600 -> 3800 (2026-09-12): the runtime joins its asynchronous renderer
-    # and repair calls with wait_agent_calls.py instead of leaving the wait to
+    # and repair calls with orchestrator/wait_agent_calls.py instead of leaving the wait to
     # the orchestrator, whose turn then filled with log polling and status
     # prose (run 65f6ccdc: 111 messages during the render, none during the
     # waiter-joined STRIDE waves). The join adds 268 bytes (3112 -> 3380)

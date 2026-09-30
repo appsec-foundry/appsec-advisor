@@ -1,4 +1,4 @@
-"""Regression tests for reclassify_components.py.
+"""Regression tests for model/reclassify_components.py.
 
 Focus: the resolver must never leave a threat tagged with a NON-REGISTERED
 component id (a placeholder/phantom), because that dangles the §8/§6/§3
@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-import reclassify_components as rc  # noqa: E402
+import model.reclassify_components as rc  # noqa: E402
 
 _COMPONENTS = [
     {"id": "angular-spa", "paths": ["frontend/src/**"]},
@@ -402,8 +402,8 @@ def _ref(boundary_id: str, origin: str, location: dict = _MOVE_EVIDENCE) -> dict
     ],
 )
 def test_moving_a_finding_keeps_its_boundary_refs_valid(refs, kept):
-    import validate_intermediate as vi
-    from _boundary_adjacency import is_adjacent
+    import validators.validate_intermediate as vi
+    from shared._boundary_adjacency import is_adjacent
 
     data = {
         "components": [
@@ -717,7 +717,7 @@ def test_main_cli_subprocess(run_plugin_script, tmp_path):
         "threats": [{"id": "T-001", "component": "express-backend", "evidence": {"file": "routes/x.ts"}}],
     }
     (tmp_path / "threat-model.yaml").write_text(_yaml.safe_dump(data), encoding="utf-8")
-    result = run_plugin_script("reclassify_components.py", str(tmp_path), check=False)
+    result = run_plugin_script("model/reclassify_components.py", str(tmp_path), check=False)
     assert result.returncode == 0
     assert "reclassify_components:" in result.stdout
 

@@ -10,7 +10,7 @@
 
 ## Slice 2 — the development hook stops asking for additions
 
-- [ ] Apply `requirements-hook.patch`. It changes `scripts/requirements_hook.py`, its tests, and one sentence in `specs/README.md`. The hook and `scripts/spec_guard.py` are `Edit`-denied in `.claude/settings.json` so the guard cannot rewrite itself, which also means an agent cannot apply this: run `git apply specs/changes/gate-the-change-not-the-path/requirements-hook.patch` from an ordinary terminal.
+- [ ] Apply `requirements-hook.patch`. It changes `scripts/requirements/requirements_hook.py`, its tests, and one sentence in `specs/README.md`. The hook and `scripts/spec_guard.py` are `Edit`-denied in `.claude/settings.json` so the guard cannot rewrite itself, which also means an agent cannot apply this: run `git apply specs/changes/gate-the-change-not-the-path/requirements-hook.patch` from an ordinary terminal.
 - [x] Verify the patch before handover: `git apply --check` passes, and the patched hook runs 41 tests green against a symlinked copy of the repository.
 
 ## Slice 3 — the register says what belongs in it

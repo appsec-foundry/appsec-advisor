@@ -6,7 +6,7 @@ import os
 import subprocess
 from pathlib import Path
 
-import build_stride_evidence_bundles as bundles
+import contexts.build_stride_evidence_bundles as bundles
 import pytest
 
 

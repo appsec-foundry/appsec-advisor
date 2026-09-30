@@ -1,4 +1,4 @@
-"""Tests for scripts/summarize_threat_model.py.
+"""Tests for scripts/renderers/summarize_threat_model.py.
 
 Drives the module via its public API plus CLI smoke tests. Fixtures write
 minimal ``threat-model.yaml`` files to a tmp OUTPUT_DIR so each test
@@ -18,15 +18,15 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "summarize_threat_model.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "renderers/summarize_threat_model.py"
 
 
 def _load_module():
-    if "summarize_threat_model" in sys.modules:
-        return sys.modules["summarize_threat_model"]
-    spec = importlib.util.spec_from_file_location("summarize_threat_model", SCRIPT_PATH)
+    if "renderers.summarize_threat_model" in sys.modules:
+        return sys.modules["renderers.summarize_threat_model"]
+    spec = importlib.util.spec_from_file_location("renderers.summarize_threat_model", SCRIPT_PATH)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["summarize_threat_model"] = mod
+    sys.modules["renderers.summarize_threat_model"] = mod
     assert spec.loader is not None
     spec.loader.exec_module(mod)
     return mod

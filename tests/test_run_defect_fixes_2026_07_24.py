@@ -17,10 +17,10 @@ SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-import agent_logger  # noqa: E402
-import build_stride_dispatch_manifest as manifest  # noqa: E402
-import enforce_control_taxonomy as taxonomy  # noqa: E402
-import match_abuse_cases as mac  # noqa: E402
+import model.enforce_control_taxonomy as taxonomy  # noqa: E402
+import model.match_abuse_cases as mac  # noqa: E402
+import orchestrator.build_stride_dispatch_manifest as manifest  # noqa: E402
+import runtime.agent_logger as agent_logger  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # 1. Zone vocabulary — the analyst's tier-shaped tokens are recognised
@@ -108,7 +108,7 @@ def test_auth_rate_limiting_still_belongs_to_iam():
 
 def test_supply_chain_producer_emits_the_canonical_comma_free_domain():
     """The plugin's own deterministic producer was the source of the comma form."""
-    source = (SCRIPTS / "assess_supply_chain_controls.py").read_text(encoding="utf-8")
+    source = (SCRIPTS / "analyzers/assess_supply_chain_controls.py").read_text(encoding="utf-8")
     assert '"domain": "Operations Runtime and Supply Chain Controls"' in source
     assert '"domain": "Operations, Runtime and Supply Chain Controls"' not in source
 

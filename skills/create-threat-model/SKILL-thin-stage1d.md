@@ -11,7 +11,7 @@ Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; use no other Stage-1d instru
 2. Run:
 
    ```bash
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" \
      prepare-abuse --output-dir "$OUTPUT_DIR"
    ```
 
@@ -37,7 +37,7 @@ Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; use no other Stage-1d instru
    one blocking waiter (Bash timeout 600000) with every job's candidate id:
 
    ```bash
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/wait_abuse_progress.py" "$OUTPUT_DIR" \
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/wait_abuse_progress.py" "$OUTPUT_DIR" \
      <candidate ids from dispatch_jobs[]>
    ```
 
@@ -52,7 +52,7 @@ Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; use no other Stage-1d instru
 4. Run:
 
    ```bash
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" \
      finalize-abuse --output-dir "$OUTPUT_DIR"
    ```
 
@@ -65,7 +65,7 @@ Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; use no other Stage-1d instru
    Bash call, stop the watchdog, and mark the task completed:
 
    ```bash
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/record_stage_stats.py" "$OUTPUT_DIR" \
        --stage 1 --variant abuse-verification --name "Abuse Case Verification" \
        --agent appsec-advisor:appsec-abuse-case-verifier \
        --model "<job model alias from step 3>" \

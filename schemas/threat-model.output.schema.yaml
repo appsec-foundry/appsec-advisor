@@ -168,7 +168,7 @@ properties:
                 deferred_ids: {type: array, uniqueItems: true, items: {type: string, pattern: "^tb-\\d+$"}}
                 # Subset of `deferred_ids`: boundaries deferred *because*
                 # `boundary_endpoints_valid` rejected their resolved endpoints
-                # (prepare_trust_boundary_context.py appends the same id to both).
+                # (contexts/prepare_trust_boundary_context.py appends the same id to both).
                 # Same value space as its superset, hence the same pattern.
                 invalid_ids: {type: array, uniqueItems: true, items: {type: string, pattern: "^tb-\\d+$"}}
                 focus_reasons:
@@ -184,7 +184,7 @@ properties:
         # Team-provided risks from `docs/known-threats.yaml` with `status: accepted`.
         # Phase 1 extracts these and the orchestrator emits them here during
         # Phase 11 yaml composition. The deterministic §10 fragment generator
-        # (`scripts/pregenerate_fragments.py → gen_out_of_scope`) renders them
+        # (`scripts/renderers/pregenerate_fragments.py → gen_out_of_scope`) renders them
         # as an "Accepted Risks (Team-Provided)" sub-section in §10 Out of Scope.
         # Without this list the accepted entries would silently disappear from
         # the report (STRIDE skips them; QA Check 5 excludes them by design).
@@ -210,8 +210,8 @@ properties:
     # Shape is pinned by this schema and validated at the Stage-1 boundary.
     # §"Changelog Entry Composition" and consumed by:
     #   * templates/fragments/changelog.md.j2 (markdown rendering)
-    #   * scripts/render_completion_summary.py (console Change Summary)
-    #   * scripts/baseline_state.py (carry-forward / id counter refresh)
+    #   * scripts/renderers/render_completion_summary.py (console Change Summary)
+    #   * scripts/baseline/baseline_state.py (carry-forward / id counter refresh)
     type: array
     items:
       type: object
@@ -278,8 +278,8 @@ properties:
           items: { type: string }
         # Per-run fingerprint stores enabling the self-contained delta a later
         # run diffs against (see threats `fingerprints` above). `mitigation_*`
-        # is written by build_threat_model_yaml.py; `abuse_case_*` is patched in
-        # by render_abuse_cases.py (abuse cases are produced after the builder).
+        # is written by model/build_threat_model_yaml.py; `abuse_case_*` is patched in
+        # by renderers/render_abuse_cases.py (abuse cases are produced after the builder).
         mitigation_fingerprints:
           type: array
           items: { type: string }
@@ -745,7 +745,7 @@ properties:
     # requirements dimension the Markdown report shows. Present only when the
     # run had a `.requirements.yaml` catalog and assessed at least one row;
     # absent otherwise, so an empty object never reads as "assessed nothing".
-    # `render_completion_summary.py` takes its console counts from here.
+    # `renderers/render_completion_summary.py` takes its console counts from here.
     # The status buckets sum to `total` — the reconciliation rule the control
     # effectiveness line learned the hard way.
     type: object
@@ -1206,7 +1206,7 @@ properties:
           # parameter name when one applies.
           #
           # RENDERED form for cross-references (M3.13 — emitted by
-          # _shorten_title_for_xref in compose_threat_model.py):
+          # _shorten_title_for_xref in renderers/compose_threat_model.py):
           #     "<Weakness class> in file <path> (param \"<name>\")"   with param
           #     "<Weakness class> in file <path>"                      no param
           #     "<Weakness class> in <path>"                           directory path
@@ -1241,7 +1241,7 @@ properties:
           # bad_title_substrings (2026-05) — substrings that MUST NOT appear
           # anywhere in the title string. The JSON-Schema layer can only
           # enforce the regex `pattern`; the deterministic validator in
-          # scripts/qa_checks.py (`title_substring_blocklist` check) reads
+          # scripts/validators/qa_checks.py (`title_substring_blocklist` check) reads
           # this list and fails the run when any substring matches:
           #     "@0.", "@1.", "@2.", "@3.", "@4."   (library@version form)
           #     "alg:none", "noent:true", "package-lock=false"
@@ -1502,7 +1502,7 @@ properties:
           type: [string, "null"]
           description: >
             Optional direct URL (CWE entry, OWASP cheat-sheet, internal blueprint)
-            for the threat. Consumed by `scripts/export_sarif.py` as the SARIF
+            for the threat. Consumed by `scripts/exporters/export_sarif.py` as the SARIF
             `rule.helpUri`. When null, the exporter falls back to the first
             non-null `mitigations[m].reference` reachable via `mitigation_ids`.
         source:
@@ -1717,7 +1717,7 @@ properties:
           type: string
 
   # The assessment's own conclusion — the `### Verdict` block the rendered
-  # Management Summary leads with. Written by compose_threat_model.py after a
+  # Management Summary leads with. Written by renderers/compose_threat_model.py after a
   # successful render, from the LLM-authored `.fragments/ms-verdict.json`
   # (which runtime_cleanup deletes) resolved to reader-facing ids. Absent on
   # models composed before 2026-07 and on architecture-only documents.
@@ -1921,7 +1921,7 @@ properties:
   threat_hypotheses:
     # DEPRECATED (P1, weakness-class evidence model): retired as a user-facing
     # category. The producer stops emitting this list (see P1.3
-    # arch_coverage_to_threats.py); its observable design content now flows into
+    # analyzers/arch_coverage_to_threats.py); its observable design content now flows into
     # `weaknesses[]` as design-weakness headings, its speculative content is
     # dropped. Kept readable for one release for back-compat (incremental
     # prior-finding carry maps old entries → new design signals); removed after.

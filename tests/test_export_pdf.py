@@ -1,4 +1,4 @@
-"""Tests for scripts/export_pdf.py."""
+"""Tests for scripts/exporters/export_pdf.py."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-import export_pdf as ep
+import exporters.export_pdf as ep
 
 PRINT_CSS = Path(__file__).parent.parent / "scripts" / "assets" / "print.css"
 
@@ -1001,7 +1001,7 @@ def test_print_css_declares_the_landscape_figure_page() -> None:
 def _detail_md(tmp_path, count, topology, prefix, *, stem, embedded):
     import base64
 
-    import figure1_dfd
+    import renderers.figure1_dfd as figure1_dfd
 
     from tests.test_figure1_detail import model
 

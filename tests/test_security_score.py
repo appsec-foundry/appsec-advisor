@@ -1,5 +1,5 @@
 """
-Tests for scripts/security_score.py.
+Tests for scripts/analyzers/security_score.py.
 
 Covers:
   * The denominator: `not_applicable` rules never count as passes.
@@ -29,7 +29,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import security_score as ss  # noqa: E402
+import analyzers.security_score as ss  # noqa: E402
 
 
 def _rule(rule_id: str, status: str, decision: str = "emit_control_only", evidence: list | None = None) -> dict:

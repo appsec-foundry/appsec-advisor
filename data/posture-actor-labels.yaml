@@ -6,7 +6,7 @@
 # rendering.
 #
 # Consumed by:
-#   - scripts/compose_threat_model.py (renders one Mermaid actor card
+#   - scripts/renderers/compose_threat_model.py (renders one Mermaid actor card
 #     per non-empty actor present in the threat register; reads
 #     `default_subtitle` to fill the second line of the card)
 #   - schemas/fragments/security-posture-attack-paths.schema.json (the
@@ -33,7 +33,7 @@ schema_version: 1
 # (juice-shop2) to +28.7% (juice-shop): `build-time` targets CI/CD low in the
 # figure and does improve, while `internet-anon`/`internet-user` target the
 # frontend at the top and get longer. The build-time case is handled instead by
-# the `build-threat` zone in figure1_dfd.py, which seats that actor beside the
+# the `build-threat` zone in renderers/figure1_dfd.py, which seats that actor beside the
 # build zone. Derive placement from an actor's targets before trusting this field.
 actors:
   internet-anon:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import validate_evidence_lines as vel
+import validators.validate_evidence_lines as vel
 
 
 def _write(path: Path, text: str) -> None:
@@ -299,7 +299,7 @@ def test_floor_verdicts_survive_yaml_rebuild(tmp_path: Path) -> None:
     This is the regression the previous test suite could not catch — it
     asserted the floor ran, never that its output reached the final artifact.
     """
-    import build_threat_model_yaml as btm
+    import model.build_threat_model_yaml as btm
 
     repo = tmp_path / "repo"
     out = tmp_path / "out"

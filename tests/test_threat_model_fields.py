@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from _threat_model_fields import evidence_file_of, extract_threats, is_active, severity_of
+from shared._threat_model_fields import evidence_file_of, extract_threats, is_active, severity_of
 
 
 def test_current_output_fields_take_precedence_over_legacy_aliases() -> None:

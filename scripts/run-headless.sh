@@ -28,7 +28,7 @@
 #                           <level> (critical, high, medium); PR-gate friendly
 #   --no-qa                 Skip the Stage-3 QA reviewer (faster CI runs)
 #   --trust-mode <mode>     untrusted (default) | trusted — untrusted runs
-#                           preflight_untrusted.py first (rejects repo-owned hooks
+#                           validators/preflight_untrusted.py first (rejects repo-owned hooks
 #                           and out-of-repo symlinks), enforces --strict-urls on
 #                           related-repos fetches, enables APPSEC_LOG_REDACT_PATHS,
 #                           and aborts the pipeline on preflight findings
@@ -300,11 +300,11 @@ while [ $# -gt 0 ]; do
         --yaml|--no-yaml|--sarif|--threatdragon|--no-requirements|--enrich-arch|--no-enrich-arch)
             SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
         --keep-runtime-files)
-            # Preserve all transient runtime artifacts. runtime_cleanup.py reads
+            # Preserve all transient runtime artifacts. runtime/runtime_cleanup.py reads
             # the KEEP_RUNTIME_FILES env gate (not a CLI flag at its skill-layer
             # call sites), so export it for the child claude process AND the
             # deterministic post-run cleanup backstop below. ALSO forward the flag
-            # to the skill so resolve_config.py records keep_runtime_files=true in
+            # to the skill so runtime/resolve_config.py records keep_runtime_files=true in
             # .skill-config.json (resolve_config is CLI-driven, not env-driven).
             export KEEP_RUNTIME_FILES=true
             KEEP_RUNTIME_FILES_FLAG="--keep-runtime-files"
@@ -527,10 +527,10 @@ if [ "$SKILL" = "create-threat-model" ] && [ -z "$CLEAN_MODE" ]; then
     [ -n "$ASSESSMENT_DEPTH" ] && ADMISSION_BUDGET_ARGS="$ADMISSION_BUDGET_ARGS --assessment-depth $ASSESSMENT_DEPTH"
     set +e
     if [ -n "$RUNTIME_MODE_ARGS" ]; then
-        ADMISSION_RESULT="$(python3 "$PLUGIN_DIR/scripts/orchestration_controller.py" \
+        ADMISSION_RESULT="$(python3 "$PLUGIN_DIR/scripts/orchestrator/orchestration_controller.py" \
             route -- $RUNTIME_MODE_ARGS $ADMISSION_BUDGET_ARGS --repo "$REPO_PATH" --output "$OUTPUT_PATH")"
     else
-        ADMISSION_RESULT="$(python3 "$PLUGIN_DIR/scripts/orchestration_controller.py" \
+        ADMISSION_RESULT="$(python3 "$PLUGIN_DIR/scripts/orchestrator/orchestration_controller.py" \
             route -- $ADMISSION_BUDGET_ARGS --repo "$REPO_PATH" --output "$OUTPUT_PATH")"
     fi
     ADMISSION_EXIT=$?
@@ -553,7 +553,7 @@ if [ "$TRUST_MODE" = "untrusted" ]; then
     STRICT_URLS=1
     export APPSEC_LOG_REDACT_PATHS=1
     info "trust-mode: untrusted — running preflight safety checks"
-    PREFLIGHT_SCRIPT="$PLUGIN_DIR/scripts/preflight_untrusted.py"
+    PREFLIGHT_SCRIPT="$PLUGIN_DIR/scripts/validators/preflight_untrusted.py"
     if [ ! -f "$PREFLIGHT_SCRIPT" ]; then
         die "preflight script not found: $PREFLIGHT_SCRIPT"
     fi
@@ -598,7 +598,7 @@ if [ -n "$CLEAN_MODE" ]; then
         echo "$CLEAN_ARGS" | grep -q -- '--force' || CLEAN_ARGS="$CLEAN_ARGS --force"
     fi
     info "Cleanup — mode=$CLEAN_MODE target=$OUTPUT_PATH"
-    python3 "$PLUGIN_DIR/scripts/baseline_state.py" $CLEAN_ARGS
+    python3 "$PLUGIN_DIR/scripts/baseline/baseline_state.py" $CLEAN_ARGS
     exit $?
 fi
 
@@ -666,7 +666,7 @@ set -- "$@" --allowedTools "Read,Write,Glob,Grep,Bash,Agent"
 set -- "$@" --permission-mode bypassPermissions
 # Always `json`, never `text`. The JSON result object is the only readout that
 # carries the run's authoritative token/cost accounting (total_cost_usd +
-# per-model modelUsage, sub-agents included) — see headless_usage.py. Its
+# per-model modelUsage, sub-agents included) — see runtime/headless_usage.py. Its
 # `result` field holds exactly the text that `--output-format text` would have
 # printed, so nothing user-visible is lost; the wrapper re-emits it below.
 set -- "$@" --output-format json
@@ -731,7 +731,7 @@ echo "  Depth      : ${ASSESSMENT_DEPTH:-standard}"
 # model is the dominant cost lever but drives orchestration, not analysis depth.
 # Falls back to the session model alone if the lineup cannot be resolved.
 MODEL_LINEUP=""
-[ -n "$MODEL" ] && MODEL_LINEUP="$(python3 "$SCRIPT_DIR/model_lineup.py" \
+[ -n "$MODEL" ] && MODEL_LINEUP="$(python3 "$SCRIPT_DIR/runtime/model_lineup.py" \
     --session "$MODEL" \
     ${REASONING_TIER:+--reasoning "$REASONING_TIER"} \
     --depth "${ASSESSMENT_DEPTH:-standard}" 2>/dev/null || printf '%s' "$MODEL")"
@@ -752,7 +752,7 @@ echo "  Plugin     : $PLUGIN_DIR"
 # One-line intake summary (req + blueprint counts, source names) when the
 # requirements source is a readable local file. Fails soft for URLs / config.
 [ -n "$REQUIREMENTS_SRC" ] && [ -f "$REQUIREMENTS_SRC" ] && \
-    python3 "$SCRIPT_DIR/run_summary.py" requirements "$REQUIREMENTS_SRC" 2>/dev/null || true
+    python3 "$SCRIPT_DIR/runtime/run_summary.py" requirements "$REQUIREMENTS_SRC" 2>/dev/null || true
 [ -n "$SOFT_BUDGET" ]      && echo "  Soft budget: \$$SOFT_BUDGET (steers; the run still finishes)"
 [ -n "$MAX_BUDGET" ]       && echo "  Hard cut   : \$$MAX_BUDGET (kills the session)"
 [ -n "$CATEGORY_FILTER" ]  && echo "  Category   : $CATEGORY_FILTER"
@@ -794,7 +794,7 @@ cleanup_tails() {
 
 cleanup_live_tool_markers() {
     _cleanup_dir="${RESULT_DIR:-${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}}"
-    OUTPUT_DIR="$_cleanup_dir" python3 "$PLUGIN_DIR/scripts/agent_logger.py" \
+    OUTPUT_DIR="$_cleanup_dir" python3 "$PLUGIN_DIR/scripts/runtime/agent_logger.py" \
         --clear-active-tool-calls >/dev/null 2>&1 || true
 }
 
@@ -805,7 +805,7 @@ cleanup_headless_runtime() {
     cleanup_tails
 }
 
-# Tail both logs in the background and pipe them through render_progress.py,
+# Tail both logs in the background and pipe them through renderers/render_progress.py,
 # which turns the raw event stream into a stateful, human-readable progress view
 # (current phase, sub-agent invokes, sub-steps, wall-clock elapsed).
 #
@@ -819,7 +819,7 @@ cleanup_headless_runtime() {
 start_progress_monitor() {
     "$SCRIPT_DIR/run-interruptible.sh" /dev/null \
         sh -c 'tail -n 0 -F "$1" "$2" 2>/dev/null | python3 "$3"' \
-        appsec-progress-monitor "$LOG_FILE" "$RUN_LOG_FILE" "$SCRIPT_DIR/render_progress.py" >&2 &
+        appsec-progress-monitor "$LOG_FILE" "$RUN_LOG_FILE" "$SCRIPT_DIR/renderers/render_progress.py" >&2 &
     PROGRESS_PID=$!
 }
 
@@ -855,7 +855,7 @@ if [ -n "$VERBOSE" ]; then
     # anchors — only raw lines like `step=watchdog`.
     start_progress_monitor
 
-    # APPSEC_VERBOSE=1 makes agent_logger.py mirror every line it appends to
+    # APPSEC_VERBOSE=1 makes runtime/agent_logger.py mirror every line it appends to
     # `.hook-events.log` to stderr as `[appsec] …`, plus the steering-hook
     # diagnostics that reach no log file at all. That mirror already IS the raw
     # `.hook-events.log` stream, so tailing the file on top of it would print
@@ -863,7 +863,7 @@ if [ -n "$VERBOSE" ]; then
     export APPSEC_VERBOSE=1
 
     # `.agent-run.log` has no such mirror: agents append to it directly, and
-    # log_event.py's stderr line is a compact summary, not the canonical line.
+    # runtime/log_event.py's stderr line is a compact summary, not the canonical line.
     tail -f "$RUN_LOG_FILE" >&2 &
     TAIL_RUN_PID=$!
 
@@ -912,7 +912,7 @@ RESULT_CAPTURE="$RESULT_DIR/.headless-result.json"
 #      the host session only, so it is a lower bound and must never be shown
 #      as if it were the run's cost.
 print_phase_costs() {
-    _phase_table=$(python3 "$SCRIPT_DIR/cost_running_total.py" "$RESULT_DIR" \
+    _phase_table=$(python3 "$SCRIPT_DIR/runtime/cost_running_total.py" "$RESULT_DIR" \
         --format phases 2>/dev/null || true)
     [ -n "$_phase_table" ] || return 0
     echo ""
@@ -921,14 +921,14 @@ print_phase_costs() {
 
 print_usage_summary() {
     [ -n "$RESULT_CAPTURE" ] || return 0
-    if python3 "$SCRIPT_DIR/headless_usage.py" "$RESULT_CAPTURE" 2>/dev/null; then
+    if python3 "$SCRIPT_DIR/runtime/headless_usage.py" "$RESULT_CAPTURE" 2>/dev/null; then
         # The model table is exact and covers the whole run; the phase table
         # below it is the floor the live view accumulated, and answers the one
         # question the exact figure cannot — which phase spent it.
         print_phase_costs
         return 0
     fi
-    _usage_est=$(python3 "$SCRIPT_DIR/cost_running_total.py" "$RESULT_DIR" \
+    _usage_est=$(python3 "$SCRIPT_DIR/runtime/cost_running_total.py" "$RESULT_DIR" \
         --format banner 2>/dev/null || true)
     case "$_usage_est" in
         ""|*"n/a"*) return 0 ;;
@@ -948,7 +948,7 @@ discard_capture_if_consumed() {
     [ -n "$RESULT_CAPTURE" ] && [ -f "$RESULT_CAPTURE" ] || return 0
     [ "${KEEP_RUNTIME_FILES:-}" != "true" ] || return 0
     if [ ! -s "$RESULT_CAPTURE" ] \
-       || python3 "$SCRIPT_DIR/headless_usage.py" "$RESULT_CAPTURE" --format json >/dev/null 2>&1; then
+       || python3 "$SCRIPT_DIR/runtime/headless_usage.py" "$RESULT_CAPTURE" --format json >/dev/null 2>&1; then
         rm -f "$RESULT_CAPTURE"
     fi
 }
@@ -1132,7 +1132,7 @@ cleanup_tails
 # text verbatim (what `--output-format text` printed); --json additionally dumps
 # the raw object for machine consumers. Both are no-ops on a truncated capture.
 if [ -n "$RESULT_CAPTURE" ] && [ -s "$RESULT_CAPTURE" ]; then
-    if python3 "$SCRIPT_DIR/headless_usage.py" "$RESULT_CAPTURE" --result-text 2>/dev/null; then
+    if python3 "$SCRIPT_DIR/runtime/headless_usage.py" "$RESULT_CAPTURE" --result-text 2>/dev/null; then
         [ "$EMIT_RAW_JSON" -eq 1 ] && cat "$RESULT_CAPTURE"
     else
         # No result object. The CLI wrote something else to stdout — an error it
@@ -1153,9 +1153,9 @@ if [ "$SIGINT_COUNT" -gt 0 ]; then
     warn "Run aborted by user (exit $EXIT_CODE). Skipping post-run parsing."
     # Post-run parsing is skipped, but the run still has to reach one terminal
     # state. Without this the lock stays held, the checkpoint stays mid-flight
-    # and `appsec_status.py --live` reports an unknown phase until the
+    # and `runtime/appsec_status.py --live` reports an unknown phase until the
     # heartbeat ages out — the process that took the lock is already gone.
-    python3 "$PLUGIN_DIR/scripts/terminate_run.py" \
+    python3 "$PLUGIN_DIR/scripts/runtime/terminate_run.py" \
         --output-dir "${RESULT_DIR:-${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}}" \
         --outcome interrupt --reason "operator interrupt (exit $EXIT_CODE)" \
         --run-id "$APPSEC_RUN_ID" \
@@ -1180,7 +1180,7 @@ RESULT_DIR="${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}"
 # own fail-closed failure, and printed a fresh-run command that collides again
 # on the next attempt (2026-09-05 insecure-python-app). This run produced
 # nothing and owns nothing here, so it stops before touching any of it.
-if python3 -c "import sys;sys.path.insert(0,sys.argv[1]);import acquire_lock,pathlib;sys.exit(0 if acquire_lock.lock_held_by_live_other_run(pathlib.Path(sys.argv[2])/'.appsec-lock',sys.argv[3]) else 1)" \
+if python3 -c "import sys;sys.path.insert(0,sys.argv[1]);import runtime.acquire_lock as acquire_lock;import pathlib;sys.exit(0 if acquire_lock.lock_held_by_live_other_run(pathlib.Path(sys.argv[2])/'.appsec-lock',sys.argv[3]) else 1)" \
         "$PLUGIN_DIR/scripts" "$RESULT_DIR" "$APPSEC_RUN_ID" 2>/dev/null; then
     warn "$RESULT_DIR is held by another assessment — this run made no changes there."
     warn "Wait for it to finish, or scan into a different --output directory."
@@ -1197,7 +1197,7 @@ if [ -f "$LOG_FILE" ]; then
 fi
 
 # ── Deterministic compose backstop (headless completion) ───────────
-# The in-controller _compose_if_ready backstop (orchestration_controller.py
+# The in-controller _compose_if_ready backstop (orchestrator/orchestration_controller.py
 # `next`) only fires from an LLM finalize turn (SKILL-full-runtime.md §6). A
 # hard process-kill removes that turn — e.g. CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS
 # terminating `claude -p` while the parallel-render agents' fragments are on
@@ -1211,7 +1211,7 @@ if [ "$SKILL" = "create-threat-model" ] \
    && [ -s "$RESULT_DIR/threat-model.yaml" ] \
    && [ ! -s "$RESULT_DIR/threat-model.md" ]; then
     info "threat-model.md missing but yaml present — running deterministic compose backstop"
-    python3 "$PLUGIN_DIR/scripts/orchestration_controller.py" \
+    python3 "$PLUGIN_DIR/scripts/orchestrator/orchestration_controller.py" \
         next --output-dir "$RESULT_DIR" >/dev/null 2>&1 || true
     [ -s "$RESULT_DIR/threat-model.md" ] && ok "compose backstop produced threat-model.md"
 fi
@@ -1233,18 +1233,18 @@ if [ "$SKILL" = "create-threat-model" ]; then
 fi
 
 # ── SARIF canonical-name backstop ──────────────────────────────────
-# SARIF is deterministic from threat-model.yaml (scripts/export_sarif.py), but
+# SARIF is deterministic from threat-model.yaml (scripts/exporters/export_sarif.py), but
 # the LLM finalization that invokes it can write the artefact under a
 # non-canonical name (observed 2026-06-18: threat-model.sarif, missing the
 # .json suffix) or skip it. Every downstream consumer — CI upload,
-# publish_threat_model.py, the e2e asserts — pins threat-model.sarif.json. When
+# model/publish_threat_model.py, the e2e asserts — pins threat-model.sarif.json. When
 # --sarif was requested and the canonical file is absent, regenerate it from
 # the yaml so the artefact name can never depend on LLM behaviour.
 if [ "$SKILL" = "create-threat-model" ] && [ "$EXIT_CODE" -eq 0 ] \
    && printf '%s' "$SKILL_FLAGS" | grep -q -- '--sarif' \
    && [ -s "$RESULT_DIR/threat-model.yaml" ] \
    && [ ! -f "$RESULT_DIR/threat-model.sarif.json" ]; then
-    if python3 "$SCRIPT_DIR/export_sarif.py" \
+    if python3 "$SCRIPT_DIR/exporters/export_sarif.py" \
             --threat-model "$RESULT_DIR/threat-model.yaml" \
             --output "$RESULT_DIR/threat-model.sarif.json" >/dev/null 2>&1; then
         rm -f "$RESULT_DIR/threat-model.sarif"
@@ -1254,13 +1254,13 @@ fi
 
 # ── Threat Dragon canonical-name backstop ──────────────────────────
 # Same reasoning as the SARIF backstop above: the export is deterministic from
-# threat-model.yaml (scripts/export_threat_dragon.py), so the artefact must not
+# threat-model.yaml (scripts/exporters/export_threat_dragon.py), so the artefact must not
 # depend on whether the LLM finalization actually ran the substep.
 if [ "$SKILL" = "create-threat-model" ] && [ "$EXIT_CODE" -eq 0 ] \
    && printf '%s' "$SKILL_FLAGS" | grep -q -- '--threatdragon' \
    && [ -s "$RESULT_DIR/threat-model.yaml" ] \
    && [ ! -f "$RESULT_DIR/threat-model.threatdragon.json" ]; then
-    if python3 "$SCRIPT_DIR/export_threat_dragon.py" \
+    if python3 "$SCRIPT_DIR/exporters/export_threat_dragon.py" \
             --threat-model "$RESULT_DIR/threat-model.yaml" \
             --output "$RESULT_DIR/threat-model.threatdragon.json" >/dev/null 2>&1; then
         info "Threat Dragon backstop wrote $RESULT_DIR/threat-model.threatdragon.json from yaml"
@@ -1275,7 +1275,7 @@ if [ $EXIT_CODE -eq 0 ]; then
     # List all written files with full paths
     if [ "$SKILL" = "create-threat-model" ]; then
         # Surface the Critical/High findings on the console (all modes).
-        python3 "$SCRIPT_DIR/run_summary.py" findings "$RESULT_DIR/threat-model.yaml" 2>/dev/null || true
+        python3 "$SCRIPT_DIR/runtime/run_summary.py" findings "$RESULT_DIR/threat-model.yaml" 2>/dev/null || true
 
         echo ""
         echo "  Output files:"
@@ -1309,12 +1309,12 @@ else
         # The terminator owns the aggregation on this path, and additionally
         # releases the lock and closes the checkpoint the failed run left open.
         # A controller abort already wrote its own verdict; that one stands.
-        python3 "$PLUGIN_DIR/scripts/terminate_run.py" \
+        python3 "$PLUGIN_DIR/scripts/runtime/terminate_run.py" \
             --output-dir "$RESULT_DIR" --outcome failure \
             --reason "wrapper exit $EXIT_CODE" --run-id "$APPSEC_RUN_ID" \
             --repo-root "${REPO_PATH:-.}" \
             --depth "${ASSESSMENT_DEPTH:-standard}" >/dev/null 2>&1 || true
-        python3 "$PLUGIN_DIR/scripts/render_completion_summary.py" \
+        python3 "$PLUGIN_DIR/scripts/renderers/render_completion_summary.py" \
             --issues-only --output-dir "$RESULT_DIR" --repo-root "${REPO_PATH:-.}" \
             $PLUGIN_DEV_FLAG 2>/dev/null || true
     fi
@@ -1329,7 +1329,7 @@ echo ""
 print_usage_summary
 
 # ── Cost baseline from the exact figure ────────────────────────────
-# The in-run write (`persist_run_baseline.py` from the skill) refuses a cost
+# The in-run write (`model/persist_run_baseline.py` from the skill) refuses a cost
 # that is only a floor, and on a host that reports no per-call token classes
 # every in-run figure is one — so the baseline would never gain a cost and every
 # later run would project parametrically. The result object carries the host's
@@ -1337,7 +1337,7 @@ print_usage_summary
 # session has exited. Written here, and only for a run that delivered: an
 # interrupted or refused run must not teach the next projection what it costs.
 if [ "$EXIT_CODE" -eq 0 ] && [ -n "$RESULT_CAPTURE" ] && [ -s "$RESULT_CAPTURE" ] && [ -d "$RESULT_DIR" ]; then
-    python3 "$PLUGIN_DIR/scripts/persist_run_baseline.py" \
+    python3 "$PLUGIN_DIR/scripts/model/persist_run_baseline.py" \
         --output-dir "$RESULT_DIR" --cost-from-result "$RESULT_CAPTURE" --quiet 2>/dev/null || true
 fi
 
@@ -1351,7 +1351,7 @@ fi
 # .qa-secret-scan.json gate artifact exists. Fails closed if a raw value somehow
 # survives redaction.
 if [ "$SKILL" = "create-threat-model" ] && [ $EXIT_CODE -eq 0 ] && [ -d "$OUTPUT_PATH" ]; then
-    REDACT_SCRIPT="$PLUGIN_DIR/scripts/redact_known_secrets.py"
+    REDACT_SCRIPT="$PLUGIN_DIR/scripts/validators/redact_known_secrets.py"
     if [ -f "$REDACT_SCRIPT" ]; then
         if ! python3 "$REDACT_SCRIPT" --repo-root "${REPO_PATH:-.}" --output-dir "$OUTPUT_PATH" --write-scan-json; then
             err "exact-value secret redaction left a residual raw secret — see stderr above"
@@ -1361,7 +1361,7 @@ if [ "$SKILL" = "create-threat-model" ] && [ $EXIT_CODE -eq 0 ] && [ -d "$OUTPUT
 fi
 
 # ── Post-scan unmasked-secret check ────────────────────────────────
-# Runs scripts/postscan_secret_check.py over the rendered report and
+# Runs scripts/validators/postscan_secret_check.py over the rendered report and
 # headline intermediates. The rendered report + yaml are already masked
 # deterministically upstream, but the LLM-authored intermediates
 # (.recon-summary.md etc.) were only masked if the agent remembered to —
@@ -1371,7 +1371,7 @@ fi
 # verifies and only fails if masking could not neutralise something.
 # Always-on so the trusted-mode default also gets the protection.
 if [ "$SKILL" = "create-threat-model" ] && [ $EXIT_CODE -eq 0 ] && [ -d "$OUTPUT_PATH" ]; then
-    POSTSCAN_SCRIPT="$PLUGIN_DIR/scripts/postscan_secret_check.py"
+    POSTSCAN_SCRIPT="$PLUGIN_DIR/scripts/validators/postscan_secret_check.py"
     if [ -f "$POSTSCAN_SCRIPT" ]; then
         if ! python3 "$POSTSCAN_SCRIPT" --output-dir "$OUTPUT_PATH" --mask; then
             err "post-scan secret check failed — see stderr above"
@@ -1381,7 +1381,7 @@ if [ "$SKILL" = "create-threat-model" ] && [ $EXIT_CODE -eq 0 ] && [ -d "$OUTPUT
 fi
 
 # ── Deterministic runtime-cleanup backstop ─────────────────────────
-# runtime_cleanup.py is supposed to run from the skill's Completion Summary,
+# runtime/runtime_cleanup.py is supposed to run from the skill's Completion Summary,
 # but that is an LLM-compliance dependency that headless --full runs have been
 # observed to skip entirely (no RUNTIME_CLEANUP audit line, transient dirs left
 # behind). Run it here unconditionally on success so the audit line is always
@@ -1389,7 +1389,7 @@ fi
 # Idempotent + non-fatal; with --keep-runtime-files it self-skips and preserves
 # every transient artifact (relied on by the E2E asserts).
 if [ "$SKILL" = "create-threat-model" ] && [ $EXIT_CODE -eq 0 ] && [ -d "$OUTPUT_PATH" ]; then
-    python3 "$PLUGIN_DIR/scripts/runtime_cleanup.py" "$OUTPUT_PATH" \
+    python3 "$PLUGIN_DIR/scripts/runtime/runtime_cleanup.py" "$OUTPUT_PATH" \
         --stage post-qa ${KEEP_RUNTIME_FILES_FLAG:-} 2>/dev/null || true
 fi
 

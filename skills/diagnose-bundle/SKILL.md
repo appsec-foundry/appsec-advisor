@@ -1,6 +1,6 @@
 ---
 name: diagnose-bundle
-description: Maintainer/dev skill that triages an anonymised diagnostic bundle (appsec-diag-*.tgz, produced by scripts/diagnostic_bundle.py) a user sent after a pipeline failure. Runs the deterministic inspect, then cross-references the plugin source (scripts/, compact runtimes, agents/, AGENTS.md) and known-bug history to produce a grounded root-cause hypothesis. Does NOT re-run the pipeline and never needs the user's repo.
+description: Maintainer/dev skill that triages an anonymised diagnostic bundle (appsec-diag-*.tgz, produced by scripts/runtime/diagnostic_bundle.py) a user sent after a pipeline failure. Runs the deterministic inspect, then cross-references the plugin source (scripts/, compact runtimes, agents/, AGENTS.md) and known-bug history to produce a grounded root-cause hypothesis. Does NOT re-run the pipeline and never needs the user's repo.
 ---
 
 # diagnose-bundle
@@ -9,7 +9,7 @@ A user hit a pipeline error and sent you an **anonymised** diagnostic bundle
 (`appsec-diag-<id>.tgz`). It contains only versions, run shape (phases reached,
 stage timings, aggregate counts), a metadata-only file inventory, and scrubbed
 logs — never their results, findings, or source (see
-`scripts/diagnostic_bundle.py`). Your job: turn those facts into a root-cause
+`scripts/runtime/diagnostic_bundle.py`). Your job: turn those facts into a root-cause
 hypothesis by binding them to **this** plugin's code and bug history.
 
 The leverage is that you run inside the `appsec-advisor` repo: the bundle gives
@@ -47,7 +47,7 @@ Read the bundle **in memory** — do NOT `tar -x` it to disk; a hand-crafted
 bundle could path-traverse on extraction. `inspect` reads it safely.
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/diagnostic_bundle.py" inspect \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/diagnostic_bundle.py" inspect \
   --bundle "$BUNDLE" --logs 40
 INSPECT_EXIT=$?
 [ "$INSPECT_EXIT" -ne 0 ] && { echo "diagnose-bundle: inspect failed ($INSPECT_EXIT)"; exit "$INSPECT_EXIT"; }
@@ -65,8 +65,8 @@ Bind the symptom to the mechanism. From the inspect output, take the
 entry** (a finding sidecar that is `0 B`, missing, or implausibly large), then:
 
 1. **Phase/component → producer.** Map the phase to the controller boundary and
-   its registered producer (e.g. merge → `scripts/build_threat_model_yaml.py`;
-   compose → `compose_threat_model.py`). Use
+   its registered producer (e.g. merge → `scripts/model/build_threat_model_yaml.py`;
+   compose → `renderers/compose_threat_model.py`). Use
    `docs/internal/contracts/orchestration-actions.md`, the compact runtime
    instruction file, and each agent's frontmatter for its role and turn budget.
 2. **Error signature → code.** `Grep` the repo for the distinctive tokens of the

@@ -5,7 +5,7 @@ Canonical form for every threat's `title` field. Read this before authoring titl
 > **Deterministically enforced — authoring is a soft guide, not the guard.**
 > The rules below are the authoring target, but Stage-1 titles drift under turn
 > pressure (verbose `via <impl>` phrasing, embedded files, crammed parameters).
-> `scripts/emit_clean_finding_titles.py` (auto-emitter pass) **normalizes every
+> `scripts/model/emit_clean_finding_titles.py` (auto-emitter pass) **normalizes every
 > title** to a weakness class plus a location only for one-instance findings
 > (stored form; rendered as
 > `<Weakness class> (<file>)` in cross-references, bare weakness in the §8
