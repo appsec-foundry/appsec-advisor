@@ -444,7 +444,6 @@ GROUPS = {
         coverage_checks
         discover_identity_providers
         embedded_store_access
-        extract_data_relations
         finalize_component_inventory
         flow_route_auth
         load_related_repos
@@ -4094,15 +4093,6 @@ SOURCE_TESTS = {
         verify_run_costs
         write_stride_progress
         refusal_aware_stride
-    """),
-    "scripts/analyzers/extract_data_relations.py": _tests("""
-        check_target_specificity
-        extract_data_relations
-        gate_preconditions
-        orchestration_controller
-        requirements_verification
-        run_path_guard
-        stride_outputs
     """),
     "scripts/runtime/extract_report_section.py": _tests("""
         check_target_specificity

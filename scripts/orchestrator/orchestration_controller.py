@@ -4431,15 +4431,6 @@ def context_v2_begin(output_dir: Path) -> dict[str, Any]:
             (output_dir / ".recon-patterns.json").unlink(missing_ok=True)
             receipts.append("analyzers/recon_patterns.py: best-effort failure")
             _append_event(output_dir, "ORCHESTRATION_GATE_WARN", str(exc), level="WARN")
-        # Without --output the script defaults into the scanned repository.
-        fragments = output_dir / ".fragments"
-        fragments.mkdir(parents=True, exist_ok=True)
-        _best_effort_script(
-            output_dir,
-            "analyzers/extract_data_relations.py",
-            [str(repo_root), "--output", str(fragments / "data-relations.json"), "--quiet"],
-            receipts,
-        )
 
     if not context_skip:
         _run_script(
