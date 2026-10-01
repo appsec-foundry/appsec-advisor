@@ -158,9 +158,7 @@ def _scenario_for_threat(
     hard-failed the post-Stage-1 gate for the whole run (juice-shop 2026-07-27,
     ARCH-TLS-001 → T-070).
 
-    Synthesised the same way the sibling coverage emitter does it
-    (`analyzers/coverage_checks.py` suggested_threat.scenario): an f-string over fields
-    the record already carries. No LLM, no new YAML field to keep in sync.
+    Synthesised as an f-string over fields the record already carries. No LLM, no new YAML field to keep in sync.
 
     The matched `signal` text is deliberately NOT interpolated: ARCH-SECRET-001
     matches on literal key/credential material, and this string is rendered

@@ -18,8 +18,7 @@ distinct per ``arch.md`` §"Threat-Hypothesis-Regeln":
 
   * ``architectural-anti-pattern`` / ``coverage-gap``
     Requirements/blueprint anti-patterns and recon coverage gaps,
-    produced by the architecture analyst and
-    ``analyzers/coverage_checks.py``.
+    produced by the architecture analyst.
 
   * ``architecture-coverage`` / ``threat-hypothesis``
     Phase-2.6 deterministic architecture-coverage engine output:

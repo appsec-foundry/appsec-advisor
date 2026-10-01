@@ -45,7 +45,7 @@ template, emitted deterministically on context-v2, and validated through
 | `threat-model.output.schema.yaml` | `$OUTPUT_DIR/threat-model.yaml` | orchestrator Phase 10/11 | CI/CD, DefectDojo, SonarQube, cross-repo discovery |
 | `known-threats.schema.yaml` | `docs/known-threats.yaml` (user-supplied input) | analyzed team | `contexts/build_threat_modeling_context.py`, then the focused STRIDE analyzer |
 | `related-repos.schema.yaml` | `docs/related-repos.yaml` (user-supplied input) | analyzed team | `scripts/contexts/load_related_repos.py` |
-| `cross-repo-register.schema.json` | `$OUTPUT_DIR/.cross-repo-register.json` | `scripts/contexts/build_cross_repo_register.py` | STRIDE dispatcher, `coverage_checks.check_cross_repo`, Phase 11 §5/§7 renderer |
+| `cross-repo-register.schema.json` | `$OUTPUT_DIR/.cross-repo-register.json` | `scripts/contexts/build_cross_repo_register.py` | STRIDE dispatcher, Phase 11 §5/§7 renderer |
 | `actors-repo.schema.yaml` | `<repo>/.appsec/actors.yaml` | analyzed team | `scripts/model/resolve_actors.py` |
 | `actors-discovered.schema.yaml` | `$OUTPUT_DIR/.actors-discovered.json` | `appsec-actor-discoverer` | `scripts/model/resolve_actors.py` |
 | `actors-merged-static.schema.yaml` | `$OUTPUT_DIR/.actors-merged-static.json` | `scripts/model/resolve_actors.py` | `appsec-actor-discoverer` |

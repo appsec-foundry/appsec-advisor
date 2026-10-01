@@ -161,7 +161,7 @@ Removing an entry means listing it here in the same change.
 
 | ID | Decision | Guard | Rationale |
 |---|---|---|---|
-| FE-1 | CVSS is assigned only to evidence-backed dependency and known-vulnerability findings and to eligible STRIDE CWEs with file-and-line evidence | `tests/test_cvss_eligibility.py`, `test_critical_without_cvss_follows_cvss_eligibility` | `data/cvss-eligible-cwes.yaml` |
+| FE-1 | CVSS is assigned only to evidence-backed dependency and known-vulnerability findings and to eligible STRIDE CWEs with file-and-line evidence | `tests/test_cvss_eligibility.py` | `data/cvss-eligible-cwes.yaml` |
 | FE-2 | A control is rated only from what the pipeline actually invokes — never from a tool name in a comment, a step label, or string data | `tests/test_assess_supply_chain_controls.py` *(name-level check open)* | `CHANGELOG.md` |
 | FE-3 | Client-side code is not modelled as a trust zone | `tests/test_prepare_trust_boundary_context.py` *(name-level check open)* | `CHANGELOG.md` |
 | FE-4 | Findings require target evidence from source, configuration, git history or target-owned declarations; validated external context may seed only an unverified hypothesis, and walkthroughs, solution guides or bundled vulnerability prose seed nothing | `test_cross_repo_mismatch_requires_target_evidence` | `docs/internal/analysis/analysis-external-threat-model-ingestion.md` |

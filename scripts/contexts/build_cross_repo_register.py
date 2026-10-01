@@ -17,7 +17,7 @@ filesystem for (2), then emits a unified register at
 ``schemas/cross-repo-register.schema.json``.
 
 Downstream consumers (``contexts/slice_cross_repo_for_component.py``,
-``coverage_checks.check_cross_repo``, Phase 11 §5/§7 renderers) read the
+Phase 11 §5/§7 renderers) read the
 register instead of re-parsing rendered Markdown or duplicating the discovery
 logic.
 

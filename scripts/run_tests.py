@@ -54,7 +54,6 @@ GROUPS = {
         actor_presentation
         annotate_architecture
         annotate_sequences
-        architect_structural_checks
         compose_depth_scoped_crossrefs
         compose_services
         deployment_inventory
@@ -287,7 +286,6 @@ GROUPS = {
         apply_prose_fixes
         apply_prose_fixes_coverage
         apply_repair_plan
-        architect_structural_checks
         build_editorial_context
         check_editorial_diff
         check_inline_shortcut
@@ -441,7 +439,6 @@ GROUPS = {
         classify_component
         context_prompt_budgets
         context_routing
-        coverage_checks
         discover_identity_providers
         embedded_store_access
         finalize_component_inventory
@@ -991,7 +988,6 @@ SOURCE_TESTS = {
         actor_presentation
         agent_definitions
         arch_coverage_bridge
-        architect_structural_checks
         authz_confirm
         build_post_stride_contexts
         build_threat_model_yaml
@@ -1409,7 +1405,6 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/renderers/walkthrough_renderer.py": _tests("""
-        architect_structural_checks
         attack_step_quality
         check_target_specificity
         compose_threat_model
@@ -2157,7 +2152,6 @@ SOURCE_TESTS = {
     "scripts/renderers/_severity_rollup.py": _tests("""
         actor_presentation
         analysis_version_upgrade
-        architect_structural_checks
         assert_completeness
         build_threat_model_yaml
         business_relevance
@@ -2762,7 +2756,6 @@ SOURCE_TESTS = {
         agent_config_checks
         agent_logger_cov
         arch_coverage_bridge
-        architect_structural_checks
         authz_confirm
         auto_emitter_pass
         build_threat_model_yaml
@@ -3147,15 +3140,6 @@ SOURCE_TESTS = {
         merge_threats
         requirements_verification
         run_path_guard
-        stride_outputs
-    """),
-    "scripts/analyzers/architect_structural_checks.py": _tests("""
-        architect_structural_checks
-        check_target_specificity
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        runtime_doc_cli_contract
         stride_outputs
     """),
     "scripts/analyzers/architecture_coverage_checks.py": _tests("""
@@ -3640,15 +3624,6 @@ SOURCE_TESTS = {
         run_headless_completion
         run_path_guard
         skill_watchdog
-        stride_outputs
-    """),
-    "scripts/analyzers/coverage_checks.py": _tests("""
-        check_target_specificity
-        coverage_checks
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        single_repo_no_cross_repo_regression
         stride_outputs
     """),
     "scripts/runtime/cutoff_cause.py": _tests("""

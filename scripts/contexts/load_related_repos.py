@@ -7,8 +7,8 @@ cross-repo dependencies). Validates the user-authored YAML against
 ``schemas/related-repos.schema.yaml``, resolves each entry's threat-model
 reference (relative path / absolute path / http(s) URL), reads metadata and
 interface-relevant findings, and emits a single structured JSON document
-that downstream stages (cross-repo register, STRIDE dispatch slice,
-coverage_checks) consume.
+that downstream stages (cross-repo register, STRIDE dispatch slice)
+consume.
 
 Hardening over the previous ``curl -sf --max-time 10`` agent flow:
 

@@ -1,9 +1,6 @@
 # OWASP Top 10 (2025) → CWE mapping.
 #
-# Used by scripts/analyzers/coverage_checks.py (Phase 9 Coverage Check A) to detect
-# OWASP categories that have zero threats after STRIDE merge. A missing
-# category produces a coverage-gap threat so downstream consumers see that
-# the category was considered and found absent — not silently overlooked.
+# Reference data: no script loads this file.
 #
 # Edition: OWASP Top 10:2025 (8th installment), published at
 # https://owasp.org/Top10/2025/. Key deltas vs 2021:
