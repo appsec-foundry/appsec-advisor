@@ -603,7 +603,7 @@ def mask_text(text: str) -> tuple[str, list[str]]:
     unmasked_secrets gate. Returns ``(masked_text, applied_pattern_names)``.
 
     This is the single masking source of truth shared by the composer (rendered
-    markdown) and scripts/mask_secrets.py (threat-model.yaml evidence excerpts),
+    markdown) and mask_value() (threat-model.yaml evidence excerpts),
     so detection and redaction can never drift apart again."""
     if not text:
         return text, []
