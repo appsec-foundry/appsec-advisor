@@ -103,7 +103,8 @@ def is_safe_to_read(path: Path, repo_root: Path) -> bool:
     work.
     """
     try:
-        if not path.exists():
+        # A directory, FIFO or device is never read: a FIFO blocks the reader.
+        if not path.exists() or not path.is_file():
             return False
         if path.is_symlink():
             target = path.resolve(strict=False)
