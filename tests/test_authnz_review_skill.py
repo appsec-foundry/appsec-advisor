@@ -18,11 +18,13 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 SKILL = ROOT / "skills" / "authnz-review" / "SKILL.md"
+SAVE_AND_EXPORT = SKILL.parent / "save-and-export.md"
 ORG_PROFILE = ROOT / "tests" / "fixtures" / "org-profiles" / "acme" / "org-profile.yaml"
 
 
 def _skill_text() -> str:
-    return SKILL.read_text(encoding="utf-8")
+    """The skill contract: SKILL.md plus the save/export steps it loads on demand."""
+    return SKILL.read_text(encoding="utf-8") + SAVE_AND_EXPORT.read_text(encoding="utf-8")
 
 
 def _authnz_report() -> dict:

@@ -60,53 +60,13 @@ performing the described action. No trailing summaries, no preamble, no
 
 ---
 
-## `--help` — inline help (early exit)
+## `--help` — help (early exit)
 
-If the user's arguments contain `--help` or `-h`, print this block verbatim and exit.
+If the user's arguments contain `--help` or `-h`, run the following Bash command,
+output its stdout verbatim, then exit. Do not read any other file besides `HELP.txt`.
 
-```
-/appsec-advisor:authnz-review — Cross-component AuthN/AuthZ review
-
-USAGE
-  /appsec-advisor:authnz-review [--repo <path>] [--requirements <path>]
-                                 [--with-threat-model] [--save] [--gate]
-                                 [--pentest-tasks | --no-pentest-tasks]
-                                 [--pentest-format <fmt>] [--pentest-target <url>]
-                                 [--slug <value>]
-
-OPTIONS
-  --repo <path>           Repository root to analyze (default: current directory)
-  --requirements <path>   Requirements YAML;
-                          findings are annotated with violated requirement IDs
-  --with-threat-model     Deduplicate EoP findings already covered by a prior
-                          STRIDE run in docs/security/
-  --save                  Write authnz-report.md + .authnz-report.json to
-                          docs/security/ in addition to console output
-  --pentest-tasks         Write docs/security/pentest-tasks-authnz.yaml —
-                          verification tasks for an AI pentest agent, one per
-                          finding with an eligible CWE and file:line evidence
-  --no-pentest-tasks      Skip that export even if the org profile enables it
-  --pentest-format <fmt>  generic (default) or strix
-  --pentest-target <url>  Base URL of the running target, e.g.
-                          http://localhost:3000
-  --slug <value>          Name the task file pentest-tasks-authnz-<value>.yaml,
-                          matching create-threat-model --slug; 1-64 characters
-                          from [A-Za-z0-9._-]
-
-  The three pentest values default to the organization profile's outputs
-  block (pentest_tasks, pentest_format, pentest_target) when one is active.
-  --gate                  Exit non-zero when Critical or High findings exist
-
-WHAT IT ANALYZES
-  Phase 1  Route inventory         — every route, its auth middleware, handler
-  Phase 2  Auth-check scan         — JWT misconfig, mass assignment, missing guards
-  Phase 3  IDOR/BOLA confirmation  — handler body reads to confirm suspects
-  Phase 4  Cross-component reasoning — RBAC matrix, escalation chains, AuthN↔AuthZ
-  Phase 5  Requirements annotation — maps findings to violated req IDs (opt-in)
-
-EXIT CODES
-  0   No Critical/High findings (or --gate not passed)
-  1   Critical or High findings found (only with --gate)
+```bash
+cat "<base-dir>/HELP.txt"
 ```
 
 ---
@@ -507,88 +467,11 @@ When total findings == 0:
 
 ---
 
-## Step 9 — Save files (only when --save)
+## Step 9 — Save files and pentest tasks (only when --save or --pentest-tasks)
 
-Only when `SAVE_FILES=true`.
-
-Write `$OUTPUT_DIR/authnz-report.md` using the same circles and bold/link
-conventions as the console output, with full Markdown heading structure:
-
-```markdown
-# AuthN/AuthZ Review — <repo name>
-
-**Repository:** <REPO_ROOT>
-**Date:** <ISO date>
-**Requirements:** <REQUIREMENTS_PATH or: none>
-
-## Summary
-
-| Severity  | Count |
-|-----------|------:|
-| 🔴 Critical | <N> |
-| 🟠 High     | <N> |
-| 🟡 Medium   | <N> |
-| 🔵 Low      | <N> |
-
-| Signal                 | Count |
-|------------------------|------:|
-| IDOR confirmed         | <N>   |
-| Missing auth (routes)  | <N>   |
-| JWT misconfigurations  | <N>   |
-| Privilege escalation   | <N>   |
-
-## AuthN → AuthZ Chains
-<!-- omit section when no chains -->
-...
-
-## Critical and High Findings
-...
-
-## Medium Findings
-...
-
-## Low Findings
-...
-```
-
-Write `$OUTPUT_DIR/.authnz-report.json` from `REPORT` (serialize to JSON).
-
-Print:
-```
-  Saved → docs/security/authnz-report.md
-  Saved → docs/security/.authnz-report.json
-```
-
----
-
-## Step 9b — Pentest tasks (only when --pentest-tasks)
-
-Only when `PENTEST_TASKS=true`. Run:
-
-```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/renderers/render_pentest_tasks.py" \
-  --authnz "$OUTPUT_DIR/.authnz-report.json" \
-  --route-inventory "$OUTPUT_DIR/.route-inventory.json" \
-  --output "$REPO_ROOT/docs/security/$PENTEST_FILE" \
-  --dialect "$PENTEST_FORMAT" \
-  --project "<repo name>"
-```
-
-Append `--target-url "$PENTEST_TARGET"` when `PENTEST_TARGET` is not `none`.
-The exporter emits one verification task per finding whose CWE is on
-`data/pentest-eligible-cwes.yaml` and whose evidence carries file **and**
-line — design-level findings without code evidence are dropped, so the task
-count is normally lower than the finding count. Every task carries a
-`safety` block declaring the run read-only; the target URL is written to
-`meta.target.base_url` and never contacted.
-
-If non-zero exit, print the stderr and continue to Step 10 — a failed export
-does not invalidate the review.
-
-Print (task count from the exporter's `VALID: wrote <N> pentest tasks` line):
-```
-  Saved → docs/security/<PENTEST_FILE>  (<N> tasks, <PENTEST_FORMAT>, target <PENTEST_TARGET or: none>)
-```
+When `SAVE_FILES=true` or `PENTEST_TASKS=true`, read `<base-dir>/save-and-export.md`
+in full and follow it: Step 9 writes the Markdown and JSON report, Step 9b exports
+the pentest task file. Otherwise skip to Step 10.
 
 ---
 

@@ -12,6 +12,7 @@ The rules below are deliberately cheap and total: every skill, every run.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -112,3 +113,32 @@ def test_plugin_root_is_not_discovered_by_filesystem_search():
 
     searching = [p.parent.name for p in SKILL_FILES if "find /root /home /opt" in p.read_text(encoding="utf-8")]
     assert not searching, f"skills resolve CLAUDE_PLUGIN_ROOT by filesystem search: {searching}"
+
+
+# A skill names a file it loads on demand as `<base-dir>/<path>`; `<base-dir>/..`
+# is the plugin-root fallback, not a skill file.
+_BASE_DIR_REF = re.compile(r"<base-dir>/(?!\.\.)([A-Za-z0-9_./-]+)")
+
+
+@pytest.mark.parametrize("skill_file", SKILL_FILES, ids=lambda p: p.parent.name)
+def test_skill_on_demand_files_exist(skill_file: Path):
+    """A renamed or deleted reference file only fails when a user reaches that
+    branch (`--help`, `--save`, a mode), so every `<base-dir>/...` path a
+    SKILL.md names must resolve inside its own skill directory."""
+    skill_dir = skill_file.parent
+    refs = set(_BASE_DIR_REF.findall(skill_file.read_text(encoding="utf-8")))
+    missing = sorted(ref for ref in refs if not (skill_dir / ref).is_file())
+    assert not missing, f"{skill_dir.name}: SKILL.md names missing files: {missing}"
+    escaping = sorted(ref for ref in refs if skill_dir.resolve() not in (skill_dir / ref).resolve().parents)
+    assert not escaping, f"{skill_dir.name}: on-demand files outside the skill directory: {escaping}"
+
+
+@pytest.mark.parametrize(
+    "slug", ["ask-threat-model", "audit-security-requirements", "authnz-review", "review-threat-model"]
+)
+def test_help_lives_in_help_txt(slug: str):
+    """Help text is loaded only on `--help`; inlined in SKILL.md it costs context on every call."""
+    text = (SKILLS_DIR / slug / "SKILL.md").read_text(encoding="utf-8")
+    assert 'cat "<base-dir>/HELP.txt"' in text
+    assert "\nUSAGE\n" not in text, f"{slug}: inline help USAGE block belongs in HELP.txt"
+    assert (SKILLS_DIR / slug / "HELP.txt").read_text(encoding="utf-8").startswith(f"/appsec-advisor:{slug} ")

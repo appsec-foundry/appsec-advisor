@@ -76,44 +76,15 @@ If a request is actually an **action** ("fix F-003", "accept this risk",
 question part, then point the user at the right sibling skill (see Plugin
 knowledge → Sibling skills). Do not edit code or regenerate anything here.
 
-## `--help` — inline help (early exit)
+## `--help` — help (early exit)
 
 If the user's arguments contain `--help` or `-h` **as a flag** (not as part of a
-natural-language question), print this block verbatim and exit.
+natural-language question), run the following Bash command, output its stdout
+verbatim, then exit. Do not read any other file besides `HELP.txt`.
 
+```bash
+cat "<base-dir>/HELP.txt"
 ```
-/appsec-advisor:ask-threat-model — Ask a question about your threat model.
-
-USAGE
-  /appsec-advisor:ask-threat-model [your question]  [--repo <path>] [--output <path>]
-  /appsec-advisor:ask-threat-model --grep <term>    [--severity <level>] [--component <name>] [--evidence-state <state>] [--repo <path>] [--output <path>] [--json]
-  /appsec-advisor:ask-threat-model --id <F-003>     [--repo <path>] [--output <path>] [--json]
-
-WHAT IT DOES
-  Answers a free-form question about the committed threat-model.yaml, grounded
-  in the model and citing F-ids. Read-only: never analyzes code, re-scores,
-  spawns agents, or writes files. Also answers "how do I read / act on this"
-  questions about the plugin itself.
-
-FLAGS
-  --repo <path>     Repository to inspect (default: current working dir)
-  --output <path>   Output directory holding the model (default: <repo>/docs/security)
-  --grep <term>     Pre-filter findings/mitigations to those matching <term>
-  --severity <level> Filter findings to Critical, High, Medium, Low, or Informational
-  --component <name> Filter findings by component id or name
-  --evidence-state <state>
-                    Filter findings by evidence state (for example verified or unchecked)
-  --id <id>         Look one identifier up precisely (F-/T-/M-/W-NNN), with its
-                    cross-links (finding <-> mitigation <-> weakness)
-  --json            Emit the facts index as JSON (for tooling)
-
-RELATED
-  /appsec-advisor:show-threat-model     Print the summary block (display only)
-  /appsec-advisor:review-threat-model   Triage: apply fixes / accept risk / plan
-  /appsec-advisor:create-threat-model   Generate or update the model
-```
-
-After printing the help block, exit. Do not proceed.
 
 ## Step 1 — Parse arguments (do NOT reject the question text)
 

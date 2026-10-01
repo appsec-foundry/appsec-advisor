@@ -1,0 +1,54 @@
+/appsec-advisor:review-threat-model — Triage an existing threat model.
+
+USAGE
+  /appsec-advisor:review-threat-model [--repo <path>] [--output <path>] [--plan <path>]
+
+FLAGS
+  --repo <path>     Repository the model belongs to (default: current working dir)
+  --output <path>   Directory holding threat-model.yaml (default: <repo>/docs/security)
+  --plan <path>     Where to write remediation-plan.md
+                    (default: <repo>/.appsec-triage/remediation-plan.md)
+
+WHAT IT DOES
+  * Opens a triage console: a landing screen (freshness — is the model still
+    current? — backlog by priority + severity mix + the top "worst case if
+    nothing changes" scenarios), then a menu.
+  * You first choose a mode: "Just look around" (browse the findings read-only —
+    by severity, security aspect, requirement, or control posture — no decisions,
+    no changes), "Fix or accept findings now" (apply the code fix for findings you
+    pick — or accept the risk instead — one at a time for review, no plan), or
+    "Build a remediation plan" (decide fix / accept per finding →
+    remediation-plan.md, never changes code).
+  * At any point you can Discuss a finding by id (F-/T-/M-/W-NNN) — a read-only
+    aside to ask why it rates as it does, whether it's real, or how to fix it —
+    without leaving the console. Changes nothing.
+  * At any menu, `back` goes up one level and `modes` returns to the mode picker;
+    going back never writes anything.
+  * The two action modes find and select findings the same way — a recommended
+    "fix first" set (shown with criticality, type and file:line), a pick list, or
+    browse by severity / type / requirement / unmitigated; posture ratings orient
+    Plan and look-around modes.
+  * You select findings/mitigations by id or range (e.g. `T-001..T-005, T-012`
+    or `M-003..M-009`). In Plan mode the selection is decided (mark to fix /
+    accept-risk); in Fix mode it is fixed in code. accept-risk requires a
+    rationale; mark-to-fix takes an optional owner + target.
+  * When explicit custom requirements were integrated, finding rows carry a
+    [req: …] badge and a By-requirement lens (never for the OWASP baseline).
+  * Persists your decisions to <repo>/.appsec-triage/triage.yaml (survives re-scan).
+  * Renders a grouped remediation-plan.md with the model's remediation steps.
+  * In "Fix or accept findings now" mode, applies the code changes for the findings you
+    select — one at a time, for review — based on their remediation.
+  * After an accept-risk, optionally (opt-in) records the accepted risks in
+    <repo>/docs/known-threats.yaml as status: accepted, so the next
+    create-threat-model scan skips them (not re-raised) and shows them as accepted.
+
+DOES NOT
+  * Regenerate or re-score the threat model (use create-threat-model).
+  * Judge the model's quality (use eval-threat-model).
+  * Write back to threat-model.yaml, or promote accepted risks without your
+    explicit opt-in.
+  * Bulk-apply code changes blindly, commit, or touch findings you did not select.
+
+RELATED
+  /appsec-advisor:show-threat-model     Read-only overview by severity
+  /appsec-advisor:create-threat-model   Generate or update the threat model
