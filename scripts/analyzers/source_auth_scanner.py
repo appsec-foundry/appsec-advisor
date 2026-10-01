@@ -14,6 +14,12 @@ browser-rendering, interpreter, resource, or action sink without the matching
 local guard. Multi-file, reflective, or otherwise ambiguous flows remain for
 the LLM05/LLM06 STRIDE lens instead of being promoted speculatively.
 
+A second pre-pass (`_scan_expression_inputs`) follows request input and
+record reads within one Node handler into a `$where` predicate, code
+execution, or template compilation (INJ-NODE-006/007/008) and emits them as
+insecure practices, not confirmed exploits. `--check-prefix` runs only the
+matching catalog checks and skips both pre-passes.
+
 Counter-pattern scopes:
     line    — only the matched line is searched
     window  — match_line .. match_line + counter_window  (inclusive)
@@ -1425,10 +1431,14 @@ def _scan_llm_output_file(file_abs: Path, file_rel: str) -> list[Finding]:
 
 
 def _title_with_location(check: Check, file: str, line: int) -> str:
-    # Mirrors the "<weakness class> — <file[:line]>" convention used by the
-    # plugin's threat titles (see feedback_threat_model_finding_titles.md).
+    # "<check name> — <file>:<line>": scripts/model/emit_clean_finding_titles.py
+    # strips the locator to the form in agents/shared/finding-title-contract.md.
     return f"{check.name} — {file}:{line}"
 
+
+# ---------------------------------------------------------------------------
+# Node input-to-expression checks (INJ-NODE-006/007/008)
+# ---------------------------------------------------------------------------
 
 _REQUEST_INPUT = re.compile(r"\b(?:req|request)\.(?:body|query|params|headers)\b")
 _RECORD_READ = re.compile(r"\b[\w.]+\.(?:findByPk|findById|findOne|findUnique)\s*\(")
@@ -1584,6 +1594,11 @@ def _scan_expression_inputs(file_abs: Path, file_rel: str) -> list[Finding]:
 
 def _cut_condition(line: str) -> str:
     return line.strip()[:240]
+
+
+# ---------------------------------------------------------------------------
+# Catalog scan
+# ---------------------------------------------------------------------------
 
 
 def _strong_password_rejection(lines: list[str], idx: int, matched: str) -> bool:

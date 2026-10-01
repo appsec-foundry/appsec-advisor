@@ -8,6 +8,15 @@ candidates remain separate actors and produce a team question.
 
 The emitter preserves canonical actor resolution and operator pins. Its
 fallback uses the same resolver for runs without actor resolution.
+
+Inputs: `<output_dir>/.route-inventory.json` and
+`<output_dir>/.source-auth-findings.json`, both optional; a file that fails
+its schema is ignored. `model/resolve_actors.py` calls
+`load_registration_inputs` and `resolve_open_registration` directly.
+
+Output: the CLI (`<output_dir>`, run by `auto_emitter_pass.sh`) sets
+`meta.open_user_registration` in `<output_dir>/threat-model.yaml` in place.
+The `overview_actor_*` helpers project the result for the renderers.
 """
 
 from __future__ import annotations

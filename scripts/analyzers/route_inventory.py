@@ -1,30 +1,35 @@
 #!/usr/bin/env python3
 """
-analyzers/route_inventory.py — deterministic route-extractor MVP.
+analyzers/route_inventory.py — deterministic route extractor.
 
 Writes $OUTPUT_DIR/.route-inventory.json conforming to
 schemas/route-inventory.schema.json. Consumed by Phase 6
-(attack_surface[]) and scripts/analyzers/architecture_coverage_checks.py.
+(attack_surface[]), scripts/analyzers/architecture_coverage_checks.py and
+scripts/analyzers/authz_confirm.py.
 
-Scope (per arch.md §Route Inventory):
+Route extractors:
   * Express / Koa / Fastify / Hapi / NestJS pattern: app.METHOD(...) and decorators
   * Python FastAPI / Flask / Django: @app.METHOD / @router.METHOD / path() / url()
   * Spring / JAX-RS: @GetMapping / @RequestMapping / @Path
   * ASP.NET minimal APIs: app.MapGet / MapPost / MapPut / MapDelete
   * GraphQL SDL operations: type Query / Mutation / Subscription fields
+Go, Ruby and PHP files have no route extractor; they are read only by the
+path-prefix guard-mount scan.
 
-Out of scope (NOT MVP):
-  * Cross-file router composition / mounting
+Out of scope:
+  * Cross-file router composition (a mount prefix is not joined to the route path)
   * Dynamic path construction
   * Object-level authorization, tenant scope
   * Full control-flow analysis
 
-AuthN / AuthZ are SIGNALS, never verdicts. The default is `unknown`;
-`absent` is only emitted when the engine actively saw the route handler
-declared at module level with no candidate guard in the file.
-A guard counts only for the registration it belongs to (FE-10). The
-`unknown-is-not-absent` gate is downstream policy (handled in
-analyzers/architecture_coverage_checks.py).
+AuthN / AuthZ are SIGNALS, never verdicts. The default is `unknown`.
+A guard counts only for the registration it belongs to (FE-10); a guard
+mounted on a path prefix in any scanned file lifts matching routes to
+`middleware_present`. `analyzers/handler_resolver.py` then classifies the
+resolved handler chain (FE-14): `verified` sets `present`, and `absent` is
+emitted only when the resolver returns `none` or `decode_only` for a route
+still `unknown`. The `unknown-is-not-absent` gate is downstream policy
+(handled in analyzers/architecture_coverage_checks.py).
 
 CLI:
     python3 scripts/analyzers/route_inventory.py --repo-root <repo> --output-dir <dir>

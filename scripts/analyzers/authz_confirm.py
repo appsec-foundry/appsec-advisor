@@ -8,11 +8,13 @@ key on an *inline* request marker (`req.params`). Other stacks have no such
 inline marker, so a flat regex would flag every `findById(id)` call.
 
 This module closes that gap without high false positives by REUSING the
-multi-language `analyzers/route_inventory.py` output (`.route-inventory.json`, which parses
-Express/Fastify/NestJS/Flask/FastAPI/Django/Spring/JAX-RS/Go/GraphQL into
-per-route `handler_file:handler_line` + `missing_authz_suspect` /
-`missing_auth_suspect` flags) and then reading the handler *function body* to
-confirm the gap:
+multi-language `analyzers/route_inventory.py` output (`.route-inventory.json`; its
+module docstring lists the supported frameworks) for per-route
+`handler_file:handler_line` + `missing_authz_suspect` / `missing_auth_suspect`
+flags, and then reading the handler *function body* to confirm the gap. For the
+frameworks in `handler_resolver.RESOLVED_FRAMEWORKS` the body comes from
+`HandlerResolver.handler_code` (the registration line is not the handler);
+other frameworks read the function at `handler_line`:
 
   * `missing_authz_suspect` (authn present, no authz signal, `:id` path param —
     the BOLA/IDOR primitive) → emit **AUTHZ-301** (CWE-639) UNLESS the handler

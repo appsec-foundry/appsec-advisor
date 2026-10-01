@@ -1,41 +1,42 @@
-"""M21 — Extract ORM model + route relationship map for data-persistence STRIDE.
+"""Extract an ORM model and raw-query relationship map from JS/TS sources.
 
-Problem this solves: data-layer STRIDE analyzer is consistently the slowest
-(170s mean across 8 historical Juice-Shop runs) despite producing the
-smallest output (6.6 KB mean). The bottleneck is multi-hop reasoning:
-each SQLi-class threat requires reading model + route + raw-query call
-site + sanitization layer in `lib/`. The analyzer re-discovers these
-relationships from scratch each run.
+Scans JavaScript/TypeScript application files (tests, builds and vendored
+code excluded) with regex heuristics and no LLM calls. Import patterns detect
+Sequelize, Mongoose, TypeORM and Prisma; model definitions are extracted for
+Sequelize, Mongoose (`mongoose.model("Name", ...)`) and TypeORM only, and
+associations for Sequelize only. Route consumers are read only from
+`<REPO_ROOT>/routes/**/*.ts`.
 
-This script pre-computes the relationships in Phase 2 and writes a
-single JSON file (.fragments/data-relations.json) the data-layer STRIDE
-analyzer reads instead of greppung-by-itself.
-
-Supported ORMs: Sequelize, Mongoose, TypeORM, Prisma — detected by
-import patterns. Pure heuristics; never makes LLM calls.
-
-Output schema:
+Output (JSON):
     {
       "version": 1,
       "generated_at": "<iso-8601>",
-      "orm_detected": ["sequelize"|"mongoose"|"typeorm"|"prisma"|"none"],
+      "orm_detected": ["mongoose", "prisma", "sequelize", "typeorm"],  # sorted subset; [] when none
       "models": {
         "<model_name>": {
-          "model_file": "models/user.ts",
-          "associations": ["address", "basket"],
-          "raw_query_callers": [{"file": "routes/basketItems.ts", "line": 42, "snippet": "..."}],
-          "route_consumers": ["routes/login.ts", "routes/register.ts"]
+          "model_file": "<repo-relative path>",
+          "associations": ["<model_name>", ...],
+          "raw_query_callers": [{"file": ..., "line": ..., "snippet": ...}],
+          "route_consumers": ["<routes/*.ts path>", ...]
         }
       },
-      "raw_query_routes": [
-        {"file": "routes/basketItems.ts", "line": 42, "models": ["basket", "user"], "snippet": "..."}
-      ]
+      "raw_query_routes": [{"file": ..., "line": ..., "snippet": ...}],
+      "note": "..."  # only when no ORM is detected; models and raw_query_routes are then empty
     }
 
-CLI:
-    analyzers/extract_data_relations.py <REPO_ROOT> [--output FILE]
+`raw_query_routes` lists every raw-query call site in any scanned file.
+`raw_query_callers` holds the subset in `routes/*.ts` whose snippet names the
+model. A `routes/*.ts` file is a route consumer of every model whose name it
+contains as a word.
 
-Default output: <REPO_ROOT>/docs/security/.fragments/data-relations.json
+`scripts/orchestrator/orchestration_controller.py` runs it best-effort with
+`--output $OUTPUT_DIR/.fragments/data-relations.json`.
+
+CLI:
+    analyzers/extract_data_relations.py <REPO_ROOT> [--output FILE] [--quiet]
+
+Without --output the file is written to
+<REPO_ROOT>/docs/security/.fragments/data-relations.json.
 """
 
 from __future__ import annotations

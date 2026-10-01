@@ -12,8 +12,16 @@ regular account can exploit never names the privileged user as its attacker
 an attribution. The rules live in ``data/actor-attribution-rules.yaml`` and read only
 component zones and tiers, CWEs, evidence paths, the deterministic route
 inventory and the actors' declared access; never names or prose. The check
-runs once after the merge so every report surface projects the same
-attribution.
+runs after the merge, before any report surface reads it, so every surface
+projects the same attribution.
+
+Inputs (``reconcile_output_dir``): ``.components.json``,
+``.actors-resolved.json`` and, optionally, ``.route-inventory.json`` in the
+output directory; without components or actors nothing changes. Callers:
+``model/merge_threats.py`` (finalize) and ``model/reclassify_components.py``
+for findings whose owning component moved. Both mutate the threats in place
+and store the returned corrections as ``actor_attribution_corrections`` in
+``.threats-merged.json``.
 """
 
 from __future__ import annotations
