@@ -113,6 +113,21 @@ def test_removed_legacy_runtime_surfaces_are_absent():
     assert not (MODES_DIR / "full-scan-recommendation.md").exists()
 
 
+def test_every_watchdog_launch_outlives_the_default_background_limit():
+    # Claude Code stops a background command after 30 minutes unless its Bash
+    # timeout is raised; a stage can run longer than that.
+    launches = [
+        path
+        for path in sorted((PLUGIN_ROOT / "skills").rglob("*.md"))
+        if "skill_watchdog.py" in (text := _read(path)) and "run_in_background: true" in text
+    ]
+    assert {p.name for p in launches} >= {"SKILL-full-runtime.md", "SKILL-rerender-runtime.md"}
+    for path in launches:
+        text = " ".join(_read(path).split())
+        assert "Bash timeout `7200000`" in text, path
+        assert "`killed` notification" in text, path
+
+
 def test_agents_md_describes_the_compact_runtime_only():
     agents = _read(PLUGIN_ROOT / "AGENTS.md")
     assert "SKILL-impl.md" not in agents

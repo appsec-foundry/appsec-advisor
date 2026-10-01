@@ -242,8 +242,9 @@ or an invalid completion checkpoint, emit `runtime/stall_notice.py "$OUTPUT_DIR"
 "$OUTPUT_DIR"` and follow its action (§6). Do not re-dispatch on your own.
 
 When those instructions say to start the heartbeat watchdog, use this exact
-fixed command with `run_in_background: true` and retain its task id, which
-stays out of console text:
+fixed command with `run_in_background: true` and Bash timeout `7200000`, and
+retain its task id, which stays out of console text. A `killed` notification
+before the stage ends means restart it unchanged:
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/skill_watchdog.py" "$OUTPUT_DIR" \

@@ -120,7 +120,8 @@ Read `SKILL-thin-stage2.md` in full and follow it. Do not load any Stage-1
 runtime. When a stage runtime says to start the heartbeat, run `python3
 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/skill_watchdog.py" "$OUTPUT_DIR" --plugin-root
 "$CLAUDE_PLUGIN_ROOT" --heartbeat-interval 60` with `run_in_background: true`
-and keep its task id. The final heartbeat is `python3
+and Bash timeout `7200000`, and keep its task id; restart it unchanged on a
+`killed` notification before the stage ends. The final heartbeat is `python3
 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock"
 --heartbeat --phase=skill`; then stop the watchdog with `TaskStop`.
 
