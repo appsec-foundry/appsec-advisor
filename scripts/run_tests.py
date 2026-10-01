@@ -346,6 +346,7 @@ GROUPS = {
         enrichment_pass
         hydrate_mitigation_details
         merge_threats
+        ms_input_digest
         promote_verified_abuse_cases
         reconcile_privileged_roles
         reconcile_role_access
@@ -1152,6 +1153,7 @@ SOURCE_TESTS = {
         compose_threat_model_cov3
         e2e_pipeline
         enforcement_mutations
+        ms_input_digest
         p1_renderer_correctness
         reference_format
         render_integrity
@@ -1219,6 +1221,7 @@ SOURCE_TESTS = {
         figure2_svg
         fragment_authoring_fidelity
         gate_preconditions
+        ms_input_digest
         p1_renderer_correctness
         p3_behavior_tuning
         p4_cross_reference_coverage
@@ -1668,6 +1671,15 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
+    "scripts/renderers/ms_input_digest.py": _tests("""
+        script_layout
+        check_target_specificity
+        gate_preconditions
+        ms_input_digest
+        orchestration_controller
+        requirements_verification
+        stride_outputs
+    """),
     "scripts/renderers/pregenerate_fragments.py": _tests("""
         script_layout
         actor_presentation
@@ -1690,6 +1702,7 @@ SOURCE_TESTS = {
         figure_details
         fragment_authoring_fidelity
         gate_preconditions
+        ms_input_digest
         p1_renderer_correctness
         p2_structural_determinism
         p3_behavior_tuning
@@ -2177,6 +2190,7 @@ SOURCE_TESTS = {
         figure2_svg
         figure_details
         gate_preconditions
+        ms_input_digest
         p1_renderer_correctness
         p4_cross_reference_coverage
         pregenerate_fragments
@@ -2232,6 +2246,7 @@ SOURCE_TESTS = {
         fragment_registry
         gate_preconditions
         manifest_readers
+        ms_input_digest
         p1_renderer_correctness
         p3_behavior_tuning
         p4_cross_reference_coverage
@@ -2553,6 +2568,7 @@ SOURCE_TESTS = {
         fragment_authoring_fidelity
         gate_preconditions
         incremental_two_run_e2e
+        ms_input_digest
         orchestration_controller
         p1_renderer_correctness
         p3_behavior_tuning
@@ -4924,6 +4940,7 @@ SOURCE_TESTS = {
         fragment_authoring_fidelity
         gate_preconditions
         incremental_two_run_e2e
+        ms_input_digest
         p1_renderer_correctness
         p3_behavior_tuning
         p4_cross_reference_coverage

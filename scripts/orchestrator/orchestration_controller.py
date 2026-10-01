@@ -6933,6 +6933,9 @@ def prepare_stage2(output_dir: Path) -> dict[str, Any]:
             [str(output_dir), "--only", only],
             receipts,
         )
+    # The Management-Summary renderer reads this bounded index instead of
+    # paging through threat-model.yaml; without it the renderer falls back.
+    _best_effort_script(output_dir, "renderers/ms_input_digest.py", [str(output_dir)], receipts)
     _best_effort_script(
         output_dir,
         "repairs/restore_preserved_sections.py",

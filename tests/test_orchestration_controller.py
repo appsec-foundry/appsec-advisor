@@ -1505,6 +1505,18 @@ def test_prepare_stage2_selects_compact_parallel_runtime(tmp_path, monkeypatch):
     controller._validate_action(action)
 
 
+def test_prepare_stage2_builds_the_ms_input_digest(tmp_path, monkeypatch):
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / ".skill-config.json").write_text(json.dumps(_cfg(tmp_path)), encoding="utf-8")
+    calls: list[tuple[str, list[str]]] = []
+    monkeypatch.setattr(controller, "_run_script", lambda name, args, **kw: calls.append((name, args)) or _completed())
+
+    controller.prepare_stage2(output)
+
+    assert ("renderers/ms_input_digest.py", [str(output)]) in calls
+
+
 def test_prepare_stage2_retry_uses_single_renderer(tmp_path, monkeypatch):
     output = tmp_path / "out"
     output.mkdir()

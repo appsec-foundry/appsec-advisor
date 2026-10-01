@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ms-input-digest.schema.json",
+  "title": "Management-Summary renderer input digest",
+  "description": "Deterministic, bounded index of threat-model.yaml for the Management-Summary renderer (scripts/renderers/ms_input_digest.py). Read-only input; never a fragment.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source_sha256",
+    "verdict",
+    "counts",
+    "register_floor",
+    "no_material_harm_components",
+    "components",
+    "findings",
+    "other_findings",
+    "p1_mitigations",
+    "weaknesses",
+    "omitted"
+  ],
+  "$defs": {
+    "ref": { "type": "string", "pattern": "^[FTW]-\\d{3,4}$" },
+    "cref": { "type": "string", "pattern": "^C-\\d{2,3}$" },
+    "severity": { "enum": ["Critical", "High", "Medium", "Low", "Informational"] },
+    "ids": { "type": "array", "items": { "type": "string", "maxLength": 64 }, "maxItems": 20 },
+    "brief": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "severity", "title"],
+      "properties": {
+        "ref": { "$ref": "#/$defs/ref" },
+        "severity": { "$ref": "#/$defs/severity" },
+        "title": { "type": "string", "maxLength": 120 },
+        "cwe": { "type": "string", "maxLength": 32 },
+        "component": { "$ref": "#/$defs/cref" }
+      }
+    },
+    "detailed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "severity", "title"],
+      "properties": {
+        "ref": { "$ref": "#/$defs/ref" },
+        "severity": { "enum": ["Critical", "High"] },
+        "title": { "type": "string", "maxLength": 120 },
+        "cwe": { "type": "string", "maxLength": 32 },
+        "component": { "$ref": "#/$defs/cref" },
+        "rank": { "type": "integer", "minimum": 1 },
+        "register_severity": { "$ref": "#/$defs/severity" },
+        "stride": { "type": "string", "maxLength": 64 },
+        "component_name": { "type": "string", "maxLength": 200 },
+        "attack_class": { "type": "string", "maxLength": 64 },
+        "default_target_tier": { "type": "string", "maxLength": 32 },
+        "primary_actor": { "type": "string", "maxLength": 64 },
+        "actor_ids": { "$ref": "#/$defs/ids" },
+        "evidence_tier": { "type": "string", "maxLength": 64 },
+        "chain_role": { "type": "string", "maxLength": 32 },
+        "compound_chain_ids": { "$ref": "#/$defs/ids" },
+        "verified_chain_ids": { "$ref": "#/$defs/ids" },
+        "owasp_llm_ids": { "$ref": "#/$defs/ids" },
+        "owasp_asi_ids": { "$ref": "#/$defs/ids" },
+        "llm_surface": { "const": true },
+        "mitigations": { "$ref": "#/$defs/ids" },
+        "impact": { "type": "string", "maxLength": 240 }
+      }
+    }
+  },
+  "properties": {
+    "schema_version": { "const": 1 },
+    "source_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "verdict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["severity", "floor_refs", "design_risk_refs"],
+      "properties": {
+        "severity": { "enum": ["green", "yellow", "red"] },
+        "floor_refs": { "type": "array", "items": { "$ref": "#/$defs/ref" }, "maxItems": 8 },
+        "design_risk_refs": { "type": "array", "items": { "$ref": "#/$defs/ref" } }
+      }
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "register_floor": { "type": "string", "maxLength": 16 },
+    "no_material_harm_components": { "type": "array", "items": { "type": "string", "maxLength": 128 } },
+    "components": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ref", "name", "tier", "framework", "llm_surface"],
+        "properties": {
+          "ref": { "$ref": "#/$defs/cref" },
+          "name": { "type": "string", "maxLength": 200 },
+          "tier": { "type": "string", "maxLength": 32 },
+          "framework": { "type": "string", "maxLength": 200 },
+          "llm_surface": { "type": "boolean" }
+        }
+      }
+    },
+    "findings": { "type": "array", "items": { "$ref": "#/$defs/detailed" } },
+    "other_findings": { "type": "array", "items": { "$ref": "#/$defs/brief" } },
+    "p1_mitigations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ref", "title", "finding_refs"],
+        "properties": {
+          "ref": { "type": "string", "pattern": "^M-\\d{3,4}$" },
+          "title": { "type": "string", "maxLength": 120 },
+          "finding_refs": { "type": "array", "items": { "type": "string", "maxLength": 64 } }
+        }
+      }
+    },
+    "weaknesses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ref", "severity", "kind", "design_risk", "title", "components"],
+        "properties": {
+          "ref": { "$ref": "#/$defs/ref" },
+          "severity": { "type": "string", "maxLength": 16 },
+          "kind": { "type": "string", "maxLength": 32 },
+          "design_risk": { "type": "boolean" },
+          "title": { "type": "string", "maxLength": 120 },
+          "components": { "type": "array", "items": { "type": "string", "maxLength": 128 } }
+        }
+      }
+    },
+    "omitted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["other_findings", "findings"],
+      "properties": {
+        "other_findings": { "type": "integer", "minimum": 0 },
+        "findings": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}
