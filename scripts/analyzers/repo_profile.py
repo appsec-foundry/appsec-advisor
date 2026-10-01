@@ -471,6 +471,7 @@ def _files(count: int) -> str:
 
 
 def render_text(result: dict[str, Any]) -> str:
+    """Console view of a profile; languages below ``MIN_LANGUAGE_SHARE`` are folded into one line."""
     totals = result["totals"]
     lines = [f"Repository profile — {result['repo']}"]
 

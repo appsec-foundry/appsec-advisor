@@ -271,6 +271,11 @@ def summarize(scans: list[dict[str, Any]], minimum_severity: str = "all") -> dic
 
 
 def render_text(report: dict[str, Any]) -> str:
+    """Console view of the report, ending in one machine-readable ``SUMMARY`` line.
+
+    Repository-derived strings are JSON-escaped, so a path or title cannot break a line.
+    """
+
     def visible(value: Any) -> str:
         return json.dumps(str(value), ensure_ascii=False)[1:-1]
 

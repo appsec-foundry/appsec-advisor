@@ -277,6 +277,11 @@ def _generated_at(output: Path) -> str:
 
 
 def scan(repo_root: Path, checks_path: Path, *, depth: str, output: Path) -> dict[str, Any]:
+    """Run each catalog check on its selected files: at most one finding per check and file.
+
+    A ``file_exists`` check without a matching file is itself a finding. ``output`` only locates the scan-start
+    epoch for ``generated_at``; nothing is written here.
+    """
     repo_root = repo_root.resolve()
     if not repo_root.is_dir():
         raise ConfigScanError(f"repository root is not a directory: {repo_root}")

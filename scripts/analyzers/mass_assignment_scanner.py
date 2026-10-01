@@ -147,6 +147,7 @@ def _norm(identifier: str) -> str:
 
 
 def load_catalog(path: Path) -> Catalog:
+    """Load the mass-assignment catalog YAML; raise ValueError when a required key is missing."""
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ValueError(f"catalog {path} must be a mapping")
@@ -294,6 +295,12 @@ def find_sinks(
     entities: dict[str, Entity],
     known_types: set[str] | None = None,
 ) -> list[Finding]:
+    """Report write handlers that bind the request body directly to a privileged entity.
+
+    Binds to non-entity DTOs or without a write mapping are skipped. Vertical (role/admin) fields
+    give the catalog severity, ownership-only fields the lower one; an admin guard steps either
+    down one band.
+    """
     text = without_comments(text)
     lines = text.splitlines()
     # Class-declaration annotation block (5 lines above the class decl) — a
@@ -384,6 +391,8 @@ def find_sinks(
 
 
 def scan_repo(repo_root: Path, cat: Catalog) -> list[Finding]:
+    """Discover privileged entities across all Java files, then report bind sinks as `SAF-NNN` findings
+    sorted by file and line."""
     files: list[tuple[str, str]] = []
     for path in _walk_java(repo_root):
         rel = _rel(path, repo_root)
@@ -418,6 +427,7 @@ def scan_repo(repo_root: Path, cat: Catalog) -> list[Finding]:
 
 
 def emit_sidecar(output_dir: Path, findings: list[Finding]) -> Path:
+    """Atomically write `.mass-assignment-findings.json` to `output_dir` and return its path."""
     doc = {
         "version": 1,
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

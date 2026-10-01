@@ -181,23 +181,20 @@ def _count_recon_pattern(recon_summary: str, section_pattern: str, component_hin
 _MANDATORY_CONTEXT_READS = 8
 _WRITE_AND_LOGGING_RESERVE = 10
 # Ceiling on the footprint-derived floor. Analyzers are expected to sample wide
-# components rather than read exhaustively; this keeps a 400-file component from
-# demanding an absurd budget while still covering the mid-size case that broke.
+# components rather than read exhaustively; the cap keeps a 400-file component
+# from demanding an absurd budget.
 #
-# 2026-08-02 (48 → 80): 48 admitted only (48 - 8 - 10) = 30 files before the
-# requirement was silently discarded. Anything wider was dispatched as if the
-# clamped budget were sufficient, with no sampling instruction, so the analyzer
-# read exhaustively and died. 80 admits 62 files exhaustively; beyond that the
-# clamp is now explicit (see ``budget_clamped``) instead of silent.
+# 80 admits (80 - 8 - 10) = 62 files exhaustively; a cap of 48 admitted only 30.
+# A wider component is clamped explicitly (see ``budget_clamped``) so the analyzer
+# samples. A clamp without a sampling instruction makes it read exhaustively and
+# run out of turns.
 _FOOTPRINT_TURN_CAP = 80
 
 
-# A retry after a budget-caused death must not repeat the identical dispatch.
-# 2026-08-02: attempt 2 reused attempt 1's budget verbatim, so a component that
-# died at the ceiling was guaranteed to die there again -- the gate's own abort
-# text said "an unchanged retry will repeat this" while the dispatcher had no
-# way to change it. The escalated value stays below the harness ceiling so the
-# retry can actually spend what it is granted.
+# A retry after a budget-caused death must not repeat the identical dispatch: a
+# component that died at its ceiling dies there again with the same budget. The
+# escalated value stays below the harness ceiling so the retry can spend what it
+# is granted.
 _RETRY_TURN_MULTIPLIER = 1.5
 _RETRY_TURN_CAP = 88
 
@@ -222,9 +219,8 @@ def escalated_retry_turns(max_turns: int) -> int:
 def footprint_turns_needed(file_count: int) -> int:
     """Turns an exhaustive pass over ``file_count`` files would cost.
 
-    Kept separate from the clamp so callers can see the *requirement* rather
-    than only the granted budget -- the 2026-08-02 defect was that the two were
-    indistinguishable downstream.
+    Kept separate from the clamp so callers can tell the requirement from the
+    granted budget.
     """
     return int(file_count) + _MANDATORY_CONTEXT_READS + _WRITE_AND_LOGGING_RESERVE
 
@@ -237,21 +233,14 @@ def _footprint_turn_floor(file_count: int | None, current: int) -> tuple[int, st
     component is then in the *sampling* regime and the dispatch MUST tell the
     analyzer so (see ``build_stride_dispatch_manifest`` → ``sampling_required``).
 
-    2026-07-20 juice-shop: `data-persistence` classified as `moderate` (22 soft
-    turns, 40 hard harness ceiling) purely from role heuristics, while its
-    `paths` spanned 24 model files. With the 8 mandatory context reads that is
-    32 reads before analysis can start -- the component could not finish inside
-    the ceiling, and both dispatch attempts died at exactly 40 tool calls having
-    completed zero STRIDE categories. Complexity is a risk signal; it says
-    nothing about how much reading the component requires, so the budget needs
-    this second, orthogonal input.
-
-    2026-08-02 insecure-spring-app: the same failure recurred one cap higher.
-    `spring-web-app` spanned 47 files → needed 65 turns; the cap silently
-    granted 48 against a 56-turn harness ceiling, and both attempts died at
-    exactly 56 tool calls with zero categories completed. Clamping is a
-    legitimate strategy for very wide components, but only if the analyzer is
-    *told* to sample. Silently handing it an under-sized budget is not.
+    Complexity is a risk signal and says nothing about how much reading a
+    component requires, so the file count is a second, independent input. A
+    `moderate` component (22 soft turns, 40-turn harness ceiling) spanning 24
+    files needs 32 reads with the 8 mandatory context reads before analysis
+    starts, so it cannot finish. A 47-file component needs 65 turns; granting
+    48 against a 56-turn ceiling without a sampling instruction ended both
+    attempts at the ceiling with no STRIDE category completed. Clamping a very
+    wide component is valid only when the analyzer is told to sample.
     """
     if not file_count or file_count <= 0:
         return current, "", False

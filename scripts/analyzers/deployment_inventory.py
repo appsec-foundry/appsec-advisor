@@ -244,6 +244,7 @@ def _vocab() -> dict:
 
 
 def runtime_label(images: list[str]) -> str:
+    """Label and version of the first image a vocabulary runtime pattern matches; "" without one."""
     for image in images:
         name = image.split("/")[-1].lower()
         for rule in _vocab().get("runtimes") or []:
@@ -271,6 +272,11 @@ def _dockerfile(root: Path) -> Path | None:
 
 
 def scan_runtime(root: Path) -> dict | None:
+    """Base image, build stages, USER, EXPOSE and command of the Dockerfile; ``None`` without a parsable FROM.
+
+    ``copies_repository`` lists sensitive root entries a ``COPY .`` sends into the image past .dockerignore;
+    it is set only when the Dockerfile sits at the root.
+    """
     df = _dockerfile(root)
     text = _read(df, root)
     if not text:
@@ -528,6 +534,10 @@ def _pod_facts(spec: dict, rel: str, line: int) -> list[dict]:
 
 
 def scan_manifests(root: Path) -> list[dict]:
+    """One Kubernetes or OpenShift environment per namespace with workloads, at most two namespaces.
+
+    The first of up to six workloads is drawn as entry → Service → workload; the others share a row below it.
+    """
     docs = _k8s_docs(root)
     if not any(d.get("kind") in ("Deployment", "StatefulSet", "DaemonSet", "DeploymentConfig") for _, d, _ in docs):
         return []
@@ -727,6 +737,7 @@ def _values_env(values: dict, rel: str, text: str, label: str, platform: str, no
 
 
 def scan_helm(root: Path) -> list[dict]:
+    """One environment per Chart.yaml (at most four), built from the chart's values.yaml."""
     envs = []
     for chart in _walk(root, lambda p: p.name == "Chart.yaml", max_files=4):
         values_path = chart.parent / "values.yaml"
@@ -754,6 +765,7 @@ def scan_helm(root: Path) -> list[dict]:
 
 
 def scan_gitlab_auto_deploy(root: Path) -> list[dict]:
+    """The GitLab Auto Deploy environment when .gitlab-ci.yml includes Auto-DevOps or its values file exists."""
     ci = _read(root / ".gitlab-ci.yml", root)
     if "Auto-DevOps" not in ci and not (root / ".gitlab" / "auto-deploy-values.yaml").is_file():
         return []
@@ -1025,6 +1037,7 @@ _APPLY_RE = re.compile(
 
 
 def scan_ci(root: Path) -> list[dict]:
+    """CI systems with their facts and what each publishes to (registries, Kubernetes); at most eight."""
     out = []
     wf_dir = root / ".github" / "workflows"
     if wf_dir.is_dir() and not wf_dir.is_symlink():
@@ -1131,6 +1144,7 @@ def scan_ci(root: Path) -> list[dict]:
 
 # ================================================================ dependencies and packages
 def scan_dependencies(root: Path) -> tuple[dict, list[dict]]:
+    """Dependency counts over up to 40 manifests, and per manifest the packages a vocabulary role matches."""
     vocab = _vocab()
     fw_pkgs = {p.lower() for pkgs in (vocab.get("frameworks") or {}).values() for p in pkgs}
     roles = [
@@ -1251,6 +1265,7 @@ def build_topology(root: Path, compose: dict | None) -> dict | None:
 
 # ================================================================ assembly
 def build_inventory(root: Path) -> dict:
+    """The ``.deployment-inventory.json`` document; ``topology`` only when it finds a deployable workload."""
     root = root.resolve()
     compose, compose_env = scan_compose(root)
     environments = scan_terraform(root) + scan_manifests(root) + scan_helm(root) + scan_gitlab_auto_deploy(root)

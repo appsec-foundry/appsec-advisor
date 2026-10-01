@@ -190,6 +190,8 @@ def _compile_pattern(p: str, *, name: str, check_id: str) -> re.Pattern[str]:
 
 
 def load_checks(checks_path: Path) -> list[Check]:
+    """Load and compile the check catalog; raise ValueError on a missing id or field, a bad regex, or
+    an unknown `counter_scope`."""
     raw = yaml.safe_load(checks_path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict) or "checks" not in raw:
         raise ValueError(f"checks file {checks_path} must be a mapping with a top-level `checks:` key")
@@ -1641,6 +1643,11 @@ def scan_file(
     file_rel: str,
     checks: list[Check],
 ) -> list[Finding]:
+    """Match each applicable check against one comment-stripped file.
+
+    A hit is dropped when a counter pattern matches near it or its required context is missing.
+    AUTHZ-001/002 look for the counter only in the affected query and a following ownership guard.
+    """
     try:
         if file_abs.stat().st_size > _MAX_FILE_BYTES:
             return []
@@ -1709,6 +1716,11 @@ def scan_file(
 
 
 def scan_repo(repo_root: Path, checks: list[Check], *, catalog_only: bool = False) -> list[Finding]:
+    """Scan every readable repo file and number the findings `SAF-NNN` by file, line and check.
+
+    Unless `catalog_only`, LLM-output and expression-input findings are added; an LLM-output finding
+    replaces any other hit with the same line and CWE.
+    """
     findings: list[Finding] = []
     for path in _walk_repo(repo_root):
         try:
@@ -1745,6 +1757,7 @@ def emit_sidecar(
     findings: list[Finding],
     checks_run: int,
 ) -> Path:
+    """Atomically write `.source-auth-findings.json` to `output_dir` and return its path."""
     doc = {
         "version": 1,
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

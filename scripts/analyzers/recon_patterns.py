@@ -790,6 +790,7 @@ _CAT11_EXTS = {
 
 
 def scan_exposed_routes(repo_root: Path) -> dict[str, Any]:
+    """Grep source files for debug, admin, actuator and API-doc route fragments (Cat 11)."""
     findings: list[dict[str, Any]] = []
     for p in _walk_repo(repo_root):
         if p.suffix.lower() not in _CAT11_EXTS:
@@ -822,6 +823,10 @@ _CAT14_GITLAB_IMAGE = re.compile(r"^\s*image:\s*(?P<image>[^\s#]+)", re.MULTILIN
 
 
 def scan_ci_supply_chain(repo_root: Path) -> dict[str, Any]:
+    """Flag GitHub Actions `uses:` refs not pinned to a 40-char SHA, and GitLab CI `image:` lines (Cat 14).
+
+    Only `.github/workflows` and a root `.gitlab-ci.yml` are read; local `./` actions are skipped.
+    """
     findings: list[dict[str, Any]] = []
 
     # GitHub Actions workflows
@@ -910,6 +915,7 @@ def _container_image_issue(image: str) -> str | None:
 
 
 def scan_container_images(repo_root: Path) -> dict[str, Any]:
+    """Flag Dockerfile `FROM` and compose `image:` refs without a `@sha256` digest (Cat 15)."""
     findings: list[dict[str, Any]] = []
     for p in _walk_repo(repo_root):
         rel = str(p.relative_to(repo_root)).replace("\\", "/")
@@ -954,6 +960,9 @@ _CAT17_NPM_LIFECYCLE_KEYS = ("preinstall", "postinstall", "prepare", "prebuild",
 
 
 def scan_postinstall(repo_root: Path) -> dict[str, Any]:
+    """Collect install-time code execution: npm lifecycle scripts, `ignore-scripts` in the root
+    `.npmrc`, and shell calls or `cmdclass` in `setup.py` (Cat 17).
+    """
     findings: list[dict[str, Any]] = []
 
     # npm / node lifecycle scripts in package.json
@@ -1077,6 +1086,10 @@ _CAT18_EXTS = {
 
 
 def scan_security_headers(repo_root: Path) -> dict[str, Any]:
+    """Grep for security-header, Helmet and CORS configuration lines (Cat 18).
+
+    Hits mark where headers are set; a missing header is not reported here.
+    """
     findings: list[dict[str, Any]] = []
     for p in _walk_repo(repo_root):
         if p.suffix.lower() not in _CAT18_EXTS:
@@ -1242,6 +1255,11 @@ def _scan_pattern_category(
 
 
 def scan_spa_bff(repo_root: Path) -> dict[str, Any]:
+    """Flag browser-stored tokens, `withCredentials` use and client-side role checks (Cat 10).
+
+    Adds one `spa-without-bff-candidate` finding when tokens sit in browser storage and no BFF or
+    server-session marker appears in any scanned file.
+    """
     findings: list[dict[str, Any]] = []
     token_hits: list[dict[str, Any]] = []
     credentials_hits: list[dict[str, Any]] = []
@@ -1347,6 +1365,11 @@ def _package_json_line(path: Path, dependency: str) -> int | None:
 
 
 def scan_frontend_xss(repo_root: Path) -> dict[str, Any]:
+    """Record frontend frameworks from `package.json` and unsafe HTML sinks in client code (Cat 19).
+
+    A sink is High unless a sanitizer marker appears in the same file; sanitizer bypass APIs are
+    always High.
+    """
     findings: list[dict[str, Any]] = []
 
     for p in repo_root.rglob("package.json"):
@@ -1425,6 +1448,7 @@ def scan_frontend_xss(repo_root: Path) -> dict[str, Any]:
 
 
 def scan_dom_xss(repo_root: Path) -> dict[str, Any]:
+    """Record DOM XSS sources and one High candidate per file that holds both a source and a sink (Cat 20)."""
     findings: list[dict[str, Any]] = []
     for p in _walk_repo(repo_root):
         if p.suffix.lower() not in _CLIENT_EXTS:
@@ -1467,6 +1491,7 @@ def scan_dom_xss(repo_root: Path) -> dict[str, Any]:
 
 
 def scan_client_secrets(repo_root: Path) -> dict[str, Any]:
+    """Grep client code for secret patterns and shared credential literals, redacted to 4 chars (Cat 21)."""
     findings = _scan_pattern_category(repo_root, 21, "Client-Side Secrets", _CAT21_PATTERN)["findings"]
     for path in _walk_repo(repo_root):
         if path.suffix.lower() not in _CLIENT_EXTS:
@@ -1499,6 +1524,9 @@ def scan_client_secrets(repo_root: Path) -> dict[str, Any]:
 
 
 def scan_websocket(repo_root: Path) -> dict[str, Any]:
+    """Record WebSocket surfaces, cleartext `ws://` URLs, and server sockets with no auth or origin
+    marker in the same file (Cat 22).
+    """
     findings: list[dict[str, Any]] = []
     for p in _walk_repo(repo_root):
         if p.suffix.lower() not in (_CLIENT_EXTS | {".py", ".go", ".java", ".kt", ".cs"}):
@@ -1560,6 +1588,10 @@ def scan_websocket(repo_root: Path) -> dict[str, Any]:
 
 
 def scan_postmessage(repo_root: Path) -> dict[str, Any]:
+    """Flag postMessage, message-listener, iframe and window-opener weaknesses in client code (Cat 23).
+
+    Origin-check and sandbox absence are judged per file, not per call site.
+    """
     findings: list[dict[str, Any]] = []
     for p in _walk_repo(repo_root):
         if p.suffix.lower() not in _CLIENT_EXTS:
@@ -1649,6 +1681,9 @@ def scan_postmessage(repo_root: Path) -> dict[str, Any]:
 
 
 def scan_client_routing(repo_root: Path) -> dict[str, Any]:
+    """Record client-side route guards and flag those that trust browser-held roles or lack a
+    same-file server authority marker (Cat 24).
+    """
     findings: list[dict[str, Any]] = []
     for p in _walk_repo(repo_root):
         if p.suffix.lower() not in _CLIENT_EXTS:
@@ -1843,6 +1878,10 @@ def _plist_true_key_hits(lines: list[str], key: str) -> list[tuple[int, str]]:
 
 
 def scan_mobile_architecture(repo_root: Path) -> dict[str, Any]:
+    """Flag Android manifest and network-config weaknesses and iOS ATS and URL-scheme settings (Cat 29).
+
+    Each file classified as Android or iOS also yields one leading `mobile-app-surface` Info finding.
+    """
     findings: list[dict[str, Any]] = []
     surface_files: dict[str, str] = {}
 
@@ -2189,6 +2228,9 @@ _CAT27_SELF_HOSTED = re.compile(r"^\s*runs-on\s*:.*self-hosted", re.IGNORECASE)
 
 
 def scan_gha_privileges(repo_root: Path) -> dict[str, Any]:
+    """Flag `pull_request_target`, write permissions, self-hosted runners and workflows without a
+    `permissions:` block in `.github/workflows` (Cat 27).
+    """
     findings: list[dict[str, Any]] = []
     wf_dir = repo_root / ".github" / "workflows"
     if not wf_dir.is_dir():
@@ -2801,6 +2843,11 @@ def _is_claude_settings_path(rel: str) -> bool:
 
 
 def scan_ai_assistant_configs(repo_root: Path) -> dict[str, Any]:
+    """Inventory AI assistant and MCP config files and scan them for risky servers, permissions,
+    hooks, agent capabilities and prompt-injection payloads (Cat 28).
+
+    A Claude settings path that is not a regular file is reported instead of followed.
+    """
     findings: list[dict[str, Any]] = []
     seen: set[str] = set()
 
@@ -2898,7 +2945,7 @@ def scan_ai_assistant_configs(repo_root: Path) -> dict[str, Any]:
 # Category 13 — AI / LLM integration (deterministic; replaces the former
 # LLM-grep 5-AND rule). Two signal strengths so a single import/framework/
 # vector-DB/model-id (STRONG) is enough, while generic tokens (WEAK) only count
-# in combination — see docs/analysis/plan-deterministic-ai-llm-detection-2026-06-23.md.
+# in combination, because they also appear in ML, sensor and game code.
 # ---------------------------------------------------------------------------
 
 # Code + structured-config extensions only (all are a subset of _TEXT_EXT). Docs
@@ -3084,7 +3131,7 @@ def scan_ai_integration(repo_root: Path) -> dict[str, Any]:
 # Cap findings per category and across the aggregate `.recon-patterns.json` the
 # recon-scanner agent Reads into its LLM context. A recon pre-pass is a SIGNAL,
 # not an exhaustive enumeration — the analyst re-greps on demand — so an
-# unbounded findings list (juice-shop 2026-07-14: 319 KB of `categories`,
+# unbounded findings list (319 KB of `categories` on a mid-size web app,
 # ~120k tokens re-read every turn, a major contributor to the multi-million
 # cache_read that made the streaming call fragile) only inflates context. The
 # true magnitude stays in each category's `count`; strong-strength hits are kept
@@ -3182,6 +3229,10 @@ def run_all(
     repo_root: Path,
     include_manifest: bool = False,
 ) -> dict[str, Any]:
+    """Run every category scanner and cap the findings kept per category and in total.
+
+    Uncapped totals stay in each category's `count`; `limits` records the caps and omitted counts.
+    """
     _OVERSIZE_SKIPPED.clear()
     out: dict[str, Any] = {
         "version": 1,

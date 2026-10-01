@@ -8,9 +8,8 @@ can clone the repo and read committed secrets, so that capability belongs to the
 **Anonymous Internet Attacker**. `compose_threat_model._collapse_public_repo_actors`
 folds `repo-read → internet-anon` when this flag is true. When the source is
 NOT confidently public we leave the flag unset and the "Internal Developer"
-actor is kept — exactly the user's rule (2026-06-02): only call it an anonymous
-internet attacker when we are sure it is a public repo; otherwise keep the
-internal-developer framing.
+actor is kept: repository read access is attributed to an anonymous internet
+attacker only when the repo is certainly public.
 
 Conservative high-confidence heuristic (ALL signals are LOCAL — no network):
   PUBLIC requires, together:

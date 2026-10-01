@@ -1055,6 +1055,7 @@ def _derive_overall(sub_controls: list[dict[str, Any]]) -> tuple[str, str]:
 
 
 def assess(output_dir: str, repo_root: str | None) -> dict[str, Any]:
+    """Rate the nine sub-controls and the domain; the result is the ``.supply-chain-assessment.json`` document."""
     recon = _load_recon(output_dir, repo_root)
 
     sub_controls = [

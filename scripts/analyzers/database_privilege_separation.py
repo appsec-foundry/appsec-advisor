@@ -213,6 +213,12 @@ def _evidence(binding: Binding, signal: str) -> dict:
 
 
 def assess(repo_root: Path, assessment_depth: str) -> dict:
+    """Group database clients by principal and report `DBSEP-NNN` entries for principals shared by
+    privileged and unprivileged code.
+
+    An entry is confirmed only when a visible grant matches the shared literal principal; otherwise it
+    is a hypothesis. Runs only at `thorough` depth.
+    """
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     result = {
         "version": 1,

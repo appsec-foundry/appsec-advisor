@@ -273,6 +273,9 @@ def _get(node: Any, *path: str) -> Any:
 
 # --------------------------------------------------------------------------- Compose
 
+# The public evaluators from here on take ``(text, path)`` and return ``(line, snippet)`` for the first
+# violation, or ``None``. A catalog entry selects one by its key in ``EVALUATORS``.
+
 
 def _compose_services(text: str) -> Iterator[tuple[str, dict]]:
     docs = _documents(text)
@@ -345,6 +348,7 @@ def _published_port(item: Any) -> tuple[str | None, tuple[int, int] | None] | No
 
 
 def compose_sensitive_port_on_all_interfaces(text: str, path: Path) -> tuple[int, str] | None:
+    """A sensitive container port published without a host address counts as bound to every interface."""
     for service_name, service in _compose_services(text):
         ports = service.get("ports")
         if not isinstance(ports, list):
@@ -414,6 +418,10 @@ def _effective(container_ctx: dict, pod_ctx: dict, key: str) -> Any:
 
 
 def kubernetes_root_not_prevented(text: str, path: Path) -> tuple[int, str] | None:
+    """A container passes with ``runAsNonRoot: true`` and no UID 0, or with a positive ``runAsUser``.
+
+    Container settings override the pod's; pods pinned to Windows nodes are skipped.
+    """
     for label, pod, containers in _workloads(text):
         if _get(pod, "nodeSelector", "kubernetes.io/os") == "windows":
             continue
@@ -446,6 +454,7 @@ def kubernetes_env_secret_literal(text: str, path: Path) -> tuple[int, str] | No
 
 
 def kubernetes_route_without_tls(text: str, path: Path) -> tuple[int, str] | None:
+    """An Ingress without ``spec.tls``, or an OpenShift Route without termination or that also accepts plain HTTP."""
     for doc in _manifests(text):
         kind, name = doc.get("kind"), _get(doc, "metadata", "name")
         if not isinstance(doc.get("apiVersion"), str) or kind not in {"Ingress", "Route"}:

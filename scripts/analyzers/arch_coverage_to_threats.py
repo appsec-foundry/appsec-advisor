@@ -154,9 +154,8 @@ def _scenario_for_threat(
     `scenario` is schema-required on every threat
     (schemas/threat-model.output.schema.yaml → threats[].required) and must
     survive `validate_intermediate._check_scenario_stripped_length` (>= 10
-    non-whitespace chars). The bridge never set it, so a single coverage hit
-    hard-failed the post-Stage-1 gate for the whole run (juice-shop 2026-07-27,
-    ARCH-TLS-001 → T-070).
+    non-whitespace chars). A bridged threat without it fails the post-Stage-1
+    gate for the whole run.
 
     Synthesised as an f-string over fields the record already carries. No LLM, no new YAML field to keep in sync.
 
@@ -244,6 +243,11 @@ def _arch_trace_kwargs(src: dict) -> dict[str, str]:
 
 
 def select_and_build(coverage: dict) -> tuple[list[dict], list[dict]]:
+    """Bridge high-confidence anti-pattern candidates and confirmed high-confidence hypotheses to threats.
+
+    Returns ``(threats, skipped)``; each skipped entry names its reason. A candidate capped at Critical is
+    skipped, and a promoted hypothesis is always rated High.
+    """
     threats: list[dict] = []
     skipped: list[dict] = []
 

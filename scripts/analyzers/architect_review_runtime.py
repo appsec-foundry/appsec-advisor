@@ -51,6 +51,7 @@ MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
 
 
 def validate_status(value: dict) -> None:
+    """Raise ``ReviewError`` unless the status matches its schema and its counts agree with its outcome."""
     schema = json.loads((SCHEMA_ROOT / "architect-review-runtime.schema.json").read_text(encoding="utf-8"))
     if not Draft202012Validator(schema["$defs"]["status"]).is_valid(value):
         raise ReviewError("invalid architect status contract")
@@ -409,6 +410,7 @@ def review_coverage(value: dict | None) -> dict:
 
 
 def project_model(output_dir: Path, model: dict, merged: dict) -> dict:
+    """Apply the accepted mitigation corrections to a rebuilt model; unchanged without a saved review."""
     value = load_review(output_dir)
     if value is None:
         return model
@@ -421,6 +423,11 @@ def project_model(output_dir: Path, model: dict, merged: dict) -> dict:
 
 
 def verify_model(output_dir: Path, model: dict) -> dict | None:
+    """Raise ``ReviewError`` when the delivered model lost an accepted correction; return the saved review.
+
+    A correction is lost when its source values changed, its finding dropped out of the register while
+    still above the severity floor, or its reviewed mitigation no longer matches. ``None`` without a review.
+    """
     if not isinstance(model, dict):
         raise ReviewError("architect preservation requires a canonical model object")
     value = load_review(output_dir)

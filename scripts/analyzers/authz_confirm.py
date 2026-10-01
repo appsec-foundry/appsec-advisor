@@ -268,6 +268,7 @@ def confirm_instances(repo_root: Path, inventory: dict) -> list[dict]:
 
 
 def build_document(repo_root: Path, inventory: dict, checks_run: int = 2) -> dict:
+    """Wrap the confirmed findings for `inventory` in the sidecar document; `checks_run` is reported as given."""
     findings = confirm_instances(repo_root, inventory)
     return {
         "version": 1,

@@ -369,6 +369,8 @@ def _config_integrations(text: str, rel: str) -> list[Integration]:
     result = []
 
     def walk(node, path=(), depth=0):
+        """Collect IdP addresses under identity-config keys; a mapping with `enabled` or `active`
+        set false is skipped with its whole subtree."""
         if depth > 40:
             return
         if isinstance(node, yaml.MappingNode):

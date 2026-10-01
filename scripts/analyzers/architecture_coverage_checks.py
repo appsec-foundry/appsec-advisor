@@ -957,6 +957,12 @@ def run(
     *,
     assessment_depth: str = "standard",
 ) -> dict:
+    """Evaluate the hard and hypothesis rules against the repository and return the coverage document.
+
+    A hard rule becomes an anti-pattern candidate only for an ``anti_pattern_candidate`` rule with high-confidence
+    evidence. Every applicable hypothesis rule whose control is not present emits a hypothesis. Database privilege
+    separation is read only at ``thorough`` depth.
+    """
     inventory: dict | None = None
     if output_dir is not None:
         inventory = _load_json_or_none(output_dir / ".route-inventory.json")

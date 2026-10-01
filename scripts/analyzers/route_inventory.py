@@ -1003,6 +1003,11 @@ def _extract_file(repo_root: Path, path: Path) -> list[RouteCandidate]:
 
 
 def build_inventory(repo_root: Path) -> dict:
+    """Extract routes, lift their auth signals from mounted guards and resolved handlers, and
+    return the `.route-inventory.json` document with `R-NNN` ids and coverage counts.
+
+    `missing_auth_suspect` and `missing_authz_suspect` are review flags, never findings.
+    """
     llm_sdk_declared = _declares_llm_sdk(repo_root)
     all_routes: list[RouteCandidate] = []
     frameworks_seen: set[str] = set()
