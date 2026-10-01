@@ -827,7 +827,8 @@ def test_job_budget_invalid_identity_never_falls_back_to_global(tmp_path, invali
 @pytest.mark.parametrize(
     "relative",
     [
-        "agents/appsec-stride-analyzer-v2.md",
+        # The STRIDE analyzer reads its budget from runtime/stride_attempt_writer.py;
+        # tests/test_stride_attempt_writer.py pins the same own-job rule there.
         "agents/appsec-abuse-case-verifier.md",
         "agents/shared/logging-standard.md",
     ],

@@ -53,7 +53,7 @@ list envelope but each new entry must validate against
 `agent_call_id + action_id + job_id + component_id + attempt` identity are
 inert.
 
-Agents use `runtime/budget_watchdog.py active-job-critical --action-id <ACTION_ID> --job-id <JOB_ID>` with their controller dispatch identity. Only a critical marker belonging to that job's unique current call authorizes its wrap-up. Missing or ambiguous identity supplies no wrap-up signal and never falls back to another job. Controller gates retain the global `active-critical` query. Neither consumer branches on marker-file existence.
+Agents use `runtime/budget_watchdog.py active-job-critical --action-id <ACTION_ID> --job-id <JOB_ID>` with their controller dispatch identity. The STRIDE analyzer gets the same check as the `budget` field of each `runtime/stride_attempt_writer.py category` call. Only a critical marker belonging to that job's unique current call authorizes its wrap-up. Missing or ambiguous identity supplies no wrap-up signal and never falls back to another job. Controller gates retain the global `active-critical` query. Neither consumer branches on marker-file existence.
 
 Terminal cleanup first emits `AGENT_FAILED` for any
 remaining calls, retires their counters and markers, then removes

@@ -1,7 +1,7 @@
 ---
 name: appsec-stride-analyzer-v2
 description: "INTERNAL context-v2 — bounded STRIDE for one component."
-tools: Read, Glob, Grep, Bash, Write
+tools: Read, Glob, Grep, Bash
 model: sonnet
 maxTurns: 96
 skills:
@@ -27,8 +27,8 @@ Log start/end with `MODEL_ID` and exact plan `analysis.depth` (`full` or
 `light`); never infer it from profile, budget, or another component. Log
 `AGENT_START`, steps (`step-start`/`step-end "<message>"`), and `AGENT_END` to
 `.agent-run.log` with `runtime/log_event.py` as above; it appends validated `component`
-and `depth`, so never author depth. Report progress with `agent_progress.sh`
-for context, source reads, six categories and output;
+and `depth`, so never author depth. Report steps 1 (context) and 2 (source
+reads) with `agent_progress.sh`; the attempt writer reports 3-9;
 never invoke that shell script with Python.
 Controller owns `AGENT_INVOKE`/`AGENT_DONE`, validation, retry, and routing.
 
@@ -68,8 +68,8 @@ Batch by root, path, and range; read each `path_routing.focus_paths` slice once.
 Omitted focus paths authorize no read.
 
 Broader search is allowed only when an admitted slice cannot decide a specific
-question that could change a finding. Before searching, append one bounded
-`discovery_escapes[]` record. Exact fields are `reason` (one of
+question that could change a finding. Record one bounded `discovery_escapes[]`
+entry per search in that category's writer call. Exact fields are `reason` (one of
 `missing-control-proof`, `ambiguous-data-flow`, `stale-location-recovery`, or
 `component-path-sampling`), `decision_key`, `search_paths`, and optional `lens`
 (the selected fixed lens or `null`).
@@ -87,35 +87,34 @@ reserve one write turn per category.
 
 ## Write-first guarantee
 
-At the end of context loading, Read `$STRIDE_OUTPUT_PATH`. If it exists with
-`resumed_from_attempt`, it is this retry's start: keep its threats and local
-IDs, analyze only its `skipped_categories`, and write no pre-seed. Otherwise,
-before source reads, write a schema-valid `$STRIDE_OUTPUT_PATH` with:
+Never Write or Read `$STRIDE_OUTPUT_PATH`; the attempt writer owns it and
+resolves it from your dispatch. Each call is one Bash turn, prints JSON, and
+changes nothing when it rejects (fix the named field and resend):
 
-```json
-{
-  "component_id": "<COMPONENT_ID>",
-  "component_name": "<COMPONENT_NAME>",
-  "started_at": "<ISO 8601 UTC>",
-  "analyzed_at": "<same initial timestamp>",
-  "partial": true,
-  "seed_only": true,
-  "skipped_categories": [
-    "Spoofing", "Tampering", "Repudiation", "Information Disclosure",
-    "Denial of Service", "Elevation of Privilege"
-  ],
-  "discovery_escapes": [],
-  "threats": []
-}
+```bash
+export OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
+export CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/stride_attempt_writer.py" <init|category|finish> "$OUTPUT_DIR" \
+  --component-id "<COMPONENT_ID literal>" <arguments below> <<'STRIDE_JSON'
+<stdin JSON object; init reads none>
+STRIDE_JSON
 ```
 
-Overwrite it after every completed category, clearing `seed_only` on the
-first; a budget stop keeps `partial:true` with only unstarted categories
-skipped. `runtime/log_event.py step-end "category complete: <Category>"` is refused
-until the file no longer skips that category: write, then log.
+- `init --component-name "<COMPONENT_NAME from bundle>"`, after context
+  loading and before source reads, writes the pre-seed. `"resumed": true`
+  continues an earlier attempt: analyze only its `skipped_categories` and
+  number from `next_local_number`.
+- `category --category "<exact name>"` with `{"threats": [...]}` (that
+  category only, `[]` when none) after each category: it logs `category
+  complete`, reports progress, and prints `budget`. Resending replaces that
+  category. The object may carry `discovery_escapes` and
+  `resolved_prior_findings` (appended), `lens_coverage` (replaced by `item`),
+  or `declined_turns`.
+- `finish` with any final fields sets `partial:false` once all six are
+  persisted and logs `AGENT_END`.
 
-A declined turn persists nothing. Do not resend its content: record
-`declined_turns` (count) in the file, keep that category skipped, and continue.
+A declined turn persists nothing. Do not resend its content: send
+`declined_turns` (count) with the next call and continue.
 
 ## Prior, actor, and boundary handling
 
@@ -180,7 +179,7 @@ go in `owasp_llm_ids` and `owasp_asi_ids`. Do not duplicate one
 mechanism merely because two lenses name it. Use one CWE, RFC, or OWASP
 `remediation.reference`.
 
-With `llm` or `agentic` selected, write top-level `lens_coverage` with one
+With `llm` or `agentic` selected, send `lens_coverage` through the writer with one
 entry per LLM01-LLM10 or ASI01-ASI10: `{"item", "disposition"}` plus
 `local_ids` for `finding` (threats tagged with that ID), `evidence` file:line
 and `reason` for `controlled`, and `reason` for `not-applicable` (capability
@@ -240,8 +239,8 @@ unscored.
 
 ## Output shape
 
-Every category write uses the version-1 `schemas/stride.schema.yaml` shape and
-these exact threat fields; the last one sets `partial:false`:
+Every threat sent to the writer uses the version-1 `schemas/stride.schema.yaml`
+shape and these exact fields:
 
 ```json
 {
@@ -286,19 +285,9 @@ For a confirmed input-to-sink CWE listed above, add `"mechanism_trace": {"input"
 
 A plan `repair` holds your rejected previous `threats` and the `gate_errors` indexing them. Keep unnamed threats; fix each named one, and each named `lens_coverage` item, at its source by the rules above. Never drop a finding to pass; skip re-analysis of untouched categories.
 
-After each category, check your dispatch IDs:
-
-```bash
-OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
-CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/budget_watchdog.py" active-job-critical --output-dir "$OUTPUT_DIR" --action-id "<ACTION_ID>" --job-id "<JOB_ID>"
-```
-
-If it returns zero, finish the current category, flush its valid findings, mark
-the untouched categories skipped, log the semantic wrap-up, and return. Do not spend a model turn on
-validation: the post-agent gate validates and retries a rejected attempt with its errors.
-
-On completion, write all six categories, set `partial:false`, clear
-`skipped_categories`, emit `AGENT_END`, and return only:
+When a category call prints `"budget": "critical"`, run only `finish`;
+untouched categories stay skipped. Do not spend a model turn on validation:
+the post-agent gate validates and retries a rejected attempt with its errors.
+After `finish`, return only:
 
 `Wrote <N> threats to <STRIDE_OUTPUT_PATH>. Completed all six STRIDE categories for <COMPONENT_NAME>.`

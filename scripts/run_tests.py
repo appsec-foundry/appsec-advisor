@@ -248,6 +248,7 @@ GROUPS = {
         stage3_runtime_contract
         stall_notice
         stamp_threat_model
+        stride_attempt_writer
         stride_dispatch_waves
         stride_outputs
         stride_progress
@@ -870,6 +871,7 @@ SOURCE_TESTS = {
         schema_integrity
         schemas
         stage1_coverage_recovery_2026_07_20
+        stride_attempt_writer
         stride_dispatch_waves
         validate_intermediate
         build_architect_context
@@ -939,6 +941,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/model/schema_canonicalize.py": _tests("""
+        stride_attempt_writer
         topology_workloads
         check_stride_dispatch
         check_target_specificity
@@ -966,6 +969,7 @@ SOURCE_TESTS = {
         run_path_guard
         stage1_coverage_recovery_2026_07_20
         stage1_coverage_recovery_2026_08_02
+        stride_attempt_writer
         stride_dispatch_waves
         stride_outputs
         stride_serial_dispatch_detection
@@ -1027,6 +1031,7 @@ SOURCE_TESTS = {
         source_auth_scanner
         stage1_coverage_recovery_2026_07_20
         stage1_coverage_recovery_2026_08_02
+        stride_attempt_writer
         stride_dispatch_waves
         stride_outputs
         threat_fixture
@@ -2823,6 +2828,7 @@ SOURCE_TESTS = {
         stage1_context_edge_inventory
         stage1_coverage_recovery_2026_07_20
         stage1_coverage_recovery_2026_08_02
+        stride_attempt_writer
         stride_dispatch_waves
         stride_outputs
         stride_serial_dispatch_detection
@@ -3021,6 +3027,7 @@ SOURCE_TESTS = {
         run_headless_completion
         run_path_guard
         stage1_coverage_recovery_2026_08_02
+        stride_attempt_writer
         stride_dispatch_waves
         stride_outputs
         telemetry_consistency
@@ -3282,6 +3289,7 @@ SOURCE_TESTS = {
         requirements_verification
         run_issues_pipeline
         run_path_guard
+        stride_attempt_writer
         stride_outputs
         telemetry_consistency
         terminate_run
@@ -4061,6 +4069,7 @@ SOURCE_TESTS = {
         skill_auto_retry
         skill_watchdog
         stall_notice
+        stride_attempt_writer
         stride_dispatch_waves
         stride_outputs
         telemetry_consistency
@@ -4282,6 +4291,7 @@ SOURCE_TESTS = {
         refusal_aware_stride
         requirements_verification
         run_path_guard
+        stride_attempt_writer
         stride_outputs
         write_stride_progress
     """),
@@ -4314,6 +4324,7 @@ SOURCE_TESTS = {
         severity_policy
         skill_auto_retry
         source_auth_scanner
+        stride_attempt_writer
         stride_dispatch_waves
         stride_outputs
         threat_fixture
@@ -4408,6 +4419,7 @@ SOURCE_TESTS = {
     """),
     "scripts/runtime/phase_budgets.py": _tests("""
         script_layout
+        stride_attempt_writer
         topology_workloads
         architect_review_runtime
         acquire_lock_heartbeat
@@ -4549,6 +4561,7 @@ SOURCE_TESTS = {
         requirements_verification
         run_path_guard
         severity_policy
+        stride_attempt_writer
         stride_dispatch_waves
         stride_outputs
         threat_fixture
@@ -5623,11 +5636,15 @@ SOURCE_TESTS = {
         stride_outputs
         weakness_signals
     """),
+    "scripts/runtime/stride_attempt_writer.py": _tests("""
+        stride_attempt_writer
+    """),
     "scripts/runtime/write_stride_progress.py": _tests("""
         check_target_specificity
         gate_preconditions
         requirements_verification
         run_path_guard
+        stride_attempt_writer
         stride_outputs
         write_stride_progress
     """),
