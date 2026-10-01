@@ -2786,17 +2786,17 @@ def _usage_from_transcript(transcript_path: str) -> dict:
     block" logged only one turn's worth of tokens and made ASSESSMENT_TOKENS
     useless.
 
-    Streaming line-by-line keeps memory flat regardless of transcript size;
-    typical transcripts run a few MB with 50–200 assistant turns.
+    One API message is written as one line per content block, each repeating
+    that message's ``usage``; summing lines counted input and cache tokens once
+    per block. A message counts once, by ``message.id``, with the largest value
+    per field because a streamed block may carry partial ``output_tokens``.
+    Lines without an id each count, the shape older hosts write.
     """
     if not transcript_path or not os.path.isfile(transcript_path):
         return {}
-    totals = {
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "cache_creation_input_tokens": 0,
-        "cache_read_input_tokens": 0,
-    }
+    keys = ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
+    by_message: dict[str, dict[str, int]] = {}
+    unidentified: list[dict[str, int]] = []
     found_any = False
     try:
         with open(transcript_path, encoding="utf-8", errors="replace") as fh:
@@ -2822,13 +2822,23 @@ def _usage_from_transcript(transcript_path: str) -> dict:
                 if not isinstance(usage, dict) or not usage:
                     continue
                 found_any = True
-                for k in totals:
+                values = {}
+                for k in keys:
                     v = usage.get(k, 0)
-                    if isinstance(v, (int, float)):
-                        totals[k] += int(v)
+                    values[k] = int(v) if isinstance(v, (int, float)) else 0
+                message_id = msg.get("id")
+                if isinstance(message_id, str) and message_id:
+                    seen = by_message.setdefault(message_id, dict.fromkeys(keys, 0))
+                    for k in keys:
+                        seen[k] = max(seen[k], values[k])
+                else:
+                    unidentified.append(values)
     except Exception:
         pass
-    return totals if found_any else {}
+    if not found_any:
+        return {}
+    rows = [*by_message.values(), *unidentified]
+    return {k: sum(row[k] for row in rows) for k in keys}
 
 
 def _stop_reason_from_transcript(transcript_path: str) -> str:

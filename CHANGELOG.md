@@ -57,7 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Architecture enrichment fills Security Architecture prose and routes remaining placeholders to repair, while self-checks catch inconsistent flows and asset locations before later validation failures.
 - Management summaries state the analysis method and coverage limits concisely and use short finding references for unresolved questions.
 - Dependency checks recognise Gradle dependencies declared in map notation (`group:`, `name:`, `version:`).
-- Run logs retain earlier events, completion summaries appear once and explain missing cost measurements, and the run plan warns up front when requested PDF or HTML exports cannot complete in the environment.
+- Run logs retain earlier events, completion summaries appear once and explain missing cost measurements, run costs and budget projections no longer count sub-agent tokens twice, and the run plan warns up front when requested PDF or HTML exports cannot complete in the environment.
 - Plugin update checks compare against released versions instead of advertising development builds.
 - STRIDE analysis receives the most severe scanner signals when a component exceeds the per-class evidence limit, instead of an arbitrary subset.
 - Run Issues report a review stage that covered no finding and a Critical or High count that fell below half of the previous comparable run.

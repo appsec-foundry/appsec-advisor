@@ -341,6 +341,92 @@ class TestUsageFromTranscript:
         t.write_text(json.dumps({"message": {"role": "user", "content": "hi"}}) + "\n")
         assert al._usage_from_transcript(str(t)) == {}
 
+    @staticmethod
+    def _line(message_id, block, **usage):
+        message = {"role": "assistant", "content": [{"type": block}], "usage": usage}
+        if message_id:
+            message["id"] = message_id
+        return json.dumps({"type": "assistant", "message": message})
+
+    @pytest.mark.parametrize(
+        ("lines", "per_message"),
+        [
+            pytest.param(
+                [("m1", "thinking"), ("m1", "text"), ("m1", "tool_use")],
+                [
+                    {
+                        "input_tokens": 3,
+                        "output_tokens": 40,
+                        "cache_creation_input_tokens": 900,
+                        "cache_read_input_tokens": 7000,
+                    }
+                ],
+                id="one-message-three-blocks",
+            ),
+            pytest.param(
+                [("m1", "text"), ("m2", "tool_use"), ("m2", "text")],
+                [
+                    {
+                        "input_tokens": 3,
+                        "output_tokens": 40,
+                        "cache_creation_input_tokens": 900,
+                        "cache_read_input_tokens": 7000,
+                    },
+                    {
+                        "input_tokens": 3,
+                        "output_tokens": 40,
+                        "cache_creation_input_tokens": 900,
+                        "cache_read_input_tokens": 7000,
+                    },
+                ],
+                id="two-messages",
+            ),
+            pytest.param(
+                [(None, "text"), (None, "text")],
+                [
+                    {
+                        "input_tokens": 3,
+                        "output_tokens": 40,
+                        "cache_creation_input_tokens": 900,
+                        "cache_read_input_tokens": 7000,
+                    },
+                    {
+                        "input_tokens": 3,
+                        "output_tokens": 40,
+                        "cache_creation_input_tokens": 900,
+                        "cache_read_input_tokens": 7000,
+                    },
+                ],
+                id="lines-without-id-each-count",
+            ),
+        ],
+    )
+    def test_each_api_message_counts_once(self, al, tmp_path, lines, per_message):
+        usage = per_message[0]
+        t = tmp_path / "blocks.jsonl"
+        t.write_text("\n".join(self._line(mid, block, **usage) for mid, block in lines) + "\n")
+        expected = {key: sum(row[key] for row in per_message) for key in usage}
+        assert al._usage_from_transcript(str(t)) == expected
+
+    def test_streamed_partial_output_counts_its_final_value(self, al, tmp_path):
+        t = tmp_path / "stream.jsonl"
+        t.write_text(
+            "\n".join(
+                [
+                    self._line("m1", "thinking", input_tokens=2, output_tokens=8, cache_read_input_tokens=500),
+                    self._line("m1", "tool_use", input_tokens=2, output_tokens=310, cache_read_input_tokens=500),
+                    json.dumps({"type": "user", "message": {"role": "user", "content": "tool result"}}),
+                ]
+            )
+            + "\n"
+        )
+        assert al._usage_from_transcript(str(t)) == {
+            "input_tokens": 2,
+            "output_tokens": 310,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 500,
+        }
+
 
 # ---------------------------------------------------------------------------
 # _emit_substep_progress
