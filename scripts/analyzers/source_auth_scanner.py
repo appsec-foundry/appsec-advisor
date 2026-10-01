@@ -66,7 +66,7 @@ import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 from shared._path_guard import is_safe_to_read
 from shared._source_lex import call_end, code_only, rejecting_check, without_comments
@@ -1130,6 +1130,352 @@ def _llm_finding(
     )
 
 
+def _update_llm_function_frames(
+    line: str,
+    suffix: str,
+    indent: int,
+    brace_depth: int,
+    function_frames: list[tuple[int, int, set[str], set[str]]],
+    tainted: set[str],
+    html_sanitized: set[str],
+) -> tuple[set[str], set[str]]:
+    """Restore taint on function exit; push a frame and clear parameter taint on entry."""
+    while function_frames and (
+        (suffix == ".py" and line.strip() and indent <= function_frames[-1][1])
+        or (suffix != ".py" and brace_depth <= function_frames[-1][0])
+    ):
+        _, _, tainted, html_sanitized = function_frames.pop()
+    definition = re.search(r"(?:\bfunction\s*\w*|\bdef\s+\w+)\s*\(([^)]*)\)|(?:\([^)]*\)|[A-Za-z_$]\w*)\s*=>\s*{", line)
+    if definition:
+        function_frames.append((brace_depth, indent, set(tainted), set(html_sanitized)))
+        params = (
+            definition.group(1) if definition.group(1) is not None else definition.group(0).split("=>")[0].strip("() ")
+        )
+        for param in (params or "").split(","):
+            name = param.strip().split(":")[0].split("=")[0].strip()
+            tainted = {ref for ref in tainted if ref != name and not ref.startswith(name + ".")}
+            html_sanitized.discard(name)
+    return tainted, html_sanitized
+
+
+def _check_llm_structured_output(
+    lines: list[str],
+    idx: int,
+    file_rel: str,
+    targets: list[str],
+    rhs_scope: str,
+    rhs_refs: set[str],
+    rhs_has_direct_output: bool,
+    emit_once: Callable[[Finding], None],
+) -> None:
+    """Parsed model JSON consumed without schema validation."""
+    if _RAW_STRUCTURED_PARSE_RE.search(rhs_scope) and (rhs_refs or rhs_has_direct_output):
+        structured_refs = set(targets) | rhs_refs
+        if _structured_output_consumed(lines, idx, targets) and not _structured_validation_present(
+            lines, idx, structured_refs, rhs_scope
+        ):
+            emit_once(
+                _llm_finding(
+                    check_id="INJ-LLM-001",
+                    file_rel=file_rel,
+                    line_idx=idx,
+                    lines=lines,
+                    title="Improper LLM Output Validation",
+                    scenario=(
+                        "Model-generated JSON is parsed and subsequently consumed without a schema or complete "
+                        "type, range, and allowlist checks. Prompt-influenced fields can therefore select "
+                        "unexpected identifiers, enum values, or numeric bounds."
+                    ),
+                    severity="Medium",
+                    cwe="CWE-20",
+                    finding_type="",
+                    remediation=(
+                        "Validate parsed model output with a closed schema that rejects unknown fields and "
+                        "enforces types, enum allowlists, identifier formats, and numeric ranges before use."
+                    ),
+                )
+            )
+
+
+def _propagate_llm_assignment(
+    lines: list[str],
+    idx: int,
+    line: str,
+    statement: str,
+    file_rel: str,
+    tainted: set[str],
+    html_sanitized: set[str],
+    emit_once: Callable[[Finding], None],
+) -> None:
+    """Propagate taint and sanitizer state through an assignment; check structured parsing."""
+    assignment = _assignment(line)
+    if assignment:
+        targets, rhs = assignment
+        continuation = "\n".join(statement.splitlines()[1:])
+        rhs_scope = "\n".join(part for part in (rhs, continuation) if part)
+        rhs_refs = _refs_in(rhs_scope, tainted)
+        rhs_has_direct_output = _direct_llm_call(rhs_scope, has_surface=True)
+        rhs_is_tainted = bool(rhs_refs or rhs_has_direct_output)
+        for target in targets:
+            if rhs_is_tainted:
+                tainted.add(target)
+                sanitizes_refs = bool(rhs_refs and _html_sanitizes_refs(rhs_scope, rhs_refs))
+                sanitizes_direct = rhs_has_direct_output and _guard_wraps_direct_output(rhs_scope, _HTML_SANITIZER_RE)
+                if sanitizes_refs or sanitizes_direct:
+                    html_sanitized.add(target)
+                else:
+                    html_sanitized.discard(target)
+            else:
+                tainted.discard(target)
+                html_sanitized.discard(target)
+
+        _check_llm_structured_output(
+            lines, idx, file_rel, targets, rhs_scope, rhs_refs, rhs_has_direct_output, emit_once
+        )
+
+
+def _check_llm_html_sink(
+    lines: list[str],
+    idx: int,
+    line: str,
+    statement: str,
+    file_rel: str,
+    tainted: set[str],
+    html_sanitized: set[str],
+    emit_once: Callable[[Finding], None],
+) -> None:
+    """Unsanitized model output in an active HTML sink."""
+    html_match = _HTML_SINK_RE.search(line)
+    if html_match:
+        html_payload = _html_sink_payload(statement, html_match)
+        sink_refs = _refs_in(html_payload, tainted)
+        unsafe_refs = sink_refs - html_sanitized
+        direct_html = _direct_llm_call(html_payload, has_surface=True)
+        unsafe_direct_html = direct_html and not _guard_wraps_direct_output(html_payload, _HTML_SANITIZER_RE)
+        if (unsafe_refs and not _html_sanitizes_refs(html_payload, unsafe_refs)) or unsafe_direct_html:
+            emit_once(
+                _llm_finding(
+                    check_id="INJ-LLM-002",
+                    file_rel=file_rel,
+                    line_idx=idx,
+                    lines=lines,
+                    title="Cross-Site Scripting from LLM Output",
+                    scenario=(
+                        "Model-controlled text is inserted into an active HTML context without contextual encoding "
+                        "or a sanitizer applied to that value, allowing model output to become executable markup."
+                    ),
+                    severity="High",
+                    cwe="CWE-79",
+                    finding_type="FT-011",
+                    remediation=(
+                        "Render model text through framework escaping or sanitize it for the exact HTML context "
+                        "immediately before the sink; keep raw HTML disabled for Markdown output."
+                    ),
+                )
+            )
+
+
+def _llm_execution_kind(
+    line: str,
+    statement: str,
+    suffix: str,
+    tainted: set[str],
+    statement_refs: set[str],
+    statement_has_direct_output: bool,
+) -> tuple[str, str, str, str] | None:
+    """Classify model output reaching a code, process, or SQL interpreter."""
+    execution_kind: tuple[str, str, str, str] | None = None
+    code_match = _CODE_EXEC_RE.search(line)
+    if code_match is None and suffix.lower() == ".py":
+        code_match = _PYTHON_CODE_EXEC_RE.search(line)
+    if code_match:
+        first_arg = _call_first_argument(statement, code_match)
+        if _refs_in(first_arg, tainted) or _direct_llm_call(first_arg, has_surface=True):
+            execution_kind = ("code", "CWE-94", "FT-020", "Critical")
+    else:
+        process_match = _PROCESS_EXEC_RE.search(line)
+        if process_match:
+            first_arg = _call_first_argument(statement, process_match)
+            first_arg_is_model_output = bool(
+                _refs_in(first_arg, tainted) or _direct_llm_call(first_arg, has_surface=True)
+            )
+            shell_enabled = bool(re.search(r"(?i)\bshell\s*[:=]\s*true\b", statement))
+            shell_receives_model_output = shell_enabled and bool(statement_refs or statement_has_direct_output)
+            interpreter_receives_model_output = _fixed_interpreter_executes_model_output(
+                statement, statement_refs, statement_has_direct_output
+            )
+            safe_python_argv = _python_fixed_argv(statement, process_match, first_arg)
+            if interpreter_receives_model_output or (
+                (first_arg_is_model_output or shell_receives_model_output) and not safe_python_argv
+            ):
+                execution_kind = ("process", "CWE-78", "FT-003", "Critical")
+        if execution_kind is None:
+            sql_match = _SQL_EXEC_RE.search(line)
+            if sql_match:
+                first_arg = _call_first_argument(statement, sql_match)
+                if _refs_in(first_arg, tainted) or _direct_llm_call(first_arg, has_surface=True):
+                    execution_kind = ("SQL", "CWE-89", "FT-001", "High")
+    return execution_kind
+
+
+def _check_llm_execution_sink(
+    lines: list[str],
+    idx: int,
+    file_rel: str,
+    execution_kind: tuple[str, str, str, str] | None,
+    emit_once: Callable[[Finding], None],
+) -> None:
+    """Model output executed as code, a process, or SQL."""
+    if execution_kind is not None:
+        kind, cwe, finding_type, severity = execution_kind
+        emit_once(
+            _llm_finding(
+                check_id="INJ-LLM-003",
+                file_rel=file_rel,
+                line_idx=idx,
+                lines=lines,
+                title={
+                    "code": "Code Injection from LLM Output",
+                    "process": "Command Injection from LLM Output",
+                    "SQL": "SQL Injection from LLM Output",
+                }[kind],
+                scenario=(
+                    f"Model-controlled output reaches a {kind} interpreter as executable structure rather than "
+                    "data. Prompt injection or a compromised model response can therefore alter the operation "
+                    "that the application executes."
+                ),
+                severity=severity,
+                cwe=cwe,
+                finding_type=finding_type,
+                remediation=(
+                    "Do not execute model output directly. Use fixed operations with bound parameters or a "
+                    "shell-free fixed executable, and mediate any model-selected action through a strict allowlist."
+                ),
+            )
+        )
+
+
+def _check_llm_resource_sinks(
+    lines: list[str],
+    idx: int,
+    line: str,
+    statement: str,
+    suffix: str,
+    file_rel: str,
+    tainted: set[str],
+    emit_once: Callable[[Finding], None],
+) -> None:
+    """Unguarded model output selecting an outbound URL or filesystem path."""
+    resource_sinks = [
+        (_URL_SINK_RE, "outbound URL", "CWE-918", "FT-070", _URL_GUARD_RE),
+        (_PATH_SINK_RE, "filesystem path", "CWE-22", "FT-060", _PATH_GUARD_RE),
+    ]
+    if suffix.lower() == ".py":
+        resource_sinks.append((_PYTHON_PATH_SINK_RE, "filesystem path", "CWE-22", "FT-060", _PATH_GUARD_RE))
+    for sink_re, resource_kind, cwe, finding_type, guard_re in resource_sinks:
+        sink_match = sink_re.search(line)
+        if not sink_match:
+            continue
+        resource_argument = _resource_sink_argument(statement, sink_match)
+        resource_refs = _value_refs(resource_argument, tainted)
+        direct_resource = _direct_llm_call(resource_argument, has_surface=True)
+        if not resource_refs and not direct_resource:
+            continue
+        scope = "\n".join([_guard_scope_before(lines, idx, sink_match.start()), resource_argument])
+        guarded_refs = resource_refs and _guard_consumes_refs(scope, guard_re, resource_refs)
+        guarded_direct = direct_resource and _guard_wraps_direct_output(resource_argument, guard_re)
+        if guarded_refs or guarded_direct:
+            continue
+        emit_once(
+            _llm_finding(
+                check_id="INJ-LLM-004",
+                file_rel=file_rel,
+                line_idx=idx,
+                lines=lines,
+                title=(
+                    "Server-Side Request Forgery from LLM Output"
+                    if cwe == "CWE-918"
+                    else "Path Traversal from LLM Output"
+                ),
+                scenario=(
+                    f"A model-generated value selects an {resource_kind} without a visible destination/containment "
+                    "allowlist. Prompt-influenced output can therefore reach resources outside the caller's "
+                    "intended scope."
+                ),
+                severity="High",
+                cwe=cwe,
+                finding_type=finding_type,
+                remediation=(
+                    "Validate the model-selected resource with a strict allowlist and canonical containment or "
+                    "destination checks before access; do not treat model output as a trusted locator."
+                ),
+            )
+        )
+
+
+def _check_llm_selection_sink(
+    lines: list[str],
+    idx: int,
+    line: str,
+    statement: str,
+    file_rel: str,
+    tainted: set[str],
+    emit_once: Callable[[Finding], None],
+) -> None:
+    """Model-selected tool, action, or object identifier without authorization and allowlist."""
+    object_match = _OBJECT_SINK_RE.search(line)
+    tool_match = _TOOL_SINK_RE.search(line)
+    selected_match = tool_match or object_match
+    if selected_match:
+        is_tool = tool_match is not None
+        selected_argument = (
+            selected_match.group(0).split("[", 1)[1].rsplit("]", 1)[0]
+            if is_tool and "[" in selected_match.group(0)
+            else _call_first_argument(statement, selected_match)
+        )
+        scope = "\n".join([_guard_scope_before(lines, idx, selected_match.start()), selected_argument])
+        selected_refs = _selected_sink_refs(statement, selected_match, tainted, is_tool=is_tool)
+        direct_selection = _direct_llm_call(selected_argument, has_surface=True)
+        if not selected_refs and not direct_selection:
+            return
+        has_authz = _authz_guard_present(scope, selected_argument, selected_refs, direct_selection)
+        has_allowlist = (
+            bool(
+                (selected_refs and _guard_consumes_refs(scope, _TOOL_ALLOWLIST_RE, selected_refs))
+                or (direct_selection and _guard_wraps_direct_output(selected_argument, _TOOL_ALLOWLIST_RE))
+            )
+            if is_tool
+            else True
+        )
+        if not (has_authz and has_allowlist):
+            target_kind = "tool/action" if is_tool else "object identifier"
+            emit_once(
+                _llm_finding(
+                    check_id="AUTHZ-LLM-001",
+                    file_rel=file_rel,
+                    line_idx=idx,
+                    lines=lines,
+                    title=(
+                        "Missing Authorization for LLM-Selected Action"
+                        if is_tool
+                        else "Missing Authorization for LLM-Selected Object"
+                    ),
+                    scenario=(
+                        f"A model-generated {target_kind} reaches a protected operation without both a server-side "
+                        "authorization/ownership decision and, for dynamic actions, a fixed allowlist. The model can "
+                        "therefore direct application authority at a resource the caller may not control."
+                    ),
+                    severity="High",
+                    cwe="CWE-862",
+                    finding_type="FT-042",
+                    remediation=(
+                        "Resolve the model-selected value through an allowlisted server-side mapping, then authorize "
+                        "the authenticated caller against the concrete tool, action, object, owner, and tenant."
+                    ),
+                )
+            )
+
+
 def _scan_llm_output_file(file_abs: Path, file_rel: str) -> list[Finding]:
     """Emit high-confidence findings for direct model-output-to-sink flows."""
     if file_abs.suffix.lower() not in _LLM_OUTPUT_EXTS:
@@ -1157,81 +1503,18 @@ def _scan_llm_output_file(file_abs: Path, file_rel: str) -> list[Finding]:
             emitted.add(key)
             findings.append(finding)
 
+    suffix = file_abs.suffix
     function_frames: list[tuple[int, int, set[str], set[str]]] = []
     brace_depth = 0
     for idx, line in enumerate(lines):
         indent = len(line) - len(line.lstrip())
-        while function_frames and (
-            (file_abs.suffix == ".py" and line.strip() and indent <= function_frames[-1][1])
-            or (file_abs.suffix != ".py" and brace_depth <= function_frames[-1][0])
-        ):
-            _, _, tainted, html_sanitized = function_frames.pop()
-        definition = re.search(
-            r"(?:\bfunction\s*\w*|\bdef\s+\w+)\s*\(([^)]*)\)|(?:\([^)]*\)|[A-Za-z_$]\w*)\s*=>\s*{", line
+        tainted, html_sanitized = _update_llm_function_frames(
+            line, suffix, indent, brace_depth, function_frames, tainted, html_sanitized
         )
-        if definition:
-            function_frames.append((brace_depth, indent, set(tainted), set(html_sanitized)))
-            params = (
-                definition.group(1)
-                if definition.group(1) is not None
-                else definition.group(0).split("=>")[0].strip("() ")
-            )
-            for param in (params or "").split(","):
-                name = param.strip().split(":")[0].split("=")[0].strip()
-                tainted = {ref for ref in tainted if ref != name and not ref.startswith(name + ".")}
-                html_sanitized.discard(name)
         braces = code_only(line)
         brace_depth += braces.count("{") - braces.count("}")
         statement = _forward_statement(lines, idx)
-        assignment = _assignment(line)
-        if assignment:
-            targets, rhs = assignment
-            continuation = "\n".join(statement.splitlines()[1:])
-            rhs_scope = "\n".join(part for part in (rhs, continuation) if part)
-            rhs_refs = _refs_in(rhs_scope, tainted)
-            rhs_has_direct_output = _direct_llm_call(rhs_scope, has_surface=True)
-            rhs_is_tainted = bool(rhs_refs or rhs_has_direct_output)
-            for target in targets:
-                if rhs_is_tainted:
-                    tainted.add(target)
-                    sanitizes_refs = bool(rhs_refs and _html_sanitizes_refs(rhs_scope, rhs_refs))
-                    sanitizes_direct = rhs_has_direct_output and _guard_wraps_direct_output(
-                        rhs_scope, _HTML_SANITIZER_RE
-                    )
-                    if sanitizes_refs or sanitizes_direct:
-                        html_sanitized.add(target)
-                    else:
-                        html_sanitized.discard(target)
-                else:
-                    tainted.discard(target)
-                    html_sanitized.discard(target)
-
-            if _RAW_STRUCTURED_PARSE_RE.search(rhs_scope) and (rhs_refs or rhs_has_direct_output):
-                structured_refs = set(targets) | rhs_refs
-                if _structured_output_consumed(lines, idx, targets) and not _structured_validation_present(
-                    lines, idx, structured_refs, rhs_scope
-                ):
-                    emit_once(
-                        _llm_finding(
-                            check_id="INJ-LLM-001",
-                            file_rel=file_rel,
-                            line_idx=idx,
-                            lines=lines,
-                            title="Improper LLM Output Validation",
-                            scenario=(
-                                "Model-generated JSON is parsed and subsequently consumed without a schema or complete "
-                                "type, range, and allowlist checks. Prompt-influenced fields can therefore select "
-                                "unexpected identifiers, enum values, or numeric bounds."
-                            ),
-                            severity="Medium",
-                            cwe="CWE-20",
-                            finding_type="",
-                            remediation=(
-                                "Validate parsed model output with a closed schema that rejects unknown fields and "
-                                "enforces types, enum allowlists, identifier formats, and numeric ranges before use."
-                            ),
-                        )
-                    )
+        _propagate_llm_assignment(lines, idx, line, statement, file_rel, tainted, html_sanitized, emit_once)
 
         loop = _loop_target(line)
         if loop and _refs_in(loop[1], tainted):
@@ -1243,191 +1526,13 @@ def _scan_llm_output_file(file_abs: Path, file_rel: str) -> list[Finding]:
         if not statement_refs and not statement_has_direct_output:
             continue
 
-        html_match = _HTML_SINK_RE.search(line)
-        if html_match:
-            html_payload = _html_sink_payload(statement, html_match)
-            sink_refs = _refs_in(html_payload, tainted)
-            unsafe_refs = sink_refs - html_sanitized
-            direct_html = _direct_llm_call(html_payload, has_surface=True)
-            unsafe_direct_html = direct_html and not _guard_wraps_direct_output(html_payload, _HTML_SANITIZER_RE)
-            if (unsafe_refs and not _html_sanitizes_refs(html_payload, unsafe_refs)) or unsafe_direct_html:
-                emit_once(
-                    _llm_finding(
-                        check_id="INJ-LLM-002",
-                        file_rel=file_rel,
-                        line_idx=idx,
-                        lines=lines,
-                        title="Cross-Site Scripting from LLM Output",
-                        scenario=(
-                            "Model-controlled text is inserted into an active HTML context without contextual encoding "
-                            "or a sanitizer applied to that value, allowing model output to become executable markup."
-                        ),
-                        severity="High",
-                        cwe="CWE-79",
-                        finding_type="FT-011",
-                        remediation=(
-                            "Render model text through framework escaping or sanitize it for the exact HTML context "
-                            "immediately before the sink; keep raw HTML disabled for Markdown output."
-                        ),
-                    )
-                )
-
-        execution_kind: tuple[str, str, str, str] | None = None
-        code_match = _CODE_EXEC_RE.search(line)
-        if code_match is None and file_abs.suffix.lower() == ".py":
-            code_match = _PYTHON_CODE_EXEC_RE.search(line)
-        if code_match:
-            first_arg = _call_first_argument(statement, code_match)
-            if _refs_in(first_arg, tainted) or _direct_llm_call(first_arg, has_surface=True):
-                execution_kind = ("code", "CWE-94", "FT-020", "Critical")
-        else:
-            process_match = _PROCESS_EXEC_RE.search(line)
-            if process_match:
-                first_arg = _call_first_argument(statement, process_match)
-                first_arg_is_model_output = bool(
-                    _refs_in(first_arg, tainted) or _direct_llm_call(first_arg, has_surface=True)
-                )
-                shell_enabled = bool(re.search(r"(?i)\bshell\s*[:=]\s*true\b", statement))
-                shell_receives_model_output = shell_enabled and bool(statement_refs or statement_has_direct_output)
-                interpreter_receives_model_output = _fixed_interpreter_executes_model_output(
-                    statement, statement_refs, statement_has_direct_output
-                )
-                safe_python_argv = _python_fixed_argv(statement, process_match, first_arg)
-                if interpreter_receives_model_output or (
-                    (first_arg_is_model_output or shell_receives_model_output) and not safe_python_argv
-                ):
-                    execution_kind = ("process", "CWE-78", "FT-003", "Critical")
-            if execution_kind is None:
-                sql_match = _SQL_EXEC_RE.search(line)
-                if sql_match:
-                    first_arg = _call_first_argument(statement, sql_match)
-                    if _refs_in(first_arg, tainted) or _direct_llm_call(first_arg, has_surface=True):
-                        execution_kind = ("SQL", "CWE-89", "FT-001", "High")
-        if execution_kind is not None:
-            kind, cwe, finding_type, severity = execution_kind
-            emit_once(
-                _llm_finding(
-                    check_id="INJ-LLM-003",
-                    file_rel=file_rel,
-                    line_idx=idx,
-                    lines=lines,
-                    title={
-                        "code": "Code Injection from LLM Output",
-                        "process": "Command Injection from LLM Output",
-                        "SQL": "SQL Injection from LLM Output",
-                    }[kind],
-                    scenario=(
-                        f"Model-controlled output reaches a {kind} interpreter as executable structure rather than "
-                        "data. Prompt injection or a compromised model response can therefore alter the operation "
-                        "that the application executes."
-                    ),
-                    severity=severity,
-                    cwe=cwe,
-                    finding_type=finding_type,
-                    remediation=(
-                        "Do not execute model output directly. Use fixed operations with bound parameters or a "
-                        "shell-free fixed executable, and mediate any model-selected action through a strict allowlist."
-                    ),
-                )
-            )
-
-        resource_sinks = [
-            (_URL_SINK_RE, "outbound URL", "CWE-918", "FT-070", _URL_GUARD_RE),
-            (_PATH_SINK_RE, "filesystem path", "CWE-22", "FT-060", _PATH_GUARD_RE),
-        ]
-        if file_abs.suffix.lower() == ".py":
-            resource_sinks.append((_PYTHON_PATH_SINK_RE, "filesystem path", "CWE-22", "FT-060", _PATH_GUARD_RE))
-        for sink_re, resource_kind, cwe, finding_type, guard_re in resource_sinks:
-            sink_match = sink_re.search(line)
-            if not sink_match:
-                continue
-            resource_argument = _resource_sink_argument(statement, sink_match)
-            resource_refs = _value_refs(resource_argument, tainted)
-            direct_resource = _direct_llm_call(resource_argument, has_surface=True)
-            if not resource_refs and not direct_resource:
-                continue
-            scope = "\n".join([_guard_scope_before(lines, idx, sink_match.start()), resource_argument])
-            guarded_refs = resource_refs and _guard_consumes_refs(scope, guard_re, resource_refs)
-            guarded_direct = direct_resource and _guard_wraps_direct_output(resource_argument, guard_re)
-            if guarded_refs or guarded_direct:
-                continue
-            emit_once(
-                _llm_finding(
-                    check_id="INJ-LLM-004",
-                    file_rel=file_rel,
-                    line_idx=idx,
-                    lines=lines,
-                    title=(
-                        "Server-Side Request Forgery from LLM Output"
-                        if cwe == "CWE-918"
-                        else "Path Traversal from LLM Output"
-                    ),
-                    scenario=(
-                        f"A model-generated value selects an {resource_kind} without a visible destination/containment "
-                        "allowlist. Prompt-influenced output can therefore reach resources outside the caller's "
-                        "intended scope."
-                    ),
-                    severity="High",
-                    cwe=cwe,
-                    finding_type=finding_type,
-                    remediation=(
-                        "Validate the model-selected resource with a strict allowlist and canonical containment or "
-                        "destination checks before access; do not treat model output as a trusted locator."
-                    ),
-                )
-            )
-
-        object_match = _OBJECT_SINK_RE.search(line)
-        tool_match = _TOOL_SINK_RE.search(line)
-        selected_match = tool_match or object_match
-        if selected_match:
-            is_tool = tool_match is not None
-            selected_argument = (
-                selected_match.group(0).split("[", 1)[1].rsplit("]", 1)[0]
-                if is_tool and "[" in selected_match.group(0)
-                else _call_first_argument(statement, selected_match)
-            )
-            scope = "\n".join([_guard_scope_before(lines, idx, selected_match.start()), selected_argument])
-            selected_refs = _selected_sink_refs(statement, selected_match, tainted, is_tool=is_tool)
-            direct_selection = _direct_llm_call(selected_argument, has_surface=True)
-            if not selected_refs and not direct_selection:
-                continue
-            has_authz = _authz_guard_present(scope, selected_argument, selected_refs, direct_selection)
-            has_allowlist = (
-                bool(
-                    (selected_refs and _guard_consumes_refs(scope, _TOOL_ALLOWLIST_RE, selected_refs))
-                    or (direct_selection and _guard_wraps_direct_output(selected_argument, _TOOL_ALLOWLIST_RE))
-                )
-                if is_tool
-                else True
-            )
-            if not (has_authz and has_allowlist):
-                target_kind = "tool/action" if is_tool else "object identifier"
-                emit_once(
-                    _llm_finding(
-                        check_id="AUTHZ-LLM-001",
-                        file_rel=file_rel,
-                        line_idx=idx,
-                        lines=lines,
-                        title=(
-                            "Missing Authorization for LLM-Selected Action"
-                            if is_tool
-                            else "Missing Authorization for LLM-Selected Object"
-                        ),
-                        scenario=(
-                            f"A model-generated {target_kind} reaches a protected operation without both a server-side "
-                            "authorization/ownership decision and, for dynamic actions, a fixed allowlist. The model can "
-                            "therefore direct application authority at a resource the caller may not control."
-                        ),
-                        severity="High",
-                        cwe="CWE-862",
-                        finding_type="FT-042",
-                        remediation=(
-                            "Resolve the model-selected value through an allowlisted server-side mapping, then authorize "
-                            "the authenticated caller against the concrete tool, action, object, owner, and tenant."
-                        ),
-                    )
-                )
+        _check_llm_html_sink(lines, idx, line, statement, file_rel, tainted, html_sanitized, emit_once)
+        execution_kind = _llm_execution_kind(
+            line, statement, suffix, tainted, statement_refs, statement_has_direct_output
+        )
+        _check_llm_execution_sink(lines, idx, file_rel, execution_kind, emit_once)
+        _check_llm_resource_sinks(lines, idx, line, statement, suffix, file_rel, tainted, emit_once)
+        _check_llm_selection_sink(lines, idx, line, statement, file_rel, tainted, emit_once)
 
     return findings
 

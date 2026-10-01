@@ -1002,30 +1002,35 @@ def _extract_file(repo_root: Path, path: Path) -> list[RouteCandidate]:
 # ---------------------------------------------------------------------------
 
 
-def build_inventory(repo_root: Path) -> dict:
-    """Extract routes, lift their auth signals from mounted guards and resolved handlers, and
-    return the `.route-inventory.json` document with `R-NNN` ids and coverage counts.
+def _record_mount(match: re.Match, prefixes: set[str], exact: set[tuple[str, str]]) -> None:
+    """Record a guarded mount as a path prefix or an exact (verb, path) pair."""
+    verb, path = match.group("verb").lower(), match.group("path")
+    wildcard = path.endswith("*")
+    path = path.rstrip("*").rstrip("/") or "/"
+    if verb == "use" or wildcard:
+        prefixes.add(path)
+    else:
+        exact.add(("ANY" if verb == "all" else verb.upper(), path))
 
-    `missing_auth_suspect` and `missing_authz_suspect` are review flags, never findings.
-    """
-    llm_sdk_declared = _declares_llm_sdk(repo_root)
-    all_routes: list[RouteCandidate] = []
-    frameworks_seen: set[str] = set()
-    unsupported: list[str] = []
-    guarded_prefixes: set[str] = set()
-    authz_guarded_prefixes: set[str] = set()
-    guarded_exact: set[tuple[str, str]] = set()
-    authz_guarded_exact: set[tuple[str, str]] = set()
 
-    def _record_mount(match: re.Match, prefixes: set[str], exact: set[tuple[str, str]]) -> None:
-        verb, path = match.group("verb").lower(), match.group("path")
-        wildcard = path.endswith("*")
-        path = path.rstrip("*").rstrip("/") or "/"
-        if verb == "use" or wildcard:
-            prefixes.add(path)
-        else:
-            exact.add(("ANY" if verb == "all" else verb.upper(), path))
+def _guarded(route: RouteCandidate, prefixes: set[str], exact: set[tuple[str, str]]) -> bool:
+    """Return whether a recorded mount guard covers the route."""
+    p = (route.path or "").rstrip("/") or "/"
+    if (route.method.upper(), p) in exact or ("ANY", p) in exact:
+        return True
+    return any(p == g or p.startswith(g.rstrip("/") + "/") for g in prefixes)
 
+
+def _collect_routes(
+    repo_root: Path,
+    all_routes: list[RouteCandidate],
+    frameworks_seen: set[str],
+    guarded_prefixes: set[str],
+    authz_guarded_prefixes: set[str],
+    guarded_exact: set[tuple[str, str]],
+    authz_guarded_exact: set[tuple[str, str]],
+) -> None:
+    """Extract routes and guarded mounts from every source file."""
     for src in _walk_sources(repo_root):
         try:
             lines = src.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
@@ -1051,107 +1056,115 @@ def build_inventory(repo_root: Path) -> dict:
             frameworks_seen.add(r.framework)
             all_routes.append(r)
 
-    # Apply prefix guards + compute the missing-auth advisory flag.
-    def _guarded(route: RouteCandidate, prefixes: set[str], exact: set[tuple[str, str]]) -> bool:
-        p = (route.path or "").rstrip("/") or "/"
-        if (route.method.upper(), p) in exact or ("ANY", p) in exact:
-            return True
-        return any(p == g or p.startswith(g.rstrip("/") + "/") for g in prefixes)
 
-    resolver = HandlerResolver(repo_root)
-    for r in all_routes:
-        is_graphql = r.framework == "graphql"
-        gql_notes = set(r.notes or [])
-        gql_object_access = "object-id argument" in gql_notes
-        gql_sensitive = "sensitive-name signal" in gql_notes
-        gql_mutation = (r.path or "").startswith("Mutation ")
-        gql_subscription = (r.path or "").startswith("Subscription ")
-        if r.authn_signal == "unknown" and _guarded(r, guarded_prefixes, guarded_exact):
-            r.authn_signal = "middleware_present"
-        # Cross-file authZ lift: a route under a centrally-mounted role/permission
-        # guard is authorized even though the per-handler scan cannot see the
-        # mount. Mirrors the authN lift above.
-        if r.authz_signal == "unknown" and _guarded(r, authz_guarded_prefixes, authz_guarded_exact):
-            r.authz_signal = "middleware_present"
-        # The handler chain itself: a verified credential check proves authentication;
-        # `absent` needs a fully resolved chain that never checks a credential.
-        route_ref = {
-            "framework": r.framework,
-            "handler_file": r.handler_file,
-            "handler_line": r.handler_line,
-            "path": r.path,
-        }
-        handler = resolver.route_signal(route_ref)
-        r.handler_module = resolver.handler_module(route_ref)
-        if handler is not None:
-            r.authn_handler_signal = handler.signal
-            r.authn_handler_scheme = handler.scheme
-            r.authn_handler_evidence = handler.evidence
-            if r.authn_signal == "unknown" and handler.signal == "verified":
-                r.authn_signal = "present"
-            elif r.authn_signal == "unknown" and handler.signal in ("none", "decode_only"):
-                r.authn_signal = "absent"
-        # Warning (not a finding): a state-changing or management route with no
-        # detected auth guard looks like it SHOULD require authentication —
-        # unless it is an auth-flow / public-probe endpoint (login, register,
-        # captcha, health…) which is unauthenticated by design.
-        if (
-            r.authn_signal in ("unknown", "absent")
-            and (r.method.upper() in _STATE_CHANGING or r.management_surface)
-            and not _is_public_by_design(r.path)
-        ):
-            r.missing_auth_suspect = True
-        # GraphQL SDL has no HTTP verb per operation. Treat unauthenticated
-        # mutations/subscriptions and sensitive object lookups as review
-        # candidates so the existing ARCH-AUTHN hypothesis covers GraphQL too.
-        if (
-            is_graphql
-            and r.authn_signal == "unknown"
-            and (
-                (gql_mutation and not _is_public_by_design(r.path))
-                or gql_subscription
-                or (gql_object_access and gql_sensitive)
-            )
-        ):
-            r.missing_auth_suspect = True
-        # Advisory (not a finding): an AUTHENTICATED, object-addressing route
-        # (path carries a resource id) with no detected role/ownership gate is
-        # the canonical BOLA/IDOR primitive — a logged-in user swaps the id for
-        # another tenant's record. Hypothesis, not assertion: the scan cannot
-        # prove a gate is absent (unknown != absent), so this seeds an
-        # investigate-class hypothesis, never a hard finding.
-        if (
-            r.authn_signal in _AUTHN_PRESENT
-            and r.authz_signal not in _AUTHZ_PRESENT
-            and (bool(_PATH_PARAM_RE.search(r.path or "")) or (is_graphql and gql_object_access and gql_sensitive))
-            and not _is_public_by_design(r.path)
-        ):
-            r.missing_authz_suspect = True
-        # Display relevance (NOT a finding): reasons a route still merits an
-        # individual §5 row even with zero linked findings. The renderer keeps
-        # these out of the "N further entry points" collapse and shows the
-        # reason as a review chip. Order is deterministic.
-        tags: list[str] = []
-        if _REGISTRATION_PATH_RE.search(r.path or "") or (
-            is_graphql and re.search(r"(?i)\b(?:register|signup|sign-up)\b", r.path or "")
-        ):
-            tags.append("registration")
-        if _AUTHFLOW_PATH_RE.search(r.path or "") or (is_graphql and _PUBLIC_OPERATION_NAME_RE.search(r.path or "")):
-            tags.append("authentication")
-        if r.management_surface:
-            tags.append("management")
-        if is_graphql and (gql_mutation or gql_subscription):
-            tags.append("graphql-mutation")
-        if is_graphql and gql_object_access and gql_sensitive:
-            tags.append("graphql-object-access")
-        if r.missing_auth_suspect:
-            tags.append("missing-auth")
-        if r.missing_authz_suspect:
-            tags.append("missing-authz")
-        if llm_sdk_declared and _LLM_PATH_RE.search(r.path or ""):
-            tags.append("llm")
-        r.relevance_tags = tags
+def _lift_auth_signals(
+    r: RouteCandidate,
+    resolver: HandlerResolver,
+    guarded_prefixes: set[str],
+    authz_guarded_prefixes: set[str],
+    guarded_exact: set[tuple[str, str]],
+    authz_guarded_exact: set[tuple[str, str]],
+) -> None:
+    """Lift authn/authz signals from mount guards and the resolved handler chain."""
+    if r.authn_signal == "unknown" and _guarded(r, guarded_prefixes, guarded_exact):
+        r.authn_signal = "middleware_present"
+    # Cross-file authZ lift: a route under a centrally-mounted role/permission
+    # guard is authorized even though the per-handler scan cannot see the
+    # mount. Mirrors the authN lift above.
+    if r.authz_signal == "unknown" and _guarded(r, authz_guarded_prefixes, authz_guarded_exact):
+        r.authz_signal = "middleware_present"
+    # The handler chain itself: a verified credential check proves authentication;
+    # `absent` needs a fully resolved chain that never checks a credential.
+    route_ref = {
+        "framework": r.framework,
+        "handler_file": r.handler_file,
+        "handler_line": r.handler_line,
+        "path": r.path,
+    }
+    handler = resolver.route_signal(route_ref)
+    r.handler_module = resolver.handler_module(route_ref)
+    if handler is not None:
+        r.authn_handler_signal = handler.signal
+        r.authn_handler_scheme = handler.scheme
+        r.authn_handler_evidence = handler.evidence
+        if r.authn_signal == "unknown" and handler.signal == "verified":
+            r.authn_signal = "present"
+        elif r.authn_signal == "unknown" and handler.signal in ("none", "decode_only"):
+            r.authn_signal = "absent"
 
+
+def _flag_route(r: RouteCandidate, llm_sdk_declared: bool) -> None:
+    """Set the suspect flags and relevance tags from the lifted signals."""
+    is_graphql = r.framework == "graphql"
+    gql_notes = set(r.notes or [])
+    gql_object_access = "object-id argument" in gql_notes
+    gql_sensitive = "sensitive-name signal" in gql_notes
+    gql_mutation = (r.path or "").startswith("Mutation ")
+    gql_subscription = (r.path or "").startswith("Subscription ")
+    # Warning (not a finding): a state-changing or management route with no
+    # detected auth guard looks like it SHOULD require authentication —
+    # unless it is an auth-flow / public-probe endpoint (login, register,
+    # captcha, health…) which is unauthenticated by design.
+    if (
+        r.authn_signal in ("unknown", "absent")
+        and (r.method.upper() in _STATE_CHANGING or r.management_surface)
+        and not _is_public_by_design(r.path)
+    ):
+        r.missing_auth_suspect = True
+    # GraphQL SDL has no HTTP verb per operation. Treat unauthenticated
+    # mutations/subscriptions and sensitive object lookups as review
+    # candidates so the existing ARCH-AUTHN hypothesis covers GraphQL too.
+    if (
+        is_graphql
+        and r.authn_signal == "unknown"
+        and (
+            (gql_mutation and not _is_public_by_design(r.path))
+            or gql_subscription
+            or (gql_object_access and gql_sensitive)
+        )
+    ):
+        r.missing_auth_suspect = True
+    # Advisory (not a finding): an AUTHENTICATED, object-addressing route
+    # (path carries a resource id) with no detected role/ownership gate is
+    # the canonical BOLA/IDOR primitive — a logged-in user swaps the id for
+    # another tenant's record. Hypothesis, not assertion: the scan cannot
+    # prove a gate is absent (unknown != absent), so this seeds an
+    # investigate-class hypothesis, never a hard finding.
+    if (
+        r.authn_signal in _AUTHN_PRESENT
+        and r.authz_signal not in _AUTHZ_PRESENT
+        and (bool(_PATH_PARAM_RE.search(r.path or "")) or (is_graphql and gql_object_access and gql_sensitive))
+        and not _is_public_by_design(r.path)
+    ):
+        r.missing_authz_suspect = True
+    # Display relevance (NOT a finding): reasons a route still merits an
+    # individual §5 row even with zero linked findings. The renderer keeps
+    # these out of the "N further entry points" collapse and shows the
+    # reason as a review chip. Order is deterministic.
+    tags: list[str] = []
+    if _REGISTRATION_PATH_RE.search(r.path or "") or (
+        is_graphql and re.search(r"(?i)\b(?:register|signup|sign-up)\b", r.path or "")
+    ):
+        tags.append("registration")
+    if _AUTHFLOW_PATH_RE.search(r.path or "") or (is_graphql and _PUBLIC_OPERATION_NAME_RE.search(r.path or "")):
+        tags.append("authentication")
+    if r.management_surface:
+        tags.append("management")
+    if is_graphql and (gql_mutation or gql_subscription):
+        tags.append("graphql-mutation")
+    if is_graphql and gql_object_access and gql_sensitive:
+        tags.append("graphql-object-access")
+    if r.missing_auth_suspect:
+        tags.append("missing-auth")
+    if r.missing_authz_suspect:
+        tags.append("missing-authz")
+    if llm_sdk_declared and _LLM_PATH_RE.search(r.path or ""):
+        tags.append("llm")
+    r.relevance_tags = tags
+
+
+def _dedupe_routes(all_routes: list[RouteCandidate]) -> list[RouteCandidate]:
+    """Drop repeated (method, path, handler_file, handler_line) routes, keeping the first."""
     seen_keys: set[tuple] = set()
     deduped: list[RouteCandidate] = []
     for r in all_routes:
@@ -1160,60 +1173,104 @@ def build_inventory(repo_root: Path) -> dict:
             continue
         seen_keys.add(key)
         deduped.append(r)
+    return deduped
 
-    routes_out = []
-    for i, r in enumerate(deduped, start=1):
-        d = asdict(r)
-        d["route_id"] = f"R-{i:03d}"
-        ordered = {
-            "route_id": d["route_id"],
-            "method": d["method"],
-            "path": d["path"],
-            "framework": d["framework"],
-            "handler_file": d["handler_file"],
-            "handler_line": d["handler_line"],
-            "authn_signal": d["authn_signal"],
-            "authz_signal": d["authz_signal"],
-            "management_surface": d["management_surface"],
-            "missing_auth_suspect": d["missing_auth_suspect"],
-            "missing_authz_suspect": d["missing_authz_suspect"],
-            "relevance_tags": d["relevance_tags"],
-            "notes": d["notes"],
-            "confidence": d["confidence"],
-        }
-        if d["authn_handler_signal"]:
-            ordered["authn_handler_signal"] = d["authn_handler_signal"]
-            if d["authn_handler_scheme"]:
-                ordered["authn_handler_scheme"] = d["authn_handler_scheme"]
-            if d["authn_handler_evidence"]:
-                ordered["authn_handler_evidence"] = d["authn_handler_evidence"]
-        if d["handler_module"]:
-            ordered["handler_module"] = d["handler_module"]
-        routes_out.append(ordered)
 
+def _serialize_route(i: int, r: RouteCandidate) -> dict:
+    """Emit one route dict with its `R-NNN` id in the contracted key order."""
+    d = asdict(r)
+    d["route_id"] = f"R-{i:03d}"
+    ordered = {
+        "route_id": d["route_id"],
+        "method": d["method"],
+        "path": d["path"],
+        "framework": d["framework"],
+        "handler_file": d["handler_file"],
+        "handler_line": d["handler_line"],
+        "authn_signal": d["authn_signal"],
+        "authz_signal": d["authz_signal"],
+        "management_surface": d["management_surface"],
+        "missing_auth_suspect": d["missing_auth_suspect"],
+        "missing_authz_suspect": d["missing_authz_suspect"],
+        "relevance_tags": d["relevance_tags"],
+        "notes": d["notes"],
+        "confidence": d["confidence"],
+    }
+    if d["authn_handler_signal"]:
+        ordered["authn_handler_signal"] = d["authn_handler_signal"]
+        if d["authn_handler_scheme"]:
+            ordered["authn_handler_scheme"] = d["authn_handler_scheme"]
+        if d["authn_handler_evidence"]:
+            ordered["authn_handler_evidence"] = d["authn_handler_evidence"]
+    if d["handler_module"]:
+        ordered["handler_module"] = d["handler_module"]
+    return ordered
+
+
+def _coverage(routes_out: list[dict], frameworks_seen: set[str], unsupported: list[str]) -> dict:
+    """Count frameworks, suspects, and authentication states over the emitted routes."""
     mgmt_count = sum(1 for r in routes_out if r["management_surface"])
     missing_auth_count = sum(1 for r in routes_out if r["missing_auth_suspect"])
     missing_authz_count = sum(1 for r in routes_out if r["missing_authz_suspect"])
     authenticated_count = sum(1 for r in routes_out if route_authenticated(r))
     authn_absent_count = sum(1 for r in routes_out if r["authn_signal"] == "absent")
+    return {
+        "frameworks_detected": sorted(frameworks_seen),
+        "unsupported_route_files": unsupported,
+        "route_count": len(routes_out),
+        "management_surface_count": mgmt_count,
+        "missing_auth_suspect_count": missing_auth_count,
+        "missing_authz_suspect_count": missing_authz_count,
+        # FE-14: only `absent` is proven unauthenticated; the rest is unknown.
+        "authenticated_count": authenticated_count,
+        "authn_absent_count": authn_absent_count,
+        "authn_unknown_count": len(routes_out) - authenticated_count - authn_absent_count,
+    }
+
+
+def build_inventory(repo_root: Path) -> dict:
+    """Extract routes, lift their auth signals from mounted guards and resolved handlers, and
+    return the `.route-inventory.json` document with `R-NNN` ids and coverage counts.
+
+    `missing_auth_suspect` and `missing_authz_suspect` are review flags, never findings.
+    """
+    llm_sdk_declared = _declares_llm_sdk(repo_root)
+    all_routes: list[RouteCandidate] = []
+    frameworks_seen: set[str] = set()
+    unsupported: list[str] = []
+    guarded_prefixes: set[str] = set()
+    authz_guarded_prefixes: set[str] = set()
+    guarded_exact: set[tuple[str, str]] = set()
+    authz_guarded_exact: set[tuple[str, str]] = set()
+
+    _collect_routes(
+        repo_root,
+        all_routes,
+        frameworks_seen,
+        guarded_prefixes,
+        authz_guarded_prefixes,
+        guarded_exact,
+        authz_guarded_exact,
+    )
+
+    # Apply prefix guards + compute the missing-auth advisory flag.
+    resolver = HandlerResolver(repo_root)
+    for r in all_routes:
+        _lift_auth_signals(r, resolver, guarded_prefixes, authz_guarded_prefixes, guarded_exact, authz_guarded_exact)
+        _flag_route(r, llm_sdk_declared)
+
+    deduped = _dedupe_routes(all_routes)
+
+    routes_out = []
+    for i, r in enumerate(deduped, start=1):
+        routes_out.append(_serialize_route(i, r))
 
     return {
         "version": 1,
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "repo_root": str(repo_root),
         "routes": routes_out,
-        "coverage": {
-            "frameworks_detected": sorted(frameworks_seen),
-            "unsupported_route_files": unsupported,
-            "route_count": len(routes_out),
-            "management_surface_count": mgmt_count,
-            "missing_auth_suspect_count": missing_auth_count,
-            "missing_authz_suspect_count": missing_authz_count,
-            # FE-14: only `absent` is proven unauthenticated; the rest is unknown.
-            "authenticated_count": authenticated_count,
-            "authn_absent_count": authn_absent_count,
-            "authn_unknown_count": len(routes_out) - authenticated_count - authn_absent_count,
-        },
+        "coverage": _coverage(routes_out, frameworks_seen, unsupported),
     }
 
 

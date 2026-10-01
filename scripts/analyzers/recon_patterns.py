@@ -517,6 +517,220 @@ def _add_cat9(
     )
 
 
+def _oauth_surface_checks(
+    findings: list[dict[str, Any]], rel: str, lines: list[str], surface_hits: list[tuple[int, str]]
+) -> None:
+    """Record the OAuth/OIDC surface and identity-derived local credentials."""
+    _add_cat9(
+        findings,
+        rel=rel,
+        subcategory="oauth-oidc-surface",
+        severity="Info",
+        line=surface_hits[0][0],
+        match=surface_hits[0][1],
+        evidence="OAuth/OIDC-related token, endpoint, SDK, or config pattern present",
+    )
+
+    # A reversible transform of an identity claim is not a password
+    # generator. Keep this deliberately narrow: the assignment target must
+    # be credential-like, the transform must be reversible encoding (not a
+    # password KDF), and the input must be a user identity attribute in the
+    # same source line. Test/spec/fixture paths are already excluded by the
+    # repository walker. This is a review signal with exact file/line
+    # evidence; the STRIDE analyzer still establishes reachability.
+    for n, line in _line_hits(lines, _CAT9_DERIVED_CREDENTIAL):
+        _add_cat9(
+            findings,
+            rel=rel,
+            subcategory="oauth-derived-user-credential",
+            severity="High",
+            line=n,
+            match=line,
+            evidence="OAuth-local credential is predictably derived from a user identity attribute with reversible encoding",
+        )
+        findings[-1].update(
+            {
+                "cwe": "CWE-522",
+                "finding_type": "credential-management-candidate",
+                "false_positive_exclusions": "cryptographic password KDFs, random credentials, and excluded test/spec/fixture paths",
+            }
+        )
+
+
+def _oauth_flow_checks(
+    findings: list[dict[str, Any]],
+    rel: str,
+    lines: list[str],
+    text: str,
+    surface_hits: list[tuple[int, str]],
+    frontend_like: bool,
+) -> list[tuple[int, str]]:
+    """Check implicit flow, PKCE, state, nonce, and ID-token claim validation."""
+    for n, line in _line_hits(lines, _CAT9_IMPLICIT):
+        _add_cat9(
+            findings,
+            rel=rel,
+            subcategory="oauth-implicit-flow",
+            severity="High",
+            line=n,
+            match=line,
+            evidence="Implicit/hybrid token response or token-in-fragment pattern; RFC 9700 deprecates less-secure browser token delivery",
+        )
+
+    code_hits = _line_hits(lines, _CAT9_CODE_FLOW)
+    if code_hits and not _CAT9_PKCE_PRESENT.search(text):
+        _add_cat9(
+            findings,
+            rel=rel,
+            subcategory="oauth-code-without-pkce",
+            severity="High" if frontend_like else "Medium",
+            line=code_hits[0][0],
+            match=code_hits[0][1],
+            evidence="Authorization-code flow found without PKCE markers in the same file",
+        )
+
+    for n, line in _line_hits(lines, _CAT9_PKCE_PLAIN):
+        _add_cat9(
+            findings,
+            rel=rel,
+            subcategory="oauth-pkce-plain",
+            severity="High",
+            line=n,
+            match=line,
+            evidence="PKCE uses plain challenge method instead of S256",
+        )
+
+    if _CAT9_AUTH_REQUEST.search(text) and not _CAT9_STATE_TOKEN.search(text):
+        auth_hits = _line_hits(lines, _CAT9_AUTH_REQUEST)
+        _add_cat9(
+            findings,
+            rel=rel,
+            subcategory="oauth-missing-state",
+            severity="High",
+            line=auth_hits[0][0] if auth_hits else surface_hits[0][0],
+            match=auth_hits[0][1] if auth_hits else surface_hits[0][1],
+            evidence="OAuth authorization request pattern without state marker in the same file",
+        )
+
+    id_token_flow = bool(_CAT9_ID_TOKEN_FLOW.search(text))
+    if id_token_flow and not _CAT9_NONCE_TOKEN.search(text):
+        id_hits = _line_hits(lines, _CAT9_ID_TOKEN_FLOW)
+        _add_cat9(
+            findings,
+            rel=rel,
+            subcategory="oidc-missing-nonce",
+            severity="High",
+            line=id_hits[0][0] if id_hits else surface_hits[0][0],
+            match=id_hits[0][1] if id_hits else surface_hits[0][1],
+            evidence="OIDC id_token/openid flow without nonce marker in the same file",
+        )
+
+    if id_token_flow and _CAT9_CLAIM_CONTEXT.search(text) and not _CAT9_CLAIM_VALIDATION.search(text):
+        id_hits = _line_hits(lines, _CAT9_ID_TOKEN_FLOW)
+        _add_cat9(
+            findings,
+            rel=rel,
+            subcategory="oidc-claim-validation-gap",
+            severity="High",
+            line=id_hits[0][0] if id_hits else surface_hits[0][0],
+            match=id_hits[0][1] if id_hits else surface_hits[0][1],
+            evidence="OIDC token handling without issuer/audience/JWKS/nonce validation markers in the same file",
+        )
+    return code_hits
+
+
+def _oauth_token_and_redirect_checks(
+    findings: list[dict[str, Any]], rel: str, lines: list[str], frontend_like: bool
+) -> None:
+    """Check refresh-token storage, ROPC, client secrets, redirect URIs, and static state."""
+    for n, line in _line_hits(lines, _CAT9_REFRESH_BROWSER):
+        _add_cat9(
+            findings,
+            rel=rel,
+            subcategory="oauth-refresh-token-browser-storage",
+            severity="High",
+            line=n,
+            match=line,
+            evidence="Refresh token appears to be stored in browser-accessible storage",
+        )
+
+    for n, line in _line_hits(lines, _CAT9_ROPC):
+        _add_cat9(
+            findings,
+            rel=rel,
+            subcategory="oauth-ropc-grant",
+            severity="High",
+            line=n,
+            match=line,
+            evidence="Resource Owner Password Credentials grant is present; RFC 9700 says it MUST NOT be used",
+        )
+
+    for n, line in _line_hits(lines, _CAT9_CLIENT_SECRET):
+        if frontend_like:
+            _add_cat9(
+                findings,
+                rel=rel,
+                subcategory="oauth-client-secret-in-frontend",
+                severity="High",
+                line=n,
+                match=line,
+                evidence="Client secret marker appears in frontend/browser code",
+            )
+
+    for n, line in _line_hits(lines, _CAT9_HTTP_REDIRECT):
+        _add_cat9(
+            findings,
+            rel=rel,
+            subcategory="oauth-insecure-redirect-uri",
+            severity="High",
+            line=n,
+            match=line,
+            evidence="OAuth redirect URI uses non-loopback HTTP",
+        )
+
+    for n, line in _line_hits(lines, _CAT9_REDIRECT_WEAK_MATCH):
+        subcat = (
+            "oauth-post-logout-redirect-weak" if _CAT9_POST_LOGOUT.search(line) else "oauth-redirect-uri-weak-match"
+        )
+        _add_cat9(
+            findings,
+            rel=rel,
+            subcategory=subcat,
+            severity="High",
+            line=n,
+            match=line,
+            evidence="Redirect URI allowlist appears to use substring/prefix/wildcard matching instead of exact matching",
+        )
+
+    for n, line in _line_hits(lines, _CAT9_STATIC_STATE_NONCE):
+        _add_cat9(
+            findings,
+            rel=rel,
+            subcategory="oauth-static-state-or-nonce",
+            severity="High",
+            line=n,
+            match=line,
+            evidence="State or nonce appears to be a static constant",
+        )
+
+
+def _oauth_pkce_s256_check(
+    findings: list[dict[str, Any]], rel: str, lines: list[str], text: str, code_hits: list[tuple[int, str]]
+) -> None:
+    """Check that PKCE on a code flow uses S256."""
+    if _CAT9_PKCE_PRESENT.search(text) and not _CAT9_PKCE_S256.search(text) and _CAT9_CODE_FLOW.search(text):
+        pkce_hits = _line_hits(lines, _CAT9_PKCE_PRESENT)
+        _add_cat9(
+            findings,
+            rel=rel,
+            subcategory="oauth-pkce-s256-not-evident",
+            severity="Medium",
+            line=pkce_hits[0][0] if pkce_hits else code_hits[0][0],
+            match=pkce_hits[0][1] if pkce_hits else code_hits[0][1],
+            evidence="PKCE markers found on code flow but S256 is not evident in the same file",
+        )
+
+
 def scan_oauth_oidc(repo_root: Path) -> dict[str, Any]:
     """Detect OAuth/OIDC surfaces and common security anti-patterns.
 
@@ -540,194 +754,12 @@ def scan_oauth_oidc(repo_root: Path) -> dict[str, Any]:
         if not surface_hits:
             continue
 
-        _add_cat9(
-            findings,
-            rel=rel,
-            subcategory="oauth-oidc-surface",
-            severity="Info",
-            line=surface_hits[0][0],
-            match=surface_hits[0][1],
-            evidence="OAuth/OIDC-related token, endpoint, SDK, or config pattern present",
-        )
-
-        # A reversible transform of an identity claim is not a password
-        # generator. Keep this deliberately narrow: the assignment target must
-        # be credential-like, the transform must be reversible encoding (not a
-        # password KDF), and the input must be a user identity attribute in the
-        # same source line. Test/spec/fixture paths are already excluded by the
-        # repository walker. This is a review signal with exact file/line
-        # evidence; the STRIDE analyzer still establishes reachability.
-        for n, line in _line_hits(lines, _CAT9_DERIVED_CREDENTIAL):
-            _add_cat9(
-                findings,
-                rel=rel,
-                subcategory="oauth-derived-user-credential",
-                severity="High",
-                line=n,
-                match=line,
-                evidence="OAuth-local credential is predictably derived from a user identity attribute with reversible encoding",
-            )
-            findings[-1].update(
-                {
-                    "cwe": "CWE-522",
-                    "finding_type": "credential-management-candidate",
-                    "false_positive_exclusions": "cryptographic password KDFs, random credentials, and excluded test/spec/fixture paths",
-                }
-            )
+        _oauth_surface_checks(findings, rel, lines, surface_hits)
 
         frontend_like = bool(_CAT9_FRONTEND_HINT.search(rel))
-        for n, line in _line_hits(lines, _CAT9_IMPLICIT):
-            _add_cat9(
-                findings,
-                rel=rel,
-                subcategory="oauth-implicit-flow",
-                severity="High",
-                line=n,
-                match=line,
-                evidence="Implicit/hybrid token response or token-in-fragment pattern; RFC 9700 deprecates less-secure browser token delivery",
-            )
-
-        code_hits = _line_hits(lines, _CAT9_CODE_FLOW)
-        if code_hits and not _CAT9_PKCE_PRESENT.search(text):
-            _add_cat9(
-                findings,
-                rel=rel,
-                subcategory="oauth-code-without-pkce",
-                severity="High" if frontend_like else "Medium",
-                line=code_hits[0][0],
-                match=code_hits[0][1],
-                evidence="Authorization-code flow found without PKCE markers in the same file",
-            )
-
-        for n, line in _line_hits(lines, _CAT9_PKCE_PLAIN):
-            _add_cat9(
-                findings,
-                rel=rel,
-                subcategory="oauth-pkce-plain",
-                severity="High",
-                line=n,
-                match=line,
-                evidence="PKCE uses plain challenge method instead of S256",
-            )
-
-        if _CAT9_AUTH_REQUEST.search(text) and not _CAT9_STATE_TOKEN.search(text):
-            auth_hits = _line_hits(lines, _CAT9_AUTH_REQUEST)
-            _add_cat9(
-                findings,
-                rel=rel,
-                subcategory="oauth-missing-state",
-                severity="High",
-                line=auth_hits[0][0] if auth_hits else surface_hits[0][0],
-                match=auth_hits[0][1] if auth_hits else surface_hits[0][1],
-                evidence="OAuth authorization request pattern without state marker in the same file",
-            )
-
-        id_token_flow = bool(_CAT9_ID_TOKEN_FLOW.search(text))
-        if id_token_flow and not _CAT9_NONCE_TOKEN.search(text):
-            id_hits = _line_hits(lines, _CAT9_ID_TOKEN_FLOW)
-            _add_cat9(
-                findings,
-                rel=rel,
-                subcategory="oidc-missing-nonce",
-                severity="High",
-                line=id_hits[0][0] if id_hits else surface_hits[0][0],
-                match=id_hits[0][1] if id_hits else surface_hits[0][1],
-                evidence="OIDC id_token/openid flow without nonce marker in the same file",
-            )
-
-        if id_token_flow and _CAT9_CLAIM_CONTEXT.search(text) and not _CAT9_CLAIM_VALIDATION.search(text):
-            id_hits = _line_hits(lines, _CAT9_ID_TOKEN_FLOW)
-            _add_cat9(
-                findings,
-                rel=rel,
-                subcategory="oidc-claim-validation-gap",
-                severity="High",
-                line=id_hits[0][0] if id_hits else surface_hits[0][0],
-                match=id_hits[0][1] if id_hits else surface_hits[0][1],
-                evidence="OIDC token handling without issuer/audience/JWKS/nonce validation markers in the same file",
-            )
-
-        for n, line in _line_hits(lines, _CAT9_REFRESH_BROWSER):
-            _add_cat9(
-                findings,
-                rel=rel,
-                subcategory="oauth-refresh-token-browser-storage",
-                severity="High",
-                line=n,
-                match=line,
-                evidence="Refresh token appears to be stored in browser-accessible storage",
-            )
-
-        for n, line in _line_hits(lines, _CAT9_ROPC):
-            _add_cat9(
-                findings,
-                rel=rel,
-                subcategory="oauth-ropc-grant",
-                severity="High",
-                line=n,
-                match=line,
-                evidence="Resource Owner Password Credentials grant is present; RFC 9700 says it MUST NOT be used",
-            )
-
-        for n, line in _line_hits(lines, _CAT9_CLIENT_SECRET):
-            if frontend_like:
-                _add_cat9(
-                    findings,
-                    rel=rel,
-                    subcategory="oauth-client-secret-in-frontend",
-                    severity="High",
-                    line=n,
-                    match=line,
-                    evidence="Client secret marker appears in frontend/browser code",
-                )
-
-        for n, line in _line_hits(lines, _CAT9_HTTP_REDIRECT):
-            _add_cat9(
-                findings,
-                rel=rel,
-                subcategory="oauth-insecure-redirect-uri",
-                severity="High",
-                line=n,
-                match=line,
-                evidence="OAuth redirect URI uses non-loopback HTTP",
-            )
-
-        for n, line in _line_hits(lines, _CAT9_REDIRECT_WEAK_MATCH):
-            subcat = (
-                "oauth-post-logout-redirect-weak" if _CAT9_POST_LOGOUT.search(line) else "oauth-redirect-uri-weak-match"
-            )
-            _add_cat9(
-                findings,
-                rel=rel,
-                subcategory=subcat,
-                severity="High",
-                line=n,
-                match=line,
-                evidence="Redirect URI allowlist appears to use substring/prefix/wildcard matching instead of exact matching",
-            )
-
-        for n, line in _line_hits(lines, _CAT9_STATIC_STATE_NONCE):
-            _add_cat9(
-                findings,
-                rel=rel,
-                subcategory="oauth-static-state-or-nonce",
-                severity="High",
-                line=n,
-                match=line,
-                evidence="State or nonce appears to be a static constant",
-            )
-
-        if _CAT9_PKCE_PRESENT.search(text) and not _CAT9_PKCE_S256.search(text) and _CAT9_CODE_FLOW.search(text):
-            pkce_hits = _line_hits(lines, _CAT9_PKCE_PRESENT)
-            _add_cat9(
-                findings,
-                rel=rel,
-                subcategory="oauth-pkce-s256-not-evident",
-                severity="Medium",
-                line=pkce_hits[0][0] if pkce_hits else code_hits[0][0],
-                match=pkce_hits[0][1] if pkce_hits else code_hits[0][1],
-                evidence="PKCE markers found on code flow but S256 is not evident in the same file",
-            )
+        code_hits = _oauth_flow_checks(findings, rel, lines, text, surface_hits, frontend_like)
+        _oauth_token_and_redirect_checks(findings, rel, lines, frontend_like)
+        _oauth_pkce_s256_check(findings, rel, lines, text, code_hits)
 
     return {
         "category": 9,
@@ -1877,6 +1909,310 @@ def _plist_true_key_hits(lines: list[str], key: str) -> list[tuple[int, str]]:
     return hits
 
 
+def _mobile_platform(p: Path, lower_rel: str, text: str) -> tuple[bool, bool]:
+    """Classify a file as Android and/or iOS source."""
+    is_android = (
+        p.name == "AndroidManifest.xml"
+        or "network_security_config" in lower_rel
+        or "/android/" in f"/{lower_rel}"
+        or bool(_ANDROID_MANIFEST_SURFACE.search(text))
+        or bool(_ANDROID_CODE_HINT.search(text))
+    )
+    is_ios = (
+        p.name == "Info.plist" or "/ios/" in f"/{lower_rel}" or "CFBundle" in text or bool(_IOS_CODE_HINT.search(text))
+    )
+    return is_android, is_ios
+
+
+def _mobile_android_manifest(findings: list[dict[str, Any]], rel: str, lines: list[str], text: str) -> None:
+    """Check AndroidManifest.xml flags, exported components, and deep links."""
+    for n, line in _line_hits(lines, _ANDROID_DEBUGGABLE):
+        _add_mobile(
+            findings,
+            rel=rel,
+            subcategory="android-debuggable-enabled",
+            severity="High",
+            line=n,
+            match=line,
+            evidence="Android manifest enables debuggable runtime",
+            platform="Android",
+            anti_pattern="Mobile debug build shipped",
+        )
+    for n, line in _line_hits(lines, _ANDROID_ALLOW_BACKUP):
+        _add_mobile(
+            findings,
+            rel=rel,
+            subcategory="android-allowbackup-enabled",
+            severity="Medium",
+            line=n,
+            match=line,
+            evidence="Android app data backup is enabled in the manifest",
+            platform="Android",
+            anti_pattern="Mobile client stores sensitive state without platform hardening",
+        )
+    for n, line in _line_hits(lines, _ANDROID_CLEARTEXT):
+        _add_mobile(
+            findings,
+            rel=rel,
+            subcategory="android-cleartext-traffic-enabled",
+            severity="High",
+            line=n,
+            match=line,
+            evidence="Android manifest permits cleartext network traffic",
+            platform="Android",
+            anti_pattern="Mobile cleartext network policy",
+        )
+    for start, block in _android_component_blocks(lines):
+        if _ANDROID_EXPORTED_TRUE.search(block) and not _ANDROID_PERMISSION.search(block):
+            _add_mobile(
+                findings,
+                rel=rel,
+                subcategory="android-exported-component-without-permission",
+                severity="High",
+                line=start,
+                match=block[:400],
+                evidence="Exported Android component lacks an explicit permission in the component declaration",
+                platform="Android",
+                anti_pattern="Mobile IPC boundary exposed",
+            )
+    for n, line in _line_hits(lines, _ANDROID_SCHEME):
+        scheme_match = _ANDROID_SCHEME.search(line)
+        scheme = scheme_match.group("scheme").lower() if scheme_match else ""
+        if scheme and scheme not in {"http", "https"}:
+            _add_mobile(
+                findings,
+                rel=rel,
+                subcategory="android-custom-url-scheme",
+                severity="Medium",
+                line=n,
+                match=line,
+                evidence="Custom-scheme deep link is present; ownership is not OS-verified like app links",
+                platform="Android",
+                anti_pattern="Mobile deep-link trust boundary",
+            )
+        elif scheme in {"http", "https"} and not _ANDROID_AUTOVERIFY.search(text):
+            _add_mobile(
+                findings,
+                rel=rel,
+                subcategory="android-applink-not-verified",
+                severity="Medium",
+                line=n,
+                match=line,
+                evidence="HTTP(S) deep link lacks autoVerify marker in the manifest",
+                platform="Android",
+                anti_pattern="Mobile deep-link trust boundary",
+            )
+
+
+def _mobile_network_security_config(findings: list[dict[str, Any]], rel: str, lines: list[str]) -> None:
+    """Check an Android network security config for cleartext and weakened trust."""
+    for n, line in _line_hits(lines, _ANDROID_NETWORK_CLEAR):
+        _add_mobile(
+            findings,
+            rel=rel,
+            subcategory="android-network-config-cleartext",
+            severity="High",
+            line=n,
+            match=line,
+            evidence="Android network security config permits cleartext traffic",
+            platform="Android",
+            anti_pattern="Mobile cleartext network policy",
+        )
+    for n, line in _line_hits(lines, _ANDROID_USER_CA):
+        _add_mobile(
+            findings,
+            rel=rel,
+            subcategory="android-user-ca-trusted",
+            severity="Medium",
+            line=n,
+            match=line,
+            evidence="Android network security config trusts user-installed CAs",
+            platform="Android",
+            anti_pattern="Mobile TLS trust weakened",
+        )
+    for n, line in _line_hits(lines, _ANDROID_DEBUG_OVERRIDES):
+        _add_mobile(
+            findings,
+            rel=rel,
+            subcategory="android-debug-overrides",
+            severity="Medium",
+            line=n,
+            match=line,
+            evidence="Android debug network trust overrides are present",
+            platform="Android",
+            anti_pattern="Mobile debug trust override",
+        )
+
+
+def _mobile_android_code(findings: list[dict[str, Any]], rel: str, lines: list[str]) -> None:
+    """Check Android code for WebView, storage, TLS, and build hardening gaps."""
+    android_patterns = [
+        (
+            _ANDROID_WEBVIEW_BRIDGE,
+            "android-webview-js-bridge",
+            "High",
+            "WebView JavaScript bridge is exposed",
+            "Mobile WebView bridge",
+        ),
+        (
+            _ANDROID_WEBVIEW_JS,
+            "android-webview-javascript-enabled",
+            "Medium",
+            "WebView JavaScript execution is enabled",
+            "Mobile WebView bridge",
+        ),
+        (
+            _ANDROID_WEBVIEW_FILE,
+            "android-webview-file-access",
+            "High",
+            "WebView file/universal file URL access is enabled",
+            "Mobile WebView bridge",
+        ),
+        (
+            _ANDROID_WEBVIEW_DEBUG,
+            "android-webview-debugging-enabled",
+            "High",
+            "WebView remote debugging is enabled",
+            "Mobile debug build shipped",
+        ),
+        (
+            _ANDROID_SHARED_PREF_TOKEN,
+            "android-token-sharedpreferences",
+            "High",
+            "Sensitive token/secret marker appears in SharedPreferences usage",
+            "Mobile token in app storage",
+        ),
+        (
+            _ANDROID_WORLD_READABLE,
+            "android-world-readable-storage",
+            "High",
+            "World-readable Android storage mode is used",
+            "Mobile token in app storage",
+        ),
+        (
+            _ANDROID_ACCEPT_ALL_TLS,
+            "android-accept-all-tls",
+            "Critical",
+            "Android TLS validation appears to accept arbitrary certificates or hosts",
+            "Mobile TLS trust disabled",
+        ),
+        (
+            _MOBILE_MINIFY_FALSE,
+            "android-minify-disabled",
+            "Info",
+            "Android build disables code shrinking/obfuscation",
+            "Mobile release hardening gap",
+        ),
+    ]
+    for pattern, subcat, severity, evidence, anti_pattern in android_patterns:
+        for n, line in _line_hits(lines, pattern):
+            _add_mobile(
+                findings,
+                rel=rel,
+                subcategory=subcat,
+                severity=severity,
+                line=n,
+                match=line,
+                evidence=evidence,
+                platform="Android",
+                anti_pattern=anti_pattern,
+            )
+
+
+def _mobile_info_plist(findings: list[dict[str, Any]], rel: str, lines: list[str]) -> None:
+    """Check Info.plist for ATS exceptions and custom URL schemes."""
+    for n, line in _plist_true_key_hits(lines, "NSAllowsArbitraryLoads"):
+        _add_mobile(
+            findings,
+            rel=rel,
+            subcategory="ios-ats-arbitrary-loads",
+            severity="High",
+            line=n,
+            match=line,
+            evidence="iOS App Transport Security allows arbitrary loads",
+            platform="iOS",
+            anti_pattern="Mobile cleartext network policy",
+        )
+    for n, line in _plist_true_key_hits(lines, "NSExceptionAllowsInsecureHTTPLoads"):
+        _add_mobile(
+            findings,
+            rel=rel,
+            subcategory="ios-ats-insecure-exception",
+            severity="High",
+            line=n,
+            match=line,
+            evidence="iOS ATS exception permits insecure HTTP loads",
+            platform="iOS",
+            anti_pattern="Mobile cleartext network policy",
+        )
+    for n, line in _line_hits(lines, _IOS_URL_SCHEME):
+        _add_mobile(
+            findings,
+            rel=rel,
+            subcategory="ios-custom-url-scheme-surface",
+            severity="Info",
+            line=n,
+            match=line,
+            evidence="iOS custom URL scheme surface is present",
+            platform="iOS",
+            anti_pattern="Mobile deep-link trust boundary",
+        )
+
+
+def _mobile_ios_code(findings: list[dict[str, Any]], rel: str, lines: list[str]) -> None:
+    """Check iOS code for WebView bridges, token storage, TLS, and associated domains."""
+    ios_patterns = [
+        (
+            _IOS_WEBVIEW_BRIDGE,
+            "ios-webview-js-bridge",
+            "High",
+            "iOS WebView JavaScript bridge or evaluation API is present",
+            "Mobile WebView bridge",
+        ),
+        (
+            _IOS_USERDEFAULTS_TOKEN,
+            "ios-token-userdefaults",
+            "High",
+            "Sensitive token/secret marker appears in UserDefaults usage",
+            "Mobile token in app storage",
+        ),
+        (
+            _IOS_KEYCHAIN_ALWAYS,
+            "ios-keychain-accessible-always",
+            "Medium",
+            "Keychain item uses always-accessible class",
+            "Mobile token in app storage",
+        ),
+        (
+            _IOS_ACCEPT_ALL_TLS,
+            "ios-accept-all-tls",
+            "Critical",
+            "iOS TLS validation appears to accept arbitrary certificates or hosts",
+            "Mobile TLS trust disabled",
+        ),
+        (
+            _IOS_ASSOCIATED_DOMAINS,
+            "ios-associated-domains-surface",
+            "Info",
+            "iOS Associated Domains entitlement is present",
+            "Mobile deep-link trust boundary",
+        ),
+    ]
+    for pattern, subcat, severity, evidence, anti_pattern in ios_patterns:
+        for n, line in _line_hits(lines, pattern):
+            _add_mobile(
+                findings,
+                rel=rel,
+                subcategory=subcat,
+                severity=severity,
+                line=n,
+                match=line,
+                evidence=evidence,
+                platform="iOS",
+                anti_pattern=anti_pattern,
+            )
+
+
 def scan_mobile_architecture(repo_root: Path) -> dict[str, Any]:
     """Flag Android manifest and network-config weaknesses and iOS ATS and URL-scheme settings (Cat 29).
 
@@ -1895,302 +2231,26 @@ def scan_mobile_architecture(repo_root: Path) -> dict[str, Any]:
             continue
         text = "\n".join(lines)
         lower_rel = rel.lower()
-        is_android = (
-            p.name == "AndroidManifest.xml"
-            or "network_security_config" in lower_rel
-            or "/android/" in f"/{lower_rel}"
-            or bool(_ANDROID_MANIFEST_SURFACE.search(text))
-            or bool(_ANDROID_CODE_HINT.search(text))
-        )
-        is_ios = (
-            p.name == "Info.plist"
-            or "/ios/" in f"/{lower_rel}"
-            or "CFBundle" in text
-            or bool(_IOS_CODE_HINT.search(text))
-        )
+        is_android, is_ios = _mobile_platform(p, lower_rel, text)
         if is_android:
             surface_files[rel] = "Android"
         elif is_ios:
             surface_files[rel] = "iOS"
 
         if p.name == "AndroidManifest.xml":
-            for n, line in _line_hits(lines, _ANDROID_DEBUGGABLE):
-                _add_mobile(
-                    findings,
-                    rel=rel,
-                    subcategory="android-debuggable-enabled",
-                    severity="High",
-                    line=n,
-                    match=line,
-                    evidence="Android manifest enables debuggable runtime",
-                    platform="Android",
-                    anti_pattern="Mobile debug build shipped",
-                )
-            for n, line in _line_hits(lines, _ANDROID_ALLOW_BACKUP):
-                _add_mobile(
-                    findings,
-                    rel=rel,
-                    subcategory="android-allowbackup-enabled",
-                    severity="Medium",
-                    line=n,
-                    match=line,
-                    evidence="Android app data backup is enabled in the manifest",
-                    platform="Android",
-                    anti_pattern="Mobile client stores sensitive state without platform hardening",
-                )
-            for n, line in _line_hits(lines, _ANDROID_CLEARTEXT):
-                _add_mobile(
-                    findings,
-                    rel=rel,
-                    subcategory="android-cleartext-traffic-enabled",
-                    severity="High",
-                    line=n,
-                    match=line,
-                    evidence="Android manifest permits cleartext network traffic",
-                    platform="Android",
-                    anti_pattern="Mobile cleartext network policy",
-                )
-            for start, block in _android_component_blocks(lines):
-                if _ANDROID_EXPORTED_TRUE.search(block) and not _ANDROID_PERMISSION.search(block):
-                    _add_mobile(
-                        findings,
-                        rel=rel,
-                        subcategory="android-exported-component-without-permission",
-                        severity="High",
-                        line=start,
-                        match=block[:400],
-                        evidence="Exported Android component lacks an explicit permission in the component declaration",
-                        platform="Android",
-                        anti_pattern="Mobile IPC boundary exposed",
-                    )
-            for n, line in _line_hits(lines, _ANDROID_SCHEME):
-                scheme_match = _ANDROID_SCHEME.search(line)
-                scheme = scheme_match.group("scheme").lower() if scheme_match else ""
-                if scheme and scheme not in {"http", "https"}:
-                    _add_mobile(
-                        findings,
-                        rel=rel,
-                        subcategory="android-custom-url-scheme",
-                        severity="Medium",
-                        line=n,
-                        match=line,
-                        evidence="Custom-scheme deep link is present; ownership is not OS-verified like app links",
-                        platform="Android",
-                        anti_pattern="Mobile deep-link trust boundary",
-                    )
-                elif scheme in {"http", "https"} and not _ANDROID_AUTOVERIFY.search(text):
-                    _add_mobile(
-                        findings,
-                        rel=rel,
-                        subcategory="android-applink-not-verified",
-                        severity="Medium",
-                        line=n,
-                        match=line,
-                        evidence="HTTP(S) deep link lacks autoVerify marker in the manifest",
-                        platform="Android",
-                        anti_pattern="Mobile deep-link trust boundary",
-                    )
+            _mobile_android_manifest(findings, rel, lines, text)
 
         if p.name == "network_security_config.xml" or "network_security_config" in lower_rel:
-            for n, line in _line_hits(lines, _ANDROID_NETWORK_CLEAR):
-                _add_mobile(
-                    findings,
-                    rel=rel,
-                    subcategory="android-network-config-cleartext",
-                    severity="High",
-                    line=n,
-                    match=line,
-                    evidence="Android network security config permits cleartext traffic",
-                    platform="Android",
-                    anti_pattern="Mobile cleartext network policy",
-                )
-            for n, line in _line_hits(lines, _ANDROID_USER_CA):
-                _add_mobile(
-                    findings,
-                    rel=rel,
-                    subcategory="android-user-ca-trusted",
-                    severity="Medium",
-                    line=n,
-                    match=line,
-                    evidence="Android network security config trusts user-installed CAs",
-                    platform="Android",
-                    anti_pattern="Mobile TLS trust weakened",
-                )
-            for n, line in _line_hits(lines, _ANDROID_DEBUG_OVERRIDES):
-                _add_mobile(
-                    findings,
-                    rel=rel,
-                    subcategory="android-debug-overrides",
-                    severity="Medium",
-                    line=n,
-                    match=line,
-                    evidence="Android debug network trust overrides are present",
-                    platform="Android",
-                    anti_pattern="Mobile debug trust override",
-                )
+            _mobile_network_security_config(findings, rel, lines)
 
         if is_android:
-            android_patterns = [
-                (
-                    _ANDROID_WEBVIEW_BRIDGE,
-                    "android-webview-js-bridge",
-                    "High",
-                    "WebView JavaScript bridge is exposed",
-                    "Mobile WebView bridge",
-                ),
-                (
-                    _ANDROID_WEBVIEW_JS,
-                    "android-webview-javascript-enabled",
-                    "Medium",
-                    "WebView JavaScript execution is enabled",
-                    "Mobile WebView bridge",
-                ),
-                (
-                    _ANDROID_WEBVIEW_FILE,
-                    "android-webview-file-access",
-                    "High",
-                    "WebView file/universal file URL access is enabled",
-                    "Mobile WebView bridge",
-                ),
-                (
-                    _ANDROID_WEBVIEW_DEBUG,
-                    "android-webview-debugging-enabled",
-                    "High",
-                    "WebView remote debugging is enabled",
-                    "Mobile debug build shipped",
-                ),
-                (
-                    _ANDROID_SHARED_PREF_TOKEN,
-                    "android-token-sharedpreferences",
-                    "High",
-                    "Sensitive token/secret marker appears in SharedPreferences usage",
-                    "Mobile token in app storage",
-                ),
-                (
-                    _ANDROID_WORLD_READABLE,
-                    "android-world-readable-storage",
-                    "High",
-                    "World-readable Android storage mode is used",
-                    "Mobile token in app storage",
-                ),
-                (
-                    _ANDROID_ACCEPT_ALL_TLS,
-                    "android-accept-all-tls",
-                    "Critical",
-                    "Android TLS validation appears to accept arbitrary certificates or hosts",
-                    "Mobile TLS trust disabled",
-                ),
-                (
-                    _MOBILE_MINIFY_FALSE,
-                    "android-minify-disabled",
-                    "Info",
-                    "Android build disables code shrinking/obfuscation",
-                    "Mobile release hardening gap",
-                ),
-            ]
-            for pattern, subcat, severity, evidence, anti_pattern in android_patterns:
-                for n, line in _line_hits(lines, pattern):
-                    _add_mobile(
-                        findings,
-                        rel=rel,
-                        subcategory=subcat,
-                        severity=severity,
-                        line=n,
-                        match=line,
-                        evidence=evidence,
-                        platform="Android",
-                        anti_pattern=anti_pattern,
-                    )
+            _mobile_android_code(findings, rel, lines)
 
         if p.name == "Info.plist":
-            for n, line in _plist_true_key_hits(lines, "NSAllowsArbitraryLoads"):
-                _add_mobile(
-                    findings,
-                    rel=rel,
-                    subcategory="ios-ats-arbitrary-loads",
-                    severity="High",
-                    line=n,
-                    match=line,
-                    evidence="iOS App Transport Security allows arbitrary loads",
-                    platform="iOS",
-                    anti_pattern="Mobile cleartext network policy",
-                )
-            for n, line in _plist_true_key_hits(lines, "NSExceptionAllowsInsecureHTTPLoads"):
-                _add_mobile(
-                    findings,
-                    rel=rel,
-                    subcategory="ios-ats-insecure-exception",
-                    severity="High",
-                    line=n,
-                    match=line,
-                    evidence="iOS ATS exception permits insecure HTTP loads",
-                    platform="iOS",
-                    anti_pattern="Mobile cleartext network policy",
-                )
-            for n, line in _line_hits(lines, _IOS_URL_SCHEME):
-                _add_mobile(
-                    findings,
-                    rel=rel,
-                    subcategory="ios-custom-url-scheme-surface",
-                    severity="Info",
-                    line=n,
-                    match=line,
-                    evidence="iOS custom URL scheme surface is present",
-                    platform="iOS",
-                    anti_pattern="Mobile deep-link trust boundary",
-                )
+            _mobile_info_plist(findings, rel, lines)
 
         if is_ios:
-            ios_patterns = [
-                (
-                    _IOS_WEBVIEW_BRIDGE,
-                    "ios-webview-js-bridge",
-                    "High",
-                    "iOS WebView JavaScript bridge or evaluation API is present",
-                    "Mobile WebView bridge",
-                ),
-                (
-                    _IOS_USERDEFAULTS_TOKEN,
-                    "ios-token-userdefaults",
-                    "High",
-                    "Sensitive token/secret marker appears in UserDefaults usage",
-                    "Mobile token in app storage",
-                ),
-                (
-                    _IOS_KEYCHAIN_ALWAYS,
-                    "ios-keychain-accessible-always",
-                    "Medium",
-                    "Keychain item uses always-accessible class",
-                    "Mobile token in app storage",
-                ),
-                (
-                    _IOS_ACCEPT_ALL_TLS,
-                    "ios-accept-all-tls",
-                    "Critical",
-                    "iOS TLS validation appears to accept arbitrary certificates or hosts",
-                    "Mobile TLS trust disabled",
-                ),
-                (
-                    _IOS_ASSOCIATED_DOMAINS,
-                    "ios-associated-domains-surface",
-                    "Info",
-                    "iOS Associated Domains entitlement is present",
-                    "Mobile deep-link trust boundary",
-                ),
-            ]
-            for pattern, subcat, severity, evidence, anti_pattern in ios_patterns:
-                for n, line in _line_hits(lines, pattern):
-                    _add_mobile(
-                        findings,
-                        rel=rel,
-                        subcategory=subcat,
-                        severity=severity,
-                        line=n,
-                        match=line,
-                        evidence=evidence,
-                        platform="iOS",
-                        anti_pattern=anti_pattern,
-                    )
+            _mobile_ios_code(findings, rel, lines)
 
     for rel, platform in sorted(surface_files.items()):
         findings.insert(
