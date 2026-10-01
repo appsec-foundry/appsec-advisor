@@ -244,6 +244,58 @@ def test_wait_status_keeps_an_unregistered_attempt_pending_until_the_deadline(tm
     assert waves.wait_status(plan, manifest, tmp_path, ["api"], now=1 + deadline)["status"] == "expired"
 
 
+def _call(output_dir: Path, job_id: str) -> dict:
+    state = lifecycle.validate_state(json.loads(lifecycle.state_path(output_dir).read_text(encoding="utf-8")))
+    return next(c for c in state["calls"] if c["job_id"] == job_id)
+
+
+def test_a_live_attempt_holds_its_wave_past_the_deadline(tmp_path: Path) -> None:
+    """Expiring a wave closes its job and lets claim() dispatch the next attempt
+    beside the analyzer that is still writing; the deadline frees only calls
+    that stopped or outlived the ceiling."""
+    plan, manifest = _claimed_wave(tmp_path, "api", "web")
+    _register(tmp_path, "stride:api:attempt-1", attempt=1)
+    web = _register(tmp_path, "stride:web:attempt-1", attempt=1)
+    lifecycle.note_child_stop(tmp_path, web)
+    spawned = _call(tmp_path, "stride:api:attempt-1")["spawned_at"]
+    deadline = waves.wave_deadline_seconds(manifest, ["api", "web"])
+    plan["wait_started_at"] = {"api": spawned, "web": spawned}
+
+    status = waves.wait_status(plan, manifest, tmp_path, ["api", "web"], now=spawned + deadline + 60)
+
+    assert status["status"] == "pending"
+    assert _call(tmp_path, "stride:api:attempt-1")["state"] == "running"
+
+
+def test_a_call_past_the_ceiling_no_longer_holds_its_wave(tmp_path: Path) -> None:
+    plan, manifest = _claimed_wave(tmp_path, "api")
+    _register(tmp_path, "stride:api:attempt-1", attempt=1)
+    spawned = _call(tmp_path, "stride:api:attempt-1")["spawned_at"]
+    plan["wait_started_at"] = {"api": spawned}
+
+    status = waves.wait_status(plan, manifest, tmp_path, ["api"], now=spawned + waves.WAIT_DEADLINE_CEILING_SECONDS + 1)
+
+    assert status["status"] == "expired"
+    assert _call(tmp_path, "stride:api:attempt-1")["failure_reason"] == "join_deadline_expired"
+
+
+def test_claim_never_dispatches_a_retry_beside_a_live_attempt(tmp_path: Path, monkeypatch) -> None:
+    """The cost invariant itself: whatever the waiter reported, a component's
+    next attempt is not claimed while its current attempt still runs."""
+    plan, manifest = _claimed_wave(tmp_path, "api")
+    _attempt_file(tmp_path, "api", 1, skipped=ALL[3:])
+    _register(tmp_path, "stride:api:attempt-1", attempt=1)
+    spawned = _call(tmp_path, "stride:api:attempt-1")["spawned_at"]
+    plan["wait_started_at"] = {"api": spawned}
+    late = spawned + waves.wave_deadline_seconds(manifest, ["api"]) + 60
+    monkeypatch.setattr(waves.time, "time", lambda: late)
+
+    payload, changed = waves.claim(plan, manifest, tmp_path)
+
+    assert payload["status"] == "in_flight" and changed is False
+    assert plan["attempts"]["api"] == 1
+
+
 def test_stride_waiter_returns_to_the_controller_on_a_settled_wave(tmp_path: Path, monkeypatch) -> None:
     plan, manifest = _claimed_wave(tmp_path, "api")
     (tmp_path / ".dispatch-waves.json").write_text(json.dumps(plan), encoding="utf-8")

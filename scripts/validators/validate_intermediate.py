@@ -683,6 +683,29 @@ def _error_signatures(errors) -> set[str]:
     return {f"{list(e.absolute_path)}|{e.validator}|{e.message}" for e in errors}
 
 
+def _signatures_after_delete(errors, target: list) -> set[str]:
+    """The signatures ``errors`` would carry once ``target`` is deleted.
+
+    Deleting array element k renumbers every later sibling, so its unchanged
+    errors would otherwise read as new ones and veto the element in favour of
+    the whole branch. Errors inside the deleted element are dropped.
+    """
+    if not target or not isinstance(target[-1], int):
+        return _error_signatures(errors)
+    prefix, index = list(target[:-1]), target[-1]
+    depth = len(prefix)
+    signatures: set[str] = set()
+    for error in errors:
+        path = list(error.absolute_path)
+        if path[:depth] == prefix and len(path) > depth and isinstance(path[depth], int):
+            if path[depth] == index:
+                continue
+            if path[depth] > index:
+                path[depth] -= 1
+        signatures.add(f"{path}|{error.validator}|{error.message}")
+    return signatures
+
+
 def _format_target(target: list) -> str:
     """Render a prune target the way _format_error_path renders an error path."""
     parts: list[str] = []
@@ -785,7 +808,9 @@ def prune_optional_schema_violations(data: dict) -> list[str]:
       `analyzed_at`, `threats`, and each threat's `local_id`, `stride`,
       `scenario`, `likelihood`, `impact`, `risk`) stay fatal by construction.
       `threats[i]` elements are additionally never candidates — dropping one
-      would shrink the error set while deleting a finding.
+      would shrink the error set while deleting a finding. Deleting an array
+      element renumbers its later siblings; their errors are compared under
+      the new index, so one bad element never costs the whole branch.
 
     Scope — sibling surfaces deliberately NOT routed through this, so the next
     reader does not "finish the job" by reflex:
@@ -822,7 +847,8 @@ def prune_optional_schema_violations(data: dict) -> list[str]:
                 trial = copy.deepcopy(data)
                 if not _delete_at(trial, target):
                     continue
-                if _error_signatures(validator.iter_errors(trial)) < before:
+                after = _error_signatures(validator.iter_errors(trial))
+                if after <= _signatures_after_delete(errors, target) and len(after) < len(before):
                     data.clear()
                     data.update(trial)
                     pruned.append(_format_target(target))

@@ -277,6 +277,54 @@ def test_optional_metadata_defect_never_costs_the_component(tmp_path: Path, labe
     assert len(repaired["threats"]) == expected_threats, "pruning must never drop a finding"
 
 
+def _lens_entry(n: int, **overrides) -> dict:
+    entry = {"item": f"LLM{n:02d}", "disposition": "no-evidence", "reason": "No model call in this component."}
+    entry.update(overrides)
+    return entry
+
+
+@pytest.mark.parametrize(
+    ("branch", "build"),
+    [
+        (
+            "discovery_escapes",
+            lambda bad: [_escape(decision_key=f"k{i}") if i != bad else _escape(decision_key=_LONG) for i in range(5)],
+        ),
+        (
+            "resolved_prior_findings",
+            lambda bad: [{"prior_id": f"P-{i}", "reason": _LONG if i == bad else "ok"} for i in range(5)],
+        ),
+        (
+            "lens_coverage",
+            lambda bad: [_lens_entry(i + 1, **({"reason": _LONG} if i == bad else {})) for i in range(5)],
+        ),
+    ],
+)
+@pytest.mark.parametrize("bad", [0, 2, 4], ids=["first", "middle", "last"])
+def test_one_bad_optional_element_costs_only_itself(branch: str, build, bad: int) -> None:
+    """Deleting element k renumbers every later sibling, so their unchanged
+    errors read as new ones; the prune must not take that for a regression and
+    fall back to dropping the whole branch with its valid entries."""
+    data = _valid_stride_component()
+    entries = build(bad)
+    data[branch] = entries
+
+    pruned = waves.prune_optional_schema_violations(data)
+
+    assert pruned == [f"{branch}[{bad}]"]
+    assert data[branch] == entries[:bad] + entries[bad + 1 :]
+
+
+def test_two_bad_elements_keep_every_valid_sibling() -> None:
+    data = _valid_stride_component()
+    entries = [_lens_entry(i + 1, **({"reason": _LONG} if i in {1, 3} else {})) for i in range(5)]
+    data["lens_coverage"] = entries
+
+    waves.prune_optional_schema_violations(data)
+
+    assert data["lens_coverage"] == [entries[0], entries[2], entries[4]]
+
+
 @pytest.mark.parametrize(
     ("label", "mutate"),
     [

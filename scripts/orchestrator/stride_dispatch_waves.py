@@ -61,6 +61,8 @@ from validators.validate_intermediate import (
     validate_stride,
 )
 
+import orchestrator.wait_agent_calls as wait_agent_calls
+
 DEFAULT_CONCURRENCY = 5
 # One context-v2 component can require eleven immediate receipt checks: bundle,
 # plan, optional repository, business, and architecture projections, and six
@@ -1033,6 +1035,13 @@ def _validated_wait_components(plan: dict[str, Any], component_ids: list[str]) -
     return deduped
 
 
+def _live_attempt_calls(output_dir: Path, job_ids: list[str], now: float) -> list[dict[str, Any]]:
+    """Current-attempt calls that still take turns and have not outlived the ceiling."""
+    wanted = set(job_ids)
+    calls = [call for call in agent_lifecycle.running_calls(output_dir) if call.get("job_id") in wanted]
+    return wait_agent_calls.still_waiting(calls, now, WAIT_DEADLINE_CEILING_SECONDS)
+
+
 def wait_status(
     plan: dict[str, Any],
     manifest: dict[str, Any],
@@ -1089,7 +1098,10 @@ def wait_status(
     # incomplete component's current-attempt call has stopped, nothing more
     # can land, and waiting out the deadline idled 25+ minutes per attempt on
     # run 5a9d03be. A call that was never registered keeps the wave pending.
-    if elapsed >= deadline:
+    # A call that still runs past the deadline holds the wave until the
+    # ceiling: expiring it closes its job, and claim() then dispatches the
+    # next attempt beside the analyzer that is still writing (OR-35).
+    if elapsed >= deadline and not _live_attempt_calls(output_dir, incomplete_jobs, current):
         wave_state = "expired"
     elif agent_lifecycle.jobs_settled(output_dir, incomplete_jobs, now=current):
         wave_state = "settled"

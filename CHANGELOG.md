@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Figure 2 links numbered attack routes to findings, access prerequisites, weaknesses, and impact for each relevant attacker.
 - Malicious insiders and attackers holding a user's device now require opt-in through `enable:` in `.appsec/actors.yaml` or `actors.enable` in the organization profile and are otherwise listed as not assessed.
 - `--stride-cap` and the quick profile never drop Critical or High findings.
-- Components with the LLM or agentic lens record a finding, a cited control, not applicable, or no evidence for every OWASP LLM or Agentic Top-10 item.
+- Components with the LLM or agentic lens record a finding, a cited control, not applicable, or no evidence for every OWASP LLM or Agentic Top-10 item, and one malformed entry no longer discards the others.
 - Interactive runs save confirmed business context in `docs/security/business-context.md` with legacy-path fallback, and prioritised mitigations name the declared business-critical assets they protect.
 - Report sections use Figure 1's actor names consistently, and Identified Actors lists each actor's access, scenarios, and finding counts.
 - Verdicts assess evidenced concerns without implying release readiness, and completion summaries lead with the assessment and grouped P1 fixes, list each concern as its prerequisite-bearing scenario sentence, and show complete requirement counts.
@@ -52,7 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Actor discovery preserves confirmed administrators and relevant attackers without inventing unnecessary roles or treating unauthenticated paths as signed-in access.
 - Detection gaps no longer name an attacker, and attack vectors match the attributed attacker, including build-time supply-chain attacks.
 - Runs no longer abort when consolidated findings move to their owning application component or when a component spans more than 32 paths, whose remaining files are now analysed too, and no longer stall and curtail other analyses when agents exhaust their turn budget.
-- STRIDE validation retries receive the exact errors to repair, and aborted runs name the failed rule instead of reporting missing output.
+- STRIDE validation retries receive the exact errors to repair, a slow analysis is never retried while it still runs, and aborted runs name the failed rule instead of reporting missing output.
 - Architecture diagrams preserve component connections, avoid duplicate databases, identity providers and user roles, keep the project name when a report moves, align finding counts with the report, and identify each scenario's attacker, with build-pipeline attacks shown as supply-chain attacks.
 - Architecture enrichment fills Security Architecture prose and routes remaining placeholders to repair, while self-checks catch inconsistent flows and asset locations before later validation failures.
 - Management summaries state the analysis method and coverage limits concisely and use short finding references for unresolved questions.
