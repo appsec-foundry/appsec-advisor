@@ -57,6 +57,20 @@ def test_figure1_optional_labels_are_bounded_across_artifact_schemas():
         assert not validator.is_valid(value)
 
 
+def test_attack_path_schema_admits_one_entry_per_taxonomy_class():
+    import yaml
+
+    taxonomy = yaml.safe_load((REPO_ROOT / "data" / "attack-class-taxonomy.yaml").read_text())
+    class_ids = [c["id"] for c in taxonomy["classes"]]
+    schema = json.loads((SCHEMAS_DIR / "security-posture-attack-paths.schema.json").read_text())
+    paths = schema["properties"]["attack_paths"]
+    assert paths["items"]["properties"]["class"]["enum"] == class_ids
+    assert paths["maxItems"] == len(class_ids)
+    assert len(taxonomy["glyph_sequence"]) >= len(class_ids)
+    count_words = r"\b(?:one|two|three|four|five|six|seven|eight|nine|ten)\s+numbered\b"
+    assert not re.search(count_words, schema["description"]), "class count belongs to the taxonomy"
+
+
 def test_external_entity_access_is_consistent_and_role_only():
     import yaml
 
