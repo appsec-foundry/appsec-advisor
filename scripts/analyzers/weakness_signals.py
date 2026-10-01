@@ -4,6 +4,15 @@ Finding classification owns the security claim. This producer additionally
 checks the cited implementation mechanism, limits its scope, and preserves the
 finding identity so later refutation removes its backing too. It does not scan
 for new vulnerabilities or infer application-wide control absence.
+
+Inputs: merged threats with verified evidence, the target repository source at
+each cited site, and the ``mechanism_guidance`` catalog in
+data/weakness-classes.yaml.
+Outputs: ``finding_signals`` returns design-signal records conforming to
+schemas/weakness-signals.schema.json; ``validate_document`` checks that schema
+(or impl-strategy.schema.json) plus the weakness-class vocabulary.
+Consumers: model/merge_threats.py (``refresh_weaknesses``, ``_load_design_signals``),
+analyzers/arch_coverage_to_threats.py and analyzers/detect_impl_strategy.py.
 """
 
 from __future__ import annotations

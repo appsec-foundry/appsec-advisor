@@ -108,9 +108,11 @@ def fill_from_verified_findings(flows: list, threats: list) -> tuple[list, list[
 
     The route inventory cannot see channels that are not HTTP routes (a
     WebSocket, a queue consumer), so their flows stay unknown even after
-    evidence verification confirmed the missing authentication. Only a finding
-    on the flow's target component whose evidence names a file the flow itself
-    cites may fill it; broken authentication (CWE-287) is still authentication.
+    evidence verification confirmed the missing authentication. Only a verified
+    CWE-306 finding on the flow's target component (``to``) whose evidence names
+    a file listed in the flow's ``authentication.evidence`` may fill it. A flow
+    without authentication evidence is never filled. Broken authentication
+    (CWE-287) does not fill a flow: it is still authentication.
     """
     result = copy.deepcopy(flows)
     filled: list[str] = []

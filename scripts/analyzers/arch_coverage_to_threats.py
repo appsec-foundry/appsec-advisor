@@ -5,31 +5,38 @@ analyzers/arch_coverage_to_threats.py — Phase-9 bridge.
 Converts $OUTPUT_DIR/.architecture-coverage.json into threat-shaped
 candidates ready to merge into $OUTPUT_DIR/.threats-merged.json.
 
-Selection policy (arch.md §Pipeline-Integration Punkt 5):
+Selection policy:
   * anti_pattern_candidates                          → source=architecture-coverage
-  * threat_hypotheses with proof_state=confirmed     → source=threat-hypothesis
-  * threat_hypotheses with proof_state in
-    {control-derived, evidence-backed}               → NOT merged. They stay
-                                                       in .architecture-coverage.json
-                                                       and are persisted in
-                                                       threat-model.yaml#threat_hypotheses[]
-                                                       by Phase 11.
+  * threat_hypotheses with proof_state=confirmed
+    and confidence=high                              → source=threat-hypothesis
+  * every other threat_hypothesis                    → NOT a threat. With an
+                                                       observable absent-control
+                                                       signal it becomes a design
+                                                       signal for the weakness
+                                                       register (build_design_signals,
+                                                       read by merge_threats);
+                                                       without one it is dropped.
 
 Output (.arch-coverage-threats.json):
   {
     "version": 1,
     "generated_at": "...",
-    "threats": [...],       # ready to merge; t_id assigned by --merge-into
-    "skipped":  [...]       # hypotheses NOT exported, with reason
+    "threats": [...],       # ready to merge; t_id assigned by merge-into
+    "skipped":  [...]       # candidates/hypotheses NOT exported, with reason
   }
 
-Modes:
-  emit          — write .arch-coverage-threats.json (default).
-  merge-into    — append entries to an existing .threats-merged.json,
-                  re-assigning contiguous T-NNN ids.
+Subcommands (one is required):
+  emit                 — write .arch-coverage-threats.json.
+  merge-into           — append entries to an existing .threats-merged.json,
+                         re-assigning contiguous T-NNN ids.
+  emit-design-signals  — write .arch-design-signals.json (design signals for
+                         the merge_threats weakness reconciler).
+  persist-hypotheses   — merge unpromoted hypotheses into
+                         threat-model.yaml#threat_hypotheses[].
 
-Severity policy: risk / likelihood / impact default to the rule's
-severity_cap; never Critical individually (arch.md §Severity-Policy).
+Severity policy: risk and impact take the rule's severity_cap (High, Medium or
+Low; anything else becomes Medium), likelihood is Medium, and a candidate whose
+severity_cap is Critical is skipped. Promoted hypotheses are rated High.
 """
 
 from __future__ import annotations
@@ -267,11 +274,9 @@ def select_and_build(coverage: dict) -> tuple[list[dict], list[dict]]:
                 rule_id=rule_id,
                 title=cand.get("generic_threat_title") or cand.get("title") or rule_id,
                 cwe=cand.get("cwe") or "CWE-693",
-                # bugs2 Bug 1: prefer rule-YAML stride over the legacy
-                # rule_id-keyed fallback map; map kept only as last-resort default
-                # for rules without a stride: field. After bugs2 Bug 6 lands (schema
-                # makes stride required on every candidate), the fallback becomes
-                # unreachable in well-formed inputs.
+                # Prefer the rule-YAML stride. The schema requires stride on every
+                # anti-pattern candidate, so the rule_id-keyed fallback map is
+                # reached only by input that bypassed schema validation.
                 stride=cand.get("stride") or _stride_for_rule(rule_id),
                 threat_category_id=cand.get("threat_category_id"),
                 risk=cand.get("severity_cap") or "Medium",
@@ -320,14 +325,14 @@ def select_and_build(coverage: dict) -> tuple[list[dict], list[dict]]:
 
 def build_design_signals(coverage: dict) -> tuple[list[dict], list[dict]]:
     """Normalize UNPROMOTED architecture-coverage hypotheses into design-signal
-    records consumed by merge_threats.build_weakness_register (P1.3).
+    records consumed by merge_threats.build_weakness_register.
 
-    Replaces routing these to a user-facing `threat_hypotheses[]` list (Fact R):
-    the observable design gap folds into a weakness heading, its speculative
-    framing is dropped. Emission gate (I2 / proposal §0): a signal is emitted
-    ONLY when it carries an observable absent-control signal
-    (`controls_absent_evidence` / `positive_signals`); pure "might be
-    vulnerable" speculation with no such signal is dropped, not shown.
+    The observable design gap folds into a weakness heading instead of a
+    user-facing hypothesis; its speculative framing is dropped. Emission gate:
+    a signal is emitted ONLY when it carries an observable absent-control
+    signal (`controls_absent_evidence`, `weak_or_missing_controls` or
+    `positive_signals`); pure "might be vulnerable" speculation with no such
+    signal is returned in the dropped list, not shown.
 
     Confirmed+high hypotheses are NOT design signals — they promote to
     `threats[]` via select_and_build / merge-into as before.
@@ -393,7 +398,7 @@ def build_design_signals(coverage: dict) -> tuple[list[dict], list[dict]]:
             "title": control or (hyp.get("title") or "Security control weakness"),
             "statement": statement,
             "absent_control_signal": list(backing),
-            # Populated by the P2 misuse/strategy layer; None until then.
+            # Taken from the hypothesis when it carries one; None otherwise.
             "implementation_strategy": hyp.get("implementation_strategy"),
             "severity": hyp.get("severity") or "Medium",
         }

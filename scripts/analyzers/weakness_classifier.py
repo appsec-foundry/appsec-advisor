@@ -1,14 +1,12 @@
 """Canonical weakness-class classifier.
 
 Single source of truth for mapping a CWE (or a threat dict) to one of the
-`data/weakness-classes.yaml` cluster ids (injection, broken_auth,
-missing_authz, weak_crypto, server_side_exposure, output_xss_csp,
-sensitive_disclosure, dos, outdated_deps, or the `_unmapped` catch-all).
+cluster ids defined in `data/weakness-classes.yaml`, or the `_unmapped`
+catch-all (decision WK-1).
 
 Shared by the threat merger's weakness reconciler (model/merge_threats.py) and the
 composer (renderers/compose_threat_model.py) so both group findings by the SAME class
-map — P1 of the weakness-class evidence model
-(docs/internal/analysis/implplan-weakness-class-evidence-model.md).
+map.
 
 validators/qa_checks.py deliberately keeps its own self-contained copy (it avoids
 cross-module imports by design); keep the CWE→cluster logic here identical.

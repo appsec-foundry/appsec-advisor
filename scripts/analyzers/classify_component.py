@@ -1,10 +1,12 @@
-"""M8 + M18 — Deterministic component complexity + MAX_TURNS classifier.
+"""Deterministic component complexity and STRIDE turn-budget classifier.
 
-Replaces the LLM-discretionary "thin-component cap" / "moderate / complex"
-heuristics used by `orchestrator/build_stride_dispatch_manifest.py`. The controller runs this
-script per component AFTER recon-summary is in working memory, BEFORE Phase
-9 dispatch — and uses the returned (complexity, max_turns, estimated_threat_count)
-triple to populate the STRIDE-analyzer prompt parameters.
+Runtime consumers import the turn-budget helpers, not ``classify``:
+`orchestrator/build_stride_dispatch_manifest.py` applies
+``_footprint_turn_floor`` / ``footprint_turns_needed`` to each component's
+tier budget, and `orchestrator/stride_dispatch_waves.py` uses
+``escalated_retry_turns`` for a retry after a budget-caused death.
+``classify`` and the CLI return the full (complexity, max_turns,
+estimated_threat_count) verdict for one component.
 
 Inputs (CLI):
     analyzers/classify_component.py <COMPONENT_ID> --recon-summary FILE
@@ -22,36 +24,32 @@ Output (JSON on stdout):
 
 Decision tree:
 
-  1. **Auth/identity** (canonical_id == auth-identity OR component_id matches
-     `auth-*`) → ALWAYS complexity=complex (M19 invariant — auth is never
+  1. **Auth/identity** (``--canonical-id`` if given, else the component id,
+     after alias resolution is ``auth`` or starts with ``auth-``) → ALWAYS
+     complexity=complex. Auth is never
      thin even when its file footprint is small, because the threat surface
-     is concentrated and high-impact).
+     is concentrated and high-impact.
 
-  2. **Trivial-skip eligible** (per M24 conditions) → complexity=trivial,
-     max_turns=0 (caller writes stub stride file and skips dispatch).
+  2. **Trivial-skip eligible** (≤2 interfaces, no dangerous-sink, secret or
+     input-handling matches in recon Sections 7.8 / 7.12 / 7.4, not
+     frontend-spa) → complexity=trivial, max_turns=0 (caller writes a stub
+     stride file and skips dispatch).
 
-  3. **Thin** (per the manifest builder's thin-cap conditions) →
+  3. **Thin** (<3 interfaces, no dangerous-sink and no secret matches) →
      complexity=simple, max_turns=8, estimated_threat_count=low.
 
-  4. **Moderate** (3-6 interfaces AND ≤2 dangerous-sink matches in recon
-     Section 7.8) → complexity=moderate, max_turns=STRIDE_TURNS_MODERATE.
+  4. **Moderate** (≤6 interfaces AND ≤2 dangerous-sink matches in recon
+     Section 7.8) → complexity=moderate.
 
-  5. **Complex** (≥7 interfaces OR ≥3 dangerous-sink matches OR component
-     is admin/payment/PII handler) → complexity=complex,
-     max_turns=STRIDE_TURNS_COMPLEX.
+  5. **Complex** (otherwise: ≥7 interfaces OR ≥3 dangerous-sink matches) →
+     complexity=complex.
 
-  6. **Per-type calibration (M18)** — based on 8-run telemetry:
-     - file-handling: bump complexity floor to moderate (rarely simple in
-       practice; small file count masks genuine I/O complexity)
-     - data-persistence: bump complexity floor to moderate (multi-hop
-       reasoning over models + queries justifies extra budget)
-     - frontend-spa: keep heuristic-driven (varies wildly with template
-       count)
-     - backend-api: respect heuristic (small APIs really are simple)
+  6. **Per-type floor** (``TYPE_COMPLEXITY_FLOOR``): file-handling and
+     data-persistence are raised to at least moderate, admin-panel to
+     complex; frontend-spa and backend-api keep the heuristic verdict.
 
-The per-depth turn-budget tables come from `data/depth-params.yaml` (or
-the duplicate copy in runtime/resolve_config.py.DEPTH_PARAMS — kept in sync via
-test_resolve_config.py).
+max_turns for moderate/complex comes from ``TURN_BUDGETS`` at the given depth;
+the result is then raised by the file-footprint floor (``_footprint_turn_floor``).
 """
 
 from __future__ import annotations
@@ -70,16 +68,18 @@ import re
 import sys
 from pathlib import Path
 
-# Per-depth turn budgets (mirror of runtime/resolve_config.py.DEPTH_PARAMS values
-# for simple/moderate/complex tiers).
+# Per-depth turn budgets. The moderate/complex values equal
+# runtime/resolve_config.py DEPTH_PARAMS; simple does not (it is a flat 8 here,
+# 10/15/20 there). No test compares the two tables, so keep them aligned by hand.
 TURN_BUDGETS = {
     "quick": {"simple": 8, "moderate": 15, "complex": 20},
     "standard": {"simple": 8, "moderate": 22, "complex": 31},
     "thorough": {"simple": 8, "moderate": 28, "complex": 35},
 }
 
-# M18 — per-component-type complexity floor. Empirical: when the component
-# type historically takes 1.5× longer than its tier-mean, bump the floor.
+# Per-component-type complexity floor: a type whose analysis consistently needs
+# more budget than its heuristic tier grants is raised to at least this tier.
+# auth-identity never reaches the floor step; rule 1 returns earlier.
 TYPE_COMPLEXITY_FLOOR = {
     "file-handling": "moderate",
     "data-persistence": "moderate",
@@ -122,19 +122,14 @@ ALIASES_TO_CANONICAL = {
 
 
 def _to_canonical(component_id: str, hint: str | None = None) -> str:
-    """Canonical id for classification, with the M19 auth rule applied last.
+    """Canonical id for classification, with the auth rule applied last.
 
-    The docstring's rule 1 says an id matching ``auth-*`` is always auth-identity,
-    but that was only ever approximated by an enumeration in
-    ``ALIASES_TO_CANONICAL`` (auth-core, auth-jwt, auth-login, auth-module,
-    auth-session). Any name outside the list fell through to itself, missing the
-    complex floor. On 2026-07-20 an inventory named the component ``auth-service``
-    -- not in the list -- so the component holding JWT signing, password hashing,
-    login and 2FA classified as *moderate* and got the smaller turn budget, while
-    an earlier run of the same repo classified it complex. Auth is the one class
-    where under-budgeting is most costly, so the rule is applied as a prefix here
-    and also to a caller-supplied hint: the hint comes from an LLM-authored
-    inventory and must not be able to opt a component out of a safety floor.
+    The hint (else ``component_id``) is lowercased and resolved through
+    ``ALIASES_TO_CANONICAL``; any result equal to ``auth`` or starting with
+    ``auth-`` then becomes ``auth-identity``. The rule is a prefix match rather
+    than an alias list so an unlisted name such as ``auth-service`` cannot miss
+    the complex verdict, and it also applies to the hint: the hint comes from
+    an LLM-authored inventory and must not opt a component out of that floor.
     """
     candidate = (hint or component_id).lower()
     if candidate in ALIASES_TO_CANONICAL:
@@ -287,7 +282,7 @@ def classify(
 
     # Step 1 — auth-identity invariant
     if canonical == "auth-identity":
-        # The complexity verdict ignores file footprint by design (M19/M8), but
+        # The complexity verdict ignores file footprint by design, but
         # the turn budget must not: reading N files costs N turns whatever the
         # risk rating says.
         auth_turns, auth_floor, auth_clamped = _footprint_turn_floor(file_count, budgets["complex"])
@@ -309,7 +304,7 @@ def classify(
     inputs = _count_recon_pattern(recon_summary, "7.4 ", component_id)
     inputs = max(inputs, _count_recon_pattern(recon_summary, "7.4 ", canonical))
 
-    # Step 2 — trivial skip (M24)
+    # Step 2 — trivial skip
     is_frontend = canonical == "frontend-spa"
     if interfaces <= 2 and sinks == 0 and secrets == 0 and inputs == 0 and not is_frontend:
         return {
@@ -335,7 +330,7 @@ def classify(
         complexity = "complex"
         reason = f"complex: {interfaces} interfaces, {sinks} dangerous-sinks"
 
-    # Step 6 — M18 per-type floor
+    # Step 6 — per-type floor
     floor = TYPE_COMPLEXITY_FLOOR.get(canonical)
     if floor:
         bumped = _bump_complexity(complexity, floor)

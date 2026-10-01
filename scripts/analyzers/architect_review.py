@@ -1,7 +1,8 @@
 """Deterministic assessment/remediation correction core; no runtime dispatch.
 
-This module neither calls a model nor writes run files. The controller adapter
-authorizes packets, binds snapshots, bounds calls and publishes accepted data.
+This module neither calls a model nor writes run files. The controller adapter,
+analyzers/architect_review_runtime.py, authorizes packets, binds snapshots,
+bounds calls and publishes accepted data.
 
 The first contract deliberately rejects evidence, CVSS, ownership and deletion
 edits. Those require their own semantic verification or a deterministic scorer.

@@ -5,24 +5,24 @@ analyzers/architecture_coverage_checks.py — deterministic architecture-coverag
 Always-on evaluation of problematic security controls and architecture
 anti-patterns. Reads:
   * data/architecture-coverage-rules.yaml          — rule catalog (required)
+  * repository source files under --repo-root      — rule signal patterns
   * $OUTPUT_DIR/.route-inventory.json              — route basis (optional)
-  * $OUTPUT_DIR/.recon-patterns.json               — recon signals (optional)
-  * $OUTPUT_DIR/.config-scan-findings.json         — config/IaC signals (optional)
+  * $OUTPUT_DIR/.db-privilege-separation.json      — DB principal separation
+                                                     (optional, thorough only)
 
 Writes:
   $OUTPUT_DIR/.architecture-coverage.json  conforming to
   schemas/architecture-coverage.schema.json.
 
-Contract (arch.md §Erste Lieferung):
+Contract:
   * Every rule appears in rules_evaluated[] — not just matches.
   * The unknown-is-not-absent gate: route signals 'unknown' / 'inherited_unknown'
     never escalate to a hard candidate on their own.
   * Hard candidates require positive evidence; absence of an exculpatory
     framework is not enough.
   * Hypothesis rules default to emit_hypothesis_only; promotion to a
-    threat candidate requires proof_state=confirmed (currently emitted
-    only when a positive signal AND an inventory surface co-occur and
-    no exculpatory signal is present in the same file).
+    threat candidate requires proof_state=confirmed, which only confirmed
+    records in .db-privilege-separation.json produce.
 
 CLI:
     python3 scripts/analyzers/architecture_coverage_checks.py \
@@ -72,7 +72,7 @@ except Exception:  # pragma: no cover
 _DEFAULT_RULES_YAML = _HERE.parent / "data" / "architecture-coverage-rules.yaml"
 
 
-# bugs2 Bug 3 — Engine-wide default excludes. Any path containing one of these
+# Engine-wide default excludes. Any path containing one of these
 # segments is never scanned, regardless of how permissive a rule's signal
 # patterns are. This prevents future repo-wide rules (e.g. `**/*.ts`) from
 # walking into bundled vendor code and producing spurious anti-pattern matches.
@@ -150,7 +150,7 @@ _SINK_SANITIZER = re.compile(r"(?i)(?:DOMPurify\.sanitize|sanitize\s*\(|escapeHt
 
 
 def _is_excluded(rel: str, repo_root: Path | None = None) -> bool:
-    # bugs2 Bug 3 — opt-out for specialised audits (lockfile / supply chain).
+    # Opt-out for specialised audits (lockfile / supply chain).
     if os.environ.get("APPSEC_ARCH_INCLUDE_VENDOR") == "1":
         return False
     if _scan_is_excluded is not None:
@@ -421,7 +421,7 @@ def _cooccurrence_satisfied(hits: PatternHits, window: int) -> list[tuple[str, i
 def _evaluate_mgmt_rule(rule: CompiledRule, inventory: dict | None) -> dict:
     """Returns {applies, status, confidence, evidence, skip_reason}.
 
-    arch.md §ARCH-MGMT-001:
+    ARCH-MGMT-001:
       hard candidate only when management_surface=true AND authn_signal=absent AND
       authz_signal=absent. 'unknown' / 'inherited_unknown' must NOT escalate.
     """
@@ -1023,10 +1023,9 @@ def run(
             and verdict["confidence"] == "high"
             and verdict["evidence"]
         ):
-            # bugs2 Bug 1 + Bug 6 — propagate stride + threat_category_id
-            # from the rule YAML so the bridge can use them without falling
-            # back to the legacy _DOMAIN_TO_STRIDE map (which only covered
-            # 5 of 9 rules and silently mis-classified the other 4).
+            # Propagate stride + threat_category_id from the rule YAML: the
+            # schema requires stride on every anti-pattern, and the bridge's
+            # rule-id fallback map (_DOMAIN_TO_STRIDE) does not cover every rule.
             anti_patterns.append(
                 _with_arch_fields(
                     {

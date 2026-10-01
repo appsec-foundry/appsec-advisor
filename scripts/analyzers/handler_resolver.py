@@ -615,6 +615,15 @@ class HandlerResolver:
 
     # -- classification ------------------------------------------------------
     def _classify(self, bodies: list[Body], python: bool) -> HandlerSignal:
+        """Authentication one chain link's code proves, judged line by line.
+
+        JS bodies are expanded with the repository helpers they call. The first
+        match wins in this order: ``verified`` (with its scheme) when a verify
+        call sits in a body that reads a credential and a rejection follows
+        within ``_REJECT_WINDOW`` lines, or after a later test of the verify
+        result; ``decode_only`` when a token is decoded without verification;
+        ``unresolved`` when a credential is read but neither is shown; else ``none``.
+        """
         credential, verify, decode, reject = (
             (_PY_CREDENTIAL_RE, _PY_VERIFY_RE, _PY_DECODE_RE, _PY_REJECT_RE)
             if python

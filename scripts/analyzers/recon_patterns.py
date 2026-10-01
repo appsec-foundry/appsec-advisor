@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """
-analyzers/recon_patterns.py — deterministic recon pattern scans (Sprint 3 Item #1).
+analyzers/recon_patterns.py — deterministic recon pattern scans.
 
-Replaces four pattern-only categories that the LLM-driven recon-scanner
-used to grep for. These are pure regex scans with no judgement involved:
+Owns the pattern-only recon categories so the LLM-driven recon-scanner does
+not grep for them. These are regex scans with no judgement involved; the
+category set is the ``_DISPATCH`` table:
 
-  Cat 11  Exposed Routes — admin/debug/swagger/actuator endpoints
   Cat 9   OAuth / OIDC — redirect-flow and token-handling anti-patterns
   Cat 10  SPA / BFF — browser token and client-trust anti-patterns
+  Cat 11  Exposed Routes — admin/debug/swagger/actuator endpoints
+  Cat 13  AI / LLM Integration — genuine AI/LLM surface (a strong signal, or
+          prompt construction co-located with another weak signal in one file)
   Cat 14  CI/CD Supply Chain — unpinned GitHub Actions (no SHA ref),
           GitLab CI image directives
   Cat 15  Container Base Images — unpinned Docker / Compose images
@@ -34,6 +37,7 @@ CLI:
   python3 analyzers/recon_patterns.py oauth-oidc      --repo-root <path>
   python3 analyzers/recon_patterns.py spa-bff         --repo-root <path>
   python3 analyzers/recon_patterns.py exposed-routes  --repo-root <path>
+  python3 analyzers/recon_patterns.py ai-integration  --repo-root <path>
   python3 analyzers/recon_patterns.py ci-supply-chain --repo-root <path>
   python3 analyzers/recon_patterns.py container-images --repo-root <path>
   python3 analyzers/recon_patterns.py postinstall     --repo-root <path>
