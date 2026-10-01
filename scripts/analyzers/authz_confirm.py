@@ -57,6 +57,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from shared._path_guard import is_safe_to_read  # noqa: E402
+
 from analyzers.handler_resolver import RESOLVED_FRAMEWORKS, HandlerResolver  # noqa: E402
 from analyzers.source_auth_scanner import _source_type_for  # noqa: E402  (reuse ext→enum map)
 
@@ -206,8 +208,10 @@ def confirm_instances(repo_root: Path, inventory: dict) -> list[dict]:
         hl = r.get("handler_line")
         if not hf or not isinstance(hl, int):
             continue
+        # `handler_file` comes from a sidecar: an absolute or escaping path, or a
+        # symlink out of the repository, is never read.
         path = repo_root / hf
-        if not path.exists() or not path.is_file():
+        if not path.is_file() or not is_safe_to_read(path, repo_root):
             continue
         try:
             lines = path.read_text(encoding="utf-8", errors="replace").splitlines()

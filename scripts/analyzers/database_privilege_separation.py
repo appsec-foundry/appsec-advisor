@@ -35,6 +35,7 @@ from typing import Iterable
 
 _HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_HERE))
+from shared._path_guard import is_safe_to_read  # noqa: E402
 from validators.validate_intermediate import validate_db_privilege_separation  # noqa: E402
 
 _EXTENSIONS = {
@@ -112,7 +113,9 @@ def _walk(repo_root: Path) -> Iterable[Path]:
         dirs[:] = [d for d in dirs if d not in _EXCLUDED]
         for name in files:
             path = Path(base) / name
-            if path.suffix.lower() in _EXTENSIONS:
+            # A symlink out of the repository or a non-regular file (FIFO,
+            # device) is never read: it could leak or block the scan.
+            if path.suffix.lower() in _EXTENSIONS and path.is_file() and is_safe_to_read(path, repo_root):
                 yield path
 
 

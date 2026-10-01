@@ -7,6 +7,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import analyzers.authz_confirm as ac  # noqa: E402
@@ -307,3 +309,25 @@ def test_merge_ingests_and_folds_into_missing_authz(tmp_path: Path) -> None:
     assert t["source"] == "source-scan"
     assert t["cwe"] == "CWE-639"
     assert t["source_check_id"] == "AUTHZ-301"
+
+
+@pytest.mark.parametrize("via", ["symlink", "absolute"])
+def test_handler_outside_the_repository_is_never_read(tmp_path: Path, via: str) -> None:
+    repo, outside = tmp_path / "repo", tmp_path / "outside"
+    repo.mkdir()
+    outside.mkdir()
+    _unguarded_handler(outside, "items.js")
+    if via == "symlink":
+        (repo / "items.js").symlink_to(outside / "items.js")
+        handler_file = "items.js"
+    else:
+        handler_file = str(outside / "items.js")
+    assert ac.confirm_instances(repo, _inv([_suspect(handler_file, "/items/:id", "absent")])) == []
+
+
+def test_handler_symlinked_inside_the_repository_is_still_read(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    _unguarded_handler(tmp_path, "src/items.js")
+    (tmp_path / "items.js").symlink_to(tmp_path / "src" / "items.js")
+    findings = ac.confirm_instances(tmp_path, _inv([_suspect("items.js", "/items/:id", "absent")]))
+    assert [f["check_id"] for f in findings] == ["AUTHZ-302"]
