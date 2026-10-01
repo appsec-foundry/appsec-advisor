@@ -549,34 +549,25 @@ def _strip_literals(text: str) -> str:
     return _STRING_LITERAL_RE.sub('""', text)
 
 
+# String literals are matched as a unit so a `//` or `#` inside one is no comment;
+# an unterminated quote ends at its line, an unterminated block at the file end.
+_STRINGS = r'"(?:[^"\\\n]|\\[\s\S])*"?|\'(?:[^\'\\\n]|\\[\s\S])*\'?|`(?:[^`\\]|\\[\s\S])*`?'
+_COMMENT_RES = {
+    "//": re.compile(_STRINGS + r"|//[^\n]*|/\*[\s\S]*?(?:\*/|\Z)"),
+    "#": re.compile(_STRINGS + r"|#[^\n]*"),
+}
+_NOT_NEWLINE_RE = re.compile(r"[^\n]")
+
+
 def _mask_comments(text: str, line_comment: str) -> str:
     """Blank comments with spaces, keeping offsets and newlines, so a commented-out
-    registration or guard is not code. String literals are skipped as a unit."""
-    out = list(text)
-    i, n = 0, len(text)
-    block = line_comment == "//"
-    while i < n:
-        ch = text[i]
-        if ch in "'\"`":
-            end = i + 1
-            while end < n and text[end] != ch and (ch == "`" or text[end] != "\n"):
-                end += 2 if text[end] == "\\" else 1
-            i = end + 1
-            continue
-        if text.startswith(line_comment, i):
-            end = text.find("\n", i)
-            end = n if end < 0 else end
-        elif block and text.startswith("/*", i):
-            end = text.find("*/", i + 2)
-            end = n if end < 0 else end + 2
-        else:
-            i += 1
-            continue
-        for j in range(i, end):
-            if out[j] != "\n":
-                out[j] = " "
-        i = end
-    return "".join(out)
+    registration or guard is not code."""
+
+    def blank(m: re.Match) -> str:
+        token = m.group(0)
+        return token if token[0] in "'\"`" else _NOT_NEWLINE_RE.sub(" ", token)
+
+    return _COMMENT_RES[line_comment].sub(blank, text)
 
 
 def _scan_auth_text(text: str) -> tuple[str, str]:

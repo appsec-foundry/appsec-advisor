@@ -180,6 +180,19 @@ def _skip_string(text: str, i: int) -> int:
     return i + 1
 
 
+#: Handler factories nest a few arrows at most; the cap bounds a pathological chain.
+_MAX_CURRIED_ARROWS = 4
+
+
+def _is_arrow(text: str, start: int) -> bool:
+    """Whether an arrow function starts at `start`."""
+    rest = text[start:]
+    params = start + len(re.match(r"(?:async\s+)?", rest).group(0))
+    return bool(_JS_FUNCTION_START_RE.match(rest)) and "=>" in rest.split("\n", 1)[0] + (
+        text[params : _matching(text, params)] if text.startswith("(", params) else ""
+    )
+
+
 def _strip_js_comments(text: str) -> str:
     """Blank comments while keeping offsets and line numbers."""
     out, i = list(text), 0
@@ -361,15 +374,23 @@ class HandlerResolver:
         while start < len(text) and text[start] in " \t\n":
             start += 1
         rest = text[start:]
-        if _JS_FUNCTION_START_RE.match(rest) and "=>" in rest.split("\n", 1)[0] + (
-            text[start : _matching(text, start)] if rest.startswith("(") else ""
-        ):
-            arrow = text.find("=>", _matching(text, start) if rest.startswith("(") else start)
-            body_start = arrow + 2
-            while body_start < len(text) and text[body_start] in " \t\n":
-                body_start += 1
-            if text.startswith("{", body_start):
-                return line, text[m.start() : _matching(text, body_start)], None
+        if _is_arrow(text, start):
+            # A factory returns the handler (`() => async (req, res) => {…}`): follow
+            # each returned arrow to the block body instead of stopping at the first.
+            for _ in range(_MAX_CURRIED_ARROWS):
+                params = start + len(re.match(r"(?:async\s+)?", text[start:]).group(0))
+                arrow = text.find("=>", _matching(text, params) if text.startswith("(", params) else params)
+                body_start = arrow + 2
+                while body_start < len(text) and text[body_start] in " \t\n":
+                    body_start += 1
+                if text.startswith("{", body_start):
+                    return line, text[m.start() : _matching(text, body_start)], None
+                if not _is_arrow(text, body_start):
+                    break
+                start = body_start
+            if re.match(r"(?:async\s+)?function\b", text[body_start:]):
+                brace = text.find("{", _matching(text, text.find("(", body_start)))
+                return line, text[m.start() : _matching(text, brace)], None
             end = text.find("\n", body_start)
             return line, text[m.start() : len(text) if end < 0 else end], None
         if re.match(r"(?:async\s+)?function\b", rest):

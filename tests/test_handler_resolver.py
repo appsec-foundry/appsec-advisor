@@ -291,3 +291,68 @@ def test_optional_chaining_reads_the_credential_like_member_access(tmp_path, nam
     assert row["authn_handler_signal"] == "verified"
     assert row["authn_signal"] == "present"
     assert not row["missing_auth_suspect"]
+
+
+GUARD_MODULE = "export function requireSession () {\n  return (req, res, next) => next()\n}\n"
+
+
+@pytest.mark.parametrize(
+    ("file", "factory"),
+    [
+        (
+            "routes/items.js",
+            "module.exports.loadItem = () => async (req, res) => {\n"
+            "  const item = await Item.findByPk(req.params.id)\n"
+            "  if (item.ownerId !== req.user.id) return res.sendStatus(403)\n"
+            "  res.json(item)\n"
+            "}\n",
+        ),
+        (
+            "routes/items.ts",
+            "export const loadItem = (opts) =>\n"
+            "  async (req, res) => {\n"
+            "    const item = await Item.findByPk(req.params.id)\n"
+            "    if (item.ownerId !== req.user.id) return res.sendStatus(403)\n"
+            "    res.json(item)\n"
+            "  }\n",
+        ),
+    ],
+)
+def test_a_handler_factory_yields_the_returned_handler_body(tmp_path, file, factory):
+    """The ownership check sits in the handler a factory returns, below its first line."""
+    write(
+        tmp_path,
+        {
+            "server.js": "const express = require('express')\n"
+            "const { requireSession } = require('./lib/guard')\n"
+            f"const {{ loadItem }} = require('./{file.rsplit('.', 1)[0]}')\n"
+            "const app = express()\n"
+            "app.get('/items/:id', requireSession(), loadItem())\n",
+            "lib/guard.js": GUARD_MODULE,
+            file: factory,
+        },
+    )
+    row = {"framework": "express", "handler_file": "server.js", "handler_line": 5, "path": "/items/:id"}
+    code = HandlerResolver(tmp_path).handler_code(row)
+    assert "item.ownerId !== req.user.id" in code
+    assert ac.confirm_instances(tmp_path, {"routes": [{**row, "method": "GET", "missing_authz_suspect": True}]}) == []
+
+
+def test_a_handler_factory_without_an_ownership_check_is_still_confirmed(tmp_path):
+    write(
+        tmp_path,
+        {
+            "server.js": "const express = require('express')\n"
+            "const { requireSession } = require('./lib/guard')\n"
+            "const { loadItem } = require('./routes/items')\n"
+            "const app = express()\n"
+            "app.get('/items/:id', requireSession(), loadItem())\n",
+            "lib/guard.js": GUARD_MODULE,
+            "routes/items.js": "module.exports.loadItem = () => async (req, res) => {\n"
+            "  res.json(await Item.findByPk(req.params.id))\n"
+            "}\n",
+        },
+    )
+    row = {"framework": "express", "handler_file": "server.js", "handler_line": 5, "path": "/items/:id"}
+    (finding,) = ac.confirm_instances(tmp_path, {"routes": [{**row, "method": "GET", "missing_authz_suspect": True}]})
+    assert finding["check_id"] == "AUTHZ-301"
