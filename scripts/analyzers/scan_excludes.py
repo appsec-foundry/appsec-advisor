@@ -2,16 +2,18 @@
 """
 analyzers/scan_excludes.py — single source of truth for scan exclusions.
 
-Loaded from data/scan-excludes.yaml. Three consumers:
+Two responsibilities, shared by the repository scanners, analyzers, and
+context builders under scripts/:
 
-1. Recon-scanner and stride-analyzer agents call `glob_exclusion_string()`
-   to build the Grep `glob:` parameter that excludes irrelevant paths.
+1. Path exclusion policy loaded from data/scan-excludes.yaml:
+   `is_excluded()` / `is_always_included()` per file, `is_oversize()` /
+   `max_file_bytes()` for the per-file byte cap, and
+   `glob_exclusion_string()` for the Grep `glob:` parameter agents use.
 
-2. `analyzers/security_relevance_filter.py` calls `is_excluded()` per file during
-   incremental-mode dirty-set classification.
-
-3. Tests call `load_excludes()` to validate the contract and to drive
-   drift guards.
+2. Assessment-output detection: `is_assessment_artifact()` and
+   `assessment_output_prefixes()` find directories that hold a prior run's
+   products (a threat-model.md/.yaml pair or two runtime markers) under any
+   name, so scanners do not treat earlier reports as repository evidence.
 
 Whitelist-wins rule: if a path matches `always_include`, it is NEVER
 excluded — even if it matches a `directories` / `path_prefixes` /
@@ -228,6 +230,11 @@ def is_excluded(
     return False
 
 
+# ---------------------------------------------------------------------------
+# Assessment-output detection
+# ---------------------------------------------------------------------------
+
+
 def is_assessment_output_dir(path: Path) -> bool:
     """Return whether ``path`` has the on-disk signature of a run output.
 
@@ -284,6 +291,11 @@ def is_assessment_artifact(rel_path: str, repo_root: Path | str) -> bool:
     return any(
         normalized == prefix or normalized.startswith(prefix + "/") for prefix in assessment_output_prefixes(repo_root)
     )
+
+
+# ---------------------------------------------------------------------------
+# Per-file byte cap and Grep glob
+# ---------------------------------------------------------------------------
 
 
 def max_file_bytes(excludes: dict | None = None) -> int:

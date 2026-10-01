@@ -32,7 +32,7 @@ import subprocess
 import sys
 from pathlib import Path, PurePosixPath
 
-# Central scan-excludes (Sprint 1 Item F). Imported lazily-safe: if the
+# Central scan-excludes (analyzers/scan_excludes.py). Imported lazily-safe: if the
 # loader or its YAML is unavailable, fall back to the hardcoded classifier
 # below so this filter never hard-fails on a misconfigured plugin install.
 try:
@@ -143,7 +143,8 @@ ALWAYS_RELEVANT_EXTENSIONS = frozenset(
     }
 )
 
-# Manifest / IaC / Dockerfile names — always relevant (reuse from baseline_state)
+# Manifest / IaC / Dockerfile names — always relevant. A local list, maintained
+# separately from baseline_state.MANIFEST_NAMES.
 ALWAYS_RELEVANT_NAMES = frozenset(
     {
         "package.json",
@@ -535,6 +536,10 @@ def _git_show_blob(repo_root: str, ref: str, file_path: str) -> str | None:
         return None
 
 
+# ---------------------------------------------------------------------------
+# Semantic-diff helpers (package.json, Dockerfile, whitespace-only edits)
+# ---------------------------------------------------------------------------
+
 # Security-relevant top-level keys in package.json. Changes outside this
 # set (name/version/contributors/repository/license/keywords/description/
 # author/homepage/bugs/funding/main/module/browser/files/types/typings/
@@ -887,6 +892,11 @@ def _is_tier1_downgradeable(reasons: list[str]) -> bool:
     return any(r.startswith(_DOWNGRADEABLE_REASON_PREFIXES) for r in reasons)
 
 
+# ---------------------------------------------------------------------------
+# Changed-file listing
+# ---------------------------------------------------------------------------
+
+
 def get_changed_files(repo_root: str, baseline_sha: str | None) -> list[str]:
     """Get list of changed files from git diff."""
     files: set[str] = set()
@@ -971,19 +981,10 @@ def classify_files(
         diff_text = get_diff_for_file(repo_root, baseline_sha, f)
         if not diff_text:
             # No git diff — almost always an UNTRACKED/new file git cannot diff
-            # against the baseline. The old behaviour blindly marked these
-            # "relevant", which flagged every stray tooling / home dotfile that
-            # happens to sit in the repo working dir (.bashrc, .zshrc,
-            # .gitconfig, .profile, …) and forced a needless re-analysis on a
-            # tree whose actual application surface was unchanged.
-            #
-            # Instead, read the file's full content and classify it as if every
-            # line were added. A genuinely security-relevant NEW file (a new
-            # route, auth module, crypto helper, …) still trips the Tier-2/3
-            # patterns and stays relevant — but inert config with no security
-            # signal is correctly dropped. This preserves the safe direction
-            # (no false negatives on real new code) while killing the dotfile
-            # false positives.
+            # against the baseline. Classify its full content as if every line
+            # were added: a new file is relevant only when it trips the Tier-2/3
+            # patterns, so inert files (stray dotfiles, tooling config) do not
+            # force a re-analysis.
             content = _read_untracked_content(repo_root, f)
             if content is None:
                 # Missing / unreadable / binary — no signal to act on.

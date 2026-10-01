@@ -3,6 +3,16 @@
 
 A finding is titled with its check's ``violation_title``, which names the
 defect. The check ``name`` states the desired state and would read as a pass.
+
+Inputs: --repo-root (required), --checks (catalog, default
+data/config-iac-checks.yaml), --assessment-depth quick|standard|thorough
+(quick caps each IaC category to a few files; agent_config is never capped).
+
+Output: --output JSON, conventionally $OUTPUT_DIR/.config-scan-findings.json,
+shaped by schemas/config-scan-findings.schema.yaml and validated by
+validators/validate_intermediate.py (config_scan_findings).
+
+Exit codes: 0 written; 2 bad arguments, catalog, scan, or write failure.
 """
 
 from __future__ import annotations

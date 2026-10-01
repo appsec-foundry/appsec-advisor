@@ -2,10 +2,10 @@
 """
 analyzers/assess_supply_chain_controls.py — deterministic supply chain control assessment.
 
-Replaces the LLM reasoning loop for Phase 8's "Operations, Runtime and Supply Chain"
-domain by evaluating the 9 rule-based sub-controls directly from recon artifacts.
-Saves ~4 orchestrator turns per run (the LLM no longer needs to read recon sections
-7.14–7.17, 7.26–7.28, reason through 9 sub-controls, and write the assessment prose).
+Rates the Phase 8 "Operations Runtime and Supply Chain Controls" domain by
+evaluating 9 rule-based sub-controls from .recon-summary.md and, when
+--repo-root is given, the repository files. Any Missing or Weak sub-control rates
+the domain Weak; all Adequate rates it Adequate; anything else rates it Partial.
 
 Sub-controls evaluated (per data/architectural-controls.yaml §"Operations, Runtime and Supply
 Chain — sub-controls"):
@@ -27,7 +27,8 @@ Usage:
 
 Exit codes:
   0   Assessment written (or printed in --report-only mode).
-  1   Required input not found (.recon-summary.md missing and no repo-root given).
+  1   Writing the output file failed. A missing .recon-summary.md is not an
+      error; the assessment then relies on --repo-root alone.
 """
 
 from __future__ import annotations
@@ -72,7 +73,7 @@ def _load_recon(output_dir: str, repo_root: str | None) -> str:
     recon_path = Path(output_dir) / ".recon-summary.md"
     if recon_path.exists():
         return recon_path.read_text(encoding="utf-8", errors="replace")
-    # Fallback: scan repo root directly (first-run before recon writes the file).
+    # Without the summary each evaluator relies on the repository files alone.
     return ""
 
 
@@ -99,8 +100,9 @@ _SKIP_DIRS = {
 def _iter_files(repo_root: str | None, name_match) -> list[Path]:
     """Walk the repo for files whose name satisfies ``name_match``.
 
-    Mirrors the exclusion behaviour of ``recon_patterns._walk_repo`` without
-    importing it (this script must stay dependency-free and fast).
+    Uses its own narrow ``_SKIP_DIRS`` set, which is smaller than the exclude
+    policy of ``recon_patterns._walk_repo``. Symlinked directories are not
+    followed, and each file must pass ``is_safe_to_read``.
     """
     if not repo_root:
         return []
@@ -608,9 +610,10 @@ def _eval_dependency_confusion(recon: str, repo_root: str | None) -> dict[str, s
 # signal — flagging it would be noise.
 _INSTALL_HOOK_KEYS = ("preinstall", "install", "postinstall")
 
-# The wider list, kept in sync with recon_patterns._CAT17_NPM_LIFECYCLE_KEYS, is
-# scanned only for *content* that is actually dangerous (a `prepare` hook that
-# curls a script is a real finding regardless of how common the key is).
+# The wider list is recon_patterns._CAT17_NPM_LIFECYCLE_KEYS plus `install`; the
+# two are maintained separately. It is scanned only for *content* that is
+# actually dangerous (a `prepare` hook that curls a script is a real finding
+# regardless of how common the key is).
 _LIFECYCLE_KEYS = ("preinstall", "install", "postinstall", "prepare", "prebuild", "postpublish")
 
 
@@ -1070,11 +1073,9 @@ def assess(output_dir: str, repo_root: str | None) -> dict[str, Any]:
 
     return {
         "schema_version": 1,
-        # Comma-free — matches the canonical §6.11 title in
-        # sections-contract.yaml. The comma form emitted here until 2026-07-24
-        # was not a known domain string, so enforce_control_taxonomy treated
-        # the domain as unknown and re-routed controls out of it on the
-        # inferred token alone ("Rate Limiting" landed in §6.2 IAM).
+        # Must equal the comma-free canonical §6.11 title in
+        # sections-contract.yaml; enforce_control_taxonomy treats an unknown
+        # domain string as re-routable and moves controls out of it.
         "domain": "Operations Runtime and Supply Chain Controls",
         "sub_controls": sub_controls,
         "overall_effectiveness": overall_effectiveness,

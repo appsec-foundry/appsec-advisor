@@ -1,3 +1,28 @@
+"""
+analyzers/security_steering.py — AppSec Coach UserPromptSubmit hook.
+
+Registered in hooks/hooks.json. Runs on every prompt and injects secure-coding
+guidance as additional context when the coach is active and the prompt looks
+like coding work.
+
+Input (stdin): the hook JSON; only the ``prompt`` field is read.
+
+Output (stdout): ``{}`` when the coach is inactive, the input is invalid or
+empty, or the prompt does not meet the keyword thresholds. Otherwise
+``hookSpecificOutput.additionalContext`` carries the baseline text plus the
+matched topics' guidance and requirement text, and ``systemMessage`` names the
+activation source. Every handled path exits 0.
+
+Activation (first match wins): ``APPSEC_COACH`` env var (truthy forces on,
+falsy forces off), an active org profile's
+``security_coach.enabled_by_default``, then ``enabled`` in
+hooks/steering_keywords.json. Keywords, topics, thresholds, and requirement
+sources come from that file, with built-in defaults when it is unreadable.
+
+Side effect: appends a COACH_INJECTED line to docs/security/.hook-events.log
+under the working directory (best-effort).
+"""
+
 # Direct CLI execution must resolve the same packages as imports from scripts/.
 import sys as _sys
 from pathlib import Path as _Path
@@ -126,7 +151,8 @@ def _activation_source(cfg):
 
 
 def _plugin_roots():
-    """Return candidate paths that resolve to the  directory."""
+    """Return candidate plugin root directories: ``CLAUDE_PLUGIN_ROOT`` first,
+    then the root derived from this file's location, deduplicated."""
     roots = []
     env_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "").strip()
     if env_root:
