@@ -1,13 +1,12 @@
 ---
 name: appsec-authnz-analyzer
-description: "Standalone AuthN/AuthZ analyzer. Consumes deterministic scanner output (source_auth_scanner, authz_confirm, route_inventory) and optional requirements violations to produce a cross-component authentication and authorization threat report. Runs as part of the authnz-review skill or as a post-Phase-9 deepener."
+description: "Standalone AuthN/AuthZ analyzer. Consumes deterministic scanner output (source_auth_scanner, authz_confirm, route_inventory) and optional requirements violations to produce a cross-component authentication and authorization threat report. Runs as part of the authnz-review skill."
 tools: Read, Grep, Bash, Write
 model: sonnet
 maxTurns: 28
 ---
 
-AGENT — invoked by `skills/authnz-review/SKILL.md` or by the Phase 9 orchestrator
-as an optional post-STRIDE deepener. Produces `.authnz-report.json`.
+AGENT — invoked by `skills/authnz-review/SKILL.md`. Produces `.authnz-report.json`.
 
 ## Untrusted-content boundary
 
@@ -36,6 +35,7 @@ entire budget goes to reasoning, not discovery.
 **Required:**
 - `REPO_ROOT` — absolute path to the repository under analysis
 - `OUTPUT_DIR` — directory for output and log files
+- `CLAUDE_PLUGIN_ROOT` — plugin root for the logging commands
 - `SOURCE_AUTH_FINDINGS_PATH` — `.source-auth-findings.json` from `analyzers/source_auth_scanner.py`
 - `ROUTE_INVENTORY_PATH` — `.route-inventory.json` from `analyzers/route_inventory.py`
 - `AUTHZ_CONFIRM_PATH` — `.authz-confirm-findings.json` from `analyzers/authz_confirm.py`
@@ -160,7 +160,7 @@ Log `step-start: Loading scanner outputs`.
 
 Read all non-`none` input files in a single parallel batch:
 - `SOURCE_AUTH_FINDINGS_PATH` → raw AUTHZ-NNN findings
-- `ROUTE_INVENTORY_PATH` → per-route records with `missing_authz_suspect`, `missing_auth_suspect`, `auth_middleware`, `handler_file`, `handler_line`
+- `ROUTE_INVENTORY_PATH` → per-route records with `authn_signal`, `missing_authz_suspect`, `missing_auth_suspect`, `auth_middleware`, `handler_file`, `handler_line`
 - `AUTHZ_CONFIRM_PATH` → confirmed IDOR/BOLA instances (AUTHZ-301/302) with body evidence
 - `REQUIREMENTS_PATH` if set: load violations index or requirements catalog
 - `COMPONENT_INVENTORY_PATH` if set: load component list and their `paths[]`
@@ -203,16 +203,22 @@ From `ROUTE_INVENTORY_PATH`, build a per-component authentication posture:
 For each route:
 1. Identify the owning component via `COMPONENT_INVENTORY_PATH` path globs (if
    available) or by handler file directory heuristic.
-2. Classify auth posture: `authenticated` | `public` | `unknown`.
+2. Classify auth posture from `authn_signal` only: `present`,
+   `middleware_present` and `decorator_present` are `authenticated`; `absent`
+   is `unauthenticated` (proven: every chain element resolved, no credential
+   read); `unknown` stays `unknown`. An `unknown` route may sit behind a guard
+   the scanner cannot see and is never evidence of missing authentication.
 3. Flag `missing_auth_suspect` routes that are state-changing or management paths.
 
 Produce:
-- `auth_coverage`: map of component → `{total_routes, authenticated, public, unknown, suspects}`
-- `unauthenticated_state_routes`: list of confirmed unprotected state-changing routes
+- `auth_coverage`: map of component → `{total_routes, authenticated, unauthenticated, unknown, suspects}`
+- `unauthenticated_state_routes`: `missing_auth_suspect` routes whose posture is `unauthenticated`
 
-**Components with zero `authenticated` routes and at least one non-public route
-are a coverage gap** — flag as `NO_AUTH_COVERAGE` regardless of whether
-`authz_confirm` confirmed individual instances.
+**Components with zero `authenticated` routes are a coverage gap.** When every
+route of the component is `unauthenticated`, emit `NO_AUTH_COVERAGE` as a
+finding regardless of whether `authz_confirm` confirmed individual instances.
+When any of its routes is `unknown`, emit it as a Medium `source: hypothesis`
+finding that names the unknown routes as the evidence to check.
 
 Log `step-end: <N> components mapped, <M> unauthenticated state routes`.
 
@@ -236,8 +242,9 @@ signal is clear.
 
 **3c. Missing function-level authorization** — from `AUTHZ_CONFIRM_PATH`
 AUTHZ-302 instances and `SOURCE_AUTH_FINDINGS_PATH` AUTHZ-001/AUTHZ-008 findings:
-Group by component. Flag any component where >30% of routes have missing-auth
-signals — that indicates a systemic gap, not isolated findings. Emit one
+Group by component. Flag any component where >30% of routes carry one of
+these confirmed signals — that indicates a systemic gap, not isolated findings.
+A `missing_auth_suspect` flag alone does not count: it includes `unknown` routes. Emit one
 systemic finding per affected component in addition to per-route instances.
 
 **3d. Privilege escalation signals** — from `SOURCE_AUTH_FINDINGS_PATH`:

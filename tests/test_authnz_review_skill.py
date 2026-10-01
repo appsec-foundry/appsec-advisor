@@ -215,3 +215,32 @@ def test_slug_names_the_task_file():
     assert "PENTEST_FILE=pentest-tasks-authnz.yaml" in text
     assert '--output "$REPO_ROOT/docs/security/$PENTEST_FILE"' in text
     assert "[A-Za-z0-9._-]" in text
+
+
+def test_skill_reads_the_inventory_coverage_counts():
+    """The skill prints and gates on counts the inventory computes (FE-14),
+    so it never recounts routes or invents a field the file lacks."""
+    text = _skill_text()
+    schema = json.loads((ROOT / "schemas" / "route-inventory.schema.json").read_text(encoding="utf-8"))
+    coverage = schema["properties"]["coverage"]["properties"]
+    for field in ("route_count", "authenticated_count", "authn_absent_count", "authn_unknown_count"):
+        assert field in coverage, field
+        assert field in text, field
+    assert "authn_absent_count == route_count" in text
+    assert "authenticated_routes" not in text
+
+
+def test_skill_passes_the_plugin_root_and_keeps_no_trap():
+    text = _skill_text()
+    assert "CLAUDE_PLUGIN_ROOT=<CLAUDE_PLUGIN_ROOT>" in text
+    assert "trap " not in text
+
+
+def test_agent_maps_every_authn_signal_value():
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import analyzers.route_inventory as ri
+
+    agent = (ROOT / "agents" / "appsec-authnz-analyzer.md").read_text(encoding="utf-8")
+    for value in (*ri._AUTHN_PRESENT, "absent", "unknown"):
+        assert f"`{value}`" in agent, value
+    assert "post-Phase-9" not in agent

@@ -53,6 +53,21 @@
         "missing_authz_suspect_count": {
           "type": "integer",
           "minimum": 0
+        },
+        "authenticated_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Routes whose authentication is present (FE-14)."
+        },
+        "authn_absent_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Routes whose authentication the inventory proved absent (FE-14)."
+        },
+        "authn_unknown_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Routes whose authentication is neither proven present nor proven absent."
         }
       }
     }

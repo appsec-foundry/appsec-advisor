@@ -149,17 +149,18 @@ exit, unparseable output) leaves all three at those defaults — a broken profil
 must not silently change what a review writes. Record `PENTEST_SOURCE` as
 `flag` or `org profile <preset>` for the introduction block.
 
-When `SAVE_FILES` is not set, use a temp dir for scanner sidecar files:
+When `SAVE_FILES` is not set, use a temp dir for scanner sidecar files.
+Shell state does not survive between Bash calls, so print the path once and
+write it literally as `OUTPUT_DIR` in every later command:
 ```bash
-SCRATCH_DIR="$(mktemp -d)"
-trap 'rm -rf "$SCRATCH_DIR"' EXIT
-OUTPUT_DIR="$SCRATCH_DIR"
+mktemp -d
 ```
+Set `SCRATCH_DIR` and `OUTPUT_DIR` to the printed path.
 
 The pentest exporter reads the report from disk, so set
 `AGENT_SAVE_MODE=true` when `SAVE_FILES=true` **or** `PENTEST_TASKS=true`,
 else `false`. With `--pentest-tasks` but no `--save`, the report is written
-into the temp dir and removed on exit — only the task file survives.
+into the temp dir and removed in Step 10 — only the task file survives.
 
 Record start time: `START_EPOCH=$(date +%s)`
 
@@ -194,10 +195,15 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/analyzers/route_inventory.py" \
 
 If non-zero exit, print the stderr and stop.
 
-Read `$OUTPUT_DIR/.route-inventory.json`. Print:
+Read `$OUTPUT_DIR/.route-inventory.json`. Take every count from its
+`coverage` block — `route_count`, `authenticated_count`, `authn_absent_count`,
+`authn_unknown_count`, `missing_authz_suspect_count`,
+`missing_auth_suspect_count` — and never recount routes yourself. A route is
+unauthenticated only when the inventory proved it (`absent`); `unknown` may sit
+behind a guard the scanner cannot see. Print:
 ```
   🟢 <N> routes parsed across <M> files
-     authenticated <A>  ·  public <P>  ·  unknown <U>
+     authenticated <A>  ·  no authentication <B>  ·  unknown <U>
      suspects: missing authz <X>  ·  missing auth <Y>
 
 Phase 1/5 complete                                      [ 20%]
@@ -274,12 +280,16 @@ Circle: 🟢 for 0 confirmed, 🟡 for 1–2, 🔴 for 3+.
 
 ## Step 4b — No-auth-layer early exit
 
-After reading the Phase 1–3 results, check whether the repository has any
-authentication or authorization signals at all:
+After reading the Phase 1–3 results, check whether the repository provably
+has no authentication layer:
 
-- `authenticated_routes == 0` (from `.route-inventory.json`)
+- `route_count > 0` and `authn_absent_count == route_count` (from
+  `.route-inventory.json` `coverage`) — every route proven unauthenticated
 - scanner findings == 0 (from `.source-auth-findings.json`)
 - confirmed instances == 0 (from `.authz-confirm-findings.json`)
+
+A route with `unknown` authentication is not proof of a missing layer; when
+any route is `unknown`, continue with Step 5.
 
 When **all three** are true, skip Steps 5–9b and print (when
 `PENTEST_TASKS=true`, add `⚪ --pentest-tasks: no findings with code evidence
@@ -297,7 +307,7 @@ Results · <repo name> · 1 finding
 
 🟠 **[AZ-001] No authentication layer detected**
 
-   *Evidence*    <N> routes scanned, 0 authenticated
+   *Evidence*    <N> routes scanned, every one proven unauthenticated
    *Attack path* Any endpoint in the application is reachable without
                  credentials — there is no token, session, or access guard
                  to bypass.
@@ -339,6 +349,7 @@ Dispatch `appsec-advisor:appsec-authnz-analyzer` with this prompt
 ```
 REPO_ROOT=<REPO_ROOT>
 OUTPUT_DIR=<OUTPUT_DIR>
+CLAUDE_PLUGIN_ROOT=<CLAUDE_PLUGIN_ROOT>
 MODEL_ID=<session model, e.g. sonnet>
 SAVE_MODE=<AGENT_SAVE_MODE>
 
@@ -590,3 +601,6 @@ If `GATE_MODE=true` and Critical or High findings exist:
 Exit non-zero by printing `exit_code: 1` as the final line.
 
 Otherwise (no Critical/High, or gate not set): no extra line needed.
+
+When `SCRATCH_DIR` is set, remove it last, including after the Step 4b early
+exit: `rm -rf "<SCRATCH_DIR>"`.

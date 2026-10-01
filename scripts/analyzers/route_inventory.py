@@ -1184,6 +1184,8 @@ def build_inventory(repo_root: Path) -> dict:
     mgmt_count = sum(1 for r in routes_out if r["management_surface"])
     missing_auth_count = sum(1 for r in routes_out if r["missing_auth_suspect"])
     missing_authz_count = sum(1 for r in routes_out if r["missing_authz_suspect"])
+    authenticated_count = sum(1 for r in routes_out if route_authenticated(r))
+    authn_absent_count = sum(1 for r in routes_out if r["authn_signal"] == "absent")
 
     return {
         "version": 1,
@@ -1197,6 +1199,10 @@ def build_inventory(repo_root: Path) -> dict:
             "management_surface_count": mgmt_count,
             "missing_auth_suspect_count": missing_auth_count,
             "missing_authz_suspect_count": missing_authz_count,
+            # FE-14: only `absent` is proven unauthenticated; the rest is unknown.
+            "authenticated_count": authenticated_count,
+            "authn_absent_count": authn_absent_count,
+            "authn_unknown_count": len(routes_out) - authenticated_count - authn_absent_count,
         },
     }
 

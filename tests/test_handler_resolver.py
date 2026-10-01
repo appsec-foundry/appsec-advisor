@@ -356,3 +356,57 @@ def test_a_handler_factory_without_an_ownership_check_is_still_confirmed(tmp_pat
     row = {"framework": "express", "handler_file": "server.js", "handler_line": 5, "path": "/items/:id"}
     (finding,) = ac.confirm_instances(tmp_path, {"routes": [{**row, "method": "GET", "missing_authz_suspect": True}]})
     assert finding["check_id"] == "AUTHZ-301"
+
+
+@pytest.mark.parametrize(
+    ("guarded", "open_", "opaque"),
+    [("/account", "/feedback", "/export"), ("/v1/orders", "/v1/notes", "/v1/reports")],
+)
+def test_coverage_counts_only_proven_absence_as_unauthenticated(tmp_path, guarded, open_, opaque):
+    write(
+        tmp_path,
+        {
+            "server.ts": (
+                "import express from 'express'\n"
+                "import { guardedHandler } from './routes/guarded'\n"
+                "import { openHandler } from './routes/open'\n"
+                "import { opaqueHandler } from 'vendor-handlers'\n"
+                "const app = express()\n"
+                f"app.post('{guarded}', guardedHandler())\n"
+                f"app.post('{open_}', openHandler())\n"
+                f"app.post('{opaque}', opaqueHandler())\n"
+            ),
+            "routes/guarded.ts": SESSION_HANDLER.format(name="guardedHandler", cookie="sid"),
+            "routes/open.ts": "export function openHandler () {\n  return (req, res) => res.json(req.body)\n}\n",
+        },
+    )
+    inventory = ri.build_inventory(tmp_path)
+    jsonschema.validate(inventory, json.loads((ROOT / "schemas" / "route-inventory.schema.json").read_text()))
+    signals = {r["path"]: r["authn_signal"] for r in inventory["routes"]}
+    assert signals == {guarded: "present", open_: "absent", opaque: "unknown"}
+    coverage = inventory["coverage"]
+    assert (coverage["authenticated_count"], coverage["authn_absent_count"], coverage["authn_unknown_count"]) == (
+        1,
+        1,
+        1,
+    )
+
+
+def test_coverage_counts_an_unresolved_chain_as_unknown_not_absent(tmp_path):
+    write(
+        tmp_path,
+        {
+            "server.ts": (
+                "import express from 'express'\n"
+                "import { submit } from 'vendor-handlers'\n"
+                "const app = express()\n"
+                "app.post('/feedback', submit())\n"
+            ),
+        },
+    )
+    coverage = ri.build_inventory(tmp_path)["coverage"]
+    assert (coverage["authenticated_count"], coverage["authn_absent_count"], coverage["authn_unknown_count"]) == (
+        0,
+        0,
+        1,
+    )
