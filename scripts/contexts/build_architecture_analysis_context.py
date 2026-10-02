@@ -19,29 +19,76 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from jsonschema import Draft202012Validator
 from shared._atomic_io import atomic_write_json
 
-MAX_RECON_SECTIONS = 64
-MAX_RECON_RETAINED_LINES = 200
-MAX_RECON_LINE_CHARS = 500
-MAX_ROUTES = 96
-MAX_UNSUPPORTED_ROUTE_FILES = 64
-MAX_ROLE_UNITS = 12
-MAX_ROLE_UNIT_PATHS = 25
-MAX_TOPOLOGY_WORKLOADS = 128
-MAX_WORKLOAD_DEFINITIONS = 4
+# Every projection below is total: for any source it either raises
+# ContextProjectionError or returns output its schema accepts. The schemas are
+# the only source of the limits, so a cap changed on one side cannot drift from
+# the other; an item the schema rejects is omitted and counted, never passed on.
+_SCHEMA_DIR = Path(__file__).resolve().parents[2] / "schemas"
+RECON_SCHEMA = "recon-summary-context.schema.json"
+ROUTE_SCHEMA = "architecture-route-context.schema.json"
+ROLE_UNITS_SCHEMA = "architecture-role-units.schema.json"
+TOPOLOGY_SCHEMA = "architecture-topology-context.schema.json"
+_VALIDATORS = {
+    name: Draft202012Validator(json.loads((_SCHEMA_DIR / name).read_text(encoding="utf-8")))
+    for name in (RECON_SCHEMA, ROUTE_SCHEMA, ROLE_UNITS_SCHEMA, TOPOLOGY_SCHEMA)
+}
+
+
+def _schema_at(name: str, *keys: str) -> Any:
+    node: Any = _VALIDATORS[name].schema
+    for key in keys:
+        node = node[key]
+    return node
+
+
+def _item_check(name: str, *keys: str) -> Any:
+    """``is_valid`` of the subschema at ``keys``, resolving ``$ref`` against its root."""
+    return _VALIDATORS[name].evolve(schema=_schema_at(name, *keys)).is_valid
+
+
+_RECON_SECTION = ("properties", "sections", "items")
+MAX_RECON_SECTIONS = _schema_at(RECON_SCHEMA, "properties", "limits", "properties", "max_sections", "const")
+MAX_RECON_RETAINED_LINES = _schema_at(RECON_SCHEMA, "properties", "limits", "properties", "max_retained_lines", "const")
+MAX_RECON_LINE_CHARS = _schema_at(RECON_SCHEMA, "properties", "limits", "properties", "max_line_chars", "const")
+MAX_RECON_HEADING_CHARS = _schema_at(RECON_SCHEMA, *_RECON_SECTION, "properties", "heading", "maxLength")
+MAX_SECTION_LINES = _schema_at(RECON_SCHEMA, *_RECON_SECTION, "else", "properties", "lines", "maxItems")
 # The recon template's component table carries one hint per row; the generic
 # level-2 cap kept its intro and header plus five hints.
-COMPONENT_HINTS_HEADING = "Preliminary Components"
-MAX_COMPONENT_HINT_LINES = 48
+COMPONENT_HINTS_HEADING = _schema_at(
+    RECON_SCHEMA, *_RECON_SECTION, "if", "properties", "heading", "pattern"
+).removesuffix("$")
+MAX_COMPONENT_HINT_LINES = _schema_at(RECON_SCHEMA, *_RECON_SECTION, "then", "properties", "lines", "maxItems")
+MAX_ROUTES = _schema_at(ROUTE_SCHEMA, "properties", "limits", "properties", "max_routes", "const")
+MAX_UNSUPPORTED_ROUTE_FILES = _schema_at(
+    ROUTE_SCHEMA, "properties", "limits", "properties", "max_unsupported_route_files", "const"
+)
+MAX_FRAMEWORKS_DETECTED = _schema_at(
+    ROUTE_SCHEMA, "properties", "coverage", "properties", "frameworks_detected", "maxItems"
+)
+MAX_ROLE_UNITS = _schema_at(ROLE_UNITS_SCHEMA, "properties", "limits", "properties", "max_units", "const")
+MAX_ROLE_UNIT_PATHS = _schema_at(ROLE_UNITS_SCHEMA, "properties", "limits", "properties", "max_paths", "const")
+_WORKLOAD = ("properties", "workloads", "items")
+MAX_TOPOLOGY_WORKLOADS = _schema_at(TOPOLOGY_SCHEMA, "properties", "limits", "properties", "max_workloads", "const")
+MAX_WORKLOAD_DEFINITIONS = _schema_at(TOPOLOGY_SCHEMA, "properties", "limits", "properties", "max_definitions", "const")
+MAX_WORKLOAD_ZONES = _schema_at(TOPOLOGY_SCHEMA, *_WORKLOAD, "properties", "zones", "maxItems")
 TOPOLOGY_CONTEXT = ".dispatch-context/architecture/topology.json"
 
-_ROUTE_CONTEXT_SCHEMA = Path(__file__).resolve().parents[2] / "schemas" / "architecture-route-context.schema.json"
 # The projection carries only the route fields its own schema declares; a field
 # the inventory gains stays out until that schema opts in, never aborts the run.
-_PROJECTED_ROUTE_FIELDS = frozenset(
-    json.loads(_ROUTE_CONTEXT_SCHEMA.read_text(encoding="utf-8"))["$defs"]["route"]["properties"]
+_PROJECTED_ROUTE_FIELDS = frozenset(_schema_at(ROUTE_SCHEMA, "$defs", "route", "properties"))
+_valid_route = _item_check(ROUTE_SCHEMA, "$defs", "route")
+_valid_framework = _item_check(ROUTE_SCHEMA, "properties", "coverage", "properties", "frameworks_detected", "items")
+_valid_unsupported_file = _item_check(
+    ROUTE_SCHEMA, "properties", "coverage", "properties", "unsupported_route_files", "items"
 )
+_valid_role_unit = _item_check(ROLE_UNITS_SCHEMA, "properties", "units", "items")
+_valid_role_unit_path = _item_check(ROLE_UNITS_SCHEMA, "properties", "units", "items", "properties", "paths", "items")
+_valid_workload = _item_check(TOPOLOGY_SCHEMA, *_WORKLOAD)
+_valid_zone = _item_check(TOPOLOGY_SCHEMA, *_WORKLOAD, "properties", "zones", "items")
+_valid_definition = _item_check(TOPOLOGY_SCHEMA, *_WORKLOAD, "properties", "definitions", "items")
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 _STATE_CHANGING = frozenset({"POST", "PUT", "PATCH", "DELETE"})
@@ -60,15 +107,29 @@ class ContextProjectionError(ValueError):
     """Raised when a source artifact cannot produce a safe bounded projection."""
 
 
+def _checked(schema: str, projected: dict[str, Any]) -> dict[str, Any]:
+    errors = sorted(_VALIDATORS[schema].iter_errors(projected), key=lambda error: list(error.absolute_path))
+    if errors:
+        detail = "; ".join(
+            f"/{'/'.join(str(part) for part in error.absolute_path)}: {error.message[:160]}" for error in errors[:3]
+        )
+        raise ContextProjectionError(f"projection violates {schema}: {detail}")
+    return projected
+
+
+def _list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
 def _sha256(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _bounded_line(value: str) -> str:
+def _bounded_line(value: str, limit: int = MAX_RECON_LINE_CHARS) -> str:
     compact = value.strip()
-    if len(compact) <= MAX_RECON_LINE_CHARS:
+    if len(compact) <= limit:
         return compact
-    return compact[: MAX_RECON_LINE_CHARS - 1].rstrip() + "…"
+    return compact[: limit - 1].rstrip() + "…"
 
 
 def _select_body_lines(body_lines: list[str], budget: int) -> list[str]:
@@ -107,7 +168,7 @@ def project_recon_summary(payload: bytes) -> dict[str, Any]:
             if len(sections) >= MAX_RECON_SECTIONS:
                 raise ContextProjectionError(f"recon summary exceeds {MAX_RECON_SECTIONS} headings")
             current = {
-                "heading": heading.group(2),
+                "heading": _bounded_line(heading.group(2), MAX_RECON_HEADING_CHARS),
                 "level": len(heading.group(1)),
                 "source_body_lines": [],
             }
@@ -122,7 +183,7 @@ def project_recon_summary(payload: bytes) -> dict[str, Any]:
     projected: list[dict[str, Any]] = []
     for section in sections:
         level = section["level"]
-        per_section_cap = 4 if level == 1 else (8 if level == 2 else 3)
+        per_section_cap = 4 if level == 1 else (MAX_SECTION_LINES if level == 2 else 3)
         if level == 2 and section["heading"].endswith(COMPONENT_HINTS_HEADING):
             per_section_cap = MAX_COMPONENT_HINT_LINES
         available = max(0, MAX_RECON_RETAINED_LINES - retained_total)
@@ -138,23 +199,26 @@ def project_recon_summary(payload: bytes) -> dict[str, Any]:
             }
         )
 
-    return {
-        "schema_version": 1,
-        "source": {
-            "artifact_path": ".recon-summary.md",
-            "sha256": _sha256(payload),
-            "line_count": len(source_lines),
+    return _checked(
+        RECON_SCHEMA,
+        {
+            "schema_version": 1,
+            "source": {
+                "artifact_path": ".recon-summary.md",
+                "sha256": _sha256(payload),
+                "line_count": len(source_lines),
+            },
+            "limits": {
+                "max_sections": MAX_RECON_SECTIONS,
+                "max_retained_lines": MAX_RECON_RETAINED_LINES,
+                "max_line_chars": MAX_RECON_LINE_CHARS,
+                "retained_lines": retained_total,
+                "omitted_body_lines": sum(row["omitted_body_lines"] for row in projected),
+                "ordering_key": "source heading and line order",
+            },
+            "sections": projected,
         },
-        "limits": {
-            "max_sections": MAX_RECON_SECTIONS,
-            "max_retained_lines": MAX_RECON_RETAINED_LINES,
-            "max_line_chars": MAX_RECON_LINE_CHARS,
-            "retained_lines": retained_total,
-            "omitted_body_lines": sum(row["omitted_body_lines"] for row in projected),
-            "ordering_key": "source heading and line order",
-        },
-        "sections": projected,
-    }
+    )
 
 
 def _route_order_key(route: dict[str, Any]) -> tuple[Any, ...]:
@@ -197,7 +261,8 @@ def project_routes(payload: bytes) -> dict[str, Any]:
     routes = source["routes"]
     if any(not isinstance(route, dict) for route in routes):
         raise ContextProjectionError("route inventory contains a non-object route")
-    ranked = sorted(routes, key=_route_order_key)
+    projectable = [route for route in routes if _valid_route(_projected_route(route))]
+    ranked = sorted(projectable, key=_route_order_key)
 
     selected: list[dict[str, Any]] = ranked[: min(len(ranked), MAX_ROUTES // 2)]
     selected_ids = {id(route) for route in selected}
@@ -219,36 +284,40 @@ def project_routes(payload: bytes) -> dict[str, Any]:
     selected.sort(key=_route_order_key)
 
     coverage = source.get("coverage") if isinstance(source.get("coverage"), dict) else {}
-    unsupported = sorted(
-        value for value in coverage.get("unsupported_route_files", []) if isinstance(value, str) and value
+    unsupported_source = _list(coverage.get("unsupported_route_files"))
+    unsupported = sorted({value for value in unsupported_source if _valid_unsupported_file(value)})
+    frameworks = sorted({value for value in _list(coverage.get("frameworks_detected")) if _valid_framework(value)})
+    return _checked(
+        ROUTE_SCHEMA,
+        {
+            "schema_version": 1,
+            "source": {
+                "artifact_path": ".route-inventory.json",
+                "sha256": _sha256(payload),
+                "route_count": len(routes),
+            },
+            "limits": {
+                "max_routes": MAX_ROUTES,
+                "original_routes": len(routes),
+                "retained_routes": len(selected),
+                "omitted_routes": len(routes) - len(selected),
+                "max_unsupported_route_files": MAX_UNSUPPORTED_ROUTE_FILES,
+                "omitted_unsupported_route_files": len(unsupported_source)
+                - len(unsupported[:MAX_UNSUPPORTED_ROUTE_FILES]),
+                "ordering_key": "management,missing-auth,missing-authz,llm,relevance,state-change,confidence,framework,file,line,id",
+                "diversity_key": "framework,top-level-handler-directory",
+            },
+            "coverage": {
+                "frameworks_detected": frameworks[:MAX_FRAMEWORKS_DETECTED],
+                "unsupported_route_files": unsupported[:MAX_UNSUPPORTED_ROUTE_FILES],
+            },
+            "routes": [_projected_route(route) for route in selected],
+        },
     )
-    return {
-        "schema_version": 1,
-        "source": {
-            "artifact_path": ".route-inventory.json",
-            "sha256": _sha256(payload),
-            "route_count": len(routes),
-        },
-        "limits": {
-            "max_routes": MAX_ROUTES,
-            "original_routes": len(routes),
-            "retained_routes": len(selected),
-            "omitted_routes": len(routes) - len(selected),
-            "max_unsupported_route_files": MAX_UNSUPPORTED_ROUTE_FILES,
-            "omitted_unsupported_route_files": max(0, len(unsupported) - MAX_UNSUPPORTED_ROUTE_FILES),
-            "ordering_key": "management,missing-auth,missing-authz,llm,relevance,state-change,confidence,framework,file,line,id",
-            "diversity_key": "framework,top-level-handler-directory",
-        },
-        "coverage": {
-            "frameworks_detected": sorted(
-                value for value in coverage.get("frameworks_detected", []) if isinstance(value, str) and value
-            )[:32],
-            "unsupported_route_files": unsupported[:MAX_UNSUPPORTED_ROUTE_FILES],
-        },
-        "routes": [
-            {key: value for key, value in route.items() if key in _PROJECTED_ROUTE_FIELDS} for route in selected
-        ],
-    }
+
+
+def _projected_route(route: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in route.items() if key in _PROJECTED_ROUTE_FIELDS}
 
 
 def project_role_units(repo_root: Path) -> dict[str, Any]:
@@ -256,27 +325,34 @@ def project_role_units(repo_root: Path) -> dict[str, Any]:
     from orchestrator.build_stride_dispatch_manifest import role_unit_candidates  # noqa: PLC0415
 
     candidates = role_unit_candidates(repo_root)
-    units = [
-        {
-            "id": card["id"],
-            "name": card["name"],
-            "role": card["role"],
-            "tier": card["tier"],
+    units: list[dict[str, Any]] = []
+    for card in candidates:
+        if len(units) >= MAX_ROLE_UNITS:
+            break
+        paths = [path for path in dict.fromkeys(_list(card.get("paths"))) if _valid_role_unit_path(path)]
+        unit = {
+            "id": card.get("id"),
+            "name": card.get("name"),
+            "role": card.get("role"),
+            "tier": card.get("tier"),
             "framework": card.get("framework"),
-            "paths": card["paths"][:MAX_ROLE_UNIT_PATHS],
-            "omitted_paths": max(0, len(card["paths"]) - MAX_ROLE_UNIT_PATHS),
+            "paths": paths[:MAX_ROLE_UNIT_PATHS],
+            "omitted_paths": len(_list(card.get("paths"))) - len(paths[:MAX_ROLE_UNIT_PATHS]),
         }
-        for card in candidates[:MAX_ROLE_UNITS]
-    ]
-    return {
-        "schema_version": 1,
-        "limits": {
-            "max_units": MAX_ROLE_UNITS,
-            "max_paths": MAX_ROLE_UNIT_PATHS,
-            "omitted_units": max(0, len(candidates) - MAX_ROLE_UNITS),
+        if _valid_role_unit(unit):
+            units.append(unit)
+    return _checked(
+        ROLE_UNITS_SCHEMA,
+        {
+            "schema_version": 1,
+            "limits": {
+                "max_units": MAX_ROLE_UNITS,
+                "max_paths": MAX_ROLE_UNIT_PATHS,
+                "omitted_units": len(candidates) - len(units),
+            },
+            "units": units,
         },
-        "units": units,
-    }
+    )
 
 
 def build_role_units(output_dir: Path, repo_root: Path) -> Path:
@@ -331,20 +407,33 @@ def project_topology(payload: bytes) -> dict[str, Any] | None:
     workloads = topology_workloads(inventory)
     if not workloads:
         return None
-    return {
-        "schema_version": 1,
-        "source": {"artifact_path": ".deployment-inventory.json", "sha256": _sha256(payload)},
-        "limits": {
-            "max_workloads": MAX_TOPOLOGY_WORKLOADS,
-            "max_definitions": MAX_WORKLOAD_DEFINITIONS,
-            "original_workloads": len(workloads),
-            "omitted_workloads": max(0, len(workloads) - MAX_TOPOLOGY_WORKLOADS),
+    # A workload is never renamed to fit: the analyst cites names verbatim and
+    # coverage compares them exactly, so an unprojectable one is omitted whole.
+    kept: list[dict[str, Any]] = []
+    for row in workloads:
+        if len(kept) >= MAX_TOPOLOGY_WORKLOADS:
+            break
+        workload = {
+            **row,
+            "zones": [zone for zone in row["zones"] if _valid_zone(zone)][:MAX_WORKLOAD_ZONES],
+            "definitions": [item for item in row["definitions"] if _valid_definition(item)][:MAX_WORKLOAD_DEFINITIONS],
+        }
+        if _valid_workload(workload):
+            kept.append(workload)
+    return _checked(
+        TOPOLOGY_SCHEMA,
+        {
+            "schema_version": 1,
+            "source": {"artifact_path": ".deployment-inventory.json", "sha256": _sha256(payload)},
+            "limits": {
+                "max_workloads": MAX_TOPOLOGY_WORKLOADS,
+                "max_definitions": MAX_WORKLOAD_DEFINITIONS,
+                "original_workloads": len(workloads),
+                "omitted_workloads": len(workloads) - len(kept),
+            },
+            "workloads": kept,
         },
-        "workloads": [
-            {**row, "definitions": row["definitions"][:MAX_WORKLOAD_DEFINITIONS]}
-            for row in workloads[:MAX_TOPOLOGY_WORKLOADS]
-        ],
-    }
+    )
 
 
 def build_topology(output_dir: Path) -> Path | None:

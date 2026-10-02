@@ -39,11 +39,14 @@
         "properties": {
           "heading": {"type": "string", "minLength": 1, "maxLength": 200},
           "level": {"type": "integer", "minimum": 1, "maximum": 6},
-          "lines": {"type": "array", "maxItems": 8, "items": {"type": "string", "minLength": 1, "maxLength": 500}},
+          "lines": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 500}},
           "original_body_lines": {"type": "integer", "minimum": 0, "maximum": 1000000},
           "omitted_body_lines": {"type": "integer", "minimum": 0, "maximum": 1000000}
         },
-        "additionalProperties": false
+        "additionalProperties": false,
+        "if": {"properties": {"level": {"const": 2}, "heading": {"pattern": "Preliminary Components$"}}},
+        "then": {"properties": {"lines": {"maxItems": 48}}},
+        "else": {"properties": {"lines": {"maxItems": 8}}}
       }
     }
   },

@@ -39,6 +39,7 @@ Removing an entry means listing it here in the same change.
 | CR-5 | An assignment may not broaden component or candidate scope | `test_semantics_reject_target_that_broadens_component_or_candidate_context` | `docs/internal/analysis/analysis-context-routing-control-plane-2026-08-07.md` |
 | CR-6 | Declared paths cannot escape the plugin root or the output root, symlinks included | `test_semantics_reject_plugin_symlink_escape`, `test_shadow_plan_rejects_output_symlink_escape` | `docs/internal/analysis/analysis-context-routing-control-plane-2026-08-07.md` |
 | CR-7 | Projections are size-limited and the plan itself is capped | `test_shadow_plan_enforces_internal_size_limit` | `docs/internal/analysis/analysis-context-routing-control-plane-2026-08-07.md` |
+| CR-8 | An architecture projection is total: for any source it returns output its schema accepts or raises `ContextProjectionError`. Its limits are read from that schema, never restated, and an item the schema rejects is omitted and counted, never truncated into a different identifier | `test_recon_projection_is_schema_valid_for_any_shape`, `test_route_projection_omits_a_route_its_schema_rejects`, `test_role_unit_projection_omits_a_unit_its_schema_rejects`, `test_a_workload_the_schema_rejects_is_omitted_whole_never_renamed` | `scripts/contexts/build_architecture_analysis_context.py`; a hand-copied component-hint cap of 48 against a schema cap of 8 aborted every run with more than five recon component hints at the fail-closed post-recon receipt |
 
 ## Shared state
 

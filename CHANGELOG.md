@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A repository with more than five preliminary components, or with an overlong recon heading, route, role-unit path, or deployment workload, no longer aborts the run after reconnaissance; entries that cannot be projected are left out and counted.
 - A component whose analysis the model declines no longer aborts the run: it is reported as only partly analysed, retries name the refusal instead of a turn budget and continue from the categories already saved, and waits end as soon as every analyzer has stopped.
 - Findings and abuse cases use consistent, policy-capped ratings, and abuse cases are ordered by verification status and risk; a code-verified attack chain raises its findings only to the goal impact its case declares, also when evidence sampling left a step ambiguous.
 - Config and IaC findings reach the report again, and rejected configuration scans appear in Run Issues.

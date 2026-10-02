@@ -363,3 +363,99 @@ def test_cli_writes_role_units_only_for_a_repository(tmp_path: Path) -> None:
     _role_repo(repo, {"ci-cd"})
     assert context.main(["--output-dir", str(output), "--repo-root", str(repo)]) == 0
     assert json.loads(target.read_text()) == context.project_role_units(repo)
+
+
+# Each projection bounds untrusted or LLM-authored input for a fail-closed
+# controller receipt, so any input must yield schema-valid output or a
+# ContextProjectionError — never a projection the receipt rejects.
+def _hint_rows(count: int) -> str:
+    return "\n".join(f"| svc-{i} | Service | java | role | /api |" for i in range(count))
+
+
+RECON_SHAPES = {
+    "component hints at the generic cap": f"# R\n## 9. Preliminary Components\nIntro\n| h |\n|---|\n{_hint_rows(5)}\n",
+    "component hints above the generic cap": f"# R\n## 9. Preliminary Components\nIntro\n| h |\n|---|\n{_hint_rows(9)}\n",
+    "component hints above their own cap": f"# R\n## 9. Preliminary Components\n{_hint_rows(300)}\n",
+    "component heading at level three": f"# R\n### Preliminary Components\n{_hint_rows(30)}\n",
+    "overlong component heading": f"# R\n## {'x' * 400} Preliminary Components\n{_hint_rows(30)}\n",
+    "overlong heading": f"# {'H' * 5000}\n- a\n",
+    "overlong lines": "# R\n## S\n" + "\n".join("y" * 5000 for _ in range(20)) + "\n",
+    "heading only": "# R\n",
+    "sections at the cap": "".join(f"## S{i}\n" + "- line\n" * 12 for i in range(64)),
+}
+
+
+@pytest.mark.parametrize("shape", sorted(RECON_SHAPES))
+def test_recon_projection_is_schema_valid_for_any_shape(shape: str) -> None:
+    projected = context.project_recon_summary(RECON_SHAPES[shape].encode())
+    jsonschema.validate(projected, _schema("recon-summary-context.schema.json"))
+
+
+def test_recon_schema_keeps_the_generic_line_cap_outside_component_hints() -> None:
+    projected = context.project_recon_summary(f"# R\n## Routes\n{_hint_rows(3)}\n".encode())
+    projected["sections"][1]["lines"] = ["line"] * (context.MAX_SECTION_LINES + 1)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(projected, _schema("recon-summary-context.schema.json"))
+
+
+def test_too_many_recon_headings_fail_closed_with_a_projection_error() -> None:
+    payload = "".join(f"## S{i}\n- a\n" for i in range(context.MAX_RECON_SECTIONS + 1)).encode()
+    with pytest.raises(context.ContextProjectionError):
+        context.project_recon_summary(payload)
+
+
+ROUTE_SHAPES = {
+    "overlong path": dict(_route(1), path="/" + "p" * 5000),
+    "overlong framework": dict(_route(2), framework="f" * 500),
+    "unknown confidence": dict(_route(3), confidence="certain"),
+    "missing required field": {key: value for key, value in _route(4).items() if key != "handler_file"},
+}
+
+
+@pytest.mark.parametrize("shape", sorted(ROUTE_SHAPES))
+def test_route_projection_omits_a_route_its_schema_rejects(shape: str) -> None:
+    inventory = {
+        "version": 1,
+        "routes": [_route(10), ROUTE_SHAPES[shape]],
+        "coverage": {
+            "frameworks_detected": ["express", "express", "f" * 500, 7],
+            "unsupported_route_files": ["a.ts", "a.ts", "u" * 5000],
+        },
+    }
+    projected = context.project_routes(json.dumps(inventory).encode())
+    jsonschema.validate(projected, _schema("architecture-route-context.schema.json"))
+    assert [route["route_id"] for route in projected["routes"]] == ["R-010"]
+    assert projected["limits"]["omitted_routes"] == 1
+    assert projected["coverage"] == {"frameworks_detected": ["express"], "unsupported_route_files": ["a.ts"]}
+    assert projected["limits"]["omitted_unsupported_route_files"] == 2
+
+
+ROLE_UNIT_SHAPES = {
+    "overlong id": {"id": "a" * 200},
+    "id outside its pattern": {"id": "Unit_X"},
+    "overlong name": {"name": "n" * 200},
+    "overlong framework": {"framework": "f" * 200},
+    "only unprojectable paths": {"paths": ["/abs/path.ts", "../escape.ts", "p" * 600]},
+}
+
+
+@pytest.mark.parametrize("shape", sorted(ROLE_UNIT_SHAPES))
+def test_role_unit_projection_omits_a_unit_its_schema_rejects(shape: str, tmp_path: Path, monkeypatch) -> None:
+    import orchestrator.build_stride_dispatch_manifest as manifest
+
+    good = {"id": "unit-ok", "name": "Unit", "role": "realtime", "tier": "application", "framework": None}
+    good["paths"] = ["src/ok.ts", "src/ok.ts", "/abs.ts"]
+    bad = dict(good, id="unit-bad", paths=["src/bad.ts"])
+    bad.update(ROLE_UNIT_SHAPES[shape])
+    monkeypatch.setattr(manifest, "role_unit_candidates", lambda _repo: [bad, good])
+    projected = context.project_role_units(tmp_path)
+    jsonschema.validate(projected, _schema("architecture-role-units.schema.json"))
+    assert [unit["id"] for unit in projected["units"]] == ["unit-ok"]
+    assert projected["units"][0]["paths"] == ["src/ok.ts"]
+    assert projected["units"][0]["omitted_paths"] == 2
+    assert projected["limits"]["omitted_units"] == 1
+
+
+def test_a_projection_its_schema_rejects_is_a_projection_error() -> None:
+    with pytest.raises(context.ContextProjectionError, match="recon-summary-context"):
+        context._checked(context.RECON_SCHEMA, {"schema_version": 1})  # noqa: SLF001

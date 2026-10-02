@@ -219,6 +219,34 @@ def test_recon_projection_keeps_every_component_hint_row() -> None:
     rows = "\n".join(f"| svc-{i} | Service {i} | java | role | /api |" for i in range(30))
     summary = f"# Recon\n\n## 9. Preliminary Components\n\nIntro line.\n\n| ID | Name | T | R | E |\n|---|---|---|---|---|\n{rows}\n\n## 10. Other\n\n- a\n"
     projected = context.project_recon_summary(summary.encode("utf-8"))
+    jsonschema.validate(projected, json.loads((ROOT / "schemas" / "recon-summary-context.schema.json").read_text()))
     section = next(s for s in projected["sections"] if s["heading"].endswith("Preliminary Components"))
     assert section["omitted_body_lines"] == 0
     assert len(section["lines"]) == 33
+
+
+UNPROJECTABLE_WORKLOADS = {
+    "overlong name": _workload("w" * 200, "compose", ["net"]),
+    "unknown platform": _workload("nomad-job", "nomad", ["net"]),
+    "absolute source": _workload("abs", "compose", ["net"], source="/etc/deploy.yml"),
+    "escaping source": _workload("escape", "compose", ["net"], source="../deploy.yml"),
+    "overlong source": _workload("deep", "compose", ["net"], source="d/" * 200 + "deploy.yml"),
+}
+
+
+@pytest.mark.parametrize("shape", sorted(UNPROJECTABLE_WORKLOADS))
+def test_a_workload_the_schema_rejects_is_omitted_whole_never_renamed(shape: str) -> None:
+    projected = _project(_inventory([_workload("api", "compose", ["net"]), UNPROJECTABLE_WORKLOADS[shape]]))
+    jsonschema.validate(projected, SCHEMA)
+    assert [row["name"] for row in projected["workloads"]] == ["api"]
+    assert projected["limits"]["omitted_workloads"] == 1
+
+
+def test_zones_and_definitions_are_bounded_by_the_schema() -> None:
+    zones = [f"z{i:02d}" for i in range(context.MAX_WORKLOAD_ZONES + 5)] + ["q" * 200]
+    rows = [_workload("api", "compose", zones, line=i) for i in range(context.MAX_WORKLOAD_DEFINITIONS + 2)]
+    projected = _project(_inventory(rows + [dict(_workload("api", "compose", []), kind="k" * 100)]))
+    jsonschema.validate(projected, SCHEMA)
+    (row,) = projected["workloads"]
+    assert len(row["zones"]) == context.MAX_WORKLOAD_ZONES
+    assert len(row["definitions"]) == context.MAX_WORKLOAD_DEFINITIONS
