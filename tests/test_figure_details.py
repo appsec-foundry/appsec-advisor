@@ -215,19 +215,14 @@ def _svg_ok(svg: str) -> None:
 
 
 @pytest.mark.parametrize("variant", [False, True], ids=["neutral", "renamed"])
-def test_deployment_figure_and_controls_table_render(tmp_path: Path, variant: bool):
+def test_controls_table_renders_and_section_2_2_has_no_detail_view(tmp_path: Path, variant: bool):
     n = _names(variant)
     root = _repo(tmp_path, n)
     figs = FD.build_detail_figures(_model(root, n), _inventory(root))
-    assert sorted(figs) == ["2.2", "2.3"]
-    fig, table = figs["2.2"], figs["2.3"]
-    _svg_ok(fig.svg)
-    assert fig.number == 3 and not fig.markdown  # four compose services: several deployment units
-    assert "Figure 3 — " in fig.svg and "DETAIL OF FIGURE 1" in fig.svg
-    assert "Deployment and Technology" in fig.svg and n["gw"] in fig.svg
+    assert sorted(figs) == ["2.3"]  # four compose services still draw no deployment figure
+    table = figs["2.3"]
     assert table.markdown.startswith(FD.DETAIL_TABLE_MARKER + "\n| Component |") and not table.svg
-    for view in (fig.svg, table.markdown):
-        assert "s3cr3t-value" not in view  # environment values never reach a view
+    assert "s3cr3t-value" not in table.markdown  # environment values never reach a view
 
 
 @pytest.mark.parametrize("variant", [False, True], ids=["neutral", "renamed"])
@@ -310,15 +305,16 @@ def _ctx(tmp_path: Path, model: dict, inventory: dict | None, repo: Path | None 
     )
 
 
-def test_composer_writes_figures_and_section_2_replaces_only_their_mermaid(tmp_path: Path):
+def test_composer_writes_no_figure_and_section_2_replaces_only_the_2_3_mermaid(tmp_path: Path):
     n = _names(False)
     root = _repo(tmp_path, n)
     ctx = _ctx(tmp_path, _model(root, n), _inventory(root))
+    (ctx.output_dir / "threat-model.figure3.svg").write_text("<svg/>", encoding="utf-8")  # left by an older run
     figures = compose._render_detail_figures(ctx)
-    assert sorted(p.name for p in ctx.output_dir.glob("*.svg")) == ["threat-model.figure3.svg"]
+    assert list(ctx.output_dir.glob("*.svg")) == []
     md = gen_architecture_diagrams(ctx.yaml_data, figures=figures)
-    assert md.count("```mermaid") == 1  # §2.1 keeps its Mermaid diagram
-    assert "![Figure 3 - Deployment and Technology](threat-model.figure3.svg)" in md
+    assert md.count("```mermaid") == 2  # §2.1 and §2.2 keep their Mermaid diagrams
+    assert "Deployment and Technology" not in md and "figure3" not in md
     assert FD.DETAIL_TABLE_MARKER + "\n| Component |" in md
     assert "| Component ID | Name | Tier | Source paths | Threats |" in md  # the §2.3 table stays
     assert "### 2.4" not in md
@@ -374,7 +370,10 @@ def test_contract_and_qa_accept_a_detail_figure_only_when_its_file_exists(tmp_pa
     n = _names(False)
     root = _repo(tmp_path, n)
     ctx = _ctx(tmp_path, _model(root, n), _inventory(root))
-    md = gen_architecture_diagrams(ctx.yaml_data, figures=compose._render_detail_figures(ctx))
+    figures = compose._render_detail_figures(ctx)
+    figures["2.2"] = {"image": "![Figure 3 - Detail](threat-model.figure3.svg)", "takeaway": "Detail."}
+    (ctx.output_dir / "threat-model.figure3.svg").write_text("<svg/>", encoding="utf-8")
+    md = gen_architecture_diagrams(ctx.yaml_data, figures=figures)
     pattern = yaml.safe_load(CONTRACT.read_text())["sections"]["architecture_diagrams"]["required_patterns"][0]
     assert re.search(pattern, md) and re.search(pattern, "```mermaid\nflowchart TD\n```")
     assert not re.search(pattern, "![Figure 3 - x](https://evil.example/x.svg)")

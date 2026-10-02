@@ -1,18 +1,12 @@
 """§2 detail views: deterministic views that each detail one aspect of Figure 1.
 
-Figure 1 stays the overview. These views add what it leaves out, each for one
-question:
+Figure 1 stays the overview. The controls view (§2.3) adds what it leaves out:
+per component, exposure, threat tally and the effectiveness of the security
+controls evidenced on it, as a Markdown table. §2.2 keeps its Mermaid diagram.
 
-* deployment and technology (§2.2) — where each component runs and what it is
-  built on, from ``.deployment-inventory.json`` by ``figure_deployment``: an SVG
-  figure in Figure 1's visual language when several deployment units run, a
-  Markdown table when one unit runs everything;
-* controls (§2.3) — per component: exposure, threat tally and the effectiveness
-  of the security controls evidenced on it, as a Markdown table.
-
-Both read the threat model and the deployment inventory the scan wrote; neither
-reads the repository, so a re-render shows the state of the scan. Each builder
-returns ``None`` when its inputs are missing; the §2 generator then keeps that
+It reads the threat model and the deployment inventory the scan wrote, never
+the repository, so a re-render shows the state of the scan. A builder returns
+``None`` when its inputs are missing; the §2 generator then keeps that
 subsection's Mermaid diagram. Every string comes from the model or the
 inventory and is XML- or Markdown-escaped; no view contains scripts or
 environment values.
@@ -572,14 +566,10 @@ def controls_table(m: Model, number: int) -> DetailFigure | None:
 def build_detail_figures(yaml_data: dict, inventory: dict | None, first_number: int = 3) -> dict[str, DetailFigure]:
     """§2 subsection → detail view; SVG figures are numbered consecutively in section order, tables take no
     number, and missing inputs leave a subsection out."""
-    from renderers.figure_deployment import (
-        build as figure_deployment,  # noqa: PLC0415 — figure_deployment imports this module
-    )
-
     m = Model(yaml_data, inventory)
     out: dict[str, DetailFigure] = {}
     number = first_number
-    for build in (lambda n: figure_deployment(yaml_data, inventory, n), lambda n: controls_table(m, n)):
+    for build in (lambda n: controls_table(m, n),):
         fig = build(number)
         if fig is not None:
             out[fig.key] = fig

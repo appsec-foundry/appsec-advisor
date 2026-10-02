@@ -21,6 +21,10 @@
 - [x] QA accepts a table under the `<!-- detail-table -->` marker in place of a diagram; the §2.3 table injector keeps that table and now also ends §2.3 at an H2 or the §2 legend (`scripts/validators/qa_checks.py`, `scripts/renderers/compose_threat_model.py`).
 - [ ] §2.1 as a C4 Level 1 view from `external_entities` and the report's actor set (separate change).
 
+## Revision 2026-10-02
+
+- [x] The Deployment and Technology view no longer renders: it drew the wrong environment when a repository declares several (clean Terraform instead of compose, Kubernetes or insecure Terraform), left most components unplaced and stated that no setting weakens a control. §2.2 keeps its Mermaid diagram; a stale `<stem>.figure3.svg` is removed by the composer. `scripts/renderers/figure_deployment.py` stays, but nothing calls it (`scripts/renderers/figure_details.py`).
+
 ## Open
 
 - [ ] Confirm the figures on fresh runs: a repository with only a Dockerfile, one with compose, one with Kubernetes manifests and one with AWS Terraform.
