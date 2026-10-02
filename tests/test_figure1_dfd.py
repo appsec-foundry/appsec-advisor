@@ -2340,6 +2340,64 @@ def test_opposing_routes_reallocate_ports_before_fallback(prefix, detail):
     assert problems == []
 
 
+def _reversed_pairs(n, prefix):
+    """n services each writing to the store in the mirrored row: crossings in model order."""
+    return _routing_model(["application"] * n + ["data"] * n, [(i, 2 * n - 1 - i) for i in range(n)], prefix)
+
+
+def _zone_runs(state):
+    """Per column, the zone of each node from top to bottom with repeats collapsed."""
+    runs = {}
+    for col in {n["col"] for n in state["nodes"].values()}:
+        zones = [n["zone"] for n in sorted(state["nodes"].values(), key=lambda n: n["y"]) if n["col"] == col]
+        runs[col] = [z for i, z in enumerate(zones) if not i or zones[i - 1] != z]
+    return runs
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        _reversed_pairs(2, "ledger"),
+        _reversed_pairs(3, "ledger"),
+        _reversed_pairs(5, "sensor"),
+        _routing_model(["application"] * 4 + ["data"] * 4, [(i, 4 + i) for i in range(4)], "parallel"),
+        _routing_model(
+            ["client", "application", "application", "application", "data", "data"],
+            [(0, 5), (4, 2), (1, 5), (2, 3)],
+            "dispatch",
+        ),
+        _model(app=4, stores=3, intra=True)[0],
+    ],
+)
+def test_overview_leaves_model_order_only_for_a_clear_crossing_gain(model):
+    reading_svg, reading = F._build(model, [], [], detail=False, _layout_ranks={})
+    svg, state = F._build(model, [], [], detail=False)
+    before, after = F._routed_crossings(reading["edges"]), F._routed_crossings(state["edges"])
+    if state["d"]["_reordered"]:
+        assert before - after >= max(F.REORDER_MIN_SAVED, F.REORDER_MIN_SHARE * before)
+        assert F.check_diagram(model, {}, {}, detail=False)[1] == []
+        assert "to reduce line crossings" in svg
+        # Only the stacking order moves: zones stay contiguous blocks in their columns.
+        assert _zone_runs(state) == _zone_runs(reading)
+    else:
+        assert svg == reading_svg
+    assert F._build(model, [], [], detail=False)[0] == svg
+
+
+def test_reversed_service_store_pairs_reorder_only_above_the_threshold():
+    assert not F._build(_reversed_pairs(2, "ledger"), [], [], detail=False)[1]["d"]["_reordered"]
+    _, state = F._build(_reversed_pairs(4, "ledger"), [], [], detail=False)
+    assert state["d"]["_reordered"] and F._routed_crossings(state["edges"]) == 0
+
+
+def test_reorder_threshold_and_detail_views_keep_model_order(monkeypatch):
+    model = _reversed_pairs(4, "sensor")
+    assert not F._build(model, [], [], detail=True)[1]["d"]["_reordered"]
+    monkeypatch.setattr(F, "REORDER_MIN_SAVED", 100)
+    reading_svg, _ = F._build(model, [], [], detail=False, _layout_ranks={})
+    assert F._build(model, [], [], detail=False)[0] == reading_svg
+
+
 @pytest.mark.parametrize("incoming,victim", [(False, False), (True, False), (False, True)])
 def test_generic_user_requires_an_external_flow_or_victim(incoming, victim):
     model = _routing_model(["application"], [("external", 0)] if incoming else [], "worker")

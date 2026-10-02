@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Figure 1 reorders components within their layer when that clearly reduces line crossings, and says so in its legend; otherwise it keeps C-number order.
+
 - Architect review checks ratings and mitigations before prioritization as parallel agent jobs that also run in sandboxed sessions, preserves accepted corrections through report rebuilds without leaving a shared mitigation at the priority of a finding it no longer covers, and reports a review that covered no finding as not performed with its reason instead of running a later blanket prose pass.
 
 - The architecture report now includes a C4 context diagram (§2.1), deployment details from repository configuration (§2.2), and per-component control coverage (§2.3), replacing the separate Technology Architecture section (§2.4).

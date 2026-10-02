@@ -18,7 +18,11 @@ finding dots use.
 The layout is computed, never hand-placed: three columns (untrusted, application,
 data), zones stacked per column, nodes ordered by the barycenter of their
 incoming flows, orthogonal edges with one lane per edge, ports spread along the
-node sides. Measured legend blocks fill up to three columns below the diagram.
+node sides. The overview keeps model order (C-01 … C-NN top to bottom) unless
+reordering nodes within their zones removes at least ``REORDER_MIN_SAVED`` and
+``REORDER_MIN_SHARE`` of the routed line crossings without failing the self-check
+or losing a payload label; the legend then says so (``_reorder_for_crossings``).
+Measured legend blocks fill up to three columns below the diagram.
 The same input yields byte-identical SVG.
 
 Public entry point: ``build_figure1_dfd_svg(yaml_data, attack_paths_data,
@@ -56,7 +60,7 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 from functools import cache
-from itertools import product
+from itertools import combinations, product
 from pathlib import Path
 
 import yaml
@@ -142,6 +146,10 @@ PILL_H, PILL_ROW, PILL_GAP, PILL_SIZE = 13, 17, 5, 7.5
 TECH_H, TECH_CHARS = 16, 28  # technology line under a component title, before the labels
 COLUMN = {"client": 0, "application": 1, "build": 1, "build-threat": 1, "data": 2, "third-party": 0}
 ZONE_ORDER = {"client": 0, "application": 0, "build": 1, "build-threat": 2, "data": 0, "third-party": 1}
+# The overview leaves reading order only for a clear gain: at least this many fewer
+# line crossings, and at least this share of the reading-order crossings.
+REORDER_MIN_SAVED, REORDER_MIN_SHARE = 3, 0.25
+REORDER_POLISH_BUILDS = 20  # routed layouts spent on neighbour swaps after the abstract proposal
 
 
 def _esc(s):
@@ -2083,7 +2091,7 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3, *, optimize=True, roomy_
             srcs = [nodes[s]["cy"] for s in incoming[n["id"]] if "cy" in nodes[s]]
             bary = sum(srcs) / len(srcs) if srcs else 1e9
             if n.get("stable_order"):
-                bary = n["order"]
+                bary = n.get("layout_rank", n["order"])
             return (n.get("col_rank", 1), ZONE_ORDER.get(n["zone"], 9), bary, n["order"])
 
         members.sort(key=key)
@@ -3502,6 +3510,8 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
     if dropped:
         n = sum(len(v) for v in dropped.values())
         notes.append(f"{n} participants collapsed into '+N more' bars; open the detail views for their connections.")
+    if d.get("_reordered"):
+        notes.append("Components are ordered within their layer to reduce line crossings, not by C-number.")
     if d.get("_overview"):
         omitted = {fid for fid, _ in d.get("_undrawn_flows", [])}
         groups = collections.defaultdict(collections.Counter)
@@ -3750,7 +3760,26 @@ def _build(
     authentication_catalog=None,
     projected_victim=None,
     _roomy_gaps=frozenset(),
+    _layout_ranks=None,
 ):
+    if not detail and _layout_ranks is None:
+
+        def build(ranks):
+            return _build(
+                yaml_data,
+                scenarios,
+                actors,
+                actor_groups,
+                detail=detail,
+                _optimize=_optimize,
+                component_numbers=component_numbers,
+                authentication_catalog=authentication_catalog,
+                projected_victim=projected_victim,
+                _roomy_gaps=_roomy_gaps,
+                _layout_ranks=ranks,
+            )
+
+        return _reorder_for_crossings(build)
     if projected_victim is None:
         d, victim_target, _role_notes = _project_legitimate_roles(yaml_data)
     else:
@@ -3802,6 +3831,10 @@ def _build(
             continue
         texts = _label_texts(edge, flow_rows)
         edge["min_label_w"] = min((max(_tw(x, FS) for x in t.split("\n")) for t in texts), default=0)
+    for nid, rank in (_layout_ranks or {}).items():
+        if nid in nodes:
+            nodes[nid]["layout_rank"] = rank
+    d["_reordered"] = any(nodes[nid].get("layout_rank", nodes[nid]["order"]) != nodes[nid]["order"] for nid in nodes)
     col_x, col_w, zone_boxes, boundaries, chips, height = _layout(
         nodes, edges, dropped, tb_threats, optimize=_optimize, roomy_gaps=_roomy_gaps
     )
@@ -3843,6 +3876,7 @@ def _build(
             authentication_catalog=authentication_catalog,
             projected_victim=projected_victim,
             _roomy_gaps=_roomy_gaps,
+            _layout_ranks=_layout_ranks,
         )
         missing = {fid for ids, _ in d["_label_notes"] for fid in ids}
         alternative_missing = {fid for ids, _ in alternative["d"].get("_label_notes", []) for fid in ids}
@@ -3878,6 +3912,7 @@ def _build(
             authentication_catalog=authentication_catalog,
             projected_victim=projected_victim,
             _roomy_gaps=_roomy_gaps | crowded,
+            _layout_ranks=_layout_ranks,
         )
         if len(roomy["d"].get("_label_notes", [])) < len(state["d"].get("_label_notes", [])):
             return roomy_svg, roomy
@@ -3893,6 +3928,150 @@ def _crowded_gaps(state):
             g1, g2 = sorted((nodes[e["src"]]["col"], nodes[e["dst"]]["col"]))
             gaps.update(range(g1, g2))
     return frozenset(gaps)
+
+
+def _stack_key(node, ranks):
+    """``place_column``'s order for stable-order nodes, with ``ranks`` in place of ``layout_rank``."""
+    rank = ranks.get(node["id"], node.get("layout_rank", node["order"]))
+    return (node.get("col_rank", 1), ZONE_ORDER.get(node["zone"], 9), rank, node["order"])
+
+
+def _stacking_groups(nodes):
+    """Stable-order nodes that ``place_column`` stacks as one block; reordering stays inside a block."""
+    groups = collections.defaultdict(list)
+    for node in nodes.values():
+        if node.get("stable_order"):
+            groups[(node["col"], node.get("col_rank", 1), ZONE_ORDER.get(node["zone"], 9), node["zone"])].append(node)
+    return groups
+
+
+def _abstract_crossings(nodes, edges, ranks):
+    """Crossings of the column-to-column edges between stacked columns: the cheap proxy the
+    reorder search minimises before one routed layout confirms it. Edges sharing a node meet
+    there, so only pairs with four distinct endpoints count."""
+    position = {}
+    columns = collections.defaultdict(list)
+    for node in nodes.values():
+        columns[node["col"]].append(node)
+    for members in columns.values():
+        members.sort(key=lambda n: _stack_key(n, ranks))
+        for i, node in enumerate(members):
+            position[node["id"]] = (i + 0.5) / len(members)
+    spans = []
+    for e in edges:
+        (a, ca), (b, cb) = sorted(
+            ((e["src"], nodes[e["src"]]["col"]), (e["dst"], nodes[e["dst"]]["col"])), key=lambda x: x[1]
+        )
+        if ca != cb:
+            spans.append((a, b, ca, cb))
+
+    def at(span, col):
+        a, b, ca, cb = span
+        return position[a] + (position[b] - position[a]) * (col - ca) / (cb - ca)
+
+    count = 0
+    for s, t in combinations(spans, 2):
+        if {s[0], s[1]} & {t[0], t[1]}:
+            continue
+        for gap in range(max(s[2], t[2]), min(s[3], t[3])):
+            count += (at(s, gap) - at(t, gap)) * (at(s, gap + 1) - at(t, gap + 1)) < 0
+    return count
+
+
+def _propose_layout_ranks(nodes, edges):
+    """Reorder nodes inside their stacking group (column, rank, zone) to cut abstract crossings.
+
+    A node only exchanges slots with members of its own group, so zones stay contiguous and
+    attackers stay in their sidebar group (RA-15). Moving a node costs its displacement, so
+    order changes only where crossings fall. Returns ``{}`` when model order is already best."""
+    groups = _stacking_groups(nodes)
+    sequences = {k: [n["id"] for n in sorted(v, key=lambda n: _stack_key(n, {}))] for k, v in groups.items()}
+    sequences = {k: ids for k, ids in sequences.items() if len(ids) > 1}
+    home = {nid: (k, i) for k, ids in sequences.items() for i, nid in enumerate(ids)}
+    slots = {k: [_stack_key(nodes[nid], {})[2] for nid in ids] for k, ids in sequences.items()}
+
+    def ranks_of(seqs):
+        return {nid: slots[k][i] for k, ids in seqs.items() for i, nid in enumerate(ids)}
+
+    def cost(seqs):
+        moved = sum(abs(i - home[nid][1]) for ids in seqs.values() for i, nid in enumerate(ids))
+        return _abstract_crossings(nodes, edges, ranks_of(seqs)), moved
+
+    best = cost(sequences)
+    improved = True
+    while improved and best[0]:
+        improved = False
+        for key, ids in sequences.items():
+            for i, j in product(range(len(ids)), repeat=2):
+                if i == j:
+                    continue
+                candidate = ids[:i] + ids[i + 1 :]
+                candidate.insert(j, ids[i])
+                trial = {**sequences, key: candidate}
+                trial_cost = cost(trial)
+                if trial_cost < best:
+                    sequences, best, improved = trial, trial_cost, True
+                    break
+            if improved:
+                break
+    ranks = ranks_of(sequences)
+    return {} if all(ranks[nid] == _stack_key(nodes[nid], {})[2] for nid in ranks) else ranks
+
+
+def _routed_crossings(edges):
+    """Proper crossings between the drawn routes."""
+    return sum(_route_intersections(a["pts"], b["pts"])[1] for a, b in combinations(edges, 2))
+
+
+def _reorder_for_crossings(build):
+    """Model order unless a reorder clearly pays: ``build(ranks)`` lays the overview out with
+    ``ranks`` as stacking order. The reordered figure is adopted only when it saves at least
+    ``REORDER_MIN_SAVED`` and ``REORDER_MIN_SHARE`` of the routed crossings, passes the
+    geometry and semantic self-check, and loses no payload label (REQ-RPT-007)."""
+    svg, state = build({})
+    before = _routed_crossings(state["edges"])
+    if before < REORDER_MIN_SAVED:
+        return svg, state
+    ranks = _propose_layout_ranks(state["nodes"], state["edges"])
+    alternative_svg, alternative = build(ranks) if ranks else (svg, state)
+    after = _routed_crossings(alternative["edges"])
+    # The abstract count ignores ports, buses and lanes; neighbour swaps judged on the
+    # routed figure close part of that gap within a fixed budget.
+    current = {nid: ranks.get(nid, _stack_key(node, {})[2]) for nid, node in state["nodes"].items()}
+    budget = REORDER_POLISH_BUILDS
+    for members in _stacking_groups(state["nodes"]).values():
+        ids = sorted((n["id"] for n in members), key=lambda nid: current[nid])
+        for i in range(len(ids) - 1):
+            if not budget:
+                break
+            budget -= 1
+            a, b = ids[i], ids[i + 1]
+            trial = {**current, a: current[b], b: current[a]}
+            trial_svg, trial_state = build(trial)
+            crossings = _routed_crossings(trial_state["edges"])
+            if crossings < after and not _self_check(trial_state):
+                current, after, alternative_svg, alternative = trial, crossings, trial_svg, trial_state
+                ids[i], ids[i + 1] = b, a
+    if not alternative["d"].get("_reordered"):
+        return svg, state
+    saved = before - after
+    if saved < max(REORDER_MIN_SAVED, REORDER_MIN_SHARE * before):
+        return svg, state
+
+    def unlabelled(s):
+        return {fid for ids, _ in s["d"].get("_label_notes", []) for fid in ids}
+
+    if unlabelled(alternative) - unlabelled(state) or _self_check(alternative):
+        return svg, state
+    return alternative_svg, alternative
+
+
+def _self_check(state):
+    """The geometry and semantic problems ``check_diagram`` reports for a built state."""
+    s = state
+    return _check_geometry(s["nodes"], s["edges"], s["canvas"], s["chips"], boundaries=s["boundaries"]) + _audit(
+        s["d"], s["nodes"], s["edges"], s["chips"], s["boundaries"], s["canvas"]
+    )
 
 
 def build_figure1_dfd_svg(yaml_data, attack_paths_data, attack_taxonomy, meta=None, actor_labels=None, *, detail=True):
