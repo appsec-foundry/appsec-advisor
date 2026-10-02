@@ -943,6 +943,7 @@ def _settle_swept_calls(destination: str, session_transcript: str) -> list[agent
                 usage,
                 tool_uses=_tool_uses_from_transcript(transcript),
                 resolved_model=_resolved_model_from_transcript(transcript),
+                output_partial=_output_completeness(transcript),
             )
         error = _api_error_from_transcript(transcript)
         if error:
@@ -970,6 +971,7 @@ def _backfill_closed_call_usage(destination: str, session_transcript: str) -> li
                 usage,
                 tool_uses=_tool_uses_from_transcript(transcript),
                 resolved_model=_resolved_model_from_transcript(transcript),
+                output_partial=_output_completeness(transcript),
             )
     return events
 
@@ -2841,6 +2843,36 @@ def _usage_from_transcript(transcript_path: str) -> dict:
     return {k: sum(row[k] for row in rows) for k in keys}
 
 
+def _output_completeness(transcript_path: str) -> tuple[int, int]:
+    """``(messages without a final usage record, identified assistant messages)``.
+
+    Only a record carrying ``stop_reason`` holds a message's final
+    ``output_tokens``; the host writes many messages with their streaming start
+    value only, which makes the summed output a lower bound.
+    """
+    if not transcript_path or not os.path.isfile(transcript_path):
+        return (0, 0)
+    final: dict[str, bool] = {}
+    try:
+        with open(transcript_path, encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if not line.startswith("{"):
+                    continue
+                try:
+                    msg = json.loads(line).get("message")
+                except Exception:
+                    continue
+                if not isinstance(msg, dict) or msg.get("role") != "assistant":
+                    continue
+                message_id = msg.get("id")
+                if isinstance(message_id, str) and message_id:
+                    final[message_id] = final.get(message_id, False) or msg.get("stop_reason") is not None
+    except OSError:
+        return (0, 0)
+    return (sum(not done for done in final.values()), len(final))
+
+
 def _stop_reason_from_transcript(transcript_path: str) -> str:
     """Terminal ``stop_reason`` of the last assistant turn in the transcript.
 
@@ -3168,6 +3200,7 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
                 usage,
                 tool_uses=tool_uses,
                 resolved_model=_resolved_model_from_transcript(transcript),
+                output_partial=_output_completeness(transcript),
             )
             agent_lifecycle.append_events(_output_dir(), events)
             # A matched call returns no event when its usage is already recorded

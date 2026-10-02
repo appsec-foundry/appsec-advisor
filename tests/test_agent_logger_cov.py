@@ -341,6 +341,24 @@ class TestUsageFromTranscript:
         t.write_text(json.dumps({"message": {"role": "user", "content": "hi"}}) + "\n")
         assert al._usage_from_transcript(str(t)) == {}
 
+    def test_output_completeness_counts_messages_without_a_final_usage(self, al, tmp_path):
+        # Only the record carrying stop_reason holds the message's final
+        # output_tokens; a message without one reports its streaming start value.
+        def line(message_id, stop_reason, output_tokens):
+            message = {"role": "assistant", "id": message_id, "stop_reason": stop_reason}
+            message["usage"] = {"input_tokens": 1, "output_tokens": output_tokens}
+            return json.dumps({"type": "assistant", "message": message})
+
+        t = tmp_path / "t4.jsonl"
+        t.write_text(
+            "\n".join([line("m1", None, 8), line("m1", "tool_use", 640), line("m2", None, 16), line("m3", None, 9)])
+        )
+        assert al._output_completeness(str(t)) == (2, 3)
+
+    def test_output_completeness_without_transcript_is_unknown(self, al):
+        assert al._output_completeness("") == (0, 0)
+        assert al._output_completeness("/no/such/file.jsonl") == (0, 0)
+
     @staticmethod
     def _line(message_id, block, **usage):
         message = {"role": "assistant", "content": [{"type": block}], "usage": usage}

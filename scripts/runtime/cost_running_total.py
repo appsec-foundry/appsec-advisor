@@ -290,6 +290,7 @@ def aggregate_subagent_usage(
         "usage_source_absent": False,
         "unpriced_tokens": 0,
         "unpriced_calls": 0,
+        "partial_output_calls": 0,
         "subagent_snapshot": vrc.TokenSnapshot(),
         "subagent_cost": 0.0,
     }
@@ -378,6 +379,7 @@ def aggregate_subagent_usage(
     result["unmetered_agents"] = len(spawned - metered - covered)
     result["unpriced_tokens"] = unpriced + unpriced_release_tokens
     result["unpriced_calls"] = len(covered) + len(unpriced_release_calls)
+    result["partial_output_calls"] = sum(1 for _, fields in usage_rows if fields.get("output_partial"))
     result["subagent_snapshot"] = snapshot
     result["subagent_cost"] = cost
     return result
@@ -507,12 +509,20 @@ def aggregate_running_total(output_dir: Path, since_iso: str | None = None) -> d
         "unmetered_agents": sub["unmetered_agents"],
         "unpriced_tokens": sub["unpriced_tokens"],
         "unpriced_calls": sub["unpriced_calls"],
+        # Calls whose output count is the host's streaming start value for some
+        # messages: their output tokens, and so the cost, are a lower bound.
+        "partial_output_calls": sub["partial_output_calls"],
         # Exposed, not just folded into `cost_is_floor`: mid-run every reading is
         # a floor because sub-agents report at completion, while this flag means
         # the host reports no per-call usage at all and the figure is short by
         # orders of magnitude. Only the second is a reason to show nothing.
         "usage_source_absent": bool(sub["usage_source_absent"]),
-        "cost_is_floor": bool(sub["unmetered_agents"] or sub["usage_source_absent"] or sub["unpriced_tokens"]),
+        "cost_is_floor": bool(
+            sub["unmetered_agents"]
+            or sub["usage_source_absent"]
+            or sub["unpriced_tokens"]
+            or sub["partial_output_calls"]
+        ),
     }
 
 
