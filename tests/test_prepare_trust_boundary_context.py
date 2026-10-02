@@ -1777,6 +1777,34 @@ def test_paths_contained_uses_glob_semantics_not_zone_labels():
     assert not prep._paths_contained(["a/b/c.ts"], ["a/*"])
 
 
+@pytest.mark.parametrize(
+    ("inner", "outer"),
+    [
+        (["routes/login.ts"], ["routes/**/*.ts"]),
+        (["routes/admin/users.ts"], ["routes/**/*.ts"]),
+        (["lib/startup/ws.ts", "lib/utils.ts"], ["lib/**/*.ts"]),
+        (["lib/**/*.ts"], ["lib/**"]),
+        (["src/app.py"], ["src/**/*.ts"]),
+        (["a/b/c.ts"], ["a/*"]),
+        (["worker/**"], ["routes/**"]),
+    ],
+)
+def test_deployable_containment_agrees_with_the_ingress_fold(inner: list[str], outer: list[str]):
+    """Both containment checks answer one question; when they disagreed, the
+    candidate merge kept apart what the later ingress fold joined."""
+    assert prep._paths_contained(inner, outer) == prep._contained_in({"paths": inner}, {"paths": outer})
+
+
+def test_deployable_root_reaches_the_host_through_a_suffix_glob():
+    components = {
+        "api": {"id": "api", "paths": ["server.ts", "routes/**/*.ts", "lib/**/*.ts"]},
+        "ws": {"id": "ws", "paths": ["lib/startup/ws.ts", "lib/challenge.ts"]},
+        "web3": {"id": "web3", "paths": ["routes/checkKeys.ts"]},
+    }
+    assert prep._deployable_root("ws", components) == "api"
+    assert prep._deployable_root("web3", components) == "api"
+
+
 def _repo_with(tmp_path: Path, rel: str, body: str) -> Path:
     repo = tmp_path / "repo"
     target = repo / rel

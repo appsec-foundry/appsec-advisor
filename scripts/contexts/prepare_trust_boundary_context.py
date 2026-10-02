@@ -1836,23 +1836,6 @@ _ROUTE_REGISTRATION_RE = re.compile(
 )
 
 
-def _glob_matcher(pattern: str) -> re.Pattern[str]:
-    """Compile a path glob so `**` spans separators and `*` does not."""
-    out: list[str] = []
-    i = 0
-    while i < len(pattern):
-        if pattern.startswith("**", i):
-            out.append(".*")
-            i += 2
-        elif pattern[i] == "*":
-            out.append("[^/]*")
-            i += 1
-        else:
-            out.append(re.escape(pattern[i]))
-            i += 1
-    return re.compile("^" + "".join(out) + "$")
-
-
 def _paths_contained(inner: list[str], outer: list[str]) -> bool:
     """True when every glob in ``inner`` is covered by some glob in ``outer``.
 
@@ -1861,14 +1844,19 @@ def _paths_contained(inner: list[str], outer: list[str]) -> bool:
     assumption says "there is no separate network hop", so a zone comparison
     would have missed it; `models/**` and `data/sequelize.ts` sitting inside
     `models/**` + `data/**` would not.
+
+    Globs use the component registry's own matcher, as `_contained_in` does, so
+    `routes/**/*.ts` covers `routes/login.ts`: a private dialect in which `**/`
+    required a directory kept every top-level file out of its deployable.
     """
     if not inner or not outer:
         return False
-    matchers = [_glob_matcher(p) for p in outer if isinstance(p, str) and p]
+    matchers = [_rc_glob_to_regex(p) for p in outer if isinstance(p, str) and p]
     if not matchers:
         return False
     return all(
-        isinstance(candidate, str) and candidate and any(m.match(candidate) for m in matchers) for candidate in inner
+        isinstance(candidate, str) and candidate and any(m.search(_glob_probe(candidate)) for m in matchers)
+        for candidate in inner
     )
 
 
