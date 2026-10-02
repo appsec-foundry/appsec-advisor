@@ -563,6 +563,22 @@ def _resolve_artifact_path(output_root: Path, artifact_path: str) -> Path:
     return resolved
 
 
+def _require_catalog_assigned_inputs(jobs: list[dict[str, Any]]) -> None:
+    """Reject a dispatch whose declared inputs the routing catalog cannot deliver.
+
+    The dispatch boundary enforces the same rule, but only on the CLI path; checking
+    where the dispatch is built makes every builder test see a missing catalog entry.
+    """
+    catalog, bindings, _, _ = context_routing.load_catalog_contracts()
+    for job in jobs:
+        gaps = context_routing.unassigned_declared_inputs(job, catalog=catalog, bindings=bindings)
+        if gaps:
+            raise ControllerError(
+                f"job {job.get('job_id')!r} declares inputs without a context routing catalog assignment: "
+                + ", ".join(gaps)
+            )
+
+
 def _prepare_context_v2_dispatch_outputs(output_root: Path, jobs: list[dict[str, Any]]) -> None:
     """Remove prior bytes for outputs that the next semantic boundary must write.
 
@@ -571,6 +587,7 @@ def _prepare_context_v2_dispatch_outputs(output_root: Path, jobs: list[dict[str,
     repair outputs are preserved only when the same action also names them as
     inputs; their successor gate remains responsible for semantic validation.
     """
+    _require_catalog_assigned_inputs(jobs)
     output_root = output_root.resolve()
     protected = {
         artifact_path

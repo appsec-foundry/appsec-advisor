@@ -974,6 +974,33 @@ def _recommend_topology_workload_unmodelled(issue: dict, output_dir: Path) -> di
     }
 
 
+def _recommend_topology_workloads_not_delivered(issue: dict, output_dir: Path) -> dict:
+    """The topology projection omitted workloads to stay within its routing budget."""
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "high",
+        "risk_level": "medium",
+        "summary": "Part of the deployed topology never reached the architecture analyst, so no component models it.",
+        "rationale": (
+            "`.dispatch-context/architecture/topology.json` is trimmed to the `topology_projection` limit "
+            "profile in data/context-routing-bindings.json; the omitted workloads are absent from the "
+            "component inventory by construction, not by an analyst decision."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": ".deployment-inventory.json",
+                "details": (
+                    "Compare original_workloads with the projected workloads; narrow the scan scope or raise the "
+                    "topology_projection profile when the omitted workloads carry a security role."
+                ),
+            },
+        ],
+        "verification": [],
+    }
+
+
 def _recommend_actor_attribution_corrected(issue: dict, output_dir: Path) -> dict:
     """A STRIDE analyst named an access group the finding's evidence does not support."""
     return {
@@ -1129,6 +1156,7 @@ RECOMMENDERS: dict[str, Callable[[dict, Path], dict]] = {
     "business_context_unmapped": _recommend_business_context_unmapped,
     "injected_component_without_flows": _recommend_injected_component_without_flows,
     "topology_workload_unmodelled": _recommend_topology_workload_unmodelled,
+    "topology_workloads_not_delivered": _recommend_topology_workloads_not_delivered,
     "actor_attribution_corrected": _recommend_actor_attribution_corrected,
     "privileged_role_added": _recommend_privileged_role_added,
     "pillar_cwe_finding": _recommend_pillar_cwe_finding,

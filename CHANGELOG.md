@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A repository whose deployment configuration defines workloads no longer aborts the run after actor discovery; a topology too large for the architecture context is delivered in part and the omitted workloads are reported.
 - A repository with more than five preliminary components, or with an overlong recon heading, route, role-unit path, or deployment workload, no longer aborts the run after reconnaissance; entries that cannot be projected are left out and counted.
 - The trust-boundary catalogue lists an internet-facing endpoint that has no control of its own as a separate crossing instead of showing it behind the control of the code that hosts it.
 - Components whose files sit directly in a folder that another component claims with a pattern like `routes/**/*.ts` are recognised as part of that deployable, so their uncontrolled internet crossings share one catalogue row.

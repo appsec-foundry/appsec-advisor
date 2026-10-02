@@ -2378,7 +2378,7 @@ def test_context_v2_dispatch_clears_prior_output_but_preserves_in_place_input(tm
         role="architecture_analyst",
         job_id="architecture",
         next_boundary="context-v2-post-architecture",
-        input_artifacts=[".recon-summary.md"],
+        input_artifacts=[".dispatch-context/architecture/recon-summary-context.json"],
         output_artifacts=[".components.json"],
         decision_keys=["components"],
         receipts=[],
@@ -5847,26 +5847,31 @@ class TestContextV2PostActors:
         receipt = next(r for r in action["artifact_receipts"] if r["artifact_path"].endswith("role-units.json"))
         assert receipt["record_count"] == 1
 
+    @staticmethod
+    def _write_topology(output: Path) -> Path:
+        inventory = output / ".deployment-inventory.json"
+        inventory.write_text(
+            json.dumps(
+                {
+                    "topology": {
+                        "zones": [],
+                        "zone_bridging": [],
+                        "workloads": [
+                            {"name": "api", "platform": "compose", "source": "c.yml", "line": 3, "zones": ["edge"]}
+                        ],
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        architecture_context.build_topology(output)
+        return inventory
+
     @pytest.mark.parametrize("state", ["absent", "current", "stale"])
     def test_architecture_receives_the_topology_only_when_the_run_has_one(self, tmp_path, monkeypatch, state):
         output = self._prepare(tmp_path)
-        inventory = output / ".deployment-inventory.json"
         if state != "absent":
-            inventory.write_text(
-                json.dumps(
-                    {
-                        "topology": {
-                            "zones": [],
-                            "zone_bridging": [],
-                            "workloads": [
-                                {"name": "api", "platform": "compose", "source": "c.yml", "line": 3, "zones": ["edge"]}
-                            ],
-                        }
-                    }
-                ),
-                encoding="utf-8",
-            )
-            architecture_context.build_topology(output)
+            inventory = self._write_topology(output)
         if state == "stale":
             inventory.write_text(inventory.read_text().replace('"edge"', '"core"'), encoding="utf-8")
         monkeypatch.setattr(controller, "_run_script", self._script([]))
@@ -5877,6 +5882,29 @@ class TestContextV2PostActors:
         action = controller.context_v2_post_actors(output)
         inputs = action["dispatch_jobs"][0]["input_artifacts"]
         assert (architecture_context.TOPOLOGY_CONTEXT in inputs) is (state == "current")
+        # The dispatch boundary resolves the same action against the routing
+        # catalog; building it is not enough to prove the run can dispatch it.
+        controller._bind_dispatch_action(action)
+        plan = json.loads((output / context_routing.PLAN_NAME).read_text(encoding="utf-8"))
+        topology = [row for row in plan["deliveries"] if row["context_id"] == "architecture.topology"]
+        assert [row["status"] for row in topology] == ["delivered" if state == "current" else "omitted_optional"]
+
+    def test_a_declared_input_without_a_catalog_assignment_stops_where_the_dispatch_is_built(
+        self, tmp_path, monkeypatch
+    ):
+        output = self._prepare(tmp_path)
+        self._write_topology(output)
+        monkeypatch.setattr(controller, "_run_script", self._script([]))
+        load = context_routing.load_catalog_contracts
+
+        def without_topology_assignment(**kwargs):
+            catalog, bindings, catalog_sha, bindings_sha = load(**kwargs)
+            assignments = [row for row in catalog["assignments"] if row["context"] != "architecture.topology"]
+            return {**catalog, "assignments": assignments}, bindings, catalog_sha, bindings_sha
+
+        monkeypatch.setattr(context_routing, "load_catalog_contracts", without_topology_assignment)
+        with pytest.raises(controller.ControllerError, match="without a context routing catalog assignment"):
+            controller.context_v2_post_actors(output)
 
     def test_valid_discovery_feeds_the_resolver_and_dispatches_architecture(self, tmp_path, monkeypatch):
         output = self._prepare(tmp_path)

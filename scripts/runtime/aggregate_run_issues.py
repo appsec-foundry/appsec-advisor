@@ -1706,23 +1706,43 @@ def _extract_unmodelled_workloads(output_dir: Path) -> list[dict]:
 
     The analyst's own gate enforces the same rule; a gap left here means the
     report's components, boundaries and threats do not cover part of what the
-    repository deploys.
+    repository deploys. Coverage is judged against the projection the analyst
+    received; workloads the projection omitted are reported separately, since
+    the analyst never saw them.
     """
-    from contexts.build_architecture_analysis_context import topology_workloads
+    from contexts.build_architecture_analysis_context import ContextProjectionError, project_topology
     from validators.validate_fragment import workload_coverage_errors
 
     try:
-        inventory = json.loads((output_dir / ".deployment-inventory.json").read_text(encoding="utf-8"))
+        inventory_bytes = (output_dir / ".deployment-inventory.json").read_bytes()
         components = json.loads((output_dir / ".components.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        projected = project_topology(inventory_bytes)
+    except (OSError, ValueError, ContextProjectionError):
         return []
-    workloads = topology_workloads(inventory)
-    if not workloads:
+    if projected is None:
         return []
-    errors = workload_coverage_errors(components, {"workloads": workloads})
+    issues: list[dict] = []
+    omitted = projected["limits"]["omitted_workloads"]
+    if omitted:
+        issues.append(
+            {
+                "category": "topology_workloads_not_delivered",
+                "severity": "warning",
+                "title": f"{omitted} deployed workload(s) exceeded the architecture context budget and were not modelled",
+                "evidence": {
+                    "log_file": ".dispatch-context/architecture/topology.json",
+                    "log_line": 1,
+                    "raw_event": (
+                        f"original_workloads={projected['limits']['original_workloads']} omitted_workloads={omitted}"
+                    ),
+                    "outcome": "workload_projection_truncated",
+                },
+            }
+        )
+    errors = workload_coverage_errors(components, projected)
     if not errors:
-        return []
-    return [
+        return issues
+    return issues + [
         {
             "category": "topology_workload_unmodelled",
             "severity": "warning",

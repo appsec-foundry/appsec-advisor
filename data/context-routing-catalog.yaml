@@ -243,6 +243,11 @@ contexts:
     category: architecture_and_data_flows
     description: Deterministically detected authentication, CI/CD, realtime, web3, and embedded-store units that the finalized inventory must contain.
     scope: whole_run
+  - id: architecture.topology
+    name: Deployed workload topology
+    category: architecture_and_data_flows
+    description: Deployable workloads with platform-qualified zones that the component inventory must account for.
+    scope: whole_run
   - id: architecture.targeted_source
     name: Targeted architecture source reads
     category: architecture_and_data_flows
@@ -601,6 +606,14 @@ assignments:
     importance: essential
     applies_to: whole_run
     reason: Units that finalization would add later must be modelled before data flows are written, or they reach the report without connections.
+  - id: topology-for-architecture
+    context: architecture.topology
+    agents:
+      - architecture_analyst
+    delivery: optional
+    importance: supporting
+    applies_to: whole_run
+    reason: When the deployment configuration defines workloads, each one must be modelled or declared unmodelled, so the analyst sees them.
   - id: no-complete-route-inventory-for-architecture
     context: architecture.routes
     agents:

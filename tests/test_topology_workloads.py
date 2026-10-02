@@ -242,6 +242,55 @@ def test_a_workload_the_schema_rejects_is_omitted_whole_never_renamed(shape: str
     assert projected["limits"]["omitted_workloads"] == 1
 
 
+def _maximal_workload(name: str) -> list[dict]:
+    """Inventory rows that project to the largest workload the schema admits."""
+    zones = [f"{'z' * 120}{i:02d}" for i in range(context.MAX_WORKLOAD_ZONES)]
+    source = "d/" * 140 + "deploy.yaml"
+    return [
+        _workload(name, "kubernetes", zones, line=i, source=source) for i in range(context.MAX_WORKLOAD_DEFINITIONS)
+    ]
+
+
+BUDGET_SHAPES = {
+    "realistic compose topology": [_workload(f"svc-{i:02d}", "compose", ["edge", "core"], line=i) for i in range(42)],
+    "count cap only": [_workload(f"svc-{i:03d}", "compose", ["net"], line=i) for i in range(200)],
+    "schema-maximal workloads": [
+        row for i in range(context.MAX_TOPOLOGY_WORKLOADS) for row in _maximal_workload(f"w{i:03d}")
+    ],
+}
+
+
+@pytest.mark.parametrize("shape", sorted(BUDGET_SHAPES))
+def test_the_written_projection_always_fits_its_routing_limit_profile(tmp_path, shape: str) -> None:
+    from contexts import context_routing
+
+    inventory = _inventory(BUDGET_SHAPES[shape])
+    (tmp_path / ".deployment-inventory.json").write_text(json.dumps(inventory), encoding="utf-8")
+    written = context.build_topology(tmp_path).read_bytes()
+    projected = json.loads(written)
+    jsonschema.validate(projected, SCHEMA)
+    budget = context_routing.limit_profile_for_artifact(context.TOPOLOGY_CONTEXT)
+    assert context_routing.fits_limits(written, budget, record_count=len(projected["workloads"]))
+    limits = projected["limits"]
+    assert limits["original_workloads"] - limits["omitted_workloads"] == len(projected["workloads"])
+    all_names = [row["name"] for row in context.topology_workloads(inventory)]
+    assert [row["name"] for row in projected["workloads"]] == all_names[: len(projected["workloads"])]
+
+
+def test_a_topology_within_budget_is_delivered_whole() -> None:
+    projected = _project(_inventory(BUDGET_SHAPES["realistic compose topology"]))
+    assert projected["limits"]["omitted_workloads"] == 0
+
+
+def test_workloads_trimmed_for_budget_are_reported_apart_from_modelling_gaps(tmp_path) -> None:
+    inventory = _inventory(BUDGET_SHAPES["schema-maximal workloads"])
+    projected = _project(inventory)
+    assert projected["limits"]["omitted_workloads"] > 0
+    components = {"components": [{"id": "a", "workloads": [row["name"] for row in projected["workloads"]]}]}
+    found = aggregate_run_issues._extract_unmodelled_workloads(_run_dir(tmp_path, components, inventory))
+    assert [issue["category"] for issue in found] == ["topology_workloads_not_delivered"]
+
+
 def test_zones_and_definitions_are_bounded_by_the_schema() -> None:
     zones = [f"z{i:02d}" for i in range(context.MAX_WORKLOAD_ZONES + 5)] + ["q" * 200]
     rows = [_workload("api", "compose", zones, line=i) for i in range(context.MAX_WORKLOAD_DEFINITIONS + 2)]

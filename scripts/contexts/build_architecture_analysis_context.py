@@ -22,10 +22,13 @@ from typing import Any
 from jsonschema import Draft202012Validator
 from shared._atomic_io import atomic_write_json
 
+from contexts import context_routing
+
 # Every projection below is total: for any source it either raises
 # ContextProjectionError or returns output its schema accepts. The schemas are
-# the only source of the limits, so a cap changed on one side cannot drift from
-# the other; an item the schema rejects is omitted and counted, never passed on.
+# the only source of the count limits, so a cap changed on one side cannot drift
+# from the other; an item the schema rejects is omitted and counted, never passed
+# on. The topology's byte budget comes from its context-routing limit profile.
 _SCHEMA_DIR = Path(__file__).resolve().parents[2] / "schemas"
 RECON_SCHEMA = "recon-summary-context.schema.json"
 ROUTE_SCHEMA = "architecture-route-context.schema.json"
@@ -420,9 +423,9 @@ def project_topology(payload: bytes) -> dict[str, Any] | None:
         }
         if _valid_workload(workload):
             kept.append(workload)
-    return _checked(
-        TOPOLOGY_SCHEMA,
-        {
+
+    def document() -> dict[str, Any]:
+        return {
             "schema_version": 1,
             "source": {"artifact_path": ".deployment-inventory.json", "sha256": _sha256(payload)},
             "limits": {
@@ -432,8 +435,20 @@ def project_topology(payload: bytes) -> dict[str, Any] | None:
                 "omitted_workloads": len(workloads) - len(kept),
             },
             "workloads": kept,
-        },
-    )
+        }
+
+    # The schema bounds counts, not bytes; the routing profile bounds bytes. Trim
+    # whole workloads from the end until the written file fits the profile, so an
+    # oversized topology is delivered partially and counted, never aborts the run.
+    budget = context_routing.limit_profile_for_artifact(TOPOLOGY_CONTEXT)
+    while kept and not context_routing.fits_limits(_written_bytes(document()), budget, record_count=len(kept)):
+        kept.pop()
+    return _checked(TOPOLOGY_SCHEMA, document())
+
+
+def _written_bytes(value: dict[str, Any]) -> bytes:
+    """The bytes ``atomic_write_json`` writes for ``value`` with this module's settings."""
+    return (json.dumps(value, indent=2, sort_keys=False, default=str) + "\n").encode("utf-8")
 
 
 def build_topology(output_dir: Path) -> Path | None:

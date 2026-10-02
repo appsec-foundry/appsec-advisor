@@ -383,6 +383,21 @@ _COUNT_LIMIT_KEYS = {
 }
 
 
+def fits_limits(payload: bytes, limits: dict[str, int], *, record_count: int | None = None) -> bool:
+    """Whether ``payload`` passes the delivery limits the dispatch boundary enforces."""
+    counts = _counts(payload, record_count)
+    return all(counts[count_key] <= limits[limit_key] for count_key, limit_key in _COUNT_LIMIT_KEYS.items())
+
+
+def limit_profile_for_artifact(artifact_path: str) -> dict[str, int]:
+    """The limit profile bound to the output artifact delivered at ``artifact_path``."""
+    _, bindings, _, _ = load_catalog_contracts()
+    for binding in bindings["contexts"]:
+        if binding["source"].get("artifact_pattern") == artifact_path:
+            return bindings["limit_profiles"][binding["limit_profile"]]
+    raise ContextRoutingError(f"no context binding delivers {artifact_path!r}")
+
+
 def _enforce_limits(context_id: str, counts: dict[str, int], limits: dict[str, int]) -> None:
     for count_key, limit_key in _COUNT_LIMIT_KEYS.items():
         if counts[count_key] > limits[limit_key]:
@@ -848,6 +863,40 @@ def _write_plan(output_root: Path, plan: dict[str, Any]) -> None:
     _validate_plan_receipt(plan_path, receipt_path)
 
 
+def unassigned_declared_inputs(
+    job: dict[str, Any],
+    *,
+    catalog: dict[str, Any] | None = None,
+    bindings: dict[str, Any] | None = None,
+) -> list[str]:
+    """Declared job inputs that no non-forbidden catalog assignment of its role delivers.
+
+    The one rule for declared-input coverage: ``resolve_action`` enforces it at
+    the dispatch boundary and the controller applies it when it builds a
+    dispatch, so a new or conditional input without a catalog entry fails where
+    it is introduced instead of only on the run that first declares it.
+    """
+    declared = set(job.get("input_artifacts", []))
+    if not declared:
+        return []
+    if catalog is None or bindings is None:
+        catalog, bindings, _, _ = load_catalog_contracts()
+    role = job["semantic_role"]
+    context_bindings = _unique_index(bindings["contexts"], "context binding")
+    deliverable: set[str] = set()
+    for assignment in catalog["assignments"]:
+        if role not in assignment["agents"] or assignment["delivery"] == "forbidden":
+            continue
+        binding = context_bindings[assignment["context"]]
+        source = binding["source"]
+        if source["kind"] != "output_artifact":
+            continue
+        if binding.get("delivery_overrides", {}).get(role, binding["delivery"]) != "declared":
+            continue
+        deliverable.add(_render_artifact(source["artifact_pattern"], job.get("component_id"), job.get("candidate_id")))
+    return sorted(declared - deliverable)
+
+
 def resolve_action(
     action: dict[str, Any],
     output_root: Path,
@@ -939,7 +988,6 @@ def resolve_action(
         agent_id = job["semantic_role"]
         if agent_bindings[agent_id]["runtime"] != "context_v2":
             raise ContextRoutingError(f"action uses a non-context-v2 agent binding: {agent_id!r}")
-        matched_declared: set[str] = set()
         delivered_bytes = 0
         assignments = sorted(assignments_by_agent[agent_id], key=lambda item: item["id"])
         limits = agent_bindings[agent_id]["limits"]
@@ -963,7 +1011,7 @@ def resolve_action(
                 catalog_sha=catalog_sha,
                 bindings_sha=bindings_sha,
             )
-            delivery, diagnostic, declared_path = _resolve_delivery(
+            delivery, diagnostic, _declared_path = _resolve_delivery(
                 base,
                 action=action,
                 job=job,
@@ -974,14 +1022,12 @@ def resolve_action(
                 limits=bindings["limit_profiles"][binding["limit_profile"]],
                 action_receipts=action_receipts,
             )
-            if declared_path and declared_path in job.get("input_artifacts", []):
-                matched_declared.add(declared_path)
             if "source_receipt" in delivery:
                 delivered_bytes += delivery["source_receipt"]["byte_count"]
             deliveries.append(delivery)
             if diagnostic is not None:
                 diagnostics.append(diagnostic)
-        unmatched = sorted(set(job.get("input_artifacts", [])) - matched_declared)
+        unmatched = unassigned_declared_inputs(job, catalog=catalog, bindings=bindings)
         if unmatched:
             raise ContextRoutingError(
                 f"job {job['job_id']!r} has declared inputs without human catalog assignments: {', '.join(unmatched)}"
