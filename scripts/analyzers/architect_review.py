@@ -384,10 +384,13 @@ def apply_review(
                 "decisions": [],
             },
         )
+        # Both hashes are optional in the proposal schema; run, packet and input
+        # identity are enforced by apply_corrections. Only a stated hash that
+        # differs proves the proposal was made against another context or policy.
         stale_context = (
             pid in proposals
             and isinstance(proposal, dict)
-            and any(proposal.get(key) != manifest[key] for key in ("context_sha256", "policy_sha256"))
+            and any(key in proposal and proposal[key] != manifest[key] for key in ("context_sha256", "policy_sha256"))
         )
         candidate, part = apply_corrections(
             merged,

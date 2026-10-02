@@ -259,6 +259,29 @@ def test_proposal_bound_to_old_context_or_policy_is_rejected(field):
     assert report["outcomes"][0]["reason"] == "stale_or_foreign_context"
 
 
+@pytest.mark.parametrize("omitted", [("context_sha256",), ("policy_sha256",), ("context_sha256", "policy_sha256")])
+def test_proposal_omitting_optional_binding_hashes_is_applied(omitted):
+    # The schema makes both hashes optional; identity rests on run, packet and
+    # input. Only a stated hash that differs marks a proposal as stale.
+    source = merged()
+    manifest = build(source)
+    packet = manifest["packets"][0]
+    proposal = {
+        **{
+            key: packet[key]
+            for key in ("schema_version", "run_id", "packet_id", "input_sha256", "context_sha256", "policy_sha256")
+            if key not in omitted
+        },
+        "decisions": [decision()],
+    }
+    result, report = apply_review(
+        source, {}, manifest, {packet["packet_id"]: proposal}, run_id="run-test", **manifest["limits"]
+    )
+    assert report["outcomes"][0]["reason"] == "validated"
+    assert [row["t_id"] for row in report["accepted"]] == ["T-001"]
+    assert result["threats"][0]["risk"] == "High"
+
+
 def test_non_object_proposal_is_reported_as_an_invalid_envelope():
     source = merged()
     manifest = build(source)
