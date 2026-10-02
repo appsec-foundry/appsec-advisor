@@ -1108,6 +1108,11 @@ def _contained_in(inner: dict, outer: dict) -> bool:
     return all(any(_rc_glob_to_regex(g).search(_glob_probe(p)) for g in outer_globs) for p in inner_paths)
 
 
+def _point_key(row: dict) -> str | None:
+    point = row.get("enforcement_point")
+    return point.strip().casefold() if isinstance(point, str) and point.strip() else None
+
+
 def _consolidate(rows: list[dict], components: dict[str, dict], warnings: list[str]) -> list[dict]:
     """Collapse over-modelled boundaries before IDs are assigned.
 
@@ -1130,7 +1135,9 @@ def _consolidate(rows: list[dict], components: dict[str, dict], warnings: list[s
     3. Two internet-ingress crossings whose targets are the same code — one
        component's paths fully contained in the other's — share one perimeter:
        an embedded WebSocket gateway is reached through the same port and
-       process as the API it lives in. The inner one folds into the outer.
+       process as the API it lives in. The inner one folds into the outer —
+       unless exactly one of the two names an enforcement point, since the fold
+       would otherwise attribute that control to code it does not guard.
     """
     out: list[dict] = []
     seen: dict[tuple, dict] = {}
@@ -1164,6 +1171,12 @@ def _consolidate(rows: list[dict], components: dict[str, dict], warnings: list[s
     for index, row in enumerate(ingress):
         for other_index, other in enumerate(ingress):
             if other is row or other in folded or row.get("kind") != other.get("kind"):
+                continue
+            # Shared code is one perimeter, not one control: a row that names no
+            # enforcement point must not inherit the survivor's, nor lend its
+            # missing control to a row that has one. Two named points on one
+            # perimeter are usually two descriptions of the same check and fold.
+            if (_point_key(row) is None) != (_point_key(other) is None):
                 continue
             # Containment is symmetric when both rows enter the SAME component,
             # so "inner folds into outer" picks no side and the survivor would be

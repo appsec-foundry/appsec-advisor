@@ -157,6 +157,7 @@ Removing an entry means listing it here in the same change.
 | TB-8 | The same crossing collapses unless a stated reason distinguishes it | `test_same_crossing_without_a_stated_reason_collapses` | `schemas/threat-model.output.schema.yaml` |
 | TB-9 | Boundary identity survives renumbering; external IDs are translated at delivery | `test_external_boundary_ids_are_translated_through_the_delivery_renumber` | `scripts/model/emit_severity_rationale.py` |
 | TB-10 | A flow whose endpoints run on different network zones of one deployment platform is a mandatory `cross-zone-flow` signal even when their canonical zones agree; zones are compared per platform, and differing sets count, so a zone-bridging workload is where the crossing is found | `test_flows_between_different_network_zones_are_cross_zone_signals`, `test_a_component_without_workload_zones_keeps_its_previous_card_and_signals` | `scripts/contexts/build_trust_boundary_assessment_input.py` → `_network_zone_crossing` |
+| TB-11 | Folding an ingress crossing into the perimeter of the code that contains it never lends a control: it folds only when both rows name an enforcement point or neither does, so an unguarded embedded endpoint keeps its own row instead of appearing behind its host's control | `test_ingress_fold_never_lends_a_control_to_a_row_without_one` | `scripts/contexts/prepare_trust_boundary_context.py` → `_consolidate` |
 
 ## Findings and evidence
 
