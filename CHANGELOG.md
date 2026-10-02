@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Figure 2 links numbered attack routes to findings, access prerequisites, weaknesses, and impact for each relevant attacker.
 - Malicious insiders and attackers holding a user's device now require opt-in through `enable:` in `.appsec/actors.yaml` or `actors.enable` in the organization profile and are otherwise listed as not assessed.
 - `--stride-cap` and the quick profile never drop Critical or High findings.
+- Thorough assessments pass each component's threat analysis up to twice as many deterministic signals and source slices within the same token budget; quick and standard are unchanged.
 - Components with the LLM or agentic lens record a finding, a cited control, not applicable, or no evidence for every OWASP LLM or Agentic Top-10 item, and one malformed entry no longer discards the others.
 - Interactive runs save confirmed business context in `docs/security/business-context.md` with legacy-path fallback, and prioritised mitigations name the declared business-critical assets they protect.
 - Report sections use Figure 1's actor names consistently, and Identified Actors lists each actor's access, scenarios, and finding counts.

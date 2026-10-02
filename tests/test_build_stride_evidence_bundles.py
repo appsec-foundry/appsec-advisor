@@ -97,6 +97,58 @@ def test_build_all_emits_bounded_valid_component_bundle(tmp_path):
     assert not (output / ".dispatch-context/backend-api/architecture-context.json").exists()
 
 
+def _many_signals(repo: Path, output: Path, count: int) -> None:
+    (repo / "src" / "app.py").write_text("".join(f"x{n} = {n}\n" for n in range(count)), encoding="utf-8")
+    findings = [{"file": "src/app.py", "line": n + 1, "rule_id": f"AUTH-{n}"} for n in range(count)]
+    (output / ".source-auth-findings.json").write_text(json.dumps({"findings": findings}), encoding="utf-8")
+
+
+def _signal_repo(tmp_path: Path, count: int = 100) -> tuple[Path, Path]:
+    repo, output = _repo(tmp_path)
+    _many_signals(repo, output, count)
+    return repo, output
+
+
+def _bundle_for_depth(repo: Path, output: Path, depth: str | None) -> tuple[dict, bytes]:
+    manifest = _manifest()
+    if depth is not None:
+        manifest["assessment_depth"] = depth
+    component = bundles.build_all(output, repo, manifest)["components"][0]
+    payload = (output / component["evidence_bundle_path"]).read_bytes()
+    parsed = bundles.validate_bundle(
+        output / component["evidence_bundle_path"],
+        {"primary": repo},
+        expected_component_id="backend-api",
+        expected_sha256=component["evidence_bundle_sha256"],
+        output_dir=output,
+    )
+    return parsed, payload
+
+
+def test_thorough_depth_admits_more_signals_and_slices_within_content_budgets(tmp_path):
+    repo, output = _signal_repo(tmp_path)
+    standard, _ = _bundle_for_depth(repo, output, "standard")
+    thorough, _ = _bundle_for_depth(repo, output, "thorough")
+    assert len(standard["source_slices"]) == bundles.MAX_SOURCE_SLICES
+    assert len(standard["evidence"]["recon_signals"]) <= bundles.MAX_CLASS_VALUES
+    assert len(thorough["source_slices"]) > bundles.MAX_SOURCE_SLICES
+    assert len(thorough["evidence"]["recon_signals"]) > bundles.MAX_CLASS_VALUES
+    assert thorough["limits"]["estimated_tokens"] <= bundles.MAX_ESTIMATED_TOKENS
+    assert thorough["limits"]["referenced_source_lines"] <= bundles.MAX_SOURCE_LINES
+    caps = {row["signal_class"]: row["cap"] for row in thorough["truncation"]}
+    assert caps.get("source_slices", bundles.DEPTH_LIMITS["thorough"].source_slices) == (
+        bundles.DEPTH_LIMITS["thorough"].source_slices
+    )
+
+
+@pytest.mark.parametrize("depth", ["standard", "quick", "unknown-depth"])
+def test_non_thorough_depth_keeps_the_bundle_byte_identical(tmp_path, depth):
+    repo, output = _signal_repo(tmp_path)
+    _, baseline = _bundle_for_depth(repo, output, None)
+    _, payload = _bundle_for_depth(repo, output, depth)
+    assert payload == baseline
+
+
 def test_decode_only_route_handler_reaches_the_bundle_and_other_routes_do_not(tmp_path):
     repo, output = _repo(tmp_path)
     route = {"method": "POST", "path": "/login", "authn_handler_signal": "decode_only"}
@@ -835,7 +887,7 @@ def test_containment_does_not_mask_a_failure_unrelated_to_routing(tmp_path, monk
     """Without routing hints to drop there is nothing to degrade — raise as before."""
     repo, output = _repo(tmp_path)
 
-    def always_fails(output_dir, component, registry):
+    def always_fails(output_dir, component, registry, **kwargs):
         raise bundles.BundleError("genuine contract violation")
 
     monkeypatch.setattr(bundles, "build_bundle", always_fails)
@@ -1823,11 +1875,14 @@ def test_schema_slice_caps_track_the_code_constant():
     asserted together rather than kept in sync by hand.
     """
     schema = json.loads(bundles.SCHEMA_PATH.read_text(encoding="utf-8"))
-    assert schema["properties"]["source_slices"]["maxItems"] == bundles.MAX_SOURCE_SLICES
+    all_limits = [bundles.STANDARD_LIMITS, *bundles.DEPTH_LIMITS.values()]
+    largest_slices = max(limits.source_slices for limits in all_limits)
+    assert schema["properties"]["source_slices"]["maxItems"] == largest_slices
 
     focus = schema["properties"]["path_routing"]["properties"]["focus_admission"]
     projected = focus["items"]["properties"]["projected_files"]
-    assert projected["maxItems"] == bundles.MAX_SOURCE_SLICES
+    assert projected["maxItems"] == largest_slices
+    assert schema["$defs"]["record_array"]["maxItems"] == max(limits.class_values for limits in all_limits)
 
 
 def _severity_rows(levels, *, key="severity", prefix="row"):
