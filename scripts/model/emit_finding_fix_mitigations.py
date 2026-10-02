@@ -95,6 +95,12 @@ def _resolve_priority(severity: str, effort: str, vektor: str) -> str:
     return _SEV_TO_PRI.get(sev, "P3")
 
 
+def finding_fix_priority(severity: str, effort: str, members: list[dict]) -> str:
+    """Priority of a finding-fix card: any unauth-reachable member keeps a Critical at P1."""
+    vektor = next((m.get("vektor") for m in members if (m.get("vektor") or "") in _UNAUTH_VEKTORS), "")
+    return _resolve_priority(severity, effort, vektor)
+
+
 def _norm_title(title: str) -> str:
     """Normalise a mitigation title for grouping (case/space-insensitive)."""
     return re.sub(r"\s+", " ", (title or "").strip().lower())
@@ -267,12 +273,6 @@ def _synthesize(data: dict, state: dict) -> list[dict]:
             for m in members
         ]
         effort = min(efforts, key=lambda e: {"Low": 0, "Medium": 1, "High": 2}.get(e.capitalize(), 1))
-        # Any unauth-reachable member keeps a Critical at P1.
-        vektor = ""
-        for m in members:
-            if (m.get("vektor") or "") in _UNAUTH_VEKTORS:
-                vektor = m.get("vektor")
-                break
         cwes = []
         for m in members:
             c = m.get("cwe")
@@ -284,7 +284,7 @@ def _synthesize(data: dict, state: dict) -> list[dict]:
             "id": mid,
             "title": g["title"],
             "kind": "fix",
-            "priority": _resolve_priority(sev, effort, vektor),
+            "priority": finding_fix_priority(sev, effort, members),
             "severity": sev,
             "effort": effort.capitalize(),
             "threat_ids": [m["id"] for m in members],

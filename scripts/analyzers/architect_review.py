@@ -36,6 +36,8 @@ MAX_PROPOSAL_BYTES = 131_072
 # Legitimate proposals nest a few levels; the bound must not depend on the interpreter's recursion limit.
 MAX_PROPOSAL_DEPTH = 32
 _RATING_KEYS = ("risk", "likelihood", "impact")
+_FIX_KEYS = ("title", "steps", "verification", "effort")
+_PRIORITY_BY_RISK = {"Critical": "P1", "High": "P2", "Medium": "P3", "Low": "P4"}
 
 
 class ReviewError(ValueError):
@@ -99,6 +101,18 @@ def _fix(threat: dict) -> dict | None:
     }
 
 
+def _is_fix_card(card: dict) -> bool:
+    return card.get("kind", "fix") == "fix"
+
+
+def _card_matches(card: dict, fix: dict) -> bool:
+    return all(card.get(key) == fix[key] for key in _FIX_KEYS)
+
+
+def _highest_risk(ids: list[str], threats: dict) -> str:
+    return max((threats[tid]["risk"] for tid in ids), key=RANK.__getitem__)
+
+
 def _outcome(tid: str, status: str, reason: str, decision: dict | None = None) -> dict:
     return {
         "t_id": tid,
@@ -107,6 +121,41 @@ def _outcome(tid: str, status: str, reason: str, decision: dict | None = None) -
         "assessment": decision["assessment"] if decision and status != "rejected" else "unreviewed",
         "remediation": decision["remediation"] if decision and status != "rejected" else "unreviewed",
     }
+
+
+def _apply_decision(original: dict, decision: dict) -> tuple[dict, str | None]:
+    """Return the corrected copy of one finding, or the reason the decision is rejected."""
+    if original.get("evidence_check") == "refuted":
+        return original, "refuted_finding"
+    candidate = copy.deepcopy(original)
+    rating = decision.get("rating")
+    fix = decision.get("fix")
+    if rating:
+        candidate.update(rating)
+        for key in (
+            "risk_before_policy",
+            "effective_severity",
+            "rank",
+            "rank_score",
+            "severity_rationale",
+            "severity_rationale_manual",
+        ):
+            candidate.pop(key, None)
+    if fix:
+        existing = original.get("remediation")
+        has_fix = isinstance(existing, dict) and bool(existing.get("steps"))
+        if (fix["operation"] == "add") == has_fix:
+            return original, "remediation_operation_mismatch"
+        value = fix["value"]
+        candidate["mitigation_title"] = value["title"]
+        # Replacement removes old examples and generic `how` guidance.
+        # Requirements mappings live on the finding and stay untouched.
+        candidate["remediation"] = {key: copy.deepcopy(value[key]) for key in ("steps", "verification", "effort")}
+        if isinstance(existing, dict):
+            for key in ("reference", "blueprint"):
+                if key in existing:
+                    candidate["remediation"][key] = copy.deepcopy(existing[key])
+    return candidate, None
 
 
 def apply_corrections(
@@ -183,32 +232,12 @@ def apply_corrections(
             report["outcomes"].append(_outcome(tid, "rejected", "duplicate_or_invalid_decision"))
             continue
         original = originals[tid]
-        if original.get("evidence_check") == "refuted":
-            report["outcomes"].append(_outcome(tid, "rejected", "refuted_finding"))
+        candidate, rejection = _apply_decision(original, decision)
+        if rejection:
+            report["outcomes"].append(_outcome(tid, "rejected", rejection))
             continue
-        candidate = copy.deepcopy(original)
         rating = decision.get("rating")
         fix = decision.get("fix")
-        if rating:
-            candidate.update(rating)
-            candidate.pop("risk_before_policy", None)
-            for key in ("effective_severity", "rank", "rank_score", "severity_rationale", "severity_rationale_manual"):
-                candidate.pop(key, None)
-        if fix:
-            existing = original.get("remediation")
-            has_fix = isinstance(existing, dict) and bool(existing.get("steps"))
-            if (fix["operation"] == "add") == has_fix:
-                report["outcomes"].append(_outcome(tid, "rejected", "remediation_operation_mismatch"))
-                continue
-            value = fix["value"]
-            candidate["mitigation_title"] = value["title"]
-            # Replacement removes old examples and generic `how` guidance.
-            # Requirements mappings live on the finding and stay untouched.
-            candidate["remediation"] = {key: copy.deepcopy(value[key]) for key in ("steps", "verification", "effort")}
-            if isinstance(existing, dict):
-                for key in ("reference", "blueprint"):
-                    if key in existing:
-                        candidate["remediation"][key] = copy.deepcopy(existing[key])
         trial = copy.deepcopy(result)
         trial["threats"][positions[tid]] = candidate
         if rating:
@@ -355,9 +384,10 @@ def apply_review(
                 "decisions": [],
             },
         )
-        stale_context = pid in proposals and (
-            not isinstance(proposal, dict)
-            or any(proposal.get(key) != manifest[key] for key in ("context_sha256", "policy_sha256"))
+        stale_context = (
+            pid in proposals
+            and isinstance(proposal, dict)
+            and any(proposal.get(key) != manifest[key] for key in ("context_sha256", "policy_sha256"))
         )
         candidate, part = apply_corrections(
             merged,
@@ -390,12 +420,11 @@ def apply_review(
 def _card_priority(card: dict, risk: str, threats: dict) -> str:
     """Keep deterministic finding-fix exceptions under their existing owner."""
     if card.get("auto_source") == "finding-fix":
-        from model.emit_finding_fix_mitigations import _UNAUTH_VEKTORS, _resolve_priority
+        from model.emit_finding_fix_mitigations import finding_fix_priority
 
         members = [threats[tid] for tid in card.get("threat_ids", [])]
-        vector = next((row.get("vektor") for row in members if row.get("vektor") in _UNAUTH_VEKTORS), "")
-        return _resolve_priority(risk, card.get("effort", "Medium"), vector)
-    return {"Critical": "P1", "High": "P2", "Medium": "P3", "Low": "P4"}[risk]
+        return finding_fix_priority(risk, card.get("effort", "Medium"), members)
+    return _PRIORITY_BY_RISK[risk]
 
 
 def project_reviewed_mitigations(
@@ -421,7 +450,8 @@ def project_reviewed_mitigations(
         )
         + 1
     )
-    priorities = {"Critical": "P1", "High": "P2", "Medium": "P3", "Low": "P4"}
+    # Cards that lost a member must drop that member's severity and priority.
+    resized: set[str] = set()
     for correction in report["accepted"]:
         tid = correction["t_id"]
         threat = threats.get(tid)
@@ -435,22 +465,21 @@ def project_reviewed_mitigations(
         expected = fix["after"]
         if _fix(threat) != expected:
             raise ReviewError("accepted source remediation changed before projection")
-        existing = [
-            row for row in result["mitigations"] if tid in row.get("threat_ids", []) and row.get("kind", "fix") == "fix"
-        ]
+        existing = [row for row in result["mitigations"] if tid in row.get("threat_ids", []) and _is_fix_card(row)]
         if (
             len(existing) == 1
             and existing[0].get("threat_ids") == [tid]
-            and all(existing[0].get(key) == expected[key] for key in ("title", "steps", "verification", "effort"))
+            and _card_matches(existing[0], expected)
             and existing[0]["id"] in threat.get("mitigation_ids", [])
         ):
             continue
         retained = []
         for mitigation in result["mitigations"]:
-            if tid in mitigation.get("threat_ids", []) and mitigation.get("kind", "fix") == "fix":
+            if tid in mitigation.get("threat_ids", []) and _is_fix_card(mitigation):
                 mitigation["threat_ids"] = [item for item in mitigation["threat_ids"] if item != tid]
                 if not mitigation["threat_ids"]:
                     continue
+                resized.add(mitigation["id"])
             retained.append(mitigation)
         result["mitigations"] = retained
         linked = [row["id"] for row in retained if tid in row.get("threat_ids", [])]
@@ -462,7 +491,7 @@ def project_reviewed_mitigations(
                 "title": expected["title"],
                 "threat_ids": [tid],
                 "kind": "fix",
-                "priority": priorities[threat["risk"]],
+                "priority": _PRIORITY_BY_RISK[threat["risk"]],
                 "severity": threat["risk"],
                 "effort": expected["effort"],
                 "steps": copy.deepcopy(expected["steps"]),
@@ -473,9 +502,9 @@ def project_reviewed_mitigations(
     changed_ratings = {row["t_id"] for row in report["accepted"] if row["rating"]}
     for mitigation in result.get("mitigations", []):
         ids = mitigation.get("threat_ids", [])
-        if mitigation.get("kind", "fix") != "fix" or not changed_ratings.intersection(ids):
+        if not _is_fix_card(mitigation) or not (changed_ratings.intersection(ids) or mitigation["id"] in resized):
             continue
-        risk = max((threats[tid]["risk"] for tid in ids), key=RANK.__getitem__)
+        risk = _highest_risk(ids, threats)
         mitigation["severity"] = risk
         mitigation["priority"] = _card_priority(mitigation, risk, threats)
     return result
@@ -494,11 +523,11 @@ def reviewed_mitigation_errors(
     changed_ratings = {row["t_id"] for row in report["accepted"] if row["rating"]}
     for card in model.get("mitigations", []):
         ids = card.get("threat_ids", [])
-        if card.get("kind", "fix") == "fix" and changed_ratings.intersection(ids):
+        if _is_fix_card(card) and changed_ratings.intersection(ids):
             if any(tid not in threats for tid in ids):
                 errors.append("reviewed mitigation has an unknown finding")
                 continue
-            risk = max((threats[tid]["risk"] for tid in ids), key=RANK.__getitem__)
+            risk = _highest_risk(ids, threats)
             if card.get("severity") != risk or card.get("priority") != _card_priority(card, risk, threats):
                 errors.append("accepted assessment no longer determines mitigation priority")
     for correction in report["accepted"]:
@@ -508,17 +537,8 @@ def reviewed_mitigation_errors(
         fix = correction["remediation"]
         if not fix or tid not in threats:
             continue
-        cards = [
-            row
-            for row in model.get("mitigations", [])
-            if tid in row.get("threat_ids", []) and row.get("kind", "fix") == "fix"
-        ]
-        expected = fix["after"]
-        matching = [
-            row
-            for row in cards
-            if all(row.get(key) == expected[key] for key in ("title", "steps", "verification", "effort"))
-        ]
+        cards = [row for row in model.get("mitigations", []) if tid in row.get("threat_ids", []) and _is_fix_card(row)]
+        matching = [row for row in cards if _card_matches(row, fix["after"])]
         if len(cards) != 1 or len(matching) != 1 or matching[0]["id"] not in threats[tid].get("mitigation_ids", []):
             errors.append(f"{tid}: accepted remediation was changed or diluted")
     return errors

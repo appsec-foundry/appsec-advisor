@@ -257,3 +257,14 @@ def test_proposal_bound_to_old_context_or_policy_is_rejected(field):
     )
     assert result == source
     assert report["outcomes"][0]["reason"] == "stale_or_foreign_context"
+
+
+def test_non_object_proposal_is_reported_as_an_invalid_envelope():
+    source = merged()
+    manifest = build(source)
+    packet_id = manifest["packets"][0]["packet_id"]
+    result, report = apply_review(
+        source, {}, manifest, {packet_id: ["not", "an", "object"]}, run_id="run-test", **manifest["limits"]
+    )
+    assert result == source
+    assert report["outcomes"][0]["reason"] == "invalid_envelope"

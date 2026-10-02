@@ -359,3 +359,45 @@ def test_oversized_output_and_refuted_findings_remain_unchanged():
     source["threats"][0]["evidence_check"] = "refuted"
     result, audit = apply(source, [decision()])
     assert result == source and audit["outcomes"][0]["reason"] == "refuted_finding"
+
+
+def _project_fix_only(*findings, scope):
+    source = merged(*findings)
+    result, audit = apply(source, [decision(tid, rating=False) for tid in scope], scope=scope)
+    threats, _ = build_threats(result)
+    model = {"threats": threats, "mitigations": build_mitigations(threats)}
+    projected = review.project_reviewed_mitigations(model, audit, merged_snapshot=result)
+    return {row["id"]: row for row in projected["mitigations"]}, projected, audit, result
+
+
+def _rated(tid, risk, **kw):
+    row = finding(tid, **kw)
+    row.update(risk=risk, likelihood=risk, impact=risk)
+    return row
+
+
+def test_shared_card_drops_the_detached_findings_severity_and_priority():
+    cards, projected, audit, result = _project_fix_only(_rated("T-001", "High"), finding("T-002"), scope=["T-001"])
+    assert cards["M-001"]["threat_ids"] == ["T-002"]
+    assert (cards["M-001"]["severity"], cards["M-001"]["priority"]) == ("Medium", "P3")
+    assert review.reviewed_mitigation_errors(projected, audit, merged_snapshot=result) == []
+
+
+def test_resized_card_keeps_the_highest_remaining_member():
+    cards, *_ = _project_fix_only(
+        _rated("T-001", "Critical", component="billing", filename="api/invoices.go"),
+        _rated("T-002", "High", component="billing", filename="api/refunds.go"),
+        _rated("T-003", "Medium", component="billing", filename="api/export.go"),
+        scope=["T-001"],
+    )
+    shared = next(row for row in cards.values() if "T-002" in row["threat_ids"])
+    assert shared["threat_ids"] == ["T-002", "T-003"]
+    assert (shared["severity"], shared["priority"]) == ("High", "P2")
+
+
+def test_card_without_the_corrected_finding_keeps_its_rating():
+    other = _rated("T-002", "High")
+    other["mitigation_ids"] = ["M-002"]
+    cards, *_ = _project_fix_only(_rated("T-001", "Critical"), other, scope=["T-001"])
+    untouched = next(row for row in cards.values() if row["threat_ids"] == ["T-002"])
+    assert (untouched["severity"], untouched["priority"]) == ("High", "P2")
