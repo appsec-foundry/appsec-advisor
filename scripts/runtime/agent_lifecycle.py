@@ -663,6 +663,7 @@ def _record_usage_for_call(
     *,
     tool_uses: int | None = None,
     resolved_model: str = "",
+    output_partial: tuple[int, int] = (0, 0),
 ) -> list[LifecycleEvent]:
     """Record a call's usage once as ``AGENT_USAGE``; a resumed child's growth as ``AGENT_USAGE_RESUMED``.
 
@@ -708,6 +709,11 @@ def _record_usage_for_call(
             event = "AGENT_USAGE"
         if _MODEL_ID_RE.fullmatch(resolved_model or ""):
             event_call["resolved_model"] = resolved_model
+        # Messages whose transcript records lack the final usage report only
+        # their streaming start value, so the output count is a lower bound.
+        partial, messages = output_partial
+        if 0 < partial <= messages:
+            event_call["output_partial"] = f"{partial}/{messages}"
         return [LifecycleEvent(event, event_call)]
 
 
@@ -718,9 +724,12 @@ def record_call_usage(
     *,
     tool_uses: int | None = None,
     resolved_model: str = "",
+    output_partial: tuple[int, int] = (0, 0),
 ) -> list[LifecycleEvent]:
     """Attribute usage to a call by its own ID, for a source that knows it."""
-    return _record_usage_for_call(output_dir, call_id, usage, tool_uses=tool_uses, resolved_model=resolved_model)
+    return _record_usage_for_call(
+        output_dir, call_id, usage, tool_uses=tool_uses, resolved_model=resolved_model, output_partial=output_partial
+    )
 
 
 def record_runtime_usage(
@@ -730,6 +739,7 @@ def record_runtime_usage(
     *,
     tool_uses: int | None = None,
     resolved_model: str = "",
+    output_partial: tuple[int, int] = (0, 0),
 ) -> list[LifecycleEvent]:
     call = call_by_runtime_agent_id(output_dir, runtime_agent_id)
     if call is None:
@@ -740,6 +750,7 @@ def record_runtime_usage(
         usage,
         tool_uses=tool_uses,
         resolved_model=resolved_model,
+        output_partial=output_partial,
     )
 
 
@@ -975,6 +986,8 @@ def event_detail(event: LifecycleEvent) -> str:
         )
         if "tool_uses" in usage:
             fields.append(f"tool_uses={usage['tool_uses']}")
+        if call.get("output_partial"):
+            fields.append(f"output_partial={call['output_partial']}")
     if event.reason:
         fields.append(f"reason={_bounded(event.reason, 512)}")
     if call.get("description"):

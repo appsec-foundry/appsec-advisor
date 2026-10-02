@@ -131,6 +131,39 @@ def test_usage_event_carries_the_reported_release_without_persisting_it(tmp_path
     assert "resolved_model" not in stored["calls"][0]
 
 
+def test_usage_event_reports_partial_output_without_persisting_it(tmp_path: Path) -> None:
+    lifecycle.register_call(tmp_path, _identity("toolu_p"))
+    events = lifecycle.record_call_usage(tmp_path, "toolu_p", {"output_tokens": 10}, output_partial=(3, 4))
+    assert "output_partial=3/4" in lifecycle.event_detail(events[0])
+    stored = json.loads(lifecycle.state_path(tmp_path).read_text(encoding="utf-8"))
+    assert "output_partial" not in stored["calls"][0]
+
+
+def test_complete_output_adds_no_partial_marker(tmp_path: Path) -> None:
+    lifecycle.register_call(tmp_path, _identity("toolu_q"))
+    events = lifecycle.record_call_usage(tmp_path, "toolu_q", {"output_tokens": 10}, output_partial=(0, 4))
+    assert "output_partial=" not in lifecycle.event_detail(events[0])
+
+
+def test_partial_output_makes_the_run_cost_a_floor(tmp_path: Path) -> None:
+    lifecycle.register_call(tmp_path, _identity("toolu_r"))
+    lifecycle.append_events(
+        tmp_path,
+        lifecycle.record_call_usage(
+            tmp_path, "toolu_r", {"output_tokens": 10}, resolved_model="claude-opus-5", output_partial=(5, 6)
+        ),
+    )
+    assert crt.aggregate_subagent_usage(tmp_path / ".agent-run.log")["partial_output_calls"] == 1
+    (tmp_path / ".hook-events.log").write_text("", encoding="utf-8")
+    assert crt.aggregate_running_total(tmp_path)["cost_is_floor"] is True
+
+
+def test_complete_output_leaves_the_cost_exact(tmp_path: Path) -> None:
+    log = tmp_path / ".agent-run.log"
+    log.write_text(_usage_line("toolu_s", "opus", resolved="claude-opus-5"))
+    assert crt.aggregate_subagent_usage(log)["partial_output_calls"] == 0
+
+
 def test_a_malformed_reported_model_is_dropped(tmp_path: Path) -> None:
     lifecycle.register_call(tmp_path, _identity("toolu_b"))
     events = lifecycle.record_call_usage(tmp_path, "toolu_b", {"output_tokens": 10}, resolved_model="bad model\nx")
