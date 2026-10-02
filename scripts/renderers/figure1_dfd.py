@@ -2485,9 +2485,12 @@ def _label_texts(edge, flows):
         texts = [label + (f" {part}" if part else "")]
         if part:
             texts.append(label + f"\n{line}")
-        wrapped = _legend_wrap(label, 110, FS)
-        if len(wrapped) <= 3:
-            texts.append("\n".join([*wrapped, *([line] if line else [])]))
+        # The narrower wrap fits gaps whose routes leave no run as wide as the default
+        # one; without it the label is lost or the gap widens to the full reserve.
+        for wrap_width in (110, 75):
+            wrapped = "\n".join([*_legend_wrap(label, wrap_width, FS), *([line] if line else [])])
+            if len(wrapped.split("\n")) - bool(line) <= 3 and wrapped not in texts:
+                texts.append(wrapped)
     return texts
 
 
