@@ -5584,6 +5584,7 @@ SOURCE_TESTS = {
         thin_runtime_regressions_2026_07_20
         wait_agent_calls
         refusal_aware_stride
+        stride_dispatch_waves
     """),
     "scripts/orchestrator/wait_stride_progress.py": _tests("""
         check_target_specificity
