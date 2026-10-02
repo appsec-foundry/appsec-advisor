@@ -1183,6 +1183,14 @@ SOURCE_TESTS = {
         stride_outputs
         weakness_signals
     """),
+    "data/consolidation-groups.yaml": _tests("""
+        build_threat_model_yaml
+        check_target_specificity
+        config_iac_checks
+        incremental_two_run_e2e
+        merge_threats
+        threat_fixture
+    """),
     "data/actor-attribution-rules.yaml": _tests("""
         actor_presentation
         analysis_version_upgrade
