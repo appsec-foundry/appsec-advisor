@@ -534,7 +534,38 @@ FULL_SUITE_SOURCES = {
 # remains runtime input and falls back to all unless explicitly routed below. threat_fixture replays
 # build_threat_model_yaml and compose_threat_model, so modules they import
 # route to it.
+# Measured readers of every shipped agent or skill file: the prompt contracts,
+# glob scans and tracked-file scans. A route for one of these files starts from
+# its base and adds the tests that read that file by name or path.
+_AGENT_FILE_TESTS = (
+    "agent_definitions agent_doc_shell_snippets check_target_specificity context_routing "
+    "requirements_verification stride_outputs"
+)
+_SKILL_FILE_TESTS = "check_target_specificity context_routing requirements_verification"
+
 SOURCE_TESTS = {
+    "agents/appsec-authnz-analyzer.md": _tests(
+        f"{_AGENT_FILE_TESTS} agent_logger authnz_report authnz_review_skill fragment_invariant_parity"
+    ),
+    "skills/authnz-review/SKILL.md": _tests(
+        f"{_SKILL_FILE_TESTS} authnz_review_skill lazy_phase_group_loading package_internal_plugin "
+        "runtime_doc_cli_contract skill_definitions"
+    ),
+    "skills/authnz-review/save-and-export.md": _tests(
+        f"{_SKILL_FILE_TESTS} authnz_review_skill lazy_phase_group_loading skill_definitions"
+    ),
+    "skills/authnz-review/HELP.txt": _tests(f"{_SKILL_FILE_TESTS} skill_definitions"),
+    "schemas/source-auth-findings.schema.yaml": _tests("""
+        authz_confirm
+        check_target_specificity
+        context_routing
+        credential_lifecycle_checks
+        requirements_verification
+        resolve_actors
+        schemas
+        security_score
+        validate_intermediate
+    """),
     "scripts/analyzers/__init__.py": _tests(
         "script_layout check_target_specificity gate_preconditions requirements_verification stride_outputs"
     ),
