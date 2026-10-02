@@ -4116,6 +4116,7 @@ def overview_people(yaml_data, attack_paths_data, attack_taxonomy, actor_labels=
         overview_actor_groups(yaml_data, attack_paths_data, attack_taxonomy),
         detail=False,
         _optimize=False,
+        _layout_ranks={},  # identities and model order only; the crossing search cannot change them
     )
     entities = {e["id"]: e for e in state["d"].get("external_entities") or [] if isinstance(e, dict) and e.get("id")}
     people = []
