@@ -33,6 +33,19 @@
 # title: the consolidated survivor's title (replaces per-file titles).
 
 groups:
+  # Tokens read without any signature check and verifiers that check a signature
+  # with an unrestricted algorithm are different defects with different fixes:
+  # pinning algorithms leaves an unverified call site exploitable. This group
+  # precedes jwt-verification so an unverified site never joins the verifier.
+  - id: jwt-signature-unverified
+    title: "JWT Accepted Without Signature Verification"
+    scope: cross-component
+    cross_component_scope_field: control_scope
+    match_any:
+      - source_check_id: [AUTHZ-006, AUTHZ-201]
+      - cwe: [CWE-347, CWE-287, CWE-345]
+        title_pattern: '(?i)^(?=.*\b(jwt|jws|token|bearer)\b)(?=.*(\bunverified\b|\bunsigned\b|\bnot\s+verified\b|\bno\s+signature\b|\bwithout\s+(any\s+)?(signature\s+)?(verif\w*|check\w*|validat\w*)))'
+
   - id: jwt-verification
     title: "Insecure JWT Verification"
     scope: cross-component
@@ -40,7 +53,7 @@ groups:
     match_any:
       - cwe: [CWE-347, CWE-287, CWE-345]
         title_pattern: '(?i)\b(jwt|algorithm|signature|verif\w*|decode)\b'
-      - source_check_id: [AUTHZ-005, AUTHZ-006, AUTHZ-007, AUTHZ-103, AUTHZ-201]
+      - source_check_id: [AUTHZ-005, AUTHZ-007, AUTHZ-103]
 
   - id: missing-route-auth
     title: "Sensitive Routes Registered Without Authentication Middleware"

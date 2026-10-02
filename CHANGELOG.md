@@ -46,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `authnz-review` analyzes JWT, mass-assignment and credential-policy findings from every supported language, no longer reports IDOR suspects whose handler already checks ownership, and stops instead of printing an invalid report.
 - Full assessments confirm object-level authorization gaps and entity mass assignment again, and no longer merge stale results that an earlier run or `authnz-review --save` left in the output directory.
 - Finding deduplication preserves the highest risk, case-sensitive source paths, evidence, and scenario references.
+- Code that reads JWT claims without any signature check is reported as its own finding instead of being folded into a verifier's missing-algorithm-allowlist finding whose fix does not cover it.
 - Security Score withholds a score when a required scanner fails or returns invalid output while preserving available findings and diagnostics.
 - Scanners retain application source coverage and distinguish effective authentication, LLM guards, field annotations, and supply-chain controls from misleading signals without following external symlinks.
 - Findings provide clearer injection and SSRF evidence and more accurate weakness classifications and links, with fewer safe-code false positives.

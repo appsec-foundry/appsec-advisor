@@ -1370,14 +1370,57 @@ class TestConsolidateByGroup:
         ]
         out = mt._consolidate_by_group(members)
         survivors = [t for t in out if t.get("consolidation_group") == "jwt-verification"]
-        assert len(survivors) == 1, "all JWT-verification hits collapse to ONE finding"
+        assert len(survivors) == 1, "all algorithm-allowlist hits collapse to ONE finding"
         s = survivors[0]
         assert s["systemic"] is True
         assert s["title"] == "Insecure JWT Verification"
-        assert s["instance_count"] == 5
+        assert s["instance_count"] == 3
         assert s["risk"] == "Critical"  # survivor = highest-risk member
         assert "lib/insecurity.ts" in s["affected_files"]
+        unverified = [t for t in out if t.get("consolidation_group") == "jwt-signature-unverified"]
+        assert len(unverified) == 1
+        assert unverified[0]["instance_count"] == 2
+        assert {i["line"] for i in unverified[0]["instances"]} == {58}
         assert "routes/chatbot.ts" in s["affected_files"]
+
+    def test_unverified_token_identity_stays_out_of_algorithm_allowlist_finding(self, mt):
+        # A call site that reads token claims without any signature check is not
+        # a manifestation of a verifier that lacks an algorithm allowlist: pinning
+        # algorithms at the verifier leaves the call site exploitable.
+        allowlist = _jwt("src/auth/tokens.py", 40, component_id="orders", control_scope="")
+        unverified = _jwt(
+            "src/handlers/assistant.py",
+            12,
+            title="Assistant trusts unverified JWT identity",
+            component_id="orders",
+            control_scope="",
+        )
+        second_allowlist = _jwt("src/auth/session.py", 77, component_id="orders", control_scope="")
+        out = mt._consolidate_by_group([allowlist, unverified, second_allowlist])
+        by_file = {t["evidence"]["file"]: t for t in out if not t.get("systemic")}
+        algorithm = next(t for t in out if t.get("consolidation_group") == "jwt-verification")
+        assert {i["file"] for i in algorithm["instances"]} == {"src/auth/tokens.py", "src/auth/session.py"}
+        assert by_file["src/handlers/assistant.py"].get("consolidation_group") is None
+
+    @pytest.mark.parametrize(
+        ("check_id", "title", "group"),
+        [
+            ("AUTHZ-006", "Token payload read without check", "jwt-signature-unverified"),
+            ("AUTHZ-201", "Token parsed without check", "jwt-signature-unverified"),
+            ("AUTHZ-005", "Verifier accepts any algorithm", "jwt-verification"),
+            ("AUTHZ-103", "JWT decode missing algorithms allowlist", "jwt-verification"),
+        ],
+    )
+    def test_scanner_checks_select_group_by_mechanism(self, mt, check_id, title, group):
+        threat = _threat(cwe="CWE-347", title=title, evidence={"file": "app/x.py", "line": 1})
+        threat["source_check_id"] = check_id
+        assert mt._match_consolidation_group(threat, mt._load_consolidation_groups())["id"] == group
+
+    def test_unverified_non_token_signature_is_not_a_jwt_finding(self, mt):
+        webhook = _threat(
+            cwe="CWE-345", title="Unverified webhook payload accepted", evidence={"file": "app/hooks.py", "line": 9}
+        )
+        assert mt._match_consolidation_group(webhook, mt._load_consolidation_groups()) is None
 
     def test_path_traversal_splits_read_vs_upload(self, mt):
         # CWE-22 spans two sink families with different fixes: a READ traversal
