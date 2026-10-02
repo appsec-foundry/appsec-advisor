@@ -295,6 +295,7 @@ GROUPS = {
         editorial_gate
         eval_threat_model
         evidence_verification_schema
+        ground_truth_recall
         guard_evidence_verification
         inline_code_formatter
         mermaid_validator
@@ -4084,6 +4085,10 @@ SOURCE_TESTS = {
         run_path_guard
         runtime_doc_cli_contract
         stride_outputs
+    """),
+    "scripts/validators/ground_truth_recall.py": _tests("""
+        check_target_specificity
+        ground_truth_recall
     """),
     "scripts/runtime/event_log.py": _tests("""
         render_completion_summary
