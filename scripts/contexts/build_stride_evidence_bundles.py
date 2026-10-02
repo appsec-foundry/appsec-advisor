@@ -20,7 +20,7 @@ import subprocess
 import sys
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from model.reclassify_components import _glob_to_regex
 from shared._atomic_io import atomic_write_text
@@ -46,6 +46,26 @@ MAX_SOURCE_LINES = 400
 MAX_SOURCE_SLICES = 64
 MAX_SLICE_LINES = 40
 MAX_CLASS_VALUES = 32
+
+
+class BundleLimits(NamedTuple):
+    class_values: int
+    source_slices: int
+
+
+# Only the counters grow with depth; the byte, token and source-line budgets
+# above stay the effective ceilings at every depth. Observed on a thorough run:
+# the largest component kept 32 of 63 recon signals and 60 of 64 slices while
+# spending about 6k of its 16k token budget. The schema maxima match the
+# largest entry here.
+STANDARD_LIMITS = BundleLimits(MAX_CLASS_VALUES, MAX_SOURCE_SLICES)
+DEPTH_LIMITS = {"thorough": BundleLimits(64, 128)}
+
+
+def limits_for_depth(depth: object) -> BundleLimits:
+    return DEPTH_LIMITS.get(depth, STANDARD_LIMITS) if isinstance(depth, str) else STANDARD_LIMITS
+
+
 MAX_COMPONENT_PATHS = 32  # schema cap on `component.paths`, not on the component's scope
 MAX_VALUE_CHARS = 4096
 MAX_ROUTING_PATHS = 16
@@ -439,14 +459,16 @@ def _severity_priority(value: Any) -> int:
     return _UNRANKED_SEVERITY
 
 
-def _bounded_records(source: str, values: list[Any]) -> tuple[list[dict[str, Any]], dict[str, int]]:
+def _bounded_records(
+    source: str, values: list[Any], cap: int = MAX_CLASS_VALUES
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
     # The cap keeps the most severe rows; canonical bytes only break ties.
     ranked = sorted(
         ((_severity_priority(value), _record(source, value)) for value in values),
         key=lambda pair: (pair[0], _canonical_bytes(pair[1])),
     )
     records = [record for _, record in ranked]
-    retained = records[:MAX_CLASS_VALUES]
+    retained = records[:cap]
     return retained, {"original": len(records), "value_truncations": sum(row["truncated"] for row in retained)}
 
 
@@ -1186,6 +1208,7 @@ def _source_signals(
     component_paths: list[str],
     registry: dict[str, Path],
     focus_paths: list[str],
+    slice_cap: int = MAX_SOURCE_SLICES,
 ) -> tuple[list[dict[str, Any]], list[Any], int, set[str]]:
     candidates: list[dict[str, Any]] = []
     for signal_kind, filename in SIGNAL_FILES:
@@ -1307,8 +1330,8 @@ def _source_signals(
     # MAX_SOURCE_LINES. Hold one slot per unprojected focus path — capped at half
     # the budget so signal evidence can never be starved in turn.
     unprojected_focus = sum(1 for matches in focus_matches if not matches)
-    reserved_slots = min(unprojected_focus, MAX_SOURCE_SLICES // 2)
-    signal_slice_budget = MAX_SOURCE_SLICES - reserved_slots
+    reserved_slots = min(unprojected_focus, slice_cap // 2)
+    signal_slice_budget = slice_cap - reserved_slots
 
     retained: list[dict[str, Any]] = []
     source_lines = 0
@@ -1399,6 +1422,7 @@ def _focus_source_slices(
     focus_paths: list[str],
     component_paths: list[str],
     mandatory_slices: list[dict[str, Any]],
+    slice_cap: int = MAX_SOURCE_SLICES,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Project focus paths into the remaining source-slice and line budgets."""
     retained = list(mandatory_slices)
@@ -1440,7 +1464,7 @@ def _focus_source_slices(
                 omitted += 1
                 continue
             end_line = min(line_count, MAX_SLICE_LINES)
-            if len(retained) >= MAX_SOURCE_SLICES or source_lines + end_line > MAX_SOURCE_LINES:
+            if len(retained) >= slice_cap or source_lines + end_line > MAX_SOURCE_LINES:
                 omitted += 1
                 continue
             row = {
@@ -1493,7 +1517,7 @@ def _focus_source_slices(
 
 
 def _truncation_rows(
-    stats: dict[str, dict[str, int]], evidence: dict[str, list[dict[str, Any]]]
+    stats: dict[str, dict[str, int]], evidence: dict[str, list[dict[str, Any]]], cap: int = MAX_CLASS_VALUES
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for signal_class in sorted(stats):
@@ -1506,7 +1530,7 @@ def _truncation_rows(
                     "original_count": original,
                     "retained_count": retained,
                     "omitted_count": original - retained,
-                    "cap": MAX_CLASS_VALUES,
+                    "cap": cap,
                     "ordering_key": "severity,canonical-json",
                 }
             )
@@ -1543,6 +1567,7 @@ def build_bundle(
     registry: dict[str, Path],
     *,
     degraded: dict[str, Any] | None = None,
+    limits: BundleLimits = STANDARD_LIMITS,
 ) -> tuple[dict[str, Any], bytes]:
     component_id = component["component_id"]
     paths_value = component.get("component_paths") or []
@@ -1574,6 +1599,7 @@ def build_bundle(
         scope_paths,
         registry,
         focus_paths,
+        limits.source_slices,
     )
     raw["recon_signals"].extend(signal_summaries)
     for evidence_class in ALL_EVIDENCE_CLASSES:
@@ -1619,12 +1645,13 @@ def build_bundle(
         focus_paths,
         scope_paths,
         mandatory_slices,
+        limits.source_slices,
     )
 
     evidence: dict[str, list[dict[str, Any]]] = {}
     stats: dict[str, dict[str, int]] = {}
     for name in EVIDENCE_CLASSES:
-        evidence[name], stats[name] = _bounded_records(name, raw[name])
+        evidence[name], stats[name] = _bounded_records(name, raw[name], limits.class_values)
 
     admitted_repository_ids = {"primary", *(row["repository_id"] for row in source_slices)}
     unknown_repository_ids = admitted_repository_ids - set(registry)
@@ -1701,7 +1728,7 @@ def build_bundle(
                 "original_count": original_slice_count,
                 "retained_count": len(mandatory_slices),
                 "omitted_count": original_slice_count - len(mandatory_slices),
-                "cap": MAX_SOURCE_SLICES,
+                "cap": limits.source_slices,
                 "ordering_key": "repository-id,path,start-line,end-line,signal-kind",
             }
         )
@@ -1709,7 +1736,7 @@ def build_bundle(
     while True:
         bundle["truncation"] = [
             row for row in bundle["truncation"] if row["signal_class"] in {"component_paths", "source_slices"}
-        ] + _truncation_rows(stats, evidence)
+        ] + _truncation_rows(stats, evidence, limits.class_values)
         payload = _render_bundle(bundle)
         if len(payload) <= MAX_BUNDLE_BYTES and bundle["limits"]["estimated_tokens"] <= MAX_ESTIMATED_TOKENS:
             break
@@ -1965,6 +1992,7 @@ def _build_bundle_without_fatal_routing(
     output_dir: Path,
     component: dict[str, Any],
     registry: dict[str, Path],
+    limits: BundleLimits = STANDARD_LIMITS,
 ) -> tuple[dict[str, Any], bytes]:
     """Build one component bundle, never letting a routing hint kill the run.
 
@@ -1985,7 +2013,7 @@ def _build_bundle_without_fatal_routing(
     same answer.
     """
     try:
-        return build_bundle(output_dir, component, registry)
+        return build_bundle(output_dir, component, registry, limits=limits)
     except RoutingHintError as exc:
         dropped_focus = list(component.get("focus_paths") or [])
         dropped_exclude = list(component.get("exclude_paths") or [])
@@ -2006,6 +2034,7 @@ def _build_bundle_without_fatal_routing(
                 "dropped_focus_paths": dropped_focus,
                 "dropped_exclude_paths": dropped_exclude,
             },
+            limits=limits,
         )
 
 
@@ -2018,6 +2047,7 @@ def build_all(
 ) -> dict[str, Any]:
     output_dir = output_dir.resolve()
     registry = load_repository_registry(repo_root, repository_registry)
+    limits = limits_for_depth(manifest.get("assessment_depth"))
     seen: set[str] = set()
     for component in manifest.get("components", []):
         component_id = component.get("component_id")
@@ -2032,7 +2062,7 @@ def build_all(
         # The source fields stay in the manifest. Consuming them made a second
         # build over the same manifest drop the two projections it had just
         # written, so the boundary could not repeat its own answer.
-        bundle, payload = _build_bundle_without_fatal_routing(output_dir, component, registry)
+        bundle, payload = _build_bundle_without_fatal_routing(output_dir, component, registry, limits)
         bundle_dir.mkdir(parents=True, exist_ok=True)
         bundle_path = bundle_dir / "evidence-bundle.json"
         atomic_write_text(bundle_path, payload.decode("utf-8"))

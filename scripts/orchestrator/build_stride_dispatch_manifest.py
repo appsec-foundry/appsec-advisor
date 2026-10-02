@@ -1789,6 +1789,7 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
     return {
         "schema_version": 1,
         "generated_at": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "assessment_depth": depth,
         "stride_model": stride_model,
         "stride_profile": analyst_context.get("_stride_profile", "full")
         if isinstance(analyst_context, dict)

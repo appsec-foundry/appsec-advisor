@@ -33,6 +33,10 @@ properties:
   generated_at:
     type: string
     description: ISO-8601 UTC timestamp when Analyst-A wrote the manifest.
+  assessment_depth:
+    description: Assessment depth the evidence bundles were built for. Thorough admits more recon signals and source slices per component; any other or absent value uses the standard limits.
+    type: string
+    enum: [quick, standard, thorough]
   stride_profile:
     description: STRIDE profile passed to every analyzer (label or inline object).
     oneOf:
