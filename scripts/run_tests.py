@@ -123,6 +123,7 @@ GROUPS = {
         arch_coverage_bridge_coverage
         architecture_coverage_checks
         assess_supply_chain_controls
+        authnz_report
         authz_confirm
         backfill_scanner_remediation
         check_target_specificity
@@ -737,6 +738,13 @@ SOURCE_TESTS = {
         architect_review_runtime
         build_architect_context
         calibrate_architect_review
+    """),
+    "scripts/model/authnz_report.py": _tests("""
+        authnz_report
+        authnz_review_skill
+    """),
+    "schemas/authnz-report.schema.json": _tests("""
+        authnz_report
     """),
     "scripts/model/match_abuse_cases.py": _tests("""
         abuse_case_verdicts
@@ -3198,6 +3206,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/analyzers/authz_confirm.py": _tests("""
+        authnz_report
         authz_confirm
         check_target_specificity
         gate_preconditions

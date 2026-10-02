@@ -117,10 +117,9 @@ mktemp -d
 ```
 Set `SCRATCH_DIR` and `OUTPUT_DIR` to the printed path.
 
-The pentest exporter reads the report from disk, so set
-`AGENT_SAVE_MODE=true` when `SAVE_FILES=true` **or** `PENTEST_TASKS=true`,
-else `false`. With `--pentest-tasks` but no `--save`, the report is written
-into the temp dir and removed in Step 10 — only the task file survives.
+The analyzer always writes `.authnz-report.json` into `OUTPUT_DIR`. Without
+`--save`, that is the temp dir, which Step 10 removes — with `--pentest-tasks`
+only the task file survives.
 
 Record start time: `START_EPOCH=$(date +%s)`
 
@@ -162,7 +161,7 @@ Read `$OUTPUT_DIR/.route-inventory.json`. Take every count from its
 unauthenticated only when the inventory proved it (`absent`); `unknown` may sit
 behind a guard the scanner cannot see. Print:
 ```
-  🟢 <N> routes parsed across <M> files
+  🟢 <N> routes parsed
      authenticated <A>  ·  no authentication <B>  ·  unknown <U>
      suspects: missing authz <X>  ·  missing auth <Y>
 
@@ -179,9 +178,7 @@ Print:
 ```
 Phase 2/5 · Auth-check scan                             [ 20%]
   Running pattern checks across all source files…
-  AUTHZ-001 BFLA  ·  AUTHZ-002 IDOR  ·  AUTHZ-003/004 mass-assign
-  AUTHZ-005/006/007 JWT algorithm     ·  AUTHZ-008 missing route auth
-  + equivalents for Python · Java · Go · C# · PHP · Ruby · Android
+  IDOR · missing route auth · mass assignment · JWT verification · credential policy
 ```
 
 Run:
@@ -193,12 +190,18 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/analyzers/source_auth_scanner.py" \
 
 If non-zero exit, print the stderr and stop.
 
-Read `$OUTPUT_DIR/.source-auth-findings.json`. Count findings by category
-(`jwt` = AUTHZ-005/006/007/103/201; `mass_assign` = AUTHZ-003/004/101/102;
-`route_auth` = AUTHZ-001/008; `other` = rest). Print:
+Count the findings by category; never count them yourself:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/authnz_report.py" counts --output-dir "$OUTPUT_DIR"
+```
+
+If non-zero exit, print the stderr and stop. From its `scanner` object, print
+(`<N>` is `in_scope`; omit the `out of scope` token when it is 0):
 
 ```
-  <circle> <N> findings  (JWT <jwt>  ·  mass-assign <ma>  ·  route auth <ra>  ·  other <o>)
+  <circle> <N> findings  (IDOR <idor>  ·  route auth <route_auth>  ·  mass-assign <mass_assign>  ·  JWT <jwt>  ·  credential <credential>)
+     <out_of_scope> out of scope (injection, crypto, mobile) — not part of this review
 
 Phase 2/5 complete                                      [ 40%]
 ```
@@ -226,10 +229,11 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/analyzers/authz_confirm.py" \
 
 If non-zero exit, print the stderr and stop.
 
-Read `$OUTPUT_DIR/.authz-confirm-findings.json`. Print:
+Run the `counts` command from Phase 2 again and, from its `confirmed` object,
+print (omit the second line when `unresolved_suspects` is 0):
 ```
-  <circle> <confirmed> confirmed  (<idor> IDOR/BOLA  ·  <mra> missing route auth)
-     <unresolvable> suspects unresolvable — kept as design-level hypotheses
+  <circle> <total> confirmed  (<idor> IDOR/BOLA  ·  <route_auth> missing route auth)
+     <unresolved_suspects> suspects unresolvable — kept as design-level hypotheses
 
 Phase 3/5 complete                                      [ 60%]
 ```
@@ -245,8 +249,8 @@ has no authentication layer:
 
 - `route_count > 0` and `authn_absent_count == route_count` (from
   `.route-inventory.json` `coverage`) — every route proven unauthenticated
-- scanner findings == 0 (from `.source-auth-findings.json`)
-- confirmed instances == 0 (from `.authz-confirm-findings.json`)
+- `scanner.in_scope == 0` (from the Phase 3 `counts` output)
+- `confirmed.total == 0` (from the same output)
 
 A route with `unknown` authentication is not proof of a missing layer; when
 any route is `unknown`, continue with Step 5.
@@ -311,7 +315,6 @@ REPO_ROOT=<REPO_ROOT>
 OUTPUT_DIR=<OUTPUT_DIR>
 CLAUDE_PLUGIN_ROOT=<CLAUDE_PLUGIN_ROOT>
 MODEL_ID=<session model, e.g. sonnet>
-SAVE_MODE=<AGENT_SAVE_MODE>
 
 SOURCE_AUTH_FINDINGS_PATH=<OUTPUT_DIR>/.source-auth-findings.json
 ROUTE_INVENTORY_PATH=<OUTPUT_DIR>/.route-inventory.json
@@ -322,26 +325,28 @@ STRIDE_FINDINGS_GLOB=<STRIDE_FINDINGS_GLOB>
 COMPONENT_INVENTORY_PATH=<$REPO_ROOT/docs/security/.components.json if exists, else none>
 ```
 
-Wait for the agent to complete.
+Wait for the agent to complete, then validate the report and compute its
+summary:
 
-**When `AGENT_SAVE_MODE=false`:** extract the JSON from the agent's final
-message between the `AUTHNZ_REPORT_START` and `AUTHNZ_REPORT_END` markers.
-Parse it into memory as `REPORT`. Do not read from disk.
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/authnz_report.py" finalize --report "$OUTPUT_DIR/.authnz-report.json"
+```
 
-**When `AGENT_SAVE_MODE=true`:** read `$OUTPUT_DIR/.authnz-report.json` into
-memory as `REPORT`.
-
-Extract the `summary` block from `REPORT`.
+If non-zero exit, print the stderr and stop: an invalid report is never
+printed. Otherwise read `$OUTPUT_DIR/.authnz-report.json` into memory as
+`REPORT`; every count below comes from `REPORT.summary`. When `REPORT.partial`
+is `true`, the analyzer stopped early: print
+`  ⚪ partial report — the analyzer stopped after <last_step>` before the counts.
 
 Print:
 ```
   🔴 Critical <critical>  🟠 High <high>  🟡 Medium <medium>  🔵 Low <low>
-     IDOR confirmed <idor_confirmed>  ·  chains <chain_count>  ·  STRIDE deduped <stride_deduplicated>
+     IDOR confirmed <idor_confirmed>  ·  chains <chains>  ·  STRIDE deduped <stride_deduplicated>
 
 Phase 4/5 complete                                      [ 80%]
 ```
 
-Use `chain_count = len(chain_findings)` from the report. Omit the `STRIDE deduped` token when `stride_deduplicated == 0`.
+Omit the `STRIDE deduped` token when `stride_deduplicated == 0`.
 
 ---
 
@@ -359,8 +364,8 @@ If `REQUIREMENTS_PATH` is `none`:
                                                         [100%]
 ```
 
-Otherwise the authnz-analyzer already performed annotation in its Step 5.
-From `REPORT`, count findings where `requirement_id` is non-null, and print:
+Otherwise the analyzer has already annotated the findings. Print, with
+`<N>` = `summary.requirements_annotated`:
 ```
   🟢 <N> of <total> findings linked to requirement IDs  (<source>)
      <M> findings use OWASP/CWE fallback references
@@ -376,23 +381,25 @@ Use `REPORT` (already in memory from Step 6). Do not read from disk.
 
 ### 8a — Results header
 
-Print exactly this fixed block — never as prose:
+Print exactly this fixed block — never as prose. Every count is the named
+`REPORT.summary` field; never recount findings:
 
 ```
-Results · <repo name> · <total> findings
+Results · <repo name> · <total_findings> findings
 
-  🔴 Critical  <N>
-  🟠 High      <N>
-  🟡 Medium    <N>
-  🔵 Low       <N>
+  🔴 Critical  <critical>
+  🟠 High      <high>
+  🟡 Medium    <medium>
+  🔵 Low       <low>
   ──────────────────────────────────────
-  IDOR confirmed          <N>
-  Missing auth (routes)   <N>
-  JWT misconfigurations   <N>
-  Privilege escalation    <N>
+  IDOR confirmed          <idor_confirmed>
+  Missing auth (routes)   <missing_auth>
+  JWT misconfigurations   <jwt_findings>
+  Credential policy       <credential_findings>
+  Privilege escalation    <privilege_escalation>
   ──────────────────────────────────────
-  Req. violations linked  <N>        ← omit row when REQUIREMENTS_PATH=none
-  STRIDE deduplicated     <N>        ← omit row when STRIDE_FINDINGS_GLOB=none
+  Req. violations linked  <requirements_annotated>   ← omit row when REQUIREMENTS_PATH=none
+  STRIDE deduplicated     <stride_deduplicated>   ← omit row when STRIDE_FINDINGS_GLOB=none
   ──────────────────────────────────────
   completed in            <Xm Ys>
 ```

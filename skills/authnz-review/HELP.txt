@@ -34,7 +34,7 @@ WHAT IT ANALYZES
   Phase 1  Route inventory         — every route, its auth middleware, handler
   Phase 2  Auth-check scan         — JWT misconfig, mass assignment, missing guards
   Phase 3  IDOR/BOLA confirmation  — handler body reads to confirm suspects
-  Phase 4  Cross-component reasoning — RBAC matrix, escalation chains, AuthN↔AuthZ
+  Phase 4  Cross-component reasoning — auth coverage, escalation chains, AuthN↔AuthZ
   Phase 5  Requirements annotation — maps findings to violated req IDs (opt-in)
 
 EXIT CODES

@@ -30,6 +30,7 @@ conventions as the console output, with full Markdown heading structure:
 | IDOR confirmed         | <N>   |
 | Missing auth (routes)  | <N>   |
 | JWT misconfigurations  | <N>   |
+| Credential policy      | <N>   |
 | Privilege escalation   | <N>   |
 
 ## AuthN → AuthZ Chains
@@ -46,7 +47,8 @@ conventions as the console output, with full Markdown heading structure:
 ...
 ```
 
-Write `$OUTPUT_DIR/.authnz-report.json` from `REPORT` (serialize to JSON).
+`$OUTPUT_DIR/.authnz-report.json` is already in place: the analyzer wrote it
+and Step 6 validated it.
 
 Print:
 ```

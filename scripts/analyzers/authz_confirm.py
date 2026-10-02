@@ -27,7 +27,9 @@ other frameworks read the function at `handler_line`:
 
 A suspect the reader cannot resolve (no handler file/line, file missing, body
 not extractable) is deliberately NOT emitted — it stays a design-level
-hypothesis via the architecture-coverage ARCH-BOLA-001 / ARCH-AUTHN-001 rules.
+hypothesis via the architecture-coverage ARCH-BOLA-001 / ARCH-AUTHN-001 rules,
+and its `route_id` is listed in `unresolved_suspects` so a consumer can tell it
+from a suspect whose body was read and cleared.
 We only upgrade to a *confirmed* instance when the body affirmatively shows the
 predicate is absent. This keeps the confirmed-instance channel low-FP (a false
 negative on suppression — over-including a neighbouring function's ownership
@@ -193,35 +195,36 @@ def _snippet(body: str) -> str:
     return first[0][:_SNIPPET_MAX] if first else ""
 
 
-def confirm_instances(repo_root: Path, inventory: dict) -> list[dict]:
-    """Return schema-shaped findings for confirmed IDOR / missing-route-auth."""
+def _is_examined(route: dict) -> bool:
+    """Whether the confirmer reads this route's handler: an IDOR suspect, or a
+    missing-auth suspect whose authentication the inventory proved `absent`."""
+    return bool(
+        route.get("missing_authz_suspect")
+        or (route.get("missing_auth_suspect") and route.get("authn_signal") == "absent")
+    )
+
+
+def _examine(repo_root: Path, inventory: dict) -> tuple[list[dict], list[str]]:
+    """Return the confirmed findings and the `route_id`s of examined suspects
+    whose handler body could not be read. A suspect in neither list was read
+    and cleared by its predicate."""
     routes = inventory.get("routes") if isinstance(inventory, dict) else None
     if not isinstance(routes, list):
-        return []
+        return [], []
     findings: list[dict] = []
+    unresolved: list[str] = []
     seq = 0
     resolver = HandlerResolver(repo_root)
     for r in routes:
-        if not isinstance(r, dict):
+        if not isinstance(r, dict) or not _is_examined(r):
             continue
-        hf = (r.get("handler_file") or "").strip()
-        hl = r.get("handler_line")
-        if not hf or not isinstance(hl, int):
-            continue
-        # `handler_file` comes from a sidecar: an absolute or escaping path, or a
-        # symlink out of the repository, is never read.
-        path = repo_root / hf
-        if not path.is_file() or not is_safe_to_read(path, repo_root):
-            continue
-        try:
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
-            continue
-        # A call-registered route's line is its registration, not its handler: read the
-        # handler through the shared resolver, and emit nothing when it does not resolve.
-        body = resolver.handler_code(r) if r.get("framework") in RESOLVED_FRAMEWORKS else extract_body(lines, hl, path)
+        body = _handler_body(repo_root, resolver, r)
         if not body:
+            if isinstance(r.get("route_id"), str):
+                unresolved.append(r["route_id"])
             continue
+        hf = r["handler_file"].strip()
+        hl = r["handler_line"]
         method = (r.get("method") or "").upper()
         route_path = r.get("path") or ""
 
@@ -264,18 +267,46 @@ def confirm_instances(repo_root: Path, inventory: dict) -> list[dict]:
                 "evidence_snippet": _snippet(body),
             }
         )
-    return findings
+    return findings, unresolved
+
+
+def _handler_body(repo_root: Path, resolver: HandlerResolver, route: dict) -> str:
+    """The route's handler body, or "" when the file or the body cannot be read."""
+    hf = (route.get("handler_file") or "").strip()
+    hl = route.get("handler_line")
+    if not hf or not isinstance(hl, int):
+        return ""
+    # `handler_file` comes from a sidecar: an absolute or escaping path, or a
+    # symlink out of the repository, is never read.
+    path = repo_root / hf
+    if not path.is_file() or not is_safe_to_read(path, repo_root):
+        return ""
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    # A call-registered route's line is its registration, not its handler: read the
+    # handler through the shared resolver, and emit nothing when it does not resolve.
+    if route.get("framework") in RESOLVED_FRAMEWORKS:
+        return resolver.handler_code(route) or ""
+    return extract_body(lines, hl, path)
+
+
+def confirm_instances(repo_root: Path, inventory: dict) -> list[dict]:
+    """Return schema-shaped findings for confirmed IDOR / missing-route-auth."""
+    return _examine(repo_root, inventory)[0]
 
 
 def build_document(repo_root: Path, inventory: dict, checks_run: int = 2) -> dict:
     """Wrap the confirmed findings for `inventory` in the sidecar document; `checks_run` is reported as given."""
-    findings = confirm_instances(repo_root, inventory)
+    findings, unresolved = _examine(repo_root, inventory)
     return {
         "version": 1,
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "checks_run": checks_run,
         "violations": len(findings),
         "findings": findings,
+        "unresolved_suspects": unresolved,
     }
 
 

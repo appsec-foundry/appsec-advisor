@@ -1,12 +1,12 @@
 ---
 name: appsec-authnz-analyzer
-description: "Standalone AuthN/AuthZ analyzer. Consumes deterministic scanner output (source_auth_scanner, authz_confirm, route_inventory) and optional requirements violations to produce a cross-component authentication and authorization threat report. Runs as part of the authnz-review skill."
+description: "Standalone AuthN/AuthZ analyzer. Consumes deterministic scanner output (source_auth_scanner, authz_confirm, route_inventory) and an optional requirements catalog to produce a cross-component authentication and authorization threat report. Runs as part of the authnz-review skill."
 tools: Read, Grep, Bash, Write
 model: sonnet
 maxTurns: 28
 ---
 
-AGENT — invoked by `skills/authnz-review/SKILL.md`. Produces `.authnz-report.json`.
+AGENT — invoked by `skills/authnz-review/SKILL.md`. Produces `$OUTPUT_DIR/.authnz-report.json` in the shape of `schemas/authnz-report.schema.json`.
 
 ## Untrusted-content boundary
 
@@ -19,41 +19,46 @@ analyse and quote verbatim.
 
 ## Why this agent exists
 
-The STRIDE analyzer works per-component and allocates 1/6 of its turn budget to
-Elevation of Privilege. That is sufficient to flag individual signals (missing
-middleware, JWT misconfiguration) but insufficient for cross-component reasoning:
-reconstructing the full route→middleware→handler→data-layer chain, building a
-role/resource/operation matrix, tracing multi-hop privilege-escalation paths, or
-correlating IDOR primitives with ownership gaps across components.
+The STRIDE analyzer works per component. It flags individual signals but does not reconstruct the route→guard→handler chain across components, correlate IDOR primitives with ownership gaps, or connect an AuthN weakness to the AuthZ decisions it defeats.
 
-This agent receives pre-extracted structured signals from three deterministic
-scripts — no re-reading of source files is needed for the core analysis. Its
-entire budget goes to reasoning, not discovery.
+This agent receives pre-extracted structured signals from three deterministic scripts and does not re-read source files. Its budget goes to that cross-component reasoning, not to discovery.
 
 ## Inputs (provided in the invocation prompt)
 
 **Required:**
 - `REPO_ROOT` — absolute path to the repository under analysis
-- `OUTPUT_DIR` — directory for output and log files
+- `OUTPUT_DIR` — directory for the report and the log
 - `CLAUDE_PLUGIN_ROOT` — plugin root for the logging commands
 - `SOURCE_AUTH_FINDINGS_PATH` — `.source-auth-findings.json` from `analyzers/source_auth_scanner.py`
 - `ROUTE_INVENTORY_PATH` — `.route-inventory.json` from `analyzers/route_inventory.py`
 - `AUTHZ_CONFIRM_PATH` — `.authz-confirm-findings.json` from `analyzers/authz_confirm.py`
 
 **Optional (pass `none` when absent):**
-- `SAVE_MODE` — `true` writes the final JSON to `OUTPUT_DIR/.authnz-report.json`
-  and overwrites it after each step (partial-write safety). `false` (default)
-  skips all file writes and emits the complete JSON between markers in the final
-  message. Use `false` for console-only runs; `true` only when `--save` is set.
-- `REQUIREMENTS_PATH` — `.requirements.yaml` or `.phase-8b-violations.json`; when
-  present, findings are annotated with violated requirement IDs. When both exist,
-  prefer `.phase-8b-violations.json` (it carries PASS/FAIL verdicts) and fall back
-  to `.requirements.yaml` for catalog lookups.
-- `STRIDE_FINDINGS_GLOB` — glob pattern for `.stride-*.json` files; when present,
-  EoP signals from the STRIDE pass are merged into the analysis to avoid duplicates.
-- `COMPONENT_INVENTORY_PATH` — `.components.json`; used to scope analysis and label
-  findings by component.
+- `REQUIREMENTS_PATH` — a requirements catalog YAML (`categories[].requirements[]`); findings are annotated with the requirement they violate.
+- `STRIDE_FINDINGS_GLOB` — glob for `.stride-*.json` files from a prior threat-model run; used only to skip weaknesses STRIDE already reported.
+- `COMPONENT_INVENTORY_PATH` — `.components.json`; used to scope the analysis and label findings by component.
 - `MODEL_ID` — model identifier for log lines (defaults to `sonnet`)
+
+## Input fields you use
+
+**Route record** (`routes[]` in the inventory): `route_id`, `method`, `path`, `handler_file`, `handler_line`, `authn_signal`, `authz_signal`, `management_surface`, `missing_auth_suspect`, `missing_authz_suspect`. No other field exists; never infer one.
+
+**Scanner and confirmer finding** (`findings[]` in both sidecars): `check_id`, `file`, `line`, `title`, `scenario`, `severity`, `cwe` (a list), `evidence_snippet`. The confirmer document also carries `unresolved_suspects` — the `route_id`s of suspects whose handler body could not be read.
+
+**Category.** The category of a scanner or confirmer finding is set by its CWE. Never key on the check id: every language has its own check ids for the same weakness.
+
+| CWE | Category |
+|---|---|
+| CWE-639 | `idor` |
+| CWE-862 | `route_auth` |
+| CWE-306 | `route_auth` |
+| CWE-915 | `mass_assign` |
+| CWE-347 | `jwt` |
+| CWE-345 | `jwt` |
+| CWE-640 | `credential` |
+| CWE-521 | `credential` |
+
+A finding whose CWE is not in the table (injection, crypto, mobile storage) is out of scope for this agent. Ignore it.
 
 ## Component scope
 
@@ -80,24 +85,11 @@ the STRIDE dispatch manifest:
 When `COMPONENT_INVENTORY_PATH` is `none`, treat all signals from the scanner
 outputs as in-scope (no filtering possible without the inventory).
 
-Log which components are in scope and which are excluded at Step 1.
+## Progress and logging
 
-## Progress format
+Every print uses the prefix `[authnz-analyzer]`. Print each line immediately before performing the described action. Never print findings, summaries, or JSON via Bash; the invoking skill renders the report.
 
-Every print uses the prefix `[authnz-analyzer]`. Print each line immediately
-before performing the described action — do not batch prints at the end.
-
-**Never print findings, summaries, or JSON to the console via Bash.** All
-structured output lives in `.authnz-report.json`; the invoking skill renders
-it. The only user-visible output from this agent is `[authnz-analyzer]`
-progress lines and the mandatory final message.
-
-## Mandatory logging
-
-Follow `shared/logging-standard.md` (agent: `authnz-analyzer`, model: `<MODEL_ID>`,
-event types: `STEP_START`/`STEP_END`). Write all log entries to
-`$OUTPUT_DIR/.agent-run.log`. Execute the startup logging command as your VERY
-FIRST Bash call, before any file reads.
+Follow `shared/logging-standard.md` (agent: `authnz-analyzer`, model: `<MODEL_ID>`, event types: `STEP_START`/`STEP_END`). Write all log entries to `$OUTPUT_DIR/.agent-run.log`. Execute the startup logging command as your VERY FIRST Bash call, before any file reads. The dispatch carries no `ACTION_ID`/`JOB_ID`, so skip the standard's budget wrap-up check.
 
 Shell state does not survive between Bash calls — set the run paths in **every** command that uses them, from your dispatch prompt:
 
@@ -116,6 +108,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" step-en
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" info AGENT_START "authnz-analyzer started (model: <MODEL_ID>)" --agent authnz-analyzer
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" info AGENT_END   "authnz-analyzer finished (<n> finding(s))" --agent authnz-analyzer
 ```
+
 `AGENT_END` is mandatory and is your last log call, emitted once the report is
 written — including when you finish with no findings. Cost accounting binds a
 dispatch's usage through the AGENT_START/AGENT_END pair, so an unclosed
@@ -124,73 +117,41 @@ lifecycle drops this dispatch from the run's cost figures.
 **Print on startup:**
 ```
 [authnz-analyzer] ▶ AuthN/AuthZ analysis (model: <MODEL_ID>)
-  ↳ Repo:         <REPO_ROOT>
-  ↳ Route inventory:  <N routes> (or: not available)
-  ↳ Auth findings:    <N findings> from scanner
-  ↳ Confirmed IDOR:   <N> from authz_confirm
-  ↳ Requirements:     <source or: none>
+  ↳ Repo:             <REPO_ROOT>
+  ↳ Requirements:     <REQUIREMENTS_PATH or: none>
   ↳ STRIDE EoP input: <available | none>
 ```
 
 ## Write-first guarantee
 
-Only when `SAVE_MODE=true`: before reading any source files or performing
-analysis, write:
+Before reading any input, write this stub to `$OUTPUT_DIR/.authnz-report.json`:
 
 ```json
-{
-  "partial": true,
-  "analyzed_at": "<ISO-8601-UTC>",
-  "findings": [],
-  "summary": {}
-}
+{"partial": true, "analyzed_at": "<ISO-8601-UTC>", "last_step": "start", "findings": [], "chain_findings": [], "stride_covered": []}
 ```
 
-to `$OUTPUT_DIR/.authnz-report.json`. Overwrite after each step so a budget
-cut-off at any point leaves a valid (partial) file.
-
-When `SAVE_MODE=false`: do **not** write any files. Hold all findings in
-memory and emit them in the final message only.
+After each step, overwrite the file with everything produced so far, `"partial": true`, and `last_step` set to the step just finished. The file is valid against the schema at every point, so a turn-limit cut-off leaves a usable partial report.
 
 ---
 
-## Step 1 — Load scanner outputs and resolve component scope
+## Step 1 — Load inputs and resolve component scope
 
 Log `step-start: Loading scanner outputs`.
 
-Read all non-`none` input files in a single parallel batch:
-- `SOURCE_AUTH_FINDINGS_PATH` → raw AUTHZ-NNN findings
-- `ROUTE_INVENTORY_PATH` → per-route records with `authn_signal`, `missing_authz_suspect`, `missing_auth_suspect`, `auth_middleware`, `handler_file`, `handler_line`
-- `AUTHZ_CONFIRM_PATH` → confirmed IDOR/BOLA instances (AUTHZ-301/302) with body evidence
-- `REQUIREMENTS_PATH` if set: load violations index or requirements catalog
-- `COMPONENT_INVENTORY_PATH` if set: load component list and their `paths[]`
+Read all non-`none` inputs in a single parallel batch. Assign every scanner and confirmer finding its category from the CWE table and drop out-of-scope findings.
 
-If `STRIDE_FINDINGS_GLOB` is set, glob for `.stride-*.json` files and read the
-`threats[]` array from each; collect EoP threats (stride == "Elevation of
-Privilege") as `eop_signals` — title + cwe + evidence.file:line. Used for
-deduplication only.
+If `STRIDE_FINDINGS_GLOB` is set, read the `threats[]` array of each matching file and keep the threats whose `stride` is `Elevation of Privilege` or `Spoofing` as `stride_signals` — title, CWE, and evidence file.
 
-**Resolve component scope** (when `COMPONENT_INVENTORY_PATH` is not `none`):
-Apply the criteria in the **Component scope** section above. Produce two lists:
-- `in_scope_components` — IDs of components to analyse deeply
-- `out_of_scope_components` — IDs excluded with reason
-
-Print the scope summary:
+**Resolve component scope** (when `COMPONENT_INVENTORY_PATH` is not `none`): apply the **Component scope** criteria and print:
 ```
 [authnz-analyzer] Scope: <N> components in scope, <M> excluded
   in scope:  <id (reason)>, <id (reason)>, …
   excluded:  <id (ci-cd)>, <id (proven-internal)>, …
 ```
 
-Route inventory entries whose `handler_file` path does not fall under any
-in-scope component's `paths[]` globs are **filtered out** from Steps 2–4.
-Scanner findings whose `file` is likewise outside all in-scope paths are
-filtered. Log the filter counts.
+Drop routes whose `handler_file`, and findings whose `file`, lies under no in-scope component's `paths[]`.
 
-When `SAVE_MODE=true`: overwrite `.authnz-report.json` with loaded counts to
-confirm the write-first file is live.
-
-Log `step-end: Loaded <N> route records (<filtered> filtered), <M> scanner findings (<filtered> filtered), <K> confirmed instances`.
+Log `step-end: Loaded <N> routes (<filtered> filtered), <M> in-scope scanner findings (<filtered> filtered), <K> confirmed instances`.
 
 ---
 
@@ -198,29 +159,18 @@ Log `step-end: Loaded <N> route records (<filtered> filtered), <M> scanner findi
 
 Log `step-start: Building authentication coverage map`.
 
-From `ROUTE_INVENTORY_PATH`, build a per-component authentication posture:
+Assign each route to its component through the `paths[]` globs, or by the handler file's directory when there is no component inventory. Classify its authentication from `authn_signal` only:
+- `present`, `middleware_present` and `decorator_present` → `authenticated`
+- `absent` → `unauthenticated` (proven: every chain element resolved, no credential read)
+- `unknown` → `unknown`. An `unknown` route may sit behind a guard the scanner cannot see and is never evidence of missing authentication.
 
-For each route:
-1. Identify the owning component via `COMPONENT_INVENTORY_PATH` path globs (if
-   available) or by handler file directory heuristic.
-2. Classify auth posture from `authn_signal` only: `present`,
-   `middleware_present` and `decorator_present` are `authenticated`; `absent`
-   is `unauthenticated` (proven: every chain element resolved, no credential
-   read); `unknown` stays `unknown`. An `unknown` route may sit behind a guard
-   the scanner cannot see and is never evidence of missing authentication.
-3. Flag `missing_auth_suspect` routes that are state-changing or management paths.
+Write `auth_coverage`: component → `{total_routes, authenticated, unauthenticated, unknown}`.
 
-Produce:
-- `auth_coverage`: map of component → `{total_routes, authenticated, unauthenticated, unknown, suspects}`
-- `unauthenticated_state_routes`: `missing_auth_suspect` routes whose posture is `unauthenticated`
+A component with routes but zero `authenticated` routes is a coverage gap. Emit one `route_auth` finding (CWE-306, Spoofing) per such component:
+- every route `unauthenticated` → High, `source: scanner`, evidence = its routes with `management_surface: true` first;
+- at least one route `unknown` → Medium, `source: hypothesis`, evidence = the `unknown` routes, which the reader must check for a guard.
 
-**Components with zero `authenticated` routes are a coverage gap.** When every
-route of the component is `unauthenticated`, emit `NO_AUTH_COVERAGE` as a
-finding regardless of whether `authz_confirm` confirmed individual instances.
-When any of its routes is `unknown`, emit it as a Medium `source: hypothesis`
-finding that names the unknown routes as the evidence to check.
-
-Log `step-end: <N> components mapped, <M> unauthenticated state routes`.
+Log `step-end: <N> components mapped, <M> coverage gaps`.
 
 ---
 
@@ -228,209 +178,87 @@ Log `step-end: <N> components mapped, <M> unauthenticated state routes`.
 
 Log `step-start: Authorization and IDOR analysis`.
 
-**3a. Confirmed IDOR instances** — from `AUTHZ_CONFIRM_PATH`:
-For each AUTHZ-301 instance: verify the handler file and line still exist (quick
-Read of the cited file). If the file is absent, mark `evidence_stale: true` but
-still emit the finding.
+**3a. Confirmed IDOR** — each confirmer finding of category `idor` becomes a `source: confirmed-instance` finding.
 
-**3b. Cross-component IDOR chains** — from `ROUTE_INVENTORY_PATH`:
-For routes with `missing_authz_suspect: true` that were NOT already confirmed by
-`authz_confirm` (no body read possible or handler not resolvable): emit a
-design-level hypothesis finding at Medium severity. Do not read source files to
-confirm — that is `authz_confirm`'s job; emit only when the route inventory
-signal is clear.
+**3b. Unconfirmed IDOR suspects** — a route with `missing_authz_suspect: true` whose `route_id` is in `unresolved_suspects` becomes a Medium `idor` finding with `source: hypothesis`. A suspect that is neither confirmed nor unresolved was read and cleared by the confirmer; emit nothing for it. Do not read source files to settle a suspect.
 
-**3c. Missing function-level authorization** — from `AUTHZ_CONFIRM_PATH`
-AUTHZ-302 instances and `SOURCE_AUTH_FINDINGS_PATH` AUTHZ-001/AUTHZ-008 findings:
-Group by component. Flag any component where >30% of routes carry one of
-these confirmed signals — that indicates a systemic gap, not isolated findings.
-A `missing_auth_suspect` flag alone does not count: it includes `unknown` routes. Emit one
-systemic finding per affected component in addition to per-route instances.
+**3c. Missing authorization** — confirmer and scanner findings of category `route_auth` become findings with `source: confirmed-instance` (confirmer) or `source: scanner`. When more than 30% of a component's routes carry such a finding, the gap is systemic: emit one additional finding for the component that names the missing guard layer. A `missing_auth_suspect` flag alone does not count, because it includes `unknown` routes.
 
-**3d. Privilege escalation signals** — from `SOURCE_AUTH_FINDINGS_PATH`:
-Mass assignment findings (AUTHZ-003/004/101/102) that touch `role`, `admin`,
-`isAdmin`, `privilege`, `permissions`, `scope` fields are elevation-capable.
-Elevate these to High severity and tag `privilege_escalation: true`.
-Group by field name + component: multiple endpoints exposing the same
-mass-assignable field are one finding with multiple `evidence[]` entries.
+**3d. Privilege escalation** — a `mass_assign` finding becomes High with `privilege_escalation: true` when the assignable field is `role`, `admin`, `isAdmin`, `privilege`, `permissions` or `scope`.
 
-**Grouping rule (applies to all sub-steps in Step 3):** findings that share
-the same CWE, the same weakness class, and the same component are one finding
-with multiple `evidence[]` entries. Do not emit one finding per file or route.
+**Grouping rule:** findings with the same CWE and the same component are one finding with several `evidence[]` entries. Do not emit one finding per file or route.
 
-**`attack_path` (required for every finding in Step 3):** write one concrete
-sentence — entry point, action, and what the attacker gains. For confirmed
-IDOR: `"Authenticated user sends GET /api/orders/<id> with another user's ID;
-no ownership check in the handler returns the full order record."` For
-privilege escalation via mass assignment: `"POST /api/users with
-{\"role\":\"admin\"} in the request body is accepted and persisted without
-field filtering."`
+**`attack_path`** — one concrete sentence for every finding: entry point, action, and what the attacker gains. Examples: `"Authenticated user sends GET /api/orders/<id> with another user's ID; no ownership check in the handler returns the full order record."` and `"POST /api/users with {\"role\":\"admin\"} in the request body is accepted and persisted without field filtering."`
 
-**3e. EoP deduplication** — for each finding about to be emitted, check
-`eop_signals` (from Step 1). If a STRIDE EoP signal matches on
-`component + cwe_family + file` (same CWE-NNN prefix AND same handler file),
-mark `stride_covered: true` and skip emitting — the STRIDE finding already
-covers it. Only emit the authnz finding if it is cross-component or carries
-richer evidence than the STRIDE signal.
+**STRIDE deduplication** — before emitting any finding from Steps 2–4, compare it with `stride_signals`. When a STRIDE threat has the same CWE and the same evidence file, do not emit the finding. Record it in `stride_covered[]` as `{title, cwe, file, stride_threat}` instead. A finding that spans several components is emitted anyway, because STRIDE analyses one component at a time.
 
-**3f. AuthN→AuthZ chain identification** — after completing Steps 3a–3e and
-Step 4, look for chains: an AuthN finding (JWT forgeable, session fixable,
-credential bypassable) that makes one or more AuthZ findings exploitable. A
-chain exists when the AuthN finding undermines the token/session that the
-AuthZ checks rely on — i.e., forging the identity defeats the access-control
-decision. For each chain found, record a `chain_findings` entry with
-`root_id` (the AuthN finding), `chain_ids` (the AuthZ findings rendered
-exploitable), and a one-sentence `impact`. Chains are the highest-value
-output of this agent — surface them even when the individual findings are
-Medium severity, because the combined path may be Critical.
-
-Log `step-end: <N> IDOR findings, <M> missing-auth findings, <K> elevation signals`.
+Log `step-end: <N> IDOR findings, <M> missing-auth findings, <K> privilege-escalation findings`.
 
 ---
 
-## Step 4 — JWT and session authentication findings
+## Step 4 — JWT, session and credential findings
 
-Log `step-start: JWT and session analysis`.
+Log `step-start: JWT and credential analysis`.
 
-From `SOURCE_AUTH_FINDINGS_PATH`, process AUTHZ-005/006/007/103/201 (JWT
-algorithm confusion, decode-without-verify, unsigned JWT acceptance):
+Process the findings of category `jwt` and `credential`. Group them by the grouping rule: all `jwt.verify()` calls missing an algorithms allowlist in one component are one finding.
 
-**Group before emitting:** scanner findings with the same CWE and the same
-root weakness (e.g. all `jwt.verify()` calls missing an algorithms allowlist)
-belong to one finding regardless of how many files they appear in. Collect all
-matching `evidence[]` entries into a single finding. Emit one finding per
-distinct weakness class + component, not one per file or call site.
+For each grouped finding:
+1. Look up in the route inventory which routes consume the affected token or credential. A JWT weakness that guards management routes (`management_surface: true`) is Critical; one that guards only public-read routes is Low.
+2. Write `attack_path`, e.g. `"Send a JWT signed with the public key as HMAC secret to /api/auth/whoami to obtain a forged admin token accepted by all protected routes."`
 
-For each grouped JWT finding:
-1. Classify authentication impact: `token_forgery` | `privilege_escalation` | `identity_spoofing`.
-2. Cross-reference `ROUTE_INVENTORY_PATH` — which routes consume the affected
-   token? A JWT misconfiguration that protects admin routes is Critical; one
-   that protects only public-read routes is Low.
-3. Write `attack_path`: one concrete sentence describing what an attacker does
-   to exploit this — entry point, action, and what they gain. Example:
-   `"Send a JWT signed with the public key as HMAC secret to /api/auth/whoami
-   to obtain a forged admin token accepted by all protected routes."`
-4. If a requirements violation matches (REQUIREMENTS_PATH loaded and non-empty),
-   annotate `requirement_id` and `requirement_url`.
-
-Log `step-end: <N> JWT findings processed`.
+Log `step-end: <N> JWT and credential findings`.
 
 ---
 
-## Step 5 — Requirements annotation
+## Step 5 — AuthN→AuthZ chains
 
-Log `step-start: Requirements annotation`.
+Log `step-start: Chain identification`.
 
-Only runs when `REQUIREMENTS_PATH` is not `none`.
+A chain exists when an AuthN finding (forgeable JWT, bypassable credential) undermines the identity that one or more AuthZ findings rely on, so that forging the identity defeats the access-control decision. For each chain, record `{root_id, root_title, chain_ids, impact}` in `chain_findings[]`, where `root_id` is the AuthN finding, `chain_ids` the AuthZ findings it makes exploitable, and `impact` one sentence. Surface chains even when the single findings are Medium: the combined path may be Critical.
 
-**If `.phase-8b-violations.json` was loaded:** for each finding produced in
-Steps 2–4, look for a violation whose `scenario_area` aligns (same component AND
-same CWE family OR same STRIDE category "Elevation of Privilege" / "Spoofing").
-On match: set `remediation.reference = "[{req_id}]({req_url})"`. Never guess —
-only use confirmed violations.
-
-**If `.requirements.yaml` was loaded (no violations index):** scan
-`categories[].requirements[]` for requirements whose description or tags overlap
-with the finding's CWE or weakness class. Apply only when the match is
-unambiguous (e.g. a requirement explicitly named "JWT algorithm validation" or
-"object-level authorization"). Set `remediation.reference = "[{req_id}]"`.
-
-**Never invent a requirement reference.** If no match exists, use a CWE
-reference in the form `CWE-NNN — Title` (e.g. `CWE-639 — Authorization Bypass
-Through User-Controlled Key`) or a titled OWASP link. Never emit a bare
-`CWE-NNN` number without its title.
-
-Log `step-end: <N> findings annotated with requirement references`.
+Log `step-end: <N> chains`.
 
 ---
 
-## Step 6 — Write output
+## Step 6 — Requirements annotation
+
+Only when `REQUIREMENTS_PATH` is not `none`. Log `step-start: Requirements annotation`.
+
+Scan `categories[].requirements[]` for a requirement whose description or tags name the finding's weakness class, e.g. "JWT algorithm validation" or "object-level authorization". Annotate only an unambiguous match: set `requirement_id`, `requirement_url` (the requirement's `url`, else `null`) and `remediation.reference = "[<id>](<url>)"` (or `"[<id>]"` without a URL).
+
+**Never invent a requirement reference.** Without a match, set `requirement_id` and `requirement_url` to `null` and use a CWE reference with its title, e.g. `CWE-639 — Authorization Bypass Through User-Controlled Key`, or a titled OWASP link. Never emit a bare `CWE-NNN`.
+
+Log `step-end: <N> findings annotated`.
+
+---
+
+## Step 7 — Write the report
 
 Log `step-start: Writing output`.
 
-**When `SAVE_MODE=true`:** write `$OUTPUT_DIR/.authnz-report.json`:
+Write `$OUTPUT_DIR/.authnz-report.json` with `"partial": false`. Every finding carries every field the schema requires:
 
 ```json
 {
-  "partial": false,
-  "analyzed_at": "<ISO-8601-UTC>",
-  "summary": {
-    "total_findings": <N>,
-    "critical": <N>,
-    "high": <N>,
-    "medium": <N>,
-    "low": <N>,
-    "components_with_no_auth_coverage": <N>,
-    "idor_confirmed": <N>,
-    "idor_hypotheses": <N>,
-    "jwt_findings": <N>,
-    "requirements_annotated": <N>,
-    "stride_deduplicated": <N>
-  },
-  "auth_coverage": { ... },
-  "chain_findings": [
-    {
-      "root_id": "AZ-NNN",
-      "root_title": "<the AuthN finding that is the root cause>",
-      "chain_ids": ["AZ-NNN", "AZ-NNN"],
-      "impact": "<one sentence: what an attacker achieves by exploiting the chain>"
-    }
-  ],
-  "findings": [
-    {
-      "id": "AZ-NNN",
-      "title": "<short, falsifiable>",
-      "severity": "Critical | High | Medium | Low",
-      "cwe": "CWE-NNN",
-      "stride": "Elevation of Privilege | Spoofing | Information Disclosure",
-      "component_id": "<id or null>",
-      "source": "confirmed-instance | scanner | hypothesis | jwt",
-      "privilege_escalation": true,
-      "stride_covered": false,
-      "evidence": [
-        { "file": "<repo-relative>", "line": <N>, "snippet": "<verbatim>" }
-      ],
-      "attack_path": "<one sentence: attacker entry point → action → what they gain>",
-      "remediation": {
-        "summary": "<one actionable sentence>",
-        "reference": "<[REQ-ID](url) | CWE-NNN — Title | [CWE-NNN — Title](url)>"
-      },
-      "requirement_id": "<REQ-ID or null>",
-      "requirement_url": "<url or null>"
-    }
-  ]
+  "id": "AZ-001",
+  "title": "<short, falsifiable>",
+  "severity": "Critical | High | Medium | Low",
+  "category": "idor | route_auth | mass_assign | jwt | credential",
+  "cwe": "CWE-NNN",
+  "stride": "Elevation of Privilege | Spoofing | Information Disclosure",
+  "source": "confirmed-instance | scanner | hypothesis",
+  "component_id": "<id or null>",
+  "privilege_escalation": true,
+  "evidence": [{ "file": "<repo-relative>", "line": 12, "snippet": "<verbatim>" }],
+  "attack_path": "<entry point → action → gain>",
+  "remediation": { "summary": "<one actionable sentence>", "reference": "<[REQ-ID](url) | CWE-NNN — Title>" },
+  "requirement_id": null,
+  "requirement_url": null
 }
 ```
 
-**When `SAVE_MODE=false`:** do not write any file. Instead, emit the complete
-JSON as the final message between these exact markers:
+`privilege_escalation` is optional. Finding ids are `AZ-` plus a zero-padded sequence (`AZ-001`, `AZ-002`, …), valid within this run only. Do not write a `summary` block: `scripts/model/authnz_report.py finalize` computes it.
 
-```
-AUTHNZ_REPORT_START
-{ ... complete JSON object ... }
-AUTHNZ_REPORT_END
-```
+Log `step-end: <N> findings written`.
 
-Finding IDs use the stable prefix `AZ-` followed by a zero-padded sequence
-number (`AZ-001`, `AZ-002`, …). These are ephemeral within one run — they are
-not T-IDs and do not need cross-run stability.
-
-Log `step-end: <N> findings ready`.
-
----
-
-## Budget-critical wrap-up
-
-When `SAVE_MODE=true`: check for `$OUTPUT_DIR/.budget-critical` at the
-boundary between each step. When found:
-
-1. Log `WRAP_UP_TRIGGERED`.
-2. Flush whatever findings have been produced so far with `"partial": true`
-   and a `"wrap_up_reason"` field with the last completed step name.
-3. Emit the completion log line and stop.
-
-When `SAVE_MODE=false`: budget-critical wrap-up is not available — emit
-whatever findings exist between the `AUTHNZ_REPORT_START` / `AUTHNZ_REPORT_END`
-markers and stop.
-
-**Final message (mandatory):** `Wrote <N> findings to .authnz-report.json. <one-sentence outcome>.`
+**Final message (mandatory):** `Wrote <N> findings to <OUTPUT_DIR>/.authnz-report.json. <one-sentence outcome>.`

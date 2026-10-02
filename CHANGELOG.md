@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Findings and abuse cases use consistent, policy-capped ratings, and abuse cases are ordered by verification status and risk; a code-verified attack chain raises its findings only to the goal impact its case declares, also when evidence sampling left a step ambiguous.
 - Config and IaC findings reach the report again, and rejected configuration scans appear in Run Issues.
 - Route authentication checks resolve imported handlers, recognise method-security annotations and guards behind nested middleware calls, ignore commented-out routes, path strings and neighbouring-route or decoded-token signals, and report missing authentication only on routes proven unauthenticated, in `authnz-review` too, with findings on authenticated routes attributed to authenticated attackers.
+- `authnz-review` analyzes JWT, mass-assignment and credential-policy findings from every supported language, no longer reports IDOR suspects whose handler already checks ownership, and stops instead of printing an invalid report.
 - Full assessments confirm object-level authorization gaps and entity mass assignment again, and no longer merge stale results that an earlier run or `authnz-review --save` left in the output directory.
 - Finding deduplication preserves the highest risk, case-sensitive source paths, evidence, and scenario references.
 - Security Score withholds a score when a required scanner fails or returns invalid output while preserving available findings and diagnostics.

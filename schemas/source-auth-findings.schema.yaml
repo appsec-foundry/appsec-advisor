@@ -81,6 +81,13 @@ $defs:
         type: array
         items:
           $ref: "#/$defs/finding"
+      # Written by authz_confirm.py only: suspect routes whose handler body
+      # could not be read, so they were neither confirmed nor cleared.
+      unresolved_suspects:
+        type: array
+        items:
+          type: string
+          pattern: "^R-[0-9]{3,}$"
 
   finding:
     type: object
