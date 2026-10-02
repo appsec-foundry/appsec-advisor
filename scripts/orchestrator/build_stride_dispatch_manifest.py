@@ -484,7 +484,11 @@ def _is_datastore(c: dict) -> bool:
 
 
 def _is_exposed(c: dict) -> bool:
-    return bool(_zones(c) & EXPOSED_ZONES)
+    # `_route_exposed` is a derived enrichment set by _enrich_from_route_inventory
+    # when the static route inventory shows this component owns at least one HTTP
+    # handler.  It catches monolith packages labelled `internal-network` by the
+    # architect that are served on the same internet-facing port as the entry service.
+    return bool(_zones(c) & EXPOSED_ZONES) or bool(c.get("_route_exposed"))
 
 
 def _business_assets(c: dict) -> list:
@@ -597,6 +601,54 @@ def _cheap_stride_target(c: dict) -> bool:
     return _priority(c) > 2 and not (_is_file_upload(c) or _is_realtime(c) or _is_datastore(c) or _is_core_backend(c))
 
 
+def _owns_file(pattern: str, file: str) -> bool:
+    """Canonical component-glob ownership, as in reconcile_privileged_roles._owns.
+
+    A catch-all pattern (``**``) is a fallback scope, not ownership evidence.
+    """
+    from model.reclassify_components import _glob_to_regex
+
+    if pattern.strip("/") in {"**", "**/*"}:
+        return False
+    if _glob_to_regex(pattern).fullmatch(file):
+        return True
+    return not re.search(r"[*?\[]", pattern) and file.startswith(pattern.rstrip("/") + "/")
+
+
+def _enrich_from_route_inventory(all_components: list, output_dir: Path) -> None:
+    """Set ``_route_exposed=True`` on any component that owns at least one HTTP
+    handler in ``.route-inventory.json``.
+
+    Mutates each matching component dict in place.  The underscore prefix marks
+    the field as derived (not analyst-authored) so downstream code can
+    distinguish the two exposure sources.
+
+    Best-effort: silently skips when the inventory is absent or unreadable so
+    the pipeline is never blocked by a missing optional artifact.
+    """
+    inv_path = output_dir / ".route-inventory.json"
+    if not inv_path.is_file():
+        return
+    try:
+        inv = json.loads(inv_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    routes = inv.get("routes") if isinstance(inv, dict) else None
+    handler_files = [
+        r["handler_file"]
+        for r in routes or []
+        if isinstance(r, dict) and isinstance(r.get("handler_file"), str) and r["handler_file"]
+    ]
+    if not handler_files:
+        return
+    for c in all_components:
+        if not isinstance(c, dict) or c.get("_route_exposed"):
+            continue
+        patterns = [str(p) for p in c.get("paths") or [] if p]
+        if any(_owns_file(p, hf) for p in patterns for hf in handler_files):
+            c["_route_exposed"] = True
+
+
 def _selection_reasons(c: dict, depth: str) -> list:
     reasons = []
     if _is_auth(c):
@@ -606,7 +658,11 @@ def _selection_reasons(c: dict, depth: str) -> list:
     if _is_llm(c):
         reasons.append("AI/LLM surface (OWASP LLM Top-10 — prompt injection / excessive agency, mandatory)")
     if _is_exposed(c):
-        reasons.append(f"internet-exposed ({','.join(sorted(_zones(c) & EXPOSED_ZONES))})")
+        zone_labels = sorted(_zones(c) & EXPOSED_ZONES)
+        if zone_labels:
+            reasons.append(f"internet-exposed ({','.join(zone_labels)})")
+        else:
+            reasons.append("internet-exposed (route-inventory)")
     if depth != "quick" and _is_cicd(c):
         reasons.append("ci-cd / deployment (supply-chain boundary)")
     if depth != "quick" and _is_crown_jewel(c):
@@ -1581,6 +1637,10 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
         except (OSError, ValueError, json.JSONDecodeError) as e:
             sys.stderr.write(f"ACTOR_SLICES: could not build actor slices: {e}\n")
 
+    # Enrich components from the deterministic route inventory before selection
+    # so that a monolith package labelled `internal-network` by the architect but
+    # carrying its own HTTP handlers is treated as internet-exposed.
+    _enrich_from_route_inventory(all_components, output_dir)
     components, selection_report = select_stride_components(all_components, depth, ceiling)
     # Prepare optional boundary context only for the already-selected STRIDE
     # set. This is deliberately downstream of inventory reconciliation and the

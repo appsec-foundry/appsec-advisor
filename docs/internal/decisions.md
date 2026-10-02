@@ -121,6 +121,7 @@ Removing an entry means listing it here in the same change.
 | DT-3 | Exposure steers component selection, and unknown exposure fails safe to full depth — an off-vocabulary zone becomes exposure-unknown, never internal | `test_builder_cheap_stride_never_screens_exposure_unknown` | `docs/internal/analysis/proposal-stride-depth-tiering-2026-07-23.md` |
 | DT-5 | Turn ceilings are computed per component at dispatch time, never declared in agent frontmatter; a ceiling paces work and never caps coverage | — *(no guard written)* | `scripts/orchestrator/build_stride_dispatch_manifest.py` |
 | DT-6 | A ceiling lift or a dropped overflow is surfaced as a run issue, never silently absorbed | `test_stride_ceiling_lift_is_surfaced`, `test_stride_ceiling_overflow_dropped_is_surfaced` | `scripts/runtime/aggregate_run_issues.py` |
+| DT-7 | A component labelled `internal-network` by the architect is treated as internet-exposed when the static route inventory shows it owns at least one HTTP handler — `_is_exposed` checks the derived `_route_exposed` flag set by `_enrich_from_route_inventory`; this prevents monolith packages served on the same internet-facing port from being silently excluded at standard depth | `test_select_internal_zone_component_selected_when_route_exposed`, `test_route_exposed_does_not_screen_under_cheap_stride` | `scripts/orchestrator/build_stride_dispatch_manifest.py` → `_enrich_from_route_inventory`, `_is_exposed` |
 
 ## Depth modes and rescans
 

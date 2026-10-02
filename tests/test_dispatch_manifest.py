@@ -9,6 +9,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
+
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = PLUGIN_ROOT / "scripts" / "validators/validate_dispatch_manifest.py"
 
@@ -2253,3 +2255,139 @@ def test_signal_location_name_cannot_activate_an_agentic_lens(tmp_path):
     )
     manifest = bm.build(tmp_path, "standard", {}, PLUGIN_ROOT)
     assert manifest["components"][0]["lens_ids"] == ["llm"]
+
+
+# ---------------------------------------------------------------------------
+# Route-inventory exposure enrichment (_enrich_from_route_inventory, DT-7)
+# ---------------------------------------------------------------------------
+
+
+def _route_inv(handler_files: list[str]) -> dict:
+    """Minimal .route-inventory.json payload for testing."""
+    return {
+        "version": "1",
+        "routes": [{"route_id": f"R-{i:03d}", "handler_file": hf} for i, hf in enumerate(handler_files, 1)],
+    }
+
+
+_HANDLER = "src/main/java/com/x/orders/OrderController.java"
+
+
+@pytest.mark.parametrize(
+    "pattern, owned",
+    [
+        ("src/main/java/com/x/orders/*.java", True),
+        ("src/main/java/com/x/orders/**", True),
+        ("src/main/java/com/x/orders", True),
+        ("src/main/java/com/x/orders/", True),
+        (_HANDLER, True),
+        ("src/*/java/com/x/orders/**", True),
+        # A wildcard in the middle must not widen ownership to the literal prefix.
+        ("src/main/java/**/logging/*.java", False),
+        ("src/*/java/com/y/**", False),
+        ("src/main/java/com/x/*.java", False),
+        ("src/main/java/com/x/ordersextra/**", False),
+        # A catch-all scope is a fallback, not evidence of owning the handler.
+        ("**", False),
+        ("**/*", False),
+    ],
+)
+def test_route_ownership_uses_canonical_glob_semantics(tmp_path, pattern, owned):
+    (tmp_path / ".route-inventory.json").write_text(json.dumps(_route_inv([_HANDLER])), encoding="utf-8")
+    comps = [{"id": "c", "paths": [pattern], "deployment_zones": ["internal-network"]}]
+    bm._enrich_from_route_inventory(comps, tmp_path)
+    assert bool(comps[0].get("_route_exposed")) is owned
+
+
+@pytest.mark.parametrize(
+    "payload", ["not json", "[]", '{"routes": null}', '{"routes": ["x", {"handler_file": 3}, {}]}']
+)
+def test_enrich_tolerates_malformed_inventory(tmp_path, payload):
+    (tmp_path / ".route-inventory.json").write_text(payload, encoding="utf-8")
+    comps = [{"id": "c", "paths": ["src/**"], "deployment_zones": ["internal-network"]}]
+    bm._enrich_from_route_inventory(comps, tmp_path)
+    assert not comps[0].get("_route_exposed")
+
+
+def test_enrich_marks_component_with_matching_handler(tmp_path):
+    (tmp_path / ".route-inventory.json").write_text(
+        json.dumps(_route_inv(["src/pkg/OrderController.java"])), encoding="utf-8"
+    )
+    comps = [{"id": "search-svc", "paths": ["src/pkg/*.java"], "deployment_zones": ["internal-network"]}]
+    bm._enrich_from_route_inventory(comps, tmp_path)
+    assert comps[0].get("_route_exposed") is True
+
+
+def test_enrich_leaves_component_without_matching_handler(tmp_path):
+    (tmp_path / ".route-inventory.json").write_text(json.dumps(_route_inv(["src/other/Foo.java"])), encoding="utf-8")
+    comps = [{"id": "worker", "paths": ["src/pkg/*.java"], "deployment_zones": ["internal-network"]}]
+    bm._enrich_from_route_inventory(comps, tmp_path)
+    assert not comps[0].get("_route_exposed")
+
+
+def test_enrich_noop_when_inventory_absent(tmp_path):
+    comps = [{"id": "x", "paths": ["src/**"], "deployment_zones": []}]
+    bm._enrich_from_route_inventory(comps, tmp_path)  # no .route-inventory.json
+    assert not comps[0].get("_route_exposed")
+
+
+def test_enrich_handles_double_star_glob(tmp_path):
+    (tmp_path / ".route-inventory.json").write_text(
+        json.dumps(_route_inv(["src/landscape/deep/sub/LandscapeController.java"])), encoding="utf-8"
+    )
+    comps = [{"id": "landscape", "paths": ["src/landscape/**/*.java"], "deployment_zones": ["internal-network"]}]
+    bm._enrich_from_route_inventory(comps, tmp_path)
+    assert comps[0].get("_route_exposed") is True
+
+
+def test_select_internal_zone_component_selected_when_route_exposed(tmp_path):
+    """A component labelled `internal-network` is selected at standard depth
+    when the route inventory shows it carries HTTP handlers (2026-10-02 regression:
+    monolith packages with `internal-network` zone were silently excluded at
+    standard depth despite owning permitAll routes on /api/**)."""
+    (tmp_path / ".route-inventory.json").write_text(
+        json.dumps(_route_inv(["src/search/OrderSearchController.java"])), encoding="utf-8"
+    )
+    comps = [
+        {"id": "frontend", "paths": ["src/frontend/**"], "deployment_zones": ["client-device"], "tier": "client"},
+        {
+            "id": "search-svc",
+            "paths": ["src/search/*.java"],
+            "deployment_zones": ["internal-network"],
+            "handles_sensitive_data": False,
+        },
+        {"id": "db", "paths": ["src/db/**"], "deployment_zones": ["prod-write-db"], "handles_sensitive_data": True},
+    ]
+    bm._enrich_from_route_inventory(comps, tmp_path)
+    selected, report = bm.select_stride_components(comps, "standard")
+    ids = {c["id"] for c in selected}
+    assert "search-svc" in ids, "route-exposed internal component must be selected"
+    assert report["excluded"] == []
+
+
+def test_route_exposed_reason_text_uses_route_inventory_label(tmp_path):
+    (tmp_path / ".route-inventory.json").write_text(
+        json.dumps(_route_inv(["src/search/OrderSearchController.java"])), encoding="utf-8"
+    )
+    comps = [{"id": "search-svc", "paths": ["src/search/*.java"], "deployment_zones": ["internal-network"]}]
+    bm._enrich_from_route_inventory(comps, tmp_path)
+    reasons = bm._selection_reasons(comps[0], "standard")
+    assert "internet-exposed (route-inventory)" in reasons
+
+
+def test_route_exposed_does_not_screen_under_cheap_stride(tmp_path):
+    """A component selected via route-inventory exposure must NOT be cheapened
+    under --cheap-stride (DT-2 / DT-3: exposure is never screenable)."""
+    (tmp_path / ".route-inventory.json").write_text(
+        json.dumps(_route_inv(["src/search/OrderSearchController.java"])), encoding="utf-8"
+    )
+    comp = {"id": "search-svc", "paths": ["src/search/*.java"], "deployment_zones": ["internal-network"]}
+    bm._enrich_from_route_inventory([comp], tmp_path)
+    assert bm._cheap_stride_target(comp) is False
+
+
+def test_zone_based_exposed_reason_still_includes_zone_label():
+    """When a component is exposed via deployment_zones, the zone label still appears."""
+    comp = {"id": "api", "deployment_zones": ["dmz"]}
+    reasons = bm._selection_reasons(comp, "standard")
+    assert any("dmz" in r for r in reasons)

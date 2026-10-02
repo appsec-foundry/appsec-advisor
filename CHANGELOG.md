@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `export-threat-model` and `authnz-review` accept `--slug`, naming their exports and pentest task files like `create-threat-model --slug` does.
 - `.appsec/actors.yaml` accepts `legitimate_roles` to add or replace modelled roles whose login lives outside the repository, preserving their declared names and access levels.
 
+### Fixed
+
+- Components labelled `internal-network` that own HTTP handlers in the route inventory are now selected for STRIDE analysis as `internet-exposed (route-inventory)` instead of being excluded.
+
 ### Changed
 
 - Architect review checks ratings and mitigations before prioritization as parallel agent jobs that also run in sandboxed sessions, preserves accepted corrections through report rebuilds without leaving a shared mitigation at the priority of a finding it no longer covers, and reports a review that covered no finding as not performed with its reason instead of running a later blanket prose pass.
