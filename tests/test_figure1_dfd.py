@@ -225,6 +225,25 @@ def test_explicit_access_groups_preserve_methods_and_individual_detail(name, mod
     assert ET.fromstring(separate).find("{*}g[@data-flow-ids='df-001 df-002']") is None
 
 
+@pytest.mark.parametrize("label", ["Credentials (MFA if enrolled)", "Session token (rotated hourly)"])
+def test_access_labels_offer_a_narrow_wrap_for_tight_gaps(label):
+    # A gap's routes can leave no run as wide as the default wrap; a narrower
+    # candidate keeps the label in the drawing without widening the figure.
+    edge = {"ids": ["df-1"], "access_group": {"label": label}}
+    texts = F._label_texts(edge, {"df-1": {"id": "df-1", "protocol": "HTTPS"}})
+    widest = [max(F._tw(line, F.FS) for line in text.split("\n")) for text in texts]
+    assert min(widest) <= 80
+    assert all(text.splitlines()[-1] == "(HTTPS)" for text in texts if "\n" in text)
+    assert all(label.split()[0] in text for text in texts)
+
+
+def test_access_label_wraps_never_exceed_three_content_lines():
+    label = "Signed request with nonce, timestamp and client certificate pinning"
+    edge = {"ids": ["df-1"], "access_group": {"label": label}}
+    texts = F._label_texts(edge, {"df-1": {"id": "df-1", "protocol": "HTTPS"}})
+    assert all(len(text.split("\n")) <= 4 for text in texts)
+
+
 @pytest.mark.parametrize("provider", ["Federation Gateway", "Independent Authentication Authority With A Longer Name"])
 def test_overview_reference_rows_name_peers_and_keep_authentication_at_receiver(provider):
     model, paths, taxonomy = _model()
