@@ -2146,10 +2146,11 @@ def _summary_architect(output_dir: Path, cfg: dict) -> str:
             if recorded and data["unresolved_or_unreviewed"] == recorded and not corrected:
                 reason = f" ({str(data['reason']).replace('_', ' ')})" if data.get("reason") else ""
                 return f"not performed — none of {recorded} findings reviewed{reason}"
+            refuted = f"; {data['excluded_refuted']} refuted and excluded" if data.get("excluded_refuted") else ""
             return (
                 f"{data['outcome'].replace('_', ' ')} — "
                 f"{data['assessment_corrected']} assessment(s), {data['remediation_corrected']} mitigation(s) corrected; "
-                f"{data['unresolved_or_unreviewed']}/{data['findings_recorded']} unresolved or unreviewed"
+                f"{data['unresolved_or_unreviewed']}/{data['findings_recorded']} unresolved or unreviewed{refuted}"
             )
         outcome = str(data.get("outcome") or "")
         if outcome in _ARCHITECT_OUTCOME_WORDS:

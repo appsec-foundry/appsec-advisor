@@ -229,6 +229,10 @@
           "type": "integer",
           "minimum": 0
         },
+        "excluded_refuted": {
+          "type": "integer",
+          "minimum": 0
+        },
         "reviewed": {
           "type": "integer",
           "minimum": 0

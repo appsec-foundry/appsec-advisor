@@ -527,3 +527,39 @@ def test_a_set_evidence_verdict_of_a_reviewed_finding_stays_fixed(tmp_path):
     (tmp_path / ".threats-merged.json").write_text(json.dumps(merged_now))
     with pytest.raises(ReviewError, match="lost downstream"):
         runtime.verify_model(tmp_path, model)
+
+
+def _coverage_row(tid, status, reason, assessment=None):
+    assessment = assessment or ("unchanged" if status == "accepted" else "unreviewed")
+    remediation = "unchanged" if status == "accepted" else "unreviewed"
+    return {"t_id": tid, "status": status, "reason": reason, "assessment": assessment, "remediation": remediation}
+
+
+@pytest.mark.parametrize(
+    ("excluded", "expected_outcome", "expected_unresolved", "expected_refuted"),
+    [
+        ([], "reviewed", 0, 0),
+        ([("T-9", "unreviewed", "refuted")], "reviewed", 0, 1),
+        ([("T-9", "unreviewed", "oversized")], "incomplete", 1, 0),
+        ([("T-9", "unreviewed", "packet_limit")], "incomplete", 1, 0),
+        ([("T-9", "unreviewed", "missing_result")], "incomplete", 1, 0),
+        ([("T-8", "unreviewed", "refuted"), ("T-9", "unreviewed", "oversized")], "incomplete", 1, 1),
+    ],
+)
+def test_refuted_exclusions_are_not_coverage_gaps(excluded, expected_outcome, expected_unresolved, expected_refuted):
+    rows = [_coverage_row("T-1", "accepted", "validated"), _coverage_row("T-2", "accepted", "validated")]
+    rows += [_coverage_row(*row) for row in excluded]
+    value = {"application": {"outcomes": rows}, "dispatch_jobs": [{"status": "returned"}]}
+    coverage = runtime.review_coverage(value)
+    runtime.validate_status({"status": "pass", "review_kind": "semantic", **coverage})
+    assert coverage["outcome"] == expected_outcome
+    assert coverage["unresolved_or_unreviewed"] == expected_unresolved
+    assert coverage["excluded_refuted"] == expected_refuted
+    assert coverage["findings_recorded"] == len(rows) - expected_refuted
+
+
+def test_reviewer_unresolved_assessment_still_counts():
+    rows = [_coverage_row("T-1", "accepted", "validated", assessment="unresolved")]
+    coverage = runtime.review_coverage({"application": {"outcomes": rows}, "dispatch_jobs": []})
+    assert coverage["outcome"] == "incomplete"
+    assert coverage["unresolved_or_unreviewed"] == 1
