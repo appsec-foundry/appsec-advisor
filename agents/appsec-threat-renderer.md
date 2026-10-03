@@ -89,7 +89,7 @@ Author only the fragments that require LLM judgement or explicitly requested enr
 - `.fragments/ms-verdict.json` — do NOT cite exact severity counts in the `opening` prose (e.g. "eight Critical and eleven High"); those drift from the real totals. The composer injects an authoritative deterministic `**Risk distribution:** 🔴 Critical: N · 🟠 High: M · …` line directly under the opening. Describe posture + consequence in words; let the injected line carry the numbers.
 - `.fragments/ms-critical-attack-tree.json` only when `threats[].risk == Critical` count is ≥ 2 in `threat-model.yaml` (the composer gate is `has_multi_critical`; skip authoring when fewer than 2 Critical findings exist)
 - `.fragments/ms-anti-patterns.json` when one or more §6 control blocks carry an `⚠ Anti-pattern:` label — derive from those labels. **Omit the file entirely** when no §6 anti-pattern is tagged; the schema requires `minItems:1` and the composer soft-skips the section when the fragment is absent.
-- `.fragments/ms-ai-exposure.json` when the system has a genuine LLM/AI surface **and** you found ≥1 LLM-specific threat. **Detect the surface from `$OUTPUT_DIR/threat-model.yaml` FIRST — that is the authoritative signal.** The surface exists when **either** (a) any `threats[]` entry is LLM-categorizable — its `title`/`description`/`component` names an LLM/AI concern (chat, chatbot, prompt, model API, tool-calling, excessive agency, system prompt, `/rest/chat`, an AI SDK), **or** (b) any `components[]` entry is an LLM/AI component. If either holds you **MUST** author this fragment. The `.recon-summary.md` section `### 7.13 AI / LLM Integration` (`**LLM detected: yes**`) is a *confirming* signal only — do **NOT** gate solely on it: when recon runs in fallback mode that heading is absent even though the YAML carries LLM threats (juice-shop 2026-07-02 shipped a blank/thin callout for exactly this reason). Do **not** rely on `KNOWN_LLM_PATTERNS` being passed as a prompt variable — the orchestrator does not always forward it. Map each LLM threat to its OWASP LLM Top-10 category (see `### ms-ai-exposure.json authoring contract` below). **Omit the file entirely** only when the YAML has NO LLM-categorizable threat AND no LLM component. Missing this fragment when LLM threats exist leaves the `### AI / LLM Exposure` Management Summary section blank; a deterministic backstop (`renderers/pregenerate_fragments.py --only ms-ai-exposure.json`) regenerates it from the YAML if you omit it, but authoring it yourself yields the richer executive prose.
+- Do not write `.fragments/ms-ai-exposure.json`: `renderers/pregenerate_fragments.py` generates it from the findings' OWASP LLM and Agentic tags.
 - `.fragments/security-posture-attack-paths.json` unless `SKIP_ATTACK_PATHS_AUTHORING=true`
 - `.fragments/requirements-compliance.md` when `CHECK_REQUIREMENTS=true` — see authoring contract below
 - Never write `.fragments/top-threats-architecture.md` (Figure 1): the composer builds it deterministically (`_render_top_threats_architecture`), and a file here would override it in the no-attack-paths fallback.
@@ -179,35 +179,6 @@ Renders as the optional **`### Architectural Anti-Patterns`** callout in the Man
 ```
 
 **Naming vocabulary** (use a canonical label, do not invent one to pad the list): `SPA without BFF` · `JWT in localStorage` · `Raw SQL string interpolation` · `Secrets hardcoded in source` · `Missing server-side authorization layer` · `Mass-assignment / unscoped object binding` · `Client-side trust boundary` · `Sanitizer bypass by default` · `Unvalidated OAuth/OIDC token` · `Server-side eval of untrusted input`. Derive each entry from the §6 control blocks / threat scenarios you have already written — this fragment is a *headline index* of them, not new analysis. The same pattern you tag here should carry the `⚠ Anti-pattern:` label in its §6 control block (see the §6.X authoring pattern below).
-
-### `ms-ai-exposure.json` authoring contract (OPTIONAL — AI / LLM surface)
-
-Renders as the optional **`### AI / LLM Exposure`** callout in the Management Summary, immediately after the anti-patterns block. Its job is to make explicit, at executive level, that the system embeds an **LLM / AI-agent surface** and to name its headline architectural risks (the OWASP LLM Top-10 lens you already applied in STRIDE) — instead of leaving them scattered across §6 control prose. Schema: `schemas/fragments/ai-exposure.schema.json` (`additionalProperties:false`).
-
-**When to author.** ONLY when the system has a genuine LLM/AI surface — but detect that from `$OUTPUT_DIR/threat-model.yaml`, which is authoritative. Author the fragment when **either** any `threats[]` entry is LLM-categorizable (its `title`/`description`/`component` names chat/chatbot/prompt/model-API/tool-calling/excessive-agency/system-prompt/`/rest/chat`/an AI SDK) **or** any `components[]` entry is an LLM/AI component. The `.recon-summary.md` section `### 7.13 AI / LLM Integration` (`**LLM detected: yes**`) is only a *confirming* signal — do NOT gate solely on it, because fallback recon omits that heading while the YAML still carries LLM threats (juice-shop 2026-07-02 shipped a thin callout for exactly this reason). Do **not** rely on `KNOWN_LLM_PATTERNS` being passed as a prompt variable — it is only forwarded to STRIDE analyzers, not to the renderer. **Omit the file entirely** only when the YAML has NO LLM-categorizable threat AND no LLM component (do NOT author an empty array; the schema requires `minItems:1`). This keeps non-AI reports unchanged: no AI surface → no fragment → the section renders nothing. Derive each `ai_risks[]` entry from the LLM threats you already recorded — this fragment is a *headline index* of them, not new analysis.
-
-```json
-{
-  "summary": "<OPTIONAL 1-sentence framing of the AI surface, 20-300 chars>",
-  "ai_risks": [                            // REQUIRED, 1-10, most severe first
-    {
-      "owasp_llm_id": "LLM01",             // OPTIONAL, enum LLM01..LLM10 (leading badge)
-      "owasp_asi_id": "ASI01",             // OPTIONAL, enum ASI01..ASI10 — agentic-surface risks only (renders a linked badge)
-      "name": "Prompt Injection",          // REQUIRED, canonical risk name (4-60 chars)
-      "severity": "red",                   // OPTIONAL, enum green|yellow|red; defaults red
-      "description": "<1-2 sentence design-review prose: which untrusted input reaches which AI sink and why it is structural, 40-400 chars>",  // REQUIRED. Components/files referenced GENERICALLY.
-      "affected_components": ["C-03"],     // OPTIONAL, C-NN ids (auto-enriched to links)
-      "findings": [                        // REQUIRED, 1-4 representative findings
-        { "ref": "T-021", "label": "User chat input concatenated into system prompt" }  // ref ^[FTM]-\\d{3,4}$
-      ]
-    }
-  ]
-}
-```
-
-**Naming vocabulary** (canonical OWASP LLM Top-10 risk names; do not invent one to pad the list): `Prompt Injection` (LLM01) · `Sensitive Information Disclosure` (LLM02) · `Model Supply Chain` (LLM03) · `Data & Model Poisoning` (LLM04) · `Improper Output Handling` (LLM05) · `Excessive Agency` (LLM06) · `System Prompt Leakage` (LLM07) · `Vector & Embedding Weaknesses` (LLM08) · `Misinformation` (LLM09) · `Unbounded Consumption` (LLM10). Map each to its `owasp_llm_id` and anchor it to the finding(s) where you recorded it.
-
-**`owasp_asi_id` (OPTIONAL — agentic surface).** Preserve the finding's explicit `owasp_asi_ids` (ASI01..ASI10). An inferred tag needs that finding's own evidenced model-directed action, goal manipulation or delegation path; another agent in the repository or a shared backend is insufficient. RAG, memory and MCP alone imply no agency. The LLM-to-ASI crosswalk is a candidate mapping, not evidence: ordinary consumption is not a cascade, and misinformation alone is not human trust exploitation. Keep different ASI classifications in separate risk groups and retain ASI-only findings even when another risk already uses their category. Reuse finding references without duplicating the underlying findings. Apply the existing ten-group limit by severity and disclose omitted groups in `summary`, pointing to the complete Findings Register.
 
 ### `ms-critical-attack-tree.json` authoring contract
 

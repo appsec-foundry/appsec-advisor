@@ -177,6 +177,38 @@ def weakness_basis_breakdown(yaml_data: dict) -> tuple[int, int, int, int] | Non
     return (confirmed + implementation + design, confirmed, implementation, design)
 
 
+def _tallied_threats(yaml_data: dict) -> list[tuple[dict, str]]:
+    """The ``threats[]`` rows the Risk-distribution tally counts, with their tally key."""
+    fold_practice = practice_fold_active(yaml_data)
+    rows = []
+    for t in yaml_data.get("threats") or []:
+        if fold_practice and is_folded_practice(t):
+            continue
+        sev = (t.get("risk") or t.get("severity") or "").strip().lower()
+        if sev in DISTRIBUTION_KEYS:
+            rows.append((t, sev))
+        elif sev in ("informational", "information"):
+            rows.append((t, "info"))
+    return rows
+
+
+def finding_confirmation(yaml_data: dict) -> tuple[int, int]:
+    """``(confirmed, findings)`` over exactly the findings the Risk distribution counts.
+
+    The Management-Summary evidence line reads "X of N findings confirmed", so
+    both numbers must range over one set: design-risk weaknesses are not
+    findings and stay out of N, and confirmation is the shared finding-state
+    authority (decision FE-21), never the stored ``evidence_tier``.
+    """
+    rows = [t for t, _ in _tallied_threats(yaml_data)]
+    confirmed = sum(
+        1
+        for t in rows
+        if _finding_state.is_confirmed(t) and (t.get("source") or "").strip() not in _DESIGN_LEVEL_SOURCES
+    )
+    return confirmed, len(rows)
+
+
 def risk_distribution_counts(yaml_data: dict) -> dict[str, int]:
     """Severity tally for the Management-Summary Risk-distribution line.
 
@@ -190,14 +222,8 @@ def risk_distribution_counts(yaml_data: dict) -> dict[str, int]:
     """
     fold_practice = practice_fold_active(yaml_data)
     counts = {k: 0 for k in DISTRIBUTION_KEYS}
-    for t in yaml_data.get("threats") or []:
-        if fold_practice and is_folded_practice(t):
-            continue
-        sev = (t.get("risk") or t.get("severity") or "").strip().lower()
-        if sev in counts:
-            counts[sev] += 1
-        elif sev in ("informational", "information"):
-            counts["info"] += 1
+    for _threat, key in _tallied_threats(yaml_data):
+        counts[key] += 1
     if fold_practice:
         for w in yaml_data.get("weaknesses") or []:
             if (w.get("severity_basis") or "") != "design-risk":
@@ -244,6 +270,12 @@ def register_floor(yaml_data: dict) -> str:
 def low_suppressed(yaml_data: dict) -> bool:
     """True when the floor excludes Low, so no Low finding could reach the tally."""
     return _FLOOR_RANK[register_floor(yaml_data)] > _FLOOR_RANK["low"]
+
+
+def tiers_below_floor(yaml_data: dict) -> list[str]:
+    """Severity tiers the register floor dropped from ``threats[]``, most severe first."""
+    floor = _FLOOR_RANK[register_floor(yaml_data)]
+    return [tier for tier, rank in sorted(_FLOOR_RANK.items(), key=lambda kv: -kv[1]) if rank < floor]
 
 
 def low_cell(yaml_data: dict, counts: dict) -> str:

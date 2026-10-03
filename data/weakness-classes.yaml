@@ -535,6 +535,13 @@ class_guidance:
 # A mechanism whose fix is purely mechanical (parameterise
 # the query, encode the output, pick a KDF) carries no question: there is
 # nothing for the team to decide, only work to schedule.
+#
+# `answer_decides` names what the answer settles: `design-intent` (which access
+# or field is meant to be allowed), `deployment-fact` (what production outside
+# this repository enforces or still accepts), or `business-weighting` (how much
+# the reachable data matters). An explicit no-material-harm declaration already
+# answers a business-weighting question for its components, so it is not asked
+# there; the other two stay open whatever the declared impact.
 mechanism_guidance:
   unrestricted-attribute-binding:
     weakness_name: "Privileged attributes lack an enforced write allowlist"
@@ -546,6 +553,7 @@ mechanism_guidance:
     structural_fix: >-
       define operation-specific write schemas and assign privileged attributes
       exclusively through server-side policy
+    answer_decides: design-intent
     team_question: >-
       Which fields accepted by {component} may users change themselves, and which require staff approval?
     decision_impact: >-
@@ -584,6 +592,7 @@ mechanism_guidance:
     structural_fix: >-
       move reusable credentials behind a server-managed session boundary and
       keep browser-visible state free of reusable authentication secrets
+    answer_decides: deployment-fact
     team_question: >-
       How quickly can operators revoke a stolen session for {component} across its production clients?
     decision_impact: >-
@@ -619,6 +628,7 @@ mechanism_guidance:
     structural_fix: >-
       start every sign-in through a maintained OAuth/OIDC client that
       generates and verifies state (and PKCE) for each authorization request
+    answer_decides: deployment-fact
     team_question: >-
       Which callback protections does the production identity provider enforce for {component} independently of this client?
     decision_impact: >-
@@ -658,6 +668,7 @@ mechanism_guidance:
     structural_fix: >-
       provide one parameterised repository or query-builder path and prohibit
       application-value interpolation in database queries
+    answer_decides: business-weighting
     team_question: >-
       Which sensitive business records can the production database account used by {component} access?
     decision_impact: >-
@@ -676,6 +687,7 @@ mechanism_guidance:
       build document queries from fixed operator structures, coerce request
       values to the expected scalar types, and disable server-side JavaScript
       evaluation in the database
+    answer_decides: business-weighting
     team_question: >-
       Which other business datasets can the production database connection used by {component} access?
     decision_impact: >-
@@ -710,6 +722,7 @@ mechanism_guidance:
     structural_fix: >-
       enforce server-side schemas and domain-specific allowlists before input
       reaches parsing, persistence, or command construction
+    answer_decides: deployment-fact
     team_question: >-
       Which parameter restrictions does infrastructure outside this repository enforce before requests reach {component}?
     decision_impact: >-
@@ -735,8 +748,9 @@ mechanism_guidance:
     structural_fix: >-
       enforce authorization through a shared server-side policy layer and make
       ownership and tenant scope mandatory inputs to data access
+    answer_decides: design-intent
     team_question: >-
-      Which cross-user or cross-tenant operations in {component} are intended for support staff or administrators?
+      Which operations on other users' or tenants' data in {component} are intended for support staff or administrators?
     decision_impact: >-
       Each access confirmed as intended narrows the finding to the remaining
       routes; if none are intended, every listed route is a live
@@ -751,6 +765,7 @@ mechanism_guidance:
     structural_fix: >-
       centralise token validation on a vetted library with pinned algorithms,
       issuer and audience checks, and managed signing keys
+    answer_decides: deployment-fact
     team_question: >-
       Which other production services accept identities or roles from tokens issued by {component}?
     decision_impact: >-
@@ -774,6 +789,7 @@ mechanism_guidance:
     structural_fix: >-
       enforce authentication centrally at the routing and channel boundary so every
       exposed endpoint requires a verified session unless explicitly marked public
+    answer_decides: design-intent
     team_question: >-
       Which operations in {component} are intended to be available without login?
     decision_impact: >-
@@ -795,6 +811,7 @@ mechanism_guidance:
     structural_fix: >-
       move every secret to a managed secret store or injected environment
       configuration, rotate the exposed values, and add secret-scanning to CI
+    answer_decides: deployment-fact
     team_question: >-
       Which production deployments still accept credentials exposed in the history of {component}?
     decision_impact: >-
@@ -814,6 +831,7 @@ mechanism_guidance:
     structural_fix: >-
       pin every third-party action and build dependency to an immutable commit SHA
       (or a vetted internal mirror) and enforce SHA-pinning in CI
+    answer_decides: deployment-fact
     team_question: >-
       Who can publish the build inputs used by {component} without independent approval?
     decision_impact: >-
@@ -830,6 +848,7 @@ mechanism_guidance:
     structural_fix: >-
       introduce a backend-for-frontend that holds OAuth tokens server-side and
       gives the browser a hardened HttpOnly session cookie
+    answer_decides: deployment-fact
     team_question: >-
       Which production restrictions outside this repository limit reuse of a stolen browser token for {component}?
     decision_impact: >-
@@ -855,6 +874,7 @@ mechanism_guidance:
     structural_fix: >-
       standardise on a password KDF, a CSPRNG for secrets, and modern
       authenticated cryptographic primitives with centrally reviewed parameters
+    answer_decides: deployment-fact
     team_question: >-
       Which stored business records in {component} require migration when this cryptographic primitive is replaced?
     decision_impact: >-

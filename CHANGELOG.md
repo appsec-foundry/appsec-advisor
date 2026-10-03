@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `export-threat-model` and `authnz-review` accept `--slug`, naming their exports and pentest task files like `create-threat-model --slug` does.
 - Run Issues report as errors a delivered model with two findings for the same code location and weakness, a verified finding that does not say how it was verified, or an architect review that counts refuted findings as unresolved.
 - `.appsec/actors.yaml` accepts `legitimate_roles` to add or replace modelled roles whose login lives outside the repository, preserving their declared names and access levels.
+- The Management Summary verdict opens with the modelled components by tier and the external services they exchange data with.
 
 ### Fixed
 
@@ -32,10 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SBOM generation, image signing and Dependabot ecosystem coverage are judged once for the whole repository and only where they apply, so one workflow without an SBOM step no longer yields a finding when another generates one.
 - Findings about something missing name the files that were searched and are verified by re-running their check, instead of citing line 1 or line 0 of a file.
 - Components labelled `internal-network` that own HTTP handlers in the route inventory are now selected for STRIDE analysis as `internet-exposed (route-inventory)` instead of being excluded.
+- The AI / LLM Exposure section lists every LLM-tagged finding once per OWASP category under that category's name, with agentic ids on the finding they belong to, and no longer pulls in unrelated findings from the same component.
 
 ### Changed
 
-- Findings whose evidence was never verified, or whose cited line was merely found, no longer count as confirmed in the summary's confirmed-exploitable figure or the posture verdict; they stay in the findings register.
+- The Management Summary states how many of its findings are confirmed in code instead of calling them confirmed-exploitable, lists weakness classes on their own line, and names the reporting threshold in its method line; findings whose evidence was never verified, or whose cited line was merely found, no longer count as confirmed there or in the posture verdict.
 - Figure 1 reorders components within their layer when that clearly reduces line crossings, and says so in its legend; otherwise it keeps C-number order.
 
 - Architect review checks ratings and mitigations before prioritization as parallel agent jobs that also run in sandboxed sessions, preserves accepted corrections through report rebuilds without leaving a shared mitigation at the priority of a finding it no longer covers, and reports a review that covered no finding as not performed with its reason instead of running a later blanket prose pass.
@@ -50,7 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Interactive runs save confirmed business context in `docs/security/business-context.md` with legacy-path fallback, and prioritised mitigations name the declared business-critical assets they protect.
 - Report sections use Figure 1's actor names consistently, and Identified Actors lists each actor's access, scenarios, and finding counts.
 - Verdicts assess evidenced concerns without implying release readiness, and completion summaries lead with the assessment and grouped P1 fixes, list each concern as its prerequisite-bearing scenario sentence, and show complete requirement counts.
-- Open team questions stay in the Management Summary and focus on unresolved assumptions and decisions rather than verification of individual findings.
+- Open team questions stay in the Management Summary, focus on unresolved assumptions and decisions rather than verification of individual findings, and no longer ask how much data matters where the business context declares no material harm.
 - `/appsec-advisor:report-error` investigates suspected plugin errors and prepares anonymised GitHub issue drafts for review and explicit publication approval; `--bundle-only` retains the local diagnostic workflow.
 - New aiscb installations load verified modules on demand, and `update-baseline` uses compatible signed upstream installers while preserving installation scope and mode.
 - `create-threat-model` no longer requires the `Bash(*)` allow-list when `permissions.defaultMode` is `auto` or `bypassPermissions`, and permission failures distinguish missing from unreadable settings and provide a usable `setup-target` command.

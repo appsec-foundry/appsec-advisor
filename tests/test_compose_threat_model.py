@@ -270,12 +270,11 @@ def test_ai_exposure_renders_in_specialized_band(tmp_path: Path) -> None:
             },
             {
                 "owasp_llm_id": "LLM06",
-                "owasp_asi_id": "ASI02",
                 "name": "Excessive Agency",
                 "description": "The agent can invoke shell and SQL tools with no "
                 "human approval gate, so a successful injection escalates straight "
                 "into destructive tool execution.",
-                "findings": [{"ref": "F-002", "label": "Unguarded agent tool use"}],
+                "findings": [{"ref": "F-002", "label": "Unguarded agent tool use", "owasp_asi_ids": ["ASI02"]}],
             },
         ],
     }
@@ -288,8 +287,11 @@ def test_ai_exposure_renders_in_specialized_band(tmp_path: Path) -> None:
     assert "Prompt Injection" in ms_slice
     assert "LLM01" in ms_slice
     assert "Excessive Agency" in ms_slice
-    # The Agentic-Top-10 (ASI) id renders as a linked badge to the OWASP resource.
-    assert "[ASI02](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/)" in ms_slice
+    # The Agentic-Top-10 (ASI) id renders as a linked badge on its own finding line.
+    asi_link = "[ASI02](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/)"
+    finding_line = next(line for line in ms_slice.splitlines() if "Unguarded agent tool use" in line)
+    assert asi_link in finding_line
+    assert all(asi_link not in line for line in ms_slice.splitlines() if "Unsanitized prompt assembly" in line)
     # Ordering (2026-07-14): Verdict → Security Posture & Top Threats → Top
     # Mitigations → AI Exposure. The LLM callout now sits in the specialized-
     # surface band after the headline threat/mitigation tables, not at MS #2.
@@ -5220,7 +5222,8 @@ def test_verdict_scope_coverage_line(tmp_path: Path) -> None:
     import renderers.pregenerate_fragments as pregen
 
     assert pregen.method_and_limits(yaml_data["meta"]) in out
-    assert "; Worker and DB were not analysed — see [§1 Scope](#scope)" in out
+    assert "; Worker and DB were not analysed; Low and Informational findings not reported" in out
+    assert "(threshold: medium) — see [§1 Scope](#scope)" in out
     assert "**Scope:**" not in out and "lower-priority / internal" not in out
 
 
@@ -5253,7 +5256,11 @@ def test_verdict_basis_line_is_unconditional(tmp_path: Path) -> None:
     )
     # No component_selection at all — scope_coverage stays empty.
     ctx = compose.RenderContext(
-        output_dir=tmp_path, contract={}, yaml_data={"meta": {}, "threats": []}, triage={}, fragments_dir=frag
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={"meta": {"register_severity_floor": "low"}, "threats": []},
+        triage={},
+        fragments_dir=frag,
     )
     env = compose._build_jinja_env(ctx)
     section = {"fragment": "ms-verdict.json", "schema": "verdict.schema.json", "template": "verdict.md.j2"}
@@ -5297,7 +5304,8 @@ def test_verdict_scope_coverage_counts_screening_separately(tmp_path: Path) -> N
     )
     cs = _cs_with_exclusions()
     cs["selected"][1]["analysis_depth"] = "screening"
-    yaml_data = {"meta": {"component_selection": cs}, "threats": []}
+    # A low floor keeps the line to coverage; the floor wording has its own test.
+    yaml_data = {"meta": {"component_selection": cs, "register_severity_floor": "low"}, "threats": []}
     ctx = compose.RenderContext(output_dir=tmp_path, contract={}, yaml_data=yaml_data, triage={}, fragments_dir=frag)
     env = compose._build_jinja_env(ctx)
     section = {"fragment": "ms-verdict.json", "schema": "verdict.schema.json", "template": "verdict.md.j2"}
@@ -5473,10 +5481,10 @@ def test_verdict_low_cell_reads_na_and_names_the_threshold(tmp_path: Path) -> No
     ctx.yaml_data = {"meta": {"register_severity_floor": "medium"}, "threats": [{"risk": "High"}]}
     out = compose._render_verdict(ctx, env, section)
     assert "🟢 Low: n/a" in out
-    # The dash is not pinned: `_normalize_emdashes` rewrites it in the final
-    # document, so this asserts the claim, not the glyph.
-    assert "**Reporting threshold:** medium" in out
-    assert "Low and Informational excluded" in out
+    # The floor is named once, in the Method-and-limits line.
+    method_line = out.split("**Method and limits:**", 1)[1].split("\n", 1)[0]
+    assert "Low and Informational findings not reported (threshold: medium)" in method_line
+    assert "Reporting threshold" not in out
 
 
 def test_verdict_low_cell_reads_a_count_when_the_floor_kept_it(tmp_path: Path) -> None:
@@ -5494,7 +5502,38 @@ def test_verdict_low_cell_reads_a_count_when_the_floor_kept_it(tmp_path: Path) -
     }
     out = compose._render_verdict(ctx, env, section)
     assert "🟢 Low: 1" in out
-    assert "Reporting threshold" not in out
+    assert "not reported (threshold" not in out
+
+
+def test_verdict_evidence_line_counts_findings_apart_from_weakness_classes(tmp_path: Path) -> None:
+    """The evidence line states confirmation over the tallied findings only; a
+    stored `confirmed-exploitable` tier without established evidence is not
+    confirmed, and weakness classes sit on their own line."""
+    ctx, env, section = _verdict_ctx_with_abuse(
+        tmp_path,
+        bullets=[
+            {"title": "Full DB theft", "body": "Any internet user extracts the customer table.", "refs": ["F-001"]},
+            {"title": "Customer data reachable", "body": "Any logged-in user reads other records.", "refs": ["F-002"]},
+        ],
+        abuse_cases=None,
+    )
+    ctx.yaml_data = {
+        "meta": {},
+        "threats": [
+            {"risk": "High", "evidence_tier": "confirmed-exploitable", "evidence_check": "verified"},
+            {"risk": "Medium", "evidence_tier": "confirmed-exploitable", "source": "config-scan"},
+        ],
+        "weaknesses": [
+            {"kind": "implementation"},
+            {"kind": "design", "severity_basis": "design-risk", "severity": "High"},
+        ],
+    }
+    out = compose._render_verdict(ctx, env, section)
+    confirmed, findings = compose._severity_rollup.finding_confirmation(ctx.yaml_data)
+    assert f"**Assessment evidence:** {confirmed} of {findings} finding(s) confirmed in code" in out
+    assert (confirmed, findings) == (1, 2)
+    assert "**Weakness classes:** 2 (1 implementation, 1 design)" in out
+    assert "confirmed-exploitable" not in out
 
 
 def test_verdict_badges_bullet_anchoring_fully_viable_chain(tmp_path: Path) -> None:
@@ -6712,7 +6751,11 @@ def test_ms_open_questions_follow_top_weaknesses(monkeypatch) -> None:
     assert compose._team_questions.REPORT_INTRO in report_questions
     # The ambiguous T-002 needs triage, not a team decision: no verification bullet.
     assert "F-002" not in report_questions
-    for value in ("W-001", "F-001", "Which cross-user or cross-tenant operations in this application are intended"):
+    for value in (
+        "W-001",
+        "F-001",
+        "Which operations on other users' or tenants' data in this application are intended",
+    ):
         assert value in report_questions
     for report_line in [line for line in report_questions.splitlines() if line.startswith("- ")]:
         # The rendered shape is what keeps the enrichment passes off the block.

@@ -72,18 +72,20 @@ _Append-only history of assessment runs. Most recent first._
 
 ### Verdict
 
+**System:** The system consists of 2 components: REST API and Auth Service.
+
 🔴 **CRITICAL SECURITY POSTURE** - the fixture project has severe exploitable vulnerabilities across authentication, injection, and access control. The assessment identified **3 Critical** and **1 High** findings.
 
-**Risk distribution:** 🔴 Critical: 3 · 🟠 High: 1 · 🟡 Medium: 0 · 🟢 Low: n/a · **Total: 4**<br/>**Reporting threshold:** medium - Low and Informational excluded
+**Risk distribution:** 🔴 Critical: 3 · 🟠 High: 1 · 🟡 Medium: 0 · 🟢 Low: n/a · **Total: 4**
 
 
-**Method and limits:** Automated static analysis of code and configuration, not a pentest or a team threat-modeling session - see [§11 Out of Scope](#11-out-of-scope).
+**Method and limits:** Automated static analysis of code and configuration, not a pentest or a team threat-modeling session; Low and Informational findings not reported (threshold: medium) - see [§11 Out of Scope](#11-out-of-scope).
 
 <br/>
 
 **Security concerns behind this assessment:**
 
-<blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">
+<blockquote style="border-left: 3px solid #dc2626; padding: 16px 20px; margin: 0;">
 
 - **Admin login without a password** — SQL injection in the login endpoint lets any internet user log in as any account, including administrators, with no credentials. *(🔴 [F-002](#f-002))*
 - **Full database theft without login** — SQL injection in product search returns the full Users and Orders tables in a single web request. *(🔴 [F-001](#f-001))*

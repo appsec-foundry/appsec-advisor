@@ -7279,10 +7279,8 @@ def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
         "system-overview.md,architecture-diagrams.md,assets.md,attack-surface.md,out-of-scope.md,attack-walkthroughs.md",
     )
     # Conditional MS fragments (idempotent, self-gating — a renderer-authored
-    # copy already on disk is preserved). ms-ai-exposure.json is the recurring
-    # gap: the thin renderer often skips it, so the "AI / LLM Exposure" MS
-    # callout silently vanishes even though the yaml carries an LLM surface
-    # (2026-07-02). Deriving it here from the yaml guarantees the section.
+    # copy already on disk is preserved). ms-ai-exposure.json is model-owned:
+    # no agent writes it, and the generator always rebuilds it from the yaml.
     # ms-verdict.json joins the floor: compose HARD-fails without it, and it is
     # the one MANDATORY MS fragment neither prepare_stage2 nor this pass used to
     # regenerate — so an MS-renderer cut-off before its first Write forced a

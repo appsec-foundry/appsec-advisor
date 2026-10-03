@@ -88,9 +88,6 @@ def _snapshot_state(output_dir: Path) -> tuple[str, set[str]]:
         return "", set()
     origin = (man.get("origin_depth") or "").strip().lower()
     captured = {s.get("id") for s in (man.get("sections") or []) if s.get("captured")}
-    # v1 manifest back-compat: AI captured flagged via has_ai_exposure.
-    if not captured and man.get("has_ai_exposure"):
-        captured = {"ai_exposure_ms"}
     return origin, captured
 
 

@@ -444,20 +444,20 @@ def test_focused_renderer_line_slices_match_their_owned_contracts():
     ms = (AGENTS_DIR / "appsec-ms-renderer.md").read_text(encoding="utf-8")
     secarch = (AGENTS_DIR / "appsec-secarch-renderer.md").read_text(encoding="utf-8")
 
-    assert "lines 106–306" in ms
+    assert "lines 106–277" in ms
     assert renderer_lines[105].startswith("### MS prose")
-    assert renderer_lines[304].startswith("Finding severity does not determine compliance status")
-    assert renderer_lines[305] == ""
-    assert "lines 307–630" in secarch
-    assert renderer_lines[306].startswith("### `security-architecture.md` authoring")
-    assert renderer_lines[628] == "```"
-    assert renderer_lines[629] == ""
-    assert renderer_lines[630].startswith("## Completion")
+    assert renderer_lines[275].startswith("Finding severity does not determine compliance status")
+    assert renderer_lines[276] == ""
+    assert "lines 278–601" in secarch
+    assert renderer_lines[277].startswith("### `security-architecture.md` authoring")
+    assert renderer_lines[599] == "```"
+    assert renderer_lines[600] == ""
+    assert renderer_lines[601].startswith("## Completion")
 
     # The MS slice must actually carry the ms-verdict rules the MS renderer is
     # sent here for — an edit that lands one outside the bounds ships a rule no
     # agent ever reads (which is what the line numbers above are protecting).
-    ms_slice = "\n".join(renderer_lines[105:304])
+    ms_slice = "\n".join(renderer_lines[105:275])
     assert "`ms-verdict.json` authoring contract" in ms_slice
     assert "Assert no ranking or shared prerequisite" in ms_slice
     assert "Security concerns behind this assessment:" in ms_slice

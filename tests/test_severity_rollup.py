@@ -193,6 +193,34 @@ def test_weakness_basis_breakdown_excludes_design_sources_and_bad_evidence():
     assert combined == 4
 
 
+@pytest.mark.parametrize("with_register", [True, False])
+def test_finding_confirmation_counts_the_risk_distribution_findings(with_register):
+    """In "X of N findings confirmed", N is exactly the threats the Risk distribution
+    tallies (no design-risk weakness, no folded practice site), and X is the
+    finding-state authority, so a stored tier alone confirms nothing."""
+    threats = [
+        {"risk": "High", "evidence_tier": "confirmed-exploitable", "evidence_check": "verified"},
+        {"risk": "Medium", "evidence_tier": "confirmed-exploitable", "evidence_check": "ambiguous"},
+        {"risk": "Medium", "evidence_tier": "confirmed-exploitable"},
+        {"risk": "High", "source": "coverage-gap", "evidence_check": "verified"},
+        {"risk": "High", "evidence_tier": "insecure-practice", "evidence_check": "verified"},
+        {"risk": "Critical", "evidence_check": "refuted"},
+        {"risk": "unrated", "evidence_check": "verified"},
+    ]
+    weaknesses = (
+        [{"kind": "design", "severity_basis": "design-risk", "severity": "Critical"}, {"kind": "implementation"}]
+        if with_register
+        else []
+    )
+    data = _model(threats, weaknesses=weaknesses)
+    confirmed, findings = sr.finding_confirmation(data)
+    design_risk = sum(1 for w in weaknesses if w.get("severity_basis") == "design-risk")
+    assert findings == sum(sr.risk_distribution_counts(data).values()) - design_risk
+    assert findings == (5 if with_register else 6)
+    assert confirmed == 1
+    assert 0 <= confirmed <= findings
+
+
 def test_composer_delegates_to_this_module():
     """The composer's Management-Summary tally and this module must not drift
     apart again — they are the same function."""

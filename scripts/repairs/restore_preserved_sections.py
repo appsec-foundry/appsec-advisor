@@ -8,11 +8,11 @@ the snapshot was authored at (``standard``/``thorough``), this restores the
 fragment-driven deep sections that the shallow run does not regenerate so they
 survive into the rendered report.
 
-Currently restores:
-
-* ``ms-ai-exposure.json`` — the AI/LLM Exposure callout fragment. Copied back
-  into ``.fragments/`` only when the current run did not author one, so the
-  composer's existing presence-gated render path emits the preserved callout.
+Restores every ``substrate: fragment`` entry of the contract's
+``preserve_on_downgrade`` block, copied back into ``.fragments/`` only when the
+current run did not author one. The AI/LLM Exposure callout is not among them:
+it is generated from the current model at every depth, and a carried copy
+would cite the prior run's finding ids.
 
 §7 Security Architecture is handled directly by the composer's
 ``_resolve_security_arch_override`` (it reads the snapshot's ``prior-report.md``
@@ -80,9 +80,6 @@ def restore(output_dir: Path, current_depth: str, plugin_root: Path, repo_root: 
 
     for sid, dmeta in declared.items():
         cmeta = captured.get(sid)
-        # Back-compat with v1 manifests (no per-section block): treat AI as captured.
-        if cmeta is None and sid == "ai_exposure_ms" and manifest.get("has_ai_exposure"):
-            cmeta = {"id": sid, "fragment": "ms-ai-exposure.json", "captured": True}
         if not cmeta or not cmeta.get("captured"):
             continue
         if _is_stale(cmeta, dmeta, repo_root):

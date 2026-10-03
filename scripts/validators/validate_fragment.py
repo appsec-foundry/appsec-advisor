@@ -940,7 +940,6 @@ MS_RENDERER_FRAGMENT_TYPES = (
     "critical-attack-tree",
     "security-posture-attack-paths",
     "anti-patterns",
-    "ai-exposure",
 )
 
 

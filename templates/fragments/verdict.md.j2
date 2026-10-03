@@ -18,9 +18,13 @@
              business_context_note (renderer-computed, optional): declared no-harm scope.
              method_limits (renderer-computed, unconditional): one sentence on
              the method and any screened or unanalysed components.
+             system_line (renderer-computed, optional): what was modeled, from
+             the model's components and external services.
 -#}
 ### Verdict
-
+{% if system_line %}
+{{ system_line }}
+{% endif %}
 {{ severity_emoji(data.severity) }} {{ data.opening }}
 {% if risk_distribution %}
 {{ risk_distribution }}
@@ -34,7 +38,7 @@
 
 **{{ data.bullets_intro or ("Residual risks worth reviewing:" if data.severity == "green" else "Security concerns behind this assessment:") }}**
 
-<blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">
+<blockquote style="border-left: 3px solid #dc2626; padding: 16px 20px; margin: 0;">
 
 {% for bullet in data.bullets -%}
 - **{{ bullet.title }}** — {{ bullet.body }}{{ verified_suffixes[loop.index0] if verified_suffixes else "" }}

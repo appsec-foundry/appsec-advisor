@@ -28,6 +28,30 @@ _MAX_NAMED_ASSETS = 2
 UNNAMED_CONTEXT_NOTE = "Declared business context"
 
 
+def no_harm_components(yaml_data: dict) -> set[str]:
+    """Component ids whose applied business context explicitly declares no material harm.
+
+    An explicit no-harm declaration is distinct from unknown impact
+    (REQ-BIZ-003): only ``impact_is_material is False`` counts.
+    """
+    trace = yaml_data.get("business_context_trace") or {}
+    if not isinstance(trace, dict) or trace.get("status") != "applied":
+        return set()
+    return {
+        str(row["component_id"])
+        for row in trace.get("component_coverage") or []
+        if isinstance(row, dict) and row.get("impact_is_material") is False and row.get("component_id")
+    }
+
+
+def declared_asset_names(yaml_data: dict) -> set[str]:
+    """Asset names the applied business context names explicitly."""
+    trace = yaml_data.get("business_context_trace") or {}
+    if not isinstance(trace, dict) or trace.get("status") != "applied":
+        return set()
+    return {name for name in trace.get("declared_asset_names") or [] if isinstance(name, str)}
+
+
 def relevant_findings(yaml_data: dict) -> dict[str, tuple[str, ...]]:
     """Finding id → declared asset names it reaches; an empty tuple means the
     context applies to its component without naming an asset. Both the raw and
@@ -35,12 +59,8 @@ def relevant_findings(yaml_data: dict) -> dict[str, tuple[str, ...]]:
     trace = yaml_data.get("business_context_trace") or {}
     if not isinstance(trace, dict) or trace.get("status") != "applied":
         return {}
-    declared = {name for name in trace.get("declared_asset_names") or [] if isinstance(name, str)}
-    no_harm = {
-        row.get("component_id")
-        for row in trace.get("component_coverage") or []
-        if isinstance(row, dict) and row.get("impact_is_material") is False
-    }
+    declared = declared_asset_names(yaml_data)
+    no_harm = no_harm_components(yaml_data)
     names_by_finding: dict[str, list[str]] = {}
     for asset in yaml_data.get("assets") or []:
         if not isinstance(asset, dict) or asset.get("name") not in declared:
@@ -80,15 +100,8 @@ def mitigation_note(finding_ids: list, relevant: dict[str, tuple[str, ...]]) -> 
 
 def verdict_context_note(yaml_data: dict) -> str:
     """Disclose declared no-harm scope without changing technical concern levels."""
-    trace = yaml_data.get("business_context_trace") or {}
-    if not isinstance(trace, dict) or trace.get("status") != "applied":
-        return ""
     components = {c["id"] for c in yaml_data.get("components") or [] if isinstance(c, dict) and c.get("id")}
-    covered = {
-        row.get("component_id")
-        for row in trace.get("component_coverage") or []
-        if isinstance(row, dict) and row.get("impact_is_material") is False
-    } & components
+    covered = no_harm_components(yaml_data) & components
     if not covered:
         return ""
     return (
