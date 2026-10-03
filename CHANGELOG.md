@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `scripts/analyzers/repo_scan.py` runs selected deterministic checks without a threat model, with severity filtering and endpoint and technology inventories; it and Security Score accept local repositories or HTTPS GitHub and GitLab URLs and export YAML or JSON.
 - `export-threat-model` and `authnz-review` accept `--slug`, naming their exports and pentest task files like `create-threat-model --slug` does.
+- Run Issues report as errors a delivered model with two findings for the same code location and weakness, a verified finding that does not say how it was verified, or an architect review that counts refuted findings as unresolved.
 - `.appsec/actors.yaml` accepts `legitimate_roles` to add or replace modelled roles whose login lives outside the repository, preserving their declared names and access levels.
 
 ### Fixed

@@ -1048,6 +1048,30 @@ def _recommend_pillar_cwe_finding(issue: dict, output_dir: Path) -> dict:
     }
 
 
+def _recommend_run_invariant_violated(issue: dict, output_dir: Path) -> dict:
+    """A cross-artifact invariant that guards a fixed producer defect failed."""
+    name = (issue.get("evidence") or {}).get("outcome") or "unknown"
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "high",
+        "risk_level": "medium",
+        "summary": f"The delivered model violates the {name} invariant; the producer it guards regressed.",
+        "rationale": (
+            "Each reported invariant compares two artifacts of the same run and holds once its producer "
+            "fix is in place, so a violation names a regression rather than an ambiguous signal."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": "scripts/validators/run_invariants.py",
+                "details": f"Run run_invariants.py on the output directory and trace each {name} item to its producer.",
+            },
+        ],
+        "verification": [],
+    }
+
+
 def _recommend_privileged_role_added(issue: dict, output_dir: Path) -> dict:
     """The architecture analyst folded a confirmed privileged actor into a regular role."""
     return {
@@ -1160,6 +1184,7 @@ RECOMMENDERS: dict[str, Callable[[dict, Path], dict]] = {
     "actor_attribution_corrected": _recommend_actor_attribution_corrected,
     "privileged_role_added": _recommend_privileged_role_added,
     "pillar_cwe_finding": _recommend_pillar_cwe_finding,
+    "run_invariant_violated": _recommend_run_invariant_violated,
     "component_evidence_coverage": _recommend_component_evidence_coverage,
     "routing_effectiveness": _recommend_routing_effectiveness,
     "dispatch_count_inconsistent": _recommend_dispatch_count_inconsistent,

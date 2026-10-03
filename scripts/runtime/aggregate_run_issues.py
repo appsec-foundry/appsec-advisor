@@ -1758,6 +1758,41 @@ def _extract_unmodelled_workloads(output_dir: Path) -> list[dict]:
     ]
 
 
+# Cross-artifact invariants (validators/run_invariants.py) reported as errors
+# that do not stop the run yet. Each one guards a fixed producer defect, so a
+# violation on a current run is a regression, not noise.
+_REPORTED_INVARIANTS = ("confirmed_needs_verified", "unique_identity", "architect_refuted")
+
+
+def _extract_run_invariants(output_dir: Path) -> list[dict]:
+    """Report each violated cross-artifact invariant of the delivered model."""
+    if not (output_dir / "threat-model.yaml").is_file():
+        return []
+    from validators import run_invariants  # noqa: PLC0415 — loads the model stack only when a model exists
+
+    issues = []
+    for name in _REPORTED_INVARIANTS:
+        try:
+            violations = getattr(run_invariants, name)(output_dir)
+        except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError):
+            continue
+        if violations:
+            issues.append(
+                {
+                    "category": "run_invariant_violated",
+                    "severity": "error",
+                    "title": f"Invariant {name} violated by {len(violations)} item(s)",
+                    "evidence": {
+                        "log_file": "threat-model.yaml",
+                        "log_line": 1,
+                        "raw_event": "; ".join(violations[:10]),
+                        "outcome": name,
+                    },
+                }
+            )
+    return issues
+
+
 def _extract_pillar_cwe_findings(output_dir: Path) -> list[dict]:
     """Report findings whose primary CWE is a class-level pillar.
 
@@ -2660,6 +2695,7 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     issues.extend(_extract_unmodelled_workloads(output_dir))
     issues.extend(_extract_actor_model_corrections(output_dir, agent_log))
     issues.extend(_extract_pillar_cwe_findings(output_dir))
+    issues.extend(_extract_run_invariants(output_dir))
     issues.extend(_extract_render_integrity(output_dir))
     issues.extend(_extract_abuse_case_outcomes(output_dir))
     issues.extend(_extract_stage_coverage_collapse(output_dir))
