@@ -67,6 +67,7 @@ import yaml
 from analyzers.detect_open_registration import overview_actor_groups, overview_actor_slug
 from analyzers.weakness_classifier import load_weakness_classes
 from contexts.prepare_trust_boundary_context import boundary_endpoints_valid
+from shared._boundary_interface import is_internal_interface
 
 from renderers._severity_rollup import register_severity, register_threats, risk_distribution_counts
 from renderers.actor_presentation import attacker_display
@@ -206,15 +207,7 @@ def _figure_boundaries(d):
     ]
 
 
-def _internal_interface(row):
-    """An in-process call without a trust change is not a trust boundary.
-
-    Legacy rows may carry only kind; explicit surface/transition axes take
-    precedence, as in the report's boundary catalogue.
-    """
-    if row.get("surface") in {"network", "in-process", "build-pipeline"} and isinstance(row.get("transition"), list):
-        return row["surface"] == "in-process" and not row["transition"]
-    return row.get("kind") == "process"
+_internal_interface = is_internal_interface
 
 
 def _boundary_count_label(tbs, *, interfaces=True):

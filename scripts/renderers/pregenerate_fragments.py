@@ -68,6 +68,7 @@ from typing import Any, Iterable
 
 import yaml
 from contexts.load_business_context import RUN_ONLY_NAME
+from shared._boundary_interface import is_internal_interface
 
 from renderers._severity_rollup import (
     display_id,
@@ -603,10 +604,12 @@ def _has_ids(key: str, ids: list[str]) -> bool:
     return not (len(ids) == 1 and ids[0] == key)
 
 
-def _container_boundaries(yaml_data: dict, components: list[dict]) -> tuple[list[dict], list[dict], list[dict]]:
+def _container_boundaries(
+    yaml_data: dict, components: list[dict]
+) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
     """Split resolved boundaries into what §2.2 can draw and what it cannot.
 
-    Returns ``(into_server, application_to_data, other)``:
+    Returns ``(into_server, application_to_data, other, interfaces)``:
       * ``into_server`` — crossings from the untrusted side (the internet or a
         client-tier component) into the application or data tier. This is the
         perimeter of the deployable system and the one §2.2 draws.
@@ -614,6 +617,10 @@ def _container_boundaries(yaml_data: dict, components: list[dict]) -> tuple[list
         when there is no ingress crossing to draw (four-subgraph cap).
       * ``other`` — egress and intra-tier crossings, which a container diagram
         of tiers cannot place without inventing a zone. Named in the caption.
+      * ``interfaces`` — in-process enforcement interfaces without a trust
+        transition (``shared._boundary_interface``, the rule Figure 1 and the
+        §1 catalogue apply). Not trust boundaries, so never drawn or captioned
+        as one.
     """
     tier_by_id = {
         (c.get("id") or "").strip(): _classify_tier(c) for c in components if isinstance(c, dict) and c.get("id")
@@ -621,7 +628,11 @@ def _container_boundaries(yaml_data: dict, components: list[dict]) -> tuple[list
     into_server: list[dict] = []
     app_to_data: list[dict] = []
     other: list[dict] = []
+    interfaces: list[dict] = []
     for tb in _resolved_boundaries(yaml_data):
+        if is_internal_interface(tb):
+            interfaces.append(tb)
+            continue
         src = (tb.get("from") or "").strip()
         dst = (tb.get("to") or "").strip()
         src_tier = "external" if src.lower() == "external" else tier_by_id.get(src)
@@ -632,7 +643,7 @@ def _container_boundaries(yaml_data: dict, components: list[dict]) -> tuple[list
             app_to_data.append(tb)
         else:
             other.append(tb)
-    return into_server, app_to_data, other
+    return into_server, app_to_data, other, interfaces
 
 
 def _components_crossings(yaml_data: dict, by_tier: dict[str, list[dict]]) -> list[dict]:
@@ -661,7 +672,7 @@ def _components_crossings(yaml_data: dict, by_tier: dict[str, list[dict]]) -> li
     """
     if not (by_tier.get("application") or []):
         return []
-    into_server, _app_to_data, _other = _container_boundaries(yaml_data, yaml_data.get("components") or [])
+    into_server, _app_to_data, _other, _interfaces = _container_boundaries(yaml_data, yaml_data.get("components") or [])
     return into_server
 
 
@@ -705,6 +716,22 @@ def _tb_caption_from_entries(entries: list[str], max_entries: int = _TB_NOTE_MAX
     return (
         f"*Trust boundaries {lead}: {', '.join(shown)}{tail} — "
         f"every boundary is listed in [§1 Trust Boundaries](#trust-boundaries).*"
+    )
+
+
+def _interface_caption(interfaces: list[dict], max_entries: int = _TB_NOTE_MAX) -> str:
+    """Italic caption naming the in-process enforcement interfaces, kept apart
+    from the trust boundaries so the reader does not take them for undrawn ones.
+    Empty when there are none."""
+    entries = _tb_entries(interfaces) if interfaces else []
+    if not entries:
+        return ""
+    shown = entries[:max_entries]
+    rest = len(entries) - len(shown)
+    tail = f", +{rest} more" if rest else ""
+    return (
+        f"*Internal interfaces (in-process, no trust transition): {', '.join(shown)}{tail} — "
+        f"listed in [§1 Trust Boundaries](#trust-boundaries).*"
     )
 
 
@@ -930,7 +957,7 @@ def gen_architecture_diagrams(yaml_data: dict, figures: dict | None = None, peop
     # that is the crossing an attacker traverses — otherwise the
     # application→data boundary. Whatever is not drawn is named in the caption
     # below the diagram, never dropped.
-    srv_bounds, data_bounds, other_bounds = _container_boundaries(yaml_data, components)
+    srv_bounds, data_bounds, other_bounds, interface_bounds = _container_boundaries(yaml_data, components)
     wrap_server = bool(srv_bounds)
     wrap_data = bool(data_bounds) and not wrap_server
     undrawn = (data_bounds if wrap_server else []) + other_bounds
@@ -1049,6 +1076,10 @@ def gen_architecture_diagrams(yaml_data: dict, figures: dict | None = None, peop
     tb_caption = _tb_caption(undrawn)
     if tb_caption:
         lines.append(tb_caption)
+        lines.append("")
+    interface_caption = _interface_caption(interface_bounds)
+    if interface_caption:
+        lines.append(interface_caption)
         lines.append("")
     lines.append(f"**Key takeaway:** {takeaways['2.2']}")
     lines.append("")

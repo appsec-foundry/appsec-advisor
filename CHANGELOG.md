@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - The §2.2 container diagram draws one edge per component pair, protocol and authentication method, labelled with the most sensitive data classification it carries.
+- The §2.2 caption lists in-process interfaces without a trust transition, such as an embedded database, as internal interfaces instead of undrawn trust boundaries.
 - Components labelled `internal-network` that own HTTP handlers in the route inventory are now selected for STRIDE analysis as `internet-exposed (route-inventory)` instead of being excluded.
 
 ### Changed
