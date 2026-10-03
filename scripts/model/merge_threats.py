@@ -63,6 +63,7 @@ from shared._severity_policy import normalize_risks
 from shared._shared_sources import CODE_LEVEL_SOURCES, CONFIG_DEFECT_SOURCES, DESIGN_LEVEL_SOURCES
 
 from model.finding_intake import apply_intake
+from model.reclassify_components import resolve_owner
 
 # Stable ordering for the T-NNN deterministic sort.
 _RISK_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
@@ -829,48 +830,14 @@ _AUTHZ_TO_STRIDE: dict[str, str] = {
 }
 
 
-def _guess_component_from_path(file_path: str) -> tuple[str, str]:
-    """Best-guess initial (component_id, component_name) from the file path.
-
-    model/reclassify_components.py later refines this against the orchestrator's
-    actual components[].paths globs — when exactly one component matches
-    the evidence file the threat is reassigned automatically, and so is every
-    instance or merged_from entry that still carries the guess (FE-12). The
-    values we emit here only matter when the auto-reassignment can't decide.
-    """
-    p = file_path.replace("\\", "/").lower()
-    if any(
-        p.startswith(prefix)
-        for prefix in (
-            "frontend/",
-            "client/",
-            "web/",
-            "ui/",
-            "src/app/",
-            "app/components/",
-        )
-    ):
-        return ("frontend", "Frontend SPA")
-    if any(
-        p.startswith(prefix)
-        for prefix in (
-            "models/",
-            "db/",
-            "database/",
-            "schema/",
-            "prisma/",
-            "migrations/",
-        )
-    ):
-        return ("data-layer", "Data Layer")
-    # Default for everything else (routes/, lib/, controllers/, server.ts,
-    # app.ts, …) — the dominant case for Node.js backend apps.
-    return ("backend-api", "Backend API")
-
-
-def _source_auth_finding_to_threat(f: dict) -> dict:
+def _source_auth_finding_to_threat(f: dict, components: list | None = None) -> dict:
     """Convert one `.source-auth-findings.json` finding into the merged-threats
-    threat record shape used by Phase 10/11."""
+    threat record shape used by Phase 10/11.
+
+    A source scan works under no component, so its owner is resolved from the
+    evidence file against the component registry (``resolve_owner``). Without a
+    registry the finding carries a placeholder that reclassify_components binds
+    once one exists."""
     cwes = f.get("cwe") or []
     cwe = cwes[0] if cwes else ""
     check_id = f.get("check_id") or ""
@@ -879,7 +846,7 @@ def _source_auth_finding_to_threat(f: dict) -> dict:
         stride = "Tampering"
     severity = f.get("severity") or "Medium"
     file_path = f.get("file") or ""
-    component_id, component_name = _guess_component_from_path(file_path)
+    component_id, component_name = resolve_owner(file_path, components or []) or ("backend-api", "Backend API")
     threat = {
         "title": f.get("title") or "",
         "scenario": f.get("scenario") or "",
@@ -953,7 +920,9 @@ def _load_source_auth_findings(output_dir: Path, filename: str = ".source-auth-f
     findings = doc.get("findings") or [] if isinstance(doc, dict) else []
     if not isinstance(findings, list):
         return []
-    return [_source_auth_finding_to_threat(f) for f in findings if isinstance(f, dict)]
+    registry = _read_json_file(output_dir / ".components.json", default={})
+    components = registry.get("components") if isinstance(registry, dict) else None
+    return [_source_auth_finding_to_threat(f, components) for f in findings if isinstance(f, dict)]
 
 
 def _load_config_scan_findings(output_dir: Path) -> list[dict]:

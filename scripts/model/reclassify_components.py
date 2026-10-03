@@ -257,6 +257,33 @@ def _primary_component_id(components: list) -> str:
     return ""
 
 
+def resolve_owner(file_path: str, components: list) -> tuple[str, str] | None:
+    """The registered (id, name) owning an evidence file; None without a registry.
+
+    One matching glob wins; overlapping globs resolve to the most specific one;
+    a file no glob matches falls back to the primary component. Producers that
+    know no owner of their own (source scans, promoted abuse-case steps) use
+    this at intake, so a path never lands on a guessed id that happens to be a
+    registered component.
+    """
+    registered = [c for c in components if isinstance(c, dict) and (c.get("id") or "").strip()]
+    if not registered:
+        return None
+    primary = _primary_component_id(registered)
+    hits = _component_for(file_path, [_build_matcher(c) for c in registered])
+    if not hits:
+        cid = primary
+    elif len(hits) == 1:
+        cid = hits[0]
+    else:
+        glob_index = {
+            (c.get("id") or "").strip(): [g for g in (c.get("paths") or []) if isinstance(g, str)] for c in registered
+        }
+        cid = _most_specific_candidate([file_path], hits, glob_index, primary)
+    name = next((str(c.get("name") or cid) for c in registered if (c.get("id") or "").strip() == cid), cid)
+    return cid, name
+
+
 def _reassign_instance_owner(threat: dict, old: str, new: str) -> None:
     """Keep overview ownership aligned while retaining the original instance attribution."""
     if isinstance(threat.get("merged_from"), list):
@@ -349,8 +376,8 @@ def reclassify(data: dict) -> tuple[dict, list[dict]]:
             token = f"tier_reclassified_from_{current or 'unknown'}"
         elif current and current not in known_ids and primary_id:
             # `current` is a NON-REGISTERED placeholder/phantom component id —
-            # the "backend-api" default emitted by
-            # merge_threats._guess_component_from_path, or a pseudo component
+            # the "backend-api" placeholder a producer emits when no registry
+            # exists yet (resolve_owner), or a pseudo component
             # like "ci-cd-pipeline". It has no §2.3 component section, so the
             # §8/§6/§3 Component link dangles at a missing anchor (the
             # 2026-06-13 juice-shop T-002 dead `#backend-api` link). Unlike a

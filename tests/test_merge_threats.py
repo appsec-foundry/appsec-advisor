@@ -2137,17 +2137,40 @@ class TestConfigFindingToThreat:
         assert set(catalog.values()) <= set(mt._STRIDE_ORDER)
 
 
-class TestGuessComponentFromPath:
-    def test_frontend_prefix(self, mt):
-        assert mt._guess_component_from_path("frontend/app.ts") == ("frontend", "Frontend SPA")
-        assert mt._guess_component_from_path("client/main.js") == ("frontend", "Frontend SPA")
+class TestSourceScanOwner:
+    REGISTRY = [
+        {"id": "frontend", "name": "Admin Web", "paths": ["web/**"]},
+        {"id": "portal", "name": "Customer Portal", "paths": ["frontend/**"]},
+        {"id": "api", "name": "API", "paths": ["src/server.ts", "src/**"]},
+        {"id": "auth", "name": "Auth", "paths": ["src/auth/session.ts"]},
+    ]
 
-    def test_data_layer_prefix(self, mt):
-        assert mt._guess_component_from_path("models/user.ts") == ("data-layer", "Data Layer")
-        assert mt._guess_component_from_path("prisma/schema.prisma") == ("data-layer", "Data Layer")
+    @pytest.mark.parametrize(
+        ("file", "owner"),
+        [
+            # A guessed id that is also a registered component must not win.
+            ("frontend/app.ts", ("portal", "Customer Portal")),
+            ("web/admin/main.js", ("frontend", "Admin Web")),
+            # Overlapping globs resolve to the most specific owner.
+            ("src/auth/session.ts", ("auth", "Auth")),
+            # No glob matches: the primary component owns it.
+            ("Dockerfile", ("api", "API")),
+        ],
+    )
+    def test_owner_comes_from_the_registry(self, mt, file, owner):
+        threat = mt._source_auth_finding_to_threat({"check_id": "AUTHZ-002", "file": file}, self.REGISTRY)
+        assert (threat["component_id"], threat["component_name"]) == owner
 
-    def test_backend_default(self, mt):
-        assert mt._guess_component_from_path("routes/order.ts") == ("backend-api", "Backend API")
+    def test_without_a_registry_the_placeholder_waits_for_reclassify(self, mt):
+        threat = mt._source_auth_finding_to_threat({"check_id": "AUTHZ-002", "file": "frontend/app.ts"})
+        assert threat["component_id"] == "backend-api"
+
+    def test_loader_reads_the_registry(self, mt, tmp_path):
+        (tmp_path / ".components.json").write_text(json.dumps({"schema_version": 1, "components": self.REGISTRY}))
+        (tmp_path / ".source-auth-findings.json").write_text(
+            json.dumps({"findings": [{"check_id": "AUTHZ-002", "file": "frontend/app.ts", "line": 3}]})
+        )
+        assert [t["component_id"] for t in mt._load_source_auth_findings(tmp_path)] == ["portal"]
 
 
 class TestSourceAuthFindingToThreat:
