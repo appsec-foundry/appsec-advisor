@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A CI/CD component modelled by the architecture analyst now owns the repository's unowned build and supply-chain files, such as nested Dockerfiles, so findings on them are attributed to it.
 - The Config/IaC scan no longer reports files git ignores, including the user's global ignores, and judges agent settings only in files the repository tracks.
 - GitHub Actions permission checks accept job-level permission blocks and explicit blocks without `contents`, point at the job that lacks permissions, and report a missing block once instead of twice.
+- Config/IaC findings carry the STRIDE category their check declares, such as Elevation of Privilege for a container that runs as root, instead of every one being Information Disclosure; a finding with no category is rejected.
 - The §2.2 container diagram draws one edge per component pair, protocol and authentication method, labelled with the most sensitive data classification it carries.
 - The §2.2 caption lists in-process interfaces without a trust transition, such as an embedded database, as internal interfaces instead of undrawn trust boundaries.
 - The §2.2 introduction no longer calls every box a separate runtime process when the model places components behind an internal interface; it names them as running inside their caller's process.

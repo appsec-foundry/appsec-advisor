@@ -29,6 +29,19 @@ $defs:
     type: string
     enum: [Critical, High, Medium, Low]
 
+  strideCategory:
+    # The STRIDE category a finding reports. Catalog checks carry it in
+    # data/config-iac-checks.yaml; a synthesised finding (check_id null) must
+    # state it itself — nothing downstream supplies a default.
+    type: string
+    enum:
+      - Spoofing
+      - Tampering
+      - Repudiation
+      - Information Disclosure
+      - Denial of Service
+      - Elevation of Privilege
+
   iacType:
     type: string
     enum:
@@ -182,6 +195,8 @@ $defs:
         type: ["string", "null"]
       severity:
         $ref: "#/$defs/severity"
+      stride:
+        $ref: "#/$defs/strideCategory"
       cwe:
         type: array
         items:

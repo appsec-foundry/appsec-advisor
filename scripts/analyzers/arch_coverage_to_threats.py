@@ -63,6 +63,8 @@ try:
 except ImportError:  # pragma: no cover
     yaml = None  # type: ignore
 
+from model.finding_intake import apply_intake
+
 from analyzers.weakness_classifier import classify_cwe
 
 _HERE = Path(__file__).resolve().parents[1]
@@ -205,8 +207,6 @@ def _build_threat(
     safe_risk = risk if risk in {"High", "Medium", "Low"} else "Medium"
     threat: dict[str, Any] = {
         "t_id": None,  # assigned by --merge-into; left None on emit
-        "component_id": component_id,
-        "component_name": component_name,
         "stride": spaced_stride,
         "risk": safe_risk,
         "likelihood": "Medium",
@@ -227,6 +227,7 @@ def _build_threat(
         "architectural_violation": True,
         "rule_id": rule_id,
     }
+    apply_intake(threat, dispatch_component=component_id, component_name=component_name)
     if threat_category_id:
         threat["threat_category_id"] = threat_category_id
     if hypothesis_id:

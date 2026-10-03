@@ -37,6 +37,27 @@
 #                                `file_pattern` is only its display path.
 #   severity_if_violated       — severity if the expectation is not met
 #   cwe                        — primary CWE for the finding
+#   stride                     — the STRIDE category of the weakness this check
+#                                reports, one of Spoofing, Tampering,
+#                                Repudiation, Information Disclosure, Denial of
+#                                Service, Elevation of Privilege. Required: no
+#                                default is applied downstream. Choose the harm
+#                                the defect enables, not the file type:
+#                                  Elevation of Privilege — more privilege or
+#                                    reach than needed (root, privileged,
+#                                    broad token or IAM scope, auto-approved
+#                                    agent tools, untrusted code in a trusted
+#                                    context)
+#                                  Tampering — code, dependency or artifact
+#                                    integrity (unpinned or unsigned inputs,
+#                                    build scripts, stale dependencies)
+#                                  Information Disclosure — data or secrets
+#                                    exposed (hardcoded secrets, plaintext
+#                                    transport or storage, public exposure)
+#                                  Denial of Service — availability only
+#                                  Repudiation — missing provenance or audit
+#                                    record of what was built or done
+#                                  Spoofing — identity not established
 #   finding_type               — FT-NNN from finding-types.yaml
 #   rationale                  — 1-2 sentence reason this matters
 #   remediation                — short fix text (becomes mitigation_title_hint)
@@ -123,6 +144,7 @@ file_patterns_by_type:
 checks:
   # ============ Dockerfile ============
   - id: IAC-001
+    stride: Tampering
     name: "Dockerfile base image must be digest-pinned"
     violation_title: "Unpinned Container Base Image"
     iac_type: Dockerfile
@@ -137,6 +159,7 @@ checks:
     remediation: "Pin base image to @sha256:<digest>"
 
   - id: IAC-002
+    stride: Elevation of Privilege
     name: "Dockerfile USER directive (non-root)"
     violation_title: "Container Runs as Root"
     iac_type: Dockerfile
@@ -153,6 +176,7 @@ checks:
     remediation: "Add USER <non-root-uid>"
 
   - id: IAC-003
+    stride: Denial of Service
     name: "Dockerfile HEALTHCHECK instruction"
     violation_title: "Missing Container Healthcheck"
     iac_type: Dockerfile
@@ -168,6 +192,7 @@ checks:
     remediation: "Add HEALTHCHECK CMD curl -f http://localhost:<port>/health"
 
   - id: IAC-004
+    stride: Elevation of Privilege
     name: "Dockerfile no --unsafe-perm install flag"
     violation_title: "Package Install Scripts Run as Root"
     iac_type: Dockerfile
@@ -181,6 +206,7 @@ checks:
     remediation: "Remove --unsafe-perm; use non-root user"
 
   - id: IAC-005
+    stride: Tampering
     name: "Dockerfile npm/pnpm/yarn install without --ignore-scripts"
     violation_title: "Dependency Install Scripts Run at Build Time"
     iac_type: Dockerfile
@@ -202,6 +228,7 @@ checks:
 
   # ============ GitHub Actions Workflows ============
   - id: IAC-010
+    stride: Elevation of Privilege
     name: "GitHub Actions workflow-level permissions block"
     violation_title: "Missing Workflow Permissions Block"
     iac_type: github_workflow
@@ -215,6 +242,7 @@ checks:
     remediation: "Add `permissions: { contents: read }` at workflow root; elevate per-job only where needed"
 
   - id: IAC-011
+    stride: Tampering
     name: "Third-party GitHub Actions pinned to commit SHA"
     violation_title: "Unpinned Third-Party GitHub Action"
     iac_type: github_workflow
@@ -228,6 +256,7 @@ checks:
     remediation: "Pin every third-party action to a full 40-char commit SHA"
 
   - id: IAC-012
+    stride: Elevation of Privilege
     name: "pull_request_target must not check out head ref from fork"
     violation_title: "Fork Checkout in pull_request_target Workflow"
     iac_type: github_workflow
@@ -241,6 +270,7 @@ checks:
     remediation: "Never check out PR-head in pull_request_target. Use pull_request event (no secrets) for code execution; use pull_request_target only for metadata ops"
 
   - id: IAC-013
+    stride: Elevation of Privilege
     name: "No script injection via github.event.* expressions in run:"
     violation_title: "Workflow Script Injection from Event Data"
     iac_type: github_workflow
@@ -254,6 +284,7 @@ checks:
     remediation: "Pass via env: instead: `env: TITLE: ${{ github.event... }}` then `run: echo \"$TITLE\"`"
 
   - id: IAC-014
+    stride: Information Disclosure
     name: "No ACTIONS_STEP_DEBUG or set -x echoing secrets"
     violation_title: "Secrets Echoed in Workflow Debug Logs"
     iac_type: github_workflow
@@ -267,6 +298,7 @@ checks:
     remediation: "Remove debug flags; use ::add-mask:: for ad-hoc secrets; never echo variables starting with _TOKEN/_SECRET"
 
   - id: IAC-015
+    stride: Elevation of Privilege
     name: "GITHUB_TOKEN scope minimization"
     violation_title: "Default GITHUB_TOKEN Scope Not Restricted"
     iac_type: github_workflow
@@ -281,6 +313,7 @@ checks:
 
   # ============ docker-compose ============
   - id: IAC-020
+    stride: Elevation of Privilege
     name: "docker-compose no privileged mode"
     violation_title: "Privileged Compose Service"
     iac_type: docker_compose
@@ -294,6 +327,7 @@ checks:
     remediation: "Remove privileged: true; add individual cap_add entries only if strictly needed"
 
   - id: IAC-021
+    stride: Elevation of Privilege
     name: "docker-compose no docker.sock mount"
     violation_title: "Docker Socket Mounted into Container"
     iac_type: docker_compose
@@ -307,6 +341,7 @@ checks:
     remediation: "Remove the docker.sock volume; use docker:dind if daemon access is truly needed"
 
   - id: IAC-022
+    stride: Elevation of Privilege
     name: "docker-compose no host network mode"
     violation_title: "Compose Service on Host Network"
     iac_type: docker_compose
@@ -320,6 +355,7 @@ checks:
     remediation: "Use bridge/custom networks; expose only the needed ports via `ports:`"
 
   - id: IAC-023
+    stride: Information Disclosure
     name: "docker-compose secrets supplied by reference"
     violation_title: "Hardcoded Secret in Compose Environment"
     iac_type: docker_compose
@@ -334,6 +370,7 @@ checks:
     remediation: "Move the value to Compose `secrets` or an untracked env file and reference it as `${VAR}`; rotate the committed value"
 
   - id: IAC-024
+    stride: Information Disclosure
     name: "docker-compose data and admin ports bound to a host address"
     violation_title: "Data or Admin Port Published on All Interfaces"
     iac_type: docker_compose
@@ -353,6 +390,7 @@ checks:
   # at all is the §6.11 "Automated dependency updates" control row
   # (model/emit_sca_practice.py), not three findings here.
   - id: IAC-030
+    stride: Tampering
     name: "Dependabot covers npm ecosystem"
     violation_title: "Dependabot Does Not Cover npm"
     iac_type: dependabot
@@ -368,6 +406,7 @@ checks:
     remediation: "Add npm ecosystem entry to .github/dependabot.yml"
 
   - id: IAC-031
+    stride: Tampering
     name: "Dependabot covers github-actions ecosystem"
     violation_title: "Dependabot Does Not Cover GitHub Actions"
     iac_type: dependabot
@@ -383,6 +422,7 @@ checks:
     remediation: "Add github-actions ecosystem entry"
 
   - id: IAC-032
+    stride: Tampering
     name: "Dependabot covers docker ecosystem"
     violation_title: "Dependabot Does Not Cover Docker"
     iac_type: dependabot
@@ -411,6 +451,7 @@ checks:
   # the §6.11 "Automated dependency updates" control row.
 
   - id: IAC-033
+    stride: Tampering
     name: "Renovate config present (file-mode detection)"
     violation_title: "Renovate Configuration Missing"
     iac_type: renovate
@@ -424,6 +465,7 @@ checks:
     remediation: "Add renovate.json with a baseline preset (extends: [\"config:base\"]) OR confirm Renovate hosted-app is enabled at the repo / org level."
 
   - id: IAC-034
+    stride: Tampering
     name: "Renovate config alternative location (.github/renovate.json)"
     violation_title: "Renovate GitHub Directory Configuration Missing"
     iac_type: renovate
@@ -437,6 +479,7 @@ checks:
     remediation: "Place renovate.json at repo root or under .github/. Either is accepted by Renovate."
 
   - id: IAC-035
+    stride: Tampering
     name: "Renovate config alternative dotfile (.renovaterc[.json])"
     violation_title: "Renovate Dotfile Configuration Missing"
     iac_type: renovate
@@ -453,6 +496,7 @@ checks:
   # Repository capabilities: one workflow that signs or generates an SBOM
   # satisfies the repository, so these are judged once, not per workflow.
   - id: IAC-040
+    stride: Tampering
     name: "Container image signing via cosign or attest-build-provenance"
     violation_title: "Missing Container Image Signing"
     iac_type: github_workflow
@@ -468,6 +512,7 @@ checks:
     remediation: "Add cosign signing step to release workflow; or use actions/attest-build-provenance"
 
   - id: IAC-041
+    stride: Repudiation
     name: "SBOM generation in build pipeline"
     violation_title: "Missing SBOM Generation"
     iac_type: github_workflow
@@ -483,6 +528,7 @@ checks:
 
   # ============ NPM config ============
   - id: IAC-050
+    stride: Tampering
     name: "package-lock.json present and committed"
     violation_title: "Missing npm Lockfile"
     iac_type: npm_config
@@ -496,6 +542,7 @@ checks:
     remediation: "Commit package-lock.json; use `npm ci` in CI"
 
   - id: IAC-051
+    stride: Tampering
     name: "No postinstall scripts in package.json (or audited)"
     violation_title: "Unaudited npm Lifecycle Script"
     iac_type: npm_config
@@ -520,6 +567,7 @@ checks:
   # Explicit weakening (sandbox off, approvals off, tools auto-trusted) is a
   # violation on its own.
   - id: IAC-060
+    stride: Elevation of Privilege
     name: "Claude Code project settings must enable the command sandbox"
     violation_title: "Claude Code Command Sandbox Not Enabled"
     iac_type: agent_config
@@ -533,6 +581,7 @@ checks:
     remediation: "Set sandbox.enabled to true in the project settings; keep filesystem allow-lists in user settings, where absolute host paths belong"
 
   - id: IAC-061
+    stride: Elevation of Privilege
     name: "Claude Code settings must not disable permission prompts"
     violation_title: "Claude Code Permission Prompts Disabled"
     iac_type: agent_config
@@ -546,6 +595,7 @@ checks:
     remediation: "Remove defaultMode: bypassPermissions and grant narrow permissions.allow rules instead"
 
   - id: IAC-062
+    stride: Elevation of Privilege
     name: "Claude Code settings must not auto-trust repository MCP servers"
     violation_title: "Claude Code Auto-Trusts Repository MCP Servers"
     iac_type: agent_config
@@ -559,6 +609,7 @@ checks:
     remediation: "Remove enableAllProjectMcpServers and approve MCP servers individually"
 
   - id: IAC-063
+    stride: Elevation of Privilege
     name: "Codex project config must not disable the sandbox"
     violation_title: "Codex Sandbox Disabled"
     iac_type: agent_config
@@ -572,6 +623,7 @@ checks:
     remediation: "Set sandbox_mode = \"workspace-write\" (or \"read-only\") in .codex/config.toml"
 
   - id: IAC-064
+    stride: Elevation of Privilege
     name: "Codex project config must not disable approvals"
     violation_title: "Codex Approvals Disabled"
     iac_type: agent_config
@@ -585,6 +637,7 @@ checks:
     remediation: "Use approval_policy = \"on-request\" or \"untrusted\" in the project config"
 
   - id: IAC-065
+    stride: Information Disclosure
     name: "Codex sandbox must not be granted network access"
     violation_title: "Codex Sandbox Network Access Enabled"
     iac_type: agent_config
@@ -598,6 +651,7 @@ checks:
     remediation: "Drop network_access = true, or constrain traffic with the network_proxy domain policy"
 
   - id: IAC-066
+    stride: Elevation of Privilege
     name: "VS Code workspace settings must not auto-approve every agent tool"
     violation_title: "VS Code Agent Tools Auto-Approved"
     iac_type: agent_config
@@ -611,6 +665,7 @@ checks:
     remediation: "Remove chat.tools.global.autoApprove and allow-list individual commands via chat.tools.terminal.autoApprove"
 
   - id: IAC-067
+    stride: Elevation of Privilege
     name: "VS Code workspace settings must not turn the agent sandbox off"
     violation_title: "VS Code Agent Sandbox Disabled"
     iac_type: agent_config
@@ -624,6 +679,7 @@ checks:
     remediation: "Set chat.agent.sandbox.enabled to \"on\" or drop the key so the user's own setting applies"
 
   - id: IAC-068
+    stride: Elevation of Privilege
     name: "Gemini CLI project settings must enable sandboxing"
     violation_title: "Gemini CLI Sandbox Not Enabled"
     iac_type: agent_config
@@ -637,6 +693,7 @@ checks:
     remediation: "Set tools.sandbox to \"docker\" or \"podman\" in .gemini/settings.json"
 
   - id: IAC-069
+    stride: Elevation of Privilege
     name: "Gemini CLI project settings must not auto-trust tools"
     violation_title: "Gemini CLI Tools Auto-Trusted"
     iac_type: agent_config
@@ -650,6 +707,7 @@ checks:
     remediation: "Remove trust: true and autoAccept from the project settings"
 
   - id: IAC-070
+    stride: Elevation of Privilege
     name: "Kiro workspace MCP servers must not auto-approve tools"
     violation_title: "Kiro MCP Tools Auto-Approved"
     iac_type: agent_config
@@ -663,6 +721,7 @@ checks:
     remediation: "Empty the autoApprove list, or keep only read-only tools in it"
 
   - id: IAC-071
+    stride: Elevation of Privilege
     name: "Automation must not run a coding agent without sandbox or approvals"
     violation_title: "Unsandboxed Coding Agent in Automation"
     iac_type: agent_automation
@@ -676,6 +735,7 @@ checks:
     remediation: "Drop the bypass flag and grant the agent the specific tools the job needs"
 
   - id: IAC-072
+    stride: Elevation of Privilege
     name: "Committed agent hooks must not run remote or constructed commands"
     violation_title: "Agent Hook Runs Remote or Constructed Commands"
     iac_type: agent_config
@@ -689,6 +749,7 @@ checks:
     remediation: "Replace the hook body with a checked-in script that takes no interpolated input and fetches nothing at run time"
 
   - id: IAC-073
+    stride: Information Disclosure
     name: "Committed agent hooks must not egress or delete on every trigger"
     violation_title: "Agent Hook Egresses or Deletes on Every Trigger"
     iac_type: agent_config
@@ -702,6 +763,7 @@ checks:
     remediation: "Drop the network call or destructive command from the hook, or gate it behind an explicit local opt-in"
 
   - id: IAC-074
+    stride: Elevation of Privilege
     name: "Committed permission rules must not grant shell or credential access"
     violation_title: "Agent Permission Rules Grant Shell or Credential Access"
     iac_type: agent_config
@@ -715,6 +777,7 @@ checks:
     remediation: "Narrow each allow rule to the command or path the workflow needs, and keep credential paths in permissions.deny"
 
   - id: IAC-075
+    stride: Information Disclosure
     name: "Committed permission rules must not grant unrestricted read or fetch"
     violation_title: "Agent Permission Rules Grant Unrestricted Read or Fetch"
     iac_type: agent_config
@@ -732,6 +795,7 @@ checks:
   # ReplicaSet, ReplicationController, Job, CronJob). A missing NetworkPolicy is
   # a property of a namespace across files and is not checked per file.
   - id: IAC-080
+    stride: Elevation of Privilege
     name: "Kubernetes containers run unprivileged"
     violation_title: "Privileged Kubernetes Container"
     iac_type: kubernetes
@@ -745,6 +809,7 @@ checks:
     remediation: "Remove `privileged: true`; add only the individual capabilities the workload needs"
 
   - id: IAC-081
+    stride: Elevation of Privilege
     name: "Kubernetes pods keep their own namespaces"
     violation_title: "Kubernetes Pod Shares Host Namespaces"
     iac_type: kubernetes
@@ -758,6 +823,7 @@ checks:
     remediation: "Remove `hostNetwork`/`hostPID`/`hostIPC` and expose the workload through a Service"
 
   - id: IAC-082
+    stride: Elevation of Privilege
     name: "Kubernetes containers are prevented from running as root"
     violation_title: "Kubernetes Container Allowed to Run as Root"
     iac_type: kubernetes
@@ -771,6 +837,7 @@ checks:
     remediation: "Set `securityContext.runAsNonRoot: true` and a non-zero `runAsUser` on the pod or each container"
 
   - id: IAC-083
+    stride: Information Disclosure
     name: "Kubernetes container secrets come from Secret references"
     violation_title: "Hardcoded Secret in Kubernetes Container Env"
     iac_type: kubernetes
@@ -785,6 +852,7 @@ checks:
     remediation: "Store the value in a Secret and reference it with `valueFrom.secretKeyRef`; rotate the committed value"
 
   - id: IAC-084
+    stride: Information Disclosure
     name: "Kubernetes Ingresses and OpenShift Routes terminate TLS"
     violation_title: "Kubernetes Ingress or Route Without TLS"
     iac_type: kubernetes
@@ -802,6 +870,7 @@ checks:
   # .gitlab/auto-deploy-values.yaml configure the rendered workload. The chart
   # templates themselves have no checks, so `helm` stays an uncovered surface.
   - id: IAC-085
+    stride: Elevation of Privilege
     name: "Helm chart values run the container unprivileged"
     violation_title: "Privileged Container in Helm Chart Values"
     iac_type: helm_values
@@ -815,6 +884,7 @@ checks:
     remediation: "Remove `privileged: true` from the values; add only the individual capabilities the workload needs"
 
   - id: IAC-086
+    stride: Information Disclosure
     name: "Helm chart values enable the ingress only with TLS"
     violation_title: "Helm Chart Ingress Without TLS"
     iac_type: helm_values
@@ -829,6 +899,7 @@ checks:
 
   # ============ Terraform ============
   - id: IAC-090
+    stride: Information Disclosure
     name: "Terraform ingress to data and admin ports is restricted"
     violation_title: "Data or Admin Port Open to the Internet"
     iac_type: terraform
@@ -843,6 +914,7 @@ checks:
     remediation: "Restrict the source to known CIDRs or security groups and reach admin ports through a bastion or VPN"
 
   - id: IAC-091
+    stride: Information Disclosure
     name: "Terraform storage buckets and containers are private"
     violation_title: "Publicly Accessible Storage Bucket"
     iac_type: terraform
@@ -857,6 +929,7 @@ checks:
     remediation: "Enable all public access block flags, drop public ACLs, and grant bucket access to named principals only"
 
   - id: IAC-092
+    stride: Information Disclosure
     name: "Terraform data stores encrypt data at rest"
     violation_title: "Unencrypted Data Store at Rest"
     iac_type: terraform
@@ -870,6 +943,7 @@ checks:
     remediation: "Set the resource's encryption flag to `true`, preferably with a customer-managed KMS key"
 
   - id: IAC-093
+    stride: Information Disclosure
     name: "Terraform credentials come from variables without defaults or a secret store"
     violation_title: "Hardcoded Credential in Terraform Configuration"
     iac_type: terraform
@@ -884,6 +958,7 @@ checks:
     remediation: "Declare the variable without a default and mark it `sensitive`, or read the value from a secret manager data source; rotate the committed value"
 
   - id: IAC-094
+    stride: Information Disclosure
     name: "Terraform load balancers serve HTTPS"
     violation_title: "Load Balancer Serving Plain HTTP"
     iac_type: terraform
@@ -897,6 +972,7 @@ checks:
     remediation: "Add an HTTPS listener with an ACM certificate and turn the HTTP listener into a redirect to HTTPS"
 
   - id: IAC-095
+    stride: Information Disclosure
     name: "Terraform compute resources stay without public IP addresses"
     violation_title: "Compute Resource With a Public IP Address"
     iac_type: terraform
@@ -910,6 +986,7 @@ checks:
     remediation: "Place the instance or task in a private subnet without a public IP and reach it through a load balancer or NAT"
 
   - id: IAC-096
+    stride: Information Disclosure
     name: "Terraform databases are not publicly accessible"
     violation_title: "Publicly Accessible Database Instance"
     iac_type: terraform
@@ -924,6 +1001,7 @@ checks:
     remediation: "Set `publicly_accessible = false` and reach the database only from the application subnets"
 
   - id: IAC-097
+    stride: Elevation of Privilege
     name: "Terraform IAM policies grant specific actions on specific resources"
     violation_title: "Wildcard IAM Permissions on All Resources"
     iac_type: terraform

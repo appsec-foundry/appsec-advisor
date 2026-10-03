@@ -20,6 +20,7 @@ def _check(check_id: str, iac_type: str, file_pattern: str, expect: str, **extra
         "expect": expect,
         "severity_if_violated": "Medium",
         "cwe": "CWE-1000",
+        "stride": "Tampering",
         "finding_type": "FT-100",
         "rationale": "The setting must satisfy policy.",
         "remediation": "Apply the secure setting",
@@ -403,6 +404,31 @@ def test_catalog_rejects_an_unknown_breach_vector(tmp_path):
     catalog = _catalog(tmp_path, [_check("IAC-900", "Dockerfile", "Dockerfile", "absent", breach_vector="Nearby")])
     with pytest.raises(scanner.ConfigScanError, match="breach_vector"):
         scanner.scan(tmp_path, catalog, depth="standard", output=tmp_path / "r.json")
+
+
+def test_catalog_rejects_a_check_without_a_stride_category(tmp_path):
+    check = _check("IAC-900", "Dockerfile", "Dockerfile", "absent")
+    del check["stride"]
+    with pytest.raises(scanner.ConfigScanError, match="incomplete"):
+        scanner.scan(tmp_path, _catalog(tmp_path, [check]), depth="standard", output=tmp_path / "r.json")
+
+
+@pytest.mark.parametrize("stride", ["Disclosure", "tampering", "", None, "Information-Disclosure"])
+def test_catalog_rejects_an_unknown_stride_category(tmp_path, stride):
+    catalog = _catalog(tmp_path, [_check("IAC-900", "Dockerfile", "Dockerfile", "absent", stride=stride)])
+    with pytest.raises(scanner.ConfigScanError, match="stride"):
+        scanner.scan(tmp_path, catalog, depth="standard", output=tmp_path / "r.json")
+
+
+def test_every_finding_carries_the_stride_its_check_declares(tmp_path):
+    (tmp_path / "Dockerfile").write_text("FROM scratch\nRUN bad\n", encoding="utf-8")
+    catalog = _catalog(
+        tmp_path,
+        [_check("IAC-900", "Dockerfile", "Dockerfile", "absent", pattern="bad", stride="Elevation of Privilege")],
+    )
+    findings = scanner.scan(tmp_path, catalog, depth="standard", output=tmp_path / "r.json")["findings"]
+
+    assert findings and {f["stride"] for f in findings} == {"Elevation of Privilege"}
 
 
 SCHEMA = yaml.safe_load(
