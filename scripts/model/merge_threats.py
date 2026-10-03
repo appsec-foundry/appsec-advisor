@@ -1056,10 +1056,16 @@ def _extract_endpoints(t: dict) -> tuple[str, ...]:
 # so that two threats sharing an endpoint AND belonging to the same broad
 # class (e.g. access-control family) become merge candidates, while
 # unrelated co-located findings (e.g. SQLi vs missing-CORS on the same
-# route) stay separate.
+# route) stay separate. It also keys the line-anchored identity
+# (_evidence_identity_key). build_threat_model_yaml._CWE_FAMILIES is the
+# deliberately narrower, file-only cross-run identity; a narrow family must never
+# span two of these broad families (guarded in test_merge_threats).
 _CWE_FAMILY: dict[str, str] = {
     # Access control / authorization
+    "CWE-250": "authz",
+    "CWE-266": "authz",
     "CWE-269": "authz",
+    "CWE-732": "authz",
     "CWE-285": "authz",
     "CWE-639": "authz",
     "CWE-862": "authz",
@@ -1077,6 +1083,7 @@ _CWE_FAMILY: dict[str, str] = {
     "CWE-89": "injection",
     "CWE-78": "injection",
     "CWE-94": "injection",
+    "CWE-95": "injection",
     "CWE-77": "injection",
     "CWE-917": "injection",
     "CWE-943": "injection",
@@ -1096,6 +1103,7 @@ _CWE_FAMILY: dict[str, str] = {
     "CWE-798": "crypto",
     "CWE-916": "crypto",
     # Supply-chain / dependency integrity
+    "CWE-494": "supply-chain",
     "CWE-829": "supply-chain",
     "CWE-1104": "supply-chain",
     "CWE-1357": "supply-chain",

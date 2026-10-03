@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- One code location reported under sibling CWEs by two analyses, such as an `eval` flagged as CWE-95 and CWE-94, is now a single finding.
 - Components labelled `internal-network` that own HTTP handlers in the route inventory are now selected for STRIDE analysis as `internet-exposed (route-inventory)` instead of being excluded.
 
 ### Changed

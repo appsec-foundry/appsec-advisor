@@ -1311,6 +1311,30 @@ def test_changelog_stable_across_cwe_and_title_drift_same_file(tmp_path):
     ]
 
 
+@pytest.mark.parametrize("stored_cwe", ["CWE-95", "CWE-94"])
+def test_changelog_family_extension_keeps_prior_keys_matching(tmp_path, stored_cwe):
+    """A prior entry stored before a CWE joined a family keeps the bare CWE in
+    its match_keys; the next run must still recognise the same finding."""
+    b = _load()
+    prior = {
+        "fingerprints": [f"backend|{stored_cwe}|Eval of username"],
+        "match_keys": [f"routes/userprofile.ts|{stored_cwe}"],
+        "run_id": "1000",
+        "current_sha": "sha-1",
+    }
+    keys, _ = b._prior_match_index(prior)
+    current = {
+        "id": "T-006",
+        "component": "backend",
+        "cwe": "CWE-95",
+        "title": "Eval of username",
+        "evidence": {"file": "routes/userProfile.ts", "line": 61},
+    }
+    assert b._match_key(current) in keys
+    assert b._refamily_match_key("lib/x.ts|hardcoded-key") == "lib/x.ts|hardcoded-key"
+    assert b._refamily_match_key("lib/x.ts|CWE-79") == "lib/x.ts|CWE-79"
+
+
 def test_changelog_distinct_findings_same_file_stay_separate(tmp_path):
     """Narrow families must NOT collapse two genuinely-distinct findings that
     share a file: a hardcoded key (hardcoded-key family) and weak password
