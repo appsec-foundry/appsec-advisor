@@ -23,6 +23,7 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
 from runtime.event_log import format_line
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -2026,6 +2027,50 @@ def test_pillar_cwe_findings_are_reported_and_base_cwes_are_not(tmp_path):
     assert agg._extract_pillar_cwe_findings(tmp_path) == []
 
 
+def _model(tmp_path, *threats):
+    (tmp_path / "threat-model.yaml").write_text(json.dumps({"components": [], "threats": list(threats)}))
+    return tmp_path
+
+
+def _finding(tid, file="lib/store.py", line=12, cwe="CWE-89", **over):
+    row = {
+        "id": tid,
+        "cwe": cwe,
+        "evidence": [{"file": file, "line": line}],
+        "evidence_check": "verified",
+        "evidence_basis": "llm-verified",
+    }
+    row.update(over)
+    return row
+
+
+@pytest.mark.parametrize(
+    ("threats", "violated"),
+    [
+        # Same object and weakness family reported twice (CWE-89 and CWE-943 are injection).
+        ((_finding("T-001"), _finding("T-002", cwe="CWE-943")), "unique_identity"),
+        ((_finding("T-001", file="cmd/run.go", line=40, evidence_basis=None),), "confirmed_needs_verified"),
+    ],
+)
+def test_a_violated_run_invariant_is_an_error_that_names_it(tmp_path, threats, violated):
+    issues = agg._extract_run_invariants(_model(tmp_path, *threats))
+    assert [(i["category"], i["severity"], i["evidence"]["outcome"]) for i in issues] == [
+        ("run_invariant_violated", "error", violated)
+    ]
+
+
+def test_holding_invariants_and_a_missing_model_report_nothing(tmp_path):
+    assert agg._extract_run_invariants(tmp_path) == []
+    distinct = (_finding("T-001"), _finding("T-002", cwe="CWE-79"), _finding("T-003", line=13))
+    assert agg._extract_run_invariants(_model(tmp_path, *distinct)) == []
+
+
+def test_the_frozen_run_reports_its_known_violations():
+    frozen = Path(__file__).parent / "fixtures" / "run_invariants" / "juice-shop-thorough"
+    outcomes = {i["evidence"]["outcome"] for i in agg._extract_run_invariants(frozen)}
+    assert outcomes == {"confirmed_needs_verified", "unique_identity"}
+
+
 def test_uncovered_iac_surface_becomes_one_warning(tmp_path):
     (tmp_path / ".config-scan-findings.json").write_text(
         json.dumps(
@@ -2059,8 +2104,6 @@ def test_covered_or_missing_config_scan_raises_no_uncovered_warning(tmp_path):
 # ---------------------------------------------------------------------------
 # _extract_stage_coverage_collapse
 # ---------------------------------------------------------------------------
-
-import pytest  # noqa: E402
 
 
 def _coverage_run(tmp_path, *, enabled=True, recorded=4, unresolved=4, flags=1, threats=2, corrected=0):
