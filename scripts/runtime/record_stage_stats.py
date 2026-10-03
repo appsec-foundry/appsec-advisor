@@ -81,6 +81,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import orchestrator.dispatch_window as dispatch_window
+from orchestrator.wait_agent_calls import PLUGIN_AGENT_PREFIX
 
 from runtime.event_log import parse_line
 
@@ -131,6 +132,21 @@ def _match_hook_event(line: str):
 _HOOK_EVENT_RE = _HOOK_EVENT_AGENT_RE
 
 
+def _canonical_agent_type(value: str) -> str:
+    """Namespaced form of a plugin agent type, as the hook log records it.
+
+    Callers pass the type either verbatim from ``dispatch_jobs[].agent_type``
+    (``appsec-advisor:appsec-architect-reviewer``) or bare
+    (``appsec-architect-reviewer``). Both sides of the spawn match go through
+    this so a bare type cannot match zero spawns. Only the plugin's own
+    namespace is added; another plugin's ``ns:name`` is left untouched.
+    """
+    value = value.strip()
+    if value and ":" not in value and value.startswith("appsec-"):
+        return PLUGIN_AGENT_PREFIX + value
+    return value
+
+
 def _derive_dispatch_stats(
     log_path: Path,
     subagent_type: str,
@@ -163,7 +179,7 @@ def _derive_dispatch_stats(
     resolved_models: set[str] = set()
     legacy_spawn_times: list[str] = []
     legacy_terminal_times: list[str] = []
-    subagent_types = {value.strip() for value in (subagent_type or "").split(",") if value.strip()}
+    subagent_types = {_canonical_agent_type(value) for value in (subagent_type or "").split(",") if value.strip()}
     if not subagent_types:
         return None
 
@@ -181,7 +197,7 @@ def _derive_dispatch_stats(
                 detail = parsed.detail if parsed is not None else ""
                 call_id_match = re.search(r"\bagent_call_id=([^\s]+)", detail)
                 agent_match = re.search(r"\bagent_type=([^\s]+)", detail)
-                if call_id_match and agent_match and agent_match.group(1) in subagent_types:
+                if call_id_match and agent_match and _canonical_agent_type(agent_match.group(1)) in subagent_types:
                     call_id = call_id_match.group(1)
                     if event == "AGENT_SPAWN":
                         spawn_times.setdefault(call_id, ts)
@@ -194,7 +210,7 @@ def _derive_dispatch_stats(
                             resolved_models.add(resolved.group(1))
                     continue
                 match = legacy_match or _match_hook_event(raw)
-                if match is None or match.group("subagent") not in subagent_types:
+                if match is None or _canonical_agent_type(match.group("subagent")) not in subagent_types:
                     continue
                 if event == "AGENT_SPAWN":
                     legacy_spawn_times.append(ts)
@@ -543,6 +559,15 @@ def main(argv: list[str]) -> int:
                     f"warn: --since-iso {args.since_iso} matched no dispatch of "
                     f"{args.subagent_type}; derived from the full log instead "
                     "(capture --since-iso before dispatching)\n"
+                )
+            else:
+                # Without this the row is accepted with no dispatch_count, and
+                # the completion summary later reports the run as PARTIAL with
+                # nothing pointing back at the cause.
+                sys.stderr.write(
+                    f"warn: no AGENT_SPAWN in {HOOK_LOG_FILENAME} matched --subagent-type "
+                    f"{args.subagent_type}; this row records no dispatch coverage "
+                    "(pass dispatch_jobs[].agent_type verbatim)\n"
                 )
         if derived is not None:
             record.update(derived)
