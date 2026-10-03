@@ -28,7 +28,7 @@ After the Threat Register and Mitigation Register are complete, generate a **Man
 - **Every T-NNN and M-NNN in this section must be a clickable link** — never bare text.
 - **Zero severity-count noise.** The Management Summary does not render Risk Distribution tables, STRIDE Coverage tables, or severity totals (e.g. "5 Critical and 14 High…"). Those live in the Threat Register alone.
 - **Tables over bullets for structured data.** Top Findings, Mitigations (Prioritized + Follow-up), and Operational Strengths use tables — they are easier to scan than bullet lists and align columns for comparison.
-- **Worst-case scenarios are rendered as bullets inside the Verdict blockquote.** The Verdict section is framed by a red HTML box (`<blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">`) that contains the attack-path bullets with F-NNN references. There is **no separate `### ⚠ Worst Case Scenarios` sub-section** — the bullets inside the Verdict blockquote *are* the worst-case scenarios.
+- **Worst-case scenarios are rendered as bullets inside the Verdict blockquote.** The Verdict section is framed by a red HTML box (`<blockquote style="border-left: 3px solid #dc2626; padding: 16px 20px; margin: 0;">`) that contains the attack-path bullets with F-NNN references. There is **no separate `### ⚠ Worst Case Scenarios` sub-section** — the bullets inside the Verdict blockquote *are* the worst-case scenarios.
 - **Verified-chain badge (renderer-added, do NOT author).** When at least one cited finding participates in a fully viable abuse chain, the renderer appends ` — ✓ cited finding in a code-verified chain`. This indicates finding participation, not verification of the entire scenario or an executed attack. It is absent when no fully viable chain supports a cited finding. Use only as many scenario bullets as the evidence supports; never pad the list.
 
 ```markdown
@@ -44,7 +44,7 @@ After the Threat Register and Mitigation Register are complete, generate a **Man
 
 🔴 **Critical security concerns** — The assessed paths expose customer records and administrative actions to unauthorized users.
 
-<blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">
+<blockquote style="border-left: 3px solid #dc2626; padding: 16px 20px; margin: 0;">
 
 - **Full database theft without login** — SQL injection lets anyone on the internet download the entire customer table in one request. *([F-009](#f-009))*
 - **Admin login without a password** — An authentication bypass lets an attacker sign in as any user, including administrators, without knowing the password. *([F-014](#f-014))*

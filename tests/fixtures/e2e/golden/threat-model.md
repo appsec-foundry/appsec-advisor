@@ -83,7 +83,7 @@ _Append-only history of assessment runs. Most recent first._
 
 **Security concerns behind this assessment:**
 
-<blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">
+<blockquote style="border-left: 3px solid #dc2626; padding: 16px 20px; margin: 0;">
 
 - **Admin login without a password** — SQL injection in the login endpoint lets any internet user log in as any account, including administrators, with no credentials. *(🔴 [F-002](#f-002))*
 - **Full database theft without login** — SQL injection in product search returns the full Users and Orders tables in a single web request. *(🔴 [F-001](#f-001))*

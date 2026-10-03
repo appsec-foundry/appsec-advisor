@@ -34,7 +34,7 @@
 
 **{{ data.bullets_intro or ("Residual risks worth reviewing:" if data.severity == "green" else "Security concerns behind this assessment:") }}**
 
-<blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">
+<blockquote style="border-left: 3px solid #dc2626; padding: 16px 20px; margin: 0;">
 
 {% for bullet in data.bullets -%}
 - **{{ bullet.title }}** — {{ bullet.body }}{{ verified_suffixes[loop.index0] if verified_suffixes else "" }}
