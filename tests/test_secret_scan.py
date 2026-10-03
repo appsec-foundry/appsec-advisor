@@ -4,6 +4,7 @@ credential assignments, and the masking-marker exemption."""
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -910,3 +911,72 @@ def test_mask_file_still_masks_markdown_as_text(secret_scan, tmp_path):
     assert secret_scan.mask_file(p) == ["generic_credential_assignment"]
     assert "hunter2longer" not in p.read_text()
     assert secret_scan.scan_file(p) == []
+
+
+# Synthetic key-like material only: a DER-shaped prefix plus filler that is not a
+# real key. Each line qualifies as a body chunk (>=16 chars, contains a digit).
+_FAKE_KEY_LINE = "MIICXQIBAAKBgQC" + "A1b2C3d4E5f6G7h8" * 3
+_PEM_BEGIN = "-----BEGIN RSA PRIVATE KEY-----"
+_PEM_END = "-----END RSA PRIVATE KEY-----"
+
+
+@pytest.mark.parametrize(
+    ("text", "kept"),
+    [
+        (f"{_PEM_BEGIN}\n{_FAKE_KEY_LINE}\n{_FAKE_KEY_LINE}\n{_PEM_END}\nnext line", "\nnext line"),
+        (f"key = '{_PEM_BEGIN}\\n{_FAKE_KEY_LINE}\\n{_FAKE_KEY_LINE}\\n{_PEM_END}'", "key = '"),
+        (f"const privateKey = '{_PEM_BEGIN}\\r\\n{_FAKE_KEY_LINE}\\r\\n{_FAKE_KEY_LINE}'", "const privateKey = '"),
+        (f'"signal": "k = \'{_PEM_BEGIN}\\\\r\\\\n{_FAKE_KEY_LINE}\\\\r\\\\n{_FAKE_KEY_LINE}\'"', '"signal": "k = \''),
+        (f"{_PEM_BEGIN}\n{_FAKE_KEY_LINE}\nThe attacker then signs tokens.", "\nThe attacker then signs tokens."),
+        (f"var k = '{_PEM_BEGIN}' +\n  '{_FAKE_KEY_LINE}' +\n  '{_FAKE_KEY_LINE}';", "var k = '"),
+        (f"Embedded {_PEM_BEGIN} then the attacker signs arbitrary tokens.", " then the attacker signs arbitrary"),
+    ],
+    ids=[
+        "real-newlines",
+        "escaped-n",
+        "escaped-crlf-truncated",
+        "json-serialized-escapes",
+        "truncated-before-prose",
+        "concatenated",
+        "header-only",
+    ],
+)
+def test_pem_block_is_masked_as_one_unit(secret_scan, text, kept):
+    masked, applied = secret_scan.mask_text(text)
+    assert "pem_private_key" in applied
+    assert "A1b2C3d4" not in masked and "MIICXQ" not in masked
+    assert kept in masked
+    assert secret_scan.scan_text(masked) == []
+
+
+def test_key_bytes_behind_a_redaction_marker_are_flagged_and_masked(secret_scan):
+    text = f"privateKey = '[PEM PRIVATE KEY — REDACTED]\\r\\n{_FAKE_KEY_LINE}'"
+    assert [h.pattern for h in secret_scan.scan_text(text)] == ["pem_orphaned_key_body"]
+    masked, _ = secret_scan.mask_text(text)
+    assert masked == "privateKey = '[PEM PRIVATE KEY — REDACTED]'"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "src=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk",
+        "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA\n-----END PUBLIC KEY-----",
+        "-----BEGIN CERTIFICATE-----\nMIIDdzCCAl+gAwIBAgIEAgAAuTANBgkqhkiG9w0BAQUF\n-----END CERTIFICATE-----",
+    ],
+    ids=["data-uri", "public-key", "certificate"],
+)
+def test_base64_outside_a_private_key_is_left_alone(secret_scan, text):
+    assert secret_scan.scan_text(text) == []
+    assert secret_scan.mask_text(text) == (text, [])
+
+
+def test_mask_structure_masks_a_key_body_in_yaml_leaves(secret_scan):
+    doc = {"evidence_flags": [{"signal": f"k = '{_PEM_BEGIN}\\r\\n{_FAKE_KEY_LINE}'"}]}
+    masked, applied = secret_scan.mask_structure(doc)
+    assert masked["evidence_flags"][0]["signal"] == "k = '[PEM PRIVATE KEY — REDACTED]'"
+    assert "pem_private_key" in applied
+
+
+def test_key_bytes_behind_an_ascii_escaped_marker_are_flagged(secret_scan):
+    text = json.dumps({"signal": f"k = '[PEM PRIVATE KEY — REDACTED]\\r\\n{_FAKE_KEY_LINE}'"})
+    assert [h.pattern for h in secret_scan.scan_text(text)] == ["pem_orphaned_key_body"]

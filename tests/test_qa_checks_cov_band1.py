@@ -373,6 +373,23 @@ def test_unmasked_secrets_scans_yaml_too(tmp_path: Path):
     assert any("threat-model.yaml" in i for i in report.issues)
 
 
+@pytest.mark.parametrize("name", qa._PUBLISHED_ARTIFACTS)
+def test_unmasked_secrets_scans_every_published_artifact(tmp_path: Path, name: str):
+    md = _md(tmp_path, "clean prose\n")
+    (tmp_path / name).write_text("aws: AKIAIOSFODNN7EXAMPLE\n", encoding="utf-8")
+    report = qa.check_unmasked_secrets(md, output_dir=tmp_path)
+    assert any(name in i for i in report.issues)
+
+
+def test_unmasked_secrets_flags_key_bytes_left_behind_a_marker(tmp_path: Path):
+    md = _md(tmp_path, "clean prose\n")
+    (tmp_path / "threat-model.yaml").write_text(
+        "signal: \"k = '[PEM PRIVATE KEY — REDACTED]\\\\r\\\\nMIICXQIBAAKBgQCA1b2C3d4E5f6G7h8'\"\n", encoding="utf-8"
+    )
+    report = qa.check_unmasked_secrets(md, output_dir=tmp_path)
+    assert any("pem_orphaned_key_body" in i for i in report.issues)
+
+
 # ---------------------------------------------------------------------------
 # check_unfounded_perimeter_claims
 # ---------------------------------------------------------------------------

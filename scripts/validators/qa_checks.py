@@ -111,6 +111,7 @@ from analyzers.perimeter_patterns import PERIMETER_ABSENCE_PATTERNS as _PERIMETE
 from shared._atomic_io import atomic_write_text
 
 from validators.check_reference_format import lint_text as _reference_format_lint
+from validators.secret_scan import PUBLISHED_ARTIFACTS as _PUBLISHED_ARTIFACTS
 from validators.secret_scan import scan_file as _scan_file_for_secrets
 
 VSCODE_LINK_RE = re.compile(r"vscode://file/([^)\s]+?)(?::(\d+))?(?=[)\s])")
@@ -1056,10 +1057,9 @@ def check_unmasked_secrets(md_path: Path, output_dir: Path | None = None) -> Rep
     """Hard QA gate — scan rendered artifacts for raw, unmasked secrets.
 
     Scans ``threat-model.md`` (always) plus — when an ``output_dir`` is given —
-    every OTHER published artifact a secret can propagate into: the canonical
-    ``threat-model.yaml``, the ``threat-model.sarif.json``,
-    ``threat-model.threatdragon.json`` and ``threat-model.html``
-    exports, and the LLM-authored ``.fragments/*.md`` that feed the compose. The
+    every OTHER published artifact a secret can propagate into
+    (``secret_scan.PUBLISHED_ARTIFACTS``: the canonical YAML, the SARIF,
+    Threat Dragon, HTML and pentest-task exports), and the LLM-authored ``.fragments/*.md`` that feed the compose. The
     composer masks the final MD, but the data pipeline (STRIDE → merged → yaml/
     sarif) and the fragments were previously unscanned, so an analyst-copied raw
     secret could ship in those artifacts undetected (2026-06-28 e2e leak). A hit
@@ -1071,12 +1071,7 @@ def check_unmasked_secrets(md_path: Path, output_dir: Path | None = None) -> Rep
     report = Report(check="unmasked_secrets")
     targets: list[Path] = [md_path]
     if output_dir is not None:
-        for rel in (
-            "threat-model.yaml",
-            "threat-model.sarif.json",
-            "threat-model.threatdragon.json",
-            "threat-model.html",
-        ):
+        for rel in _PUBLISHED_ARTIFACTS:
             p = output_dir / rel
             if p.exists():
                 targets.append(p)

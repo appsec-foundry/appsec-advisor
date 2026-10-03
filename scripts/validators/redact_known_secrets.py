@@ -58,6 +58,7 @@ from validators.secret_scan import (  # noqa: E402
     _PROSE_VOWEL_RE,
     _PROSE_WORD_RE,
     CREDENTIAL_KEYWORDS,
+    PUBLISHED_ARTIFACTS,
     _value_is_masked,
     scan_file,
     scan_text,
@@ -232,13 +233,7 @@ def _residual_scan(output_dir: Path) -> list[str]:
     """Final pattern scan over the published artifacts — confirms the redaction
     left nothing the unmasked-secrets gate would still catch."""
     issues: list[str] = []
-    for rel in (
-        "threat-model.md",
-        "threat-model.yaml",
-        "threat-model.sarif.json",
-        "threat-model.threatdragon.json",
-        "threat-model.html",
-    ):
+    for rel in ("threat-model.md", *PUBLISHED_ARTIFACTS):
         p = output_dir / rel
         if not p.is_file():
             continue
