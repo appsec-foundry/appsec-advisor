@@ -2572,9 +2572,17 @@ def review_business_impact(output_dir: Path, *, run_id: str) -> dict[str, Any]:
     }
 
 
-def complete_preflight(output_dir: Path, *, run_id: str, context_answer: str) -> dict[str, Any]:
-    """Accept the dialog result once, before any expensive scanner or dispatch."""
+def complete_preflight(
+    output_dir: Path, *, run_id: str, context_answer: str, impact_choice: str | None = None
+) -> dict[str, Any]:
+    """Accept the dialog result once, before any expensive scanner or dispatch.
+
+    ``impact_choice`` names the selected application-wide impact option; the
+    answer is then marked so every runtime component receives it before STRIDE
+    (see ``contexts.business_impact_scope``). Free-text answers pass none.
+    """
     import contexts.business_context_preview as business_context_preview
+    import contexts.business_impact_scope as business_impact_scope
     import contexts.load_business_context as load_business_context
     import runtime.acquire_lock as acquire_lock
     from shared._atomic_io import atomic_write_text
@@ -2588,6 +2596,8 @@ def complete_preflight(output_dir: Path, *, run_id: str, context_answer: str) ->
         raise CallError("review business impact after the use-case question before completing preflight")
     if context_answer not in {"answered", "skip", "unchanged"}:
         raise CallError("invalid business-context decision")
+    if impact_choice is not None and context_answer != "answered":
+        raise CallError("an impact choice requires an answered business-context dialog")
     repo_root = Path(cfg["repo_root"])
     raw_path = output_dir / business_context_preview.RAW_NAME
     if context_answer == "answered":
@@ -2598,6 +2608,8 @@ def complete_preflight(output_dir: Path, *, run_id: str, context_answer: str) ->
             if truncated or not answer.strip():
                 raise ValueError("business-context answer is empty or too large")
             load_business_context._reject_secrets(answer)
+            if impact_choice is not None:
+                answer = business_impact_scope.annotate(answer, impact_choice)
             load_business_context._persist_target(repo_root)
 
             def combined_context(source: Path | None, root: Path) -> str:
@@ -3072,6 +3084,44 @@ def _normalize_context_v2_analyst_context(output_dir: Path) -> None:
         "CONTEXT_V2_RESERVED_FIELD_DROPPED",
         "removed producer-authored _stride_profile; resolved run configuration is authoritative",
         level="WARN",
+    )
+
+
+def _apply_application_impact(output_dir: Path, cfg: dict[str, Any]) -> None:
+    """Give every runtime component the operator's application-wide impact answer."""
+    import contexts.business_impact_scope as business_impact_scope
+    import contexts.load_business_context as load_business_context
+
+    from orchestrator.build_stride_dispatch_manifest import _is_cicd
+
+    if cfg.get("skip_business_context"):
+        return
+    repo_root = Path(str(cfg.get("repo_root") or output_dir))
+    source = load_business_context.effective_source(repo_root, output_dir)
+    if source is None:
+        return
+    try:
+        text = source.read_bytes()[: load_business_context.MAX_BYTES].decode("utf-8", errors="replace")
+    except OSError as exc:
+        raise ControllerError(f"cannot read business context {source}: {exc}") from exc
+    impact = business_impact_scope.application_impact(text)
+    if impact is None:
+        return
+    path = output_dir / ".stride-analyst-context.json"
+    analyst = _load_json_object(path, contract="stride-analyst-context-v1")
+    components = _load_json_object(output_dir / ".components.json", contract="components-v1").get("components")
+    if not isinstance(components, list):
+        raise ControllerError("components-v1 artifact has no components array")
+    changed = business_impact_scope.propagate(analyst, [c for c in components if isinstance(c, dict)], impact, _is_cicd)
+    if not changed:
+        return
+    from shared._atomic_io import atomic_write_json
+
+    atomic_write_json(path, analyst, sort_keys=False)
+    _append_event(
+        output_dir,
+        "BUSINESS_IMPACT_APPLIED",
+        f"choice={impact['choice']} components={','.join(changed)}",
     )
 
 
@@ -5557,6 +5607,7 @@ def context_v2_prepare_stride(output_dir: Path) -> dict[str, Any]:
     repo_root = Path(str(cfg.get("repo_root") or output_dir))
     _run_script("validators/validate_fragment.py", ["security-controls", str(controls_path)])
     _normalize_context_v2_analyst_context(output_dir)
+    _apply_application_impact(output_dir, cfg)
     _validate_context_v2_analyst_context(output_dir, repo_root=repo_root)
     # Write the per-component requirements slice before the manifest indexes it.
     # A no-op without a catalog, so runs without requirements are unaffected.
@@ -7736,6 +7787,7 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     complete_preflight_parser.add_argument("--output-dir", required=True)
     complete_preflight_parser.add_argument("--run-id", required=True)
     complete_preflight_parser.add_argument("--context-answer", choices=("answered", "skip", "unchanged"), required=True)
+    complete_preflight_parser.add_argument("--impact-choice", choices=("no-material-harm", "declared-harm"))
     prepare_abuse_parser = sub.add_parser("prepare-abuse")
     prepare_abuse_parser.add_argument("--output-dir", required=True)
     finalize_abuse_parser = sub.add_parser("finalize-abuse")
@@ -7800,7 +7852,12 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "review-business-impact":
             action = review_business_impact(Path(args.output_dir), run_id=args.run_id)
         elif args.command == "complete-preflight":
-            action = complete_preflight(Path(args.output_dir), run_id=args.run_id, context_answer=args.context_answer)
+            action = complete_preflight(
+                Path(args.output_dir),
+                run_id=args.run_id,
+                context_answer=args.context_answer,
+                impact_choice=args.impact_choice,
+            )
         elif args.command == "prepare-abuse":
             action = prepare_abuse(Path(args.output_dir))
         elif args.command == "finalize-abuse":
