@@ -44,7 +44,6 @@ def test_frozen_reported_findings_have_unique_identity():
     assert inv.unique_identity(FROZEN) == []
 
 
-@pytest.mark.xfail(strict=True, reason="pending fix diagram: app-to-data boundary representation")
 def test_frozen_every_boundary_represented():
     assert inv.boundaries_represented(FROZEN) == []
 
@@ -180,6 +179,27 @@ def test_boundary_named_only_outside_a_diagram_is_not_represented(tmp_path):
 def test_boundary_in_figure_only_counts(tmp_path):
     run = _run(tmp_path, boundaries=[{"id": "tb-6"}], svg="<svg><text>tb-6</text></svg>")
     assert inv.boundaries_represented(run) == []
+
+
+@pytest.mark.parametrize(
+    ("boundary", "expected"),
+    [
+        ({"id": "tb-4", "surface": "in-process", "transition": []}, []),
+        ({"id": "tb-4", "kind": "process"}, []),
+        (
+            {"id": "tb-4", "surface": "network", "transition": []},
+            ["tb-4: not represented in any §2 diagram or figure"],
+        ),
+        (
+            {"id": "tb-4", "surface": "in-process", "transition": ["privilege"]},
+            ["tb-4: not represented in any §2 diagram or figure"],
+        ),
+    ],
+    ids=["in-process-interface", "legacy-process-kind", "network-db-boundary", "in-process-with-transition"],
+)
+def test_internal_interfaces_need_no_diagram(tmp_path, boundary, expected):
+    run = _run(tmp_path, boundaries=[{"id": "tb-1"}, boundary], mermaid='subgraph T["tb-1"]\nend')
+    assert inv.boundaries_represented(run) == expected
 
 
 @pytest.mark.parametrize(

@@ -17,7 +17,8 @@ Invariants (each check returns a list of violation strings, empty = holds):
                           component's path globs (or the finding is system-wide)
   unique_identity         no two reported findings share file|line|cwe-family
   boundaries_represented  every catalogued trust boundary appears in a §2
-                          diagram or a rendered figure
+                          diagram or a rendered figure; in-process
+                          enforcement interfaces are exempt (RA-15)
   architect_refuted       architect coverage does not count findings excluded as
                           refuted by evidence verification as unresolved
 
@@ -41,6 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from analyzers.architect_review_runtime import review_coverage  # noqa: E402
 from model.merge_threats import _CWE_FAMILY  # noqa: E402
 from model.reclassify_components import _build_matcher  # noqa: E402
+from renderers.figure1_dfd import _internal_interface  # noqa: E402
 
 SYSTEM_WIDE = "system-wide"
 _VERIFIED = {"verified", "verified-prior"}
@@ -155,7 +157,11 @@ def _named_boundaries(output_dir: Path) -> set[str]:
 
 
 def boundaries_represented(output_dir: Path) -> list[str]:
-    catalog = [b.get("id") for b in _load_yaml(output_dir).get("trust_boundaries") or [] if b.get("id")]
+    catalog = [
+        b.get("id")
+        for b in _load_yaml(output_dir).get("trust_boundaries") or []
+        if b.get("id") and not _internal_interface(b)
+    ]
     drawn = _named_boundaries(output_dir)
     if catalog and not drawn:
         return [f"no §2 diagram or figure names any trust boundary ({', '.join(catalog)})"]
