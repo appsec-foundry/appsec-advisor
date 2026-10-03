@@ -1073,6 +1073,41 @@ class TestArchitectureDataFlows:
 
         assert edges == ["spa -->|HTTPS · Confidential| api"]
 
+    @pytest.mark.parametrize(
+        ("flows", "expected"),
+        [
+            (
+                [("HTTP", "", "Confidential"), ("HTTP", "", "Public")],
+                ["spa -->|HTTP · Confidential| api"],
+            ),
+            (
+                [("HTTP", "", "Public"), ("HTTP", "", "Restricted")],
+                ["spa -->|HTTP · Restricted| api"],
+            ),
+            (
+                [("HTTP", "", "Internal"), ("HTTP", "", "Internal")],
+                ["spa -->|HTTP · Internal| api"],
+            ),
+            (
+                [("HTTP", "JWT", "Confidential"), ("HTTP", "", "Confidential")],
+                ["spa -->|HTTP / JWT · Confidential| api", "spa -->|HTTP · Confidential| api"],
+            ),
+            (
+                [("HTTP", "", "Confidential"), ("WebSocket", "", "Confidential")],
+                ["spa -->|HTTP · Confidential| api", "spa -.->|WebSocket · Confidential| api"],
+            ),
+        ],
+    )
+    def test_parallel_flows_collapse_per_protocol_and_auth_keeping_the_most_sensitive_class(self, flows, expected):
+        data = {
+            "components": [{"id": "spa", "name": "SPA"}, {"id": "api", "name": "API"}],
+            "data_flows": [
+                {"id": f"df-{i}", "from": "spa", "to": "api", "protocol": p, "auth_method": a, "data_classification": c}
+                for i, (p, a, c) in enumerate(flows)
+            ],
+        }
+        assert pf._data_flow_edges(data, data["components"]) == expected
+
     def test_falls_back_to_tier_heuristic_when_data_flows_empty(self):
         data = {
             "meta": {"project": {"name": "TestApp"}},
@@ -1435,6 +1470,45 @@ class TestSection2TrustBoundaries:
 
         assert "*Trust boundaries not drawn above: api → db (tb-2), api → external (tb-3)" in md
         assert "[§1 Trust Boundaries](#trust-boundaries)" in md
+
+    @pytest.mark.parametrize(
+        ("axes", "interface"),
+        [
+            ({"surface": "in-process", "transition": []}, True),
+            ({"kind": "process"}, True),
+            ({"surface": "network", "transition": []}, False),
+            ({"surface": "in-process", "transition": ["privilege"]}, False),
+            ({"kind": "network"}, False),
+        ],
+    )
+    def test_internal_interfaces_are_named_apart_from_trust_boundaries(self, axes, interface):
+        """An in-process call without a trust transition (an embedded store) is
+        an enforcement interface, as Figure 1 and the §1 catalogue treat it;
+        §2.2 must neither draw nor caption it as a trust boundary."""
+        md = pf.gen_architecture_diagrams(
+            self._data([self._tb("tb-1", "external", "api"), {**self._tb("tb-2", "api", "db"), **axes}])
+        )
+        block = self._block(md, "2.2 Container Architecture")
+        section = md.split("### 2.2 Container Architecture")[1].split("### ")[0]
+        not_drawn = [ln for ln in section.splitlines() if ln.startswith("*Trust boundaries not drawn above")]
+        interfaces = [ln for ln in section.splitlines() if ln.startswith("*Internal interfaces")]
+
+        assert "tb-2" not in block
+        if interface:
+            assert not not_drawn
+            assert interfaces and "api → db (tb-2)" in interfaces[0]
+        else:
+            assert not_drawn and "api → db (tb-2)" in not_drawn[0]
+            assert not interfaces
+
+    def test_an_interface_is_never_drawn_as_the_data_boundary(self):
+        md = pf.gen_architecture_diagrams(
+            self._data([{**self._tb("tb-9", "api", "db"), "surface": "in-process", "transition": []}])
+        )
+        block = self._block(md, "2.2 Container Architecture")
+
+        assert "subgraph TBDATA" not in block
+        assert "*Internal interfaces (in-process, no trust transition): api → db (tb-9)" in md
 
     def test_unresolved_boundaries_are_never_drawn(self):
         md = pf.gen_architecture_diagrams(self._data([self._tb("tb-1", "external", "api", status="unresolved")]))

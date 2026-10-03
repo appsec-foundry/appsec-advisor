@@ -109,6 +109,7 @@ from model.reclassify_components import (
 )
 from shared._atomic_io import atomic_write_text
 from shared._boundary_criticality import exposure_of, rating_of, tier_of
+from shared._boundary_interface import is_internal_interface
 from shared._manifest_readers import (
     derive_homepage as _derive_homepage,
 )
@@ -15951,7 +15952,7 @@ def _boundary_kind_label(row: dict) -> str:
     label = _BOUNDARY_SURFACE_LABELS.get(surface, "network")
     if changes:
         return f"{label} · {' + '.join(changes)}"
-    if surface == "in-process":
+    if is_internal_interface(row):
         return f"{label} — enforcement interface, no trust transition"
     return label
 

@@ -68,6 +68,7 @@ from typing import Any, Iterable
 
 import yaml
 from contexts.load_business_context import RUN_ONLY_NAME
+from shared._boundary_interface import is_internal_interface
 
 from renderers._severity_rollup import (
     display_id,
@@ -603,10 +604,12 @@ def _has_ids(key: str, ids: list[str]) -> bool:
     return not (len(ids) == 1 and ids[0] == key)
 
 
-def _container_boundaries(yaml_data: dict, components: list[dict]) -> tuple[list[dict], list[dict], list[dict]]:
+def _container_boundaries(
+    yaml_data: dict, components: list[dict]
+) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
     """Split resolved boundaries into what §2.2 can draw and what it cannot.
 
-    Returns ``(into_server, application_to_data, other)``:
+    Returns ``(into_server, application_to_data, other, interfaces)``:
       * ``into_server`` — crossings from the untrusted side (the internet or a
         client-tier component) into the application or data tier. This is the
         perimeter of the deployable system and the one §2.2 draws.
@@ -614,6 +617,10 @@ def _container_boundaries(yaml_data: dict, components: list[dict]) -> tuple[list
         when there is no ingress crossing to draw (four-subgraph cap).
       * ``other`` — egress and intra-tier crossings, which a container diagram
         of tiers cannot place without inventing a zone. Named in the caption.
+      * ``interfaces`` — in-process enforcement interfaces without a trust
+        transition (``shared._boundary_interface``, the rule Figure 1 and the
+        §1 catalogue apply). Not trust boundaries, so never drawn or captioned
+        as one.
     """
     tier_by_id = {
         (c.get("id") or "").strip(): _classify_tier(c) for c in components if isinstance(c, dict) and c.get("id")
@@ -621,7 +628,11 @@ def _container_boundaries(yaml_data: dict, components: list[dict]) -> tuple[list
     into_server: list[dict] = []
     app_to_data: list[dict] = []
     other: list[dict] = []
+    interfaces: list[dict] = []
     for tb in _resolved_boundaries(yaml_data):
+        if is_internal_interface(tb):
+            interfaces.append(tb)
+            continue
         src = (tb.get("from") or "").strip()
         dst = (tb.get("to") or "").strip()
         src_tier = "external" if src.lower() == "external" else tier_by_id.get(src)
@@ -632,7 +643,7 @@ def _container_boundaries(yaml_data: dict, components: list[dict]) -> tuple[list
             app_to_data.append(tb)
         else:
             other.append(tb)
-    return into_server, app_to_data, other
+    return into_server, app_to_data, other, interfaces
 
 
 def _components_crossings(yaml_data: dict, by_tier: dict[str, list[dict]]) -> list[dict]:
@@ -661,7 +672,7 @@ def _components_crossings(yaml_data: dict, by_tier: dict[str, list[dict]]) -> li
     """
     if not (by_tier.get("application") or []):
         return []
-    into_server, _app_to_data, _other = _container_boundaries(yaml_data, yaml_data.get("components") or [])
+    into_server, _app_to_data, _other, _interfaces = _container_boundaries(yaml_data, yaml_data.get("components") or [])
     return into_server
 
 
@@ -705,6 +716,22 @@ def _tb_caption_from_entries(entries: list[str], max_entries: int = _TB_NOTE_MAX
     return (
         f"*Trust boundaries {lead}: {', '.join(shown)}{tail} — "
         f"every boundary is listed in [§1 Trust Boundaries](#trust-boundaries).*"
+    )
+
+
+def _interface_caption(interfaces: list[dict], max_entries: int = _TB_NOTE_MAX) -> str:
+    """Italic caption naming the in-process enforcement interfaces, kept apart
+    from the trust boundaries so the reader does not take them for undrawn ones.
+    Empty when there are none."""
+    entries = _tb_entries(interfaces) if interfaces else []
+    if not entries:
+        return ""
+    shown = entries[:max_entries]
+    rest = len(entries) - len(shown)
+    tail = f", +{rest} more" if rest else ""
+    return (
+        f"*Internal interfaces (in-process, no trust transition): {', '.join(shown)}{tail} — "
+        f"listed in [§1 Trust Boundaries](#trust-boundaries).*"
     )
 
 
@@ -930,7 +957,7 @@ def gen_architecture_diagrams(yaml_data: dict, figures: dict | None = None, peop
     # that is the crossing an attacker traverses — otherwise the
     # application→data boundary. Whatever is not drawn is named in the caption
     # below the diagram, never dropped.
-    srv_bounds, data_bounds, other_bounds = _container_boundaries(yaml_data, components)
+    srv_bounds, data_bounds, other_bounds, interface_bounds = _container_boundaries(yaml_data, components)
     wrap_server = bool(srv_bounds)
     wrap_data = bool(data_bounds) and not wrap_server
     undrawn = (data_bounds if wrap_server else []) + other_bounds
@@ -1049,6 +1076,10 @@ def gen_architecture_diagrams(yaml_data: dict, figures: dict | None = None, peop
     tb_caption = _tb_caption(undrawn)
     if tb_caption:
         lines.append(tb_caption)
+        lines.append("")
+    interface_caption = _interface_caption(interface_bounds)
+    if interface_caption:
+        lines.append(interface_caption)
         lines.append("")
     lines.append(f"**Key takeaway:** {takeaways['2.2']}")
     lines.append("")
@@ -1806,6 +1837,28 @@ def _is_async_protocol(protocol: str) -> bool:
     )
 
 
+_CLASSIFICATION_ORDER = {
+    "restricted": 0,
+    "secret": 0,
+    "top secret": 0,
+    "confidential": 1,
+    "pii": 1,
+    "sensitive": 1,
+    "internal": 2,
+    "private": 2,
+    "public": 3,
+}
+
+
+def _classification_rank(value: str | None) -> int:
+    """Sensitivity rank of a free-text data classification; 0 is most sensitive, unknown sorts last."""
+    c = re.sub(r"[`*_]", "", value or "").strip().lower()
+    for key, rank in _CLASSIFICATION_ORDER.items():
+        if key in c:
+            return rank
+    return 4
+
+
 def _data_flow_edges(yaml_data: dict, components: list[dict]) -> list[str]:
     """Render mermaid edges from `data_flows[]` in the yaml.
 
@@ -1835,7 +1888,12 @@ def _data_flow_edges(yaml_data: dict, components: list[dict]) -> list[str]:
     if not isinstance(flows, list):
         return []
     valid_ids = {c.get("id") for c in components if isinstance(c, dict)}
-    edges: list[str] = []
+    # Several flows between the same pair over the same protocol and auth method
+    # are one connection in a container diagram. They collapse onto one edge
+    # carrying the most sensitive classification any of them moves; keying on
+    # the rendered label instead drew `HTTP · Confidential` and `HTTP` as two
+    # parallel lines whenever one flow was Public (juice-shop 2026-10-03).
+    best: dict[tuple[str, str, str], tuple[int, str]] = {}
     for f in flows:
         if not isinstance(f, dict):
             continue
@@ -1862,13 +1920,12 @@ def _data_flow_edges(yaml_data: dict, components: list[dict]) -> list[str]:
         annotated = " · ".join(parts) if parts else "→"
 
         arrow = "-.->|" if _is_async_protocol(protocol) else "-->|"
-        edges.append(f"{_safe_node_id(src)} {arrow}{annotated}| {_safe_node_id(dst)}")
-    # Several flows between the same pair collapse onto one label here, because
-    # the label carries protocol and classification but not each flow's
-    # `diagram_label`. Emitting the duplicate draws a second identical line that
-    # adds no information (VulnerableApp: login and password-reset both render
-    # `client-ui -->|HTTP · Confidential| auth`). One line says the same thing.
-    return list(dict.fromkeys(edges))
+        edge = f"{_safe_node_id(src)} {arrow}{annotated}| {_safe_node_id(dst)}"
+        key = (src, dst, head.lower())
+        rank = _classification_rank(data_class)
+        if key not in best or rank < best[key][0]:
+            best[key] = (rank, edge)
+    return [edge for _rank, edge in best.values()]
 
 
 # ---------------------------------------------------------------------------
@@ -1903,25 +1960,7 @@ def gen_assets(yaml_data: dict) -> str:
     # Sort rows by data-classification severity (2026-05-31 user request) so the
     # most-sensitive assets lead the table, regardless of A-NNN allocation order.
     # Stable within a class — preserves the yaml/ID order for ties.
-    def _classification_rank(a: dict) -> int:
-        c = re.sub(r"[`*_]", "", (a.get("classification") or "")).strip().lower()
-        order = {
-            "restricted": 0,
-            "secret": 0,
-            "top secret": 0,
-            "confidential": 1,
-            "pii": 1,
-            "sensitive": 1,
-            "internal": 2,
-            "private": 2,
-            "public": 3,
-        }
-        for key, rank in order.items():
-            if key in c:
-                return rank
-        return 4  # unknown / n/a sorts last
-
-    assets = sorted(assets, key=_classification_rank)
+    assets = sorted(assets, key=lambda a: _classification_rank(a.get("classification")))
 
     # Check whether any asset has linked_threats to decide if the column is needed
     any_linked = any(a.get("linked_threats") for a in assets)

@@ -478,6 +478,7 @@ GROUPS = {
     """),
     "shared": _tests("""
         atomic_io
+        boundary_interface
         intermediate_json
         reserve_ids
         safe_cond
@@ -2597,6 +2598,14 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
         validate_intermediate
+    """),
+    "scripts/shared/_boundary_interface.py": _tests("""
+        boundary_interface
+        compose_threat_model
+        figure1_dfd
+        figure1_detail
+        pregenerate_fragments
+        threat_fixture
     """),
     "scripts/shared/_boundary_criticality.py": _tests("""
         script_layout
