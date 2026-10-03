@@ -24,7 +24,7 @@ def _tracked() -> set[str]:
 # ── frozen run ─────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="pending fix/config-scan-inventory")
+@pytest.mark.xfail(strict=True, reason="fixed in the scanner, but this frozen run predates it: refresh the fixture from a new run")
 def test_frozen_no_evidence_outside_target_inventory():
     assert inv.untracked_evidence(FROZEN, _tracked()) == []
 
@@ -48,7 +48,6 @@ def test_frozen_every_boundary_represented():
     assert inv.boundaries_represented(FROZEN) == []
 
 
-@pytest.mark.xfail(strict=True, reason="pending fix/architect-coverage-reasons")
 def test_frozen_architect_coverage_ignores_refuted_exclusions():
     assert inv.architect_refuted(FROZEN) == []
 
@@ -206,15 +205,29 @@ def test_internal_interfaces_need_no_diagram(tmp_path, boundary, expected):
     ("outcomes", "expected"),
     [
         ([_outcome("T-1")], 0),
-        ([_outcome("T-1", status="unreviewed", assessment="unreviewed", reason="refuted")], 1),
+        ([_outcome("T-1", status="unreviewed", assessment="unreviewed", reason="refuted")], 0),
         ([_outcome("T-1", status="unreviewed", assessment="unreviewed", reason="oversized")], 0),
         ([_outcome("T-1", assessment="unresolved")], 0),
     ],
-    ids=["clean", "refuted-counted", "oversized-is-a-real-gap", "reviewer-unresolved-is-real"],
+    ids=["clean", "refuted-not-counted", "oversized-is-a-real-gap", "reviewer-unresolved-is-real"],
 )
 def test_architect_refuted(tmp_path, outcomes, expected):
     run = _run(tmp_path, outcomes=outcomes)
     assert len(inv.architect_refuted(run)) == expected
+
+
+def test_architect_check_detects_a_coverage_that_counts_refuted_rows(tmp_path, monkeypatch):
+    """The detector must still fire if the coverage function regresses to counting
+    every outcome that is not accepted, refuted exclusions included."""
+    refuted = _outcome("T-1", status="unreviewed", assessment="unreviewed", reason="refuted")
+    run = _run(tmp_path, outcomes=[_outcome("T-2"), refuted])
+
+    def regressed(value):
+        rows = value["application"]["outcomes"]
+        return {"unresolved_or_unreviewed": sum(r["status"] != "accepted" for r in rows)}
+
+    monkeypatch.setattr(inv, "review_coverage", regressed)
+    assert len(inv.architect_refuted(run)) == 1
 
 
 def test_architect_check_without_review_artifact(tmp_path):
