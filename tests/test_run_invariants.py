@@ -24,7 +24,9 @@ def _tracked() -> set[str]:
 # ── frozen run ─────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="fixed in the scanner, but this frozen run predates it: refresh the fixture from a new run")
+@pytest.mark.xfail(
+    strict=True, reason="fixed in the scanner, but this frozen run predates it: refresh the fixture from a new run"
+)
 def test_frozen_no_evidence_outside_target_inventory():
     assert inv.untracked_evidence(FROZEN, _tracked()) == []
 
