@@ -298,6 +298,72 @@ def test_dispatch_derivation_unknown_subagent_omits_fields(tmp_path):
     assert "wall_secs_observed" not in record
 
 
+# The hook log always records the namespaced agent type; the orchestrator may
+# pass it bare. Both shapes of hook line (call-id and legacy positional) must
+# match either spelling, and nothing else.
+_CALL_ID_LOG = """\
+2026-10-02T22:00:00Z  [229ac997]  INFO   AGENT_SPAWN  agent_call_id=toolu_a  agent_type=appsec-advisor:appsec-architect-reviewer  model=sonnet
+2026-10-02T22:00:01Z  [229ac997]  INFO   AGENT_SPAWN  agent_call_id=toolu_b  agent_type=appsec-advisor:appsec-architect-reviewer  model=sonnet
+2026-10-02T22:02:00Z  [229ac997]  INFO   AGENT_DONE   agent_call_id=toolu_a  agent_type=appsec-advisor:appsec-architect-reviewer  model=sonnet
+2026-10-02T22:03:00Z  [229ac997]  INFO   AGENT_DONE   agent_call_id=toolu_b  agent_type=appsec-advisor:appsec-architect-reviewer  model=sonnet
+"""
+_LEGACY_LOG = """\
+2026-10-02T22:00:00Z  [run]  INFO   AGENT_SPAWN  appsec-advisor:appsec-architect-reviewer  model=sonnet
+2026-10-02T22:00:01Z  [run]  INFO   AGENT_SPAWN  appsec-advisor:appsec-architect-reviewer  model=sonnet
+2026-10-02T22:03:00Z  [run]  INFO   AGENT_INVOKE  appsec-advisor:appsec-architect-reviewer  model=sonnet
+"""
+
+
+@pytest.mark.parametrize("log_body", [_CALL_ID_LOG, _LEGACY_LOG], ids=["call-id", "legacy"])
+@pytest.mark.parametrize(
+    "subagent_type",
+    ["appsec-advisor:appsec-architect-reviewer", "appsec-architect-reviewer", " appsec-architect-reviewer "],
+    ids=["namespaced", "bare", "padded"],
+)
+def test_dispatch_derivation_matches_bare_and_namespaced_agent_type(tmp_path, capsys, log_body, subagent_type):
+    _write_hook_log(tmp_path, log_body)
+    argv = _argv(tmp_path, **{"--subagent-type": subagent_type, "--since-iso": "2026-10-02T21:59:00Z"})
+    assert rec.main(argv) == 0
+    record = json.loads((tmp_path / ".stage-stats.jsonl").read_text().strip())
+    assert record["dispatch_count"] == 2
+    assert "no AGENT_SPAWN" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("log_body", [_CALL_ID_LOG, _LEGACY_LOG], ids=["call-id", "legacy"])
+def test_dispatch_derivation_keeps_foreign_namespace_distinct(tmp_path, log_body):
+    _write_hook_log(tmp_path, log_body)
+    assert (
+        rec._derive_dispatch_stats(tmp_path / ".hook-events.log", "other-plugin:appsec-architect-reviewer", "") is None
+    )
+
+
+def test_dispatch_derivation_warns_when_no_spawn_matches(tmp_path, capsys):
+    _write_hook_log(tmp_path, _CALL_ID_LOG)
+    argv = _argv(
+        tmp_path, **{"--subagent-type": "appsec-advisor:appsec-missing", "--since-iso": "2026-10-02T21:59:00Z"}
+    )
+    assert rec.main(argv) == 0
+    assert "no AGENT_SPAWN" in capsys.readouterr().err
+    record = json.loads((tmp_path / ".stage-stats.jsonl").read_text().strip())
+    assert "dispatch_count" not in record
+
+
+def test_deterministic_row_without_subagent_type_stays_silent(tmp_path, capsys):
+    _write_hook_log(tmp_path, _CALL_ID_LOG)
+    argv = _argv(
+        tmp_path,
+        **{
+            "--agent": "deterministic:qa_checks.py",
+            "--model": "none",
+            "--tokens": "0",
+            "--tool-uses": "0",
+            "--duration-ms": "0",
+        },
+    )
+    assert rec.main(argv) == 0
+    assert "no AGENT_SPAWN" not in capsys.readouterr().err
+
+
 # ---------------------------------------------------------------------------
 # Fix B (2026-05-25) — hybrid-record sanity gate. A record that claims a
 # deterministic agent/model but carries non-zero token/tool counts is
