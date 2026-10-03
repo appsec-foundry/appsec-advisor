@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub Actions permission checks accept job-level permission blocks and explicit blocks without `contents`, point at the job that lacks permissions, and report a missing block once instead of twice.
 - The §2.2 container diagram draws one edge per component pair, protocol and authentication method, labelled with the most sensitive data classification it carries.
 - The §2.2 caption lists in-process interfaces without a trust transition, such as an embedded database, as internal interfaces instead of undrawn trust boundaries.
+- The §2.2 introduction no longer calls every box a separate runtime process when the model places components behind an internal interface; it names them as running inside their caller's process.
 - SBOM generation, image signing and Dependabot ecosystem coverage are judged once for the whole repository and only where they apply, so one workflow without an SBOM step no longer yields a finding when another generates one.
 - Findings about something missing name the files that were searched and are verified by re-running their check, instead of citing line 1 or line 0 of a file.
 - Components labelled `internal-network` that own HTTP handlers in the route inventory are now selected for STRIDE analysis as `internet-exposed (route-inventory)` instead of being excluded.
