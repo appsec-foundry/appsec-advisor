@@ -735,6 +735,52 @@ def _interface_caption(interfaces: list[dict], max_entries: int = _TB_NOTE_MAX) 
     )
 
 
+def _embedded_component_names(yaml_data: dict, components: list[dict]) -> list[str]:
+    """Names of components reached only through an internal interface: they run
+    inside their caller's process, so §2.2 must not call them separate processes."""
+    name_by_id = {
+        (c.get("id") or "").strip(): (c.get("name") or c.get("id") or "").strip()
+        for c in components
+        if isinstance(c, dict) and c.get("id")
+    }
+    names: list[str] = []
+    for tb in _resolved_boundaries(yaml_data):
+        if not is_internal_interface(tb):
+            continue
+        name = name_by_id.get((tb.get("to") or "").strip())
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def _container_intro(embedded: list[str], max_names: int = 3) -> str:
+    """Opening sentence of §2.2. The separate-process claim holds for every box
+    unless the model puts some behind an internal interface."""
+    if not embedded:
+        base = "Each box is a separate runtime process or service container"
+    else:
+        shown = embedded[:max_names]
+        rest = len(embedded) - len(shown)
+        if rest:
+            listed = f"{', '.join(shown)} and {rest} more"
+        elif len(shown) > 1:
+            listed = f"{', '.join(shown[:-1])} and {shown[-1]}"
+        else:
+            listed = shown[0]
+        many = len(embedded) > 1
+        base = (
+            "Each box is a separate runtime process or service container, "
+            f"except {listed}, which {'run inside their' if many else 'runs inside its'} "
+            f"caller's process behind an internal interface and {'are' if many else 'is'} "
+            "drawn apart for the data held"
+        )
+    return (
+        f"How the system decomposes into deployable units. {base}; arrows show "
+        "synchronous request paths between them. Components with ≥3 Critical "
+        "findings carry a red border, ≥2 High amber (C4 Level 2)."
+    )
+
+
 def _tb_title_line(entry: str, limit: int) -> str:
     """Fit one `crossing (ids)` entry into `limit` chars, sacrificing the
     crossing text before the ids — the ids are the locator into §1."""
@@ -917,12 +963,7 @@ def gen_architecture_diagrams(yaml_data: dict, figures: dict | None = None, peop
     lines.append("### 2.2 Container Architecture")
     lines.append("")
     mark_22 = len(lines)
-    lines.append(
-        "How the system decomposes into deployable units. Each box is a separate "
-        "runtime process or service container; arrows show synchronous request "
-        "paths between them. Components with ≥3 Critical findings carry a red "
-        "border, ≥2 High amber (C4 Level 2)."
-    )
+    lines.append(_container_intro(_embedded_component_names(yaml_data, components)))
     lines.append("")
 
     # M3.3 / D1.5 (G) — DB-engine annotation when not already in name.

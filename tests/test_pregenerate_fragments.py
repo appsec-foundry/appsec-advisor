@@ -1501,6 +1501,45 @@ class TestSection2TrustBoundaries:
             assert not_drawn and "api → db (tb-2)" in not_drawn[0]
             assert not interfaces
 
+    @pytest.mark.parametrize(
+        ("axes", "embedded"),
+        [
+            ({"surface": "in-process", "transition": []}, True),
+            ({"kind": "process"}, True),
+            ({"surface": "network", "transition": []}, False),
+            ({"surface": "in-process", "transition": ["privilege"]}, False),
+        ],
+    )
+    def test_container_intro_names_embedded_components_only_for_interfaces(self, axes, embedded):
+        """The separate-process claim stays for every box unless a component is
+        reached through an internal interface; a network database keeps it."""
+        md = pf.gen_architecture_diagrams(
+            self._data([self._tb("tb-1", "external", "api"), {**self._tb("tb-2", "api", "db"), **axes}])
+        )
+        section = md.split("### 2.2 Container Architecture")[1].split("```")[0]
+
+        assert "Each box is a separate runtime process or service container" in section
+        assert ("runs inside its caller's process" in section) is embedded
+
+    def test_container_intro_is_unchanged_without_boundaries(self):
+        md = pf.gen_architecture_diagrams(self._data([]))
+        section = md.split("### 2.2 Container Architecture")[1].split("```")[0]
+
+        assert "Each box is a separate runtime process or service container; arrows show" in section
+        assert "caller's process" not in section
+
+    @pytest.mark.parametrize(
+        ("names", "phrase"),
+        [
+            (["A"], "except A, which runs inside its caller's process"),
+            (["A", "B"], "except A and B, which run inside their caller's process"),
+            (["A", "B", "C"], "except A, B and C, which run inside"),
+            (["A", "B", "C", "D", "E"], "except A, B, C and 2 more, which run inside"),
+        ],
+    )
+    def test_container_intro_lists_embedded_names(self, names, phrase):
+        assert phrase in pf._container_intro(names)
+
     def test_an_interface_is_never_drawn_as_the_data_boundary(self):
         md = pf.gen_architecture_diagrams(
             self._data([{**self._tb("tb-9", "api", "db"), "surface": "in-process", "transition": []}])
