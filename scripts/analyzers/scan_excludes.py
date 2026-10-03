@@ -51,6 +51,8 @@ import sys
 from pathlib import Path, PurePosixPath
 from typing import Iterable
 
+from shared._paths import strip_dot_slash
+
 try:
     import yaml
 except ImportError:  # pragma: no cover - pyyaml is a hard dependency
@@ -162,11 +164,7 @@ def _matches_file_pattern(name: str, patterns: Iterable[str]) -> bool:
 
 
 def _matches_path_prefix(rel_path: str, prefixes: Iterable[str]) -> bool:
-    norm = rel_path.replace("\\", "/")
-    # Strip leading "./" only — NOT lstrip("./"), which would eat a leading
-    # "." from paths like ".github/foo" (hidden-directory names).
-    if norm.startswith("./"):
-        norm = norm[2:]
+    norm = strip_dot_slash(rel_path.replace("\\", "/"))
     return any(norm.startswith(prefix) for prefix in prefixes)
 
 
