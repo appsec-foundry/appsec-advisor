@@ -227,7 +227,10 @@ def test_evidence_application_accepts_only_selected_unique_flags(tmp_path: Path)
         {"version": 1, "threats": copy.deepcopy(threats)}, context, verification
     )
     assert merged["threats"][0]["evidence_check"] == "verified"
+    # The verifier read the code: the basis says so, unlike a resolved pointer.
+    assert merged["threats"][0]["evidence_basis"] == "llm-verified"
     assert merged["threats"][1]["evidence_check"] == "unchecked"
+    assert "evidence_basis" not in merged["threats"][1]
     verification["flags"][0]["t_id"] = "T-002"
     with pytest.raises(contexts.PostStrideContextError, match="unselected"):
         contexts.apply_evidence_verification({"version": 1, "threats": copy.deepcopy(threats)}, context, verification)

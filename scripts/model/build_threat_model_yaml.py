@@ -77,7 +77,7 @@ from runtime.stride_outputs import is_stride_output, stride_output_files  # noqa
 from shared._atomic_io import atomic_write_text  # noqa: E402
 from shared._boundary_criticality import exposure_of as _boundary_exposure_of  # noqa: E402
 from shared._boundary_criticality import tier_of as _boundary_tier_of  # noqa: E402
-from shared._finding_state import is_refuted  # noqa: E402
+from shared._finding_state import is_refuted, record_evidence  # noqa: E402
 from shared._paths import strip_dot_slash  # noqa: E402
 from shared._severity_policy import normalize_risks  # noqa: E402
 
@@ -925,7 +925,7 @@ def reconcile_incremental_threats(
             next_t_num += 1
             carried = dict(pt)
             carried["id"] = f"T-{next_t_num:03d}"
-            carried["evidence_check"] = "carried-unverified-shallower-depth"
+            record_evidence(carried, "carried-unverified-shallower-depth")
             threats.append(carried)
             present.add(key)
             carried_ids.append(carried["id"])

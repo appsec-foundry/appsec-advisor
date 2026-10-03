@@ -17,10 +17,11 @@ floor:
   - Absence — a config finding whose evidence has `kind: absence` (something
     is missing, so there is no line) is judged by re-running its catalog check
     (`analyzers.config_iac_scanner.absence_still_holds`): `verified` with
-    `absence_confirmed` while it is still missing, `refuted` with
-    `absence_contradicted` once it is present.
+    `absence_confirmed` and basis `absence-verified` while it is still missing,
+    `refuted` with `absence_contradicted` once it is present.
   - All other findings whose existing check is `unchecked` are upgraded
-    to `verified` (deterministic — the evidence pointer resolves cleanly).
+    to `verified` with basis `pointer-resolved`: the evidence pointer resolves
+    cleanly, which does not confirm the finding (`shared/_finding_state.py`).
 
 Idempotent — a finding that already carries `verified-prior`, `refuted`,
 or `ambiguous` from the LLM verifier is left untouched during validation.
@@ -63,7 +64,7 @@ import yaml
 # Local shared modules — single source of truth for inference/coverage-gap
 # source-string enums.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from shared._finding_state import is_refuted  # noqa: E402
+from shared._finding_state import is_refuted, record_evidence  # noqa: E402
 from shared._shared_sources import ARCH_ALL_SOURCES  # noqa: E402
 
 # A "comment-only" line is one whose stripped form starts with a recognised
@@ -340,7 +341,12 @@ def validate_yaml(data: dict, repo_root: Path) -> tuple[dict, dict]:
             stats["skipped"] += 1
             continue
         final, flags = _validate_one(t, repo_root)
-        t["evidence_check"] = final
+        # A re-run check establishes an absence; a resolved pointer only shows
+        # the cited line exists, which does not confirm the finding.
+        basis = None
+        if final == "verified":
+            basis = "absence-verified" if "absence_confirmed" in flags else "pointer-resolved"
+        record_evidence(t, final, basis)
         if flags:
             existing = list(t.get("evidence_flags") or [])
             # Merge without duplication, preserve insertion order.
@@ -416,7 +422,7 @@ def persist_to_merged(output_dir: Path, data: dict) -> int:
             continue
         if (threat.get("evidence_check") or "").strip() in _RESPECTED_PRIOR_STATES:
             continue
-        threat["evidence_check"] = source["evidence_check"]
+        record_evidence(threat, source["evidence_check"], source.get("evidence_basis"))
         if source.get("evidence_flags"):
             existing = list(threat.get("evidence_flags") or [])
             for flag in source["evidence_flags"]:

@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from shared._atomic_io import atomic_write_json
+from shared._finding_state import record_evidence
 
 MAX_EVIDENCE_ITEMS = 256
 MAX_EVIDENCE_BYTES = 524_288
@@ -318,7 +319,7 @@ def apply_evidence_verification(
         if not isinstance(threat, dict) or threat.get("t_id") not in verdict_by_threat:
             continue
         flag = verdict_by_threat[str(threat["t_id"])]
-        threat["evidence_check"] = flag["verdict"]
+        record_evidence(threat, flag["verdict"], "llm-verified" if flag["verdict"] == "verified" else None)
         annotation = {
             "flag_id": flag["flag_id"],
             "verdict": flag["verdict"],

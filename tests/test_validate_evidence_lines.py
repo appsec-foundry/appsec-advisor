@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import validators.validate_evidence_lines as vel
+from shared._finding_state import is_confirmed
 
 
 def _write(path: Path, text: str) -> None:
@@ -246,6 +248,40 @@ def _merged(*t_ids: str, evidence_check: str | None = None) -> dict:
     return {"threats": threats}
 
 
+@pytest.mark.parametrize(
+    ("evidence", "check", "basis"),
+    [
+        ({"file": "src/app.ts", "line": 1}, "verified", "pointer-resolved"),
+        ({"file": "lib/handlers/upload.py", "line": 2}, "verified", "pointer-resolved"),
+        ({"file": "src/missing.ts", "line": 1}, "refuted", "refuted"),
+        ({"file": "src/app.ts", "line": 2}, "ambiguous", "ambiguous"),
+    ],
+)
+def test_a_resolved_pointer_is_verified_but_not_confirmed(tmp_path: Path, evidence, check, basis) -> None:
+    repo = tmp_path / "repo"
+    _write(repo / "src" / "app.ts", "const sql = query(req.body.id)\n// comment only\n")
+    _write(repo / "lib" / "handlers" / "upload.py", "import os\nopen(request.files['f'].filename, 'wb')\n")
+
+    updated, _ = vel.validate_yaml({"threats": [_threat("T-1", evidence)]}, repo)
+
+    threat = updated["threats"][0]
+    assert (threat["evidence_check"], threat["evidence_basis"]) == (check, basis)
+    # Finding the cited line does not establish the finding.
+    assert not is_confirmed(threat)
+
+
+def test_a_verifier_verdict_keeps_its_basis(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _write(repo / "src" / "app.ts", "const sql = query(req.body.id)\n")
+    threat = _threat("T-1", {"file": "src/app.ts", "line": 1}, evidence_check="verified")
+    threat["evidence_basis"] = "llm-verified"
+
+    updated, _ = vel.validate_yaml({"threats": [threat]}, repo)
+
+    assert updated["threats"][0]["evidence_basis"] == "llm-verified"
+    assert is_confirmed(updated["threats"][0])
+
+
 def test_persist_to_merged_mirrors_verdicts_and_respects_prior(tmp_path: Path) -> None:
     out = tmp_path / "out"
     out.mkdir()
@@ -264,7 +300,7 @@ def test_persist_to_merged_mirrors_verdicts_and_respects_prior(tmp_path: Path) -
     )
     data = {
         "threats": [
-            _threat("T-001", evidence_check="verified", flags=["ok"]),
+            {**_threat("T-001", evidence_check="verified", flags=["ok"]), "evidence_basis": "pointer-resolved"},
             _threat("T-002", evidence_check="refuted", flags=["file_missing"]),
             _threat("T-003", evidence_check="ambiguous"),
         ]
@@ -275,6 +311,7 @@ def test_persist_to_merged_mirrors_verdicts_and_respects_prior(tmp_path: Path) -
     merged = vel.json.loads((out / ".threats-merged.json").read_text(encoding="utf-8"))
     by_id = {t["t_id"]: t for t in merged["threats"]}
     assert by_id["T-001"]["evidence_check"] == "verified"
+    assert by_id["T-001"]["evidence_basis"] == "pointer-resolved"
     assert by_id["T-001"]["evidence_flags"] == ["ok"]
     # Refuted is retained in the merged intermediate for audit — the drop
     # happens only in the active model.
@@ -410,6 +447,8 @@ def test_a_repository_absence_is_verified_by_rerunning_its_check_not_by_a_line(t
     updated, _ = vel.validate_yaml({"threats": [dict(finding)]}, repo)
     assert updated["threats"][0]["evidence_check"] == "verified"
     assert updated["threats"][0]["evidence_flags"] == ["absence_confirmed"]
+    assert updated["threats"][0]["evidence_basis"] == "absence-verified"
+    assert is_confirmed(updated["threats"][0])
 
     workflow.write_text(PUSHING_WORKFLOW + SIGNED, encoding="utf-8")
     updated, _ = vel.validate_yaml({"threats": [dict(finding)]}, repo)

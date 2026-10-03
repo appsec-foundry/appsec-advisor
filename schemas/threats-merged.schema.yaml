@@ -290,6 +290,17 @@ properties:
           type: [string, "null"]
           enum: [verified, verified-prior, refuted, ambiguous, unchecked,
                  carried-unverified-shallower-depth, null]
+        evidence_basis:
+          # How the `evidence_check` verdict was established, written with it
+          # (shared/_finding_state.record_evidence). `verified` splits into
+          # `llm-verified` (a verifier read the code), `pointer-resolved` (the
+          # deterministic check found the cited line, which confirms nothing)
+          # and `absence-verified` (a re-run check still finds it missing).
+          # Only llm-verified, absence-verified and verified-prior confirm a
+          # finding. Absent on runs written before the field existed.
+          type: [string, "null"]
+          enum: [llm-verified, pointer-resolved, absence-verified, verified-prior,
+                 refuted, ambiguous, unchecked, carried-unverified-shallower-depth, null]
         evidence_tier:
           # P1 (weakness-class evidence model): the evidence BASIS of the
           # threat — distinct from `evidence_check` (verification state); do

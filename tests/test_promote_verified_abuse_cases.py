@@ -118,6 +118,7 @@ def test_confirmed_source_probe_becomes_normal_bound_finding(tmp_path: Path) -> 
     assert created["t_id"] == "T-002"
     assert created["source"] == "source-scan"
     assert created["evidence_check"] == "verified"
+    assert created["evidence_basis"] == "llm-verified"
     assert created["abuse_case_id"] == "REPO-AC-001"
     assert created["abuse_case_step"] == 1
     assert created["mitigation_title"] == "Remove dynamic template evaluation"
