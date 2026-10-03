@@ -39,6 +39,7 @@ from model.reclassify_components import (
 from model.reserve_ids import ensure_counter_at_least, reserve
 from model.sanitize_perimeter_claims import sanitize_perimeter_prose
 from shared._atomic_io import atomic_write_json
+from shared._finding_state import is_discredited
 from validators.validate_fragment import fragment_invariant_errors
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -263,9 +264,6 @@ def boundary_endpoints_valid(boundary: dict, component_ids: set[str]) -> bool:
     return boundary.get("from") in allowed and boundary.get("to") in allowed
 
 
-_UNVERIFIED_EVIDENCE_STATES = frozenset({"refuted", "ambiguous"})
-
-
 def _finding_number(value: Any) -> tuple[int, str]:
     text = str(value or "")
     match = re.search(r"(\d+)$", text)
@@ -472,7 +470,7 @@ def boundary_leg_states(boundary: dict, threats: Iterable[dict]) -> list[dict]:
         tid = str(threat.get("id") or "")
         if not tid:
             continue
-        verified = threat.get("evidence_check") not in _UNVERIFIED_EVIDENCE_STATES
+        verified = not is_discredited(threat)
         links = [
             ref
             for ref in threat.get("boundary_refs") or []
@@ -549,7 +547,7 @@ def boundary_assumption_state(boundary: dict, threats: Iterable[dict]) -> tuple[
         tid = str(threat.get("id") or "")
         if not tid:
             continue
-        verified = threat.get("evidence_check") not in _UNVERIFIED_EVIDENCE_STATES
+        verified = not is_discredited(threat)
         links_here = any(
             isinstance(ref, dict) and str(ref.get("boundary_id") or "") == boundary_id
             for ref in threat.get("boundary_refs") or []

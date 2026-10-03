@@ -477,6 +477,7 @@ GROUPS = {
     """),
     "shared": _tests("""
         atomic_io
+        finding_state
         intermediate_json
         reserve_ids
         safe_cond
@@ -2777,6 +2778,25 @@ SOURCE_TESTS = {
         supply_chain_config
         terminate_run
         threat_fixture
+        weakness_signals
+    """),
+    "scripts/shared/_finding_state.py": _tests("""
+        architect_review
+        build_architect_context
+        build_posture_verdict
+        build_threat_model_yaml
+        compose_threat_model_cov
+        detect_impl_strategy
+        figure2_svg
+        finding_state
+        match_abuse_cases
+        merge_threats
+        prepare_trust_boundary_context
+        severity_policy
+        severity_rollup
+        team_questions
+        threat_fixture
+        validate_evidence_lines
         weakness_signals
     """),
     "scripts/shared/_paths.py": _tests("""

@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from shared._atomic_io import atomic_write_json
+from shared._finding_state import is_refuted
 from shared._path_guard import is_safe_to_read, run_path_arg
 
 from analyzers.source_auth_scanner import _without_js_comments
@@ -257,7 +258,7 @@ def emit_artifacts(repo_root: Path, out_dir: Path, threats: list[dict] | None = 
     strategies = build_strategy_map(repo_root)
     refuted = set()
     for threat in threats or []:
-        if threat.get("evidence_check") != "refuted":
+        if not is_refuted(threat):
             continue
         evidence = threat.get("evidence") or []
         if isinstance(evidence, dict):
@@ -281,7 +282,7 @@ def emit_artifacts(repo_root: Path, out_dir: Path, threats: list[dict] | None = 
             evidence = threat.get("evidence") or []
             if isinstance(evidence, dict):
                 evidence = [evidence]
-            if threat.get("cwe") != signal["cwe"] or threat.get("evidence_check") == "refuted":
+            if threat.get("cwe") != signal["cwe"] or is_refuted(threat):
                 continue
             if not any((e.get("file"), e.get("line")) in sites for e in evidence if isinstance(e, dict)):
                 continue

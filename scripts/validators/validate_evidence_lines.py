@@ -57,6 +57,7 @@ import yaml
 # Local shared modules — single source of truth for inference/coverage-gap
 # source-string enums.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from shared._finding_state import is_refuted  # noqa: E402
 from shared._shared_sources import ARCH_ALL_SOURCES  # noqa: E402
 
 # A "comment-only" line is one whose stripped form starts with a recognised
@@ -334,7 +335,7 @@ def drop_refuted_findings(data: dict) -> int:
     kept: list[object] = []
     dropped = 0
     for threat in threats:
-        if isinstance(threat, dict) and (threat.get("evidence_check") or "").strip().lower() == "refuted":
+        if isinstance(threat, dict) and is_refuted(threat):
             dropped += 1
             continue
         kept.append(threat)

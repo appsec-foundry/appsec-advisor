@@ -77,6 +77,7 @@ from runtime.stride_outputs import is_stride_output, stride_output_files  # noqa
 from shared._atomic_io import atomic_write_text  # noqa: E402
 from shared._boundary_criticality import exposure_of as _boundary_exposure_of  # noqa: E402
 from shared._boundary_criticality import tier_of as _boundary_tier_of  # noqa: E402
+from shared._finding_state import is_refuted  # noqa: E402
 from shared._paths import strip_dot_slash  # noqa: E402
 from shared._severity_policy import normalize_risks  # noqa: E402
 
@@ -1596,7 +1597,7 @@ def build_threats(merged: dict, register_floor: str = "medium") -> tuple[list[di
         if not threat.get("id") or is_info_stub:
             skipped_stubs += 1
             continue
-        if (threat.get("evidence_check") or "").strip().lower() == "refuted":
+        if is_refuted(threat):
             skipped_refuted += 1
             continue
         threat["component"] = threat.pop("component_id", threat.get("component", ""))
@@ -1994,7 +1995,7 @@ def refuted_threat_ids(merged: dict) -> set[str]:
     for t in merged.get("threats") or []:
         if not isinstance(t, dict):
             continue
-        if (t.get("evidence_check") or "").strip().lower() != "refuted":
+        if not is_refuted(t):
             continue
         tid = t.get("t_id") or t.get("id")
         if tid:

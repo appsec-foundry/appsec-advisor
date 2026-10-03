@@ -20,6 +20,8 @@ from pathlib import Path
 
 import yaml
 
+from shared._finding_state import is_discredited, is_refuted
+
 RANK = {"Low": 0, "Medium": 1, "High": 2, "Critical": 3}
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 
@@ -50,16 +52,18 @@ def finding_cwe(finding: dict) -> str:
 
 
 def companion_cwes(finding: dict, findings: list[dict]) -> set[str]:
-    """Only other, non-refuted findings in the same explicit category count."""
+    """Other findings in the same explicit category whose evidence is not discredited.
+
+    A companion only needs usable evidence, not confirmed evidence: unchecked
+    and practice-tier findings still count. Refuted or ambiguous ones do not.
+    """
     category = finding.get("threat_category_id")
     if not category:
         return set()
     return {
         finding_cwe(other)
         for other in findings
-        if other is not finding
-        and other.get("threat_category_id") == category
-        and other.get("evidence_check") not in ("refuted", "ambiguous")
+        if other is not finding and other.get("threat_category_id") == category and not is_discredited(other)
     }
 
 
@@ -115,7 +119,7 @@ def abuse_case_priority(findings: list[dict]) -> tuple[int, int, int, int]:
     ranks = {"Informational": -1, **RANK}
     keys = []
     for finding in findings:
-        if finding.get("evidence_check") == "refuted":
+        if is_refuted(finding):
             continue
         risk = finding.get("risk") or finding.get("severity")
         if risk not in ranks:

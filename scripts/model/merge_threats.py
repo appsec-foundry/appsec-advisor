@@ -58,6 +58,7 @@ from runtime.stride_outputs import component_id as _stride_component_id
 from runtime.stride_outputs import stride_output_files
 from shared._artifact_stamp import carry_generated_at
 from shared._atomic_io import atomic_write_json, atomic_write_text
+from shared._finding_state import is_refuted
 from shared._severity_policy import normalize_risks
 from shared._shared_sources import CODE_LEVEL_SOURCES, CONFIG_DEFECT_SOURCES, DESIGN_LEVEL_SOURCES
 
@@ -2782,7 +2783,7 @@ def build_weakness_register(
 
     confirmed: list[dict] = []
     for t in threats:
-        if t.get("evidence_check") == "refuted":
+        if is_refuted(t):
             continue
         src = (t.get("source") or "").strip()
         wcid = classify_threat(t, vocab, warn=False)

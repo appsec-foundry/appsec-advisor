@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
+from shared._finding_state import is_confirmed
 from shared._shared_sources import DESIGN_LEVEL_SOURCES
 
 import renderers._severity_rollup as _severity_rollup
@@ -191,8 +192,7 @@ def select_open_questions(
                 "build_time": build_time,
                 "actor_ids": {str(value) for value in actor_ids} if isinstance(actor_ids, list) else set(),
                 "component": str(threat.get("component") or threat.get("component_id") or ""),
-                "unproven": threat.get("evidence_tier") != "confirmed-exploitable"
-                or threat.get("evidence_check") not in {"verified", "verified-prior"},
+                "unproven": not is_confirmed(threat),
             }
         )
     candidates.sort(key=lambda item: (item["rank"], int(item["id"][2:])))

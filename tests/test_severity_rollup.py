@@ -175,10 +175,12 @@ def test_weakness_basis_breakdown_none_without_register():
 def test_weakness_basis_breakdown_excludes_design_sources_and_bad_evidence():
     data = _model(
         [
-            {"risk": "High"},
-            {"risk": "High", "source": "coverage-gap"},
+            {"risk": "High", "evidence_check": "verified"},
+            {"risk": "High", "source": "coverage-gap", "evidence_check": "verified"},
             {"risk": "High", "evidence_check": "refuted"},
-            {"risk": "High", "evidence_tier": "insecure-practice"},
+            {"risk": "High", "evidence_check": "unchecked"},
+            {"risk": "High"},
+            {"risk": "High", "evidence_tier": "insecure-practice", "evidence_check": "verified"},
         ],
         weaknesses=[
             {"kind": "implementation"},
