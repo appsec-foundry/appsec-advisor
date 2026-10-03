@@ -378,6 +378,32 @@ class TestEvidenceDedup:
         )
         assert len(mt._dedupe_title_locator(mt._dedupe_evidence([spoof, disclose]))) == 2
 
+    @pytest.mark.parametrize(("cwe_a", "cwe_b"), [("CWE-95", "CWE-94"), ("CWE-494", "CWE-829"), ("CWE-732", "CWE-250")])
+    def test_same_line_sibling_labels_from_two_sources_collapse(self, mt, cwe_a, cwe_b):
+        # One sink reported by two producers under sibling CWEs (an eval found by
+        # STRIDE as CWE-95 and by the source scan as CWE-94) is one finding.
+        ev = {"file": "routes/userProfile.ts", "line": 61}
+        a = _threat(component_id="c", cwe=cwe_a, stride="Tampering", evidence=dict(ev), title="Eval of username")
+        b = _threat(component_id="c", cwe=cwe_b, stride="Tampering", evidence=dict(ev), title="Input passed to eval")
+        assert len(mt._dedupe_evidence([a, b])) == 1
+
+    def test_same_file_different_lines_never_share_identity(self, mt):
+        a = _threat(component_id="c", cwe="CWE-95", evidence={"file": "routes/x.ts", "line": 61})
+        b = _threat(component_id="c", cwe="CWE-94", evidence={"file": "routes/x.ts", "line": 87})
+        assert mt._evidence_identity_key(a) != mt._evidence_identity_key(b)
+
+    def test_narrow_cross_run_families_stay_inside_one_broad_family(self, mt):
+        # build_threat_model_yaml's file-only families claim "same finding". If one
+        # spanned two broad families, a pair merged across runs would be kept apart
+        # within a run (and vice versa).
+        from model.build_threat_model_yaml import _CWE_FAMILIES
+
+        broad: dict[str, set[str]] = {}
+        for cwe, family in _CWE_FAMILIES.items():
+            broad.setdefault(family, set()).add(mt._cwe_family(cwe))
+        spanning = {family: kinds - {"other"} for family, kinds in broad.items() if len(kinds - {"other"}) > 1}
+        assert spanning == {}
+
     def test_same_line_other_family_falls_back_to_exact_cwe(self, mt):
         # Two findings whose CWEs both land in the catch-all "other" family must
         # NOT merge unless the CWE is literally identical — the conservative

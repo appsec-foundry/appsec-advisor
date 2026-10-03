@@ -569,6 +569,8 @@ def _fp_str(t: dict) -> str:
 # hardcoded RSA key AND weak password hashing — different families, so they keep
 # separate identities and a partial fix is still visible). Unlisted CWEs map to
 # themselves. Add a pair here only when a real same-finding CWE swap is observed.
+# merge_threats._CWE_FAMILY is the broader, line-anchored in-run identity; every
+# family here must stay inside one of its families (guarded in test_merge_threats).
 _CWE_FAMILIES: dict[str, str] = {
     # Hard-coded key / cryptographic material / cleartext secret.
     "CWE-798": "hardcoded-key",
@@ -592,6 +594,9 @@ _CWE_FAMILIES: dict[str, str] = {
     "CWE-770": "resource-exhaustion",
     "CWE-405": "resource-exhaustion",
     "CWE-1333": "resource-exhaustion",
+    # Code injection via eval / dynamic code evaluation.
+    "CWE-94": "code-eval",
+    "CWE-95": "code-eval",
 }
 
 
@@ -605,6 +610,19 @@ def _cwe_family(cwe: str) -> str:
 # normalized with ``lstrip("./")``, which dropped the dot of hidden directories;
 # a diff against such an entry recomputes the current side the same way.
 MATCH_KEY_VERSION = 2
+
+
+def _refamily_match_key(mk: str) -> str:
+    """Re-derive the family part of a stored ``file|family`` key.
+
+    A key stored before a CWE joined a family still carries the bare CWE
+    (``f|CWE-95``); mapping it through today's table keeps it equal to the
+    current run's key, so extending a family never reports the same finding as
+    resolved and added. Family names already stored pass through unchanged."""
+    f, sep, token = str(mk).rpartition("|")
+    if not sep or not token.upper().startswith("CWE-"):
+        return mk
+    return f"{f}|{_cwe_family(token)}"
 
 
 def _norm_file(path: str, *, legacy: bool = False) -> str:
@@ -665,6 +683,7 @@ def _prior_match_index(entry: dict | None) -> tuple[set[str], dict[str, str], bo
     fps = entry.get("fingerprints") or []
     if isinstance(mks, list) and mks and len(mks) == len(fps):
         legacy = entry.get("match_key_version") != MATCH_KEY_VERSION
+        mks = [_refamily_match_key(mk) for mk in mks]
         return set(mks), {mk: fp for mk, fp in zip(mks, fps)}, legacy
     ifps = entry.get("instance_fingerprints") or []
     if ifps:
