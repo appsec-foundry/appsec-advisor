@@ -30,8 +30,10 @@ import sys
 from pathlib import Path
 
 import yaml
+from shared._finding_state import is_refuted
 
 from model.finding_intake import apply_intake
+from model.merge_threats import _evidence_identity_key
 from model.reclassify_components import (  # canonical registry resolver — see _component_for
     _build_matcher as _rc_build_matcher,
 )
@@ -160,6 +162,22 @@ def _registered_components(output_dir: Path) -> list:
     return components if isinstance(components, list) else []
 
 
+def _same_object_finding(threats: list[dict], candidate: dict) -> str | None:
+    """T-ID of a live finding with the candidate's evidence identity, if any.
+
+    Uses the merge pass's identity (file, positive line, CWE family) so
+    promotion and merging agree on what "the same finding" is. A refuted
+    finding never absorbs a confirmed step.
+    """
+    key = _evidence_identity_key(candidate)
+    if key is None:
+        return None
+    for threat in threats:
+        if isinstance(threat, dict) and not is_refuted(threat) and _evidence_identity_key(threat) == key:
+            return threat.get("t_id")
+    return None
+
+
 def _find_step(case_match: dict, step_number: object) -> dict | None:
     case = case_match.get("case")
     if not isinstance(case, dict):
@@ -234,6 +252,18 @@ def promote(output_dir: Path) -> tuple[int, list[str]]:
                 continue
             key = (case_id, step_no, str(evidence.get("file")), evidence.get("line"))
             t_id = existing.get(key)
+            basis = "promoted_source_probe"
+            if not t_id:
+                # A finding already at the same code location and weakness family
+                # is the same finding: bind the step to it instead of promoting a
+                # duplicate the merge pass, which already ran, can no longer fold.
+                t_id = _same_object_finding(
+                    threats,
+                    {"evidence": {"file": str(evidence["file"]), "line": evidence.get("line")}, "cwe": meta["cwe"]},
+                )
+                if t_id:
+                    basis = "finding"
+                    existing[key] = t_id
             if not t_id:
                 t_id = _next_t_id(threats)
                 component_id, component_name = _component_for(str(evidence["file"]), components)
@@ -268,7 +298,7 @@ def promote(output_dir: Path) -> tuple[int, list[str]]:
                 existing[key] = t_id
                 promoted.append(t_id)
             step_match["matched_finding_id"] = t_id
-            step_match["match_basis"] = "promoted_source_probe"
+            step_match["match_basis"] = basis
             step_verdict["matched_finding_id"] = t_id
             bindings_changed = True
 

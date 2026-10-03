@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import jsonschema
+import pytest
 import yaml
 
 ROOT = Path(__file__).parent.parent
@@ -164,6 +165,59 @@ def test_promotion_is_idempotent_when_next_scan_rediscovers_same_source_probe(tm
     assert len(merged["threats"]) == 2
     rebound = json.loads(matches_path.read_text())["matches"][0]["step_matches"][0]
     assert rebound["matched_finding_id"] == "T-002"
+
+
+def _with_existing_finding(tmp_path: Path, **finding: object) -> None:
+    merged_path = tmp_path / ".threats-merged.json"
+    merged = json.loads(merged_path.read_text())
+    merged["threats"] = [{"t_id": "T-001", "title": "Existing finding", **finding}]
+    _write(merged_path, merged)
+
+
+@pytest.mark.parametrize(
+    ("evidence_file", "existing_cwe"),
+    [
+        ("src/template.ts", "CWE-94"),
+        # Sibling CWE of the same family, under an unrelated path.
+        ("lib/render/view.js", "CWE-95"),
+    ],
+)
+def test_confirmed_step_binds_to_the_finding_already_at_its_location(
+    tmp_path: Path, evidence_file: str, existing_cwe: str
+) -> None:
+    _sidecars(tmp_path, evidence_file=evidence_file)
+    _with_existing_finding(tmp_path, cwe=existing_cwe, evidence={"file": evidence_file, "line": 17})
+
+    count, _ = mod.promote(tmp_path)
+
+    assert count == 0
+    assert [t["t_id"] for t in json.loads((tmp_path / ".threats-merged.json").read_text())["threats"]] == ["T-001"]
+    step = json.loads((tmp_path / ".abuse-case-matches.json").read_text())["matches"][0]["step_matches"][0]
+    assert step["matched_finding_id"] == "T-001"
+    assert step["match_basis"] == "finding"
+    verdict = json.loads((tmp_path / ".abuse-case-verdicts.json").read_text())["verdicts"][0]["step_verdicts"][0]
+    assert verdict["matched_finding_id"] == "T-001"
+    # A rediscovered probe stays bound to the same finding.
+    assert mod.promote(tmp_path)[0] == 0
+
+
+@pytest.mark.parametrize(
+    "existing",
+    [
+        {"cwe": "CWE-79", "evidence": {"file": "src/template.ts", "line": 17}},
+        {"cwe": "CWE-94", "evidence": {"file": "src/template.ts", "line": 18}},
+        {"cwe": "CWE-94", "evidence": {"file": "src/template.ts", "line": 17}, "evidence_check": "refuted"},
+    ],
+    ids=["other-family-same-line", "same-family-other-line", "refuted-finding"],
+)
+def test_step_is_promoted_when_no_live_finding_shares_its_identity(tmp_path: Path, existing: dict) -> None:
+    _sidecars(tmp_path)
+    _with_existing_finding(tmp_path, **existing)
+
+    assert mod.promote(tmp_path)[0] == 1
+    step = json.loads((tmp_path / ".abuse-case-matches.json").read_text())["matches"][0]["step_matches"][0]
+    assert step["matched_finding_id"] == "T-002"
+    assert step["match_basis"] == "promoted_source_probe"
 
 
 def test_unconfirmed_or_unclassified_probe_is_never_promoted(tmp_path: Path) -> None:
