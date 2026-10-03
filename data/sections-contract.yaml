@@ -355,9 +355,8 @@ sections:
       - { id: top_weaknesses,              condition: "has_weakness_register" }
       - { id: open_questions_for_team,      condition: "has_open_questions" }
       - { id: architectural_anti_patterns, condition: "has_anti_patterns" }
-      # ai_exposure_ms is a deep-only callout preserved on downgrade — see the
-      # authoritative `preserve_on_downgrade:` block at the end of this file
-      # (substrate: fragment, ms-ai-exposure.json).
+      # ai_exposure_ms is generated from the model at every depth
+      # (pregenerate_fragments.gen_ai_exposure), so it is never carried over.
       - { id: ai_exposure_ms,              condition: "has_llm_surface" }
       # systemic_posture — P4 "### Security Principles" verdict table, hoisted
       # from §8 (2026-07-13) so a systemically-violated principle is visible at
@@ -462,10 +461,11 @@ sections:
   # risks the report articulates via the OWASP LLM Top-10 lens (prompt injection,
   # excessive agency, model supply chain, …), so the fact the system embeds an
   # LLM/agent — and its headline risks — is visible at executive level instead of
-  # scattered across §6 control prose. LLM-authored OPTIONAL fragment: the
-  # threat-renderer writes ms-ai-exposure.json only when the system has an LLM/AI
-  # surface (KNOWN_LLM_PATTERNS != none); absent → the section renders nothing
-  # (gated by `has_llm_surface`), so a repo with no AI usage pays zero cost.
+  # scattered across §6 control prose. Deterministic OPTIONAL fragment:
+  # pregenerate_fragments.gen_ai_exposure writes ms-ai-exposure.json from the
+  # findings' OWASP LLM/Agentic tags only when the model has an LLM/AI surface;
+  # absent → the section renders nothing (gated by `has_llm_surface`), so a repo
+  # with no AI usage pays zero cost. No agent authors it.
   # Rendered via the special-case path in `_render_management_summary` (not the
   # generic loop), so it never demands a fragment that non-LLM runs lack.
   ai_exposure_ms:
@@ -1603,9 +1603,6 @@ preserve_on_downgrade:
   - id: security_architecture
     substrate: md-slice
     md_section_number: 7
-  - id: ai_exposure_ms
-    substrate: fragment
-    fragment: ms-ai-exposure.json
   - id: abuse_cases
     substrate: fragment
     fragment: abuse-cases.md

@@ -12,7 +12,7 @@ You are the Management Summary half of Stage 2. `MODEL_ID` is supplied by the di
 
 ## Ownership and shared state
 
-You may write only `ms-verdict.json`, conditional `ms-critical-attack-tree.json`, `security-posture-attack-paths.json`, conditional `requirements-compliance.md`, `ms-anti-patterns.json`, and `ms-ai-exposure.json` under `$OUTPUT_DIR/.fragments/`. The controller owns `threat-model.md`, `threat-model.yaml`, shared stage events, `.phase-epoch`, `.appsec-progress.json`, and `.appsec-checkpoint`. Do not write shared stage-state files.
+You may write only `ms-verdict.json`, conditional `ms-critical-attack-tree.json`, `security-posture-attack-paths.json`, conditional `requirements-compliance.md`, and `ms-anti-patterns.json` under `$OUTPUT_DIR/.fragments/`. The controller owns `threat-model.md`, `threat-model.yaml`, shared stage events, `.phase-epoch`, `.appsec-progress.json`, and `.appsec-checkpoint`. Do not write shared stage-state files.
 
 Follow `agents/shared/logging-standard.md` for a short `STEP_START` and `STEP_END` entry in `.agent-run.log`. The skill has already emitted the phase-level telemetry.
 
@@ -24,7 +24,7 @@ Before authoring, read `agents/shared/prose-style.md` and `agents/shared/prose-s
 
 ## Focused contract loading
 
-The authoritative Management Summary authoring contract remains in the full-fragment renderer so both renderer profiles retain one source of truth. Read **only lines 106–306** of `agents/appsec-threat-renderer.md`; do not load its security-architecture section. Those lines define every fragment you own, their schemas, the compactness gate, and the conditional authoring rules. Where they name `threat-model.yaml` or `.triage-flags.json` as the source, take the same data from the digest: `findings` lists the Critical rows in triage order, and `llm_surface` already applies the AI-surface detection rule.
+The authoritative Management Summary authoring contract remains in the full-fragment renderer so both renderer profiles retain one source of truth. Read **only lines 106–277** of `agents/appsec-threat-renderer.md`; do not load its security-architecture section. Those lines define every fragment you own, their schemas, the compactness gate, and the conditional authoring rules. Where they name `threat-model.yaml` or `.triage-flags.json` as the source, take the same data from the digest: `findings` lists the Critical rows in triage order, and `llm_surface` already applies the AI-surface detection rule.
 
 ## Execution
 

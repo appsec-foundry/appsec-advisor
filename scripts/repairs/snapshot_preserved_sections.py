@@ -22,8 +22,6 @@ This script captures a STABLE snapshot at run-start, BEFORE the wipe/overwrite:
 * ``.appsec-cache/preserved-sections/prior-report.md`` — the full prior
   ``threat-model.md`` (the composer extracts §7 verbatim from it and runs its
   F-NNN stability gate against this stable copy).
-* ``.appsec-cache/preserved-sections/ms-ai-exposure.json`` — the prior AI/LLM
-  exposure fragment, when one existed.
 * ``.appsec-cache/preserved-sections/manifest.json`` — ``origin_depth`` (the
   depth the snapshot content was authored at) + capture metadata.
 
@@ -207,8 +205,6 @@ def snapshot(output_dir: Path, plugin_root: Path, repo_root: Path | None) -> int
         "origin_date": _read_prior_date(output_dir),
         "captured_at": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "has_prior_report": True,
-        # legacy field retained for the composer's older read path
-        "has_ai_exposure": any(e["id"] == "ai_exposure_ms" and e["captured"] for e in section_meta),
         "files": captured,
         "sections": section_meta,
     }

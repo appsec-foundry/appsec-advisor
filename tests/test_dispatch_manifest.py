@@ -845,16 +845,18 @@ def test_builder_supplements_sparse_llm_patterns_from_cat13(tmp_path):
 AGENTS_DIR = PLUGIN_ROOT / "agents"
 
 
-def test_ms_renderer_includes_ms_ai_exposure_in_author_list():
-    """The dedicated Management Summary renderer must own ms-ai-exposure.json.
+def test_no_renderer_authors_the_model_owned_ai_fragment():
+    """ms-ai-exposure.json is generated from the findings' OWASP tags at every
+    run. An LLM-authored copy once won over the generator and dropped tagged
+    findings and mislabelled LLM01 (juice-shop, 2026-10)."""
+    import renderers.pregenerate_fragments as pf
 
-    Guard against future edits that re-strip it from the allowlist — this was the
-    root cause of the AI/LLM Exposure section missing from the Management Summary
-    on the 2026-06-24 juice-shop standard run.
-    """
-    renderer_md = (AGENTS_DIR / "appsec-ms-renderer.md").read_text(encoding="utf-8")
-    assert "ms-ai-exposure.json" in renderer_md
-    assert "You may write only" in renderer_md
+    assert "ms-ai-exposure.json" in pf._MODEL_OWNED_FRAGMENTS
+    ms_md = (AGENTS_DIR / "appsec-ms-renderer.md").read_text(encoding="utf-8")
+    allowed = ms_md.split("You may write only", 1)[1].split("\n", 1)[0]
+    assert "ms-ai-exposure.json" not in allowed
+    threat_md = (AGENTS_DIR / "appsec-threat-renderer.md").read_text(encoding="utf-8")
+    assert "### `ms-ai-exposure.json` authoring contract" not in threat_md
 
 
 def test_renderer_delegates_every_export_to_the_controller_tail():

@@ -333,14 +333,22 @@ def test_a_component_slug_compose_repairs_is_not_a_violation(tmp_path, capsys, m
     (tmp_path / "threat-model.yaml").write_text(
         "components:\n  - id: billing-api\n  - id: web-client\n", encoding="utf-8"
     )
-    path = _write(tmp_path, "ms-ai-exposure.json", _ai_exposure(["web-client"]))
+    path = _write(tmp_path, "ms-anti-patterns.json", _anti_patterns(_prose(60), ["web-client"]))
     before = path.read_bytes()
     assert _run(tmp_path, monkeypatch) == 0
     assert path.read_bytes() == before, "the renderer's gate must not rewrite its fragments"
 
-    _write(tmp_path, "ms-ai-exposure.json", _ai_exposure(["no-such-component"]))
+    _write(tmp_path, "ms-anti-patterns.json", _anti_patterns(_prose(60), ["no-such-component"]))
     assert _run(tmp_path, monkeypatch) == 1
-    assert "ms-ai-exposure.json: ai_risks/0/affected_components/0" in capsys.readouterr().out
+    assert "ms-anti-patterns.json: anti_patterns/0/affected_components/0" in capsys.readouterr().out
+
+
+def test_the_renderer_gate_does_not_judge_the_model_owned_ai_fragment(tmp_path, monkeypatch):
+    """ms-ai-exposure.json is generated from the model; the MS renderer cannot
+    re-author it, so its gate leaves it to the pre-render gate."""
+    (tmp_path / "threat-model.yaml").write_text("components:\n  - id: web-client\n", encoding="utf-8")
+    _write(tmp_path, "ms-ai-exposure.json", _ai_exposure(["no-such-component"]))
+    assert _run(tmp_path, monkeypatch) == 0
 
 
 @pytest.mark.parametrize(

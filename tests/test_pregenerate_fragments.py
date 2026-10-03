@@ -502,7 +502,7 @@ class TestAiExposure:
         the LLM→ASI crosswalk is gated on a real agentic surface."""
         out = pf.gen_ai_exposure(self._LLM_YAML)
         data = json.loads(out)
-        assert all("owasp_asi_id" not in r for r in data["ai_risks"])
+        assert _asi_pairs(data["ai_risks"]) == set()
 
     def test_asi_crosswalk_on_agentic_surface(self):
         """When a threat evidences an agentic surface (here: tool-calling /
@@ -525,7 +525,8 @@ class TestAiExposure:
         data = json.loads(out)
         by_id = {r["owasp_llm_id"]: r for r in data["ai_risks"]}
         assert "LLM06" in by_id
-        assert by_id["LLM06"].get("owasp_asi_id") == "ASI02"
+        assert by_id["LLM06"]["findings"][0]["owasp_asi_ids"] == ["ASI02"]
+        assert "owasp_asi_id" not in by_id["LLM06"]
 
     def test_explicit_owasp_ids_override_title_heuristics_and_surface_asi_only_risk(self):
         d = {
@@ -549,10 +550,13 @@ class TestAiExposure:
             ],
         }
         data = json.loads(pf.gen_ai_exposure(d))
-        by_asi = {r.get("owasp_asi_id"): r for r in data["ai_risks"]}
+        by_asi = {r.get("owasp_asi_id"): r for r in data["ai_risks"] if r.get("owasp_asi_id")}
         assert by_asi["ASI03"]["name"] == "Agent Identity & Privilege Abuse"
         assert by_asi["ASI03"]["findings"][0]["ref"] == "T-071"
-        assert by_asi["ASI02"]["owasp_llm_id"] == "LLM06"
+        by_llm = {r["owasp_llm_id"]: r for r in data["ai_risks"] if r.get("owasp_llm_id")}
+        assert by_llm["LLM06"]["findings"] == [
+            {"ref": "T-072", "label": "Generic Finding (chat.py:12)", "owasp_asi_ids": ["ASI02"]}
+        ]
 
     def test_ai_exposure_schema_declares_asi_enum(self):
         """The ai-exposure fragment schema must accept owasp_asi_id ASI01..ASI10
@@ -562,6 +566,16 @@ class TestAiExposure:
         )
         enum = schema["properties"]["ai_risks"]["items"]["properties"]["owasp_asi_id"]["enum"]
         assert enum == [f"ASI{n:02d}" for n in range(1, 11)]
+
+
+def _asi_pairs(rows: list[dict]) -> set[tuple[str, str]]:
+    """(finding, ASI id) pairs a fragment states: per finding on LLM rows, per row on ASI-only rows."""
+    pairs = set()
+    for row in rows:
+        for finding in row["findings"]:
+            ids = finding.get("owasp_asi_ids") or ([row["owasp_asi_id"]] if row.get("owasp_asi_id") else [])
+            pairs |= {(finding["ref"], asi) for asi in ids}
+    return pairs
 
 
 class TestCriticalAttackTree:
@@ -4192,9 +4206,13 @@ def test_ai_exposure_does_not_spread_agentic_classification(agent_name):
         ],
     }
     output = json.loads(pf.gen_ai_exposure(data))["ai_risks"]
-    for ref in ("T-801", "T-803"):
-        assert all(not row.get("owasp_asi_id") for row in output if any(f["ref"] == ref for f in row["findings"]))
-    assert any(row.get("owasp_asi_id") == "ASI01" and row["findings"][0]["ref"] == "T-802" for row in output)
+    pairs = _asi_pairs(output)
+    assert {ref for ref, _ in pairs} == {"T-802"}
+    assert pairs == {("T-802", "ASI01")}
+    # T-801 shares the LLM01 row with T-802 without inheriting its agentic id.
+    llm01 = next(row for row in output if row.get("owasp_llm_id") == "LLM01")
+    assert {f["ref"] for f in llm01["findings"]} == {"T-801", "T-802"}
+    assert "owasp_asi_id" not in llm01
 
 
 def test_ai_exposure_retains_asi_only_findings_after_same_category_was_paired():
@@ -4209,17 +4227,115 @@ def test_ai_exposure_retains_asi_only_findings_after_same_category_was_paired():
         {"id": "T-812", "title": "Independent operation bypass", "risk": "High", "owasp_asi_ids": ["ASI02"]},
     ]
     output = json.loads(pf.gen_ai_exposure({"threats": threats}))["ai_risks"]
-    pairs = {(f["ref"], row.get("owasp_asi_id")) for row in output for f in row["findings"]}
-    assert {("T-811", "ASI02"), ("T-811", "ASI03"), ("T-812", "ASI02")} <= pairs
+    assert _asi_pairs(output) == {("T-811", "ASI02"), ("T-811", "ASI03"), ("T-812", "ASI02")}
+    asi_only = [row for row in output if row.get("owasp_asi_id")]
+    assert [(row["owasp_asi_id"], [f["ref"] for f in row["findings"]]) for row in asi_only] == [("ASI02", ["T-812"])]
+
+
+@pytest.mark.parametrize("component_flag", ["capability", "name-hint"])
+def test_ai_exposure_needs_the_findings_own_llm_prose_not_its_component(component_flag):
+    """In a monolith the LLM component carries every route. An untagged finding
+    whose own prose never names the model surface stays out, however its
+    title matches a keyword; one whose prose does name it is still grouped."""
+    component = {"id": "backend", "name": "API Backend"}
+    if component_flag == "capability":
+        component["capabilities"] = [{"capability": "llm-calls", "evidence": [{"file": "src/chat.ts", "line": 9}]}]
+    else:
+        component["name"] = "Chatbot API Backend"
+    threats = [
+        {
+            "id": "T-901",
+            "component": "backend",
+            "title": "Model call unbounded",
+            "risk": "High",
+            "owasp_llm_ids": ["LLM10"],
+        },
+        {"id": "T-902", "component": "backend", "title": "No rate limiting on login", "risk": "Medium"},
+        {"id": "T-903", "component": "backend", "title": "Reset rate limit keyed on client header", "risk": "Medium"},
+        {
+            "id": "T-904",
+            "component": "backend",
+            "title": "Unauthenticated rate-unlimited chat endpoint",
+            "risk": "Medium",
+            "impact_description": "Each request spends quota on a metered external LLM API.",
+        },
+    ]
+    rows = json.loads(pf.gen_ai_exposure({"components": [component], "threats": threats}))["ai_risks"]
+    grouped = {f["ref"] for row in rows for f in row["findings"]}
+    assert grouped == {"T-901", "T-904"}
+
+
+def test_ai_exposure_lists_each_llm_category_once():
+    threats = [
+        {
+            "id": "T-911",
+            "title": "Tool call issues coupons",
+            "risk": "High",
+            "owasp_llm_ids": ["LLM01", "LLM06"],
+            "owasp_asi_ids": ["ASI01", "ASI02"],
+        },
+        {
+            "id": "T-912",
+            "title": "Chat tool trusts unverified identity",
+            "risk": "Medium",
+            "owasp_llm_ids": ["LLM06"],
+            "owasp_asi_ids": ["ASI03"],
+        },
+    ]
+    rows = json.loads(pf.gen_ai_exposure({"threats": threats}))["ai_risks"]
+    ids = [row.get("owasp_llm_id") for row in rows]
+    assert sorted(ids) == ["LLM01", "LLM06"]
+    llm06 = next(row for row in rows if row["owasp_llm_id"] == "LLM06")
+    assert {f["ref"]: f["owasp_asi_ids"] for f in llm06["findings"]} == {
+        "T-911": ["ASI01", "ASI02"],
+        "T-912": ["ASI03"],
+    }
+    assert next(row for row in rows if row["owasp_llm_id"] == "LLM01")["name"] == "Prompt Injection"
+
+
+def test_model_owned_ai_fragment_is_rebuilt_and_removed_with_the_model(tmp_path):
+    """No agent authors ms-ai-exposure.json: a copy left on disk never wins over
+    the current model, and it disappears when the model has no LLM surface."""
+    frag = tmp_path / ".fragments" / "ms-ai-exposure.json"
+    frag.parent.mkdir(parents=True)
+    frag.write_text(
+        json.dumps(
+            {
+                "ai_risks": [
+                    {
+                        "name": "Stale risk",
+                        "description": "A risk group copied from an earlier run that cites an old finding id.",
+                        "findings": [{"ref": "T-999", "label": "Old finding label"}],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    model = {
+        "threats": [{"id": "T-001", "title": "Prompt injection in chat", "risk": "High", "owasp_llm_ids": ["LLM01"]}]
+    }
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(model), encoding="utf-8")
+
+    result = _run_cli(str(tmp_path), "--only", "ms-ai-exposure.json")
+    assert result.returncode == 0, result.stderr
+    rebuilt = json.loads(frag.read_text(encoding="utf-8"))
+    assert [f["ref"] for row in rebuilt["ai_risks"] for f in row["findings"]] == ["T-001"]
+
+    model["threats"] = [{"id": "T-001", "title": "SQL injection in search", "risk": "High"}]
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(model), encoding="utf-8")
+    result = _run_cli(str(tmp_path), "--only", "ms-ai-exposure.json")
+    assert result.returncode == 0, result.stderr
+    assert not frag.exists()
 
 
 def test_ordinary_agent_consumption_does_not_imply_a_cascade():
     threat = {"id": "T-821", "title": "Agentic model token consumption", "risk": "Medium", "owasp_llm_ids": ["LLM10"]}
     output = json.loads(pf.gen_ai_exposure({"threats": [threat]}))["ai_risks"]
-    assert "owasp_asi_id" not in output[0]
+    assert _asi_pairs(output) == set()
     threat["evidence_summary"] = "A recursive agent loop amplifies tool retries across agents."
     output = json.loads(pf.gen_ai_exposure({"threats": [threat]}))["ai_risks"]
-    assert output[0]["owasp_asi_id"] == "ASI08"
+    assert _asi_pairs(output) == {("T-821", "ASI08")}
 
 
 def test_component_table_uses_evidenced_ai_function_labels(minimal_yaml_data):
@@ -4237,25 +4353,17 @@ def test_component_table_uses_evidenced_ai_function_labels(minimal_yaml_data):
 
 
 def test_ai_summary_discloses_bounded_risk_group_selection():
+    # Ten LLM categories plus one agentic category no LLM row covers: 11 groups.
     threats = [
         {
             "id": f"T-{830 + i}",
             "title": "Explicitly classified finding",
             "risk": "High",
-            "owasp_llm_ids": ["LLM01"],
-            "owasp_asi_ids": [f"ASI{i:02d}"],
+            "owasp_llm_ids": [f"LLM{i:02d}"],
         }
         for i in range(1, 11)
     ]
-    threats.append(
-        {
-            "id": "T-850",
-            "title": "Another classified finding",
-            "risk": "High",
-            "owasp_llm_ids": ["LLM02"],
-            "owasp_asi_ids": ["ASI01"],
-        }
-    )
+    threats.append({"id": "T-850", "title": "Another classified finding", "risk": "High", "owasp_asi_ids": ["ASI05"]})
     result = json.loads(pf.gen_ai_exposure({"threats": threats}))
     assert len(result["ai_risks"]) == 10
     assert "10 of 11" in result["summary"]

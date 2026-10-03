@@ -270,12 +270,11 @@ def test_ai_exposure_renders_in_specialized_band(tmp_path: Path) -> None:
             },
             {
                 "owasp_llm_id": "LLM06",
-                "owasp_asi_id": "ASI02",
                 "name": "Excessive Agency",
                 "description": "The agent can invoke shell and SQL tools with no "
                 "human approval gate, so a successful injection escalates straight "
                 "into destructive tool execution.",
-                "findings": [{"ref": "F-002", "label": "Unguarded agent tool use"}],
+                "findings": [{"ref": "F-002", "label": "Unguarded agent tool use", "owasp_asi_ids": ["ASI02"]}],
             },
         ],
     }
@@ -288,8 +287,11 @@ def test_ai_exposure_renders_in_specialized_band(tmp_path: Path) -> None:
     assert "Prompt Injection" in ms_slice
     assert "LLM01" in ms_slice
     assert "Excessive Agency" in ms_slice
-    # The Agentic-Top-10 (ASI) id renders as a linked badge to the OWASP resource.
-    assert "[ASI02](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/)" in ms_slice
+    # The Agentic-Top-10 (ASI) id renders as a linked badge on its own finding line.
+    asi_link = "[ASI02](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/)"
+    finding_line = next(line for line in ms_slice.splitlines() if "Unguarded agent tool use" in line)
+    assert asi_link in finding_line
+    assert all(asi_link not in line for line in ms_slice.splitlines() if "Unsanitized prompt assembly" in line)
     # Ordering (2026-07-14): Verdict → Security Posture & Top Threats → Top
     # Mitigations → AI Exposure. The LLM callout now sits in the specialized-
     # surface band after the headline threat/mitigation tables, not at MS #2.

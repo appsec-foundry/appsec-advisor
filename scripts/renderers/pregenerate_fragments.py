@@ -22,7 +22,6 @@ fragment missing (idempotent — a richer LLM version already on disk wins):
 
   +  ``ms-verdict.json``          — Management-Summary verdict (mandatory; compose
                                     HARD-fails without it → gen_verdict is its floor)
-  +  ``ms-ai-exposure.json``      — AI/LLM Exposure callout (self-gates: no LLM surface → none)
   +  ``ms-critical-attack-tree.json`` — Critical Attack Tree (self-gates: <2 Criticals → none)
   +  ``attack-walkthroughs.md``   — narrative sequence diagrams
 
@@ -32,6 +31,12 @@ The script NEVER overwrites a fragment that already exists. The LLM
 always has the right of first refusal — pre-generation is a fallback
 that runs after the orchestrator's Phase-11 substeps but before
 ``validators/check_inline_shortcut.py`` makes the call.
+
+The exception is ``_MODEL_OWNED_FRAGMENTS``: no agent authors them, so each
+run regenerates them from the current model and removes a copy left from
+an earlier run when the generator finds nothing to show.
+
+  *  ``ms-ai-exposure.json``      — AI/LLM Exposure callout (self-gates: no LLM surface → none)
 
 Exit codes
 ----------
@@ -5128,6 +5133,11 @@ _LLM_SURFACE_RE = re.compile(
 )
 
 
+# Fragments derived only from the canonical model: no agent authors them, so a
+# copy already on disk is never preferred over the current model's.
+_MODEL_OWNED_FRAGMENTS = frozenset({"ms-ai-exposure.json"})
+
+
 def gen_ai_exposure(yaml_data: dict):
     """Deterministically emit ms-ai-exposure.json when the model has an LLM/AI
     surface, else return ``None`` (→ no file written, section renders nothing).
@@ -5148,8 +5158,9 @@ def gen_ai_exposure(yaml_data: dict):
     llm_component_names = [c.get("name") for c in components if _is_llm_component(c) and c.get("name")]
 
     def _llm_context(threat: dict, blob_lc: str) -> bool:
-        if threat.get("component") in llm_component_ids:
-            return True
+        # The threat's own prose must name the LLM surface. Living on an LLM
+        # component is not enough: in a monolith that is every route, and it
+        # put "No rate limiting on login" into LLM10 (juice-shop, 2026-10).
         return bool(_LLM_SURFACE_RE.search(blob_lc))
 
     # First-match-wins categorization of each threat into an LLM Top-10 bucket.
@@ -5227,9 +5238,13 @@ def gen_ai_exposure(yaml_data: dict):
             file=sys.stderr,
         )
 
-    # Classify each finding before grouping. An unrelated agent (or a second
-    # route on the same backend) cannot establish this finding's execution path.
+    # One row per LLM Top-10 category. A finding tagged with several categories
+    # appears under each of them, but its agentic (ASI) ids stay on the finding:
+    # pooled on the row they would attribute one finding's ASI id to its
+    # row-mates. Classify each finding on its own; an unrelated agent (or a
+    # second route on the same backend) cannot establish its execution path.
     grouped: dict[tuple[str, str], list[dict]] = {}
+    finding_asi: dict[tuple[str, str], list[str]] = {}
     paired: set[tuple[str, str]] = set()
     for llm_id, bucket in buckets.items():
         for threat in bucket["threats"]:
@@ -5244,10 +5259,10 @@ def gen_ai_exposure(yaml_data: dict):
                 cascade = any(kw in blob for kw in ("cascad", "recursive", "recursion", "agent loop", "retry loop"))
                 inferred = _LLM_TO_ASI_CROSSWALK.get(llm_id) if agentic and (llm_id != "LLM10" or cascade) else None
                 asi_ids = [inferred] if inferred else []
-            for asi_id in asi_ids or [""]:
-                grouped.setdefault((llm_id, asi_id), []).append(threat)
-                if asi_id:
-                    paired.add((str(threat.get("id")), asi_id))
+            grouped.setdefault((llm_id, ""), []).append(threat)
+            finding_asi[(llm_id, str(threat.get("id")))] = list(dict.fromkeys(asi_ids))
+            for asi_id in asi_ids:
+                paired.add((str(threat.get("id")), asi_id))
     for threat in threats:
         for asi_id in threat.get("owasp_asi_ids") or []:
             if asi_id in _ASI_RISK_DETAILS and (str(threat.get("id")), asi_id) not in paired:
@@ -5270,13 +5285,16 @@ def gen_ai_exposure(yaml_data: dict):
             "name": name,
             "description": description,
             "severity": _llm_severity_glyph(severity),
-            "findings": [
-                {"ref": ref, "label": _clean_finding_label(t.get("title", ""))} for ref, t in list(by_id.items())[:6]
-            ],
+            "findings": [],
         }
+        for ref, t in list(by_id.items())[:6]:
+            entry = {"ref": ref, "label": _clean_finding_label(t.get("title", ""))}
+            if finding_asi.get((llm_id, str(ref))):
+                entry["owasp_asi_ids"] = finding_asi[(llm_id, str(ref))]
+            risk["findings"].append(entry)
         if llm_id:
             risk["owasp_llm_id"] = llm_id
-        if asi_id:
+        else:
             risk["owasp_asi_id"] = asi_id
         affected = list(dict.fromkeys(cmap[t["component"]] for t in group_sorted if t.get("component") in cmap))
         if affected:
@@ -5730,7 +5748,7 @@ def main(argv: list[str] | None = None) -> int:
 
     for name in selected:
         path = fragments_dir / name
-        if path.exists() and not args.force:
+        if path.exists() and not args.force and name not in _MODEL_OWNED_FRAGMENTS:
             # Stale-scaffold self-heal (juice-shop 2026-06-16): an UNFILLED
             # security-architecture.md scaffold (still carrying
             # NARRATIVE_PLACEHOLDER markers) holds no LLM narrative to preserve.
@@ -5800,7 +5818,10 @@ def main(argv: list[str] | None = None) -> int:
         if content is None:
             # Generator opted out (e.g. ms-ai-exposure.json on a repo with no
             # LLM/AI surface). Not a failure — there is simply nothing to write,
-            # and the optional section then renders nothing.
+            # and the optional section then renders nothing. A model-owned
+            # fragment from an earlier run would render stale findings.
+            if name in _MODEL_OWNED_FRAGMENTS and path.exists() and not args.dry_run:
+                path.unlink()
             skipped.append(f"{name} (not applicable)")
             continue
         if args.dry_run:

@@ -611,7 +611,7 @@ owasp_llm_top10:
     url: "https://genai.owasp.org/llmrisk/llm10/"
 
   # OWASP Top 10 for Agentic Applications (2026, ASI). Referenced in agentic
-  # threat scenarios via `owasp_asi_id` on the ms-ai-exposure fragment. OWASP
+  # threat scenarios via `owasp_asi_ids` on the ms-ai-exposure findings. OWASP
   # does not publish stable per-risk pages for this list yet, so every entry
   # points at the canonical framework resource (do not fabricate per-id URLs).
 owasp_asi_top10:
