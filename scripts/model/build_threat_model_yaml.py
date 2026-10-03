@@ -77,6 +77,7 @@ from runtime.stride_outputs import is_stride_output, stride_output_files  # noqa
 from shared._atomic_io import atomic_write_text  # noqa: E402
 from shared._boundary_criticality import exposure_of as _boundary_exposure_of  # noqa: E402
 from shared._boundary_criticality import tier_of as _boundary_tier_of  # noqa: E402
+from shared._paths import strip_dot_slash  # noqa: E402
 from shared._severity_policy import normalize_risks  # noqa: E402
 
 import model.triage_compute_ranking as triage_compute_ranking  # noqa: E402
@@ -600,12 +601,22 @@ def _cwe_family(cwe: str) -> str:
     return _CWE_FAMILIES.get(c, c)
 
 
-def _norm_file(path: str) -> str:
-    """Lowercased, ``./``-stripped path for stable cross-run file comparison."""
-    return (path or "").strip().lstrip("./").strip().lower()
+# Version of the persisted changelog ``match_keys``. Version 1 (unmarked) was
+# normalized with ``lstrip("./")``, which dropped the dot of hidden directories;
+# a diff against such an entry recomputes the current side the same way.
+MATCH_KEY_VERSION = 2
 
 
-def _anchor_file(t: dict) -> str:
+def _norm_file(path: str, *, legacy: bool = False) -> str:
+    """Lowercased, ``./``-stripped path for stable cross-run file comparison.
+    ``legacy`` reproduces the version-1 normalization, only for diffing
+    against an entry persisted before ``MATCH_KEY_VERSION`` 2."""
+    raw = (path or "").strip()
+    stripped = raw.lstrip("./") if legacy else strip_dot_slash(raw)
+    return stripped.strip().lower()
+
+
+def _anchor_file(t: dict, *, legacy: bool = False) -> str:
     """Primary evidence file for a threat — its diff anchor. Uses the first
     instance location for a consolidated finding, else the evidence anchor.
     Mirrors the anchor selection in _instance_fingerprints()."""
@@ -613,29 +624,31 @@ def _anchor_file(t: dict) -> str:
     if isinstance(insts, list):
         for i in insts:
             if isinstance(i, dict) and i.get("file"):
-                return _norm_file(i["file"])
+                return _norm_file(i["file"], legacy=legacy)
     ev = t.get("evidence")
     if isinstance(ev, list):
         ev = next((e for e in ev if isinstance(e, dict)), {})
     elif not isinstance(ev, dict):
         ev = {}
-    return _norm_file(ev.get("file") or "")
+    return _norm_file(ev.get("file") or "", legacy=legacy)
 
 
-def _match_key(t: dict) -> str:
+def _match_key(t: dict, *, legacy: bool = False) -> str:
     """Stable cross-run identity for the changelog diff: ``file|cwe-family``.
     Falls back to the legacy ``comp|cwe|title`` fingerprint when a threat has no
     evidence file, so file-less findings still get a stable-enough identity."""
-    f = _anchor_file(t)
+    f = _anchor_file(t, legacy=legacy)
     if not f:
         return _fp_str(t)
     return f"{f}|{_cwe_family(t.get('cwe') or '')}"
 
 
-def _prior_match_index(entry: dict | None) -> tuple[set[str], dict[str, str]]:
-    """Return ``(match-key set, match-key → display-label)`` for a prior
+def _prior_match_index(entry: dict | None) -> tuple[set[str], dict[str, str], bool]:
+    """Return ``(match-key set, match-key → display-label, legacy)`` for a prior
     changelog entry, so the current run can diff against it AND render resolved
-    findings with a human-readable label.
+    findings with a human-readable label. ``legacy`` is True when the keys were
+    persisted before ``MATCH_KEY_VERSION`` 2; the caller then derives the
+    current side with ``_match_key(..., legacy=True)`` so both sides agree.
 
     Resolution order:
       1. explicit ``match_keys`` (written by current builds, paired positionally
@@ -647,11 +660,12 @@ def _prior_match_index(entry: dict | None) -> tuple[set[str], dict[str, str]]:
          no file, so they only match another legacy entry's fingerprints).
     """
     if not entry:
-        return set(), {}
+        return set(), {}, False
     mks = entry.get("match_keys")
     fps = entry.get("fingerprints") or []
     if isinstance(mks, list) and mks and len(mks) == len(fps):
-        return set(mks), {mk: fp for mk, fp in zip(mks, fps)}
+        legacy = entry.get("match_key_version") != MATCH_KEY_VERSION
+        return set(mks), {mk: fp for mk, fp in zip(mks, fps)}, legacy
     ifps = entry.get("instance_fingerprints") or []
     if ifps:
         keys: set[str] = set()
@@ -672,8 +686,8 @@ def _prior_match_index(entry: dict | None) -> tuple[set[str], dict[str, str]]:
             keys.add(mk)
             label.setdefault(mk, "|".join(parts[:-1]))
         if keys:
-            return keys, label
-    return set(fps), {fp: fp for fp in fps}
+            return keys, label, False
+    return set(fps), {fp: fp for fp in fps}, False
 
 
 def _mitigation_fp(m: dict) -> str:
@@ -2670,7 +2684,6 @@ def build_changelog(
     # The diff (added/resolved) runs on these keys; cur_fps stays the human-
     # readable display/identity label.
     cur_match_keys = [_match_key(t) for t in threats]
-    cur_match_set = set(cur_match_keys)
     # Select the prior entry to diff against — but SKIP an existing entry that
     # describes THIS SAME run (this run's own earlier yaml build — Phase-11 may
     # build the yaml more than once), NOT a genuine previous run; treating it as
@@ -2730,8 +2743,10 @@ def build_changelog(
     # Stable match keys + display labels for the prior entry. Diffs are computed
     # on the match keys (file|cwe-family), but resolved findings are RENDERED via
     # the prior entry's comp|cwe|title label so the changelog stays readable.
-    prior_match_set, prior_label_by_key = _prior_match_index(prior_entry)
+    prior_match_set, prior_label_by_key, prior_keys_legacy = _prior_match_index(prior_entry)
     prior_has_fps = bool(prior_entry) and bool(prior_match_set)
+    # Diff-side keys: the current keys in the prior entry's normalization.
+    diff_key_by_threat = [_match_key(t, legacy=True) for t in threats] if prior_keys_legacy else cur_match_keys
     prior_depth = (prior_entry or {}).get("assessment_depth")
     prior_n = (
         (prior_entry or {}).get("threat_count")
@@ -2794,8 +2809,10 @@ def build_changelog(
         # real per-finding delta, computed on stable file|cwe-family match keys
         # (NOT comp|cwe|title — those drift between runs and churn the diff).
         delta_basis = "fingerprint"
-        added_threats = sorted(t["id"] for t in threats if t.get("id") and _match_key(t) not in prior_match_set)
-        resolved_keys = sorted(prior_match_set - cur_match_set)
+        added_threats = sorted(
+            t["id"] for t, k in zip(threats, diff_key_by_threat) if t.get("id") and k not in prior_match_set
+        )
+        resolved_keys = sorted(prior_match_set - set(diff_key_by_threat))
         reanalyzed = sorted({c.get("id", "") for c in components if c.get("id")})
         carried_components = []
         resolved_block = {
@@ -2909,6 +2926,7 @@ def build_changelog(
         # `fingerprints`. The diff runs on these; `fingerprints` stays the
         # display label. Next run reads these back via _prior_match_index.
         "match_keys": cur_match_keys,
+        "match_key_version": MATCH_KEY_VERSION,
         "mitigation_fingerprints": cur_mit_fps,
         "instance_fingerprints": cur_instance_fps,
         "delta_basis": delta_basis,

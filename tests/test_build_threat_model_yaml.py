@@ -1311,6 +1311,63 @@ def test_changelog_stable_across_cwe_and_title_drift_same_file(tmp_path):
     ]
 
 
+_DOT_DIR_THREATS = [
+    {
+        "id": "T-001",
+        "component": "comp-a",
+        "cwe": "CWE-732",
+        "title": "Workflow permissions",
+        "evidence": {"file": ".github/workflows/ci.yml", "line": 3},
+    },
+    {
+        "id": "T-002",
+        "component": "comp-a",
+        "cwe": "CWE-732",
+        "title": "Copied workflow",
+        "evidence": {"file": "github/workflows/ci.yml", "line": 3},
+    },
+    {
+        "id": "T-003",
+        "component": "comp-a",
+        "cwe": "CWE-89",
+        "title": "SQL injection",
+        "evidence": {"file": "./routes/login.ts", "line": 34},
+    },
+]
+
+
+def test_match_key_keeps_hidden_directories_distinct():
+    """The identity strips a ``./`` prefix, never the dot of a hidden directory:
+    `.github/x` and `github/x` are different files and keep different keys."""
+    b = _load()
+    keys = [b._match_key(t) for t in _DOT_DIR_THREATS]
+    assert keys[0].startswith(".github/")
+    assert keys[0] != keys[1]
+    assert keys[2].startswith("routes/login.ts|")
+
+
+@pytest.mark.parametrize("threats", [_DOT_DIR_THREATS, _DOT_DIR_THREATS[:1], _DOT_DIR_THREATS[2:]])
+def test_changelog_diff_against_version1_keys_does_not_churn(tmp_path, threats):
+    """An entry persisted before MATCH_KEY_VERSION 2 holds keys normalized the old
+    way. Re-scanning the same findings must report zero churn against it, and the
+    new entry persists version-2 keys so the following run diffs exactly."""
+    b = _load()
+    run1 = b.build_changelog(_CL_CFG, threats, _CL_COMPS, [], None, tmp_path, current_sha="sha-1", run_id="1")
+    v1 = dict(run1[0])
+    v1["match_keys"] = [b._match_key(t, legacy=True) for t in threats]
+    v1.pop("match_key_version", None)
+    run2 = b.build_changelog(_CL_CFG, threats, _CL_COMPS, [], [v1], tmp_path, current_sha="sha-2", run_id="2")
+    e2 = run2[0]
+    assert e2["delta_basis"] == "fingerprint"
+    assert e2["added"]["threats"] == []
+    assert e2["resolved"]["fingerprints"] == []
+    assert e2["match_key_version"] == b.MATCH_KEY_VERSION
+    assert e2["match_keys"] == [b._match_key(t) for t in threats]
+    run3 = b.build_changelog(_CL_CFG, threats, _CL_COMPS, [], run2, tmp_path, current_sha="sha-3", run_id="3")
+    assert run3[0]["added"]["threats"] == []
+    assert run3[0]["resolved"]["fingerprints"] == []
+
+
 def test_changelog_distinct_findings_same_file_stay_separate(tmp_path):
     """Narrow families must NOT collapse two genuinely-distinct findings that
     share a file: a hardcoded key (hardcoded-key family) and weak password

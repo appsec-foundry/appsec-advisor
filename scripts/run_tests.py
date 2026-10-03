@@ -482,6 +482,7 @@ GROUPS = {
         safe_cond
         schema_drift
         schemas
+        shared_paths
         threat_model_fields
         validate_intermediate
         yaml_io
@@ -2777,6 +2778,41 @@ SOURCE_TESTS = {
         terminate_run
         threat_fixture
         weakness_signals
+    """),
+    "scripts/shared/_paths.py": _tests("""
+        aggregate_run_issues
+        arch_coverage_bridge
+        architecture_coverage_checks
+        baseline_content_unchanged
+        baseline_state_coverage
+        build_abuse_case_contexts
+        build_stride_evidence_bundles
+        build_threat_model_yaml
+        check_target_specificity
+        discover_identity_providers
+        embedded_store_access
+        flow_route_auth
+        fragment_invariant_parity
+        gate_preconditions
+        handler_resolver
+        match_abuse_cases
+        orchestration_controller
+        recon_patterns
+        reconcile_role_access
+        redact_known_secrets
+        repo_scan
+        requirements_verification
+        route_inventory
+        run_defect_fixes_2026_07_24
+        run_path_guard
+        scan_excludes
+        scanner_review_regressions
+        security_relevance_filter
+        security_score
+        shared_paths
+        stride_outputs
+        threat_fixture
+        validate_fragment
     """),
     "scripts/shared/_requirements_gate.py": _tests("""
         aggregate_run_issues

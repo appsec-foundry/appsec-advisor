@@ -63,6 +63,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import contexts.load_business_context as load_business_context  # noqa: E402
 from shared._path_guard import run_path_arg  # noqa: E402
+from shared._paths import strip_dot_slash  # noqa: E402
 
 import runtime.stride_outputs as stride_outputs  # noqa: E402
 import runtime.verify_run_costs as verify_run_costs  # noqa: E402
@@ -1166,14 +1167,14 @@ def _extract_routing_effectiveness(output_dir: Path) -> list[dict]:
         if not isinstance(threats, list) or not threats:
             continue
         delivered = {
-            str(row.get("path")).lstrip("./")
+            strip_dot_slash(str(row.get("path")))
             for row in bundle.get("source_slices") or []
             if isinstance(row, dict) and row.get("repository_id") == "primary" and row.get("path")
         }
         if not delivered:
             continue
         cited = {
-            str((threat.get("evidence") or {}).get("file")).split(":")[0].lstrip("./")
+            strip_dot_slash(str((threat.get("evidence") or {}).get("file")).split(":")[0])
             for threat in threats
             if isinstance(threat, dict) and isinstance(threat.get("evidence"), dict)
         }
