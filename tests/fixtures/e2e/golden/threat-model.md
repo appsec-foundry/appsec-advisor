@@ -72,6 +72,8 @@ _Append-only history of assessment runs. Most recent first._
 
 ### Verdict
 
+**System:** The system consists of 2 components: REST API and Auth Service.
+
 🔴 **CRITICAL SECURITY POSTURE** - the fixture project has severe exploitable vulnerabilities across authentication, injection, and access control. The assessment identified **3 Critical** and **1 High** findings.
 
 **Risk distribution:** 🔴 Critical: 3 · 🟠 High: 1 · 🟡 Medium: 0 · 🟢 Low: n/a · **Total: 4**

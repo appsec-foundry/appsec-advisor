@@ -18,9 +18,13 @@
              business_context_note (renderer-computed, optional): declared no-harm scope.
              method_limits (renderer-computed, unconditional): one sentence on
              the method and any screened or unanalysed components.
+             system_line (renderer-computed, optional): what was modeled, from
+             the model's components and external services.
 -#}
 ### Verdict
-
+{% if system_line %}
+{{ system_line }}
+{% endif %}
 {{ severity_emoji(data.severity) }} {{ data.opening }}
 {% if risk_distribution %}
 {{ risk_distribution }}

@@ -147,6 +147,7 @@ from renderers.pregenerate_fragments import _classify_tier as _pregen_classify_t
 from renderers.pregenerate_fragments import component_coverage as _pregen_component_coverage
 from renderers.pregenerate_fragments import gen_architecture_diagrams
 from renderers.pregenerate_fragments import method_and_limits as _pregen_method_and_limits
+from renderers.pregenerate_fragments import system_at_a_glance as _pregen_system_at_a_glance
 
 try:
     import jsonschema
@@ -2747,6 +2748,7 @@ def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) 
             data=data,
             risk_distribution=risk_distribution,
             method_limits=method_limits,
+            system_line=_pregen_system_at_a_glance(ctx.yaml_data),
             business_context_note=ctx.verdict_export.get("business_context_note", ""),
             verified_suffixes=verified_suffixes,
         ).rstrip()

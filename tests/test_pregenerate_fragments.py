@@ -4113,6 +4113,50 @@ def _selection(n_full: int, n_screen: int, n_excluded: int) -> dict:
     return {"total": n_full + n_screen + n_excluded, "selected": selected, "excluded": excluded}
 
 
+def test_system_at_a_glance_names_components_by_tier_and_external_services():
+    model = {
+        "meta": {"project_name": "Shop", "project": "shop-repo"},
+        "components": [
+            {"id": "web", "name": "Web Client", "tier": "client"},
+            {"id": "api", "name": "Order API", "tier": "application"},
+            {"id": "db", "name": "Orders DB", "tier": "data"},
+            {"id": "job", "name": "Nightly Job", "tier": "batch"},
+        ],
+        "external_entities": [
+            {"id": "user", "name": "Customer", "kind": "legitimate-role"},
+            {"id": "pay", "name": "Payment Provider", "kind": "external-service"},
+        ],
+    }
+    line = pf.system_at_a_glance(model)
+    assert line == (
+        "**System:** Shop consists of 4 components: Web Client in the client tier; Order API in the "
+        "application tier; Orders DB in the data tier; Nightly Job. It exchanges data with Payment Provider."
+    )
+
+
+@pytest.mark.parametrize(
+    "model,expected",
+    [
+        ({"components": []}, ""),
+        (
+            {"components": [{"id": f"c{i}", "name": f"Service {i}", "tier": "application"} for i in range(8)]},
+            "**System:** The system consists of 8 components: Service 0, Service 1, Service 2, Service 3, "
+            "Service 4, Service 5 and 2 more in the application tier.",
+        ),
+        (
+            {
+                "meta": {"project": "x"},
+                "components": [{"id": "a", "name": "[Api](http://e.invalid)`<b>`", "tier": "edge"}],
+            },
+            "**System:** x consists of 1 component: Apihttp://e.invalidb in the edge tier.",
+        ),
+    ],
+    ids=["empty", "capped", "markup"],
+)
+def test_system_at_a_glance_shapes(model, expected):
+    assert pf.system_at_a_glance(model) == expected
+
+
 @pytest.mark.parametrize(
     "floor,expected",
     [

@@ -333,6 +333,63 @@ def method_and_limits(meta: dict) -> str:
     return f"**Method and limits:** {'; '.join([METHOD_SHORT, *gaps])} — see {details}."
 
 
+# Tier order and wording for the Management Summary's system sentence.
+_SYSTEM_TIERS = (("client", "client"), ("edge", "edge"), ("application", "application"), ("data", "data"))
+_SYSTEM_NAME_CAP = 6
+_SYSTEM_UNSAFE_RE = re.compile(r"[\x00-\x1f\x7f\[\]()<>`*_|\\#]")
+
+
+def _plain_name(value: object) -> str:
+    return " ".join(_SYSTEM_UNSAFE_RE.sub("", str(value or "")).split())[:80].strip()
+
+
+def _name_list(names: list[str]) -> str:
+    shown = names[:_SYSTEM_NAME_CAP]
+    more = len(names) - len(shown)
+    if more:
+        return ", ".join(shown) + f" and {more} more"
+    return shown[0] if len(shown) == 1 else ", ".join(shown[:-1]) + " and " + shown[-1]
+
+
+def system_at_a_glance(yaml_data: dict) -> str:
+    """The Management Summary's one-paragraph description of what was modeled.
+
+    Built only from the canonical model — components by tier and the external
+    services they exchange data with — so it is stable across runs and carries
+    no repository or business prose. Empty when the model has no components.
+    """
+    meta = yaml_data.get("meta") or {}
+    project = meta.get("project")
+    name = _plain_name(
+        meta.get("project_name") or (project.get("name") if isinstance(project, dict) else project) or ""
+    )
+    components = [c for c in yaml_data.get("components") or [] if isinstance(c, dict) and c.get("id")]
+    if not components:
+        return ""
+    by_tier: dict[str, list[str]] = {}
+    for component in components:
+        tier = str(component.get("tier") or "")
+        by_tier.setdefault(tier, []).append(_plain_name(component.get("name") or component.get("id")))
+    known = {tier for tier, _ in _SYSTEM_TIERS}
+    parts = [f"{_name_list(by_tier[tier])} in the {label} tier" for tier, label in _SYSTEM_TIERS if by_tier.get(tier)]
+    other = [n for tier, names in by_tier.items() if tier not in known for n in names]
+    if other:
+        parts.append(_name_list(other))
+    count = f"{len(components)} component" + ("s" if len(components) != 1 else "")
+    sentence = f"**System:** {name or 'The system'} consists of {count}: " + "; ".join(p for p in parts if p) + "."
+    services = list(
+        dict.fromkeys(
+            _plain_name(e.get("name") or e.get("id"))
+            for e in yaml_data.get("external_entities") or []
+            if isinstance(e, dict) and e.get("id") and e.get("kind") != "legitimate-role"
+        )
+    )
+    services = [s for s in services if s]
+    if services:
+        sentence += f" It exchanges data with {_name_list(services)}."
+    return sentence
+
+
 def gen_system_overview(yaml_data: dict) -> str:
     """## 1. System Overview — business purpose + perimeter, NO deployment topology
     (that lives in §2.1).
