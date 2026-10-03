@@ -83,6 +83,10 @@ $defs:
       violations:
         type: integer
         minimum: 0
+      # How the scanned file set was built: git (ignore rules applied) or a
+      # filesystem walk (no git repository, so nothing is ignored).
+      inventory_source:
+        enum: [git, filesystem-walk]
       findings:
         type: array
         items:

@@ -12,6 +12,14 @@ Output: --output JSON, conventionally $OUTPUT_DIR/.config-scan-findings.json,
 shaped by schemas/config-scan-findings.schema.yaml and validated by
 validators/validate_intermediate.py (config_scan_findings).
 
+Scope: a check's glob only admits files in the repository inventory
+(``analyzers.scan_excludes.repo_inventory``), so files git ignores — including
+the user's global ignores — are never evidence. Agent-configuration checks
+judge settings a repository hands to every contributor, so they admit only
+tracked files when the inventory comes from git; a developer's untracked local
+settings are not the project's posture. ``inventory_source`` in the output
+records whether the inventory came from git or a filesystem walk.
+
 Exit codes: 0 written; 2 bad arguments, catalog, scan, or write failure.
 """
 
@@ -37,6 +45,7 @@ from runtime.agent_config_checks import EVALUATORS as AGENT_EVALUATORS
 from shared._atomic_io import atomic_write_json
 
 from analyzers.iac_resource_checks import EVALUATORS as RESOURCE_EVALUATORS
+from analyzers.scan_excludes import INVENTORY_GIT, RepoInventory, repo_inventory
 
 EVALUATORS = {**AGENT_EVALUATORS, **RESOURCE_EVALUATORS}
 DEFAULT_BREACH_VECTOR = "Build-Time"
@@ -50,6 +59,7 @@ QUICK_FILES_PER_CATEGORY = 5
 # repository. `agent_config` holds one settings path per coding agent, so
 # capping it would silently drop a whole tool's posture instead of sampling.
 UNCAPPED_CATEGORIES = frozenset({"agent_config"})
+TRACKED_ONLY_CATEGORIES = frozenset({"agent_config"})
 AUDIT_MARKERS = ("// audited:", "# audited:", "<!-- audited:")
 
 
@@ -139,7 +149,9 @@ def _catalog(path: Path) -> list[dict[str, Any]]:
     return checks
 
 
-def _uncovered_surfaces(repo_root: Path, checks_path: Path, checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _uncovered_surfaces(
+    repo_root: Path, checks_path: Path, checks: list[dict[str, Any]], inventory: RepoInventory
+) -> list[dict[str, Any]]:
     """Files of inventory categories that no check covers.
 
     ``file_patterns_by_type`` is the scanner's inventory of recognised
@@ -156,34 +168,51 @@ def _uncovered_surfaces(repo_root: Path, checks_path: Path, checks: list[dict[st
             continue
         if not isinstance(patterns, list) or not all(isinstance(value, str) and value for value in patterns):
             raise ConfigScanError(f"surface {iac_type} has invalid file patterns")
-        surface = {"id": f"surface:{iac_type}", "file_pattern": patterns[0], "_file_patterns": patterns}
-        files = [path.relative_to(root).as_posix() for path in _matches_for_check(repo_root, surface)]
+        surface = {
+            "id": f"surface:{iac_type}",
+            "iac_type": iac_type,
+            "file_pattern": patterns[0],
+            "_file_patterns": patterns,
+        }
+        files = [path.relative_to(root).as_posix() for path in _matches_for_check(repo_root, surface, inventory)]
         if files:
             rows.append({"iac_type": iac_type, "file_count": len(files), "files": files[:UNCOVERED_FILES_LISTED]})
     return rows
 
 
-def _matches_for_check(repo_root: Path, check: dict[str, Any]) -> list[Path]:
+def _admitted(rel_path: str, check: dict[str, Any], inventory: RepoInventory) -> bool:
+    if rel_path not in inventory:
+        return False
+    if check.get("iac_type") in TRACKED_ONLY_CATEGORIES and inventory.source == INVENTORY_GIT:
+        return inventory.is_tracked(rel_path) is True
+    return True
+
+
+def _matches_for_check(repo_root: Path, check: dict[str, Any], inventory: RepoInventory) -> list[Path]:
     patterns = check.get("_file_patterns", [check["file_pattern"]])
+    root = repo_root.resolve()
     paths: list[Path] = []
     for pattern in patterns:
         if Path(pattern).is_absolute() or ".." in Path(pattern).parts:
             raise ConfigScanError(f"{check['id']} has an unsafe file_pattern")
         try:
-            candidates = repo_root.glob(pattern)
-            paths.extend(_canonical_file(repo_root, path) for path in candidates if path.is_file())
+            candidates = [path for path in repo_root.glob(pattern) if path.is_file()]
         except (OSError, ValueError) as exc:
             raise ConfigScanError(f"{check['id']} cannot enumerate {pattern!r}: {exc}") from exc
-    return sorted(set(paths), key=lambda path: path.relative_to(repo_root.resolve()).as_posix())
+        for path in candidates:
+            if _admitted(path.relative_to(repo_root).as_posix(), check, inventory):
+                paths.append(_canonical_file(repo_root, path))
+    return sorted(set(paths), key=lambda path: path.relative_to(root).as_posix())
 
 
 def _selected_files(
     repo_root: Path,
     checks: list[dict[str, Any]],
+    inventory: RepoInventory,
     *,
     depth: str,
 ) -> dict[str, list[Path]]:
-    by_check = {check["id"]: _matches_for_check(repo_root, check) for check in checks}
+    by_check = {check["id"]: _matches_for_check(repo_root, check, inventory) for check in checks}
     if depth != "quick":
         return by_check
     category_files: dict[str, set[Path]] = {}
@@ -286,7 +315,8 @@ def scan(repo_root: Path, checks_path: Path, *, depth: str, output: Path) -> dic
     if not repo_root.is_dir():
         raise ConfigScanError(f"repository root is not a directory: {repo_root}")
     checks = _catalog(checks_path)
-    selected = _selected_files(repo_root, checks, depth=depth)
+    inventory = repo_inventory(repo_root)
+    selected = _selected_files(repo_root, checks, inventory, depth=depth)
     pending: list[dict[str, Any]] = []
     for check in checks:
         paths = selected[check["id"]]
@@ -325,9 +355,10 @@ def scan(repo_root: Path, checks_path: Path, *, depth: str, output: Path) -> dic
         "generated_at": _generated_at(output),
         "checks_run": len(checks),
         "violations": len(findings),
+        "inventory_source": inventory.source,
         "findings": findings,
     }
-    uncovered = _uncovered_surfaces(repo_root, checks_path, checks)
+    uncovered = _uncovered_surfaces(repo_root, checks_path, checks, inventory)
     if uncovered:
         result["uncovered_iac"] = uncovered
     return result
@@ -351,6 +382,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     uncovered = ", ".join(row["iac_type"] for row in result.get("uncovered_iac", []))
     suffix = f"; no checks for: {uncovered}" if uncovered else ""
+    if result["inventory_source"] != INVENTORY_GIT:
+        suffix += f"; inventory: {result['inventory_source']} (no git ignore rules applied)"
     print(f"config-iac-scanner: {result['checks_run']} checks, {result['violations']} violations{suffix}")
     return 0
 
