@@ -183,12 +183,12 @@ checks:
     violation_title: "Missing Workflow Permissions Block"
     iac_type: github_workflow
     file_pattern: ".github/workflows/*.yml"
-    pattern: "^permissions:"
-    expect: present
+    expect: structured
+    evaluator: github_workflow_permissions_missing
     severity_if_violated: Medium
     cwe: CWE-732
     finding_type: FT-143
-    rationale: "Without an explicit permissions block, the workflow inherits the repository default (commonly write-all) for GITHUB_TOKEN — any compromised step can push code, create releases, or approve PRs."
+    rationale: "Without an explicit permissions block at workflow or job level, the job inherits the repository default (commonly write-all) for GITHUB_TOKEN — any compromised step can push code, create releases, or approve PRs."
     remediation: "Add `permissions: { contents: read }` at workflow root; elevate per-job only where needed"
 
   - id: IAC-011
@@ -248,12 +248,12 @@ checks:
     violation_title: "Default GITHUB_TOKEN Scope Not Restricted"
     iac_type: github_workflow
     file_pattern: ".github/workflows/*.yml"
-    pattern: "permissions:\\s*\\n\\s+contents:\\s+read"
-    expect: present
+    expect: structured
+    evaluator: github_workflow_token_scope_broad
     severity_if_violated: Medium
     cwe: CWE-732
     finding_type: FT-143
-    rationale: "`contents: read` at workflow root forces per-job opt-in for write scopes — minimal privilege by default."
+    rationale: "The workflow root grants `contents: write` (or `write-all`) to every job, so any step in any job can push code or tags; read-only contents at the root forces per-job opt-in for write scopes."
     remediation: "Add `permissions: { contents: read }` at root; per-job elevate to `contents: write` only where needed"
 
   # ============ docker-compose ============
@@ -496,8 +496,8 @@ checks:
     severity_if_violated: Medium
     cwe: CWE-250
     finding_type: FT-180
-    rationale: "The committed settings pre-approve tool calls but declare no sandbox, so the agent runs with the contributor's full filesystem and network reach. An instruction planted in repository content, a dependency, or an issue body then reaches the shell with no boundary around it."
-    remediation: "Set sandbox.enabled to true in the committed settings; keep filesystem allow-lists in user settings, where absolute host paths belong"
+    rationale: "The project settings pre-approve tool calls but declare no sandbox, so the agent runs with the contributor's full filesystem and network reach. An instruction planted in repository content, a dependency, or an issue body then reaches the shell with no boundary around it."
+    remediation: "Set sandbox.enabled to true in the project settings; keep filesystem allow-lists in user settings, where absolute host paths belong"
 
   - id: IAC-061
     name: "Claude Code settings must not disable permission prompts"
@@ -549,7 +549,7 @@ checks:
     cwe: CWE-732
     finding_type: FT-181
     rationale: "approval_policy = \"never\" executes generated commands without asking, so the sandbox boundary is the only remaining control."
-    remediation: "Use approval_policy = \"on-request\" or \"untrusted\" in the committed project config"
+    remediation: "Use approval_policy = \"on-request\" or \"untrusted\" in the project config"
 
   - id: IAC-065
     name: "Codex sandbox must not be granted network access"
@@ -600,7 +600,7 @@ checks:
     severity_if_violated: Medium
     cwe: CWE-250
     finding_type: FT-180
-    rationale: "The committed settings auto-accept tool calls or trust an MCP server while sandboxing stays off (its default), so shell commands and file writes run directly on the host."
+    rationale: "The project settings auto-accept tool calls or trust an MCP server while sandboxing stays off (its default), so shell commands and file writes run directly on the host."
     remediation: "Set tools.sandbox to \"docker\" or \"podman\" in .gemini/settings.json"
 
   - id: IAC-069
@@ -614,7 +614,7 @@ checks:
     cwe: CWE-829
     finding_type: FT-181
     rationale: "A server marked trust: true bypasses all tool-call confirmations, and autoAccept approves tool calls without review — both for anyone who opens the project."
-    remediation: "Remove trust: true and autoAccept from the committed settings"
+    remediation: "Remove trust: true and autoAccept from the project settings"
 
   - id: IAC-070
     name: "Kiro workspace MCP servers must not auto-approve tools"
@@ -639,7 +639,7 @@ checks:
     severity_if_violated: High
     cwe: CWE-250
     finding_type: FT-180
-    rationale: "The committed workflow or script starts an agent with approvals and isolation switched off, with repository write access and CI secrets in its environment and no human in the loop."
+    rationale: "The repository's workflow or script starts an agent with approvals and isolation switched off, with repository write access and CI secrets in its environment and no human in the loop."
     remediation: "Drop the bypass flag and grant the agent the specific tools the job needs"
 
   - id: IAC-072

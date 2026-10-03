@@ -15,6 +15,20 @@ context builders under scripts/:
    products (a threat-model.md/.yaml pair or two runtime markers) under any
    name, so scanners do not treat earlier reports as repository evidence.
 
+3. Repository inventory: `repo_inventory()` lists the files that belong to the
+   repository — tracked plus untracked files git does not ignore (repository
+   `.gitignore`, `.git/info/exclude` and the user's `core.excludesFile`) —
+   and records which are tracked. A developer's ignored local files, such as a
+   personal agent settings file, are not repository evidence. It does not
+   apply the exclusion policy above; callers that scan source apply
+   `is_excluded()` on top, while the config scanner deliberately does not
+   (its catalog targets files that policy drops, e.g. `package-lock.json`).
+   Scanners that still walk the tree themselves: recon_patterns,
+   route_inventory, db_privilege_separation, assess_supply_chain_controls,
+   mass_assignment_scanner and _lib_manifest each pair the walk with their own
+   skip sets and opt-ins; moving them onto this inventory changes what they
+   see and needs its own verification.
+
 Whitelist-wins rule: if a path matches `always_include`, it is NEVER
 excluded — even if it matches a `directories` / `path_prefixes` /
 `file_patterns` entry. This is how AsciiDoc source docs and OpenAPI
@@ -47,6 +61,7 @@ import functools
 import json
 import os
 import stat
+import subprocess
 import sys
 from pathlib import Path, PurePosixPath
 from typing import Iterable
@@ -289,6 +304,106 @@ def is_assessment_artifact(rel_path: str, repo_root: Path | str) -> bool:
     return any(
         normalized == prefix or normalized.startswith(prefix + "/") for prefix in assessment_output_prefixes(repo_root)
     )
+
+
+# ---------------------------------------------------------------------------
+# Repository inventory
+# ---------------------------------------------------------------------------
+
+INVENTORY_GIT = "git"
+INVENTORY_WALK = "filesystem-walk"
+_GIT_TIMEOUT_SECONDS = 120
+
+
+class RepoInventory:
+    """Repository files as repo-relative POSIX paths.
+
+    ``files`` maps each path to whether git tracks it; the value is ``None``
+    when the inventory came from a filesystem walk and tracking is unknown.
+    ``source`` names how the inventory was built."""
+
+    __slots__ = ("files", "source")
+
+    def __init__(self, files: dict[str, bool | None], source: str) -> None:
+        self.files = files
+        self.source = source
+
+    def __contains__(self, rel_path: object) -> bool:
+        return rel_path in self.files
+
+    def is_tracked(self, rel_path: str) -> bool | None:
+        return self.files.get(rel_path)
+
+
+def _git_paths(root: Path, *args: str) -> list[str] | None:
+    try:
+        proc = subprocess.run(
+            ["git", "-c", "core.fsmonitor=", "-C", str(root), "ls-files", "-z", *args],
+            capture_output=True,
+            timeout=_GIT_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    return [path for path in proc.stdout.decode("utf-8", "surrogateescape").split("\0") if path]
+
+
+def _git_files(root: Path, seen: set[Path]) -> dict[str, bool | None] | None:
+    listed = _git_paths(root, "--cached", "--others", "--exclude-standard")
+    tracked = _git_paths(root, "--cached")
+    if listed is None or tracked is None:
+        return None
+    tracked_set = set(tracked)
+    files: dict[str, bool | None] = {}
+    for entry in listed:
+        rel = entry.rstrip("/")
+        path = root / rel
+        if path.is_dir() and not path.is_symlink():
+            # A submodule gitlink, or an untracked nested repository that git
+            # lists as one directory entry: inventory it with its own rules.
+            nested = _inventory_files(path, seen)[0]
+            files.update({f"{rel}/{child}": status for child, status in nested.items()})
+        elif path.is_file():
+            files[rel] = rel in tracked_set
+    return files
+
+
+def _walk_files(root: Path) -> dict[str, bool | None]:
+    files: dict[str, bool | None] = {}
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        dirnames[:] = [name for name in dirnames if name != ".git"]
+        base = Path(dirpath)
+        for name in filenames:
+            path = base / name
+            if path.is_file():
+                files[path.relative_to(root).as_posix()] = None
+    return files
+
+
+def _inventory_files(root: Path, seen: set[Path]) -> tuple[dict[str, bool | None], str]:
+    if root in seen:
+        return {}, INVENTORY_WALK
+    seen.add(root)
+    files = _git_files(root, seen)
+    if files:
+        return files, INVENTORY_GIT
+    # Not a repository, git unavailable, or a directory git lists as empty
+    # (for instance one an enclosing repository ignores): walk it instead of
+    # reporting a non-empty directory as having no files.
+    return _walk_files(root), INVENTORY_WALK
+
+
+def repo_inventory(repo_root: Path | str) -> RepoInventory:
+    """Files that belong to the repository at ``repo_root``; see module docstring §3.
+
+    Not cached: callers build it once per scan, and a cached listing would go
+    stale when files change between scans in one process."""
+    root = Path(repo_root).resolve(strict=False)
+    files, source = _inventory_files(root, set())
+    kept = {rel: status for rel, status in files.items() if not is_assessment_artifact(rel, root)}
+    return RepoInventory(kept, source)
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import analyzers.config_iac_scanner as scanner
@@ -286,6 +287,116 @@ def test_repository_without_iac_reports_neither_findings_nor_uncovered_surfaces(
 
     assert not [row for row in result["findings"] if row["iac_type"] in {"kubernetes", "terraform", "docker_compose"}]
     assert "uncovered_iac" not in result
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+
+
+@pytest.fixture
+def git_home(tmp_path, monkeypatch):
+    """Isolate git from the developer's global config; returns the global ignore file."""
+    xdg = tmp_path / "xdg"
+    (xdg / "git").mkdir(parents=True)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.delenv("GIT_CONFIG_GLOBAL", raising=False)
+    for key in ("GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"):
+        monkeypatch.setenv(key, "t")
+    for key in ("GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"):
+        monkeypatch.setenv(key, "t@example.invalid")
+    return xdg / "git" / "ignore"
+
+
+def _write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def _dockerfile_files(result: dict) -> list[str]:
+    return sorted(row["file"] for row in result["findings"] if row["check_id"] == "IAC-901")
+
+
+DOCKER_CHECK = _check("IAC-901", "Dockerfile", "**/Dockerfile", "absent", pattern="RUN install")
+
+
+def test_scan_skips_files_git_ignores_and_keeps_untracked_repository_files(tmp_path, git_home):
+    repo = tmp_path / "repo"
+    for rel in ("Dockerfile", "new/Dockerfile", "ignored/Dockerfile", "personal/Dockerfile"):
+        _write(repo / rel, "RUN install\n")
+    _write(repo / ".gitignore", "ignored/\n")
+    git_home.write_text("personal/\n", encoding="utf-8")
+    _git(repo, "init", "-q")
+    _git(repo, "add", "Dockerfile", ".gitignore")
+
+    result = scanner.scan(repo, _catalog(tmp_path, [DOCKER_CHECK]), depth="standard", output=tmp_path / "r.json")
+
+    assert result["inventory_source"] == "git"
+    assert _dockerfile_files(result) == ["Dockerfile", "new/Dockerfile"]
+
+
+def test_agent_config_checks_judge_only_tracked_settings(tmp_path, git_home):
+    repo = tmp_path / "repo"
+    _write(repo / ".claude" / "settings.json", '{"defaultMode": "bypassPermissions"}\n')
+    _write(repo / ".claude" / "settings.local.json", '{"defaultMode": "bypassPermissions"}\n')
+    _git(repo, "init", "-q")
+    _git(repo, "add", ".claude/settings.json")
+    check = _check("IAC-902", "agent_config", ".claude/settings*.json", "absent", pattern="bypassPermissions")
+
+    result = scanner.scan(repo, _catalog(tmp_path, [check]), depth="standard", output=tmp_path / "r.json")
+
+    assert [row["file"] for row in result["findings"]] == [".claude/settings.json"]
+
+
+def test_scan_outside_git_walks_the_tree_and_says_so(tmp_path, capsys):
+    repo = tmp_path / "repo"
+    _write(repo / "svc" / "Dockerfile", "RUN install\n")
+    catalog = _catalog(tmp_path, [DOCKER_CHECK])
+
+    assert scanner.main(["--repo-root", str(repo), "--output", str(tmp_path / "r.json"), "--checks", str(catalog)]) == 0
+
+    result = json.loads((tmp_path / "r.json").read_text(encoding="utf-8"))
+    assert result["inventory_source"] == "filesystem-walk"
+    assert _dockerfile_files(result) == ["svc/Dockerfile"]
+    assert "inventory: filesystem-walk" in capsys.readouterr().out
+
+
+def test_directory_an_enclosing_repository_ignores_is_walked_not_reported_empty(tmp_path, git_home):
+    outer = tmp_path / "outer"
+    _write(outer / ".gitignore", "scan/\n")
+    _write(outer / "scan" / "Dockerfile", "RUN install\n")
+    _git(outer, "init", "-q")
+
+    result = scanner.scan(
+        outer / "scan", _catalog(tmp_path, [DOCKER_CHECK]), depth="standard", output=tmp_path / "r.json"
+    )
+
+    assert result["inventory_source"] == "filesystem-walk"
+    assert _dockerfile_files(result) == ["Dockerfile"]
+
+
+def test_submodule_and_nested_repository_files_follow_their_own_ignore_rules(tmp_path, git_home):
+    repo = tmp_path / "repo"
+    inner = repo / "inner"
+    _write(inner / "Dockerfile", "RUN install\n")
+    _write(inner / "cache" / "Dockerfile", "RUN install\n")
+    _write(inner / ".gitignore", "cache/\n")
+    _git(inner, "init", "-q")
+    _git(inner, "add", "Dockerfile", ".gitignore")
+    _git(inner, "commit", "-q", "-m", "inner")
+    nested = repo / "nested"
+    _write(nested / "Dockerfile", "RUN install\n")
+    _git(nested, "init", "-q")
+    _git(repo, "init", "-q")
+    head = subprocess.run(
+        ["git", "-C", str(inner), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+    ).stdout.strip()
+    _git(repo, "update-index", "--add", "--cacheinfo", f"160000,{head},inner")
+
+    result = scanner.scan(repo, _catalog(tmp_path, [DOCKER_CHECK]), depth="standard", output=tmp_path / "r.json")
+
+    assert _dockerfile_files(result) == ["inner/Dockerfile", "nested/Dockerfile"]
 
 
 def test_catalog_rejects_an_unknown_breach_vector(tmp_path):
