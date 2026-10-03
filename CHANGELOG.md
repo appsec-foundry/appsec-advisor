@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Findings whose evidence was never verified no longer count as confirmed in the summary's confirmed-exploitable figure or the posture verdict; they stay in the findings register.
 - Figure 1 reorders components within their layer when that clearly reduces line crossings, and says so in its legend; otherwise it keeps C-number order.
 
 - Architect review checks ratings and mitigations before prioritization as parallel agent jobs that also run in sandboxed sessions, preserves accepted corrections through report rebuilds without leaving a shared mitigation at the priority of a finding it no longer covers, and reports a review that covered no finding as not performed with its reason instead of running a later blanket prose pass.

@@ -24,6 +24,7 @@ import yaml
 from analyzers.architect_review import ReviewError, _canonical_valid, fingerprint
 from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
+from shared._finding_state import is_refuted
 from shared._severity_policy import (
     RANK,
     companion_cwes,
@@ -154,7 +155,7 @@ def build_context(
     priorities = {"Critical": "P1", "High": "P2", "Medium": "P3", "Low": "P4"}
     groups: dict[str, list[dict]] = {}
     for row in threats:
-        if row.get("evidence_check") == "refuted":
+        if is_refuted(row):
             result["excluded"].append({"t_id": row["t_id"], "reason": "refuted"})
         else:
             groups.setdefault(row["component_id"], []).append(row)

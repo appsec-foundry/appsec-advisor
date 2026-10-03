@@ -31,6 +31,7 @@ import re
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
+from shared._finding_state import evidence_established
 from shared._path_guard import is_safe_to_read
 
 from analyzers.source_auth_scanner import _JS_LEXEME, _without_js_comments
@@ -133,7 +134,7 @@ def finding_signals(threats: list[dict], repo_root: Path) -> list[dict]:
     for threat in threats:
         if threat.get("source") not in {"stride", "source-scan", "config-scan", "config-scan-finding"}:
             continue
-        if threat.get("evidence_check") not in {"verified", "verified-prior"}:
+        if not evidence_established(threat):
             continue
         tid = threat.get("t_id") or threat.get("id")
         if not isinstance(tid, str) or not re.fullmatch(r"T-\d{3,}", tid):

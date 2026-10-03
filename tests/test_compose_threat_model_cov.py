@@ -2700,8 +2700,13 @@ class TestWeaknessBasisBreakdown:
     def test_confirmed_excludes_folded_practice(self):
         yd = {
             "threats": [
-                {"id": "T-001", "risk": "Critical", "evidence_tier": "confirmed-exploitable"},
-                {"id": "T-002", "risk": "High", "evidence_tier": "confirmed-exploitable"},
+                {
+                    "id": "T-001",
+                    "risk": "Critical",
+                    "evidence_tier": "confirmed-exploitable",
+                    "evidence_check": "verified",
+                },
+                {"id": "T-002", "risk": "High", "evidence_tier": "confirmed-exploitable", "evidence_check": "verified"},
                 {"id": "T-003", "risk": "Medium", "evidence_tier": "insecure-practice"},
             ],
             "weaknesses": [
@@ -2711,13 +2716,29 @@ class TestWeaknessBasisBreakdown:
         }
         assert compose._weakness_basis_breakdown(yd) == (4, 2, 1, 1)
 
-    def test_missing_tier_counts_as_confirmed(self):
-        # Legacy threats without evidence_tier are register findings (confirmed).
+    def test_missing_tier_counts_as_confirmed_on_established_evidence(self):
+        # Legacy threats without evidence_tier are register findings; they count as
+        # confirmed once their evidence is established (FE-21).
         yd = {
-            "threats": [{"id": "T-001", "risk": "High"}],
+            "threats": [{"id": "T-001", "risk": "High", "evidence_check": "verified"}],
             "weaknesses": [{"id": "W-001", "kind": "design", "weakness_class": "injection"}],
         }
         assert compose._weakness_basis_breakdown(yd) == (2, 1, 0, 1)
+
+    def test_unchecked_evidence_is_not_counted_confirmed(self):
+        yd = {
+            "threats": [
+                {
+                    "id": "T-001",
+                    "risk": "High",
+                    "evidence_tier": "confirmed-exploitable",
+                    "evidence_check": "unchecked",
+                },
+                {"id": "T-002", "risk": "High", "evidence_tier": "confirmed-exploitable"},
+            ],
+            "weaknesses": [{"id": "W-001", "kind": "design", "weakness_class": "injection"}],
+        }
+        assert compose._weakness_basis_breakdown(yd)[1] == 0
 
 
 class TestSystemicWeaknessesRender:

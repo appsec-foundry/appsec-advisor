@@ -26,6 +26,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
+from shared._finding_state import is_confirmed
 
 from renderers._severity_rollup import SEVERITY_ORDER, display_id, register_severity
 from renderers.figure1_dfd import FONT, INK, LINE, MUTED, NAVY, RED, scenarios_from_attack_paths
@@ -108,10 +109,7 @@ def _prerequisite(finding: dict, raw_actor: str, victim: bool, public_source: bo
 
 
 def _unproven(finding: dict) -> bool:
-    return finding.get("evidence_tier") != "confirmed-exploitable" or finding.get("evidence_check") not in {
-        "verified",
-        "verified-prior",
-    }
+    return not is_confirmed(finding)
 
 
 def build_figure2_data(

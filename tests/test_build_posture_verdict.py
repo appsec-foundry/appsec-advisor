@@ -61,8 +61,8 @@ def test_unfolded_confirmed_threat_counts_but_folded_not_double() -> None:
     yd = {
         "weaknesses": [_weakness("injection", basis="confirmed", instances=[{"id": "T-001"}], components=["a"])],
         "threats": [
-            {"id": "T-001", "cwe": "CWE-89", "evidence_tier": "confirmed-exploitable"},  # folded
-            {"id": "T-050", "cwe": "CWE-89", "evidence_tier": "confirmed-exploitable"},  # unfolded
+            {"id": "T-001", "cwe": "CWE-89", "evidence_tier": "confirmed-exploitable", "evidence_check": "verified"},
+            {"id": "T-050", "cwe": "CWE-89", "evidence_tier": "confirmed-exploitable", "evidence_check": "verified"},
         ],
     }
     rows = {r["theme"]: r for r in bpv.build_posture_verdict(yd)}
@@ -71,14 +71,16 @@ def test_unfolded_confirmed_threat_counts_but_folded_not_double() -> None:
 
 
 def test_unverified_evidence_not_counted_as_confirmed() -> None:
-    # RC.P2a: ambiguous/refuted evidence pointers are not confirmed instances,
-    # so they must not drive a principle to VIOLATED on confirmed grounds. Only
-    # the verified threat counts.
+    # RC.P2a / FE-21: ambiguous, refuted and unchecked evidence pointers are not
+    # confirmed instances, so they must not drive a principle to VIOLATED on
+    # confirmed grounds. Only the verified threat counts.
     yd = {
         "threats": [
             {"id": "T-01", "cwe": "CWE-89", "evidence_tier": "confirmed-exploitable", "evidence_check": "verified"},
             {"id": "T-02", "cwe": "CWE-89", "evidence_tier": "confirmed-exploitable", "evidence_check": "ambiguous"},
             {"id": "T-03", "cwe": "CWE-89", "evidence_tier": "confirmed-exploitable", "evidence_check": "refuted"},
+            {"id": "T-04", "cwe": "CWE-89", "evidence_tier": "confirmed-exploitable", "evidence_check": "unchecked"},
+            {"id": "T-05", "cwe": "CWE-89", "evidence_tier": "confirmed-exploitable"},
         ],
     }
     rows = {r["theme"]: r for r in bpv.build_posture_verdict(yd)}

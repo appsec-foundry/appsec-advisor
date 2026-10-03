@@ -75,6 +75,7 @@ from typing import Any, Callable, Iterable, Optional
 import jinja2
 import repairs.apply_prose_fixes as _prose_formatter
 import requirements.requirements_trace as requirements_trace
+import shared._finding_state as _finding_state
 import shared._ms_component_refs as _ms_component_refs
 import shared._safe_cond as _safe_cond
 import yaml
@@ -17250,7 +17251,7 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     # Vektor sort key — within a severity tier, scan dirtier paths first.
     vektor_order = {"repo-read": 0, "internet-anon": 1, "internet-user": 2, "victim-required": 3}
     all_threats_sorted = sorted(
-        (threat for threat in threats if (threat.get("evidence_check") or "").strip().lower() != "refuted"),
+        (threat for threat in threats if not _finding_state.is_refuted(threat)),
         key=lambda t: (
             sev_rank.get((t.get("risk") or t.get("severity") or "").lower(), 99),
             vektor_order.get((t.get("vektor") or "").strip().lower(), 99),
@@ -18400,7 +18401,7 @@ def render(
         yaml_data["threats"] = [
             threat
             for threat in yaml_data["threats"]
-            if not (isinstance(threat, dict) and (threat.get("evidence_check") or "").strip().lower() == "refuted")
+            if not (isinstance(threat, dict) and _finding_state.is_refuted(threat))
         ]
     # M-10c: Normalize threats[].title from em-dash form to paren form
     # ("SQL injection — routes/login.ts" → "SQL Injection (routes/login.ts)").

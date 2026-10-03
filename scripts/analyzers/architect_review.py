@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from jsonschema import Draft202012Validator
+from shared._finding_state import is_refuted
 from shared._severity_policy import RANK, normalize_risks
 
 SCHEMA_PATH = Path(__file__).resolve().parents[2] / "schemas/architect-corrections.schema.json"
@@ -125,7 +126,7 @@ def _outcome(tid: str, status: str, reason: str, decision: dict | None = None) -
 
 def _apply_decision(original: dict, decision: dict) -> tuple[dict, str | None]:
     """Return the corrected copy of one finding, or the reason the decision is rejected."""
-    if original.get("evidence_check") == "refuted":
+    if is_refuted(original):
         return original, "refuted_finding"
     candidate = copy.deepcopy(original)
     rating = decision.get("rating")

@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from shared._atomic_io import atomic_write_json
+from shared._finding_state import is_confirmed
 
 _HERE = Path(__file__).resolve().parents[1]
 _RUBRIC = _HERE.parent / "data" / "posture-rubric.yaml"
@@ -137,12 +138,10 @@ def build_posture_verdict(yaml_data: dict, rubric: dict | None = None) -> list[d
         }
         if (t.get("source") or "").strip() in _design_src:
             continue
-        if (t.get("evidence_tier") or "confirmed-exploitable") == "insecure-practice":
-            continue
-        # RC.P2a: an unverifiable (ambiguous) or refuted evidence pointer is not a
-        # *confirmed* instance — it must not drive a principle to VIOLATED on
-        # confirmed grounds. Raw severity is untouched; it can still count as WEAK.
-        if (t.get("evidence_check") or "").strip() in ("ambiguous", "refuted"):
+        # Only a confirmed finding (shared finding-state authority) may drive a
+        # principle to VIOLATED on confirmed grounds; practice sites and
+        # unchecked, ambiguous or refuted evidence are skipped here.
+        if not is_confirmed(t):
             continue
         tid = (t.get("id") or t.get("t_id") or "").strip().upper()
         if tid and tid in folded_ids:

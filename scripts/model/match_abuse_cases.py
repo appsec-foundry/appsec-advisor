@@ -58,6 +58,7 @@ from pathlib import Path
 
 import analyzers.scan_excludes as scan_excludes
 import yaml
+from shared._finding_state import is_refuted
 from shared._severity_policy import abuse_case_priority, normalize_risks
 from validators.validate_intermediate import validate_recon_signals
 
@@ -127,7 +128,7 @@ def load_findings(path: Path) -> list[dict]:
 
 def matchable_findings(findings: list[dict]) -> list[dict]:
     """Exclude findings that authoritative evidence verification refuted."""
-    return [finding for finding in findings if finding.get("evidence_check") != "refuted"]
+    return [finding for finding in findings if not is_refuted(finding)]
 
 
 def _compile(patterns: list[str]) -> list[re.Pattern]:

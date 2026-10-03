@@ -72,6 +72,7 @@ from pathlib import Path as _Path
 if not __package__:
     _sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
 
+import shared._finding_state as _finding_state  # noqa: E402
 
 # Display order for the canonical severity labels.
 SEVERITY_ORDER: dict[str, int] = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Informational": 4}
@@ -130,11 +131,9 @@ def is_refuted(threat: dict | None) -> bool:
     """True when evidence verification refuted the finding.
 
     The §8 register drops these; they are not part of the delivered
-    inventory.
+    inventory. Delegates to the shared finding-state authority.
     """
-    if not threat:
-        return False
-    return (threat.get("evidence_check") or "").strip().lower() == "refuted"
+    return _finding_state.is_refuted(threat)
 
 
 def is_folded_practice(threat: dict | None) -> bool:
@@ -158,9 +157,10 @@ def weakness_basis_breakdown(yaml_data: dict) -> tuple[int, int, int, int] | Non
     """``(combined, confirmed, implementation, design)`` or ``None``.
 
     ``None`` when the model carries no weakness register — the fold rules do
-    not apply then. ``confirmed`` counts evidence-backed findings only:
-    folded practice sites, design-level sources and ambiguous/refuted
-    evidence are excluded. ``implementation`` / ``design`` count W-records.
+    not apply then. ``confirmed`` counts findings the shared finding-state
+    authority calls confirmed (established evidence only; practice sites and
+    unchecked, ambiguous or refuted evidence are not confirmed), excluding
+    design-level sources. ``implementation`` / ``design`` count W-records.
     The combined total is retained for callers that need an assessment count;
     it must never be labelled a finding count.
     """
@@ -170,10 +170,7 @@ def weakness_basis_breakdown(yaml_data: dict) -> tuple[int, int, int, int] | Non
     confirmed = sum(
         1
         for t in (yaml_data.get("threats") or [])
-        if (t.get("evidence_tier") or "confirmed-exploitable") != "insecure-practice"
-        and (t.get("source") or "").strip() not in _DESIGN_LEVEL_SOURCES
-        # RC.P2a: unverifiable/refuted evidence is not "confirmed-exploitable".
-        and (t.get("evidence_check") or "").strip() not in ("ambiguous", "refuted")
+        if _finding_state.is_confirmed(t) and (t.get("source") or "").strip() not in _DESIGN_LEVEL_SOURCES
     )
     implementation = sum(1 for w in weaknesses if w.get("kind") == "implementation")
     design = sum(1 for w in weaknesses if w.get("kind") == "design")
