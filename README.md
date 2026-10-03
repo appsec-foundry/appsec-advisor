@@ -9,7 +9,7 @@
 
 > ⚠️ **Beta: not production ready.** `appsec-advisor` is under active development. Interfaces, schemas, and output may change without notice.
 
-`appsec-advisor` is a Claude Code plugin for **code-derived threat modeling**: it reads the code and configuration in a repository, builds an architecture model, and runs STRIDE against it. Each finding references repository evidence and includes remediation guidance.
+`appsec-advisor` is a Claude Code plugin for **automated, code-derived threat modeling**. It reconstructs application components, data flows, and trust boundaries from code and configuration, then applies STRIDE to identify threats in the implemented architecture. Findings reference repository evidence and include remediation guidance.
 
 The plugin also includes requirements audits, change reviews, and CI gates.
 
@@ -19,22 +19,23 @@ The plugin also includes requirements audits, change reviews, and CI gates.
 
 ## Why appsec-advisor?
 
-Traditional threat modeling brings teams together in workshops to map data flows, assets, trust boundaries, assumptions, and acceptable risks. This captures how the system is intended to work. Once code and configuration exist, `appsec-advisor` adds evidence from the implementation. It does not replace workshops, expert review, or developers thinking about threats themselves.
+Threat modeling examines what could go wrong with a system and which controls it needs. Teams can start from an intended design or an existing implementation. Both perspectives inform security decisions throughout development.
 
-The plugin reads the repository and looks for missing controls at trust boundaries, implicit trust between services, unauthenticated paths, and other design risks. Run it again as the application changes to keep the threat model current. These repeatable checks help a small AppSec team cover a larger application portfolio and focus expert time on cases that need human judgment.
+| | Starting from design | Starting from implementation |
+|---|---|---|
+| **Basis** | Planned architecture, requirements, and security assumptions | Code, configuration, and supplied context |
+| **Focus** | Anticipate threats and choose controls | Identify threats and control gaps in the implemented architecture |
+| **Use of results** | Guide implementation and review | Inform design reviews and remediation |
+
+`appsec-advisor` automates analysis from the implementation. Run it again as code and configuration change to revisit security assumptions and design decisions. Business context and trust-boundary declarations help explain conditions that the code alone cannot establish.
+
+An existing threat model is not required. The generated architecture and findings provide a starting point for team review.
 
 Organizations can add their own requirements and tools without maintaining a fork of the core analysis pipeline. See [Enterprise rollout](#enterprise-rollout).
 
-<a id="why-this-isnt-a-sast-tool"></a>
-### Why this isn't a SAST tool
-
-SAST analyzes implementation flaws in source code and traces untrusted data through concrete code paths. `appsec-advisor` works at the architecture level: it reconstructs components, data flows, and trust boundaries, then checks whether the expected controls exist across them.
-
-The two approaches overlap in their use of code evidence, but answer different questions. SAST asks where an implementation is vulnerable. Code-derived threat modeling also asks whether the system design depends on trust or controls that the implementation does not provide.
-
 ### Scope and limitations
 
-The analysis is limited to the repository and any configured related repositories. It cannot verify runtime behavior, production-only controls, business processes, or user journeys. An AppSec engineer or security architect should validate findings before they drive remediation or risk acceptance.
+The assessment uses evidence from the analyzed repository and supplied context, including configured related-repository models. It cannot verify runtime behavior or production-only controls. Business context and design intent require input from the team. Automated analysis supports workshops and expert review. An AppSec engineer or security architect should validate findings before they drive remediation or risk acceptance.
 
 ## Security notes
 

@@ -1,12 +1,13 @@
 # Threat Modeler
 
-`/appsec-advisor:create-threat-model` derives the implemented architecture from a repository and applies STRIDE. **Code-derived threat modeling** means that code and configuration are the primary evidence, rather than a manually maintained diagram.
+`/appsec-advisor:create-threat-model` performs **automated, code-derived threat modeling**. It reconstructs the architecture visible in code and configuration and applies STRIDE to identify threats and control gaps. The analysis covers architectural assumptions and implementation weaknesses, with repository evidence supporting its findings.
 
 → [Back to README](../README.md)
 
 ## Contents
 
 - [What you get](#what-you-get)
+- [Using the model in design reviews](#using-the-model-in-design-reviews)
 - [Threat model lifecycle](#threat-model-lifecycle)
 - [Example report](#example-report-owasp-juice-shop)
 - [What it checks](#what-it-checks)
@@ -54,9 +55,17 @@ Generate optional formats from an existing assessment without running the analys
 
 SARIF, pentest tasks, and Threat Dragon are generated from `threat-model.yaml`. PDF and HTML are converted from `threat-model.md`; rendered diagrams also require `mmdc` and Chrome or Chromium. Check dependencies with `/appsec-advisor:export-threat-model --check-only`, or use `--no-mermaid` to export PDF or HTML without rendered diagrams. See [Threat Dragon export](threat-dragon-export.md) for that format's limits.
 
+## Using the model in design reviews
+
+Review the generated model with developers, architects, and security reviewers. Compare its data flows and trust boundaries with the intended design, investigate findings, and resolve assumptions that repository evidence cannot settle. If no documented threat model exists, use the generated model as a starting point.
+
+Supply business purpose, sensitive assets, and security assumptions through [repo-local context](#repo-local-context). Use [trust-boundary declarations](#trust-boundary-declarations--appsectrust-boundariesyaml) to clarify deployment, tenancy, or ownership that the source does not establish. Declarations provide context; they do not prove that a control works. The analysis cannot verify runtime behavior or production-only controls.
+
+Use the review to decide which design changes and fixes are needed. After implementation changes, reassess the repository to check the revised design against the available code and configuration.
+
 ## Threat model lifecycle
 
-Treat the threat model as a maintained review artifact. Create the initial model, review its findings, and update it as the repository changes.
+The plugin automates repository analysis and report generation. The team validates findings, resolves open assumptions, and decides on design changes, remediation, or risk acceptance. Rerun the assessment as the implementation changes to keep the model current.
 
 The Management Summary verdict rates security concerns in the assessed scope: red indicates Critical concerns, yellow indicates High concerns, and green means neither was reported. It includes finding priorities and design risks without changing individual finding ratings. Green does not establish deployment safety or coverage of unexamined surfaces. When you explicitly declare no material business harm, the verdict shows the component scope of that declaration separately; technical findings and their severity remain available for benchmarking. Design-risk citations link directly to weaknesses and do not assert confirmed exploitation; the team retains the deployment decision.
 
