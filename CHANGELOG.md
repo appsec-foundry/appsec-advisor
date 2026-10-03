@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The architect review no longer counts findings the evidence verifier refuted as unresolved; they are reported separately as refuted and excluded.
 - A selected worst-case impact answer from the interactive dialog now reaches every runtime component instead of only those the analysis chose; build and delivery components are covered only when the answer names them.
 - Private keys quoted in findings are now masked completely, key bytes included, and the secret-leak gate also checks `pentest-tasks.yaml` and flags key bytes left behind a redaction marker.
+- A CI/CD component modelled by the architecture analyst now owns the repository's unowned build and supply-chain files, such as nested Dockerfiles, so findings on them are attributed to it.
 - Components labelled `internal-network` that own HTTP handlers in the route inventory are now selected for STRIDE analysis as `internet-exposed (route-inventory)` instead of being excluded.
 
 ### Changed

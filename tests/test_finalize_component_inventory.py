@@ -374,3 +374,54 @@ def test_refined_llm_tools_pass_the_finalization_evidence_gate(tmp_path: Path):
     assert finalized["components"][0]["capabilities"] == [
         {"capability": "llm-tools", "evidence": [{"file": "src/api/assistant.py", "line": 3}]}
     ]
+
+
+def _ci_repo(tmp_path: Path, dockerfiles: list[str]) -> None:
+    (tmp_path / ".github/workflows").mkdir(parents=True)
+    (tmp_path / ".github/workflows/ci.yml").write_text("on: push\n")
+    for rel in dockerfiles:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text("FROM node:24\n")
+
+
+def _owners(components: list[dict], rel: str) -> list[str]:
+    return [c["id"] for c in components if manifest._path_owns(c.get("paths") or [], rel)]
+
+
+@pytest.mark.parametrize(
+    "dockerfiles,other_paths,expect_glob",
+    [
+        (["Dockerfile", "test/smoke/Dockerfile"], [], True),
+        (["Dockerfile", "a/Dockerfile", "b/c/Dockerfile"], [], True),
+        (["Dockerfile", "services/api/Dockerfile", "test/smoke/Dockerfile"], ["services/api/**"], False),
+    ],
+)
+def test_analyst_authored_cicd_component_adopts_unowned_supply_chain_files(
+    tmp_path, dockerfiles, other_paths, expect_glob
+):
+    _ci_repo(tmp_path, dockerfiles)
+    rows = [_component("ci-cd-pipeline", paths=[".github/workflows/**", "Dockerfile"])]
+    if other_paths:
+        rows.append(_component("api", paths=other_paths))
+    result, injected = manifest.reconcile_inventory(rows, tmp_path)
+    assert not injected
+    for rel in dockerfiles:
+        owner = "api" if rel.startswith("services/api/") else "ci-cd-pipeline"
+        assert _owners(result, rel) == [owner]
+    assert ("**/Dockerfile" in result[0]["paths"]) is expect_glob
+    assert manifest.reconcile_inventory(result, tmp_path)[0] == result
+
+
+def test_cicd_adoption_adds_no_speculative_globs(tmp_path):
+    _ci_repo(tmp_path, [])
+    rows = [_component("ci-cd-pipeline", paths=[".github/workflows/**"])]
+    result, _ = manifest.reconcile_inventory(rows, tmp_path)
+    assert result[0]["paths"] == [".github/workflows/**"]
+
+
+def test_pipeline_component_without_ci_files_is_left_alone(tmp_path):
+    (tmp_path / "Dockerfile").write_text("FROM node:24\n")
+    rows = [_component("data-pipeline", paths=["etl/**"])]
+    result, injected = manifest.reconcile_inventory(rows, tmp_path)
+    assert not injected
+    assert result[0]["paths"] == ["etl/**"]
