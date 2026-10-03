@@ -1073,6 +1073,41 @@ class TestArchitectureDataFlows:
 
         assert edges == ["spa -->|HTTPS · Confidential| api"]
 
+    @pytest.mark.parametrize(
+        ("flows", "expected"),
+        [
+            (
+                [("HTTP", "", "Confidential"), ("HTTP", "", "Public")],
+                ["spa -->|HTTP · Confidential| api"],
+            ),
+            (
+                [("HTTP", "", "Public"), ("HTTP", "", "Restricted")],
+                ["spa -->|HTTP · Restricted| api"],
+            ),
+            (
+                [("HTTP", "", "Internal"), ("HTTP", "", "Internal")],
+                ["spa -->|HTTP · Internal| api"],
+            ),
+            (
+                [("HTTP", "JWT", "Confidential"), ("HTTP", "", "Confidential")],
+                ["spa -->|HTTP / JWT · Confidential| api", "spa -->|HTTP · Confidential| api"],
+            ),
+            (
+                [("HTTP", "", "Confidential"), ("WebSocket", "", "Confidential")],
+                ["spa -->|HTTP · Confidential| api", "spa -.->|WebSocket · Confidential| api"],
+            ),
+        ],
+    )
+    def test_parallel_flows_collapse_per_protocol_and_auth_keeping_the_most_sensitive_class(self, flows, expected):
+        data = {
+            "components": [{"id": "spa", "name": "SPA"}, {"id": "api", "name": "API"}],
+            "data_flows": [
+                {"id": f"df-{i}", "from": "spa", "to": "api", "protocol": p, "auth_method": a, "data_classification": c}
+                for i, (p, a, c) in enumerate(flows)
+            ],
+        }
+        assert pf._data_flow_edges(data, data["components"]) == expected
+
     def test_falls_back_to_tier_heuristic_when_data_flows_empty(self):
         data = {
             "meta": {"project": {"name": "TestApp"}},

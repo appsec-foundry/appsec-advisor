@@ -1806,6 +1806,28 @@ def _is_async_protocol(protocol: str) -> bool:
     )
 
 
+_CLASSIFICATION_ORDER = {
+    "restricted": 0,
+    "secret": 0,
+    "top secret": 0,
+    "confidential": 1,
+    "pii": 1,
+    "sensitive": 1,
+    "internal": 2,
+    "private": 2,
+    "public": 3,
+}
+
+
+def _classification_rank(value: str | None) -> int:
+    """Sensitivity rank of a free-text data classification; 0 is most sensitive, unknown sorts last."""
+    c = re.sub(r"[`*_]", "", value or "").strip().lower()
+    for key, rank in _CLASSIFICATION_ORDER.items():
+        if key in c:
+            return rank
+    return 4
+
+
 def _data_flow_edges(yaml_data: dict, components: list[dict]) -> list[str]:
     """Render mermaid edges from `data_flows[]` in the yaml.
 
@@ -1835,7 +1857,12 @@ def _data_flow_edges(yaml_data: dict, components: list[dict]) -> list[str]:
     if not isinstance(flows, list):
         return []
     valid_ids = {c.get("id") for c in components if isinstance(c, dict)}
-    edges: list[str] = []
+    # Several flows between the same pair over the same protocol and auth method
+    # are one connection in a container diagram. They collapse onto one edge
+    # carrying the most sensitive classification any of them moves; keying on
+    # the rendered label instead drew `HTTP · Confidential` and `HTTP` as two
+    # parallel lines whenever one flow was Public (juice-shop 2026-10-03).
+    best: dict[tuple[str, str, str], tuple[int, str]] = {}
     for f in flows:
         if not isinstance(f, dict):
             continue
@@ -1862,13 +1889,12 @@ def _data_flow_edges(yaml_data: dict, components: list[dict]) -> list[str]:
         annotated = " · ".join(parts) if parts else "→"
 
         arrow = "-.->|" if _is_async_protocol(protocol) else "-->|"
-        edges.append(f"{_safe_node_id(src)} {arrow}{annotated}| {_safe_node_id(dst)}")
-    # Several flows between the same pair collapse onto one label here, because
-    # the label carries protocol and classification but not each flow's
-    # `diagram_label`. Emitting the duplicate draws a second identical line that
-    # adds no information (VulnerableApp: login and password-reset both render
-    # `client-ui -->|HTTP · Confidential| auth`). One line says the same thing.
-    return list(dict.fromkeys(edges))
+        edge = f"{_safe_node_id(src)} {arrow}{annotated}| {_safe_node_id(dst)}"
+        key = (src, dst, head.lower())
+        rank = _classification_rank(data_class)
+        if key not in best or rank < best[key][0]:
+            best[key] = (rank, edge)
+    return [edge for _rank, edge in best.values()]
 
 
 # ---------------------------------------------------------------------------
@@ -1903,25 +1929,7 @@ def gen_assets(yaml_data: dict) -> str:
     # Sort rows by data-classification severity (2026-05-31 user request) so the
     # most-sensitive assets lead the table, regardless of A-NNN allocation order.
     # Stable within a class — preserves the yaml/ID order for ties.
-    def _classification_rank(a: dict) -> int:
-        c = re.sub(r"[`*_]", "", (a.get("classification") or "")).strip().lower()
-        order = {
-            "restricted": 0,
-            "secret": 0,
-            "top secret": 0,
-            "confidential": 1,
-            "pii": 1,
-            "sensitive": 1,
-            "internal": 2,
-            "private": 2,
-            "public": 3,
-        }
-        for key, rank in order.items():
-            if key in c:
-                return rank
-        return 4  # unknown / n/a sorts last
-
-    assets = sorted(assets, key=_classification_rank)
+    assets = sorted(assets, key=lambda a: _classification_rank(a.get("classification")))
 
     # Check whether any asset has linked_threats to decide if the column is needed
     any_linked = any(a.get("linked_threats") for a in assets)
