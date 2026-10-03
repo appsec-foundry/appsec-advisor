@@ -376,9 +376,19 @@ def _advance_review(output_dir: Path, cfg: dict, concurrency: int) -> list[dict]
     return None
 
 
+def _refuted_exclusion(row: dict) -> bool:
+    return row.get("status") == "unreviewed" and row.get("reason") == "refuted"
+
+
 def review_coverage(value: dict | None) -> dict:
-    """Coverage fields of the status receipt, derived from the saved transaction."""
-    outcomes = value["application"]["outcomes"] if value else []
+    """Coverage fields of the status receipt, derived from the saved transaction.
+
+    A finding the evidence verifier refuted leaves the report, so it needs no
+    semantic review: it is reported as ``excluded_refuted`` and does not count
+    as unresolved. Other exclusions (oversized, packet_limit, missing result)
+    stay coverage gaps."""
+    all_outcomes = value["application"]["outcomes"] if value else []
+    outcomes = [row for row in all_outcomes if not _refuted_exclusion(row)]
     dispatch = (value or {}).get("dispatch_jobs") or []
     unresolved = sum(
         row["status"] != "accepted" or "unresolved" in (row["assessment"], row["remediation"]) for row in outcomes
@@ -401,6 +411,7 @@ def review_coverage(value: dict | None) -> dict:
         "jobs_returned": returned,
         "assessment_corrected": sum(row["assessment"] == "corrected" for row in outcomes),
         "remediation_corrected": sum(row["remediation"] == "corrected" for row in outcomes),
+        "excluded_refuted": len(all_outcomes) - len(outcomes),
     }
     if outcome == "unavailable":
         coverage["reason"] = (
@@ -474,9 +485,10 @@ def main(argv: list[str] | None = None) -> int:
         validate_status(status)
         atomic_write_json(args.output_dir / ".architect-status.json", status)
         reason = f" ({status['reason']})" if status.get("reason") else ""
+        refuted = f"; {status['excluded_refuted']} refuted and excluded" if status.get("excluded_refuted") else ""
         print(
             f"Architect review: {status['outcome']}{reason}; {status['findings_recorded']} findings recorded, "
-            f"{status['unresolved_or_unreviewed']} unresolved or unreviewed."
+            f"{status['unresolved_or_unreviewed']} unresolved or unreviewed{refuted}."
         )
         return 0
     except (OSError, ValueError, RecursionError):
