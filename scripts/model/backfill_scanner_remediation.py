@@ -54,6 +54,7 @@ import sys
 from pathlib import Path
 
 import yaml
+from shared._threat_model_fields import evidence_locator
 
 from model.enrichment_pass import EnrichmentContinuation
 
@@ -101,8 +102,7 @@ def _evidence_location(threat: dict) -> str:
     if isinstance(evidence, list):
         for item in evidence:
             if isinstance(item, dict) and _text(item.get("file")):
-                line = item.get("line")
-                return f"{_text(item['file'])}:{line}" if line is not None else _text(item["file"])
+                return evidence_locator(item)
     affected = threat.get("affected_files") or []
     if isinstance(affected, list) and affected and _text(affected[0]):
         return _text(affected[0])

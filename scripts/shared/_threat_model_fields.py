@@ -56,3 +56,31 @@ def evidence_file_of(threat: dict[str, Any]) -> str | None:
         return evidence["file"]
     legacy = threat.get("evidence_file")
     return legacy if isinstance(legacy, str) else None
+
+
+def evidence_locator(entry: Any) -> str:
+    """``file:line`` for an evidence entry, or ``file`` when it cites no line.
+
+    Line 0 is not a location: absence evidence (``kind: absence``) carries it,
+    and rendering ``file:0`` would point a reader at a line that does not
+    exist."""
+    if not isinstance(entry, dict):
+        return ""
+    file = str(entry.get("file") or "").strip()
+    line = entry.get("line")
+    if not file:
+        return ""
+    return f"{file}:{line}" if isinstance(line, int) and not isinstance(line, bool) and line > 0 else file
+
+
+def evidence_description(entry: Any, *, listed: int = 3) -> str:
+    """Human-readable evidence: the locator, or for an absence what was searched."""
+    locator = evidence_locator(entry)
+    if not locator or entry.get("kind") != "absence":
+        return locator
+    searched = [str(value) for value in entry.get("searched_files") or [] if str(value).strip()]
+    count = entry.get("searched_file_count", len(searched))
+    if not searched:
+        return f"{locator}: not found"
+    shown = ", ".join(searched[:listed]) + (", …" if count > listed else "")
+    return f"{locator}: not found in {count} searched file(s) ({shown})"

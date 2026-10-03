@@ -82,6 +82,10 @@ def _eligible(threat: dict[str, Any], repo_root: Path) -> bool:
     evidence = threat.get("evidence")
     if not isinstance(evidence, dict) or not isinstance(evidence.get("file"), str):
         return False
+    # A line window cannot show that something is missing; the deterministic
+    # floor re-runs the producing check for absence evidence instead.
+    if evidence.get("kind") == "absence":
+        return False
     line = evidence.get("line")
     if isinstance(line, bool) or not isinstance(line, int) or line < 1:
         return False

@@ -2031,6 +2031,30 @@ class TestConfigFindingToThreat:
         assert out["config_check_slug"] == "cors-wildcard"
         assert out["control_scope"] == "edge-cors-policy"
 
+    def test_absence_evidence_is_carried_into_the_threat(self, mt):
+        out = mt._config_finding_to_threat(
+            {
+                "file": ".github/workflows/*.yml",
+                "line": 0,
+                "evidence_kind": "absence",
+                "searched_files": ["a.yml", "b.yml"],
+                "searched_file_count": 2,
+            }
+        )
+        assert out["evidence"] == {
+            "file": ".github/workflows/*.yml",
+            "line": 0,
+            "kind": "absence",
+            "searched_files": ["a.yml", "b.yml"],
+            "searched_file_count": 2,
+        }
+
+    def test_location_evidence_stays_file_and_line(self, mt):
+        assert mt._config_finding_to_threat({"file": "Dockerfile", "line": 3})["evidence"] == {
+            "file": "Dockerfile",
+            "line": 3,
+        }
+
     def test_defaults_when_missing(self, mt):
         out = mt._config_finding_to_threat({})
         assert out["risk"] == "Medium"

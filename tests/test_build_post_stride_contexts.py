@@ -319,3 +319,13 @@ def test_synthesis_context_rejects_unknown_component(tmp_path: Path) -> None:
 
     with pytest.raises(contexts.PostStrideContextError, match="unknown component"):
         contexts.write_synthesis_contexts(output)
+
+
+def test_absence_evidence_is_never_sampled_into_a_line_window(tmp_path: Path) -> None:
+    threat = _threat("T-001", "Critical", "app.py", 10)
+    threat["evidence"].update(kind="absence", searched_files=["app.py"])
+    output, repo = _write_inputs(tmp_path, [threat])
+    value = contexts.build_evidence_context(
+        (output / ".threats-merged.json").read_bytes(), repo, depth="thorough", noncritical_cap=20
+    )
+    assert value["samples"] == []

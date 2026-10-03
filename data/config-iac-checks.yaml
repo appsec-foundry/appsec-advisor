@@ -17,7 +17,24 @@
 # category inventory when a format has equivalent names or extensions.
 #   pattern                    — regex or keyword to match
 #   expect                     — `present`, `absent`, `all_third_party_actions`,
-#                                `any_of`, `all_of`
+#                                `any_of`, `any_of_present`, `structured`,
+#                                `file_exists`, `repository`
+#   anchor                     — optional regex for `present`/`any_of_present`:
+#                                the line a missing statement belongs to, cited
+#                                as evidence (`anchor_occurrence: first|last`,
+#                                default first). Without one, or when the file has
+#                                no such line, the finding is an absence (line 0,
+#                                the file searched) — never a pseudo line 1.
+#   capability / precondition  — `expect: repository` only: a property of the
+#                                whole repository (sbom, image_signing,
+#                                dependency_updates + `ecosystem`) judged once
+#                                from analyzers/supply_chain_facts.py, which owns
+#                                the detection patterns. `precondition`
+#                                (has_build_pipeline, publishes_container_image,
+#                                dependency_update_tool_configured) limits the
+#                                check to repositories it applies to. One gap is
+#                                one finding listing every file searched.
+#                                `file_pattern` is only its display path.
 #   severity_if_violated       — severity if the expectation is not met
 #   cwe                        — primary CWE for the finding
 #   finding_type               — FT-NNN from finding-types.yaml
@@ -112,6 +129,7 @@ checks:
     file_pattern: "Dockerfile"
     pattern: "^FROM\\s+\\S+@sha256:"
     expect: present
+    anchor: "^FROM\\s"
     severity_if_violated: Medium
     cwe: CWE-1104
     finding_type: FT-140
@@ -125,6 +143,9 @@ checks:
     file_pattern: "Dockerfile"
     pattern: "^USER\\s+(?!root)(?!0\\b)"
     expect: present
+    # The runtime user is set in the final stage; cite its FROM.
+    anchor: "^FROM\\s"
+    anchor_occurrence: last
     severity_if_violated: Medium
     cwe: CWE-250
     finding_type: FT-160
@@ -138,6 +159,8 @@ checks:
     file_pattern: "Dockerfile"
     pattern: "^HEALTHCHECK"
     expect: present
+    anchor: "^FROM\\s"
+    anchor_occurrence: last
     severity_if_violated: Low
     cwe: CWE-703
     finding_type: FT-160
@@ -324,13 +347,20 @@ checks:
     remediation: "Drop the `ports:` entry and use the Compose network, or bind it to `127.0.0.1:`"
 
   # ============ Dependabot / Renovate ============
+  # Coverage, not presence: each check applies only when the repository uses
+  # the ecosystem and has Dependabot or Renovate configured; Renovate without
+  # `enabledManagers` covers every ecosystem. A repository with no update tool
+  # at all is the §6.11 "Automated dependency updates" control row
+  # (model/emit_sca_practice.py), not three findings here.
   - id: IAC-030
     name: "Dependabot covers npm ecosystem"
     violation_title: "Dependabot Does Not Cover npm"
     iac_type: dependabot
     file_pattern: ".github/dependabot.yml"
-    pattern: "package-ecosystem:\\s*\"npm\""
-    expect: present
+    expect: repository
+    capability: dependency_updates
+    ecosystem: npm
+    precondition: dependency_update_tool_configured
     severity_if_violated: Medium
     cwe: CWE-1104
     finding_type: FT-170
@@ -342,8 +372,10 @@ checks:
     violation_title: "Dependabot Does Not Cover GitHub Actions"
     iac_type: dependabot
     file_pattern: ".github/dependabot.yml"
-    pattern: "package-ecosystem:\\s*\"github-actions\""
-    expect: present
+    expect: repository
+    capability: dependency_updates
+    ecosystem: github-actions
+    precondition: dependency_update_tool_configured
     severity_if_violated: Medium
     cwe: CWE-1104
     finding_type: FT-170
@@ -355,8 +387,10 @@ checks:
     violation_title: "Dependabot Does Not Cover Docker"
     iac_type: dependabot
     file_pattern: ".github/dependabot.yml"
-    pattern: "package-ecosystem:\\s*\"docker\""
-    expect: present
+    expect: repository
+    capability: dependency_updates
+    ecosystem: docker
+    precondition: dependency_update_tool_configured
     severity_if_violated: Medium
     cwe: CWE-1104
     finding_type: FT-170
@@ -416,16 +450,17 @@ checks:
     remediation: "Either consolidate to renovate.json or keep .renovaterc.json — both are recognised."
 
   # ============ SBOM & Provenance ============
+  # Repository capabilities: one workflow that signs or generates an SBOM
+  # satisfies the repository, so these are judged once, not per workflow.
   - id: IAC-040
     name: "Container image signing via cosign or attest-build-provenance"
     violation_title: "Missing Container Image Signing"
     iac_type: github_workflow
     file_pattern: ".github/workflows/*.yml"
-    pattern_any_of:
-      - "cosign"
-      - "actions/attest-build-provenance"
-      - "sigstore/cosign-installer"
-    expect: any_of_present
+    expect: repository
+    capability: image_signing
+    # Only a repository that pushes an image has something to sign.
+    precondition: publishes_container_image
     severity_if_violated: Medium
     cwe: CWE-347
     finding_type: FT-148
@@ -437,11 +472,9 @@ checks:
     violation_title: "Missing SBOM Generation"
     iac_type: github_workflow
     file_pattern: ".github/workflows/*.yml"
-    pattern_any_of:
-      - "cyclonedx"
-      - "syft"
-      - "anchore/sbom-action"
-    expect: any_of_present
+    expect: repository
+    capability: sbom
+    precondition: has_build_pipeline
     severity_if_violated: Low
     cwe: CWE-1104
     finding_type: FT-148

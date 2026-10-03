@@ -152,6 +152,7 @@ GROUPS = {
         source_lex
         supply_chain_config
         scanner_review_regressions
+        supply_chain_facts
     """),
     "prompts": _tests("""
         agent_config_checks
@@ -487,6 +488,7 @@ GROUPS = {
         schemas
         shared_paths
         threat_model_fields
+        threat_model_fields_evidence
         validate_intermediate
         yaml_io
     """),
@@ -1510,6 +1512,22 @@ SOURCE_TESTS = {
         run_path_guard
         security_score
         stride_outputs
+        supply_chain_facts
+        validate_evidence_lines
+        validate_intermediate
+    """),
+    "scripts/analyzers/supply_chain_facts.py": _tests("""
+        check_target_specificity
+        config_iac_scanner
+        config_scanner_wireup
+        gate_preconditions
+        repo_scan
+        requirements_verification
+        run_path_guard
+        security_score
+        stride_outputs
+        supply_chain_facts
+        validate_evidence_lines
         validate_intermediate
     """),
     "scripts/analyzers/iac_resource_checks.py": _tests("""
@@ -3043,7 +3061,9 @@ SOURCE_TESTS = {
         requirements_verification
         run_path_guard
         stride_outputs
+        threat_fixture
         threat_model_fields
+        threat_model_fields_evidence
     """),
     "scripts/shared/_url_guard.py": _tests("""
         appsec_status

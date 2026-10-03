@@ -403,3 +403,103 @@ def test_catalog_rejects_an_unknown_breach_vector(tmp_path):
     catalog = _catalog(tmp_path, [_check("IAC-900", "Dockerfile", "Dockerfile", "absent", breach_vector="Nearby")])
     with pytest.raises(scanner.ConfigScanError, match="breach_vector"):
         scanner.scan(tmp_path, catalog, depth="standard", output=tmp_path / "r.json")
+
+
+SCHEMA = yaml.safe_load(
+    (Path(scanner.__file__).resolve().parents[2] / "schemas" / "config-scan-findings.schema.yaml").read_text(
+        encoding="utf-8"
+    )
+)
+
+
+@pytest.mark.parametrize(
+    ("extra", "line", "kind"),
+    [
+        ({"anchor": r"^FROM\s"}, 1, None),
+        ({"anchor": r"^FROM\s", "anchor_occurrence": "last"}, 3, None),
+        ({"anchor": r"^MISSING\b"}, 0, "absence"),
+        ({}, 0, "absence"),
+    ],
+    ids=["first-anchor", "last-anchor", "anchor-not-in-file", "no-anchor"],
+)
+def test_a_missing_statement_cites_its_anchor_line_or_the_absence(tmp_path, extra, line, kind):
+    repo = tmp_path / "repo"
+    _write(repo / "Dockerfile", "FROM build:1 AS build\nRUN make\nFROM runtime:1\n")
+    check = _check("IAC-900", "Dockerfile", "Dockerfile", "present", pattern=r"^USER\s", **extra)
+
+    result = scanner.scan(repo, _catalog(tmp_path, [check]), depth="standard", output=tmp_path / "r.json")
+
+    from jsonschema import Draft202012Validator
+
+    Draft202012Validator(SCHEMA).validate(result)
+    (finding,) = result["findings"]
+    assert finding["line"] == line
+    assert finding.get("evidence_kind") == kind
+    if kind == "absence":
+        assert finding["searched_files"] == ["Dockerfile"]
+    assert finding["line"] != 1 or finding["evidence_snippet"].startswith("FROM")
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        ({"capability": "telepathy"}, "capability"),
+        ({"capability": "sbom", "precondition": "always"}, "precondition"),
+        ({"capability": "dependency_updates"}, "ecosystem"),
+    ],
+)
+def test_catalog_rejects_an_invalid_repository_check(tmp_path, extra, message):
+    catalog = _catalog(
+        tmp_path, [_check("IAC-900", "github_workflow", ".github/workflows/*.yml", "repository", **extra)]
+    )
+    with pytest.raises(scanner.ConfigScanError, match=message):
+        scanner.scan(tmp_path, catalog, depth="standard", output=tmp_path / "r.json")
+
+
+def test_catalog_rejects_an_invalid_anchor(tmp_path):
+    catalog = _catalog(tmp_path, [_check("IAC-900", "Dockerfile", "Dockerfile", "present", anchor="(")])
+    with pytest.raises(scanner.ConfigScanError, match="anchor"):
+        scanner.scan(tmp_path, catalog, depth="standard", output=tmp_path / "r.json")
+
+
+@pytest.mark.parametrize(
+    "finding",
+    [
+        {"line": 0},
+        {"line": 3, "evidence_kind": "absence", "searched_files": ["a"], "searched_file_count": 1},
+        {"line": 0, "evidence_kind": "absence"},
+    ],
+    ids=["line-0-without-absence", "absence-with-a-line", "absence-without-searched-files"],
+)
+def test_schema_rejects_a_line_0_location_and_an_absence_with_a_line(finding):
+    from jsonschema import Draft202012Validator
+
+    document = {
+        "version": 1,
+        "generated_at": "2026-01-01T00:00:00Z",
+        "checks_run": 1,
+        "violations": 1,
+        "findings": [
+            {
+                "local_id": "CFG-001",
+                "check_id": "IAC-900",
+                "iac_type": "Dockerfile",
+                "file": "Dockerfile",
+                "title": "Violation IAC-900",
+                "severity": "Medium",
+                **finding,
+            }
+        ],
+    }
+    assert list(Draft202012Validator(SCHEMA).iter_errors(document))
+
+
+def test_absence_still_holds_reruns_the_check_on_the_current_repository(tmp_path):
+    repo = tmp_path / "repo"
+    _write(repo / "Dockerfile", "FROM runtime:1\n")
+    catalog = _catalog(tmp_path, [_check("IAC-900", "Dockerfile", "Dockerfile", "present", pattern=r"^USER\s")])
+
+    assert scanner.absence_still_holds(repo, "IAC-900", ["Dockerfile"], checks_path=catalog) is True
+    _write(repo / "Dockerfile", "FROM runtime:1\nUSER app\n")
+    assert scanner.absence_still_holds(repo, "IAC-900", ["Dockerfile"], checks_path=catalog) is False
+    assert scanner.absence_still_holds(repo, "IAC-999", ["Dockerfile"], checks_path=catalog) is None

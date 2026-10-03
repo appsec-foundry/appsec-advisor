@@ -91,6 +91,8 @@ $defs:
         type: array
         items:
           $ref: "#/$defs/finding"
+      supply_chain_facts:
+        $ref: "#/$defs/supplyChainFacts"
       # Recognised IaC surfaces present in the repository for which the
       # catalog has no check; absent when every present surface is covered.
       uncovered_iac:
@@ -156,6 +158,21 @@ $defs:
       line:
         type: ["integer", "null"]
         minimum: 0
+      # `absence`: the finding is that something is missing. `line` is then 0,
+      # `searched_files` lists the files the check read (empty when the
+      # violation is the file itself being absent) and `file` is the check's
+      # display path. Absent field = a location finding.
+      evidence_kind:
+        enum: [location, absence]
+      searched_files:
+        type: array
+        maxItems: 50
+        items:
+          type: string
+          minLength: 1
+      searched_file_count:
+        type: integer
+        minimum: 0
       evidence_snippet:
         type: ["string", "null"]
       title:
@@ -175,3 +192,108 @@ $defs:
         type: ["string", "null"]
       breach_vector:
         $ref: "#/$defs/breachVector"
+    # A line-0 citation is an absence and must say so; an absence names what
+    # was searched and cites no line.
+    allOf:
+      - if:
+          required: [line]
+          properties: {line: {const: 0}}
+        then:
+          required: [evidence_kind, searched_files]
+          properties: {evidence_kind: {const: absence}}
+      - if:
+          required: [evidence_kind]
+          properties: {evidence_kind: {const: absence}}
+        then:
+          required: [searched_files, searched_file_count]
+          properties: {line: {const: 0}}
+
+  # Build and supply-chain facts (analyzers/supply_chain_facts.py), the input
+  # of repository-scope checks and of the §6.11 supply-chain view. Only what
+  # the repository states; nothing inferred.
+  evidenceLocation:
+    type: object
+    required: [file, line]
+    additionalProperties: false
+    properties:
+      file: {type: string, minLength: 1}
+      line: {type: integer, minimum: 1}
+
+  capability:
+    type: object
+    required: [present, evidence, searched_files, searched_file_count]
+    properties:
+      present: {type: boolean}
+      evidence:
+        type: array
+        items: {$ref: "#/$defs/evidenceLocation"}
+      searched_files:
+        type: array
+        maxItems: 50
+        items: {type: string, minLength: 1}
+      searched_file_count: {type: integer, minimum: 0}
+      tools:
+        type: array
+        items: {enum: [dependabot, renovate]}
+      ecosystems_used:
+        type: array
+        items: {type: string, minLength: 1}
+      ecosystems_covered:
+        type: array
+        items: {type: string, minLength: 1}
+    additionalProperties: false
+
+  supplyChainFacts:
+    type: object
+    required: [version, workflows, inputs, outputs, capabilities]
+    additionalProperties: false
+    properties:
+      version: {const: 1}
+      workflows:
+        type: array
+        items:
+          type: object
+          required: [file, token_permissions, builds_container_image, pushes_container_image, publishes_packages]
+          additionalProperties: false
+          properties:
+            file: {type: string, minLength: 1}
+            # workflow: root block; per-job: every job; partial: some jobs;
+            # default: none, so the repository default token scope applies.
+            token_permissions: {enum: [workflow, per-job, partial, default, unknown]}
+            builds_container_image: {type: boolean}
+            pushes_container_image: {type: boolean}
+            publishes_packages:
+              type: array
+              items: {type: string, minLength: 1}
+      inputs:
+        type: array
+        items:
+          type: object
+          required: [kind, reference, pinning, file, line]
+          additionalProperties: false
+          properties:
+            kind: {enum: [github_action, base_image, remote_script]}
+            reference: {type: string, minLength: 1}
+            pinning: {enum: [commit-sha, digest, tag, branch, none, unresolved]}
+            file: {type: string, minLength: 1}
+            line: {type: integer, minimum: 1}
+      outputs:
+        type: array
+        items:
+          type: object
+          required: [kind, file, line]
+          additionalProperties: false
+          properties:
+            kind: {enum: [container_image, package]}
+            ecosystem: {type: string, minLength: 1}
+            pushed: {type: boolean}
+            file: {type: string, minLength: 1}
+            line: {type: integer, minimum: 1}
+      capabilities:
+        type: object
+        required: [sbom, image_signing, dependency_updates]
+        additionalProperties: false
+        properties:
+          sbom: {$ref: "#/$defs/capability"}
+          image_signing: {$ref: "#/$defs/capability"}
+          dependency_updates: {$ref: "#/$defs/capability"}
