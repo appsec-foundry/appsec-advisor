@@ -348,6 +348,7 @@ GROUPS = {
         enforce_yaml_invariants
         enrich_asset_links
         enrichment_pass
+        finding_intake
         hydrate_mitigation_details
         merge_threats
         ms_input_digest
@@ -563,6 +564,34 @@ SOURCE_TESTS = {
         f"{_SKILL_FILE_TESTS} authnz_review_skill lazy_phase_group_loading skill_definitions"
     ),
     "skills/authnz-review/HELP.txt": _tests(f"{_SKILL_FILE_TESTS} skill_definitions"),
+    "data/config-iac-checks.yaml": _tests("""
+        agent_config_checks
+        config_iac_checks
+        config_iac_scanner
+        config_scanner_wireup
+        iac_resource_checks
+        merge_threats
+        recommend_fixes
+        stage1_context_edge_inventory
+        supply_chain_facts
+        validate_intermediate
+    """),
+    "schemas/config-scan-findings.schema.yaml": _tests("""
+        agent_definitions
+        config_iac_scanner
+        config_scanner_wireup
+        merge_threats
+        orchestration_controller
+        supply_chain_facts
+        validate_intermediate
+    """),
+    "agents/appsec-config-scanner.md": _tests("""
+        agent_definitions
+        completion_contract
+        config_scanner_wireup
+        telemetry_consistency
+        validate_intermediate
+    """),
     "schemas/source-auth-findings.schema.yaml": _tests("""
         authz_confirm
         check_target_specificity
@@ -2819,6 +2848,13 @@ SOURCE_TESTS = {
         terminate_run
         threat_fixture
         weakness_signals
+    """),
+    "scripts/model/finding_intake.py": _tests("""
+        arch_coverage_bridge
+        config_iac_scanner
+        finding_intake
+        merge_threats
+        promote_verified_abuse_cases
     """),
     "scripts/shared/_finding_state.py": _tests("""
         architect_review

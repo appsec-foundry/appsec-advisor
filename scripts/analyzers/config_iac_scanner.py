@@ -84,6 +84,7 @@ def canonical_finding_fields(check: dict[str, Any]) -> dict[str, Any]:
         "iac_type": check.get("iac_type"),
         "title": check.get("violation_title"),
         "severity": check.get("severity_if_violated"),
+        "stride": check.get("stride"),
         "cwe": [check.get("cwe")],
         "recommended_mitigation_title": check.get("remediation"),
     }
@@ -112,8 +113,20 @@ def _catalog(path: Path) -> list[dict[str, Any]]:
     patterns_by_type = data.get("file_patterns_by_type", {})
     if not isinstance(patterns_by_type, dict):
         raise ConfigScanError("file_patterns_by_type must be a mapping")
-    required = {"id", "name", "violation_title", "iac_type", "file_pattern", "expect", "severity_if_violated", "cwe"}
-    breach_vectors = set(yaml.safe_load(FINDINGS_SCHEMA.read_text(encoding="utf-8"))["$defs"]["breachVector"]["enum"])
+    required = {
+        "id",
+        "name",
+        "violation_title",
+        "iac_type",
+        "file_pattern",
+        "expect",
+        "severity_if_violated",
+        "cwe",
+        "stride",
+    }
+    schema_defs = yaml.safe_load(FINDINGS_SCHEMA.read_text(encoding="utf-8"))["$defs"]
+    breach_vectors = set(schema_defs["breachVector"]["enum"])
+    stride_categories = set(schema_defs["strideCategory"]["enum"])
     seen: set[str] = set()
     for index, check in enumerate(checks):
         if not isinstance(check, dict) or not required.issubset(check):
@@ -125,6 +138,8 @@ def _catalog(path: Path) -> list[dict[str, Any]]:
         violation_title = check["violation_title"]
         if not isinstance(violation_title, str) or not violation_title.strip():
             raise ConfigScanError(f"{check_id} has no violation_title")
+        if check["stride"] not in stride_categories:
+            raise ConfigScanError(f"{check_id} has an unknown stride category {check['stride']!r}")
         configured_patterns = patterns_by_type.get(check["iac_type"], [check["file_pattern"]])
         if (
             not isinstance(configured_patterns, list)

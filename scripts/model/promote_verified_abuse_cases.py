@@ -31,6 +31,7 @@ from pathlib import Path
 
 import yaml
 
+from model.finding_intake import apply_intake
 from model.reclassify_components import (  # canonical registry resolver — see _component_for
     _build_matcher as _rc_build_matcher,
 )
@@ -248,15 +249,19 @@ def promote(output_dir: Path) -> tuple[int, list[str]]:
                     "evidence": {"file": str(evidence["file"]), "line": evidence.get("line")},
                     "source": "source-scan",
                     "architectural_violation": False,
-                    "component_id": component_id,
-                    "component_name": component_name,
                     "evidence_check": "verified",
-                    "evidence_tier": "confirmed-exploitable",
                     "abuse_case_id": case_id,
                     "abuse_case_step": step_no,
                     "source_scan_ref": f"{case_id}:{step_no}",
                     "mitigation_title": meta["mitigation_title"],
                 }
+                # A verified abuse-case step claims a proven sink.
+                apply_intake(
+                    threat,
+                    dispatch_component=component_id,
+                    component_name=component_name,
+                    claimed_tier="confirmed-exploitable",
+                )
                 if meta["remediation"]:
                     threat["remediation"] = {"how": meta["remediation"], "effort": "Medium"}
                 threats.append(threat)

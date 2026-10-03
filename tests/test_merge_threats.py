@@ -2016,6 +2016,7 @@ class TestConfigFindingToThreat:
             "title": "CORS wildcard",
             "scenario": "any origin allowed",
             "severity": "High",
+            "stride": "Information Disclosure",
             "cwe": ["CWE-942"],
             "file": "app.js",
             "line": 7,
@@ -2034,6 +2035,7 @@ class TestConfigFindingToThreat:
     def test_absence_evidence_is_carried_into_the_threat(self, mt):
         out = mt._config_finding_to_threat(
             {
+                "stride": "Tampering",
                 "file": ".github/workflows/*.yml",
                 "line": 0,
                 "evidence_kind": "absence",
@@ -2050,16 +2052,47 @@ class TestConfigFindingToThreat:
         }
 
     def test_location_evidence_stays_file_and_line(self, mt):
-        assert mt._config_finding_to_threat({"file": "Dockerfile", "line": 3})["evidence"] == {
+        assert mt._config_finding_to_threat({"stride": "Tampering", "file": "Dockerfile", "line": 3})["evidence"] == {
             "file": "Dockerfile",
             "line": 3,
         }
 
     def test_defaults_when_missing(self, mt):
-        out = mt._config_finding_to_threat({})
+        out = mt._config_finding_to_threat({"stride": "Tampering"})
         assert out["risk"] == "Medium"
         assert out["cwe"] == ""
         assert out["breach_distance"] is None
+
+    def test_stride_comes_from_the_catalog_check_when_the_finding_has_none(self, mt):
+        """A finding written before `stride` existed still resolves through its check."""
+        out = mt._config_finding_to_threat({"check_id": "IAC-002", "file": "Dockerfile", "line": 1})
+        assert out["stride"] == "Elevation of Privilege"
+
+    def test_a_finding_stride_wins_over_the_catalog(self, mt):
+        out = mt._config_finding_to_threat({"check_id": "IAC-002", "stride": "Tampering"})
+        assert out["stride"] == "Tampering"
+
+    @pytest.mark.parametrize(
+        "finding",
+        [
+            {},
+            {"check_slug": "cors-wildcard"},
+            {"check_id": "IAC-9999"},
+            {"stride": "Information-Disclosure"},
+            {"check_id": "IAC-002", "stride": "bogus"},
+        ],
+        ids=["empty", "synthesised-without-stride", "unknown-check", "misspelt-stride", "invalid-stride"],
+    )
+    def test_no_valid_category_is_rejected_not_defaulted(self, mt, finding):
+        with pytest.raises(ValueError, match="STRIDE category"):
+            mt._config_finding_to_threat(finding)
+
+    def test_every_catalog_check_declares_a_valid_stride(self, mt):
+        """The catalog is the source of the category, so none may lack one."""
+        catalog = mt._config_catalog_stride()
+        ids = {row["id"] for row in yaml.safe_load(mt.CONFIG_CATALOG_PATH.read_text(encoding="utf-8"))["checks"]}
+        assert set(catalog) == ids
+        assert set(catalog.values()) <= set(mt._STRIDE_ORDER)
 
 
 class TestGuessComponentFromPath:
@@ -2176,7 +2209,7 @@ class TestLoadConfigScanFindings:
 
     def test_valid_findings_converted(self, mt, tmp_path):
         (tmp_path / ".config-scan-findings.json").write_text(
-            json.dumps({"findings": [{"title": "x", "file": "ci.yml"}]}),
+            json.dumps({"findings": [{"title": "x", "file": "ci.yml", "stride": "Tampering"}]}),
             encoding="utf-8",
         )
         out = mt._load_config_scan_findings(tmp_path)
@@ -2731,7 +2764,10 @@ class TestCmdCollectFinalizeBranches:
         # lines 1454, 1460: config + source-auth threats appended in collect.
         _write_stride(tmp_path, "backend", [_threat()])
         (tmp_path / ".config-scan-findings.json").write_text(
-            json.dumps({"findings": [{"title": "CORS", "file": "ci.yml", "line": 1}]}), encoding="utf-8"
+            json.dumps(
+                {"findings": [{"title": "CORS", "file": "ci.yml", "line": 1, "stride": "Information Disclosure"}]}
+            ),
+            encoding="utf-8",
         )
         (tmp_path / ".source-auth-findings.json").write_text(
             json.dumps(

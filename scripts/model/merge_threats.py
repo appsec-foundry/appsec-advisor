@@ -62,6 +62,8 @@ from shared._finding_state import is_refuted
 from shared._severity_policy import normalize_risks
 from shared._shared_sources import CODE_LEVEL_SOURCES, CONFIG_DEFECT_SOURCES, DESIGN_LEVEL_SOURCES
 
+from model.finding_intake import apply_intake
+
 # Stable ordering for the T-NNN deterministic sort.
 _RISK_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
 _STRIDE_ORDER = {
@@ -527,8 +529,13 @@ def _flatten_threats(pairs: list[tuple[str, dict]], output_dir: Path | None = No
             if not isinstance(t, dict):
                 continue
             t = dict(t)  # shallow copy — never mutate source
-            t.setdefault("component_id", comp_id)
-            t.setdefault("component_name", comp_name)
+            apply_intake(
+                t,
+                dispatch_component=comp_id,
+                component_name=comp_name,
+                claimed_tier=t.get("evidence_tier"),
+                keep_existing=True,
+            )
             # STRIDE analyzers write stride_category (not stride) and
             # source='stride-analyzer' (not the canonical 'stride').
             # Normalize here so downstream scripts see valid enum values.
@@ -691,19 +698,45 @@ _BREACH_VECTOR_TO_DISTANCE = {
 }
 
 
+CONFIG_CATALOG_PATH = Path(__file__).resolve().parents[2] / "data" / "config-iac-checks.yaml"
+
+
+@functools.lru_cache(maxsize=1)
+def _config_catalog_stride() -> dict[str, str]:
+    """STRIDE category of every catalog check, by check id."""
+    doc = yaml.safe_load(CONFIG_CATALOG_PATH.read_text(encoding="utf-8")) or {}
+    return {
+        row["id"]: row["stride"]
+        for row in doc.get("checks") or []
+        if isinstance(row, dict) and isinstance(row.get("id"), str) and row.get("stride")
+    }
+
+
+def _config_finding_stride(f: dict) -> str:
+    """STRIDE category of one config finding: its own `stride`, else the one its
+    catalog check declares. A finding with neither is rejected — no category is
+    assumed, so a synthesised finding must state it."""
+    stride = f.get("stride") or f.get("stride_category") or _config_catalog_stride().get(f.get("check_id") or "")
+    if stride not in _STRIDE_ORDER:
+        raise ValueError(
+            f"config finding {f.get('local_id') or f.get('check_id') or '?'} has no valid STRIDE category "
+            f"(got {stride!r}); catalog checks declare `stride` in data/config-iac-checks.yaml, "
+            f"a synthesised finding must carry `stride`"
+        )
+    return stride
+
+
 def _config_finding_to_threat(f: dict) -> dict:
     """Convert one `.config-scan-findings.json` finding into the merged-threats
     threat shape used by Phase 10/11.
 
-    Default STRIDE category is `Information Disclosure` — the dominant pattern
-    for config/IaC misconfigurations (exposed ports, missing TLS, hardcoded
-    secrets, missing SCA in CI). Config-scanner agents that emit
-    `stride_category` override the default.
+    The STRIDE category comes from the finding or its catalog check
+    (`_config_finding_stride`); nothing is defaulted.
     """
     cwes = f.get("cwe") or []
     cwe = cwes[0] if cwes else ""
     severity = f.get("severity") or "Medium"
-    stride = f.get("stride") or f.get("stride_category") or "Information Disclosure"
+    stride = _config_finding_stride(f)
     evidence: dict[str, Any] = {"file": f.get("file") or "", "line": f.get("line")}
     if f.get("evidence_kind") == "absence":
         # Absence evidence names what was searched instead of a line; the
@@ -722,8 +755,6 @@ def _config_finding_to_threat(f: dict) -> dict:
         "evidence": evidence,
         "source": "config-scan",
         "architectural_violation": False,
-        "component_id": "ci-cd-pipeline",
-        "component_name": "CI/CD pipeline",
         "config_scan_ref": f.get("local_id"),
         "config_check_id": f.get("check_id"),
         # The scanner's slug (`cors-wildcard`, `csp-missing`, …) used by the
@@ -739,6 +770,9 @@ def _config_finding_to_threat(f: dict) -> dict:
         "finding_type_id": f.get("finding_type_id"),
         "control_scope": f.get("control_scope"),
     }
+    # Every config finding is attributed to the pipeline component until the
+    # finalize pass resolves it from the evidence path.
+    apply_intake(threat, dispatch_component="ci-cd-pipeline", component_name="CI/CD pipeline")
     # The merger's category guard applies equally to deterministic findings.
     # Derive the canonical category where the CWE taxonomy is authoritative;
     # leave genuinely unmapped configuration findings unclassified so they are
@@ -860,8 +894,6 @@ def _source_auth_finding_to_threat(f: dict) -> dict:
         },
         "source": "source-scan",
         "architectural_violation": False,
-        "component_id": component_id,
-        "component_name": component_name,
         "source_scan_ref": f.get("local_id"),
         "source_check_id": check_id,
         "source_type": f.get("source_type"),
@@ -881,8 +913,12 @@ def _source_auth_finding_to_threat(f: dict) -> dict:
         threat["owasp_llm_ids"] = ["LLM05"]
     elif check_id == "AUTHZ-LLM-001":
         threat["owasp_llm_ids"] = ["LLM06"]
-    if f.get("evidence_tier") in {"confirmed-exploitable", "insecure-practice"}:
-        threat["evidence_tier"] = f["evidence_tier"]
+    apply_intake(
+        threat,
+        dispatch_component=component_id,
+        component_name=component_name,
+        claimed_tier=f.get("evidence_tier"),
+    )
     category = _threat_category_id_for(threat)
     if category:
         threat["threat_category_id"] = category

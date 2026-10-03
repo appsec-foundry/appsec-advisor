@@ -176,6 +176,7 @@ The script writes `$OUTPUT_DIR/.config-scan-findings.json`:
 - `cwe` MUST be a list of canonical `CWE-NNN` strings (even when it contains a single CWE). Copy `check.cwe` verbatim; never strip the `CWE-` prefix.
 - `generated_at` MUST use whole-second UTC as `%Y-%m-%dT%H:%M:%SZ`; never emit fractional seconds.
 - `breach_vector` MUST be one of the enum values defined in the "Breach-vector mapping" section below.
+- `stride` MUST be one of Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service, Elevation of Privilege. Copy `check.stride` verbatim for a catalog check; a synthesised finding (`check_id: null`) states the category of the harm it enables. The merge rejects a finding with none.
 
 Findings missing `recommended_mitigation_title` are caught by the auto-emitter's fallback path (generic remediation prose), but the user-visible §8 Fix column reads markedly weaker text in that case. Emit the field at authoring time; do not rely on the fallback.
 

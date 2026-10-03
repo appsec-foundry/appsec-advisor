@@ -301,6 +301,17 @@ properties:
           # sink is proven, else insecure-practice.
           type: [string, "null"]
           enum: [confirmed-exploitable, insecure-practice, null]
+        dispatch_component:
+          # Raw intake (FE-22): the component the producing analysis worked
+          # under or guessed from a path. A hint — `component_id` is derived
+          # from it by model/finding_intake.py until the finalize pass owns it.
+          type: string
+          minLength: 1
+        claimed_tier:
+          # Raw intake (FE-22): the producer's evidence-basis claim, before the
+          # verification verdict is applied. `evidence_tier` is derived from it
+          # by model/finding_intake.py until the finalize pass owns it.
+          enum: [confirmed-exploitable, insecure-practice]
         evidence_flags:
           # Annotated by the appsec-evidence-verifier. Parallel to
           # triage_flags. Each entry carries a flag_id (EV-NNN),

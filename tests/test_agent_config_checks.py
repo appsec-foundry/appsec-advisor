@@ -296,6 +296,7 @@ def test_unknown_evaluator_fails_the_catalog_gate(tmp_path):
                         "evaluator": "claude_sandbox_absnet",
                         "severity_if_violated": "Medium",
                         "cwe": "CWE-250",
+                        "stride": "Elevation of Privilege",
                     }
                 ],
             }
