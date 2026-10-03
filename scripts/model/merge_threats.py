@@ -1286,19 +1286,27 @@ def _consolidate_config_checks(threats: list[dict]) -> list[dict]:
     ``{file, line, snippet?}``), a derived ``affected_files[]`` summary,
     ``instance_count``, and ``systemic: true``. The survivor title is
     declassified (per-file locator stripped). Config findings WITHOUT a
-    ``config_check_id`` (e.g. secret-scan hits like a hardcoded API key) and
-    all non-config threats pass through untouched.
+    ``config_check_id`` (e.g. secret-scan hits like a hardcoded API key) pass
+    through untouched.
+
+    A finding of another source joins a check's bucket only when it carries
+    that ``config_check_id`` and the check has a config-scan hit of its own.
+    ``_dedupe_evidence`` runs first and folds a config hit into a STRIDE
+    finding at the same line, which then carries the check id; without this
+    the check's remaining hits became a second finding for the same check.
+    Non-config findings sharing an id with no config-scan hit stay separate.
 
     Runs in ``cmd_collect`` AFTER ``_dedupe_evidence`` and BEFORE
     ``_group_candidates`` so the merger never sees the per-instance repeats.
     Deterministic; no LLM."""
     from collections import OrderedDict
 
+    scanned_checks = {t.get("config_check_id") for t in threats if t.get("source") == "config-scan"}
     buckets: OrderedDict[str, list[dict]] = OrderedDict()
     out: list[dict] = []
     for t in threats:
-        cid = t.get("config_check_id") if t.get("source") == "config-scan" else None
-        if cid:
+        cid = t.get("config_check_id")
+        if cid and (t.get("source") == "config-scan" or cid in scanned_checks):
             buckets.setdefault(cid, []).append(t)
         else:
             out.append(t)
@@ -1315,15 +1323,25 @@ def _consolidate_config_checks(threats: list[dict]) -> list[dict]:
         instances: list[dict] = []
         files: list[str] = []
         for m in members:
-            ev = m.get("evidence") or {}
-            f = (ev.get("file") or "").strip()
-            inst: dict = {"file": f, "line": ev.get("line")}
-            sn = (ev.get("snippet") or ev.get("excerpt") or "").strip()
-            if sn:
-                inst["snippet"] = sn
-            instances.append(inst)
-            if f and f not in files:
-                files.append(f)
+            # A non-config carrier keeps the instances _dedupe_evidence folded
+            # into it, including the config hit that gave it the check id.
+            prior = []
+            if m.get("source") != "config-scan":
+                prior = [i for i in m.get("instances") or [] if isinstance(i, dict)]
+            if not prior:
+                ev = m.get("evidence") or {}
+                inst: dict = {"file": (ev.get("file") or "").strip(), "line": ev.get("line")}
+                sn = (ev.get("snippet") or ev.get("excerpt") or "").strip()
+                if sn:
+                    inst["snippet"] = sn
+                prior = [inst]
+            for inst in prior:
+                f = (inst.get("file") or "").strip()
+                if any((i.get("file"), i.get("line")) == (inst.get("file"), inst.get("line")) for i in instances):
+                    continue
+                instances.append(inst)
+                if f and f not in files:
+                    files.append(f)
         survivor["instances"] = instances
         survivor["affected_files"] = sorted(files)
         survivor["instance_count"] = len(instances)

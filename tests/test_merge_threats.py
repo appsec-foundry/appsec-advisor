@@ -608,6 +608,48 @@ class TestConsolidateConfigChecks:
         assert len(result) == 1
         assert result[0]["risk"] == "High"
 
+    @pytest.mark.parametrize(
+        ("check_id", "carrier_file", "hit_files"),
+        [
+            ("IAC-011", ".github/workflows/deploy.yml", (".github/workflows/ci.yml", ".github/workflows/scan.yml")),
+            ("IAC-001", "docker/api.Dockerfile", ("docker/worker.Dockerfile",)),
+        ],
+    )
+    def test_carrier_of_a_folded_config_hit_joins_the_checks_finding(self, mt, check_id, carrier_file, hit_files):
+        # _dedupe_evidence folded a config hit into a STRIDE finding at the same
+        # line, so that finding now carries the check id; the check's remaining
+        # hits must fold into it instead of becoming a second finding.
+        carrier = _threat(component_id="pipeline", evidence={"file": carrier_file, "line": 33}, risk="High")
+        carrier["source"] = "stride"
+        carrier["config_check_id"] = check_id
+        carrier["instances"] = [
+            {"file": carrier_file, "line": 33, "source": "stride"},
+            {"file": carrier_file, "line": 33, "source": "config-scan"},
+        ]
+        hits = [_config_threat(check_id, f, line=7) for f in hit_files]
+
+        result = mt._consolidate_config_checks([carrier, *hits])
+
+        assert len(result) == 1
+        survivor = result[0]
+        assert survivor["source"] == "stride" and survivor["risk"] == "High"
+        assert [(i["file"], i["line"]) for i in survivor["instances"]] == [
+            (carrier_file, 33),
+            *((f, 7) for f in hit_files),
+        ]
+        assert survivor["instance_count"] == 1 + len(hit_files)
+
+    def test_carrier_of_a_check_without_config_hits_stays_separate(self, mt):
+        carrier = _threat(component_id="pipeline")
+        carrier["source"] = "stride"
+        carrier["config_check_id"] = "IAC-011"
+        other = _config_threat("IAC-010", "ci.yml")
+
+        result = mt._consolidate_config_checks([carrier, other])
+
+        assert len(result) == 2
+        assert all("instances" not in r for r in result)
+
     def test_non_config_source_never_consolidated(self, mt):
         # A STRIDE finding that happens to carry a config_check_id-like field
         # must NOT be touched (guard keys on source == 'config-scan').
