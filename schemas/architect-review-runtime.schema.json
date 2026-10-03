@@ -233,6 +233,10 @@
           "type": "integer",
           "minimum": 0
         },
+        "excluded_below_floor": {
+          "type": "integer",
+          "minimum": 0
+        },
         "reviewed": {
           "type": "integer",
           "minimum": 0

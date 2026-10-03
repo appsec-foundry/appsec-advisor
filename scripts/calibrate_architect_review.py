@@ -59,7 +59,11 @@ def calibrate(fixture: dict, *, model: str = "sonnet") -> dict:
     for size in (1, 3):
         run_id = f"architect-calibration-group-{size}"
         limits = {"max_findings": size, "max_packet_bytes": 16_384, "max_packets": 3}
-        manifest = build_context(fixture["merged"], fixture["analyst_context"], run_id=run_id, **limits)
+        # The fixture calibrates rating corrections on a Low finding, which a
+        # run reviews only when its register keeps Low findings.
+        manifest = build_context(
+            fixture["merged"], fixture["analyst_context"], run_id=run_id, register_floor="low", **limits
+        )
         if manifest["excluded"] or len(manifest["packets"]) != (3 if size == 1 else 1):
             raise ReviewError("calibration fixture does not fit both planned groupings")
         jobs = [

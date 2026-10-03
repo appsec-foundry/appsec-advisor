@@ -1561,6 +1561,13 @@ _SEVERITY_FLOOR_RANK = {
 }
 
 
+def below_register_floor(threat: dict, register_floor: str | None) -> bool:
+    """The finding ranks below ``register_severity_floor`` and leaves the register."""
+    floor_rank = _SEVERITY_FLOOR_RANK.get((register_floor or "medium").strip().lower(), 2)
+    severity = threat.get("effective_severity") or threat.get("risk") or threat.get("severity") or "medium"
+    return _SEVERITY_FLOOR_RANK.get(str(severity).strip().lower(), 2) < floor_rank
+
+
 def build_threats(merged: dict, register_floor: str = "medium") -> tuple[list[dict], list[str]]:
     """Transform .threats-merged.json[threats] into yaml.threats[] shape.
 
@@ -1591,7 +1598,6 @@ def build_threats(merged: dict, register_floor: str = "medium") -> tuple[list[di
     finding as resolved in the changelog when applicable.
     Returns (threats, warnings).
     """
-    floor_rank = _SEVERITY_FLOOR_RANK.get((register_floor or "medium").strip().lower(), 2)
     out: list[dict] = []
     warnings: list[str] = []
     skipped_stubs = 0
@@ -1663,17 +1669,7 @@ def build_threats(merged: dict, register_floor: str = "medium") -> tuple[list[di
     # Lexical repairs precede policy, and policy precedes the register floor.
     # Keep all normalized peers available when evaluating cap exceptions.
     normalize_risks(out)
-    retained = [
-        threat
-        for threat in out
-        if _SEVERITY_FLOOR_RANK.get(
-            str(threat.get("effective_severity") or threat.get("risk") or threat.get("severity") or "medium")
-            .strip()
-            .lower(),
-            2,
-        )
-        >= floor_rank
-    ]
+    retained = [threat for threat in out if not below_register_floor(threat, register_floor)]
     skipped_below_floor = len(out) - len(retained)
     out = retained
     if skipped_stubs:

@@ -70,6 +70,7 @@
           "reason": {
             "enum": [
               "refuted",
+              "below_report_floor",
               "oversized",
               "packet_limit"
             ]

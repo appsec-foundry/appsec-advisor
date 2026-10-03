@@ -70,7 +70,7 @@ def test_missing_remediation_and_existing_control_context_survive_projection():
     assert projected["controls_in_place"] == row["controls_in_place"]
 
 
-def test_all_findings_have_one_disposition_without_a_report_floor():
+def test_all_findings_have_one_disposition():
     rows = [finding(f"T-{index:03d}") for index in range(1, 8)]
     rows[0]["evidence_check"] = "ambiguous"
     rows[1]["risk"] = "Low"
@@ -80,8 +80,41 @@ def test_all_findings_have_one_disposition_without_a_report_floor():
     assert assigned[0] == "T-001"
     assert set(assigned) | {row["t_id"] for row in manifest["excluded"]} == {row["t_id"] for row in rows}
     assert {"t_id": "T-003", "reason": "refuted"} in manifest["excluded"]
-    assert {"t_id": "T-002", "reason": "packet_limit"} in manifest["excluded"]
+    assert {"t_id": "T-002", "reason": "below_report_floor"} in manifest["excluded"]
     assert all(row["reason"] != "refuted" for row in manifest["excluded"] if row["t_id"] != "T-003")
+
+
+@pytest.mark.parametrize(
+    ("floor", "risks", "excluded"),
+    [
+        (None, ("Medium", "Low"), {"T-002"}),
+        ("high", ("High", "Medium"), {"T-002"}),
+        ("low", ("Medium", "Low"), set()),
+    ],
+)
+def test_findings_below_the_report_floor_stay_with_triage(tmp_path, floor, risks, excluded):
+    # The architect reviews what the report delivers; build_threats drops the rest.
+    if floor is not None:
+        (tmp_path / ".skill-config.json").write_text(f'{{"register_severity_floor": "{floor}"}}')
+    rows = [finding(f"T-{index:03d}") for index in (1, 2)]
+    for row, risk in zip(rows, risks, strict=True):
+        row.update(risk=risk, likelihood=risk, impact=risk)
+    source = merged(*rows)
+    manifest = build(source, output_dir=tmp_path)
+    assert {row["t_id"] for row in manifest["excluded"] if row["reason"] == "below_report_floor"} == excluded
+    delivered = {row["id"] for row in build_threats(source, floor or "medium")[0]}
+    reviewed = {row["finding"]["t_id"] for packet in manifest["packets"] for row in packet["findings"]}
+    assert reviewed == delivered
+    context.verify_manifest_sources(
+        manifest,
+        source,
+        {},
+        run_id="run-test",
+        max_findings=2,
+        max_packet_bytes=16_384,
+        max_packets=20,
+        output_dir=tmp_path,
+    )
 
 
 def test_byte_boundary_counts_utf8_and_never_truncates_a_finding():

@@ -376,19 +376,24 @@ def _advance_review(output_dir: Path, cfg: dict, concurrency: int) -> list[dict]
     return None
 
 
-def _refuted_exclusion(row: dict) -> bool:
-    return row.get("status") == "unreviewed" and row.get("reason") == "refuted"
+def _excluded_for(row: dict, reason: str) -> bool:
+    return row.get("status") == "unreviewed" and row.get("reason") == reason
 
 
 def review_coverage(value: dict | None) -> dict:
     """Coverage fields of the status receipt, derived from the saved transaction.
 
-    A finding the evidence verifier refuted leaves the report, so it needs no
-    semantic review: it is reported as ``excluded_refuted`` and does not count
-    as unresolved. Other exclusions (oversized, packet_limit, missing result)
-    stay coverage gaps."""
+    A finding the evidence verifier refuted, or one below the register severity
+    floor, is not in the report, so it needs no semantic review: it is reported
+    as ``excluded_refuted`` or ``excluded_below_floor`` and does not count as
+    unresolved. Other exclusions (oversized, packet_limit, missing result) stay
+    coverage gaps."""
     all_outcomes = value["application"]["outcomes"] if value else []
-    outcomes = [row for row in all_outcomes if not _refuted_exclusion(row)]
+    refuted = sum(_excluded_for(row, "refuted") for row in all_outcomes)
+    below_floor = sum(_excluded_for(row, "below_report_floor") for row in all_outcomes)
+    outcomes = [
+        row for row in all_outcomes if not (_excluded_for(row, "refuted") or _excluded_for(row, "below_report_floor"))
+    ]
     dispatch = (value or {}).get("dispatch_jobs") or []
     unresolved = sum(
         row["status"] != "accepted" or "unresolved" in (row["assessment"], row["remediation"]) for row in outcomes
@@ -411,7 +416,8 @@ def review_coverage(value: dict | None) -> dict:
         "jobs_returned": returned,
         "assessment_corrected": sum(row["assessment"] == "corrected" for row in outcomes),
         "remediation_corrected": sum(row["remediation"] == "corrected" for row in outcomes),
-        "excluded_refuted": len(all_outcomes) - len(outcomes),
+        "excluded_refuted": refuted,
+        "excluded_below_floor": below_floor,
     }
     if outcome == "unavailable":
         coverage["reason"] = (
