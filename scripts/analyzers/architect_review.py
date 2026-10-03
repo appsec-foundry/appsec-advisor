@@ -310,7 +310,8 @@ def _check_report(report: dict, merged_snapshot: dict, output_dir: Path | None =
             raise ReviewError("application report lost or altered packet coverage")
         assigned = {row["t_id"] for row in part_outcomes}
         if any(
-            row["status"] != "unreviewed" or row["reason"] not in {"refuted", "oversized", "packet_limit"}
+            row["status"] != "unreviewed"
+            or row["reason"] not in {"refuted", "below_report_floor", "oversized", "packet_limit"}
             for tid, row in outcomes.items()
             if tid not in assigned
         ):

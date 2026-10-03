@@ -535,6 +535,15 @@ def _coverage_row(tid, status, reason, assessment=None):
     return {"t_id": tid, "status": status, "reason": reason, "assessment": assessment, "remediation": remediation}
 
 
+def test_below_floor_exclusions_are_not_coverage_gaps():
+    rows = [_coverage_row("T-1", "accepted", "validated"), _coverage_row("T-9", "unreviewed", "below_report_floor")]
+    value = {"application": {"outcomes": rows}, "dispatch_jobs": [{"status": "returned"}]}
+    coverage = runtime.review_coverage(value)
+    runtime.validate_status({"status": "pass", "review_kind": "semantic", **coverage})
+    assert (coverage["outcome"], coverage["unresolved_or_unreviewed"]) == ("reviewed", 0)
+    assert (coverage["excluded_below_floor"], coverage["excluded_refuted"], coverage["findings_recorded"]) == (1, 0, 1)
+
+
 @pytest.mark.parametrize(
     ("excluded", "expected_outcome", "expected_unresolved", "expected_refuted"),
     [

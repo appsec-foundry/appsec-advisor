@@ -23,6 +23,7 @@ from pathlib import Path
 import yaml
 from analyzers.architect_review import ReviewError, _canonical_valid, fingerprint
 from jsonschema import Draft202012Validator
+from model.build_threat_model_yaml import below_register_floor
 from referencing import Registry, Resource
 from shared._finding_state import is_refuted
 from shared._severity_policy import (
@@ -102,6 +103,18 @@ def validate_manifest(value: dict) -> None:
         seen.add(row["t_id"])
 
 
+def _register_floor(output_dir: Path | None) -> str:
+    """The run's ``register_severity_floor``, as ``build_threats`` applies it."""
+    path = output_dir / ".skill-config.json" if output_dir is not None else None
+    if path is None or not path.is_file():
+        return "medium"
+    try:
+        cfg = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ReviewError("unreadable run configuration") from exc
+    return str(cfg.get("register_severity_floor") or "medium") if isinstance(cfg, dict) else "medium"
+
+
 def build_context(
     merged: dict,
     analyst_context: dict,
@@ -111,6 +124,7 @@ def build_context(
     max_packet_bytes: int,
     max_packets: int,
     output_dir: Path | None = None,
+    register_floor: str | None = None,
 ) -> dict:
     """Group eligible findings without truncating a finding or hiding coverage.
 
@@ -154,9 +168,13 @@ def build_context(
         raise ReviewError("duplicate canonical finding identity")
     priorities = {"Critical": "P1", "High": "P2", "Medium": "P3", "Low": "P4"}
     groups: dict[str, list[dict]] = {}
+    register_floor = register_floor or _register_floor(output_dir)
     for row in threats:
         if is_refuted(row):
             result["excluded"].append({"t_id": row["t_id"], "reason": "refuted"})
+        elif below_register_floor(row, register_floor):
+            # Not in the delivered report; triage still rates it.
+            result["excluded"].append({"t_id": row["t_id"], "reason": "below_report_floor"})
         else:
             groups.setdefault(row["component_id"], []).append(row)
 
