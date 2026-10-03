@@ -1382,7 +1382,11 @@ def reconcile_inventory(components: list, repo_root: Path) -> tuple:
                 if candidate:
                     owner = covered[0]
                     owner["paths"] = list(dict.fromkeys([*(owner.get("paths") or []), *candidate["paths"]]))
-            continue  # role already covered; authentication handlers still need ownership
+            elif detect is _detect_cicd:
+                candidate = detect(repo_root)
+                if candidate:
+                    _adopt_unowned_paths(covered[0], candidate["paths"], augmented, repo_root)
+            continue  # role already covered; its owner still needs the role's repository files
         cand = detect(repo_root)
         if cand and not any(c.get("id") == cand.get("id") for c in augmented):
             augmented.append(cand)
@@ -1394,6 +1398,29 @@ def reconcile_inventory(components: list, repo_root: Path) -> tuple:
                 injected.append(candidate)
     injected.extend(_reconcile_orm_ownership(augmented, repo_root))
     return augmented, injected
+
+
+def _adopt_unowned_paths(owner: dict, candidate_paths: list, components: list, repo_root: Path) -> None:
+    """Give an existing role owner the detector's repository-backed paths.
+
+    The CI/CD detector globs the supply-chain surface (``_CICD_SUPPLYCHAIN_GLOBS``)
+    only when it injects the component itself; an analyst-authored CI/CD
+    component kept its narrow globs, leaving e.g. a nested Dockerfile without
+    an owner. Precedence: a file another component already globs stays with
+    that component. A glob whose files are all unowned is adopted as written;
+    otherwise only its unowned files are adopted, as literal paths."""
+    paths = list(owner.get("paths") or [])
+    others = [c for c in components if c is not owner]
+    for pattern in candidate_paths:
+        if pattern in paths:
+            continue
+        files = _glob_files(repo_root, [pattern])
+        unowned = [f for f in files if not any(_path_owns(c.get("paths") or [], f) for c in others)]
+        if files and len(unowned) == len(files):
+            paths.append(pattern)
+        else:
+            paths.extend(f for f in unowned if f not in paths and not _path_owns(paths, f))
+    owner["paths"] = paths
 
 
 def _covers_embedded_store(component: dict, candidate: dict) -> bool:

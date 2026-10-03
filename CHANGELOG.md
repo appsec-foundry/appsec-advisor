@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A CI/CD component modelled by the architecture analyst now owns the repository's unowned build and supply-chain files, such as nested Dockerfiles, so findings on them are attributed to it.
 - Components labelled `internal-network` that own HTTP handlers in the route inventory are now selected for STRIDE analysis as `internet-exposed (route-inventory)` instead of being excluded.
 
 ### Changed
