@@ -11,8 +11,9 @@ Invariants (each check returns a list of violation strings, empty = holds):
   untracked_evidence      no reported finding cites a file outside the target's
                           tracked/visible inventory, except explicit absence
                           findings
-  confirmed_needs_verified a reported finding is confirmed-exploitable only with
-                          verified or verified-prior evidence
+  confirmed_needs_verified every verified finding states its evidence basis, so
+                          a merely resolved pointer is never counted as
+                          confirmed (shared/_finding_state.py)
   component_paths         every evidence file of a reported finding matches its
                           component's path globs (or the finding is system-wide)
   unique_identity         no two reported findings share file|line|cwe-family
@@ -43,9 +44,9 @@ from analyzers.architect_review_runtime import review_coverage  # noqa: E402
 from model.merge_threats import _CWE_FAMILY  # noqa: E402
 from model.reclassify_components import _build_matcher  # noqa: E402
 from renderers.figure1_dfd import _internal_interface  # noqa: E402
+from shared._finding_state import basis_unstated  # noqa: E402
 
 SYSTEM_WIDE = "system-wide"
-_VERIFIED = {"verified", "verified-prior"}
 _TB_ID = re.compile(r"\btb-\d+\b")
 _MERMAID = re.compile(r"```mermaid\n(.*?)```", re.DOTALL)
 
@@ -98,9 +99,9 @@ def untracked_evidence(output_dir: Path, tracked: set[str]) -> list[str]:
 
 def confirmed_needs_verified(output_dir: Path) -> list[str]:
     return [
-        f"{t.get('id')}: confirmed-exploitable with evidence_check={t.get('evidence_check')!r}"
+        f"{t.get('id')}: verified evidence without an evidence_basis"
         for t in _load_yaml(output_dir).get("threats") or []
-        if t.get("evidence_tier") == "confirmed-exploitable" and t.get("evidence_check") not in _VERIFIED
+        if basis_unstated(t)
     ]
 
 

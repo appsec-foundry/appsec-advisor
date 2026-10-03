@@ -16,15 +16,18 @@ findings stay in the register; they are only not called confirmed.
 
 Field sources, newest first:
 
-* finalized fields written by the finding finalize pass (``confirmed``,
-  ``evidence_basis``, ``in_report_scope``);
+* ``evidence_basis``, written with ``evidence_check`` by every producer that
+  sets a verdict (``record_evidence``): the evidence verifier, the
+  deterministic line and absence checks, abuse-case promotion and the
+  shallower-depth carry-forward; ``confirmed`` and ``in_report_scope`` when a
+  producer states them;
 * legacy fields (``evidence_tier``, ``evidence_check``) for runs, resumes,
-  rerenders and baselines written before that pass existed.
+  rerenders and baselines written before ``evidence_basis`` existed.
 
 Legacy limitation: a legacy ``evidence_check: verified`` also covers pointers
 the deterministic line check merely resolved, so the legacy fallback cannot
 tell ``pointer-resolved`` from ``llm-verified`` and treats both as verified.
-The finalize pass separates them.
+``evidence_basis`` separates them.
 
 Deliberately not routed here:
 
@@ -57,6 +60,23 @@ def evidence_basis(threat: dict | None) -> str:
     if not isinstance(threat, dict):
         return ""
     return _text(threat.get("evidence_basis")) or _text(threat.get("evidence_check"))
+
+
+def record_evidence(threat: dict, check: str, basis: str | None = None) -> None:
+    """Set a verdict and its basis together; the basis defaults to the check.
+
+    ``verified`` is the only check with more than one basis, so every producer
+    that sets it names how it was established.
+    """
+    threat["evidence_check"] = check
+    threat["evidence_basis"] = basis or check
+
+
+def basis_unstated(threat: dict | None) -> bool:
+    """A verified verdict that does not say whether a verifier or a pointer made it."""
+    if not isinstance(threat, dict):
+        return False
+    return not _text(threat.get("evidence_basis")) and _text(threat.get("evidence_check")) == "verified"
 
 
 def is_refuted(threat: dict | None) -> bool:

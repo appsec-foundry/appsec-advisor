@@ -27,6 +27,7 @@ def _load():
 
 b = _load()
 import model.emit_clean_finding_titles as ecf  # noqa: E402  (scripts/ is on sys.path via the builder)
+from shared._finding_state import is_confirmed  # noqa: E402
 
 
 def test_clamp_title_short_passthrough():
@@ -1739,12 +1740,17 @@ def test_reanalyzed_component_ids_none_without_baseline(tmp_path):
 
 def test_reconcile_carries_dropped_prior_threat_at_shallower_depth(tmp_path):
     _setup_incremental(tmp_path, prior_depth="thorough", stride={"auth": (b"old", b"new")})
-    prior = {"threats": [_prior_threat("T-007", "auth", "CWE-287", "Weak auth (login.ts:10)")]}
+    prior_threat = _prior_threat("T-007", "auth", "CWE-287", "Weak auth (login.ts:10)")
+    prior_threat.update(evidence_check="verified", evidence_basis="llm-verified")
+    prior = {"threats": [prior_threat]}
     new_threats = [{"id": "T-001", "component": "auth", "cwe": "CWE-89", "title": "SQLi (db.ts:3)"}]
     out, recon = b.reconcile_incremental_threats(new_threats, prior, [{"id": "auth"}], tmp_path, "quick", {})
     carried = [t for t in out if t.get("evidence_check") == "carried-unverified-shallower-depth"]
     assert len(carried) == 1
     assert carried[0]["title"] == "Weak auth (login.ts:10)"
+    # The prior verdict's basis does not travel with an unverified carry-forward.
+    assert carried[0]["evidence_basis"] == "carried-unverified-shallower-depth"
+    assert not is_confirmed(carried[0])
     # fresh, collision-free id (continues after T-001)
     assert carried[0]["id"] == "T-002"
     assert recon is not None

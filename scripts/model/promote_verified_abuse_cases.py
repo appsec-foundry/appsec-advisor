@@ -280,6 +280,8 @@ def promote(output_dir: Path) -> tuple[int, list[str]]:
                     "source": "source-scan",
                     "architectural_violation": False,
                     "evidence_check": "verified",
+                    # The abuse-case verifier confirmed this step.
+                    "evidence_basis": "llm-verified",
                     "abuse_case_id": case_id,
                     "abuse_case_step": step_no,
                     "source_scan_ref": f"{case_id}:{step_no}",

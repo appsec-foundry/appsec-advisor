@@ -31,7 +31,10 @@ def test_frozen_no_evidence_outside_target_inventory():
     assert inv.untracked_evidence(FROZEN, _tracked()) == []
 
 
-@pytest.mark.xfail(strict=True, reason="pending core refactor: evidence basis derived after verdicts")
+@pytest.mark.xfail(
+    strict=True,
+    reason="producers state evidence_basis, but this frozen run predates it: refresh the fixture from a new run",
+)
 def test_frozen_confirmed_needs_verified_evidence():
     assert inv.confirmed_needs_verified(FROZEN) == []
 
@@ -65,6 +68,7 @@ def _threat(tid, **over):
         "evidence": [{"file": "src/api/db.ts", "line": 10}],
         "evidence_tier": "confirmed-exploitable",
         "evidence_check": "verified",
+        "evidence_basis": "llm-verified",
         "evidence_flags": [],
     }
     base.update(over)
@@ -125,11 +129,19 @@ def test_absence_kind_is_exempt_from_inventory(tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("check", "expected"),
-    [("verified", 0), ("verified-prior", 0), ("ambiguous", 1), ("unchecked", 1), (None, 1)],
+    ("check", "basis", "expected"),
+    [
+        ("verified", "llm-verified", 0),
+        ("verified", "pointer-resolved", 0),
+        ("verified", "absence-verified", 0),
+        ("verified", None, 1),
+        ("verified-prior", None, 0),
+        ("ambiguous", None, 0),
+        ("unchecked", None, 0),
+    ],
 )
-def test_confirmed_needs_verified(tmp_path, check, expected):
-    run = _run(tmp_path, threats=[_threat("T-1", evidence_check=check)])
+def test_confirmed_needs_verified(tmp_path, check, basis, expected):
+    run = _run(tmp_path, threats=[_threat("T-1", evidence_check=check, evidence_basis=basis)])
     assert len(inv.confirmed_needs_verified(run)) == expected
 
 

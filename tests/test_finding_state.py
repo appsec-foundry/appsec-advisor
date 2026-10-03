@@ -139,7 +139,7 @@ _STATE_LITERAL = re.compile(
     r"""evidence_(?:check|basis)\b[^\n]{0,80}?(['"])(refuted|ambiguous|verified|verified-prior)\1"""
 )
 _ALLOWED = {
-    "shared/_finding_state.py": 2,
+    "shared/_finding_state.py": 3,
     "analyzers/flow_route_auth.py": 1,  # needs a fresh verifier receipt
     "validators/qa_checks.py": 1,  # needs a fresh verifier receipt
     "contexts/build_architect_context.py": 1,  # ordering: ambiguous last

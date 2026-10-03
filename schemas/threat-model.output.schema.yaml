@@ -1280,6 +1280,12 @@ properties:
           # threats-merged.schema.yaml.
           type: [string, "null"]
           enum: [confirmed-exploitable, insecure-practice, null]
+        evidence_basis:
+          # How the evidence verdict was established. Mirrors
+          # threats-merged.schema.yaml.
+          type: [string, "null"]
+          enum: [llm-verified, pointer-resolved, absence-verified, verified-prior,
+                 refuted, ambiguous, unchecked, carried-unverified-shallower-depth, null]
         scenario:
           type: string
           minLength: 10
