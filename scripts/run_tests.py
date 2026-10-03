@@ -428,6 +428,7 @@ GROUPS = {
     """),
     "context": _tests("""
         business_context_preview
+        business_impact_scope
         abuse_case_gate
         abuse_case_verdicts
         abuse_cases_schema
@@ -1867,6 +1868,10 @@ SOURCE_TESTS = {
         stride_outputs
         version_status
     """),
+    "scripts/contexts/business_impact_scope.py": _tests("""
+        business_impact_scope
+        orchestration_controller
+    """),
     "scripts/contexts/load_business_context.py": _tests("""
         aggregate_run_issues
         build_threat_model_yaml
@@ -1949,6 +1954,7 @@ SOURCE_TESTS = {
     """),
     "scripts/orchestrator/orchestration_controller.py": _tests("""
         script_layout
+        business_impact_scope
         architect_review_runtime
         agent_logger_cov
         auto_emitter_pass

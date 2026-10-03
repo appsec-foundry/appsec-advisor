@@ -7124,6 +7124,86 @@ def test_early_context_persists_answers_without_persisting_run_only_import(tmp_p
     assert answer.strip() in source.read_text()
 
 
+def _impact_preflight(tmp_path, monkeypatch, answer: str) -> tuple[dict, Path]:
+    import runtime.acquire_lock as acquire_lock
+
+    cfg = _cfg(tmp_path)
+    out = Path(cfg["output_dir"])
+    out.mkdir()
+    Path(cfg["repo_root"]).mkdir()
+    cfg.update(
+        run_id="current-run",
+        business_context_pending=True,
+        business_context_step="worst_case",
+        preflight_workspace={"removed": 0, "had_state": False},
+    )
+    (out / ".skill-config.json").write_text(json.dumps(cfg))
+    (out / ".business-context-raw.md").write_text(
+        f"## Impact if compromised\n\n**Question:** Worst consequence?\n\n**Answer:** {answer}\n"
+    )
+    monkeypatch.setattr(acquire_lock, "read_run_id", lambda path: "current-run")
+    monkeypatch.setattr(controller, "_run_script", lambda *args, **kwargs: _completed())
+    monkeypatch.setattr(controller, "_prepasses", lambda *args: None)
+    monkeypatch.setattr(controller, "_fetch_requirements", lambda *args: None)
+    monkeypatch.setattr(controller, "_prepared_action", lambda *args: {"action": "dispatch_agent"})
+    return cfg, out
+
+
+def test_selected_impact_option_is_saved_with_application_scope(tmp_path, monkeypatch):
+    import contexts.business_impact_scope as business_impact_scope
+
+    cfg, out = _impact_preflight(tmp_path, monkeypatch, "No material business harm — synthetic data only.")
+    controller.complete_preflight(
+        out, run_id="current-run", context_answer="answered", impact_choice="no-material-harm"
+    )
+    saved = (Path(cfg["repo_root"]) / "docs/security/business-context.md").read_text()
+    assert business_impact_scope.application_impact(saved)["impact_is_material"] is False
+
+
+@pytest.mark.parametrize(
+    ("decision", "choice", "match"),
+    [("skip", "no-material-harm", "requires an answered"), ("answered", "declared-harm", "does not match")],
+)
+def test_impact_choice_must_fit_the_answer(tmp_path, monkeypatch, decision, choice, match):
+    cfg, out = _impact_preflight(tmp_path, monkeypatch, "No material business harm.")
+    with pytest.raises(controller.CallError, match=match):
+        controller.complete_preflight(out, run_id="current-run", context_answer=decision, impact_choice=choice)
+    assert not (Path(cfg["repo_root"]) / "docs/security/business-context.md").exists()
+
+
+@pytest.mark.parametrize("marked", [True, False])
+@pytest.mark.parametrize("skip", [False, True])
+def test_application_impact_reaches_every_runtime_component_before_stride(tmp_path, marked, skip):
+    import contexts.business_impact_scope as business_impact_scope
+
+    repo, out = tmp_path / "repo", tmp_path / "out"
+    (repo / "docs/security").mkdir(parents=True)
+    out.mkdir()
+    dialog = "## Impact if compromised\n\n**Answer:** No material business harm for this training app.\n"
+    if marked:
+        dialog = business_impact_scope.annotate(dialog, "no-material-harm")
+    (repo / "docs/security/business-context.md").write_text(dialog)
+    components = [
+        {"id": "web", "name": "Web", "tier": "client"},
+        {"id": "socket", "name": "Realtime Channel", "tier": "application"},
+        {"id": "store", "name": "Document Store", "tier": "data"},
+        {"id": "ci-cd-pipeline", "name": "CI/CD Pipeline", "tier": "application"},
+    ]
+    (out / ".components.json").write_text(json.dumps({"components": components}))
+    analyst = {"web": {"business_context": {"impact_if_compromised": "Declared by the analyst."}}}
+    (out / ".stride-analyst-context.json").write_text(json.dumps(analyst))
+    cfg = {"repo_root": str(repo), "skip_business_context": skip}
+    controller._apply_application_impact(out, cfg)
+    result = json.loads((out / ".stride-analyst-context.json").read_text())
+    assert result["web"] == analyst["web"]
+    assert "ci-cd-pipeline" not in result
+    applied = marked and not skip
+    for cid in ("socket", "store"):
+        assert (cid in result) is applied
+        if applied:
+            assert result[cid]["business_context"]["impact_is_material"] is False
+
+
 @pytest.mark.parametrize("fault", ["symlink", "parent_escape", "oversized", "credential"])
 def test_early_context_rejects_unsafe_persistence_before_writes(tmp_path, monkeypatch, fault):
     import runtime.acquire_lock as acquire_lock

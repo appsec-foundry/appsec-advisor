@@ -14,14 +14,16 @@ Other options describe plausible losses: disclosure of confidential records, man
 
 ## Save and continue
 
-For a substantive answer, use **Write** to add the exact English question and verbatim answer under `## Impact if compromised` in `$OUTPUT_DIR/.business-context-raw.md`, preserving the use-case answer. For a selected option, retain its exact label and description, including stated conditions. Write only answered questions; do not add model-authored claims, credentials, or existing context. Keep the complete file below 8000 bytes and 190 lines; never silently summarize a longer answer. Do not ask another question.
+For a substantive answer, use **Write** to add the exact English question and verbatim answer under `## Impact if compromised` in `$OUTPUT_DIR/.business-context-raw.md`, preserving the use-case answer. Write them as two lines, `**Question:** <question>` and `**Answer:** <answer>`. For a selected option, retain its exact label and description, including stated conditions. Write only answered questions; do not add model-authored claims, credentials, or existing context. Keep the complete file below 8000 bytes and 190 lines; never silently summarize a longer answer. Do not ask another question.
 
 Use decision `answered` when the raw file contains either substantive answer, `unchanged` when existing context answered both topics, otherwise `skip`. A skipped worst-case question still saves a substantive use-case answer. Call:
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" \
   complete-preflight --output-dir "$OUTPUT_DIR" --run-id "$APPSEC_RUN_ID" \
-  --context-answer <decision>
+  --context-answer <decision> [--impact-choice <choice>]
 ```
+
+Add `--impact-choice no-material-harm` when the user selected the no-material-harm option, `--impact-choice declared-harm` when they selected one of your proposed outcome options. Omit it for a free-text answer, unknown, or skip. The question concerns the whole application, so a selected option applies to every runtime component; the controller applies it before analysis.
 
 The controller validates answers, captures them for this analysis, and saves them in `docs/security/business-context.md` alongside existing repository context. Explicit `--context` imports remain run-only. Later analyses reuse saved answers and omit answered topics. On rejection, print the reason and stop; never discard an answer silently or continue as if accepted. Return the successful action to the full runtime. Remaining unanswered questions may appear in the report.
