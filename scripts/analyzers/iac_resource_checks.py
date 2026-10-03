@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Structured evaluators for the Compose, Kubernetes, Helm values and Terraform
-checks in the Config/IaC catalog.
+"""Structured evaluators for the Compose, Kubernetes, Helm values, Terraform
+and GitHub Actions checks in the Config/IaC catalog.
 
 The deployment inventory marks some configuration facts ``weak`` for the
 deployment figure. Each such fact kind is covered by a check here or listed as
@@ -930,7 +930,53 @@ def terraform_wildcard_iam_policy(text: str, path: Path) -> tuple[int, str] | No
     return min(_wildcard_policies(_Hcl(text)), default=None)
 
 
+# --------------------------------------------------------------------------- GitHub Actions
+#
+# GitHub applies the workflow-root ``permissions`` to every job and lets a job
+# replace it with its own block; a scope an explicit block does not list is
+# ``none``. Workflow-level checks therefore read the parsed document, not a
+# line pattern: a root block, or a block on every job, both set the token
+# scope, and an explicit block without ``contents`` grants no contents access.
+
+
+def _workflow(text: str) -> _Map | None:
+    documents = _documents(text)
+    return documents[0] if len(documents) == 1 and isinstance(documents[0], _Map) else None
+
+
+def github_workflow_permissions_missing(text: str, path: Path) -> tuple[int, str] | None:
+    """A job runs with the repository's default token scope: neither the root nor the job sets permissions."""
+    workflow = _workflow(text)
+    if workflow is None or "permissions" in workflow:
+        return None
+    jobs = workflow.get("jobs")
+    if not isinstance(jobs, _Map):
+        return None
+    for name, job in jobs.items():
+        if not (isinstance(job, dict) and "permissions" in job):
+            return _line_of(jobs, name), f"job {name}: no permissions at job or workflow level"
+    return None
+
+
+def github_workflow_token_scope_broad(text: str, path: Path) -> tuple[int, str] | None:
+    """The workflow root grants every job write access to repository contents.
+
+    A workflow without a root block is the permissions-missing check's finding
+    and is not repeated here."""
+    workflow = _workflow(text)
+    if workflow is None or "permissions" not in workflow:
+        return None
+    permissions = workflow["permissions"]
+    if isinstance(permissions, str) and permissions.strip() == "write-all":
+        return _line_of(workflow, "permissions"), "permissions: write-all at workflow level"
+    if isinstance(permissions, _Map) and str(permissions.get("contents") or "").strip() == "write":
+        return _line_of(permissions, "contents"), "permissions: contents: write at workflow level"
+    return None
+
+
 EVALUATORS: dict[str, Callable[[str, Path], tuple[int, str] | None]] = {
+    "github_workflow_permissions_missing": github_workflow_permissions_missing,
+    "github_workflow_token_scope_broad": github_workflow_token_scope_broad,
     "compose_environment_secret_literal": compose_environment_secret_literal,
     "compose_sensitive_port_on_all_interfaces": compose_sensitive_port_on_all_interfaces,
     "kubernetes_privileged_container": kubernetes_privileged_container,

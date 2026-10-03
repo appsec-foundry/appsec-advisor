@@ -183,12 +183,12 @@ checks:
     violation_title: "Missing Workflow Permissions Block"
     iac_type: github_workflow
     file_pattern: ".github/workflows/*.yml"
-    pattern: "^permissions:"
-    expect: present
+    expect: structured
+    evaluator: github_workflow_permissions_missing
     severity_if_violated: Medium
     cwe: CWE-732
     finding_type: FT-143
-    rationale: "Without an explicit permissions block, the workflow inherits the repository default (commonly write-all) for GITHUB_TOKEN — any compromised step can push code, create releases, or approve PRs."
+    rationale: "Without an explicit permissions block at workflow or job level, the job inherits the repository default (commonly write-all) for GITHUB_TOKEN — any compromised step can push code, create releases, or approve PRs."
     remediation: "Add `permissions: { contents: read }` at workflow root; elevate per-job only where needed"
 
   - id: IAC-011
@@ -248,12 +248,12 @@ checks:
     violation_title: "Default GITHUB_TOKEN Scope Not Restricted"
     iac_type: github_workflow
     file_pattern: ".github/workflows/*.yml"
-    pattern: "permissions:\\s*\\n\\s+contents:\\s+read"
-    expect: present
+    expect: structured
+    evaluator: github_workflow_token_scope_broad
     severity_if_violated: Medium
     cwe: CWE-732
     finding_type: FT-143
-    rationale: "`contents: read` at workflow root forces per-job opt-in for write scopes — minimal privilege by default."
+    rationale: "The workflow root grants `contents: write` (or `write-all`) to every job, so any step in any job can push code or tags; read-only contents at the root forces per-job opt-in for write scopes."
     remediation: "Add `permissions: { contents: read }` at root; per-job elevate to `contents: write` only where needed"
 
   # ============ docker-compose ============

@@ -858,3 +858,47 @@ def test_every_checked_entry_is_proven_by_a_shape(tmp_path):
         weak, _findings = _scan(tmp_path / str(index), files)
         proven.update(_entry(text, WEAK_ENTRIES)["fact"] for text, _file in weak if _entry(text, WEAK_ENTRIES))
     assert {e["fact"] for e in WEAK_ENTRIES if e.get("checks")} <= proven
+
+
+# --------------------------------------------------------------------------- GitHub Actions permissions
+
+ON = "on: push\n"
+JOB_A = "  build:\n    runs-on: ubuntu-latest\n    steps: [{run: make}]\n"
+JOB_B = "  deploy:\n    runs-on: ubuntu-latest\n    steps: [{run: make}]\n"
+JOB_A_PERMS = "  build:\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n    steps: [{run: make}]\n"
+JOB_B_PERMS = (
+    "  deploy:\n    runs-on: ubuntu-latest\n    permissions:\n      contents: write\n    steps: [{run: make}]\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("text", "missing_line", "broad_line"),
+    [
+        pytest.param(ON + "jobs:\n" + JOB_A + JOB_B, 3, None, id="no-permissions-anywhere"),
+        pytest.param(ON + "permissions:\n  contents: read\njobs:\n" + JOB_A, None, None, id="root-read"),
+        pytest.param(ON + "permissions: read-all\njobs:\n" + JOB_A, None, None, id="root-read-all"),
+        pytest.param(ON + "permissions: {}\njobs:\n" + JOB_A, None, None, id="root-empty"),
+        pytest.param(
+            ON + "permissions:\n  issues: write\n  pull-requests: write\njobs:\n" + JOB_A,
+            None,
+            None,
+            id="explicit-without-contents",
+        ),
+        pytest.param(ON + "jobs:\n" + JOB_A_PERMS + JOB_B_PERMS, None, None, id="every-job-declares"),
+        pytest.param(ON + "jobs:\n" + JOB_A_PERMS + JOB_B, 8, None, id="partial-job-level"),
+        pytest.param(ON + "permissions:\n  contents: write\njobs:\n" + JOB_A, None, 3, id="root-contents-write"),
+        pytest.param(ON + "permissions: write-all\njobs:\n" + JOB_A, None, 2, id="root-write-all"),
+        pytest.param(ON + "jobs: [", None, None, id="unparsable"),
+    ],
+)
+def test_github_workflow_permission_checks(text, missing_line, broad_line):
+    missing = irc.github_workflow_permissions_missing(text, P)
+    broad = irc.github_workflow_token_scope_broad(text, P)
+    assert (missing[0] if missing else None) == missing_line
+    assert (broad[0] if broad else None) == broad_line
+
+
+def test_catalog_judges_workflow_permissions_structurally():
+    checks = {c["id"]: c for c in yaml.safe_load(scanner.DEFAULT_CHECKS.read_text(encoding="utf-8"))["checks"]}
+    assert checks["IAC-010"]["evaluator"] == "github_workflow_permissions_missing"
+    assert checks["IAC-015"]["evaluator"] == "github_workflow_token_scope_broad"
