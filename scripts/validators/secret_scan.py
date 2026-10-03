@@ -49,6 +49,17 @@ _MASKING_MARKERS = (
     "…",
 )
 
+# Published run artifacts a secret can propagate into, besides threat-model.md.
+# The release gate (qa_checks unmasked_secrets) and the redaction pass's
+# residual scan both read this list, so neither can miss a file the other covers.
+PUBLISHED_ARTIFACTS = (
+    "threat-model.yaml",
+    "threat-model.sarif.json",
+    "threat-model.threatdragon.json",
+    "threat-model.html",
+    "pentest-tasks.yaml",
+)
+
 # The credential keywords that make a nearby literal look like a credential.
 # Named because redact_known_secrets reuses it to decide whether an occurrence
 # sits in credential context; a second hand-maintained copy there would drift
@@ -65,6 +76,27 @@ class _Pattern:
     # format would not survive a partial mask.
     strict: bool
 
+
+# A PEM private key is masked as one unit: header, key bytes and END marker.
+# Excerpts carry the bytes in many shapes — real newlines, escaped ``\r\n`` in a
+# one-line string literal (doubled to ``\\r\\n`` once serialized to JSON or a
+# quoted YAML scalar), ``'…' +`` concatenation, or a body cut off before the END
+# marker — and masking only the header leaves a usable key behind it.
+#
+# Without an END marker, a body chunk is a run of at least 16 base64 characters
+# that contains a digit, ``+`` or ``/``. That boundary keeps ordinary prose after
+# a truncated header ("…PRIVATE KEY----- then the attacker signs…") intact; a
+# real key line always qualifies. Base64 elsewhere (data URIs, certificates,
+# public keys) is never masked: only bytes that follow a private-key header or
+# its redaction marker are.
+_PEM_MASK = "[PEM PRIVATE KEY — REDACTED]"
+_PEM_HEADER = r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----"
+_PEM_SEP = r"""(?:\s|\\{1,2}[rn]|\\(?=\s)|['"`]\s*\+\s*['"`]|(?:Proc-Type|DEK-Info):[^\n\\'"]*)"""
+_PEM_BODY_CHUNKS = r"(?:" + _PEM_SEP + r"*(?=[A-Za-z]*[0-9+/])[A-Za-z0-9+/]{16,}={0,2})+"
+_PEM_REST = (
+    r"(?:(?:" + _PEM_SEP + r"|[A-Za-z0-9+/=])*?-----END (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----"
+    r"|" + _PEM_BODY_CHUNKS + r")?"
+)
 
 _PATTERNS: list[_Pattern] = [
     # --- Strict format patterns (a match = real leak) -----------------------
@@ -83,9 +115,13 @@ _PATTERNS: list[_Pattern] = [
         re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b"),
         True,
     ),
+    _Pattern("pem_private_key", re.compile(_PEM_HEADER + _PEM_REST), True),
+    # Key bytes left behind a redaction marker, e.g. by an older masker that
+    # replaced only the BEGIN header. Without this the gate is blind to them.
+    # The em dash is matched in its ASCII-escaped JSON form too.
     _Pattern(
-        "pem_private_key",
-        re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----"),
+        "pem_orphaned_key_body",
+        re.compile(r"\[PEM PRIVATE KEY (?:—|\\u2014) REDACTED\]" + _PEM_BODY_CHUNKS),
         True,
     ),
     # --- Loose key/value patterns (mask-marker exempts) ---------------------
@@ -575,8 +611,8 @@ def _mask_match(pat: _Pattern, m: re.Match[str]) -> str:
     The replacement always contains a masking marker so the value can never be
     re-flagged by scan_text()."""
     matched = m.group(0)
-    if pat.name == "pem_private_key":
-        return "[PEM PRIVATE KEY — REDACTED]"
+    if pat.name in ("pem_private_key", "pem_orphaned_key_body"):
+        return _PEM_MASK
     if pat.strict:
         # Token formats (AWS/GitHub/Google/Slack/Stripe/JWT/…). Keeping the
         # first 4 chars preserves provider identification while breaking the

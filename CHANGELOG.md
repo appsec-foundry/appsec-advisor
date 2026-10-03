@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Private keys quoted in findings are now masked completely, key bytes included, and the secret-leak gate also checks `pentest-tasks.yaml` and flags key bytes left behind a redaction marker.
 - Components labelled `internal-network` that own HTTP handlers in the route inventory are now selected for STRIDE analysis as `internet-exposed (route-inventory)` instead of being excluded.
 
 ### Changed
