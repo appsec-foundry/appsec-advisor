@@ -34,18 +34,7 @@ from shared._finding_state import is_refuted
 
 from model.finding_intake import apply_intake
 from model.merge_threats import _evidence_identity_key
-from model.reclassify_components import (  # canonical registry resolver — see _component_for
-    _build_matcher as _rc_build_matcher,
-)
-from model.reclassify_components import (
-    _component_for as _rc_component_for,
-)
-from model.reclassify_components import (
-    _most_specific_candidate as _rc_most_specific_candidate,
-)
-from model.reclassify_components import (
-    _primary_component_id as _rc_primary_component_id,
-)
+from model.reclassify_components import resolve_owner  # canonical registry resolver
 
 _VALID_SEVERITIES = {"Critical", "High", "Medium", "Low"}
 _VALID_STRIDE = {
@@ -122,29 +111,13 @@ def _component_for(file_path: str, components: list) -> tuple[str, str]:
     matching no glob falls back to the primary component (still registered)
     rather than to an invented id.
     """
-    registered = [c for c in components if isinstance(c, dict) and (c.get("id") or "").strip()]
-    if not registered:
+    owner = resolve_owner(file_path, components)
+    if owner is None:
         # No registry to resolve against (yaml absent). Nothing here can be
         # "registered" yet; keep the historical default and let the later
         # reclassify_components pass bind it once the yaml exists.
         return "backend-api", "Backend API"
-
-    primary = _rc_primary_component_id(registered)
-    hits = _rc_component_for(file_path, [_rc_build_matcher(c) for c in registered])
-    if not hits:
-        cid = primary
-    elif len(hits) == 1:
-        cid = hits[0]
-    else:
-        glob_index = {
-            (c.get("id") or "").strip(): [g for g in (c.get("paths") or []) if isinstance(g, str)] for c in registered
-        }
-        cid = _rc_most_specific_candidate([file_path], hits, glob_index, primary)
-
-    for component in registered:
-        if (component.get("id") or "").strip() == cid:
-            return cid, str(component.get("name") or cid)
-    return cid, cid
+    return owner
 
 
 def _registered_components(output_dir: Path) -> list:
