@@ -108,6 +108,7 @@ GROUPS = {
         render_requirements_banner
         render_review_report
         render_threat_model
+        run_invariants
         sarif_validation
         section_condition_wiring
         section_integrity
@@ -626,6 +627,7 @@ SOURCE_TESTS = {
         prompt_token_bounds
     """),
     "scripts/analyzers/architect_review_runtime.py": _tests("""
+        run_invariants
         actor_presentation
         incremental_two_run_e2e
         runtime_doc_cli_contract
@@ -733,6 +735,11 @@ SOURCE_TESTS = {
         calibrate_architect_review
         requirements_verification
     """),
+    "tests/fixtures/run_invariants/juice-shop-thorough/.architect-review.json": _tests("run_invariants"),
+    "tests/fixtures/run_invariants/juice-shop-thorough/threat-model.figure1.svg": _tests("run_invariants"),
+    "tests/fixtures/run_invariants/juice-shop-thorough/threat-model.md": _tests("run_invariants"),
+    "tests/fixtures/run_invariants/juice-shop-thorough/threat-model.yaml": _tests("run_invariants"),
+    "tests/fixtures/run_invariants/juice-shop-thorough/tracked-files.txt": _tests("run_invariants"),
     "schemas/architect-corrections.schema.json": _tests("""
         architect_review
         architect_review_runtime
@@ -4373,6 +4380,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/model/merge_threats.py": _tests("""
+        run_invariants
         actor_attribution
         agent_config_checks
         arch_coverage_bridge
@@ -4742,6 +4750,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/model/reclassify_components.py": _tests("""
+        run_invariants
         topology_workloads
         architect_review_runtime
         actor_attribution
@@ -5211,6 +5220,9 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
         validate_fragment
+    """),
+    "scripts/validators/run_invariants.py": _tests("""
+        run_invariants
     """),
     "scripts/validators/secret_scan.py": _tests("""
         actor_presentation
