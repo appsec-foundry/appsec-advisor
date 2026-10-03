@@ -25,6 +25,7 @@ import yaml
 from shared._finding_state import is_confirmed
 from shared._shared_sources import DESIGN_LEVEL_SOURCES
 
+import renderers._business_relevance as _business_relevance
 import renderers._severity_rollup as _severity_rollup
 
 CONSOLE_HEADER = "Open questions for the team:"
@@ -94,6 +95,11 @@ def mechanism_team_questions(plugin_root: Optional[Path] = None) -> dict[str, st
     return _mechanism_field("team_question", plugin_root)
 
 
+def mechanism_answer_decides(plugin_root: Optional[Path] = None) -> dict[str, str]:
+    """Return what each mechanism's answer settles: design-intent, deployment-fact or business-weighting."""
+    return _mechanism_field("answer_decides", plugin_root)
+
+
 def mechanism_decision_impacts(plugin_root: Optional[Path] = None) -> dict[str, str]:
     """Return what each mechanism's answer decides, keyed like the questions.
 
@@ -133,6 +139,7 @@ def select_open_questions(
     *,
     team_questions: Optional[dict[str, str]] = None,
     decision_impacts: Optional[dict[str, str]] = None,
+    answer_decides: Optional[dict[str, str]] = None,
 ) -> dict[str, list[dict]]:
     """Select up to three questions only the team can answer.
 
@@ -149,6 +156,8 @@ def select_open_questions(
         team_questions = mechanism_team_questions()
     if decision_impacts is None:
         decision_impacts = mechanism_decision_impacts()
+    if answer_decides is None:
+        answer_decides = mechanism_answer_decides()
     anchors = {str(anchor).lower() for anchor in available_anchors}
     candidates: list[dict] = []
     for threat in _severity_rollup.register_threats(yaml_data):
@@ -266,6 +275,8 @@ def select_open_questions(
 
     trace = yaml_data.get("business_context_trace") or {}
     answers = trace.get("answered_questions", []) if trace.get("status") == "applied" else []
+    no_harm = _business_relevance.no_harm_components(yaml_data)
+    declared_assets = _business_relevance.declared_asset_names(yaml_data)
 
     def answered(topic: str, component: str, asset_name: str = "") -> bool:
         return bool(component) and any(
@@ -314,6 +325,17 @@ def select_open_questions(
         linked = {_severity_rollup.display_id(str(value)) for value in asset.get("linked_threats") or []}
         reached = [by_id[fid] for fid in sorted(linked & by_id.keys())]
         if reached and all(answered("asset-criticality", item["component"], asset.get("name")) for item in reached):
+            continue
+        # An explicit no-material-harm declaration is a sourced answer to how much
+        # the asset matters (AC-7) where it covers every component that reaches
+        # or stores the asset. An asset the context names on its own stays
+        # relevant (REQ-BIZ-003), and unknown impact keeps asking.
+        holders = {item["component"] for item in reached} | {
+            str(ref.get("component_id"))
+            for ref in asset.get("component_refs") or []
+            if isinstance(ref, dict) and ref.get("component_id")
+        }
+        if reached and asset.get("name") not in declared_assets and holders <= no_harm:
             continue
         name = " ".join(_UNSAFE_NAME_CHARS_RE.sub("", str(asset.get("name") or "")).split())[:60].strip()
         reach = len(linked & by_id.keys())
@@ -427,6 +449,12 @@ def select_open_questions(
             for item in candidates
             if item["id"] in instance_ids and not answered(str(weakness.get("mechanism_id")), item["component"])
         ]
+        # A business-weighting answer is already given where every affected
+        # component declares no material harm; intent and deployment facts are not.
+        if answer_decides.get(str(weakness.get("mechanism_id") or "")) == "business-weighting" and all(
+            item["component"] in no_harm for item in related
+        ):
+            continue
         if not related:
             continue
         question = question.replace("{component}", subject(related))

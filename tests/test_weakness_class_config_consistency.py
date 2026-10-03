@@ -126,6 +126,19 @@ def test_curated_mechanism_ids_match_the_schema_pattern() -> None:
         assert pattern.match(str(key)), f"mechanism id {key!r} violates {pattern.pattern}"
 
 
+def test_every_team_question_states_what_its_answer_decides() -> None:
+    """The question selector drops a business-weighting question where the
+    context already declares no material harm; an unmarked question would
+    silently keep or lose that behaviour."""
+    guidance = yaml.safe_load((DATA / "weakness-classes.yaml").read_text()).get("mechanism_guidance") or {}
+    asked = {key: entry for key, entry in guidance.items() if (entry or {}).get("team_question")}
+    assert asked
+    for key, entry in asked.items():
+        assert entry.get("answer_decides") in {"design-intent", "deployment-fact", "business-weighting"}, key
+    for key, entry in guidance.items():
+        assert "answer_decides" not in (entry or {}) or key in asked, f"{key} decides without a question"
+
+
 def test_both_schemas_state_the_same_mechanism_id_pattern() -> None:
     assert _mechanism_id_pattern("threats-merged.schema.yaml") == _mechanism_id_pattern(
         "threat-model.output.schema.yaml"

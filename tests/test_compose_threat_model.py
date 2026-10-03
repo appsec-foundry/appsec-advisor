@@ -6749,7 +6749,11 @@ def test_ms_open_questions_follow_top_weaknesses(monkeypatch) -> None:
     assert compose._team_questions.REPORT_INTRO in report_questions
     # The ambiguous T-002 needs triage, not a team decision: no verification bullet.
     assert "F-002" not in report_questions
-    for value in ("W-001", "F-001", "Which cross-user or cross-tenant operations in this application are intended"):
+    for value in (
+        "W-001",
+        "F-001",
+        "Which operations on other users' or tenants' data in this application are intended",
+    ):
         assert value in report_questions
     for report_line in [line for line in report_questions.splitlines() if line.startswith("- ")]:
         # The rendered shape is what keeps the enrichment passes off the block.

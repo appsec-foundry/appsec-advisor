@@ -690,7 +690,7 @@ class TestManualReviewStep:
         # comes last and the cap holds at three.
         assert [re.findall(r"\b(W-\d+)\b", line) for line in questions] == [["W-002"], ["W-003"], ["W-004"]]
         assert re.findall(r"\b(F-\d+)\b", text) == ["F-001", "F-002", "F-020", "F-030"]
-        assert "Which cross-user or cross-tenant operations in this application are intended" in questions[0]
+        assert "Which operations on other users' or tenants' data in this application are intended" in questions[0]
         assert "still accept credentials exposed in the history" in questions[1]
         assert "intended to be available without login" in questions[2]
         assert len(questions) == 3
@@ -786,7 +786,7 @@ class TestManualReviewStep:
         assert self.render([owner]) == ""
         text = self.render([owner], [self.weakness(2, "route-by-route-authorization", 1)])
         assert self.bullets(text)[0].endswith(" (W-002: F-001)")
-        assert "Which cross-user or cross-tenant operations in this application are intended" in text
+        assert "Which operations on other users' or tenants' data in this application are intended" in text
         assert self.render([owner], [self.weakness(2, "no-such-mechanism", 1)]) == ""
         questions = rcs.mechanism_team_questions()
         assert set(questions) >= {"route-by-route-authorization", "secrets-committed-to-source"}

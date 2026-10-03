@@ -395,6 +395,73 @@ def test_declared_names_of_a_skipped_context_do_not_settle_criticality() -> None
     assert _selected(model, "F-001", "F-002", "F-003", "F-004")[0].startswith("How critical are Order History")
 
 
+def _no_harm(*components: str, declared: tuple[str, ...] = (), material: bool = False) -> dict:
+    return {
+        "status": "applied",
+        "component_coverage": [
+            {"component_id": c, "fields": ["impact_if_compromised"], "impact_is_material": material} for c in components
+        ],
+        "declared_asset_names": list(declared),
+    }
+
+
+@pytest.mark.parametrize(
+    "trace,asked",
+    [
+        # Every component that reaches or stores an asset declares no harm: answered (AC-7).
+        (_no_harm("db", "api"), None),
+        # The signing key lives in a component the declaration does not cover.
+        (_no_harm("db"), "How critical are Signing Key"),
+        # A declared material impact does not say how much each asset matters.
+        (_no_harm("db", "api", material=True), "How critical are Order History, Customer Records and Signing Key"),
+        # An asset the context names on its own stays relevant (REQ-BIZ-003).
+        (_no_harm("db", "api", declared=("Order History",)), "How critical are Order History"),
+    ],
+    ids=["all-no-harm", "holder-uncovered", "material", "named-asset"],
+)
+def test_explicit_no_harm_settles_asset_criticality_only_where_it_covers_every_holder(trace, asked) -> None:
+    model = _asset_model(business_context_trace=trace)
+
+    questions = [
+        q["question"] for q in tq.select_open_questions(model, anchors("F-001", "F-002", "F-003", "F-004"))["questions"]
+    ]
+    critical = [q for q in questions if q.startswith("How critical")]
+
+    if asked is None:
+        assert critical == []
+    else:
+        assert len(critical) == 1 and critical[0].startswith(asked)
+
+
+@pytest.mark.parametrize(
+    "decides,no_harm,expected",
+    [
+        ("business-weighting", ("db",), False),
+        ("business-weighting", ("api",), True),
+        ("business-weighting", (), True),
+        ("design-intent", ("db",), True),
+        ("deployment-fact", ("db",), True),
+    ],
+)
+def test_no_harm_answers_only_business_weighting_weakness_questions(decides, no_harm, expected) -> None:
+    model = {
+        "components": [{"id": "db", "tier": "data"}, {"id": "api", "tier": "application"}],
+        "threats": [finding(1, component="db")],
+        "weaknesses": [weakness(1, "some-mechanism", 1)],
+        "business_context_trace": _no_harm(*no_harm),
+    }
+
+    questions = tq.select_open_questions(
+        model,
+        anchors("F-001", "W-001"),
+        team_questions={"some-mechanism": "Which records can the account used by {component} reach?"},
+        decision_impacts={"some-mechanism": "The answer weights the breach impact."},
+        answer_decides={"some-mechanism": decides},
+    )["questions"]
+
+    assert any(q["weakness_id"] == "W-001" for q in questions) is expected
+
+
 def test_asset_names_cannot_inject_markup_or_extra_questions() -> None:
     model = _asset_model(
         assets=[asset("Card [data](https://example.invalid)?\x1b`x`", "Restricted", 1, stored_in="db")]
