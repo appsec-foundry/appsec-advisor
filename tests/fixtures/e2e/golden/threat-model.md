@@ -74,10 +74,10 @@ _Append-only history of assessment runs. Most recent first._
 
 🔴 **CRITICAL SECURITY POSTURE** - the fixture project has severe exploitable vulnerabilities across authentication, injection, and access control. The assessment identified **3 Critical** and **1 High** findings.
 
-**Risk distribution:** 🔴 Critical: 3 · 🟠 High: 1 · 🟡 Medium: 0 · 🟢 Low: n/a · **Total: 4**<br/>**Reporting threshold:** medium - Low and Informational excluded
+**Risk distribution:** 🔴 Critical: 3 · 🟠 High: 1 · 🟡 Medium: 0 · 🟢 Low: n/a · **Total: 4**
 
 
-**Method and limits:** Automated static analysis of code and configuration, not a pentest or a team threat-modeling session - see [§11 Out of Scope](#11-out-of-scope).
+**Method and limits:** Automated static analysis of code and configuration, not a pentest or a team threat-modeling session; Low and Informational findings not reported (threshold: medium) - see [§11 Out of Scope](#11-out-of-scope).
 
 <br/>
 

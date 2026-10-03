@@ -2709,18 +2709,18 @@ def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) 
     if counts["info"] > 0:
         rd_parts.append(f"⚪ Info: {counts['info']}")
     risk_distribution = "**Risk distribution:** " + " · ".join(rd_parts) + f" · **Total: {total}**"
-    # Name the floor that made the Low cell `n/a`, so the reader knows the
-    # tiers are missing by configuration and which flag brings them back.
-    if _severity_rollup.low_suppressed(ctx.yaml_data):
-        risk_distribution += (
-            f"<br/>**Reporting threshold:** {_severity_rollup.register_floor(ctx.yaml_data)} — "
-            "Low and Informational excluded"
-        )
+    # The reporting floor that made the Low cell `n/a` is named in the
+    # Method-and-limits line (`pregenerate_fragments.method_and_limits`).
+    # Findings and weakness classes are different counting units, so each gets
+    # its own line; "confirmed" is the finding-state authority (FE-21), not
+    # an exploitability claim.
     if _breakdown is not None:
-        _combined_assessment_count, confirmed, impl, design = _breakdown
+        _combined_assessment_count, _confirmed, impl, design = _breakdown
+        confirmed, findings = _severity_rollup.finding_confirmation(ctx.yaml_data)
         risk_distribution += (
-            f"<br/>**Assessment evidence:** {confirmed} confirmed-exploitable finding(s) · "
-            f"{impl} implementation weakness(es) · {design} design weakness(es)"
+            f"<br/>**Assessment evidence:** {confirmed} of {findings} finding(s) confirmed in code"
+            f"<br/>**Weakness classes:** {impl + design} ({impl} implementation, {design} design) — "
+            "see [§7 Weakness Register](#7-weakness-register)"
         )
     # Method, depth and limits in one block, from the rules §1 and §11 share, so the
     # executive verdict states what kind of analysis this is and how much of the

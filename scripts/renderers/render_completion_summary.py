@@ -276,6 +276,7 @@ def extract_metrics(
         "low_suppressed": _severity_rollup.low_suppressed(yaml_data),
         "register_floor": _severity_rollup.register_floor(yaml_data),
         "evidence_breakdown": _severity_rollup.weakness_basis_breakdown(yaml_data),
+        "finding_confirmation": _severity_rollup.finding_confirmation(yaml_data),
         "threats_info": threats_info,
         "n_components": n_components,
         "n_stride_components": n_stride_components,
@@ -1281,13 +1282,12 @@ def render_metrics(metrics: dict, cfg: dict) -> list[str]:
         )
     breakdown = metrics.get("evidence_breakdown")
     if breakdown is not None:
-        _, confirmed, implementation, design = breakdown
-        lines.extend(_summary_field("Evidence", f"{confirmed} confirmed-exploitable findings"))
+        _, _, implementation, design = breakdown
+        confirmed, findings = metrics.get("finding_confirmation") or (0, 0)
+        lines.extend(_summary_field("Evidence", f"{confirmed} of {findings} findings confirmed in code"))
         lines.extend(_summary_field("Weaknesses", f"{implementation} implementation | {design} design"))
         lines.extend(
-            _summary_wrap(
-                "Findings and weakness records are different counting units; these counts do not add to the threat total."
-            )
+            _summary_wrap("Weakness records group findings by root cause; they are not counted in the finding total.")
         )
     return lines
 
@@ -2453,7 +2453,13 @@ def render_verdict(md_text: str, cfg: dict, verdict: dict | None = None, fixes: 
     for raw in logical_lines:
         plain = _console_plain(raw).strip()
         if plain.startswith(
-            ("Risk distribution:", "Reporting threshold:", "Assessment evidence:", "Method and limits:")
+            (
+                "Risk distribution:",
+                "Reporting threshold:",
+                "Assessment evidence:",
+                "Weakness classes:",
+                "Method and limits:",
+            )
         ):
             continue
         is_concern = plain.startswith("•") or plain in captions

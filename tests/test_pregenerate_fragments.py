@@ -4099,6 +4099,27 @@ def _selection(n_full: int, n_screen: int, n_excluded: int) -> dict:
     return {"total": n_full + n_screen + n_excluded, "selected": selected, "excluded": excluded}
 
 
+@pytest.mark.parametrize(
+    "floor,expected",
+    [
+        ("informational", None),
+        ("low", None),
+        ("medium", "Low and Informational findings not reported (threshold: medium)"),
+        ("high", "Medium, Low and Informational findings not reported (threshold: high)"),
+        ("critical", "High, Medium, Low and Informational findings not reported (threshold: critical)"),
+    ],
+)
+def test_method_and_limits_names_the_tiers_the_register_floor_dropped(floor, expected):
+    """The verdict's Low cell reads `n/a` under a floor above low; the limits line
+    is where the reader learns which tiers are missing and why."""
+    block = pf.method_and_limits({"register_severity_floor": floor})
+    if expected is None:
+        assert "not reported" not in block
+    else:
+        assert expected in block
+    assert block.count(". ") == 0
+
+
 @pytest.mark.parametrize("depth", ["quick", "standard", "thorough", None])
 @pytest.mark.parametrize(
     "shape", [(3, 0, 0), (2, 1, 0), (2, 0, 2), (1, 2, 1)], ids=["full", "screened", "excluded", "mixed"]

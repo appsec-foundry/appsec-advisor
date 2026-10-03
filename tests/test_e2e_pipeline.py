@@ -805,7 +805,8 @@ def test_weakness_register_renders_and_is_qa_safe(e2e_run: Path) -> None:
     assert rendered.index("### Top Weaknesses") < rendered.index("## 7. Weakness Register")
     # Findings and systemic weaknesses are reported as separate evidence types.
     assert "**Assessment evidence:**" in rendered
-    assert "confirmed-exploitable finding(s)" in rendered
+    assert "finding(s) confirmed in code" in rendered
+    assert "**Weakness classes:**" in rendered
     # QA invariants pass on the rendered document (the block adds no anchor /
     # section that check_invariants would reject).
     (e2e_run / "threat-model.md").write_text(rendered, encoding="utf-8")

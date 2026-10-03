@@ -73,8 +73,10 @@ from shared._boundary_interface import is_internal_interface
 from renderers._severity_rollup import (
     display_id,
     priority_severity,
+    register_floor,
     register_severity,
     register_threats,
+    tiers_below_floor,
     verdict_basis,
     verdict_floor_ids,
     verdict_ranked_ids,
@@ -310,6 +312,12 @@ def method_and_limits(meta: dict) -> str:
             if coverage[key]:
                 verb = "was" if len(coverage[key]) == 1 else "were"
                 gaps.append(f"{_component_names(coverage[key], False)} {verb} {state}")
+    # The register floor drops whole severity tiers from threats[]; the verdict's
+    # Low cell reads `n/a` for it, and this names why.
+    below = [tier.capitalize() for tier in tiers_below_floor({"meta": meta})]
+    if "Low" in below:
+        tiers = ", ".join(below[:-1]) + " and " + below[-1]
+        gaps.append(f"{tiers} findings not reported (threshold: {register_floor({'meta': meta})})")
     # §1 carries the coverage detail only when a component selection exists; a §1
     # fragment without one need not have a Scope anchor, so the link follows it.
     details = (
