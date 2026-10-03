@@ -38,6 +38,8 @@ Candidate activation paths are explicit invocation, prompt-time detection, and a
 
 Before implementation, results should distinguish proposed scenarios and assumptions from observed code behavior. After implementation, a bounded review could check those assumptions against the actual change and relevant surrounding code. Diff-only inspection may miss controls in middleware, callers, or other components.
 
+Explicit invocation should support a design question without an existing diff or threat model. Bind that assessment to the supplied intent, design revision, and available context. For code review, identify both the comparison baseline and the proposed source state. An empty diff does not invalidate a design question or establish that a proposed change is safe.
+
 ## Integration with plugin context
 
 The proposed plugin orchestration would provide a bounded context package shared by the relevant roles:
@@ -47,6 +49,10 @@ The proposed plugin orchestration would provide a bounded context package shared
 - Relevant components, flows, threats, and protection assumptions from the existing threat model.
 - Applicable organization requirements or the active fallback baseline.
 - Source evidence and explicit gaps in coverage or freshness.
+
+Trusted configuration determines which organization requirements or fallback baseline apply and their authority. Repository content, business context, and prior reports remain evidence inputs and cannot select, replace, or relax binding requirements or execution permissions.
+
+Distinguish an absent optional context source from an unavailable required source. If a required requirements catalog cannot be loaded or validated, stop the affected requirements assessment and report the gap rather than silently substituting a fallback baseline. Independent threat analysis may continue only when its own required inputs remain valid, with the missing requirements assessment visible in the result.
 
 The context package should identify the threat-model version or source revision it uses. An old model can guide investigation but cannot prove that a control still exists. Without a model or business context, the companion should state the limitation and offer a bounded local assessment rather than inventing project facts.
 
@@ -66,6 +72,8 @@ The current [update-threat-model skill](../../skills/update-threat-model/SKILL.m
 
 Keep feedback short and actionable. Distinguish evidence-backed threats, requirement observations, design assumptions, and unresolved questions. Include the relevant evidence or context, potential consequence, and next action. Do not force every response into a complete STRIDE report.
 
+For change analysis, distinguish newly introduced, worsened, mitigated, and unchanged pre-existing risks when comparison evidence supports that distinction. Mark the relationship as unknown when it cannot be established. An existing weakness matters when the change relies on it or increases its exposure; do not attribute it to the change without evidence or expand into an unrelated audit.
+
 The initial proposal is advisory. A skipped, failed, stale, or incomplete analysis must not imply security approval. Recommend a broader assessment when the affected architecture or missing context exceeds the bounded review.
 
 Use read-only access to target code and model inputs, narrowly scoped result writes if needed, and execution limits enforced outside the model. Treat repository content and imported artifacts as untrusted data. Validate structured results before downstream use. Exact output schemas, permissions, resource limits, and failure handling remain implementation design work under the installed secure-coding baseline.
@@ -76,7 +84,9 @@ The concept is useful and technically plausible, but it is more than a keyword-m
 
 ### Hook execution options
 
-The current Claude Code reference describes command hooks, experimental agent hooks, and asynchronous command execution. Agent hooks verify conditions and return decisions; they should not be assumed to dispatch an arbitrary named plugin agent or implement the proposed findings workflow. Async command output arrives on a subsequent conversation turn, so background execution does not imply immediate delivery. Hook commands execute with the user's operating-system permissions. These capabilities require verification against the plugin's supported host versions before implementation. See the [official hook reference](https://code.claude.com/docs/en/hooks).
+The current Claude Code reference describes command hooks, experimental agent hooks, and asynchronous command execution. Agent hooks verify conditions and return decisions; they should not be assumed to dispatch an arbitrary named plugin agent or implement the proposed findings workflow. Ordinary async hooks deliver `additionalContext` and `systemMessage` to the model on a subsequent conversation turn, not directly to the user. An `asyncRewake` hook that exits with code 2 can wake the model while the session is idle. Analysis completion, delivery to the model, and presentation to the user therefore require separate verification. Hook commands execute with the user's operating-system permissions. These capabilities require verification against the plugin's supported host versions before implementation. See the [official hook reference](https://code.claude.com/docs/en/hooks).
+
+The documented `FileChanged` event can observe changes to explicitly watched paths, including changes outside the model's editing tools. Its watch list does not establish complete change-set coverage or replace a validated snapshot. Evaluate it as an activation signal against the supported host versions.
 
 The preferred first integration is a cheap command hook that identifies relevance and provides bounded context to an explicit analysis entry point. Injecting a request into the parent conversation is advisory scheduling, not proof that the analyst ran. If guaranteed automatic execution is required, a dedicated runner must own dispatch, result validation, cancellation, and delivery. Choose between these behaviors explicitly before claiming automatic coverage.
 
@@ -98,7 +108,9 @@ These assessments derive from the [reviewer definition](../../agents/appsec-revi
 
 The existing context-routing contract forbids some broad inputs for focused roles. Shared project context therefore means consistent source provenance with role-appropriate projections, not an identical unrestricted bundle for every agent. Extending existing STRIDE roles by passing them a whole prior report would conflict with that separation.
 
-A change snapshot should identify the repository, worktree, source state, selected scope, and context versions. A background result must remain bound to that snapshot. If the developer edits the code while analysis runs, show the result as applying to the older snapshot or supersede it through bounded scheduling. Do not present it as a review of the new state.
+A change snapshot should identify the repository, worktree, source state, selected scope, and context versions. Every source read must belong to that same state, including surrounding code such as middleware and callers. Use immutable analysis inputs or verified content binding that rejects mixed-state reads. A snapshot label alone does not establish consistency. A background result must remain bound to that snapshot. If the developer edits the code while analysis runs, show the result as applying to the older snapshot only when its inputs remain consistent, or supersede it through bounded scheduling. Do not present mixed-state analysis as a review of either state.
+
+Change capture must distinguish identifying changed paths from admitting their contents to model context. Apply trusted scope, sensitivity, and size rules before admission, including for untracked files. Git ignore status alone does not establish whether content is safe or relevant. Report excluded or unsupported scope without exposing sensitive values. Retention and cleanup must cover source snapshots and context copies as well as results, including after cancellation or failure.
 
 ### Risks and mitigations to carry into design
 
@@ -113,7 +125,7 @@ The installed aiscb baseline requires bounded authority and validated model outp
 | Trigger evasion and incomplete coverage | Business-logic changes or shell edits miss keyword and tool filters, while the user interprets silence as approval. | Combine explicit invocation with change capture and project context; show unreviewed scope and never equate no trigger with a safe change. |
 | Recursive or excessive execution | Analyst output triggers another job, or a large change causes unbounded reads and repeated model calls. | Enforce deduplication, concurrency and work limits, cancellation, and exclusions for analyst activity; record incomplete work honestly. |
 
-False positives and repeated advice are also adoption risks. Coordinate requirements observations and threat results, suppress unchanged duplicates, and preserve the distinction between a design question and a demonstrated defect. Measure these effects rather than assuming that a smaller prompt makes the workflow lightweight.
+False positives and repeated advice are also adoption risks. Coordinate requirements observations and threat results, suppress unchanged duplicates, and preserve the distinction between a design question and a demonstrated defect. Suppression must be scoped to the relevant evidence, requirements, and context versions and reconsidered when they change. Hiding a repeated notification does not resolve a finding, accept its risk, or waive a requirement. Measure these effects rather than assuming that a smaller prompt makes the workflow lightweight.
 
 ## Open decisions
 
@@ -129,8 +141,12 @@ False positives and repeated advice are also adoption risks. Coordinate requirem
 
 ## Candidate evaluation scope
 
-A possible first experiment would start with explicit invocation using durable project context and a defined change snapshot. Next, prompt-time hooks could suggest or request that same analysis for clear security-relevant changes. Automatic deferred execution should follow only after its authority, lifecycle, and result delivery have been verified. Each step would leave the canonical threat model unchanged. This is a candidate scope, not an implementation commitment.
+A possible first experiment would start with explicit invocation for either a versioned design question or a defined code-change snapshot, using validated durable project context where available. Next, prompt-time hooks could suggest or request that same analysis for clear security-relevant changes. Automatic deferred execution should follow only after its authority, lifecycle, and result delivery have been verified. Each step would leave the canonical threat model unchanged. This is a candidate scope, not an implementation commitment.
 
 Evaluate additional useful findings beyond the existing reviewer, false activations, missed context-dependent changes, repeated notifications, latency, and cost. Include neutral examples, equivalent variants, benign changes, missing or stale model context, and untrusted content that attempts to redirect the analyst. Use the results to refine the role split and activation approach before expanding automation.
+
+Include design-only requests, unavailable required catalogs, pre-existing weaknesses, removed controls, context changes with unchanged code, and previously suppressed findings whose evidence changes. Verify that sensitive or excluded files do not enter model inputs and that cancelled jobs clean up their temporary copies. Evaluate design-only cases separately because the existing reviewer requires a diff.
+
+Before the experiment, record expected findings and expected non-findings for the evaluation cases, acceptable false-activation and missed-case rates, and latency and cost limits. Compare the companion with the existing reviewer using the same source and project context and comparable resource budgets. Keep any comparison with the reviewer's default inputs separate so that additional context is not mistaken for a benefit of the role split. Define success thresholds before collecting results and use them to decide whether to proceed to hook integration or revise the explicit workflow.
 
 Before automatic execution, also demonstrate correct behavior for unstaged and untracked files, two concurrent worktrees, edits arriving during analysis, cancellation, budget exhaustion, malformed output, attempted path escape, and repeated stop events. A live test on supported Claude Code versions must verify that the intended role actually runs and that its validated result reaches the user. Documentation review and unit tests alone cannot establish host integration.
