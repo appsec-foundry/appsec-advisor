@@ -56,7 +56,35 @@ Distinguish an absent optional context source from an unavailable required sourc
 
 The context package should identify the threat-model version or source revision it uses. An old model can guide investigation but cannot prove that a control still exists. Without a model or business context, the companion should state the limitation and offer a bounded local assessment rather than inventing project facts.
 
-Example: a support export changes access to customer data while the existing threat model assumes that support can see only metadata. The analysis should connect that changed assumption to possible disclosure, identify the relevant authorization requirements, and ask for or inspect the evidence needed to establish who can initiate the export.
+### Shared analysis foundation
+
+The plugin should provide a versioned analysis catalog connecting change relevance, investigation questions, applicable requirement references, evidence needs, and negative tests. It should support semantic selection rather than require a keyword match. The catalog guides investigation without limiting threat discovery to listed questions or creating a second requirements standard.
+
+| Catalog element | Purpose |
+|---|---|
+| Relevance signals | Identify changes that may affect a security topic, including business operations and removed controls. |
+| Analysis questions | Investigate assets, identities, trust boundaries, abuse paths, and changed protection assumptions. |
+| Requirement references | Connect questions to applicable entries in the active catalog without assuming particular requirement IDs. |
+| Evidence needs | Identify the source or context needed to substantiate an answer and expose missing evidence. |
+| Negative tests | Describe representative unauthorized or malformed actions that should fail. |
+
+The hook and Coach use a bounded selection for activation and brief guidance. The Security Advisor uses it to explain expectations and unresolved design choices. The Threat Analyst investigates attack paths with relevant threat-model projections and current evidence. Reuse the existing reviewer's requirement-grading responsibility instead of implementing a second grader in the analyst. Shared references should coordinate these outputs without merging a requirement observation, an assumption, and a demonstrated threat into one verdict. Catalog selection does not grant tools or access to additional context.
+
+### Operation with and without aiscb
+
+The analysis catalog should include questions and investigation principles derived from a pinned aiscb release and work without aiscb installed in the target project. Preserve upstream attribution, source rule identifiers, release provenance, and the distinction between adapted questions and original rules. Review catalog updates and requirement mappings together rather than copying policy text into each agent prompt or fetching a new baseline during analysis.
+
+Without an explicitly integrated aiscb policy, these questions provide analysis methodology. Applicable organization requirements or the existing plugin fallback remain the requirements source. An unanswered question establishes an evidence gap, not automatically a vulnerability, requirement violation, or aiscb compliance verdict.
+
+An explicitly integrated aiscb policy additionally supplies its verified applicable rules through its supported catalog and loader. Trusted configuration determines this integration; discovering policy-like text in the target repository does not activate it. Organization overlays cannot relax an active aiscb baseline. A missing required policy input follows the same failure boundary as other required catalogs. The aiscb installation governing development of this plugin is separate from this proposed runtime integration.
+
+### From design assumptions to code verification
+
+Preserve relevant design assumptions and unanswered questions as bounded, versioned review items for the current change. Each item should retain its source, affected scope, requirement references where applicable, evidence needed, and intended negative test. The later code review checks these items against the implementation and distinguishes supported, contradicted, and unresolved assumptions. A proposed test is not evidence that it ran or passed.
+
+For example, a support export changes access to customer data while the existing threat model assumes that support can see only metadata. The shared authorization questions identify who may export which customer's data. The Advisor explains the applicable requirements and records the intended access restriction. The Analyst investigates cross-customer export abuse and the changed trust assumption. The subsequent review inspects the implemented authorization and available negative-test evidence rather than repeating the design advice.
+
+These review items remain separate from the canonical threat model and do not allocate its public finding identities. Their writes and reuse require deterministic schema validation, authorized scope, and source provenance. Stored model assertions never become policy or proof of a control. Changed intent, evidence, requirements, or context must trigger reassessment of affected items. Users must be able to discard stale or poisoned items; retention and cleanup apply to these artifacts as well as analysis results.
 
 ## Existing integration points
 
@@ -133,6 +161,7 @@ False positives and repeated advice are also adoption risks. Coordinate requirem
 - Which hook events can support prompt guidance and deferred analysis without delaying every edit or causing recursive activation.
 - How project context contributes to activation beyond keywords, including multilingual prompts and indirect changes to protected business logic.
 - How to select relevant model and requirement context and detect stale or missing inputs.
+- Who maintains the shared analysis catalog, reviews upstream aiscb changes, and verifies mappings to active requirements.
 - How to coordinate overlapping role results and suppress repeated feedback across a change set.
 - How users configure activation, explicitly request analysis, and cancel ongoing work.
 - Which results warrant a full threat-model reassessment and how to present that recommendation.
@@ -146,6 +175,8 @@ A possible first experiment would start with explicit invocation for either a ve
 Evaluate additional useful findings beyond the existing reviewer, false activations, missed context-dependent changes, repeated notifications, latency, and cost. Include neutral examples, equivalent variants, benign changes, missing or stale model context, and untrusted content that attempts to redirect the analyst. Use the results to refine the role split and activation approach before expanding automation.
 
 Include design-only requests, unavailable required catalogs, pre-existing weaknesses, removed controls, context changes with unchanged code, and previously suppressed findings whose evidence changes. Verify that sensitive or excluded files do not enter model inputs and that cancelled jobs clean up their temporary copies. Evaluate design-only cases separately because the existing reviewer requires a diff.
+
+Exercise the shared questions with no aiscb installation, an explicitly integrated policy, and organization catalogs with different identifiers. Verify that guidance works without aiscb, required policy failures remain visible, and adapted questions never acquire policy authority. Carry a design assumption into both a compliant implementation and a variant that contradicts it. Test invalidation and removal of stale or poisoned review items, rejection of writes outside the authorized scope, and discovery of a relevant threat beyond the catalog's listed questions.
 
 Before the experiment, record expected findings and expected non-findings for the evaluation cases, acceptable false-activation and missed-case rates, and latency and cost limits. Compare the companion with the existing reviewer using the same source and project context and comparable resource budgets. Keep any comparison with the reviewer's default inputs separate so that additional context is not mistaken for a benefit of the role split. Define success thresholds before collecting results and use them to decide whether to proceed to hook integration or revise the explicit workflow.
 
