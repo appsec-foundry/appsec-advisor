@@ -53,6 +53,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from shared._boundary_criticality import facts_of as _boundary_facts  # noqa: E402
+from shared._threat_model_fields import evidence_description  # noqa: E402
 
 TD_VERSION = "2.4.0"
 DIAGRAM_TYPE = "STRIDE"
@@ -468,9 +469,9 @@ def _threat_description(threat: dict, boundary_facts: dict[str, dict], trace: di
     if summary:
         evidence_lines.append(summary)
     for entry in _evidence_entries(threat):
-        line = entry.get("line")
-        file_ref = _text(entry.get("file"))
-        evidence_lines.append(f"- {file_ref}:{line}" if isinstance(line, int) and line > 0 else f"- {file_ref}")
+        description = evidence_description(entry)
+        if description:
+            evidence_lines.append(f"- {description}")
     if evidence_lines:
         blocks.append("Evidence:\n" + "\n".join(evidence_lines))
 

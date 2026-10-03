@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The Config/IaC scan no longer reports files git ignores, including the user's global ignores, and judges agent settings only in files the repository tracks.
 - GitHub Actions permission checks accept job-level permission blocks and explicit blocks without `contents`, point at the job that lacks permissions, and report a missing block once instead of twice.
+- SBOM generation, image signing and Dependabot ecosystem coverage are judged once for the whole repository and only where they apply, so one workflow without an SBOM step no longer yields a finding when another generates one.
+- Findings about something missing name the files that were searched and are verified by re-running their check, instead of citing line 1 or line 0 of a file.
 - Components labelled `internal-network` that own HTTP handlers in the route inventory are now selected for STRIDE analysis as `internet-exposed (route-inventory)` instead of being excluded.
 
 ### Changed

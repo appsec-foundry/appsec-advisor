@@ -133,6 +133,7 @@ from shared._manifest_readers import (
 from shared._manifest_readers import (
     read_readme_tags as _read_readme_tags,
 )
+from shared._threat_model_fields import evidence_locator
 
 import renderers._business_relevance as _business_relevance
 import renderers._severity_rollup as _severity_rollup
@@ -1712,13 +1713,7 @@ def _evidence_locator(t: dict) -> str:
     ev = t.get("evidence") or {}
     if isinstance(ev, list):
         ev = ev[0] if ev and isinstance(ev[0], dict) else {}
-    if not isinstance(ev, dict):
-        return ""
-    f = (ev.get("file") or "").strip()
-    if not f:
-        return ""
-    ln = ev.get("line")
-    return f"{f}:{ln}" if ln is not None else f
+    return evidence_locator(ev)
 
 
 def _mitigation_locator(m: dict, threats_by_id: dict[str, dict]) -> str:

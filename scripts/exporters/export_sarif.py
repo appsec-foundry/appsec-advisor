@@ -42,6 +42,7 @@ from shared._boundary_criticality import facts_of as _boundary_facts  # noqa: E4
 from shared._shared_sources import ARCH_COVERAGE_SOURCES  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
+SARIF_ABSENCE_LOCATIONS = 10
 
 
 def _default_tool_version() -> str:
@@ -239,17 +240,19 @@ def _build_result(threat: dict, mitigations_by_id: dict[str, dict], boundary_fac
     locations: list[dict] = []
     for ev in _evidence_entries(threat):
         line = ev.get("line")
-        physical: dict[str, Any] = {
-            "artifactLocation": {
-                "uri": ev["file"],
-                "uriBaseId": "%SRCROOT%",
-            }
-        }
-        if isinstance(line, int) and line > 0:
-            physical["region"] = {"startLine": line}
-        else:
-            physical["region"] = {"startLine": 1}
-        locations.append({"physicalLocation": physical})
+        # An absence names a check's display path (often a glob); the files it
+        # searched are the real artifacts. Code-scanning consumers require a
+        # region, so file-level results keep the conventional startLine 1.
+        uris = [ev["file"]]
+        if ev.get("kind") == "absence" and ev.get("searched_files"):
+            uris = list(ev["searched_files"])[:SARIF_ABSENCE_LOCATIONS]
+        for uri in uris:
+            physical: dict[str, Any] = {"artifactLocation": {"uri": uri, "uriBaseId": "%SRCROOT%"}}
+            if isinstance(line, int) and line > 0:
+                physical["region"] = {"startLine": line}
+            else:
+                physical["region"] = {"startLine": 1}
+            locations.append({"physicalLocation": physical})
     if locations:
         result["locations"] = locations
 

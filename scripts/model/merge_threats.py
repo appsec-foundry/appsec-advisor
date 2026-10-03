@@ -703,6 +703,13 @@ def _config_finding_to_threat(f: dict) -> dict:
     cwe = cwes[0] if cwes else ""
     severity = f.get("severity") or "Medium"
     stride = f.get("stride") or f.get("stride_category") or "Information Disclosure"
+    evidence: dict[str, Any] = {"file": f.get("file") or "", "line": f.get("line")}
+    if f.get("evidence_kind") == "absence":
+        # Absence evidence names what was searched instead of a line; the
+        # evidence floor re-runs the check rather than reading a line window.
+        evidence["kind"] = "absence"
+        evidence["searched_files"] = list(f.get("searched_files") or [])
+        evidence["searched_file_count"] = f.get("searched_file_count", len(evidence["searched_files"]))
     threat = {
         "title": f.get("title") or "",
         "scenario": f.get("scenario") or "",
@@ -711,10 +718,7 @@ def _config_finding_to_threat(f: dict) -> dict:
         "likelihood": severity,
         "impact": severity,
         "cwe": cwe,
-        "evidence": {
-            "file": f.get("file") or "",
-            "line": f.get("line"),
-        },
+        "evidence": evidence,
         "source": "config-scan",
         "architectural_violation": False,
         "component_id": "ci-cd-pipeline",

@@ -110,8 +110,11 @@ def test_validate_yaml_marks_evidence_outcomes_and_merges_flags(tmp_path: Path) 
     threats = {t["id"]: t for t in updated["threats"] if isinstance(t, dict)}
 
     assert threats["valid"]["evidence_check"] == "verified"
-    assert threats["file-only"]["evidence_check"] == "verified"
-    assert threats["bad-line-token"]["evidence_check"] == "verified"
+    # A file without a usable line proves nothing about the defect.
+    assert threats["file-only"]["evidence_check"] == "ambiguous"
+    assert threats["file-only"]["evidence_flags"] == ["no_line_cited"]
+    assert threats["bad-line-token"]["evidence_check"] == "ambiguous"
+    assert threats["bad-line-token"]["evidence_flags"] == ["no_line_cited"]
     assert threats["missing-file"]["evidence_check"] == "refuted"
     assert threats["missing-file"]["evidence_flags"] == ["file_missing"]
     assert threats["comment"]["evidence_check"] == "ambiguous"
@@ -126,7 +129,7 @@ def test_validate_yaml_marks_evidence_outcomes_and_merges_flags(tmp_path: Path) 
     assert threats["mixed-import"]["evidence_flags"] == ["some_import_lines"]
     assert threats["no-evidence"]["evidence_check"] == "ambiguous"
     assert threats["no-evidence"]["evidence_flags"] == ["no_evidence"]
-    assert stats == {"sampled": 11, "verified": 6, "refuted": 1, "ambiguous": 4, "skipped": 0}
+    assert stats == {"sampled": 11, "verified": 4, "refuted": 1, "ambiguous": 6, "skipped": 0}
 
 
 def test_validate_yaml_respects_prior_verdicts_and_non_list_threats(tmp_path: Path) -> None:
@@ -375,3 +378,65 @@ def test_code_source_on_same_line_still_verifies(tmp_path: Path) -> None:
     data = {"threats": [t]}
     vel.validate_yaml(data, repo)
     assert data["threats"][0]["evidence_check"] == "verified"
+
+
+SIGNED = "      - run: cosign sign img\n"
+PUSHING_WORKFLOW = """\
+jobs:
+  image:
+    steps:
+      - uses: docker/build-push-action@v6
+        with:
+          push: true
+"""
+
+
+def _absence_threat(check_id: str, file: str, searched: list[str]) -> dict:
+    finding = _threat(
+        "T-050",
+        {"file": file, "line": 0, "kind": "absence", "searched_files": searched, "searched_file_count": len(searched)},
+    )
+    finding.update(source="config-scan", config_check_id=check_id)
+    return finding
+
+
+def test_a_repository_absence_is_verified_by_rerunning_its_check_not_by_a_line(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    workflow = repo / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text(PUSHING_WORKFLOW, encoding="utf-8")
+    finding = _absence_threat("IAC-040", ".github/workflows/*.yml", [".github/workflows/release.yml"])
+
+    updated, _ = vel.validate_yaml({"threats": [dict(finding)]}, repo)
+    assert updated["threats"][0]["evidence_check"] == "verified"
+    assert updated["threats"][0]["evidence_flags"] == ["absence_confirmed"]
+
+    workflow.write_text(PUSHING_WORKFLOW + SIGNED, encoding="utf-8")
+    updated, _ = vel.validate_yaml({"threats": [dict(finding)]}, repo)
+    assert updated["threats"][0]["evidence_check"] == "refuted"
+    assert updated["threats"][0]["evidence_flags"] == ["absence_contradicted"]
+
+
+def test_an_absent_file_absence_is_refuted_once_the_file_exists(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    finding = _absence_threat("IAC-050", "package-lock.json", [])
+
+    updated, _ = vel.validate_yaml({"threats": [dict(finding)]}, repo)
+    assert updated["threats"][0]["evidence_check"] == "verified"
+
+    (repo / "package-lock.json").write_text("{}", encoding="utf-8")
+    updated, _ = vel.validate_yaml({"threats": [dict(finding)]}, repo)
+    assert updated["threats"][0]["evidence_check"] == "refuted"
+
+
+def test_absence_evidence_on_a_non_config_finding_is_not_trusted(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app.py").write_text("x = 1\n", encoding="utf-8")
+    finding = _threat("T-051", {"file": "app.py", "line": 0, "kind": "absence", "searched_files": ["app.py"]})
+    finding["source"] = "stride"
+
+    updated, _ = vel.validate_yaml({"threats": [finding]}, repo)
+    assert updated["threats"][0]["evidence_check"] == "ambiguous"
+    assert updated["threats"][0]["evidence_flags"] == ["no_line_cited"]

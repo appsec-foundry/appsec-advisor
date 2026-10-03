@@ -12,7 +12,13 @@ floor:
     REPO_ROOT. Misses are marked `refuted` with flag `file_missing`.
   - Line legitimacy — `evidence.line` must point to a non-empty, non-
     comment-only line. Comment-only or whitespace-only cites are marked
-    `ambiguous` with flag `comment_only_line`.
+    `ambiguous` with flag `comment_only_line`; a file cited without a line
+    proves nothing and is `ambiguous` with flag `no_line_cited`.
+  - Absence — a config finding whose evidence has `kind: absence` (something
+    is missing, so there is no line) is judged by re-running its catalog check
+    (`analyzers.config_iac_scanner.absence_still_holds`): `verified` with
+    `absence_confirmed` while it is still missing, `refuted` with
+    `absence_contradicted` once it is present.
   - All other findings whose existing check is `unchecked` are upgraded
     to `verified` (deterministic — the evidence pointer resolves cleanly).
 
@@ -94,6 +100,30 @@ def _is_expected_absence_finding(threat: dict) -> bool:
     return (threat.get("source") or "").strip() == "config-scan" and (
         threat.get("config_check_id") or ""
     ).strip() in _file_exists_config_check_ids()
+
+
+def _absence_verdict(threat: dict, repo_root: Path) -> tuple[str, list[str]] | None:
+    """Verdict for a config finding whose evidence is that something is missing.
+
+    A line window cannot show an absence, so the check that produced the
+    finding is re-run on the repository: still missing -> verified, now present
+    -> refuted. None when the finding carries no absence evidence or the check
+    cannot be re-run; the caller then falls back to the pointer checks."""
+    if (threat.get("source") or "").strip() != "config-scan":
+        return None
+    evidence = next((ev for ev in _evidence_entries(threat) if ev.get("kind") == "absence"), None)
+    check_id = (threat.get("config_check_id") or "").strip()
+    if evidence is None or not check_id:
+        return None
+    from analyzers.config_iac_scanner import ConfigScanError, absence_still_holds  # noqa: PLC0415
+
+    try:
+        holds = absence_still_holds(repo_root, check_id, list(evidence.get("searched_files") or []))
+    except (ConfigScanError, OSError):
+        return None
+    if holds is None:
+        return None
+    return ("verified", ["absence_confirmed"]) if holds else ("refuted", ["absence_contradicted"])
 
 
 # RC.D — patterns that match a line containing only an import / package
@@ -213,6 +243,9 @@ def _validate_one(threat: dict, repo_root: Path) -> tuple[str, list[str]]:
     entries = _evidence_entries(threat)
     if not entries:
         return "ambiguous", ["no_evidence"]
+    absence = _absence_verdict(threat, repo_root)
+    if absence is not None:
+        return absence
 
     file_misses = 0
     comment_only = 0
@@ -231,9 +264,10 @@ def _validate_one(threat: dict, repo_root: Path) -> tuple[str, list[str]]:
             file_misses += 1
             continue
         if line_no is None or line_no < 1:
-            # File exists but no line — accept as code_hit; the file
-            # presence is itself evidence.
-            code_hits += 1
+            # A file without a cited line proves nothing about the finding:
+            # presence of a file is not presence of the defect. Absence
+            # findings were judged above by re-running their check.
+            flags.append("no_line_cited")
             continue
         content = _read_line(path, line_no)
         if content is None:

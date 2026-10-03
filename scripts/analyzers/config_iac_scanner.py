@@ -20,6 +20,15 @@ tracked files when the inventory comes from git; a developer's untracked local
 settings are not the project's posture. ``inventory_source`` in the output
 records whether the inventory came from git or a filesystem walk.
 
+Evidence: a finding cites the line that is wrong. When the defect is that
+something is missing, it cites the line the statement belongs to (a check's
+``anchor``) or, failing that, the absence itself: ``evidence_kind: absence``,
+``line: 0`` and the ``searched_files``. Checks of a repository-wide capability
+(``expect: repository`` — SBOM generation, image signing, dependency-update
+coverage) are evaluated once against ``analyzers.supply_chain_facts`` rather
+than per file; those facts are written as ``supply_chain_facts``.
+``absence_still_holds`` re-runs an absence finding for the evidence floor.
+
 Exit codes: 0 written; 2 bad arguments, catalog, scan, or write failure.
 """
 
@@ -44,6 +53,7 @@ import yaml
 from runtime.agent_config_checks import EVALUATORS as AGENT_EVALUATORS
 from shared._atomic_io import atomic_write_json
 
+from analyzers import supply_chain_facts
 from analyzers.iac_resource_checks import EVALUATORS as RESOURCE_EVALUATORS
 from analyzers.scan_excludes import INVENTORY_GIT, RepoInventory, repo_inventory
 
@@ -131,6 +141,22 @@ def _catalog(path: Path) -> list[dict[str, Any]]:
                 raise ConfigScanError(f"{check_id} has an invalid pattern: {exc}") from exc
         if check["expect"] == "structured" and check.get("evaluator") not in EVALUATORS:
             raise ConfigScanError(f"{check_id} names an unknown evaluator {check.get('evaluator')!r}")
+        if check["expect"] == "repository":
+            if check.get("capability") not in supply_chain_facts.CAPABILITIES:
+                raise ConfigScanError(f"{check_id} names an unknown capability {check.get('capability')!r}")
+            precondition = check.get("precondition")
+            if precondition is not None and precondition not in supply_chain_facts.PRECONDITIONS:
+                raise ConfigScanError(f"{check_id} names an unknown precondition {precondition!r}")
+            if check["capability"] == "dependency_updates" and not isinstance(check.get("ecosystem"), str):
+                raise ConfigScanError(f"{check_id} must name the ecosystem it requires")
+        anchor = check.get("anchor")
+        if anchor is not None:
+            try:
+                re.compile(anchor, re.MULTILINE)
+            except (re.error, TypeError) as exc:
+                raise ConfigScanError(f"{check_id} has an invalid anchor: {exc}") from exc
+            if check.get("anchor_occurrence", "first") not in {"first", "last"}:
+                raise ConfigScanError(f"{check_id} has an invalid anchor_occurrence")
         if check.get("breach_vector", DEFAULT_BREACH_VECTOR) not in breach_vectors:
             raise ConfigScanError(f"{check_id} names an unknown breach_vector {check.get('breach_vector')!r}")
         if check["expect"] in {"any_of", "any_of_present"}:
@@ -240,11 +266,6 @@ def _line_for_offset(text: str, offset: int) -> tuple[int, str]:
     return line, snippet[:500]
 
 
-def _first_line(text: str) -> str:
-    lines = text.splitlines()
-    return (lines[0].strip() if lines else "")[:500]
-
-
 def _third_party_action_violation(text: str) -> tuple[int, str] | None:
     for match in re.finditer(r"(?m)^\s*(?:-\s*)?uses\s*:\s*([^\s#]+)", text):
         reference = match.group(1).strip("\"'")
@@ -267,6 +288,22 @@ def _undocumented_match(pattern: re.Pattern[str], text: str) -> tuple[int, str] 
     return None
 
 
+def _missing_in_file(check: dict[str, Any], text: str) -> tuple[int, str]:
+    """Location of a required statement that a file lacks.
+
+    The check's ``anchor`` names the line the statement belongs to (the final
+    ``FROM`` of a Dockerfile, a Dependabot ``updates:`` key). Without an anchor,
+    or when the file has no such line, the evidence is the absence itself:
+    line 0, the whole file searched — never a pseudo line 1."""
+    anchor = check.get("anchor")
+    if anchor:
+        matches = list(re.finditer(anchor, text, re.MULTILINE))
+        if matches:
+            match = matches[-1] if check.get("anchor_occurrence") == "last" else matches[0]
+            return _line_for_offset(text, match.start())
+    return 0, f"{check['name']}: not found in file"
+
+
 def _violation(check: dict[str, Any], path: Path, text: str) -> tuple[int, str] | None:
     expect = check["expect"]
     pattern_text = check.get("pattern")
@@ -275,7 +312,7 @@ def _violation(check: dict[str, Any], path: Path, text: str) -> tuple[int, str] 
     )
     match = pattern.search(text) if pattern is not None else None
     if expect == "present":
-        return None if match else (1, _first_line(text))
+        return None if match else _missing_in_file(check, text)
     if expect == "absent":
         return _line_for_offset(text, match.start()) if match else None
     if expect == "all_third_party_actions":
@@ -284,14 +321,14 @@ def _violation(check: dict[str, Any], path: Path, text: str) -> tuple[int, str] 
         patterns = check.get("pattern_any_of")
         if any(re.search(value, text, re.MULTILINE | re.DOTALL) for value in patterns):
             return None
-        return 1, _first_line(text)
+        return _missing_in_file(check, text)
     if expect == "absent_or_documented":
         if pattern is None:
             raise ConfigScanError(f"{check['id']} requires a pattern")
         return _undocumented_match(pattern, text)
     if expect == "structured":
         return EVALUATORS[check["evaluator"]](text, path)
-    if expect == "file_exists":
+    if expect in {"file_exists", "repository"}:
         return None
     raise ConfigScanError(f"{check['id']} has unsupported expectation {expect!r}")
 
@@ -316,12 +353,18 @@ def scan(repo_root: Path, checks_path: Path, *, depth: str, output: Path) -> dic
         raise ConfigScanError(f"repository root is not a directory: {repo_root}")
     checks = _catalog(checks_path)
     inventory = repo_inventory(repo_root)
+    facts = supply_chain_facts.collect(repo_root, inventory)
     selected = _selected_files(repo_root, checks, inventory, depth=depth)
     pending: list[dict[str, Any]] = []
     for check in checks:
+        if check["expect"] == "repository":
+            gap = supply_chain_facts.capability_gap(facts, check)
+            if gap is not None:
+                pending.append({"check": check, "path": None, "line": 0, **gap})
+            continue
         paths = selected[check["id"]]
         if check["expect"] == "file_exists" and not paths:
-            pending.append({"check": check, "path": None, "line": 0, "snippet": "File not found"})
+            pending.append({"check": check, "path": None, "line": 0, "snippet": "File not found", "searched_files": []})
             continue
         for path in paths:
             try:
@@ -331,25 +374,31 @@ def scan(repo_root: Path, checks_path: Path, *, depth: str, output: Path) -> dic
             violation = _violation(check, path, text)
             if violation is not None:
                 line, snippet = violation
-                pending.append({"check": check, "path": path, "line": line, "snippet": snippet})
+                row = {"check": check, "path": path, "line": line, "snippet": snippet}
+                if line == 0:
+                    row["searched_files"] = [path.relative_to(repo_root).as_posix()]
+                pending.append(row)
 
     findings: list[dict[str, Any]] = []
     for index, row in enumerate(pending, start=1):
         check = row["check"]
         relative = check["file_pattern"] if row["path"] is None else row["path"].relative_to(repo_root).as_posix()
         canonical = canonical_finding_fields(check)
-        findings.append(
-            {
-                "local_id": f"CFG-{index:03d}",
-                "check_id": check["id"],
-                **canonical,
-                "file": relative,
-                "line": row["line"],
-                "evidence_snippet": row["snippet"],
-                "scenario": f"{canonical['title']}: {check.get('rationale', '').strip()}",
-                "breach_vector": check.get("breach_vector", DEFAULT_BREACH_VECTOR),
-            }
-        )
+        finding = {
+            "local_id": f"CFG-{index:03d}",
+            "check_id": check["id"],
+            **canonical,
+            "file": relative,
+            "line": row["line"],
+            "evidence_snippet": row["snippet"],
+            "scenario": f"{canonical['title']}: {check.get('rationale', '').strip()}",
+            "breach_vector": check.get("breach_vector", DEFAULT_BREACH_VECTOR),
+        }
+        if "searched_files" in row:
+            finding["evidence_kind"] = "absence"
+            finding["searched_files"] = row["searched_files"]
+            finding["searched_file_count"] = row.get("searched_file_count", len(row["searched_files"]))
+        findings.append(finding)
     result: dict[str, Any] = {
         "version": 1,
         "generated_at": _generated_at(output),
@@ -357,11 +406,45 @@ def scan(repo_root: Path, checks_path: Path, *, depth: str, output: Path) -> dic
         "violations": len(findings),
         "inventory_source": inventory.source,
         "findings": findings,
+        "supply_chain_facts": facts,
     }
     uncovered = _uncovered_surfaces(repo_root, checks_path, checks, inventory)
     if uncovered:
         result["uncovered_iac"] = uncovered
     return result
+
+
+def absence_still_holds(
+    repo_root: Path, check_id: str, searched_files: list[str], *, checks_path: Path = DEFAULT_CHECKS
+) -> bool | None:
+    """Re-run an absence finding's check on the repository as it is now.
+
+    True when the check still finds the statement or capability missing, False
+    when the repository now satisfies it, None when the check is unknown or is
+    not an absence check. The evidence floor uses this instead of a line window,
+    which cannot show that something is missing."""
+    checks = {check["id"]: check for check in _catalog(checks_path)}
+    check = checks.get(check_id)
+    if check is None:
+        return None
+    repo_root = repo_root.resolve()
+    expect = check["expect"]
+    if expect == "repository":
+        facts = supply_chain_facts.collect(repo_root, repo_inventory(repo_root))
+        return supply_chain_facts.capability_gap(facts, check) is not None
+    if expect == "file_exists":
+        return not _matches_for_check(repo_root, check, repo_inventory(repo_root))
+    if expect not in {"present", "any_of", "any_of_present"} or not searched_files:
+        return None
+    for rel in searched_files:
+        path = repo_root / rel
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+        if _violation(check, path, text) is None:
+            return False
+    return True
 
 
 def main(argv: list[str] | None = None) -> int:
