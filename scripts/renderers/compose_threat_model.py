@@ -6344,6 +6344,64 @@ def _render_figure1b(ctx: RenderContext) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _inject_supply_chain_paragraph(ctx: RenderContext, md: str) -> str:
+    """Open the §6 control section of the build-time classes with the build path behind Figure 1b.
+
+    The paragraph points back to Figure 1b and states, from `.supply-chain-view.json`, the
+    highlighted path, the attack entries and the findings without a CI owner, so a reader of
+    §6 sees where the build is attacked without the figure. Without Figure 1b it is absent.
+    """
+    split = _supply_chain_split(ctx)
+    if split is None:
+        return md
+    from model.build_supply_chain_view import BUILD_TIME
+
+    from renderers.figure1b_svg import ENTRY_TITLES, _where
+
+    sections = {
+        str(c["control_section"]).strip()
+        for c in _load_attack_class_taxonomy().get("classes", [])
+        if isinstance(c, dict) and c.get("default_actor") == BUILD_TIME and c.get("control_section")
+    }
+    heading = next(
+        (
+            m
+            for name in sorted(sections)
+            if (m := re.search(r"^###\s+[\d.]+\s+" + re.escape(name) + r"[ \t]*$", md, re.MULTILINE))
+        ),
+        None,
+    )
+    # Idempotent like the other §6 passes: the QA re-render loop can compose the same content twice.
+    if heading is None or "**Build path.**" in md:
+        return md
+    view = split["view"]
+    labels = {e["id"]: e["label"] for e in view["elements"]}
+
+    def refs(ids) -> str:
+        return ", ".join(ctx.linkify_with_label(i, compact=True) for i in dict.fromkeys(ids))
+
+    project = (ctx.yaml_data.get("meta") or {}).get("project_name")
+    text = [
+        f"[Figure 1b](#{_FIGURE1B_ANCHOR}) shows the inputs, build systems and release artifacts "
+        f"that {project or 'the repository'} evidences."
+    ]
+    path = view.get("highlighted_path") or {}
+    if steps := path.get("steps"):
+        hops = [labels.get(steps[0]["from"], steps[0]["from"])]
+        hops += [f"{labels.get(s['to'], s['to'])} ({_where(s.get('via'))})" for s in steps]
+        text.append(
+            f"The highlighted path follows {refs([path['finding']])} from {' → '.join(hops)} "
+            "and stops where the evidence ends."
+        )
+    if view["entries"]:
+        entries = "; ".join(f"{ENTRY_TITLES[e['entry']]} {refs(e['findings'])}" for e in view["entries"])
+        text.append(f"Attack entries: {entries}.")
+    if unowned := [f["id"] for f in view["findings"] if f["element"] == "unowned"]:
+        text.append(f"Findings without an evidenced CI owner: {refs(unowned)}.")
+    paragraph = "**Build path.** " + " ".join(text)
+    return md[: heading.end()] + "\n\n" + paragraph + md[heading.end() :]
+
+
 _DETAIL_FIGURE_NUMBERS = range(3, 7)  # the §2 deployment figure follows Figures 1 and 2; 4–6 are only cleaned up
 _DEPLOYMENT_INVENTORY = ".deployment-inventory.json"
 
@@ -10890,6 +10948,7 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
         # not individual findings. Runs before the severity-dot pass below so the
         # swapped W-links are not re-dotted as findings.
         md = _rewrite_sec7_table_findings_to_weaknesses(ctx, md)
+        md = _inject_supply_chain_paragraph(ctx, md)
     elif section_id == "attack_walkthroughs":
         md = _inject_attack_walkthroughs_intros(ctx, md)
 

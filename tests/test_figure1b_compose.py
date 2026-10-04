@@ -277,3 +277,56 @@ def test_every_attack_class_control_section_names_a_section_6_heading():
         c["control_section"] for c in compose._load_attack_class_taxonomy()["classes"] if c.get("control_section")
     ]
     assert sections and set(sections) <= headings
+
+
+SECTION_6 = (
+    "### {n} File Parser and Outbound Request Controls\n\nparsers\n\n"
+    "### {m} Operations Runtime and Supply Chain Controls\n\ncontrols\n"
+)
+
+
+def test_section_6_opens_the_supply_chain_controls_with_the_build_path(evidence):
+    ctx = _ctx(evidence)
+    md = compose._inject_supply_chain_paragraph(ctx, SECTION_6.format(n="6.10", m="6.11"))
+    head, _, body = md.partition("### 6.11 Operations Runtime and Supply Chain Controls\n\n")
+    assert "Build path" not in head  # only the build control section carries it
+    paragraph = body.split("\n\n")[0]
+    assert paragraph.startswith("**Build path.** [Figure 1b](#figure-1b) shows the inputs")
+    assert "that Orders evidences" in paragraph
+    assert (
+        "follows [F-002](#f-002) from npm registry → GitHub Actions (`.github/workflows/release.yml:9`) → "
+        "ghcr.io/acme/orders (`.github/workflows/release.yml:14`)"
+    ) in paragraph
+    assert "Attack entries: Manipulated dependency [F-002](#f-002)." in paragraph
+    assert "without an evidenced CI owner" not in paragraph
+    assert body.split("\n\n")[1].strip() == "controls"
+    assert compose._inject_supply_chain_paragraph(ctx, md) == md  # a re-render adds no second paragraph
+
+
+def test_the_build_path_follows_the_heading_and_lists_findings_without_a_ci_owner(evidence):
+    ctx = _ctx(evidence)
+    ctx.yaml_data["meta"] = {"project_name": "Ledger"}
+    ctx.yaml_data["threats"].append(
+        {
+            "id": "T-007",
+            "title": "Deploy script logs the registry token",
+            "component": "release-automation",
+            "risk": "Medium",
+            "effective_severity": "Medium",
+            "cwe": "CWE-532",
+            "evidence": [{"file": "scripts/publish.sh", "line": 3}],
+        }
+    )
+    md = compose._inject_supply_chain_paragraph(ctx, SECTION_6.format(n="7.2", m="7.3"))
+    paragraph = md.split("### 7.3 Operations Runtime and Supply Chain Controls\n\n")[1].split("\n\n")[0]
+    assert "that Ledger evidences" in paragraph
+    assert paragraph.endswith("Findings without an evidenced CI owner: [F-007](#f-007).")
+
+
+def test_without_figure_1b_or_the_control_heading_section_6_is_unchanged(tmp_path, evidence):
+    md = SECTION_6.format(n="6.10", m="6.11")
+    ctx = _ctx(tmp_path / "no-build", build_threat=False)
+    ctx.yaml_data["components"] = ctx.yaml_data["components"][:3]
+    assert compose._inject_supply_chain_paragraph(ctx, md) == md
+    without_heading = "### 6.10 File Parser and Outbound Request Controls\n\nparsers\n"
+    assert compose._inject_supply_chain_paragraph(_ctx(evidence), without_heading) == without_heading
