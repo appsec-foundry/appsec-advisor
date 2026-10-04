@@ -225,7 +225,11 @@
           "type": "integer",
           "minimum": 0
         },
-        "unresolved_or_unreviewed": {
+        "unreviewed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unresolved": {
           "type": "integer",
           "minimum": 0
         },
@@ -264,7 +268,8 @@
         "findings_recorded",
         "assessment_corrected",
         "remediation_corrected",
-        "unresolved_or_unreviewed"
+        "unreviewed",
+        "unresolved"
       ],
       "additionalProperties": false
     }

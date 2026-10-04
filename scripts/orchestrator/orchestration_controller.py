@@ -5935,7 +5935,7 @@ def _context_v2_architect_review(output_dir: Path, cfg: dict[str, Any]) -> dict[
             output_dir,
             "ARCHITECT_REVIEW_COMPLETE",
             f"findings={coverage['findings_recorded']} reviewed={coverage['reviewed']} "
-            f"incomplete={coverage['unresolved_or_unreviewed']} jobs={coverage['jobs_returned']}/"
+            f"unreviewed={coverage['unreviewed']} unresolved={coverage['unresolved']} jobs={coverage['jobs_returned']}/"
             f"{coverage['jobs_dispatched']}",
         )
         if coverage["outcome"] == "unavailable":

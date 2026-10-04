@@ -7,6 +7,13 @@ than a concrete code fix:
 
   M-15: evidence_check == "ambiguous" → kind=review, "Manual review:
         verify <weakness> at <file:line>" (P3).
+  M-16: the architect reviewer left a finding's assessment or remediation
+        unresolved → its reason joins that finding's M-15 card, or a new
+        review card. When the assessment is open and the evidence does not
+        confirm the finding (``_finding_state.review_before_fix``), the review
+        card takes the severity priority (Critical → P1) and every fix card
+        covering only such findings drops one band; the band it had is kept in
+        ``priority_before_review`` so a re-run does not drop it again.
   M-17: source ∈ {architectural-anti-pattern, coverage-gap}
         → kind=investigate, ONE card per architectural_theme cluster
         (volume control per verification report) (P2).
@@ -49,8 +56,12 @@ import yaml
 
 # Local shared modules — single source of truth for source-string enums.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from analyzers.architect_review_runtime import open_decisions  # noqa: E402
 from shared._critical_findings_sync import resync_critical_findings  # noqa: E402
+from shared._finding_state import review_before_fix  # noqa: E402
 from shared._shared_sources import ARCH_ALL_SOURCES  # noqa: E402
+
+from model.emit_finding_fix_mitigations import after_review_priority, severity_priority  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # CWE → injection-class allowlist for M-20 PoC hints.
@@ -207,6 +218,80 @@ def _synthesize_evidence_review(data: dict, state: dict, threats_by_id: dict) ->
             }
         )
         _link_threat_to_mitigation(threats_by_id, tid, mid)
+    return new_cards
+
+
+# ---------------------------------------------------------------------------
+# M-16: architect review left a decision open
+# ---------------------------------------------------------------------------
+
+
+def _is_fix(card: dict) -> bool:
+    return (card.get("kind") or "fix").strip().lower() == "fix"
+
+
+def _restore_review_demotions(data: dict) -> None:
+    """Undo a previous run's review demotion so it is applied exactly once."""
+    for card in data.get("mitigations") or []:
+        if isinstance(card, dict) and card.get("priority_before_review"):
+            card["priority"] = card.pop("priority_before_review")
+
+
+def _synthesize_architect_review(
+    data: dict, state: dict, threats_by_id: dict, decisions: dict[str, dict], cards: list[dict]
+) -> list[dict]:
+    """Carry each open architect decision to a manual-review card; schedule
+    the review before the fix when the finding is unconfirmed."""
+    new_cards: list[dict] = []
+    review_first = {tid for tid, decision in decisions.items() if review_before_fix(threats_by_id.get(tid), decision)}
+    demoted: dict[str, list[str]] = {tid: [] for tid in review_first}
+    for card in data.get("mitigations") or []:
+        if not isinstance(card, dict):
+            continue
+        ids = card.get("threat_ids") or []
+        if not (_is_fix(card) and ids and set(ids) <= review_first):
+            continue
+        card["priority_before_review"] = card.get("priority") or "P3"
+        card["priority"] = after_review_priority(card["priority_before_review"])
+        for tid in ids:
+            demoted[tid].append(card.get("id") or "")
+    for tid in sorted(decisions):
+        threat = threats_by_id.get(tid)
+        if threat is None:
+            continue
+        decision = decisions[tid]
+        parts = [part for part in ("assessment", "remediation") if decision[part] == "unresolved"]
+        what = " and ".join(parts)
+        note = f"The architect review left the {what} open" + (f": {decision['reason']}" if decision["reason"] else ".")
+        card = next(
+            (c for c in cards if c.get("kind") == "review" and c.get("threat_ids") == [tid]),
+            None,
+        )
+        if card is None:
+            f, ln = _evidence_file(threat)
+            target = f"{f}:{ln}" if (f and ln) else (f or "the cited location")
+            card = {
+                "id": _allocate_next_m_id(state),
+                "title": f"Manual review: confirm {_short_weakness(threat.get('title') or '')} at {target}",
+                "kind": "review",
+                "priority": "P3",
+                "threat_ids": [tid],
+                "how": "Have a developer familiar with this code path decide whether to keep, re-rate, or "
+                "remove this finding.",
+                "review_target": target,
+                "review_reason": f"architect review left the {what} open",
+                "auto_emitted": True,
+                "auto_source": "architect-unresolved",
+            }
+            new_cards.append(card)
+            _link_threat_to_mitigation(threats_by_id, tid, card["id"])
+        else:
+            card["review_reason"] = f"{card['review_reason']}; architect review left the {what} open"
+        card["how"] = f"{note} {card['how']}"
+        if tid in review_first:
+            card["priority"] = severity_priority(threat.get("risk") or "")
+            fixes = f" ({', '.join(sorted(demoted[tid]))})" if demoted[tid] else ""
+            card["how"] += f" Confirm the finding before implementing its fix{fixes}."
     return new_cards
 
 
@@ -392,6 +477,7 @@ def main(argv: list[str]) -> int:
 
     # Idempotent re-run: drop prior auto_emitted entries first.
     _clear_prior_auto_mitigations(data)
+    _restore_review_demotions(data)
 
     threats_by_id = {
         (t.get("id") or "").strip(): t for t in (data.get("threats") or []) if isinstance(t, dict) and t.get("id")
@@ -401,6 +487,9 @@ def main(argv: list[str]) -> int:
 
     new_cards: list[dict] = []
     new_cards.extend(_synthesize_evidence_review(data, state, threats_by_id))
+    new_cards.extend(
+        _synthesize_architect_review(data, state, threats_by_id, open_decisions(output_dir), list(new_cards))
+    )
     new_cards.extend(_synthesize_architectural_investigate(data, state, threats_by_id))
     poc_count = _synthesize_poc_hints(data, threats_by_id)
 

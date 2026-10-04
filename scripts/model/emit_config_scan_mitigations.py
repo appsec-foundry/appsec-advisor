@@ -57,7 +57,11 @@ from pathlib import Path
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from analyzers.architect_review_runtime import open_decisions  # noqa: E402
 from shared._critical_findings_sync import resync_critical_findings  # noqa: E402
+from shared._finding_state import review_before_fix  # noqa: E402
+
+from model.emit_finding_fix_mitigations import _threat_ids_with_real_mitigation, after_review_priority  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -309,7 +313,11 @@ def _resolve_remediation(threat: dict, iac_index: dict[str, dict]) -> tuple[str,
 # ---------------------------------------------------------------------------
 
 
-def _synthesize_fix_mitigations(data: dict, state: dict, iac_index: dict[str, dict]) -> list[dict]:
+def _synthesize_fix_mitigations(
+    data: dict, state: dict, iac_index: dict[str, dict], open_decisions: dict[str, dict] | None = None
+) -> list[dict]:
+    open_decisions = open_decisions or {}
+    covered = _threat_ids_with_real_mitigation(data)
     new_cards: list[dict] = []
     threats = data.get("threats") or []
     for t in threats:
@@ -317,22 +325,24 @@ def _synthesize_fix_mitigations(data: dict, state: dict, iac_index: dict[str, di
             continue
         if (t.get("source") or "") != "config-scan":
             continue
-        if t.get("mitigation_ids"):
-            # Already has a fix card from an upstream source — do nothing.
-            continue
         tid = (t.get("id") or "").strip()
-        if not tid:
+        if not tid or tid in covered:
+            # Already has a fix card from an upstream source; a lone review
+            # card is a confidence note, not coverage.
             continue
 
         title, how = _resolve_remediation(t, iac_index)
         sev = t.get("risk") or "Medium"
+        priority = _SEV_TO_PRI.get(sev, "P3")
+        if review_before_fix(t, open_decisions.get(tid)):
+            priority = after_review_priority(priority)
         mid = _allocate_next_m_id(state)
         new_cards.append(
             {
                 "id": mid,
                 "title": title,
                 "kind": "fix",
-                "priority": _SEV_TO_PRI.get(sev, "P3"),
+                "priority": priority,
                 "severity": sev,
                 "threat_ids": [tid],
                 "how": how,
@@ -385,7 +395,7 @@ def main() -> int:
     _clear_stale_threat_refs(data, stale_ids)
 
     state = {"counter": _scan_max_m_id(data)}
-    new_cards = _synthesize_fix_mitigations(data, state, iac_index)
+    new_cards = _synthesize_fix_mitigations(data, state, iac_index, open_decisions(out_dir))
     if not new_cards:
         if stale_ids:
             _write_yaml(yaml_path, data)

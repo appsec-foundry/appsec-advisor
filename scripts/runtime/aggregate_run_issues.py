@@ -2077,15 +2077,8 @@ def _extract_stage_coverage_collapse(output_dir: Path) -> list[dict]:
     cfg = _read_json_object(output_dir / ".skill-config.json")
     status = _read_json_object(output_dir / ".architect-status.json")
     recorded = status.get("findings_recorded")
-    unresolved = status.get("unresolved_or_unreviewed")
-    corrected = (status.get("assessment_corrected") or 0) + (status.get("remediation_corrected") or 0)
-    if (
-        cfg.get("architect_review")
-        and isinstance(recorded, int)
-        and recorded > 0
-        and unresolved == recorded
-        and not corrected
-    ):
+    unreviewed = status.get("unreviewed")
+    if cfg.get("architect_review") and isinstance(recorded, int) and recorded > 0 and unreviewed == recorded:
         jobs = _read_json_object(output_dir / ".architect-review.json").get("jobs") or []
         job_states = Counter(str(job.get("status")) for job in jobs if isinstance(job, dict))
         states = ", ".join(f"{state}={count}" for state, count in sorted(job_states.items())) or "no jobs"

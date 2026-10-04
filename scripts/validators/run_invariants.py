@@ -179,11 +179,11 @@ def architect_refuted(output_dir: Path) -> list[str]:
     without["application"]["outcomes"] = [
         r for r in outcomes if not (r.get("reason") == "refuted" and r.get("status") != "accepted")
     ]
-    counted = review_coverage(value)["unresolved_or_unreviewed"]
-    expected = review_coverage(without)["unresolved_or_unreviewed"]
+    counted = review_coverage(value)["unreviewed"]
+    expected = review_coverage(without)["unreviewed"]
     if counted == expected:
         return []
-    return [f"unresolved_or_unreviewed={counted} counts {counted - expected} refuted exclusion(s)"]
+    return [f"unreviewed={counted} counts {counted - expected} refuted exclusion(s)"]
 
 
 def run_all(output_dir: Path, tracked: set[str] | None) -> dict[str, list[str]]:

@@ -1662,6 +1662,11 @@ properties:
           # reviewer knows WHY this is a review and not a fix (e.g.
           # "evidence-verifier returned ambiguous").
           type: [string, "null"]
+        priority_before_review:
+          # Set only on a fix scheduled one band lower because its findings
+          # need a manual review first (decision FE-23); keeps the band it had
+          # so a re-run of model/emit_review_mitigations.py applies it once.
+          enum: [P1, P2, P3, P4]
         steps:
           type: array
           items: { type: string }

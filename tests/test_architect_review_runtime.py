@@ -230,6 +230,27 @@ def test_tampered_transaction_and_foreign_run_are_rejected(tmp_path, monkeypatch
         runtime.load_review(tmp_path)
 
 
+def test_open_decisions_carry_the_reviewer_reason_only_from_a_verified_transaction(tmp_path):
+    cfg, _, _ = setup_run(tmp_path, count=2)
+    reason = "The cited window shows a comparison, not the handler that assigns the field."
+
+    def mixed(packet):
+        rows = {
+            "T-001": {"t_id": "T-001", "assessment": "unresolved", "remediation": "unchanged", "reason": reason},
+            "T-002": {"t_id": "T-002", "assessment": "unchanged", "remediation": "unchanged"},
+        }
+        return {**answer(packet), "decisions": [rows[row["finding"]["t_id"]] for row in packet["findings"]]}
+
+    assert runtime.open_decisions(tmp_path) == {}
+    result = review(tmp_path, cfg, mixed)
+    assert runtime.open_decisions(tmp_path) == {
+        "T-001": {"assessment": "unresolved", "remediation": "unchanged", "reason": reason}
+    }
+    result["snapshot"]["threats"][0]["risk"] = "Low"
+    (tmp_path / runtime.ARTIFACT).write_text(json.dumps(result))
+    assert runtime.open_decisions(tmp_path) == {}
+
+
 def test_later_source_changes_are_not_hidden_by_projection(tmp_path, monkeypatch):
     cfg, _, _ = setup_run(tmp_path)
     result = review(tmp_path, cfg)
@@ -476,13 +497,14 @@ def test_completion_reports_assessment_and_mitigation_corrections_independently(
     assert runtime.main(["--output-dir", str(tmp_path)]) == 0
     summary = _summary_architect(tmp_path, cfg)
     assert "1 assessment(s), 1 mitigation(s) corrected" in summary
-    assert "0/1 unresolved or unreviewed" in summary
+    assert "unreviewed" not in summary and "left open" not in summary
     status = json.loads((tmp_path / ".architect-status.json").read_text())
-    status.update(outcome="incomplete", unresolved_or_unreviewed=1)
+    status.update(outcome="incomplete", findings_recorded=2, unreviewed=1)
     (tmp_path / ".architect-status.json").write_text(json.dumps(status))
     assert "incomplete" in _summary_architect(tmp_path, cfg)
+    assert "1/2 unreviewed" in _summary_architect(tmp_path, cfg)
     assert "no validated result" not in _summary_architect(tmp_path, cfg)
-    status["assessment_corrected"] = 2
+    status["assessment_corrected"] = 3
     (tmp_path / ".architect-status.json").write_text(json.dumps(status))
     assert _summary_architect(tmp_path, cfg) == "status unreadable"
 
@@ -540,7 +562,7 @@ def test_below_floor_exclusions_are_not_coverage_gaps():
     value = {"application": {"outcomes": rows}, "dispatch_jobs": [{"status": "returned"}]}
     coverage = runtime.review_coverage(value)
     runtime.validate_status({"status": "pass", "review_kind": "semantic", **coverage})
-    assert (coverage["outcome"], coverage["unresolved_or_unreviewed"]) == ("reviewed", 0)
+    assert (coverage["outcome"], coverage["unreviewed"]) == ("reviewed", 0)
     assert (coverage["excluded_below_floor"], coverage["excluded_refuted"], coverage["findings_recorded"]) == (1, 0, 1)
 
 
@@ -562,13 +584,52 @@ def test_refuted_exclusions_are_not_coverage_gaps(excluded, expected_outcome, ex
     coverage = runtime.review_coverage(value)
     runtime.validate_status({"status": "pass", "review_kind": "semantic", **coverage})
     assert coverage["outcome"] == expected_outcome
-    assert coverage["unresolved_or_unreviewed"] == expected_unresolved
+    assert coverage["unreviewed"] == expected_unresolved
     assert coverage["excluded_refuted"] == expected_refuted
     assert coverage["findings_recorded"] == len(rows) - expected_refuted
 
 
-def test_reviewer_unresolved_assessment_still_counts():
-    rows = [_coverage_row("T-1", "accepted", "validated", assessment="unresolved")]
-    coverage = runtime.review_coverage({"application": {"outcomes": rows}, "dispatch_jobs": []})
-    assert coverage["outcome"] == "incomplete"
-    assert coverage["unresolved_or_unreviewed"] == 1
+@pytest.mark.parametrize(
+    ("rows", "expected"),
+    [
+        ([("T-1", "accepted", "validated", "unresolved")], ("reviewed", 0, 1)),
+        ([("T-1", "accepted", "validated", "unresolved"), ("T-2", "accepted", "validated")], ("reviewed", 0, 1)),
+        ([("T-1", "accepted", "validated", "unresolved"), ("T-2", "unreviewed", "oversized")], ("incomplete", 1, 1)),
+        (
+            [("T-1", "accepted", "validated", "unresolved"), ("T-2", "accepted", "validated", "unresolved")],
+            ("reviewed", 0, 2),
+        ),
+    ],
+    ids=["one-open", "open-and-clean", "open-and-gap", "all-open"],
+)
+def test_a_decision_the_reviewer_left_open_is_counted_open_not_as_a_coverage_gap(rows, expected):
+    value = {"application": {"outcomes": [_coverage_row(*row) for row in rows]}, "dispatch_jobs": []}
+    coverage = runtime.review_coverage(value)
+    runtime.validate_status({"status": "pass", "review_kind": "semantic", **coverage})
+    assert (coverage["outcome"], coverage["unreviewed"], coverage["unresolved"]) == expected
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"outcome": "reviewed", "unreviewed": 1},
+        {"outcome": "incomplete", "unreviewed": 0},
+        {"unreviewed": 2, "unresolved": 2},
+    ],
+    ids=["reviewed-with-gap", "incomplete-without-gap", "counts-exceed-scope"],
+)
+def test_status_whose_outcome_contradicts_its_counts_is_rejected(patch):
+    status = {
+        "status": "pass",
+        "review_kind": "semantic",
+        "outcome": "reviewed",
+        "findings_recorded": 3,
+        "assessment_corrected": 0,
+        "remediation_corrected": 0,
+        "unreviewed": 0,
+        "unresolved": 0,
+        "reviewed": 3,
+    }
+    status.update(patch)
+    with pytest.raises(ReviewError):
+        runtime.validate_status(status)

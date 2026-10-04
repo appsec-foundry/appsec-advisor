@@ -56,10 +56,13 @@ def validate_status(value: dict) -> None:
     if not Draft202012Validator(schema["$defs"]["status"]).is_valid(value):
         raise ReviewError("invalid architect status contract")
     total = value["findings_recorded"]
-    if any(value[key] > total for key in ("assessment_corrected", "remediation_corrected", "unresolved_or_unreviewed")):
+    keys = ("assessment_corrected", "remediation_corrected", "unreviewed", "unresolved")
+    if any(value[key] > total for key in keys) or value["unreviewed"] + value["unresolved"] > total:
         raise ReviewError("architect coverage counts exceed reviewed scope")
-    if (value["outcome"] == "reviewed" and value["unresolved_or_unreviewed"]) or (
-        value["outcome"] == "not_run" and total
+    if (
+        (value["outcome"] == "reviewed" and value["unreviewed"])
+        or (value["outcome"] == "incomplete" and not value["unreviewed"])
+        or (value["outcome"] == "not_run" and total)
     ):
         raise ReviewError("architect outcome contradicts coverage")
     unavailable = value["outcome"] == "unavailable"
@@ -146,6 +149,37 @@ def load_review(output_dir: Path) -> dict | None:
     if snapshot != value["snapshot"] or application != value["application"]:
         raise ReviewError("architect review transaction was altered")
     return value
+
+
+def open_decisions(output_dir: Path) -> dict[str, dict]:
+    """Reviewed findings whose assessment or remediation the reviewer left
+    ``unresolved``, keyed by finding id, with the reviewer's reason.
+
+    The reason comes from the replay-verified proposals, so runs saved before
+    this reader existed are covered too. A missing, incomplete or altered
+    transaction yields no decisions: the callers are best-effort emitters."""
+    try:
+        value = load_review(output_dir)
+    except (OSError, ValueError, RecursionError):
+        return {}
+    if not value:
+        return {}
+    rows = {
+        row["t_id"]: row
+        for row in value["application"]["outcomes"]
+        if row["status"] == "accepted" and "unresolved" in (row["assessment"], row["remediation"])
+    }
+    result: dict[str, dict] = {}
+    for packet in value["proposals"].values():
+        for decision in packet.get("decisions") or []:
+            row = rows.get(decision.get("t_id"))
+            if row:
+                result[row["t_id"]] = {
+                    "assessment": row["assessment"],
+                    "remediation": row["remediation"],
+                    "reason": str(decision.get("reason") or "").strip(),
+                }
+    return result
 
 
 def _verdict_replaced(before: object, after: object) -> bool:
@@ -385,9 +419,13 @@ def review_coverage(value: dict | None) -> dict:
 
     A finding the evidence verifier refuted, or one below the register severity
     floor, is not in the report, so it needs no semantic review: it is reported
-    as ``excluded_refuted`` or ``excluded_below_floor`` and does not count as
-    unresolved. Other exclusions (oversized, packet_limit, missing result) stay
-    coverage gaps."""
+    as ``excluded_refuted`` or ``excluded_below_floor`` and is no coverage gap.
+    Every other finding without an accepted decision (oversized, packet_limit,
+    missing result, rejected proposal) is ``unreviewed`` and makes the outcome
+    ``incomplete``. A reviewed finding whose assessment or remediation the
+    reviewer left ``unresolved`` is a review result, not a gap: it is counted as
+    ``unresolved`` and its reason reaches the report as a manual-review card
+    (``model/emit_review_mitigations.py``)."""
     all_outcomes = value["application"]["outcomes"] if value else []
     refuted = sum(_excluded_for(row, "refuted") for row in all_outcomes)
     below_floor = sum(_excluded_for(row, "below_report_floor") for row in all_outcomes)
@@ -395,10 +433,10 @@ def review_coverage(value: dict | None) -> dict:
         row for row in all_outcomes if not (_excluded_for(row, "refuted") or _excluded_for(row, "below_report_floor"))
     ]
     dispatch = (value or {}).get("dispatch_jobs") or []
-    unresolved = sum(
-        row["status"] != "accepted" or "unresolved" in (row["assessment"], row["remediation"]) for row in outcomes
-    )
     reviewed = sum(row["status"] == "accepted" for row in outcomes)
+    unresolved = sum(
+        row["status"] == "accepted" and "unresolved" in (row["assessment"], row["remediation"]) for row in outcomes
+    )
     dispatched = sum(job["status"] != "pending" for job in dispatch)
     returned = sum(job["status"] == "returned" for job in dispatch)
     if value is None:
@@ -406,11 +444,12 @@ def review_coverage(value: dict | None) -> dict:
     elif outcomes and not reviewed:
         outcome = "unavailable"
     else:
-        outcome = "incomplete" if unresolved else "reviewed"
+        outcome = "incomplete" if reviewed < len(outcomes) else "reviewed"
     coverage = {
         "outcome": outcome,
         "findings_recorded": len(outcomes),
-        "unresolved_or_unreviewed": unresolved,
+        "unreviewed": len(outcomes) - reviewed,
+        "unresolved": unresolved,
         "reviewed": reviewed,
         "jobs_dispatched": dispatched,
         "jobs_returned": returned,
@@ -494,7 +533,7 @@ def main(argv: list[str] | None = None) -> int:
         refuted = f"; {status['excluded_refuted']} refuted and excluded" if status.get("excluded_refuted") else ""
         print(
             f"Architect review: {status['outcome']}{reason}; {status['findings_recorded']} findings recorded, "
-            f"{status['unresolved_or_unreviewed']} unresolved or unreviewed{refuted}."
+            f"{status['unreviewed']} unreviewed, {status['unresolved']} left open by the reviewer{refuted}."
         )
         return 0
     except (OSError, ValueError, RecursionError):

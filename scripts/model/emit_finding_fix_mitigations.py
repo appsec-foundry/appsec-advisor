@@ -58,6 +58,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from shared._critical_findings_sync import resync_critical_findings  # noqa: E402
+from shared._finding_state import review_before_fix  # noqa: E402
 
 _M_ID_RE = re.compile(r"\bM-(\d{3,})\b")
 
@@ -99,6 +100,21 @@ def finding_fix_priority(severity: str, effort: str, members: list[dict]) -> str
     """Priority of a finding-fix card: any unauth-reachable member keeps a Critical at P1."""
     vektor = next((m.get("vektor") for m in members if (m.get("vektor") or "") in _UNAUTH_VEKTORS), "")
     return _resolve_priority(severity, effort, vektor)
+
+
+_PRIORITIES = ("P1", "P2", "P3", "P4")
+
+
+def severity_priority(severity: str) -> str:
+    """Baseline priority of a severity, without the effort and reachability rules."""
+    return _SEV_TO_PRI.get(severity, "P3")
+
+
+def after_review_priority(priority: str) -> str:
+    """One band below ``priority``: a fix that waits for a manual review of its
+    finding (``shared._finding_state.review_before_fix``) never outranks it."""
+    index = _PRIORITIES.index(priority) if priority in _PRIORITIES else 2
+    return _PRIORITIES[min(index + 1, len(_PRIORITIES) - 1)]
 
 
 def _norm_title(title: str) -> str:
@@ -218,8 +234,12 @@ def _threat_ids_with_real_mitigation(data: dict) -> set[str]:
     return covered
 
 
-def _synthesize(data: dict, state: dict) -> list[dict]:
-    """Group uncovered code findings by fix title and emit one card each."""
+def _synthesize(data: dict, state: dict, open_decisions: dict[str, dict] | None = None) -> list[dict]:
+    """Group uncovered code findings by fix title and emit one card each.
+
+    A card whose every finding needs a manual review first is scheduled one
+    band below its severity priority; the review card carries the urgency."""
+    open_decisions = open_decisions or {}
     covered = _threat_ids_with_real_mitigation(data)
     groups: dict[str, dict] = {}
     order: list[str] = []
@@ -280,11 +300,14 @@ def _synthesize(data: dict, state: dict) -> list[dict]:
                 cwes.append(c)
         mid = f"M-{state['counter'] + 1:03d}"
         state["counter"] += 1
+        priority = finding_fix_priority(sev, effort, members)
+        if all(review_before_fix(m, open_decisions.get(m["id"])) for m in members):
+            priority = after_review_priority(priority)
         card = {
             "id": mid,
             "title": g["title"],
             "kind": "fix",
-            "priority": finding_fix_priority(sev, effort, members),
+            "priority": priority,
             "severity": sev,
             "effort": effort.capitalize(),
             "threat_ids": [m["id"] for m in members],
@@ -322,8 +345,10 @@ def main() -> int:
     stale = _clear_prior_auto_mitigations(data)
     _clear_stale_threat_refs(data, stale)
 
+    from analyzers.architect_review_runtime import open_decisions
+
     state = {"counter": _scan_max_m_id(data)}
-    new_cards = _synthesize(data, state)
+    new_cards = _synthesize(data, state, open_decisions(out_dir))
     if not new_cards:
         if stale:
             _write_yaml(yaml_path, data)

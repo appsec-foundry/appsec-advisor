@@ -192,3 +192,30 @@ def test_usage_error_is_best_effort_success(monkeypatch, capsys) -> None:
     assert ecm.main() == 0
 
     assert "usage:" in capsys.readouterr().err
+
+
+def test_a_lone_review_card_does_not_suppress_the_config_fix(tmp_path: Path, monkeypatch) -> None:
+    """A review card is a confidence note, not coverage; when the finding waits
+    for a manual review its fix is scheduled one band lower."""
+    _write_yaml(
+        tmp_path,
+        {
+            "mitigations": [
+                {"id": "M-010", "kind": "review", "title": "Manual review", "threat_ids": ["T-001"], "priority": "P1"}
+            ],
+            "threats": [
+                _config_threat(
+                    "T-001",
+                    config_check_id="IAC-001",
+                    risk="Critical",
+                    evidence_check="ambiguous",
+                    mitigation_ids=["M-010"],
+                )
+            ],
+        },
+    )
+    open_ = {"assessment": "unresolved", "remediation": "unchanged", "reason": "x"}
+    monkeypatch.setattr(ecm, "open_decisions", lambda _out: {"T-001": open_})
+    assert _run(tmp_path, monkeypatch) == 0
+    fixes = [m for m in _read_yaml(tmp_path)["mitigations"] if m.get("kind") == "fix"]
+    assert [(m["threat_ids"], m["priority"]) for m in fixes] == [(["T-001"], "P2")]

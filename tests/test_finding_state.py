@@ -14,6 +14,7 @@ from shared._finding_state import (
     is_confirmed,
     is_discredited,
     is_refuted,
+    review_before_fix,
 )
 from shared._severity_policy import companion_cwes
 
@@ -73,6 +74,23 @@ def test_finalized_basis_wins_over_legacy_check(basis, confirmed, refuted, discr
     assert is_confirmed(threat) is confirmed
     assert is_refuted(threat) is refuted
     assert is_discredited(threat) is discredited
+
+
+@pytest.mark.parametrize(
+    ("threat", "decision", "expected"),
+    [
+        ({"evidence_basis": "ambiguous"}, {"assessment": "unresolved", "remediation": "unchanged"}, True),
+        ({}, {"assessment": "unresolved", "remediation": "corrected"}, True),
+        ({"evidence_basis": "llm-verified"}, {"assessment": "unresolved", "remediation": "unchanged"}, False),
+        ({"confirmed": True, "evidence_basis": "ambiguous"}, {"assessment": "unresolved", "remediation": "x"}, False),
+        ({"evidence_basis": "ambiguous"}, {"assessment": "unchanged", "remediation": "unresolved"}, False),
+        ({"evidence_basis": "ambiguous"}, None, False),
+        (None, {"assessment": "unresolved", "remediation": "unchanged"}, False),
+    ],
+    ids=["ambiguous", "unchecked", "verified", "finalized-confirmed", "open-remediation", "no-decision", "no-threat"],
+)
+def test_review_before_fix_needs_an_open_assessment_on_an_unconfirmed_finding(threat, decision, expected) -> None:
+    assert review_before_fix(threat, decision) is expected
 
 
 def test_practice_tier_is_never_confirmed_even_on_established_basis() -> None:
