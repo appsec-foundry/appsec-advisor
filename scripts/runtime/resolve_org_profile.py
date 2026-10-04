@@ -378,6 +378,7 @@ def resolve(
         "skill_toggles": {},
         "security_coach": None,
         "llm_policy": None,
+        "analyst": None,
     }
     if not profile_path:
         return base, []
@@ -461,8 +462,31 @@ def resolve(
         "skill_toggles": normalize_skill_toggles(profile),
         "security_coach": coach,
         "llm_policy": profile.get("llm_policy"),
+        "analyst": analyst_packages(profile, profile_path.parent),
     }
     return base, []
+
+
+def analyst_packages(profile: dict, profile_dir: Path) -> dict[str, list[str]] | None:
+    """Package selections of the on-demand threat analysis.
+
+    Consumed only by the analyst controller through ``resolve()``; it never
+    reaches the assessment configuration. A profile file becomes an absolute,
+    digest-pinned selection.
+    """
+    block = profile.get("analyst")
+    if not block:
+        return None
+
+    def spec(entry: dict) -> str:
+        if "ref" in entry:
+            return entry["ref"]
+        return f"{(profile_dir / entry['file']).resolve()}#sha256={entry['sha256']}"
+
+    return {
+        "required": [spec(e) for e in block.get("required_packages") or []],
+        "default": [spec(e) for e in block.get("default_packages") or []],
+    }
 
 
 # ---------------------------------------------------------------------------

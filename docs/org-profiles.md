@@ -536,6 +536,21 @@ The packaged configuration enforces toggles before the first scan, when no effec
 
 Use a skill toggle to block a command and show the policy reason. Use `plugin_surface.skills` in `org-profile/package-policy.yaml` to remove its command, code, and README entry from the package. See the [packaging runbook](internal-plugin-packaging.md).
 
+## On-demand threat analysis
+
+The `analyst` block sets the question packages and methodology profiles an invoked [on-demand threat analysis](threat-analyst.md) uses. It never starts an analysis and adds no CI check.
+
+```yaml
+analyst:
+  required_packages:
+    - file: analyst/payments-package.yaml
+      sha256: <sha256 of the file>
+  default_packages:
+    - ref: tmm/threat-modeling-manifesto@1.0.0
+```
+
+`required_packages` apply to every invoked analysis; a developer cannot remove them. `default_packages` apply unless a developer adds more. Name a packaged package by `ref`, or ship your own package as a `file` under the profile directory pinned by its `sha256`. A file outside the profile directory, a missing file, or an unpinned file fails profile validation, and an invalid active profile rejects the analysis instead of running it without its required packages.
+
 ## Security Coach
 
 `security_coach.enabled_by_default: true` activates the coach for the team. `APPSEC_COACH=0` still disables it for one session.

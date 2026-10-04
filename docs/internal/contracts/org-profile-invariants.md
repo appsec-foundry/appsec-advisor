@@ -31,6 +31,8 @@ Profile-level policy consumed by a hook or guard bypasses `flatten_preset`. It f
 
 Examples include `security_coach.topics` consumed by `scripts/analyzers/security_steering.py` and `policy.url_allowlist` consumed by `scripts/shared/_url_guard.py`. Relevant guards include `tests/test_security_steering_units.py` and `tests/test_url_guard.py`.
 
+`analyst` is the one profile-level field that does not reach `.org-profile-effective.json`. `resolve()` returns it under `analyst`, and only `scripts/orchestrator/analyst_controller.py` consumes it, by calling `resolve()` itself; `resolve_config` and the assessment never see it. It spans the schema, `scripts/validators/validate_org_profile.py::_check_analyst`, `scripts/runtime/resolve_org_profile.py::analyst_packages`, the controller, and `tests/test_resolve_org_profile.py` / `tests/test_analyst_controller.py`. It adds no packaged surface.
+
 `llm_policy` is the one profile-level field consumed by an agent rather than by Python: `resolve()` carries it into `.org-profile-effective.json`, `resolve_config` exposes it as `org_profile_llm_policy`, the skill emits it as `LLM_POLICY_JSON`, and Phase-9 dispatch forwards it in Group A. It stays in Group A because it is identical for every component; moving it to Group B would pay for it once per dispatch.
 
 ### Preset guardrails

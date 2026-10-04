@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/analyst-catalog.schema.json",
+  "title": "Threat analyst question package",
+  "description": "A versioned package of investigation questions for the on-demand threat analysis. Questions guide what the analysis investigates; they carry no commands, tools, write targets, prompt overrides, or permissions.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "kind",
+    "id",
+    "version",
+    "title",
+    "provenance",
+    "questions"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "kind": {
+      "const": "questions"
+    },
+    "id": {
+      "$ref": "#/$defs/package_id"
+    },
+    "version": {
+      "$ref": "#/$defs/version"
+    },
+    "title": {
+      "$ref": "#/$defs/short_text"
+    },
+    "provenance": {
+      "$ref": "#/$defs/provenance"
+    },
+    "questions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "topic",
+          "applies_when",
+          "asks",
+          "purpose",
+          "evidence"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/entry_id"
+          },
+          "topic": {
+            "enum": [
+              "authentication",
+              "authorization",
+              "input_handling",
+              "sensitive_data",
+              "secrets",
+              "external_integration",
+              "business_integrity",
+              "availability",
+              "logging",
+              "supply_chain",
+              "llm_and_agents",
+              "configuration"
+            ]
+          },
+          "applies_when": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "new_entry_point",
+                "changed_permission",
+                "sensitive_data",
+                "removed_control",
+                "external_integration",
+                "business_operation",
+                "untrusted_input",
+                "credential_handling",
+                "model_or_agent",
+                "dependency_or_build",
+                "configuration_change",
+                "any_change"
+              ]
+            }
+          },
+          "asks": {
+            "$ref": "#/$defs/text"
+          },
+          "purpose": {
+            "$ref": "#/$defs/text"
+          },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 6,
+            "items": {
+              "$ref": "#/$defs/short_text"
+            }
+          },
+          "requirement_refs": {
+            "type": "array",
+            "maxItems": 10,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+            }
+          },
+          "negative_tests": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {
+              "$ref": "#/$defs/text"
+            }
+          },
+          "source_rules": {
+            "type": "array",
+            "maxItems": 4,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^aiscb-[A-Z]+-[0-9]{3}$"
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "package_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,39}/[a-z0-9][a-z0-9-]{0,63}$"
+    },
+    "entry_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "short_text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 600
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "revision"
+      ],
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/short_text"
+        },
+        "revision": {
+          "$ref": "#/$defs/short_text"
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 300,
+          "pattern": "^https://"
+        },
+        "license": {
+          "$ref": "#/$defs/short_text"
+        },
+        "notes": {
+          "$ref": "#/$defs/text"
+        }
+      }
+    }
+  }
+}

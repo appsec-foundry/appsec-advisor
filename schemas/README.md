@@ -58,6 +58,16 @@ template, emitted deterministically on context-v2, and validated through
 | `recon-summary-context.schema.json` | `$OUTPUT_DIR/.dispatch-context/architecture/recon-summary-context.json` | `scripts/contexts/build_architecture_analysis_context.py` | actor, architecture, and exceptional triage roles |
 | `architecture-route-context.schema.json` | `$OUTPUT_DIR/.dispatch-context/architecture/route-context.json` | `scripts/contexts/build_architecture_analysis_context.py` | architecture analyst |
 | `threat-summary.schema.json` | `<OUTPUT_DIR>/threat-summary.json` (when `--format json` or `both`) | `scripts/model/aggregate_threat_summary.py` | External dashboards / internal reporting jobs |
+| `analyst-request.schema.json` | `request.json` in an on-demand threat analysis job root | on-demand threat analysis controller | `scripts/validators/validate_analyst.py` |
+| `analyst-state.schema.json` | `state.json` in an on-demand threat analysis job root | on-demand threat analysis controller | `scripts/validators/validate_analyst.py` |
+| `analyst-snapshot.schema.json` | `snapshot.json` in an on-demand threat analysis job root | on-demand threat analysis snapshot capture | `scripts/validators/validate_analyst.py` |
+| `analyst-context.schema.json` | `context.json` in an on-demand threat analysis job root | `scripts/contexts/build_analyst_context.py` | analyst controller and prompt builder |
+| `analyst-response.schema.json` | untrusted model reply of one analysis pass | model session via `scripts/runtime/analyst_host.py` | `scripts/validators/validate_analyst.py` before any use |
+| `analyst-result.schema.json` | `result.json` in the job root and `analyst-result.json` in the chosen output | `scripts/orchestrator/analyst_controller.py` | `scripts/renderers/render_analyst_report.py`, CI consumers |
+| `analyst-feature.schema.json` | developer-chosen feature-context file | `scripts/contexts/analyst_questions.py` on explicit save | analyst controller (`--feature`) |
+| `analyst-catalog.schema.json` | `data/analyst-questions.yaml` and custom question packages | plugin maintainers, organizations | `scripts/contexts/resolve_analyst_catalog.py` |
+| `analyst-methodology.schema.json` | `data/analyst-methods/*.yaml` and custom methodology profiles | plugin maintainers, organizations | `scripts/contexts/resolve_analyst_catalog.py` |
+| `analyst-limits.schema.json` | `data/analyst-limits.yaml` | plugin maintainers | `scripts/contexts/resolve_analyst_catalog.py` |
 
 ## Design notes
 

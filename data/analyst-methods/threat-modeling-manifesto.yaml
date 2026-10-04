@@ -1,0 +1,50 @@
+# Optional methodology profile of the on-demand threat analysis, adapted from
+# the Threat Modeling Manifesto. Loaded only when selected for an analysis or
+# set as an organization default or requirement. It guides the process and its
+# reflection on coverage; it certifies no compliance and does not replace
+# human collaboration.
+schema_version: 1
+kind: methodology
+id: tmm/threat-modeling-manifesto
+version: 1.0.0
+title: Threat Modeling Manifesto (adapted)
+provenance:
+  source: Threat Modeling Manifesto, Threat Modeling Manifesto Working Group
+  revision: Manifesto release 1; website text retrieved 2026-10-04
+  url: https://www.threatmodelingmanifesto.org/
+  license: CC BY 4.0
+  notes: Principles and criteria are paraphrased adaptations, not the original text. Changes from the source are the reduction to review criteria for a bounded analysis.
+principles:
+  - id: four-questions
+    statement: A threat model answers what is being worked on, what can go wrong, what will be done about it, and whether the work was good enough.
+  - id: early-and-frequent
+    statement: Threat modeling is most useful early and repeatedly, in iterations scoped to manageable portions of the system.
+  - id: stakeholder-value
+    statement: Outcomes matter when they are of value to the people who build, run, and depend on the system.
+  - id: dialog
+    statement: Dialog establishes a shared understanding; documents record it and make it measurable.
+  - id: systematic-and-creative
+    statement: Thoroughness comes from applying security and privacy knowledge in a structured way while leaving room for creativity.
+  - id: varied-viewpoints
+    statement: Different roles and subject matter experts see different threats; one person's view is not enough.
+  - id: practical-responses
+    statement: Analysis goes beyond the problem to practical and relevant responses.
+criteria:
+  - id: system-understood
+    asks: Does the analysis state what is being changed or designed, its assets, and its trust boundaries, and does it name what it could not see?
+    principles: [four-questions]
+  - id: plausible-failures
+    asks: Are the identified failures plausible for this system and its business context, rather than generic checklist items?
+    principles: [four-questions, stakeholder-value]
+  - id: practical-responses
+    asks: Does each relevant threat have a concrete, proportionate response the team can act on and verify?
+    principles: [practical-responses, four-questions]
+  - id: investigation-adequate
+    asks: Is the depth of investigation adequate for the scope, and are coverage gaps and unverified assumptions stated instead of implied away?
+    principles: [four-questions, systematic-and-creative]
+  - id: missing-perspectives
+    asks: Which roles or stakeholders would need to confirm the assumptions, and which perspectives are missing from the available context?
+    principles: [varied-viewpoints, dialog]
+  - id: iterative-refinement
+    asks: Which open questions or assumptions should be revisited when the design or implementation changes?
+    principles: [early-and-frequent, dialog]

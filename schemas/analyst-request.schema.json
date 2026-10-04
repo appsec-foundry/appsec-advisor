@@ -1,0 +1,318 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/analyst-request.schema.json",
+  "title": "Threat analyst request",
+  "description": "Controller-written request for one on-demand threat analysis job. Every field is set by the controller from caller-authorized arguments and trusted configuration; feature-file content never populates it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "job_id",
+    "mode",
+    "scope",
+    "repository",
+    "output_dir",
+    "packages",
+    "limits",
+    "plugin_version",
+    "requested_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "job_id": {
+      "$ref": "#/$defs/job_id"
+    },
+    "mode": {
+      "enum": [
+        "design",
+        "review"
+      ]
+    },
+    "scope": {
+      "$ref": "#/$defs/scope"
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root"
+      ],
+      "properties": {
+        "root": {
+          "$ref": "#/$defs/absolute_path"
+        }
+      }
+    },
+    "output_dir": {
+      "$ref": "#/$defs/absolute_path"
+    },
+    "feature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "packages": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "kind",
+          "version",
+          "sha256",
+          "authority"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,39}/[a-z0-9][a-z0-9-]{0,63}$"
+          },
+          "kind": {
+            "enum": [
+              "questions",
+              "methodology"
+            ]
+          },
+          "version": {
+            "type": "string",
+            "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+          },
+          "sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "authority": {
+            "enum": [
+              "core",
+              "org_required",
+              "org_default",
+              "ci_pinned",
+              "explicit"
+            ]
+          }
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "job_seconds",
+        "call_seconds",
+        "host_calls",
+        "evidence_rounds",
+        "question_rounds",
+        "transport_retries",
+        "admitted_files",
+        "file_kib",
+        "job_kib",
+        "response_kib",
+        "selected_questions",
+        "answer_hours"
+      ],
+      "properties": {
+        "job_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 7200
+        },
+        "call_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600
+        },
+        "host_calls": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
+        },
+        "evidence_rounds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "question_rounds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "transport_retries": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "admitted_files": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2000
+        },
+        "file_kib": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024
+        },
+        "job_kib": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096
+        },
+        "response_kib": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024
+        },
+        "selected_questions": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 200
+        },
+        "answer_hours": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 720
+        }
+      }
+    },
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model",
+        "instructions_sha256"
+      ],
+      "properties": {
+        "model": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"
+        },
+        "instructions_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "plugin_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "requested_at": {
+      "$ref": "#/$defs/timestamp"
+    }
+  },
+  "$defs": {
+    "job_id": {
+      "type": "string",
+      "pattern": "^aj-[0-9a-f]{32}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "object_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+    },
+    "revision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[^\\s\\x00-]"
+    },
+    "absolute_path": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 4096,
+      "pattern": "^/[^\\x00]*$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "scope": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "source",
+            "content_sha256"
+          ],
+          "properties": {
+            "kind": {
+              "const": "design"
+            },
+            "source": {
+              "enum": [
+                "text",
+                "file"
+              ]
+            },
+            "content_sha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "design_path": {
+              "$ref": "#/$defs/absolute_path"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "base",
+            "head",
+            "comparison"
+          ],
+          "properties": {
+            "kind": {
+              "const": "commits"
+            },
+            "base": {
+              "$ref": "#/$defs/revision"
+            },
+            "head": {
+              "$ref": "#/$defs/revision"
+            },
+            "comparison": {
+              "enum": [
+                "merge_base",
+                "exact"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "staged",
+                "worktree"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

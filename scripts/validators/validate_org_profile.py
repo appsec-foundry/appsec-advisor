@@ -205,6 +205,22 @@ def resolve_under(profile_dir: Path, rel_path: str) -> tuple[Path | None, str | 
     return candidate, None
 
 
+def _check_analyst(profile: dict, profile_dir: Path) -> list[str]:
+    """Analyst package files stay under the profile directory and exist."""
+    errors: list[str] = []
+    block = profile.get("analyst") or {}
+    for key in ("required_packages", "default_packages"):
+        for entry in block.get(key) or []:
+            if "file" not in entry:
+                continue
+            resolved, err = resolve_under(profile_dir, entry["file"])
+            if err:
+                errors.append(f"analyst.{key}: {err}")
+            elif resolved is not None and not resolved.is_file():
+                errors.append(f"analyst.{key}: file not found at '{entry['file']}'")
+    return errors
+
+
 def _check_llm_context_paths(profile: dict, profile_dir: Path) -> list[str]:
     errors: list[str] = []
     docs = ((profile.get("llm_context") or {}).get("documents")) or []
@@ -480,6 +496,7 @@ def validate(profile: Any, profile_dir: Path, plugin_version: str | None = None)
 
     errors += _check_default_preset(profile)
     errors += _check_llm_context_paths(profile, profile_dir)
+    errors += _check_analyst(profile, profile_dir)
     errors += _check_preset_context_refs(profile)
     errors += _check_target_rules(profile)
     errors += _check_requirements_url(profile)

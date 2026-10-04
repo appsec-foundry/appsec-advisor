@@ -464,6 +464,20 @@ properties:
                 type: string
                 maxLength: 80
 
+  analyst:
+    type: object
+    additionalProperties: false
+    description: |
+      Inputs for an invoked on-demand threat analysis (/appsec-advisor:analyze-threats
+      or appsec-analyst-cli). Required packages apply to every invoked analysis and
+      cannot be removed by a developer; default packages apply unless a developer
+      selection adds more. Configuring this block never starts an analysis.
+    properties:
+      required_packages:
+        $ref: "#/$defs/analyst_packages"
+      default_packages:
+        $ref: "#/$defs/analyst_packages"
+
   skill_toggles:
     type: object
     additionalProperties:
@@ -588,6 +602,31 @@ properties:
       $ref: "#/$defs/org_hook"
 
 $defs:
+  analyst_packages:
+    type: array
+    maxItems: 10
+    description: |
+      Question packages or methodology profiles for an invoked analysis. A
+      packaged package is named by ref; an organization package is a file
+      under the profile directory pinned by its sha256.
+    items:
+      type: object
+      additionalProperties: false
+      oneOf:
+        - required: [ref]
+        - required: [file, sha256]
+      properties:
+        ref:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9-]{0,39}/[a-z0-9][a-z0-9-]{0,63}@[0-9]+\\.[0-9]+\\.[0-9]+$"
+        file:
+          type: string
+          minLength: 1
+          maxLength: 300
+        sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+
   org_hook:
     type: object
     additionalProperties: false

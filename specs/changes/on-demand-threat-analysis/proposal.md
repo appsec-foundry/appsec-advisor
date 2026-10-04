@@ -72,6 +72,8 @@ A new section `## On-demand threat analysis` follows `## After the run`:
 
 `check_specs.py` requires a binding for every active requirement, and a binding must match existing files and name existing tests. The `REQ-FLW-002` and `P-1` wording can land as soon as it is approved, because their bindings and guards do not change. Each `REQ-ANA` requirement enters the catalog in the work package that creates its first bound file and guard test, together with its binding. An approved requirement that has not landed yet stays listed in `tasks.md`.
 
+Landed so far: `REQ-FLW-002`, `P-1`, `REQ-ANA-003` (work package 2), and `REQ-ANA-001`, `REQ-ANA-002`, and `REQ-ANA-004` through `REQ-ANA-008` (work packages 3 to 5).
+
 ## Open review points
 
 - Decision `P-7` asks for one vocabulary per concept. The analysis returns exit code 2 for rejected input, while the assessment uses its own reject code under `OR-14`. Review in work package 2 whether the analysis adopts the assessment's codes or documents a separate contract.

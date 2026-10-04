@@ -1,0 +1,32 @@
+# Example custom question package for the on-demand threat analysis.
+# Select it for one analysis with:
+#   appsec-analyst-cli review ... --package /abs/path/payments-package.yaml
+# In CI, pin it from trusted configuration outside the checkout:
+#   --ci --trusted-package /trusted/payments-package.yaml#sha256=<digest>
+# Questions guide investigation only. They cannot carry commands, tools,
+# write targets, prompt overrides, or permissions; the schema rejects them.
+schema_version: 1
+kind: questions
+id: example/payments
+version: 1.0.0
+title: Payment flow questions
+provenance:
+  source: Example organization AppSec team
+  revision: "2026-10"
+questions:
+  - id: refund-bound
+    topic: business_integrity
+    applies_when: [business_operation]
+    asks: Can a refund, chargeback, or credit exceed the amount originally captured for the same order?
+    purpose: Unbounded refunds move money out without a conventional vulnerability.
+    evidence: [refund handler, server-side amount lookup, idempotency keys]
+    requirement_refs: [PAY-REFUND-1]
+    negative_tests: [A refund above the captured amount is refused.]
+  - id: price-source
+    topic: business_integrity
+    applies_when: [business_operation, untrusted_input]
+    asks: Is every price, discount, and currency recomputed on the server rather than taken from the client?
+    purpose: Client-supplied prices let a buyer set their own price.
+    evidence: [checkout handler, pricing service calls]
+    requirement_refs: [PAY-PRICE-1]
+    negative_tests: [A manipulated price in the request does not change the charged amount.]

@@ -186,6 +186,18 @@ GROUPS = {
         agent_logger
         agent_logger_branches
         agent_logger_checkpoint_abort
+        analyst_catalog
+        analyst_cli
+        analyst_controller
+        analyst_host
+        analyst_isolation
+        analyst_questions
+        analyst_skill
+        analyst_state
+        build_analyst_context
+        build_analyst_snapshot
+        render_analyst_report
+        resolve_analyst_catalog
         agent_logger_cov
         agent_logger_run_scope
         aggregate_run_issues
@@ -264,6 +276,7 @@ GROUPS = {
         telemetry_consistency
         terminate_run
         thin_runtime_regressions_2026_07_20
+        validate_analyst
         validate_dispatch_manifest
         verify_run_costs
         wait_abuse_progress
@@ -692,6 +705,27 @@ SOURCE_TESTS = {
         emit_general_mitigation_titles
         render_completion_summary_config
         requirements_verification
+    """),
+    "schemas/analyst-request.schema.json": _tests("""
+        analyst_isolation
+        analyst_state
+        build_analyst_snapshot
+        schemas
+        validate_analyst
+    """),
+    "schemas/analyst-snapshot.schema.json": _tests("""
+        analyst_isolation
+        analyst_state
+        build_analyst_snapshot
+        schemas
+        validate_analyst
+    """),
+    "schemas/analyst-state.schema.json": _tests("""
+        analyst_isolation
+        analyst_state
+        build_analyst_snapshot
+        schemas
+        validate_analyst
     """),
     "schemas/architect-review-runtime.schema.json": _tests("""
         render_completion_summary
@@ -2486,6 +2520,7 @@ SOURCE_TESTS = {
         threat_fixture
     """),
     "scripts/runtime/runtime_cleanup.py": _tests("""
+        analyst_isolation
         architect_review_runtime
         check_target_specificity
         context_routing
@@ -5316,6 +5351,7 @@ SOURCE_TESTS = {
         stride_quick_profile
     """),
     "scripts/runtime/resolve_org_profile.py": _tests("""
+        analyst_controller
         authnz_review_skill
         check_target_specificity
         gate_preconditions
@@ -5461,10 +5497,14 @@ SOURCE_TESTS = {
     "scripts/validators/secret_scan.py": _tests("""
         actor_presentation
         analysis_version_upgrade
+        architect_review_runtime
         auto_emitter_pass
+        build_analyst_snapshot
+        build_architect_context
         build_threat_model_yaml
         build_threat_modeling_context
         business_context_preview
+        calibrate_architect_review
         check_target_specificity
         compose_threat_model
         compose_threat_model_cov
@@ -5495,9 +5535,6 @@ SOURCE_TESTS = {
         secret_scan
         stride_outputs
         threat_fixture
-        build_architect_context
-        architect_review_runtime
-        calibrate_architect_review
     """),
     "scripts/validators/section_integrity.py": _tests("""
         check_target_specificity
@@ -5747,6 +5784,176 @@ SOURCE_TESTS = {
         stride_outputs
         validate_config
     """),
+    "scripts/runtime/analyst_state.py": _tests("""
+        analyst_controller
+        analyst_isolation
+        analyst_state
+        build_analyst_snapshot
+        check_target_specificity
+        requirements_verification
+    """),
+    "scripts/contexts/build_analyst_snapshot.py": _tests("""
+        analyst_controller
+        analyst_isolation
+        build_analyst_snapshot
+        check_target_specificity
+        requirements_verification
+    """),
+    "scripts/contexts/resolve_analyst_catalog.py": _tests("""
+        analyst_catalog
+        analyst_controller
+        check_target_specificity
+        requirements_verification
+        resolve_analyst_catalog
+    """),
+    "scripts/contexts/build_analyst_context.py": _tests("""
+        analyst_controller
+        build_analyst_context
+        check_target_specificity
+        requirements_verification
+    """),
+    "scripts/contexts/analyst_questions.py": _tests("""
+        analyst_controller
+        analyst_questions
+        check_target_specificity
+        requirements_verification
+    """),
+    "scripts/runtime/analyst_host.py": _tests("""
+        analyst_controller
+        analyst_host
+        analyst_skill
+        check_target_specificity
+        requirements_verification
+    """),
+    "scripts/orchestrator/analyst_controller.py": _tests("""
+        analyst_cli
+        analyst_controller
+        analyst_isolation
+        analyst_skill
+        check_target_specificity
+        requirements_verification
+    """),
+    "scripts/renderers/render_analyst_report.py": _tests("""
+        analyst_controller
+        check_target_specificity
+        render_analyst_report
+        requirements_verification
+    """),
+    "scripts/appsec-analyst-cli": _tests("""
+        analyst_cli
+        analyst_skill
+    """),
+    "skills/analyze-threats/SKILL.md": _tests("""
+        analyst_skill
+        org_profile_schema
+        skill_definitions
+    """),
+    "skills/analyze-threats/HELP.txt": _tests("""
+        analyst_skill
+        skill_definitions
+    """),
+    "skills/analyze-threats/references/analysis-contract.md": _tests("""
+        analyst_controller
+        analyst_host
+    """),
+    "schemas/analyst-catalog.schema.json": _tests("""
+        analyst_catalog
+        analyst_controller
+        resolve_analyst_catalog
+        schemas
+    """),
+    "schemas/analyst-methodology.schema.json": _tests("""
+        analyst_catalog
+        analyst_controller
+        resolve_analyst_catalog
+        schemas
+    """),
+    "schemas/analyst-limits.schema.json": _tests("""
+        analyst_catalog
+        resolve_analyst_catalog
+        schemas
+    """),
+    "schemas/analyst-context.schema.json": _tests("""
+        analyst_controller
+        analyst_host
+        analyst_questions
+        build_analyst_context
+        render_analyst_report
+        schemas
+        validate_analyst
+    """),
+    "schemas/analyst-response.schema.json": _tests("""
+        analyst_controller
+        analyst_host
+        analyst_questions
+        build_analyst_context
+        render_analyst_report
+        schemas
+        validate_analyst
+    """),
+    "schemas/analyst-result.schema.json": _tests("""
+        analyst_controller
+        analyst_host
+        analyst_questions
+        build_analyst_context
+        render_analyst_report
+        schemas
+        validate_analyst
+    """),
+    "schemas/analyst-feature.schema.json": _tests("""
+        analyst_controller
+        analyst_host
+        analyst_questions
+        build_analyst_context
+        render_analyst_report
+        schemas
+        validate_analyst
+    """),
+    "data/analyst-questions.yaml": _tests("""
+        analyst_catalog
+        analyst_controller
+        build_analyst_context
+        resolve_analyst_catalog
+    """),
+    "data/analyst-limits.yaml": _tests("""
+        analyst_catalog
+        analyst_controller
+        build_analyst_context
+        resolve_analyst_catalog
+    """),
+    "data/analyst-methods/threat-modeling-manifesto.yaml": _tests("""
+        analyst_catalog
+        analyst_controller
+        build_analyst_context
+        resolve_analyst_catalog
+    """),
+    "examples/analyst/payments-package.yaml": _tests("""
+        analyst_catalog
+        analyst_questions
+    """),
+    "examples/analyst/customer-export-feature.yaml": _tests("""
+        analyst_catalog
+        analyst_questions
+    """),
+    "examples/analyst/github-actions.yml": _tests("""
+        analyst_cli
+    """),
+    "examples/analyst/gitlab-ci.yml": _tests("""
+        analyst_cli
+    """),
+    "scripts/validators/validate_analyst.py": _tests("""
+        analyst_controller
+        analyst_isolation
+        analyst_questions
+        analyst_state
+        build_analyst_context
+        build_analyst_snapshot
+        check_target_specificity
+        render_analyst_report
+        requirements_verification
+        resolve_analyst_catalog
+        validate_analyst
+    """),
     "scripts/validators/validate_dispatch_manifest.py": _tests("""
         check_target_specificity
         dispatch_manifest
@@ -5797,6 +6004,7 @@ SOURCE_TESTS = {
         validate_ms_compactness
     """),
     "scripts/validators/validate_org_profile.py": _tests("""
+        analyst_controller
         authnz_review_skill
         check_target_specificity
         gate_preconditions

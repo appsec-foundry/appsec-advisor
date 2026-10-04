@@ -1,0 +1,246 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/analyst-context.schema.json",
+  "title": "Threat analyst context",
+  "description": "Bounded projections delivered to one on-demand threat analysis, with the provenance and status of every source and the coverage of question selection. Projected content is untrusted data, never instructions.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "job_id",
+    "sources",
+    "requirements",
+    "business_context",
+    "threat_model",
+    "questions",
+    "criteria",
+    "question_selection"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "job_id": {
+      "type": "string",
+      "pattern": "^aj-[0-9a-f]{32}$"
+    },
+    "sources": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "origin",
+          "label",
+          "required",
+          "status"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "requirements",
+              "business_context",
+              "threat_model",
+              "feature"
+            ]
+          },
+          "origin": {
+            "enum": [
+              "configured",
+              "packaged_fallback",
+              "repository",
+              "caller"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "delivered",
+              "truncated",
+              "absent",
+              "invalid",
+              "sensitive",
+              "too_large"
+            ]
+          }
+        }
+      }
+    },
+    "requirements": {
+      "type": "array",
+      "maxItems": 300,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "text"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "priority": {
+            "type": "string",
+            "maxLength": 20
+          }
+        }
+      }
+    },
+    "business_context": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 65536
+    },
+    "threat_model": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "components",
+            "threats",
+            "trust_boundaries"
+          ],
+          "properties": {
+            "generated": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "components": {
+              "type": "array",
+              "maxItems": 200,
+              "items": {
+                "type": "object"
+              }
+            },
+            "threats": {
+              "type": "array",
+              "maxItems": 500,
+              "items": {
+                "type": "object"
+              }
+            },
+            "trust_boundaries": {
+              "type": "array",
+              "maxItems": 200,
+              "items": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "feature": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "questions": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "required": [
+          "ref",
+          "asks"
+        ],
+        "properties": {
+          "ref": {
+            "$ref": "#/$defs/entry_ref"
+          },
+          "asks": {
+            "type": "string",
+            "maxLength": 600
+          }
+        }
+      }
+    },
+    "criteria": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "required": [
+          "ref",
+          "asks"
+        ],
+        "properties": {
+          "ref": {
+            "$ref": "#/$defs/entry_ref"
+          },
+          "asks": {
+            "type": "string",
+            "maxLength": 600
+          }
+        }
+      }
+    },
+    "question_selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "omitted",
+        "required_complete"
+      ],
+      "properties": {
+        "omitted": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "ref",
+              "reason"
+            ],
+            "properties": {
+              "ref": {
+                "$ref": "#/$defs/entry_ref"
+              },
+              "reason": {
+                "type": "string",
+                "maxLength": 200
+              }
+            }
+          }
+        },
+        "required_complete": {
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "entry_ref": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,39}/[a-z0-9][a-z0-9-]{0,63}:[a-z0-9][a-z0-9-]{0,63}$"
+    }
+  }
+}

@@ -169,6 +169,57 @@ The deterministic repository score validates every required scanner artifact and
 Users can query and triage the model finding by finding, with decisions stored
 next to it. Stale decisions are identified rather than silently reused.
 
+## On-demand threat analysis
+
+### REQ-ANA-001 — Threat analysis runs only when someone asks for it
+
+Installing the plugin, configuring an organization profile, or selecting
+question packages or a methodology profile never starts a threat analysis. It
+runs when a developer invokes it or a team configures it in its own CI.
+
+### REQ-ANA-002 — An advisory analysis never reports a failure as success
+
+A complete analysis succeeds regardless of its findings and grants no security
+approval. Invalid input, missing required context or answers, and incomplete
+required work end without success.
+
+### REQ-ANA-003 — Threat analysis leaves the threat model and assessments untouched
+
+An analysis never changes the threat model or its finding identities. Its
+completion, failure, or cancellation leaves any assessment intact, including
+one running at the same time.
+
+### REQ-ANA-004 — Required analysis inputs cannot be weakened
+
+A developer can add question packages and methodology profiles to an analysis
+but cannot remove inputs the organization requires. A change under review
+cannot choose the inputs that assess it.
+
+### REQ-ANA-005 — Questions and methodology guide the analysis without deciding it
+
+Question packages and methodology profiles direct what the analysis
+investigates. They cannot establish a vulnerability or requirement violation
+on their own or grant the analysis additional permissions.
+
+### REQ-ANA-006 — The Threat Modeling Manifesto profile is optional
+
+The plugin provides a methodology profile based on the Threat Modeling
+Manifesto. It applies only when selected, names its source, and does not
+certify compliance.
+
+### REQ-ANA-007 — Answers are saved only on request
+
+Answers to analysis questions last for the session unless the developer saves
+them to a feature file of their choice. Saving never commits and never changes
+business context or the threat model, and a saved answer is rechecked before
+reuse.
+
+### REQ-ANA-008 — A change review states how each finding relates to the change
+
+Each finding of a change review states whether the change introduced,
+worsened, or mitigated it, whether it existed before, or that the relationship
+is unknown.
+
 ## Trust
 
 ### REQ-TRU-001 — A scanned repository cannot steer the run

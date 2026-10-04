@@ -1,0 +1,36 @@
+/appsec-advisor:analyze-threats — Advisory threat analysis of a planned design or a code change.
+
+USAGE
+  /appsec-advisor:analyze-threats <design question in plain text>
+  /appsec-advisor:analyze-threats --design-file <path>
+  /appsec-advisor:analyze-threats --worktree | --staged
+  /appsec-advisor:analyze-threats --base <commit> --head <commit> [--exact-base]
+
+OPTIONS
+  --feature <file>        Reviewed feature-context file with saved declarations and answers.
+  --package <ref|file>    Add a question package or methodology profile for this analysis,
+                          e.g. tmm/threat-modeling-manifesto@1.0.0 or /abs/path/package.yaml.
+                          Packages your organization requires always apply.
+  --output <dir>          Also write analyst-result.json and analyst-result.md there.
+  --help                  Show this help.
+
+  To stop a job or remove a saved answer, ask; the skill runs
+  appsec-analyst-cli cancel --job <id> or forget --question-fingerprint <fp>.
+
+WHAT IT DOES
+  Runs only when you invoke it. It analyzes the design or the selected change
+  together with your requirements, business context, and an existing threat
+  model, and reports evidence-backed findings, threat scenarios, protection
+  assumptions, and questions. It asks only when a missing answer changes the
+  assessment. You can save answers explicitly to a feature file for later
+  reviews and CI; nothing is committed.
+
+WHAT IT IS NOT
+  Not a security approval, not a full threat model, and not a requirements
+  grade. It never edits code, never changes threat-model.yaml, and never runs
+  your tests or builds. Use /appsec-advisor:create-threat-model for a full
+  assessment and /appsec-advisor:verify-requirements for requirement grading.
+
+EXIT
+  The result states complete, incomplete (missing answers, inputs, or limits),
+  failed, or cancelled. Only a complete result covers its stated scope.

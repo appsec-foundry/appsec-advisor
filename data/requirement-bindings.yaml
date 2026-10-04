@@ -793,6 +793,119 @@ requirements:
       - tests/test_review_threat_model.py::test_reconcile_merges_sidecar_decisions
       - tests/test_review_threat_model.py::test_reconcile_flags_stale_entries
 
+  REQ-ANA-001:
+    applies_to:
+      - skills/analyze-threats/**
+      - scripts/appsec-analyst-cli
+      - scripts/orchestrator/analyst_controller.py
+    decisions:
+      - EX-1
+    documents:
+      - docs/threat-analyst.md
+    coverage: partial
+    guards:
+      - tests/test_analyst_isolation.py::test_importing_the_analyst_modules_creates_no_job
+      - tests/test_analyst_isolation.py::test_plugin_hooks_never_activate_the_analyst
+      - tests/test_analyst_controller.py::test_configuring_the_organization_profile_starts_nothing
+
+  REQ-ANA-002:
+    applies_to:
+      - scripts/appsec-analyst-cli
+      - scripts/orchestrator/analyst_controller.py
+      - scripts/validators/validate_analyst.py
+    decisions: []
+    documents:
+      - docs/threat-analyst.md
+    coverage: direct
+    guards:
+      - tests/test_analyst_controller.py::test_complete_review_publishes_a_validated_result
+      - tests/test_analyst_controller.py::test_unsupported_claims_fail_validation_and_publish_nothing_from_the_reply
+      - tests/test_analyst_controller.py::test_transport_failures_are_retried_within_the_limit_then_fail
+      - tests/test_analyst_controller.py::test_required_questions_leave_a_noninteractive_run_incomplete
+      - tests/test_analyst_controller.py::test_a_missing_required_catalog_stops_before_any_model_call
+      - tests/test_analyst_cli.py::test_invalid_invocations_exit_2_before_any_job
+
+  REQ-ANA-003:
+    applies_to:
+      - scripts/runtime/analyst_state.py
+      - scripts/contexts/build_analyst_snapshot.py
+    decisions:
+      - RA-6
+    documents:
+      - docs/threat-analyst.md
+    coverage: direct
+    guards:
+      - tests/test_analyst_isolation.py::test_analyst_jobs_leave_a_concurrent_assessment_untouched
+      - tests/test_analyst_isolation.py::test_assessment_cleanup_cannot_remove_analyst_state
+      - tests/test_analyst_isolation.py::test_analyst_output_cannot_land_in_assessment_state
+
+  REQ-ANA-004:
+    applies_to:
+      - scripts/contexts/resolve_analyst_catalog.py
+      - scripts/runtime/resolve_org_profile.py
+    decisions:
+      - EX-1
+    documents:
+      - docs/threat-analyst.md
+    coverage: direct
+    guards:
+      - tests/test_resolve_analyst_catalog.py::test_ci_requires_pinned_trusted_packages_from_outside_the_checkout
+      - tests/test_resolve_analyst_catalog.py::test_conflicting_definitions_under_one_identity_are_rejected
+      - tests/test_analyst_controller.py::test_organization_required_packages_apply_to_every_invoked_analysis
+      - tests/test_analyst_controller.py::test_an_invalid_organization_profile_rejects_the_analysis
+
+  REQ-ANA-005:
+    applies_to:
+      - schemas/analyst-catalog.schema.json
+      - schemas/analyst-methodology.schema.json
+      - data/analyst-questions.yaml
+    decisions: []
+    documents:
+      - docs/threat-analyst.md
+    coverage: direct
+    guards:
+      - tests/test_resolve_analyst_catalog.py::test_packages_cannot_carry_authority_or_unbounded_content
+      - tests/test_analyst_controller.py::test_design_requests_never_produce_findings
+      - tests/test_analyst_controller.py::test_unsupported_claims_fail_validation_and_publish_nothing_from_the_reply
+
+  REQ-ANA-006:
+    applies_to:
+      - data/analyst-methods/threat-modeling-manifesto.yaml
+    decisions: []
+    documents:
+      - docs/threat-analyst.md
+    coverage: direct
+    guards:
+      - tests/test_analyst_catalog.py::test_manifesto_profile_is_attributed_optional_and_not_a_certification
+      - tests/test_analyst_controller.py::test_without_a_selected_profile_no_methodology_is_delivered
+      - tests/test_analyst_controller.py::test_selected_manifesto_profile_is_delivered_and_recorded
+
+  REQ-ANA-007:
+    applies_to:
+      - scripts/contexts/analyst_questions.py
+      - schemas/analyst-feature.schema.json
+    decisions: []
+    documents:
+      - docs/threat-analyst.md
+    coverage: direct
+    guards:
+      - tests/test_analyst_questions.py::test_feature_save_is_explicit_merging_and_refuses_stale_overwrites
+      - tests/test_analyst_questions.py::test_reuse_rechecks_saved_answers
+      - tests/test_analyst_controller.py::test_required_questions_checkpoint_interactively_and_resume_with_answers
+
+  REQ-ANA-008:
+    applies_to:
+      - schemas/analyst-response.schema.json
+      - scripts/renderers/render_analyst_report.py
+    decisions: []
+    documents:
+      - docs/threat-analyst.md
+    coverage: direct
+    guards:
+      - tests/test_analyst_controller.py::test_unsupported_claims_fail_validation_and_publish_nothing_from_the_reply
+      - tests/test_analyst_controller.py::test_unknown_relationship_needs_no_comparison
+      - tests/test_render_analyst_report.py::test_report_states_advisory_scope_and_coverage
+
   REQ-TRU-001:
     applies_to:
       - scripts/validators/preflight_untrusted.py

@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Run Issues report as errors a delivered model with two findings for the same code location and weakness, a verified finding that does not say how it was verified, or an architect review that counts refuted findings as unresolved.
 - `.appsec/actors.yaml` accepts `legitimate_roles` to add or replace modelled roles whose login lives outside the repository, preserving their declared names and access levels.
 - The Management Summary verdict opens with the modelled components by tier and the external services they exchange data with.
+- `/appsec-advisor:analyze-threats` and `scripts/appsec-analyst-cli` run an opt-in, advisory threat analysis of a design question or a selected code change, with optional question packages, the Threat Modeling Manifesto profile, organization-required packages, and explicitly saved feature answers.
 - Repositories with a build pipeline get Figure 1b, which shows the build inputs, CI systems and release artifacts with the evidenced path of the most severe supply-chain attack, the attacker's goal and a link to the supply-chain controls, while Figure 1 becomes the runtime view Figure 1a.
 
 ### Fixed

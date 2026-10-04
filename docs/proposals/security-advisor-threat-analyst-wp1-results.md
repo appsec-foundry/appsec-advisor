@@ -11,7 +11,7 @@ Status: work package 1 in progress. This document records the contract decisions
 | Verified host retention behavior | Blocked | The parent sandbox denies writes to `~/.claude`, so in-sandbox runs cannot show what the host would persist. An unsandboxed run was refused by the session's permission classifier and needs an operator run. |
 | Requirement mapping | Approved | [Requirement mapping](#requirement-mapping) |
 | Dependency addition needed | No | `jsonschema` and `PyYAML` are already used; no new package is required |
-| Shared-helper prerequisite needed | One, approved | Organization-profile extension at the end of work package 3; see [organization profile prerequisite](#organization-profile-prerequisite) |
+| Shared-helper prerequisite needed | One, implemented | Organization-profile `analyst` block; see [organization profile prerequisite](#organization-profile-prerequisite) |
 
 Work package 1 is not complete until the blocked retention check and the missing containment controls pass on a supported host.
 
@@ -219,3 +219,15 @@ Existing requirements that constrain the analyst unchanged: `REQ-PUR-002`, `REQ-
 - `TR-2` rejects repository-owned Claude Code configuration before an untrusted assessment starts. The analyst instead never loads that configuration: it runs outside the repository with `--safe-mode` and `--restricted`.
 - `TA-2` requires permission inventory entries for new commands and targets. The design above adds none; the work package 4 review confirms this.
 - `RA-6` keeps audit artifacts outside cleanup. The analyst job root is outside the assessment output directory.
+
+## Implementation status after work packages 2 to 5
+
+The deterministic parts of work packages 2 to 5 are implemented on branch `feat/threat-analyst-job-foundation`: job state, snapshot capture, catalog and package resolution with the Manifesto profile, context adapters, response and result validation, rendering, questions and feature files, the organization-profile `analyst` block, the controller, the CLI, the skill, CI examples, and `REQ-ANA-001` to `REQ-ANA-008` with bindings. Tests replace only the model transport.
+
+These acceptance items remain open because they need live model runs or operator decisions:
+
+- Host qualification: the operator runs listed under [required operator runs](#required-operator-runs).
+- Semantic evaluation of findings, questions, and the Manifesto profile on neutral fixtures, with thresholds agreed before the evaluation (work packages 3 and 6).
+- Live interactive question delivery on a supported host (work package 4) and a live trusted-CI run with artifact upload (work package 5).
+- Concurrent live assessment and analysis, and the comparison with the existing reviewer under comparable inputs and budgets (work package 6).
+- Measured values for every provisional limit.

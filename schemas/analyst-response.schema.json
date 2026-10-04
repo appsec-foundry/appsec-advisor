@@ -1,0 +1,356 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/analyst-response.schema.json",
+  "title": "Threat analyst model response",
+  "description": "Untrusted proposals of one bounded analysis pass. The controller validates every reference against the admitted snapshot and context before any of it reaches a result. There are no fields for commands, tools, write targets, permissions, identifiers, or completion.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "summary",
+    "findings",
+    "scenarios",
+    "assumptions",
+    "requirement_observations",
+    "methodology_observations",
+    "question_coverage",
+    "questions",
+    "evidence_requests",
+    "limitations"
+  ],
+  "properties": {
+    "summary": {
+      "$ref": "#/$defs/text"
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "title",
+          "explanation",
+          "severity",
+          "change_relationship",
+          "evidence",
+          "comparison",
+          "next_action"
+        ],
+        "properties": {
+          "title": {
+            "$ref": "#/$defs/title"
+          },
+          "explanation": {
+            "$ref": "#/$defs/text"
+          },
+          "severity": {
+            "enum": [
+              "critical",
+              "high",
+              "medium",
+              "low"
+            ]
+          },
+          "change_relationship": {
+            "enum": [
+              "introduced",
+              "worsened",
+              "mitigated",
+              "unchanged_preexisting",
+              "unknown"
+            ]
+          },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 6,
+            "items": {
+              "$ref": "#/$defs/location"
+            }
+          },
+          "comparison": {
+            "type": "array",
+            "maxItems": 6,
+            "items": {
+              "$ref": "#/$defs/location"
+            }
+          },
+          "requirement_refs": {
+            "$ref": "#/$defs/requirement_refs"
+          },
+          "next_action": {
+            "$ref": "#/$defs/text"
+          }
+        }
+      }
+    },
+    "scenarios": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "title",
+          "description",
+          "next_action"
+        ],
+        "properties": {
+          "title": {
+            "$ref": "#/$defs/title"
+          },
+          "description": {
+            "$ref": "#/$defs/text"
+          },
+          "next_action": {
+            "$ref": "#/$defs/text"
+          },
+          "requirement_refs": {
+            "$ref": "#/$defs/requirement_refs"
+          }
+        }
+      }
+    },
+    "assumptions": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "statement",
+          "status"
+        ],
+        "properties": {
+          "statement": {
+            "$ref": "#/$defs/text"
+          },
+          "status": {
+            "enum": [
+              "declared",
+              "supported",
+              "contradicted",
+              "unresolved"
+            ]
+          },
+          "evidence": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {
+              "$ref": "#/$defs/location"
+            }
+          }
+        }
+      }
+    },
+    "requirement_observations": {
+      "type": "array",
+      "maxItems": 30,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "requirement_ref",
+          "observation"
+        ],
+        "properties": {
+          "requirement_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "observation": {
+            "$ref": "#/$defs/text"
+          },
+          "evidence": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {
+              "$ref": "#/$defs/location"
+            }
+          }
+        }
+      }
+    },
+    "methodology_observations": {
+      "type": "array",
+      "maxItems": 40,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "criterion_ref",
+          "observation"
+        ],
+        "properties": {
+          "criterion_ref": {
+            "$ref": "#/$defs/entry_ref"
+          },
+          "observation": {
+            "$ref": "#/$defs/text"
+          }
+        }
+      }
+    },
+    "question_coverage": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "question_ref",
+          "status",
+          "note"
+        ],
+        "properties": {
+          "question_ref": {
+            "$ref": "#/$defs/entry_ref"
+          },
+          "status": {
+            "enum": [
+              "answered_from_evidence",
+              "needs_answer",
+              "not_applicable"
+            ]
+          },
+          "note": {
+            "$ref": "#/$defs/text"
+          }
+        }
+      }
+    },
+    "questions": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "asks",
+          "why",
+          "affects",
+          "required"
+        ],
+        "properties": {
+          "question_ref": {
+            "$ref": "#/$defs/entry_ref"
+          },
+          "asks": {
+            "$ref": "#/$defs/text"
+          },
+          "why": {
+            "$ref": "#/$defs/text"
+          },
+          "affects": {
+            "$ref": "#/$defs/text"
+          },
+          "suggested_answers": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {
+              "$ref": "#/$defs/title"
+            }
+          },
+          "required": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "evidence_requests": {
+      "type": "array",
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "reason"
+        ],
+        "properties": {
+          "path": {
+            "$ref": "#/$defs/relative_path"
+          },
+          "reason": {
+            "$ref": "#/$defs/title"
+          }
+        }
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "$ref": "#/$defs/text"
+      }
+    }
+  },
+  "$defs": {
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1200
+    },
+    "entry_ref": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,39}/[a-z0-9][a-z0-9-]{0,63}:[a-z0-9][a-z0-9-]{0,63}$"
+    },
+    "requirement_refs": {
+      "type": "array",
+      "maxItems": 6,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      }
+    },
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?!/)(?!.*(^|/)\\.\\.?(/|$))[^\\x00]+$"
+    },
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "side",
+        "path",
+        "line_start",
+        "line_end",
+        "excerpt"
+      ],
+      "properties": {
+        "side": {
+          "enum": [
+            "baseline",
+            "proposed"
+          ]
+        },
+        "path": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "line_start": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "line_end": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "excerpt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400
+        }
+      }
+    }
+  }
+}

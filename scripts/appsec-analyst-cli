@@ -1,0 +1,238 @@
+#!/usr/bin/env python3
+"""appsec-analyst-cli — entry point of the on-demand threat analysis.
+
+Thin launcher: it validates arguments and calls the analyst controller, which
+owns all analysis logic. The /appsec-advisor:analyze-threats skill calls it
+with --interactive; CI calls it without. It never fetches, never reads stdin,
+and never prompts.
+
+    appsec-analyst-cli design --repo DIR (--design-file FILE | --text TEXT) [options]
+    appsec-analyst-cli review --repo DIR (--base REV --head REV [--exact-base] | --staged | --worktree) [options]
+    appsec-analyst-cli answer --repo DIR --job ID (--answers FILE | --answer QID=TEXT ...) [--save-feature FILE ...]
+    appsec-analyst-cli cancel --repo DIR --job ID
+    appsec-analyst-cli forget --repo DIR --feature FILE --feature-sha SHA --question-fingerprint FP
+
+SIGTERM and SIGINT stop the analysis, terminate its model session, and record
+the job as cancelled.
+
+Exit codes: 0 complete (or, with --interactive, waiting for answers),
+2 rejected, incomplete, or failed, 130 cancelled. Findings never change the
+exit code; 1 is reserved for a future gate.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import signal
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from contexts.resolve_analyst_catalog import Selection  # noqa: E402
+from orchestrator import analyst_controller as ctl  # noqa: E402
+from runtime.analyst_host import DEFAULT_MODEL, ClaudeCliTransport  # noqa: E402
+
+MAX_TEXT_CHARS = 20000
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        self.print_usage(sys.stderr)
+        sys.stderr.write(f"{self.prog}: error: {message}\n")
+        raise SystemExit(ctl.EXIT_NOT_COMPLETE)
+
+
+def _path(value: str) -> Path:
+    if not value or "\x00" in value:
+        raise argparse.ArgumentTypeError("empty or invalid path")
+    return Path(os.path.abspath(value))
+
+
+def _model(value: str) -> str:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,63}", value):
+        raise argparse.ArgumentTypeError("invalid model name")
+    return value
+
+
+def _common(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--repo", type=_path, required=True, help="Git working tree to analyze")
+    parser.add_argument(
+        "--state-dir", type=_path, help="analyst state root (default: $XDG_STATE_HOME/appsec-advisor/analyst)"
+    )
+    parser.add_argument("--model", type=_model, default=DEFAULT_MODEL, help="model alias for the analysis session")
+    parser.add_argument("--max-budget-usd", type=float, default=1.0, help="spend ceiling per model call")
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="used by the skill: allows worktree, staged, and free-text scopes and question checkpoints",
+    )
+
+
+def _analysis(parser: argparse.ArgumentParser) -> None:
+    _common(parser)
+    parser.add_argument("--output", type=_path, help="directory for analyst-result.json and analyst-result.md")
+    parser.add_argument("--feature", type=_path, help="reviewed feature-context file (untrusted declarations)")
+    parser.add_argument(
+        "--package",
+        action="append",
+        default=[],
+        help="add a package: <namespace>/<id>@<version> or an absolute file path, optionally #sha256=<hex>",
+    )
+    parser.add_argument(
+        "--trusted-package",
+        action="append",
+        default=[],
+        help="CI only: package from trusted pipeline configuration; must be pinned with #sha256=",
+    )
+    parser.add_argument(
+        "--ci", action="store_true", help="trusted-CI semantics: only pinned trusted packages, no question checkpoint"
+    )
+    parser.add_argument("--requirements", type=_path, help="requirements catalog from trusted configuration")
+    parser.add_argument("--requirements-required", action="store_true")
+    parser.add_argument("--threat-model", type=_path, help="structured threat-model.yaml to use as context")
+    parser.add_argument("--threat-model-required", action="store_true")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = Parser(prog="appsec-analyst-cli", description="On-demand threat analysis (advisory).")
+    sub = parser.add_subparsers(dest="command", required=True, parser_class=Parser)
+    design = sub.add_parser("design", help="analyze a planned design")
+    _analysis(design)
+    source = design.add_mutually_exclusive_group(required=True)
+    source.add_argument("--design-file", type=_path)
+    source.add_argument("--text", help="free-text design request (interactive only)")
+    review = sub.add_parser("review", help="analyze a code change")
+    _analysis(review)
+    review.add_argument("--base")
+    review.add_argument("--head")
+    review.add_argument("--exact-base", action="store_true", help="compare base directly instead of the merge base")
+    review.add_argument("--staged", action="store_true")
+    review.add_argument("--worktree", action="store_true")
+    answer = sub.add_parser("answer", help="answer the open questions of a job")
+    _common(answer)
+    answer.add_argument("--job", required=True)
+    given = answer.add_mutually_exclusive_group(required=True)
+    given.add_argument(
+        "--answers", type=_path, help="JSON file: {job_id, answers: [{question_id, fingerprint, answer}]}"
+    )
+    given.add_argument(
+        "--answer", action="append", metavar="QID=TEXT", help="interactive only: answer one question of this job"
+    )
+    answer.add_argument("--save-feature", type=_path)
+    answer.add_argument("--feature-sha")
+    answer.add_argument("--feature-id")
+    stop = sub.add_parser("cancel", help="stop a running job or close one waiting for answers")
+    _common(stop)
+    stop.add_argument("--job", required=True)
+    forget = sub.add_parser("forget", help="remove one saved answer from a feature file")
+    _common(forget)
+    forget.add_argument("--feature", type=_path, required=True)
+    forget.add_argument("--feature-sha", required=True)
+    forget.add_argument("--question-fingerprint", required=True)
+    return parser
+
+
+def _terminate(signum, frame):
+    raise ctl.Terminated()
+
+
+def _scope(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict:
+    if args.command == "design":
+        if args.text is not None:
+            if not args.interactive:
+                parser.error("--text is interactive only; CI passes --design-file")
+            if not args.text.strip() or len(args.text) > MAX_TEXT_CHARS:
+                parser.error("--text must be non-empty and at most 20000 characters")
+            return {"kind": "design", "source": "text"}
+        return {"kind": "design", "source": "file", "design_path": str(args.design_file)}
+    commits = args.base is not None or args.head is not None
+    chosen = [name for name, on in (("commits", commits), ("staged", args.staged), ("worktree", args.worktree)) if on]
+    if len(chosen) != 1:
+        parser.error("choose exactly one scope: --base/--head, --staged, or --worktree")
+    if commits:
+        if args.base is None or args.head is None:
+            parser.error("--base and --head are required together")
+        return {
+            "kind": "commits",
+            "base": args.base,
+            "head": args.head,
+            "comparison": "exact" if args.exact_base else "merge_base",
+        }
+    if args.exact_base:
+        parser.error("--exact-base applies only to --base/--head")
+    if not args.interactive:
+        parser.error("--staged and --worktree are interactive only; CI passes --base and --head")
+    return {"kind": chosen[0]}
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    signal.signal(signal.SIGTERM, _terminate)
+
+    def transport(job, request):
+        return ClaudeCliTransport(job.root / "work", model=args.model, max_budget_usd=args.max_budget_usd)
+
+    if args.command == "cancel":
+        outcome = ctl.cancel(args.job, args.repo, args.state_dir)
+    elif args.command == "forget":
+        outcome = ctl.forget_answer(args.feature, args.feature_sha, args.question_fingerprint)
+    elif args.command == "answer":
+        if (args.save_feature is not None or args.answer) and not args.interactive:
+            parser.error("--save-feature and --answer are interactive only")
+        inline = None
+        if args.answer:
+            inline = {}
+            for item in args.answer:
+                qid, sep, text = item.partition("=")
+                if not sep or qid in inline:
+                    parser.error("--answer expects QID=TEXT once per question")
+                inline[qid] = text
+        outcome = ctl.answer(
+            args.job,
+            args.repo,
+            args.answers,
+            transport,
+            args.state_dir,
+            save_feature=args.save_feature,
+            feature_sha256=args.feature_sha,
+            feature_id=args.feature_id,
+            inline_answers=inline,
+        )
+    else:
+        if args.ci and args.interactive:
+            parser.error("--ci and --interactive exclude each other")
+        if args.ci and args.package:
+            parser.error("CI accepts packages only through --trusted-package")
+        if args.trusted_package and not args.ci:
+            parser.error("--trusted-package requires --ci")
+        packages = [Selection(spec, "explicit") for spec in args.package]
+        packages += [Selection(spec, "ci_pinned") for spec in args.trusted_package]
+        invocation = ctl.Invocation(
+            mode="design" if args.command == "design" else "review",
+            scope=_scope(args, parser),
+            repo_root=args.repo,
+            output_dir=args.output,
+            design_text=getattr(args, "text", None),
+            feature_path=args.feature,
+            packages=packages,
+            ci=args.ci,
+            requirements_path=args.requirements,
+            requirements_required=args.requirements_required,
+            threat_model_path=args.threat_model,
+            threat_model_required=args.threat_model_required,
+            state_root=args.state_dir,
+            model=args.model,
+        )
+        outcome = ctl.run(invocation, transport, interactive=args.interactive)
+    sys.stdout.write(outcome.report)
+    if outcome.job_id:
+        sys.stdout.write(f"\nJob: {outcome.job_id}\nState: {outcome.state}\n")
+    return outcome.exit_code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

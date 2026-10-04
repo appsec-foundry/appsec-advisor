@@ -1,0 +1,16 @@
+# Example feature-context file. The analyze-threats skill writes this file
+# only when you save answers explicitly; it never commits it. CI can pass it
+# with --feature. Every entry is a declaration of intended behavior: it does
+# not prove that code implements it, waive a requirement, or accept a risk.
+# Saved answers carry fingerprints; an answer whose question or package
+# changed, or whose text was edited after saving, is not reused.
+schema_version: 1
+feature_id: customer-export
+revision: 1
+intent: Support staff can export the data of customers assigned to them as CSV.
+declarations:
+  - Only support staff with an assignment to the customer may export that customer's data.
+  - Exports contain contact and order metadata, never payment card data.
+answers: []
+pending_verification:
+  - A support user without an assignment receives 403 for another customer's export.

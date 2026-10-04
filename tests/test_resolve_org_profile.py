@@ -527,3 +527,52 @@ def test_llm_policy_rejects_an_unknown_field(isolated_root, tmp_path):
     path = _profile_with_llm_policy(tmp_path, {"permitted_actions": ["anything"]})
     _, errors = rop.resolve(str(path), None, False, None, isolated_root, env={})
     assert errors
+
+
+def _profile_with_analyst(tmp_path: Path, analyst: dict) -> Path:
+    import yaml
+
+    target = tmp_path / "org"
+    shutil.copytree(FIXTURE_DIR, target)
+    profile = yaml.safe_load((target / "org-profile.yaml").read_text())
+    profile["analyst"] = analyst
+    (target / "org-profile.yaml").write_text(yaml.safe_dump(profile))
+    return target / "org-profile.yaml"
+
+
+def test_resolve_carries_analyst_packages_without_touching_defaults(isolated_root, tmp_path):
+    effective, errors = rop.resolve(str(FIXTURE_PATH), None, False, None, isolated_root, env={})
+    assert errors == [] and effective["analyst"] is None
+    baseline_defaults = effective["defaults"]
+    path = _profile_with_analyst(
+        tmp_path,
+        {
+            "required_packages": [{"ref": "tmm/threat-modeling-manifesto@1.0.0"}],
+            "default_packages": [{"file": "analyst/payments.yaml", "sha256": "a" * 64}],
+        },
+    )
+    (path.parent / "analyst").mkdir()
+    (path.parent / "analyst" / "payments.yaml").write_text("x: 1\n")
+    effective, errors = rop.resolve(str(path), None, False, None, isolated_root, env={})
+    assert errors == []
+    assert effective["analyst"]["required"] == ["tmm/threat-modeling-manifesto@1.0.0"]
+    assert effective["analyst"]["default"] == [
+        f"{(path.parent / 'analyst' / 'payments.yaml').resolve()}#sha256={'a' * 64}"
+    ]
+    assert effective["defaults"] == baseline_defaults
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"file": "../outside.yaml", "sha256": "a" * 64},
+        {"file": "missing.yaml", "sha256": "a" * 64},
+        {"file": "x.yaml"},
+        {"ref": "not-a-ref"},
+    ],
+    ids=["escaping", "missing", "unpinned", "malformed-ref"],
+)
+def test_invalid_analyst_packages_fail_profile_validation(isolated_root, tmp_path, entry):
+    path = _profile_with_analyst(tmp_path, {"required_packages": [entry]})
+    _effective, errors = rop.resolve(str(path), None, False, None, isolated_root, env={})
+    assert errors

@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/analyst-state.schema.json",
+  "title": "Threat analyst job state",
+  "description": "Controller-owned state of one on-demand threat analysis job. Only the controller writes it; model output never sets a state or terminal reason.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "job_id",
+    "state",
+    "input_fingerprint",
+    "counters",
+    "pending_questions",
+    "terminal_reason",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "job_id": {
+      "type": "string",
+      "pattern": "^aj-[0-9a-f]{32}$"
+    },
+    "state": {
+      "enum": [
+        "prepared",
+        "analyzing",
+        "awaiting_answers",
+        "complete",
+        "incomplete",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "input_fingerprint": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "counters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "host_calls",
+        "evidence_rounds",
+        "question_rounds",
+        "transport_retries"
+      ],
+      "properties": {
+        "host_calls": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "evidence_rounds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "question_rounds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "transport_retries": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "pending_questions": {
+      "type": "array",
+      "maxItems": 200,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^q-[0-9]{3}$"
+      }
+    },
+    "terminal_reason": {
+      "enum": [
+        null,
+        "analysis_complete",
+        "empty_scope",
+        "required_answers_missing",
+        "required_input_missing",
+        "limit_exhausted",
+        "invalid_model_output",
+        "transport_failure",
+        "validation_failure",
+        "cancelled_by_user",
+        "terminated"
+      ]
+    },
+    "updated_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    }
+  }
+}
