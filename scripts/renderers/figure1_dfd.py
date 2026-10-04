@@ -923,6 +923,8 @@ def scenarios_from_attack_paths(yaml_data, attack_paths_data, attack_taxonomy, a
                 "fids": fids,
                 "targets": targets,
                 "risk": risk,
+                "impact": [str(i) for i in ap.get("impact") or []],
+                "class": slug,
             }
         )
     # Equivalent overview origins share one numbered scenario, retaining the
@@ -934,12 +936,16 @@ def scenarios_from_attack_paths(yaml_data, attack_paths_data, attack_taxonomy, a
             combined[key] = scenario
             continue
         existing = combined[key]
-        for field in ("cids", "fids"):
+        for field in ("cids", "fids", "impact"):
             existing[field] = list(dict.fromkeys(existing[field] + scenario[field]))
         existing["targets"] += [row for row in scenario["targets"] if row not in existing["targets"]]
         existing["risk"] = min((existing["risk"], scenario["risk"]), key=lambda risk: SEV_RANK.get(risk, 9))
     scenarios = list(combined.values())
-    actors = [{"name": actor_name(s), "slug": s, "sub": actor_sub(s), "attacker": True} for s in order]
+    # Codes are assigned over every attacker, so a projection that drops one (Figure 1a) keeps the others' codes.
+    actors = [
+        {"name": actor_name(s), "slug": s, "sub": actor_sub(s), "attacker": True, "code": f"A{i}"}
+        for i, s in enumerate(order, 1)
+    ]
     counts = represented_role_counts(yaml_data, attack_paths_data, attack_taxonomy)
     for actor in actors:
         if count := counts.get(actor["slug"]):
@@ -1367,7 +1373,7 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
             "col_rank": 2,
             "color": ACTOR_COLORS[i % len(ACTOR_COLORS)],
             "marker": f"attacker-{i}",
-            "actor_code": f"A{i + 1}",
+            "actor_code": a.get("code") or f"A{i + 1}",
             "actor_slug": a.get("slug"),
             "order": i + 1,
             "attacker": True,

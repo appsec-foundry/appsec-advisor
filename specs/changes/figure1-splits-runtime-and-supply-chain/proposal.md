@@ -165,6 +165,18 @@ Implementation refined four points of the design above:
 3. Finding attachment. STRIDE findings carry supply-chain defects as well (the juice-shop lockfile finding has no config check). A finding without a config check attaches through an evidence location shared with a fact row (input or install step) or a package manifest, and it can establish an entry only with a supply-chain CWE from the build-time attribution list.
 4. Presentation. The build strip is a Markdown line under the Figure 1a caption, not part of the SVG. The PDF export gives Figure 1b the same A3 sheet as a wide Figure 1a. The supported display widths are 880 px for report, README and HTML and 1100 px for the PDF sheet, with a minimum effective text size of 6 px.
 
+## Revision 2026-10-04 (juice-shop replay)
+
+The replay of the juice-shop run refined seven points:
+
+1. Actor codes. Codes `A1` … `An` are assigned once over all attackers in model order, before Figure 1a drops the build-time actor. §1 Identified Actors, Figure 1a and Figure 1b show the same code; Figure 1a may skip a code.
+2. Findings at an output. A finding located at a push step attaches to the artifact that step publishes, not to the action performing it.
+3. Package-manager configuration. `.npmrc`, `.yarnrc`, `.yarnrc.yml`, `pip.conf`, `pip.ini` and `gradle.properties` attach to their ecosystem like a manifest.
+4. Runtime hardening on a build component. A runtime hardening check on a build-plane component has no runtime component to stay on; Figure 1b lists it with the findings without an evidenced CI owner, without an entry.
+5. Goal. The execution element names the goal of the build-time scenario: "Goal of A<n> · <impact label> · <risk>". The impact comes from `data/business-impact-taxonomy.yaml`, the risk is the scenario risk of Figure 2 and the Top Threats row.
+6. Subtitle. The subtitle counts CI systems, upstream source types, delivery channels and the findings shown. Counts stay non-additive (decision 8).
+7. Control link. The Figure 1b caption and the Top Threats row of a build-time scenario link to §6.11. The target comes from a `control_section` field in `data/attack-class-taxonomy.yaml` and the §6 heading list, never a hard-coded number.
+
 ## Non-goals
 
 - Splitting §6.11. §6.12 and §6.13 are taken, and renumbering moves report anchors (`REQ-EVO-003`). Figure 1b links to §6.11 for the control assessment.

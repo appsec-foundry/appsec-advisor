@@ -6009,7 +6009,7 @@ def _supply_chain_split(ctx: RenderContext) -> dict | None:
         taxonomy = _load_attack_class_taxonomy()
         paths = _load_attack_paths_fragment(ctx, taxonomy, ctx.yaml_data.get("threats") or [])
         labels = (_load_posture_actor_labels() or {}).get("actors") or {}
-        scenarios, _actors = scenarios_from_attack_paths(
+        scenarios, actors = scenarios_from_attack_paths(
             _figure1_display_data(ctx), copy.deepcopy(paths), taxonomy, labels
         )
         build = [s for s in scenarios if s["actor_slug"] == BUILD_TIME]
@@ -6038,12 +6038,24 @@ def _supply_chain_split(ctx: RenderContext) -> dict | None:
             actor = None
             if active:
                 name, subtitle = attacker_display(BUILD_TIME, ctx.yaml_data.get("meta") or {}, labels)
-                actor = {"name": name, "subtitle": subtitle}
+                code = next((a["code"] for a in actors if a["slug"] == BUILD_TIME), None)
+                actor = {"name": name, "subtitle": subtitle, "code": code}
+                # The goal is what the build-time scenarios reach: their impact and the risk Figure 2 shows.
+                impact_label = {
+                    i.get("id"): i.get("label") or i.get("id")
+                    for i in _load_business_impact_taxonomy().get("impacts", [])
+                    if isinstance(i, dict)
+                }
+                impacts = list(dict.fromkeys(impact_label.get(i, i) for s in build for i in s.get("impact") or []))
+                risks = [s["risk"] for s in build if s.get("risk")]
+                if impacts:
+                    actor["goal"] = {"impacts": impacts, "risk": min(risks, key=_severity_rank) if risks else ""}
             result = {
                 "view": view,
                 "actor": actor,
                 "numbers": numbers,
                 "scenario_ns": list(dict.fromkeys(s["n"] for s in build)),
+                "classes": list(dict.fromkeys(s["class"] for s in build if s.get("class"))),
             }
         elif artifact.exists():
             artifact.unlink()  # never leave a prior run's view next to a report without one
@@ -6265,8 +6277,10 @@ def _figure1b_strip(ctx: RenderContext) -> str:
     view = split["view"]
     systems = [e["label"] for e in view["elements"] if e["kind"] == "ci" and e.get("coverage") != "none"]
     where = ", ".join(systems) if systems else "no CI system evidenced"
+    from renderers.figure1b_svg import actor_title
+
     actor = split.get("actor")
-    who = f" {' '.join(split['numbers'])} {actor['name']}".rstrip() if actor else ""
+    who = f" {' '.join(split['numbers'])} {actor_title(actor)}".rstrip() if actor else ""
     return f"**Build pipeline**, not drawn in this runtime view: {where}.{who} → [Figure 1b](#{_FIGURE1B_ANCHOR})."
 
 
@@ -6300,6 +6314,16 @@ def _render_figure1b(ctx: RenderContext) -> str:
     )
     if path.get("steps"):
         intro += f" The highlighted path follows {path['finding']} as far as the repository evidences it."
+    class_meta = {c.get("id"): c for c in _load_attack_class_taxonomy().get("classes", []) if isinstance(c, dict)}
+    controls = list(
+        dict.fromkeys(
+            link
+            for cls in split.get("classes") or []
+            if (link := _control_section_link(ctx, class_meta.get(cls) or {}))
+        )
+    )
+    if controls:
+        intro += f" The control assessment is in {', '.join(controls)}."
     lines = [f'<a id="{_FIGURE1B_ANCHOR}"></a>', "", "**Figure 1b — Supply Chain and Build**", "", intro, ""]
     if svg:
         target.write_text(svg, encoding="utf-8")
@@ -10154,6 +10178,8 @@ def _compute_top_threats_rows(ctx: RenderContext) -> list[dict[str, Any]]:
         impact_str = " · ".join(impacts)
         if ap.get("actor") == "build-time" and _supply_chain_split(ctx) is not None:
             link = f"Path through the build: [Figure 1b](#{_FIGURE1B_ANCHOR})"
+            if controls := _control_section_link(ctx, class_meta.get(ap.get("class")) or {}):
+                link += f" · controls: {controls}"
             description = f"{description}<br/>{link}" if description else link
 
         rows.append(
@@ -11309,6 +11335,28 @@ _LEG_SECTION7_DOMAIN = {
     "validation": "6.6 Input Boundary Validation Controls",
     "egress-destination": "6.10 File Parser and Outbound Request Controls",
 }
+
+
+def _control_section_link(ctx: RenderContext, attack_class: dict) -> str:
+    """`[§6.11](#611-…)` for an attack class's `control_section`, or "" when §6 has no such heading.
+
+    The target is read from the §6 heading list in effect, so a renumbering moves the link with
+    its heading instead of leaving a hard-coded number behind.
+    """
+    wanted = str(attack_class.get("control_section") or "").strip()
+    if not wanted or not ctx.eval_context.get("render_security_architecture", True):
+        return ""
+    section = (ctx.contract.get("sections") or {}).get("security_architecture") or {}
+    subsections = section.get("required_subsections") or []
+    if ctx.eval_context.get("security_schema") == "v2":
+        subsections = (section.get("schema_v2") or {}).get("required_subsections") or subsections
+    for sub in subsections:
+        title = str(sub.get("title") or "") if isinstance(sub, dict) else ""
+        number, _, name = title.partition(" ")
+        if name.strip() == wanted:
+            hashes = "#" * int(sub.get("level") or 3)
+            return f"[§{number}](#{_slug_github_render_slug(f'{hashes} {title}')})"
+    return ""
 
 
 def _control_domain_anchor(domain_heading: str) -> str:
@@ -15950,7 +15998,7 @@ def _overview_people(ctx: RenderContext) -> list[dict]:
                     "kind": "attacker",
                     "slug": "build-time",
                     "subtitle": actor["subtitle"],
-                    "code": None,
+                    "code": actor.get("code"),
                     "scenarios": split["scenario_ns"],
                     "privileged": False,
                     "figure": "1b",

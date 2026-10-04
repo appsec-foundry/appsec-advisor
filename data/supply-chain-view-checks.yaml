@@ -8,7 +8,8 @@
 # limits the entry to repositories that push a container image.
 #
 # `runtime` lists checks about the running system. Their findings stay on the
-# runtime components of Figure 1a and never appear in Figure 1b.
+# runtime components of Figure 1a. On a build-plane component, which Figure 1a
+# does not draw, Figure 1b lists them without an owner and without an entry.
 #
 # Every check in data/config-iac-checks.yaml appears exactly once, in `checks`
 # or in `runtime` (tests/test_build_supply_chain_view.py).

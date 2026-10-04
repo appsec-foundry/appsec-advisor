@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 import renderers.compose_threat_model as compose
 import renderers.figure1b_svg as figure1b
+import yaml
 from renderers.pregenerate_fragments import gen_architecture_diagrams
 
 CI_COMPONENT = {
@@ -218,3 +219,61 @@ def test_container_diagram_leaves_the_build_plane_to_figure_1b_and_components_ke
     assert "is shown in [Figure 1b](#figure-1b)" in container
     assert "Release Automation" in components
     assert "Release Automation" in gen_architecture_diagrams(ctx.yaml_data).split("### 2.3 ", 1)[0]
+
+
+@pytest.mark.parametrize("runtime_threat", [True, False])
+def test_every_attacker_has_one_code_in_the_actor_table_and_both_figures(evidence, runtime_threat):
+    # Codes are assigned before Figure 1a drops the build-time actor, so no surface renumbers them.
+    ctx = _ctx(evidence, runtime_threat=runtime_threat)
+    paths = _paths("internet-anon", "build-time") if runtime_threat else _paths("build-time")
+    compose._render_figure1_svg(ctx, paths, compose._load_attack_class_taxonomy())
+    attackers = [p for p in compose._overview_people(ctx) if p["kind"] == "attacker"]
+    codes = [p["code"] for p in attackers]
+    assert all(codes) and len(set(codes)) == len(codes)
+    build = next(p for p in attackers if p["slug"] == "build-time")
+    assert compose._supply_chain_split(ctx)["actor"]["code"] == build["code"]
+    assert f"{build['code']} · {build['name']}" in compose._figure1b_strip(ctx)
+    compose._render_figure1b(ctx)
+    assert f"Entry points of {build['code']} · {build['name']}" in (evidence / "figure1b.svg").read_text()
+    figure_1a = (evidence / "figure1.svg").read_text()
+    for runtime in (p for p in attackers if p["slug"] != "build-time"):
+        assert f">{runtime['code']} · " in figure_1a  # the label may wrap after the code
+
+
+def test_figure_1b_names_the_goal_and_counts_of_the_build_time_scenarios(evidence):
+    ctx = _ctx(evidence)
+    compose._render_figure1b(ctx)
+    svg = (evidence / "figure1b.svg").read_text()
+    goal = compose._supply_chain_split(ctx)["actor"]["goal"]
+    assert goal["risk"] == "High"  # the scenario risk Figure 2 shows for the build-time finding
+    assert figure1b.goal_text(compose._supply_chain_split(ctx)["actor"]).startswith("Goal of A")
+    assert "1 CI system · 1 upstream source type · 0 delivery channels · 1 finding shown here" in svg
+    assert "Goal of " in svg
+
+
+def test_without_an_impact_figure_1b_draws_no_goal():
+    assert figure1b.goal_text({"name": "Build Attacker", "code": "A3"}) == ""
+    assert figure1b.goal_text(None) == ""
+
+
+def test_figure_1b_links_the_control_section_from_the_heading_list(evidence):
+    ctx = _ctx(evidence)
+    ctx.contract = yaml.safe_load(compose.DEFAULT_CONTRACT.read_text(encoding="utf-8"))
+    ctx.eval_context["security_schema"] = "v2"
+    assert "The control assessment is in [§6.11](#611-operations-runtime-and-supply-chain-controls)." in (
+        compose._render_figure1b(ctx)
+    )
+    ctx.eval_context["render_security_architecture"] = False  # quick depth: no §6, no dangling link
+    assert "control assessment" not in compose._render_figure1b(ctx)
+
+
+def test_every_attack_class_control_section_names_a_section_6_heading():
+    contract = yaml.safe_load(compose.DEFAULT_CONTRACT.read_text(encoding="utf-8"))
+    headings = {
+        sub["title"].partition(" ")[2]
+        for sub in contract["sections"]["security_architecture"]["schema_v2"]["required_subsections"]
+    }
+    sections = [
+        c["control_section"] for c in compose._load_attack_class_taxonomy()["classes"] if c.get("control_section")
+    ]
+    assert sections and set(sections) <= headings

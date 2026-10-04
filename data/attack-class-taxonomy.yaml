@@ -226,6 +226,9 @@ classes:
       application.
     default_actor: build-time
     default_target_tier: application
+    # The §6 heading (without its number) that assesses this class's controls; the
+    # Management Summary row and the Figure 1b caption link to it.
+    control_section: "Operations Runtime and Supply Chain Controls"
     cwes_from: build-time
     default_impacts:
       - full-server-compromise
