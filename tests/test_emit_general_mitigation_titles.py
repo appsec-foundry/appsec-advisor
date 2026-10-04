@@ -53,6 +53,22 @@ def test_cwe_maps_to_general_title():
     assert d["mitigations"][0]["title"] == "Use parameterized database queries"
 
 
+def test_a_review_card_keeps_the_location_a_person_must_check():
+    title = "Manual review: verify SQL injection at routes/login.ts:34"
+    d = _data(
+        {"id": "M-020", "kind": "review", "title": title, "threat_ids": ["T-009"]},
+        {
+            "id": "M-021",
+            "kind": "fix",
+            "title": "Use Sequelize replacements in routes/login.ts",
+            "threat_ids": ["T-009"],
+        },
+        threats=[{"id": "T-009", "cwe": "CWE-89", "remediation": {"steps": ["x"]}}],
+    )
+    assert egm.apply(d) == 1
+    assert [m["title"] for m in d["mitigations"]] == [title, "Use parameterized database queries"]
+
+
 def test_explicit_cwe_fields_win_over_threat_lookup():
     d = _data(
         {

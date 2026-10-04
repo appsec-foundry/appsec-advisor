@@ -242,6 +242,100 @@ def test_authz003_does_not_skip_challenge_or_verify_named_source(tmp_path: Path)
     assert "AUTHZ-003" in _ids(_scan(tmp_path))
 
 
+_PRIVILEGED_FIELD_SHAPES = [
+    # (file, source, check, fires)
+    (
+        "a.ts",
+        "export const d = () => (req, res, next) => {\n"
+        "  solveIf(c, () => { return req.body && req.body.role === roles.admin })\n  next()\n}\n",
+        "AUTHZ-003",
+        False,
+    ),
+    (
+        "a.ts",
+        "export const g = (req, res) => {\n  if (req.body.role) { return res.status(400).end() }\n"
+        "  return User.create({ email: req.body.email, role: 'user' })\n}\n",
+        "AUTHZ-003",
+        False,
+    ),
+    (
+        "a.ts",
+        "export const l = (req, res) => {\n  logger.info(req.body.role)\n}\n"
+        "export const n = async (req, res) => {\n  await User.create({ email: req.body.email })\n}\n",
+        "AUTHZ-003",
+        False,
+    ),
+    (
+        "a.ts",
+        "export const t = (req, res) => {\n  const role: string = req.body.role\n  log(role)\n}\n",
+        "AUTHZ-003",
+        False,
+    ),
+    ("a.ts", "export const m = (req, res) => {\n  logger.info(\n    req.body.role\n  )\n}\n", "AUTHZ-003", False),
+    (
+        "a.ts",
+        "export const w = async (req, res) => {\n  user.role = req.body.role\n  await user.save()\n}\n",
+        "AUTHZ-003",
+        True,
+    ),
+    (
+        "a.ts",
+        "export const e = async (req, res) => {\n  if (req.body.isAdmin) {\n    user.isAdmin = true\n  }\n}\n",
+        "AUTHZ-003",
+        True,
+    ),
+    (
+        "a.ts",
+        "export const c = async (req, res) => {\n  await User.create(\n    req.body.email,\n"
+        "    req.body.role\n  )\n}\n",
+        "AUTHZ-003",
+        True,
+    ),
+    (
+        "v.py",
+        "def g(request):\n    if request.data.get('is_staff'):\n        return Response(status=403)\n    return ok()\n",
+        "AUTHZ-101",
+        False,
+    ),
+    ("v.py", "def l(request):\n    role = request.data.get('role')\n    logger.info(role)\n", "AUTHZ-101", False),
+    ("v.py", "def k(request):\n    User.objects.create(email=x, role=request.data.get('role'))\n", "AUTHZ-101", True),
+    (
+        "v.py",
+        "def p(request):\n    db.create_user(\n        request.POST.get('email'),\n"
+        "        request.POST.get('role', 'USER'),\n    )\n",
+        "AUTHZ-101",
+        True,
+    ),
+    ("v.py", "def d(request):\n    update_user({'role': request.data.get('role')})\n", "AUTHZ-101", True),
+    (
+        "v.py",
+        "def s(request):\n    if request.data.get('is_staff'):\n        user.is_staff = True\n",
+        "AUTHZ-101",
+        True,
+    ),
+]
+
+
+@pytest.mark.parametrize(("name", "source", "check", "fires"), _PRIVILEGED_FIELD_SHAPES)
+def test_privileged_field_mass_assignment_needs_a_write_in_the_same_block(
+    tmp_path: Path, name: str, source: str, check: str, fires: bool
+) -> None:
+    """Reading a privileged request field is mass assignment only when the same
+    block writes a privileged field or persists a record; comparing, logging or
+    rejecting the field is not, and a write in another function never counts."""
+    (tmp_path / name).write_text(source, encoding="utf-8")
+    assert (check in _ids(_scan(tmp_path))) is fires
+
+
+def test_block_scope_and_rejecting_guard_are_catalog_options(tmp_path: Path) -> None:
+    path = _write_checks(tmp_path / "checks.yaml", pattern="secret", counter_scope="block", skip_rejecting_guard=True)
+    (check,) = S.load_checks(path)
+    assert (check.counter_scope, check.skip_rejecting_guard) == ("block", True)
+    assert S.load_checks(_write_checks(tmp_path / "plain.yaml", pattern="secret"))[0].skip_rejecting_guard is False
+    with pytest.raises(ValueError, match="line\\|window\\|call\\|block"):
+        S.load_checks(_write_checks(tmp_path / "bad.yaml", pattern="secret", counter_scope="file"))
+
+
 def test_authz008_sensitive_route_without_auth(tmp_path: Path) -> None:
     (tmp_path / "server.js").write_text("const app = express();\napp.post('/api/Users', createUser);\n")
     assert "AUTHZ-008" in _ids(_scan(tmp_path))

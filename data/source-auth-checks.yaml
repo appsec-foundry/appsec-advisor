@@ -20,11 +20,16 @@
 #   pattern                  — primary regex (must match for finding)
 #   counter_window           — lines AFTER match to scan for counter-pattern
 #                              (0 = same line only; default 5)
-#   counter_scope            — line | window | call (default: window)
+#   counter_scope            — line | window | call | block (default: window)
 #                              `line`  : only the matched line
 #                              `window`: match_line .. match_line + counter_window
 #                              `call`  : match_line until balanced close-paren
 #                                        or counter_window lines (whichever first)
+#                              `block` : match_line until the enclosing block
+#                                        ends or a sibling declaration starts,
+#                                        capped at counter_window
+#   skip_rejecting_guard     — true drops a hit on a line that rejects the
+#                              request (`if … return/throw/raise`)
 #   counter_patterns         — list of regexes; ANY match suppresses the finding
 #   required_context_patterns — list of regexes; at least one must match in the
 #                               configured scope before the finding is emitted
@@ -146,16 +151,18 @@ checks:
 
   # ===================================================================
   # AUTHZ-003 — Mass assignment of privileged fields
-  # Direct references to req.body.{role,isAdmin,permissions,...} accept
-  # role-elevating data without server-side stripping or allowlisting.
+  # A req.body.{role,isAdmin,permissions,...} read counts only when the
+  # same block writes a privileged field or persists a record; a read that
+  # only compares or rejects the field is not mass assignment.
   # ===================================================================
   - id: AUTHZ-003
     name: "Mass assignment — privileged field accepted from request body"
     description: >
-      The handler reads or persists a privileged attribute (role /
-      isAdmin / permissions / scope / privileges / roleId / tenantId)
-      directly from req.body. Without an allowlist filter the client
-      can self-elevate by including the field in the JSON payload.
+      The handler reads a privileged attribute (role / isAdmin /
+      permissions / scope / privileges / roleId / tenantId) directly from
+      req.body and writes or persists it in the same block. Without an
+      allowlist filter the client can self-elevate by including the field
+      in the JSON payload.
     file_patterns:
       - "**/*.ts"
       - "**/*.tsx"
@@ -175,8 +182,14 @@ checks:
       - "**/build/**"
       - "**/coverage/**"
     pattern: 'req\.body\.(role|isAdmin|is_admin|isStaff|is_staff|isSuperuser|is_superuser|admin|administrator|permissions?|privileges?|scopes?|roleId|role_id|userType|user_type)\b'
-    counter_scope: window
+    counter_scope: block
     counter_window: 8
+    skip_rejecting_guard: true
+    required_context_patterns:
+      - '\.\s*(?:role|isAdmin|is_admin|isStaff|is_staff|isSuperuser|is_superuser|admin|administrator|permissions?|privileges?|scopes?|roleId|role_id|userType|user_type)\s*=(?!=)'
+      - '(?:^|[{,\s])[''"]?(?:role|isAdmin|is_admin|isStaff|is_staff|isSuperuser|is_superuser|admin|administrator|permissions?|privileges?|scopes?|roleId|role_id|userType|user_type)[''"]?\s*:(?!\s*(?:string|number|boolean|any|unknown)\b)'
+      - '\.(?:create|update|build|insert|insertMany|insertOne|save|bulkCreate|upsert|findOneAndUpdate|findByIdAndUpdate|updateOne|updateMany)\w*\s*\('
+      - 'Object\.assign\s*\('
     counter_patterns:
       - 'delete\s+req\.body\.(role|isAdmin|permissions|scope|admin)'
       - '_\.(pick|omit)\s*\(\s*req\.body'
@@ -450,8 +463,9 @@ checks:
     description: >
       A handler reads a privileged attribute (role / is_staff /
       is_superuser / permissions / groups) directly from request.data /
-      request.POST / request.json. Without a serializer allowlist the
-      client self-elevates by adding the field to the payload.
+      request.POST / request.json and writes or persists it in the same
+      block. Without a serializer allowlist the client self-elevates by
+      adding the field to the payload.
     file_patterns:
       - "**/*.py"
     exclude_file_patterns:
@@ -465,8 +479,16 @@ checks:
       - "**/site-packages/**"
       - "**/settings*.py"
     pattern: 'request\.(?:data|POST|json|query_params)(?:\.get\(\s*|\s*\[\s*)[''"](role|is_staff|is_superuser|is_admin|is_active|permissions?|groups?|scopes?|user_type|account_type)[''"]'
-    counter_scope: window
+    counter_scope: block
     counter_window: 8
+    skip_rejecting_guard: true
+    required_context_patterns:
+      - '\.\s*(?:role|is_staff|is_superuser|is_admin|is_active|permissions?|groups?|scopes?|user_type|account_type)\s*=(?!=)'
+      - '[(,]\s*(?:role|is_staff|is_superuser|is_admin|is_active|permissions?|groups?|scopes?|user_type|account_type)\s*=(?!=)'
+      - '[''"](?:role|is_staff|is_superuser|is_admin|is_active|permissions?|groups?|scopes?|user_type|account_type)[''"]\s*:'
+      - '\bsetattr\s*\('
+      - '\.(?:save|create|update|bulk_create|bulk_update|update_or_create|get_or_create)\w*\s*\('
+      - '\bsession\.(?:add|merge)\s*\('
     counter_patterns:
       - 'serializer\.(is_valid|validated_data|save)'
       - 'read_only_fields'

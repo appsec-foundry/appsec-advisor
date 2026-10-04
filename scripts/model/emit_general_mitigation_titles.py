@@ -294,6 +294,10 @@ def apply(data: dict, reviewed: frozenset[tuple[str, str]] = frozenset()) -> int
         ids = m.get("threat_ids") or []
         if m.get("kind", "fix") == "fix" and len(ids) == 1 and (ids[0], m.get("title")) in reviewed:
             continue
+        # A review card names the location a person must check; a general
+        # practice title would make it read as a fix in the P1 list.
+        if m.get("kind") == "review":
+            continue
         # Idempotency: the canonical basis is the FIRST title we ever saw.
         original = (m.get("_title_source") or m.get("title") or m.get("mitigation_title") or "").strip()
         if not original:

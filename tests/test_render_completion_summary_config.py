@@ -127,22 +127,31 @@ def test_architect_line_reports_the_outcome_not_the_release_status(tmp_path, out
 
 
 @pytest.mark.parametrize(
-    ("unresolved", "corrected", "expected"),
+    ("unreviewed", "unresolved", "corrected", "expected"),
     [
-        (5, 0, "not performed — none of 5 findings reviewed"),
-        (5, 1, "incomplete — 1 assessment(s), 0 mitigation(s) corrected; 5/5 unresolved or unreviewed"),
-        (2, 1, "incomplete — 1 assessment(s), 0 mitigation(s) corrected; 2/5 unresolved or unreviewed"),
-        (0, 1, "reviewed — 1 assessment(s), 0 mitigation(s) corrected; 0/5 unresolved or unreviewed"),
+        (5, 0, 0, "not performed — none of 5 findings reviewed"),
+        (2, 0, 1, "incomplete — 1 assessment(s), 0 mitigation(s) corrected; 2/5 unreviewed"),
+        (
+            2,
+            1,
+            1,
+            "incomplete — 1 assessment(s), 0 mitigation(s) corrected; 2/5 unreviewed; 1 left open for manual review",
+        ),
+        (0, 5, 0, "reviewed — 0 assessment(s), 0 mitigation(s) corrected; 5 left open for manual review"),
+        (0, 0, 1, "reviewed — 1 assessment(s), 0 mitigation(s) corrected"),
     ],
-    ids=["none-reviewed", "all-open-but-corrected", "partial", "complete"],
+    ids=["none-reviewed", "partial", "partial-and-open", "all-open-is-reviewed", "complete"],
 )
-def test_semantic_review_that_covered_nothing_reads_as_not_performed(tmp_path, unresolved, corrected, expected):
+def test_semantic_review_that_covered_nothing_reads_as_not_performed(
+    tmp_path, unreviewed, unresolved, corrected, expected
+):
     status = {
         "status": "pass",
-        "outcome": "incomplete" if unresolved else "reviewed",
+        "outcome": "incomplete" if unreviewed else "reviewed",
         "review_kind": "semantic",
         "findings_recorded": 5,
-        "unresolved_or_unreviewed": unresolved,
+        "unreviewed": unreviewed,
+        "unresolved": unresolved,
         "assessment_corrected": corrected,
         "remediation_corrected": 0,
     }

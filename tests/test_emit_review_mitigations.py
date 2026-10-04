@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import model.emit_review_mitigations as erm
+import pytest
 import yaml
 
 
@@ -370,3 +371,96 @@ def test_existing_mitigations_not_a_list_is_reset(tmp_path: Path) -> None:
     data = _read_yaml(tmp_path)
     assert isinstance(data["mitigations"], list)
     assert any(m.get("auto_emitted") for m in data["mitigations"])
+
+
+# ---------------------------------------------------------------------------
+# M-16: open architect decisions
+# ---------------------------------------------------------------------------
+
+_OPEN = {"assessment": "unresolved", "remediation": "unchanged", "reason": "The cited line only compares the field."}
+
+
+def _open_run(tmp_path: Path, monkeypatch, threat: dict, decision: dict, fixes: list[dict]) -> dict:
+    _write_yaml(tmp_path, {"threats": [threat], "mitigations": fixes})
+    monkeypatch.setattr(erm, "open_decisions", lambda _out: {threat["id"]: decision})
+    assert erm.main([str(tmp_path)]) == 0
+    return _read_yaml(tmp_path)
+
+
+def _cards(data: dict, kind: str) -> list[dict]:
+    return [m for m in data["mitigations"] if m.get("kind", "fix") == kind]
+
+
+@pytest.mark.parametrize(
+    ("evidence", "decision", "risk", "review_priority", "fix_priority"),
+    [
+        ({"evidence_check": "ambiguous"}, _OPEN, "Critical", "P1", "P2"),
+        ({}, _OPEN, "High", "P2", "P2"),
+        ({"evidence_check": "verified", "evidence_basis": "llm-verified"}, _OPEN, "Critical", "P3", "P1"),
+        (
+            {"evidence_check": "ambiguous"},
+            {**_OPEN, "assessment": "unchanged", "remediation": "unresolved"},
+            "Critical",
+            "P3",
+            "P1",
+        ),
+    ],
+    ids=[
+        "ambiguous-open-assessment",
+        "unchecked-open-assessment",
+        "confirmed-open-assessment",
+        "open-remediation-only",
+    ],
+)
+def test_an_open_architect_decision_reaches_one_review_card_and_schedules_review_before_fix(
+    tmp_path: Path, monkeypatch, evidence, decision, risk, review_priority, fix_priority
+) -> None:
+    """Every open decision reaches the report with the reviewer's reason. Only an
+    unconfirmed finding whose assessment is open is reviewed before it is fixed:
+    the review takes the severity priority and the fix drops one band."""
+    threat = _threat("T-001", risk=risk, mitigation_ids=["M-010"], **evidence)
+    fix = {"id": "M-010", "kind": "fix", "title": "Fix it", "threat_ids": ["T-001"], "priority": "P1"}
+    data = _open_run(tmp_path, monkeypatch, threat, decision, [fix])
+    (review,) = _cards(data, "review")
+    (fix_card,) = _cards(data, "fix")
+    assert decision["reason"] in review["how"]
+    assert review["title"].startswith("Manual review:")
+    assert (review["priority"], fix_card["priority"]) == (review_priority, fix_priority)
+    assert review["id"] in data["threats"][0]["mitigation_ids"]
+
+
+def test_a_fix_shared_with_a_confirmed_finding_keeps_its_priority(tmp_path: Path, monkeypatch) -> None:
+    threats = [
+        _threat("T-001", risk="Critical", evidence_check="ambiguous", mitigation_ids=["M-010"]),
+        _threat(
+            "T-002", risk="Critical", evidence_check="verified", evidence_basis="llm-verified", mitigation_ids=["M-010"]
+        ),
+    ]
+    fix = {"id": "M-010", "kind": "fix", "title": "Fix it", "threat_ids": ["T-001", "T-002"], "priority": "P1"}
+    _write_yaml(tmp_path, {"threats": threats, "mitigations": [fix]})
+    monkeypatch.setattr(erm, "open_decisions", lambda _out: {"T-001": _OPEN})
+    assert erm.main([str(tmp_path)]) == 0
+    (fix_card,) = _cards(_read_yaml(tmp_path), "fix")
+    assert fix_card["priority"] == "P1"
+
+
+def test_review_before_fix_is_applied_once_across_reruns(tmp_path: Path, monkeypatch) -> None:
+    threat = _threat("T-001", risk="Critical", evidence_check="ambiguous", mitigation_ids=["M-010"])
+    fix = {"id": "M-010", "kind": "fix", "title": "Fix it", "threat_ids": ["T-001"], "priority": "P1"}
+    first = _open_run(tmp_path, monkeypatch, threat, _OPEN, [fix])
+    assert erm.main([str(tmp_path)]) == 0
+    second = _read_yaml(tmp_path)
+    assert first["mitigations"] == second["mitigations"]
+    monkeypatch.setattr(erm, "open_decisions", lambda _out: {})
+    assert erm.main([str(tmp_path)]) == 0
+    (fix_card,) = _cards(_read_yaml(tmp_path), "fix")
+    assert fix_card["priority"] == "P1" and "priority_before_review" not in fix_card
+
+
+def test_without_an_architect_transaction_review_cards_are_unchanged(tmp_path: Path) -> None:
+    _write_yaml(
+        tmp_path, {"threats": [_threat("T-001", evidence_check="ambiguous", risk="Critical")], "mitigations": []}
+    )
+    assert erm.main([str(tmp_path)]) == 0
+    (review,) = _cards(_read_yaml(tmp_path), "review")
+    assert review["priority"] == "P3" and "architect" not in review["how"]

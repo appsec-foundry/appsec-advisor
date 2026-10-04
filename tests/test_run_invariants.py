@@ -238,7 +238,7 @@ def test_architect_check_detects_a_coverage_that_counts_refuted_rows(tmp_path, m
 
     def regressed(value):
         rows = value["application"]["outcomes"]
-        return {"unresolved_or_unreviewed": sum(r["status"] != "accepted" for r in rows)}
+        return {"unreviewed": sum(r["status"] != "accepted" for r in rows)}
 
     monkeypatch.setattr(inv, "review_coverage", regressed)
     assert len(inv.architect_refuted(run)) == 1

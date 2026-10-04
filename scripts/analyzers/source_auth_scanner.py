@@ -25,6 +25,12 @@ Counter-pattern scopes:
     window  — match_line .. match_line + counter_window  (inclusive)
     call    — match_line until balanced close-paren OR counter_window
               lines (whichever comes first)
+    block   — match_line until the enclosing block ends (a less indented
+              line) or a sibling declaration starts, capped at counter_window
+
+`skip_rejecting_guard` drops a hit on a line that visibly rejects the request
+(`if … return/throw/raise`): reading a field to refuse it is the control, not
+the weakness.
 
 The scanner is pure-Python, depends only on stdlib + PyYAML, and is
 designed to run in well under 30 seconds on a 1000-file repo. It is
@@ -147,7 +153,7 @@ class Check:
     file_patterns: list[str]
     exclude_file_patterns: list[str]
     pattern: re.Pattern[str]
-    counter_scope: str  # line | window | call
+    counter_scope: str  # line | window | call | block
     counter_window: int
     counter_patterns: list[re.Pattern[str]]
     required_context_patterns: list[re.Pattern[str]]
@@ -157,6 +163,7 @@ class Check:
     breach_vector: str
     rationale: str
     remediation: str
+    skip_rejecting_guard: bool = False
 
 
 @dataclass
@@ -203,8 +210,8 @@ def load_checks(checks_path: Path) -> list[Check]:
             raise ValueError(f"check is missing id: {entry}")
         try:
             scope = entry.get("counter_scope") or "window"
-            if scope not in ("line", "window", "call"):
-                raise ValueError(f"check {cid}: counter_scope must be one of line|window|call, got {scope!r}")
+            if scope not in ("line", "window", "call", "block"):
+                raise ValueError(f"check {cid}: counter_scope must be one of line|window|call|block, got {scope!r}")
             out.append(
                 Check(
                     id=cid,
@@ -229,6 +236,7 @@ def load_checks(checks_path: Path) -> list[Check]:
                     breach_vector=str(entry.get("breach_vector") or "Internet User"),
                     rationale=str(entry.get("rationale") or "").strip(),
                     remediation=str(entry.get("remediation") or "").strip(),
+                    skip_rejecting_guard=bool(entry.get("skip_rejecting_guard", False)),
                 )
             )
         except KeyError as e:
@@ -412,6 +420,62 @@ def _scope_lines_for_call(lines: list[str], start_idx: int, max_window: int) -> 
     return lines[start_idx : end_idx + 1]
 
 
+_SIBLING_DECLARATION = re.compile(
+    r"^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function|def|class)\b"
+    r"|^\s*(?:export\s+)?(?:const|let|var)\s+\w+\s*=\s*(?:async\s*)?(?:\(|function\b|\w+\s*=>)"
+)
+
+
+def _indent(line: str) -> int:
+    return len(line) - len(line.lstrip())
+
+
+def _open_group_head(lines: list[str], start_idx: int, max_window: int) -> int:
+    """Index of the line opening a multi-line call or list that still encloses
+    `start_idx`, or `start_idx` itself. Braces are ignored so a function body
+    never makes its header part of the statement."""
+    depth = 0
+    for i in range(start_idx - 1, max(-1, start_idx - max_window - 1), -1):
+        for ch in reversed(lines[i]):
+            if ch in ")]":
+                depth += 1
+            elif ch in "([":
+                depth -= 1
+                if depth < 0:
+                    return i
+    return start_idx
+
+
+def _scope_lines_for_block(lines: list[str], start_idx: int, max_window: int) -> list[str]:
+    """Return lines from the head of the statement enclosing `start_idx` until
+    the enclosing block ends or a sibling declaration starts, capped at
+    `max_window` lines.
+
+    Indentation is the block signal for both brace and Python sources, so a
+    write in the next function never counts as context for this one. A hit
+    inside a multi-line call or literal includes the line that opens it."""
+    indent = _indent(lines[start_idx])
+    head = _open_group_head(lines, start_idx, max_window)
+    end = start_idx + 1
+    for i in range(start_idx + 1, min(len(lines), start_idx + max_window + 1)):
+        line = lines[i]
+        if line.strip() and (_indent(line) < indent or (_indent(line) <= indent and _SIBLING_DECLARATION.match(line))):
+            break
+        end = i + 1
+    return lines[head:end]
+
+
+def _scope_lines(lines: list[str], match_line_idx: int, check: Check) -> list[str]:
+    if check.counter_scope == "line":
+        return [lines[match_line_idx]]
+    if check.counter_scope == "call":
+        return _scope_lines_for_call(lines, match_line_idx, check.counter_window)
+    if check.counter_scope == "block":
+        return _scope_lines_for_block(lines, match_line_idx, check.counter_window)
+    end = min(len(lines), match_line_idx + check.counter_window + 1)
+    return lines[match_line_idx:end]
+
+
 def _counter_match(
     lines: list[str],
     match_line_idx: int,
@@ -421,15 +485,7 @@ def _counter_match(
     if not check.counter_patterns:
         return False
 
-    if check.counter_scope == "line":
-        scope_lines = [lines[match_line_idx]]
-    elif check.counter_scope == "call":
-        scope_lines = _scope_lines_for_call(lines, match_line_idx, check.counter_window)
-    else:  # window
-        end = min(len(lines), match_line_idx + check.counter_window + 1)
-        scope_lines = lines[match_line_idx:end]
-
-    blob = "\n".join(scope_lines)
+    blob = "\n".join(_scope_lines(lines, match_line_idx, check))
     if check.id == "AUTHZ-103" and re.search(r"['\"]verify_signature['\"]\s*:\s*False\b", blob):
         return False
     if check.id == "AUTHN-001":
@@ -455,14 +511,7 @@ def _required_context_matches(
     """
     if not check.required_context_patterns:
         return True
-    if check.counter_scope == "line":
-        scope_lines = [lines[match_line_idx]]
-    elif check.counter_scope == "call":
-        scope_lines = _scope_lines_for_call(lines, match_line_idx, check.counter_window)
-    else:  # window
-        end = min(len(lines), match_line_idx + check.counter_window + 1)
-        scope_lines = lines[match_line_idx:end]
-    blob = "\n".join(scope_lines)
+    blob = "\n".join(_scope_lines(lines, match_line_idx, check))
     return any(pattern.search(blob) for pattern in check.required_context_patterns)
 
 
@@ -1797,6 +1846,8 @@ def scan_file(
             if _counter_match(counter_lines, counter_idx, check):
                 continue
             if check.id == "AUTHN-002" and _strong_password_rejection(lines, line_idx, m.group(0)):
+                continue
+            if check.skip_rejecting_guard and rejecting_check(lines[line_idx]):
                 continue
             if not _required_context_matches(lines, line_idx, check):
                 continue

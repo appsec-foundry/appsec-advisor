@@ -2106,11 +2106,11 @@ def test_covered_or_missing_config_scan_raises_no_uncovered_warning(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _coverage_run(tmp_path, *, enabled=True, recorded=4, unresolved=4, flags=1, threats=2, corrected=0):
+def _coverage_run(tmp_path, *, enabled=True, recorded=4, unreviewed=4, unresolved=0, flags=1, threats=2):
     (tmp_path / ".skill-config.json").write_text(json.dumps({"architect_review": enabled}))
     status = {"status": "pass", "outcome": "incomplete", "findings_recorded": recorded}
-    status["unresolved_or_unreviewed"] = unresolved
-    status["assessment_corrected"] = corrected
+    status["unreviewed"] = unreviewed
+    status["unresolved"] = unresolved
     (tmp_path / ".architect-status.json").write_text(json.dumps(status))
     jobs = [{"packet_id": "p1", "status": "stage_exhausted"}, {"packet_id": "p2", "status": "failed"}]
     (tmp_path / ".architect-review.json").write_text(json.dumps({"jobs": jobs}))
@@ -2127,14 +2127,23 @@ def _coverage_run(tmp_path, *, enabled=True, recorded=4, unresolved=4, flags=1, 
     [
         ({}, ["architect_review"]),
         ({"enabled": False}, []),
-        ({"unresolved": 0}, []),
-        ({"unresolved": 2}, []),
-        ({"recorded": 0, "unresolved": 0}, []),
+        ({"unreviewed": 0}, []),
+        ({"unreviewed": 2}, []),
+        ({"recorded": 0, "unreviewed": 0}, []),
         ({"flags": 0}, ["architect_review", "evidence_verification"]),
-        ({"flags": 0, "threats": 0, "unresolved": 1}, []),
-        ({"corrected": 1}, []),
+        ({"flags": 0, "threats": 0, "unreviewed": 1}, []),
+        ({"unreviewed": 0, "unresolved": 4}, []),
     ],
-    ids=["architect-none", "disabled", "full", "partial", "no-findings", "both-none", "nothing-to-verify", "corrected"],
+    ids=[
+        "architect-none",
+        "disabled",
+        "full",
+        "partial",
+        "no-findings",
+        "both-none",
+        "nothing-to-verify",
+        "all-reviewed-but-left-open",
+    ],
 )
 def test_a_stage_that_covered_nothing_is_a_run_issue(tmp_path, kwargs, stages):
     issues = agg._extract_stage_coverage_collapse(_coverage_run(tmp_path, **kwargs))

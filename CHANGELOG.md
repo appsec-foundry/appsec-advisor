@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Mass-assignment checks for JavaScript and Python no longer report code that only compares, logs or rejects a privileged request field such as `role`; they report it when the same block writes or persists it.
+- The architect review reads as reviewed when every finding got a decision; findings the reviewer left open are counted separately and their reasons appear in a manual-review card.
+- A finding that is unconfirmed and whose rating the architect left open gets its manual review first: the review card takes the finding's priority and its fix is scheduled one band lower.
+- Manual-review cards keep their "Manual review: …" title, and a review card no longer suppresses the fix card of a configuration finding.
 - One code location reported under sibling CWEs by two analyses, such as an `eval` flagged as CWE-95 and CWE-94, is now a single finding.
 - The architect review reviews only findings the report delivers: findings the evidence verifier refuted or that fall below the report's severity floor are excluded and no longer count as unresolved.
 - A selected worst-case impact answer from the interactive dialog now reaches every runtime component instead of only those the analysis chose; build and delivery components are covered only when the answer names them.

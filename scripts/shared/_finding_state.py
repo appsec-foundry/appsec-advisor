@@ -116,6 +116,19 @@ def is_confirmed(threat: dict | None) -> bool:
     return evidence_established(threat)
 
 
+def review_before_fix(threat: dict | None, open_decision: dict | None) -> bool:
+    """The finding needs a manual review before its fix is scheduled: the
+    architect reviewer left its assessment open and its evidence does not
+    confirm it. ``open_decision`` is the finding's entry from
+    ``analyzers.architect_review_runtime.open_decisions``."""
+    return (
+        isinstance(threat, dict)
+        and bool(open_decision)
+        and open_decision.get("assessment") == "unresolved"
+        and not is_confirmed(threat)
+    )
+
+
 def in_report_scope(threat: dict | None) -> bool:
     """The finding belongs to the delivered model (the finalized field, else not refuted)."""
     if not isinstance(threat, dict):

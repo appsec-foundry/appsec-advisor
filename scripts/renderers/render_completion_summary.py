@@ -2143,14 +2143,16 @@ def _summary_architect(output_dir: Path, cfg: dict) -> str:
                 return "status unreadable"
             recorded = data["findings_recorded"]
             corrected = data["assessment_corrected"] + data["remediation_corrected"]
-            if recorded and data["unresolved_or_unreviewed"] == recorded and not corrected:
+            if recorded and data["unreviewed"] == recorded:
                 reason = f" ({str(data['reason']).replace('_', ' ')})" if data.get("reason") else ""
                 return f"not performed — none of {recorded} findings reviewed{reason}"
+            gaps = f"; {data['unreviewed']}/{recorded} unreviewed" if data["unreviewed"] else ""
+            open_ = f"; {data['unresolved']} left open for manual review" if data["unresolved"] else ""
             refuted = f"; {data['excluded_refuted']} refuted and excluded" if data.get("excluded_refuted") else ""
             return (
                 f"{data['outcome'].replace('_', ' ')} — "
-                f"{data['assessment_corrected']} assessment(s), {data['remediation_corrected']} mitigation(s) corrected; "
-                f"{data['unresolved_or_unreviewed']}/{data['findings_recorded']} unresolved or unreviewed{refuted}"
+                f"{data['assessment_corrected']} assessment(s), {data['remediation_corrected']} mitigation(s) corrected"
+                f"{gaps}{open_}{refuted}"
             )
         outcome = str(data.get("outcome") or "")
         if outcome in _ARCHITECT_OUTCOME_WORDS:
