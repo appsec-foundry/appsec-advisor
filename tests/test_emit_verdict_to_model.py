@@ -152,7 +152,7 @@ def test_no_harm_scope_survives_export_without_lowering_technical_severity(tmp_p
     doc = _persisted(out)
     assert doc["threats"] == model["threats"]
     assert doc["verdict"]["severity"] == "red"
-    assert "1 of 1 modeled components" in doc["verdict"]["business_context_note"]
+    assert "no material harm for the application" in doc["verdict"]["business_context_note"]
     import jsonschema
 
     schema = yaml.safe_load(
