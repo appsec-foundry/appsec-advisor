@@ -476,7 +476,70 @@ def enforce(data: dict) -> tuple[dict, list[dict], list[dict]]:
                     flags.append(token)
                 c["audit_flags"] = flags
 
+    domain_changes += _resolve_from_catalog(controls)
     return data, name_changes, domain_changes
+
+
+_PLUGIN_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _section_titles() -> set[str]:
+    """§6 headings without their number, from the schema_v2 contract the renderer uses."""
+    contract = yaml.safe_load((_PLUGIN_ROOT / "data" / "sections-contract.yaml").read_text(encoding="utf-8"))
+    subsections = contract["sections"]["security_architecture"]["schema_v2"]["required_subsections"]
+    return {re.sub(r"^\d+(?:\.\d+)*\s+", "", s["title"]).strip() for s in subsections}
+
+
+def _catalog_domain_keys() -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    """(rule id → domain key, catalog name or alias → domain key, domain key → §6 title)."""
+    rules = yaml.safe_load((_PLUGIN_ROOT / "data" / "architecture-coverage-rules.yaml").read_text(encoding="utf-8"))
+    catalog = yaml.safe_load((_PLUGIN_ROOT / "data" / "architectural-controls.yaml").read_text(encoding="utf-8"))
+    by_rule = {
+        r["id"]: r["domain"]
+        for r in (rules.get("hard_rules") or []) + (rules.get("hypothesis_rules") or [])
+        if r.get("id") and r.get("domain")
+    }
+    by_name = {}
+    for control in catalog.get("controls") or []:
+        for name in [control.get("name"), *(control.get("aliases") or [])]:
+            if name and control.get("domain"):
+                by_name.setdefault(str(name).strip().casefold(), control["domain"])
+    return by_rule, by_name, dict(catalog.get("domain_sections") or {})
+
+
+def _resolve_from_catalog(controls: list) -> list[dict]:
+    """Give a control whose domain names no §6 heading the heading of its rule or catalog domain.
+
+    The model's ``domain`` is free text. A rule-backed control (``rule_id``) or a
+    catalog control carries a deterministic domain key; without this pass a
+    domain such as "Supply Chain" matches no heading and the control is dropped
+    from §6. A control that matches neither stays as written; the QA gate
+    ``check_controls_reach_section6`` reports it.
+    """
+    titles = _section_titles()
+    by_rule, by_name, sections = _catalog_domain_keys()
+    changes = []
+    for c in controls:
+        if not isinstance(c, dict) or (c.get("domain") or "").strip() in titles:
+            continue
+        key = by_rule.get(str(c.get("rule_id") or "")) or by_name.get(str(c.get("control") or "").strip().casefold())
+        target = sections.get(key or "")
+        if not target:
+            continue
+        changes.append(
+            {
+                "id": c.get("id") or "<anon>",
+                "from": c.get("domain") or "<unset>",
+                "to": target,
+                "control": c.get("control"),
+            }
+        )
+        c["domain"] = target
+        flags = list(c.get("audit_flags") or [])
+        if "control_domain_from_catalog" not in flags:
+            flags.append("control_domain_from_catalog")
+        c["audit_flags"] = flags
+    return changes
 
 
 def _log(output_dir: Path, msg: str) -> None:

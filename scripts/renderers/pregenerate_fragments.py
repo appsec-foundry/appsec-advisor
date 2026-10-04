@@ -2998,101 +2998,39 @@ _V2_APPROACH_FIRST_RE = re.compile(
 )
 
 
-# CWE → §6.X routing table — mirrors sections-contract.yaml schema_v2
-# finding_routing. Kept here as a static map so the pregenerator does not
-# need to parse the YAML contract.
-_V2_CWE_ROUTING: dict[str, str] = {
-    "CWE-287": "6.2 Identity and Authentication Controls",
-    "CWE-307": "6.2 Identity and Authentication Controls",
-    "CWE-294": "6.2 Identity and Authentication Controls",
-    "CWE-345": "6.2 Identity and Authentication Controls",
-    "CWE-347": "6.2 Identity and Authentication Controls",
-    "CWE-620": "6.2 Identity and Authentication Controls",
-    "CWE-640": "6.2 Identity and Authentication Controls",
-    "CWE-916": "6.2 Identity and Authentication Controls",
-    "CWE-922": "6.3 Session and Token Controls",
-    "CWE-384": "6.3 Session and Token Controls",
-    "CWE-613": "6.3 Session and Token Controls",
-    "CWE-1004": "6.3 Session and Token Controls",
-    "CWE-285": "6.4 Authorization Controls",
-    "CWE-639": "6.4 Authorization Controls",
-    "CWE-269": "6.4 Authorization Controls",
-    "CWE-862": "6.4 Authorization Controls",
-    "CWE-863": "6.4 Authorization Controls",
-    "CWE-732": "6.4 Authorization Controls",
-    "CWE-352-authz": "6.4 Authorization Controls",
-    "CWE-602": "6.4 Authorization Controls",
-    "CWE-915": "6.4 Authorization Controls",
-    "CWE-89": "6.5 Query Construction and Data Access Controls",
-    "CWE-943": "6.5 Query Construction and Data Access Controls",
-    "CWE-20": "6.6 Input Boundary Validation Controls",
-    "CWE-1284": "6.6 Input Boundary Validation Controls",
-    "CWE-1287": "6.6 Input Boundary Validation Controls",
-    "CWE-400": "6.6 Input Boundary Validation Controls",
-    "CWE-79": "6.7 Output Encoding and Rendering Controls",
-    "CWE-80": "6.7 Output Encoding and Rendering Controls",
-    "CWE-87": "6.7 Output Encoding and Rendering Controls",
-    "CWE-116": "6.7 Output Encoding and Rendering Controls",
-    "CWE-1021": "6.8 Browser and Cross-Origin Controls",
-    "CWE-942": "6.8 Browser and Cross-Origin Controls",
-    "CWE-693": "6.8 Browser and Cross-Origin Controls",
-    "CWE-358": "6.8 Browser and Cross-Origin Controls",
-    "CWE-352": "6.8 Browser and Cross-Origin Controls",
-    "CWE-321": "6.9 Cryptography Secrets and Data Protection",
-    "CWE-798": "6.9 Cryptography Secrets and Data Protection",
-    "CWE-327": "6.9 Cryptography Secrets and Data Protection",
-    "CWE-326": "6.9 Cryptography Secrets and Data Protection",
-    "CWE-329": "6.9 Cryptography Secrets and Data Protection",
-    "CWE-330": "6.9 Cryptography Secrets and Data Protection",
-    "CWE-312": "6.9 Cryptography Secrets and Data Protection",
-    "CWE-538": "6.9 Cryptography Secrets and Data Protection",
-    "CWE-759": "6.9 Cryptography Secrets and Data Protection",
-    "CWE-611": "6.10 File Parser and Outbound Request Controls",
-    "CWE-22": "6.10 File Parser and Outbound Request Controls",
-    "CWE-23": "6.10 File Parser and Outbound Request Controls",
-    "CWE-409": "6.10 File Parser and Outbound Request Controls",
-    "CWE-776": "6.10 File Parser and Outbound Request Controls",
-    "CWE-94": "6.10 File Parser and Outbound Request Controls",
-    "CWE-95": "6.10 File Parser and Outbound Request Controls",
-    "CWE-918": "6.10 File Parser and Outbound Request Controls",
-    "CWE-601": "6.10 File Parser and Outbound Request Controls",
-    "CWE-441": "6.10 File Parser and Outbound Request Controls",
-    "CWE-548": "6.10 File Parser and Outbound Request Controls",
-    "CWE-552": "6.10 File Parser and Outbound Request Controls",
-    "CWE-749": "6.10 File Parser and Outbound Request Controls",
-    "CWE-200": "6.10 File Parser and Outbound Request Controls",
-    "CWE-117": "6.11 Operations Runtime and Supply Chain Controls",
-    "CWE-223": "6.11 Operations Runtime and Supply Chain Controls",
-    "CWE-209": "6.11 Operations Runtime and Supply Chain Controls",
-    "CWE-532": "6.11 Operations Runtime and Supply Chain Controls",
-    "CWE-778": "6.11 Operations Runtime and Supply Chain Controls",
-    "CWE-1104": "6.11 Operations Runtime and Supply Chain Controls",
-    "CWE-1395": "6.11 Operations Runtime and Supply Chain Controls",
-    "CWE-937": "6.11 Operations Runtime and Supply Chain Controls",
-    "CWE-829": "6.11 Operations Runtime and Supply Chain Controls",
-    "CWE-250": "6.11 Operations Runtime and Supply Chain Controls",
-    "CWE-15": "6.11 Operations Runtime and Supply Chain Controls",
-    "CWE-260": "6.11 Operations Runtime and Supply Chain Controls",
-    "CWE-1385": "6.12 Real-time and Not Applicable Controls",
-    # 2026-07-19 — routing gaps found while diagnosing the recurring §6 repair
-    # loop. An unrouted CWE contributes nothing to `routed_here`, which is one
-    # of the guards deciding whether a Missing control still earns an H4 block;
-    # on an AI/LLM codebase 17 of 49 findings landed here (CWE-1336 x5, CWE-74
-    # x4, ...), so whole §6 sections saw zero routed findings. Each entry below
-    # is placed with its existing siblings: injection-to-RCE classes join
-    # CWE-94/95 in §6.10, missing/spoofed authn joins CWE-287 in §6.2,
-    # resource-exhaustion joins CWE-400 in §6.6.
-    "CWE-306": "6.2 Identity and Authentication Controls",
-    "CWE-290": "6.2 Identity and Authentication Controls",
-    "CWE-284": "6.4 Authorization Controls",
-    "CWE-74": "6.6 Input Boundary Validation Controls",
-    "CWE-770": "6.6 Input Boundary Validation Controls",
-    "CWE-78": "6.10 File Parser and Outbound Request Controls",
-    "CWE-502": "6.10 File Parser and Outbound Request Controls",
-    "CWE-1336": "6.10 File Parser and Outbound Request Controls",
-    "CWE-359": "6.10 File Parser and Outbound Request Controls",
-    "CWE-494": "6.11 Operations Runtime and Supply Chain Controls",
-}
+def _load_cwe_routing() -> dict[str, str]:
+    """CWE → §6 heading from the contract's schema_v2 `finding_routing`, the single authority.
+
+    A CWE listed under two headings would route by file order, so the contract
+    names each CWE once (tests/test_pregenerate_fragments.py guards it).
+    """
+    contract = yaml.safe_load(_CONTRACT_PATH.read_text(encoding="utf-8")) or {}
+    routing = contract["sections"]["security_architecture"]["schema_v2"]["finding_routing"]
+    return {str(cwe).upper(): heading for heading, rule in routing.items() for cwe in (rule or {}).get("cwes") or []}
+
+
+_V2_CWE_ROUTING: dict[str, str] = _load_cwe_routing()
+_V2_BUILD_SECTION = "6.11 Operations Runtime and Supply Chain Controls"
+
+
+def _v2_threat_section(t: dict) -> str | None:
+    """The §6 heading a finding is listed under: its build placement when known, else its CWE."""
+    if "_v2_section" in t:
+        return t["_v2_section"]
+    return _V2_CWE_ROUTING.get((t.get("cwe") or "").strip().upper())
+
+
+def _v2_route_threats(yaml_data: dict) -> list[dict]:
+    """Threats annotated with their §6 heading. A finding on a build-plane component
+    (model/build_plane, RA-28) is about the build whatever its CWE, so it goes to 6.11."""
+    from model.build_plane import build_component_ids
+
+    build = build_component_ids(yaml_data.get("components") or [])
+    return [
+        dict(t, _v2_section=_V2_BUILD_SECTION if t.get("component") in build else _v2_threat_section(t))
+        for t in yaml_data.get("threats") or []
+        if isinstance(t, dict)
+    ]
 
 
 def _render_threat_hypotheses_table(yaml_data: dict) -> list[str]:
@@ -3151,16 +3089,13 @@ def _render_threat_hypotheses_table(yaml_data: dict) -> list[str]:
 
 
 def _count_routings_by_section(threats: list[dict]) -> dict[str, int]:
-    """Return {heading -> finding_count} using the static CWE map.
-    Threats without a CWE or with a CWE outside the map contribute zero."""
+    """Return {heading -> finding_count} by `_v2_threat_section`.
+    Threats that route to no heading contribute zero."""
     counts: dict[str, int] = {}
     for t in threats or []:
         if not isinstance(t, dict):
             continue
-        cwe = (t.get("cwe") or "").strip().upper()
-        if not cwe:
-            continue
-        section = _V2_CWE_ROUTING.get(cwe)
+        section = _v2_threat_section(t)
         if section:
             counts[section] = counts.get(section, 0) + 1
     return counts
@@ -3453,13 +3388,35 @@ def _v2_finding_links(threats: list[dict], section: str, max_links: int = 5) -> 
     for t in threats or []:
         if not isinstance(t, dict):
             continue
-        if _V2_CWE_ROUTING.get((t.get("cwe") or "").strip().upper()) != section:
+        if _v2_threat_section(t) != section:
             continue
         tid = _to_canonical_finding_label(t.get("id", "?"))
         links.append(f"[{tid}](#{tid.lower()})")
         if len(links) >= max_links:
             break
     return links
+
+
+def _v2_insert_unattributed(lines: list[str], section_start: int, threats: list[dict], heading: str) -> None:
+    """List, once and before the first control block, the findings routed to ``heading`` that no control shows.
+
+    Control blocks list only the findings attributed to them. Without this line a
+    routed finding no control claims would be missing from §6 entirely; a section
+    without control blocks lists its findings itself and needs none.
+    """
+    first = next((i for i in range(section_start, len(lines)) if lines[i].startswith("#### ")), None)
+    if first is None:
+        return
+    shown = set(re.findall(r"\[([FT]-\d+)\]\(#", "\n".join(lines[section_start:])))
+    rest = [
+        link
+        for link in _v2_finding_links(threats, heading, max_links=len(threats) or 1)
+        if link[1:].split("]")[0] not in shown
+    ]
+    if not rest:
+        return
+    at = first - 1 if first > section_start and lines[first - 1].startswith("<a id=") else first
+    lines[at:at] = ["**Findings in this category without a control:** " + ", ".join(rest), ""]
 
 
 # Friendlier replacements for a handful of terse / overly-technical control
@@ -3721,13 +3678,13 @@ def _emit_v2_grouped_control(
                 if fid not in seen:
                     seen.add(fid)
                     agg.append(f"[{fid}](#{fid.lower()})")
-    if not agg:
-        agg = _v2_finding_links(threats, heading, max_links=4)
+    # No section-wide fallback: a finding is listed under a control only when it is attributed to it;
+    # the section lists the rest once (`_v2_insert_unattributed`).
     if agg:
         for link in agg:
             lines.append(f"- {link}")
     else:
-        lines.append("- No dedicated finding routed in this assessment.")
+        lines.append("- No finding is attributed to this control.")
     lines.append("")
 
 
@@ -3861,15 +3818,11 @@ def _emit_v2_subcontrol_block(
             bullet_links.append(f"[{fid}](#{fid.lower()}) - {rationale}")
         else:
             bullet_links.append(f"[{fid}](#{fid.lower()})")
-    if not bullet_links:
-        # Heuristic fallback: route findings by CWE → §6.x → take top 3.
-        for link in _v2_finding_links(threats, heading, max_links=3):
-            bullet_links.append(link)
     if bullet_links:
         for link in bullet_links:
             lines.append(f"- {link}")
     else:
-        lines.append("- No dedicated finding routed in this assessment.")
+        lines.append("- No finding is attributed to this control.")
     lines.append("")
 
 
@@ -3993,6 +3946,9 @@ def _emit_v2_subcontrol_legacy(
         # the LLM does not need to author a placeholder. A bare file-reference
         # list is not that paragraph and falls through to the placeholder.
         lines.append(impl_text)
+    elif eff == "missing":
+        # Nothing implements a Missing control; a positive-case placeholder would ask the renderer to invent it.
+        lines.append("This control is not evidenced in the repository.")
     else:
         lines.append(
             "<!-- NARRATIVE_PLACEHOLDER: 1-2 sentences in plain language. "
@@ -4018,6 +3974,12 @@ def _emit_v2_subcontrol_legacy(
         lines.append("")
     lines.append("**Security assessment**")
     lines.append("")
+    assessment = (c.get("assessment") or "").strip()
+    if assessment:
+        # The deterministic assessment is the fact base; the narrative may not contradict it.
+        lines.append(
+            f"<!-- Model assessment (facts the narrative must not contradict): {assessment.replace('--', '—')} -->"
+        )
     lines.append(
         "<!-- NARRATIVE_PLACEHOLDER: 2-4 sentences. Open with one sentence "
         "in plain language describing what this codebase actually does or "
@@ -4044,17 +4006,15 @@ def _emit_v2_subcontrol_legacy(
     raw_links = c.get("linked_threats") or []
     if isinstance(raw_links, str):
         raw_links = [raw_links]
-    for tid in raw_links[:5]:
+    for tid in raw_links:
         if isinstance(tid, str) and tid.strip():
             fid = _to_canonical_finding_label(tid)
             links.append(f"[{fid}](#{fid.lower()})")
-    if not links:
-        links = _v2_finding_links(threats, heading, max_links=3)
     if links:
         for link in links:
             lines.append(f"- {link}")
     else:
-        lines.append("- No dedicated finding routed in this assessment.")
+        lines.append("- No finding is attributed to this control.")
     lines.append("")
     return True
 
@@ -4317,7 +4277,14 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
     """
     quick_depth = (depth or "").strip().lower() == "quick"
     controls = _normalize_security_controls(yaml_data.get("security_controls"))
-    threats = yaml_data.get("threats") or []
+    # A control without a §6 heading would vanish from the chapter while the overview still counts it.
+    unplaced = [c for c in controls if not _v2_canonical_section_for_control(c)]
+    if unplaced:
+        names = ", ".join(f"{c.get('control') or c.get('name')!r} (domain {c.get('domain')!r})" for c in unplaced)
+        raise ValueError(
+            f"§6 has no section for control(s) {names}; give them a rule_id, a catalog name or a §6 domain"
+        )
+    threats = _v2_route_threats(yaml_data)
     special_surfaces = _v2_special_surfaces(yaml_data)
 
     eff_counts: dict[str, int] = {}
@@ -4334,7 +4301,7 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
     for t in threats:
         if not isinstance(t, dict):
             continue
-        sec = _V2_CWE_ROUTING.get((t.get("cwe") or "").strip().upper())
+        sec = _v2_threat_section(t)
         if sec:
             threats_by_section.setdefault(sec, []).append(t)
 
@@ -4667,6 +4634,16 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
         # line, NOT with a negative summary.
         if implemented:
             lines.append(f"**Implemented controls:** {'; '.join(implemented[:5])}.")
+        elif section_controls and all(
+            (c.get("effectiveness") or "").strip().lower() == "missing" for c in section_controls
+        ):
+            # Every catalogued control is Missing: a positive-only placeholder would make the
+            # renderer invent an inventory the model contradicts, so the line is written here.
+            lines.append(
+                "<!-- Mechanically derived: every control of this category is Missing. "
+                "Renderer must not rewrite the line below. -->"
+            )
+            lines.append("**Implemented controls:** No control in this category is evidenced in the repository.")
         else:
             lines.append(
                 '**Implemented controls:** <!-- NARRATIVE_PLACEHOLDER: positive inventory only — name the controls that ARE in place (e.g. "Angular template escaping, Helmet noSniff/frameguard, multer file-size limit"). Forbidden openers: "None", "No ", "Missing", "Not implemented". Concrete gaps belong in the Assessment block. -->'
@@ -4905,6 +4882,8 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             for link in links:
                 lines.append(f"- {link}")
             lines.append("")
+
+        _v2_insert_unattributed(lines, section_start, threats, heading)
 
         # Section-scoped sequenceDiagram guarantee (sections-contract.yaml
         # domain_required_patterns: §6.2 AND §6.3 each MUST contain at least one

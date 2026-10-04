@@ -37,6 +37,23 @@ domains:
   AI:           "AI / LLM"
   SessionMgmt:  "Session Management"
 
+# The §6 heading (without its number, see data/sections-contract.yaml schema_v2)
+# a control of each domain belongs to when the model names no §6 heading itself.
+# model/enforce_control_taxonomy.py resolves rule-backed and catalog controls
+# through it; a control that resolves nowhere would be dropped from §6.
+domain_sections:
+  IAM:          "Identity and Authentication Controls"
+  AuthZ:        "Authorization Controls"
+  DataProt:     "Cryptography Secrets and Data Protection"
+  InputVal:     "Input Boundary Validation Controls"
+  FrontendSec:  "Browser and Cross-Origin Controls"
+  Audit:        "Operations Runtime and Supply Chain Controls"
+  Infra:        "Operations Runtime and Supply Chain Controls"
+  SupplyChain:  "Operations Runtime and Supply Chain Controls"
+  RealTime:     "Real-time and Not Applicable Controls"
+  AI:           "Real-time and Not Applicable Controls"
+  SessionMgmt:  "Session and Token Controls"
+
 controls:
   # ---------- IAM ----------
   #

@@ -3612,8 +3612,10 @@ class TestEmitV2GroupedControl:
         # bare heading (no section_id/idx)
         assert joined.startswith("#### ")
         assert "NARRATIVE_PLACEHOLDER" in joined  # impl + assessment + diagram placeholders
-        # CWE-routed fallback finding link present
-        assert "[F-005](#f-005)" in joined
+        # A finding routed to the section by CWE alone is not attributed to this control;
+        # the section lists it once (`_v2_insert_unattributed`).
+        assert "[F-005](#f-005)" not in joined
+        assert "No finding is attributed to this control." in joined
 
     def test_grouped_block_no_findings_anywhere(self):
         lines: list[str] = []
@@ -3621,7 +3623,7 @@ class TestEmitV2GroupedControl:
         subs = [{"title": "Stage", "effectiveness": "weak"}]
         pf._emit_v2_grouped_control(lines, c, subs, [], "6.6 Misc")
         joined = "\n".join(lines)
-        assert "No dedicated finding routed in this assessment." in joined
+        assert "No finding is attributed to this control." in joined
 
 
 class TestEmitV2SubcontrolBlock:
@@ -3691,7 +3693,7 @@ class TestEmitV2SubcontrolBlock:
         sub = {"title": "X", "effectiveness": "adequate", "assessment": "ok"}
         pf._emit_v2_subcontrol_block(lines, sub, [], "6.11 Logging")
         joined = "\n".join(lines)
-        assert "No dedicated finding routed in this assessment." in joined
+        assert "No finding is attributed to this control." in joined
 
 
 class TestEmitV2SubcontrolLegacy:
@@ -4504,3 +4506,92 @@ def test_verdict_fallback_ignores_refuted_findings():
     assert verdict["severity"] == "green"
     assert [ref for b in verdict["bullets"] for ref in b["refs"]] == ["T-072"]
     assert "does not establish" in verdict["opening"]
+
+
+# ---------------------------------------------------------------------------
+# §6 routing authority, control placement and per-control findings
+# ---------------------------------------------------------------------------
+
+
+def _section(md: str, number: str) -> str:
+    return md.split(f"### {number} ", 1)[1].split("\n### ", 1)[0]
+
+
+def test_section_6_routing_is_the_contract_and_names_each_cwe_once():
+    contract = yaml.safe_load((REPO_ROOT / "data" / "sections-contract.yaml").read_text(encoding="utf-8"))
+    routing = contract["sections"]["security_architecture"]["schema_v2"]["finding_routing"]
+    cwes = [cwe for rule in routing.values() for cwe in rule.get("cwes") or []]
+    assert len(cwes) == len(set(cwes))
+    assert pf._V2_CWE_ROUTING == {cwe: h for h, rule in routing.items() for cwe in rule.get("cwes") or []}
+
+
+def test_a_control_without_a_section_6_heading_stops_the_fragment():
+    data = {"components": [], "threats": [], "security_controls": [{"control": "Bespoke thing", "domain": "Misc"}]}
+    with pytest.raises(ValueError, match="Bespoke thing"):
+        pf.gen_security_architecture_v2(data)
+
+
+@pytest.mark.parametrize("cwe", ["CWE-345", "CWE-79"])
+def test_a_finding_on_a_build_component_is_listed_in_6_11_whatever_its_cwe(cwe):
+    data = {
+        "components": [
+            {"id": "pipeline", "paths": [".github/workflows/*"]},
+            {"id": "api", "paths": ["src/**"]},
+        ],
+        "threats": [
+            {"id": "T-001", "cwe": cwe, "component": "pipeline", "title": "build"},
+            {"id": "T-002", "cwe": cwe, "component": "api", "title": "runtime"},
+        ],
+        "security_controls": [
+            {
+                "domain": "Operations Runtime and Supply Chain Controls",
+                "control": "Lockfile hygiene",
+                "effectiveness": "Missing",
+            },
+        ],
+    }
+    md = pf.gen_security_architecture_v2(data)
+    assert "[F-001]" in _section(md, "6.11") and "[F-002]" not in _section(md, "6.11")
+
+
+def test_controls_list_only_their_findings_and_the_section_lists_the_rest_once():
+    threats = [{"id": f"T-{n:03d}", "cwe": "CWE-1104", "title": f"dep {n}"} for n in range(1, 7)]
+    data = {
+        "components": [],
+        "threats": threats,
+        "security_controls": [
+            {
+                "domain": "Operations Runtime and Supply Chain Controls",
+                "control": "Automated SCA scanning",
+                "effectiveness": "Missing",
+            },
+            {
+                "domain": "Operations Runtime and Supply Chain Controls",
+                "control": "Lockfile hygiene",
+                "effectiveness": "Missing",
+                "linked_threats": ["T-002"],
+            },
+        ],
+    }
+    section = _section(pf.gen_security_architecture_v2(data), "6.11")
+    rest = re.search(r"\*\*Findings in this category without a control:\*\* (.+)", section).group(1)
+    assert re.findall(r"\[(F-\d+)\]", rest) == ["F-001", "F-003", "F-004", "F-005", "F-006"]
+    assert section.count("[F-002]") == 1  # only under the control it is attributed to
+    assert "No finding is attributed to this control." in section
+
+
+def test_a_section_whose_controls_are_all_missing_says_so_instead_of_inviting_an_inventory():
+    def implemented(controls):
+        data = {"components": [], "threats": [], "security_controls": controls}
+        return re.search(
+            r"\*\*Implemented controls:\*\*(.*)", _section(pf.gen_security_architecture_v2(data), "6.11")
+        ).group(1)
+
+    missing = {
+        "domain": "Operations Runtime and Supply Chain Controls",
+        "control": "Lockfile hygiene",
+        "effectiveness": "Missing",
+    }
+    partial = dict(missing, control="Automated SCA scanning", effectiveness="Partial")
+    assert implemented([missing]).strip() == "No control in this category is evidenced in the repository."
+    assert "NARRATIVE_PLACEHOLDER" in implemented([missing, partial])

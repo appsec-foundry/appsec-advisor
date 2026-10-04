@@ -628,3 +628,26 @@ def test_main_default_plugin_root(tmp_path: Path) -> None:
     # which is the real plugin root containing data/sca-practice-severity.yaml.
     rc = sca.main(["--repo-root", str(repo), "--output-dir", str(out)])
     assert rc == 0
+
+
+@pytest.mark.parametrize(
+    "files, expected",
+    [
+        (
+            {".gitignore": "node_modules\n/package-lock.json\n", ".npmrc": "package-lock=false\n"},
+            [".gitignore:2", ".npmrc:1"],
+        ),
+        ({".gitignore": "dist\nyarn.lock\n"}, [".gitignore:2"]),
+        ({".gitignore": "node_modules\n"}, []),
+    ],
+)
+def test_a_missing_lockfile_names_what_excludes_it(tmp_path: Path, files, expected) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _write(repo / "package.json", '{"dependencies": {"express": "^4.18.0"}}\n')
+    for rel, text in files.items():
+        _write(repo / rel, text)
+    effectiveness, evidence = sca.classify_lockfile_hygiene(repo)
+    assert (effectiveness, evidence) == ("Missing", expected)
+    text = sca._assessment_text(sca.CONTROL_LOCKFILE, effectiveness, evidence)
+    assert all(ref in text for ref in expected) and ("Excluded by" in text) == bool(expected)

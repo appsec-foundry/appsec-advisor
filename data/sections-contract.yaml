@@ -1072,22 +1072,23 @@ sections:
       # explicit category (when set on the threat). The renderer uses
       # this to know where to PRIMARILY list a finding; cross-references
       # in other sections are still allowed but the primary listing is
-      # deterministic. validators/qa_checks.py:check_v2_finding_mapping enforces it.
+      # deterministic. Each CWE names exactly one section; renderers/pregenerate_fragments.py
+      # reads this map, and a finding on a build-plane component goes to 6.11 first (RA-28).
       finding_routing:
         "6.2 Identity and Authentication Controls":
-          cwes: [CWE-287, CWE-307, CWE-294, CWE-345, CWE-347, CWE-620, CWE-640, CWE-916]
+          cwes: [CWE-287, CWE-307, CWE-294, CWE-345, CWE-347, CWE-620, CWE-640, CWE-916, CWE-306, CWE-290]
           clusters: [broken_auth]
         "6.3 Session and Token Controls":
           cwes: [CWE-922, CWE-384, CWE-613, CWE-1004]
           clusters: []
         "6.4 Authorization Controls":
-          cwes: [CWE-285, CWE-639, CWE-269, CWE-862, CWE-863, CWE-732, CWE-352, CWE-602, CWE-915]
+          cwes: [CWE-285, CWE-639, CWE-269, CWE-862, CWE-863, CWE-732, CWE-602, CWE-915, CWE-284]
           clusters: [missing_authz]
         "6.5 Query Construction and Data Access Controls":
           cwes: [CWE-89, CWE-943]
           clusters: []
         "6.6 Input Boundary Validation Controls":
-          cwes: [CWE-20, CWE-1284, CWE-1287, CWE-400]
+          cwes: [CWE-20, CWE-1284, CWE-1287, CWE-400, CWE-74, CWE-770]
           clusters: []
         "6.7 Output Encoding and Rendering Controls":
           cwes: [CWE-79, CWE-80, CWE-87, CWE-116]
@@ -1099,14 +1100,14 @@ sections:
           cwes: [CWE-321, CWE-798, CWE-327, CWE-326, CWE-329, CWE-330, CWE-312, CWE-538, CWE-759]
           clusters: [weak_crypto]
         "6.10 File Parser and Outbound Request Controls":
-          cwes: [CWE-611, CWE-22, CWE-23, CWE-409, CWE-776, CWE-94, CWE-95, CWE-918, CWE-601, CWE-441, CWE-548, CWE-552, CWE-749, CWE-200]
+          cwes: [CWE-611, CWE-22, CWE-23, CWE-409, CWE-776, CWE-94, CWE-95, CWE-918, CWE-601, CWE-441, CWE-548, CWE-552, CWE-749, CWE-200, CWE-78, CWE-502, CWE-1336, CWE-359]
           clusters: [server_side_exposure]
         "6.11 Operations Runtime and Supply Chain Controls":
-          cwes: [CWE-117, CWE-223, CWE-209, CWE-532, CWE-778, CWE-1104, CWE-1395, CWE-937, CWE-829, CWE-250, CWE-732, CWE-15, CWE-260]
+          cwes: [CWE-117, CWE-223, CWE-209, CWE-532, CWE-778, CWE-1104, CWE-1395, CWE-937, CWE-829, CWE-250, CWE-15, CWE-260, CWE-494, CWE-506]
           clusters: [outdated_deps]
           library_token_match: true
         "6.12 Real-time and Not Applicable Controls":
-          cwes: []
+          cwes: [CWE-1385]
           clusters: []
           recon_triggers: ["socket.io", "websocket"]
 

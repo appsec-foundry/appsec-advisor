@@ -430,8 +430,29 @@ def classify_lockfile_hygiene(repo_root: Path) -> tuple[str, list[str]]:
     if not missing:
         return "Adequate", evidence
     if len(missing) == len(ecosystems):
-        return "Missing", []
+        return "Missing", _lockfile_exclusions(repo_root)
     return "Partial", evidence
+
+
+def _lockfile_exclusions(repo_root: Path) -> list[str]:
+    """`file:line` of settings that keep lockfiles out of the repository.
+
+    A missing lockfile is either never generated or deliberately excluded. The
+    exclusion is the evidence a reader needs, and without it the §6 narrative has
+    no fact to contradict a claim that a lockfile is committed.
+    """
+    names = {name for patterns in _LOCKFILE_PATTERNS.values() for name in patterns}
+    out = []
+    for rel, matches in (
+        (".gitignore", lambda line: line.strip().lstrip("/") in names),
+        (".npmrc", lambda line: re.match(r"\s*package-lock\s*=\s*false\b", line) is not None),
+    ):
+        try:
+            text = (repo_root / rel).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        out += [f"{rel}:{number}" for number, line in enumerate(text.splitlines(), 1) if matches(line)]
+    return out
 
 
 def _detect_ecosystems(repo_root: Path) -> set[str]:
@@ -600,8 +621,9 @@ def _assessment_text(control: str, effectiveness: str, evidence: list[str]) -> s
             f"Evidence: {', '.join(evidence[:3]) if evidence else 'none on disk'}. "
             "Expand to all detected ecosystems before treating this control as adequate."
         )
+    excluded = f" Excluded by {', '.join(evidence[:3])}." if evidence else ""
     return (
-        f"{control} not detected in the repository. "
+        f"{control} not detected in the repository.{excluded} "
         "Patch-management posture depends on this control being in place — the "
         "team is reactive rather than proactive without it."
     )

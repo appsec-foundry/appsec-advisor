@@ -6,6 +6,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -555,3 +556,41 @@ class TestCLIErrorPaths:
         monkeypatch.setattr(Path, "open", _boom)
         # Should not raise.
         ect._log(tmp_path, "test message")
+
+
+# ---------------------------------------------------------------------------
+# Catalog fallback — a domain that names no §6 heading
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "control, expected",
+    [
+        (
+            {"control": "Some Pinning Control", "domain": "Supply Chain", "rule_id": "ARCH-SUPPLY-001"},
+            "Operations Runtime and Supply Chain Controls",
+        ),
+        (
+            {"control": "Principal split", "domain": "Data Protection", "rule_id": "ARCH-DBSEP-001"},
+            "Authorization Controls",
+        ),
+        ({"control": "Lockfile Integrity", "domain": "Build hygiene"}, "Operations Runtime and Supply Chain Controls"),
+        (
+            {"control": "CORS Policy", "domain": "Browser and Cross-Origin Controls", "rule_id": "ARCH-SUPPLY-001"},
+            "Browser and Cross-Origin Controls",
+        ),
+        ({"control": "Bespoke thing", "domain": "Misc"}, "Misc"),
+    ],
+)
+def test_a_domain_outside_section_6_takes_its_rule_or_catalog_section(control, expected):
+    # The rule or catalog decides only when the model's domain names no §6 heading.
+    data, _names, _domains = ect.enforce(_make_yaml([dict(control)]))
+    assert data["security_controls"][0]["domain"] == expected
+
+
+def test_every_catalog_domain_maps_to_a_section_6_heading():
+    catalog = yaml.safe_load(
+        (SCRIPT_PATH.parents[2] / "data" / "architectural-controls.yaml").read_text(encoding="utf-8")
+    )
+    assert set(catalog["domain_sections"]) == set(catalog["domains"])
+    assert set(catalog["domain_sections"].values()) <= ect._section_titles()
