@@ -1394,7 +1394,7 @@ sections:
             enforcement: "warning"
         # R7 — §6.13 is prose-only. Markdown tables are a contract violation
         # because they invite speculative perimeter-absence claims and break
-        # the reference-style "two-paragraph cross-cutting summary" shape.
+        # the two-list cross-cutting summary shape (What holds / Repair first).
         "6.13 Defense-in-Depth Summary":
           - rule: "forbidden_constructs"
             forbidden_constructs:

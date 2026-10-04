@@ -3613,7 +3613,8 @@ class TestEmitV2GroupedControl:
         # A finding routed to the section by CWE alone is not attributed to this control;
         # the section lists it once (`_v2_insert_unattributed`).
         assert "[F-005](#f-005)" not in joined
-        assert "No finding is attributed to this control." in joined
+        # ...but the reader is pointed at the category's other findings.
+        assert "- None linked to this control; see the other findings of this category." in joined
 
     def test_grouped_block_no_findings_anywhere(self):
         lines: list[str] = []
@@ -3621,7 +3622,7 @@ class TestEmitV2GroupedControl:
         subs = [{"title": "Stage", "effectiveness": "weak"}]
         pf._emit_v2_grouped_control(lines, c, subs, [], "6.6 Misc")
         joined = "\n".join(lines)
-        assert "No finding is attributed to this control." in joined
+        assert "- None." in joined  # no finding in the whole category
 
 
 class TestEmitV2SubcontrolBlock:
@@ -3691,7 +3692,7 @@ class TestEmitV2SubcontrolBlock:
         sub = {"title": "X", "effectiveness": "adequate", "assessment": "ok"}
         pf._emit_v2_subcontrol_block(lines, sub, [], "6.11 Logging")
         joined = "\n".join(lines)
-        assert "No finding is attributed to this control." in joined
+        assert "- None." in joined
 
 
 class TestEmitV2SubcontrolLegacy:
@@ -4585,7 +4586,7 @@ def test_controls_list_only_their_findings_and_the_section_lists_the_rest_once()
     rest = re.search(r"\*\*Findings in this category without a control:\*\*\n\n((?:- .+\n)+)", section).group(1)
     assert re.findall(r"^- \[(F-\d+)\]\(#f-\d+\)$", rest, re.MULTILINE) == ["F-001", "F-003", "F-004", "F-005", "F-006"]
     assert section.count("[F-002]") == 1  # only under the control it is attributed to
-    assert "No finding is attributed to this control." in section
+    assert "- None linked to this control; see the other findings of this category." in section
 
 
 def test_a_section_whose_controls_are_all_missing_says_so_instead_of_inviting_an_inventory():
@@ -4606,3 +4607,33 @@ def test_a_section_whose_controls_are_all_missing_says_so_instead_of_inviting_an
     # implementation text stay out of the inventory line.
     located = dict(partial, implementation="Detected in scope: `.github/workflows/ci.yml:33`")
     assert implemented([missing, located]).strip() == "Automated SCA scanning."
+
+
+def test_h4_intro_is_authored_from_the_implementation_note_not_printed_verbatim():
+    data = {
+        "components": [],
+        "threats": [],
+        "security_controls": [
+            {
+                "domain": "Operations Runtime and Supply Chain Controls",
+                "control": "Automated SCA scanning",
+                "effectiveness": "Partial",
+                "implementation": "Detected in scope: `.github/workflows/ci.yml:33`",
+            }
+        ],
+    }
+    section = _section(pf.gen_security_architecture_v2(data), "6.11")
+    body = section.split("#### ", 1)[1]
+    assert "\nDetected in scope" not in body  # never a reader line
+    assert "Model implementation note (facts for the intro): Detected in scope" in body
+    assert "at most 50 words" in body
+    assert "no file:line" in body.split("**Security assessment**", 1)[1]
+
+
+def test_defense_in_depth_summary_has_no_verdict_and_no_overview_row():
+    md = pf.gen_security_architecture_v2({"components": [], "threats": [], "security_controls": []})
+    summary = _section(md, "6.13")
+    assert "**Verdict:**" not in summary
+    assert "at most 120 words" in summary and "Repair first" in summary
+    overview = _section(md, "6.1")
+    assert "Defense-in-Depth Summary" not in overview

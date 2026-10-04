@@ -3623,14 +3623,13 @@ def _emit_v2_grouped_control(
     lines.append("")
     impl = (c.get("implementation") or "").strip()
     if impl and not _v2_is_file_ref_list(impl):
-        lines.append(impl)
-    else:
-        lines.append(
-            "<!-- NARRATIVE_PLACEHOLDER: 1-2 sentences naming the shared "
-            "mechanism this control family routes through (e.g. one hashing "
-            "primitive, one query path) — POSITIVE-CASE, no gaps yet. The "
-            "lifecycle bullets below carry the per-stage verdicts. -->"
-        )
+        lines.append(_implementation_facts(impl))
+    lines.append(
+        "<!-- NARRATIVE_PLACEHOLDER: 1-2 sentences, at most 50 words, naming the "
+        "shared mechanism this control family routes through (e.g. one hashing "
+        "primitive, one query path) — POSITIVE-CASE, no gaps yet. The "
+        "lifecycle bullets below carry the per-stage verdicts. -->"
+    )
     lines.append("")
     # Per-flow diagram — the grouped block represents a multi-step auth flow
     # (e.g. the password login path). The schema_v2 auth_method_decomposition
@@ -3665,12 +3664,7 @@ def _emit_v2_grouped_control(
     if assess:
         lines.append(assess)
     else:
-        lines.append(
-            "<!-- NARRATIVE_PLACEHOLDER: 2-4 sentences (or a short bullet "
-            "list when there are ≥2 discrete weaknesses). Name the shared "
-            "root cause and the most important code paths with file:line "
-            "evidence. The per-stage detail is in the bullets above. -->"
-        )
+        lines.append(_H4_ASSESSMENT_PLACEHOLDER)
     lines.append("")
     lines.append("**Relevant findings**")
     lines.append("")
@@ -3694,7 +3688,7 @@ def _emit_v2_grouped_control(
         for link in agg:
             lines.append(f"- {link}")
     else:
-        lines.append("- No finding is attributed to this control.")
+        lines.append(_no_attributed_finding_line(threats, heading))
     lines.append("")
 
 
@@ -3754,20 +3748,8 @@ def _emit_v2_subcontrol_block(
     lines.append("")
     impl = (sub.get("implementation") or "").strip()
     if impl and not _v2_is_file_ref_list(impl):
-        lines.append(impl)
-    else:
-        lines.append(
-            "<!-- NARRATIVE_PLACEHOLDER: 1-2 sentences in plain language. "
-            "First sentence: what protection this control provides for the "
-            "user, in business terms — no library, file, or route names. "
-            "Second sentence: how the application implements it, naming the "
-            "user-facing surface (e.g. 'authenticated endpoints', 'shopping "
-            "basket routes', 'user profile pages') rather than file paths. "
-            "Library / middleware / vendor names belong in the security-"
-            "assessment block below, NOT in this implementation paragraph. "
-            "POSITIVE-CASE only — what the mechanism does, not what is "
-            "missing. -->"
-        )
+        lines.append(_implementation_facts(impl))
+    lines.append(_H4_INTRO_PLACEHOLDER)
     lines.append("")
     diag = (sub.get("sequence_diagram") or "").strip()
     if diag:
@@ -3832,8 +3814,39 @@ def _emit_v2_subcontrol_block(
         for link in bullet_links:
             lines.append(f"- {link}")
     else:
-        lines.append("- No finding is attributed to this control.")
+        lines.append(_no_attributed_finding_line(threats, heading))
     lines.append("")
+
+
+_H4_INTRO_PLACEHOLDER = (
+    "<!-- NARRATIVE_PLACEHOLDER: 1-2 sentences, at most 50 words: what this "
+    "control does and where it sits, POSITIVE-CASE only. Do not repeat the "
+    "status line above or anticipate the assessment below. -->"
+)
+_H4_ASSESSMENT_PLACEHOLDER = (
+    "<!-- NARRATIVE_PLACEHOLDER: one framing sentence, then 2-5 bullets, one "
+    "weakness each, in plain words with its finding link ([F-NNN](#f-nnn)); no "
+    "file:line (the finding carries the location). Prose only when the "
+    "weaknesses form one causal chain, at most 3 sentences. -->"
+)
+
+
+def _implementation_facts(impl: str) -> str:
+    """The catalog's implementation note as facts for the renderer, not as reader text.
+
+    Printed verbatim it repeated the status line and the assessment, and it
+    carries locators and scanner wording ("Detected in scope: …").
+    """
+    return f"<!-- Model implementation note (facts for the intro): {impl.replace('--', '—')} -->" if impl else ""
+
+
+def _no_attributed_finding_line(threats: list, heading: str) -> str:
+    """Relevant-findings line for a control without its own linked finding."""
+    section = heading.split(" ", 1)[0]
+    in_category = any(
+        isinstance(t, dict) and (_v2_threat_section(t) or "").split(" ", 1)[0] == section for t in threats or []
+    )
+    return "- None linked to this control; see the other findings of this category." if in_category else "- None."
 
 
 # Flow-like mechanism tokens — if the control name matches one of these,
@@ -3951,27 +3964,13 @@ def _emit_v2_subcontrol_legacy(
         )
     )
     lines.append("")
-    if impl_text and not _v2_is_file_ref_list(impl_text):
-        # Stage 1 supplied an implementation paragraph — use it verbatim;
-        # the LLM does not need to author a placeholder. A bare file-reference
-        # list is not that paragraph and falls through to the placeholder.
-        lines.append(impl_text)
-    elif eff == "missing":
+    if eff == "missing":
         # Nothing implements a Missing control; a positive-case placeholder would ask the renderer to invent it.
         lines.append("This control is not evidenced in the repository.")
     else:
-        lines.append(
-            "<!-- NARRATIVE_PLACEHOLDER: 1-2 sentences in plain language. "
-            "First sentence: what protection this control provides for the "
-            "user, in business terms — no library, file, or route names. "
-            "Second sentence: how the application implements it, naming the "
-            "user-facing surface (e.g. 'authenticated endpoints', 'shopping "
-            "basket routes', 'user profile pages') rather than file paths. "
-            "Library / middleware / vendor names belong in the security-"
-            "assessment block below, NOT in this implementation paragraph. "
-            "POSITIVE-CASE only — what the mechanism does, not what is "
-            "missing. -->"
-        )
+        if impl_text and not _v2_is_file_ref_list(impl_text):
+            lines.append(_implementation_facts(impl_text))
+        lines.append(_H4_INTRO_PLACEHOLDER)
     lines.append("")
     if _is_flow_like_control(name):
         lines.append(
@@ -3990,17 +3989,7 @@ def _emit_v2_subcontrol_legacy(
         lines.append(
             f"<!-- Model assessment (facts the narrative must not contradict): {assessment.replace('--', '—')} -->"
         )
-    lines.append(
-        "<!-- NARRATIVE_PLACEHOLDER: 2-4 sentences. Open with one sentence "
-        "in plain language describing what this codebase actually does or "
-        "fails to do, then the concrete defects with file:line evidence. "
-        "Library / middleware / vendor names are allowed here (this is the "
-        "technical block), but should appear in the middle or end of the "
-        "narrative, not as the first words. Multi-sentence prose — not a "
-        "one-line inline tag like '**Security assessment:** ❌ Missing - …'. "
-        "Avoid generic phrases ('an attacker could'); avoid rhetorical "
-        "severity ('catastrophic'). -->"
-    )
+    lines.append(_H4_ASSESSMENT_PLACEHOLDER)
     lines.append("")
     if _is_flow_like_control(name):
         lines.append(
@@ -4024,7 +4013,7 @@ def _emit_v2_subcontrol_legacy(
         for link in links:
             lines.append(f"- {link}")
     else:
-        lines.append("- No finding is attributed to this control.")
+        lines.append(_no_attributed_finding_line(threats, heading))
     lines.append("")
     return True
 
@@ -4357,7 +4346,8 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
     )
     lines.append("")
 
-    overview_rows = [h for h, _, _ in _V2_SUBSECTIONS[1:]]
+    # §6.13 summarizes the categories; it has no controls or findings of its own to rate.
+    overview_rows = [h for h, _, _ in _V2_SUBSECTIONS[1:] if not h.startswith("6.13 ")]
     lines.append("### 6.1 Security Control Overview")
     lines.append("")
     # R5 / LOCKED — §6.1 is mechanically derived from security_controls[] +
@@ -4459,7 +4449,7 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
         section_start = len(lines)
 
         if heading.startswith("6.13 "):
-            # R7 — §6.13 is prose-only. Two paragraphs:
+            # R7 — §6.13 carries no table. Two short lists:
             #   (a) what individual controls exist + the strongest positive
             #       control if any (e.g. distroless runtime image)
             #   (b) which boundary repairs would restore layered defense
@@ -4467,15 +4457,13 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             # drift pattern and recurrently carries speculative perimeter
             # claims like "No WAF in source" that `sanitize_perimeter_claims`
             # then has to scrub).
+            # A synthesis section carries no verdict of its own: the category
+            # verdicts above already rate each control family.
             lines.append(
-                "**Verdict:** <!-- NARRATIVE_PLACEHOLDER: one of `🟢 Adequate` · `🟡 Partial` · `🟠 Weak` · `🔴 Unsafe` · `🔴 Missing`. -->"
+                "<!-- §6.13 FORMAT — NEVER a table, at most 120 words, no file:line. Two short bullet lists: **What holds** (the individual positive controls that exist, strongest first, e.g. distroless runtime image, RS256 algorithm choice) and **Repair first** (the control-boundary repairs that would restore layered defense, each with its mitigation link [M-NNN](#m-nnn)). Do NOT emit a Markdown table — `| header |` lines under §6.13 are a contract violation. Do NOT make speculative perimeter-absence claims (`No WAF`, `No firewall`, `No DAM`) — only positive evidence from the recon scan. -->"
             )
             lines.append("")
-            lines.append(
-                "<!-- §6.13 FORMAT — prose-only, NEVER a table. Two short paragraphs: (1) name the individual controls that exist and the strongest positive control if any (e.g. distroless runtime image, RS256 algorithm choice); (2) name which control-boundary repairs would restore layered defense (e.g. parameterized queries, runtime-injected secrets, strict JWT verification). Do NOT emit a Markdown table — `| header |` lines under §6.13 are a contract violation. Do NOT make speculative perimeter-absence claims (`No WAF`, `No firewall`, `No DAM`) — only positive evidence from the recon scan. -->"
-            )
-            lines.append("")
-            lines.append(f"<!-- NARRATIVE_PLACEHOLDER: §{heading} — {hint} (prose paragraphs only) -->")
+            lines.append(f"<!-- NARRATIVE_PLACEHOLDER: §{heading} — {hint} (two short lists, at most 120 words) -->")
             lines.append("")
             continue
 
