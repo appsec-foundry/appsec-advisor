@@ -196,3 +196,67 @@ def test_outputs_record_pushed_images_and_published_packages(tmp_path):
         ("container_image", True, None),
         ("package", None, "npm"),
     ]
+
+
+# --- job association, installs, built Dockerfile and push destination (RA-30) ---
+
+TWO_JOBS = """\
+name: ci
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+      - run: npm install
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: registry.example.org/team/service:${{ github.sha }}
+"""
+
+
+def test_inputs_installs_and_outputs_carry_their_workflow_job(tmp_path):
+    repo = _repo(tmp_path, {".github/workflows/ci.yml": TWO_JOBS, "Dockerfile": "FROM node:22\nRUN npm ci\n"})
+    facts = _facts(repo)
+    jobs = {(row["kind"], row["reference"]): row.get("job") for row in facts["inputs"]}
+    assert jobs[("github_action", "actions/setup-node@v4")] == "test"
+    assert jobs[("github_action", "docker/build-push-action@v6")] == "release"
+    assert jobs[("base_image", "node:22")] is None  # Dockerfile rows sit outside any job
+    workflow_install = next(row for row in facts["installs"] if row["file"] == ".github/workflows/ci.yml")
+    assert workflow_install == {
+        "ecosystem": "npm",
+        "command": "npm install",
+        "lockfile_enforced": False,
+        "file": ".github/workflows/ci.yml",
+        "line": 8,
+        "job": "test",
+    }
+    dockerfile_install = next(row for row in facts["installs"] if row["file"] == "Dockerfile")
+    assert dockerfile_install["lockfile_enforced"] is True and "job" not in dockerfile_install
+    (image,) = [row for row in facts["outputs"] if row["kind"] == "container_image"]
+    assert image["job"] == "release"
+    assert image["dockerfile"] == "Dockerfile"
+    assert image["destination"] == {"registry": "registry.example.org", "repository": "team/service"}
+    Draft202012Validator({"$defs": SCHEMA["$defs"], **SCHEMA["$defs"]["supplyChainFacts"]}).validate(facts)
+
+
+def test_a_destination_hidden_behind_an_expression_and_an_unbuilt_dockerfile_stay_absent(tmp_path):
+    workflow = TWO_JOBS.replace("registry.example.org/team/service", "${{ vars.IMAGE }}").replace(
+        "context: .", "file: build/Containerfile"
+    )
+    repo = _repo(tmp_path, {".github/workflows/ci.yml": workflow, "Dockerfile": "FROM node:22\n"})
+    (image,) = [row for row in _facts(repo)["outputs"] if row["kind"] == "container_image"]
+    assert "destination" not in image
+    assert "dockerfile" not in image  # build/Containerfile is not in the repository
+
+
+def test_a_docker_hub_short_name_resolves_to_docker_io(tmp_path):
+    workflow = TWO_JOBS.replace("registry.example.org/team/service:${{ github.sha }}", "acme/web:latest")
+    repo = _repo(tmp_path, {".github/workflows/ci.yml": workflow})
+    (image,) = [row for row in _facts(repo)["outputs"] if row["kind"] == "container_image"]
+    assert image["destination"] == {"registry": "docker.io", "repository": "acme/web"}

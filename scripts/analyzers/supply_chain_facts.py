@@ -18,8 +18,15 @@ shaped by ``$defs/supplyChainFacts`` in schemas/config-scan-findings.schema.yaml
   base images and piped remote installers — each with its pinning.
 - ``outputs``: artifacts the pipeline produces — container images (pushed or
   not) and published packages.
+- ``installs``: package-install steps in workflows and Dockerfiles, with the
+  ecosystem and whether the command enforces the lockfile.
 - ``capabilities``: ``sbom``, ``image_signing`` and ``dependency_updates``,
   each with the evidence that establishes it and the files that were searched.
+
+A workflow row carries the ``job`` it sits in, so the supply-chain view joins an
+input, an install and an output only when they share a job (RA-30). A container
+output names the Dockerfile it builds and the image it pushes to when the
+workflow states them.
 
 Only what the repository states is recorded: no environment, registry or
 deployment target is inferred.
@@ -82,6 +89,33 @@ _PACKAGE_PUBLISH = (
 _USES = re.compile(r"(?m)^\s*(?:-\s*)?uses\s*:\s*['\"]?([^\s#'\"]+)")
 _FROM = re.compile(r"(?im)^\s*FROM\s+(?:--platform=\S+\s+)?(\S+)(?:\s+AS\s+(\S+))?")
 _REMOTE_INSTALLER = re.compile(r"\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z|da)?sh\b")
+_JOBS_KEY = re.compile(r"(?m)^jobs\s*:\s*$")
+_JOB_KEY = re.compile(r"(?m)^([ \t]+)([A-Za-z0-9_.-]+)\s*:\s*$")
+_DOCKERFILE_ARG = re.compile(r"(?m)^\s*file\s*:\s*['\"]?([^\s'\"#]+)|(?:\s-f|--file)[ =]['\"]?([^\s'\"]+)")
+_CONTEXT_ARG = re.compile(r"(?m)^\s*context\s*:\s*['\"]?([^\s'\"#]+)")
+_TAGS_INLINE = re.compile(r"(?m)^\s*tags\s*:\s*['\"]?([^\s'\"#|>,]+)")
+_TAGS_BLOCK = re.compile(r"(?m)^\s*tags\s*:\s*[|>]?-?\s*\n\s*(?:-\s*)?['\"]?([^\s'\"#,]+)")
+_PUSH_REF = re.compile(r"\b(?:docker|buildah|podman)\s+push\s+['\"]?([^\s'\"]+)")
+# (ecosystem, install command, lockfile-enforcing form or None when the tool always reads its lockfile)
+_INSTALLS = (
+    (
+        "npm",
+        re.compile(r"\bnpm\s+(?:ci|install|i)\b|\byarn\s+install\b|\bpnpm\s+(?:install|i)\b"),
+        re.compile(r"\bnpm\s+ci\b|--frozen-lockfile|--immutable"),
+    ),
+    (
+        "pip",
+        re.compile(r"\bpip3?\s+install\b|\bpoetry\s+install\b|\buv\s+sync\b|\bpipenv\s+install\b"),
+        re.compile(r"--require-hashes|\bpoetry\s+install\b|\buv\s+sync\b[^\n]*--(?:frozen|locked)|--deploy\b"),
+    ),
+    ("gomod", re.compile(r"\bgo\s+(?:mod\s+download|build|install)\b"), None),
+    ("cargo", re.compile(r"\bcargo\s+(?:build|fetch|install)\b"), re.compile(r"--locked|--frozen")),
+    ("bundler", re.compile(r"\bbundle\s+install\b"), re.compile(r"--frozen|--deployment")),
+    ("composer", re.compile(r"\bcomposer\s+install\b"), None),
+    ("maven", re.compile(r"\bmvnw?\s+[^\n]*\b(?:install|package|verify|deploy)\b"), None),
+    ("gradle", re.compile(r"\bgradlew?\s+[^\n]*\b(?:build|assemble|publish)\b"), None),
+)
+MAX_REFERENCE = 200
 
 # Marker file -> dependency-update ecosystem, as Dependabot names them.
 _ECOSYSTEM_MARKERS = {
@@ -182,16 +216,106 @@ def _token_permissions(document: Any) -> str:
     return "partial" if scoped else "default"
 
 
-def _workflows(repo_root: Path, files: list[str]) -> tuple[list[dict], list[dict], list[dict]]:
+def _job_spans(text: str, document: Any) -> list[tuple[str, int, int]]:
+    """``(job, first offset, end offset)`` of each job under the workflow's ``jobs:`` block."""
+    jobs = document.get("jobs") if isinstance(document, dict) else None
+    anchor = _JOBS_KEY.search(text)
+    if not isinstance(jobs, dict) or not anchor:
+        return []
+    starts: list[tuple[str, int]] = []
+    indent = None
+    for match in _JOB_KEY.finditer(text, anchor.end()):
+        if indent is None:
+            indent = match.group(1)
+        if match.group(1) == indent and match.group(2) in jobs:
+            starts.append((match.group(2), match.start()))
+    top_level = re.compile(r"(?m)^[A-Za-z_]").search(text, anchor.end())
+    end = top_level.start() if top_level else len(text)
+    return [(name, start, starts[i + 1][1] if i + 1 < len(starts) else end) for i, (name, start) in enumerate(starts)]
+
+
+def _job_at(spans: list[tuple[str, int, int]], offset: int) -> str | None:
+    return next((name for name, start, end in spans if start <= offset < end), None)
+
+
+def _span_text(text: str, spans: list[tuple[str, int, int]], offset: int) -> str:
+    return next((text[start:end] for _name, start, end in spans if start <= offset < end), text)
+
+
+def _with_job(row: dict, job: str | None) -> dict:
+    if job:
+        row["job"] = job
+    return row
+
+
+def _image_destination(reference: str) -> dict | None:
+    """``{registry, repository}`` of a literal image reference; None when an expression hides the registry."""
+    reference = reference.strip().strip("'\"")
+    if not reference or reference.startswith("$"):
+        return None
+    name = reference.split("@", 1)[0]
+    parts = name.split("/")
+    if len(parts) > 1 and ("." in parts[0] or ":" in parts[0] or parts[0] == "localhost"):
+        registry, path = parts[0], "/".join(parts[1:])
+    else:
+        registry, path = "docker.io", name
+    last = path.rsplit("/", 1)
+    last[-1] = last[-1].split(":", 1)[0]
+    repository = "/".join(last)
+    if "$" in registry or not repository or "$" in repository.split("/")[0]:
+        return None
+    return {"registry": registry[:MAX_REFERENCE], "repository": repository[:MAX_REFERENCE]}
+
+
+def _built_dockerfile(job_text: str, rel: str, dockerfiles: set[str]) -> str | None:
+    """The Dockerfile a job builds: an explicit ``file``/``-f`` argument, else ``<context>/Dockerfile``."""
+    root = rel.split(".github/workflows/", 1)[0]
+    explicit = _DOCKERFILE_ARG.search(job_text)
+    if explicit:
+        candidate = (explicit.group(1) or explicit.group(2) or "").removeprefix("./")
+    else:
+        context = _CONTEXT_ARG.search(job_text)
+        base = (context.group(1) if context else ".").removeprefix("./").strip("/")
+        candidate = f"{base}/Dockerfile" if base and base != "." else "Dockerfile"
+    candidate = f"{root}{candidate}" if root and not candidate.startswith(root) else candidate
+    return candidate if candidate in dockerfiles else None
+
+
+def _installs(rel: str, text: str, spans: list[tuple[str, int, int]]) -> list[dict]:
+    rows = []
+    for ecosystem, command, enforcing in _INSTALLS:
+        for match in command.finditer(text):
+            line_end = text.find("\n", match.start())
+            line_text = text[match.start() : line_end if line_end >= 0 else len(text)]
+            rows.append(
+                _with_job(
+                    {
+                        "ecosystem": ecosystem,
+                        "command": line_text.strip()[:120],
+                        "lockfile_enforced": True if enforcing is None else bool(enforcing.search(line_text)),
+                        "file": rel,
+                        "line": _line(text, match.start()),
+                    },
+                    _job_at(spans, match.start()),
+                )
+            )
+    return rows
+
+
+def _workflows(
+    repo_root: Path, files: list[str], dockerfiles: set[str] | None = None
+) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
     workflows: list[dict] = []
     inputs: list[dict] = []
     outputs: list[dict] = []
+    installs: list[dict] = []
     for rel in files:
         text = _read(repo_root, rel)
         try:
             document = yaml.safe_load(text)
         except yaml.YAMLError:
             document = None
+        spans = _job_spans(text, document)
         build = _IMAGE_BUILD.search(text)
         pushed = bool(build and _IMAGE_PUSH.search(text))
         published = [(name, m) for name, pattern in _PACKAGE_PUBLISH for m in [pattern.search(text)] if m]
@@ -204,38 +328,60 @@ def _workflows(repo_root: Path, files: list[str]) -> tuple[list[dict], list[dict
                 "publishes_packages": sorted({name for name, _ in published}),
             }
         )
-        if build:
-            outputs.append(
-                {"kind": "container_image", "file": rel, "line": _line(text, build.start()), "pushed": pushed}
-            )
+        for match in _IMAGE_BUILD.finditer(text):
+            job = _job_at(spans, match.start())
+            if any(row.get("job") == job and row["file"] == rel for row in outputs if row["kind"] == "container_image"):
+                continue  # one image output per job
+            output = {"kind": "container_image", "file": rel, "line": _line(text, match.start()), "pushed": pushed}
+            job_text = _span_text(text, spans, match.start())
+            tags = _TAGS_INLINE.search(job_text) or _TAGS_BLOCK.search(job_text) or _PUSH_REF.search(job_text)
+            destination = _image_destination(tags.group(1)) if tags and pushed else None
+            if destination:
+                output["destination"] = destination
+            dockerfile = _built_dockerfile(job_text, rel, dockerfiles or set())
+            if dockerfile:
+                output["dockerfile"] = dockerfile
+            outputs.append(_with_job(output, job))
         for name, match in published:
-            outputs.append({"kind": "package", "ecosystem": name, "file": rel, "line": _line(text, match.start())})
+            outputs.append(
+                _with_job(
+                    {"kind": "package", "ecosystem": name, "file": rel, "line": _line(text, match.start())},
+                    _job_at(spans, match.start()),
+                )
+            )
         for match in _USES.finditer(text):
             reference = match.group(1)
             if reference.startswith("./"):
                 continue
             inputs.append(
-                {
-                    "kind": "github_action",
-                    "reference": reference,
-                    "pinning": _action_pinning(reference),
-                    "file": rel,
-                    "line": _line(text, match.start(1)),
-                }
+                _with_job(
+                    {
+                        "kind": "github_action",
+                        "reference": reference[:MAX_REFERENCE],
+                        "pinning": _action_pinning(reference),
+                        "file": rel,
+                        "line": _line(text, match.start(1)),
+                    },
+                    _job_at(spans, match.start(1)),
+                )
             )
-        inputs.extend(_remote_installers(rel, text))
-    return workflows, inputs, outputs
+        inputs.extend(_remote_installers(rel, text, spans))
+        installs.extend(_installs(rel, text, spans))
+    return workflows, inputs, outputs, installs
 
 
-def _remote_installers(rel: str, text: str) -> list[dict]:
+def _remote_installers(rel: str, text: str, spans: list[tuple[str, int, int]] | None = None) -> list[dict]:
     return [
-        {
-            "kind": "remote_script",
-            "reference": match.group(0).strip()[:200],
-            "pinning": "none",
-            "file": rel,
-            "line": _line(text, match.start()),
-        }
+        _with_job(
+            {
+                "kind": "remote_script",
+                "reference": match.group(0).strip()[:MAX_REFERENCE],
+                "pinning": "none",
+                "file": rel,
+                "line": _line(text, match.start()),
+            },
+            _job_at(spans or [], match.start()),
+        )
         for match in _REMOTE_INSTALLER.finditer(text)
     ]
 
@@ -251,7 +397,7 @@ def _base_images(repo_root: Path, files: list[str]) -> list[dict]:
                 rows.append(
                     {
                         "kind": "base_image",
-                        "reference": reference,
+                        "reference": reference[:MAX_REFERENCE],
                         "pinning": _image_pinning(reference),
                         "file": rel,
                         "line": _line(text, match.start(1)),
@@ -317,14 +463,17 @@ def collect(repo_root: Path, inventory: RepoInventory) -> dict[str, Any]:
     workflow_files = _files(repo_root, inventory, WORKFLOW_GLOBS)
     dockerfiles = _files(repo_root, inventory, DOCKERFILE_GLOBS)
     build_scripts = _files(repo_root, inventory, BUILD_SCRIPT_GLOBS)
-    workflows, inputs, outputs = _workflows(repo_root, workflow_files)
+    workflows, inputs, outputs, installs = _workflows(repo_root, workflow_files, set(dockerfiles))
     inputs.extend(_base_images(repo_root, dockerfiles))
+    for rel in dockerfiles:
+        installs.extend(_installs(rel, _read(repo_root, rel), []))
     build_files = sorted(set(workflow_files) | set(dockerfiles) | set(build_scripts))
     return {
         "version": FACTS_VERSION,
         "workflows": workflows,
         "inputs": inputs,
         "outputs": outputs,
+        "installs": installs,
         "capabilities": {
             "sbom": _capability(repo_root, build_files, _SBOM),
             "image_signing": _capability(repo_root, build_files, _IMAGE_SIGNING),

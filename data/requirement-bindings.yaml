@@ -746,6 +746,37 @@ requirements:
       - tests/test_figure1_dfd.py::test_overview_of_neutral_topologies_stays_within_the_width_budget
       - tests/test_figure1_dfd.py::test_readme_example_is_legible_at_page_width_and_names_the_scanned_project
 
+  REQ-RPT-008:
+    applies_to:
+      - scripts/model/build_plane.py
+      - scripts/model/build_supply_chain_view.py
+      - scripts/analyzers/supply_chain_facts.py
+      - scripts/renderers/figure1b_svg.py
+      - scripts/renderers/figure1_dfd.py
+      - scripts/renderers/compose_threat_model.py
+      - data/supply-chain-view-checks.yaml
+      - schemas/supply-chain-view.schema.json
+    decisions:
+      - RA-28
+      - RA-29
+      - RA-30
+      - RA-31
+    documents:
+      - specs/changes/figure1-splits-runtime-and-supply-chain/proposal.md
+      - docs/internal/contracts/schema-invariants.md
+    coverage: direct
+    guards:
+      - tests/test_build_plane.py::test_a_ci_component_without_zones_is_build_plane
+      - tests/test_build_supply_chain_view.py::test_a_dependency_installed_in_the_pushing_job_is_evidenced_up_to_the_artifact
+      - tests/test_build_supply_chain_view.py::test_independent_workflows_are_never_joined_into_one_path
+      - tests/test_build_supply_chain_view.py::test_a_publish_only_repository_asserts_no_execution
+      - tests/test_build_supply_chain_view.py::test_an_unsigned_pushed_image_is_an_entry_and_a_missing_sbom_alone_is_not
+      - tests/test_figure1b_svg.py::test_every_cap_beyond_its_limit_aggregates_and_still_draws_clean
+      - tests/test_figure1b_svg.py::test_the_legibility_gate_measures_the_smallest_text_at_every_display_width
+      - tests/test_figure1b_compose.py::test_with_build_evidence_figure_1a_drops_the_pipeline_and_figure_1b_carries_it
+      - tests/test_figure1b_compose.py::test_a_failed_gate_renders_the_table_and_removes_the_stale_image
+      - tests/test_figure1b_compose.py::test_without_build_evidence_nothing_changes_and_stale_files_go
+
   REQ-USE-001:
     applies_to:
       - skills/ask-threat-model/**

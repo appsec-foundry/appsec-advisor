@@ -67,6 +67,7 @@ import yaml
 from analyzers.detect_open_registration import overview_actor_groups, overview_actor_slug
 from analyzers.weakness_classifier import load_weakness_classes
 from contexts.prepare_trust_boundary_context import boundary_endpoints_valid
+from model.build_plane import build_component_ids, is_build_component
 from shared._boundary_interface import is_internal_interface
 
 from renderers._severity_rollup import register_severity, register_threats, risk_distribution_counts
@@ -819,8 +820,7 @@ def _weak_line(c, x, y, items, maxw):
 
 def _zone_key(comp):
     tier = (comp.get("tier") or "application").lower()
-    zones = [str(z).lower() for z in (comp.get("deployment_zones") or [])]
-    if any(("ci" in z or "build" in z or "pipeline" in z) for z in zones):
+    if is_build_component(comp):
         return "build"
     if tier == "client":
         return "client"
@@ -1119,7 +1119,7 @@ def legitimate_role_notes(yaml_data):
     return _project_legitimate_roles(yaml_data)[2]
 
 
-def overview_facts(yaml_data, attack_paths_data, attack_taxonomy, actor_labels=None):
+def overview_facts(yaml_data, attack_paths_data, attack_taxonomy, actor_labels=None, scenarios=None):
     """Counts of what the overview draws, for the report sentence that introduces it."""
     comps = [c for c in yaml_data.get("components") or [] if isinstance(c, dict) and c.get("id")]
     flows = [f for f in yaml_data.get("data_flows") or [] if isinstance(f, dict)]
@@ -1128,9 +1128,10 @@ def overview_facts(yaml_data, attack_paths_data, attack_taxonomy, actor_labels=N
         for e in yaml_data.get("external_entities") or []
         if isinstance(e, dict) and e.get("id") and e.get("kind") != "legitimate-role"
     } | {f"ext:{f.get('from')}" for f in flows if f.get("to") == "external" and not f.get("to_entity")}
-    scenarios, _actors = scenarios_from_attack_paths(
-        yaml_data, attack_paths_data or {}, attack_taxonomy or {}, actor_labels
-    )
+    if scenarios is None:
+        scenarios, _actors = scenarios_from_attack_paths(
+            yaml_data, attack_paths_data or {}, attack_taxonomy or {}, actor_labels
+        )
     return {
         "components": len(comps),
         "layers": len({_zone_key(c) for c in comps}),
@@ -2711,7 +2712,9 @@ def _render(
     c.text(
         MARGIN,
         26,
-        "Figure 1 — Architecture and Threat Overview",
+        "Figure 1a — Runtime Architecture and Threat Overview"
+        if d.get("_runtime_view")
+        else "Figure 1 — Architecture and Threat Overview",
         size=14,
         anchor="start",
         weight="bold",
@@ -2722,10 +2725,12 @@ def _render(
     )
     boundary_label = _boundary_count_label(tbs, interfaces=not d.get("_overview"))
     threat_total = sum(risk_distribution_counts(d).values())
+    # Figure 1a keeps the model-wide tally the Management Summary shows (RA-29) and says so.
+    threat_label = f"{threat_total} threats in the model" if d.get("_runtime_view") else f"{threat_total} threats"
     c.text(
         MARGIN,
         42,
-        f"{identity} · {n_comp} components · {len(d.get('data_flows') or [])} data flows · {boundary_label} · {threat_total} threats",
+        f"{identity} · {n_comp} components · {len(d.get('data_flows') or [])} data flows · {boundary_label} · {threat_label}",
         size=10,
         anchor="start",
         fill=MUTED,
@@ -3777,9 +3782,11 @@ def _build(
         d, victim_target, _role_notes = _project_legitimate_roles(yaml_data)
     else:
         d, victim_target = copy.deepcopy(yaml_data), projected_victim
-    d["_component_numbers"] = component_numbers or {
-        row["id"]: f"C-{i:02d}" for i, row in enumerate(d.get("components") or [], 1)
-    }
+    d["_component_numbers"] = (
+        component_numbers
+        or d.get("_component_numbers")
+        or {row["id"]: f"C-{i:02d}" for i, row in enumerate(d.get("components") or [], 1)}
+    )
     d["_overview"] = not detail
     d["_auth_catalog"] = (
         authentication_catalog
@@ -4089,7 +4096,7 @@ def build_figure1_dfd_svg(yaml_data, attack_paths_data, attack_taxonomy, meta=No
     return svg
 
 
-def overview_people(yaml_data, attack_paths_data, attack_taxonomy, actor_labels=None):
+def overview_people(yaml_data, attack_paths_data, attack_taxonomy, actor_labels=None, scenarios=None, actors=None):
     """Attackers and legitimate roles exactly as the Figure 1 overview draws them, in drawing order.
 
     Report sections that name actors read this list, so none can show a person
@@ -4099,9 +4106,10 @@ def overview_people(yaml_data, attack_paths_data, attack_taxonomy, actor_labels=
     """
     if not (yaml_data.get("components") or []):
         return []
-    scenarios, actors = scenarios_from_attack_paths(
-        yaml_data, attack_paths_data or {}, attack_taxonomy or {}, actor_labels
-    )
+    if scenarios is None:
+        scenarios, actors = scenarios_from_attack_paths(
+            yaml_data, attack_paths_data or {}, attack_taxonomy or {}, actor_labels
+        )
     _svg, state = _build(
         yaml_data,
         scenarios,
@@ -4177,6 +4185,44 @@ def legitimate_role_people(yaml_data):
         }
         for key, entity in rows
     ]
+
+
+BUILD_TIME = "build-time"
+
+
+def runtime_model(yaml_data):
+    """The model Figure 1a draws: no build-plane component and no flow touching one (RA-29).
+
+    Component numbers come from the full model, so ``C-NN`` stays the number every
+    other section uses. Threats stay, so the header tally still matches the
+    Management Summary.
+    """
+    components = [c for c in yaml_data.get("components") or [] if isinstance(c, dict) and c.get("id")]
+    build = build_component_ids(components)
+    model = dict(yaml_data)
+    model["_component_numbers"] = {c["id"]: f"C-{i:02d}" for i, c in enumerate(components, 1)}
+    model["_runtime_view"] = True
+    model["components"] = [c for c in components if c["id"] not in build]
+    model["data_flows"] = [
+        f
+        for f in yaml_data.get("data_flows") or []
+        if isinstance(f, dict) and f.get("from") not in build and f.get("to") not in build
+    ]
+    return model
+
+
+def runtime_scenarios(yaml_data, attack_paths_data, attack_taxonomy, actor_labels=None):
+    """Scenarios and attacker cards of Figure 1a: every scenario except the build-time ones.
+
+    Numbers stay those of Figure 2 and the Top Threats table, so a filtered
+    scenario leaves a gap rather than renumbering the rest.
+    """
+    scenarios, actors = scenarios_from_attack_paths(
+        yaml_data, attack_paths_data or {}, attack_taxonomy or {}, actor_labels
+    )
+    scenarios = [s for s in scenarios if s["actor_slug"] != BUILD_TIME]
+    remaining = {s["actor_slug"] for s in scenarios}
+    return scenarios, [a for a in actors if a["slug"] in remaining]
 
 
 def check_diagram(

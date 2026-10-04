@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "supply-chain-view.schema.json",
+  "title": "Supply-chain view",
+  "description": "Written by scripts/model/build_supply_chain_view.py when the composer renders Figure 1b. Elements, relationships and finding attachments only; actor codes and scenario numbers come from the resolved attack paths at render time.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "fingerprint", "elements", "edges", "findings", "entries", "highlighted_path"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "elements": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "column", "kind", "label", "sources"],
+        "properties": {
+          "id": {"$ref": "#/$defs/id"},
+          "column": {"enum": ["sources", "build", "artifacts", "execution"]},
+          "kind": {"enum": ["repository", "package", "github_action", "base_image", "remote_script", "ci", "artifact", "execution"]},
+          "label": {"$ref": "#/$defs/text"},
+          "detail": {"type": "string", "maxLength": 300},
+          "manifest_detail": {"type": "string", "maxLength": 200},
+          "ecosystem": {"type": "string", "maxLength": 40},
+          "coverage": {"enum": ["full", "inventory-only", "none"]},
+          "facts": {"type": "array", "maxItems": 3, "items": {"type": "string", "maxLength": 200}},
+          "artifact": {"enum": ["container_image", "package", "inventory"]},
+          "pushed": {"type": "boolean"},
+          "owner": {"$ref": "#/$defs/id"},
+          "channels": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 200}},
+          "sources": {"type": "array", "maxItems": 5, "items": {"$ref": "#/$defs/source"}}
+        }
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["from", "to", "status", "label", "sources"],
+        "properties": {
+          "from": {"$ref": "#/$defs/id"},
+          "to": {"$ref": "#/$defs/id"},
+          "status": {"enum": ["evidenced", "unknown"]},
+          "label": {"type": "string", "maxLength": 40},
+          "sources": {"type": "array", "maxItems": 5, "items": {"$ref": "#/$defs/source"}}
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "title", "severity", "element", "entry", "evidence"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^F-\\d+$"},
+          "title": {"type": "string", "maxLength": 160},
+          "severity": {"enum": ["Critical", "High", "Medium", "Low", "Informational"]},
+          "element": {"$ref": "#/$defs/id"},
+          "entry": {"enum": ["dependency", "ci-input", "repository", "artifact", null]},
+          "evidence": {"$ref": "#/$defs/source"}
+        }
+      }
+    },
+    "entries": {
+      "type": "array",
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["entry", "element", "severity", "findings"],
+        "properties": {
+          "entry": {"enum": ["dependency", "ci-input", "repository", "artifact"]},
+          "element": {"$ref": "#/$defs/id"},
+          "severity": {"enum": ["Critical", "High", "Medium", "Low", "Informational"]},
+          "findings": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^F-\\d+$"}}
+        }
+      }
+    },
+    "highlighted_path": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["finding", "entry", "element", "steps"],
+          "properties": {
+            "finding": {"type": "string", "pattern": "^F-\\d+$"},
+            "entry": {"enum": ["dependency", "ci-input", "repository", "artifact"]},
+            "element": {"$ref": "#/$defs/id"},
+            "steps": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["n", "from", "to"],
+                "properties": {
+                  "n": {"type": "integer", "minimum": 1},
+                  "from": {"$ref": "#/$defs/id"},
+                  "to": {"$ref": "#/$defs/id"},
+                  "via": {"$ref": "#/$defs/source"}
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "id": {"type": "string", "minLength": 1, "maxLength": 200},
+    "text": {"type": "string", "minLength": 1, "maxLength": 200},
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file"],
+      "properties": {
+        "file": {"type": "string", "maxLength": 300},
+        "line": {"type": "integer", "minimum": 1}
+      }
+    }
+  }
+}

@@ -180,6 +180,7 @@ NEVER_CLEANUP = {
     ".recon-signals.json",
     ".config-scan-findings.json",
     ".deployment-inventory.json",
+    ".supply-chain-view.json",
     ".sca-practice-findings.json",
     ".known-bad-libs-findings.json",
     ".dep-update-activity.json",

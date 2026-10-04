@@ -54,7 +54,12 @@ GROUPS = {
         actor_presentation
         annotate_architecture
         annotate_sequences
+        build_plane
+        build_supply_chain_view
+        figure1b_compose
+        figure1b_svg
         compose_depth_scoped_crossrefs
+
         compose_services
         deployment_inventory
         compose_threat_model
@@ -575,9 +580,11 @@ SOURCE_TESTS = {
         stage1_context_edge_inventory
         supply_chain_facts
         validate_intermediate
+        build_supply_chain_view
     """),
     "schemas/config-scan-findings.schema.yaml": _tests("""
         agent_definitions
+        build_supply_chain_view
         config_iac_scanner
         config_scanner_wireup
         merge_threats
@@ -812,6 +819,84 @@ SOURCE_TESTS = {
         architect_review_runtime
         build_architect_context
         calibrate_architect_review
+    """),
+    "scripts/model/build_plane.py": _tests("""
+        build_plane
+        build_supply_chain_view
+        figure1_dfd
+        figure1b_compose
+        compose_threat_model
+        pregenerate_fragments
+        threat_fixture
+        actor_presentation
+        analysis_version_upgrade
+        check_target_specificity
+        compose_threat_model_cov2
+        discover_identity_providers
+        e2e_pipeline
+        enforcement_mutations
+        export_html
+        export_pdf
+        figure1_detail
+        figure1b_svg
+        finding_state
+        gate_preconditions
+        p1_renderer_correctness
+        reference_format
+        render_integrity
+        render_properties
+        requirements_mapping
+        shared_paths
+        stride_outputs
+    """),
+    "scripts/model/build_supply_chain_view.py": _tests("""
+        build_supply_chain_view
+        compose_threat_model
+        figure1b_compose
+        figure1b_svg
+        threat_fixture
+        actor_presentation
+        analysis_version_upgrade
+        check_target_specificity
+        compose_threat_model_cov
+        compose_threat_model_cov2
+        compose_threat_model_cov3
+        e2e_pipeline
+        enforcement_mutations
+        figure1_dfd
+        finding_state
+        gate_preconditions
+        p1_renderer_correctness
+        reference_format
+        render_integrity
+        render_properties
+        requirements_mapping
+        shared_paths
+        stride_outputs
+    """),
+    "scripts/renderers/figure1b_svg.py": _tests("""
+        figure1b_compose
+        figure1b_svg
+        threat_fixture
+        check_target_specificity
+        finding_state
+        gate_preconditions
+        shared_paths
+        stride_outputs
+    """),
+    "schemas/supply-chain-view.schema.json": _tests("""
+        build_supply_chain_view
+        check_target_specificity
+        figure1b_compose
+        schemas
+    """),
+    "data/supply-chain-view-checks.yaml": _tests("""
+        build_supply_chain_view
+        check_target_specificity
+        figure1b_compose
+        figure1b_svg
+        security_score
+        weakness_class_config_consistency
     """),
     "scripts/model/authnz_report.py": _tests("""
         authnz_report
@@ -1236,6 +1321,7 @@ SOURCE_TESTS = {
     """),
     "data/actor-attribution-rules.yaml": _tests("""
         actor_presentation
+        build_supply_chain_view
         analysis_version_upgrade
         compose_threat_model
         compose_threat_model_cov
@@ -1254,6 +1340,8 @@ SOURCE_TESTS = {
         emit_threat_vektors
         requirements_verification
         weakness_class_config_consistency
+        figure1b_compose
+        figure1b_svg
     """),
     "scripts/model/reconcile_privileged_roles.py": _tests("""
         check_target_specificity
@@ -1336,6 +1424,7 @@ SOURCE_TESTS = {
         taxonomy_coverage
         team_questions
         threat_fixture
+        figure1b_compose
     """),
     "scripts/exporters/export_sarif.py": _tests("""
         script_layout
@@ -1391,6 +1480,8 @@ SOURCE_TESTS = {
     """),
     "scripts/renderers/figure1_dfd.py": _tests("""
         actor_presentation
+        build_plane
+        figure1b_compose
         analysis_version_upgrade
         check_target_specificity
         compose_threat_model
@@ -1547,6 +1638,7 @@ SOURCE_TESTS = {
         validate_intermediate
     """),
     "scripts/analyzers/supply_chain_facts.py": _tests("""
+        build_supply_chain_view
         check_target_specificity
         config_iac_scanner
         config_scanner_wireup
@@ -1787,6 +1879,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/renderers/pregenerate_fragments.py": _tests("""
+        figure1b_compose
         script_layout
         actor_presentation
         analysis_version_upgrade
@@ -2240,6 +2333,7 @@ SOURCE_TESTS = {
         threat_fixture
         weakness_class_config_consistency
         weakness_signals
+        figure1b_compose
     """),
     "docs/internal/contracts/cleanup-whitelist.md": _tests("""
         requirements_verification
@@ -2329,8 +2423,12 @@ SOURCE_TESTS = {
         walkthrough_renderer
         architect_review
         architect_review_runtime
+        build_supply_chain_view
+        figure1b_compose
+        figure1b_svg
     """),
     "scripts/renderers/compose_threat_model.py": _tests("""
+        figure1b_compose
         script_layout
         incremental_two_run_e2e
         architect_review_runtime
@@ -2713,6 +2811,7 @@ SOURCE_TESTS = {
         taxonomy_coverage
         team_questions
         threat_fixture
+        figure1b_compose
     """),
     "scripts/shared/_critical_findings_sync.py": _tests("""
         agent_config_checks
@@ -2773,6 +2872,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
         threat_fixture
+        figure1b_compose
     """),
     "scripts/shared/_ms_component_refs.py": _tests("""
         analysis_version_upgrade
@@ -2848,6 +2948,7 @@ SOURCE_TESTS = {
         terminate_run
         threat_fixture
         weakness_signals
+        build_supply_chain_view
     """),
     "scripts/model/finding_intake.py": _tests("""
         arch_coverage_bridge
@@ -2874,6 +2975,7 @@ SOURCE_TESTS = {
         threat_fixture
         validate_evidence_lines
         weakness_signals
+        figure1b_compose
     """),
     "scripts/shared/_paths.py": _tests("""
         aggregate_run_issues
@@ -2909,6 +3011,7 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
         validate_fragment
+        build_supply_chain_view
     """),
     "scripts/shared/_requirements_gate.py": _tests("""
         aggregate_run_issues
@@ -3108,6 +3211,7 @@ SOURCE_TESTS = {
         scanner_review_regressions
         stride_outputs
         supply_chain_config
+        build_supply_chain_view
     """),
     "scripts/shared/_threat_model_fields.py": _tests("""
         build_cross_repo_register
@@ -3902,6 +4006,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
         threat_fixture
+        figure1b_compose
     """),
     "scripts/analyzers/detect_public_repo.py": _tests("""
         auto_emitter_pass
@@ -4315,6 +4420,7 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
         threat_fixture
+        figure1b_compose
     """),
     "scripts/renderers/figure1_harness.py": _tests("""
         check_target_specificity
@@ -4363,6 +4469,7 @@ SOURCE_TESTS = {
         threat_fixture
         validate_fragment
         validate_intermediate
+        figure1b_compose
     """),
     "scripts/renderers/figure1_svg.py": _tests("""
         check_target_specificity
@@ -5152,6 +5259,7 @@ SOURCE_TESTS = {
         taxonomy_coverage
         team_questions
         threat_fixture
+        figure1b_compose
     """),
     "scripts/model/reserve_ids.py": _tests("""
         check_target_specificity
@@ -5347,6 +5455,7 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
         validate_fragment
+        build_supply_chain_view
     """),
     "scripts/validators/run_invariants.py": _tests("""
         run_invariants
@@ -5832,6 +5941,7 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
         weakness_signals
+        figure1b_compose
     """),
     "scripts/analyzers/weakness_signals.py": _tests("""
         actor_attribution

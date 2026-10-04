@@ -61,6 +61,7 @@ if not __package__:
 import argparse
 import base64
 import copy
+import dataclasses
 import functools
 import html
 import importlib.util
@@ -5931,12 +5932,14 @@ def _figure_basename_for_md(md_name: str) -> str:
     return f"{Path(md_name).stem}.figure1.svg"
 
 
-def _figure1_intro(project: str, facts: dict) -> str:
+def _figure1_intro(project: str, facts: dict, *, runtime: bool = False) -> str:
     """Introduce Figure 1 with this system's facts; the in-figure legend explains the notation."""
     system = f"{project} has {pluralize(facts['components'], 'component')} in {pluralize(facts['layers'], 'layer')}"
+    if runtime:
+        system = f"At runtime, {system[0].lower() + system[1:] if system.startswith('The ') else system}"
     if facts["external_services"]:
         system += f" and exchanges data with {pluralize(facts['external_services'], 'external service')}"
-    shown = "Figure 1 shows these data flows"
+    shown = ("Figure 1a" if runtime else "Figure 1") + " shows these data flows"
     if facts["scenarios"] == 1:
         shown += " and where the attack scenario below begins"
     elif facts["scenarios"]:
@@ -5964,6 +5967,118 @@ def _figure1_display_data(ctx: RenderContext) -> dict:
     return {**data, "project": project}
 
 
+_SUPPLY_CHAIN_VIEW = ".supply-chain-view.json"
+_CONFIG_SCAN = ".config-scan-findings.json"
+_FIGURE1B_ANCHOR = "figure-1b"
+_UNSET = object()
+
+
+def _figure1b_basename(ctx: RenderContext) -> str:
+    """`<stem>.figure1.svg` → `<stem>.figure1b.svg`; the stamp and rebuild globs (`*.figure*.svg`) match it."""
+    base = ctx.figure_basename or "figure1.svg"
+    return base.replace(".figure1.", ".figure1b.") if ".figure1." in base else "figure1b.svg"
+
+
+def _read_json_quietly(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _supply_chain_split(ctx: RenderContext) -> dict | None:
+    """The supply-chain view and its actor when the repository has build evidence, else None (RA-30).
+
+    Rebuilt on every render from the inputs a run keeps, written to
+    `.supply-chain-view.json`, and cached on the context so Figure 1a, Figure 1b,
+    §1 and §2 read one answer. The scenario numbers come from the same resolved
+    attack paths that number Figure 2 and the Top Threats table.
+    """
+    cached = getattr(ctx, "_supply_chain_split_cache", _UNSET)
+    if cached is not _UNSET:
+        return cached
+    result = None
+    artifact = ctx.output_dir / _SUPPLY_CHAIN_VIEW
+    try:
+        from jsonschema import Draft202012Validator
+        from model.build_supply_chain_view import BUILD_TIME, build_view
+
+        from renderers.actor_presentation import attacker_display
+        from renderers.figure1_dfd import scenarios_from_attack_paths
+
+        taxonomy = _load_attack_class_taxonomy()
+        paths = _load_attack_paths_fragment(ctx, taxonomy, ctx.yaml_data.get("threats") or [])
+        labels = (_load_posture_actor_labels() or {}).get("actors") or {}
+        scenarios, _actors = scenarios_from_attack_paths(
+            _figure1_display_data(ctx), copy.deepcopy(paths), taxonomy, labels
+        )
+        build = [s for s in scenarios if s["actor_slug"] == BUILD_TIME]
+        facts = (_read_json_quietly(ctx.output_dir / _CONFIG_SCAN) or {}).get("supply_chain_facts")
+        inventory = _read_json_quietly(ctx.output_dir / _DEPLOYMENT_INVENTORY)
+        view = build_view(
+            ctx.yaml_data,
+            facts if isinstance(facts, dict) else None,
+            inventory if isinstance(inventory, dict) else None,
+            sum(len(s["fids"]) for s in build),
+        )
+        if view is not None:
+            schema = json.loads((PLUGIN_ROOT / "schemas" / "supply-chain-view.schema.json").read_text(encoding="utf-8"))
+            Draft202012Validator(schema).validate(view)
+            artifact.write_text(json.dumps(view, indent=2) + "\n", encoding="utf-8")
+            glyphs = taxonomy.get("glyph_sequence") or list("①②③④⑤⑥⑦⑧⑨")
+            numbers = [
+                glyphs[int(n) - 1] if str(n).isdigit() and 0 < int(n) <= len(glyphs) else str(n)
+                for n in dict.fromkeys(s["n"] for s in build)
+            ]
+            active = build or any(
+                a.get("heatmap_slug") == BUILD_TIME and a.get("active", True)
+                for a in ctx.yaml_data.get("actors") or []
+                if isinstance(a, dict)
+            )
+            actor = None
+            if active:
+                name, subtitle = attacker_display(BUILD_TIME, ctx.yaml_data.get("meta") or {}, labels)
+                actor = {"name": name, "subtitle": subtitle}
+            result = {
+                "view": view,
+                "actor": actor,
+                "numbers": numbers,
+                "scenario_ns": list(dict.fromkeys(s["n"] for s in build)),
+            }
+        elif artifact.exists():
+            artifact.unlink()  # never leave a prior run's view next to a report without one
+    except Exception as exc:  # noqa: BLE001 — an unusable view omits Figure 1b, it never breaks the section
+        ctx.warnings.append(f"figure1b: supply-chain view unavailable ({type(exc).__name__}: {exc}); Figure 1b omitted")
+        if artifact.exists():
+            artifact.unlink()
+        result = None
+    ctx._supply_chain_split_cache = result  # type: ignore[attr-defined]
+    return result
+
+
+def _figure1_inputs(ctx: RenderContext, attack_paths_data: dict, attack_taxonomy: dict, actor_labels: dict):
+    """(model, scenarios, actors) Figure 1 draws: the runtime projection when Figure 1b exists (RA-29)."""
+    from renderers.figure1_dfd import runtime_model, runtime_scenarios, scenarios_from_attack_paths
+
+    figure_data = _figure1_display_data(ctx)
+    if _supply_chain_split(ctx) is None:
+        scenarios, actors = scenarios_from_attack_paths(
+            figure_data, attack_paths_data or {}, attack_taxonomy or {}, actor_labels
+        )
+        return figure_data, scenarios, actors
+    scenarios, actors = runtime_scenarios(figure_data, attack_paths_data, attack_taxonomy, actor_labels)
+    return runtime_model(figure_data), scenarios, actors
+
+
+def _runtime_attack_paths(attack_paths_data: dict) -> dict:
+    """Attack paths without the build-time ones, for the fallbacks that take raw paths."""
+    data = copy.deepcopy(attack_paths_data or {})
+    data["attack_paths"] = [
+        p for p in data.get("attack_paths") or [] if not (isinstance(p, dict) and p.get("actor") == "build-time")
+    ]
+    return data
+
+
 def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxonomy: dict) -> str:
     """Build Figure 1 as a deterministic hand-built SVG, write it next to
     threat-model.md, and return the image-reference markdown.
@@ -5982,7 +6097,9 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
     falls back to the Mermaid builder and finally the LLM fragment.
     """
     components = ctx.yaml_data.get("components") or []
-    if not components or not (attack_paths_data.get("attack_paths") or []):
+    split = _supply_chain_split(ctx) is not None
+    # With Figure 1b present the runtime view is drawn even when every scenario is build-time (R7).
+    if not components or not (split or attack_paths_data.get("attack_paths") or []):
         return ""
     actor_labels = (_load_posture_actor_labels() or {}).get("actors") or {}
     kwargs = {"meta": ctx.yaml_data.get("meta") or {}, "actor_labels": actor_labels}
@@ -6003,10 +6120,18 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
         from renderers.figure1_detail import needs_views
         from renderers.figure1_dfd import check_diagram, legitimate_role_notes, overview_facts
 
-        figure_data = _figure1_display_data(ctx)
+        figure_data, scenarios, actors = _figure1_inputs(ctx, attack_paths_data, attack_taxonomy, actor_labels)
+        if not figure_data.get("components"):
+            return ""
         paged = needs_views(figure_data)
         svg, problems = check_diagram(
-            figure_data, attack_paths_data, attack_taxonomy, actor_labels=actor_labels, detail=False
+            figure_data,
+            attack_paths_data,
+            attack_taxonomy,
+            actor_labels=actor_labels,
+            scenarios=scenarios,
+            actors=actors,
+            detail=False,
         )
         if problems:
             ctx.warnings.append(
@@ -6018,12 +6143,21 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
             role_notes = legitimate_role_notes(ctx.yaml_data)
             intro = _figure1_intro(
                 (figure_data.get("project") or {}).get("name") or "The system",
-                overview_facts(figure_data, attack_paths_data, attack_taxonomy, actor_labels=actor_labels),
+                overview_facts(
+                    figure_data, attack_paths_data, attack_taxonomy, actor_labels=actor_labels, scenarios=scenarios
+                ),
+                runtime=split,
             )
             if paged:
                 try:
                     detail_svg, detail_problems = check_diagram(
-                        figure_data, attack_paths_data, attack_taxonomy, actor_labels=actor_labels, detail=True
+                        figure_data,
+                        attack_paths_data,
+                        attack_taxonomy,
+                        actor_labels=actor_labels,
+                        scenarios=scenarios,
+                        actors=actors,
+                        detail=True,
                     )
                 except Exception as exc:  # noqa: BLE001 — a detail failure must not discard a valid overview
                     detail_svg, detail_problems = "", [str(exc)]
@@ -6042,7 +6176,14 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
             from renderers.figure1_svg import build_figure1_svg
         except Exception:  # noqa: BLE001 — missing module must never break the section
             return ""
-        svg = build_figure1_svg(ctx.yaml_data, attack_paths_data, attack_taxonomy, **kwargs)
+        if split:
+            from renderers.figure1_dfd import runtime_model
+
+            svg = build_figure1_svg(
+                runtime_model(ctx.yaml_data), _runtime_attack_paths(attack_paths_data), attack_taxonomy, **kwargs
+            )
+        else:
+            svg = build_figure1_svg(ctx.yaml_data, attack_paths_data, attack_taxonomy, **kwargs)
         if not (svg or "").strip():
             return ""
         intro = (
@@ -6091,7 +6232,92 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
             else detail_basename
         )
         caption += f"\n\n[Detailed architecture diagram]({detail_src})"
-    return f"{intro}\n\n![Figure 1 - Architecture and Threat Overview]({src}){caption}"
+    alt = (
+        "Figure 1a - Runtime Architecture and Threat Overview"
+        if split
+        else "Figure 1 - Architecture and Threat Overview"
+    )
+    return f"{intro}\n\n![{alt}]({src}){caption}"
+
+
+def _names_a_build_component(ctx: RenderContext, text: str) -> bool:
+    from model.build_plane import is_build_component
+
+    for component in ctx.yaml_data.get("components") or []:
+        if isinstance(component, dict) and is_build_component(component):
+            if any(token and token in text for token in (component.get("id"), component.get("name"))):
+                return True
+    return False
+
+
+def _embed_figures_enabled(ctx: RenderContext) -> bool:
+    if getattr(ctx, "embed_figures", False):
+        return True
+    config = _read_json_quietly(ctx.output_dir / ".skill-config.json")
+    return bool(isinstance(config, dict) and config.get("embed_figures"))
+
+
+def _figure1b_strip(ctx: RenderContext) -> str:
+    """The line under Figure 1a that names the build systems and points to Figure 1b; "" without Figure 1b."""
+    split = _supply_chain_split(ctx)
+    if split is None:
+        return ""
+    view = split["view"]
+    systems = [e["label"] for e in view["elements"] if e["kind"] == "ci" and e.get("coverage") != "none"]
+    where = ", ".join(systems) if systems else "no CI system evidenced"
+    actor = split.get("actor")
+    who = f" {' '.join(split['numbers'])} {actor['name']}".rstrip() if actor else ""
+    return f"**Build pipeline**, not drawn in this runtime view: {where}.{who} → [Figure 1b](#{_FIGURE1B_ANCHOR})."
+
+
+def _render_figure1b(ctx: RenderContext) -> str:
+    """Figure 1b as an image, or as tables when a gate fails; "" and no file without build evidence (RA-31)."""
+    target = ctx.output_dir / _figure1b_basename(ctx)
+    split = _supply_chain_split(ctx)
+    if split is None:
+        if target.exists():
+            target.unlink()
+        return ""
+    from renderers.figure1b_svg import render, render_table
+
+    view, actor, numbers = split["view"], split.get("actor"), split["numbers"]
+    project = ((_figure1_display_data(ctx).get("project") or {}).get("name")) or ""
+    try:
+        svg, problems = render(view, actor, numbers, project)
+    except Exception as exc:  # noqa: BLE001 — a renderer crash falls back to the table like a failed gate
+        svg, problems = "", [f"{type(exc).__name__}: {exc}"]
+    shown = len(view["findings"])
+    systems = [e["label"] for e in view["elements"] if e["kind"] == "ci" and e.get("coverage") != "none"]
+    built = (
+        f"{project or 'The repository'} builds in {', '.join(systems)}"
+        if systems
+        else f"{project or 'The repository'} evidences no CI system"
+    )
+    path = view.get("highlighted_path") or {}
+    intro = (
+        f"{built}. Figure 1b shows the inputs, build systems and release artifacts the repository evidences, "
+        f"with {pluralize(shown, 'finding')} attached to them."
+    )
+    if path.get("steps"):
+        intro += f" The highlighted path follows {path['finding']} as far as the repository evidences it."
+    lines = [f'<a id="{_FIGURE1B_ANCHOR}"></a>', "", "**Figure 1b — Supply Chain and Build**", "", intro, ""]
+    if svg:
+        target.write_text(svg, encoding="utf-8")
+        src = (
+            "data:image/svg+xml;base64," + base64.b64encode(svg.encode("utf-8")).decode("ascii")
+            if _embed_figures_enabled(ctx)
+            else target.name
+        )
+        lines.append(f"![Figure 1b - Supply Chain and Build]({src})")
+    else:
+        if target.exists():
+            target.unlink()
+        ctx.warnings.append(
+            f"figure1b: supply-chain figure failed its checks ({len(problems)} problem(s): {'; '.join(problems[:3])}) "
+            "— rendered as tables"
+        )
+        lines.append(render_table(view, actor, numbers))
+    return "\n".join(lines).rstrip() + "\n"
 
 
 _DETAIL_FIGURE_NUMBERS = range(3, 7)  # the §2 deployment figure follows Figures 1 and 2; 4–6 are only cleaned up
@@ -7632,9 +7858,18 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
         figure1_md = ""
     # FALLBACK 1: the legacy deterministic Mermaid builder (kept for robustness
     # if the SVG generator is unavailable or yields nothing).
+    split = _supply_chain_split(ctx) is not None
     if not figure1_md:
         try:
-            figure1_md = _render_top_threats_architecture(ctx, attack_paths_data, attack_taxonomy).strip()
+            if split:
+                from renderers.figure1_dfd import runtime_model
+
+                runtime_ctx = dataclasses.replace(ctx, yaml_data=runtime_model(ctx.yaml_data))
+                figure1_md = _render_top_threats_architecture(
+                    runtime_ctx, _runtime_attack_paths(attack_paths_data), attack_taxonomy
+                ).strip()
+            else:
+                figure1_md = _render_top_threats_architecture(ctx, attack_paths_data, attack_taxonomy).strip()
         except Exception:  # noqa: BLE001 — Figure 1 is non-essential
             figure1_md = ""
     # FALLBACK 2: an LLM/operator-authored fragment.
@@ -7645,16 +7880,29 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
                 figure1_md = fig1_path.read_text(encoding="utf-8").strip()
         except OSError:
             figure1_md = ""
+        if figure1_md and split and _names_a_build_component(ctx, figure1_md):
+            # A saved diagram that still draws the pipeline would undo the runtime split (R7).
+            ctx.warnings.append("figure1: saved top-threats-architecture fragment draws a build component — not used")
+            figure1_md = ""
 
     table_md = _render_top_threats(ctx, env, {"template": "top-threats.md.j2"}).rstrip()
 
     parts: list[str] = ["### Security Posture & Top Threats", ""]
     if figure1_md:
-        parts += ["**Figure 1 — Architecture and Threat Overview**", "", figure1_md, ""]
+        caption = (
+            "**Figure 1a — Runtime Architecture and Threat Overview**"
+            if split
+            else "**Figure 1 — Architecture and Threat Overview**"
+        )
+        parts += [caption, "", figure1_md, ""]
+        if strip := _figure1b_strip(ctx):
+            parts += [strip, ""]
     if inventory_actors(ctx.yaml_data):
         parts += ["Role access and finding assignments are listed in [Identified Actors](#identified-actors).", ""]
     if actor_notes:
         parts += ["**Actor grouping.** " + " ".join(actor_notes), ""]
+    if figure1b_md := _render_figure1b(ctx):
+        parts += [figure1b_md.rstrip(), ""]
     parts += [
         "**Figure 2 — Attack Routes and Impact**",
         "",
@@ -9904,6 +10152,9 @@ def _compute_top_threats_rows(ctx: RenderContext) -> list[dict[str, Any]]:
 
         impacts = [impact_label.get(s, s) for s in (ap.get("impact") or [])]
         impact_str = " · ".join(impacts)
+        if ap.get("actor") == "build-time" and _supply_chain_split(ctx) is not None:
+            link = f"Path through the build: [Figure 1b](#{_FIGURE1B_ANCHOR})"
+            description = f"{description}<br/>{link}" if description else link
 
         rows.append(
             {
@@ -10430,7 +10681,10 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
         # composition chokepoint prevents a renderer from reintroducing extra
         # Mermaid nodes after the pre-generator has enforced compactness.
         md = gen_architecture_diagrams(
-            _figure1_display_data(ctx), figures=_render_detail_figures(ctx), people=_overview_people(ctx)
+            _figure1_display_data(ctx),
+            figures=_render_detail_figures(ctx),
+            people=_overview_people(ctx),
+            supply_chain_anchor=_FIGURE1B_ANCHOR if _supply_chain_split(ctx) is not None else None,
         )
     else:
         md = _load_fragment(ctx, section_id, fragment_name)
@@ -15680,7 +15934,29 @@ def _overview_people(ctx: RenderContext) -> list[dict]:
     paths = _load_attack_paths_fragment(ctx, taxonomy, ctx.yaml_data.get("threats") or [])
     labels = (_load_posture_actor_labels() or {}).get("actors") or {}
     try:
-        return overview_people(_figure1_display_data(ctx), copy.deepcopy(paths), taxonomy, labels)
+        split = _supply_chain_split(ctx)
+        if split is None:
+            return overview_people(_figure1_display_data(ctx), copy.deepcopy(paths), taxonomy, labels)
+        # Figure 1a draws the runtime people, Figure 1b the build-time attacker; sections name both (RA-29).
+        model, scenarios, actors = _figure1_inputs(ctx, copy.deepcopy(paths), taxonomy, labels)
+        people = overview_people(model, copy.deepcopy(paths), taxonomy, labels, scenarios=scenarios, actors=actors)
+        actor = split.get("actor")
+        if actor and not any(p.get("slug") == "build-time" for p in people):
+            attackers = [i for i, p in enumerate(people) if p["kind"] == "attacker"]
+            people.insert(
+                attackers[-1] + 1 if attackers else 0,
+                {
+                    "name": actor["name"],
+                    "kind": "attacker",
+                    "slug": "build-time",
+                    "subtitle": actor["subtitle"],
+                    "code": None,
+                    "scenarios": split["scenario_ns"],
+                    "privileged": False,
+                    "figure": "1b",
+                },
+            )
+        return people
     except Exception as exc:  # noqa: BLE001 — same guard as the Figure 1 builder itself
         getattr(ctx, "warnings", []).append(f"actors: overview actor set unavailable ({type(exc).__name__}: {exc})")
         return []
@@ -15730,9 +16006,17 @@ def _render_actor_inventory(ctx: RenderContext, people: list[dict]) -> str:
     from renderers.figure1_dfd import _project_name
 
     project = _project_name(_figure1_display_data(ctx)) or "the system"
-    intro = f"Figure 1 draws {names(attackers) or 'no attacker'} as attacker" + ("s" if len(attackers) != 1 else "")
+    build_attackers = [p for p in attackers if p.get("figure") == "1b"]
+    runtime_attackers = [p for p in attackers if p.get("figure") != "1b"]
+    figure = "Figure 1a" if build_attackers else "Figure 1"
+    intro = f"{figure} draws {names(runtime_attackers) or 'no attacker'} as attacker" + (
+        "s" if len(runtime_attackers) != 1 else ""
+    )
     intro += f" and {names(roles)} as legitimate role" + ("s" if len(roles) != 1 else "") if roles else ""
-    intro += f" of {safe(project)}. Each row gives that actor's access and the findings attributed to it."
+    intro += f" of {safe(project)}."
+    if build_attackers:
+        intro += f" [Figure 1b](#{_FIGURE1B_ANCHOR}) draws {names(build_attackers)} and the build it attacks."
+    intro += " Each row gives that actor's access and the findings attributed to it."
     lines = ['<a id="identified-actors"></a>', "### Identified Actors", "", intro, ""]
     lines += ["| Actor | Type | Access | Scenarios | Attributed findings |", "|---|---|---|---|---|"]
     several = len(attackers) > 1
@@ -15757,7 +16041,8 @@ def _render_actor_inventory(ctx: RenderContext, people: list[dict]) -> str:
             if tally
             else "—"
         )
-        lines.append(f"| {safe(name)} | {kind} | {safe(access)} | {scenario_text or '—'} | {findings} |")
+        where = f" · [Figure 1b](#{_FIGURE1B_ANCHOR})" if person.get("figure") == "1b" else ""
+        lines.append(f"| {safe(name)} | {kind} | {safe(access)}{where} | {scenario_text or '—'} | {findings} |")
     return "\n".join(lines) + "\n"
 
 

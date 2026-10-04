@@ -292,6 +292,8 @@ $defs:
             pinning: {enum: [commit-sha, digest, tag, branch, none, unresolved]}
             file: {type: string, minLength: 1}
             line: {type: integer, minimum: 1}
+            # The workflow job the reference sits in; absent outside a workflow job.
+            job: {type: string, minLength: 1}
       outputs:
         type: array
         items:
@@ -304,6 +306,30 @@ $defs:
             pushed: {type: boolean}
             file: {type: string, minLength: 1}
             line: {type: integer, minimum: 1}
+            job: {type: string, minLength: 1}
+            # The Dockerfile the job builds, when the workflow states it or the default exists.
+            dockerfile: {type: string, minLength: 1}
+            # The image a pushing job names with a literal registry and repository.
+            destination:
+              type: object
+              required: [registry, repository]
+              additionalProperties: false
+              properties:
+                registry: {type: string, minLength: 1}
+                repository: {type: string, minLength: 1}
+      installs:
+        type: array
+        items:
+          type: object
+          required: [ecosystem, command, lockfile_enforced, file, line]
+          additionalProperties: false
+          properties:
+            ecosystem: {type: string, minLength: 1}
+            command: {type: string, minLength: 1}
+            lockfile_enforced: {type: boolean}
+            file: {type: string, minLength: 1}
+            line: {type: integer, minimum: 1}
+            job: {type: string, minLength: 1}
       capabilities:
         type: object
         required: [sbom, image_signing, dependency_updates]

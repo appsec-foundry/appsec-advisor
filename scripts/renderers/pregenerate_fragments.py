@@ -981,12 +981,20 @@ def _detail_figure_block(key: str, name: str, figure: dict) -> list[str]:
     ]
 
 
-def gen_architecture_diagrams(yaml_data: dict, figures: dict | None = None, people: list[dict] | None = None) -> str:
+def gen_architecture_diagrams(
+    yaml_data: dict,
+    figures: dict | None = None,
+    people: list[dict] | None = None,
+    supply_chain_anchor: str | None = None,
+) -> str:
     """## 2. Architecture Diagrams — 3 required sub-sections. §2.2 and §2.3
     show the composer's detail view when ``figures`` carries one
     (``{"2.2": {"image": "![Figure 3 - …](….svg)" | "markdown": table, "takeaway": …}}``),
     otherwise a ```mermaid block. ``people`` is the Figure 1 actor set that
     §2.1 draws; without it §2.1 shows the modelled roles only.
+
+    ``supply_chain_anchor`` is set when the report carries Figure 1b: the §2.2
+    container diagram then leaves the build plane out and points there (RA-28).
     """
     figures = figures or {}
     meta = yaml_data.get("meta") or {}
@@ -1007,6 +1015,22 @@ def gen_architecture_diagrams(yaml_data: dict, figures: dict | None = None, peop
     # the same source of truth.
     crit_counts, high_counts = _threat_counts_per_component(yaml_data)
     takeaways = _arch_diagram_takeaways(name, components, by_tier, crit_counts, high_counts)
+    # §2.2 draws the runtime only when Figure 1b carries the build plane; §2.3 keeps every component.
+    all_components, all_by_tier = components, by_tier
+    build_plane: list[dict] = []
+    if supply_chain_anchor:
+        from model.build_plane import is_build_component
+
+        build_plane = [c for c in components if isinstance(c, dict) and is_build_component(c)]
+    if build_plane:
+        components = [c for c in components if c not in build_plane]
+        by_tier = _components_by_tier(components)
+        takeaways["2.2"] = _arch_diagram_takeaways(name, components, by_tier, crit_counts, high_counts)["2.2"]
+        takeaways["2.2"] += (
+            " The build plane ("
+            + ", ".join(str(c.get("name") or c.get("id")) for c in build_plane)
+            + f") is shown in [Figure 1b](#{supply_chain_anchor})."
+        )
 
     lines = ["## 2. Architecture Diagrams", ""]
 
@@ -1197,6 +1221,8 @@ def gen_architecture_diagrams(yaml_data: dict, figures: dict | None = None, peop
     if "2.2" in figures:  # the detail figure replaces the Mermaid diagram and its captions
         del lines[mark_22:]
         lines.extend(_detail_figure_block("2.2", name, figures["2.2"]))
+
+    components, by_tier = all_components, all_by_tier
 
     # ----- 2.3 Components ----------------------------------------------------
     # Compact 4-tier layout (post-2026-05) per

@@ -716,16 +716,16 @@ _EMOJI_FALLBACKS: dict[str, tuple[str, str]] = {
 
 _SVG_BLOCK_RE = re.compile(r"<svg\b.*?</svg>", re.DOTALL | re.IGNORECASE)
 
-# The Figure 1 region as pandoc emits it: an optional section heading, the bold
+# A Figure 1, 1a or 1b region as pandoc emits it: an optional section heading, the bold
 # caption paragraph, the intro paragraph(s), and the image paragraph whose alt
 # text names the figure. Matching on the caption/alt text — not on the image
 # path — covers both the file reference and the base64 data URI that
 # `--embed-resources` / `--embed-figures` produce.
 _FIGURE1_REGION_RE = re.compile(
     r"(?:<h[2-4][^>]*>(?:(?!</h[2-4]>).)*</h[2-4]>\s*)?"
-    r"<p><strong>Figure 1\b.*?</strong></p>"
+    r"<p><strong>Figure 1[ab]?\b.*?</strong></p>"
     r"(?:(?!<p><img\b).)*?"
-    r'<p><img\s+src="(?P<src>[^"]*)"[^>]*\balt="Figure 1\b[^"]*"[^>]*/?>\s*</p>',
+    r'<p><img\s+src="(?P<src>[^"]*)"[^>]*\balt="Figure 1[ab]?\b[^"]*"[^>]*/?>\s*</p>',
     re.DOTALL | re.IGNORECASE,
 )
 _SVG_TAG_RE = re.compile(r"<svg\b[^>]*>", re.IGNORECASE)
@@ -764,15 +764,14 @@ def _svg_dimensions(src: str, base_dir: Path) -> Optional[tuple[float, float]]:
 
 
 def _wrap_wide_figure1(html: str, base_dir: Path) -> str:
-    """Keep a large Figure 1 and its introduction together on an A3 page."""
-    m = _FIGURE1_REGION_RE.search(html)
-    if not m:
-        return html
-    dims = _svg_dimensions(m.group("src"), base_dir)
-    if not dims or dims[0] < _LANDSCAPE_MIN_WIDTH_PX:
-        return html
-    cls = "figure-landscape" if dims[0] >= _LANDSCAPE_MIN_ASPECT * dims[1] else "figure-portrait"
-    return html[: m.start()] + f'<div class="{cls}">\n' + m.group(0) + "\n</div>" + html[m.end() :]
+    """Keep each large Figure 1 (or 1a and 1b) and its introduction together on an A3 page."""
+    for m in reversed(list(_FIGURE1_REGION_RE.finditer(html))):
+        dims = _svg_dimensions(m.group("src"), base_dir)
+        if not dims or dims[0] < _LANDSCAPE_MIN_WIDTH_PX:
+            continue
+        cls = "figure-landscape" if dims[0] >= _LANDSCAPE_MIN_ASPECT * dims[1] else "figure-portrait"
+        html = html[: m.start()] + f'<div class="{cls}">\n' + m.group(0) + "\n</div>" + html[m.end() :]
+    return html
 
 
 # The link compose writes under Figure 1 to its generated detail sibling.

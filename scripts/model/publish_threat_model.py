@@ -45,6 +45,11 @@ TIER2 = [
     "figure1-detail.svg",
     "threat-model.figure1.svg",
     "threat-model.figure1-detail.svg",
+    # Figure 2 and the supply-chain Figure 1b are referenced from the Management Summary.
+    "figure1b.svg",
+    "figure2.svg",
+    "threat-model.figure1b.svg",
+    "threat-model.figure2.svg",
     # §2 detail figures (Figures 3–4) that threat-model.md references.
     *(f"{stem}figure{n}.svg" for n in range(3, 5) for stem in ("", "threat-model.")),
     ".architect-review.md",
