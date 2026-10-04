@@ -2310,6 +2310,14 @@ SOURCE_TESTS = {
         requirements_verification
         stride_outputs
     """),
+    "agents/shared/sec6-authoring.md": _tests("""
+        agent_definitions
+        agent_doc_shell_snippets
+        check_target_specificity
+        phase_group_prompts
+        requirements_verification
+        stride_outputs
+    """),
     "agents/shared/prose-samples.md": _tests("""
         agent_definitions
         agent_doc_shell_snippets

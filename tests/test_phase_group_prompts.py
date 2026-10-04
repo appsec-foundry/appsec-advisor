@@ -6,11 +6,13 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
 RENDERER = REPO_ROOT / "agents" / "appsec-threat-renderer.md"
+SEC6_CONTRACT = REPO_ROOT / "agents" / "shared" / "sec6-authoring.md"
 CONTROLLER = REPO_ROOT / "scripts" / "orchestrator/orchestration_controller.py"
 
 
 def test_security_architecture_v2_authoring_contract_is_active():
-    text = RENDERER.read_text(encoding="utf-8")
+    assert "agents/shared/sec6-authoring.md" in RENDERER.read_text(encoding="utf-8")
+    text = SEC6_CONTRACT.read_text(encoding="utf-8")
     assert "13-section" in text
     assert "**Controls covered:**" in text
     assert "**Security assessment**" in text

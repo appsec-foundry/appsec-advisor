@@ -448,11 +448,15 @@ def test_focused_renderer_line_slices_match_their_owned_contracts():
     assert renderer_lines[105].startswith("### MS prose")
     assert renderer_lines[275].startswith("Finding severity does not determine compliance status")
     assert renderer_lines[276] == ""
-    assert "lines 278–601" in secarch
-    assert renderer_lines[277].startswith("### `security-architecture.md` authoring")
-    assert renderer_lines[599] == "```"
-    assert renderer_lines[600] == ""
-    assert renderer_lines[601].startswith("## Completion")
+    # The §6 contract lives in one shared file both renderers read; neither
+    # carries a line window into the other's prompt any more.
+    sec6 = (AGENTS_DIR / "shared" / "sec6-authoring.md").read_text(encoding="utf-8")
+    renderer = "\n".join(renderer_lines)
+    assert "agents/shared/sec6-authoring.md" in secarch and "lines 278" not in secarch
+    assert "you MUST Read `agents/shared/sec6-authoring.md`" in renderer
+    assert "### `security-architecture.md` authoring" in sec6
+    assert "§6.13" in sec6 and "**Security assessment**" in sec6
+    assert "§6.13" not in renderer  # no second copy of the contract drifting in the renderer
 
     # The MS slice must actually carry the ms-verdict rules the MS renderer is
     # sent here for — an edit that lands one outside the bounds ships a rule no
