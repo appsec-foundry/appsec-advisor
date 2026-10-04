@@ -1744,88 +1744,123 @@ def _dedupe_title_locator(threats: list[dict]) -> list[dict]:
 
 
 def _group_candidates(threats: list[dict]) -> list[dict]:
-    """Group threats sharing the candidate key (CWE + STRIDE). Groups of
-    size >= 2 are candidates for LLM-adjudicated merge. Single-element
-    groups never need adjudication and are omitted.
+    """Candidate groups for the merger agent, in the shape of `.merge-candidates.json`.
 
-    RC.G.2 — adds a SECONDARY grouping pass keyed on (endpoint,
-    cwe_family). The primary (CWE, STRIDE) key misses pairs like T-005
-    (CWE-915 Tampering) and T-010 (CWE-269 Elevation of Privilege) that
-    target the same endpoint via the same exploit primitive. The
-    endpoint extractor walks title + scenario for `/api/...`-style paths
-    and the family map collapses CWEs into broad exploit classes.
-
-    Groups produced by either pass enter the candidate list with
-    distinct `group_id`s; the merger agent applies the contract rules
-    (same-TH constraint, distinct-sink rule) and decides per-group.
+    The passes and their order live in `_candidate_index_groups`, which the
+    apply path replays to resolve a decision's `group_id`.
     """
-    primary: dict[tuple, list[dict]] = {}
-    for t in threats:
-        primary.setdefault(_candidate_key(t), []).append(t)
+    return [
+        {**meta, "member_count": len(indices), "members": [_candidate_member(threats[i]) for i in indices]}
+        for meta, indices in _candidate_index_groups(threats)
+    ]
 
-    out: list[dict] = []
-    grouped_ids: set[int] = set()
-    for key, members in primary.items():
+
+@functools.lru_cache(maxsize=1)
+def _weakness_label_by_cwe() -> dict[str, str]:
+    """CWE → weakness label (data/weakness-classes.yaml `diagram_annotations`), the mechanism vocabulary."""
+    labels = (load_weakness_classes().get("diagram_annotations") or {}).get("labels") or {}
+    return {str(cwe).upper(): label for label, entry in labels.items() for cwe in entry.get("cwes") or []}
+
+
+def _is_config_check_finding(t: dict) -> bool:
+    """A finding a configuration check names. Source-scanner findings stay out: they carry the
+    analyzer's CWE for the same sink, which passes 1 and 2 already pair."""
+    return bool(t.get("config_check_id"))
+
+
+def _candidate_index_groups(threats: list[dict]) -> list[tuple[dict, list[int]]]:
+    """Every candidate group as (metadata, member indices in threat order), deterministically ordered.
+
+    Three passes, each exposing a different reason two findings may describe one defect:
+
+    1. ``G-`` (CWE, STRIDE).
+    2. ``GE-`` (endpoint, CWE family), only over threats outside a ``G-`` group
+       and only when the members span more than one (CWE, STRIDE) signature.
+       It catches pairs like T-005 (CWE-915 Tampering) and T-010 (CWE-269 EoP)
+       on one endpoint.
+    3. ``GC-`` (component, weakness label, threat category): a config-scan
+       finding and an analyzer finding of the same mechanism carry different
+       CWEs, so passes 1 and 2 never pair them (image signing CWE-347 against
+       CWE-345, a disabled lockfile CWE-829 against IAC-050 CWE-1104). A group
+       needs a config-check member and a member without one, one category
+       (WK-7 forbids joining categories, so a mixed group could never merge),
+       and a member set no other group already exposes. These groups may
+       overlap others; `_apply_decisions` lets each finding be merged once.
+
+    The merger agent decides every group; nothing here merges.
+    """
+    groups: list[tuple[dict, list[int]]] = []
+    primary: dict[tuple, list[int]] = {}
+    for idx, t in enumerate(threats):
+        primary.setdefault(_candidate_key(t), []).append(idx)
+    grouped: set[int] = set()
+    for (cwe, stride), members in primary.items():
         if len(members) < 2:
             continue
-        cwe, stride = key
         group_hash = hashlib.sha256(f"{cwe}|{stride}|{len(members)}".encode()).hexdigest()[:8]
-        out.append(
-            {
-                "group_id": f"G-{group_hash}",
-                "group_key": "cwe_stride",
-                "cwe": cwe,
-                "stride": stride,
-                "member_count": len(members),
-                "members": [_candidate_member(m) for m in members],
-            }
+        groups.append(
+            ({"group_id": f"G-{group_hash}", "group_key": "cwe_stride", "cwe": cwe, "stride": stride}, members)
         )
-        for m in members:
-            grouped_ids.add(id(m))
+        grouped.update(members)
 
-    # RC.G.2 — secondary endpoint-based grouping. Operates only on
-    # threats not already in a primary group (avoids exposing the same
-    # pair twice). Produces candidate groups for the LLM merger.
-    secondary: dict[tuple[str, str], list[dict]] = {}
-    for t in threats:
-        if id(t) in grouped_ids:
+    secondary: dict[tuple[str, str], list[int]] = {}
+    for idx, t in enumerate(threats):
+        if idx in grouped:
             continue
         key2 = _endpoint_candidate_key(t)
-        if key2 is None:
-            continue
-        secondary.setdefault(key2, []).append(t)
-
+        if key2 is not None:
+            secondary.setdefault(key2, []).append(idx)
     for (endpoint, family), members in secondary.items():
         if len(members) < 2:
             continue
-        # Distinct CWE / STRIDE values across members is the signal that
-        # this group exists because of endpoint co-location, not the
-        # primary key. Skip if everyone has the same CWE+STRIDE — that
-        # would have been caught by the primary pass.
-        sig = {(m.get("cwe") or "", m.get("stride") or "") for m in members}
-        if len(sig) <= 1:
+        if len({(threats[i].get("cwe") or "", threats[i].get("stride") or "") for i in members}) <= 1:
             continue
         group_hash = hashlib.sha256(f"{endpoint}|{family}|{len(members)}".encode()).hexdigest()[:8]
-        out.append(
-            {
-                "group_id": f"GE-{group_hash}",
-                "group_key": "endpoint_family",
-                "endpoint": endpoint,
-                "cwe_family": family,
-                "member_count": len(members),
-                "members": [_candidate_member(m) for m in members],
-            }
-        )
+        meta = {
+            "group_id": f"GE-{group_hash}",
+            "group_key": "endpoint_family",
+            "endpoint": endpoint,
+            "cwe_family": family,
+        }
+        groups.append((meta, members))
 
-    # Deterministic ordering — primary groups first (by CWE then STRIDE
-    # then group_id), then secondary groups (by endpoint then group_id).
-    def _order(g: dict) -> tuple[int, str, str, str]:
-        if g.get("group_key") == "cwe_stride":
-            return (0, g.get("cwe") or "", g.get("stride") or "", g["group_id"])
-        return (1, g.get("endpoint") or "", g.get("cwe_family") or "", g["group_id"])
+    labels = _weakness_label_by_cwe()
+    tertiary: dict[tuple[str, str, str], list[int]] = {}
+    for idx, t in enumerate(threats):
+        label = labels.get(str(t.get("cwe") or "").strip().upper())
+        component = str(t.get("component_id") or t.get("component") or "")
+        category = t.get("threat_category_id")
+        if label and component and isinstance(category, str) and _TH_ID_RE.match(category):
+            tertiary.setdefault((component, label, category), []).append(idx)
+    exposed = {tuple(members) for _meta, members in groups}
+    for (component, label, category), members in tertiary.items():
+        scanners = sum(_is_config_check_finding(threats[i]) for i in members)
+        if not scanners or scanners == len(members) or tuple(members) in exposed:
+            continue
+        group_hash = hashlib.sha256(f"{component}|{label}|{category}|{len(members)}".encode()).hexdigest()[:8]
+        meta = {
+            "group_id": f"GC-{group_hash}",
+            "group_key": "config_label",
+            "component": component,
+            "weakness_label": label,
+            "threat_category_id": category,
+        }
+        groups.append((meta, members))
 
-    out.sort(key=_order)
-    return out
+    rank = {"cwe_stride": 0, "endpoint_family": 1, "config_label": 2}
+
+    def _order(group: tuple[dict, list[int]]) -> tuple:
+        meta = group[0]
+        if meta["group_key"] == "cwe_stride":
+            fields = (meta.get("cwe") or "", meta.get("stride") or "")
+        elif meta["group_key"] == "endpoint_family":
+            fields = (meta.get("endpoint") or "", meta.get("cwe_family") or "")
+        else:
+            fields = (meta["component"], meta["weakness_label"])
+        return (rank[meta["group_key"]], *fields, meta["group_id"])
+
+    groups.sort(key=_order)
+    return groups
 
 
 def _risk_rank(risk: Any) -> int:
@@ -1995,58 +2030,13 @@ def _remap_scenario_local_refs(threats: list[dict]) -> list[dict]:
 
 
 def _reconstruct_group_member_indices(threats: list[dict]) -> dict[str, list[int]]:
-    """Rebuild the ``{group_id: [member_indices]}`` map that ``_group_candidates``
-    produced, so ``_apply_decisions`` can resolve a decision's ``group_id`` back
-    to the live threat indices **regardless of which pass created it** — the
-    primary ``(CWE, STRIDE)`` ``G-`` pass OR the secondary ``(endpoint,
-    cwe_family)`` ``GE-`` pass.
+    """``{group_id: [member_indices]}`` of every candidate pass, so ``_apply_decisions``
+    resolves a decision on a ``G-``, ``GE-`` or ``GC-`` group alike.
 
-    Before 2026-06-26 the apply path only rebuilt the primary ``G-`` keys, so a
-    merger decision on a ``GE-`` endpoint group was silently dropped
-    (``gid_to_key.get("GE-…")`` → ``None`` → skipped): the entire RC.G.2
-    secondary pass was non-functional in finalize, shipping the cross-CWE
-    endpoint duplicates it was built to merge.
-
-    Must stay in lockstep with ``_group_candidates``: identical grouping order,
-    identical hash inputs (``cwe|stride|len`` / ``endpoint|family|len``), and
-    identical member ordering (threat order), so the reconstructed ``group_id``s
-    and member positions match what the agent's decisions reference."""
-    out: dict[str, list[int]] = {}
-
-    # Primary pass — (CWE, STRIDE). Mirrors _group_candidates' primary loop.
-    primary: dict[tuple, list[int]] = {}
-    for idx, t in enumerate(threats):
-        primary.setdefault(_candidate_key(t), []).append(idx)
-    grouped: set[int] = set()
-    for key, members in primary.items():
-        if len(members) < 2:
-            continue
-        cwe, stride = key
-        gid = "G-" + hashlib.sha256(f"{cwe}|{stride}|{len(members)}".encode()).hexdigest()[:8]
-        out[gid] = members
-        grouped.update(members)
-
-    # Secondary pass — (endpoint, cwe_family), only on threats not already in a
-    # primary group, and only when the members span >1 (CWE, STRIDE) signature
-    # (the same guard _group_candidates applies).
-    secondary: dict[tuple[str, str], list[int]] = {}
-    for idx, t in enumerate(threats):
-        if idx in grouped:
-            continue
-        key2 = _endpoint_candidate_key(t)
-        if key2 is None:
-            continue
-        secondary.setdefault(key2, []).append(idx)
-    for (endpoint, family), members in secondary.items():
-        if len(members) < 2:
-            continue
-        sig = {(threats[i].get("cwe") or "", threats[i].get("stride") or "") for i in members}
-        if len(sig) <= 1:
-            continue
-        gid = "GE-" + hashlib.sha256(f"{endpoint}|{family}|{len(members)}".encode()).hexdigest()[:8]
-        out[gid] = members
-
-    return out
+    Before 2026-06-26 the apply path rebuilt only the ``G-`` keys and silently
+    dropped every ``GE-`` decision. Both paths now read `_candidate_index_groups`,
+    so they cannot drift apart again."""
+    return {meta["group_id"]: indices for meta, indices in _candidate_index_groups(threats)}
 
 
 def _decision_positions(decision: dict, member_indices: list[int]) -> list[int] | None:
@@ -2370,11 +2360,15 @@ def _apply_decisions(threats: list[dict], decisions: list[dict]) -> list[dict]:
     # secondary (GE-) candidate passes, so endpoint-group decisions apply too.
     gid_to_indices = _reconstruct_group_member_indices(threats)
 
+    # Groups may overlap (``GC-`` pass): a finding is merged at most once, by the
+    # first decision in candidate order, whatever order the agent wrote them in.
+    rank = {gid: n for n, gid in enumerate(gid_to_indices)}
+    decisions = sorted(
+        (d for d in decisions if isinstance(d, dict)), key=lambda d: rank.get(d.get("group_id"), len(rank))
+    )
     drop: set[int] = set()
-    claimed_by_group: dict[str, set[int]] = {}
+    claimed: set[int] = set()
     for d in decisions:
-        if not isinstance(d, dict):
-            continue
         gid = d.get("group_id")
         action = d.get("action")
         member_indices = gid_to_indices.get(gid)
@@ -2389,7 +2383,7 @@ def _apply_decisions(threats: list[dict], decisions: list[dict]) -> list[dict]:
                 not isinstance(target, int)
                 or target not in positions
                 or len(positions) < 2
-                or claimed_by_group.setdefault(gid, set()).intersection(positions)
+                or claimed.intersection(member_indices[pos] for pos in positions)
             ):
                 continue
             survivor = member_indices[target]
@@ -2402,7 +2396,7 @@ def _apply_decisions(threats: list[dict], decisions: list[dict]) -> list[dict]:
                 continue
             _merge_member_metadata(threats[survivor], [threats[idx] for idx in selected], systemic=False)
             drop.update(idx for idx in selected if idx != survivor)
-            claimed_by_group[gid].update(positions)
+            claimed.update(selected)
         elif action == "keep":
             # Keep is intentionally a no-op. Legacy v1 keep_indices must name
             # every group member; anything narrower used to delete findings.
@@ -2420,7 +2414,7 @@ def _apply_decisions(threats: list[dict], decisions: list[dict]) -> list[dict]:
                 or len(positions) < 3
                 or not isinstance(new_title, str)
                 or not new_title.strip()
-                or claimed_by_group.setdefault(gid, set()).intersection(positions)
+                or claimed.intersection(member_indices[pos] for pos in positions)
             ):
                 continue
             survivor = member_indices[target]
@@ -2436,7 +2430,7 @@ def _apply_decisions(threats: list[dict], decisions: list[dict]) -> list[dict]:
             surv["architectural_violation"] = True
             _merge_member_metadata(surv, [threats[idx] for idx in selected], systemic=True)
             drop.update(idx for idx in selected if idx != survivor)
-            claimed_by_group[gid].update(positions)
+            claimed.update(selected)
 
     return [t for i, t in enumerate(threats) if i not in drop]
 

@@ -3423,3 +3423,76 @@ def test_finding_type_supplies_the_category_when_the_cwe_map_cannot(mt):
 def test_a_signature_cwe_takes_the_category_of_the_check_that_found_it(mt, threat, expected):
     """CWE-345/347 name both artifact and token signatures; only the finding type knows which."""
     assert mt._threat_category_id_for(threat) == expected
+
+
+# ---------------------------------------------------------------------------
+# GC- pass: a config-scan finding and an analyzer finding of one mechanism
+# ---------------------------------------------------------------------------
+
+
+def _scan(**overrides):
+    return _threat(**{"source": "config-scan", "config_check_id": "IAC-900", **overrides})
+
+
+@pytest.mark.parametrize(
+    "analyzer_cwe, scanner_cwe",
+    [("CWE-345", "CWE-347"), ("CWE-829", "CWE-1104")],
+)
+def test_a_scanner_and_an_analyzer_finding_of_one_mechanism_become_candidates(mt, analyzer_cwe, scanner_cwe):
+    threats = [
+        _threat(component_id="pipeline", cwe=analyzer_cwe, stride="Spoofing", threat_category_id="TH-14"),
+        _scan(component_id="pipeline", cwe=scanner_cwe, stride="Tampering", threat_category_id="TH-14"),
+    ]
+    (group,) = [g for g in mt._group_candidates(threats) if g["group_key"] == "config_label"]
+    assert group["group_id"].startswith("GC-") and group["member_count"] == 2
+    assert mt._reconstruct_group_member_indices(threats)[group["group_id"]] == [0, 1]
+
+
+@pytest.mark.parametrize(
+    "threats",
+    [
+        # only scanner findings, only analyzer findings, two components, two categories
+        [_scan(component_id="p", cwe="CWE-345"), _scan(component_id="p", cwe="CWE-347", config_check_id="IAC-901")],
+        [_threat(component_id="p", cwe="CWE-345"), _threat(component_id="p", cwe="CWE-347", stride="Spoofing")],
+        [_threat(component_id="p", cwe="CWE-345"), _scan(component_id="q", cwe="CWE-347")],
+        [
+            _threat(component_id="p", cwe="CWE-345", threat_category_id="TH-02"),
+            _scan(component_id="p", cwe="CWE-347", threat_category_id="TH-14"),
+        ],
+    ],
+)
+def test_no_config_label_group_without_one_mechanism_one_category_and_both_kinds(mt, threats):
+    assert not [g for g in mt._group_candidates(threats) if g["group_key"] == "config_label"]
+
+
+def test_a_config_label_group_never_repeats_a_member_set_another_pass_exposes(mt):
+    threats = [_threat(component_id="p", cwe="CWE-829"), _scan(component_id="p", cwe="CWE-829")]
+    assert [g["group_key"] for g in mt._group_candidates(threats)] == ["cwe_stride"]
+
+
+def test_a_finding_in_two_groups_is_merged_once_whatever_the_decision_order(mt):
+    threats = [
+        _threat(component_id="p", cwe="CWE-829", title="Lockfile disabled", evidence={"file": ".npmrc", "line": 1}),
+        _threat(
+            component_id="p", cwe="CWE-829", title="Action pinned to a branch", evidence={"file": "ci.yml", "line": 9}
+        ),
+        _scan(component_id="p", cwe="CWE-1104", title="Missing lockfile", evidence={"file": "package.json", "line": 1}),
+    ]
+    groups = {g["group_key"]: g for g in mt._group_candidates(threats)}
+    primary, config = groups["cwe_stride"], groups["config_label"]
+    decisions = [
+        {"group_id": config["group_id"], "action": "merge", "member_indices": [1, 2], "merge_target_index": 1},
+        {"group_id": primary["group_id"], "action": "merge", "member_indices": [0, 1], "merge_target_index": 0},
+    ]
+    result = mt._apply_decisions([dict(t) for t in threats], decisions)
+    # Candidate order puts the G- decision first; the GC- decision then finds member 1 claimed.
+    assert [t["title"] for t in result] == ["Lockfile disabled", "Missing lockfile"]
+
+
+def test_a_source_scanner_finding_does_not_open_a_config_label_group(mt):
+    # Source scanners report the analyzer's own sink; passes 1 and 2 pair those.
+    threats = [
+        _threat(component_id="api", cwe="CWE-862", threat_category_id="TH-06"),
+        _threat(component_id="api", cwe="CWE-639", threat_category_id="TH-06", source_check_id="AUTHZ-900"),
+    ]
+    assert not [g for g in mt._group_candidates(threats) if g["group_key"] == "config_label"]

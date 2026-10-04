@@ -120,6 +120,12 @@ cluster: merge or consolidate the named subset, then emit `keep` for the
 unrelated members. Unmentioned members are kept automatically. Never overlap
 the `member_indices` of two decisions for the same group.
 
+A `config_label` group (`GC-`) pairs a configuration-scanner finding with
+analyzer findings of the same weakness on one component. Merge only the
+members that report the same defect, for example a missing lockfile and a
+setting that disables it; keep the rest. A finding may also appear in another
+group; finalize merges it at most once.
+
 **Field rules:**
 
 - `group_id` — copy verbatim from `candidate_groups[].group_id`

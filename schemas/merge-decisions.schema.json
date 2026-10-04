@@ -27,7 +27,7 @@
       "required": ["group_id", "action", "member_indices", "rationale"],
       "additionalProperties": false,
       "properties": {
-        "group_id": { "type": "string", "pattern": "^(G|GE)-[a-f0-9]{8}$" },
+        "group_id": { "type": "string", "pattern": "^(G|GE|GC)-[a-f0-9]{8}$" },
         "action": { "enum": ["merge", "keep", "consolidate"] },
         "member_indices": { "$ref": "#/$defs/member_indices" },
         "merge_target_index": { "type": "integer", "minimum": 0 },
