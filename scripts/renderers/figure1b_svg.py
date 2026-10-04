@@ -81,6 +81,25 @@ def text_width(text: str, size: float, bold: bool = False) -> float:
     return (len(text) - narrow * 0.45) * size * (0.6 if bold else 0.55)
 
 
+def actor_title(actor: dict) -> str:
+    """``A<n> · name`` with the code §1 and Figure 1a use, or the name alone when the actor has none."""
+    return (f"{actor['code']} · " if actor.get("code") else "") + actor["name"]
+
+
+def goal_text(actor: dict | None) -> str:
+    """``Goal of A<n> · <impact> · <risk>`` of the build-time scenarios, or "" when they name no impact."""
+    goal = (actor or {}).get("goal")
+    if not goal:
+        return ""
+    return " · ".join(
+        [f"Goal of {actor.get('code') or actor['name']}", *goal["impacts"], goal.get("risk") or ""]
+    ).rstrip(" ·")
+
+
+def _count(n: int, noun: str) -> str:
+    return f"{n} {noun}{'' if n == 1 else 's'}"
+
+
 def wrap(text: str, size: float, width: float, bold: bool = False) -> list[str]:
     """Wrap at spaces, then at path separators for long unbroken references."""
     words, lines, line = str(text).split(), [], ""
@@ -292,7 +311,12 @@ def _column_widths(plan, actor) -> dict[str, float]:
         "sources": need(["Upstream inputs"] + sources, "sources"),
         "build": need(build or ["Build"], "build"),
         "artifacts": need(artifacts or ["Artifacts"], "artifacts"),
-        "execution": need(["Running system"] + list(plan["elements"]["execution"].get("channels") or []), "execution"),
+        "execution": need(
+            ["Running system"]
+            + list(plan["elements"]["execution"].get("channels") or [])
+            + [plan.get("goal", ("", ""))[1]],
+            "execution",
+        ),
     }
     total = _total_width(widths, actor)
     columns = ["sources", "build", "artifacts", "execution"]
@@ -313,6 +337,7 @@ def _total_width(widths, actor) -> float:
 def render(view: dict, actor: dict | None, scenario_numbers: list[str], project: str = "") -> tuple[str, list[str]]:
     """Figure 1b as SVG, or ``("", problems)`` when a gate fails."""
     plan = _plan(view)
+    plan["goal"] = (((actor or {}).get("goal") or {}).get("risk") or "", goal_text(actor))
     widths = _column_widths(plan, actor)
     x = {}
     cursor = 20.0
@@ -346,13 +371,17 @@ def render(view: dict, actor: dict | None, scenario_numbers: list[str], project:
     )
     shown = len(view["findings"])
     systems = [e["label"] for e in plan["cis"] if e.get("coverage") != "none"]
+    sources = [e for e in view["elements"] if e["column"] == "sources" and e["kind"] != "repository"]
+    channels = plan["elements"]["execution"].get("channels") or []
     cv.text(20, 24, "Figure 1b — Supply Chain and Build", FONT["title"], weight="bold", fill=NAVY)
     subtitle = " · ".join(
         p
         for p in (
             project,
-            f"{len(systems)} CI system{'s' if len(systems) != 1 else ''}",
-            f"{shown} finding{'s' if shown != 1 else ''} shown here",
+            _count(len(systems), "CI system"),
+            _count(len(sources), "upstream source type"),
+            _count(len(channels), "delivery channel"),
+            f"{_count(shown, 'finding')} shown here",
         )
         if p
     )
@@ -471,6 +500,9 @@ def _place(plan, x, widths) -> dict[str, Any]:
     lines += [("detail", f"Deploy channel: {c}") for c in channels] or [
         ("detail", "No deploy channel in the repository")
     ]
+    risk, goal = plan.get("goal") or ("", "")
+    if goal:
+        lines.append(("fact", (risk, goal, "")))
     measured = _measure(lines, widths["execution"])
     bottom = max(sources_bottom, build_bottom, artifacts_bottom)
     h = max(_height(measured) + 120, bottom - BOX_TOP)
@@ -541,7 +573,7 @@ def _draw_actor(cv, actor, numbers, x, w, layout):
         f'<path d="M{cx - 11:.1f} {BOX_TOP + 38:.1f} q11 -14 22 0" fill="none" stroke="{RED}" stroke-width="1.6"/>'
     )
     y = BOX_TOP + 56
-    name = actor["name"] + (" " + " ".join(numbers) if numbers else "")
+    name = actor_title(actor) + (" " + " ".join(numbers) if numbers else "")
     for line in wrap(name, FONT["row"] + 1, w - 16, True)[:3]:
         cv.text(cx, y, line, FONT["row"] + 1, weight="bold", fill=RED, anchor="middle", owner="A2")
         y += 14
@@ -845,7 +877,7 @@ def _legend(view, plan, actor, numbers, width):
     lx, rx = 20, 40 + half
     y = 0.0
     cv.rect(lx, y, half, 24, "#2f4a68", "#2f4a68", rx=3, sw=0)
-    head = "Entry points" + (f" of {actor['name']}" if actor else "")
+    head = "Entry points" + (f" of {actor_title(actor)}" if actor else "")
     cv.text(lx + half / 2, y + 16, head, FONT["legend_head"], weight="bold", fill="#ffffff", anchor="middle")
     y += 46
     if not view["entries"]:
@@ -977,7 +1009,9 @@ def render_table(view: dict, actor: dict | None, scenario_numbers: list[str]) ->
         by_element.setdefault(finding["element"], []).append(finding["id"])
     lines = []
     if actor:
-        lines.append(f"Build-time attacker: **{actor['name']}** {' '.join(scenario_numbers)}".rstrip())
+        lines.append(f"Build-time attacker: **{actor_title(actor)}** {' '.join(scenario_numbers)}".rstrip())
+        if goal := goal_text(actor):
+            lines += ["", goal]
         lines.append("")
     lines += ["| Column | Element | Detail | Findings | Evidence |", "|---|---|---|---|---|"]
     for element in view["elements"]:

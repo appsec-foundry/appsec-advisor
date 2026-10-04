@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 
 import analyzers.supply_chain_facts as facts_module
+import pytest
 import yaml
 from analyzers.scan_excludes import repo_inventory
 from jsonschema import Draft202012Validator
@@ -194,9 +195,67 @@ def test_a_workflow_injection_finding_is_a_repository_entry_shown_on_its_ci_syst
 
 def test_runtime_checks_and_runtime_findings_stay_out_of_the_view(tmp_path):
     repo = _repo(tmp_path, {".github/workflows/ship.yml": IMAGE_ONLY, "deploy/Containerfile": "FROM python:3.12\n"})
-    root = _threat("T-020", "Container Runs as Root", "CWE-250", "deploy/Containerfile", 1, check="IAC-002")
+    root = _threat(
+        "T-020", "Container Runs as Root", "CWE-250", "deploy/Containerfile", 1, check="IAC-002", component="api"
+    )
     xss = _threat("T-021", "Stored XSS", "CWE-79", "src/view.py", 9, actor="ACT-I", component="api")
     assert _view(_model([root, xss]), _facts(repo))["findings"] == []
+
+
+@pytest.mark.parametrize("check, file", [("IAC-002", "ci/smoke/Containerfile"), ("IAC-003", "tools/e2e/Dockerfile")])
+def test_runtime_hardening_on_a_build_component_is_listed_without_an_entry(tmp_path, check, file):
+    # Figure 1a draws no build component, so the finding would otherwise appear in neither figure.
+    repo = _repo(tmp_path, {".github/workflows/ship.yml": IMAGE_ONLY, file: "FROM python:3.12\n"})
+    finding = _threat("T-022", "Hardening gap in a CI container", "CWE-250", file, 1, check=check)
+    view = _view(_model([finding]), _facts(repo))
+    assert [(f["id"], f["element"], f["entry"]) for f in view["findings"]] == [("F-022", "unowned", None)]
+    assert view["entries"] == []
+
+
+@pytest.mark.parametrize(
+    "config, ecosystem, install",
+    [(".npmrc", "npm", "npm ci"), ("pip.conf", "pip", "pip install -r requirements.txt")],
+)
+def test_a_package_manager_config_finding_belongs_to_its_ecosystem(tmp_path, config, ecosystem, install):
+    workflow = PACKAGE_ONLY.replace("npm ci", install)
+    repo = _repo(tmp_path, {".github/workflows/library.yml": workflow, config: "x=1\n"})
+    finding = _threat("T-023", "Lockfile generation disabled", "CWE-829", config, 1)
+    (row,) = _view(_model([finding]), _facts(repo))["findings"]
+    assert (row["element"], row["entry"]) == (f"input:package:{ecosystem}", "dependency")
+
+
+def test_a_build_finding_in_an_unrelated_config_file_stays_unowned(tmp_path):
+    repo = _repo(tmp_path, {".github/workflows/library.yml": PACKAGE_ONLY, "settings.toml": "x=1\n"})
+    finding = _threat("T-024", "Registry override", "CWE-829", "settings.toml", 1)
+    (row,) = _view(_model([finding]), _facts(repo))["findings"]
+    assert row["element"] == "unowned"
+
+
+def test_a_finding_at_a_push_step_belongs_to_the_published_artifact_unless_it_is_about_the_input(tmp_path):
+    repo = _repo(tmp_path, {".github/workflows/ship.yml": IMAGE_ONLY, "deploy/Containerfile": "FROM python:3.12\n"})
+    unsigned = _threat("T-025", "Published image is not signed", "CWE-345", ".github/workflows/ship.yml", 7)
+    unpinned = _threat("T-026", "Build action from a mutable source", "CWE-829", ".github/workflows/ship.yml", 7)
+    rows = {f["id"]: (f["element"], f["entry"]) for f in _view(_model([unsigned, unpinned]), _facts(repo))["findings"]}
+    assert rows["F-025"] == ("artifact:image:quay-io-example-org-ledger", None)
+    assert rows["F-026"] == ("input:github_action", "ci-input")
+
+
+def _channels(inventory):
+    view = _view(_model([]), {}, inventory, build_time=1)
+    return next(e for e in view["elements"] if e["id"] == "execution")["channels"]
+
+
+def test_a_platform_publish_adds_a_channel_only_without_an_evidenced_environment_of_that_platform():
+    ci = [{"system": "Example CI", "source": "ci.yml", "facts": [], "publishes": ["Kubernetes (kubectl/Helm)"]}]
+    cluster = {
+        "platform": "kubernetes",
+        "label": "Kubernetes · deploy/manifests",
+        "source": "deploy/manifests/app.yaml",
+    }
+    assert _channels({"ci": ci, "environments": [cluster]}) == ["Kubernetes · deploy/manifests"]
+    assert _channels({"ci": ci}) == ["Kubernetes (kubectl/Helm)"]
+    compose = {"platform": "compose", "label": "Docker Compose", "source": "compose.yaml"}
+    assert _channels({"ci": ci, "environments": [compose]}) == ["Docker Compose", "Kubernetes (kubectl/Helm)"]
 
 
 def test_a_gitlab_only_repository_is_inventory_only_without_entries(tmp_path):

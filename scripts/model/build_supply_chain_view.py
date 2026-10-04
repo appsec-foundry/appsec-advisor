@@ -87,6 +87,16 @@ MANIFEST_ECOSYSTEMS = {
     "build.gradle": "gradle",
     "gradle.lockfile": "gradle",
 }
+# Package-manager configuration names that belong to exactly one ecosystem; a finding on them
+# (a disabled lockfile, a registry override) is about that ecosystem's packages.
+PACKAGE_MANAGER_CONFIGS = {
+    ".npmrc": "npm",
+    ".yarnrc": "npm",
+    ".yarnrc.yml": "npm",
+    "pip.conf": "pip",
+    "pip.ini": "pip",
+    "gradle.properties": "gradle",
+}
 CI_FILES = {
     "GitHub Actions": ".github/workflows/",
     "GitLab CI": ".gitlab-ci.y",
@@ -303,13 +313,18 @@ def _elements(facts: dict, inventory: dict) -> tuple[dict[str, dict], list[str]]
                 "owner": f"ci:{_slug(system)}",
                 "sources": [{"file": str(row.get("source") or "")}],
             }
-    channels = [str(env.get("label")) for env in inventory.get("environments") or [] if env.get("label")]
-    channels += [
-        str(t)
-        for row in inventory.get("ci") or []
-        for t in row.get("publishes") or []
-        if str(t).lower().startswith("kubernetes")
-    ]
+    environments = [env for env in inventory.get("environments") or [] if env.get("label")]
+    channels = [str(env["label"]) for env in environments]
+    # A CI publish entry names only the platform; an evidenced environment names the concrete target,
+    # and a second cluster is a second environment. The platform entry adds a channel only when no
+    # environment of that platform is evidenced.
+    if not any(str(env.get("platform") or "").lower() == "kubernetes" for env in environments):
+        channels += [
+            str(t)
+            for row in inventory.get("ci") or []
+            for t in row.get("publishes") or []
+            if str(t).lower().startswith("kubernetes")
+        ]
     elements["execution"] = {
         "id": "execution",
         "column": "execution",
@@ -424,7 +439,8 @@ def _attach(threat: dict, elements: dict, facts: dict, systems: list[str], build
     checks = view_checks()
     check = str(threat.get("config_check_id") or "")
     if check in set(checks.get("runtime") or []):
-        return None
+        # Runtime hardening stays in Figure 1a, unless its component is build-plane and Figure 1a cannot draw it.
+        return ("unowned", None, None) if str(threat.get("component")) in build_ids else None
     locations = _locations(threat)
     build_time = BUILD_TIME in {slugs.get(str(a)) for a in threat.get("actor_ids") or []}
     if check in checks["checks"]:
@@ -437,14 +453,20 @@ def _attach(threat: dict, elements: dict, facts: dict, systems: list[str], build
     supply_cwe = str(threat.get("cwe") or "") in supply_chain_cwes()
     if supply_cwe or build_time:
         for path, line in locations:
-            row = _fact_at(facts, path, line)
-            if row is not None:
+            # A step that consumes an input and publishes an artifact: a supply-chain CWE is about the
+            # input, any other finding about what the step publishes.
+            for output, row in _facts_at(facts, path, line, outputs_first=not supply_cwe):
+                if output:
+                    if _artifact_id(row) in elements:
+                        return _artifact_id(row), None, row
+                    continue
                 kind = "package" if "ecosystem" in row and "command" in row else row.get("kind")
                 if kind in INPUT_KINDS:
                     element = f"input:package:{row['ecosystem']}" if kind == "package" else f"input:{kind}"
                     if element in elements:
                         return element, (INPUT_ENTRY[kind] if supply_cwe else None), row
-            ecosystem = MANIFEST_ECOSYSTEMS.get(path.rsplit("/", 1)[-1])
+            name = path.rsplit("/", 1)[-1]
+            ecosystem = MANIFEST_ECOSYSTEMS.get(name) or PACKAGE_MANAGER_CONFIGS.get(name)
             if ecosystem and f"input:package:{ecosystem}" in elements:
                 return f"input:package:{ecosystem}", ("dependency" if supply_cwe else None), None
     owned = str(threat.get("component")) in build_ids or build_time
@@ -481,13 +503,14 @@ def _element_for_kind(kind, ecosystem, locations, elements, systems) -> str | No
     return None
 
 
-def _fact_at(facts: dict, path: str, line: int) -> dict | None:
+def _facts_at(facts: dict, path: str, line: int, *, outputs_first: bool) -> list[tuple[bool, dict]]:
+    """``(is output, row)`` of every fact at one location, outputs first or last."""
     if line <= 0:
-        return None
-    for row in list(facts.get("inputs") or []) + list(facts.get("installs") or []):
-        if row["file"] == path and row["line"] == line:
-            return row
-    return None
+        return []
+    consumed = [(False, row) for row in list(facts.get("inputs") or []) + list(facts.get("installs") or [])]
+    produced = [(True, row) for row in facts.get("outputs") or []]
+    rows = produced + consumed if outputs_first else consumed + produced
+    return [(output, row) for output, row in rows if row["file"] == path and row["line"] == line]
 
 
 def _path(entry: dict, elements: dict, facts: dict) -> list[dict]:
