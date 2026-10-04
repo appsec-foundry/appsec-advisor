@@ -359,9 +359,11 @@ Removing an entry means listing it here in the same change.
 
 No code-local home, so they are stated in full here.
 
-- **P-1 One control plane.** There is no second orchestrator, and compaction is not the
-  primary optimization. A second scheduler would split the place where turn and context
-  admission are decided.
+- **P-1 One control plane per workflow.** The threat-model assessment has one orchestrator,
+  and compaction is not the primary optimization. A second scheduler inside the assessment
+  would split the place where turn and context admission are decided. A separate workflow
+  may own its controller only if it dispatches no assessment roles and shares no assessment
+  state.
 - **P-2 Python controls execution and validates state. The model decides security meaning
   at explicit semantic boundaries. The filesystem stays authoritative between them.**
 - **P-3 What can be derived is derived, not authored.** A computed value has no wrong

@@ -74,8 +74,9 @@ a missing control.
 
 ### REQ-FLW-002 — Every analyzed component receives complete STRIDE coverage
 
-Every analyzed component is checked against all six STRIDE categories in every
-depth mode. Cost and pacing choices may not silently reduce that coverage.
+Every component a threat-model assessment analyzes is checked against all six
+STRIDE categories in every depth mode. Cost and pacing choices may not silently
+reduce that coverage.
 
 ### REQ-FLW-003 — Invalid required analysis data cannot produce a report
 
