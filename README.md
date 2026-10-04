@@ -11,9 +11,9 @@
 
 `appsec-advisor` is a Claude Code plugin for **automated, code-derived threat modeling**. It reconstructs application components, data flows, and trust boundaries from code and configuration, then applies STRIDE to identify threats in the implemented architecture. Findings reference repository evidence and include remediation guidance.
 
-The plugin also includes on-demand threat analysis, requirements audits, change reviews, and CI gates.
+The **Threat Analyst** covers the design side: on request, it analyzes a planned feature or a selected code change for threats and asks the team for missing design facts. The plugin also includes requirements audits, change reviews, and CI gates.
 
-[Why appsec-advisor?](#why-appsec-advisor) · [Security](#security-notes) · [Quick start](#quick-start) · [Threat Modeler](#threat-modeler) · [On-demand threat analysis](#on-demand-threat-analysis) · [Documentation](#documentation) · [What's new in 0.6.0-beta.4](#whats-new-in-060-beta4) · [Contributing](#contributing)
+[Why appsec-advisor?](#why-appsec-advisor) · [Security](#security-notes) · [Quick start](#quick-start) · [Threat Modeler](#threat-modeler) · [Threat Analyst](#threat-analyst) · [Documentation](#documentation) · [What's new in 0.6.0-beta.4](#whats-new-in-060-beta4) · [Contributing](#contributing)
 
 ---
 
@@ -27,7 +27,7 @@ Threat modeling examines what could go wrong with a system and which controls it
 | **Focus** | Anticipate threats and choose controls | Identify threats and control gaps in the implemented architecture |
 | **Use of results** | Guide implementation and review | Inform design reviews and remediation |
 
-`appsec-advisor` automates analysis from the implementation. Run it again as code and configuration change to revisit security assumptions and design decisions. Business context and trust-boundary declarations help explain conditions that the code alone cannot establish.
+`appsec-advisor` supports both starting points. The [Threat Modeler](#threat-modeler) derives a full model from the implementation; run it again as code and configuration change to revisit security assumptions and design decisions. The [Threat Analyst](#threat-analyst) assesses a planned feature before it is built and checks single changes while they are developed. Business context and trust-boundary declarations help explain conditions that the code alone cannot establish.
 
 An existing threat model is not required. The generated architecture and findings provide a starting point for team review.
 
@@ -114,6 +114,10 @@ The assessment writes `threat-model.md` and `threat-model.yaml` to `docs/securit
 what are the most critical findings?
 what should I fix first?
 does it cover SSRF?
+
+# Analyze a planned feature or your current changes
+/appsec-advisor:analyze-threats Let support staff export customer data as CSV.
+/appsec-advisor:analyze-threats --worktree
 ```
 
 Updates preserve finding IDs. Review decisions are stored separately, and publishing remains optional. Run `/appsec-advisor:help` for the complete command list.
@@ -138,9 +142,9 @@ Figure 1 shows the components, data flows, and attack paths identified in OWASP 
 
 Assessments consume model tokens and usually take tens of minutes; thorough runs may exceed an hour. The [Threat Modeler reference](docs/threat-modeler.md#assessment-depth--cost-control) covers depth, focused scans, repository context, measured costs, and limits.
 
-## On-demand threat analysis
+## Threat Analyst
 
-`/appsec-advisor:analyze-threats` is available on `dev` for questions about a planned feature and for selected code changes. It examines applicable security requirements and possible attack paths, then reports findings, assumptions, and questions for the team. The report is advisory; it does not approve a change or update `threat-model.yaml`. See the [threat analysis guide](docs/threat-analyst.md) for scope options, saved answers, CI use, and limitations. The host integration still needs verification before release.
+Run `/appsec-advisor:analyze-threats` with a description of a planned feature or with a selected code change. It examines applicable security requirements and possible attack paths, then reports findings, assumptions, and questions for the team. The report is advisory; it does not approve a change or update `threat-model.yaml`. The Threat Analyst is *experimental*. See the [Threat Analyst guide](docs/threat-analyst.md) for scope options, saved answers, CI use, and limitations.
 
 ### Feature branch playbook
 
@@ -169,7 +173,6 @@ If you do not have a catalog, adapt `data/appsec-requirements-fallback.yaml` or 
 | Tool | Use |
 |---|---|
 | [Secure-coding baseline](https://github.com/appsec-foundry/aiscb) | Install, update, verify, or remove secure-coding instructions with `install-baseline`, `update-baseline`, `verify-baseline`, and `remove-baseline`. |
-| [On-demand threat analysis](docs/threat-analyst.md) (*development branch*) | Analyze a design question or selected code change when invoked; results are advisory. |
 | [Security Coach](docs/dev-security-helper-usage.md#security-coach-hook) (*experimental*) | Add security guidance while writing security-sensitive code. |
 | [appsec-reviewer](docs/dev-security-helper-usage.md#appsec-reviewer-agent) (*experimental*) | Embed change review in Claude Code or an Agent SDK workflow. |
 | [verify-requirements](docs/dev-security-helper-usage.md#verify-requirements-skill) (*experimental*) | Review an interactive diff against the requirements catalog. |
@@ -222,7 +225,7 @@ See [Internal Plugin Packaging](docs/internal-plugin-packaging.md) and [Organiza
 | Goal | Start here |
 |---|---|
 | Run or configure a threat model | [Threat Modeler](docs/threat-modeler.md) |
-| Analyze a design or selected code change | [On-demand threat analysis](docs/threat-analyst.md) |
+| Analyze a planned feature or selected code change | [Threat Analyst](docs/threat-analyst.md) |
 | Add repository context or trust-boundary declarations | [Repo-local context](docs/threat-modeler.md#repo-local-context) |
 | Configure models, cost, logging, or organization settings | [Configuration](docs/configuration.md) and [Model Selection](docs/model-selection.md) |
 | Configure requirements audits | [Requirements Audit](docs/security-requirements-audit-skill.md) |

@@ -66,6 +66,11 @@ Documentation: https://github.com/appsec-foundry/appsec-advisor
 - `/appsec-advisor:review-threat-model` — fix or accept findings, P1 first
 - *what are the critical findings?* — ask in plain language; answers cite finding IDs
 
+### Threat Analyst
+
+- `/appsec-advisor:analyze-threats <feature>` — threats in a planned feature, before coding
+- `/appsec-advisor:analyze-threats --worktree` — threats in your current changes
+
 ### Security requirements
 
 - `/appsec-advisor:verify-requirements` — check your current changes; built-in baseline if no catalog
@@ -135,6 +140,19 @@ Documentation: https://github.com/appsec-foundry/appsec-advisor
   - *what are the critical findings?*
   - *is there a fix for F-003?*
   - *does the model cover SSRF?*
+
+### Threat Analyst
+
+Advisory analysis of a planned feature or a selected change, only when you ask. It never changes the model.
+
+- `/appsec-advisor:analyze-threats <feature>` — describe a planned feature in plain text
+  - `--design-file <path>` — read the description from a file
+  - `--worktree` — review uncommitted changes, including untracked files
+  - `--staged` — review staged changes
+  - `--base <commit> --head <commit>` — review a branch against its merge base
+  - `--feature <file>` — reuse answers saved in a reviewed feature file
+  - `--package <ref>` — add a question package, e.g. the Threat Modeling Manifesto
+  - `--help` — list every flag
 
 ### Security requirements
 
