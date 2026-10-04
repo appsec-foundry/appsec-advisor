@@ -242,48 +242,6 @@ Circle: 🟢 for 0 confirmed, 🟡 for 1–2, 🔴 for 3+.
 
 ---
 
-## Step 4b — No-auth-layer early exit
-
-After reading the Phase 1–3 results, check whether the repository provably
-has no authentication layer:
-
-- `route_count > 0` and `authn_absent_count == route_count` (from
-  `.route-inventory.json` `coverage`) — every route proven unauthenticated
-- `scanner.in_scope == 0` (from the Phase 3 `counts` output)
-- `confirmed.total == 0` (from the same output)
-
-A route with `unknown` authentication is not proof of a missing layer; when
-any route is `unknown`, continue with Step 5.
-
-When **all three** are true, skip Steps 5–9b and print (when
-`PENTEST_TASKS=true`, add `⚪ --pentest-tasks: no findings with code evidence
-— no task file written` after the finding block):
-
-```
-Phase 4/5 · Cross-component reasoning                   [ 60%]
-  Skipped — no authentication or authorization layer detected.
-
-Results · <repo name> · 1 finding
-
-  🟠 High       1
-  ──────────────────────────────────────
-  completed in  <Xm Ys>
-
-🟠 **[AZ-001] No authentication layer detected**
-
-   *Evidence*    <N> routes scanned, every one proven unauthenticated
-   *Attack path* Any endpoint in the application is reachable without
-                 credentials — there is no token, session, or access guard
-                 to bypass.
-   *Fix*         Introduce an authentication middleware (e.g. JWT, session)
-                 at the framework router level before any route handler.
-   *Reference*   CWE-306 — Missing Authentication for Critical Function
-```
-
-Then proceed to Step 10 (gate check).
-
----
-
 ## Step 5 — Resolve STRIDE EoP input
 
 Only when `WITH_THREAT_MODEL=true`: glob for
@@ -329,7 +287,7 @@ Wait for the agent to complete, then validate the report and compute its
 summary:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/authnz_report.py" finalize --report "$OUTPUT_DIR/.authnz-report.json"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/authnz_report.py" finalize --report "$OUTPUT_DIR/.authnz-report.json" --require-inputs
 ```
 
 If non-zero exit, print the stderr and stop: an invalid report is never
@@ -467,7 +425,7 @@ Low findings
 
 ### 8f — Clean result
 
-When total findings == 0:
+When total findings == 0 and `REPORT.partial` is false:
 ```
 🟢 No AuthN/AuthZ findings.
 ```
@@ -484,13 +442,12 @@ the pentest task file. Otherwise skip to Step 10.
 
 ## Step 10 — Gate check
 
-If `GATE_MODE=true` and Critical or High findings exist:
-```
-  GATE FAILED — <N> Critical/High findings require attention.
-```
-Exit non-zero by printing `exit_code: 1` as the final line.
+When `GATE_MODE=true`, run the deterministic gate after saving any requested artifacts:
 
-Otherwise (no Critical/High, or gate not set): no extra line needed.
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/authnz_report.py" gate --report "$OUTPUT_DIR/.authnz-report.json"
+```
 
-When `SCRATCH_DIR` is set, remove it last, including after the Step 4b early
-exit: `rm -rf "<SCRATCH_DIR>"`.
+Exit code 1 means incomplete analysis or Critical/High findings; print `GATE FAILED` with the returned reason. Exit code 2 means invalid or unreadable analysis data and also fails the gate. Only exit code 0 passes. A partial report is never described as clean, even when its finding list is empty.
+
+When `SCRATCH_DIR` is set, remove it last: `rm -rf "<SCRATCH_DIR>"`. Preserve the gate result when reporting completion.

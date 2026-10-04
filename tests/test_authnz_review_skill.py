@@ -228,7 +228,9 @@ def test_skill_reads_the_inventory_coverage_counts():
     for field in ("route_count", "authenticated_count", "authn_absent_count", "authn_unknown_count"):
         assert field in coverage, field
         assert field in text, field
-    assert "authn_absent_count == route_count" in text
+    assert "authn_absent_count == route_count" not in text
+    assert "--require-inputs" in text
+    assert 'gate --report "$OUTPUT_DIR/.authnz-report.json"' in text
     assert "authenticated_routes" not in text
 
 

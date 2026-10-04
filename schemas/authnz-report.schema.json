@@ -7,6 +7,42 @@
   "required": ["partial", "analyzed_at", "findings", "chain_findings", "stride_covered"],
   "additionalProperties": false,
   "properties": {
+    "signal_dispositions": {
+      "type": "array",
+      "description": "Deterministic reconciliation of in-scope scanner signals to retained report findings.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sidecar",
+          "check_id",
+          "file",
+          "line",
+          "finding_id"
+        ],
+        "properties": {
+          "sidecar": {
+            "enum": [
+              ".source-auth-findings.json",
+              ".authz-confirm-findings.json"
+            ]
+          },
+          "check_id": {
+            "type": "string"
+          },
+          "file": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "finding_id": {
+            "$ref": "#/$defs/findingId"
+          }
+        }
+      }
+    },
     "partial": {
       "type": "boolean",
       "description": "true until the analyzer has written its last step; a report still partial after the agent returned is incomplete."

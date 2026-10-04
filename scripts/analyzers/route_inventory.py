@@ -13,8 +13,7 @@ Route extractors:
   * Spring / JAX-RS: @GetMapping / @RequestMapping / @Path
   * ASP.NET minimal APIs: app.MapGet / MapPost / MapPut / MapDelete
   * GraphQL SDL operations: type Query / Mutation / Subscription fields
-Go, Ruby and PHP files have no route extractor; they are read only by the
-path-prefix guard-mount scan.
+Go, Ruby and PHP files have no route extractor.
 
 Out of scope:
   * Cross-file router composition (a mount prefix is not joined to the route path)
@@ -24,7 +23,7 @@ Out of scope:
 
 AuthN / AuthZ are SIGNALS, never verdicts. The default is `unknown`.
 A guard counts only for the registration it belongs to (FE-10); a guard
-mounted on a path prefix in any scanned file lifts matching routes to
+mounted earlier on the same application object lifts matching routes to
 `middleware_present`. `analyzers/handler_resolver.py` then classifies the
 resolved handler chain (FE-14): `verified` sets `present`, and `absent` is
 emitted only when the resolver returns `none` or `decode_only` for a route
@@ -47,6 +46,7 @@ if not __package__:
 
 
 import argparse
+import ast
 import json
 import os
 import re
@@ -313,12 +313,12 @@ _AUTHN_PATTERNS = re.compile(
 #   app.use('/rest/basket', security.isAuthorized())   # every method below the prefix
 #   app.get('/api/Users', security.isAuthorized())      # this method on this exact path
 # Many Express apps protect routes this way, separately from where the handler
-# is defined. build_inventory collects them globally: `use` (and a wildcard
+# is defined. The JavaScript extractor binds each guard to its object and order: `use` (and a wildcard
 # `all`) guards a prefix, any other verb guards only its own method and path.
 # The guard is searched in the call's middleware arguments (`_mount_middleware`),
 # so a guard with nested parentheses such as `rateLimit({..}), requireAuth` counts.
 _MOUNT_HEAD_RE = re.compile(
-    r"""\b\w+\.(?P<verb>use|all|get|post|put|delete|patch|head|options)(?P<open>\()\s*"""
+    r"""\b(?P<obj>\w+)\.(?P<verb>use|all|get|post|put|delete|patch|head|options)(?P<open>\()\s*"""
     r"""['"](?P<path>/[^'"]*)['"]\s*,"""
 )
 _GUARD_NAME_RE = re.compile(
@@ -540,6 +540,7 @@ class RouteCandidate:
     authn_handler_scheme: str | None = None
     authn_handler_evidence: list[dict] = field(default_factory=list)
     handler_module: str | None = None
+    operation_permission_present: bool = False
 
 
 def _detect_management_surface(path: str) -> bool:
@@ -585,15 +586,27 @@ def _scan_auth_text(text: str) -> tuple[str, str]:
 
 
 def _scan_auth_signals(lines: list[str], handler_line: int) -> tuple[str, str]:
-    """Search a small window around the handler line for guards.
-
-    Only decorator- and attribute-based extractors use this window, because
-    their guards sit on neighbouring lines. It can still reach a neighbouring
-    handler's guard; call-based registrations use `_call_scope` instead.
-    """
-    start = max(0, handler_line - 6)
-    end = min(len(lines), handler_line + 8)
-    return _scan_auth_text("".join(lines[start:end]))
+    """Inspect this declaration's decorators and body, never a neighbouring handler."""
+    start = max(0, handler_line - 2)
+    while start and lines[start - 1].lstrip().startswith(("@", "[")):
+        start -= 1
+    selected = []
+    depth = 0
+    started = False
+    base = None
+    for line in lines[start:]:
+        syntax = _strip_literals(line)
+        if base is not None and line.strip() and len(line) - len(line.lstrip()) <= base:
+            break
+        selected.append(line)
+        if re.match(r"\s*(?:async\s+)?def\s", line):
+            base = len(line) - len(line.lstrip())
+        if base is None:
+            depth += syntax.count("{") - syntax.count("}")
+            started = started or "{" in syntax
+            if started and depth <= 0:
+                break
+    return _scan_auth_text("".join(selected))
 
 
 def _call_scope(text: str, start: int, open_paren: int, limit: int, line_comment: str) -> str:
@@ -665,7 +678,7 @@ def _extract_javascript(path: Path, lines: list[str]) -> list[RouteCandidate]:
     for use in _JS_PATHLESS_USE_RE.finditer(text):
         signals = _scan_auth_text(_call_scope(text, use.start(), use.start("open"), len(text), "//"))
         if signals != ("unknown", "unknown"):
-            pathless_guards.append((use.start(), use.group("obj").lower(), signals))
+            pathless_guards.append((use.start(), use.group("obj"), signals))
 
     registrations = list(_JS_ROUTE_RE.finditer(text))
     for index, m in enumerate(registrations):
@@ -674,9 +687,23 @@ def _extract_javascript(path: Path, lines: list[str]) -> list[RouteCandidate]:
         n = text.count("\n", 0, m.start()) + 1
         limit = registrations[index + 1].start() if index + 1 < len(registrations) else len(text)
         authn, authz = _scan_auth_text(_call_scope(text, m.start(), m.start("open"), limit, "//"))
+        # Prefix and exact guards belong only to this object and earlier registrations.
+        for mount in _MOUNT_HEAD_RE.finditer(text, 0, m.start()):
+            if mount.group("obj") != m.group("obj"):
+                continue
+            prefixes, exact = set(), set()
+            _record_mount(mount, prefixes, exact)
+            candidate = RouteCandidate(method, route, framework, str(path), n)
+            if not _guarded(candidate, prefixes, exact):
+                continue
+            middleware = _mount_middleware(text, mount)
+            if authn == "unknown" and _GUARD_NAME_RE.search(middleware):
+                authn = "middleware_present"
+            if authz == "unknown" and _AUTHZ_GUARD_NAME_RE.search(middleware):
+                authz = "middleware_present"
         # A path-less `use` guards every later registration on the same router.
         for position, owner, (use_authn, use_authz) in pathless_guards:
-            if position < m.start() and owner == m.group("obj").lower():
+            if position < m.start() and owner == m.group("obj"):
                 authn = use_authn if authn == "unknown" else authn
                 authz = use_authz if authz == "unknown" else authz
         out.append(
@@ -1025,10 +1052,6 @@ def _collect_routes(
     repo_root: Path,
     all_routes: list[RouteCandidate],
     frameworks_seen: set[str],
-    guarded_prefixes: set[str],
-    authz_guarded_prefixes: set[str],
-    guarded_exact: set[tuple[str, str]],
-    authz_guarded_exact: set[tuple[str, str]],
 ) -> None:
     """Extract routes and guarded mounts from every source file."""
     for src in _walk_sources(repo_root):
@@ -1039,15 +1062,6 @@ def _collect_routes(
         blob = "".join(lines)
         if src.suffix.lower() in _JS_EXTS:
             blob = _mask_comments(blob, "//")
-        # Collect path prefixes mounted with an auth guard (cross-file: a guard
-        # in server.ts protects handlers defined in routes/*.ts), and the same
-        # for authoriZation guards (role/permission/policy middleware).
-        for gm in _MOUNT_HEAD_RE.finditer(blob):
-            middleware = _mount_middleware(blob, gm)
-            if _GUARD_NAME_RE.search(middleware):
-                _record_mount(gm, guarded_prefixes, guarded_exact)
-            if _AUTHZ_GUARD_NAME_RE.search(middleware):
-                _record_mount(gm, authz_guarded_prefixes, authz_guarded_exact)
         try:
             extracted = _extract_file(repo_root, src)
         except Exception:  # pragma: no cover
@@ -1057,22 +1071,65 @@ def _collect_routes(
             all_routes.append(r)
 
 
+def _scope_permission_present(body: str) -> bool:
+    """Recognize a literal scope membership rejection on locally verified Python claims.
+
+    This proves an operation permission only, never ownership of an object.
+    Dynamic policies and unknown helpers remain open review candidates.
+    """
+    try:
+        tree = ast.parse(body)
+    except (SyntaxError, ValueError):
+        return False
+    for function in tree.body:
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        verified = set()
+        for statement in function.body:
+            if isinstance(statement, ast.If) and isinstance(statement.test, ast.Compare):
+                test = statement.test
+                if len(test.ops) != 1 or not isinstance(test.ops[0], ast.NotIn):
+                    continue
+                if (
+                    not isinstance(test.left, ast.Constant)
+                    or not isinstance(test.left.value, str)
+                    or not test.left.value
+                ):
+                    continue
+                expression = ast.unparse(test.comparators[0])
+                if not any(
+                    re.fullmatch(
+                        rf"{re.escape(name)}\.get\(['\"](?:scope|scp)['\"], ['\"]['\"]\)\.split\(\)", expression
+                    )
+                    for name in verified
+                ):
+                    continue
+                for branch in statement.body:
+                    if isinstance(branch, ast.Return) and isinstance(branch.value, ast.Tuple):
+                        if any(isinstance(x, ast.Constant) and x.value == 403 for x in branch.value.elts):
+                            return True
+                    if isinstance(branch, ast.Raise) and isinstance(branch.exc, ast.Call):
+                        if any(isinstance(x, ast.Constant) and x.value == 403 for x in branch.exc.args):
+                            return True
+            # Only straight-line credential setup may precede the rejecting guard.
+            # A try may contain a decoder and its rejecting exception handler.
+            nodes = statement.body if isinstance(statement, ast.Try) else [statement]
+            for node in nodes:
+                if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call):
+                    return False
+                callee = ast.unparse(node.value.func)
+                if callee == "jwt.decode":
+                    verified.update(t.id for t in node.targets if isinstance(t, ast.Name))
+                elif not re.fullmatch(r"request\.headers\.get(?:\(.*\)\.removeprefix)?", callee):
+                    return False
+    return False
+
+
 def _lift_auth_signals(
     r: RouteCandidate,
     resolver: HandlerResolver,
-    guarded_prefixes: set[str],
-    authz_guarded_prefixes: set[str],
-    guarded_exact: set[tuple[str, str]],
-    authz_guarded_exact: set[tuple[str, str]],
 ) -> None:
     """Lift authn/authz signals from mount guards and the resolved handler chain."""
-    if r.authn_signal == "unknown" and _guarded(r, guarded_prefixes, guarded_exact):
-        r.authn_signal = "middleware_present"
-    # Cross-file authZ lift: a route under a centrally-mounted role/permission
-    # guard is authorized even though the per-handler scan cannot see the
-    # mount. Mirrors the authN lift above.
-    if r.authz_signal == "unknown" and _guarded(r, authz_guarded_prefixes, authz_guarded_exact):
-        r.authz_signal = "middleware_present"
     # The handler chain itself: a verified credential check proves authentication;
     # `absent` needs a fully resolved chain that never checks a credential.
     route_ref = {
@@ -1083,6 +1140,8 @@ def _lift_auth_signals(
     }
     handler = resolver.route_signal(route_ref)
     r.handler_module = resolver.handler_module(route_ref)
+    if r.framework in {"flask", "fastapi"}:
+        r.operation_permission_present = _scope_permission_present(resolver.handler_code(route_ref) or "")
     if handler is not None:
         r.authn_handler_signal = handler.signal
         r.authn_handler_scheme = handler.scheme
@@ -1137,6 +1196,16 @@ def _flag_route(r: RouteCandidate, llm_sdk_declared: bool) -> None:
         and not _is_public_by_design(r.path)
     ):
         r.missing_authz_suspect = True
+    if _is_public_by_design(r.path):
+        r.notes.append("public-by-design")
+    elif (
+        r.authn_signal in _AUTHN_PRESENT
+        and r.authz_signal not in _AUTHZ_PRESENT
+        and not r.operation_permission_present
+        and (r.method.upper() in _STATE_CHANGING or r.management_surface)
+    ):
+        # Authentication alone says nothing about the permission for an operation.
+        r.notes.append("authorization-review-required")
     # Display relevance (NOT a finding): reasons a route still merits an
     # individual §5 row even with zero linked findings. The renderer keeps
     # these out of the "N further entry points" collapse and shows the
@@ -1238,25 +1307,17 @@ def build_inventory(repo_root: Path) -> dict:
     all_routes: list[RouteCandidate] = []
     frameworks_seen: set[str] = set()
     unsupported: list[str] = []
-    guarded_prefixes: set[str] = set()
-    authz_guarded_prefixes: set[str] = set()
-    guarded_exact: set[tuple[str, str]] = set()
-    authz_guarded_exact: set[tuple[str, str]] = set()
 
     _collect_routes(
         repo_root,
         all_routes,
         frameworks_seen,
-        guarded_prefixes,
-        authz_guarded_prefixes,
-        guarded_exact,
-        authz_guarded_exact,
     )
 
     # Apply prefix guards + compute the missing-auth advisory flag.
     resolver = HandlerResolver(repo_root)
     for r in all_routes:
-        _lift_auth_signals(r, resolver, guarded_prefixes, authz_guarded_prefixes, guarded_exact, authz_guarded_exact)
+        _lift_auth_signals(r, resolver)
         _flag_route(r, llm_sdk_declared)
 
     deduped = _dedupe_routes(all_routes)

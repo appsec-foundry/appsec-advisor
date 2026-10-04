@@ -538,3 +538,15 @@ def test_scope_report_reads_default_mode(tmp_path, monkeypatch, content, mode):
     report = cp.scope_report(tmp_path)
     assert report["local"]["default_mode"] == mode
     assert report["user"]["default_mode"] is None
+
+
+def test_authnz_reconciliation_and_gate_use_existing_permissions():
+    rules = [entry["entry"] for entry in cp.load_required(cp.DATA_FILE)]
+    for command in (
+        "finalize --report out/.authnz-report.json --require-inputs",
+        "gate --report out/.authnz-report.json",
+    ):
+        assert any(cp._rule_covers(rule, f"Bash(python3 model/authnz_report.py {command})") for rule in rules)
+    assert "Read(${OUTPUT_DIR}/.*)" in rules
+    assert "Write(${OUTPUT_DIR}/.*)" in rules
+    assert "model/authnz_report.py finalize --require-inputs and gate" in cp.DATA_FILE.read_text()

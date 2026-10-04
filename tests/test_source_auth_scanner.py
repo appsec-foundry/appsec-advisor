@@ -1552,3 +1552,69 @@ def test_every_check_rationale_reads_as_an_attack_scenario():
     checks = yaml.safe_load(CHECKS.read_text(encoding="utf-8"))["checks"]
     normative = [c["id"] for c in checks if re.search(r"\b(?:MUST|SHALL|SHOULD)\b", c.get("rationale") or "")]
     assert normative == []
+
+
+@pytest.mark.parametrize("token", ["token", "sessionToken"])
+@pytest.mark.parametrize("variant", ["neighbour", "different-token", "after-use", "conditional", "callback", "safe"])
+def test_decode_verification_must_precede_use_of_the_same_token(tmp_path, token, variant):
+    decode = f"const claims = jwt.decode({token});\n"
+    verify = f'jwt.verify({token}, key, {{algorithms:["RS256"]}});\n'
+    if variant == "neighbour":
+        source = f"function unsafe({token}) {{ return jwt.decode({token}).sub; }}\nfunction other(otherToken) {{ jwt.verify(otherToken, key); }}\n"
+    elif variant == "different-token":
+        source = f"function read({token}) {{\n{decode}{verify.replace(token, 'otherToken')}return claims.sub;\n}}"
+    elif variant == "after-use":
+        source = f"function read({token}) {{\n{decode}return claims.sub;\n{verify}}}"
+    elif variant == "conditional":
+        source = f"function read({token}) {{\n{decode}if (enabled) {{ {verify} }}\nreturn claims.sub;\n}}"
+    elif variant == "callback":
+        source = f"function read({token}) {{\n{decode}jwt.verify({token}, key, callback);\nreturn claims.sub;\n}}"
+    else:
+        source = f"function read({token}) {{\n{decode}{verify}return claims.sub;\n}}"
+    (tmp_path / "auth.js").write_text(source)
+    assert ("AUTHZ-006" in _ids(_scan(tmp_path))) == (variant != "safe")
+
+
+@pytest.mark.parametrize("option", ["verify_aud", "verify_iss", "verify_exp", "verify_nbf"])
+@pytest.mark.parametrize("enabled", [False, True])
+def test_explicit_python_claim_validation_opt_out(tmp_path, option, enabled):
+    (tmp_path / "auth.py").write_text(
+        f'import jwt\nclaims = jwt.decode(token, key, algorithms=["RS256"], options={{"{option}": {enabled}}})\n'
+    )
+    assert ("AUTHZ-104" in _ids(_scan(tmp_path))) == (not enabled)
+
+
+@pytest.mark.parametrize("option", ["ValidateAudience", "ValidateIssuer", "ValidateLifetime"])
+@pytest.mark.parametrize("enabled", ["false", "true"])
+def test_explicit_dotnet_claim_validation_opt_out(tmp_path, option, enabled):
+    (tmp_path / "Auth.cs").write_text(f"var options = new TokenValidationParameters {{ {option} = {enabled} }};\n")
+    assert ("AUTHZ-CS-003" in _ids(_scan(tmp_path))) == (enabled == "false")
+
+
+@pytest.mark.parametrize("option", ["ignoreExpiration", "ignoreNotBefore"])
+@pytest.mark.parametrize("enabled", ["false", "true"])
+def test_explicit_node_claim_validation_opt_out(tmp_path, option, enabled):
+    (tmp_path / "auth.js").write_text(f'jwt.verify(token, key, {{algorithms:["RS256"], {option}: {enabled}}});\n')
+    assert ("AUTHZ-009" in _ids(_scan(tmp_path))) == (enabled == "true")
+
+
+def test_omitted_claim_options_are_not_proof_of_missing_validation(tmp_path):
+    (tmp_path / "auth.py").write_text('claims = jwt.decode(token, key, algorithms=["RS256"])\n')
+    assert "AUTHZ-104" not in _ids(_scan(tmp_path))
+
+
+@pytest.mark.parametrize(
+    "filename,source,check",
+    [
+        (
+            "auth.py",
+            'jwt.decode(token, key, algorithms=["RS256"], options={"verify_aud": True}, audience="verify_aud: False")',
+            "AUTHZ-104",
+        ),
+        ("auth.js", 'jwt.verify(token, key, {algorithms:["RS256"], audience:"ignoreExpiration: true"})', "AUTHZ-009"),
+        ("Auth.cs", 'new TokenValidationParameters { ValidAudience = "ValidateAudience = false" };', "AUTHZ-CS-003"),
+    ],
+)
+def test_claim_validation_words_in_values_are_not_opt_outs(tmp_path, filename, source, check):
+    (tmp_path / filename).write_text(source)
+    assert check not in _ids(_scan(tmp_path))

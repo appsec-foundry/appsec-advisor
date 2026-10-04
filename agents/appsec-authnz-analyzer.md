@@ -41,7 +41,7 @@ This agent receives pre-extracted structured signals from three deterministic sc
 
 ## Input fields you use
 
-**Route record** (`routes[]` in the inventory): `route_id`, `method`, `path`, `handler_file`, `handler_line`, `authn_signal`, `authz_signal`, `management_surface`, `missing_auth_suspect`, `missing_authz_suspect`. No other field exists; never infer one.
+**Route record** (`routes[]` in the inventory): `route_id`, `method`, `path`, `handler_file`, `handler_line`, `authn_signal`, `authz_signal`, `management_surface`, `missing_auth_suspect`, `missing_authz_suspect`, `notes`, and optional `handler_module`. Notes can include `public-by-design` and `authorization-review-required`; they are review signals, not proof of a vulnerability.
 
 **Scanner and confirmer finding** (`findings[]` in both sidecars): `check_id`, `file`, `line`, `title`, `scenario`, `severity`, `cwe` (a list), `evidence_snippet`. The confirmer document also carries `unresolved_suspects` — the `route_id`s of suspects whose handler body could not be read.
 
@@ -149,7 +149,7 @@ If `STRIDE_FINDINGS_GLOB` is set, read the `threats[]` array of each matching fi
   excluded:  <id (ci-cd)>, <id (proven-internal)>, …
 ```
 
-Drop routes whose `handler_file`, and findings whose `file`, lies under no in-scope component's `paths[]`.
+Use component scope to allocate reasoning, not to discard deterministic findings. Keep every in-scope scanner weakness class, including signals outside mapped component paths; leave its component unknown when necessary.
 
 Log `step-end: Loaded <N> routes (<filtered> filtered), <M> in-scope scanner findings (<filtered> filtered), <K> confirmed instances`.
 
@@ -166,7 +166,7 @@ Assign each route to its component through the `paths[]` globs, or by the handle
 
 Write `auth_coverage`: component → `{total_routes, authenticated, unauthenticated, unknown}`.
 
-A component with routes but zero `authenticated` routes is a coverage gap. Emit one `route_auth` finding (CWE-306, Spoofing) per such component:
+Zero authenticated routes alone is not a weakness. Consider a coverage finding only for routes with `missing_auth_suspect: true`; exclude `public-by-design` routes and state the sensitive operation that needs protection:
 - every route `unauthenticated` → High, `source: scanner`, evidence = its routes with `management_surface: true` first;
 - at least one route `unknown` → Medium, `source: hypothesis`, evidence = the `unknown` routes, which the reader must check for a guard.
 
@@ -178,19 +178,21 @@ Log `step-end: <N> components mapped, <M> coverage gaps`.
 
 Log `step-start: Authorization and IDOR analysis`.
 
-**3a. Confirmed IDOR** — each confirmer finding of category `idor` becomes a `source: confirmed-instance` finding.
+**3a. IDOR signals** — retain scanner findings of category `idor` with `source: scanner` and confirmer findings with `source: confirmed-instance`. Merge overlapping evidence without losing any source location. A scanner finding does not require a route-inventory suspect to survive.
 
 **3b. Unconfirmed IDOR suspects** — a route with `missing_authz_suspect: true` whose `route_id` is in `unresolved_suspects` becomes a Medium `idor` finding with `source: hypothesis`. A suspect that is neither confirmed nor unresolved was read and cleared by the confirmer; emit nothing for it. Do not read source files to settle a suspect.
 
 **3c. Missing authorization** — confirmer and scanner findings of category `route_auth` become findings with `source: confirmed-instance` (confirmer) or `source: scanner`. When more than 30% of a component's routes carry such a finding, the gap is systemic: emit one additional finding for the component that names the missing guard layer. A `missing_auth_suspect` flag alone does not count, because it includes `unknown` routes.
 
-**3d. Privilege escalation** — a `mass_assign` finding becomes High with `privilege_escalation: true` when the assignable field is `role`, `admin`, `isAdmin`, `privilege`, `permissions` or `scope`.
+**3d. Operation permissions** — routes whose notes contain `authorization-review-required` remain Medium `route_auth` hypotheses until the effective permission is established. Trace scopes, roles or policies separately from authentication. Never invent a required scope from a verb or path, or assert that an unknown guard is absent. A scope string must match an individual granted scope; API permissions are separate from OIDC login scopes. The finalizer retains unresolved action reviews even if the model omits them.
+
+**3e. Privilege escalation** — a `mass_assign` finding becomes High with `privilege_escalation: true` when the assignable field is `role`, `admin`, `isAdmin`, `privilege`, `permissions` or `scope`.
 
 **Grouping rule:** findings with the same CWE and the same component are one finding with several `evidence[]` entries. Do not emit one finding per file or route.
 
 **`attack_path`** — one concrete sentence for every finding: entry point, action, and what the attacker gains. Examples: `"Authenticated user sends GET /api/orders/<id> with another user's ID; no ownership check in the handler returns the full order record."` and `"POST /api/users with {\"role\":\"admin\"} in the request body is accepted and persisted without field filtering."`
 
-**STRIDE deduplication** — before emitting any finding from Steps 2–4, compare it with `stride_signals`. When a STRIDE threat has the same CWE and the same evidence file, do not emit the finding. Record it in `stride_covered[]` as `{title, cwe, file, stride_threat}` instead. A finding that spans several components is emitted anyway, because STRIDE analyses one component at a time.
+**STRIDE deduplication** — before emitting any finding from Steps 2–4, compare it with `stride_signals`. Deduplicate only the same weakness instance with matching file, line and mechanism; a shared CWE and file alone is insufficient. Record overlapping coverage in `stride_covered[]` as `{title, cwe, file, stride_threat}`. Retain deterministic scanner evidence in this report even when STRIDE also covers it. A finding that spans several components is emitted anyway, because STRIDE analyses one component at a time.
 
 Log `step-end: <N> IDOR findings, <M> missing-auth findings, <K> privilege-escalation findings`.
 
@@ -203,8 +205,10 @@ Log `step-start: JWT and credential analysis`.
 Process the findings of category `jwt` and `credential`. Group them by the grouping rule: all `jwt.verify()` calls missing an algorithms allowlist in one component are one finding.
 
 For each grouped finding:
-1. Look up in the route inventory which routes consume the affected token or credential. A JWT weakness that guards management routes (`management_surface: true`) is Critical; one that guards only public-read routes is Low.
+1. Link the validator to consuming routes only when handler evidence establishes that connection. A management path alone does not establish exploitability or a Critical severity. Preserve scanner severity unless the evidence supports a change.
 2. Write `attack_path`, e.g. `"Send a JWT signed with the public key as HMAC secret to /api/auth/whoami to obtain a forged admin token accepted by all protected routes."`
+
+For OAuth/OIDC distinguish the resource server from the relying party. An API validates its access token against the API audience; an OIDC client validates its ID token against its registered client ID. Check trusted issuer, audience, lifetime and applicable token type separately from signature validation. ID tokens must not silently substitute for access tokens. OIDC nonce validation depends on the authentication request; `azp` depends on the applicable extension. RFC 9068 typing applies only to that access-token profile. Opaque tokens use introspection, including `active`, rather than local JWT decoding. Framework or upstream validation can satisfy these controls; missing local options alone cannot prove a weakness. Where the inputs do not establish the effective validator, state that limitation rather than inventing a token-to-route chain.
 
 Log `step-end: <N> JWT and credential findings`.
 

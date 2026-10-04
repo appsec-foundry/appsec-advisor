@@ -238,3 +238,140 @@ def test_finalize_cli_prints_the_summary(tmp_path: Path):
     )
     assert proc.returncode == 0, proc.stderr
     assert json.loads(proc.stdout)["idor_confirmed"] == 1
+
+
+def _signal_document():
+    return {
+        "version": 1,
+        "generated_at": "2026-10-04T10:00:00Z",
+        "checks_run": 1,
+        "violations": 1,
+        "findings": [
+            {
+                "local_id": "SAF-001",
+                "check_id": "AUTHZ-002",
+                "source_type": "nodejs_source",
+                "file": "src/items.js",
+                "line": 7,
+                "title": "Object lookup lacks ownership filter",
+                "scenario": "A caller substitutes another object identifier in the lookup.",
+                "severity": "High",
+                "cwe": ["CWE-639"],
+                "evidence_snippet": "Items.findById(req.params.id)",
+            }
+        ],
+    }
+
+
+def test_finalize_retains_scanner_idor_without_a_route_suspect(tmp_path):
+    doc = _signal_document()
+    _write_json(tmp_path / ".source-auth-findings.json", doc)
+    path = _write_json(tmp_path / ".authnz-report.json", _report([]))
+    report = ar.finalize(path)
+    assert report["findings"][0]["source"] == "scanner"
+    assert report["signal_dispositions"][0]["finding_id"] == report["findings"][0]["id"]
+    assert len(ar.finalize(path)["findings"]) == 1
+
+
+def test_finalize_matches_instances_by_line_not_just_file(tmp_path):
+    doc = _signal_document()
+    _write_json(tmp_path / ".source-auth-findings.json", doc)
+    path = _write_json(
+        tmp_path / ".authnz-report.json", _report([_finding("AZ-001", evidence=[{"file": "src/items.js", "line": 30}])])
+    )
+    assert len(ar.finalize(path)["findings"]) == 2
+
+
+def test_required_inputs_cannot_silently_disappear(tmp_path):
+    import pytest
+
+    path = _write_json(tmp_path / ".authnz-report.json", _report([]))
+    with pytest.raises(ar.InputError):
+        ar.finalize(path, require_inputs=True)
+
+
+def test_gate_rejects_partial_empty_report_and_ignores_forged_counts(tmp_path):
+    path = _write_json(tmp_path / ".authnz-report.json", _report([], partial=True))
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "gate", "--report", str(path)], capture_output=True, text=True
+    )
+    assert result.returncode == 1
+    assert json.loads(result.stdout)["partial"]
+    _write_json(path, _report([]))
+    assert not ar.gate(path)["failed"]
+    forged = _report([_finding("AZ-001")])
+    forged["summary"] = ar.recompute_summary(_report([]))
+    _write_json(path, forged)
+    assert ar.gate(path)["failed"]
+
+
+def test_unresolved_operation_permission_survives_empty_model_report(tmp_path):
+    _write_json(
+        tmp_path / ".route-inventory.json",
+        {
+            "version": 1,
+            "coverage": {"frameworks_detected": ["express"], "unsupported_route_files": []},
+            "routes": [
+                {
+                    "route_id": "R-001",
+                    "method": "POST",
+                    "path": "/records/export",
+                    "framework": "express",
+                    "handler_file": "api.js",
+                    "handler_line": 4,
+                    "authn_signal": "present",
+                    "authz_signal": "unknown",
+                    "management_surface": False,
+                    "confidence": "medium",
+                    "notes": ["authorization-review-required"],
+                }
+            ],
+        },
+    )
+    path = _write_json(tmp_path / ".authnz-report.json", _report([]))
+    report = ar.finalize(path)
+    assert [(f["source"], f["category"], f["severity"]) for f in report["findings"]] == [
+        ("hypothesis", "route_auth", "Medium")
+    ]
+    assert len(ar.finalize(path)["findings"]) == 1
+
+
+def test_public_probe_inventory_does_not_create_a_missing_auth_finding(tmp_path):
+    _write_json(
+        tmp_path / ".route-inventory.json",
+        {
+            "version": 1,
+            "coverage": {"frameworks_detected": ["express"], "unsupported_route_files": []},
+            "routes": [
+                {
+                    "route_id": "R-001",
+                    "method": "GET",
+                    "path": "/health",
+                    "framework": "express",
+                    "handler_file": "api.js",
+                    "handler_line": 4,
+                    "authn_signal": "absent",
+                    "authz_signal": "unknown",
+                    "management_surface": True,
+                    "confidence": "medium",
+                    "notes": ["public-by-design"],
+                }
+            ],
+        },
+    )
+    path = _write_json(tmp_path / ".authnz-report.json", _report([]))
+    assert ar.finalize(path)["findings"] == []
+    assert not ar.gate(path)["failed"]
+
+
+def test_invalid_signal_cannot_partially_overwrite_a_report(tmp_path):
+    import pytest
+
+    doc = _signal_document()
+    doc["findings"][0]["line"] = None
+    _write_json(tmp_path / ".source-auth-findings.json", doc)
+    path = _write_json(tmp_path / ".authnz-report.json", _report([]))
+    before = path.read_bytes()
+    with pytest.raises(ar.InputError):
+        ar.finalize(path)
+    assert path.read_bytes() == before

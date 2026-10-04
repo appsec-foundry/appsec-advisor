@@ -393,3 +393,73 @@ def test_unresolved_suspects_lists_only_unreadable_handlers(tmp_path: Path) -> N
     assert doc["findings"] == []
     ok, errs = vi.validate_source_auth_findings(doc)
     assert ok, errs
+
+
+@pytest.mark.parametrize("name", ["Record", "Invoice"])
+@pytest.mark.parametrize(
+    "noise", ["// TODO enforce tenant_id", 'audit.info("owner_id lookup");', "audit.info(principal);"]
+)
+def test_mentions_of_ownership_do_not_clear_object_access(tmp_path, name, noise):
+    file = name + ".java"
+    _write(tmp_path, file, f"public Object get(Long id) {{\n{noise}\nreturn repo.findById(id);\n}}\n")
+    doc = ac.build_document(
+        tmp_path,
+        _inv(
+            [
+                {
+                    "route_id": "R-001",
+                    "method": "GET",
+                    "path": "/items/{id}",
+                    "handler_file": file,
+                    "handler_line": 1,
+                    "missing_authz_suspect": True,
+                }
+            ]
+        ),
+    )
+    assert [f["check_id"] for f in doc["findings"]] == ["AUTHZ-301"]
+
+
+@pytest.mark.parametrize("body", ['return "not implemented";', "return service.visibleToCaller(id);"])
+def test_readable_handler_without_proven_object_access_is_not_confirmed(tmp_path, body):
+    _write(tmp_path, "Controller.java", f"public Object get(Long id) {{\n{body}\n}}\n")
+    doc = ac.build_document(
+        tmp_path,
+        _inv(
+            [
+                {
+                    "route_id": "R-001",
+                    "method": "GET",
+                    "path": "/items/{id}",
+                    "handler_file": "Controller.java",
+                    "handler_line": 1,
+                    "missing_authz_suspect": True,
+                }
+            ]
+        ),
+    )
+    assert doc["findings"] == []
+    assert doc["unresolved_suspects"] == ["R-001"]
+
+
+def test_truncated_handler_cannot_confirm_missing_ownership(tmp_path):
+    body = "public Object get(Long id) {\n" + "    calculate();\n" * 90 + "    return repo.byOwner(id, principal);\n}\n"
+    _write(tmp_path, "Controller.java", body)
+    doc = ac.build_document(
+        tmp_path,
+        _inv(
+            [{"route_id": "R-001", "handler_file": "Controller.java", "handler_line": 1, "missing_authz_suspect": True}]
+        ),
+    )
+    assert doc["findings"] == []
+    assert doc["unresolved_suspects"] == ["R-001"]
+
+
+def test_ownership_guard_must_cover_the_loaded_object_before_use():
+    guarded = "const item = await Item.findByPk(req.params.id);\nif (item.ownerId !== req.user.id) return res.sendStatus(403);\nres.json(item);"
+    assert ac.has_ownership_predicate(guarded)
+    assert not ac.has_ownership_predicate(guarded.replace("item.ownerId", "other.ownerId"))
+    assert not ac.has_ownership_predicate(guarded.replace("if (item.ownerId", "res.json(item);\nif (item.ownerId"))
+    assert not ac.has_ownership_predicate(
+        "const item = Item.findByPk(req.params.id);\naudit.info({ownerId: req.user.id});\nreturn item;"
+    )

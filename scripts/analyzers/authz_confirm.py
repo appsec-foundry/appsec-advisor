@@ -60,6 +60,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from shared._path_guard import is_safe_to_read  # noqa: E402
+from shared._source_lex import code_only, without_comments  # noqa: E402
 
 from analyzers.handler_resolver import RESOLVED_FRAMEWORKS, HandlerResolver  # noqa: E402
 from analyzers.source_auth_scanner import _source_type_for  # noqa: E402  (reuse ext→enum map)
@@ -108,7 +109,7 @@ def _extract_brace_body(lines: list[str], i0: int, max_lines: int) -> str:
                 depth -= 1
                 if started and depth <= 0:
                     return "\n".join(out)
-    return "\n".join(out)
+    return ""  # A truncated or unbalanced body cannot prove absence of a guard.
 
 
 def _indent(line: str) -> int:
@@ -144,8 +145,8 @@ def extract_body(lines: list[str], handler_line_1based: int, path: Path) -> str:
     for Python, bounded forward window otherwise (Ruby, unknown)."""
     if handler_line_1based is None or handler_line_1based < 1:
         return ""
-    i0 = min(handler_line_1based - 1, len(lines) - 1)
-    if i0 < 0:
+    i0 = handler_line_1based - 1
+    if i0 < 0 or i0 >= len(lines):
         return ""
     ext = path.suffix.lower()
     if ext == ".py":
@@ -156,16 +157,6 @@ def extract_body(lines: list[str], handler_line_1based: int, path: Path) -> str:
 
 
 # --- predicates -------------------------------------------------------------
-
-_OWNERSHIP_RE = re.compile(
-    r"(?i)("
-    r"owner_?id|user_?id|tenant_?id|account_?id|customer_?id"
-    r"|current_?user|\breq(?:uest)?\.user\b|@PreAuthorize|@Secured|@RolesAllowed"
-    r"|\bauthorize\b|\.can\(|\bpolicy\b|isOwner|ensureOwner|verifyOwner"
-    r"|assertOwnership|getCurrentUser|CurrentUser|\bprincipal\b|belongs_to"
-    r"|scope[_.]?to[_.]?user|\.where\([^)]*user"
-    r")"
-)
 
 _AUTH_RE = re.compile(
     r"(?i)("
@@ -178,11 +169,61 @@ _AUTH_RE = re.compile(
 
 
 def has_ownership_predicate(body: str) -> bool:
-    return bool(_OWNERSHIP_RE.search(body or ""))
+    text = code_only(without_comments(without_comments(body or ""), python=True))
+    identity = r"(?:current_?user|req(?:uest)?\.user|principal|session)\b"
+    owner = r"(?:owner_?id|user_?id|tenant_?id|account_?id|customer_?id|getOwnerId\(\))"
+    # A rejecting comparison must precede the result being returned. Merely
+    # logging an identity, or mentioning an owner in a comment, is not a gate.
+    for match in re.finditer(r"\bif\b[^\n]*(?:\n[^\n]*)?", text, re.I):
+        guard = match[0]
+        resource = re.search(rf"\b(\w+)\.{owner}", guard, re.I)
+        returned = resource and re.search(
+            rf"\breturn\s+{re.escape(resource[1])}\b|\.(?:json|send)\s*\(\s*{re.escape(resource[1])}\b",
+            text[: match.start()],
+        )
+        bound_resource = not _object_access(text) or (
+            resource
+            and re.search(
+                rf"\b{re.escape(resource[1])}\s*=\s*(?:await\s+)?[\w.]+"
+                r"\.(?:findById|findByPk|findOne|findUnique|findFirst|get)\s*\(",
+                text[: match.start()],
+            )
+        )
+        if (
+            re.search(owner, guard, re.I)
+            and re.search(identity, guard, re.I)
+            and re.search(r"!=|!\s*[\w.]+(?:\(\))?\.equals\s*\(", guard)
+            and re.search(r"\b(?:throw|raise|deny|abort)\b|return\s+.*\b40[13]\b", guard)
+            and not returned
+            and bound_resource
+        ):
+            return True
+    # Only recognize an ownership-scoped lookup when its identity argument is
+    # server-derived, not another request parameter.
+    return bool(
+        re.search(rf"\.(?:byOwner|findByOwner|findByTenant)\s*\([^\n]*{identity}", text, re.I)
+        or re.search(rf"\.(?:findOne|findFirst|findMany|where)\s*\([^;\n]*\b{owner}\s*[:=]\s*{identity}", text, re.I)
+    )
 
 
 def has_auth_check(body: str) -> bool:
-    return bool(_AUTH_RE.search(body or ""))
+    raw = without_comments(without_comments(body or ""), python=True)
+    if re.search(r"@PreAuthorize\(\s*['\"]isAuthenticated\(\)['\"]\s*\)|@(?:Secured|RolesAllowed)\(", raw):
+        return True
+    text = code_only(raw)
+    return bool(_AUTH_RE.search(text) and re.search(r"\b(?:if|throw|raise|abort)\b", text))
+
+
+def _object_access(body: str) -> bool:
+    """A local data operation actually consumes an object identifier."""
+    text = code_only(body)
+    return bool(
+        re.search(
+            r"\.(?:findById|findByPk|findOne|findUnique|findFirst|get|update|destroy|delete)"
+            r"\s*\([^;\n]*\b(?:id|[A-Za-z_]\w*[Ii]d|[A-Za-z_]\w*_id)\b",
+            text,
+        )
+    )
 
 
 # --- confirmation -----------------------------------------------------------
@@ -230,6 +271,12 @@ def _examine(repo_root: Path, inventory: dict) -> tuple[list[dict], list[str]]:
 
         check_id = cwe = ft = title = None
         if r.get("missing_authz_suspect") and not has_ownership_predicate(body):
+            if not _object_access(body):
+                # A service call may enforce policy out of view. Keep it open;
+                # neither a route parameter nor readable code proves IDOR.
+                if isinstance(r.get("route_id"), str):
+                    unresolved.append(r["route_id"])
+                continue
             check_id, cwe, ft = "AUTHZ-301", "CWE-639", "FT-040"
             title = f"IDOR / broken object-level authorization — {method} {route_path}"
             scenario = (
@@ -274,7 +321,7 @@ def _handler_body(repo_root: Path, resolver: HandlerResolver, route: dict) -> st
     """The route's handler body, or "" when the file or the body cannot be read."""
     hf = (route.get("handler_file") or "").strip()
     hl = route.get("handler_line")
-    if not hf or not isinstance(hl, int):
+    if not hf or not isinstance(hl, int) or route.get("framework") == "graphql":
         return ""
     # `handler_file` comes from a sidecar: an absolute or escaping path, or a
     # symlink out of the repository, is never read.
@@ -282,13 +329,16 @@ def _handler_body(repo_root: Path, resolver: HandlerResolver, route: dict) -> st
     if not path.is_file() or not is_safe_to_read(path, repo_root):
         return ""
     try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        if path.stat().st_size > 1_000_000:
+            return ""
+        text = path.read_text(encoding="utf-8", errors="replace")
+        lines = without_comments(text, python=path.suffix == ".py").splitlines()
     except OSError:
         return ""
     # A call-registered route's line is its registration, not its handler: read the
     # handler through the shared resolver, and emit nothing when it does not resolve.
     if route.get("framework") in RESOLVED_FRAMEWORKS:
-        return resolver.handler_code(route) or ""
+        return without_comments(resolver.handler_code(route) or "", python=path.suffix == ".py")
     return extract_body(lines, hl, path)
 
 

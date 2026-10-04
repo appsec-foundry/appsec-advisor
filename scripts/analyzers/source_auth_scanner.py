@@ -65,6 +65,7 @@ if not __package__:
 
 
 import argparse
+import ast
 import json
 import os
 import re
@@ -486,6 +487,8 @@ def _counter_match(
         return False
 
     blob = "\n".join(_scope_lines(lines, match_line_idx, check))
+    if check.id == "AUTHZ-006":
+        return _decode_followed_by_verification(blob)
     if check.id == "AUTHZ-103" and re.search(r"['\"]verify_signature['\"]\s*:\s*False\b", blob):
         return False
     if check.id == "AUTHN-001":
@@ -495,6 +498,29 @@ def _counter_match(
         if cp.search(blob):
             return True
     return False
+
+
+def _decode_followed_by_verification(text: str) -> bool:
+    """Recognize only an immediately verified token before any decoded-claim use.
+
+    A neighbouring function, another token, conditional verification, callback
+    verification, or a boolean-returning jws verifier cannot clear this signal.
+    """
+    decode = re.search(r"\b(?:jwt|jws|jsonwebtoken)\.decode\s*\(\s*([\w$.]+)\s*[,)]", text)
+    if not decode:
+        return False
+    statement = text[: decode.start()].rsplit(";", 1)[-1].rsplit("{", 1)[-1]
+    if not re.fullmatch(r"\s*(?:const|let|var)\s+\w+\s*=\s*", statement):
+        return False
+    end = call_end(text, text.index("(", decode.start()))
+    tail = text[end:]
+    verify = re.match(r"\s*;?\s*(?:jwt|jsonwebtoken)\.verify\s*\(", tail)
+    if not verify:
+        return False
+    args = _call_arguments(tail, verify)
+    return bool(
+        len(args) in (2, 3) and args[0].strip() == decode[1] and (len(args) == 2 or args[2].lstrip().startswith("{"))
+    )
 
 
 def _required_context_matches(
@@ -512,6 +538,26 @@ def _required_context_matches(
     if not check.required_context_patterns:
         return True
     blob = "\n".join(_scope_lines(lines, match_line_idx, check))
+    if check.id == "AUTHZ-104":
+        call = re.search(r"\bjwt\.decode\s*\(", blob)
+        if call is None:
+            return False
+        try:
+            node = ast.parse(blob[call.start() : call_end(blob, call.end() - 1)], mode="eval").body
+        except (SyntaxError, ValueError):
+            return False
+        for keyword in node.keywords if isinstance(node, ast.Call) else []:
+            if keyword.arg == "options" and isinstance(keyword.value, ast.Dict):
+                return any(
+                    isinstance(key, ast.Constant)
+                    and key.value in {"verify_aud", "verify_iss", "verify_exp", "verify_nbf"}
+                    and isinstance(value, ast.Constant)
+                    and value.value is False
+                    for key, value in zip(keyword.value.keys, keyword.value.values)
+                )
+        return False
+    if check.id in {"AUTHZ-009", "AUTHZ-CS-003"}:
+        blob = code_only(blob)
     return any(pattern.search(blob) for pattern in check.required_context_patterns)
 
 

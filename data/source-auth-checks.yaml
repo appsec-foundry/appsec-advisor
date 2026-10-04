@@ -1547,3 +1547,60 @@ checks:
     breach_vector: "Internet Anon"
     rationale: "Unfiltered params let a client escalate privileges by setting protected attributes."
     remediation: "Use strong parameters: params.require(:x).permit(:allowed, :fields) — never permit! or raw params."
+
+  # Explicit opt-outs only; omitted options may be enforced by a framework or wrapper.
+  - id: AUTHZ-104
+    name: "JWT claim validation is explicitly disabled (Python)"
+    description: "A token validator explicitly disables a recipient, issuer or lifetime check. Missing local options alone do not match."
+    file_patterns: ["**/*.py"]
+    exclude_file_patterns: ["**/tests/**", "**/test/**", "**/*.test.*", "**/*.spec.*", "**/test_*.py", "**/*Test.cs", "**/fixtures/**"]
+    pattern: '\bjwt\.decode\s*\('
+    counter_scope: call
+    counter_window: 20
+    required_context_patterns:
+      - '(?s)\boptions\s*=\s*\{[^}]*[\x22\x27](?:verify_aud|verify_iss|verify_exp|verify_nbf)[\x22\x27]\s*:\s*False'
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-345
+    finding_type: FT-030
+    breach_vector: "Internet Anon"
+    rationale: "An explicitly disabled token-claim check can admit a signed token intended for another recipient or issuer, or outside its validity period, when no independent validator enforces that check on the same token."
+    remediation: "Enable claim validation against the trusted issuer, intended recipient and validity period; verify any equivalent upstream enforcement on the same token."
+
+  # Explicit opt-outs only; omitted options may be enforced by a framework or wrapper.
+  - id: AUTHZ-009
+    name: "JWT lifetime validation is explicitly disabled (JavaScript)"
+    description: "A token validator explicitly disables a recipient, issuer or lifetime check. Missing local options alone do not match."
+    file_patterns: ["**/*.js", "**/*.ts", "**/*.mjs", "**/*.cjs"]
+    exclude_file_patterns: ["**/tests/**", "**/test/**", "**/*.test.*", "**/*.spec.*", "**/test_*.py", "**/*Test.cs", "**/fixtures/**"]
+    pattern: '\b(?:jwt|jsonwebtoken)\.verify\s*\('
+    counter_scope: call
+    counter_window: 20
+    required_context_patterns:
+      - '\b(?:ignoreExpiration|ignoreNotBefore)\s*:\s*true'
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-345
+    finding_type: FT-030
+    breach_vector: "Internet Anon"
+    rationale: "An explicitly disabled token-claim check can admit a signed token intended for another recipient or issuer, or outside its validity period, when no independent validator enforces that check on the same token."
+    remediation: "Enable claim validation against the trusted issuer, intended recipient and validity period; verify any equivalent upstream enforcement on the same token."
+
+  # Explicit opt-outs only; omitted options may be enforced by a framework or wrapper.
+  - id: AUTHZ-CS-003
+    name: "JWT audience, issuer or lifetime validation is explicitly disabled (C#)"
+    description: "A token validator explicitly disables a recipient, issuer or lifetime check. Missing local options alone do not match."
+    file_patterns: ["**/*.cs"]
+    exclude_file_patterns: ["**/tests/**", "**/test/**", "**/*.test.*", "**/*.spec.*", "**/test_*.py", "**/*Test.cs", "**/fixtures/**"]
+    pattern: '\bTokenValidationParameters\s*\{'
+    counter_scope: block
+    counter_window: 20
+    required_context_patterns:
+      - '\b(?:ValidateAudience|ValidateIssuer|ValidateLifetime)\s*=\s*false'
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-345
+    finding_type: FT-030
+    breach_vector: "Internet Anon"
+    rationale: "An explicitly disabled token-claim check can admit a signed token intended for another recipient or issuer, or outside its validity period, when no independent validator enforces that check on the same token."
+    remediation: "Enable claim validation against the trusted issuer, intended recipient and validity period; verify any equivalent upstream enforcement on the same token."

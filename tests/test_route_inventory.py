@@ -277,16 +277,12 @@ def test_authn_signal_defaults_to_unknown(tmp_path: Path) -> None:
 
 
 def test_prefix_mounted_guard_marks_routes_protected(tmp_path: Path) -> None:
-    """Express apps (e.g. Juice Shop) protect whole path prefixes via
-    `app.use('/path', security.isAuthorized())` separate from the handler.
-    The cross-file prefix pass must mark those routes protected (fixes the
-    2026-05-31 'every route auth=unknown' miss)."""
+    """A prefix guard applies to later registrations on the same application."""
     (tmp_path / "server.ts").write_text(
-        "app.use('/api/BasketItems', security.isAuthorized());\napp.get('/api/Users', security.isAuthorized());\n"
-    )
-    (tmp_path / "routes.ts").write_text(
-        "router.get('/api/BasketItems/:id', h);\n"  # protected by the prefix
-        "router.get('/api/Products', h);\n"  # not guarded
+        "app.use('/api/BasketItems', security.isAuthorized());\n"
+        "app.get('/api/Users', security.isAuthorized());\n"
+        "app.get('/api/BasketItems/:id', h);\n"
+        "app.get('/api/Products', h);\n"
     )
     inv = _run(tmp_path)
     by_path = {r["path"]: r for r in inv["routes"]}
@@ -340,10 +336,8 @@ def test_verb_guards_cover_their_method_and_path_while_use_covers_the_prefix(tmp
         "app.get('/api/users', security.isAuthorized())\n"
         "app.use('/api/orders', security.isAuthorized())\n"
         "app.all('/api/admin/*', requireAuth)\n"
-    )
-    (tmp_path / "routes.ts").write_text(
-        "router.get('/api/users', list)\nrouter.post('/api/users', create)\nrouter.get('/api/users/:id', show)\n"
-        "router.delete('/api/orders/:id', cancel)\nrouter.post('/api/admin/reset', reset)\n"
+        "app.get('/api/users', list)\napp.post('/api/users', create)\napp.get('/api/users/:id', show)\n"
+        "app.delete('/api/orders/:id', cancel)\napp.post('/api/admin/reset', reset)\n"
     )
     inv = _run(tmp_path)
     guarded = {(r["method"], r["path"]) for r in inv["routes"] if r["authn_signal"] == "middleware_present"}
@@ -736,8 +730,8 @@ def test_a_url_inside_a_string_does_not_start_a_comment(tmp_path: Path) -> None:
     ],
 )
 def test_a_mount_guard_after_a_nested_call_protects_the_prefix(tmp_path: Path, mount: str, field: str) -> None:
-    (tmp_path / "server.js").write_text(mount)
-    (tmp_path / "items.js").write_text("app.delete('/api/items/:id', removeItem)\n")
+    receiver = mount.split(".", 1)[0]
+    (tmp_path / "server.js").write_text(mount + f"{receiver}.delete('/api/items/:id', removeItem)\n")
     row = next(r for r in _run(tmp_path)["routes"] if r["path"] == "/api/items/:id")
     assert row[field] == "middleware_present"
 
@@ -751,8 +745,8 @@ def test_a_mount_guard_after_a_nested_call_protects_the_prefix(tmp_path: Path, m
     ],
 )
 def test_a_literal_or_handler_body_is_not_a_mount_guard(tmp_path: Path, mount: str) -> None:
-    (tmp_path / "server.js").write_text(mount)
-    (tmp_path / "items.js").write_text("app.delete('/api/items/:id', removeItem)\n")
+    receiver = mount.split(".", 1)[0]
+    (tmp_path / "server.js").write_text(mount + f"{receiver}.delete('/api/items/:id', removeItem)\n")
     row = next(r for r in _run(tmp_path)["routes"] if r["path"] == "/api/items/:id")
     assert (row["authn_signal"], row["authz_signal"]) == ("unknown", "unknown")
 
@@ -767,3 +761,67 @@ def test_a_commented_python_decorator_is_not_a_route(tmp_path: Path) -> None:
         "    return ''\n"
     )
     assert [r["path"] for r in _run(tmp_path)["routes"]] == ["/items/<int:item_id>"]
+
+
+@pytest.mark.parametrize("name", ["records", "invoices"])
+def test_decorators_do_not_authenticate_a_neighbour(tmp_path, name):
+    (tmp_path / "api.py").write_text(
+        "from flask import Flask\napp = Flask(__name__)\n"
+        "@app.get('/private')\n@login_required\ndef private():\n    return 'ok'\n\n"
+        f"@app.delete('/admin/{name}')\ndef remove():\n    return '', 204\n"
+    )
+    inventory = _run(tmp_path)
+    assert _route(inventory, "GET", "/private")["authn_signal"] == "middleware_present"
+    assert _route(inventory, "DELETE", "/admin/" + name)["authn_signal"] == "absent"
+
+
+@pytest.mark.parametrize("name", ["records", "invoices"])
+@pytest.mark.parametrize("placement", ["other-file", "other-object", "later", "before"])
+def test_mount_guard_needs_the_same_object_and_precedes_the_handler(tmp_path, name, placement):
+    header = "const app = express();\n"
+    route = f"app.delete('/admin/{name}', (req, res) => {{ res.sendStatus(204); }});\n"
+    guard = f"app.use('/admin/{name}', requireAuth);\n"
+    if placement == "other-file":
+        (tmp_path / "other.js").write_text(header + guard)
+        source = header + route
+    elif placement == "other-object":
+        source = header + guard.replace("app.use", "other.use") + route
+    else:
+        source = header + (guard + route if placement == "before" else route + guard)
+    (tmp_path / "api.js").write_text(source)
+    row = _route(_run(tmp_path), "DELETE", "/admin/" + name)
+    assert row["authn_signal"] == ("middleware_present" if placement == "before" else "absent")
+
+
+@pytest.mark.parametrize("name", ["records", "invoices"])
+def test_authenticated_action_without_object_id_still_needs_authorization_review(tmp_path, name):
+    (tmp_path / "api.js").write_text(
+        f"app.post('/{name}/export', requireAuth, exportData);\n"
+        f"app.post('/{name}/approved', requireAuth, requireRole('exporter'), exportData);\n"
+    )
+    inventory = _run(tmp_path)
+    assert "authorization-review-required" in _route(inventory, "POST", f"/{name}/export")["notes"]
+    assert "authorization-review-required" not in _route(inventory, "POST", f"/{name}/approved")["notes"]
+
+
+@pytest.mark.parametrize("resource", ["records", "invoices"])
+@pytest.mark.parametrize("guarded", [True, False])
+def test_local_scope_rejection_is_distinct_from_object_ownership(tmp_path, resource, guarded):
+    guard = (
+        f'    if "{resource}:write" not in claims.get("scope", "").split():\n        return "forbidden", 403\n'
+        if guarded
+        else ""
+    )
+    (tmp_path / "api.py").write_text(
+        "from flask import Flask, request\nimport jwt\napp = Flask(__name__)\n"
+        f'@app.post("/{resource}/<int:id>")\ndef change(id):\n'
+        '    token = request.headers.get("Authorization", "").removeprefix("Bearer ")\n'
+        '    try:\n        claims = jwt.decode(token, key, algorithms=["RS256"])\n'
+        '    except jwt.InvalidTokenError:\n        return "unauthorized", 401\n'
+        + guard
+        + "    return repo.update(id)\n"
+    )
+    row = _route(_run(tmp_path), "POST", f"/{resource}/<int:id>")
+    assert row["authn_signal"] == "present"
+    assert ("authorization-review-required" in row["notes"]) == (not guarded)
+    assert row["missing_authz_suspect"] is True

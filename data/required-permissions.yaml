@@ -38,6 +38,8 @@
 # A configured permissions.defaultMode of auto or bypassPermissions already
 # keeps the run prompt-free, so the create-threat-model preflight does not
 # require this list then (check_permissions.PROMPT_FREE_MODES).
+# model/authnz_report.py finalize --require-inputs and gate use the existing
+# Bash(*) and OUTPUT_DIR dotfile rules; reconciliation writes only .authnz-report.json.
 # Maintainer commands such as scripts/run_tests.py --changed-against,
 # make test-plan, make test-changed, and make test-group use the existing
 # Bash(*) rule; local Git diffs and test selection add no permission entries.

@@ -600,6 +600,7 @@ SOURCE_TESTS = {
         validate_intermediate
     """),
     "schemas/source-auth-findings.schema.yaml": _tests("""
+        authnz_report
         authz_confirm
         check_target_specificity
         context_routing
@@ -3183,11 +3184,14 @@ SOURCE_TESTS = {
     """),
     "scripts/shared/_source_lex.py": _tests("""
         assess_supply_chain_controls
+        authz_confirm
         check_target_specificity
         credential_lifecycle_checks
         crypto_path_xxe_checks
         emit_sca_practice
+        finding_state
         gate_preconditions
+        handler_resolver
         mass_assignment_scanner
         orchestration_controller
         repo_scan
@@ -3195,10 +3199,12 @@ SOURCE_TESTS = {
         run_path_guard
         scanner_review_regressions
         security_score
+        shared_paths
         source_auth_scanner
         source_lex
         stride_outputs
         supply_chain_config
+        supply_chain_facts
         threat_fixture
     """),
     "scripts/shared/_supply_chain_config.py": _tests("""
