@@ -144,16 +144,29 @@ def _threat_category_id_for(t: dict) -> str | None:
     which left the findings carrying them unclassified in the register. Only
     the config-scan and source-auth catalogs supply ``finding_type_id``, and
     both fix that context in the check definition, so the type's parent is the
-    authoritative answer there. The CWE mapping still wins where it exists.
+    authoritative answer there. The CWE mapping still wins where it exists,
+    except for the CWEs listed under ``finding_type_decides`` (artifact versus
+    token signatures), where a finding type is the only thing that knows which.
     """
     cwe = t.get("cwe")
+    finding_type = t.get("finding_type_id")
+    by_type = _load_finding_type_to_th_map().get(finding_type) if isinstance(finding_type, str) else None
+    if by_type and cwe in _load_finding_type_decides():
+        return by_type
     mapping = _load_cwe_to_th_map()
     if isinstance(cwe, str) and cwe in mapping:
         return mapping[cwe]
-    finding_type = t.get("finding_type_id")
-    if isinstance(finding_type, str):
-        return _load_finding_type_to_th_map().get(finding_type)
-    return None
+    return by_type
+
+
+@functools.lru_cache(maxsize=1)
+def _load_finding_type_decides() -> frozenset[str]:
+    path = Path(__file__).resolve().parents[2] / "data" / "threat-category-taxonomy.yaml"
+    try:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except OSError:
+        return frozenset()
+    return frozenset(str(cwe) for cwe in doc.get("finding_type_decides") or [])
 
 
 def backfill_threat_category_id(threat: dict) -> bool:

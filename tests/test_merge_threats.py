@@ -3409,3 +3409,17 @@ def test_finding_type_supplies_the_category_when_the_cwe_map_cannot(mt):
     assert mt._threat_category_id_for({"cwe": "CWE-89", "finding_type_id": "FT-143"}) == "TH-01"
     # Neither source resolves — the finding stays unclassified rather than guessed.
     assert mt._threat_category_id_for({"cwe": "CWE-99999", "finding_type_id": None}) is None
+
+
+@pytest.mark.parametrize(
+    "threat, expected",
+    [
+        ({"cwe": "CWE-347", "finding_type_id": "FT-148"}, "TH-14"),  # unsigned release artifact
+        ({"cwe": "CWE-345", "finding_type_id": "FT-030"}, "TH-02"),  # token accepted without verification
+        ({"cwe": "CWE-345"}, "TH-14"),  # no check: the CWE map still answers
+        ({"cwe": "CWE-311", "finding_type_id": "FT-164"}, "TH-03"),  # other CWEs keep the map's precedence
+    ],
+)
+def test_a_signature_cwe_takes_the_category_of_the_check_that_found_it(mt, threat, expected):
+    """CWE-345/347 name both artifact and token signatures; only the finding type knows which."""
+    assert mt._threat_category_id_for(threat) == expected

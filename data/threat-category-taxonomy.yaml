@@ -482,6 +482,10 @@ cwe_to_th:
   CWE-326: [TH-03]               # Inadequate Encryption Strength
   CWE-311: [TH-03]               # Missing Encryption
   CWE-319: [TH-03]               # Cleartext Transmission
+  # CWE-345 / CWE-347 name both a missing artifact signature (supply chain)
+  # and a token accepted without signature verification (authentication).
+  # They stay mapped for findings without a check; a scanner finding's
+  # finding type decides instead (`finding_type_decides` below).
   CWE-345: [TH-14, TH-03]        # Insufficient Verification
   CWE-346: [TH-14, TH-15]        # Origin Validation Error
   CWE-347: [TH-02, TH-03]        # Signature Verification
@@ -509,3 +513,8 @@ cwe_to_th:
   CWE-1357: [TH-14]              # Insufficiently Trustworthy Component
   CWE-942: [TH-06, TH-15]        # Permissive Cross-domain Policy — Broken Access Control (OWASP A01) and CSRF-enabling
   CWE-602: [TH-06]               # Client-Side Enforcement of Server-Side Security (client-trust → broken AuthZ)
+
+# CWEs whose category depends on what the finding is about. For a finding that
+# carries a scanner finding type, the type's parent category wins over cwe_to_th
+# (model/merge_threats._threat_category_id_for).
+finding_type_decides: [CWE-345, CWE-347]

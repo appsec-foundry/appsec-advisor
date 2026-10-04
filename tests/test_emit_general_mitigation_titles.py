@@ -11,6 +11,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -308,3 +309,21 @@ def test_main_best_effort_noops_for_missing_and_unreadable_yaml(tmp_path, capsys
     (tmp_path / "threat-model.yaml").write_text("threats: [\n", encoding="utf-8")
     assert egm.main([str(tmp_path)]) == 0
     assert "unreadable yaml" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "original, cwe, title",
+    [
+        ("Pin workflow actions to full commit SHAs", "CWE-829", "Pin third-party dependencies to immutable versions"),
+        ("Commit lockfiles and use npm ci in CI", "CWE-829", "Commit lockfiles and install from them"),
+        ("Install with a frozen lockfile in the release job", "CWE-829", "Commit lockfiles and install from them"),
+        ("Sign pushed images with cosign in the release job", "CWE-345", "Sign and verify release artifacts"),
+        (
+            "Replace decode(token) with verify(token, key)",
+            "CWE-345",
+            "Enforce JWT signature and algorithm verification",
+        ),
+    ],
+)
+def test_one_cwe_with_two_fixes_gets_two_titles(original, cwe, title):
+    assert egm.generalize_title(original, cwe) == title

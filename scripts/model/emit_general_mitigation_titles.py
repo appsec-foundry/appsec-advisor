@@ -139,6 +139,14 @@ _GENERAL_TITLE_BY_CWE: dict[str, str] = {
     "CWE-284": "Apply least-privilege filesystem access",
 }
 
+_SIGNATURE_FIXES = [
+    (
+        r"cosign|provenance|attest|sigstore|release|image|artifact|workflow|supply",
+        "Sign and verify release artifacts",
+    ),
+    (r"jwt|token|alg|expressjwt|rs256|hs256|decode|verify", "Enforce JWT signature and algorithm verification"),
+]
+
 # Disambiguators — one CWE, two genuinely different fixes. (regex on the lowered
 # original title) → title. Checked before the plain CWE map.
 _DISAMBIGUATE: dict[str, list[tuple[str, str]]] = {
@@ -147,12 +155,15 @@ _DISAMBIGUATE: dict[str, list[tuple[str, str]]] = {
         (r"authorization code|implicit flow|pkce|oauth", "Use OAuth authorization code flow with PKCE"),
         (r"derived-password|provider sub|identity", "Bind OAuth identities to provider subject IDs"),
     ],
-    "CWE-347": [
+    "CWE-347": _SIGNATURE_FIXES,
+    # CWE-345 names the same two fixes as CWE-347.
+    "CWE-345": _SIGNATURE_FIXES,
+    # Pinning a reference and committing the resolved tree are different fixes.
+    "CWE-829": [
         (
-            r"cosign|provenance|attest|sigstore|release|image|artifact|workflow|supply",
-            "Sign and verify release artifacts",
+            r"lockfile|lock file|package-lock|yarn\.lock|pnpm-lock|npm ci|frozen",
+            "Commit lockfiles and install from them",
         ),
-        (r"jwt|token|alg|expressjwt|rs256|hs256|decode|verify", "Enforce JWT signature and algorithm verification"),
     ],
     "CWE-400": [
         (r"query timeout|search endpoint|database query", "Set database query timeouts and rate limits"),
