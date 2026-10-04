@@ -128,7 +128,6 @@ GROUPS = {
         arch_coverage_bridge
         arch_coverage_bridge_coverage
         architecture_coverage_checks
-        assess_supply_chain_controls
         authnz_report
         authz_confirm
         backfill_scanner_remediation
@@ -569,11 +568,16 @@ SOURCE_TESTS = {
         f"{_SKILL_FILE_TESTS} authnz_review_skill lazy_phase_group_loading skill_definitions"
     ),
     "skills/authnz-review/HELP.txt": _tests(f"{_SKILL_FILE_TESTS} skill_definitions"),
+    "data/supply-chain-controls.yaml": _tests("""
+        emit_sca_practice
+        scanner_review_regressions
+    """),
     "data/config-iac-checks.yaml": _tests("""
         agent_config_checks
         config_iac_checks
         config_iac_scanner
         config_scanner_wireup
+        emit_sca_practice
         iac_resource_checks
         merge_threats
         recommend_fixes
@@ -2906,7 +2910,6 @@ SOURCE_TESTS = {
         apply_editorial_plan
         arch_coverage_bridge
         architecture_coverage_checks
-        assess_supply_chain_controls
         auto_emitter_pass
         build_editorial_context
         build_threat_model_yaml
@@ -3183,7 +3186,6 @@ SOURCE_TESTS = {
         walkthrough_renderer
     """),
     "scripts/shared/_source_lex.py": _tests("""
-        assess_supply_chain_controls
         authz_confirm
         check_target_specificity
         credential_lifecycle_checks
@@ -3208,7 +3210,6 @@ SOURCE_TESTS = {
         threat_fixture
     """),
     "scripts/shared/_supply_chain_config.py": _tests("""
-        assess_supply_chain_controls
         check_target_specificity
         emit_sca_practice
         gate_preconditions
@@ -3477,16 +3478,6 @@ SOURCE_TESTS = {
         requirements_verification
         run_path_guard
         runtime_doc_cli_contract
-        stride_outputs
-    """),
-    "scripts/analyzers/assess_supply_chain_controls.py": _tests("""
-        assess_supply_chain_controls
-        check_target_specificity
-        gate_preconditions
-        requirements_verification
-        run_defect_fixes_2026_07_24
-        run_path_guard
-        scanner_review_regressions
         stride_outputs
     """),
     "scripts/analyzers/authz_confirm.py": _tests("""
@@ -4205,6 +4196,7 @@ SOURCE_TESTS = {
         emit_sca_practice
         gate_preconditions
         requirements_verification
+        run_defect_fixes_2026_07_24
         run_path_guard
         scanner_review_regressions
         stride_outputs

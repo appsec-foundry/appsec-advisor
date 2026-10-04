@@ -3765,3 +3765,45 @@ def test_builder_preserves_named_entities_and_resolved_registration_equivalence(
 
         signals = match_abuse_cases._effective_registration_signal({"has_auth_surface"}, tmp_path)
         assert ("has_open_self_registration" in signals) is owner
+
+
+def test_linked_checks_resolve_to_the_final_findings_only():
+    """A producer names config checks; only findings that survived the run are linked."""
+    controls = [
+        {
+            "control": "Build controls",
+            "linked_checks": ["IAC-050", "IAC-011"],
+            "linked_threats": ["T-009"],
+            "subcontrols": [
+                {"title": "Lockfile", "linked_checks": ["IAC-050"]},
+                {"title": "Pinning", "linked_checks": ["IAC-011"], "relevant_findings": ["T-002"]},
+                {"title": "Other"},
+            ],
+        },
+        {"control": "Unrelated", "linked_threats": ["T-004"]},
+    ]
+    threats = [
+        {"id": "T-001", "config_check_id": "IAC-050"},
+        {"id": "T-002", "config_check_id": "IAC-011"},
+        {"id": "T-003", "config_check_id": "IAC-040"},
+    ]
+    linked = b.link_checked_controls(controls, threats)
+    assert linked[0]["linked_threats"] == ["T-009", "T-001", "T-002"]
+    assert [s.get("relevant_findings") for s in linked[0]["subcontrols"]] == [["T-001"], ["T-002"], None]
+    assert linked[1] == {"control": "Unrelated", "linked_threats": ["T-004"]}
+    # A check whose finding the run filtered out links nothing.
+    assert b.link_checked_controls([{"control": "X", "linked_checks": ["IAC-099"]}], threats)[0]["linked_threats"] == []
+
+
+def test_a_meta_finding_whose_gap_a_finding_reports_is_dropped():
+    sidecar = {
+        "findings": [
+            {"title": "Lockfile hygiene: missing", "source": "sca-practice", "linked_checks": ["IAC-050"]},
+            {"title": "Automated SCA scanning: missing", "source": "sca-practice", "linked_checks": []},
+        ]
+    }
+    reported = [{"id": "T-001", "config_check_id": "IAC-050"}]
+    titles = [m["title"] for m in b.build_meta_findings(None, [sidecar], reported)]
+    assert titles == ["Automated SCA scanning: missing"]
+    titles = [m["title"] for m in b.build_meta_findings(None, [sidecar], [])]
+    assert titles == ["Lockfile hygiene: missing", "Automated SCA scanning: missing"]

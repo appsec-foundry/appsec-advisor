@@ -42,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The supply-chain controls in the Security Architecture rate SCA, dependency updates, lockfiles, CI installs, action and base-image pinning, install scripts and SAST from repository files and CI steps with their findings, and report a scanner that may run outside the repository as not evidenced instead of missing.
 - The Management Summary states how many of its findings are confirmed in code instead of calling them confirmed-exploitable, lists weakness classes on their own line, and names the reporting threshold in its method line; findings whose evidence was never verified, or whose cited line was merely found, no longer count as confirmed there or in the posture verdict.
 - Figure 1 reorders components within their layer when that clearly reduces line crossings, and says so in its legend; otherwise it keeps C-number order.
 

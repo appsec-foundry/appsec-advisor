@@ -108,9 +108,9 @@ def test_auth_rate_limiting_still_belongs_to_iam():
 
 def test_supply_chain_producer_emits_the_canonical_comma_free_domain():
     """The plugin's own deterministic producer was the source of the comma form."""
-    source = (SCRIPTS / "analyzers/assess_supply_chain_controls.py").read_text(encoding="utf-8")
-    assert '"domain": "Operations Runtime and Supply Chain Controls"' in source
-    assert '"domain": "Operations, Runtime and Supply Chain Controls"' not in source
+    source = (SCRIPTS / "model/emit_sca_practice.py").read_text(encoding="utf-8")
+    assert 'DOMAIN = "Operations Runtime and Supply Chain Controls"' in source
+    assert "Operations, Runtime and Supply Chain Controls" not in source
 
 
 # ---------------------------------------------------------------------------

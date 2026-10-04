@@ -24,8 +24,8 @@ context builders under scripts/:
    `is_excluded()` on top, while the config scanner deliberately does not
    (its catalog targets files that policy drops, e.g. `package-lock.json`).
    Scanners that still walk the tree themselves: recon_patterns,
-   route_inventory, db_privilege_separation, assess_supply_chain_controls,
-   mass_assignment_scanner and _lib_manifest each pair the walk with their own
+   route_inventory, db_privilege_separation, mass_assignment_scanner and
+   _lib_manifest each pair the walk with their own
    skip sets and opt-ins; moving them onto this inventory changes what they
    see and needs its own verification.
 

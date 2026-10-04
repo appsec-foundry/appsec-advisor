@@ -2549,15 +2549,52 @@ def build_critical_findings(threats: list[dict]) -> list[dict]:
 _MF_ID_RE = re.compile(r"^MF-(\d{3,})$")
 
 
-def build_meta_findings(prior_yaml: dict | None, sidecars: list[dict | None]) -> list[dict]:
+def _reported_checks(threats: list[dict] | None) -> set[str]:
+    return {str(t["config_check_id"]) for t in threats or [] if isinstance(t, dict) and t.get("config_check_id")}
+
+
+def link_checked_controls(controls: list | None, threats: list[dict]) -> list:
+    """Resolve each control's and sub-control's `linked_checks` to the final findings of those checks.
+
+    Producers name config checks (data/supply-chain-controls.yaml) instead of
+    finding ids, because ids and the finding set change until the run filters
+    them. Resolving here, on the final threats, means a control never lists a
+    finding the report does not contain. Existing links are kept first.
+    """
+
+    def ids_for(checks) -> list[str]:
+        wanted = {str(c) for c in checks or []}
+        return [t["id"] for t in threats if isinstance(t, dict) and t.get("id") and t.get("config_check_id") in wanted]
+
+    for control in controls or []:
+        if not isinstance(control, dict):
+            continue
+        for sub in control.get("subcontrols") or []:
+            if isinstance(sub, dict) and sub.get("linked_checks"):
+                sub["relevant_findings"] = list(
+                    dict.fromkeys([*(sub.get("relevant_findings") or []), *ids_for(sub["linked_checks"])])
+                )
+        if control.get("linked_checks"):
+            control["linked_threats"] = list(
+                dict.fromkeys([*(control.get("linked_threats") or []), *ids_for(control["linked_checks"])])
+            )
+    return controls or []
+
+
+def build_meta_findings(
+    prior_yaml: dict | None, sidecars: list[dict | None], threats: list[dict] | None = None
+) -> list[dict]:
     """Build final meta_findings[] from current-run sidecars.
 
     The passive supply-chain emitters write MF-shaped candidates without IDs.
     This builder is the deterministic fan-in point: it allocates stable dense
     MF-NNN IDs in sidecar order and preserves hand-authored prior entries.
     When no current-run sidecar produced findings, prior yaml is carried
-    forward for backwards-compatible incremental runs.
+    forward for backwards-compatible incremental runs. A candidate whose
+    `linked_checks` a final finding carries is dropped: that finding already
+    reports the gap.
     """
+    reported = _reported_checks(threats)
     raw_findings: list[dict] = []
     for sidecar in sidecars:
         if not isinstance(sidecar, dict):
@@ -2565,7 +2602,9 @@ def build_meta_findings(prior_yaml: dict | None, sidecars: list[dict | None]) ->
         findings = sidecar.get("findings") or []
         if not isinstance(findings, list):
             continue
-        raw_findings.extend(f for f in findings if isinstance(f, dict))
+        raw_findings.extend(
+            f for f in findings if isinstance(f, dict) and not (set(map(str, f.get("linked_checks") or [])) & reported)
+        )
 
     prior_findings = (prior_yaml or {}).get("meta_findings") or []
     if not raw_findings:
@@ -3210,8 +3249,10 @@ def main() -> int:
         for threat in threats:
             threat.pop("boundary_refs", None)
         sys.stderr.write(f"  TRUST_BOUNDARY_REF_WARN: disabled optional references for this run: {exc}\n")
-    security_controls = (sidecar_sc or {}).get("security_controls") or _carry_forward(
-        prior_yaml, "security_controls", ".security-controls.json"
+    security_controls = link_checked_controls(
+        (sidecar_sc or {}).get("security_controls")
+        or _carry_forward(prior_yaml, "security_controls", ".security-controls.json"),
+        threats,
     )
 
     # threat_ids per component (derived)
@@ -3359,7 +3400,7 @@ def main() -> int:
             doc["threat_hypotheses"] = threat_hypotheses
         elif prior_yaml and prior_yaml.get("threat_hypotheses"):
             doc["threat_hypotheses"] = prior_yaml["threat_hypotheses"]
-    meta_findings = build_meta_findings(prior_yaml, [sidecar_sca_findings, sidecar_known_bad_findings])
+    meta_findings = build_meta_findings(prior_yaml, [sidecar_sca_findings, sidecar_known_bad_findings], threats)
     if meta_findings:
         doc["meta_findings"] = meta_findings
     if prior_yaml and "security_architecture" in prior_yaml:

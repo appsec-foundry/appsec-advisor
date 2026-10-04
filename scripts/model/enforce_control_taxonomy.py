@@ -242,10 +242,12 @@ _DOMAIN_TOKEN_INDEX: tuple[tuple[tuple[str, ...], str], ...] = (
     (("dependabot",), "Operations Runtime and Supply Chain Controls"),
     (("renovate",), "Operations Runtime and Supply Chain Controls"),
     (("npm", "audit"), "Operations Runtime and Supply Chain Controls"),
-    # New control names emitted by scripts/model/emit_sca_practice.py (2026-05).
-    # The token-routing also catches these via "automated"+"sca" etc., but
-    # explicit entries keep the routing unambiguous when the LLM names a
-    # control as e.g. "SCA scanning" with extra adjectives.
+    # Control names emitted by scripts/model/emit_sca_practice.py. Its rows
+    # carry the canonical domain already; these entries keep the routing
+    # unambiguous when the LLM names such a control with extra adjectives.
+    (("build", "pipeline"), "Operations Runtime and Supply Chain Controls"),
+    (("static", "analysis"), "Operations Runtime and Supply Chain Controls"),
+    (("sast",), "Operations Runtime and Supply Chain Controls"),
     (("automated", "sca"), "Operations Runtime and Supply Chain Controls"),
     (("sca", "scanning"), "Operations Runtime and Supply Chain Controls"),
     (("dependency", "updates"), "Operations Runtime and Supply Chain Controls"),
@@ -269,7 +271,7 @@ def _strip_domain_commas(domain: str) -> str:
 
     The canonical titles in ``sections-contract.yaml`` are comma-free
     ("Operations Runtime and Supply Chain Controls"), but both Stage 1 and
-    ``analyzers/assess_supply_chain_controls.py`` have historically written the comma
+    the former ``analyzers/assess_supply_chain_controls.py`` producer have historically written the comma
     form. Comparing the comma-stripped shape lets the caller recognise those
     as the SAME domain instead of treating them as unknown."""
     return re.sub(r"\s{2,}", " ", domain.replace(",", " ")).strip()
@@ -398,7 +400,8 @@ def enforce(data: dict) -> tuple[dict, list[dict], list[dict]]:
             # Comma-only drift is stylistic, never semantic. The canonical §6
             # titles in sections-contract.yaml are comma-free, but Stage 1 —
             # and, until 2026-07-24, the deterministic
-            # analyzers/assess_supply_chain_controls.py producer — wrote the comma form
+            # analyzers/assess_supply_chain_controls.py producer (since folded into
+            # model/emit_sca_practice.py) — wrote the comma form
             # ("Operations, Runtime and Supply Chain Controls"). That form
             # matched nothing in `known_domain_strings`, so the final branch
             # below treated a perfectly valid domain as unknown and re-routed
