@@ -14,7 +14,8 @@ unaffected), and links back to the underlying T-NNN list via
 `derived_from`.
 
 Idempotent — re-running rewrites the meta_findings list from current
-threats[]. Hand-authored entries with `manual: true` are preserved verbatim.
+threats[]. Hand-authored entries with `manual: true` and sidecar entries that
+carry a `source` are preserved verbatim.
 
 Usage:
     python3 model/emit_meta_findings.py <output_dir>
@@ -103,11 +104,13 @@ def _emit_meta_findings(yaml_data: dict) -> list[dict]:
         if src and tid.startswith("T-"):
             by_source.setdefault(src, []).append(tid)
 
-    # Preserve hand-authored entries (if any).
+    # Preserve hand-authored entries and those another producer owns: the yaml
+    # builder fans in sidecar meta-findings (emit_sca_practice, known-bad libs)
+    # with a `source`, and this pass only rebuilds the source-count categories.
     existing = yaml_data.get("meta_findings") or []
     if not isinstance(existing, list):
         existing = []
-    manual = [m for m in existing if isinstance(m, dict) and m.get("manual")]
+    manual = [m for m in existing if isinstance(m, dict) and (m.get("manual") or m.get("source"))]
 
     out: list[dict] = list(manual)
     counter = _next_counter_after_manual(manual)

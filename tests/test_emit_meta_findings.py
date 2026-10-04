@@ -109,3 +109,22 @@ def test_missing_invalid_and_non_mapping_yaml_return_errors(tmp_path: Path, caps
 
 def test_usage_error() -> None:
     assert emf.main([]) == 2
+
+
+def test_sidecar_meta_findings_survive_and_own_ones_number_after_them(tmp_path: Path) -> None:
+    # The yaml builder fans in producer sidecars (source: sca-practice / known-bad-libs);
+    # this pass rebuilds only its own source-count categories.
+    sidecar = {"id": "MF-001", "title": "Lockfile hygiene: missing", "source": "sca-practice", "derived_from": []}
+    threats = [_threat("T-001", "dep-scan"), _threat("T-002", "dep-scan")]
+    _write_yaml(tmp_path, {"threats": threats, "meta_findings": [sidecar]})
+    assert emf.main([str(tmp_path)]) == 0
+    meta = _read_yaml(tmp_path)["meta_findings"]
+    assert meta[0] == sidecar
+    assert [m["id"] for m in meta] == ["MF-001", "MF-002"] and meta[1]["title"] == "Insufficient Patch Management"
+
+
+def test_a_sidecar_entry_alone_is_not_dropped(tmp_path: Path) -> None:
+    sidecar = {"id": "MF-001", "title": "Automated SCA scanning: missing", "source": "sca-practice", "derived_from": []}
+    _write_yaml(tmp_path, {"threats": [], "meta_findings": [sidecar]})
+    assert emf.main([str(tmp_path)]) == 0
+    assert _read_yaml(tmp_path)["meta_findings"] == [sidecar]
