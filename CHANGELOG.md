@@ -11,95 +11,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `scripts/analyzers/repo_scan.py` runs selected deterministic checks without a threat model, with severity filtering and endpoint and technology inventories; it and Security Score accept local repositories or HTTPS GitHub and GitLab URLs and export YAML or JSON.
-- `export-threat-model` and `authnz-review` accept `--slug`, naming their exports and pentest task files like `create-threat-model --slug` does.
-- Run Issues report as errors a delivered model with two findings for the same code location and weakness, a verified finding that does not say how it was verified, or an architect review that counts refuted findings as unresolved.
-- `.appsec/actors.yaml` accepts `legitimate_roles` to add or replace modelled roles whose login lives outside the repository, preserving their declared names and access levels.
-- The Management Summary verdict opens with the modelled components by tier and the external services they exchange data with.
-- `/appsec-advisor:analyze-threats` and `scripts/appsec-analyst-cli` run an opt-in, advisory threat analysis of a design question or a selected code change, with optional question packages, the Threat Modeling Manifesto profile, organization-required packages, and explicitly saved feature answers.
-- Repositories with a build pipeline get Figure 1b, which shows the build inputs, CI systems and release artifacts with the evidenced path of the most severe supply-chain attack, the attacker's goal and a link to the supply-chain controls, while Figure 1 becomes the runtime view Figure 1a.
-
-### Fixed
-
-- Full assessments no longer stop before STRIDE analysis when the threat-category taxonomy carries keys the per-component slice does not use.
-- Mass-assignment checks for JavaScript and Python no longer report code that only compares, logs or rejects a privileged request field such as `role`; they report it when the same block writes or persists it.
-- The architect review reads as reviewed when every finding got a decision; findings the reviewer left open are counted separately and their reasons appear in a manual-review card.
-- A finding that is unconfirmed and whose rating the architect left open gets its manual review first: the review card takes the finding's priority and its fix is scheduled one band lower.
-- Manual-review cards keep their "Manual review: …" title, and a review card no longer suppresses the fix card of a configuration finding.
-- One code location reported under sibling CWEs by two analyses, such as an `eval` flagged as CWE-95 and CWE-94, is now a single finding.
-- The architect review reviews only findings the report delivers: findings the evidence verifier refuted or that fall below the report's severity floor are excluded and no longer count as unresolved.
-- A selected worst-case impact answer from the interactive dialog now reaches every runtime component instead of only those the analysis chose; build and delivery components are covered only when the answer names them.
-- Private keys quoted in findings are now masked completely, key bytes included, and the secret-leak gate also checks `pentest-tasks.yaml` and flags key bytes left behind a redaction marker.
-- A CI/CD component modelled by the architecture analyst now owns the repository's unowned build and supply-chain files, such as nested Dockerfiles, so findings on them are attributed to it.
-- The Config/IaC scan no longer reports files git ignores, including the user's global ignores, and judges agent settings only in files the repository tracks.
-- GitHub Actions permission checks accept job-level permission blocks and explicit blocks without `contents`, point at the job that lacks permissions, and report a missing block once instead of twice.
-- Config/IaC findings carry the STRIDE category their check declares, such as Elevation of Privilege for a container that runs as root, instead of every one being Information Disclosure; a finding with no category is rejected.
-- The §2.2 container diagram draws one edge per component pair, protocol and authentication method, labelled with the most sensitive data classification it carries.
-- The §2.2 caption lists in-process interfaces without a trust transition, such as an embedded database, as internal interfaces instead of undrawn trust boundaries.
-- The §2.2 introduction no longer calls every box a separate runtime process when the model places components behind an internal interface; it names them as running inside their caller's process.
-- SBOM generation, image signing and Dependabot ecosystem coverage are judged once for the whole repository and only where they apply, so one workflow without an SBOM step no longer yields a finding when another generates one.
-- Findings about something missing name the files that were searched and are verified by re-running their check, instead of citing line 1 or line 0 of a file.
-- Components labelled `internal-network` that own HTTP handlers in the route inventory are now selected for STRIDE analysis as `internet-exposed (route-inventory)` instead of being excluded.
-- The AI / LLM Exposure section lists every LLM-tagged finding once per OWASP category under that category's name, with agentic ids on the finding they belong to, and no longer pulls in unrelated findings from the same component.
+- `/appsec-advisor:analyze-threats` and `scripts/appsec-analyst-cli` provide opt-in, advisory analysis of design questions and selected code changes, with [host verification still required before release](docs/threat-analyst.md).
+- `scripts/analyzers/repo_scan.py` runs standalone checks with severity filtering and endpoint and technology inventories, with local repositories, HTTPS GitHub/GitLab URLs, and YAML or JSON output supported by both the scanner and Security Score.
+- Repositories with a build pipeline get a separate supply-chain diagram, Figure 1b, linking build inputs and release artifacts to the most severe evidenced attack and the relevant controls.
+- `.appsec/actors.yaml` accepts `legitimate_roles` for declared user roles whose login lives outside the repository.
+- `export-threat-model` and `authnz-review` accept `--slug` for naming exports and pentest task files.
 
 ### Changed
 
-- The supply-chain controls in the Security Architecture rate SCA, dependency updates, lockfiles, CI installs, action and base-image pinning, install scripts and SAST from repository files and CI steps with their findings, and report a scanner that may run outside the repository as not evidenced instead of missing.
-- The Management Summary states how many of its findings are confirmed in code instead of calling them confirmed-exploitable, lists weakness classes on their own line, and names the reporting threshold in its method line; findings whose evidence was never verified, or whose cited line was merely found, no longer count as confirmed there or in the posture verdict.
-- Figure 1 reorders components within their layer when that clearly reduces line crossings, and says so in its legend; otherwise it keeps C-number order.
-
-- Architect review checks ratings and mitigations before prioritization as parallel agent jobs that also run in sandboxed sessions, preserves accepted corrections through report rebuilds without leaving a shared mitigation at the priority of a finding it no longer covers, and reports a review that covered no finding as not performed with its reason instead of running a later blanket prose pass.
-
-- The architecture report now includes a C4 context diagram (§2.1), deployment details from repository configuration (§2.2), and per-component control coverage (§2.3), replacing the separate Technology Architecture section (§2.4).
-- Figure 1 adds technology and authentication labels and evidenced AI and service roles and sizes its column gaps to their content, so it stays readable at page width; very large models also get linked detail views with a PDF appendix, and existing models need a new analysis for missing authentication evidence.
-- Figure 2 links numbered attack routes to findings, access prerequisites, weaknesses, and impact for each relevant attacker.
-- Malicious insiders and attackers holding a user's device now require opt-in through `enable:` in `.appsec/actors.yaml` or `actors.enable` in the organization profile and are otherwise listed as not assessed.
+- Malicious insiders and attackers holding a user's device require opt-in through `enable:` in `.appsec/actors.yaml` or `actors.enable` in the organization profile and are otherwise listed as not assessed.
 - `--stride-cap` and the quick profile never drop Critical or High findings.
-- Thorough assessments pass each component's threat analysis up to twice as many deterministic signals and source slices within the same token budget; quick and standard are unchanged.
-- Components with the LLM or agentic lens record a finding, a cited control, not applicable, or no evidence for every OWASP LLM or Agentic Top-10 item, and one malformed entry no longer discards the others.
-- Interactive runs save confirmed business context in `docs/security/business-context.md` with legacy-path fallback, and prioritised mitigations name the declared business-critical assets they protect.
-- Report sections use Figure 1's actor names consistently, and Identified Actors lists each actor's access, scenarios, and finding counts.
-- Verdicts assess evidenced concerns without implying release readiness, and completion summaries lead with the assessment and grouped P1 fixes, list each concern as its prerequisite-bearing scenario sentence, and show complete requirement counts.
-- Open team questions stay in the Management Summary, focus on unresolved assumptions and decisions rather than verification of individual findings, and no longer ask how much data matters where the business context declares no material harm.
-- `/appsec-advisor:report-error` investigates suspected plugin errors and prepares anonymised GitHub issue drafts for review and explicit publication approval; `--bundle-only` retains the local diagnostic workflow.
-- New aiscb installations load verified modules on demand, and `update-baseline` uses compatible signed upstream installers while preserving installation scope and mode.
-- `create-threat-model` no longer requires the `Bash(*)` allow-list when `permissions.defaultMode` is `auto` or `bypassPermissions`, and permission failures distinguish missing from unreadable settings and provide a usable `setup-target` command.
-- `/appsec-advisor:help` shows a grouped quick start with the full reference behind `--all`, and the session banner shows a threat model only when one exists or a scan runs, including from subdirectories.
-- The configuration scan checks Kubernetes manifests, Helm values, Terraform, and Compose environment secrets and exposed data ports, and reports detected IaC files it has no checks for.
-- Repositories with Compose or Kubernetes deployments account for every deployed workload as a component or a stated exclusion, and flows between services on different deployment networks become trust-boundary candidates.
-- The deployment figure treats each Terraform root directory as its own environment.
+- Thorough assessments use more scanner evidence and source excerpts within the same token budget.
+- Interactive runs ask users to confirm the application's purpose and worst plausible business impact, then save the answers in `docs/security/business-context.md` for use in scope and prioritization, with fallback to the legacy path.
+- Components analysed with the LLM or agentic lens receive an explicit coverage assessment for every OWASP LLM or Agentic Top-10 item.
+- The configuration scan covers Kubernetes, Helm, Terraform and Compose secrets and exposed data ports, and identifies IaC files it cannot check.
+- Compose and Kubernetes workloads are accounted for as components or explicit exclusions, including deployment networks that may form trust boundaries.
+- Architect review checks finding ratings and mitigations before prioritization and preserves accepted corrections when reports are rebuilt.
+- The Management Summary identifies the modelled system and distinguishes findings confirmed in code from unverified findings without claiming exploitability or release readiness.
+- Completion summaries lead with the assessment and grouped P1 fixes, while open team questions focus on unresolved business and deployment decisions.
+- The architecture report combines C4 context, deployment details and component control coverage in §2.1–§2.3, replacing the separate Technology Architecture section.
+- Figure 1 adds technology and authentication labels, with linked detail views and a PDF appendix for large models; existing models need a new analysis to populate missing authentication evidence.
+- Figure 2 connects each attack route to its attacker, access prerequisites, findings and impact.
+- Supply-chain controls are assessed from repository and CI evidence, with tools that may run elsewhere marked as not evidenced rather than missing.
+- `/appsec-advisor:report-error` investigates suspected plugin errors and prepares anonymised GitHub issue drafts for explicit publication approval; `--bundle-only` keeps the local diagnostic workflow.
+- New aiscb installations load verified modules on demand, and `update-baseline` uses compatible signed installers while preserving installation scope and mode.
+- `create-threat-model` accepts `auto` and `bypassPermissions` permission modes without a separate `Bash(*)` allow-list and gives actionable guidance when settings cannot be used.
+- `/appsec-advisor:help` opens with a quick start and keeps the full reference behind `--all`.
 
 ### Fixed
 
-- A repository whose deployment configuration defines workloads no longer aborts the run after actor discovery; a topology too large for the architecture context is delivered in part and the omitted workloads are reported.
-- A repository with more than five preliminary components, or with an overlong recon heading, route, role-unit path, or deployment workload, no longer aborts the run after reconnaissance; entries that cannot be projected are left out and counted.
-- The trust-boundary catalogue lists an internet-facing endpoint that has no control of its own as a separate crossing instead of showing it behind the control of the code that hosts it.
-- Components whose files sit directly in a folder that another component claims with a pattern like `routes/**/*.ts` are recognised as part of that deployable, so their uncontrolled internet crossings share one catalogue row.
-- A component whose analysis the model declines no longer aborts the run: it is reported as only partly analysed, retries name the refusal instead of a turn budget and continue from the categories already saved, and waits end as soon as every analyzer has stopped.
-- Findings and abuse cases use consistent, policy-capped ratings, and abuse cases are ordered by verification status and risk; a code-verified attack chain raises its findings only to the goal impact its case declares, also when evidence sampling left a step ambiguous.
-- Config and IaC findings reach the report again, and rejected configuration scans appear in Run Issues.
-- Route authentication checks resolve imported handlers and bind guards to their handler, application and registration order, so unrelated routes no longer appear protected.
-- `authnz-review` retains scanner findings, reviews unresolved operation permissions, detects disabled JWT claim validation, avoids unsupported authentication and IDOR conclusions, and fails its gate on incomplete analysis.
-- Full assessments confirm object-level authorization gaps and entity mass assignment again, and no longer merge stale results that an earlier run or `authnz-review --save` left in the output directory.
-- Finding deduplication preserves the highest risk, case-sensitive source paths, evidence, and scenario references, and neither a verified abuse-case step, a configuration check also reported by threat analysis, nor a source-scan finding attributed to the component that owns its file duplicates the finding it belongs to.
-- Code that reads JWT claims without any signature check is reported as its own finding instead of being folded into a verifier's missing-algorithm-allowlist finding whose fix does not cover it.
-- Security Score withholds a score when a required scanner fails or returns invalid output while preserving available findings and diagnostics.
-- Scanners retain application source coverage and distinguish effective authentication, LLM guards, field annotations, and supply-chain controls from misleading signals without following external symlinks.
-- Findings provide clearer injection and SSRF evidence and more accurate weakness classifications and links, with fewer safe-code false positives.
-- AI analysis retains component-specific RAG and agentic evidence and tags, checks model-context entry paths and tool identities, and applies transport-specific MCP checks without misclassifying unrelated LLM findings as agentic risks.
-- Actor discovery preserves confirmed administrators and relevant attackers without inventing unnecessary roles or treating unauthenticated paths as signed-in access.
-- Detection gaps no longer name an attacker, and attack vectors match the attributed attacker, including build-time supply-chain attacks.
-- Runs no longer abort when consolidated findings move to their owning application component or when a component spans more than 32 paths, whose remaining files are now analysed too, and no longer stall and curtail other analyses when agents exhaust their turn budget.
-- STRIDE validation retries receive the exact errors to repair, a slow analysis is never retried while it still runs, and aborted runs name the failed rule instead of reporting missing output.
-- Architecture diagrams preserve component connections, avoid duplicate databases, identity providers and user roles, keep the project name when a report moves, align finding counts with the report, and identify each scenario's attacker, with build-pipeline attacks shown as supply-chain attacks.
-- Architecture enrichment fills Security Architecture prose and routes remaining placeholders to repair, while self-checks catch inconsistent flows and asset locations before later validation failures.
-- Management summaries state the analysis method and coverage limits concisely and use short finding references for unresolved questions.
-- Dependency checks recognise Gradle dependencies declared in map notation (`group:`, `name:`, `version:`).
-- Run logs retain earlier events, completion summaries appear once and explain missing cost measurements, run costs and budget projections no longer count sub-agent tokens twice, and the run plan warns up front when requested PDF or HTML exports cannot complete in the environment.
-- Plugin update checks compare against released versions instead of advertising development builds.
-- STRIDE analysis receives the most severe scanner signals when a component exceeds the per-class evidence limit, instead of an arbitrary subset.
-- Run Issues report a review stage that covered no finding and a Critical or High count that fell below half of the previous comparable run.
-- The Findings Register states when its total counts findings differently from the Management Summary's risk distribution.
+- Private keys are fully redacted from findings, and pentest task exports are checked for leaked secrets.
+- Config and IaC findings reach reports again with the correct STRIDE category and component attribution.
+- Full assessments confirm object-level authorization gaps and entity mass assignment again without importing stale results from earlier runs.
+- Route authentication checks follow imported handlers and apply guards only to the routes they protect, so unrelated endpoints no longer appear authenticated.
+- `authnz-review` retains scanner findings, checks unresolved operation permissions and disabled JWT claim validation, and fails its gate when analysis is incomplete.
+- Security Score withholds a score when a required scanner fails or returns invalid output, while retaining available findings and diagnostics.
+- Runs no longer abort on large component inventories, deployment topology or threat-category metadata, and report any context omitted because of size limits.
+- Declined analyses and exhausted agent budgets leave explicit coverage gaps without blocking other analyses, and retries resume saved work without duplicating a running attempt.
+- Duplicate findings from different analyses are merged without losing the highest risk, evidence or scenario references, while distinct JWT signature failures remain separate.
+- Finding and abuse-case ratings respect policy limits, and verified attack chains raise finding severity only to their declared goal impact.
+- Architect review excludes refuted and below-threshold findings, explains unresolved decisions, and schedules manual review before fixes for findings whose evidence and rating remain unsettled.
+- Config/IaC checks respect Git ignores and assess only tracked agent settings, while GitHub Actions checks recognise valid job-level permissions.
+- SBOM, image-signing and dependency-update checks account for coverage across the repository, and findings about missing controls identify the files searched.
+- Mass-assignment checks exclude code that only reads or rejects privileged fields.
+- HTTP handlers are included in STRIDE analysis even when their component is labelled internal, and large components retain their source coverage with the most severe scanner evidence first.
+- A confirmed worst-case business impact applies to every runtime component, with build and delivery components included only when named in the answer.
+- LLM analysis retains component-specific RAG and agentic evidence, and the AI / LLM Exposure section includes only findings with the relevant OWASP tags.
+- Architecture diagrams and the trust-boundary catalogue distinguish unprotected endpoints from their hosts' controls and in-process interfaces from separate services.
+- Security Architecture includes all assessed controls and lists findings under the controls they concern.
+- Run Issues flag duplicate findings, missing verification evidence, incomplete review coverage and sharp drops in Critical or High findings between comparable runs.
+- Run logs retain earlier events, and cost totals no longer double-count sub-agent tokens or conceal missing measurements.
+- Run plans warn when requested PDF or HTML exports cannot complete in the environment.
+- Plugin update checks advertise released versions only.
 
 ## 0.6.0-beta.3 (2026-09-14)
 
