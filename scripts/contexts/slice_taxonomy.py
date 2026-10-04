@@ -27,6 +27,7 @@ if not __package__:
 
 import argparse
 import copy
+import functools
 import os
 import re
 import sys
@@ -195,10 +196,37 @@ def detect_profile(component_type: str, component_id: str) -> dict | None:
 # ---------------------------------------------------------------------------
 
 
+_SLICE_SCHEMA_PATH = Path(__file__).resolve().parents[2] / "schemas" / "threat-taxonomy-slice.schema.yaml"
+
+
+@functools.cache
+def _slice_fields() -> tuple[frozenset[str], frozenset[str]]:
+    top = _yaml_io.load_yaml(_SLICE_SCHEMA_PATH, default={})["properties"]
+    return frozenset(top), frozenset(top["categories"]["items"]["properties"])
+
+
+def project_threat_slice(data: dict) -> dict:
+    """Keep only the keys the closed slice schema declares, at top level and per category.
+
+    A wholesale copy lets any new source key abort every run; source-only keys
+    such as finding_type_decides stay in the source. Source key order is kept.
+    """
+    top_fields, item_fields = _slice_fields()
+    out = {key: copy.deepcopy(value) for key, value in data.items() if key in top_fields}
+    if isinstance(out.get("categories"), list):
+        out["categories"] = [
+            {key: value for key, value in category.items() if key in item_fields}
+            if isinstance(category, dict)
+            else category
+            for category in out["categories"]
+        ]
+    return out
+
+
 def slice_threat_categories(data: dict, th_ids: set) -> dict:
     """Keep only the specified TH-IDs in the categories list.
     cwe_to_th is filtered to entries whose value intersects th_ids."""
-    out = copy.deepcopy(data)
+    out = project_threat_slice(data)
     out["categories"] = [c for c in out.get("categories", []) if c["id"] in th_ids]
     if "cwe_to_th" in out:
         out["cwe_to_th"] = {
@@ -326,7 +354,9 @@ def main() -> int:
         dst = os.path.join(slice_dir, filename)
         try:
             data = load_yaml(src)
-            if passthrough:
+            if passthrough and key == "threats":
+                sliced = project_threat_slice(data)
+            elif passthrough:
                 sliced = copy.deepcopy(data)
             elif key == "threats":
                 sliced = slice_threat_categories(data, th_ids)

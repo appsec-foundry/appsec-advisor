@@ -17,6 +17,7 @@ import contexts.build_architecture_analysis_context as architecture_context
 import contexts.build_post_stride_contexts as post_stride_contexts
 import contexts.build_stride_evidence_bundles as evidence_bundles
 import contexts.context_routing as context_routing
+import contexts.slice_taxonomy as slice_taxonomy
 import orchestrator.orchestration_controller as controller
 import orchestrator.stride_dispatch_waves as stride_waves
 import orchestrator.wait_agent_calls as wait_agent_calls
@@ -3469,15 +3470,24 @@ def test_stride_plan_repair_must_name_the_attempt_before_the_dispatched_one(tmp_
         controller._validate_stride_component_context_plan(output, job, [receipt], {"stride_profile_label": "full"})
 
 
-def test_context_v2_taxonomy_slice_is_bounded_and_fingerprinted(tmp_path):
+_UNMATCHED_COMPONENT = "zz-unmatched-component"
+
+
+@pytest.mark.parametrize(
+    "component_id",
+    [profile["keywords"][0] for profile in slice_taxonomy.COMPONENT_PROFILES] + [_UNMATCHED_COMPONENT],
+)
+def test_context_v2_taxonomy_slice_is_bounded_and_fingerprinted(tmp_path, component_id):
+    # The unmatched id exercises the passthrough slice, which carries every category.
+    assert bool(slice_taxonomy.detect_profiles(component_id, component_id)) is (component_id != _UNMATCHED_COMPONENT)
     output = tmp_path / "out"
     output.mkdir()
 
-    relative, digest = controller._context_v2_taxonomy_slice(output, "backend-api")
+    relative, digest = controller._context_v2_taxonomy_slice(output, component_id)
 
     path = output / relative
     payload = path.read_bytes()
-    assert relative == ".taxonomy-slices/backend-api/threat-category-taxonomy.yaml"
+    assert relative == f".taxonomy-slices/{component_id}/threat-category-taxonomy.yaml"
     assert len(payload) <= 32_768
     assert hashlib.sha256(payload).hexdigest() == digest
     assert b"cwe_to_th:" in payload

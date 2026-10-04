@@ -2308,6 +2308,34 @@ SOURCE_TESTS = {
         requirements_verification
         stride_outputs
     """),
+    "data/threat-category-taxonomy.yaml": _tests("""
+        agent_definitions
+        check_target_specificity
+        compose_threat_model
+        context_routing
+        emit_general_mitigation_titles
+        merge_threats
+        orchestration_controller
+        p1_renderer_correctness
+        requirements_verification
+        review_threat_model
+        schemas
+        slice_taxonomy
+        taxonomy_coverage
+        validate_intermediate
+    """),
+    "schemas/threat-category-taxonomy.schema.yaml": _tests("""
+        check_target_specificity
+        requirements_verification
+        schemas
+    """),
+    "schemas/threat-taxonomy-slice.schema.yaml": _tests("""
+        check_target_specificity
+        orchestration_controller
+        requirements_verification
+        schemas
+        slice_taxonomy
+    """),
     "data/context-routing-bindings.json": _tests("""
         build_abuse_case_contexts
         build_architecture_analysis_context

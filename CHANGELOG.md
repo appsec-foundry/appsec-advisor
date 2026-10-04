@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Full assessments no longer stop before STRIDE analysis when the threat-category taxonomy carries keys the per-component slice does not use.
 - Mass-assignment checks for JavaScript and Python no longer report code that only compares, logs or rejects a privileged request field such as `role`; they report it when the same block writes or persists it.
 - The architect review reads as reviewed when every finding got a decision; findings the reviewer left open are counted separately and their reasons appear in a manual-review card.
 - A finding that is unconfirmed and whose rating the architect left open gets its manual review first: the review card takes the finding's priority and its fix is scheduled one band lower.

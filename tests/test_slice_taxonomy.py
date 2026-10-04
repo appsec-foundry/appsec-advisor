@@ -374,3 +374,42 @@ class TestCli:
         )
         assert res.returncode == 0
         assert "database profile" in res.stdout
+
+
+# ---------------------------------------------------------------------------
+# The threats slice is a projection onto its closed schema
+# ---------------------------------------------------------------------------
+_ROOT = Path(__file__).resolve().parents[1]
+
+
+class TestThreatSliceProjection:
+    def _slice(self, monkeypatch, tmp_path, component: str, inject: str) -> dict:
+        taxonomy = yaml.safe_load((_ROOT / "data" / "threat-category-taxonomy.yaml").read_text())
+        target = taxonomy if inject == "top" else taxonomy["categories"][0]
+        target["undeclared_key"] = {"nested": True}
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / "threat-category-taxonomy.yaml").write_text(yaml.dump(taxonomy, sort_keys=False))
+        out_dir = tmp_path / "out"
+        argv = [component, str(out_dir), "--component-id", component, "--data-dir", str(data_dir)]
+        monkeypatch.setattr(st.sys, "argv", ["contexts/slice_taxonomy.py", *argv, "--taxonomies", "threats"])
+        st.main()
+        path = out_dir / ".taxonomy-slices" / component / "threat-category-taxonomy.yaml"
+        return yaml.safe_load(path.read_text())
+
+    @pytest.mark.parametrize("component", ["backend", "zz-unmatched-component"])
+    @pytest.mark.parametrize("inject", ["top", "category"])
+    def test_undeclared_source_keys_never_reach_the_slice(self, monkeypatch, tmp_path, component, inject):
+        from jsonschema import Draft202012Validator
+
+        out = self._slice(monkeypatch, tmp_path, component, inject)
+        schema = yaml.safe_load((_ROOT / "schemas" / "threat-taxonomy-slice.schema.yaml").read_text())
+        errors = [error.message for error in Draft202012Validator(schema).iter_errors(out)]
+        assert not errors
+
+    def test_source_only_keys_stay_out_of_the_slice(self):
+        data = {"schema_version": 1, "categories": [{"id": "TH-01", "extra": 1}], "finding_type_decides": ["CWE-345"]}
+        out = st.project_threat_slice(data)
+        assert out == {"schema_version": 1, "categories": [{"id": "TH-01"}]}
+        assert data["finding_type_decides"] == ["CWE-345"]
+        assert data["categories"][0]["extra"] == 1
