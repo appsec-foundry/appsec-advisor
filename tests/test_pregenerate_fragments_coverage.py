@@ -461,6 +461,13 @@ class TestHelperBranches:
         out = pf._attack_surface_notes({"notes": "see (T-001)", "linked_threats": ["T-001"]})
         assert "F-001" in out
 
+    def test_attack_surface_notes_reader_wording(self):
+        # Inventory tags stay in the YAML; §5 shows reader wording and no handler locator.
+        out = pf._attack_surface_notes({"notes": "public-by-design; handler: server.ts:426"})
+        assert out == "Public by design"
+        out = pf._attack_surface_notes({"notes": "Management surface; authorization-review-required"})
+        assert out == "Management surface; Authorization not confirmed (review)"
+
     def test_attack_surface_notes_non_dict(self):
         assert pf._attack_surface_notes("nope") == ""  # type: ignore[arg-type]
 

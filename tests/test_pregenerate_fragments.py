@@ -3905,7 +3905,8 @@ class TestOverviewVerdictBranches:
         md = pf.gen_security_architecture_v2(data)
         row = next(l for l in md.splitlines() if l.startswith("| [") and "Identity and Authentication" in l)
         assert "🟢 Adequate" in row
-        assert "no routed findings" in row
+        assert "no findings in this category" in row
+        assert "routed" not in row
 
     def test_weak_no_controls_routed_finding(self):
         # A finding routes to §6.4 (CWE-862 authz) but no control catalogued there.
@@ -4130,6 +4131,17 @@ def test_assessment_intro_states_the_method_and_the_model_size():
         "It reconstructs the implemented architecture (2 components and 1 external service, see "
         "[§2](#2-architecture-diagrams)) and identifies threats and control gaps in it."
     )
+
+
+def test_assessment_intro_states_the_confirmed_use_case_in_plain_words():
+    model = {
+        "meta": {"project_name": "Shop"},
+        "components": [{"id": "api", "name": "Order API"}],
+        "business_context_trace": {"confirmed_use_case": "a training shop [link](x) for `CTF` practice."},
+    }
+    intro = pf.assessment_intro(model)
+    assert intro.endswith(" Confirmed use case: a training shop linkx for CTF practice.")
+    assert "Confirmed use case" not in pf.assessment_intro({**model, "business_context_trace": {"status": "skipped"}})
 
 
 @pytest.mark.parametrize(
@@ -4590,4 +4602,7 @@ def test_a_section_whose_controls_are_all_missing_says_so_instead_of_inviting_an
     }
     partial = dict(missing, control="Automated SCA scanning", effectiveness="Partial")
     assert implemented([missing]).strip() == "No control in this category is evidenced in the repository."
-    assert "NARRATIVE_PLACEHOLDER" in implemented([missing, partial])
+    # Only the controls that are in place are named; locators and the raw
+    # implementation text stay out of the inventory line.
+    located = dict(partial, implementation="Detected in scope: `.github/workflows/ci.yml:33`")
+    assert implemented([missing, located]).strip() == "Automated SCA scanning."

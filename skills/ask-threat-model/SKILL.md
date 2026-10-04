@@ -311,7 +311,7 @@ Two honesty rules here, both load-bearing:
 `W-NNN`) · §8 Findings Register (the individual findings `F-NNN`, as
 severity-grouped cards) · §9 Abuse Cases (verifiable abuse-scenario chains) ·
 §10 Mitigation Register (the fixes `M-NNN`, priority-ordered) · §11 Out of Scope
-· Appendices (Run Statistics, Vektor Taxonomy). "Where do I find X?" → a
+· Appendices (Run Statistics, Attack Vector Taxonomy). "Where do I find X?" → a
 specific finding lives in **§8**, its fix in **§10**, the big picture in the
 **Management Summary**. Depth/section presence varies by scan depth
 (`quick|standard|thorough`).

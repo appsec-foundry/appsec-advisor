@@ -793,3 +793,15 @@ def test_html_header_match_decodes_entities_before_comparing():
     out, _ = prose.apply_code_formatting(table)
     assumption_cell = re.findall(r"<td[^>]*>(.*?)</td>", out, re.S)[4]
     assert "<code>" not in assumption_cell and "`" not in assumption_cell
+
+
+def test_span_after_br_tag_is_not_merged_into_the_previous_span():
+    # The text between two spans in a table cell can be a bare `<br/>`; the
+    # dotted-split repair must not pair ticks across it.
+    for cell, span in [
+        ("| a | `x`<br/>.gitlab-ci.yml |", "`.gitlab-ci.yml`"),
+        ("| a | `x`<br/>`.gitlab-ci.yml` |", "`.gitlab-ci.yml`"),
+    ]:
+        out, _ = prose.apply_code_formatting(cell)
+        assert span in out
+        assert "`-" not in out and out.count("`") % 2 == 0

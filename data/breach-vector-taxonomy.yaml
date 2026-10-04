@@ -13,7 +13,7 @@
 # Consumers:
 #   - deterministic report pipeline (emits Vektor cells)
 #   - appsec-architect-reviewer (Check 8 Attack Path — uses vektor as entry label)
-#   - threat-model.md Appendix "Vektor Taxonomy" (renders one section per entry)
+#   - threat-model.md Appendix "Attack Vector Taxonomy" (renders one section per entry)
 
 schema_version: 1
 
@@ -103,7 +103,7 @@ vectors:
       - "AF-002 All secrets embedded in source code"
 
   - id: n-a
-    label: "n/a"
+    label: "Architectural (no runtime entry point)"
     breach_distance: null
     attacker_position: "Architectural / meta-finding — no runtime entry point, the finding describes a design defect aggregating multiple code-level findings"
     preconditions:

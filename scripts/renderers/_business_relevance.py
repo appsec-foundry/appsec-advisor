@@ -21,6 +21,8 @@ if not __package__:
 
 import re
 
+import model.build_plane as build_plane
+
 import renderers._severity_rollup as _severity_rollup
 
 _UNSAFE_NAME_CHARS_RE = re.compile(r"[\x00-\x1f\x7f\[\]()<>`*_|\\]")
@@ -100,13 +102,27 @@ def mitigation_note(finding_ids: list, relevant: dict[str, tuple[str, ...]]) -> 
 
 def verdict_context_note(yaml_data: dict) -> str:
     """Disclose declared no-harm scope without changing technical concern levels."""
-    components = {c["id"] for c in yaml_data.get("components") or [] if isinstance(c, dict) and c.get("id")}
+    rows = [c for c in yaml_data.get("components") or [] if isinstance(c, dict) and c.get("id")]
+    components = {c["id"] for c in rows}
     covered = no_harm_components(yaml_data) & components
     if not covered:
         return ""
+    # The impact answer is given for the application. Build components only
+    # take it when the answer names them (business_impact_scope.propagate), so
+    # "7 of 8 components" read as an unexplained exception: say what it covers.
+    uncovered_build = [c for c in rows if c["id"] not in covered and build_plane.is_build_component(c)]
+    if covered | {c["id"] for c in uncovered_build} == components:
+        scope = "for the application under the stated use-case assumptions"
+        if uncovered_build:
+            names = ", ".join(
+                " ".join(_UNSAFE_NAME_CHARS_RE.sub("", str(c.get("name") or c["id"])).split())[:60]
+                for c in uncovered_build
+            )
+            scope += f"; it does not extend to the build and delivery pipeline ({names})"
+    else:
+        scope = f"for {len(covered)} of {len(components)} modeled components under the stated use-case assumptions"
     return (
-        f"Declared business impact: no material harm for {len(covered)} of {len(components)} "
-        "modeled components under the stated use-case assumptions. Finding severities and the verdict "
+        f"Declared business impact: no material harm {scope}. Finding severities and the verdict "
         "retain their technical security concern levels; evidence of consequences outside those "
         "assumptions still requires review."
     )

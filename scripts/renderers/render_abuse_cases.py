@@ -550,11 +550,6 @@ def _case_markdown(m: dict) -> str:
     if m["blocking_mitigations"]:
         out.append("**Blocking mitigations**")
         out.append("")
-        out.append(
-            "Implementing any single mitigation below severs the chain at the "
-            "named step, so the end-to-end abuse can no longer complete:"
-        )
-        out.append("")
         # Map each finding id to its title so the "Addresses" links carry a
         # short title rather than a bare ID (2026-06-02 user request).
         fid_title = {r["fid"]: r["finding_title"] for r in m["rows"] if r["fid"]}
@@ -609,6 +604,11 @@ _VERIFICATION_GROUPS = {
     "mitigated": "Mitigated scenarios",
 }
 
+# Stated once for the section instead of under every case's list.
+_BLOCKING_NOTE = (
+    "_Blocking mitigations: implementing any single mitigation listed under a case "
+    "severs the chain at the named step, so the end-to-end abuse can no longer complete._"
+)
 _LEGEND = (
     "_Verdict: ⚠ Fully viable — no effective control blocks this chain · "
     "◐ Partially blocked — at least one step has a compensating control but the "
@@ -646,6 +646,8 @@ def render_fragment(models: list[dict], catalog_rows: list[dict] | None = None) 
             if group:
                 parts += [f"**{label}**", "", _summary_table(group), ""]
         parts += [_LEGEND, ""]
+        if any(m["blocking_mitigations"] for m in models):
+            parts += [_BLOCKING_NOTE, ""]
         for m in models:
             parts.append("---")
             parts.append("")

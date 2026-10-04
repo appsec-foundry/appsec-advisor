@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The report drops internal tool wording, lists implemented controls and instance locations instead of chaining them, gives every fix a distinct title, and states the confirmed use case in the Management Summary.
 - Malicious insiders and attackers holding a user's device require opt-in through `enable:` in `.appsec/actors.yaml` or `actors.enable` in the organization profile and are otherwise listed as not assessed.
 - `--stride-cap` and the quick profile never drop Critical or High findings.
 - Thorough assessments use more scanner evidence and source excerpts within the same token budget.

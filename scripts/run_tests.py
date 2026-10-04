@@ -449,6 +449,7 @@ GROUPS = {
     "context": _tests("""
         business_context_preview
         business_impact_scope
+        business_use_case
         abuse_case_gate
         abuse_case_verdicts
         abuse_cases_schema
@@ -2068,6 +2069,12 @@ SOURCE_TESTS = {
     "scripts/contexts/business_impact_scope.py": _tests("""
         business_impact_scope
         orchestration_controller
+    """),
+    "scripts/contexts/business_use_case.py": _tests("""
+        build_threat_model_yaml
+        business_use_case
+        orchestration_controller
+        threat_fixture
     """),
     "scripts/contexts/load_business_context.py": _tests("""
         aggregate_run_issues

@@ -1138,10 +1138,28 @@ def _declared_asset_names(skill_cfg: dict, repo_root: Path, assets: list) -> lis
     return list(dict.fromkeys(load_business_context.declared_names(text, names)))[:_MAX_DECLARED_ASSET_NAMES]
 
 
+def _confirmed_use_case(skill_cfg: dict, repo_root: Path) -> str:
+    """The dialog-confirmed use case in plain, capped words; the one business statement the report repeats."""
+    from contexts.business_use_case import confirmed_use_case
+
+    path = load_business_context.effective_source(repo_root, Path(skill_cfg["output_dir"]))
+    if path is None:
+        return ""
+    try:
+        return confirmed_use_case(path.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return ""
+
+
 def build_business_context_trace(
     skill_cfg: dict, repo_root: Path, applied_finding_count: int, assets: list | None = None
 ) -> dict[str, Any]:
-    """Build the durable, non-prose trace of business-context use."""
+    """Build the durable trace of business-context use.
+
+    It copies no business prose except ``confirmed_use_case``: the use case the
+    user confirmed in the dialog, reduced to plain words and capped
+    (``contexts.business_use_case``).
+    """
     if skill_cfg.get("skip_business_context"):
         return {
             "status": "skipped",
@@ -1191,6 +1209,7 @@ def build_business_context_trace(
         "applied_finding_count": applied_finding_count,
         "declared_asset_names": _declared_asset_names(skill_cfg, repo_root, assets or []),
         **({"answered_questions": resolved_answers} if resolved_answers else {}),
+        **({"confirmed_use_case": use_case} if (use_case := _confirmed_use_case(skill_cfg, repo_root)) else {}),
     }
 
 

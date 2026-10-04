@@ -2601,12 +2601,12 @@ class TestInstancesCard:
         )
         card = self._card(tmp_path, t)
         assert "Instances (2):" in card
-        assert "lib/insecurity.ts:191" in card
-        assert "routes/chatbot.ts:248" in card
+        assert "`lib/insecurity.ts`: 191" in card
+        assert "`routes/chatbot.ts`: 248" in card
         assert "#### F-001 · Insecure JWT Verification" in card
         assert "**Location:** Multiple locations (2)" in card
 
-    def test_mixed_severity_shows_per_instance_dots(self, tmp_path):
+    def test_mixed_severity_shows_no_per_instance_dots(self, tmp_path):
         t = self._systemic_threat(
             [
                 {"file": "lib/insecurity.ts", "line": 191, "severity": "Critical"},
@@ -2614,8 +2614,8 @@ class TestInstancesCard:
             ]
         )
         card = self._card(tmp_path, t)
-        assert "🔴 `lib/insecurity.ts:191`" in card
-        assert "🟠 `routes/chatbot.ts:248`" in card
+        line = next(ln for ln in card.splitlines() if "Instances (2):" in ln)
+        assert "🔴" not in line and "🟠" not in line
 
     def test_uniform_severity_no_dots(self, tmp_path):
         t = self._systemic_threat(
@@ -2625,8 +2625,7 @@ class TestInstancesCard:
             ]
         )
         card = self._card(tmp_path, t)
-        assert "Instances (2):" in card
-        assert "🟠 `server.ts:310`" not in card  # uniform severity → plain locations
+        assert "**Instances (2):** `server.ts`: 310, 311" in card  # grouped by file
 
     def test_high_cardinality_instances_capped_with_more_suffix(self, tmp_path):
         # A systemic finding with many instances (e.g. a component with a dozen
@@ -2640,8 +2639,8 @@ class TestInstancesCard:
         card = self._card(tmp_path, t)
         assert "Instances (12):" in card  # true total surfaced
         assert "… (+4 more)" in card  # 12 - 8 cap = 4 collapsed
-        assert "routes/r08.ts:8" in card  # 8th shown
-        assert "routes/r09.ts:9" not in card  # 9th collapsed into "+more"
+        assert "`routes/r08.ts`: 8" in card  # 8th shown
+        assert "routes/r09.ts" not in card  # 9th collapsed into "+more"
 
 
 class TestWeaknessBasisBreakdown:

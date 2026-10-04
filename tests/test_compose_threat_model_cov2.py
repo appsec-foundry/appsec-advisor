@@ -763,7 +763,8 @@ class TestRenderAppendixRunStatistics:
         assert "| Invocation |" in out
         # no per-stage / agent-dispatch / tokens blocks
         assert "### Per-Stage Breakdown" not in out
-        assert "No per-phase timing captured" in out
+        assert "Per-Phase Duration Breakdown" not in out
+        assert "No per-phase timing captured" not in out
         # --stride-cap row omitted when no cap is active
         assert "STRIDE per-category cap" not in out
 
@@ -779,6 +780,22 @@ class TestRenderAppendixRunStatistics:
         )
         out = compose._render_appendix_run_statistics(ctx, None, {})
         assert "| Reasoning models | STRIDE sonnet, triage opus, merger sonnet |" in out
+
+    def test_orchestrator_row_not_taken_from_stride_model(self, tmp_path):
+        # meta.model carries the STRIDE model; it must not be labelled as the
+        # orchestrator (session) model.
+        ctx = _bare_ctx(tmp_path, {"meta": {"model": "opus"}})
+        out = compose._render_appendix_run_statistics(ctx, None, {})
+        assert "Orchestrator model" not in out
+
+    def test_grouped_stage_row_names_every_agent(self, tmp_path):
+        (tmp_path / ".stage-stats.jsonl").write_text(
+            '{"stage": 2, "name": "Render", "agent": "appsec-advisor:appsec-secarch-renderer,'
+            'appsec-advisor:appsec-ms-renderer", "model": "s", "duration_ms": 1000, "tool_uses": 1, "tokens": 10}\n'
+        )
+        ctx = _bare_ctx(tmp_path, {"meta": {}})
+        out = compose._render_appendix_run_statistics(ctx, None, {})
+        assert "| appsec-secarch-renderer, appsec-ms-renderer |" in out
 
     def test_reasoning_models_row_omitted_when_unknown(self, tmp_path):
         ctx = _bare_ctx(tmp_path, {"meta": {}})
@@ -1047,6 +1064,8 @@ class TestRenderMitigationRegisterBranches:
         assert "Prevents CWEs" in rendered
         # extra-snippet block label for the second CWE class
         assert "Additional example implementation" in rendered
+        # A catalog snippet never claims to be code from the reported location.
+        assert "_Generic CWE-89 pattern, not code from this repository:_" in rendered
 
     def test_operational_strengths_all_demoted_empty_banner(self, tmp_path):
         out = _prepare_output_dir(tmp_path)

@@ -21,9 +21,11 @@ Use decision `answered` when the raw file contains either substantive answer, `u
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" \
   complete-preflight --output-dir "$OUTPUT_DIR" --run-id "$APPSEC_RUN_ID" \
-  --context-answer <decision> [--impact-choice <choice>]
+  --context-answer <decision> [--impact-choice <choice>] [--use-case-choice <choice>]
 ```
 
 Add `--impact-choice no-material-harm` when the user selected the no-material-harm option, `--impact-choice declared-harm` when they selected one of your proposed outcome options. Omit it for a free-text answer, unknown, or skip. The question concerns the whole application, so a selected option applies to every runtime component; the controller applies it before analysis.
+
+Add `--use-case-choice confirmed` when the user chose **Yes, assess this use case**, `--use-case-choice corrected` when they described a different use case in free text. Omit it for a bare "No", unknown, skip, or a use case taken from existing context. The report's Management Summary states the confirmed use case.
 
 The controller validates answers, captures them for this analysis, and saves them in `docs/security/business-context.md` alongside existing repository context. Explicit `--context` imports remain run-only. Later analyses reuse saved answers and omit answered topics. On rejection, print the reason and stop; never discard an answer silently or continue as if accepted. Return the successful action to the full runtime. Remaining unanswered questions may appear in the report.

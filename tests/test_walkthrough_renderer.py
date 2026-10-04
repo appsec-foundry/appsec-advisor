@@ -1085,3 +1085,38 @@ def test_zero_threats_renders_honest_stub():
     md = renderer.render_attack_walkthroughs_md({"threats": []})
     assert "sequenceDiagram" not in md
     assert "No Critical findings" in md
+
+
+def test_primary_mitigation_is_the_highest_priority_not_the_first_linked():
+    yaml_data = {
+        "mitigations": [
+            {
+                "id": "M-095",
+                "kind": "review",
+                "priority": "P3",
+                "title": "Manual review: verify x",
+                "threat_ids": ["T-031"],
+            },
+            {"id": "M-125", "kind": "fix", "priority": "P2", "title": "Validate the URL", "threat_ids": ["T-031"]},
+            {"id": "M-200", "kind": "fix", "title": "Unprioritised", "threat_ids": ["T-031"]},
+        ]
+    }
+    index = renderer._mitigations_by_threat(yaml_data)
+    assert [m["id"] for m in index["T-031"]] == ["M-125", "M-095", "M-200"]
+    bullets, primary = renderer.render_defense_in_depth({"id": "T-031"}, index)
+    assert primary == "M-125"
+    assert bullets[0].startswith("Primary mitigation:") and "M-125" in bullets[0]
+
+
+def test_generic_diagram_names_the_finding_instead_of_boilerplate():
+    templates = renderer.load_templates(REPO_ROOT / "data" / "walkthrough-templates")
+    threat = {
+        "id": "T-009",
+        "title": "Mass assignment on user update; role field — routes/user.ts:12",
+        "component": "api",
+        "cwe": "CWE-99999",
+        "evidence": [{"file": "routes/user.ts", "line": 12}],
+    }
+    diagram = renderer.render_sequence_diagram(threat, renderer._template_for("CWE-99999", templates, threat), "M-001")
+    assert "Vulnerable branch executes" not in diagram
+    assert "App->>App: Mass assignment on user update role field" in diagram

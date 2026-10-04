@@ -708,7 +708,12 @@ def _template_for(cwe: str, templates: dict[str, dict], threat: dict | None = No
 
 
 def _mitigations_by_threat(yaml_data: dict) -> dict[str, list[dict]]:
-    """Invert `mitigations[].threat_ids` into a `tid -> [mit]` map."""
+    """Invert `mitigations[].threat_ids` into a `tid -> [mit]` map.
+
+    Each list is ordered by priority (P1 first, stable on ties), the order the
+    attack-path Fix cell and the Management Summary use, so the walkthrough's primary
+    mitigation is not a P3 review card that merely precedes a P2 fix in YAML order.
+    """
 
     out: dict[str, list[dict]] = defaultdict(list)
     for m in yaml_data.get("mitigations") or []:
@@ -716,7 +721,12 @@ def _mitigations_by_threat(yaml_data: dict) -> dict[str, list[dict]]:
             continue
         for tid in m.get("threat_ids") or []:
             out[str(tid)].append(m)
-    return dict(out)
+
+    def rank(m: dict) -> int:
+        digits = re.sub(r"\D", "", str(m.get("priority") or ""))
+        return int(digits) if digits else 99
+
+    return {tid: sorted(mits, key=rank) for tid, mits in out.items()}
 
 
 def _assets_by_threat(yaml_data: dict) -> dict[str, list[dict]]:
@@ -1128,7 +1138,7 @@ def render_attack_steps(threat: dict, template: dict) -> list[str]:
             # Attacker-action voice (juice-shop 2026-07-03): the attacker is the
             # subject of each step, not the code. Generic fallback used only when
             # a CWE template has no `attack_steps_template` and the scenario is short.
-            "The attacker crafts a request targeting the weak spot at `{file}:{line}`.",
+            "The attacker crafts a request that reaches the code at `{file}:{line}`.",
             "The attacker sends it; the missing control never rejects the crafted input.",
             "The attacker reads the response and confirms the bypass succeeded.",
         ]
@@ -1162,7 +1172,7 @@ def render_attack_steps(threat: dict, template: dict) -> list[str]:
         # Attack Steps must read in a clear, attacker-followable order).
         # Prepend-gate (2026-07-19). Only pad when the scenario carries NO
         # attacker action of its own. When it does, the generic template step
-        # ("The attacker crafts a request targeting the weak spot at
+        # ("The attacker crafts a request that reaches the code at
         # `views.py:229`.") restates a step the scenario already tells and the
         # list narrates the same move twice under two different numbers — with
         # a different article each time, since the template hardcodes "The
@@ -1299,6 +1309,10 @@ def render_sequence_diagram(
     mapping = {
         "tid": _to_fid(str(threat.get("id") or "")),
         "title": _short_title(threat.get("title") or "", 120),
+        # Finding title as a Mermaid message: no locator, no `;`/`#` (message
+        # terminators/entities in sequence diagrams).
+        "weakness": _short_title(re.sub(r"[;#]", "", title_without_locator(threat.get("title") or "")), 70)
+        or "the weakness executes",
         "component": (threat.get("component") or "the application").strip() or "the application",
         "file": (evidence.get("file") or "<unknown>"),
         "line": str(evidence.get("line") or "?"),

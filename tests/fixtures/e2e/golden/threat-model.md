@@ -62,7 +62,7 @@ _Append-only history of assessment runs. Most recent first._
 10. [Mitigation Register](#10-mitigation-register)
 11. [Out of Scope](#11-out-of-scope)
 - [Appendix: Run Statistics](#appendix-run-statistics)
-- [Appendix A - Vektor Taxonomy](#appendix-a-vektor-taxonomy)
+- [Appendix A - Attack Vector Taxonomy](#appendix-a-vektor-taxonomy)
 
 > _Section numbering is non-contiguous: §7 is not present in this report. The remaining sections keep their original numbers so existing cross-references stay valid._
 
@@ -101,7 +101,7 @@ No meaningful security boundary exists between the internet-facing attack surfac
 
 **Figure 2 - Attack Routes and Impact**
 
-Each numbered route names one example finding from the corresponding Top Threats group with its access prerequisite, the register weakness it is linked to, and the group's potential business harm, which depends on deployment and affected assets. W-IDs in parentheses link the example to an existing weakness. The attack step, affected component and technical consequence remain in the SVG tooltips and the findings register. Red arrows indicate attacks; dashed red arrows involve a victim; grey arrows lead to potential harm.
+Each numbered route names one example finding from the corresponding Top Threats group with its access prerequisite, the register weakness it is linked to, and the group's potential business harm, which depends on deployment and affected assets. W-IDs in parentheses link the example to an existing weakness. The attack step, affected component and technical consequence are listed in the findings register. Red arrows indicate attacks; dashed red arrows involve a victim; grey arrows lead to potential harm.
 
 ![Figure 2 - Actors, attack routes, weaknesses and impact](figure2.svg)
 
@@ -786,19 +786,14 @@ _No P4 mitigations._
 | Mode | - |
 | Assessment depth | standard |
 | Plugin version | 0.6.0-beta.4 (analysis v5) |
-| Orchestrator model | claude-sonnet-4-6 |
 | Repository | - |
 | Output directory | - |
 | Total analysis duration | - |
 
-### Per-Phase Duration Breakdown
-
-_No per-phase timing captured - `.agent-run.log` missing or unparseable._
-
 ---
 
 <a id="appendix-a-vektor-taxonomy"></a>
-## Appendix A — Vektor Taxonomy
+## Appendix A — Attack Vector Taxonomy
 
 This appendix defines the attacker-starting-position labels used in the Top Threats table and throughout [§8 Findings Register](#8-findings-register). Each label answers the question *what does the attacker need before the exploit begins?*
 
@@ -887,7 +882,7 @@ This appendix defines the attacker-starting-position labels used in the Top Thre
 **Typical OWASP Top 10:** A04:2025, A07:2025
 
 <a id="vektor-n-a"></a>
-### n/a
+### Architectural (no runtime entry point)
 
 **Attacker position:** Architectural / meta-finding - no runtime entry point, the finding describes a design defect aggregating multiple code-level findings
 

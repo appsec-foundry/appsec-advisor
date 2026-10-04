@@ -7434,7 +7434,7 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
         "Each numbered route names one example finding from the corresponding Top Threats group with its access "
         "prerequisite, the register weakness it is linked to, and the group's potential business harm, which depends "
         "on deployment and affected assets. W-IDs in parentheses link the example to an existing weakness. The attack "
-        "step, affected component and technical consequence remain in the SVG tooltips and the findings register. "
+        "step, affected component and technical consequence are listed in the findings register. "
         "Red arrows indicate attacks; dashed red arrows involve a victim; grey arrows lead to potential harm."
     )
     figure2_block = f"{figure2_intro}\n\n{figure2_svg_md}" if figure2_svg_md else diagram_md
@@ -8278,14 +8278,7 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
     if overflow_p3:
         footer_parts.append(f"{pluralize(overflow_p3, 'P3 backlog item')}")
     if footer_parts:
-        footer = (
-            "*"
-            + " · ".join(footer_parts)
-            + " in [§10 Mitigation Register](#10-mitigation-register). "
-            + "Sorted by priority (P1 first), then declared business context, then component, then leverage "
-            + "(most findings first), severity (Critical first), and effort "
-            + "(Low first).*"
-        )
+        footer = "*" + " · ".join(footer_parts) + " in [§10 Mitigation Register](#10-mitigation-register).*"
     else:
         footer = None
 
@@ -13667,8 +13660,10 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
     except Exception:
         # Best-effort enrichment; fall through to whatever was in meta.
         pass
-    orch_model = meta.get("model") or next(
-        (a.get("model") for a in agents_yaml if (a.get("role") or "").lower().startswith("orchestrator")), "—"
+    # `meta.model` carries the STRIDE model (already shown under "Reasoning
+    # models"), not the session model, so only an explicit orchestrator row counts.
+    orch_model = next(
+        (a.get("model") for a in agents_yaml if (a.get("role") or "").lower().startswith("orchestrator")), None
     )
     # M3.3 — fall back to .skill-config.json when meta lacks repo/output paths.
     # The orchestrator does not currently emit `meta.repository_root` /
@@ -13749,7 +13744,8 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
         lines.append(f"| Business context | `{bc_source}` — {bc_reach} |")
     plugin_cell = f"{plugin_v}" + (f" (analysis v{analysis_v})" if analysis_v else "")
     lines.append(f"| Plugin version | {plugin_cell or '—'} |")
-    lines.append(f"| Orchestrator model | {orch_model} |")
+    if orch_model:
+        lines.append(f"| Orchestrator model | {orch_model} |")
     # Per-stage reasoning models. Surfaces per-stage overrides (e.g.
     # APPSEC_TRIAGE_MODEL=opus while STRIDE stays sonnet) that the tier name
     # alone hides, so a mixed-tier run is honestly disclosed. meta first,
@@ -13799,7 +13795,9 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
             total_tools += tools
             total_tokens += toks
             dur = _fmt_ms(ms)
-            agent = (r.get("agent") or "—").split(":")[-1]  # strip namespace prefix
+            # A grouped stage row lists several agents ("a:x,a:y"); strip the
+            # namespace from each instead of keeping only the last one.
+            agent = ", ".join(a.split(":")[-1] for a in (r.get("agent") or "—").split(","))
             lines.append(
                 f"| {r.get('stage', '—')} | {r.get('name', '—')} | {agent} | "
                 f"{r.get('model', '—')} | {dur} | {tools:,} | {toks:,} |"
@@ -13810,17 +13808,17 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
         lines.append("")
 
     # --- Per-Phase Duration Breakdown --------------------------------------
-    lines.append("### Per-Phase Duration Breakdown")
-    lines.append("")
+    # Omitted when the log carries no phase pairs (the compact runtime logs
+    # stages, which the Per-Stage table above already covers).
     phase_rows = _scrape_phase_durations(ctx.output_dir)
     if phase_rows:
+        lines.append("### Per-Phase Duration Breakdown")
+        lines.append("")
         lines.append("| Phase | Description | Agent (Model) | Duration |")
         lines.append("|-------|-------------|---------------|----------|")
         for r in phase_rows:
             lines.append(f"| {r['phase']} | {r['description']} | {r['agent']} | {r['duration']} |")
-    else:
-        lines.append("_No per-phase timing captured — `.agent-run.log` missing or unparseable._")
-    lines.append("")
+        lines.append("")
 
     # Coverage Summary intentionally removed. The same counters (threats by
     # severity, components, mitigations, security controls) already appear
@@ -14443,7 +14441,7 @@ def _render_run_issues(ctx: RenderContext, env: jinja2.Environment, section: dic
 def _render_appendix_vektor_taxonomy(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     lines = [
         '<a id="appendix-a-vektor-taxonomy"></a>',
-        "## Appendix A — Vektor Taxonomy",
+        "## Appendix A — Attack Vector Taxonomy",
         "",
         "This appendix defines the attacker-starting-position labels used in the "
         "Top Threats table and throughout [§8 Findings Register](#8-findings-register). Each label answers the "
@@ -14965,7 +14963,7 @@ def _build_threat_card(
         reverted that with R-7 and re-introduced it.
       * The legacy **Vektor** field was removed from the cell entirely.
         Reachability information (Repo-Read / Internet-Anon / …) still
-        exists in `Appendix A — Vektor Taxonomy`; per-finding vektor data
+        exists in `Appendix A — Attack Vector Taxonomy`; per-finding vektor data
         survives in the YAML for SARIF / pentest-tasks export. Inside the
         cell it added a fourth labelled row without changing remediation
         priority and pushed the Issue line below the fold.
@@ -15071,7 +15069,7 @@ def _build_threat_card(
     # R-7 (2026-05): Vektor field removed from the cell entirely — it was
     # adding a fourth labelled row without changing remediation priority.
     # Vektor still exists in the YAML for SARIF / pentest-tasks export and
-    # is documented in `Appendix A — Vektor Taxonomy`.
+    # is documented in `Appendix A — Attack Vector Taxonomy`.
     ev = t.get("evidence") or {}
     ev_file = ""
     ev_line = None
@@ -15559,20 +15557,18 @@ def _build_threat_card(
     instances_card = ""
     if len(_instance_pairs) > 1:
         if _instance_pairs:
-            _distinct_sevs = {severity for _, _, severity in _instance_pairs if severity}
-            _mixed = len(_distinct_sevs) > 1
+            # Grouped by file ("`a.ts`: 11, 18"). No per-instance severity
+            # dots: the card's severity glyph is the finding's, and a second
+            # set of the same glyphs without a legend misreads as findings.
             _cap = 8
-            _shown_pairs = _instance_pairs[:_cap]
-            _shown = [
-                (
-                    f"{_SEV_ICON_TBL.get(severity, '')} `{file}:{line}`".strip()
-                    if _mixed and severity
-                    else (f"`{file}:{line}`" if line else f"`{file}`")
-                )
-                for file, line, severity in _shown_pairs
-            ]
+            _by_file: dict[str, list[str]] = {}
+            for file, line, _severity in _instance_pairs[:_cap]:
+                _lines = _by_file.setdefault(file, [])
+                if line and str(line) not in _lines:
+                    _lines.append(str(line))
+            _shown = [f"`{file}`: {', '.join(lns)}" if lns else f"`{file}`" for file, lns in _by_file.items()]
             _tail = f" … (+{len(_instance_pairs) - _cap} more)" if len(_instance_pairs) > _cap else ""
-            instances_card = f"**Instances ({len(_instance_pairs)}):** " + ", ".join(_shown) + _tail
+            instances_card = f"**Instances ({len(_instance_pairs)}):** " + "; ".join(_shown) + _tail
 
     # Root cause — Option 3 (2026-07-13): the attack-class taxonomy description
     # is TIER-GENERIC — the identical sentence repeats across every finding of a
@@ -16301,7 +16297,7 @@ def _boundary_verdict_legend() -> str:
         "findings, none linked here · not examined: nothing bears on it. `N related` counts further "
         "findings on the same condition. Linked findings sit under the condition they break, or "
         "under _Unattributed_. A link raises effective severity only at a confirmed internet "
-        "ingress; raw risk never changes._"
+        "ingress; the finding's own severity stays unchanged._"
     )
 
 
@@ -16719,19 +16715,13 @@ def _render_trust_boundary_catalog(ctx: RenderContext, env: jinja2.Environment, 
     collapsed: list[str] = []
     if uniform_source is not None:
         gloss = _BOUNDARY_SOURCE_GLOSS.get(uniform_source)
-        collapsed.append(f"source `{uniform_source}`" + (f" ({gloss})" if gloss else ""))
+        collapsed.append(f"source: {gloss or uniform_source}")
     if uniform_confidence is not None:
-        collapsed.append(f"confidence `{uniform_confidence}`")
+        collapsed.append(f"confidence: {uniform_confidence}")
     if uniform_status is not None:
-        collapsed.append(f"status `{uniform_status}`")
+        collapsed.append(f"status: {uniform_status}")
     if collapsed:
-        lines.extend(
-            [
-                "",
-                f"_Identical on every row, so stated once here instead of in a column: {'; '.join(collapsed)}. "
-                "Any row that deviates is shown in the table._",
-            ]
-        )
+        lines.extend(["", f"_All boundaries share {'; '.join(collapsed)}._"])
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -18154,6 +18144,7 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
             # (improper access control) + CWE-400 (DoS) does not advertise
             # a single $where-filter snippet as the cure for all three.
             extra_cwe_snippets: list[tuple[str, dict]] = []
+            template_cwe = ""
             if not how_code and not code_example:
                 threats_idx_for_cwe = {
                     (t.get("t_id") or t.get("id") or "").upper(): t for t in (ctx.yaml_data.get("threats") or [])
@@ -18178,6 +18169,7 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                     first = seen_cwes[0]
                     snip = _MITIGATION_CWE_SNIPPETS[first]
                     code_example = snip.get("code", "").rstrip()
+                    template_cwe = first
                     if snip.get("lang"):
                         how_lang = snip["lang"]
                     if not verification_field:
@@ -18245,18 +18237,16 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
             # Introduce every code example with its source location and the
             # mitigation it demonstrates. A bare fenced block forces the reader
             # to infer both its file and purpose from surrounding prose; this
-            # deterministic sentence keeps examples skimmable and makes clear
-            # that the ordered steps, not a partial snippet, are authoritative.
-            _has_guidance = bool(how) or bool(isinstance(steps, list) and steps)
+            # deterministic sentence keeps examples skimmable. A per-CWE
+            # catalog snippet is captioned as a generic pattern: it is not
+            # code from the reported location and must not claim to be.
             _caption_title = _escape_heading_placeholders(title)
-            if file_line_inline:
-                _code_caption = f"_Example implementation in `{file_line_inline}`: it applies **{_caption_title}**."
+            if template_cwe:
+                _code_caption = f"_Generic {template_cwe} pattern, not code from this repository:_"
+            elif file_line_inline:
+                _code_caption = f"_Example implementation in `{file_line_inline}`: it applies **{_caption_title}**._"
             else:
-                _code_caption = f"_Example implementation for **{_caption_title}**:"
-            if _has_guidance:
-                _code_caption += " The ordered steps above remain authoritative._"
-            else:
-                _code_caption += "_"
+                _code_caption = f"_Example implementation for **{_caption_title}**:_"
             if how_code:
                 lines.append(_code_caption)
                 lines.append("")

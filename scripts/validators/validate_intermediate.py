@@ -1355,7 +1355,12 @@ def _check_export_trace_invariants(data: dict) -> list[str]:
         if status == "applied":
             if not business.get("source") or not business.get("sha256"):
                 errors.append("business_context_trace: applied status requires source and sha256")
-        elif coverage or business.get("fields_present") or business.get("applied_finding_count"):
+        elif (
+            coverage
+            or business.get("fields_present")
+            or business.get("applied_finding_count")
+            or business.get("confirmed_use_case")
+        ):
             errors.append("business_context_trace: non-applied status must not claim coverage or findings")
 
     analysis = data.get("abuse_case_analysis")

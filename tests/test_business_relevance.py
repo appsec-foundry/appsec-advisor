@@ -112,3 +112,33 @@ def test_verdict_no_harm_requires_a_current_component_and_explicit_boolean():
             )
             == ""
         )
+
+
+def _no_harm(*ids):
+    return {
+        "status": "applied",
+        "component_coverage": [{"component_id": i, "impact_is_material": False} for i in ids],
+    }
+
+
+@pytest.mark.parametrize(
+    "components, covered, expected",
+    [
+        # Every runtime component covered, the CI component excluded by design.
+        (
+            [{"id": "api"}, {"id": "ci", "name": "CI Pipeline", "paths": [".github/workflows/ci.yml"]}],
+            ["api"],
+            "no material harm for the application under the stated use-case assumptions; "
+            "it does not extend to the build and delivery pipeline (CI Pipeline).",
+        ),
+        # No build component: the application statement alone.
+        ([{"id": "api"}, {"id": "ui"}], ["api", "ui"], "no material harm for the application under the stated"),
+        # A runtime component is genuinely uncovered: the count stays.
+        ([{"id": "api"}, {"id": "ui"}], ["api"], "no material harm for 1 of 2 modeled components"),
+    ],
+)
+def test_verdict_note_states_what_the_impact_answer_covers(components, covered, expected):
+    from renderers._business_relevance import verdict_context_note
+
+    note = verdict_context_note({"components": components, "business_context_trace": _no_harm(*covered)})
+    assert expected in note

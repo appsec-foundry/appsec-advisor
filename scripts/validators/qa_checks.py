@@ -1658,8 +1658,8 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
     # Strip fenced source snippets before heading discovery so a literal
     # ``## 8. Findings Register`` inside evidence cannot satisfy the document
     # contract. Inline anchors are removed so headings like
-    # `## <a id="appendix-a-vektor-taxonomy"></a>Appendix A — Vektor Taxonomy`
-    # match the contract's `## Appendix A — Vektor Taxonomy`.
+    # `## <a id="appendix-a-vektor-taxonomy"></a>Appendix A — Attack Vector Taxonomy`
+    # match the contract's `## Appendix A — Attack Vector Taxonomy`.
     stripped_text = re.sub(r'<a id="[^"]*"></a>', "", _strip_code_fences(text))
 
     def has_substance(body: str) -> bool:

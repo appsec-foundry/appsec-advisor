@@ -146,7 +146,7 @@ and a way to verify the result without inventing source examples.
 
 ### REQ-RPT-006 — Machine-readable exports preserve security traceability
 
-The canonical YAML records abuse-case outcomes, the use and provenance of business context without copying its prose, and the complete configured requirements assessment. Narrower exports retain applicable requirement, abuse-case, and business-context traces as native fields or bounded text and identify semantics they cannot represent.
+The canonical YAML records abuse-case outcomes, the use and provenance of business context without copying its prose beyond a bounded, plain-text statement of the use case the user confirmed, and the complete configured requirements assessment. Narrower exports retain applicable requirement, abuse-case, and business-context traces as native fields or bounded text and identify semantics they cannot represent.
 
 ### REQ-RPT-007 — Figure 1a stays readable at page width
 

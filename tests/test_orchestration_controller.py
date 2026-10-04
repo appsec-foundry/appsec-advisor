@@ -7170,6 +7170,26 @@ def test_selected_impact_option_is_saved_with_application_scope(tmp_path, monkey
     assert business_impact_scope.application_impact(saved)["impact_is_material"] is False
 
 
+def test_confirmed_use_case_is_marked_in_the_saved_context(tmp_path, monkeypatch):
+    import contexts.business_use_case as business_use_case
+
+    cfg, out = _impact_preflight(tmp_path, monkeypatch, "No material business harm — synthetic data only.")
+    raw = out / ".business-context-raw.md"
+    raw.write_text(
+        "## Business purpose\n\n**Question:** I understand this application as a training shop. "
+        "Is that the use case to assess?\n\n**Answer:** Yes, assess this use case\n\n" + raw.read_text()
+    )
+    controller.complete_preflight(out, run_id="current-run", context_answer="answered", use_case_choice="confirmed")
+    saved = (Path(cfg["repo_root"]) / "docs/security/business-context.md").read_text()
+    assert business_use_case.confirmed_use_case(saved) == "a training shop"
+
+
+def test_use_case_choice_requires_an_answered_dialog(tmp_path, monkeypatch):
+    cfg, out = _impact_preflight(tmp_path, monkeypatch, "No material business harm.")
+    with pytest.raises(controller.CallError, match="requires an answered"):
+        controller.complete_preflight(out, run_id="current-run", context_answer="skip", use_case_choice="confirmed")
+
+
 @pytest.mark.parametrize(
     ("decision", "choice", "match"),
     [("skip", "no-material-harm", "requires an answered"), ("answered", "declared-harm", "does not match")],

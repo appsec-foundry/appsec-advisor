@@ -426,3 +426,18 @@ def test_missing_data_classification_is_not_drawn_as_none():
     }
     row = FD.controls_table(FD.Model(model, None), 4).markdown.splitlines()[3]
     assert row.startswith("| [C-01](#c-01) · API |") and "None" not in row and "| – |" in row
+
+
+def test_inbound_cell_counts_authenticated_flows_once_and_names_the_schemes(tmp_path: Path):
+    n = _names(False)
+    root = _repo(tmp_path, n)
+    data = _model(root, n)
+    app = f"{n['app']}-service"
+    for i, scheme in enumerate(("bearer", "cookie", "bearer", "none"), start=10):
+        data["data_flows"].append(
+            {"id": f"df-{i}", "from": "external", "to": app, "protocol": "HTTP", "authentication": {"scheme": scheme}}
+        )
+    fig = FD.controls_table(FD.Model(data, _inventory(root)), 4)
+    row = next(ln for ln in fig.markdown.splitlines() if ln.startswith(f"| [C-02](#c-02) · {n['app_name']} |"))
+    assert "3 authenticated (bearer, cookie)" in row
+    assert row.count("authenticated (") == 1

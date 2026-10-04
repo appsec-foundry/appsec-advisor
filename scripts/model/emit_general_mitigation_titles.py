@@ -48,6 +48,9 @@ keep the voice consistent:
 5. **Unmapped CWEs** fall through to ``_generalize_fallback`` (strips locality /
    code / URLs from the original) — acceptable but imperfect; prefer a curated
    map entry. Update ``tests/test_emit_general_mitigation_titles.py`` alongside.
+6. **Fix titles are unique.** When two fixes generalize to one title,
+   ``_disambiguate_collisions`` gives each colliding member its cleaned source
+   title, or the general title plus the addressed finding id ("… (F-007)").
 
 Usage
 -----
@@ -326,7 +329,54 @@ def apply(data: dict, reviewed: frozenset[tuple[str, str]] = frozenset()) -> int
         m["_title_source"] = original
         m["title"] = general
         changed += 1
+    _disambiguate_collisions(mitigations, reviewed)
     return changed
+
+
+# A cleaned source title replaces a colliding general title only when it still
+# reads as a short label: no code, call, path, file name or parenthetical, 3-8 words.
+_LABEL_UNSAFE_RE = re.compile(r"[`()/\\]|\b\w+\.[a-z]{1,5}\b", re.IGNORECASE)
+
+
+def _finding_label(m: dict) -> str:
+    ids = m.get("threat_ids") or m.get("addresses") or []
+    ref = str(ids[0]).strip().upper() if ids else ""
+    return re.sub(r"^T-", "F-", ref)
+
+
+def _disambiguate_collisions(mitigations: list, reviewed: frozenset[tuple[str, str]]) -> None:
+    """Make fix titles unique after per-CWE generalization.
+
+    Two mitigations for one CWE get the same general title (rule 2 above). For
+    the colliding members only, the title becomes the cleaned source title when
+    that is still a clean label, otherwise the general title plus the addressed
+    finding id. Review cards and architect-accepted titles are left alone.
+    Deterministic in list order, so a re-run produces the same titles.
+    """
+    fixes = [m for m in mitigations if isinstance(m, dict) and m.get("kind", "fix") != "review"]
+
+    def frozen(m: dict) -> bool:
+        ids = m.get("threat_ids") or []
+        return len(ids) == 1 and (ids[0], m.get("title")) in reviewed
+
+    groups: dict[str, list[dict]] = {}
+    for m in fixes:
+        groups.setdefault((m.get("title") or "").strip().lower(), []).append(m)
+    taken = {key for key, members in groups.items() if len(members) == 1}
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        for m in members:
+            if frozen(m):
+                taken.add((m.get("title") or "").strip().lower())
+                continue
+            general = (m.get("title") or "").strip()
+            candidate = _clamp_mitigation_title(_generalize_fallback(m.get("_title_source") or ""))
+            if _LABEL_UNSAFE_RE.search(candidate) or not 3 <= len(candidate.split()) <= 8 or candidate.lower() in taken:
+                label = _finding_label(m)
+                candidate = f"{general} ({label})" if label else general
+            m["title"] = candidate
+            taken.add(candidate.lower())
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -290,7 +290,7 @@ The exported status vocabulary is `PASS`, `FAIL`, `PARTIAL`, `UNVERIFIABLE`, and
 
 ## §4j. Export traceability invariant
 
-`threat-model.yaml` is the canonical machine-readable trace. New runs persist an explicit `business_context_trace` even when context was skipped or absent, a complete `abuse_case_analysis` after the deterministic verifier fold, and `requirements_provenance` whenever a catalog was assessed. These blocks carry bounded semantic values and hashes, never raw business-context prose or rendering tokens.
+`threat-model.yaml` is the canonical machine-readable trace. New runs persist an explicit `business_context_trace` even when context was skipped or absent, a complete `abuse_case_analysis` after the deterministic verifier fold, and `requirements_provenance` whenever a catalog was assessed. These blocks carry bounded semantic values and hashes, never raw business-context prose or rendering tokens. The one exception is `business_context_trace.confirmed_use_case`: the use case confirmed in the dialog, in plain words and capped at 200 characters (RC-6).
 
 An optional boolean `impact_is_material` accompanies declared `impact_if_compromised` in analyst, dispatch, and component business context. False records an explicit no-material-harm declaration and its stated conditions; absence remains unknown or legacy context. The canonical component coverage preserves that boolean alongside the impact field name. Findings covered by explicit no-harm context count as context-applied without receiving an impact-based priority bonus. Independently declared sensitive assets and obligations remain material, and technical findings and severity rules stay authoritative.
 

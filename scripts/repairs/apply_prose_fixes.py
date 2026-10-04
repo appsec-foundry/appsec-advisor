@@ -122,7 +122,10 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 # Prose between two spans always contains a space, so excluding whitespace
 # eliminates the entire class. Every legitimate head is space-free:
 # `request.data`, `/api/legacy-admin/audit`, `db.py:461`, `requests.get`.
-_SPAN_HEAD = r"`(?P<head>[^`\s\n]+)`"
+# `<` and `>` are excluded for the same reason: in a table cell the text between
+# two spans can be a bare `<br/>`, and `` `x`<br/>.gitlab-ci.yml `` paired the
+# closing tick of `x` with the opening of the next span.
+_SPAN_HEAD = r"`(?P<head>[^`\s\n<>]+)`"
 # The tail must start with a LETTER. Allowing a leading `_` made the pass merge
 # a Markdown emphasis closer into the span — ``\`pentest-tasks.yaml\`._`` (the
 # `_` closing an italic run) became ``\`pentest-tasks.yaml._\``, silently

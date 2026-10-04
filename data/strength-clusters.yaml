@@ -46,7 +46,9 @@ clusters:
     description_template: "Browser-facing HTTP hardening — security headers, cookie flags, cross-origin policy, and abuse-protection limits."
     addresses_weakness_classes: [client_storage, info_disclosure]
     # CSRF + permissive-CORS are part of this cluster's defensive remit.
-    addresses_cwes: [CWE-352, CWE-942, CWE-1021, CWE-918]
+    # Not CWE-918: SSRF is an outbound server-side request that headers, cookie
+    # flags and CORS do not address, so it must not read as bypassing this stack.
+    addresses_cwes: [CWE-352, CWE-942, CWE-1021]
 
   - id: observability
     label: Observability & Audit

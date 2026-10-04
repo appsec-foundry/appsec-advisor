@@ -706,6 +706,7 @@ requirements:
   REQ-RPT-006:
     applies_to:
       - schemas/threat-model.output.schema.yaml
+      - scripts/contexts/business_use_case.py
       - scripts/model/build_threat_model_yaml.py
       - scripts/renderers/render_abuse_cases.py
       - scripts/model/emit_requirement_trace_to_model.py
@@ -716,6 +717,7 @@ requirements:
     decisions:
       - EXP-4
       - EXP-5
+      - RC-6
     documents:
       - docs/threat-dragon-export.md
       - docs/threat-modeler.md
@@ -725,6 +727,7 @@ requirements:
       - tests/test_render_abuse_cases.py::test_main_persists_canonical_analysis_to_yaml
       - tests/test_build_threat_model_yaml.py::test_initial_abuse_analysis_distinguishes_pending_and_skipped_runs
       - tests/test_build_threat_model_yaml.py::test_business_context_trace_records_safe_provenance_without_prose
+      - tests/test_build_threat_model_yaml.py::test_trace_carries_only_the_marked_use_case_from_the_context
       - tests/test_requirements_trace.py::TestPostComposeRequirementsExport::test_complete_stage2_assessment_persists_provenance
       - tests/test_export_threat_dragon.py::test_traceability_is_folded_into_bounded_text
       - tests/test_validate_intermediate.py::test_export_trace_cross_references_fail_closed

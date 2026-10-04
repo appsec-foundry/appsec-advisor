@@ -2573,16 +2573,24 @@ def review_business_impact(output_dir: Path, *, run_id: str) -> dict[str, Any]:
 
 
 def complete_preflight(
-    output_dir: Path, *, run_id: str, context_answer: str, impact_choice: str | None = None
+    output_dir: Path,
+    *,
+    run_id: str,
+    context_answer: str,
+    impact_choice: str | None = None,
+    use_case_choice: str | None = None,
 ) -> dict[str, Any]:
     """Accept the dialog result once, before any expensive scanner or dispatch.
 
     ``impact_choice`` names the selected application-wide impact option; the
     answer is then marked so every runtime component receives it before STRIDE
     (see ``contexts.business_impact_scope``). Free-text answers pass none.
+    ``use_case_choice`` marks a confirmed or corrected use case so the report can
+    state it (see ``contexts.business_use_case``).
     """
     import contexts.business_context_preview as business_context_preview
     import contexts.business_impact_scope as business_impact_scope
+    import contexts.business_use_case as business_use_case
     import contexts.load_business_context as load_business_context
     import runtime.acquire_lock as acquire_lock
     from shared._atomic_io import atomic_write_text
@@ -2598,6 +2606,8 @@ def complete_preflight(
         raise CallError("invalid business-context decision")
     if impact_choice is not None and context_answer != "answered":
         raise CallError("an impact choice requires an answered business-context dialog")
+    if use_case_choice is not None and context_answer != "answered":
+        raise CallError("a use-case choice requires an answered business-context dialog")
     repo_root = Path(cfg["repo_root"])
     raw_path = output_dir / business_context_preview.RAW_NAME
     if context_answer == "answered":
@@ -2610,6 +2620,8 @@ def complete_preflight(
             load_business_context._reject_secrets(answer)
             if impact_choice is not None:
                 answer = business_impact_scope.annotate(answer, impact_choice)
+            if use_case_choice is not None:
+                answer = business_use_case.annotate(answer, use_case_choice)
             load_business_context._persist_target(repo_root)
 
             def combined_context(source: Path | None, root: Path) -> str:
@@ -7786,6 +7798,7 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     complete_preflight_parser.add_argument("--run-id", required=True)
     complete_preflight_parser.add_argument("--context-answer", choices=("answered", "skip", "unchanged"), required=True)
     complete_preflight_parser.add_argument("--impact-choice", choices=("no-material-harm", "declared-harm"))
+    complete_preflight_parser.add_argument("--use-case-choice", choices=("confirmed", "corrected"))
     prepare_abuse_parser = sub.add_parser("prepare-abuse")
     prepare_abuse_parser.add_argument("--output-dir", required=True)
     finalize_abuse_parser = sub.add_parser("finalize-abuse")
@@ -7855,6 +7868,7 @@ def main(argv: list[str] | None = None) -> int:
                 run_id=args.run_id,
                 context_answer=args.context_answer,
                 impact_choice=args.impact_choice,
+                use_case_choice=args.use_case_choice,
             )
         elif args.command == "prepare-abuse":
             action = prepare_abuse(Path(args.output_dir))

@@ -622,7 +622,7 @@ properties:
               line: {type: integer, minimum: 1}
 
   business_context_trace:
-    description: Bounded provenance and coverage for the business context used by this run. The source prose is never copied here.
+    description: Bounded provenance and coverage for the business context used by this run. The source prose is never copied here, except the use case the user confirmed in the dialog (confirmed_use_case).
     type: object
     additionalProperties: false
     required: [status, source_kind, source, sha256, fields_present, component_coverage, applied_finding_count]
@@ -665,6 +665,11 @@ properties:
                 type: string
                 enum: [business_purpose, impact_if_compromised, sensitive_assets, security_obligations, security_assumptions]
       applied_finding_count: {type: integer, minimum: 0}
+      confirmed_use_case:
+        description: The use case the user confirmed or supplied in the business-context dialog, in plain words (no markup, links or URLs). Absent when none was confirmed.
+        type: string
+        minLength: 1
+        maxLength: 200
       declared_asset_names:
         description: Names from `assets` mentioned by the business context; a mention alone does not settle criticality.
         type: array

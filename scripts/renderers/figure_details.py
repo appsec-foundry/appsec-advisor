@@ -504,10 +504,15 @@ def controls_table(m: Model, number: int) -> DetailFigure | None:
 
     def inbound_cell(cid) -> str:
         auth = _auth_counts(inbound.get(cid, []))
-        parts = [
-            f"{v} {'unauthenticated' if k == 'none' else 'authentication unknown' if k == 'unknown' else 'authenticated'}"
-            for k, v in sorted(auth.items(), key=lambda kv: (kv[0] != "none", kv[0] != "unknown", kv[0]))
-        ]
+        # One line per class, not per scheme: four schemes used to print
+        # "1 authenticated" four times. The schemes are named once instead.
+        schemes = sorted(k for k in auth if k not in ("none", "unknown"))
+        n_auth = sum(auth[k] for k in schemes)
+        parts = [f"{auth['none']} unauthenticated"] if auth.get("none") else []
+        if auth.get("unknown"):
+            parts.append(f"{auth['unknown']} authentication unknown")
+        if n_auth:
+            parts.append(f"{n_auth} authenticated ({', '.join(schemes)})")
         if cid in pub:
             parts.append("host port published")
         return "<br/>".join(parts) or "none modeled"

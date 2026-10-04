@@ -307,7 +307,8 @@ def test_fragment_markdown_structure(tmp_path: Path):
     assert "[F-010](#f-010)" in md  # chain step links to §8 dual anchor
     assert "[M-007](#m-007)" in md  # blocking mitigation links to §10
     # Blocking mitigations render as an explained bullet list, not a table.
-    assert "Implementing any single mitigation below severs the chain" in md
+    assert md.count("implementing any single mitigation listed under a case severs the chain") == 1
+    assert "Implementing any single mitigation below" not in md
     assert "| Mitigation | Addresses | Breaks chain at |" not in md
     assert "breaks the chain at **Step 1**" in md
     assert "[§8 Findings Register](#8-findings-register)" in md

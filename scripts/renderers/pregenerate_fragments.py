@@ -347,7 +347,9 @@ def assessment_intro(yaml_data: dict) -> str:
     States the method as the plugin describes itself — an AI-assisted threat
     model derived from the implementation — and the size of the reconstructed
     model as counts, pointing to §2 for the components themselves. Built only
-    from the canonical model, so it carries no repository or business prose.
+    from the canonical model, so it carries no repository or business prose
+    except the dialog-confirmed use case (``business_context_trace.
+    confirmed_use_case``, plain words, capped; see ``contexts.business_use_case``).
     Empty when the model has no components.
     """
     meta = yaml_data.get("meta") or {}
@@ -366,10 +368,14 @@ def assessment_intro(yaml_data: dict) -> str:
     size = f"{len(components)} component" + ("s" if len(components) != 1 else "")
     if services:
         size += f" and {len(services)} external service" + ("s" if len(services) != 1 else "")
+    trace = yaml_data.get("business_context_trace")
+    use_case = trace.get("confirmed_use_case") if isinstance(trace, dict) else ""
+    use_case = " ".join(_SYSTEM_UNSAFE_RE.sub("", str(use_case or "")).split())[:200].strip(" .")
     return (
         f"**About this assessment:** An AI-assisted threat model derived from the implementation of "
         f"{name or 'the system'}. It reconstructs the implemented architecture "
         f"({size}, see [§2](#2-architecture-diagrams)) and identifies threats and control gaps in it."
+        + (f" Confirmed use case: {use_case}." if use_case else "")
     )
 
 
@@ -2201,6 +2207,27 @@ def _to_canonical_finding_label(ref: str) -> str:
     return ref
 
 
+# Route-inventory tags stay machine-readable in the YAML (pentest tasks and
+# ask-threat-model match on them); §5 shows them in reader wording. The
+# `handler: file:line` part is dropped: the linked finding already locates it.
+_ROUTE_NOTE_READER_TEXT = {
+    "public-by-design": "Public by design",
+    "authorization-review-required": "Authorization not confirmed (review)",
+}
+
+
+def _reader_route_notes(notes: str) -> str:
+    parts = []
+    for part in notes.split(";"):
+        part = part.strip()
+        if not part or part.startswith("handler:"):
+            continue
+        part = _ROUTE_NOTE_READER_TEXT.get(part, part)
+        if part not in parts:
+            parts.append(part)
+    return "; ".join(parts)
+
+
 def _attack_surface_notes(entry: dict) -> str:
     """Render the Notes column.
 
@@ -2221,7 +2248,7 @@ def _attack_surface_notes(entry: dict) -> str:
     """
     if not isinstance(entry, dict):
         return ""
-    notes = (entry.get("notes") or "").replace("\n", " ").strip()
+    notes = _reader_route_notes((entry.get("notes") or "").replace("\n", " ").strip())
     threats = entry.get("threats") or entry.get("linked_threats") or []
     threats = [_to_canonical_finding_label(t) for t in threats if isinstance(t, str)]
 
@@ -4290,16 +4317,14 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
 
     lines = ["## 6. Security Architecture", ""]
     lines.append(
-        "This chapter is organized by security-control category. The architecture "
-        "section avoids artificial control IDs and finding-ID columns in overview "
-        "tables. Findings are listed only where the affected control is described."
+        "This chapter is organized by security-control category. Findings are "
+        "listed only where the affected control is described."
     )
     lines.append("")
     lines.append(
-        f"_§6 schema v2 (13-section control-category layout). Cataloged "
-        f"controls: {len(controls)} total — {n_adequate} adequate, "
+        f"_Cataloged controls: {len(controls)} total — {n_adequate} adequate, "
         f"{n_partial} partial, {n_weak} weak, {n_unsafe} unsafe, "
-        f"{n_missing} missing. Linked threats: {len(threats)}._"
+        f"{n_missing} missing._"
     )
     lines.append("")
     # Verdict legend — the two red verdicts are not interchangeable, and the
@@ -4377,7 +4402,7 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
         if verdict.startswith("🔴 Unsafe"):
             if n_routed:
                 reason = (
-                    f"{n_routed} routed {'finding' if n_routed == 1 else 'findings'}; "
+                    f"{n_routed} {'finding' if n_routed == 1 else 'findings'}; "
                     f"catalogued controls are present but defeated{example_clause}."
                 )
             else:
@@ -4390,33 +4415,35 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             # when several required controls were listed as Missing
             # (2026-06-02: §6.1 showed it on every category).
             if n_controls:
-                lead = f"{n_routed} routed {'finding' if n_routed == 1 else 'findings'}; " if n_routed else ""
+                lead = f"{n_routed} {'finding' if n_routed == 1 else 'findings'}; " if n_routed else ""
                 reason = f"{lead}required controls not in place{example_clause}."
                 if not lead:
                     reason = reason[0].upper() + reason[1:]
             else:
                 reason = (
-                    f"{n_routed} routed {'finding' if n_routed == 1 else 'findings'}; no controls catalogued for this category."
+                    f"{n_routed} {'finding' if n_routed == 1 else 'findings'}; no controls catalogued for this category."
                     if n_routed
                     else "No controls catalogued for this category."
                 )
         elif verdict.startswith("🟠 Weak"):
             if n_controls:
-                reason = f"{n_routed} routed {'finding' if n_routed == 1 else 'findings'}; catalogued controls are weak{example_clause}."
+                reason = f"{n_routed} {'finding' if n_routed == 1 else 'findings'}; catalogued controls are weak{example_clause}."
             else:
-                reason = f"{n_routed} routed {'finding' if n_routed == 1 else 'findings'}; no compensating controls catalogued."
+                reason = (
+                    f"{n_routed} {'finding' if n_routed == 1 else 'findings'}; no compensating controls catalogued."
+                )
         elif verdict.startswith("🟡 Partial"):
             reason = (
-                f"{n_routed} routed {'finding' if n_routed == 1 else 'findings'}; "
+                f"{n_routed} {'finding' if n_routed == 1 else 'findings'}; "
                 f"{n_controls} partial {'control' if n_controls == 1 else 'controls'}{example_clause} leave gaps."
             )
         elif verdict.startswith("🟢 Adequate"):
             reason = (
                 f"{n_controls} adequate {'control' if n_controls == 1 else 'controls'}{example_clause}; "
-                f"no routed findings in this category."
+                f"no findings in this category."
             )
         else:
-            reason = "No controls or findings routed to this category."
+            reason = "No controls or findings in this category."
         # Link text carries the section number (e.g. "6.2 Identity and
         # Authentication Controls") so the overview reads as a numbered map.
         lines.append(f"| [{h}](#{_v2_slug(h)}) | {verdict} | {reason} |")
@@ -4491,9 +4518,16 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
         section_controls = _v2_controls_for_heading(controls, heading)
         control_names = [(c.get("control") or c.get("name") or c.get("domain") or "").strip() for c in section_controls]
         control_names = [name for name in control_names if name]
-        implemented = [
-            (c.get("implementation") or "").strip() for c in section_controls if (c.get("implementation") or "").strip()
-        ]
+        # Names, not the raw `implementation` strings: those carry locators and,
+        # for absent controls, negative text the H4 blocks below already state.
+        implemented = list(
+            dict.fromkeys(
+                (c.get("control") or c.get("name") or "").strip()
+                for c in section_controls
+                if (c.get("effectiveness") or "").strip().lower() != "missing"
+                and (c.get("control") or c.get("name") or "").strip()
+            )
+        )
 
         # §6.2 and §6.3 carry domain_required_patterns in schema_v2: each
         # section must contain a `sequenceDiagram`. Minimal fixtures and sparse
@@ -4610,13 +4644,12 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
         # inventory ("X, Y, Z are present.") and never with a negative
         # framing ("None adequately implemented" / "Missing"). Concrete
         # gaps belong in the Assessment block below. The pregenerator
-        # builds this line from `security_controls[].implementation`
-        # strings — the Stage-1 prompt is responsible for filling those
-        # with positive descriptions. Empty inventory falls back to a
+        # builds this line from the names of the catalogued controls that
+        # are not Missing. Empty inventory falls back to a
         # placeholder; the LLM must replace it with a positive inventory
         # line, NOT with a negative summary.
         if implemented:
-            lines.append(f"**Implemented controls:** {'; '.join(implemented[:5])}.")
+            lines.append(f"**Implemented controls:** {', '.join(implemented[:5])}.")
         elif section_controls and all(
             (c.get("effectiveness") or "").strip().lower() == "missing" for c in section_controls
         ):

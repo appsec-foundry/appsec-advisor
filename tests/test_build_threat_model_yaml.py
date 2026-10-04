@@ -3374,6 +3374,24 @@ def test_business_context_trace_records_safe_provenance_without_prose(tmp_path):
     assert secret_prose not in json.dumps(trace)
 
 
+@pytest.mark.parametrize("marked", [True, False])
+def test_trace_carries_only_the_marked_use_case_from_the_context(tmp_path, marked):
+    repo, output = _business_meta(tmp_path)
+    secret_prose = "Settles confidential merchant balances under contract 4711."
+    marker = "<!-- appsec-advisor: use-case choice=confirmed -->\n" if marked else ""
+    (output / ".business-context-input.md").write_text(
+        f"## Business purpose\n{marker}\n**Question:** I understand this application as a merchant payout "
+        f"service. Is that the use case to assess?\n\n**Answer:** Yes, assess this use case\n\n{secret_prose}\n",
+        encoding="utf-8",
+    )
+    _analyst_context(output, {"payments-svc": {"business_context": {"business_purpose": "Pays merchants."}}})
+
+    trace = b.build_business_context_trace({"output_dir": str(output)}, repo, 0)
+
+    assert trace.get("confirmed_use_case") == ("a merchant payout service" if marked else None)
+    assert secret_prose not in json.dumps(trace)
+
+
 def test_trace_names_the_model_assets_the_context_describes(tmp_path):
     repo, output = _business_meta(tmp_path)
     (output / ".business-context-input.md").write_text(

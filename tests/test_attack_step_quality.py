@@ -325,7 +325,7 @@ class TestTemplatePrependGate:
             "An attacker then reaches every admin-gated view."
         )
         steps = renderer.render_attack_steps(_threat(scenario), template={})
-        assert "crafts a request targeting the weak spot" not in " ".join(steps)
+        assert "crafts a request that reaches the code" not in " ".join(steps)
         assert len(steps) == 3
 
     def test_padding_still_applies_when_no_attacker_action_is_present(self):

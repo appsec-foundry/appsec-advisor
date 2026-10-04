@@ -1665,9 +1665,9 @@ def test_trust_boundary_catalog_escapes_untrusted_text_and_discloses_overflow(tm
     assert "1 additional trust boundary row(s)" in rendered
     # Every row is `detected` → no Source column; the footnote states it once.
     assert "| Source |" not in rendered
-    assert "source `detected`" in rendered
+    assert "source: derived from inspected repository evidence" in rendered
     assert "only at a confirmed internet ingress" in rendered
-    assert "raw risk never changes" in rendered
+    assert "raw risk" not in rendered
 
 
 def test_trust_boundary_cell_states_each_fact_once(tmp_path: Path) -> None:
@@ -1927,10 +1927,10 @@ def test_trust_boundary_constant_provenance_confidence_and_status_are_collapsed(
     body = rendered.split("| ID |", 1)[1].split("\n_Exposure", 1)[0]
     assert "confirmed" not in body and "resolved" not in body
     assert (
-        "_Identical on every row, so stated once here instead of in a column: "
-        "source `detected` (derived from inspected repository evidence); "
-        "confidence `confirmed`; status `resolved`." in rendered
+        "_All boundaries share source: derived from inspected repository evidence; "
+        "confidence: confirmed; status: resolved._" in rendered
     )
+    assert "`detected`" not in rendered
     # The dropped column's vocabulary legend goes with it.
     assert "`repo-declared` = supplied by" not in rendered
 
@@ -7338,3 +7338,13 @@ def test_section8_names_its_basis_when_it_differs_from_the_summary(tmp_path: Pat
         assert notes == []
     else:
         assert notes and f"(Total: {summary_total})" in notes[0]
+
+
+def test_no_strength_cluster_claims_to_address_ssrf() -> None:
+    # SSRF is an outbound server-side request; no browser-facing or inbound
+    # control cluster prevents it, so it must not demote one as a "bypass".
+    clusters = yaml.safe_load(
+        (Path(compose.__file__).resolve().parents[2] / "data" / "strength-clusters.yaml").read_text()
+    )
+    entries = clusters.get("clusters", clusters) if isinstance(clusters, dict) else clusters
+    assert all("CWE-918" not in (c.get("addresses_cwes") or []) for c in entries)

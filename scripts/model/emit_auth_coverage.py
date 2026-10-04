@@ -215,11 +215,10 @@ def build_auth_coverage(yaml_data: dict, routes: list, repo_root: Path | None) -
                 "control": m["control"],
                 "kind": "mechanism",
                 "effectiveness": eff,
-                "implementation": f"Detected in scope: {evidence}",
+                "implementation": f"Present at {evidence}",
                 "evidence": evidence,
                 "main_reason": (
-                    f"{m['control']} is present but was not in the Phase-8 control "
-                    f"catalog; rated from linked finding(s)."
+                    f"{m['control']} is present but was not individually assessed; rated from linked findings."
                     if ids
                     else f"{m['control']} is present in scope but was not individually assessed — review required."
                 ),

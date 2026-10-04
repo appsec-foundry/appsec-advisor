@@ -327,3 +327,64 @@ def test_main_best_effort_noops_for_missing_and_unreadable_yaml(tmp_path, capsys
 )
 def test_one_cwe_with_two_fixes_gets_two_titles(original, cwe, title):
     assert egm.generalize_title(original, cwe) == title
+
+
+def _fix(mid: str, tid: str, title: str, kind: str = "fix") -> dict:
+    return {"id": mid, "kind": kind, "title": title, "threat_ids": [tid], "how": "detail"}
+
+
+def _sqli(tid: str) -> dict:
+    return {"t_id": tid, "cwe": "CWE-89", "title": f"SQL injection {tid}"}
+
+
+@pytest.mark.parametrize(
+    "sources, expected",
+    [
+        # Clean source titles become the distinguishing labels.
+        (
+            ["Parameterize the login query", "Parameterize the product search query"],
+            ["Parameterize the login query", "Parameterize the product search query"],
+        ),
+        # Code, paths or file names in the source fall back to the finding id.
+        (
+            ["Replace `query()` with bound parameters", "Bind values in routes/search.ts"],
+            ["Use parameterized database queries (F-001)", "Use parameterized database queries (F-002)"],
+        ),
+        # Two identical clean sources still end unique.
+        (
+            ["Parameterize the login query", "Parameterize the login query"],
+            ["Parameterize the login query", "Use parameterized database queries (F-002)"],
+        ),
+    ],
+)
+def test_fix_titles_are_unique_after_generalization(sources, expected):
+    data = {
+        "threats": [_sqli("T-001"), _sqli("T-002")],
+        "mitigations": [_fix("M-001", "T-001", sources[0]), _fix("M-002", "T-002", sources[1])],
+    }
+    egm.apply(data)
+    assert [m["title"] for m in data["mitigations"]] == expected
+    snapshot = [m["title"] for m in data["mitigations"]]
+    egm.apply(data)  # idempotent
+    assert [m["title"] for m in data["mitigations"]] == snapshot
+
+
+def test_single_fix_keeps_the_general_title_and_reviews_are_untouched():
+    review = _fix("M-002", "T-002", "Manual review: verify the query at login.ts:3", kind="review")
+    data = {
+        "threats": [_sqli("T-001"), _sqli("T-002")],
+        "mitigations": [_fix("M-001", "T-001", "Parameterize the login query"), review],
+    }
+    egm.apply(data)
+    assert data["mitigations"][0]["title"] == "Use parameterized database queries"
+    assert data["mitigations"][1]["title"] == "Manual review: verify the query at login.ts:3"
+
+
+def test_architect_accepted_title_wins_the_collision():
+    accepted = "Use parameterized database queries"
+    data = {
+        "threats": [_sqli("T-001"), _sqli("T-002")],
+        "mitigations": [_fix("M-001", "T-001", accepted), _fix("M-002", "T-002", "Bind values in routes/search.ts")],
+    }
+    egm.apply(data, reviewed=frozenset({("T-001", accepted)}))
+    assert [m["title"] for m in data["mitigations"]] == [accepted, f"{accepted} (F-002)"]

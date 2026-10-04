@@ -1527,7 +1527,7 @@ sections:
     data_source: "threat-model.yaml#meta.run_statistics"
 
   appendix_vektor_taxonomy:
-    heading: "## Appendix A — Vektor Taxonomy"
+    heading: "## Appendix A — Attack Vector Taxonomy"
     heading_numbered: false
     anchor: "appendix-a-vektor-taxonomy"
     fragment_type: computed
