@@ -11,9 +11,9 @@
 
 `appsec-advisor` is a Claude Code plugin for **automated, code-derived threat modeling**. It reconstructs application components, data flows, and trust boundaries from code and configuration, then applies STRIDE to identify threats in the implemented architecture. Findings reference repository evidence and include remediation guidance.
 
-The plugin also includes requirements audits, change reviews, and CI gates.
+The plugin also includes on-demand threat analysis, requirements audits, change reviews, and CI gates.
 
-[Why appsec-advisor?](#why-appsec-advisor) · [Security](#security-notes) · [Quick start](#quick-start) · [Threat Modeler](#threat-modeler) · [Documentation](#documentation) · [What's new in 0.6.0-beta.4](#whats-new-in-060-beta4) · [Contributing](#contributing)
+[Why appsec-advisor?](#why-appsec-advisor) · [Security](#security-notes) · [Quick start](#quick-start) · [Threat Modeler](#threat-modeler) · [On-demand threat analysis](#on-demand-threat-analysis) · [Documentation](#documentation) · [What's new in 0.6.0-beta.4](#whats-new-in-060-beta4) · [Contributing](#contributing)
 
 ---
 
@@ -138,6 +138,18 @@ Figure 1 shows the components, data flows, and attack paths identified in OWASP 
 
 Assessments consume model tokens and usually take tens of minutes; thorough runs may exceed an hour. The [Threat Modeler reference](docs/threat-modeler.md#assessment-depth--cost-control) covers depth, focused scans, repository context, measured costs, and limits.
 
+## On-demand threat analysis
+
+`/appsec-advisor:analyze-threats` is available on `dev` for questions about a planned feature and for selected code changes. It examines applicable security requirements and possible attack paths, then reports findings, assumptions, and questions for the team. The report is advisory; it does not approve a change or update `threat-model.yaml`. See the [threat analysis guide](docs/threat-analyst.md) for scope options, saved answers, CI use, and limitations. The host integration still needs verification before release.
+
+### Feature branch playbook
+
+1. Before coding, describe the planned feature, for example `/appsec-advisor:analyze-threats Let support staff export customer data as CSV.` Answer questions about missing design facts; save the answers only if you want to reuse them.
+2. During implementation, check local changes with `/appsec-advisor:analyze-threats --worktree` or staged changes with `--staged`. Run it again if the change affects access control, data exposure, or a trust boundary.
+3. Before merging, fetch the target branch and run `/appsec-advisor:analyze-threats --base <target-branch> --head HEAD`. The analysis compares the feature branch with the merge base. To check every merge request, install the [advisory CI job](docs/threat-analyst.md#advisory-ci).
+
+The [Security Coach](docs/dev-security-helper-usage.md#security-coach-hook) still provides optional guidance in prompts. The Threat Analyst runs only when you invoke it or a configured CI job runs. For a full code-derived threat model, use `/appsec-advisor:create-threat-model`.
+
 ## Requirements Audit
 
 `/appsec-advisor:audit-security-requirements` checks the repository against an AppSec requirements catalog. It provides a faster control assessment for pull-request gates, compliance dashboards, and audit preparation.
@@ -157,6 +169,7 @@ If you do not have a catalog, adapt `data/appsec-requirements-fallback.yaml` or 
 | Tool | Use |
 |---|---|
 | [Secure-coding baseline](https://github.com/appsec-foundry/aiscb) | Install, update, verify, or remove secure-coding instructions with `install-baseline`, `update-baseline`, `verify-baseline`, and `remove-baseline`. |
+| [On-demand threat analysis](docs/threat-analyst.md) (*development branch*) | Analyze a design question or selected code change when invoked; results are advisory. |
 | [Security Coach](docs/dev-security-helper-usage.md#security-coach-hook) (*experimental*) | Add security guidance while writing security-sensitive code. |
 | [appsec-reviewer](docs/dev-security-helper-usage.md#appsec-reviewer-agent) (*experimental*) | Embed change review in Claude Code or an Agent SDK workflow. |
 | [verify-requirements](docs/dev-security-helper-usage.md#verify-requirements-skill) (*experimental*) | Review an interactive diff against the requirements catalog. |
@@ -209,6 +222,7 @@ See [Internal Plugin Packaging](docs/internal-plugin-packaging.md) and [Organiza
 | Goal | Start here |
 |---|---|
 | Run or configure a threat model | [Threat Modeler](docs/threat-modeler.md) |
+| Analyze a design or selected code change | [On-demand threat analysis](docs/threat-analyst.md) |
 | Add repository context or trust-boundary declarations | [Repo-local context](docs/threat-modeler.md#repo-local-context) |
 | Configure models, cost, logging, or organization settings | [Configuration](docs/configuration.md) and [Model Selection](docs/model-selection.md) |
 | Configure requirements audits | [Requirements Audit](docs/security-requirements-audit-skill.md) |

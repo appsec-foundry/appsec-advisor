@@ -15,7 +15,7 @@ Ask a design question without any code:
 /appsec-advisor:analyze-threats Let support staff export customer data as CSV.
 ```
 
-Review a change by naming exactly one scope: `--worktree` (including untracked, not ignored files), `--staged`, or `--base <commit> --head <commit>`. A commit range compares the merge base of both commits with the head; `--exact-base` compares the two commits directly. An empty change completes without a model call.
+Review a change by naming exactly one scope: `--worktree` (including untracked, not ignored files), `--staged`, or `--base <commit> --head <commit>`. For a feature branch, use its fetched target branch as `--base` and the feature tip as `--head`. A commit range compares the merge base of both commits with the head; `--exact-base` compares the two commits directly. An empty change completes without a model call.
 
 The analysis reads your requirements catalog, `docs/security/business-context.md`, and, when you pass `--threat-model`, a structured `threat-model.yaml`. A missing optional source is reported and the analysis continues. A source marked as required that is missing or invalid ends the analysis as incomplete; a required catalog is never replaced by the packaged fallback. When your organization profile names a requirements catalog, the analysis needs a trusted local copy passed with `--requirements`; it does not download catalogs.
 
@@ -37,7 +37,7 @@ Organizations set defaults and requirements in the `analyst` block of the [organ
 
 ## Advisory CI
 
-Your team can run the same analysis on merge requests with `scripts/appsec-analyst-cli review --ci --base <sha> --head <sha>`. The plugin never installs this job. Start from the [GitHub Actions](../examples/analyst/github-actions.yml) or [GitLab CI](../examples/analyst/gitlab-ci.yml) example and pin every version they name.
+Your team can run the same analysis on merge requests with `scripts/appsec-analyst-cli review --ci --repo <repo> --base <target-branch-sha> --head <feature-branch-sha>`. The plugin never installs this job. Start from the [GitHub Actions](../examples/analyst/github-actions.yml) or [GitLab CI](../examples/analyst/gitlab-ci.yml) example and pin every version they name.
 
 In CI, packages come only from trusted pipeline configuration through `--trusted-package`, and a package file must be pinned with `#sha256=` and live outside the checkout under review. A merge request therefore cannot choose the packages that assess it. The CLI never fetches history; fetch enough history for the merge base before you call it.
 
