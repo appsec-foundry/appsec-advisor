@@ -112,6 +112,11 @@ from model.reclassify_components import (
 from shared._atomic_io import atomic_write_text
 from shared._boundary_criticality import exposure_of, rating_of, tier_of
 from shared._boundary_interface import is_internal_interface
+from shared._finding_locator import ENDING_LOOKAHEAD as _LOC_ENDING_LOOKAHEAD
+from shared._finding_locator import PARENS_LOCATOR as _PARENS_LOCATOR
+from shared._finding_locator import is_code_locator as _is_code_locator
+from shared._finding_locator import strip_trailing_locator as _strip_trailing_locator
+from shared._finding_locator import title_without_locator as _title_without_locator
 from shared._manifest_readers import (
     derive_homepage as _derive_homepage,
 )
@@ -136,7 +141,6 @@ from shared._manifest_readers import (
 from shared._manifest_readers import (
     read_readme_tags as _read_readme_tags,
 )
-from shared._threat_model_fields import evidence_locator
 
 import renderers._business_relevance as _business_relevance
 import renderers._severity_rollup as _severity_rollup
@@ -145,10 +149,10 @@ import renderers.team_questions as _team_questions
 from renderers.actor_presentation import attacker_display, inventory_actors
 from renderers.pregenerate_fragments import _TIER_HINTS as _pregen_tier_hints
 from renderers.pregenerate_fragments import _classify_tier as _pregen_classify_tier
+from renderers.pregenerate_fragments import assessment_intro as _pregen_assessment_intro
 from renderers.pregenerate_fragments import component_coverage as _pregen_component_coverage
 from renderers.pregenerate_fragments import gen_architecture_diagrams
 from renderers.pregenerate_fragments import method_and_limits as _pregen_method_and_limits
-from renderers.pregenerate_fragments import system_at_a_glance as _pregen_system_at_a_glance
 
 try:
     import jsonschema
@@ -323,12 +327,6 @@ class RenderContext:
     # measures analogue of the finding severity dot, but colourless (a text
     # tag, no colour circle) per the 2026-06-03 Variant-A decision.
     _priority_index: Optional[dict[str, str]] = None
-    # Built lazily on first `location_for_ref` call. Maps every finding ref
-    # (T-/F-NNN) and mitigation ref (M-NNN) → its full `file:line` locator
-    # string. Backs the trailing `(`file:line`)` locator that the canonical
-    # reference form appends — basename:line inline, full path in the Findings
-    # index (the `full_path` flag). RC-2026-06-29.
-    _location_index: Optional[dict[str, str]] = None
 
     def severity_emoji(self, key: str) -> str:
         k = (key or "").strip().lower()
@@ -422,7 +420,7 @@ class RenderContext:
             return ""
         if self._label_index is None:
             self._label_index = self._build_label_index()
-        return _codify_label_locator(self._label_index.get(ref.strip().upper(), ""))
+        return _title_without_locator(self._label_index.get(ref.strip().upper(), ""))
 
     def _build_severity_index(self) -> dict[str, str]:
         """Map every finding ref (T-NNN + F-NNN alias) → its rated severity.
@@ -499,55 +497,6 @@ class RenderContext:
             self._priority_index = self._build_priority_index()
         return self._priority_index.get(ref.strip().upper(), "")
 
-    def _build_location_index(self) -> dict[str, str]:
-        """Map every finding ref (T-/F-NNN) and mitigation ref (M-NNN) → its full
-        ``file:line`` locator string.
-
-        Findings source their locator from ``evidence.file[:line]``; mitigations
-        from their own ``file``/``location`` field, falling back to the first
-        finding they address. The locator is stored at FULL path; callers choose
-        basename-vs-full at lookup time (``location_for_ref(full_path=…)``).
-        """
-        threats = (self.yaml_data or {}).get("threats", []) or []
-        idx: dict[str, str] = {}
-        for t in threats:
-            tid = (t.get("t_id") or t.get("id") or "").strip().upper()
-            if not tid:
-                continue
-            loc = _evidence_locator(t)
-            if not loc:
-                continue
-            idx.setdefault(tid, loc)
-            if tid.startswith("T-"):
-                idx.setdefault("F-" + tid[2:], loc)
-            elif tid.startswith("F-"):
-                idx.setdefault("T-" + tid[2:], loc)
-        t_by_id = {(t.get("t_id") or t.get("id") or "").strip().upper(): t for t in threats}
-        for m in (self.yaml_data or {}).get("mitigations", []) or []:
-            mid = (m.get("m_id") or m.get("id") or "").strip().upper()
-            if not mid:
-                continue
-            loc = _mitigation_locator(m, t_by_id)
-            if loc:
-                idx.setdefault(mid, loc)
-        return idx
-
-    def location_for_ref(self, ref: str, full_path: bool = False) -> str:
-        """Locator for a finding/mitigation ref, or "" when unknown.
-
-        Default returns ``basename:line`` (inline references stay short);
-        ``full_path=True`` returns the full ``path/file:line`` (used only by the
-        Findings index, which has the horizontal room).
-        """
-        if not ref:
-            return ""
-        if self._location_index is None:
-            self._location_index = self._build_location_index()
-        loc = self._location_index.get(ref.strip().upper(), "")
-        if not loc:
-            return ""
-        return loc if full_path else _basename_locator(loc)
-
     @staticmethod
     def _synthesise_label_noop() -> None:
         """Placeholder — kept so downstream imports do not break if they
@@ -558,24 +507,12 @@ class RenderContext:
         """Inline-prose form of cross-references: `[ID](#anchor) (short_label)`.
 
         Use this in chain takeaways, walkthrough bullets, and any other
-        inline-prose context where the full `[ID](#anchor) — title — file`
-        form (emitted by `linkify_with_label`) reads as a torn-link
-        construct because `_normalize_emdashes` mid-line eats the em-dash
-        separator AND the title carries its own ` — <file>` suffix.
+        inline-prose context where the em-dash form (emitted by
+        `linkify_with_label`) reads as a torn-link construct because
+        `_normalize_emdashes` mid-line eats the em-dash separator. The label
+        is locator-free (RA-4), so a parenthetical such as ``(IDOR)`` stays
+        and no nested ``(Title (file))`` form can arise.
 
-        Short-label rule handles BOTH title forms produced by upstream
-        processing — without this, `_normalize_title_to_paren_form`
-        (M-10c, runs during compose's per-threat title rewrite) would
-        leave the file segment INSIDE the parens span and we'd render
-        the visually broken nested-parens form
-        `[F-005](#f-005) (Reflected XSS (search-result.component.ts))`:
-
-          - ``<weakness> — <file>``   (raw Stage-1 LLM form)
-            → split on ` — `, take leading segment
-          - ``<weakness> (<file>)``   (post-_normalize_title_to_paren_form)
-            → strip trailing ``(…)`` group
-
-        When neither separator is present, the whole label is used.
         Empty label degrades to ``[ID](#anchor)`` (no parens), same as
         ``linkify_with_label``.
         """
@@ -590,8 +527,7 @@ class RenderContext:
         anchor = r.lower()
         label = (label_override or self.lookup_label(r) or "").strip()
         # Strip the file-path tail in either em-dash or parens form.
-        short = label.split(" — ", 1)[0].strip()
-        short = re.sub(r"\s*\([^()]*\)\s*$", "", short).strip()
+        short = _title_without_locator(label)
         if short:
             # Escape unescaped `$` so a token like `$where` does not open a
             # KaTeX/LaTeX math span in math-enabled markdown viewers (which then
@@ -606,19 +542,16 @@ class RenderContext:
         ref: str,
         label_override: str | None = None,
         compact: bool = False,
-        full_path: bool = False,
     ) -> str:
         """Emit the canonical reference form for a finding/threat/mitigation.
 
         Two shapes, and ONLY these two (enforced by the §reference-format linter
         test):
 
-          * **Full (default):** ``<glyph> [ID](#id) — <label> (`file:line`)`` —
-            ID linked once, class label, basename:line locator backticked in
-            parens (full path when ``full_path=True``, used by the Findings
-            index). The locator is appended ONLY when the label was resolved
-            here (``label_override is None``); an explicit override is trusted
-            verbatim so a caller can still pass a fully-formed label.
+          * **Full (default):** ``<glyph> [ID](#id) — <label>`` — ID linked
+            once, locator-free class label. A reference never carries
+            ``file:line``: the location belongs to the finding itself, and a
+            list of references stays readable only without it (RA-4).
           * **Short (`compact=True`):** ``<glyph> [ID](#id)`` — ID only, still
             linked. For the deliberately narrow contexts (Verdict "Dominant
             Attack Paths", measure chips, narrow Addresses columns).
@@ -668,23 +601,15 @@ class RenderContext:
                 dot = f"{digit} "
         if compact:
             return f"{dot}[{r}](#{anchor})"
-        # Any locator embedded in the label (raw YAML titles / fragment labels
-        # sometimes carry `(file)` or `— file:line`) is STRIPPED, then the
-        # canonical `(`file:line`)` is appended from the location index — so the
-        # locator is always present exactly once and always backticked, no
-        # matter how the caller sourced the label.
-        if label:
-            label = _strip_trailing_locator(label)
-        loc = ""
-        loc_raw = self.location_for_ref(r, full_path=full_path)
-        if loc_raw:
-            loc = f" (`{loc_raw}`)"
+        # Raw YAML titles and fragment labels sometimes carry `(file)` or
+        # `— file:line`; a reference shows the class label only.
+        label = _title_without_locator(label)
         if label:
             # Escape unescaped `$` (see linkify_with_short_label) so a `$where`-
             # style token cannot open a KaTeX math span in math-enabled viewers.
             label = re.sub(r"(?<!\\)\$", r"\\$", label)
-            return f"{dot}[{r}](#{anchor}) — {label}{loc}"
-        return f"{dot}[{r}](#{anchor}){loc}"
+            return f"{dot}[{r}](#{anchor}) — {label}"
+        return f"{dot}[{r}](#{anchor})"
 
 
 # ---------------------------------------------------------------------------
@@ -1709,35 +1634,6 @@ _CWE_CLASS_NAMES = {
 }
 
 
-def _evidence_locator(t: dict) -> str:
-    """Full ``file[:line]`` locator from a finding's evidence, or "" when none.
-
-    Accepts evidence as a dict or a list-of-dicts (first entry wins), mirroring
-    the two shapes ``_canonical_finding_title`` already handles."""
-    ev = t.get("evidence") or {}
-    if isinstance(ev, list):
-        ev = ev[0] if ev and isinstance(ev[0], dict) else {}
-    return evidence_locator(ev)
-
-
-def _mitigation_locator(m: dict, threats_by_id: dict[str, dict]) -> str:
-    """Full ``file[:line]`` locator for a mitigation. Prefers its own
-    ``file``/``location`` field; falls back to the first finding it addresses so
-    a measure still carries a code anchor when its yaml omits one."""
-    raw = (m.get("file") or m.get("location") or "").strip()
-    if raw:
-        mm = re.search(r"([\w./\-]+\.[A-Za-z0-9]{1,6}(?::\d+(?:-\d+)?)?)", raw)
-        if mm:
-            return mm.group(1)
-    for a in m.get("threat_ids") or m.get("addresses") or []:
-        t = threats_by_id.get(str(a).strip().upper())
-        if t:
-            loc = _evidence_locator(t)
-            if loc:
-                return loc
-    return ""
-
-
 def _basename_locator(loc: str) -> str:
     """``path/to/file.ts:76`` → ``file.ts:76`` (basename, line kept)."""
     if not loc:
@@ -1745,35 +1641,6 @@ def _basename_locator(loc: str) -> str:
     path, sep, line = loc.partition(":")
     base = path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
     return f"{base}:{line}" if sep else base
-
-
-# A trailing file locator token: `path/file.ext[:line[-line]]`, optionally
-# backticked. Requires a real extension or a `:line` so prose words / acronyms
-# like "(IDOR)" are never mistaken for a locator. The `(?:-\d+)?` range branch
-# lets a `file.ts:20-25` tail be recognised (and stripped) as one unit.
-_TRAILING_LOC_TOKEN = r"`?[\w./\\-]+\.[A-Za-z0-9]{1,6}(?::\d+(?:-\d+)?)?`?"
-
-
-def _strip_trailing_locator(label: str) -> str:
-    """Remove a trailing file locator from a label in ANY form it ships:
-    ``… (`a/b.ts:12`)``, ``… (a/b.ts:12)``, ``… — a/b.ts:12``, or ``… a/b.ts:12``.
-
-    The canonical reference form (``linkify_with_label``) appends its own
-    ``(`file:line`)`` from the location index, so the label itself must carry no
-    locator or it would double. Leaves prose and non-locator parentheticals
-    (``(IDOR)``) untouched. Idempotent."""
-    if not label:
-        return label
-    s = label.rstrip()
-    for pat in (
-        rf"\s*\(\s*{_TRAILING_LOC_TOKEN}\s*\)\s*$",  # (file) / (`file`)
-        rf"\s*—\s*{_TRAILING_LOC_TOKEN}\s*$",  # — file:line
-        rf"\s+{_TRAILING_LOC_TOKEN}\s*$",  # bare-space-glued file:line
-    ):
-        s2 = re.sub(pat, "", s)
-        if s2 != s and s2.strip():
-            return s2.rstrip()
-    return s
 
 
 def _distinct_instance_locations(t: dict) -> list[tuple[str, int | None, str]]:
@@ -1797,12 +1664,11 @@ def _distinct_instance_locations(t: dict) -> list[tuple[str, int | None, str]]:
 
 
 def _canonical_finding_title(t: dict) -> str:
-    """Return a canonical finding title with a locator only for one instance.
+    """Return a canonical, locator-free finding title.
 
     Inputs (in priority order):
-      1. ``t['cwe']`` → look up in `_CWE_CLASS_NAMES` for the class label.
-      2. ``t['evidence'].file:line`` → append as the trailing `— file:line`
-         token only when the finding has at most one distinct instance.
+      1. ``t['title']`` without a trailing locator, when it is a clean label.
+      2. ``t['cwe']`` → look up in `_CWE_CLASS_NAMES` for the class label.
       3. ``t['title']`` (legacy narrative form) → used only when CWE is
          unmapped, in which case the first 5 non-stopword tokens of the
          existing title are kept as the class label so the result is
@@ -1821,7 +1687,7 @@ def _canonical_finding_title(t: dict) -> str:
     # carry (the yaml threat has it, the merged threat does not) so the evidence
     # suffix is re-appended uniformly below and BOTH call sites agree. Falls
     # back to the CWE-class derivation only when no usable short title exists.
-    curated_class = re.sub(r"\s+—\s+.*$", "", (t.get("title") or "").strip()).strip()
+    curated_class = re.sub(r"\s+—\s+.*$", "", _strip_trailing_locator((t.get("title") or "").strip())).strip()
     # A curated title with a leaked code constant (FOO_BAR / DEFAULT_FULL_SCHEMA)
     # is not a clean class label — fall through to the CWE/token derivation,
     # which additionally strips package names and over-long token runs. Legit
@@ -1873,26 +1739,7 @@ def _canonical_finding_title(t: dict) -> str:
 
         tokens = [w for w in raw.split() if w.lower() not in stopwords and not _is_noise_token(w)]
         class_label = " ".join(tokens[:5]).strip(" ,;:.")
-    if not class_label:
-        return ""
-
-    # Evidence file:line suffix. Consolidated findings deliberately retain
-    # only the weakness class: §8 renders their complete location set as
-    # Instances, and a representative path in the title is misleading.
-    ev = t.get("evidence") or {}
-    ev_file = ""
-    ev_line = None
-    if isinstance(ev, dict):
-        ev_file = (ev.get("file") or "").strip()
-        ev_line = ev.get("line")
-    elif isinstance(ev, list) and ev:
-        first = ev[0] if isinstance(ev[0], dict) else {}
-        ev_file = (first.get("file") or "").strip()
-        ev_line = first.get("line")
-
-    if ev_file and len(_distinct_instance_locations(t)) <= 1:
-        loc = f"{ev_file}:{ev_line}" if ev_line else ev_file
-        return f"{class_label} — `{loc}`"
+    # No locator: the finding card states it in its Location field (RA-4).
     return class_label
 
 
@@ -2749,7 +2596,7 @@ def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) 
             data=data,
             risk_distribution=risk_distribution,
             method_limits=method_limits,
-            system_line=_pregen_system_at_a_glance(ctx.yaml_data),
+            intro_line=_pregen_assessment_intro(ctx.yaml_data),
             business_context_note=ctx.verdict_export.get("business_context_note", ""),
             verified_suffixes=verified_suffixes,
         ).rstrip()
@@ -4473,93 +4320,6 @@ def _format_manual_review_hint(threat: dict, tid: str) -> dict[str, str] | None:
     }
 
 
-def _shorten_title_for_xref(raw_title: str, threat: dict | None = None, *, compact: bool = False) -> str:
-    """Return the cross-reference form of a threat title.
-
-    Output format (M3.13 — post-2026-05 simplified):
-        - With param + file: `<Weakness> in file <path> ("<name>")`
-        - Without param, with file: `<Weakness> in file <path>`
-        - With non-file path (directory): `<Weakness> in <path>`
-        - Cross-cutting (no path, no param): `<Weakness>`
-
-    ``compact=True`` switches to a parens form for table cells where a
-    single mitigation row may stack 4-5 findings via `<br/>` — the
-    "in file" form repeated per finding reads as bloat. Compact form:
-        - With param + file: `<Weakness> (<path>, "<name>")`
-        - Without param, with file: `<Weakness> (<path>)`
-        - Cross-cutting: `<Weakness>` (unchanged)
-
-    The bare `("<name>")` parameter token replaces the previous
-    `(param "<name>")` form — the `param ` prefix added noise without
-    information (the surrounding context already implies "this is the
-    affected parameter"). See user feedback 2026-05-17.
-
-    Examples:
-        'SQL Injection in file routes/login.ts ("email")'
-        'Hardcoded Cryptographic Key in file lib/insecurity.ts'
-        'Insecure Token Storage in frontend/src/app/Services'
-        'Cross-Site Request Forgery in file server.ts'
-
-    Input form expected from yaml.title: "<Weakness> (<file[:line]>)" or
-    "<Weakness> (<param>, <file[:line]>)" or bare "<Weakness>". The function
-    also consults `threat.affected_parameter` + `threat.evidence[0].file`
-    when the title alone is not enough.
-    """
-    raw_title = (raw_title or "").strip()
-    if not raw_title:
-        return raw_title
-
-    threat = threat or {}
-    param = (threat.get("affected_parameter") or "").strip() or None
-
-    # Pull file path from evidence (first entry) as a fallback source.
-    ev = threat.get("evidence")
-    if isinstance(ev, dict):
-        ev = [ev]
-    elif not isinstance(ev, list):
-        ev = []
-    ev_file = ""
-    if ev and isinstance(ev[0], dict):
-        ev_file = (ev[0].get("file") or "").strip()
-
-    # Parse current title to extract weakness + any existing parens content.
-    parsed_path = ""
-    parsed_param = None
-    m = re.match(r"^(.*?)\s*\(([^()]+)\)\s*$", raw_title)
-    if m:
-        weakness = m.group(1).strip()
-        inner = m.group(2).strip()
-        # Tokens are comma-separated. Path token = contains "/" or ends
-        # in ".ext"; the OTHER token (if any) is the parameter.
-        for tok in (p.strip() for p in inner.split(",")):
-            stripped = re.sub(r"(\.[A-Za-z0-9]{1,6}):\d+$", r"\1", tok)
-            if "/" in stripped or re.search(r"\.[A-Za-z0-9]{1,6}$", stripped):
-                parsed_path = parsed_path or stripped
-            else:
-                parsed_param = parsed_param or stripped
-    else:
-        weakness = raw_title
-
-    # Resolve final path + param: yaml field wins, else parsed-from-title.
-    path = parsed_path or re.sub(r"(\.[A-Za-z0-9]{1,6}):\d+$", r"\1", ev_file)
-    final_param = param or parsed_param
-
-    # Compose the new form. The affected PARAMETER is intentionally dropped —
-    # the finding-title contract is `<weakness class> — <file[:line]>` only, no
-    # payloads / parameters / code (user report 2026-06-12: cells read
-    # `… (routes/login.ts, "email")`). `final_param` is still resolved above for
-    # back-compat but never rendered into the label.
-    _ = final_param  # noqa: F841 — resolved for parsing symmetry, deliberately unused
-    if path:
-        if compact:
-            # Parens form for table-cell contexts (Top Mitigations).
-            return f"{weakness} ({path})"
-        # "in file <path>" when path looks like a file; "in <path>" otherwise.
-        in_phrase = "in file" if re.search(r"\.[A-Za-z0-9]{1,6}$", path) else "in"
-        return f"{weakness} {in_phrase} {path}"
-    return weakness
-
-
 def _strip_embedded_evidence_file(title: str, threat: dict | None) -> str:
     """Drop a trailing evidence-file token that upstream title generation
     appends to the weakness phrase.
@@ -4567,8 +4327,7 @@ def _strip_embedded_evidence_file(title: str, threat: dict | None) -> str:
     Stage-1 increasingly emits titles like
     ``"SQL injection authentication bypass routes/login.ts"`` — the file is
     glued onto the weakness with a bare space. Downstream renderers then add
-    the file AGAIN (``_shorten_title_for_xref`` → ``… (routes/login.ts)``;
-    the §8 Location cell; bare-ref linkifiers), producing the redundant
+    the file AGAIN (the §8 Location cell, bare-ref linkifiers), producing the redundant
     ``… routes/login.ts (routes/login.ts)`` form the user flagged.
 
     Strip the trailing token ONLY when it matches — or is a truncated prefix
@@ -5143,7 +4902,6 @@ _PRIO_RAMP_TBL = {"p1": "●", "p2": "◕", "p3": "◑", "p4": "○"}
 # `[F-NNN](#f-nnn)` chips with no title or criticality, which is unreadable
 # at 48 findings (2026-05-31 user report). Each chip now carries a leading
 # severity circle and the short title.
-_INDEX_PATH_TAIL_RE = re.compile(r"\s+—\s+(?:[\w.-]+/)*[\w.-]+\.\w+(?::\d+)?\s*$")
 
 
 def _paragraphize_issue_card(issue_card: str, *, min_chars: int = 300, per_para: int = 2) -> str:
@@ -5185,7 +4943,7 @@ def _index_short_title(title: str, limit: int = 72) -> str:
     We cut at a word boundary, close any dangling code span, and reduce stray
     `[text](url)` fragments to their visible text first.
     """
-    s = _INDEX_PATH_TAIL_RE.sub("", title or "").strip()
+    s = _strip_trailing_locator((title or "").strip())
     # Reduce markdown links to visible text so a cut never splits `[t](url)`.
     s = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", s)
     # Backtick bare `<placeholder>` tokens (e.g. `@sha256:<digest>`) so the
@@ -6356,7 +6114,7 @@ def _inject_supply_chain_paragraph(ctx: RenderContext, md: str) -> str:
         return md
     from model.build_supply_chain_view import BUILD_TIME
 
-    from renderers.figure1b_svg import ENTRY_TITLES, _where
+    from renderers.figure1b_svg import ENTRY_TITLES
 
     sections = {
         str(c["control_section"]).strip()
@@ -6377,29 +6135,31 @@ def _inject_supply_chain_paragraph(ctx: RenderContext, md: str) -> str:
     view = split["view"]
     labels = {e["id"]: e["label"] for e in view["elements"]}
 
-    def refs(ids) -> str:
-        return ", ".join(ctx.linkify_with_label(i, compact=True) for i in dict.fromkeys(ids))
+    def items(ids, indent: str = "") -> list[str]:
+        return [f"{indent}- {ctx.linkify_with_label(i)}" for i in dict.fromkeys(ids)]
 
     project = (ctx.yaml_data.get("meta") or {}).get("project_name")
-    text = [
-        f"[Figure 1b](#{_FIGURE1B_ANCHOR}) shows the inputs, build systems and release artifacts "
-        f"that {project or 'the repository'} evidences."
+    block = [
+        f"**Build path.** [Figure 1b](#{_FIGURE1B_ANCHOR}) shows the inputs, build systems and release "
+        f"artifacts that {project or 'the repository'} evidences."
     ]
     path = view.get("highlighted_path") or {}
     if steps := path.get("steps"):
         hops = [labels.get(steps[0]["from"], steps[0]["from"])]
-        hops += [f"{labels.get(s['to'], s['to'])} ({_where(s.get('via'))})" for s in steps]
-        text.append(
-            f"The highlighted path follows {refs([path['finding']])} from {' → '.join(hops)} "
-            "and stops where the evidence ends."
-        )
+        hops += [labels.get(s["to"], s["to"]) for s in steps]
+        block += [
+            "",
+            f"Highlighted path of {ctx.linkify_with_label(path['finding'])}: {' → '.join(hops)}. "
+            "The path stops where the evidence ends.",
+        ]
     if view["entries"]:
-        entries = "; ".join(f"{ENTRY_TITLES[e['entry']]} {refs(e['findings'])}" for e in view["entries"])
-        text.append(f"Attack entries: {entries}.")
+        block += ["", "**Attack entries:**", ""]
+        for e in view["entries"]:
+            block.append(f"- **{ENTRY_TITLES[e['entry']]}**")
+            block += items(e["findings"], indent="  ")
     if unowned := [f["id"] for f in view["findings"] if f["element"] == "unowned"]:
-        text.append(f"Findings without an evidenced CI owner: {refs(unowned)}.")
-    paragraph = "**Build path.** " + " ".join(text)
-    return md[: heading.end()] + "\n\n" + paragraph + md[heading.end() :]
+        block += ["", "**Not attributable to a build step:**", ""] + items(unowned)
+    return md[: heading.end()] + "\n\n" + "\n".join(block) + md[heading.end() :]
 
 
 _DETAIL_FIGURE_NUMBERS = range(3, 7)  # the §2 deployment figure follows Figures 1 and 2; 4–6 are only cleaned up
@@ -8141,8 +7901,8 @@ def _compute_top_findings_rows(ctx: RenderContext) -> tuple[list[dict[str, Any]]
                     "kind": (m.get("kind") or "").strip(),
                 }
             )
-        # Finding title — canonical `<weakness class> — <file:line>` form
-        # so the Top Findings row matches the §8 Findings Register row title.
+        # Canonical locator-free finding title, so the Top Findings row
+        # matches the §8 Findings Register row title.
         title = _canonical_finding_title(t)
         if not title:
             # Fallback chain matches `_build_finding_cell` for layout
@@ -8269,21 +8029,10 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
             t = threats.get(tid, {})
             sev = _severity_rank(t.get("effective_severity") or t.get("risk") or t.get("severity"))
             max_sev = min(max_sev, sev)
-            # M3.12 — short title KEEPS the trailing `(<param>, <file>)` /
-            # `(<file>)` token. A bare "SQL Injection" cell is structurally
-            # useless because the reader has no idea which endpoint it
-            # refers to. Strip ONLY the `:line` from the path so the
-            # trailing token stays compact (`routes/login.ts` rather than
-            # `routes/login.ts:34`). The §8 register still carries the
-            # full file:line for click-through detail.
-            # Strip any evidence-file token the Stage-1 title already carries
-            # so the compact form below does not render it twice
-            # (`… routes/login.ts (routes/login.ts)`).
-            raw_title = _strip_embedded_evidence_file((t.get("title") or t.get("scenario_short") or "").strip(), t)
-            # compact=True — Top Mitigations Addresses cells stack 4-5
-            # findings via `<br/>`; the parens form is more scannable
-            # than 4 repeated "in file" phrases per row.
-            short_label = _shorten_title_for_xref(raw_title, t, compact=True)
+            # Same locator-free label as every other finding reference (RA-4).
+            short_label = ctx.lookup_label(tid) or _strip_trailing_locator(
+                (t.get("title") or t.get("scenario_short") or "").strip()
+            )
             # Criticality dot — the Addresses column lists findings and so
             # carries the same severity glyph as every other finding cross-ref
             # (§8 register, asset/component tables). Empty when severity unknown.
@@ -10136,18 +9885,14 @@ def _compute_top_threats_rows(ctx: RenderContext) -> list[dict[str, Any]]:
                 continue
             seen_fids.add(visible)
             member_threats.append(t)
-            # Canonical label (class title, locator-free) + the backticked
-            # basename:line locator, mirroring linkify_with_label's full form —
-            # the cell keeps its severity span and `→ component` link, so it
-            # composes the pieces by hand but uses the SAME label + location
-            # sources so the format stays uniform (locator always backticked).
+            # Canonical locator-free class title, mirroring linkify_with_label's
+            # full form — the cell keeps its severity span and `→ component`
+            # link, so it composes the pieces by hand from the SAME label source.
             short = ctx.lookup_label(visible) or _strip_trailing_locator(
                 _strip_finding_location(
                     t.get("title") or t.get("scenario_short") or _canonical_finding_title(t) or visible
                 )
             )
-            _loc = ctx.location_for_ref(visible)
-            _loc_suffix = f" (`{_loc}`)" if _loc else ""
             c_anchor, _c_name = resolve_component(t.get("component") or t.get("component_id"))
             # Keep the atomic units non-breaking — the bullet+finding id and the
             # `→ component` link — but let the title wrap on normal spaces so a
@@ -10182,7 +9927,7 @@ def _compute_top_threats_rows(ctx: RenderContext) -> list[dict[str, Any]]:
             _c_suffix = f"&nbsp;{_c_name}" if _c_name and _c_name != c_anchor else ""
             finding_cells.append(
                 f'<span style="white-space:nowrap">{f_prefix}[{visible}](#{visible.lower()})</span>'
-                f" — {short}{_loc_suffix} "
+                f" — {short} "
                 f'<span style="white-space:nowrap">→&nbsp;[{c_anchor}](#{c_anchor.lower()})</span>{_c_suffix}'
             )
 
@@ -10969,12 +10714,9 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
     # these markdown-fragment tables match the computed-section convention.
     md = _enrich_linked_id_cells(ctx, md)
 
-    # Normalise the trailing locator on every finding/mitigation reference,
-    # fragment-agnostic: an un-backticked `(path/file:line)` directly after an
-    # `[ID](#id) — label` is backticked and basenamed in place. Already-
-    # backticked locators (incl. the Findings index's deliberate full path) are
-    # skipped. This is the catch-all for LLM-fragment-authored cross-references
-    # (e.g. the §7 control tables) that never went through linkify_with_label.
+    # Catch-all for LLM-authored cross-references that never went through
+    # linkify_with_label: a locator ending a reference is dropped (RA-4), one
+    # later in a sentence is backticked and basenamed.
     md = _normalize_reference_locators(md)
 
     # §5 Attack Surface + §7 Security Architecture author their finding
@@ -11456,17 +11198,24 @@ def _inject_boundary_leg_crossrefs(ctx: RenderContext, md: str) -> str:
     if not rows:
         return md
     threats = ctx.yaml_data.get("threats") or []
+    state_text = {"refuted": "assumption broken", "unconfirmed": "assumption not confirmed"}
     per_leg: dict[str, list[str]] = {}
     for row in rows:
         for leg in boundary_leg_states(row, threats):
             if leg["state"] == "unexamined":
                 continue
             ids = [_visible_finding_id(fid) for fid in leg["finding_ids"][:3]]
-            detail = f"{leg['state']}"
-            if ids:
-                extra = len(leg["finding_ids"]) - len(ids)
-                detail += " — " + ", ".join(ids) + (f", +{extra}" if extra > 0 else "")
-            per_leg.setdefault(leg["leg"], []).append(f"[{row['id']}](#{row['id']}) {detail}")
+            crossing, _mechanism = _boundary_crossing_and_mechanism(row)
+            entry = [
+                f"- [{row['id']}](#{row['id']})"
+                + (f" — {crossing}" if crossing else "")
+                + f" ({state_text.get(leg['state'], leg['state'])})"
+            ]
+            entry += [f"  - [{fid}](#{fid.lower()})" for fid in ids]
+            extra = len(leg["finding_ids"]) - len(ids)
+            if extra > 0:
+                entry.append(f"  - +{extra} more")
+            per_leg.setdefault(leg["leg"], []).append("\n".join(entry))
     for domain, leg in _SECTION7_DOMAIN_LEG.items():
         # `[ \t]*$`, not `\s*$`: the latter backtracks into the heading's own
         # newline, so the injected block would absorb the blank line and the
@@ -11482,7 +11231,7 @@ def _inject_boundary_leg_crossrefs(ctx: RenderContext, md: str) -> str:
             continue
         entries = per_leg.get(leg) or []
         line = (
-            f"{anchor}\n\n**Dependent crossings:** " + " · ".join(entries)
+            f"{anchor}\n\n**Dependent crossings:**\n\n" + "\n".join(entries)
             if entries
             else f"{anchor}\n\n_No trust boundary in this model depends on this control class._"
         )
@@ -11673,8 +11422,7 @@ def _section7_inline_findings_id_only(ctx: RenderContext, md: str) -> str:
     for ref in refs:
         canon = re.sub(r"^T-", "F-", ref)
         label = (ctx.lookup_label(canon) or ctx.lookup_label(ref) or "").strip()
-        short = label.split(" — ", 1)[0].strip()
-        short = re.sub(r"\s*\([^()]*\)\s*$", "", short).strip()
+        short = _title_without_locator(label)
         if short:
             strip_map[ref] = short
     if not strip_map:
@@ -11742,9 +11490,7 @@ def _section7_title_relevant_findings(ctx: RenderContext, md: str) -> str:
     region = "\n".join(lines[start:end])
     label_map: dict[str, str] = {}
     for ref in set(re.findall(r"\[(F-\d{3,4})\]\(#f-\d+\)", region)):
-        label = (ctx.lookup_label(ref) or "").strip()
-        short = label.split(" — ", 1)[0].strip()
-        short = re.sub(r"\s*\([^()]*\)\s*$", "", short).strip()
+        short = (ctx.lookup_label(ref) or "").strip()
         if short:
             label_map[ref] = short
     if not label_map:
@@ -11753,10 +11499,19 @@ def _section7_title_relevant_findings(ctx: RenderContext, md: str) -> str:
     _bullet_re = re.compile(r"^\s*-\s")
     _bare_link_re = re.compile(r"\[(F-\d{3,4})\]\(#f-\d+\)")
 
+    def _plain(s: str) -> str:
+        # Escapes and code spans (`Socket\.IO`, `/ftp`) are added to the
+        # visible title by other passes; compare without them.
+        return re.sub(r"\\(.)", r"\1", s).replace("`", "")
+
     def _title_link(m: re.Match[str]) -> str:
         ref = m.group(1)
         short = label_map.get(ref)
-        return f"[{ref} — {short}](#{ref.lower()})" if short else m.group(0)
+        if not short:
+            return m.group(0)
+        if _plain(m.string[m.end() :]).lstrip().startswith(f"— {_plain(short)}"):  # already titled
+            return m.group(0)
+        return f"[{ref} — {short}](#{ref.lower()})"
 
     in_fence = False
     for i in range(start, end):
@@ -12131,6 +11886,12 @@ _REF_TRAILING_LOC_RE = re.compile(
     r"(\[[FTM]-\d+\]\(#[ftm]-\d+\)[^\n|\[<]*?)"  # a finding/mitigation link + its (locator-free) label
     r"\((?!`)([\w./\\-]+\.[A-Za-z0-9]{1,6}(?::\d+(?:-\d+)?)?)\)"  # an un-backticked (path/file[:line[-line]]) right after
 )
+# A locator that ENDS a reference (before a cell, line break, list separator or
+# the line end) — the reference's own location, which belongs to the finding.
+_REF_ENDING_LOC_RE = re.compile(
+    r"(\[[FTM]-\d+\]\(#[ftm]-\d+\)[^\n|\[<]*?)\s*" + _PARENS_LOCATOR + _LOC_ENDING_LOOKAHEAD,
+    re.MULTILINE,
+)
 
 
 _ID_IN_LINK_TEXT_RE = re.compile(r"\[([FTM]-\d+)\s*[—–-]\s*([^\]]*)\]\(#([ftm]-\d+)\)")
@@ -12156,18 +11917,27 @@ def _delink_id_in_link_text(md: str) -> str:
 
 
 def _normalize_reference_locators(md: str) -> str:
-    """Backtick + basename an un-backticked locator that trails a finding/
-    mitigation reference. Fragment-agnostic catch-all for cross-references that
-    bypassed ``linkify_with_label`` (LLM-authored §7 control tables etc.).
+    """Fragment-agnostic catch-all for cross-references that bypassed
+    ``linkify_with_label`` (LLM-authored §6 bullets and tables etc.).
 
-    Already-backticked locators are skipped by the ``(?!`)`` guard, so the
-    Findings index's deliberate full path is preserved. The gap between the link
-    and the locator forbids ``[`` / ``<`` / ``|`` so a locator is never attached
-    across a sibling reference, an HTML tag, or a table-cell boundary."""
+    A locator that ends a reference is dropped: the location belongs to the
+    finding (RA-4). A locator later in a sentence is kept but backticked and
+    basenamed, so removing it cannot break the sentence. The gap between the
+    link and the locator forbids ``[`` / ``<`` / ``|`` so a locator is never
+    attached across a sibling reference, an HTML tag, or a table-cell boundary."""
 
     def _repl(m: re.Match[str]) -> str:
+        if not _is_code_locator(m.group(2)):
+            return m.group(0)
         return f"{m.group(1)}(`{_basename_locator(m.group(2))}`)"
 
+    def _drop(m: re.Match[str]) -> str:
+        if not _is_code_locator(m.group(2)):
+            return m.group(0)
+        # A label that was only the locator leaves `[F-1](#f-1) —` behind.
+        return re.sub(r"\s*—\s*$", "", m.group(1).rstrip())
+
+    md = _REF_ENDING_LOC_RE.sub(_drop, md)
     return _REF_TRAILING_LOC_RE.sub(_repl, md)
 
 
@@ -13142,6 +12912,11 @@ def _escape_dot_tld_identifiers(md: str) -> str:
     return "".join(out_chunks)
 
 
+# A list item that is nothing but one reference (optionally after its glyph)
+# reads as a list entry, not a mid-sentence citation: it takes the full form.
+_REF_ONLY_LIST_ITEM_RE = re.compile(r"^\s*[-*]\s+(?:\S+\s+)?\[[FTM]-\d{3,4}\]\(#[ftm]-\d+\)\s*$")
+
+
 def _linkify_bare_refs_in_prose(ctx: RenderContext, md: str) -> str:
     """Globally linkify every `[T-NNN](#t-nnn)` / `[M-NNN](#m-nnn)` /
     `[F-NNN](#f-nnn)` link that is NOT followed by ` — <label>`.
@@ -13222,7 +12997,7 @@ def _linkify_bare_refs_in_prose(ctx: RenderContext, md: str) -> str:
                 # builders) AND refs already followed by ` (<label>)` (parens
                 # form, produced by linkify_with_short_label in prose).
                 r"\[([FTM]-\d{3,4})\]\(#[ftm]-\d+\)(?!\s+[—(])",
-                make_sub(line, _strip.startswith("|")),
+                make_sub(line, _strip.startswith("|") or bool(_REF_ONLY_LIST_ITEM_RE.match(line))),
                 line,
             )
         out_chunks.append("\n".join(lines))
@@ -15116,47 +14891,6 @@ def _fix_action_lead(cwe_norm: str) -> str:
 # keys as code. Conservative — only wraps tokens that look strongly like
 # code references (file extensions, function-call shape, env-var case)
 # and never doubles existing backticks.
-# A finding/mitigation title carries its evidence pointer as a TRAILING
-# parenthetical locator — `(routes/api/Users)`, `(updateProductReviews.ts:18)`,
-# `(package.json:7)`, `(Dockerfile)`. The LLM backticks it inconsistently, so the
-# same report shows `(`a.ts:18`)` next to `(routes/api/Users)`. These two helpers
-# normalise it deterministically: code locators are ALWAYS monospaced in rendered
-# labels, prose / STRIDE tags ((S·E), (I)) are never touched, and the Table of
-# Contents strips the backticks entirely.
-_LOCATOR_TOKEN_RE = re.compile(r"^[A-Za-z0-9_@][\w./\\@-]*(?::\d+(?:-\d+)?)?$")
-_NOEXT_CODE_FILES = {
-    "dockerfile",
-    "makefile",
-    "jenkinsfile",
-    "procfile",
-    "gemfile",
-    "rakefile",
-    "vagrantfile",
-    "brewfile",
-    "gulpfile",
-    "gruntfile",
-}
-
-
-def _codify_label_locator(label: str) -> str:
-    """Backtick the trailing ``(<locator>)`` of a finding/mitigation label when it
-    is a code locator (file path, file:line, route path, or an extensionless
-    config filename like Dockerfile). Idempotent; leaves prose, STRIDE tags, and
-    already-backticked locators untouched. Only the locator is wrapped."""
-    if not label or "(" not in label:
-        return label
-    m = re.search(r"\(([^()]+)\)\s*$", label)
-    if not m:
-        return label
-    inner = m.group(1).strip()
-    if "`" in inner:  # already formatted → idempotent
-        return label
-    looks_like_code = bool(_LOCATOR_TOKEN_RE.match(inner)) and (
-        "." in inner or "/" in inner or "\\" in inner or ":" in inner or inner.lower() in _NOEXT_CODE_FILES
-    )
-    if not looks_like_code:
-        return label
-    return f"{label[: m.start()]}(`{inner}`){label[m.end() :]}"
 
 
 def _strip_label_code(label: str) -> str:
@@ -15272,14 +15006,10 @@ def _build_threat_card(
     """
     depth = _FINDING_DEPTH.get(sev, _FINDING_DEPTH["medium"])
 
-    # -- 1. Title — canonical `<weakness class> — <file:line>` form -------
-    # Per user feedback (feedback_threat_model_finding_titles.md): titles
-    # MUST be `<weakness class> — <file[:line]>` only — no library names,
-    # payload snippets, or narrative fragments. `_canonical_finding_title`
-    # looks up the threat's CWE in `_CWE_CLASS_NAMES` and combines it with
-    # the evidence file:line. If CWE is unmapped, falls back to a short
-    # noun phrase derived from the legacy narrative title (kept on a
-    # best-effort basis so unmapped findings still render something).
+    # -- 1. Title — canonical locator-free weakness class -----------------
+    # Titles name the weakness only — no library names, payload snippets,
+    # narrative fragments or locator; the Location row below carries the
+    # file:line.
     raw_title = _canonical_finding_title(t)
     if not raw_title:
         # Last-resort fallback — preserve old behaviour on findings with
@@ -17156,8 +16886,7 @@ def _weakness_finding_title_map(ctx: RenderContext) -> dict[str, str]:
             tid = (t.get("t_id") or t.get("id") or "").strip().upper()
             if not tid:
                 continue
-            title = (t.get("title") or "").strip()
-            title = re.sub(r"\s+—\s+\S.*$", "", title).strip() or title  # drop trailing " — file:line"
+            title = _strip_trailing_locator((t.get("title") or "").strip())
             m = re.search(r"(\d+)$", tid)
             if m:
                 for k in (f"T-{m.group(1)}", f"F-{m.group(1)}"):
@@ -17328,9 +17057,11 @@ def _render_systemic_weaknesses(ctx: RenderContext) -> str:
                 pid = (item.get("id") or "").strip().upper()
                 path = (item.get("file") or "").strip()
                 line_no = item.get("line")
-                loc = f" (`{path}{f':{line_no}' if line_no else ''}`)" if path else ""
                 link = _f_link(pid, with_title=True) if pid else ""
-                out.append(f"- {link}{loc}" if link else f"- {loc.strip(' ()')}")
+                if link:
+                    out.append(f"- {link}")
+                elif path:
+                    out.append(f"- `{path}{f':{line_no}' if line_no else ''}`")
             out.append("")
         # Architecture evidence (absent controls) — inline (short phrases).
         absent = (w.get("observable_backing") or {}).get("absent_control_signal") or []

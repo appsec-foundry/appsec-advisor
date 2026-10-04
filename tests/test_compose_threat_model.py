@@ -5738,35 +5738,6 @@ def test_quick_banner_no_disclosure_when_no_carried_threats(tmp_path: Path) -> N
 # ---------------------------------------------------------------------------
 
 
-def test_codify_label_locator_backticks_code_consistently():
-    f = compose._codify_label_locator
-    # file:line, route path, bare filename, extensionless config file → backticked
-    assert (
-        f("Missing Ownership Check (updateProductReviews.ts:18)")
-        == "Missing Ownership Check (`updateProductReviews.ts:18`)"
-    )
-    assert (
-        f("Mass Assignment via Finale-REST (routes/api/Users)")
-        == "Mass Assignment via Finale-REST (`routes/api/Users`)"
-    )
-    assert f("Prototype Pollution (package.json:7)") == "Prototype Pollution (`package.json:7`)"
-    assert f("Root Container (Dockerfile)") == "Root Container (`Dockerfile`)"
-
-
-def test_codify_label_locator_leaves_non_code_untouched():
-    f = compose._codify_label_locator
-    assert f("Hardcoded Secrets & Weak Cryptography (S·E)") == "Hardcoded Secrets & Weak Cryptography (S·E)"
-    assert f("Some Finding (I)") == "Some Finding (I)"
-    assert f("Some Finding (verified)") == "Some Finding (verified)"
-    assert f("Add JWT authentication middleware") == "Add JWT authentication middleware"
-
-
-def test_codify_label_locator_is_idempotent():
-    f = compose._codify_label_locator
-    once = f("Missing Ownership Check (changePassword.ts:39)")
-    assert f(once) == once
-
-
 def test_strip_label_code_removes_backticks_for_toc():
     assert compose._strip_label_code("SQL Injection (`search.ts:42`)") == "SQL Injection (search.ts:42)"
 
@@ -5891,6 +5862,21 @@ def test_prose_linkifier_table_cells_use_emdash_form():
     out_prose = compose._linkify_bare_refs_in_prose(ctx, prose_md)
     assert "[F-014](#f-014) — " in out_tbl  # em-dash in the table cell
     assert "[F-014](#f-014) (" in out_prose  # parens in inline prose
+
+
+def test_a_list_item_that_is_only_a_reference_takes_the_full_form():
+    ctx = compose.RenderContext(
+        output_dir=Path("."),
+        contract={},
+        yaml_data={"threats": [{"id": "T-014", "title": "Template injection (routes/a.ts:6)", "risk": "High"}]},
+        triage={},
+        fragments_dir=Path("."),
+    )
+    out = compose._linkify_bare_refs_in_prose(ctx, "- 🟠 [F-014](#f-014)\n- see [F-014](#f-014) here")
+    assert out.splitlines() == [
+        "- 🟠 [F-014](#f-014) — Template injection",
+        "- see [F-014](#f-014) (Template injection) here",
+    ]
 
 
 # ---- Figure 1 SVG integration (Phase 2) ------------------------------------
@@ -6556,8 +6542,8 @@ def test_sql_literal_survives_cctld_escape_pass() -> None:
 def test_section7_title_relevant_findings_titles_bare_bullet_links():
     ctx = _StubLabelCtx(
         {
-            "F-002": "Insecure JWT Verification — `insecurity.ts:55`",
-            "F-017": "Missing Rate Limiting On Login (`server.ts:596`)",
+            "F-002": "Insecure JWT Verification",
+            "F-017": "Missing Rate Limiting On Login",
         }
     )
     md = (
@@ -6577,6 +6563,16 @@ def test_section7_title_relevant_findings_titles_bare_bullet_links():
     assert "See [F-002](#f-002) elsewhere." in out
     # Idempotent — a second pass changes nothing.
     assert compose._section7_title_relevant_findings(ctx, out) == out
+
+
+def test_section7_title_relevant_findings_keeps_an_already_titled_bullet():
+    ctx = _StubLabelCtx({"F-033": "Missing auth on Socket.IO connection", "F-053": "Listing of /ftp"})
+    md = (
+        "## 6. Security Architecture\n\n"
+        "- 🟡 [F-033](#f-033) — Missing auth on Socket\\.IO connection\n"
+        "- 🟡 [F-053](#f-053) — Listing of `/ftp`\n"
+    )
+    assert compose._section7_title_relevant_findings(ctx, md) == md
 
 
 def test_section7_title_relevant_findings_noop_without_section7():
@@ -6872,10 +6868,13 @@ def test_control_domain_names_the_crossings_that_depend_on_it(tmp_path: Path) ->
     )
     out = compose._inject_boundary_leg_crossrefs(ctx, frag)
     assert '<a id="ctrl-authorization-controls"></a>' in out
-    assert "**Dependent crossings:** [tb-1](#tb-1) unconfirmed — F-008" in out
+    crossing, _mechanism = compose._boundary_crossing_and_mechanism(ctx.yaml_data["trust_boundaries"][0])
+    assert (
+        f"**Dependent crossings:**\n\n- [tb-1](#tb-1) — {crossing} (assumption not confirmed)\n  - [F-008](#f-008)"
+    ) in out
     # The injected block must not swallow the blank line before the prose, or
     # markdown folds them into one paragraph.
-    assert "F-008\n\nControl prose." in out
+    assert "[F-008](#f-008)\n\nControl prose." in out
     # Crypto is not a condition of a crossing — no leg, and so no claim.
     assert "ctrl-cryptography" not in out
 

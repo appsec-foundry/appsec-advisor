@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Compose and Kubernetes workloads are accounted for as components or explicit exclusions, including deployment networks that may form trust boundaries.
 - Architect review checks finding ratings and mitigations before prioritization and preserves accepted corrections when reports are rebuilt.
 - The Management Summary identifies the modelled system and distinguishes findings confirmed in code from unverified findings without claiming exploitability or release readiness.
+- Finding references in the report show ID and title without file and line, and §6 lists findings, build-path attack entries and dependent trust-boundary crossings as bullet lists.
 - Completion summaries lead with the assessment and grouped P1 fixes, while open team questions focus on unresolved business and deployment decisions.
 - The architecture report combines C4 context, deployment details and component control coverage in §2.1–§2.3, replacing the separate Technology Architecture section.
 - Figure 1 adds technology and authentication labels, with linked detail views and a PDF appendix for large models; existing models need a new analysis to populate missing authentication evidence.

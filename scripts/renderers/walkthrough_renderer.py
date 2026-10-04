@@ -41,6 +41,7 @@ from pathlib import Path
 
 import yaml
 from repairs.apply_prose_fixes import format_inline_code
+from shared._finding_locator import title_without_locator
 
 from renderers._severity_rollup import register_severity
 
@@ -1381,9 +1382,8 @@ def render_defense_in_depth(threat: dict, mitigations_by_threat: dict[str, list[
         # prose context where the em-dash form would be downgraded to a
         # hyphen by _normalize_emdashes (the bullet starts with "Primary
         # mitigation:" not "- [M-…", so the whitelist there doesn't fire).
-        # Short-label rule mirrors RenderContext.linkify_with_short_label:
-        # drop the ` — <file>` Stage-1-LLM tail.
-        short_title = title.split(" — ", 1)[0].strip()[:160]
+        # Same locator-free label as every other reference (RA-4).
+        short_title = title_without_locator(title) or title
         # Leading monochrome priority circle (● P1 … ○ P4) so a linked measure
         # in §3 carries the same dark→light rollout-priority ramp as every other
         # M-NNN link (MS Top-Mitigations, §8 Fix cells). Fill-ramp, 2026-07-04.
@@ -1551,14 +1551,14 @@ def _render_walkthrough_block(
     # a later qa_checks autofix linkify pass finds it already complete. A bare
     # `M-NNN` here would be linkified by autofix WITHOUT the circle (the autofix
     # linkifier has no priority data), leaving an un-annotated §3 ref.
+    # The composer's prose linkifier appends the full mitigation title; a
+    # title written here would have to be cut to fit and is never re-labelled.
     if str(primary_mit_id).startswith("M-"):
         _kt_mit = f"[{primary_mit_id}](#{primary_mit_id.lower()})"
     else:
         _kt_mit = "a defined mitigation"
-    _kt_short = (primary_mit_title or "").split(" — ", 1)[0].strip()[:60]
     lines.append(
-        f"**Key takeaway:** Until {_kt_mit}"
-        f"{f' ({_kt_short})' if _kt_short else ''} lands, {fid} is exploitable at "
+        f"**Key takeaway:** Until {_kt_mit} lands, {fid} is exploitable at "
         f"`{file_hint or '<unknown>'}:{evidence.get('line') or '?'}` "
         f"({(threat.get('risk') or 'High').strip()}-severity, {cwe or 'CWE-?'})."
     )

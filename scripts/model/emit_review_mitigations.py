@@ -58,6 +58,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from analyzers.architect_review_runtime import open_decisions  # noqa: E402
 from shared._critical_findings_sync import resync_critical_findings  # noqa: E402
+from shared._finding_locator import is_code_locator, strip_trailing_locator  # noqa: E402
 from shared._finding_state import review_before_fix  # noqa: E402
 from shared._shared_sources import ARCH_ALL_SOURCES  # noqa: E402
 
@@ -115,16 +116,29 @@ def _evidence_file(threat: dict) -> tuple[str, int | None]:
     return f, ln
 
 
+# A review title becomes a register heading (`M-NNN — <title>`), which QA
+# blocks above 100 characters; the full path stays in `review_target`.
+_REVIEW_TITLE_MAX = 80
+
+
+def _review_title(verb: str, threat: dict) -> str:
+    weakness = _short_weakness(threat.get("title") or "")
+    f, ln = _evidence_file(threat)
+    base = re.split(r"[\\/]", f)[-1]
+    where = f"{base}:{ln}" if (base and ln) else base
+    title = f"Manual review: {verb} {weakness}"
+    with_where = f"{title} at {where}" if where else title
+    return with_where if len(with_where) <= _REVIEW_TITLE_MAX else title
+
+
 def _short_weakness(title: str) -> str:
-    """Strip the trailing `(path)` or em-dash file suffix to recover the
-    weakness-class noun phrase only — used in synthesized review titles."""
-    t = (title or "").strip()
-    if not t:
-        return "the finding"
-    # Drop `(path...)` suffix.
-    t = re.sub(r"\s*\([^)]*\)$", "", t).strip()
+    """The weakness noun phrase of a finding title, without its locator — the
+    review title names the location once, after "at"."""
+    t = strip_trailing_locator((title or "").strip())
     # Drop trailing em-dash + remainder (legacy format).
     t = t.split(" — ")[0].strip()
+    if is_code_locator(t.strip("()")):
+        return "the finding"
     return t or "the finding"
 
 
@@ -192,9 +206,8 @@ def _synthesize_evidence_review(data: dict, state: dict, threats_by_id: dict) ->
             continue
         f, ln = _evidence_file(t)
         target = f"{f}:{ln}" if (f and ln) else (f or "the cited location")
-        weakness = _short_weakness(t.get("title") or "")
         mid = _allocate_next_m_id(state)
-        title = f"Manual review: verify {weakness} at {target}"
+        title = _review_title("verify", t)
         how = (
             "The evidence-verifier sample could not confirm or refute "
             "the claim from the cited snippet alone. Have a developer "
@@ -272,7 +285,7 @@ def _synthesize_architect_review(
             target = f"{f}:{ln}" if (f and ln) else (f or "the cited location")
             card = {
                 "id": _allocate_next_m_id(state),
-                "title": f"Manual review: confirm {_short_weakness(threat.get('title') or '')} at {target}",
+                "title": _review_title("confirm", threat),
                 "kind": "review",
                 "priority": "P3",
                 "threat_ids": [tid],

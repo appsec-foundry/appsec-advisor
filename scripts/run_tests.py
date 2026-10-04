@@ -499,6 +499,7 @@ GROUPS = {
     "shared": _tests("""
         atomic_io
         boundary_interface
+        finding_locator
         finding_state
         intermediate_json
         reserve_ids
@@ -1271,6 +1272,14 @@ SOURCE_TESTS = {
         marketplace_manifest
         orchestration_controller
         requirements_verification
+    """),
+    "agents/shared/finding-title-contract.md": _tests("""
+        agent_definitions
+        agent_doc_shell_snippets
+        check_target_specificity
+        emit_clean_finding_titles
+        requirements_verification
+        stride_outputs
     """),
     "agents/shared/logging-standard.md": _tests("""
         agent_definitions
@@ -3023,6 +3032,16 @@ SOURCE_TESTS = {
         finding_intake
         merge_threats
         promote_verified_abuse_cases
+    """),
+    "scripts/shared/_finding_locator.py": _tests("""
+        compose_threat_model
+        compose_threat_model_cov
+        emit_review_mitigations
+        finding_locator
+        qa_checks
+        reference_format
+        render_abuse_cases
+        threat_fixture
     """),
     "scripts/shared/_finding_state.py": _tests("""
         architect_review

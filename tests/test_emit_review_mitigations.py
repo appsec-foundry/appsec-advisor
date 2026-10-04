@@ -464,3 +464,15 @@ def test_without_an_architect_transaction_review_cards_are_unchanged(tmp_path: P
     assert erm.main([str(tmp_path)]) == 0
     (review,) = _cards(_read_yaml(tmp_path), "review")
     assert review["priority"] == "P3" and "architect" not in review["how"]
+
+
+def test_review_title_names_the_file_once_and_stays_heading_sized() -> None:
+    short = {"title": "SQL injection lib/db.ts:5", "evidence": [{"file": "lib/db.ts", "line": 5}]}
+    assert erm._review_title("verify", short) == "Manual review: verify SQL injection at db.ts:5"
+    long = {
+        "title": "Uncaught TypeError in socket handler (lib/startup/registerWebsocketEvents.ts:46)",
+        "evidence": [{"file": "lib/startup/registerWebsocketEvents.ts", "line": 46}],
+    }
+    title = erm._review_title("confirm", long)
+    assert title == "Manual review: confirm Uncaught TypeError in socket handler"
+    assert len(title) <= erm._REVIEW_TITLE_MAX

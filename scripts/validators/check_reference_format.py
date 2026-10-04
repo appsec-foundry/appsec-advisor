@@ -4,19 +4,20 @@
 Every reference to a finding (F-NNN), threat (T-NNN), or mitigation (M-NNN) must
 use exactly one of two forms (see compose_threat_model.linkify_with_label):
 
-  * Full:  ``<glyph> [ID](#id) — <label> (`file:line`)``  (locator optional, but
-           when present it MUST be fully backticked)
-  * Short: ``<glyph> [ID](#id)``                          (ID only, still linked)
+  * Full:  ``<glyph> [ID](#id) — <label>``  (no locator: it belongs to the finding, RA-4)
+  * Short: ``<glyph> [ID](#id)``            (ID only, still linked)
 
 This linter flags the deviations the producer historically shipped:
 
   A. ID inside the link text:        ``[F-NNN — title](#f-nnn)``
-  B. Un-backticked parens locator:   ``[F-NNN](#f-nnn) — title (routes/x.ts:9)``
+  B. Un-backticked parens locator:   ``[F-NNN](#f-nnn) — title (routes/x.ts:9) is …``
   C. Em-dash locator after a ref:    ``[F-NNN](#f-nnn) — title — routes/x.ts:9``
+  D. Parens locator ending a ref:    ``[F-NNN](#f-nnn) — title (`routes/x.ts:9`)``
 
-Form C is a locator that ends the reference (trailing punctuation aside); a title
-that merely starts with a filename (``— settings.json exposes …``) is prose. An
-extension ends at a token boundary, so ``app.json`` is never read as ``app.js``.
+Forms C and D are a locator that ends the reference (trailing punctuation aside);
+a title that merely starts with a filename (``— settings.json exposes …``) is
+prose, and a backticked locator later in a sentence is allowed. An extension
+ends at a token boundary, so ``app.json`` is never read as ``app.js``.
 
 It is REFERENCE-ADJACENT: it only inspects the text immediately after an
 ``[ID](#anchor)`` link, so prose file mentions, URLs, and code spans elsewhere
@@ -40,6 +41,8 @@ import re
 import sys
 from pathlib import Path
 
+from shared._finding_locator import PARENS_LOCATOR, is_code_locator
+
 _EXT = r"(?:ts|tsx|js|jsx|mjs|cjs|yml|yaml|html|json|java|py|rb|go|php|sh|sql|xml|env)(?!\w)"
 _LOC = r"[\w./\\-]+\." + _EXT + r"(?::\d+(?:-\d+)?)?"
 
@@ -51,6 +54,9 @@ _REF = re.compile(r"\[([FTM]-\d+)\]\(#[ftm]-\d+\)([^\n|]*?)(?=$|\n|\||<br/?>|\[)
 # the em-dash form must end the segment.
 _PAREN_LOC = re.compile(r"\((?!`)(" + _LOC + r")\)")
 _EMDASH_LOC = re.compile(r"—\s*(?!`)(" + _LOC + r")(?=[\s,;.)*_…→]*$)")
+# Same "ends the reference" rule as compose's normalizer; the segment already
+# stops at a cell, `<br>` or the next reference, so the lookahead ends at `$`.
+_ENDING_LOC = re.compile(PARENS_LOCATOR + r"(?=[ \t]*[.,;]?[ \t]*$)")
 
 # A `**Reference:** <value>` line (§9 mitigation cards). The value must be a
 # titled Markdown link `[title](url)` — never a bare `CWE-NNN` (unlinked) or a
@@ -66,7 +72,14 @@ def lint_text(md: str) -> list[str]:
         out.append(f"ID inside link text: {m.group(0)!r}")
     for m in _REF.finditer(md):
         ref, seg = m.group(1), m.group(2)
+        ending = _ENDING_LOC.search(seg)
+        if ending and not is_code_locator(ending.group(1)):
+            ending = None
+        if ending:
+            out.append(f"{ref}: reference ends with locator '{ending.group(0)}' — the location belongs to the finding")
         for pm in _PAREN_LOC.finditer(seg):
+            if ending and pm.start() == ending.start():
+                continue
             out.append(f"{ref}: un-backticked locator '({pm.group(1)})' — must be (`{pm.group(1)}`)")
         for em in _EMDASH_LOC.finditer(seg):
             out.append(f"{ref}: em-dash locator '— {em.group(1)}' — locator belongs in backticked parens")

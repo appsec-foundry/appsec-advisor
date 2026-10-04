@@ -430,10 +430,11 @@ def check_reference_format(md_path: Path) -> Report:
     """Per-run gate for the canonical finding/mitigation reference format.
 
     Every `[F/T/M-NNN](#…)` reference must be the full form
-    (`<glyph> [ID](#id) — <label> (`file:line`)`) or the short form
-    (`<glyph> [ID](#id)`); an un-backticked locator, an ID baked into the link
-    text, or an em-dash locator is a defect (see scripts/validators/check_reference_format.py
-    for the grammar). compose auto-normalises most of these via
+    (`<glyph> [ID](#id) — <label>`) or the short form (`<glyph> [ID](#id)`); a
+    locator ending the reference, an un-backticked locator, an ID baked into the
+    link text, or an em-dash locator is a defect (see
+    scripts/validators/check_reference_format.py for the grammar). compose
+    auto-normalises most of these via
     `_normalize_reference_locators`; a surviving violation is something the
     renderer could not fix, so it is surfaced as a blocking QA issue rather than
     shipping a malformed link. Reference-adjacent — prose file mentions and URLs
@@ -658,29 +659,23 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
     # `[ID](#id) — Label` in one pass.  Empty dict ⇒ legacy bare-link
     # behaviour (never breaks the call site if yaml is missing).
     label_idx = _load_label_index(md_path)
-    # §4a single-source: reuse compose's locator codifier so the cross-ref
-    # labels injected here render the `(`file:line`)` form that compose's
-    # `linkify_with_label` emits — without it the same finding shows
-    # `(f.ts:18)` in prose (this pass) vs `(`f.ts:18`)` in §8 tables (compose).
+    # §4a single-source: reuse compose's locator stripper so the labels
+    # injected here match compose's locator-free `linkify_with_label` form.
     # Deferred import mirrors the `_manifest_readers` idiom; compose only
     # imports qa_checks function-locally, so there is no import cycle.
     from renderers.compose_threat_model import (
-        _codify_label_locator,
         _is_bare_finding_ref_line,
-        _normalize_title_to_paren_form,
+        _strip_trailing_locator,
     )
 
     def _canonical_label(label: str) -> str:
         """Render a YAML label in the public cross-reference form.
 
         Finding titles are stored canonically as ``Title — file:line`` by
-        ``model/emit_clean_finding_titles.py``.  Cross-reference prose instead owns
-        the titled-link form ``Title (`file:line`)``.  Normalize at this
-        consumer boundary before codifying the locator so repeated autofix or
-        ``all`` passes cannot turn a compact link into an invalid em-dash
-        locator.
+        ``model/emit_clean_finding_titles.py``. A cross-reference shows the
+        title only; the location stays with the finding (RA-4).
         """
-        return _codify_label_locator(_normalize_title_to_paren_form(label))
+        return _strip_trailing_locator(label)
 
     # Merge the TH-NN label index parsed from the rendered MD itself —
     # TH-NN titles live in §8 / §6.2 declarations, not in the yaml.

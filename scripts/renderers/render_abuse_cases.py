@@ -31,7 +31,6 @@ if not __package__:
 import argparse
 import importlib.util
 import json
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -39,6 +38,7 @@ from pathlib import Path
 import yaml
 from model.enrichment_pass import EnrichmentContinuation
 from shared._atomic_io import atomic_write_text
+from shared._finding_locator import strip_trailing_locator
 from shared._severity_policy import abuse_case_priority, abuse_case_risk, verified_chain_risk
 
 from renderers.actor_presentation import attacker_display
@@ -107,12 +107,9 @@ def _anchor(fid: str) -> str:
     return "#" + fid.lower()
 
 
-# Locator helpers — mirror compose_threat_model's canonical reference format so
-# §9 finding cells read identically to §2/§4/§8 (ID — label (`basename:line`),
-# locator always backticked, label locator-free). Kept local so this module
-# stays import-light (compose is a 16k-line module). Keep in sync with
-# compose_threat_model._basename_locator / _strip_trailing_locator.
-_TRAILING_LOC = r"`?[\w./\\-]+\.[A-Za-z0-9]{1,6}(?::\d+)?`?"
+# §9 finding cells use the canonical locator-free reference form (ID — label);
+# the finding's file only decides whether a step's evidence line names a
+# different file.
 
 
 def _basename_loc(loc: str) -> str:
@@ -122,23 +119,6 @@ def _basename_loc(loc: str) -> str:
     path, sep, line = loc.partition(":")
     base = path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
     return f"{base}:{line}" if sep else base
-
-
-def _strip_locator(label: str) -> str:
-    """Drop a trailing file locator from a label in any form (parens / em-dash /
-    bare-space). Leaves prose parentheticals like ``(IDOR)`` untouched."""
-    if not label:
-        return label
-    s = label.rstrip()
-    for pat in (
-        rf"\s*\(\s*{_TRAILING_LOC}\s*\)\s*$",
-        rf"\s*—\s*{_TRAILING_LOC}\s*$",
-        rf"\s+{_TRAILING_LOC}\s*$",
-    ):
-        s2 = re.sub(pat, "", s)
-        if s2 != s and s2.strip():
-            return s2.rstrip()
-    return s
 
 
 def _finding_locator(finding: dict) -> str:
@@ -351,7 +331,7 @@ def render_case(
             {
                 "step": n,
                 "fid": fid,
-                "finding_title": _strip_locator(finding.get("title", "")),
+                "finding_title": strip_trailing_locator(finding.get("title", "")),
                 "finding_loc": _basename_loc(_finding_locator(finding)),
                 "finding_sev": _severity(finding),
                 "evidence": loc,
@@ -543,13 +523,12 @@ def _case_markdown(m: dict) -> str:
             # 2026-06: §9 was the only place F-NNN links rendered bare).
             dot = _RISK_EMOJI.get(r.get("finding_sev", ""), "")
             prefix = f"{dot} " if dot else ""
-            _loc = f" (`{r['finding_loc']}`)" if r.get("finding_loc") else ""
-            finding_cell = f"{prefix}[{r['fid']}]({_anchor(r['fid'])}) — {r['finding_title']}{_loc}"
+            finding_cell = f"{prefix}[{r['fid']}]({_anchor(r['fid'])}) — {r['finding_title']}"
         else:
             finding_cell = "_no matching finding_"
         # Only append the per-step evidence reference when it points at a
-        # DIFFERENT file than the finding's own locator (now appended to the
-        # cell as `(`basename:line`)`) — an evidence line for the same file is
+        # DIFFERENT file than the finding's own location (shown with the
+        # finding itself) — an evidence line for the same file is
         # the same code reference repeated. A cross-file evidence line (e.g. the
         # token-storage sink in a chain whose finding names the XSS sink) still
         # adds information and is kept. (2026-06-02 user request: one code
@@ -582,7 +561,7 @@ def _case_markdown(m: dict) -> str:
         fid_sev = {r["fid"]: r.get("finding_sev", "") for r in m["rows"] if r["fid"]}
         for b in m["blocking_mitigations"]:
             mid = b["id"]
-            label_m = f"[{mid}](#{mid.lower()}) — {b['title']}"
+            label_m = f"[{mid}](#{mid.lower()}) — {strip_trailing_locator(b['title'])}"
             if b["priority"]:
                 label_m += f" (**{b['priority']}**)"
             addr = ", ".join(

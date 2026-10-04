@@ -232,31 +232,6 @@ class TestFirstEvidenceFile:
         assert compose._first_evidence_file(t) == ("c.ts", None)
 
 
-class TestShortenTitleForXref:
-    def test_empty(self):
-        assert compose._shorten_title_for_xref("") == ""
-
-    def test_file_path_in_file_form(self):
-        out = compose._shorten_title_for_xref("SQL Injection (routes/login.ts:5)")
-        assert out == "SQL Injection in file routes/login.ts"
-
-    def test_compact_parens(self):
-        out = compose._shorten_title_for_xref("SQL Injection (routes/login.ts)", compact=True)
-        assert out == "SQL Injection (routes/login.ts)"
-
-    def test_directory_path_in_form(self):
-        out = compose._shorten_title_for_xref("Insecure Token (frontend/src/app)")
-        assert out == "Insecure Token in frontend/src/app"
-
-    def test_evidence_fallback(self):
-        t = {"evidence": [{"file": "server.ts"}]}
-        out = compose._shorten_title_for_xref("CSRF", t)
-        assert out == "CSRF in file server.ts"
-
-    def test_bare_weakness(self):
-        assert compose._shorten_title_for_xref("Cross-Site Request Forgery") == ("Cross-Site Request Forgery")
-
-
 class TestStripEmbeddedEvidenceFile:
     def test_no_threat(self):
         assert compose._strip_embedded_evidence_file("foo", None) == "foo"
@@ -904,27 +879,6 @@ class TestFixActionLead:
         if compose._FIX_ACTION_LEADS:
             num = next(iter(compose._FIX_ACTION_LEADS))
             assert compose._fix_action_lead(f"CWE-{num}") == compose._FIX_ACTION_LEADS[num]
-
-
-class TestCodifyLabelLocator:
-    def test_no_paren(self):
-        assert compose._codify_label_locator("SQL Injection") == "SQL Injection"
-
-    def test_backticks_file_locator(self):
-        out = compose._codify_label_locator("SQLi (routes/login.ts:18)")
-        assert "(`routes/login.ts:18`)" in out
-
-    def test_idempotent(self):
-        s = "SQLi (`routes/login.ts`)"
-        assert compose._codify_label_locator(s) == s
-
-    def test_prose_paren_untouched(self):
-        out = compose._codify_label_locator("Spoofing (S)")
-        assert out == "Spoofing (S)"
-
-    def test_dockerfile_noext(self):
-        out = compose._codify_label_locator("Pin base image (Dockerfile)")
-        assert "(`Dockerfile`)" in out
 
 
 class TestStripLabelCode:

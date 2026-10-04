@@ -602,7 +602,7 @@ requirements:
       - tests/test_compose_threat_model.py::test_toc_keeps_management_summary_subsections_out_of_the_short_form
       - tests/test_qa_checks_cov_band1.py::test_ms_structure_requires_selected_team_questions_in_the_canonical_slot
       - tests/test_reference_format.py::test_strip_trailing_locator_all_forms
-      - tests/test_reference_format.py::test_linkify_full_form_basename_and_backticked
+      - tests/test_reference_format.py::test_linkify_full_form_is_locator_free
       - tests/test_agent_definitions.py::TestProseStyleAnchor::test_prose_style_file_exists
       - tests/test_agent_definitions.py::TestProseStyleAnchor::test_prose_authoring_files_reference_anchor
       - tests/test_inline_code_formatter.py::test_rule_6_code_matrix_formats_complete_tokens

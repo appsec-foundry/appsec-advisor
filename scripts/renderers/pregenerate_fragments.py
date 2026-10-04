@@ -74,6 +74,7 @@ from typing import Any, Iterable
 import yaml
 from contexts.load_business_context import RUN_ONLY_NAME
 from shared._boundary_interface import is_internal_interface
+from shared._finding_locator import strip_trailing_locator
 
 from renderers._severity_rollup import (
     display_id,
@@ -333,9 +334,6 @@ def method_and_limits(meta: dict) -> str:
     return f"**Method and limits:** {'; '.join([METHOD_SHORT, *gaps])} — see {details}."
 
 
-# Tier order and wording for the Management Summary's system sentence.
-_SYSTEM_TIERS = (("client", "client"), ("edge", "edge"), ("application", "application"), ("data", "data"))
-_SYSTEM_NAME_CAP = 6
 _SYSTEM_UNSAFE_RE = re.compile(r"[\x00-\x1f\x7f\[\]()<>`*_|\\#]")
 
 
@@ -343,20 +341,14 @@ def _plain_name(value: object) -> str:
     return " ".join(_SYSTEM_UNSAFE_RE.sub("", str(value or "")).split())[:80].strip()
 
 
-def _name_list(names: list[str]) -> str:
-    shown = names[:_SYSTEM_NAME_CAP]
-    more = len(names) - len(shown)
-    if more:
-        return ", ".join(shown) + f" and {more} more"
-    return shown[0] if len(shown) == 1 else ", ".join(shown[:-1]) + " and " + shown[-1]
+def assessment_intro(yaml_data: dict) -> str:
+    """The Management Summary's opening: what kind of assessment this is and of what.
 
-
-def system_at_a_glance(yaml_data: dict) -> str:
-    """The Management Summary's one-paragraph description of what was modeled.
-
-    Built only from the canonical model — components by tier and the external
-    services they exchange data with — so it is stable across runs and carries
-    no repository or business prose. Empty when the model has no components.
+    States the method as the plugin describes itself — an AI-assisted threat
+    model derived from the implementation — and the size of the reconstructed
+    model as counts, pointing to §2 for the components themselves. Built only
+    from the canonical model, so it carries no repository or business prose.
+    Empty when the model has no components.
     """
     meta = yaml_data.get("meta") or {}
     project = meta.get("project")
@@ -366,28 +358,19 @@ def system_at_a_glance(yaml_data: dict) -> str:
     components = [c for c in yaml_data.get("components") or [] if isinstance(c, dict) and c.get("id")]
     if not components:
         return ""
-    by_tier: dict[str, list[str]] = {}
-    for component in components:
-        tier = str(component.get("tier") or "")
-        by_tier.setdefault(tier, []).append(_plain_name(component.get("name") or component.get("id")))
-    known = {tier for tier, _ in _SYSTEM_TIERS}
-    parts = [f"{_name_list(by_tier[tier])} in the {label} tier" for tier, label in _SYSTEM_TIERS if by_tier.get(tier)]
-    other = [n for tier, names in by_tier.items() if tier not in known for n in names]
-    if other:
-        parts.append(_name_list(other))
-    count = f"{len(components)} component" + ("s" if len(components) != 1 else "")
-    sentence = f"**System:** {name or 'The system'} consists of {count}: " + "; ".join(p for p in parts if p) + "."
-    services = list(
-        dict.fromkeys(
-            _plain_name(e.get("name") or e.get("id"))
-            for e in yaml_data.get("external_entities") or []
-            if isinstance(e, dict) and e.get("id") and e.get("kind") != "legitimate-role"
-        )
-    )
-    services = [s for s in services if s]
+    services = {
+        _plain_name(e.get("name") or e.get("id"))
+        for e in yaml_data.get("external_entities") or []
+        if isinstance(e, dict) and e.get("id") and e.get("kind") != "legitimate-role"
+    } - {""}
+    size = f"{len(components)} component" + ("s" if len(components) != 1 else "")
     if services:
-        sentence += f" It exchanges data with {_name_list(services)}."
-    return sentence
+        size += f" and {len(services)} external service" + ("s" if len(services) != 1 else "")
+    return (
+        f"**About this assessment:** An AI-assisted threat model derived from the implementation of "
+        f"{name or 'the system'}. It reconstructs the implemented architecture "
+        f"({size}, see [§2](#2-architecture-diagrams)) and identifies threats and control gaps in it."
+    )
 
 
 def gen_system_overview(yaml_data: dict) -> str:
@@ -3416,7 +3399,7 @@ def _v2_insert_unattributed(lines: list[str], section_start: int, threats: list[
     if not rest:
         return
     at = first - 1 if first > section_start and lines[first - 1].startswith("<a id=") else first
-    lines[at:at] = ["**Findings in this category without a control:** " + ", ".join(rest), ""]
+    lines[at:at] = ["**Findings in this category without a control:**", "", *(f"- {link}" for link in rest), ""]
 
 
 # Friendlier replacements for a handful of terse / overly-technical control
@@ -5176,7 +5159,7 @@ def _clean_finding_label(title: str) -> str:
     """Reduce a finding title to a short weakness-class label for the MS list
     (the schema caps labels at 80 chars). Strips the ``— file:line`` tail and
     any trailing dash artifacts, then truncates."""
-    label = (title or "").split(" — ")[0].strip().rstrip("—-– ").strip()
+    label = strip_trailing_locator((title or "").strip()).split(" — ")[0].strip().rstrip("—-– ").strip()
     if not label:
         label = (title or "").strip()
     if len(label) > 80:

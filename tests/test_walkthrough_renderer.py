@@ -208,6 +208,30 @@ class TestSequenceDiagramAltElseBlock:
         assert "else After M-005 — Use parameterized queries" in md
 
 
+class TestKeyTakeawayTitle:
+    def test_a_long_mitigation_title_is_not_cut_into_the_takeaway(self):
+        title = "Replace client-supplied owner identifiers with session identity in WHERE clauses"
+        yaml_data = {
+            "threats": [
+                {
+                    "id": "T-001",
+                    "title": "Insecure Direct Object Reference",
+                    "component": "express-backend",
+                    "cwe": "CWE-639",
+                    "risk": "critical",
+                    "evidence": [{"file": "routes/address.ts", "line": 11}],
+                }
+            ],
+            "mitigations": [{"id": "M-005", "title": title, "threat_ids": ["T-001"]}],
+            "assets": [],
+            "attack_surface": [],
+        }
+        md = renderer.render_attack_walkthroughs_md(yaml_data)
+        takeaway = next(line for line in md.splitlines() if line.startswith("**Key takeaway:** Until"))
+        # The composer's linkifier appends the full title; none is written here.
+        assert takeaway.startswith("**Key takeaway:** Until [M-005](#m-005) lands,")
+
+
 class TestWalkthroughCap:
     """§3 is capped at DEFAULT_MAX_WALKTHROUGHS so a Critical-heavy report does
     not explode into dozens of near-identical walkthroughs (2026-07-02)."""

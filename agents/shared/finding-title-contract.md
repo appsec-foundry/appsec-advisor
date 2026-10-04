@@ -7,9 +7,9 @@ Canonical form for every threat's `title` field. Read this before authoring titl
 > pressure (verbose `via <impl>` phrasing, embedded files, crammed parameters).
 > `scripts/model/emit_clean_finding_titles.py` (auto-emitter pass) **normalizes every
 > title** to a weakness class plus a location only for one-instance findings
-> (stored form; rendered as
-> `<Weakness class> (<file>)` in cross-references, bare weakness in the §8
-> heading), stashing the original in `_title_source` (idempotent). It strips
+> (stored form; the report renders the bare weakness class in cross-references
+> and the §8 heading, and the location only in the finding's Location field),
+> stashing the original in `_title_source` (idempotent). It strips
 > `via/using/through <impl>`, parentheticals, parameters, payloads, and embedded
 > file tokens. So a drifted title is corrected at render time — but author it
 > correctly anyway so the normalizer has clean input. Pinned by

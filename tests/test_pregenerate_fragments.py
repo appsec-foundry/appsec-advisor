@@ -554,9 +554,7 @@ class TestAiExposure:
         assert by_asi["ASI03"]["name"] == "Agent Identity & Privilege Abuse"
         assert by_asi["ASI03"]["findings"][0]["ref"] == "T-071"
         by_llm = {r["owasp_llm_id"]: r for r in data["ai_risks"] if r.get("owasp_llm_id")}
-        assert by_llm["LLM06"]["findings"] == [
-            {"ref": "T-072", "label": "Generic Finding (chat.py:12)", "owasp_asi_ids": ["ASI02"]}
-        ]
+        assert by_llm["LLM06"]["findings"] == [{"ref": "T-072", "label": "Generic Finding", "owasp_asi_ids": ["ASI02"]}]
 
     def test_ai_exposure_schema_declares_asi_enum(self):
         """The ai-exposure fragment schema must accept owasp_asi_id ASI01..ASI10
@@ -4115,24 +4113,22 @@ def _selection(n_full: int, n_screen: int, n_excluded: int) -> dict:
     return {"total": n_full + n_screen + n_excluded, "selected": selected, "excluded": excluded}
 
 
-def test_system_at_a_glance_names_components_by_tier_and_external_services():
+def test_assessment_intro_states_the_method_and_the_model_size():
     model = {
         "meta": {"project_name": "Shop", "project": "shop-repo"},
         "components": [
             {"id": "web", "name": "Web Client", "tier": "client"},
             {"id": "api", "name": "Order API", "tier": "application"},
-            {"id": "db", "name": "Orders DB", "tier": "data"},
-            {"id": "job", "name": "Nightly Job", "tier": "batch"},
         ],
         "external_entities": [
             {"id": "user", "name": "Customer", "kind": "legitimate-role"},
             {"id": "pay", "name": "Payment Provider", "kind": "external-service"},
         ],
     }
-    line = pf.system_at_a_glance(model)
-    assert line == (
-        "**System:** Shop consists of 4 components: Web Client in the client tier; Order API in the "
-        "application tier; Orders DB in the data tier; Nightly Job. It exchanges data with Payment Provider."
+    assert pf.assessment_intro(model) == (
+        "**About this assessment:** An AI-assisted threat model derived from the implementation of Shop. "
+        "It reconstructs the implemented architecture (2 components and 1 external service, see "
+        "[§2](#2-architecture-diagrams)) and identifies threats and control gaps in it."
     )
 
 
@@ -4142,21 +4138,21 @@ def test_system_at_a_glance_names_components_by_tier_and_external_services():
         ({"components": []}, ""),
         (
             {"components": [{"id": f"c{i}", "name": f"Service {i}", "tier": "application"} for i in range(8)]},
-            "**System:** The system consists of 8 components: Service 0, Service 1, Service 2, Service 3, "
-            "Service 4, Service 5 and 2 more in the application tier.",
+            "**About this assessment:** An AI-assisted threat model derived from the implementation of the system. "
+            "It reconstructs the implemented architecture (8 components, see [§2](#2-architecture-diagrams)) "
+            "and identifies threats and control gaps in it.",
         ),
         (
-            {
-                "meta": {"project": "x"},
-                "components": [{"id": "a", "name": "[Api](http://e.invalid)`<b>`", "tier": "edge"}],
-            },
-            "**System:** x consists of 1 component: Apihttp://e.invalidb in the edge tier.",
+            {"meta": {"project": "[x](http://e.invalid)`<b>`"}, "components": [{"id": "a", "tier": "edge"}]},
+            "**About this assessment:** An AI-assisted threat model derived from the implementation of "
+            "xhttp://e.invalidb. It reconstructs the implemented architecture (1 component, see "
+            "[§2](#2-architecture-diagrams)) and identifies threats and control gaps in it.",
         ),
     ],
-    ids=["empty", "capped", "markup"],
+    ids=["empty", "no-services", "markup"],
 )
-def test_system_at_a_glance_shapes(model, expected):
-    assert pf.system_at_a_glance(model) == expected
+def test_assessment_intro_shapes(model, expected):
+    assert pf.assessment_intro(model) == expected
 
 
 @pytest.mark.parametrize(
@@ -4574,8 +4570,8 @@ def test_controls_list_only_their_findings_and_the_section_lists_the_rest_once()
         ],
     }
     section = _section(pf.gen_security_architecture_v2(data), "6.11")
-    rest = re.search(r"\*\*Findings in this category without a control:\*\* (.+)", section).group(1)
-    assert re.findall(r"\[(F-\d+)\]", rest) == ["F-001", "F-003", "F-004", "F-005", "F-006"]
+    rest = re.search(r"\*\*Findings in this category without a control:\*\*\n\n((?:- .+\n)+)", section).group(1)
+    assert re.findall(r"^- \[(F-\d+)\]\(#f-\d+\)$", rest, re.MULTILINE) == ["F-001", "F-003", "F-004", "F-005", "F-006"]
     assert section.count("[F-002]") == 1  # only under the control it is attributed to
     assert "No finding is attributed to this control." in section
 

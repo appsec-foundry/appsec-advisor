@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -290,17 +291,19 @@ def test_section_6_opens_the_supply_chain_controls_with_the_build_path(evidence)
     md = compose._inject_supply_chain_paragraph(ctx, SECTION_6.format(n="6.10", m="6.11"))
     head, _, body = md.partition("### 6.11 Operations Runtime and Supply Chain Controls\n\n")
     assert "Build path" not in head  # only the build control section carries it
-    paragraph = body.split("\n\n")[0]
-    assert paragraph.startswith("**Build path.** [Figure 1b](#figure-1b) shows the inputs")
-    assert "that Orders evidences" in paragraph
-    assert (
-        "follows [F-002](#f-002) from npm registry → GitHub Actions (`.github/workflows/release.yml:9`) → "
-        "ghcr.io/acme/orders (`.github/workflows/release.yml:14`)"
-    ) in paragraph
-    assert "Attack entries: Manipulated dependency [F-002](#f-002)." in paragraph
-    assert "without an evidenced CI owner" not in paragraph
-    assert body.split("\n\n")[1].strip() == "controls"
-    assert compose._inject_supply_chain_paragraph(ctx, md) == md  # a re-render adds no second paragraph
+    block, _, rest = body.partition("\n\ncontrols")
+    assert block.startswith("**Build path.** [Figure 1b](#figure-1b) shows the inputs")
+    assert "that Orders evidences" in block
+    assert re.search(
+        r"^Highlighted path of .*\[F-002\]\(#f-002\).*: npm registry → GitHub Actions → ghcr\.io/acme/orders\.",
+        block,
+        re.MULTILINE,
+    )
+    assert ".github/workflows" not in block  # locations stay with the findings
+    assert re.search(r"\*\*Attack entries:\*\*\n\n- \*\*Manipulated dependency\*\*\n  - .*\[F-002\]\(#f-002\)", block)
+    assert "Not attributable" not in block
+    assert rest == "\n"
+    assert compose._inject_supply_chain_paragraph(ctx, md) == md  # a re-render adds no second block
 
 
 def test_the_build_path_follows_the_heading_and_lists_findings_without_a_ci_owner(evidence):
@@ -318,9 +321,12 @@ def test_the_build_path_follows_the_heading_and_lists_findings_without_a_ci_owne
         }
     )
     md = compose._inject_supply_chain_paragraph(ctx, SECTION_6.format(n="7.2", m="7.3"))
-    paragraph = md.split("### 7.3 Operations Runtime and Supply Chain Controls\n\n")[1].split("\n\n")[0]
-    assert "that Ledger evidences" in paragraph
-    assert paragraph.endswith("Findings without an evidenced CI owner: [F-007](#f-007).")
+    block = md.split("### 7.3 Operations Runtime and Supply Chain Controls\n\n")[1].partition("\n\ncontrols")[0]
+    assert "that Ledger evidences" in block
+    assert re.search(
+        r"\*\*Not attributable to a build step:\*\*\n\n- .*\[F-007\]\(#f-007\) — Deploy script logs the registry token$",
+        block,
+    )
 
 
 def test_without_figure_1b_or_the_control_heading_section_6_is_unchanged(tmp_path, evidence):

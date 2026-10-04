@@ -2456,7 +2456,7 @@ def render_verdict(md_text: str, cfg: dict, verdict: dict | None = None, fixes: 
         plain = _console_plain(raw).strip()
         if plain.startswith(
             (
-                "System:",
+                "About this assessment:",
                 "Risk distribution:",
                 "Reporting threshold:",
                 "Assessment evidence:",

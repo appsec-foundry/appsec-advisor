@@ -69,7 +69,7 @@ def test_no_args_exits_nonzero():
 def test_reference_format_clean_doc_has_no_issues(tmp_path: Path):
     md = _write_minimal_model(
         tmp_path,
-        "## Findings\n\n🔴 [F-010](#f-010) — Insecure Direct Object Reference (`memory.ts:15`)\n🟠 [F-016](#f-016)\n",
+        "## Findings\n\n🔴 [F-010](#f-010) — Insecure Direct Object Reference\n🟠 [F-016](#f-016)\n",
     )
     report = qa.check_reference_format(md)
     assert report.issues == []
@@ -97,7 +97,7 @@ def test_reference_format_cli_exit_codes(tmp_path: Path):
     clean_dir.mkdir()
     bad_dir = tmp_path / "b"
     bad_dir.mkdir()
-    clean = _write_minimal_model(clean_dir, "## F\n\n🔴 [F-010](#f-010) — IDOR (`memory.ts:15`)\n")
+    clean = _write_minimal_model(clean_dir, "## F\n\n🔴 [F-010](#f-010) — IDOR\n")
     bad = _write_minimal_model(bad_dir, "## F\n\n🔴 [F-010](#f-010) — IDOR (routes/memory.ts:15)\n")
     assert _run(["reference_format", str(clean)]).returncode == 0
     assert _run(["reference_format", str(bad)]).returncode == 1
@@ -3880,8 +3880,8 @@ def test_linkify_anchors_normalizes_yaml_em_dash_locator(tmp_path: Path):
 
     first_report, first = qa.linkify_anchors(md)
     assert first_report.fixes
-    assert "[F-006](#f-006) — SQL Injection (`routes/login.ts:34`)" in first
-    assert "— routes/login.ts:34" not in first
+    assert "[F-006](#f-006) — SQL Injection for the login sink" in first
+    assert "routes/login.ts" not in first  # RA-4: the location stays with the finding
 
     md.write_text(first, encoding="utf-8")
     second_report, second = qa.linkify_anchors(md)
