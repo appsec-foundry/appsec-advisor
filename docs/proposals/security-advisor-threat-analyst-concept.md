@@ -2,6 +2,8 @@
 
 Status: discussion draft. This document records a proposed development companion for further refinement. It does not authorize implementation, change product requirements, or describe available functionality.
 
+The [implementation plan](security-advisor-threat-analyst-implementation-plan.md) defines the proposed delivery sequence, file boundaries, and acceptance evidence. Its planned first release provides manual design analysis and advisory CI review without changing the existing threat-model assessment pipeline.
+
 ## Purpose
 
 Provide lightweight security guidance and threat analysis while developers plan and implement security-relevant changes. Connect the current work to business context, applicable secure coding requirements, and an existing threat model. The companion should explain what a change means for this particular system, including business consequences and protection assumptions that generic code review may miss.
@@ -10,7 +12,7 @@ Security relevance is the activation criterion. Keywords are possible signals, n
 
 ## Proposed roles
 
-The working names are Security Advisor and Threat Analyst. Their implementation as separate agents remains open.
+The working names are Security Advisor and Threat Analyst. Initially they are two perspectives in one bounded analysis workflow, not two independently orchestrated agents. Separate agents require evaluation evidence that the split improves results.
 
 | Role | Primary question | Proposed responsibility |
 |---|---|---|
@@ -25,7 +27,7 @@ The Threat Analyst should be directly invocable and eligible for hook activation
 
 Consider changes to intent, design, and code. Relevant examples include new entry points, changed permissions, altered sensitive-data processing, removed controls, external integrations, and business logic that protects valuable operations.
 
-Candidate activation paths are explicit invocation, prompt-time detection, and a review of a completed change set. A prompt hook could combine topic signals with change intent. A code-change hook could collect affected areas and defer analysis until a coherent change set is available. Exact hook events, scheduling, and execution mechanisms require a separate feasibility review.
+The first delivery supports explicit invocation and noninteractive review of a selected change set. Manual invocation does not require an enabled hook. Automatic guidance and automatic analysis are separate, initially disabled options for a later delivery; trusted organization configuration may enable them. A prompt hook could combine topic signals with change intent. A code-change hook could collect affected areas and defer analysis until a coherent change set is available. Exact hook events, scheduling, and execution mechanisms require a separate feasibility review.
 
 | Input | Candidate response |
 |---|---|
@@ -39,6 +41,20 @@ Candidate activation paths are explicit invocation, prompt-time detection, and a
 Before implementation, results should distinguish proposed scenarios and assumptions from observed code behavior. After implementation, a bounded review could check those assumptions against the actual change and relevant surrounding code. Diff-only inspection may miss controls in middleware, callers, or other components.
 
 Explicit invocation should support a design question without an existing diff or threat model. Bind that assessment to the supplied intent, design revision, and available context. For code review, identify both the comparison baseline and the proposed source state. An empty diff does not invalidate a design question or establish that a proposed change is safe.
+
+### Manual and CI entry points
+
+A user-facing skill and a noninteractive CLI should invoke the same controller, input contracts, analysis instructions, and result validator. The skill accepts a feature description or an explicit worktree, staged, or commit comparison scope. It explains the selected scope and presents actionable feedback. CI requires an explicit comparison for code review or a supplied design input, waits for a terminal result, and publishes validated JSON and Markdown. It does not depend on interactive hooks or a prior full assessment.
+
+The initial CI mode is advisory about findings. Technical failure, missing required inputs, and incomplete required analysis remain non-success outcomes. A later blocking gate requires its own evaluation and deterministic decision contract. Model output cannot decide exit codes or mark its own work complete.
+
+### Questions and answers
+
+Inspect admitted sources before asking the user. Ask when a missing answer materially changes the security assessment or recommended implementation. A question identifies its affected scope, why the answer matters, and whether it is necessary for that part of the analysis. Continue independent work while required answers are pending. Bound question rounds and avoid repeating answered questions without a relevant change.
+
+The interactive skill presents related questions together. CI emits those same questions as structured unresolved items instead of waiting for input. An optional missing answer can leave a qualified result; a missing answer required for the declared scope prevents a complete result. Neither silence nor a model-generated default is a user answer.
+
+Keep answers as sourced declarations, separate from observed implementation evidence and formal risk acceptance. Offer explicit persistence in a versioned feature-context file that CI can consume. Saving does not commit the file or edit general business context. Changed source state triggers a new analysis; unchanged answers may be reused only after their scope and context are checked. Contributor-edited answers never authorize actions, waive requirements, or prove that a control exists.
 
 ## Integration with plugin context
 
@@ -68,7 +84,7 @@ The plugin should provide a versioned analysis catalog connecting change relevan
 | Evidence needs | Identify the source or context needed to substantiate an answer and expose missing evidence. |
 | Negative tests | Describe representative unauthorized or malformed actions that should fail. |
 
-The hook and Coach use a bounded selection for activation and brief guidance. The Security Advisor uses it to explain expectations and unresolved design choices. The Threat Analyst investigates attack paths with relevant threat-model projections and current evidence. Reuse the existing reviewer's requirement-grading responsibility instead of implementing a second grader in the analyst. Shared references should coordinate these outputs without merging a requirement observation, an assumption, and a demonstrated threat into one verdict. Catalog selection does not grant tools or access to additional context.
+The Security Advisor uses this foundation to explain expectations and unresolved design choices. The Threat Analyst investigates attack paths with relevant threat-model projections and current evidence. The first delivery uses the catalog only in the new workflow. Later hook and Coach integration may use bounded selections for activation and brief guidance. Keep formal requirement grading with the existing reviewer rather than implementing a second grader in the analyst. Until a compatible isolated adapter exists, report requirement references and observations without claiming the reviewer's grades or complete catalog coverage. Catalog selection does not grant tools or access to additional context.
 
 ### Operation with and without aiscb
 
@@ -96,6 +112,16 @@ The [threat-analysis kernel](../../skills/internal-threat-analysis-kernel/SKILL.
 
 The current [update-threat-model skill](../../skills/update-threat-model/SKILL.md) explicitly rejects incremental updates. Initial companion results should therefore remain separate from the canonical threat model. Automatically updating that model would require a separate proposal and contract review.
 
+## Isolation from the existing threat modeler
+
+The first implementation is additive. Its skill, controller, schemas, context adapters, output rendering, and lifecycle are new components. Existing assessment agents, prompts, orchestration, runtime configuration defaults, composition, exports, canonical schemas, and cleanup behavior remain unchanged. The analyst may read a validated durable threat model through an adapter; it cannot start an assessment implicitly, mutate its artifacts, allocate its public identities, or require transient Stage-1 state.
+
+Analyst jobs own separate output roots, locks, logs, temporary snapshots, and cleanup. Reject output destinations that overlap assessment state. Cancelling or deleting an analyst job must not affect a full assessment, including one running concurrently in the same repository. The first delivery does not modify hook configuration. Later automation must exclude full assessments and analyst activity deterministically.
+
+Existing helpers can be reused unchanged only after reviewing their inputs, side effects, and tests. The existing team-question topics and answer-provenance checks are compatibility references, not permission to repurpose their assessment lifecycle. If safe reuse requires changing a shared helper, kernel, schema, or permission mechanism, separate that change from analyst implementation and review its existing consumers first. Do not copy a security guard merely to avoid that review.
+
+Additions to permissions metadata, packaging inventories, test routes, and documentation may be necessary. Record these integration edits explicitly and verify that existing workflows keep their behavior. Shared dependencies and plugin discovery remain regression surfaces, so independence is an acceptance condition to demonstrate rather than an assumption. Do not adopt the existing reviewer's permission-bypass launcher for the new workflow.
+
 ## Proposed result and execution boundaries
 
 Keep feedback short and actionable. Distinguish evidence-backed threats, requirement observations, design assumptions, and unresolved questions. Include the relevant evidence or context, potential consequence, and next action. Do not force every response into a complete STRIDE report.
@@ -116,7 +142,7 @@ The current Claude Code reference describes command hooks, experimental agent ho
 
 The documented `FileChanged` event can observe changes to explicitly watched paths, including changes outside the model's editing tools. Its watch list does not establish complete change-set coverage or replace a validated snapshot. Evaluate it as an activation signal against the supported host versions.
 
-The preferred first integration is a cheap command hook that identifies relevance and provides bounded context to an explicit analysis entry point. Injecting a request into the parent conversation is advisory scheduling, not proof that the analyst ran. If guaranteed automatic execution is required, a dedicated runner must own dispatch, result validation, cancellation, and delivery. Choose between these behaviors explicitly before claiming automatic coverage.
+After the manual and CI paths are validated, the preferred first hook integration is a cheap command hook that identifies relevance and provides bounded context to the same analysis entry point. Injecting a request into the parent conversation is advisory scheduling, not proof that the analyst ran. Guaranteed automatic execution must use the dedicated controller for dispatch, result validation, cancellation, and delivery. Choose between these behaviors explicitly before claiming automatic coverage.
 
 Do not make stopping depend on repeatedly obtaining a clean analysis. Stop-triggered continuation can loop; the host exposes `stop_hook_active` for this case. Generated result writes and nested analyst activity also need exclusion from activation. These protections belong to the deterministic scheduler, not the analyst prompt. See the [Stop hook contract](https://code.claude.com/docs/en/hooks#stop).
 
@@ -157,20 +183,20 @@ False positives and repeated advice are also adoption risks. Coordinate requirem
 
 ## Open decisions
 
-- Whether the two roles need separate agents or can reuse existing analysis capabilities behind distinct entry points.
+- Whether evaluation later justifies separate agents for the two perspectives.
 - Which hook events can support prompt guidance and deferred analysis without delaying every edit or causing recursive activation.
 - How project context contributes to activation beyond keywords, including multilingual prompts and indirect changes to protected business logic.
 - How to select relevant model and requirement context and detect stale or missing inputs.
 - Who maintains the shared analysis catalog, reviews upstream aiscb changes, and verifies mappings to active requirements.
 - How to coordinate overlapping role results and suppress repeated feedback across a change set.
-- How users configure activation, explicitly request analysis, and cancel ongoing work.
+- Which supported host versions can enforce the isolated execution contract and how later organization presets expose automatic activation.
 - Which results warrant a full threat-model reassessment and how to present that recommendation.
 - Which output artifact, validation contract, and retention policy fit a lightweight workflow.
 - What latency, cost, and coverage are acceptable for the intended development workflow.
 
 ## Candidate evaluation scope
 
-A possible first experiment would start with explicit invocation for either a versioned design question or a defined code-change snapshot, using validated durable project context where available. Next, prompt-time hooks could suggest or request that same analysis for clear security-relevant changes. Automatic deferred execution should follow only after its authority, lifecycle, and result delivery have been verified. Each step would leave the canonical threat model unchanged. This is a candidate scope, not an implementation commitment.
+The first experiment covers explicit invocation for a versioned design question or a defined code-change snapshot, followed by advisory CI using the same controller. Use validated durable project context where available. Prompt-time hooks may follow after these entry points work. Automatic deferred execution follows only after its authority, lifecycle, and result delivery have been verified. Each step leaves the canonical threat model unchanged. The implementation plan specifies the proposed work packages without authorizing runtime changes.
 
 Evaluate additional useful findings beyond the existing reviewer, false activations, missed context-dependent changes, repeated notifications, latency, and cost. Include neutral examples, equivalent variants, benign changes, missing or stale model context, and untrusted content that attempts to redirect the analyst. Use the results to refine the role split and activation approach before expanding automation.
 
@@ -181,3 +207,5 @@ Exercise the shared questions with no aiscb installation, an explicitly integrat
 Before the experiment, record expected findings and expected non-findings for the evaluation cases, acceptable false-activation and missed-case rates, and latency and cost limits. Compare the companion with the existing reviewer using the same source and project context and comparable resource budgets. Keep any comparison with the reviewer's default inputs separate so that additional context is not mistaken for a benefit of the role split. Define success thresholds before collecting results and use them to decide whether to proceed to hook integration or revise the explicit workflow.
 
 Before automatic execution, also demonstrate correct behavior for unstaged and untracked files, two concurrent worktrees, edits arriving during analysis, cancellation, budget exhaustion, malformed output, attempted path escape, and repeated stop events. A live test on supported Claude Code versions must verify that the intended role actually runs and that its validated result reaches the user. Documentation review and unit tests alone cannot establish host integration.
+
+Before the manual and CI release, demonstrate that analyst completion, failure, cancellation, and cleanup leave an existing assessment intact. Verify separate outputs during concurrent execution and no additional model calls from existing skills when analyst automation is disabled. Test question delivery, answer reuse, and required unanswered questions in both interactive and CI modes.
