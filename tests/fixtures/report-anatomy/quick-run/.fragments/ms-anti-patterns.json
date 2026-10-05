@@ -1,0 +1,30 @@
+{
+  "anti_patterns": [
+    {
+      "name": "Raw SQL string interpolation",
+      "severity": "red",
+      "description": "User-supplied values are concatenated directly into SQL query strings at the login and user-lookup handlers instead of using parameterized statements, turning every input-bearing query into an injection sink.",
+      "findings": [
+        { "ref": "T-001", "label": "SQL injection authentication bypass" },
+        { "ref": "T-003", "label": "SQL injection in user-lookup route" }
+      ]
+    },
+    {
+      "name": "Secrets hardcoded in source",
+      "severity": "red",
+      "description": "The session signing key and database credentials are embedded as string literals in committed source files, making them available to anyone with repository read access and impossible to rotate without a code change.",
+      "findings": [
+        { "ref": "T-005", "label": "Hardcoded JWT signing key in server.js" }
+      ]
+    },
+    {
+      "name": "Missing server-side authorization layer",
+      "severity": "red",
+      "description": "State-changing and data-access routes are registered without authentication or ownership enforcement, leaving every caller equally privileged to reach admin, user-record, and AI-assistant endpoints.",
+      "findings": [
+        { "ref": "T-010", "label": "Sensitive route without authentication middleware" },
+        { "ref": "T-011", "label": "Missing authorization on user record endpoint" }
+      ]
+    }
+  ]
+}

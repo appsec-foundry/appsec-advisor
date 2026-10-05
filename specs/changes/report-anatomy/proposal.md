@@ -15,7 +15,7 @@ The mitigation block has no contract at all beyond the P1–P4 group headings. T
 
 The Management Summary contract still lists Architectural Anti-Patterns and Security Principles as optional subsections; `_render_management_summary` retired both on 2026-07-14. The contract also defines Top Mitigations as two subsections, Prioritized and Follow-up, with a Priority column; the renderer emits one table `| # | Component | Mitigation | Addresses | Effort |` without those subsections. Comments in the contract call the Mitigation Register §9 and the Weakness Register §6; the headings are §10 and §7.
 
-The committed golden report `tests/fixtures/e2e/golden/threat-model.md` is not what the current code renders: its Assets table lacks the Description column, its finding cards lack Evidence, and its Verdict block uses different labels. A drift test needs a report rendered by the current code, not that file.
+The golden report `tests/fixtures/e2e/golden/threat-model.md` is rendered by the current code, but from the thin, partly hand-written fragments of `tests/fixtures/e2e/frozen-run`. Its Assets table and finding cards therefore show older or sparser shapes than a real run produces, and it cannot serve as the reference for the report's structure.
 
 A recomposition of `tests/fixtures/e2e/_last-run` with the current code renders the §7b link in the Management Summary as `[§7](#7-weakness-register)b`. The cross-reference linker matches `§7` inside `§7b`. This is a renderer defect independent of this proposal.
 
@@ -34,14 +34,14 @@ A reader can see in one short document what the report contains, in which order,
 1. Add `specs/report-anatomy.md` with the content of the draft in this folder.
 2. Protect it like `specs/requirements.md`: `scripts/spec_guard.py` asks before a mutation, and `scripts/check_specs.py --changed-against` requires a proposal when it changes.
 3. Add one requirement in the Report section that binds the product promise to the document, for example: "REQ-RPT-009 — The report follows its approved anatomy. The report's outline, Management Summary blocks, and the fields of findings, mitigations, and weaknesses follow `specs/report-anatomy.md`."
-4. Add a drift test that composes the frozen fixture `tests/fixtures/e2e/frozen-run` with the current code, extracts the skeleton (headings, field labels, table headers), and compares it against the document. It fails when a required part is missing, when a part appears that the document does not list, or when the order differs. It never requires an optional part to be present. It does not use `tests/fixtures/e2e/_last-run`, which every full E2E run overwrites, or the committed golden report, which the current code no longer reproduces.
+4. Add a drift test, `tests/test_report_anatomy.py`. It regenerates the deterministic fragments of two frozen runs with the current pre-generator, renders them with the current composer, and compares headings, table headers, and the fields of findings, mitigations, and weaknesses against the document. It also compares the chapter order and the §6 subsections with the contract. It fails when a required part is missing, when a part appears that the document does not list, or when the order differs, and never requires an optional part. The frozen runs are `tests/fixtures/report-anatomy/quick-run`, a copy of a full synthetic-repository run at quick depth with weaknesses, a requirements catalog, and an LLM surface, and `tests/fixtures/e2e/frozen-run` for §3. `tests/fixtures/e2e/_last-run` is not used directly because every full E2E run overwrites it.
 5. Correct the drift listed above in the contract comments, the stale `card_fields`, the retired MS entries, the docstring, and the §8 and §10 intro texts, so that all of them agree with the approved document.
 
 ## Open decisions
 
-1. Required finding fields. The current renderer emitted Root cause on none of 13 findings in the recomposed run. Keep it optional, make it required, or drop it.
+1. Required finding fields. The current renderer emitted Root cause on none of 13 findings in the recomposed run, and emits Evidence only when evidence was recorded. The draft describes both as optional, which is today's behavior. Making either required is a renderer change.
 2. Numbering gaps. When §7 is absent the report jumps from §6 to §8. Fixed numbers keep anchors such as `#8-findings-register` stable. The draft keeps fixed numbers with gaps.
-3. Test fixture. The proposed base is `tests/fixtures/e2e/frozen-run`. Whether its rendering exercises every optional part is not yet checked; if not, extend it.
+3. Untested parts. Neither frozen run renders §6 content or abuse-case scenarios. §6 is held through the contract; abuse-case scenarios are described but not checked until a fixture contains one.
 
 ## Risks
 

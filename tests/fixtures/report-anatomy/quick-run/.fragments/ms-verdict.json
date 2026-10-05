@@ -1,0 +1,38 @@
+{
+  "severity": "red",
+  "opening": "This application has no access controls that work: any caller from the internet can take over any user account, run arbitrary commands on the server, or read every secret the service depends on — without supplying any credential. The service must not be publicly reachable in its current state.",
+  "bullets_intro": "What an attacker can do today:",
+  "bullets": [
+    {
+      "title": "Authentication bypassed at login",
+      "body": "Database query injection (SQL injection) at the login handler grants any caller a signed admin session without a password.",
+      "refs": ["T-001", "T-003"]
+    },
+    {
+      "title": "Server takeover via admin route",
+      "body": "Command string injection (OS command injection) on an unauthenticated admin route lets any caller run arbitrary system commands.",
+      "refs": ["T-002"]
+    },
+    {
+      "title": "All runtime secrets exposed",
+      "body": "An unauthenticated debug route returns all runtime configuration as plain text, disclosing every credential and signing secret used by the application.",
+      "refs": ["T-004", "T-006"]
+    },
+    {
+      "title": "Account access freely forgeable",
+      "body": "The session signing key is committed in source code so any reader with repository access can issue tokens for any user identity.",
+      "refs": ["T-005"]
+    },
+    {
+      "title": "Customer account data exposed",
+      "body": "User records are readable without authentication, exposing account details and role assignments for any enumerated identifier.",
+      "refs": ["T-011", "T-010"]
+    },
+    {
+      "title": "AI assistant open to cost abuse",
+      "body": "The AI assistant accepts unauthenticated requests with no rate limit, enabling cost exhaustion and prompt manipulation against the integrated language model.",
+      "refs": ["T-008"]
+    }
+  ],
+  "closing": "Adding authentication to every public route and removing all hardcoded secrets would close the most critical risks; the remaining gaps follow from those two absent controls."
+}

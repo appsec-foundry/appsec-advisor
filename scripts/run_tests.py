@@ -67,6 +67,7 @@ GROUPS = {
         compose_threat_model_cov2
         compose_threat_model_cov3
         e2e_pipeline
+        report_anatomy
         export_html
         export_pdf
         export_sarif
@@ -1644,6 +1645,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/renderers/walkthrough_renderer.py": _tests("""
+        report_anatomy
         attack_step_quality
         check_target_specificity
         compose_threat_model
@@ -1940,6 +1942,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/renderers/pregenerate_fragments.py": _tests("""
+        report_anatomy
         figure1b_compose
         script_layout
         actor_presentation
@@ -2531,6 +2534,7 @@ SOURCE_TESTS = {
         figure1b_svg
     """),
     "scripts/renderers/compose_threat_model.py": _tests("""
+        report_anatomy
         figure1b_compose
         script_layout
         incremental_two_run_e2e
@@ -6255,6 +6259,8 @@ SOURCE_TESTS = {
 # and every test module that names the document's file name.
 SOURCE_PREFIX_TESTS = {
     "docs/": _tests("requirements_verification"),
+    "specs/changes/report-anatomy/": _tests("report_anatomy"),
+    "tests/fixtures/report-anatomy/": _tests("report_anatomy"),
 }
 
 

@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "actors": ["internet-anon", "repo-read"],
+  "attack_paths": [
+    {
+      "class": "injection",
+      "actor": "internet-anon",
+      "target": "data",
+      "scenario_title": "SQL injection at login and user lookup",
+      "description": "Unsanitized request data interpolated into SQL query syntax lets an attacker alter query logic, bypass credential checks, or extract records from any row in the database.",
+      "findings": ["T-001", "T-003"],
+      "impact": ["full-admin-takeover", "customer-data-exfiltration"]
+    },
+    {
+      "class": "remote-code-execution",
+      "actor": "internet-anon",
+      "target": "application",
+      "scenario_title": "Command injection via unauthenticated admin route",
+      "description": "Caller-controlled values interpolated into shell command strings give an attacker arbitrary code execution on the server, limited only by the process's operating-system privileges.",
+      "findings": ["T-002"],
+      "impact": ["full-server-compromise"]
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "actor": "internet-anon",
+      "target": "data",
+      "scenario_title": "All runtime secrets via unauthenticated debug route",
+      "description": "Operational or debug surfaces that serialize internal state, secrets, or configuration without authentication expose every credential to any caller who can reach the service.",
+      "findings": ["T-004", "T-006"],
+      "impact": ["customer-data-exfiltration", "full-admin-takeover"]
+    },
+    {
+      "class": "auth-bypass",
+      "actor": "repo-read",
+      "target": "application",
+      "scenario_title": "Token forgery via hardcoded signing key",
+      "description": "Predictable or hardcoded session-signing material allows an attacker to produce valid credentials for any identity without going through the authentication flow.",
+      "findings": ["T-005"],
+      "impact": ["full-admin-takeover"]
+    },
+    {
+      "class": "privilege-escalation",
+      "actor": "internet-anon",
+      "target": "data",
+      "scenario_title": "Unauthenticated access to user records and admin operations",
+      "description": "Routes that accept identity or authorization parameters from the caller without verifying them against an authoritative server-side record allow horizontal and vertical privilege escalation.",
+      "findings": ["T-009", "T-010", "T-011"],
+      "impact": ["customer-data-exfiltration"]
+    }
+  ]
+}

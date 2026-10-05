@@ -2,9 +2,9 @@
 
 ## Slice 1: drift test
 
-- [ ] Check whether composing `tests/fixtures/e2e/frozen-run` renders every optional part listed in `report-anatomy.md`, and extend the fixture where it does not.
-- [ ] Add a drift test that composes the fixture, extracts headings, field labels, and table headers, and compares them against `report-anatomy.md`: required parts present, no unlisted parts, order preserved, optional parts never required.
-- [ ] Route the test in `scripts/run_tests.py`.
+- [x] Freeze a rich run as `tests/fixtures/report-anatomy/quick-run`; use `tests/fixtures/e2e/frozen-run` for §3.
+- [x] Add `tests/test_report_anatomy.py`: regenerate deterministic fragments, render, and compare headings, tables, and fields against `report-anatomy.md`, plus chapter order and §6 subsections against the contract, with negative cases for each kind of drift.
+- [x] Route the test in `scripts/run_tests.py`.
 
 ## Slice 2: align the existing descriptions
 

