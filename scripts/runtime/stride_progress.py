@@ -25,7 +25,10 @@ files, redirected output) ASCII fallbacks (`[done]`, `[stale]`) are used
 so plain-text consumers render cleanly.
 
 Usage:
-    runtime/stride_progress.py <output_dir> <expected_count> [--force]
+    runtime/stride_progress.py <output_dir> <expected_count> [--force] [--component <id> ...]
+
+With ``--component`` the line counts and lists only those components, so a
+wave is measured against its own size; without it every component counts.
 
 Designed to be called from the orchestrator's Phase 9 poll loop:
 
@@ -246,12 +249,32 @@ def _write_appsec_progress(output_dir: Path, ready: int, expected: int, entries:
         pass
 
 
+def _split_component_args(argv: list[str]) -> tuple[list[str], set[str]] | None:
+    """Separate repeated ``--component <id>`` pairs from the positional args."""
+    args: list[str] = []
+    scope: set[str] = set()
+    items = iter(argv)
+    for item in items:
+        if item == "--component":
+            value = next(items, None)
+            if not value:
+                return None
+            scope.add(value)
+        else:
+            args.append(item)
+    return args, scope
+
+
 def main(argv: list[str]) -> int:
     force = "--force" in argv
-    args = [a for a in argv[1:] if a != "--force"]
-    if len(args) != 2:
-        print("usage: runtime/stride_progress.py <output_dir> <expected_count> [--force]", file=sys.stderr)
+    split = _split_component_args([a for a in argv[1:] if a != "--force"])
+    if split is None or len(split[0]) != 2:
+        print(
+            "usage: runtime/stride_progress.py <output_dir> <expected_count> [--force] [--component <id> ...]",
+            file=sys.stderr,
+        )
         return 2
+    args, scope = split
 
     output_dir = Path(args[0])
     try:
@@ -264,6 +287,10 @@ def main(argv: list[str]) -> int:
     progress_dir = output_dir / ".progress"
     ready_files = stride_output_files(output_dir)
     ready_ids = {_stride_component_id(p) for p in ready_files}
+    # A wave is counted against its own components: the expected count is the
+    # wave's size, and earlier waves' outputs would otherwise read "4/1 ready".
+    if scope:
+        ready_ids &= scope
 
     progress_files = sorted(progress_dir.glob("*.json")) if progress_dir.exists() else []
     now = time.time()
@@ -278,6 +305,8 @@ def main(argv: list[str]) -> int:
     for pf in progress_files:
         data = _load(pf)
         comp_id = data.get("component_id") or pf.stem
+        if scope and comp_id not in scope:
+            continue
         done = comp_id in ready_ids
         try:
             superseded = _validate_progress_record(output_dir, data, done)

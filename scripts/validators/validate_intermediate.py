@@ -312,6 +312,35 @@ def _check_scenario_stripped_length(data: dict) -> list[str]:
     return errors
 
 
+def _check_stride_evidence_locations(data: dict, repo_root: Path | None = None) -> list[str]:
+    """Each finding's evidence must name an existing file and, if it gives a line, a code line in it.
+
+    The analyzer reads source through tools whose numbering it can misread
+    (``cat -n`` over several files keeps counting across them), so a cited line
+    can lie past the end of its file. Checked here, the error reaches the
+    analyzer as an OR-31 repair brief; unchecked, it surfaced only at the
+    post-merge evidence sample and aborted the whole run. ``line`` 0 or null
+    cites the file as a whole.
+    """
+    errors: list[str] = []
+    threats = data.get("threats")
+    if repo_root is None or not isinstance(threats, list):
+        return errors
+    for index, threat in enumerate(threats):
+        evidence = threat.get("evidence") if isinstance(threat, dict) else None
+        if not isinstance(evidence, dict) or not isinstance(evidence.get("file"), str):
+            continue
+        errors.extend(
+            repository_evidence_errors(
+                [{"file": evidence["file"], "line": evidence.get("line") or None}],
+                repo_root,
+                label=f"threats[{index}].evidence",
+                require_code=True,
+            )
+        )
+    return errors
+
+
 _INPUT_TO_SINK_CWES = frozenset({"CWE-78", "CWE-79", "CWE-89", "CWE-94", "CWE-95", "CWE-918", "CWE-1336"})
 
 
@@ -656,6 +685,7 @@ def validate_stride(data: Any, repo_root: Path | None = None) -> tuple[bool, lis
     if "parse_error" not in data:
         errors.extend(_check_scenario_stripped_length(data))
         errors.extend(_check_stride_remediation_nonempty(data))
+        errors.extend(_check_stride_evidence_locations(data, repo_root))
         errors.extend(_check_stride_mechanism_traces(data, repo_root))
         # RC.G.1 / RC.I — STRIDE-analyzer prompt mandates threat_category_id.
         # Inject `source: stride` on each row before the check (per-component

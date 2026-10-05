@@ -43,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A STRIDE finding that cites a line past the end of its file goes back to the analyzer for repair instead of aborting the run after the merge.
+- Findings count as verified from an earlier assessment only when they name that earlier finding; others are checked like new findings.
+- The STRIDE progress line counts only the components of the wave being joined.
 - Private keys are fully redacted from findings, and pentest task exports are checked for leaked secrets.
 - Config and IaC findings reach reports again with the correct STRIDE category and component attribution.
 - Full assessments confirm object-level authorization gaps and entity mass assignment again without importing stale results from earlier runs.

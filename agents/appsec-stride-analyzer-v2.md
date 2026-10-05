@@ -118,15 +118,18 @@ A declined turn persists nothing. Do not resend its content: send
 
 ## Prior, actor, and boundary handling
 
-For every open known or prior finding, verify its cited slice:
+For every open known or prior finding with an id, verify its cited slice:
 
-- still present: emit it and set `evidence_check: verified-prior`;
+- still present: emit it with that id as `prior_finding_ref` and
+  `evidence_check: verified-prior`;
 - affirmatively fixed: omit it and add `resolved_prior_findings[]` with exact
   fields `prior_id`, `cwe`, `title`, and `reason`; make `reason` name the fix; or
 - undecidable: carry it unchanged with
   `evidence_check: carried-unverified-shallower-depth` only when the prior
   assessment depth was deeper. Otherwise leave resolution to the deterministic
   reconciler.
+
+Entries without an id are hypotheses: verify them as new findings.
 
 Skip accepted and false-positive threats. Verify mitigation before dropping a
 mitigated threat.
@@ -281,6 +284,7 @@ shape and these exact fields:
 
 `evidence.line` names the vulnerable statement, route registration, unsafe API,
 or configuration value, never a header, blank, comment, or closing brace.
+`cat -n` and `nl` count across files; number one file per call.
 For a confirmed input-to-sink CWE listed above, add `"mechanism_trace": {"input": {"file": "<entry path>", "line": 1}, "sink": {"file": "<same as evidence.file>", "line": 1}, "connection": "<how this input reaches this sink>", "control": {"status": "<absent-at-sink|ineffective|bypassed>", "location": {"file": "<control path>", "line": 1}, "explanation": "<why this control fails>"}}`. Omit it for other findings.
 
 A plan `repair` holds your rejected previous `threats` and the `gate_errors` indexing them. Keep unnamed threats; fix each named one, and each named `lens_coverage` item, at its source by the rules above. Never drop a finding to pass; skip re-analysis of untouched categories.

@@ -590,7 +590,80 @@ def _repair_in_place(output_dir: Path, component_id: str, data: dict[str, Any], 
         repaired = True
         if log_pruned:
             _log_pruned_branches(output_dir, component_id, pruned)
+    demoted = demote_unanchored_verified_prior(data["threats"], prior_finding_ids(output_dir, component_id))
+    if demoted:
+        repaired = True
+        if log_pruned:
+            _log_demoted_verified_prior(output_dir, component_id, demoted)
     return repaired
+
+
+#: The per-component inputs that carry earlier findings with stable ids: the
+#: prior assessment's findings and the team-maintained known-threats index.
+#: Analyst `known_vulns` candidates share the known-threats file but carry no
+#: id, so they can never anchor `verified-prior`.
+_PRIOR_FINDING_CONTEXTS = ("prior-findings-context.json", "known-threats-context.json")
+_PRIOR_FINDING_ID_KEYS = ("id", "t_id", "f_id", "prior_id")
+
+
+def prior_finding_ids(output_dir: Path, component_id: str) -> set[str]:
+    """Ids of the earlier findings this component's analyzer was given."""
+    ids: set[str] = set()
+    for name in _PRIOR_FINDING_CONTEXTS:
+        try:
+            payload = json.loads((output_dir / ".dispatch-context" / component_id / name).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        records = payload.get("records") if isinstance(payload, dict) else None
+        for record in records if isinstance(records, list) else []:
+            value = record.get("value") if isinstance(record, dict) else None
+            if isinstance(value, str):
+                try:
+                    value = json.loads(value)
+                except ValueError:
+                    continue
+            if isinstance(value, dict):
+                for key in _PRIOR_FINDING_ID_KEYS:
+                    if isinstance(value.get(key), str) and value[key].strip():
+                        ids.add(value[key].strip())
+    return ids
+
+
+def demote_unanchored_verified_prior(threats: list[Any], prior_ids: set[str]) -> list[str]:
+    """Reset `verified-prior` that names no earlier finding the analyzer was given.
+
+    `verified-prior` counts as confirmed evidence (FE-21) and skips evidence
+    sampling, so only a re-check of a real earlier finding may carry it. The
+    analyzer also stamped it on same-run hypotheses, which confirmed its own
+    claims. Such a finding becomes `unchecked` and is sampled like any other.
+    Returns the demoted local ids.
+    """
+    demoted: list[str] = []
+    for threat in threats:
+        if not isinstance(threat, dict) or threat.get("evidence_check") != "verified-prior":
+            continue
+        ref = threat.get("prior_finding_ref")
+        if isinstance(ref, str) and ref.strip() in prior_ids:
+            continue
+        threat["evidence_check"] = "unchecked"
+        threat.pop("evidence_basis", None)
+        demoted.append(str(threat.get("local_id") or "?"))
+    return demoted
+
+
+def _log_demoted_verified_prior(output_dir: Path, component_id: str, demoted: list[str]) -> None:
+    try:
+        with (output_dir / ".agent-run.log").open("a", encoding="utf-8") as handle:
+            handle.write(
+                format_line(
+                    "STRIDE_VERIFIED_PRIOR_DEMOTED",
+                    f"{component_id}: {', '.join(demoted)} cite no earlier finding; now unchecked",
+                    level="WARN ",
+                    component="stride-waves",
+                )
+            )
+    except OSError:
+        pass
 
 
 def _configured_repo_root(output_dir: Path) -> Path | None:
