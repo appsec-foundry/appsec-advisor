@@ -13,7 +13,7 @@
 
 The **Threat Analyst** covers the design side: on request, it analyzes a planned feature or a selected code change for threats and asks the team for missing design facts. The plugin also includes requirements audits, change reviews, and CI gates.
 
-[Why appsec-advisor?](#why-appsec-advisor) · [Security](#security-notes) · [Quick start](#quick-start) · [Threat Modeler](#threat-modeler) · [Threat Analyst](#threat-analyst) · [Documentation](#documentation) · [What's new in 0.6.0-beta.4](#whats-new-in-060-beta4) · [Contributing](#contributing)
+[Why appsec-advisor?](#why-appsec-advisor) · [Security](#security-notes) · [Quick start](#quick-start) · [Threat Modeler](#threat-modeler) · [Threat Analyst](#threat-analyst) · [Requirements Audit](#requirements-audit) · [Developer tools](#additional-developer-tools) · [Report a failed run](#report-a-failed-run) · [Enterprise rollout](#enterprise-rollout) · [Documentation](#documentation) · [What's new in 0.6.0-beta.4](#whats-new-in-060-beta4) · [Contributing](#contributing)
 
 ---
 
@@ -90,6 +90,8 @@ Run the one-time permission setup:
 /appsec-advisor:check-permissions --update
 ```
 
+The command adds the missing rules, including `Bash(*)`, to this repository's `.claude/settings.local.json`. Without them the assessment stops before it starts, unless your settings set `defaultMode` to `auto` or `bypassPermissions`.
+
 Restart or reload Claude Code, then create the model:
 
 ```text
@@ -101,26 +103,26 @@ The assessment writes `threat-model.md` and `threat-model.yaml` to `docs/securit
 ### 3. Work with the model
 
 ```text
-# Reassess after code changes while preserving history
-/appsec-advisor:create-threat-model --full
-
-# Record fix, accept-risk, or defer decisions
-/appsec-advisor:review-threat-model
-
-# Publish a reviewed model to version control
-/appsec-advisor:publish-threat-model
-
-# Or ask a question directly
+# Ask about the model in plain language
 what are the most critical findings?
+how well is authentication protected?
 what should I fix first?
-does it cover SSRF?
+
+# Fix findings, accept their risk, or build a remediation plan
+/appsec-advisor:review-threat-model
 
 # Analyze a planned feature or your current changes
 /appsec-advisor:analyze-threats Let support staff export customer data as CSV.
 /appsec-advisor:analyze-threats --worktree
+
+# Reassess after code changes while preserving history
+/appsec-advisor:create-threat-model --full
+
+# Optionally publish a reviewed model to version control
+/appsec-advisor:publish-threat-model
 ```
 
-Updates preserve finding IDs. Review decisions are stored separately, and publishing remains optional. Run `/appsec-advisor:help` for the complete command list.
+Updates preserve finding IDs. Review decisions are stored separately. Run `/appsec-advisor:help` for the complete command list.
 
 ## Threat Modeler
 
@@ -196,15 +198,21 @@ If you do not have a catalog, adapt `data/appsec-requirements-fallback.yaml` or 
 
 See the [developer tools guide](docs/dev-security-helper-usage.md) for commands and configuration.
 
-### Security score script
+### Security score
 
-The score script checks a repository without building a threat model. It returns a score from 0 to 100, `undetermined` if too few checks apply, or `incomplete` without a score if a required scanner fails or emits invalid output. Findings and diagnostics remain visible in every verdict. You need Python 3.10+, PyYAML, jsonschema, and git.
+The security score checks a repository without building a threat model. It returns a score from 0 to 100, `undetermined` if too few checks apply, or `incomplete` without a score if a required scanner fails or emits invalid output. Findings and diagnostics remain visible in every verdict. You need Python 3.10+, PyYAML, jsonschema, and git.
+
+```text
+/appsec-advisor:security-score
+```
+
+For CI or other automation, run the script from a plugin checkout:
 
 ```bash
 python3 /path/to/appsec-advisor/scripts/analyzers/security_score.py --repo /path/to/project
 ```
 
-Replace the example paths with your plugin checkout and project directory. `--repo` also accepts an HTTPS GitHub or GitLab Git URL. Use `--json` or `--yaml` for structured output validated against `schemas/security-score.schema.yaml`. Exit codes are 0 for a score, 2 for insufficient coverage, and 1 for incomplete execution or an error. Compare commits only with matching scoring versions, catalog fingerprints, and applicable coverage in `comparability`. Findings without a scored baseline and findings excluded by severity policy are disclosed separately.
+Both accept the same options. `--repo` also accepts an HTTPS GitHub or GitLab Git URL. Use `--json` or `--yaml` for structured output validated against `schemas/security-score.schema.yaml`. Exit codes are 0 for a score, 2 for insufficient coverage, and 1 for incomplete execution or an error. Compare commits only with matching scoring versions, catalog fingerprints, and applicable coverage in `comparability`. Findings without a scored baseline and findings excluded by severity policy are disclosed separately.
 
 ### Deterministic scan script
 
