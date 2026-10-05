@@ -351,20 +351,22 @@ sections:
       - security_posture_at_a_glance
       - mitigations
       - operational_strengths
+    # Rendered order and blocks: specs/changes/report-anatomy/report-anatomy.md
+    # → Management Summary.
     optional_subsections:
       - { id: top_weaknesses,              condition: "has_weakness_register" }
       - { id: open_questions_for_team,      condition: "has_open_questions" }
+      # architectural_anti_patterns and systemic_posture no longer render as
+      # Management Summary blocks (retired 2026-07-14). They stay listed so
+      # their sections remain reachable: the anti-patterns fragment feeds the
+      # §7 Weakness Register entries, and _render_security_principles still
+      # serves standalone callers.
       - { id: architectural_anti_patterns, condition: "has_anti_patterns" }
+      - { id: systemic_posture,           condition: "has_weakness_register" }
       # ai_exposure_ms is generated from the model at every depth
       # (pregenerate_fragments.gen_ai_exposure), so it is never carried over.
       - { id: ai_exposure_ms,              condition: "has_llm_surface" }
-      # systemic_posture — P4 "### Security Principles" verdict table, hoisted
-      # from §8 (2026-07-13) so a systemically-violated principle is visible at
-      # executive level. Computed (no LLM fragment); rendered via the
-      # special-case path in _render_management_summary.
-      - { id: systemic_posture,           condition: "has_weakness_register" }
       - { id: requirements_compliance_ms, condition: "check_requirements" }
-      - { id: triage_notes,               condition: "triage_has_warnings" }
     forbidden_subsection_patterns:                  # regexes; match = QA-strip
       - "^\\d+\\.\\d+\\s+"                          # numbered prefixes "1.1 …"
       - "^\\d+\\.\\s+"                              # numbered prefixes "1. …"
@@ -615,17 +617,6 @@ sections:
     heading: "### Top Mitigations"
     heading_numbered: false
     fragment_type: computed                         # derived from threat-model.yaml mitigations[]
-    sub_tables:
-      - id: prioritized_mitigations
-        heading: "#### Prioritized Mitigations"
-        filter: "addresses_any_severity in [Critical, High]"
-        sort: [effort_rank:asc, addressed_count:desc]
-        intro: "The mitigations below address the Critical and High findings in the Top Threats table and must be completed before any production deployment. Entries are ordered by effort (lowest first), then by number of threats addressed (highest first)."
-      - id: followup_mitigations
-        heading: "#### Follow-up Mitigations"
-        filter: "addresses_any_severity in [Medium, Low] OR (addresses_any_severity == High AND id NOT IN prioritized_mitigations)"
-        sort: [effort_rank:asc, addressed_count:desc]
-        intro: "The mitigations below address the remaining High/Medium findings not covered above and should be scheduled within the current or next sprint. Same ordering rule applies (effort ascending, findings-addressed descending)."
     table:
       # Post-2026-05-29 — Top Mitigations is a single ranked table with a
       # dedicated `Component` column (printed once per component group, blank
@@ -634,7 +625,7 @@ sections:
       # and rendered as displaced; the column form keeps proper alignment and
       # matches the sibling Top Findings table.
       columns:
-        - { key: priority,   header: "Priority",   render: priority_badge,    required: true, enum: [P1, P2] }
+        - { key: rank,       header: "#",          render: plain_text,        required: true }
         - { key: component,  header: "Component",   render: plain_text,        required: false }
         - { key: mitigation, header: "Mitigation", render: mitigation_id,     required: true }
         - { key: addresses,  header: "Addresses",  render: finding_list,      required: true }
@@ -647,7 +638,7 @@ sections:
         # more Critical-fixing mitigations than the cap), and the Stage-2
         # renderer curates the most important additional P1/P2 entries up to
         # this bound via `.fragments/ms-top-mitigations.json`. Overflow falls
-        # through to §9 Mitigation Register (the full P1/P2/P3 catalogue).
+        # through to §10 Mitigation Register (the full P1–P4 catalogue).
         min: 3
         max: 10
 
@@ -1460,21 +1451,14 @@ sections:
 
       **STRIDE Coverage:** {{ stride_line }}
     sub_sections: []
-    # 2026-05 CARD layout (replaces the flat table). Findings are grouped by
-    # severity under `### <emoji> <Severity> (n)` headers (mirroring the §9
-    # Mitigation-Register block style); each finding is one card built by
-    # `_build_threat_card` in `renderers/compose_threat_model.py` with a fixed field
-    # skeleton, every card identical:
-    #   #### F-NNN · <Title>
-    #   **Severity:** … · **Component:** [C-NN] … · **Location:** `file:line`
-    #   **Issue:** …                     (consequence folded in; no Impact field)
-    #   **Root cause:** …                (attack-class taxonomy description)
-    #   **Evidence:** <✓|◌|↻> … (+ fenced code snippet when one exists)
-    #   **Fix:** <plain remediation> → [M-NNN]
-    #   **Classification:** Category · STRIDE: <category> · [CWE-NNN](cwe.mitre.org) · [OWASP A0X:2025](owasp.org)
-    # History: pre-2026-05 was a 9-col then 4-col flat table (Story Card in the
-    # Finding cell); the table was retired for cards on 2026-05-30.
-    card_fields: [severity, component, location, issue, root_cause, evidence, fix, classification]
+    # Findings are grouped by severity under `### <emoji> <Severity> (n)`
+    # headers, mirroring the §10 Mitigation Register block style. Each finding
+    # is one card built by `_build_threat_card` in
+    # `renderers/compose_threat_model.py`. The card fields, their order, and
+    # which ones are conditional are fixed by
+    # specs/changes/report-anatomy/report-anatomy.md → §8 Findings Register and
+    # held by tests/test_report_anatomy.py.
+    card_fields: [severity, violates, weakness, trust_boundary_gap, instances, issue, root_cause, evidence, code_excerpt, fix, classification]
 
   # -------------------------------------------------------------------------
   # E2. Abuse Cases — 100% computed; body authored by renderers/render_abuse_cases.py

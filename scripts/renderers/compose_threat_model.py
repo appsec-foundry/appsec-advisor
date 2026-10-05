@@ -14942,23 +14942,16 @@ def _build_threat_card(
     evidence_requirements: dict[str, list[str]] | None = None,
     requirement_status: dict[str, str] | None = None,
 ) -> str:
-    """Build the Story Card for the §8 ``Finding`` cell.
+    """Build one §8 finding card.
 
-    Layout (single MD line — `<br>` separators inside, `&#124;` for `|`).
-    Reflects the user-adopted security-finding template (R-7, 2026-05):
+    The card's fields, their order, and which ones are conditional are fixed
+    by specs/changes/report-anatomy/report-anatomy.md → §8 Findings Register
+    and held by tests/test_report_anatomy.py. The assembly order is the
+    ``fields`` list at the end of this function. Impact is folded into
+    **Issue**, and the walkthrough link is appended to **Classification**.
 
-        **<Title — canonical weakness class + file:line>**
-        **Component:** [C-NN](#c-nn) — <Component Name>
-        **Location:** `<file:line>` · evidence: verified
-        **Issue:** <attack narrative — 1-2 sentences, plain prose>
-        **Attack Walkthrough:** [Walkthrough §3.N](#3n-…)          (Critical/High only; omitted when §3 is skipped)
-        **Evidence:** <one-sentence prose summary of what the snippet shows>
-        <details><summary>Evidence code · file:line</summary><pre>…</pre></details>
-        **Impact:** <one-sentence consequence>                      (always rendered for Critical/High)
-        **Fix:** [M-NNN](#m-nnn) — <mitigation title>
-        **Classification:** <Weakness class> · STRIDE: <Category> · [CWE-NNN](…) · [OWASP A0X:2025](…)
-
-    Design choices (R-7 — replaces the R-5 / R-6 sequence):
+    Design choices (R-7 — replaces the R-5 / R-6 sequence; the notes below on
+    the former table cell, Impact, and Root cause are history):
 
       * **Component** is BOTH a labelled field at the top of the cell AND
         a separate table column. The duplication is intentional — the
@@ -17260,10 +17253,11 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     lines.append(
         "Findings are grouped by severity (Critical → High → Medium → Low); "
         "within a tier they are ordered by attack vektor (Repo-Read → "
-        "Internet-Anon → Internet-User → Victim-Required). Each finding is a "
-        "card with the same fixed fields, in order: **Severity · Component · "
-        "Location** → **Issue** → **Root cause** → **Evidence** → **Fix** → "
-        "**Classification** (with external CWE / OWASP links)."
+        "Internet-Anon → Internet-User → Victim-Required). Every finding card "
+        "shows **Severity · Component · Location**, **Issue**, **Fix**, and "
+        "**Classification** (with external CWE / OWASP links). **Evidence**, "
+        "**Root cause**, violated requirements, the weakness, and the trust "
+        "boundary gap appear when they apply."
     )
     lines.append("")
     # Risk Distribution: always show Critical/High/Medium/Low; show Info
@@ -17663,14 +17657,15 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
     # ("This mitigation closes the root-cause weakness underlying …"
     # / "Implement the change described above …"); with 25+ mitigations
     # that produced ~2 KB of repeated text. The same information now
-    # lives once at the top of §9 and per-M-NNN blocks carry only
+    # lives once at the top of §10 and per-M-NNN blocks carry only
     # author-supplied content.
     lines.append(
         "Each mitigation block lists the findings it **Addresses**, the CWEs "
         "it **Prevents**, and the **Priority** (P1 = before deployment, "
-        "P2 = current sprint, P3 = next quarter, P4 = backlog). The **Why** / "
-        "**How** / **Verification** fields are populated only when authored; "
-        "if a field is omitted, refer to the linked finding's *Evidence* line "
+        "P2 = current sprint, P3 = next quarter, P4 = backlog). **Why**, "
+        "**How**, and **Verification** appear when written; every P1 or P2 "
+        "mitigation that changes code gives **How** and **Verification**. "
+        "If a field is omitted, refer to the linked finding's *Evidence* line "
         "for file:line context and to the threat-category description in "
         "[§8 Findings Register](#8-findings-register) for the underlying weakness."
     )

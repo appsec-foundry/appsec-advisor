@@ -91,7 +91,8 @@ class Heading:
 class FieldTable:
     owner: re.Pattern[str]
     owner_level: int
-    fields: list[tuple[re.Pattern[str], str]]  # (label pattern, "always" | "p1p2" | "optional")
+    fields: list[tuple[re.Pattern[str], bool]]  # (label pattern, required)
+    chapter: str
 
 
 @dataclass
@@ -104,13 +105,12 @@ def _split_row(line: str) -> list[str]:
     return [c.strip() for c in line.strip().strip("|").split("|")]
 
 
-def _when(cell: str) -> str:
-    cell = cell.strip().lower()
-    if cell == "always":
-        return "always"
-    if "p1 or p2" in cell:
-        return "p1p2"
-    return "optional"
+class AnatomyFormatError(ValueError):
+    """A line of the anatomy document does not follow its stated conventions."""
+
+
+def _format_error(path: Path, number: int, line: str, rule: str) -> AnatomyFormatError:
+    return AnatomyFormatError(f"{path.name} line {number}: {rule}\n    {line.strip()}")
 
 
 def parse_anatomy(path: Path = ANATOMY) -> Anatomy:
@@ -119,22 +119,34 @@ def parse_anatomy(path: Path = ANATOMY) -> Anatomy:
     current2: Heading | None = None
     last_owner: Heading | None = None
     last_any: tuple[int, str] | None = None
+    # A line saying "... always appear ..." makes every item of the list that
+    # follows it "always", up to the next blank line.
+    always_list = False
     lines = path.read_text(encoding="utf-8").splitlines()
     i = 0
     while i < len(lines):
         line = lines[i]
+        if not line.strip():
+            always_list = False
         if line.startswith("| Field |"):
-            assert last_any is not None, "field table without a preceding heading"
+            if last_any is None:
+                raise _format_error(path, i + 1, line, "a field table needs a heading in `code` before it")
             rows = []
             i += 2
             while i < len(lines) and lines[i].startswith("|"):
                 cells = _split_row(lines[i])
                 span = _CODE_SPAN.search(cells[0])
+                when = cells[-1].strip().lower()
                 if span:
+                    if when != "always" and not when.startswith("only when"):
+                        raise _format_error(
+                            path, i + 1, lines[i], 'the "When" cell must be "always" or start with "only when"'
+                        )
                     label = span.group(1).strip("*").rstrip(":").strip()
-                    rows.append((_pattern(label), _when(cells[-1])))
+                    rows.append((_pattern(label), when == "always"))
                 i += 1
-            field_tables.append(FieldTable(_pattern(last_any[1]), last_any[0], rows))
+            chapter = current2.text if current2 is not None else ""
+            field_tables.append(FieldTable(_pattern(last_any[1]), last_any[0], rows, chapter))
             continue
         for found in _CODE_SPAN.finditer(line):
             span = found.group(1)
@@ -144,9 +156,21 @@ def parse_anatomy(path: Path = ANATOMY) -> Anatomy:
                 last_any = (level, text)
                 if level == 4:
                     continue
-                # "`### X` — only when ..." marks the heading optional.
-                optional = line[found.end() :].lstrip().startswith("— only when")
+                marker = line[found.end() :].lstrip()
+                if marker.startswith("— only when"):
+                    optional = True
+                elif marker.startswith("— always") or always_list:
+                    optional = False
+                else:
+                    raise _format_error(
+                        path,
+                        i + 1,
+                        line,
+                        f"write ' — always' or ' — only when <condition>' after `{span}`",
+                    )
                 heading = Heading(level, text, not optional, _pattern(text))
+                if "always appear" in marker:
+                    always_list = True
                 if level == 2:
                     chapters.append(heading)
                     current2 = heading
@@ -155,9 +179,17 @@ def parse_anatomy(path: Path = ANATOMY) -> Anatomy:
                     current2.children.append(heading)
                 last_owner = heading
             elif span.startswith("|"):
-                assert last_owner is not None, f"table before any heading: {span}"
-                # "Table, only when ...: `| ... |`" marks the table optional.
-                optional = "only when" in line[: found.start()]
+                lead = line[: found.start()].strip().lstrip("-").strip()
+                if last_owner is None:
+                    raise _format_error(path, i + 1, line, "a table needs a heading in `code` before it")
+                if lead == "Table:":
+                    optional = False
+                elif lead.startswith("Table, only when"):
+                    optional = True
+                else:
+                    raise _format_error(
+                        path, i + 1, line, "start a table line with 'Table:' or 'Table, only when <condition>:'"
+                    )
                 last_owner.tables.append((_normalize_table(span), not optional))
         i += 1
     return Anatomy(chapters, field_tables)
@@ -277,14 +309,17 @@ def _labels(lines: list[str]) -> list[str]:
 
 def _check_fields(blocks: list[Block], anatomy: Anatomy, only: set[str] | None) -> list[str]:
     problems: list[str] = []
-    chapter, group = None, ""
+    chapter = None
     for i, block in enumerate(blocks):
         if block.level == 2:
             chapter = next((c.text for c in anatomy.chapters if c.pattern.match(block.text)), None)
-        if block.level == 3:
-            group = block.text
         if only is not None and chapter not in only:
             continue
+        # In a chapter that defines field blocks at level 4, every level-4
+        # heading must be one of those blocks.
+        level4 = [t for t in anatomy.field_tables if t.owner_level == 4 and t.chapter == chapter]
+        if block.level == 4 and level4 and not any(t.owner.match(block.text) for t in level4):
+            problems.append(f"{chapter}: level-4 heading not in the anatomy: {block.text!r}")
         for table in anatomy.field_tables:
             if block.level != table.owner_level or not table.owner.match(block.text):
                 continue
@@ -303,10 +338,8 @@ def _check_fields(blocks: list[Block], anatomy: Anatomy, only: set[str] | None) 
                     problems.append(f"{block.text}: label {state}: {label!r}")
                     continue
                 index = hit
-            urgent = group.startswith(("P1", "P2"))
-            for pattern, when in table.fields:
-                needed = when == "always" or (when == "p1p2" and urgent)
-                if needed and not any(pattern.match(lb) for lb in labels):
+            for pattern, required in table.fields:
+                if required and not any(pattern.match(lb) for lb in labels):
                     problems.append(f"{block.text}: missing required label {pattern.pattern!r}")
     return problems
 
@@ -322,6 +355,17 @@ def _render(source: Path, tmp_path: Path, fragments: tuple[str, ...]) -> str:
     assert pregenerate.main(["--force", "--only", ",".join(fragments), str(run)]) == 0
     markdown, _warnings = compose.render(CONTRACT, run)
     return markdown
+
+
+def _assert_follows(problems: list[str]) -> None:
+    if problems:
+        pytest.fail(
+            f"The rendered report differs from {ANATOMY.relative_to(REPO_ROOT)}:\n  - "
+            + "\n  - ".join(problems)
+            + "\nFix the renderer if the change was not intended. Otherwise change the anatomy"
+            " through an approved proposal (see its section 'Changing the report's shape').",
+            pytrace=False,
+        )
 
 
 @pytest.fixture(scope="module")
@@ -346,25 +390,31 @@ def test_chapter_order_matches_contract(anatomy: Anatomy, contract: dict) -> Non
     ids = [item["id"] if isinstance(item, dict) else item for item in contract["document"]["order"]]
     headings = [sections[i].get("heading") or "" for i in ids]
     expected = [h[3:] for h in headings if h.startswith("## ")]
-    assert [c.text for c in anatomy.chapters] == expected
+    assert [c.text for c in anatomy.chapters] == expected, (
+        "The chapter list in the anatomy and `document.order` in data/sections-contract.yaml differ; "
+        "change both together."
+    )
 
 
 def test_security_architecture_subsections_match_contract(anatomy: Anatomy, contract: dict) -> None:
     subsections = contract["sections"]["security_architecture"]["schema_v2"]["required_subsections"]
     chapter = next(c for c in anatomy.chapters if c.text == "6. Security Architecture")
-    assert [c.text for c in chapter.children] == [s["title"] for s in subsections]
+    assert [c.text for c in chapter.children] == [s["title"] for s in subsections], (
+        "The §6 subsections in the anatomy and `schema_v2.required_subsections` in "
+        "data/sections-contract.yaml differ; change both together."
+    )
     assert all(c.required for c in chapter.children)
 
 
 def test_quick_run_report_follows_anatomy(anatomy: Anatomy, tmp_path: Path) -> None:
     markdown = _render(QUICK_RUN, tmp_path, DETERMINISTIC_FRAGMENTS)
-    assert check_report(markdown, anatomy) == []
+    _assert_follows(check_report(markdown, anatomy))
 
 
 def test_attack_walkthroughs_follow_anatomy(anatomy: Anatomy, tmp_path: Path) -> None:
     markdown = _render(FROZEN_RUN, tmp_path, ("attack-walkthroughs.md",))
     assert "## 3. Attack Walkthroughs" in markdown
-    assert check_report(markdown, anatomy, only={"3. Attack Walkthroughs"}) == []
+    _assert_follows(check_report(markdown, anatomy, only={"3. Attack Walkthroughs"}))
 
 
 # ---------------------------------------------------------------------------
@@ -432,3 +482,41 @@ def test_optional_parts_may_be_absent(anatomy: Anatomy, quick_markdown: str) -> 
         if i != start
     )
     assert check_report(trimmed, anatomy) == []
+
+
+# ---------------------------------------------------------------------------
+# The anatomy's own conventions are enforced with a clear message
+# ---------------------------------------------------------------------------
+
+
+def _broken_anatomy(tmp_path: Path, old: str, new: str) -> Path:
+    text = ANATOMY.read_text(encoding="utf-8")
+    assert old in text
+    path = tmp_path / ANATOMY.name
+    path.write_text(text.replace(old, new, 1), encoding="utf-8")
+    return path
+
+
+def test_heading_without_condition_is_rejected(tmp_path: Path) -> None:
+    path = _broken_anatomy(tmp_path, "`### Scope` — always.", "`### Scope` - always.")
+    with pytest.raises(AnatomyFormatError, match="' — always' or ' — only when"):
+        parse_anatomy(path)
+
+
+def test_table_without_table_prefix_is_rejected(tmp_path: Path) -> None:
+    path = _broken_anatomy(tmp_path, "  - Table: `| Field | Value |`", "  - Run table: `| Field | Value |`")
+    with pytest.raises(AnatomyFormatError, match="'Table:'"):
+        parse_anatomy(path)
+
+
+def test_field_condition_without_keyword_is_rejected(tmp_path: Path) -> None:
+    path = _broken_anatomy(
+        tmp_path, "| The findings it resolves. | always |", "| The findings it resolves. | usually |"
+    )
+    with pytest.raises(AnatomyFormatError, match='"When" cell'):
+        parse_anatomy(path)
+
+
+def test_unknown_level4_heading_in_register_is_reported(anatomy: Anatomy, quick_markdown: str) -> None:
+    broken = quick_markdown.replace("\n### P1 — Immediate\n", "\n### P1 — Immediate\n\n#### Quick wins\n", 1)
+    assert any("Quick wins" in p for p in check_report(broken, anatomy))

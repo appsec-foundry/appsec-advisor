@@ -633,7 +633,7 @@ Layered defense would improve most by fixing raw SQL construction, moving signin
 
 ## 8. Findings Register
 
-Findings are grouped by severity (Critical → High → Medium → Low); within a tier they are ordered by attack vektor (Repo-Read → Internet-Anon → Internet-User → Victim-Required). Each finding is a card with the same fixed fields, in order: **Severity · Component · Location** → **Issue** → **Root cause** → **Evidence** → **Fix** → **Classification** (with external CWE / OWASP links).
+Findings are grouped by severity (Critical → High → Medium → Low); within a tier they are ordered by attack vektor (Repo-Read → Internet-Anon → Internet-User → Victim-Required). Every finding card shows **Severity · Component · Location**, **Issue**, **Fix**, and **Classification** (with external CWE / OWASP links). **Evidence**, **Root cause**, violated requirements, the weakness, and the trust boundary gap appear when they apply.
 
 **Risk Distribution:** 🔴 Critical: 3 · 🟠 High: 1 · 🟡 Medium: 0 · 🟢 Low: n/a · **Total findings: 4**
 **STRIDE Coverage:** Spoofing: 1 · Tampering: 3 · Repudiation: 0 · Information Disclosure: 0 · Denial of Service: 0 · Elevation of Privilege: 0
@@ -700,7 +700,7 @@ _No abuse cases were identified or mandated for this assessment._
 
 ## 10. Mitigation Register
 
-Each mitigation block lists the findings it **Addresses**, the CWEs it **Prevents**, and the **Priority** (P1 = before deployment, P2 = current sprint, P3 = next quarter, P4 = backlog). The **Why** / **How** / **Verification** fields are populated only when authored; if a field is omitted, refer to the linked finding's *Evidence* line for file:line context and to the threat-category description in [§8 Findings Register](#8-findings-register) for the underlying weakness.
+Each mitigation block lists the findings it **Addresses**, the CWEs it **Prevents**, and the **Priority** (P1 = before deployment, P2 = current sprint, P3 = next quarter, P4 = backlog). **Why**, **How**, and **Verification** appear when written; every P1 or P2 mitigation that changes code gives **How** and **Verification**. If a field is omitted, refer to the linked finding's *Evidence* line for file:line context and to the threat-category description in [§8 Findings Register](#8-findings-register) for the underlying weakness.
 
 **Mitigations index:**<br/>● [M-001](#m-001) — Parameterize SQL queries<br/>● [M-002](#m-002) — Externalize RSA key<br/>◕ [M-003](#m-003) — Remove DomSanitizer bypasses
 

@@ -29,7 +29,7 @@ Section numbers are fixed, so links such as `#8-findings-register` stay the same
 
 ## How to read this document
 
-- **always** means the part appears whenever the part above it appears. **only when** names the condition under which it appears. An absent part leaves no empty heading, field, or column.
+- **always** means the part appears whenever the part above it appears. **only when** names the condition under which it appears. A list introduced with "always appear" marks all its items always. An absent part leaves no empty heading, field, or column.
 - Text in `code` is exact: headings and table headers must appear in the report as written, and the test checks them. Text in **bold** describes content that the test does not check.
 - In headings, `N` and `NNN` stand for a number, `(n)` for a count, and `<...>` for free text.
 
@@ -119,21 +119,21 @@ Covers every entry point an attacker can reach, split by whether authentication 
 
 Covers, for each control family, which controls exist, how well they work, and which findings show their gaps. The unit is the control, not the finding.
 
-- `## 6. Security Architecture` — only when the run did not skip it. Otherwise a one-line note says that it was skipped. All thirteen subsections appear, in this order:
-  - `### 6.1 Security Control Overview` — always. Only the overview table, one row per family.
+- `## 6. Security Architecture` — only when the run did not skip it. Otherwise a one-line note says that it was skipped. All thirteen subsections always appear, in this order:
+  - `### 6.1 Security Control Overview`: only the overview table, one row per family.
     - Table: `| Control category | Verdict | Main reason |`
-  - `### 6.2 Identity and Authentication Controls` — always.
-  - `### 6.3 Session and Token Controls` — always.
-  - `### 6.4 Authorization Controls` — always.
-  - `### 6.5 Query Construction and Data Access Controls` — always.
-  - `### 6.6 Input Boundary Validation Controls` — always.
-  - `### 6.7 Output Encoding and Rendering Controls` — always.
-  - `### 6.8 Browser and Cross-Origin Controls` — always.
-  - `### 6.9 Cryptography Secrets and Data Protection` — always.
-  - `### 6.10 File Parser and Outbound Request Controls` — always.
-  - `### 6.11 Operations Runtime and Supply Chain Controls` — always.
-  - `### 6.12 Real-time and Not Applicable Controls` — always.
-  - `### 6.13 Defense-in-Depth Summary` — always. A **Verdict** and two short lists, what holds and what to repair first. No table.
+  - `### 6.2 Identity and Authentication Controls`
+  - `### 6.3 Session and Token Controls`
+  - `### 6.4 Authorization Controls`
+  - `### 6.5 Query Construction and Data Access Controls`
+  - `### 6.6 Input Boundary Validation Controls`
+  - `### 6.7 Output Encoding and Rendering Controls`
+  - `### 6.8 Browser and Cross-Origin Controls`
+  - `### 6.9 Cryptography Secrets and Data Protection`
+  - `### 6.10 File Parser and Outbound Request Controls`
+  - `### 6.11 Operations Runtime and Supply Chain Controls`
+  - `### 6.12 Real-time and Not Applicable Controls`
+  - `### 6.13 Defense-in-Depth Summary`: a **Verdict** and two short lists, what holds and what to repair first. No table.
 
 Each family from 6.2 to 6.12 has the same block. A family whose verdict is Not applicable has only the verdict.
 
@@ -196,7 +196,7 @@ Each finding is a card `#### F-NNN · <title>`. The title names the weakness, no
 | `**Issue:**` | What the attacker does and achieves. | always |
 | `**Root cause:**` | Why the code allows it, specific to this finding. | only when the analysis wrote one |
 | `**Evidence:**` | The verification result and what the code shows. | only when evidence was recorded |
-| **code excerpt** | The source lines, secrets redacted. | only for Critical and High findings |
+| **code excerpt** | The source lines, secrets redacted. | only when the finding is Critical or High, or marked as important, and a source excerpt is available |
 | `**Fix:**` | The required change and its mitigation. | always |
 | `**Classification:**` | Weakness class, STRIDE category, CWE, OWASP Top 10, and the walkthrough link. | always |
 
@@ -230,8 +230,8 @@ Each mitigation is a block `#### M-NNN — <title>`. The title names the action.
 | `**Requirements at stake:**` | The catalog requirements involved. | only when a catalog was checked |
 | `**Priority:**` | Priority, effort, and the main file on one line. | always |
 | `**Why:**` | Why it is needed. | only when the analysis wrote it |
-| `**How:**` | Ordered steps, optionally followed by an example implementation. | only when P1 or P2, and then always |
-| `**Verification:**` | How to confirm that the fix works. | only when P1 or P2, and then always |
+| `**How:**` | Ordered steps, optionally followed by an example implementation. | only when written; every P1 or P2 mitigation that changes code has it |
+| `**Verification:**` | How to confirm that the fix works. | only when written; every P1 or P2 mitigation that changes code has it |
 | `**Blueprint:**` | The organization's implementation blueprint. | only when one is configured |
 | `**Reference:**` | An external guide. | only when one applies |
 
@@ -244,6 +244,8 @@ Covers what this method cannot see, what was excluded, and which components were
   - `### Excluded from This Assessment` — always.
   - `### Components Not Individually Analyzed` — only when components were left out.
     - Table: `| ID | Component | Reason not analyzed |`
+  - `### Accepted Risks (Team-Provided)` — only when the team recorded accepted risks.
+    - Table: `| ID | Title | Severity | Component | STRIDE | Justification |`
 
 ## Appendices
 
@@ -253,7 +255,17 @@ Covers how the run went and the attack-vector vocabulary used in the findings.
   - Table: `| Field | Value |`
   - `### Per-Stage Breakdown` — only when stage timings were recorded.
     - Table: `| Stage | Description | Agent | Model | Duration | Tool calls | Tokens |`
+  - `### Per-Phase Duration Breakdown` — only when phase timings were recorded.
+    - Table: `| Phase | Description | Agent (Model) | Duration |`
+  - `### Agent Dispatch Log` — only when agent dispatches were recorded.
+    - Table: `| Agent | Model | Role | Phases |`
+  - `### Tokens & Cost` — only when token usage or cost was recorded.
 - `## Appendix: Composition Notes` — only when the previous rendering reported warnings.
+  - `### Soft Warnings` — only when there are warnings.
+    - Table: `| Section | Category | Detail |`
+  - `### Section Retries` — only when a section had to be composed again.
+    - Table: `| Section | Compose Attempts | Final |`
+  - `### Skill-Level Auto-Retries` — only when the run retried automatically.
 - `## Appendix A — Attack Vector Taxonomy` — always.
   - `### <vector>` — always, one per attack vector used.
 
@@ -274,7 +286,13 @@ The approved version of this document is `specs/report-anatomy.md`. A change fol
 2. Update `specs/report-anatomy.md`, the contract, and the renderer together.
 3. Run `python3 -m pytest tests/test_report_anatomy.py`. It fails until all three agree.
 
-The test checks only the parts in `code`:
+Write new entries in the same form as the existing ones, because the test reads them:
+
+- A heading is followed by ` — always` or ` — only when <condition>`, unless its list was introduced with "always appear".
+- A table line starts with `Table:` or `Table, only when <condition>:`.
+- The **When** cell of a field table is `always` or starts with `only when`.
+
+The test names the line when one of these forms is missing. It checks only the parts in `code`:
 
 - Every level-2 and level-3 heading in a rendered report must be listed here, in the listed order. A heading marked always must appear when its parent appears.
 - Every table must be listed under its heading. A table without "only when" must appear when its heading appears.
@@ -282,3 +300,9 @@ The test checks only the parts in `code`:
 - The chapter order and the §6 subsections must also match the contract, so a chapter that no test report renders is still checked.
 
 The test renders two frozen runs: `tests/fixtures/report-anatomy/quick-run` for most chapters and `tests/fixtures/e2e/frozen-run` for §3.
+
+The test does not catch everything:
+
+- Level-4 headings are checked only in §8 and §10, where every one must be a finding card or a mitigation block.
+- A field is seen only when its label starts a line. A label added inside the severity or priority line goes unnoticed.
+- The frozen runs contain no §6 content, abuse-case scenario, accepted risk, composition warning, root cause, or why field, so those parts are described here but not yet checked against a rendered report.

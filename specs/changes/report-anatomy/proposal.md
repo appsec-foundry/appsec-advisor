@@ -17,6 +17,8 @@ The Management Summary contract still lists Architectural Anti-Patterns and Secu
 
 The golden report `tests/fixtures/e2e/golden/threat-model.md` is rendered by the current code, but from the thin, partly hand-written fragments of `tests/fixtures/e2e/frozen-run`. Its Assets table and finding cards therefore show older or sparser shapes than a real run produces, and it cannot serve as the reference for the report's structure.
 
+The Management Summary prompts still describe the retired Top Mitigations layout: `agents/shared/ms-template.md` and `agents/shared/qa-ms-checks.md` instruct two sub-tables under Prioritized and Follow-up Mitigations, which the composer no longer renders and `tests/test_compose_threat_model.py` asserts are absent. Prompt text is plugin runtime input, so it is corrected separately.
+
 A recomposition of `tests/fixtures/e2e/_last-run` with the current code renders the §7b link in the Management Summary as `[§7](#7-weakness-register)b`. The cross-reference linker matches `§7` inside `§7b`. This is a renderer defect independent of this proposal.
 
 ## Goal
