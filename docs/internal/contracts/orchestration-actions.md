@@ -365,6 +365,12 @@ Before boundary assessment, the architecture handoff reconciles evidenced OAuth/
 - A context-v2 terminal abort has no continuation action. A later `--full`
   starts Stage 1 again; retained runtime artifacts are diagnostic evidence, not
   a merge-only recovery checkpoint.
+- The controller terminates its own abort through `runtime/terminate_run.py`
+  (outcome `controller_abort`): `RUN_ABORTED` once, run issues, live calls
+  closed, and this run's lock released, so the support offer can follow at
+  once. A directory another live run holds is left untouched. `clear-abort`
+  re-acquires the run's lock before reopening it and rejects while another live
+  run holds the directory.
 - A current-run `RUN_ABORTED` is enforced both by context-v2 controller entry
   points and the PreToolUse hook. Abort aggregation removes live-only
   `.active-tool-calls` state, while headless runs export their resolved output

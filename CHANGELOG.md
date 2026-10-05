@@ -42,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An aborted interactive run releases its lock, so the error report can be offered right away; `--rerender` no longer deletes another run's lock.
 - Private keys are fully redacted from findings, and pentest task exports are checked for leaked secrets.
 - Config and IaC findings reach reports again with the correct STRIDE category and component attribution.
 - Full assessments confirm object-level authorization gaps and entity mass assignment again without importing stale results from earlier runs.
