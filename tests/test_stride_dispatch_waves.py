@@ -1191,3 +1191,46 @@ def test_components_without_a_checklist_lens_are_not_asked_for_coverage(tmp_path
     _write_attempt(tmp_path, "service-01", 1, _valid_stride_component())
 
     assert waves.completion_error(tmp_path, "service-01", attempt=1) is None
+
+
+def _write_prior_context(output_dir: Path, component_id: str, name: str, values: list) -> None:
+    path = output_dir / ".dispatch-context" / component_id / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    records = [{"source": "x", "value": v if isinstance(v, str) else json.dumps(v)} for v in values]
+    path.write_text(json.dumps({"records": records}), encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("context_name", "values", "ref", "kept"),
+    [
+        ("prior-findings-context.json", [{"t_id": "T-007", "title": "x"}], "T-007", True),
+        ("known-threats-context.json", [{"id": "KT-3", "title": "x"}], "KT-3", True),
+        ("known-threats-context.json", ["Open redirect at routes/redirect.ts"], None, False),
+        ("known-threats-context.json", [{"id": "KT-3"}], "KT-9", False),
+        (None, [], "T-007", False),
+    ],
+)
+def test_verified_prior_needs_an_earlier_finding_the_analyzer_was_given(
+    tmp_path: Path, context_name, values, ref, kept
+) -> None:
+    """`verified-prior` counts as confirmed (FE-21), so a finding may keep it
+    only when `prior_finding_ref` names an id from the component's prior or
+    indexed known findings; same-run hypotheses carry no id."""
+    if context_name:
+        _write_prior_context(tmp_path, "svc", context_name, values)
+    threats = [{"local_id": "svc-001", "evidence_check": "verified-prior", "prior_finding_ref": ref}]
+
+    demoted = waves.demote_unanchored_verified_prior(threats, waves.prior_finding_ids(tmp_path, "svc"))
+
+    assert threats[0]["evidence_check"] == ("verified-prior" if kept else "unchecked")
+    assert demoted == ([] if kept else ["svc-001"])
+
+
+def test_other_evidence_states_are_not_touched_by_the_prior_check() -> None:
+    threats = [
+        {"local_id": "a-001", "evidence_check": "unchecked"},
+        {"local_id": "a-002", "evidence_check": "carried-unverified-shallower-depth"},
+    ]
+
+    assert waves.demote_unanchored_verified_prior(threats, set()) == []
+    assert [t["evidence_check"] for t in threats] == ["unchecked", "carried-unverified-shallower-depth"]

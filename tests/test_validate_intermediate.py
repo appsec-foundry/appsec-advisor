@@ -1989,3 +1989,46 @@ def test_stride_analyst_context_cli_applies_cross_artifact_routing_gate(tmp_path
 
     assert completed.returncode == 1
     assert "outside the component paths" in completed.stdout
+
+
+_ROUTE_SOURCE = "// route\nconst wallets = new Set()\n\nrouter.post('/w', (req) => wallets.add(req.body.a))\n"
+
+
+@pytest.mark.parametrize(
+    ("evidence", "expected"),
+    [
+        ({"file": "route.ts", "line": 4}, None),
+        ({"file": "route.ts", "line": 0}, None),
+        ({"file": "route.ts", "line": None}, None),
+        (None, None),
+        ({"file": "route.ts", "line": 144}, "line 144 exceeds"),
+        ({"file": "gone.ts", "line": 2}, "missing or unsafe"),
+        ({"file": "route.ts", "line": 1}, "a comment"),
+        ({"file": "route.ts", "line": 3}, "a blank line"),
+    ],
+)
+def test_stride_evidence_must_cite_a_code_line_inside_its_file(tmp_path, evidence, expected):
+    """Every finding's evidence is checked against the repository, not only
+    mechanism traces: a line past the end of its file (as `cat -n` over several
+    files produces) is rejected at the STRIDE gate, where OR-31 repair can fix it."""
+    (tmp_path / "route.ts").write_text(_ROUTE_SOURCE)
+    data = _stride_threat_with_code_example(None)
+    data["threats"][0]["evidence"] = evidence
+
+    ok, errors = vi.validate_stride(data, repo_root=tmp_path)
+
+    location_errors = [error for error in errors if error.startswith("threats[0].evidence")]
+    if expected is None:
+        assert not location_errors, location_errors
+    else:
+        assert not ok
+        assert any(expected in error for error in location_errors), errors
+
+
+def test_stride_evidence_is_not_checked_without_a_repository_root():
+    data = _stride_threat_with_code_example(None)
+    data["threats"][0]["evidence"] = {"file": "nowhere.ts", "line": 999}
+
+    _ok, errors = vi.validate_stride(data)
+
+    assert not any(error.startswith("threats[0].evidence") for error in errors)

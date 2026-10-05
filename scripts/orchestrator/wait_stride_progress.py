@@ -28,7 +28,9 @@ import orchestrator.stride_dispatch_waves as stride_dispatch_waves
 PENDING_EXIT_CODE = 75
 
 
-def _run_progress(script: Path, output_dir: Path, expected: int, *, force: bool) -> tuple[int, str]:
+def _run_progress(
+    script: Path, output_dir: Path, expected: int, *, force: bool, components: list[str] | None = None
+) -> tuple[int, str]:
     """Poll once; return the exit code and the progress text for the caller.
 
     The text is returned rather than printed so the poll loop can drop a round
@@ -40,6 +42,8 @@ def _run_progress(script: Path, output_dir: Path, expected: int, *, force: bool)
     cmd = [sys.executable, str(script), str(output_dir), str(expected)]
     if force:
         cmd.append("--force")
+    for component_id in components or []:
+        cmd.extend(["--component", component_id])
     proc = subprocess.run(cmd, text=True, capture_output=True)
     if proc.stderr:
         print(proc.stderr, end="", file=sys.stderr)
@@ -112,7 +116,9 @@ def main(argv: list[str] | None = None) -> int:
         for round_no in range(1, args.rounds + 1):
             elapsed = int(time.time() - start)
             elapsed_s = f"{elapsed // 60}m{elapsed % 60:02d}s"
-            last_rc, progress = _run_progress(progress_script, args.output_dir, args.expected, force=(round_no == 1))
+            last_rc, progress = _run_progress(
+                progress_script, args.output_dir, args.expected, force=(round_no == 1), components=args.component
+            )
             # An empty poll means runtime/stride_progress.py saw nothing new. A round is
             # reported only when its ready line moves: the per-component step
             # lines change almost every round (4.9 KB for one call on run

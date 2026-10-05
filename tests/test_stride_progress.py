@@ -429,3 +429,24 @@ def test_record_from_an_attempt_not_yet_claimed_is_still_rejected(tmp_path, caps
     rc = sp.main(["runtime/stride_progress.py", str(tmp_path), "1", "--force"])
     assert rc == 2
     assert "contradicts current dispatch claim" in capsys.readouterr().err
+
+
+def test_component_scope_counts_only_the_wave(tmp_path):
+    """A later wave is measured against its own components; outputs from an
+    earlier wave must not read as "4/1 ready"."""
+    for cid in ("done-a", "done-b", "retry"):
+        (tmp_path / f".stride-{cid}.json").write_text("{}")
+    _write_progress(tmp_path, "pending", "Pending", 4, 9, "Tampering")
+
+    unscoped = _run(tmp_path, expected=1, force=True)
+    assert "[stride] 3/1 ready" in unscoped.stdout
+
+    cmd = [sys.executable, str(PLUGIN_SCRIPTS / "runtime/stride_progress.py"), str(tmp_path), "2", "--force"]
+    env = {**os.environ, "PATH": "/usr/bin:/bin", "PYTHONPATH": str(PLUGIN_SCRIPTS)}
+    scoped = subprocess.run(
+        [*cmd, "--component", "retry", "--component", "pending"], capture_output=True, text=True, env=env
+    )
+    assert scoped.returncode == 1
+    assert "[stride] 1/2 ready" in scoped.stdout
+    assert "done-a" not in scoped.stdout
+    assert "Pending" in scoped.stdout

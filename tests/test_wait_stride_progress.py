@@ -83,7 +83,7 @@ def test_main_returns_0_on_first_round_success(tmp_path, monkeypatch):
     root = _make_root_with_progress(tmp_path)
     calls = []
 
-    def fake_run_progress(script, output_dir, expected, *, force):
+    def fake_run_progress(script, output_dir, expected, *, force, components=None):
         calls.append(force)
         return 0, ""  # ready immediately
 
