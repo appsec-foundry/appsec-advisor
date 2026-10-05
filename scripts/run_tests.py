@@ -81,6 +81,7 @@ GROUPS = {
         figure2_svg
         figure_deployment
         figure_details
+        figure_theme
         final_render_guards
         fragment_authoring_fidelity
         fragment_invariant_parity
@@ -1770,6 +1771,17 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
         threat_fixture
+    """),
+    "scripts/renderers/figure_theme.py": _tests("""
+        compose_threat_model
+        export_html
+        export_pdf
+        figure1_dfd
+        figure1b_compose
+        figure_details
+        figure_theme
+        publish_threat_model
+        qa_checks
     """),
     "scripts/renderers/compose_services.py": _tests("""
         iac_resource_checks

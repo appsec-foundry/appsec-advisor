@@ -10,6 +10,7 @@ import pytest
 import renderers.compose_threat_model as compose
 import renderers.figure1b_svg as figure1b
 import yaml
+from renderers.figure_theme import light_images
 from renderers.pregenerate_fragments import gen_architecture_diagrams
 
 CI_COMPONENT = {
@@ -140,7 +141,7 @@ def evidence(tmp_path):
 def test_with_build_evidence_figure_1a_drops_the_pipeline_and_figure_1b_carries_it(evidence):
     ctx = _ctx(evidence)
     taxonomy = compose._load_attack_class_taxonomy()
-    markdown = compose._render_figure1_svg(ctx, _paths("internet-anon", "build-time"), taxonomy)
+    markdown = light_images(compose._render_figure1_svg(ctx, _paths("internet-anon", "build-time"), taxonomy))
     figure_1a = (evidence / "figure1.svg").read_text()
     assert "Release Automation" not in figure_1a
     assert "Figure 1a — Runtime Architecture and Threat Overview" in figure_1a
@@ -149,7 +150,7 @@ def test_with_build_evidence_figure_1a_drops_the_pipeline_and_figure_1b_carries_
     strip = compose._figure1b_strip(ctx)
     assert strip.startswith("**Build pipeline**, not drawn in this runtime view: GitHub Actions.")
     assert "→ [Figure 1b](#figure-1b)" in strip
-    block = compose._render_figure1b(ctx)
+    block = light_images(compose._render_figure1b(ctx))
     assert block.startswith('<a id="figure-1b"></a>')
     assert "![Figure 1b - Supply Chain and Build](figure1b.svg)" in block
     assert (evidence / "figure1b.svg").read_text().startswith("<svg")
@@ -162,6 +163,7 @@ def test_without_build_evidence_nothing_changes_and_stale_files_go(tmp_path):
     ctx = _ctx(out, build_threat=False)
     ctx.yaml_data["components"] = ctx.yaml_data["components"][:3]
     (out / "figure1b.svg").write_text("prior run")
+    (out / "figure1b-dark.svg").write_text("prior run")
     (out / ".supply-chain-view.json").write_text("{}")
     taxonomy = compose._load_attack_class_taxonomy()
     compose._render_figure1_svg(ctx, _paths("internet-anon"), taxonomy)
@@ -169,6 +171,7 @@ def test_without_build_evidence_nothing_changes_and_stale_files_go(tmp_path):
     assert compose._figure1b_strip(ctx) == ""
     assert compose._render_figure1b(ctx) == ""
     assert not (out / "figure1b.svg").exists() and not (out / ".supply-chain-view.json").exists()
+    assert not (out / "figure1b-dark.svg").exists()
 
 
 def test_a_model_with_only_build_time_scenarios_still_draws_the_runtime(evidence):
@@ -192,7 +195,8 @@ def test_a_failed_gate_renders_the_table_and_removes_the_stale_image(evidence, m
 def test_a_custom_report_stem_names_the_supply_chain_figure_after_it(evidence):
     ctx = _ctx(evidence)
     ctx.figure_basename = "threat-model-orders.figure1.svg"
-    assert "](threat-model-orders.figure1b.svg)" in compose._render_figure1b(ctx)
+    assert "](threat-model-orders.figure1b.svg)" in light_images(compose._render_figure1b(ctx))
+    assert (evidence / "threat-model-orders.figure1b-dark.svg").is_file()
 
 
 def test_identified_actors_name_both_figures_and_link_the_build_attacker(evidence):

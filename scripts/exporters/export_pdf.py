@@ -56,9 +56,11 @@ from typing import Optional
 from urllib.parse import unquote
 
 try:
+    from renderers.figure_theme import light_images
     from shared._atomic_io import atomic_write_text
 except ImportError:
     sys.path.insert(0, str(Path(__file__).parents[1]))
+    from renderers.figure_theme import light_images  # noqa: E402
     from shared._atomic_io import atomic_write_text  # noqa: E402
 
 
@@ -975,7 +977,8 @@ def export_pdf(
     css_path: Path,
 ) -> int:
     md_text = input_md.read_text(encoding="utf-8")
-    md_text = rewrite_vscode_links(md_text)
+    # A printed page is light: every figure exports as its light file.
+    md_text = light_images(rewrite_vscode_links(md_text))
     md_text = _append_architecture_detail(md_text, input_md.parent)
 
     with tempfile.TemporaryDirectory(prefix="export-threat-model-pdf-") as tmp:

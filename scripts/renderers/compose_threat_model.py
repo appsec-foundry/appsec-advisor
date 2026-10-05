@@ -5971,7 +5971,7 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
                 "catalogued in [§1 Trust Boundaries](#trust-boundaries)."
             )
     # Always write the file (referenced by the published md / consumed by export).
-    (ctx.output_dir / ctx.figure_basename).write_text(svg, encoding="utf-8")
+    _write_figure(ctx, ctx.figure_basename, svg)
     detail_path = ctx.output_dir / detail_basename
     if detail_svg:
         detail_path.write_text(detail_svg, encoding="utf-8")
@@ -5987,13 +5987,8 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
             embed = bool(_sc.get("embed_figures"))
         except (OSError, ValueError):
             embed = False
-    if embed:
-        # Inline as a base64 data URI → self-contained Markdown (renders in
-        # VS Code / pandoc / PDF; NOT on GitHub, which strips data: URIs).
-        b64 = base64.b64encode(svg.encode("utf-8")).decode("ascii")
-        src = f"data:image/svg+xml;base64,{b64}"
-    else:
-        src = ctx.figure_basename
+    # Inline as a base64 data URI → self-contained Markdown (renders in
+    # VS Code / pandoc / PDF; NOT on GitHub, which strips data: URIs).
     caption = "\n\n" + " ".join(role_notes) if role_notes else ""
     if detail_svg:
         detail_src = (
@@ -6007,7 +6002,7 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
         if split
         else "Figure 1 - Architecture and Threat Overview"
     )
-    return f"{intro}\n\n![{alt}]({src}){caption}"
+    return f"{intro}\n\n{_figure_image(alt, ctx.figure_basename, svg, embed)}{caption}"
 
 
 def _names_a_build_component(ctx: RenderContext, text: str) -> bool:
@@ -6025,6 +6020,31 @@ def _embed_figures_enabled(ctx: RenderContext) -> bool:
         return True
     config = _read_json_quietly(ctx.output_dir / ".skill-config.json")
     return bool(isinstance(config, dict) and config.get("embed_figures"))
+
+
+def _write_figure(ctx: RenderContext, basename: str, svg: str) -> None:
+    """Write a figure and its dark-background variant beside the report."""
+    from renderers.figure_theme import dark_basename, dark_svg
+
+    (ctx.output_dir / basename).write_text(svg, encoding="utf-8")
+    (ctx.output_dir / dark_basename(basename)).write_text(dark_svg(svg), encoding="utf-8")
+
+
+def _remove_figure(ctx: RenderContext, basename: str) -> None:
+    """Remove a figure and its dark-background variant left by a prior run."""
+    from renderers.figure_theme import dark_basename
+
+    for name in (basename, dark_basename(basename)):
+        (ctx.output_dir / name).unlink(missing_ok=True)
+
+
+def _figure_image(alt: str, basename: str, svg: str, embed: bool) -> str:
+    """The report's image of a written figure: inline when embedded, else light and dark files."""
+    from renderers.figure_theme import dark_basename, themed_image
+
+    if embed:
+        return f"![{alt}](data:image/svg+xml;base64,{base64.b64encode(svg.encode('utf-8')).decode('ascii')})"
+    return themed_image(alt, basename, dark_basename(basename))
 
 
 def _figure1b_strip(ctx: RenderContext) -> str:
@@ -6047,8 +6067,7 @@ def _render_figure1b(ctx: RenderContext) -> str:
     target = ctx.output_dir / _figure1b_basename(ctx)
     split = _supply_chain_split(ctx)
     if split is None:
-        if target.exists():
-            target.unlink()
+        _remove_figure(ctx, target.name)
         return ""
     from renderers.figure1b_svg import render, render_table
 
@@ -6084,16 +6103,10 @@ def _render_figure1b(ctx: RenderContext) -> str:
         intro += f" The control assessment is in {', '.join(controls)}."
     lines = [f'<a id="{_FIGURE1B_ANCHOR}"></a>', "", "**Figure 1b — Supply Chain and Build**", "", intro, ""]
     if svg:
-        target.write_text(svg, encoding="utf-8")
-        src = (
-            "data:image/svg+xml;base64," + base64.b64encode(svg.encode("utf-8")).decode("ascii")
-            if _embed_figures_enabled(ctx)
-            else target.name
-        )
-        lines.append(f"![Figure 1b - Supply Chain and Build]({src})")
+        _write_figure(ctx, target.name, svg)
+        lines.append(_figure_image("Figure 1b - Supply Chain and Build", target.name, svg, _embed_figures_enabled(ctx)))
     else:
-        if target.exists():
-            target.unlink()
+        _remove_figure(ctx, target.name)
         ctx.warnings.append(
             f"figure1b: supply-chain figure failed its checks ({len(problems)} problem(s): {'; '.join(problems[:3])}) "
             "— rendered as tables"
@@ -6217,14 +6230,10 @@ def _render_detail_figures(ctx: RenderContext) -> dict:
                 result[key] = {"markdown": fig.markdown, "takeaway": fig.takeaway}
                 continue
             basename = _figure_basename_n(ctx, fig.number)
-            (ctx.output_dir / basename).write_text(fig.svg, encoding="utf-8")
+            _write_figure(ctx, basename, fig.svg)
             written.add(basename)
-            src = (
-                "data:image/svg+xml;base64," + base64.b64encode(fig.svg.encode("utf-8")).decode("ascii")
-                if embed
-                else basename
-            )
-            result[key] = {"image": f"![Figure {fig.number} - {fig.title}]({src})", "takeaway": fig.takeaway}
+            image = _figure_image(f"Figure {fig.number} - {fig.title}", basename, fig.svg, embed)
+            result[key] = {"image": image, "takeaway": fig.takeaway}
     except Exception as exc:  # noqa: BLE001 — §2 falls back to its Mermaid diagrams
         ctx.warnings.append(
             f"detail figures: builder failed ({type(exc).__name__}: {exc}) — §2 keeps its Mermaid diagrams"
@@ -6233,9 +6242,8 @@ def _render_detail_figures(ctx: RenderContext) -> dict:
     # Never leave a prior run's detail figure next to a report that no longer references it.
     for number in _DETAIL_FIGURE_NUMBERS:
         basename = _figure_basename_n(ctx, number)
-        stale = ctx.output_dir / basename
-        if basename not in written and stale.exists():
-            stale.unlink()
+        if basename not in written:
+            _remove_figure(ctx, basename)
     return result
 
 
@@ -6270,9 +6278,9 @@ def _render_figure2_svg(ctx: RenderContext, attack_paths: dict, attack_taxonomy:
     if not (svg or "").strip():
         return ""
     basename = _figure2_basename(ctx)
-    (ctx.output_dir / basename).write_text(svg, encoding="utf-8")
+    _write_figure(ctx, basename, svg)
     # Embed logic mirrors Figure 1: inline as a base64 data URI when the skill
-    # persisted `embed_figures` (self-contained md), else a plain relative ref.
+    # persisted `embed_figures` (self-contained md), else the light and dark files.
     embed = bool(getattr(ctx, "embed_figures", False))
     if not embed:
         try:
@@ -6280,12 +6288,7 @@ def _render_figure2_svg(ctx: RenderContext, attack_paths: dict, attack_taxonomy:
             embed = bool(_sc.get("embed_figures"))
         except (OSError, ValueError):
             embed = False
-    if embed:
-        b64 = base64.b64encode(svg.encode("utf-8")).decode("ascii")
-        src = f"data:image/svg+xml;base64,{b64}"
-    else:
-        src = basename
-    return f"![Figure 2 - Actors, attack routes, weaknesses and impact]({src})"
+    return _figure_image("Figure 2 - Actors, attack routes, weaknesses and impact", basename, svg, embed)
 
 
 def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict, attack_taxonomy: dict) -> str:
@@ -10556,8 +10559,10 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
         except Exception:
             rp_enabled = True  # conservative: enforce on parse failure
     if rp_enabled:
+        from renderers.figure_theme import light_images
+
         for pat in section.get("required_patterns", []) or []:
-            if not re.search(pat, md):
+            if not re.search(pat, light_images(md)):
                 raise FragmentError(
                     section_id,
                     f"fragment missing required pattern: {pat!r}",

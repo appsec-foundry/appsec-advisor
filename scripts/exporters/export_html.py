@@ -58,6 +58,7 @@ try:
         INSTALL_HINTS,
         _inject_table_colgroups,
         check_tool,
+        light_images,
         md_to_html,
         mmdc_failure_hints,
         probe_mmdc,
@@ -74,6 +75,7 @@ except ImportError:
         INSTALL_HINTS,
         _inject_table_colgroups,
         check_tool,
+        light_images,
         md_to_html,
         mmdc_failure_hints,
         probe_mmdc,
@@ -182,7 +184,8 @@ def export_html(
     require_mermaid: bool = False,
 ) -> int:
     md_text = input_md.read_text(encoding="utf-8")
-    md_text = rewrite_vscode_links(md_text)
+    # The standalone page embeds the light figures, matching its light stylesheet.
+    md_text = light_images(rewrite_vscode_links(md_text))
     md_text = _expand_architecture_detail(md_text, input_md.parent)
 
     with tempfile.TemporaryDirectory(prefix="export-html-") as tmp:

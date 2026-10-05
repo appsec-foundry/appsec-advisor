@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `/appsec-advisor:analyze-threats` and `scripts/appsec-analyst-cli` provide opt-in, advisory analysis of design questions and selected code changes, with [host verification still required before release](docs/threat-analyst.md).
 - `scripts/analyzers/repo_scan.py` runs standalone checks with severity filtering and endpoint and technology inventories, with local repositories, HTTPS GitHub/GitLab URLs, and YAML or JSON output supported by both the scanner and Security Score.
 - Repositories with a build pipeline get a separate supply-chain diagram, Figure 1b, linking build inputs and release artifacts to the most severe evidenced attack and the relevant controls.
+- Report figures ship with a dark-background variant that GitHub and browsers show automatically in dark mode.
 - `.appsec/actors.yaml` accepts `legitimate_roles` for declared user roles whose login lives outside the repository.
 - `export-threat-model` and `authnz-review` accept `--slug` for naming exports and pentest task files.
 

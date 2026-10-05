@@ -23,6 +23,7 @@ from types import SimpleNamespace
 
 import pytest
 import yaml
+from renderers.figure_theme import dark_svg, light_images
 
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "renderers/compose_threat_model.py"
@@ -3843,7 +3844,7 @@ class TestSecurityPostureV2:
         # that lack the ELK layout engine (GitHub, VS Code preview).
         ctx, env = self._build_ctx(tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes())
         out = compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
-        assert re.search(r"!\[Figure 2[^\]]*\]\([^)]*figure2\.svg\)", out)
+        assert re.search(r"!\[Figure 2[^\]]*\]\([^)]*figure2\.svg\)", light_images(out))
         assert (ctx.output_dir / "figure2.svg").is_file()
 
     def test_v2_svg_has_column_headers(self, tmp_path):
@@ -3967,7 +3968,7 @@ class TestSecurityPostureV2:
         out = compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
         # Must still produce a Figure 2 (portable SVG, or the Mermaid fallback
         # when the SVG builder yields nothing) + the Top Threats table.
-        assert re.search(r"!\[Figure 2[^\]]*\]\([^)]*\.svg\)", out) or "```mermaid" in out
+        assert re.search(r"!\[Figure 2[^\]]*\]\([^)]*\.svg\)", light_images(out)) or "```mermaid" in out
         assert "| # | Threat Description | Findings (→ Component) | Risk & Impact | Fix |" in out
 
     def test_v2_classify_finding_class(self):
@@ -6009,7 +6010,7 @@ def test_figure1_role_grouping_explanation_follows_image_only_when_drawn(
     ]
     if fallback:
         monkeypatch.setattr("renderers.figure1_dfd.check_diagram", lambda *a, **kw: ("", ["cannot route"]))
-    md = compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX)
+    md = light_images(compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX))
     note = "Anonymous and authenticated regular users share one card because self-registration is open."
     assert (note in md) is (registration and access and not fallback)
     if note in md:
@@ -6024,10 +6025,12 @@ def test_render_figure1_svg_writes_file_and_image_ref(tmp_path: Path) -> None:
     out = tmp_path / "out"
     out.mkdir()
     md = compose._render_figure1_svg(_fig1_ctx(out), _FIG1_APD, _FIG1_TAX)
-    assert "](figure1.svg)" in md  # image reference, not a mermaid block
+    assert "](figure1.svg)" in light_images(md)  # image reference, not a mermaid block
+    assert 'srcset="figure1-dark.svg"' in md
     assert "```mermaid" not in md
     svg = out / "figure1.svg"
     assert svg.is_file() and svg.read_text(encoding="utf-8").startswith("<svg")
+    assert (out / "figure1-dark.svg").read_text(encoding="utf-8") == dark_svg(svg.read_text(encoding="utf-8"))
 
 
 def test_model_within_overview_caps_renders_only_the_overview_figure(tmp_path, monkeypatch):
@@ -6107,7 +6110,7 @@ def test_render_figure1_svg_embed_inline_data_uri(tmp_path: Path) -> None:
 def test_render_figure1_svg_default_is_file_reference(tmp_path: Path) -> None:
     out = tmp_path / "out"
     out.mkdir()
-    md = compose._render_figure1_svg(_fig1_ctx(out), _FIG1_APD, _FIG1_TAX)
+    md = light_images(compose._render_figure1_svg(_fig1_ctx(out), _FIG1_APD, _FIG1_TAX))
     assert "](figure1.svg)" in md
     assert "data:image" not in md
 
@@ -6129,7 +6132,7 @@ def test_render_figure1_svg_custom_basename(tmp_path: Path) -> None:
     out.mkdir()
     ctx = _fig1_ctx(out)
     ctx.figure_basename = "threat-model-juice-shop-quick.figure1.svg"
-    md = compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX)
+    md = light_images(compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX))
     assert "](threat-model-juice-shop-quick.figure1.svg)" in md
     assert "](figure1.svg)" not in md
     assert (out / "threat-model-juice-shop-quick.figure1.svg").is_file()
@@ -6150,7 +6153,7 @@ def test_render_figure1_svg_skill_config_false_is_file_reference(tmp_path: Path)
     out = tmp_path / "out"
     out.mkdir()
     (out / ".skill-config.json").write_text('{"embed_figures": false}', encoding="utf-8")
-    md = compose._render_figure1_svg(_fig1_ctx(out), _FIG1_APD, _FIG1_TAX)
+    md = light_images(compose._render_figure1_svg(_fig1_ctx(out), _FIG1_APD, _FIG1_TAX))
     assert "](figure1.svg)" in md and "data:image" not in md
 
 

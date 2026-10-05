@@ -7051,7 +7051,9 @@ def check_diagram_compactness(md_path: Path, contract_path: Path = DEFAULT_CONTR
             # A §2 detail view — a hand-built SVG figure or a generator-owned
             # table — replaces the Mermaid block; the compactness rules are
             # Mermaid layout rules and do not apply to it.
-            fig = _DETAIL_FIGURE_RE.search(body)
+            from renderers.figure_theme import light_images
+
+            fig = _DETAIL_FIGURE_RE.search(light_images(body))
             if fig is None:
                 if not _DETAIL_TABLE_RE.search(body):
                     report.issues.append(f"§{heading}: no mermaid block found — diagram is required")
@@ -10524,7 +10526,9 @@ def check_security_posture_structure(md_path: Path) -> Report:
     # used to guard (those validated Mermaid *markup* that no longer exists), so
     # for the SVG form we validate the image + glyph↔table parity only. The
     # inline-Mermaid path below stays as the fallback (SVG builder unavailable).
-    fig2_img = re.search(r"!\[Figure 2[^\]]*\]\((data:image/svg[^)]*|[^)]+\.svg)\)", section)
+    from renderers.figure_theme import light_images
+
+    fig2_img = re.search(r"!\[Figure 2[^\]]*\]\((data:image/svg[^)]*|[^)]+\.svg)\)", light_images(section))
     if fig2_img:
         return _check_posture_structure_svg(report, section, md_path, fig2_img.group(1))
 
@@ -10757,7 +10761,9 @@ def _check_figure1_architecture_layout(report: Report, section: str) -> None:
     fig1_scope = section[fig1_pos : fig2_pos if fig2_pos > fig1_pos else len(section)]
     # SVG-based Figure 1 (renderers/figure1_svg.py pilot): an img tag is present instead of
     # a mermaid block.  Skip A1-A5 layout checks — the SVG is deterministic.
-    if re.search(r"\!\[Figure 1[^\]]*\]\([^)]*\.svg\)", fig1_scope):
+    from renderers.figure_theme import light_images
+
+    if re.search(r"\!\[Figure 1[^\]]*\]\([^)]*\.svg\)", light_images(fig1_scope)):
         return
     blocks = [m.group("body") for m in _MERMAID_BODY_RE.finditer(fig1_scope)]
     if not blocks:

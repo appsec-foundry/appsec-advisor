@@ -52,6 +52,8 @@ TIER2 = [
     "threat-model.figure2.svg",
     # §2 detail figures (Figures 3–4) that threat-model.md references.
     *(f"{stem}figure{n}.svg" for n in range(3, 5) for stem in ("", "threat-model.")),
+    # Dark-background variants the report's <picture> elements select (figure_theme.dark_basename).
+    *(f"{stem}figure{n}-dark.svg" for n in ("1", "1b", "2", "3", "4") for stem in ("", "threat-model.")),
     ".architect-review.md",
 ]
 

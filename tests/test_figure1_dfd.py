@@ -2047,7 +2047,7 @@ def test_report_composer_publishes_compact_annotations_without_fallback(tmp_path
     markdown = composer._render_figure1_svg(context, paths, taxonomy)
     svg = (tmp_path / "report.figure1.svg").read_text()
     assert context.warnings == []
-    assert "(report.figure1.svg)" in markdown
+    assert '<img src="report.figure1.svg"' in markdown
     facts = F.overview_facts(model, paths, taxonomy)
     intro = markdown.split("\n", 1)[0]
     assert f"has {facts['components']} components in {facts['layers']} layers" in intro

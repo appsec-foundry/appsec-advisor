@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -523,6 +524,7 @@ class TestPreflightScansEveryPublishableFile:
             ("threat-model.sarif.json", '{"text":"DB_PASSWORD=Pr0dP4ss!2024xyz"}'),
             (".architect-review.md", "Observed `api_key: AKIAIOSFODNN7EXAMPLE`\n"),
             ("threat-model.figure1-detail.svg", "<svg><text>DB_PASSWORD=Pr0dP4ss!2024xyz</text></svg>"),
+            ("threat-model.figure2-dark.svg", "<svg><text>DB_PASSWORD=Pr0dP4ss!2024xyz</text></svg>"),
         ],
     )
     def test_a_secret_in_any_published_file_is_found(self, tmp_path, name, content):
@@ -543,3 +545,11 @@ def test_support_drafts_and_reproductions_are_never_published():
 
     assert ".plugin-issue-*.json" in NEVER_PUBLISH
     assert ".plugin-issue-repro/" in NEVER_PUBLISH
+
+
+def test_every_published_report_figure_travels_with_its_dark_variant():
+    from model.publish_threat_model import TIER2
+    from renderers.figure_theme import dark_basename
+
+    figures = [n for n in TIER2 if re.fullmatch(r"(threat-model\.)?figure\d+b?\.svg", n)]
+    assert figures and all(dark_basename(n) in TIER2 for n in figures)
