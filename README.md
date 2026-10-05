@@ -148,15 +148,21 @@ Assessments consume model tokens and usually take tens of minutes; thorough runs
 
 ## Threat Analyst
 
-Run `/appsec-advisor:analyze-threats` with a description of a planned feature or with a selected code change. It examines applicable security requirements and possible attack paths, then reports findings, assumptions, and questions for the team. The report is advisory; it does not approve a change or update `threat-model.yaml`. The Threat Analyst is *experimental*. See the [Threat Analyst guide](docs/threat-analyst.md) for scope options, saved answers, CI use, and limitations.
+Run `/appsec-advisor:analyze-threats` before or while you build a feature. It reports:
 
-### Feature branch playbook
+- likely threats to the planned feature or the selected change;
+- the security requirements that apply to it;
+- assumptions it made and questions the team needs to answer.
 
-1. Before coding, describe the planned feature, for example `/appsec-advisor:analyze-threats Let support staff export customer data as CSV.` Answer questions about missing design facts; save the answers only if you want to reuse them.
-2. During implementation, check local changes with `/appsec-advisor:analyze-threats --worktree` or staged changes with `--staged`. Run it again if the change affects access control, data exposure, or a trust boundary.
-3. Before merging, fetch the target branch and run `/appsec-advisor:analyze-threats --base <target-branch> --head HEAD`. The analysis compares the feature branch with the merge base. To check every merge request, install the [advisory CI job](docs/threat-analyst.md#advisory-ci).
+The report is advisory and does not change `threat-model.yaml`. The Threat Analyst is *experimental*.
 
-The [Security Coach](docs/dev-security-helper-usage.md#security-coach-hook) still provides optional guidance in prompts. The Threat Analyst runs only when you invoke it or a configured CI job runs. For a full code-derived threat model, use `/appsec-advisor:create-threat-model`.
+| When | Command |
+|---|---|
+| Before coding | `/appsec-advisor:analyze-threats Let support staff export customer data as CSV.` |
+| During implementation | `/appsec-advisor:analyze-threats --worktree` |
+| Before merging | `/appsec-advisor:analyze-threats --base <target-branch> --head HEAD` |
+
+The [Threat Analyst guide](docs/threat-analyst.md) covers staged changes, saved answers, the [advisory CI job](docs/threat-analyst.md#advisory-ci), and limitations.
 
 ## Requirements Audit
 
