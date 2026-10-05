@@ -232,7 +232,10 @@ Use `/appsec-advisor:report-error --bundle-only` for the local diagnostic archiv
 
 AppSec and Platform teams can supply organization-specific requirements, defaults, guardrails, skills, hooks, and MCP servers. The [organization packaging template](https://github.com/appsec-foundry/appsec-advisor-packaging-template) keeps this configuration in a separate internal package built from a pinned upstream release. Core agent definitions remain upstream-owned.
 
-![Example rollout from an upstream release to an Acme-branded plugin](docs/images/orgpackaging.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/orgpackaging-dark.svg">
+  <img src="docs/images/orgpackaging.svg" alt="Example rollout from an upstream release to an Acme-branded plugin">
+</picture>
 
 See [Internal Plugin Packaging](docs/internal-plugin-packaging.md) and [Organization Profiles](docs/org-profiles.md).
 
