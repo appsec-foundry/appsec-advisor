@@ -138,11 +138,17 @@ The report links findings to the [OWASP Top 10:2025](https://owasp.org/Top10/202
 
 Figure 1a shows the runtime components, data flows, and attack paths identified in OWASP Juice Shop.
 
-![Figure 1a of the Juice Shop threat model](docs/images/figure1-example.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/figure1-example-dark.svg">
+  <img src="docs/images/figure1-example.svg" alt="Figure 1a of the Juice Shop threat model">
+</picture>
 
 For repositories with a build pipeline, Figure 1b links build inputs and release artifacts to the most severe supply-chain attacks and the relevant controls.
 
-![Figure 1b of the Juice Shop threat model](docs/images/figure1b-example.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/figure1b-example-dark.svg">
+  <img src="docs/images/figure1b-example.svg" alt="Figure 1b of the Juice Shop threat model">
+</picture>
 
 Assessments consume model tokens and usually take tens of minutes; thorough runs may exceed an hour. The [Threat Modeler reference](docs/threat-modeler.md#assessment-depth--cost-control) covers depth, focused scans, repository context, measured costs, and limits.
 
