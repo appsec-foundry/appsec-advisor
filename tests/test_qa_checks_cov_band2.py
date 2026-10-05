@@ -670,6 +670,23 @@ def test_toc_closure_broken_anchor(tmp_path):
     assert any("unresolved" in i for i in r.issues)
 
 
+def test_toc_closure_and_nested_links_ignore_links_inside_html_comments(tmp_path):
+    p = _md(
+        tmp_path,
+        "# H\n\n<!-- guidance: each with its link [M-NNN](#m-nnn),\n"
+        "or [a [b](#x)](#h) -->\n\n[real](#h)\n\n[broken](#nope)\n",
+    )
+    closure = qa.check_toc_closure(p)
+    assert closure.issues == ["unresolved TOC/link anchor: #nope"]
+    assert closure.ok == 1
+    assert qa.check_toc_nested_links(p).issues == []
+
+
+def test_toc_closure_ignores_anchors_declared_inside_comments(tmp_path):
+    p = _md(tmp_path, '# H\n\n<!-- <a id="ghost"></a> -->\n\n[x](#ghost)\n')
+    assert qa.check_toc_closure(p).issues == ["unresolved TOC/link anchor: #ghost"]
+
+
 def test_toc_closure_many_broken_truncated(tmp_path):
     links = "\n".join(f"[x](#missing-{i})" for i in range(30))
     p = _md(tmp_path, "# H\n\n" + links + "\n")

@@ -241,6 +241,17 @@ def _strip_code_fences(text: str) -> str:
     return "".join(out)
 
 
+def _strip_code_and_comments(text: str) -> str:
+    """``_strip_code_fences`` plus blanked HTML comments, line count preserved.
+
+    For link and anchor checks only: a link inside an authoring comment never
+    renders. Checks that must see comments (placeholders, secrets) keep using
+    ``_strip_code_fences``.
+    """
+    stripped = _strip_code_fences(text)
+    return re.sub(r"<!--.*?-->", lambda m: "\n" * m.group(0).count("\n"), stripped, flags=re.DOTALL)
+
+
 # ---------------------------------------------------------------------------
 # Pre-pass cache — shared input artifacts for the `all` subcommand.
 #
@@ -5217,7 +5228,7 @@ def check_toc_closure(md_path: Path) -> Report:
     """
     report = Report(check="toc_closure")
     raw = md_path.read_text(encoding="utf-8")
-    text = _strip_code_fences(raw)
+    text = _strip_code_and_comments(raw)
 
     # Build the anchor universe — heading anchors as github.com renders them.
     heading_slugs: set[str] = set()
@@ -5926,7 +5937,7 @@ def _run_authoritative_mermaid_parse(md_text: str) -> tuple[list[str], Optional[
 def check_toc_nested_links(md_path: Path) -> Report:
     """Flag markdown links whose visible text contains another link."""
     report = Report(check="toc_nested_links")
-    text = _strip_code_fences(md_path.read_text(encoding="utf-8"))
+    text = _strip_code_and_comments(md_path.read_text(encoding="utf-8"))
     # Match `[anything](#...)`, check the `anything` for nested `](`.
     # Use a non-greedy outer match, but require the outer link to be a
     # fragment link (`#...`) — we don't care about external links here.

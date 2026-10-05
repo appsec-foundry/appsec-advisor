@@ -11,6 +11,10 @@ colour, so their text keeps its contrast. The geometry and text are unchanged.
 ``prefers-color-scheme`` (GitHub, browsers) resolve to the matching file; every
 other consumer reads the light image through ``light_images``. Nothing is
 written or fetched by this module.
+
+``stash_figures`` keeps that markup byte-identical through report-wide prose
+passes (payload escaping, dotted-identifier and em-dash normalisation, linkify),
+which would otherwise backtick the ``<img>`` or rewrite the ``alt`` text.
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ from __future__ import annotations
 import colorsys
 import html
 import re
+from collections.abc import Callable
 
 _HEX_ATTR = re.compile(r'\b(fill|stroke|stop-color)="(#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3}|white|black)"')
 _TAG = re.compile(r"<(\w+)\b[^>]*>")
@@ -28,6 +33,13 @@ _PICTURE = re.compile(
     r'<picture><source media="\(prefers-color-scheme: dark\)" srcset="[^"]*">'
     r'<img src="(?P<src>[^"]*)" alt="(?P<alt>[^"]*)"></picture>'
 )
+# Only figures that point at local SVG files are preserved: model-authored text
+# can forge the shape, and a forged remote URL must still meet the prose passes.
+_LOCAL_PICTURE = re.compile(
+    r'<picture><source media="\(prefers-color-scheme: dark\)" srcset="[\w.-]+\.svg">'
+    r'<img src="[\w.-]+\.svg" alt="[^"<>]*"></picture>'
+)
+_FIGURE_TOKEN = re.compile(r"\x00FIGURE(\d+)\x00")
 
 
 def dark_basename(basename: str) -> str:
@@ -104,6 +116,26 @@ def themed_image(alt: str, light_src: str, dark_src: str) -> str:
         f'<picture><source media="(prefers-color-scheme: dark)" srcset="{html.escape(dark_src)}">'
         f'<img src="{html.escape(light_src)}" alt="{html.escape(alt)}"></picture>'
     )
+
+
+def stash_figures(markdown: str) -> tuple[str, Callable[[str], str]]:
+    """Replace each local ``themed_image`` with a token; the returned function puts it back.
+
+    Text between the two calls may pass through any prose transform: the figures
+    come back byte-identical, and only tokens issued here are restored.
+    """
+    figures: list[str] = []
+
+    def stash(match: re.Match[str]) -> str:
+        figures.append(match.group(0))
+        return f"\x00FIGURE{len(figures) - 1}\x00"
+
+    def restore(text: str) -> str:
+        return _FIGURE_TOKEN.sub(
+            lambda m: figures[int(m.group(1))] if int(m.group(1)) < len(figures) else m.group(0), text
+        )
+
+    return _LOCAL_PICTURE.sub(stash, markdown), restore
 
 
 def light_images(markdown: str) -> str:

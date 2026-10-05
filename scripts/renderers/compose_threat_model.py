@@ -10695,6 +10695,10 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
     elif section_id == "attack_walkthroughs":
         md = _inject_attack_walkthroughs_intros(ctx, md)
 
+    from renderers.figure_theme import stash_figures
+
+    md, restore_figures = stash_figures(md)
+
     # Linkify bare CWE-NNN references in every prose fragment so they become
     # clickable links to the MITRE CWE entry.  Runs after the §7-specific
     # enrichment (which also calls _linkify_bare_cwes) so that code is
@@ -10747,7 +10751,7 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
     # escape pass runs in the END-OF-RENDER pipeline (see `render()` near
     # the bottom of this file) so every section type is covered.
 
-    return md.rstrip() + "\n"
+    return restore_figures(md).rstrip() + "\n"
 
 
 _ATTACK_WALKTHROUGHS_DEFAULT_INTRO = (
@@ -18960,6 +18964,9 @@ def render(
 
     separator = contract["document"].get("section_separator", "\n\n---\n\n")
     rendered = separator.join(rendered_parts).rstrip() + "\n"
+    from renderers.figure_theme import stash_figures
+
+    rendered, restore_figures = stash_figures(rendered)
 
     # Unfilled-placeholder notice — for any top-level section that still
     # carries unfilled `<!-- NARRATIVE_PLACEHOLDER -->` HTML comments,
@@ -19141,6 +19148,7 @@ def render(
     # normal `[ID](#id) — label` tail.
     rendered = _apply_outside_changelog(rendered, _delink_id_in_link_text)
     rendered = _apply_outside_changelog(rendered, _normalize_reference_locators)
+    rendered = restore_figures(rendered)
 
     # Report-integrity manifest: certify which sections rendered and which
     # fragments were wired, surfaced on the console and consumed by the QA

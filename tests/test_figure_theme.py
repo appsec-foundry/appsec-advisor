@@ -4,7 +4,8 @@ import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from renderers.figure_theme import dark_basename, dark_svg, light_images, themed_image
+from renderers.compose_threat_model import _escape_html_payloads_in_prose
+from renderers.figure_theme import dark_basename, dark_svg, light_images, stash_figures, themed_image
 
 FIXTURE = Path(__file__).parent / "fixtures" / "run_invariants" / "juice-shop-thorough" / "threat-model.figure1.svg"
 GITHUB_DARK = "#0d1117"
@@ -91,6 +92,25 @@ def test_themed_image_selects_the_dark_file_and_reads_back_as_the_light_image():
     assert 'srcset="report.figure3-dark.svg"' in picture and "&quot;edge&quot; &amp; &lt;ingress&gt;" in picture
     report = f"Intro.\n\n{picture}\n\n![Diagram](other.svg)\n"
     assert light_images(report) == f"Intro.\n\n![{alt}](report.figure3.svg)\n\n![Diagram](other.svg)\n"
+
+
+def test_stashed_figures_survive_prose_passes_but_forged_or_payload_markup_does_not():
+    local = themed_image("Figure 1a - Runtime — Socket.IO $where", "r.figure1.svg", "r.figure1-dark.svg")
+    remote = (
+        '<picture><source media="(prefers-color-scheme: dark)" srcset="https://evil.example/d.svg">'
+        '<img src="https://evil.example/l.svg" alt="x"></picture>'
+    )
+    payload = "Attacker sends <img src=x onerror=alert(1)>."
+    report = f"{local}\n\n{remote}\n\n{payload}\n\nStray \x00FIGURE7\x00 token.\n"
+
+    stashed, restore = stash_figures(report)
+    assert local not in stashed and remote in stashed
+    out = restore(_escape_html_payloads_in_prose(stashed).replace(" — ", " - "))
+
+    assert local in out
+    assert "`<img src=x onerror=alert(1)>`" in out
+    assert '`<img src="https://evil.example/l.svg" alt="x">`' in out
+    assert "\x00FIGURE7\x00" in out  # only tokens issued by this stash are restored
 
 
 def test_dark_basename_keeps_the_report_stem_for_stamping():

@@ -131,6 +131,7 @@ compose = _load_module("renderers.compose_threat_model", SCRIPTS / "renderers/co
 qa_checks = _load_module("validators.qa_checks", SCRIPTS / "validators/qa_checks.py")
 apply_prose_fixes = _load_module("repairs.apply_prose_fixes", SCRIPTS / "repairs/apply_prose_fixes.py")
 inline_code_formatter = _load_module("renderers.inline_code_formatter", SCRIPTS / "renderers/inline_code_formatter.py")
+light_images = _load_module("renderers.figure_theme", SCRIPTS / "renderers/figure_theme.py").light_images
 
 # Reuse the canonical SARIF validator that test_export_sarif.py uses, rather
 # than re-implementing structural checks here (single source of truth).
@@ -725,6 +726,22 @@ def test_composed_report_has_no_inline_code_residue(e2e_run: Path) -> None:
     assert changes == 0
     assert second_pass == rendered
     assert report.warnings == []
+
+
+def test_composed_figures_stay_live_images_through_every_prose_pass(e2e_run: Path) -> None:
+    rendered, _ = compose.render(CONTRACT, e2e_run)
+    figures = [line for line in rendered.splitlines() if "<picture>" in line]
+    assert figures, "the frozen run must render at least one figure as a file"
+    for line in figures:
+        assert "`<" not in line, line
+    assert len(re.findall(r"!\[Figure [^\]]*\]\([\w.-]+\.svg\)", light_images(rendered))) == len(figures)
+
+    after_prose, _ = apply_prose_fixes.apply_fixes(rendered)
+    md = e2e_run / "threat-model.md"
+    md.write_text(after_prose, encoding="utf-8")
+    qa_checks._run_autofix(md, SYNTHETIC_REPO)
+    final = md.read_text(encoding="utf-8")
+    assert all(line in final for line in figures)
 
 
 def test_export_sarif_matches_golden(e2e_run: Path) -> None:

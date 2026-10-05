@@ -194,7 +194,7 @@ _DOMAIN_SUFFIXES = frozenset({"ai", "app", "co", "com", "dev", "gg", "io", "js",
 _CODE_OBJECT_HEADS = frozenset({"ctx", "document", "lib", "Object", "process", "req", "res", "self", "this", "window"})
 _HTML_ELEMENTS = frozenset(
     "a abbr b blockquote br code col colgroup dd details div dl dt em h1 h2 h3 h4 h5 h6 hr i img "
-    "li ol p pre q s small span strong sub summary sup table tbody td tfoot th thead tr u ul".split()
+    "li ol p picture pre q s small source span strong sub summary sup table tbody td tfoot th thead tr u ul".split()
 )
 
 
