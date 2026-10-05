@@ -52,20 +52,24 @@ from runtime.event_log import format_line  # noqa: E402
 
 #: The exit classes the wrapper can tell apart. The value is the word that
 #: reaches `RUN_ABORTED`, the checkpoint, and the cut-off classifier, so one
-#: run is described the same way everywhere. A controller abort needs no entry:
-#: it writes its own verdict, and this terminator then leaves it standing.
+#: run is described the same way everywhere. The controller terminates its own
+#: aborts here too, passing its verdict as the `RUN_ABORTED` detail; a later
+#: wrapper call then finds the run terminal and leaves that verdict standing.
 OUTCOMES = {
     "interrupt": "operator_interrupt",
     "failure": "run_failed",
+    "controller_abort": "controller_abort",
 }
 
 AGGREGATOR_TIMEOUT_S = 120
 
 
-def _append_event(output_dir: Path, event: str, detail: str, level: str = "WARN ") -> None:
+def _append_event(
+    output_dir: Path, event: str, detail: str, level: str = "WARN ", component: str = "run-terminator"
+) -> None:
     try:
         with (output_dir / ".agent-run.log").open("a", encoding="utf-8") as handle:
-            handle.write(format_line(event, detail, level=level, component="run-terminator"))
+            handle.write(format_line(event, detail, level=level, component=component))
     except OSError:
         pass
 
@@ -93,8 +97,22 @@ def _repo_root_from_config(output_dir: Path, given: str) -> str:
     return str(config.get("repo_root") or "") if isinstance(config, dict) else ""
 
 
-def terminate(output_dir: Path, outcome: str, reason: str, run_id: str, repo_root: str, depth: str = "") -> list[str]:
+def terminate(
+    output_dir: Path,
+    outcome: str,
+    reason: str,
+    run_id: str,
+    repo_root: str,
+    depth: str = "",
+    *,
+    detail: str = "",
+    component: str = "run-terminator",
+) -> list[str]:
     """Bring every terminal surface into agreement. Returns what it did.
+
+    ``detail`` and ``component`` let the controller record its own abort
+    verdict in its own words; they replace the default ``outcome=… reason=…``
+    line only.
 
     A run that never held this directory terminates nothing in it. The wrapper
     calls the terminator on every non-clean exit, and ``LOCK_BLOCKED`` is one of
@@ -108,12 +126,12 @@ def terminate(output_dir: Path, outcome: str, reason: str, run_id: str, repo_roo
 
     steps: list[str] = []
     kind = OUTCOMES[outcome]
-    detail = f"outcome={kind}  reason={reason or kind}"
+    detail = detail or f"outcome={kind}  reason={reason or kind}"
 
     if cutoff_cause.detect_abort(output_dir):
         steps.append("run already terminal")
     else:
-        _append_event(output_dir, "RUN_ABORTED", detail)
+        _append_event(output_dir, "RUN_ABORTED", detail, component=component)
         steps.append("RUN_ABORTED recorded")
 
     phase = agent_logger.mark_checkpoint_aborted_if_dirty(kind, output_dir)

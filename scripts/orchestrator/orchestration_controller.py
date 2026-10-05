@@ -1258,6 +1258,17 @@ def clear_abort(output_dir: Path, reason: str) -> dict[str, Any]:
                 "receipts": ["no active RUN_ABORTED latch for this run — nothing to clear"],
             }
         )
+    # The abort released this run's lock (OR-8), so reopening the run takes it
+    # back first; a directory another live run now holds stays that run's.
+    lock_path = output_dir / ".appsec-lock"
+    run_id = acquire_lock.current_run_id("")
+    if acquire_lock.lock_held_by_live_other_run(lock_path, run_id):
+        raise CallError(f"another live run holds {lock_path}; the aborted run cannot be reopened")
+    _run_script("runtime/acquire_lock.py", [str(lock_path), f"--run-id={run_id}"])
+    _run_script(
+        "runtime/acquire_lock.py",
+        [str(lock_path), f"--run-id={run_id}", "--heartbeat", "--phase=skill", "--step=clear-abort"],
+    )
     detail = " ".join(str(reason).split())[:400] or "cleared by operator"
     _append_event(output_dir, "RUN_ABORT_CLEARED", detail, level="WARN")
     return _validate_action(
@@ -1267,6 +1278,7 @@ def clear_abort(output_dir: Path, reason: str) -> dict[str, Any]:
             "receipts": [
                 "RUN_ABORTED latch cleared; the RUN_ABORTED line is retained for audit",
                 f"reason: {detail}",
+                "run lock re-acquired; restart the heartbeat watchdog before the next dispatch",
                 "re-invoke the boundary that aborted — a second abort latches again",
             ],
         }
@@ -2319,12 +2331,14 @@ def _prepare_rerender(cfg: dict[str, Any]) -> dict[str, Any]:
         }
 
     cfg["run_id"] = _run_id_for_this_run()
+    _run_script("runtime/check_state.py", [str(output_dir), "--auto-clean"])
+    # Acquired outside the cleanup below, as in full `prepare`: a refused lock
+    # belongs to the run holding it and must survive this invocation's failure.
+    lock = _run_script(
+        "runtime/acquire_lock.py",
+        [str(output_dir / ".appsec-lock"), f"--run-id={cfg['run_id']}"],
+    )
     try:
-        _run_script("runtime/check_state.py", [str(output_dir), "--auto-clean"])
-        lock = _run_script(
-            "runtime/acquire_lock.py",
-            [str(output_dir / ".appsec-lock"), f"--run-id={cfg['run_id']}"],
-        )
         config_path = _persist_config(cfg, output_dir)
         _activate_markers(cfg, output_dir)
         _run_script(
@@ -7668,42 +7682,34 @@ def _aggregate_issues_on_abort(output_dir: Any, reason: str, repo_root: Any = No
     all. The 2026-07-20 juice-shop abort left `.run-issues.json` reporting a
     clean run for a run that died without a deliverable.
 
+    The abort converges through the single terminator (OR-8), which also
+    releases this run's lock: the interactive runtimes stop on the abort and
+    never call it themselves, so the lock used to outlive the run and kept
+    `report-error --offer` busy. A directory another live run holds is left
+    untouched (OR-19), and a repeated abort records `RUN_ABORTED` only once.
+
     Best-effort in every direction: no output dir, an unreadable one, or an
     aggregator failure must never mask the real abort reason.
     """
     if not output_dir:
         return
-    path: Path | None = None
     try:
         path = Path(output_dir)
         if not path.is_dir():
             return
-        if not repo_root:
-            try:
-                config = json.loads((path / ".skill-config.json").read_text(encoding="utf-8"))
-                repo_root = config.get("repo_root")
-            except (OSError, ValueError, AttributeError):
-                repo_root = None
-        _append_event(path, "RUN_ABORTED", _abort_event_detail(reason), level="WARN")
-        command = [sys.executable, str(SCRIPT_DIR / "runtime/aggregate_run_issues.py"), str(path)]
-        if repo_root and Path(repo_root).is_dir():
-            command.extend(["--repo-root", str(repo_root)])
-        subprocess.run(
-            command,
-            capture_output=True,
-            timeout=120,
-            check=False,
+        import runtime.terminate_run as terminate_run  # noqa: PLC0415
+
+        terminate_run.terminate(
+            path,
+            "controller_abort",
+            reason,
+            acquire_lock.current_run_id(""),
+            str(repo_root or ""),
+            detail=_abort_event_detail(reason),
+            component="skill-controller",
         )
     except Exception:
         pass
-    finally:
-        if path is not None:
-            try:
-                from runtime.agent_logger import clear_terminal_active_tool_calls  # noqa: PLC0415
-
-                clear_terminal_active_tool_calls(path)
-            except Exception:
-                pass
 
 
 #: Boundaries that run after a semantic producer returned and its output was

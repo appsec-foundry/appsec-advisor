@@ -8046,3 +8046,112 @@ def test_cli_dispatch_binding_preserves_verification_and_failure_scope(tmp_path,
         controller._require_receipt_verification(output)
     controller.verify_receipt_hashes(output, [], action_id=pending["action_id"])
     controller._require_receipt_verification(output)
+
+
+# ---------------------------------------------------------------------------
+# OR-8: a controller abort converges on the single terminator
+# ---------------------------------------------------------------------------
+
+
+def _live_lock(output: Path, run_id: str) -> Path:
+    import os
+    import time
+
+    lock = output / ".appsec-lock"
+    lock.write_text(f"{os.getpid()}\n{int(time.time())}\n{run_id}\n", encoding="utf-8")
+    return lock
+
+
+def _open_run_window(output: Path) -> None:
+    import time
+
+    (output / ".scan-start-epoch").write_text(str(int(time.time()) - 60), encoding="utf-8")
+
+
+def _quiet_terminator(monkeypatch) -> None:
+    import runtime.terminate_run as terminate_run
+
+    monkeypatch.setattr(terminate_run.subprocess, "run", lambda *args, **kwargs: _completed())
+
+
+def test_controller_abort_releases_its_own_lock_once(tmp_path, monkeypatch):
+    """An interactive runtime stops on the abort and never calls the
+    terminator, so the controller must release its run's lock itself; a
+    repeated abort records RUN_ABORTED only once."""
+    output = _write_context_v2_config(tmp_path)
+    _open_run_window(output)
+    lock = _live_lock(output, "run-own")
+    monkeypatch.setenv("APPSEC_RUN_ID", "run-own")
+    _quiet_terminator(monkeypatch)
+
+    controller._aggregate_issues_on_abort(output, "producer contract failed")
+    controller._aggregate_issues_on_abort(output, "producer contract failed")
+
+    assert not lock.exists()
+    log = (output / ".agent-run.log").read_text(encoding="utf-8")
+    assert log.count("RUN_ABORTED") == 1
+    assert "producer contract failed" in log
+
+
+def test_controller_abort_leaves_a_live_foreign_run_untouched(tmp_path, monkeypatch):
+    output = _write_context_v2_config(tmp_path)
+    lock = _live_lock(output, "run-holder")
+    monkeypatch.setenv("APPSEC_RUN_ID", "run-late-caller")
+    _quiet_terminator(monkeypatch)
+    log_path = output / ".agent-run.log"
+    before = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
+
+    controller._aggregate_issues_on_abort(output, "late boundary failed")
+
+    assert lock.read_text(encoding="utf-8").splitlines()[2] == "run-holder"
+    after = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
+    assert after == before
+
+
+def test_clear_abort_takes_the_run_lock_back(tmp_path, monkeypatch):
+    out = tmp_path / "out"
+    out.mkdir()
+    _open_run_window(out)
+    controller._append_event(out, "RUN_ABORTED", "boundary failed", level="WARN")
+    monkeypatch.setenv("APPSEC_RUN_ID", "run-own")
+
+    action = controller.clear_abort(out, "fixed, continuing")
+
+    assert action["action"] == "run_gate"
+    assert (out / ".appsec-lock").read_text(encoding="utf-8").splitlines()[2] == "run-own"
+
+
+def test_clear_abort_refuses_while_another_live_run_holds_the_directory(tmp_path, monkeypatch):
+    out = tmp_path / "out"
+    out.mkdir()
+    _open_run_window(out)
+    controller._append_event(out, "RUN_ABORTED", "boundary failed", level="WARN")
+    _live_lock(out, "run-holder")
+    monkeypatch.setenv("APPSEC_RUN_ID", "run-own")
+
+    with pytest.raises(controller.CallError):
+        controller.clear_abort(out, "fixed, continuing")
+
+    assert "RUN_ABORT_CLEARED" not in (out / ".agent-run.log").read_text(encoding="utf-8")
+    assert (out / ".appsec-lock").read_text(encoding="utf-8").splitlines()[2] == "run-holder"
+
+
+def test_a_refused_rerender_lock_stays_with_its_holder(tmp_path, monkeypatch):
+    """LOCK_BLOCKED is the holder's lock: the rerender cleanup used to unlink it."""
+    output = tmp_path / "out"
+    output.mkdir()
+    lock = _live_lock(output, "run-holder")
+    monkeypatch.setattr(controller, "_missing_permissions_action", lambda *args: None)
+    monkeypatch.setattr(controller, "_rerender_missing_artifacts", lambda *args: [])
+
+    def fake_run_script(name, args, **kwargs):
+        if name == "runtime/acquire_lock.py":
+            raise controller.ControllerError("acquire_lock.py failed with exit 1: LOCK_BLOCKED: held", 1)
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", fake_run_script)
+
+    with pytest.raises(controller.ControllerError):
+        controller._prepare_rerender({"output_dir": str(output), "repo_root": str(tmp_path)})
+
+    assert lock.read_text(encoding="utf-8").splitlines()[2] == "run-holder"
