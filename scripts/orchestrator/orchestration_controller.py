@@ -2265,7 +2265,7 @@ def _missing_permissions_action(cfg: dict[str, Any], repo_root: Path, output_dir
         "mode": cfg.get("mode", "full"),
         "reason": (
             f"{headline}\n"
-            f"Run:  make -C {PLUGIN_ROOT} setup-target REPO={repo_root}\n"
+            f"Run:  /appsec-advisor:check-permissions --update --repo {repo_root} --output {output_dir}\n"
             f"then restart Claude Code and re-run the skill.\n\n"
             f"Settings files checked:\n{checked}\n\n"
             f"Missing entries:\n{entries}"

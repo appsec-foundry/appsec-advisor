@@ -7938,7 +7938,7 @@ def test_permission_abort_names_each_scope_status(monkeypatch, tmp_path, project
     reason = action["reason"]
     assert action["action"] == "abort"
     assert reason.startswith(headline)
-    assert f"make -C {controller.PLUGIN_ROOT} setup-target REPO={tmp_path}" in reason
+    assert f"/appsec-advisor:check-permissions --update --repo {tmp_path} --output {tmp_path / 'out'}" in reason
     for name in ("local", "project", "user"):
         assert f"/x/{name}.json" in reason
     assert "  Bash(*)" in reason
