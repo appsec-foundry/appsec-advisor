@@ -2,7 +2,7 @@
 
 Most users do not need to edit plugin configuration. The default configuration supports an interactive threat-model run after the permissions setup in the main README.
 
-The root [`config.json`](../config.json) controls four independent runtime concerns: external business context, prices used for local cost calculation, event-log behavior, and the pointer to a packaged organization profile. Requirements catalogs have their own configuration and are documented in the [Requirements Audit reference](security-requirements-audit-skill.md).
+The root [`config.json`](../config.json) controls four independent runtime concerns: external business context, prices used for local cost calculation, event-log behavior, and the pointer to a packaged organization profile. The `banner` block (session-start message, see [Organization Profiles](org-profiles.md#session-banner)) and the `baseline` block (bundled secure-coding baseline, managed by the `install-baseline` and `update-baseline` skills) also live in this file and normally need no manual edits. Requirements catalogs have their own configuration and are documented in the [Requirements Audit reference](security-requirements-audit-skill.md).
 
 ## Configuration files and scope
 

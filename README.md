@@ -253,15 +253,9 @@ See [Internal Plugin Packaging](docs/internal-plugin-packaging.md) and [Organiza
 |---|---|
 | Run or configure a threat model | [Threat Modeler](docs/threat-modeler.md) |
 | Analyze a planned feature or selected code change | [Threat Analyst](docs/threat-analyst.md) |
-| Add repository context or trust-boundary declarations | [Repo-local context](docs/threat-modeler.md#repo-local-context) |
-| Configure models, cost, logging, or organization settings | [Configuration](docs/configuration.md) and [Model Selection](docs/model-selection.md) |
+| Configure models, cost, or logging | [Configuration](docs/configuration.md) and [Model Selection](docs/model-selection.md) |
 | Configure requirements audits | [Requirements Audit](docs/security-requirements-audit-skill.md) |
 | Run an existing plugin checkout without interaction | [Non-interactive Mode](docs/headless-mode.md) |
-| Provision the plugin and target for terminal, cron, GitHub Actions, or GitLab CI | [appsec-advisor-tools](https://github.com/appsec-foundry/appsec-advisor-tools) |
-| Package the plugin for an organization | [Internal Plugin Packaging](docs/internal-plugin-packaging.md) |
-| Browse complete report examples | [Threat Modeler Examples](https://github.com/appsec-foundry/appsec-advisor-examples) |
-| Develop or contribute | [Contributing](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) |
-| Report a vulnerability | [Security Policy](SECURITY.md) |
 
 ## Project structure
 
