@@ -52,6 +52,7 @@ import argparse
 import ast
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -77,41 +78,49 @@ class UpdateError(Exception):
     """A condition the user has to resolve; reported without a traceback."""
 
 
+def upstream_terminal_fallback(home: Path) -> str:
+    """Give a user-run signed updater path, or the publisher's setup guide."""
+    for installer in (home / ".aiscb/install.py", home / bc.AISCB_USER_DATA / "install.py"):
+        if installer.is_file():
+            command = shlex.join(["python3", "-I", str(installer), "--update"])
+            return f"last resort: run {command} in a terminal for AISCB's interactive signed update"
+    return "last resort: follow the official AISCB Quick Start at https://github.com/appsec-foundry/aiscb#quick-start"
+
+
 def upstream_targets(result: dict, repo: Path, home: Path) -> list[tuple[Path, bool]]:
-    """Resolve only current project/user records, never a repository-selected executable."""
+    """Resolve each installation in its recorded scope, never by path overlap."""
     targets = []
+    overlapping_roots = repo.resolve() == home.resolve()
     for key in ("matches", "older", "newer"):
         for item in result.get(key, []):
-            if item.get("managed_by") != "aiscb" or item["scope"] == "policy":
+            scope = item.get("installation_scope", item["scope"])
+            if item.get("managed_by") != "aiscb" or scope not in {"user", "project"}:
                 continue
             if not re.fullmatch(r"aiscb-\d+(?:\.\d+)+", item["id"]):
                 continue
             carrier = Path(item["file"]).absolute()
-            matched = False
-            for base, user in ((home.absolute(), True), (repo.absolute(), False)):
-                record_path = base / ".aiscb/installation.json"
-                if not record_path.exists():
-                    continue
-                record = bm.document(bm.read(record_path))
-                if not isinstance(record, dict) or not isinstance(record.get("entries"), dict):
-                    raise UpdateError("invalid upstream installation record")
-                try:
-                    relative = carrier.relative_to(base).as_posix()
-                except ValueError:
-                    continue
-                if str(carrier) in record["entries"] or relative in record["entries"]:
-                    target = (base, user)
-                    if target not in targets:
-                        targets.append(target)
-                    matched = True
-            if not matched and item["scope"] in {"user", "project"}:
-                user = item["scope"] == "user"
-                base = home.absolute() if user else repo.absolute()
-                expected = home / bc.AISCB_USER_DATA / br.BASELINE_FILE if user else repo / br.BASELINE_FILE
-                if carrier.resolve() == expected.resolve():
-                    target = (base, user)
-                    if target not in targets:
-                        targets.append(target)
+            user = scope == "user"
+            base = home.absolute() if user else repo.absolute()
+            record_path = base / ".aiscb/installation.json"
+            if not record_path.exists():
+                continue
+            record = bm.document(bm.read(record_path))
+            if not isinstance(record, dict) or not isinstance(record.get("entries"), dict):
+                raise UpdateError("invalid upstream installation record")
+            try:
+                relative = carrier.relative_to(base).as_posix()
+            except ValueError:
+                continue
+            # When --repo is home, the checker sees ~/.claude/CLAUDE.md in
+            # both scopes. AISCB records user entry points as absolute paths
+            # and project entry points as paths relative to their project.
+            recorded = (str(carrier) if user else relative) in record["entries"]
+            if not overlapping_roots:
+                recorded = recorded or (relative if user else str(carrier)) in record["entries"]
+            if recorded:
+                target = (base, user)
+                if target not in targets:
+                    targets.append(target)
     return targets
 
 
@@ -165,8 +174,10 @@ def update_upstream(targets: list[tuple[Path, bool]], config: dict, *, dry_run: 
                         check=False,
                     )
                     if done.returncode:
+                        scope = "user" if user else f"project {base}"
                         raise UpdateError(
-                            "AISCB refused the delegated update; verify the installation with its installer before retrying"
+                            f"AISCB refused the delegated update for the {scope} installation; "
+                            "inspect that scope with the AISCB installer's --status before retrying"
                         )
                     if dry_run or not preview:
                         steps.extend(done.stdout.strip().splitlines())
@@ -325,7 +336,12 @@ def update(
         other_targets, _ = _partition(result, config, include_newer=forward, home=home)
         if other_targets:
             raise UpdateError("mixed plugin and upstream installations require separate updates")
-        return update_upstream(delegated, config, dry_run=dry_run, offline=offline), 0
+        try:
+            return update_upstream(delegated, config, dry_run=dry_run, offline=offline), 0
+        except UpdateError as exc:
+            if offline:
+                raise
+            raise UpdateError(f"{exc}; {upstream_terminal_fallback(home)}") from exc
     if status == "newer" and not forward:
         loaded = ", ".join(sorted({item["id"] for item in result["newer"]}))
         return [
