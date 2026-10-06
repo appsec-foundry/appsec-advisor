@@ -42,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Security controls with a free-text domain such as "Input Handling" are placed in a §6 section instead of stopping the Security Architecture fragment.
+- The completion summary offers `/appsec-advisor:report-error` only for regressions, not for known open plugin defects.
 - Private keys are fully redacted from findings, and pentest task exports are checked for leaked secrets.
 - Config and IaC findings reach reports again with the correct STRIDE category and component attribution.
 - Full assessments confirm object-level authorization gaps and entity mass assignment again without importing stale results from earlier runs, and mass-assignment checks exclude code that only reads or rejects privileged fields.

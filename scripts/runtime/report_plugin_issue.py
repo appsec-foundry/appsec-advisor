@@ -93,6 +93,9 @@ def _diagnosis(output: Path, issue_id: str) -> tuple[dict, str]:
     if extract_run_issues(output) is None:
         raise SupportError("current run issues are absent or stale")
     issues = _read(output, ".run-issues.json")
+    issue = next((i for i in issues.get("issues") or [] if isinstance(i, dict) and i.get("id") == issue_id), {})
+    if (issue.get("evidence") or {}).get("known_open"):
+        raise SupportError("this is a known open plugin defect; it needs no new report")
     # Validate before the existing consumer reads the same fixed diagnostic file.
     diagnosis = _read(output, ".run-bugs.json")
     entry = _current_diagnoses(issues, output).get(issue_id)

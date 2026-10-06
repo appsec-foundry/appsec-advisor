@@ -1049,8 +1049,23 @@ def _recommend_pillar_cwe_finding(issue: dict, output_dir: Path) -> dict:
 
 
 def _recommend_run_invariant_violated(issue: dict, output_dir: Path) -> dict:
-    """A cross-artifact invariant that guards a fixed producer defect failed."""
-    name = (issue.get("evidence") or {}).get("outcome") or "unknown"
+    """A cross-artifact invariant failed: a regression, or a known open defect."""
+    evidence = issue.get("evidence") or {}
+    name = evidence.get("outcome") or "unknown"
+    if evidence.get("known_open"):
+        return {
+            "category": "investigate",
+            "auto_applicable": False,
+            "confidence": "medium",
+            "risk_level": "low",
+            "summary": f"Known open defect, not a regression: the {name} invariant is {evidence['known_open']}.",
+            "rationale": (
+                "The invariant is listed in run_invariants.KNOWN_OPEN because its producer fix has not "
+                "landed; a violation repeats the tracked defect and needs no new report."
+            ),
+            "actions": [],
+            "verification": [],
+        }
     return {
         "category": "investigate",
         "auto_applicable": False,

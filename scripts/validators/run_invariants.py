@@ -47,6 +47,14 @@ from renderers.figure1_dfd import _internal_interface  # noqa: E402
 from shared._finding_state import basis_unstated  # noqa: E402
 
 SYSTEM_WIDE = "system-wide"
+
+# Invariants whose producer fix has not landed. A violation is a known open
+# defect, not a regression; the frozen-run tests xfail exactly these.
+KNOWN_OPEN: dict[str, str] = {
+    "component_paths": "pending core refactor: component finalize pass",
+    "unique_identity": "pending core refactor: finding identity across producers",
+}
+
 _TB_ID = re.compile(r"\btb-\d+\b")
 _MERMAID = re.compile(r"```mermaid\n(.*?)```", re.DOTALL)
 

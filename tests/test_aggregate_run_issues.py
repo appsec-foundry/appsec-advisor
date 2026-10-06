@@ -2052,11 +2052,18 @@ def _finding(tid, file="lib/store.py", line=12, cwe="CWE-89", **over):
         ((_finding("T-001", file="cmd/run.go", line=40, evidence_basis=None),), "confirmed_needs_verified"),
     ],
 )
-def test_a_violated_run_invariant_is_an_error_that_names_it(tmp_path, threats, violated):
+def test_a_violated_run_invariant_names_it_and_only_a_regression_is_an_error(tmp_path, threats, violated):
+    from renderers.render_completion_summary import user_visible_issues
+    from validators.run_invariants import KNOWN_OPEN
+
     issues = agg._extract_run_invariants(_model(tmp_path, *threats))
+    known_open = violated in KNOWN_OPEN
     assert [(i["category"], i["severity"], i["evidence"]["outcome"]) for i in issues] == [
-        ("run_invariant_violated", "error", violated)
+        ("run_invariant_violated", "warning" if known_open else "error", violated)
     ]
+    assert bool(issues[0]["evidence"].get("known_open")) is known_open
+    # End users see, and are offered a report for, regressions only.
+    assert bool(user_visible_issues(issues)) is not known_open
 
 
 def test_holding_invariants_and_a_missing_model_report_nothing(tmp_path):

@@ -1758,9 +1758,10 @@ def _extract_unmodelled_workloads(output_dir: Path) -> list[dict]:
     ]
 
 
-# Cross-artifact invariants (validators/run_invariants.py) reported as errors
-# that do not stop the run yet. Each one guards a fixed producer defect, so a
-# violation on a current run is a regression, not noise.
+# Cross-artifact invariants (validators/run_invariants.py) reported without
+# stopping the run. A violation of a fixed producer defect is a regression and
+# an error; one listed in run_invariants.KNOWN_OPEN is a known open defect and
+# only a warning, so end users are not asked to report it.
 _REPORTED_INVARIANTS = ("confirmed_needs_verified", "unique_identity", "architect_refuted")
 
 
@@ -1777,16 +1778,19 @@ def _extract_run_invariants(output_dir: Path) -> list[dict]:
         except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError):
             continue
         if violations:
+            known_open = name in run_invariants.KNOWN_OPEN
             issues.append(
                 {
                     "category": "run_invariant_violated",
-                    "severity": "error",
-                    "title": f"Invariant {name} violated by {len(violations)} item(s)",
+                    "severity": "warning" if known_open else "error",
+                    "title": f"{'Known open: invariant' if known_open else 'Invariant'} {name} "
+                    f"violated by {len(violations)} item(s)",
                     "evidence": {
                         "log_file": "threat-model.yaml",
                         "log_line": 1,
                         "raw_event": "; ".join(violations[:10]),
                         "outcome": name,
+                        **({"known_open": run_invariants.KNOWN_OPEN[name]} if known_open else {}),
                     },
                 }
             )

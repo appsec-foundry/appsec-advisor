@@ -69,6 +69,7 @@ plugin's own code before deciding:
 
 - Identify the producer using the issue's `category`, `evidence.source_agent`, and `AGENTS.md` → "Change map". Trace the evidence through its prompt or code, contract, consumer, validation, and error handling. A failure location alone is not the cause.
 - State the violated invariant and the mechanism that explains the symptom independently of the run's names, paths, IDs, and counts. Group related symptoms conceptually while retaining one verdict per issue. Do not infer a defect from historical similarity alone.
+- Before naming a root cause, read the docstring and comments at that location and search `docs/internal/decisions.md` for it. If they declare the behavior deliberate and it conflicts with another contract, name both locations as the cause and propose no one-sided fix. An issue whose `evidence.known_open` is set is a tracked open defect: say so instead of describing it as new.
 - Then choose exactly one verdict:
   - `plugin_bug` — the plugin's code, prompt, contract, or budget is wrong, and
     you can name the file and the line. Requires a `root_cause`.

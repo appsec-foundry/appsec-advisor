@@ -236,6 +236,9 @@ _DOMAIN_TOKEN_INDEX: tuple[tuple[tuple[str, ...], str], ...] = (
     # §6.10 File Parser / Outbound
     (("file", "upload"), "File Parser and Outbound Request Controls"),
     (("ssrf",), "File Parser and Outbound Request Controls"),
+    (("xxe",), "File Parser and Outbound Request Controls"),
+    (("xml", "external", "entity"), "File Parser and Outbound Request Controls"),
+    (("xml", "parser"), "File Parser and Outbound Request Controls"),
     # §6.11 Operations / Supply Chain
     (("distroless",), "Operations Runtime and Supply Chain Controls"),
     (("codeql",), "Operations Runtime and Supply Chain Controls"),
@@ -258,6 +261,82 @@ _DOMAIN_TOKEN_INDEX: tuple[tuple[tuple[str, ...], str], ...] = (
     (("socket", "io"), "Real-time and Not Applicable Controls"),
     (("realtime",), "Real-time and Not Applicable Controls"),
 )
+
+
+# Last resort for a free-text domain that is no §6 title, after the name index
+# and the catalog gave no answer: coarse words, tried on the control name first
+# and then on the domain, most specific match first.
+_DOMAIN_TEXT_INDEX: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("identity",), "Identity and Authentication Controls"),
+    (("authentication",), "Identity and Authentication Controls"),
+    (("session",), "Session and Token Controls"),
+    (("authorization",), "Authorization Controls"),
+    (("access", "control"), "Authorization Controls"),
+    (("query",), "Query Construction and Data Access Controls"),
+    (("data", "access"), "Query Construction and Data Access Controls"),
+    (("input",), "Input Boundary Validation Controls"),
+    (("output",), "Output Encoding and Rendering Controls"),
+    (("xss",), "Output Encoding and Rendering Controls"),
+    (("browser",), "Browser and Cross-Origin Controls"),
+    (("cors",), "Browser and Cross-Origin Controls"),
+    (("csrf",), "Browser and Cross-Origin Controls"),
+    (("request", "forgery"), "Browser and Cross-Origin Controls"),
+    (("cryptography",), "Cryptography Secrets and Data Protection"),
+    (("crypto",), "Cryptography Secrets and Data Protection"),
+    (("secret",), "Cryptography Secrets and Data Protection"),
+    (("secrets",), "Cryptography Secrets and Data Protection"),
+    (("credential",), "Cryptography Secrets and Data Protection"),
+    (("transport",), "Cryptography Secrets and Data Protection"),
+    (("tls",), "Cryptography Secrets and Data Protection"),
+    (("file",), "File Parser and Outbound Request Controls"),
+    (("outbound",), "File Parser and Outbound Request Controls"),
+    (("logging",), "Operations Runtime and Supply Chain Controls"),
+    (("monitoring",), "Operations Runtime and Supply Chain Controls"),
+    (("deployment",), "Operations Runtime and Supply Chain Controls"),
+    (("dependency",), "Operations Runtime and Supply Chain Controls"),
+    (("supply", "chain"), "Operations Runtime and Supply Chain Controls"),
+    (("runtime",), "Operations Runtime and Supply Chain Controls"),
+    (("llm",), "Real-time and Not Applicable Controls"),
+    (("ai",), "Real-time and Not Applicable Controls"),
+    (("agentic",), "Real-time and Not Applicable Controls"),
+    (("realtime",), "Real-time and Not Applicable Controls"),
+)
+
+
+def _domain_from_text(domain: str) -> str | None:
+    tokens = _tokenise(domain)
+    best: tuple[int, str] | None = None
+    for token_tuple, title in _DOMAIN_TEXT_INDEX:
+        if all(t in tokens for t in token_tuple) and (best is None or len(token_tuple) > best[0]):
+            best = (len(token_tuple), title)
+    return best[1] if best else None
+
+
+def _resolve_from_domain_text(controls: list) -> list[dict]:
+    """Give a control the §6 renderer cannot place a title: the control name's words win over the domain's.
+
+    Controls the renderer already places keep their domain, so this pass never moves a rendered control.
+    """
+    from renderers.pregenerate_fragments import _v2_canonical_section_for_control  # noqa: PLC0415
+
+    titles = _section_titles()
+    changes = []
+    for c in controls:
+        if not isinstance(c, dict):
+            continue
+        current = (c.get("domain") or "").strip()
+        if not current or current in titles or _v2_canonical_section_for_control(c):
+            continue
+        target = _domain_from_text(str(c.get("control") or "")) or _domain_from_text(current)
+        if not target:
+            continue
+        changes.append({"id": c.get("id") or "<anon>", "from": current, "to": target, "control": c.get("control")})
+        c["domain"] = target
+        flags = list(c.get("audit_flags") or [])
+        if "control_domain_from_domain_text" not in flags:
+            flags.append("control_domain_from_domain_text")
+        c["audit_flags"] = flags
+    return changes
 
 
 def _tokenise(text: str) -> set[str]:
@@ -480,6 +559,7 @@ def enforce(data: dict) -> tuple[dict, list[dict], list[dict]]:
                 c["audit_flags"] = flags
 
     domain_changes += _resolve_from_catalog(controls)
+    domain_changes += _resolve_from_domain_text(controls)
     return data, name_changes, domain_changes
 
 
@@ -516,8 +596,9 @@ def _resolve_from_catalog(controls: list) -> list[dict]:
     The model's ``domain`` is free text. A rule-backed control (``rule_id``) or a
     catalog control carries a deterministic domain key; without this pass a
     domain such as "Supply Chain" matches no heading and the control is dropped
-    from §6. A control that matches neither stays as written; the QA gate
-    ``check_controls_reach_section6`` reports it.
+    from §6. A control that matches neither goes to ``_resolve_from_domain_text``;
+    only what that pass cannot place either reaches the QA gate
+    ``check_controls_reach_section6``.
     """
     titles = _section_titles()
     by_rule, by_name, sections = _catalog_domain_keys()

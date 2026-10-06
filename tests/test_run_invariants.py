@@ -39,14 +39,18 @@ def test_frozen_confirmed_needs_verified_evidence():
     assert inv.confirmed_needs_verified(FROZEN) == []
 
 
-@pytest.mark.xfail(strict=True, reason="pending core refactor: component finalize pass")
+@pytest.mark.xfail(strict=True, reason=inv.KNOWN_OPEN["component_paths"])
 def test_frozen_component_matches_evidence_paths():
     assert inv.component_paths(FROZEN) == []
 
 
-@pytest.mark.xfail(strict=True, reason="pending core refactor: finding identity across producers")
+@pytest.mark.xfail(strict=True, reason=inv.KNOWN_OPEN["unique_identity"])
 def test_frozen_reported_findings_have_unique_identity():
     assert inv.unique_identity(FROZEN) == []
+
+
+def test_known_open_names_existing_invariants():
+    assert all(callable(getattr(inv, name, None)) for name in inv.KNOWN_OPEN)
 
 
 def test_frozen_every_boundary_represented():

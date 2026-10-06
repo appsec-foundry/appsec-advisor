@@ -352,3 +352,10 @@ def test_skill_wires_two_consents_and_failure_offer():
     completion = (root / "skills/create-threat-model/SKILL-thin-completion.md").read_text()
     assert "--stage post-qa --keep-run-issues" in completion
     assert "After termination, follow the same `report-error --offer`" in completion
+
+
+def test_known_open_defect_is_never_prepared(run):
+    run.issues["issues"][0]["evidence"] = {"outcome": "unique_identity", "known_open": "pending core refactor"}
+    write(run.output / ".run-issues.json", run.issues)
+    with pytest.raises(ValueError, match="known open"):
+        support.prepare(run.output, run.repo)

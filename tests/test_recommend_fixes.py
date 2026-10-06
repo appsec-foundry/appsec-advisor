@@ -604,3 +604,15 @@ def test_uncovered_iac_points_at_the_catalog_not_at_the_repository(tmp_path):
     assert rec["auto_applicable"] is False
     assert rec["actions"][0]["target"] == "data/config-iac-checks.yaml"
     assert "helm" in rec["summary"]
+
+
+@pytest.mark.parametrize("known_open", [None, "pending core refactor: finding identity across producers"])
+def test_only_a_regressed_invariant_is_a_high_confidence_regression(tmp_path, known_open):
+    evidence = {"outcome": "unique_identity", **({"known_open": known_open} if known_open else {})}
+    rec = rf.RECOMMENDERS["run_invariant_violated"]({"evidence": evidence}, tmp_path)
+    assert rec["auto_applicable"] is False
+    if known_open:
+        assert (rec["confidence"], rec["actions"]) == ("medium", [])
+        assert "not a regression" in rec["summary"] and known_open in rec["summary"]
+    else:
+        assert rec["confidence"] == "high" and "regressed" in rec["summary"]

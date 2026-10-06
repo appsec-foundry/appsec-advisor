@@ -594,3 +594,74 @@ def test_every_catalog_domain_maps_to_a_section_6_heading():
     )
     assert set(catalog["domain_sections"]) == set(catalog["domains"])
     assert set(catalog["domain_sections"].values()) <= ect._section_titles()
+
+
+# ---------------------------------------------------------------------------
+# Free-text fallback — the renderer must be able to place every control
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "control, expected",
+    [
+        (
+            {"control": "XML External Entity (XXE) Prevention", "domain": "Input Handling"},
+            "File Parser and Outbound Request Controls",
+        ),
+        (
+            {"control": "XML External Entity Prevention", "domain": "Input Validation and Injection Prevention"},
+            "File Parser and Outbound Request Controls",
+        ),
+        (
+            {"control": "Eval / Code Execution Prevention", "domain": "Input Handling and Validation"},
+            "Input Boundary Validation Controls",
+        ),
+        (
+            {"control": "Hardcoded Service Credentials", "domain": "Secrets and Credential Management"},
+            "Cryptography Secrets and Data Protection",
+        ),
+        (
+            {"control": "Database Network Exposure", "domain": "Deployment Configuration"},
+            "Operations Runtime and Supply Chain Controls",
+        ),
+        ({"control": "Console Access Control", "domain": "Deployment Configuration"}, "Authorization Controls"),
+        ({"control": "Bespoke thing", "domain": "Misc"}, "Misc"),
+    ],
+)
+def test_a_free_text_domain_reaches_a_section_the_renderer_can_place(control, expected):
+    from renderers.pregenerate_fragments import _v2_canonical_section_for_control
+
+    data, _names, _domains = ect.enforce(_make_yaml([dict(control)]))
+    placed = data["security_controls"][0]
+    assert placed["domain"] == expected
+    assert bool(_v2_canonical_section_for_control(placed)) is (expected != "Misc")
+
+
+@pytest.mark.parametrize(
+    "control",
+    [
+        {"control": "Login Anti-CSRF Token", "domain": "Identity and Authentication"},
+        {"control": "Shell Command Sanitization", "domain": "Input Handling and Validation"},
+        {"control": "LLM Tool Parameter Binding and Authorization", "domain": "LLM and AI Controls"},
+    ],
+)
+def test_the_fallback_never_moves_a_control_the_renderer_already_places(control):
+    from renderers.pregenerate_fragments import _v2_canonical_section_for_control
+
+    before = _v2_canonical_section_for_control(control)
+    data, _names, _domains = ect.enforce(_make_yaml([dict(control)]))
+    assert before and _v2_canonical_section_for_control(data["security_controls"][0]) == before
+
+
+def test_free_text_resolution_is_idempotent_and_unblocks_section_6():
+    from renderers.pregenerate_fragments import gen_security_architecture_v2
+
+    controls = [
+        {"control": "XML External Entity (XXE) Prevention", "domain": "Input Handling", "effectiveness": "Missing"},
+        {"control": "TLS Enforcement", "domain": "Transport Security", "effectiveness": "Partial"},
+    ]
+    with pytest.raises(ValueError, match="no section"):
+        gen_security_architecture_v2(_make_yaml([dict(c) for c in controls]))
+    data, _names, _domains = ect.enforce(_make_yaml(controls))
+    assert ect.enforce(data)[1:] == ([], [])
+    assert gen_security_architecture_v2(data)
