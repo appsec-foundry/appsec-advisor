@@ -710,6 +710,11 @@ SOURCE_TESTS = {
         render_completion_summary_config
         requirements_verification
     """),
+    "schemas/ms-input-digest.schema.json": _tests("""
+        ms_input_digest
+        orchestration_controller
+        schemas
+    """),
     "schemas/analyst-request.schema.json": _tests("""
         analyst_isolation
         analyst_state

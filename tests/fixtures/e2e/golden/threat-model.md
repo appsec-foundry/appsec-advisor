@@ -72,12 +72,7 @@ _Append-only history of assessment runs. Most recent first._
 
 ### Verdict
 
-**About this assessment:** An AI-assisted threat model derived from the implementation of the system. It reconstructs the implemented architecture (2 components, see [§2](#2-architecture-diagrams)) and identifies threats and control gaps in it.
-
-
-**Method and limits:** Automated static analysis of code and configuration, not a pentest or a team threat-modeling session; Low and Informational findings not reported (threshold: medium) - see [§11 Out of Scope](#11-out-of-scope).
-
-🔴 **CRITICAL SECURITY POSTURE** - the fixture project has severe exploitable vulnerabilities across authentication, injection, and access control. The assessment identified **3 Critical** and **1 High** findings.
+🔴 **Critical security concerns** - The fixture web shop can be taken over by anonymous visitors through broken authentication, injection and missing access control. It must not hold real customer data until those server-side defects are fixed.
 
 **Risk distribution:** 🔴 Critical: 3 · 🟠 High: 1 · 🟡 Medium: 0 · 🟢 Low: n/a · **Total: 4**
 
@@ -97,13 +92,18 @@ _Append-only history of assessment runs. Most recent first._
 
 No meaningful security boundary exists between the internet-facing attack surface and complete administrative control. The deployment is not production-ready.
 
+**About this assessment:** An AI-assisted threat model derived from the implementation of the system. It reconstructs the implemented architecture (2 components, see [§2](#2-architecture-diagrams)) and identifies threats and control gaps in it.
+
+
+**Method and limits:** Automated static analysis of code and configuration, not a pentest or a team threat-modeling session; Low and Informational findings not reported (threshold: medium) - see [§11 Out of Scope](#11-out-of-scope).
+
 ### Security Posture & Top Threats
 
 **Figure 2 - Attack Routes and Impact**
 
 Each numbered route names one example finding from the corresponding Top Threats group with its access prerequisite, the register weakness it is linked to, and the group's potential business harm, which depends on deployment and affected assets. W-IDs in parentheses link the example to an existing weakness. The attack step, affected component and technical consequence are listed in the findings register. Red arrows indicate attacks; dashed red arrows involve a victim; grey arrows lead to potential harm.
 
-![Figure 2 - Actors, attack routes, weaknesses and impact](figure2.svg)
+<picture><source media="(prefers-color-scheme: dark)" srcset="figure2-dark.svg"><img src="figure2.svg" alt="Figure 2 - Actors, attack routes, weaknesses and impact"></picture>
 
 **0 structural threats**, grouped by weakness class - each row is one threat, not one finding. *Threat Description* states the general architectural weakness (STRIDE in brackets); *Findings* lists the concrete instances, each linked to [§8 Findings Register](#8-findings-register) with its component; *Risk & Impact* combines severity with business consequence.
 

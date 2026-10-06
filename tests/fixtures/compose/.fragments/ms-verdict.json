@@ -1,6 +1,6 @@
 {
   "severity": "red",
-  "opening": "**CRITICAL SECURITY POSTURE** — the fixture project has severe exploitable vulnerabilities across authentication, injection, and access control. The assessment identified **3 Critical** and **1 High** findings.",
+  "opening": "The fixture web shop can be taken over by anonymous visitors through broken authentication, injection and missing access control. It must not hold real customer data until those server-side defects are fixed.",
   "bullets": [
     {
       "title": "Admin login without a password",

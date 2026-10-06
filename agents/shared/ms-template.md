@@ -42,7 +42,7 @@ After the Threat Register and Mitigation Register are complete, generate a **Man
 
 <Example:>
 
-🔴 **Critical security concerns** — The assessed paths expose customer records and administrative actions to unauthorized users.
+🔴 **Critical security concerns** — The customer shop can be taken over by anonymous visitors: administrator login, server-side code execution and theft of all customer records. It must not process real customer data until the server-side injection and authorization defects are fixed.
 
 <blockquote style="border-left: 3px solid #dc2626; padding: 16px 20px; margin: 0;">
 

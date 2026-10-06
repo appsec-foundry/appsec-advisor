@@ -85,6 +85,7 @@
     },
     "register_floor": { "type": "string", "maxLength": 16 },
     "no_material_harm_components": { "type": "array", "items": { "type": "string", "maxLength": 128 } },
+    "confirmed_use_case": { "type": "string", "maxLength": 200 },
     "components": {
       "type": "array",
       "items": {

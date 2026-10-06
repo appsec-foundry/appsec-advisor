@@ -2590,14 +2590,15 @@ def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) 
     # render never rewrites the model), so model/emit_verdict_to_model.py does the
     # persisting; this only builds the payload, next to the code that renders it.
     ctx.verdict_export = _build_verdict_export(ctx, data, fmap)
+    label = _severity_rollup.VERDICT_LABEL.get(str(data.get("severity") or "").strip().lower(), "")
     tpl = env.get_template(section["template"])
     return (
         tpl.render(
             data=data,
+            verdict_label=label[:1].upper() + label[1:],
             risk_distribution=risk_distribution,
             method_limits=method_limits,
             intro_line=_pregen_assessment_intro(ctx.yaml_data),
-            business_context_note=ctx.verdict_export.get("business_context_note", ""),
             verified_suffixes=verified_suffixes,
         ).rstrip()
         + "\n"

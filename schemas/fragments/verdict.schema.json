@@ -17,7 +17,7 @@
       "minLength": 60,
       "maxLength": 450,
       "pattern": "^(?!.*\\b[FTW]-\\d{3,4}\\b).*$",
-      "description": "One or two short sentences stating security concerns and consequences in the assessed scope. Lead with the outcome; standard weakness names are allowed. Do not assert production readiness, deployment safety or complete coverage. Do not enumerate findings or severity counts; the composer supplies the counts. No technology identifiers, code, locations or finding IDs."
+      "description": "The judgement in one or two short sentences, rendered right after the composer's concern label. First: what the system is (confirmed use case when known) and the worst outcome an attacker reaches. Second: what that means for this use — under which conditions it may run and what must not happen; a declared no-material-harm answer and its assumptions belong here. Standard weakness names are allowed. Do not assert production readiness, deployment safety or complete coverage, and do not generalise beyond the evidence ('every', 'all'). Do not enumerate findings or severity counts, or restate method and coverage; the composer supplies them. No technology identifiers, code, locations or finding IDs."
     },
     "bullets_intro": {
       "type": "string",

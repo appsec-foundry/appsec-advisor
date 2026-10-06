@@ -163,6 +163,7 @@ def build_digest(yaml_data: dict, triage: dict | None = None) -> dict:
         "counts": rollup.risk_distribution_counts(yaml_data),
         "register_floor": rollup.register_floor(yaml_data),
         "no_material_harm_components": [c for c in no_harm if c],
+        **({"confirmed_use_case": use_case} if (use_case := _text(trace.get("confirmed_use_case"), 200)) else {}),
         "components": [
             {
                 "ref": cref[c["id"]],

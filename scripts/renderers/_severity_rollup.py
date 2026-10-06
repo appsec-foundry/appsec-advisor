@@ -292,6 +292,13 @@ def low_cell(yaml_data: dict, counts: dict) -> str:
 # Critical findings than that many bullets can each carry alone.
 VERDICT_FLOOR_LIMIT = 8
 
+# The verdict's concern-level wording, shared by the report and the overview.
+VERDICT_LABEL = {
+    "red": "critical security concerns",
+    "yellow": "high security concerns",
+    "green": "no high or critical concerns reported",
+}
+
 
 def priority_severity(threat: dict | None) -> str:
     """Canonical severity for prioritisation surfaces: ``effective_severity`` first."""
