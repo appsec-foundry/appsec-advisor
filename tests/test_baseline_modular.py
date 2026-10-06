@@ -132,10 +132,10 @@ def test_damaged_modular_install_fails_closed(damage, locations, config, tmp_pat
 def test_marker_alone_and_core_without_loader_are_not_installations(locations, config):
     repo, home = locations
     (repo / "CLAUDE.md").write_text(
-        "`baseline-id: aiscb-0.1.17`\nInstallation mode: modular. Source: /absent. Release: aiscb-0.1.17.\n"
+        "`baseline-id: aiscb-0.1.19`\nInstallation mode: modular. Source: /absent. Release: aiscb-0.1.19.\n"
     )
     assert check(repo, home, config)["status"] == "invalid"
-    (repo / "CLAUDE.md").write_text("`baseline-id: aiscb-0.1.17`\naiscb-MODULES-001\n")
+    (repo / "CLAUDE.md").write_text("`baseline-id: aiscb-0.1.19`\naiscb-MODULES-001\n")
     assert check(repo, home, config)["status"] == "invalid"
 
 
@@ -293,7 +293,7 @@ def test_install_fallback_remains_modular(locations, config, monkeypatch):
 
 
 def test_complete_source_never_accepts_a_modular_core(config):
-    text = "`baseline-id: aiscb-0.1.17`\naiscb-MODULES-001\n"
+    text = "`baseline-id: aiscb-0.1.19`\naiscb-MODULES-001\n"
     with pytest.raises(ib.InstallError, match="complete policy"):
         ib._validated(text, config["id"], "test source")
 
@@ -304,7 +304,7 @@ def test_missing_identity_cannot_be_masked_by_other_valid_copy(locations, config
     target = repo / config["install_filename"]
     target.write_text(target.read_text().replace("baseline-id:", "removed-id:"))
     (home / ".claude").mkdir()
-    (home / ".claude/CLAUDE.md").write_text("`baseline-id: aiscb-0.1.17`\nLegacy complete instructions\n")
+    (home / ".claude/CLAUDE.md").write_text("`baseline-id: aiscb-0.1.19`\nLegacy complete instructions\n")
     assert check(repo, home, config)["status"] == "invalid"
 
 
@@ -313,9 +313,9 @@ def test_refresh_cannot_downgrade_a_newer_modular_installation(locations, config
     ib.install("project", repo, home, config, offline=True)
     target = repo / config["install_filename"]
     package, contents, _ = bm.from_bundle(bm.bundled(config))
-    package["release"] = "aiscb-0.1.18"
+    package["release"] = "aiscb-0.1.20"
     core = package["core"]
-    contents[core] = contents[core].replace(b"aiscb-0.1.17", b"aiscb-0.1.18")
+    contents[core] = contents[core].replace(b"aiscb-0.1.19", b"aiscb-0.1.20")
     package["files"][core] = {"size": len(contents[core]), "sha256": bm.digest(contents[core])}
     raw = (json.dumps(package, indent=2) + "\n").encode()
     fingerprint = bm.digest(raw)
@@ -375,18 +375,18 @@ def test_signed_modular_update_activates_new_snapshot_and_retains_old(locations,
     )
     resources = json.loads(node.value.value)
     for name in resources:
-        resources[name] = resources[name].replace("aiscb-0.1.17", "aiscb-0.1.18")
+        resources[name] = resources[name].replace("aiscb-0.1.19", "aiscb-0.1.20")
     catalog = json.loads(resources["baseline/catalog.json"])
     for entry in [catalog["core"], *catalog["modules"]]:
         raw = resources["baseline/" + entry["file"]].encode()
         entry["size"], entry["sha256"] = len(raw), bm.digest(raw)
     resources["baseline/catalog.json"] = json.dumps(catalog)
     installer = ("EMBEDDED_POLICY = " + repr(json.dumps(resources)) + "\n").encode()
-    complete = old_bundle[br.BASELINE_FILE].replace(b"aiscb-0.1.17", b"aiscb-0.1.18")
+    complete = old_bundle[br.BASELINE_FILE].replace(b"aiscb-0.1.19", b"aiscb-0.1.20")
     raw = json.dumps(
         {
             "schema": 1,
-            "baseline_id": "aiscb-0.1.18",
+            "baseline_id": "aiscb-0.1.20",
             "files": {
                 "scripts/install.py": {"size": len(installer), "sha256": bm.digest(installer)},
                 br.BASELINE_FILE: {"size": len(complete), "sha256": bm.digest(complete)},
@@ -400,7 +400,7 @@ def test_signed_modular_update_activates_new_snapshot_and_retains_old(locations,
         "scripts/install.py": installer,
         br.BASELINE_FILE: complete,
     }
-    github = FakeGitHub(files, tag="aiscb-0.1.18")
+    github = FakeGitHub(files, tag="aiscb-0.1.20")
     config["release"] = {"repository": REPOSITORY, "allowed_signers": [signer]}
     original_fetch = br.fetch_latest
     monkeypatch.setattr(

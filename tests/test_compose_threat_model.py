@@ -7312,7 +7312,8 @@ def test_verdict_discloses_no_harm_without_hiding_critical_findings(tmp_path, co
     assert ctx.verdict_export["bullets"][0]["findings"] == ["F-003"]
     note = ctx.verdict_export.get("business_context_note")
     if material is False:
-        assert note and note in text
+        # The authored opening states the declared no-harm answer; the note stays in the export only.
+        assert note and note not in text
         assert "1 of 2 modeled components" in note
         assert "stated use-case assumptions" in note
     else:

@@ -9,7 +9,7 @@ version: 1.0.0
 title: Core threat analysis questions
 provenance:
   source: AI Secure Coding Baseline (aiscb), adapted questions
-  revision: aiscb-0.1.17
+  revision: aiscb-0.1.19
   url: https://github.com/appsec-foundry/aiscb
   license: CC BY 4.0
   notes: Questions are adaptations, not the original rules. The rule text remains authoritative only where an organization explicitly integrates aiscb as policy.

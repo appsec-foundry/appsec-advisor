@@ -455,12 +455,12 @@ def test_modular_sync_moves_verified_bundle_and_id_together(tmp_path, monkeypatc
     config["baseline"]["id"] = "aiscb-0.1.14"
     (root / "config.json").write_text(json.dumps(config, indent=2) + "\n")
     readme = root / "data/baselines/README.md"
-    readme.write_text(readme.read_text().replace("aiscb-0.1.17", "aiscb-0.1.14"))
+    readme.write_text(readme.read_text().replace("aiscb-0.1.19", "aiscb-0.1.14"))
     target = root / "data/baselines/secure-coding-baseline.md"
     target.write_text("`baseline-id: aiscb-0.1.14`\n")
     current = bc.load_config(REPO_ROOT)
     bundle = bm.bundled(current)
-    released = br.Release(bundle[br.BASELINE_FILE].decode(), "aiscb-0.1.17", "verified test release", bundle)
+    released = br.Release(bundle[br.BASELINE_FILE].decode(), "aiscb-0.1.19", "verified test release", bundle)
 
     def fetch(release, minimum, *, include_bundle):
         assert minimum is None and include_bundle
@@ -471,9 +471,9 @@ def test_modular_sync_moves_verified_bundle_and_id_together(tmp_path, monkeypatc
     with pytest.raises(sb.VersionChange):
         sb.sync(root)
     assert before == {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()}
-    sb.sync(root, accept_id="aiscb-0.1.17", dry_run=True)
+    sb.sync(root, accept_id="aiscb-0.1.19", dry_run=True)
     assert target.read_text() == "`baseline-id: aiscb-0.1.14`\n"
-    sb.sync(root, accept_id="aiscb-0.1.17")
-    assert json.loads((root / "config.json").read_text())["baseline"]["id"] == "aiscb-0.1.17"
+    sb.sync(root, accept_id="aiscb-0.1.19")
+    assert json.loads((root / "config.json").read_text())["baseline"]["id"] == "aiscb-0.1.19"
     assert target.read_bytes() == bundle[br.BASELINE_FILE]
     assert (root / "data/baselines/aiscb/install.py").read_bytes() == bundle["install.py"]
