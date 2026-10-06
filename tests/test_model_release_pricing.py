@@ -16,10 +16,10 @@ import pytest
 SCRIPTS = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-import agent_lifecycle as lifecycle  # noqa: E402
-import cost_running_total as crt  # noqa: E402
-import record_stage_stats as rec  # noqa: E402
-import verify_run_costs as vrc  # noqa: E402
+import runtime.agent_lifecycle as lifecycle  # noqa: E402
+import runtime.cost_running_total as crt  # noqa: E402
+import runtime.record_stage_stats as rec  # noqa: E402
+import runtime.verify_run_costs as vrc  # noqa: E402
 
 _AGENT_TYPE = "appsec-advisor:appsec-stride-analyzer-v2"
 
@@ -103,13 +103,12 @@ def test_a_release_the_table_does_not_know_stays_unpriced(tmp_path: Path) -> Non
 
 
 def test_mixed_model_reference_uses_the_run_s_alias_resolution(tmp_path: Path) -> None:
-    (tmp_path / "threat-model.yaml").write_text(
-        'meta:\n  model: "sonnet"\n  agent_models:\n    stride-analyzer: "opus"\n  other: x\n'
-    )
     (tmp_path / ".agent-run.log").write_text(_usage_line("toolu_a", "opus", resolved="claude-opus-5"))
-    models = vrc._detect_agent_models(tmp_path, vrc.learned_alias_releases(tmp_path / ".agent-run.log"))
-    assert models["stride-analyzer"] == "opus-5"
-    assert models["threat-analyst"] == vrc.ALIAS_FALLBACK_RELEASES["sonnet"]
+    learned = vrc.learned_alias_releases(tmp_path / ".agent-run.log")
+    (tmp_path / "threat-model.yaml").write_text('meta:\n  model: "opus"\n  other: x\n')
+    assert vrc._detect_agent_models(tmp_path, learned) == {"stride-analyzer": "opus-5"}
+    (tmp_path / "threat-model.yaml").write_text('meta:\n  model: "sonnet"\n  other: x\n')
+    assert vrc._detect_agent_models(tmp_path, learned) == {"stride-analyzer": vrc.ALIAS_FALLBACK_RELEASES["sonnet"]}
 
 
 def _identity(call_id: str) -> dict:
@@ -132,6 +131,39 @@ def test_usage_event_carries_the_reported_release_without_persisting_it(tmp_path
     assert "resolved_model" not in stored["calls"][0]
 
 
+def test_usage_event_reports_partial_output_without_persisting_it(tmp_path: Path) -> None:
+    lifecycle.register_call(tmp_path, _identity("toolu_p"))
+    events = lifecycle.record_call_usage(tmp_path, "toolu_p", {"output_tokens": 10}, output_partial=(3, 4))
+    assert "output_partial=3/4" in lifecycle.event_detail(events[0])
+    stored = json.loads(lifecycle.state_path(tmp_path).read_text(encoding="utf-8"))
+    assert "output_partial" not in stored["calls"][0]
+
+
+def test_complete_output_adds_no_partial_marker(tmp_path: Path) -> None:
+    lifecycle.register_call(tmp_path, _identity("toolu_q"))
+    events = lifecycle.record_call_usage(tmp_path, "toolu_q", {"output_tokens": 10}, output_partial=(0, 4))
+    assert "output_partial=" not in lifecycle.event_detail(events[0])
+
+
+def test_partial_output_makes_the_run_cost_a_floor(tmp_path: Path) -> None:
+    lifecycle.register_call(tmp_path, _identity("toolu_r"))
+    lifecycle.append_events(
+        tmp_path,
+        lifecycle.record_call_usage(
+            tmp_path, "toolu_r", {"output_tokens": 10}, resolved_model="claude-opus-5", output_partial=(5, 6)
+        ),
+    )
+    assert crt.aggregate_subagent_usage(tmp_path / ".agent-run.log")["partial_output_calls"] == 1
+    (tmp_path / ".hook-events.log").write_text("", encoding="utf-8")
+    assert crt.aggregate_running_total(tmp_path)["cost_is_floor"] is True
+
+
+def test_complete_output_leaves_the_cost_exact(tmp_path: Path) -> None:
+    log = tmp_path / ".agent-run.log"
+    log.write_text(_usage_line("toolu_s", "opus", resolved="claude-opus-5"))
+    assert crt.aggregate_subagent_usage(log)["partial_output_calls"] == 0
+
+
 def test_a_malformed_reported_model_is_dropped(tmp_path: Path) -> None:
     lifecycle.register_call(tmp_path, _identity("toolu_b"))
     events = lifecycle.record_call_usage(tmp_path, "toolu_b", {"output_tokens": 10}, resolved_model="bad model\nx")
@@ -151,7 +183,7 @@ def test_the_logged_usage_line_is_priced_by_its_release(tmp_path: Path) -> None:
 
 def _record_stats(output_dir: Path, *extra: str) -> dict:
     argv = [
-        "record_stage_stats.py",
+        "runtime/record_stage_stats.py",
         str(output_dir),
         "--stage",
         "1",

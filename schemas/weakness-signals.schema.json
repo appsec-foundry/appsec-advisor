@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Weakness mechanism observations",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "design_signals"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "generated_at": {
+      "type": "string"
+    },
+    "dropped": {
+      "type": "array"
+    },
+    "design_signals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "weakness_class",
+          "statement"
+        ],
+        "properties": {
+          "rule_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "hypothesis_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mechanism_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+          },
+          "weakness_class": {
+            "type": "string"
+          },
+          "cwe": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "statement": {
+            "type": "string"
+          },
+          "absent_control_signal": {
+            "type": "array"
+          },
+          "practice_evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "file",
+                "line"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "file": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+                },
+                "line": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "id": {
+                  "type": "string",
+                  "pattern": "^T-\\d{3,}$"
+                }
+              }
+            }
+          },
+          "instance_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^T-\\d{3,}$"
+            },
+            "uniqueItems": true
+          },
+          "affected_components": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "component": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "implementation_strategy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "none",
+              "home-grown",
+              "standard-misused",
+              "standard-vetted",
+              null
+            ]
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "Low",
+              "Medium",
+              "High",
+              "Critical"
+            ]
+          }
+        },
+        "anyOf": [
+          {
+            "required": [
+              "absent_control_signal"
+            ],
+            "properties": {
+              "absent_control_signal": {
+                "minItems": 1
+              }
+            }
+          },
+          {
+            "required": [
+              "practice_evidence"
+            ],
+            "properties": {
+              "practice_evidence": {
+                "minItems": 1
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

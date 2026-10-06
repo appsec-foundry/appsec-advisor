@@ -1,4 +1,4 @@
-"""Tests for scripts/skill_policy_gate.py — enforcing the org skill policy.
+"""Tests for scripts/runtime/skill_policy_gate.py — enforcing the org skill policy.
 
 Two properties carry the weight.
 
@@ -22,10 +22,10 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "skill_policy_gate.py"
+SCRIPT = REPO_ROOT / "scripts" / "runtime/skill_policy_gate.py"
 sys.path.insert(0, str(SCRIPT.parent))
 
-import skill_policy_gate as spg  # noqa: E402
+import runtime.skill_policy_gate as spg  # noqa: E402
 
 DISABLED = {"publish-threat-model": {"enabled": False, "reason": "Release job only."}}
 
@@ -183,7 +183,11 @@ def test_registered_for_both_invocation_paths():
     """A skill is reached two ways; missing one leaves the policy half-applied."""
     hooks = json.loads((REPO_ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
     pre = [
-        entry for entry in hooks["PreToolUse"] if any("skill_policy_gate.py" in h["command"] for h in entry["hooks"])
+        entry
+        for entry in hooks["PreToolUse"]
+        if any("runtime/skill_policy_gate.py" in h["command"] for h in entry["hooks"])
     ]
     assert pre and pre[0]["matcher"] == "Skill"
-    assert any("skill_policy_gate.py" in h["command"] for entry in hooks["UserPromptExpansion"] for h in entry["hooks"])
+    assert any(
+        "runtime/skill_policy_gate.py" in h["command"] for entry in hooks["UserPromptExpansion"] for h in entry["hooks"]
+    )

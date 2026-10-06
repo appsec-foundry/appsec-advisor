@@ -1,4 +1,4 @@
-"""Tests for scripts/resolve_abuse_cases.py — the abuse-case set resolver.
+"""Tests for scripts/model/resolve_abuse_cases.py — the abuse-case set resolver.
 
 Covers the three merge sources (standard library, org glob, disable list),
 grants/requires chain consistency, and duplicate-id detection.
@@ -11,15 +11,15 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "resolve_abuse_cases.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "model/resolve_abuse_cases.py"
 
 
 def _load_module():
-    if "resolve_abuse_cases" in sys.modules:
-        return sys.modules["resolve_abuse_cases"]
-    spec = importlib.util.spec_from_file_location("resolve_abuse_cases", SCRIPT_PATH)
+    if "model.resolve_abuse_cases" in sys.modules:
+        return sys.modules["model.resolve_abuse_cases"]
+    spec = importlib.util.spec_from_file_location("model.resolve_abuse_cases", SCRIPT_PATH)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["resolve_abuse_cases"] = mod
+    sys.modules["model.resolve_abuse_cases"] = mod
     assert spec.loader is not None
     spec.loader.exec_module(mod)
     return mod

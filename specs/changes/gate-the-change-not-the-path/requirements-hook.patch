@@ -1,6 +1,6 @@
-diff --git a/scripts/requirements_hook.py b/scripts/requirements_hook.py
---- a/scripts/requirements_hook.py
-+++ b/scripts/requirements_hook.py
+diff --git a/scripts/requirements/requirements_hook.py b/scripts/requirements/requirements_hook.py
+--- a/scripts/requirements/requirements_hook.py
++++ b/scripts/requirements/requirements_hook.py
 @@ -5,8 +5,11 @@
  this repository's `.claude/settings.json` and is deliberately absent from
  `hooks/hooks.json`, which ships to users — nothing here should reach an install.
@@ -149,9 +149,9 @@ diff --git a/specs/README.md b/specs/README.md
  `specs/requirements.md` file. It does not hold proposals, archived records, or
  technical bindings.
  
--`scripts/requirements_hook.py` surfaces applicable requirements and separately
+-`scripts/requirements/requirements_hook.py` surfaces applicable requirements and separately
 -holds the decision register. Both hooks are development-only and do not ship in
-+`scripts/requirements_hook.py` surfaces applicable requirements and separately holds the decision register. An edit that leaves everything it replaces byte-identical only adds entries and passes; a whole-file write and a shell write still ask. Both hooks are development-only and do not ship in
++`scripts/requirements/requirements_hook.py` surfaces applicable requirements and separately holds the decision register. An edit that leaves everything it replaces byte-identical only adds entries and passes; a whole-file write and a shell write still ask. Both hooks are development-only and do not ship in
  the plugin.
  
  Structural checks cannot determine whether a test truly proves a product

@@ -1,4 +1,4 @@
-"""Unit tests for scripts/_artifact_stamp.py.
+"""Unit tests for scripts/shared/_artifact_stamp.py.
 
 The rule under test: an artifact a context-v2 boundary regenerates and then
 receipts must keep its previous timestamp while nothing else about it moved, so
@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT_PATH = Path(__file__).parent.parent / "scripts" / "_artifact_stamp.py"
+SCRIPT_PATH = Path(__file__).parent.parent / "scripts" / "shared/_artifact_stamp.py"
 
 
 @pytest.fixture(scope="module")
@@ -23,9 +23,9 @@ def stamp():
     scripts_dir = str(SCRIPT_PATH.parent)
     if scripts_dir not in sys.path:
         sys.path.insert(0, scripts_dir)
-    spec = importlib.util.spec_from_file_location("_artifact_stamp", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("shared._artifact_stamp", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["_artifact_stamp"] = module
+    sys.modules["shared._artifact_stamp"] = module
     spec.loader.exec_module(module)
     return module
 

@@ -76,7 +76,7 @@ Why this and not an API push:
 - Zero coupling: no URL, no token, no network call, no ThreatAtlas version
   pinned. Honours "no hidden network calls" without an allowlist debate.
 - It is a byte-deterministic file → golden-fixture testable exactly like
-  `export_sarif.py`.
+  `exporters/export_sarif.py`.
 - It is worth more than a ThreatAtlas adapter: the same file opens in OWASP
   Threat Dragon itself and in every tool that reads TD JSON. We ship an OWASP
   interchange format, not a vendor bridge.
@@ -214,10 +214,10 @@ threat-modeling-tool export. They are not substitutes.
 
 ### Tier 1 — MVP (recommended first cut)
 
-New deterministic emitter, same shape as `export_sarif.py`:
+New deterministic emitter, same shape as `exporters/export_sarif.py`:
 
 ```
-scripts/export_threat_dragon.py
+scripts/exporters/export_threat_dragon.py
     --threat-model <threat-model.yaml>
     --output       <threat-model.threatdragon.json>
     [--diagram-title <str>]
@@ -237,7 +237,7 @@ Wiring:
    fixture asserting byte-stable output.
 4. `CHANGELOG.md` — one user-visible bullet.
 
-Not in Tier 1: no `--threat-dragon` pipeline flag in `resolve_config.py`, no
+Not in Tier 1: no `--threat-dragon` pipeline flag in `runtime/resolve_config.py`, no
 `outputs.threat_dragon` in `schemas/org-profile.schema.yaml`. Ship it
 skill-only, promote it once the format has survived a real import.
 
@@ -315,5 +315,5 @@ marker, add it to `all`, and only then consider the org-profile output flag.
 - `backend/app/schemas/{threat,mitigation,model,product,diagram,diagram_version}.py`
 - `backend/app/models/{threat,model,enums}.py`
 - `docs/{mcp,ci-integration}.md`
-- local: `schemas/threat-model.output.schema.yaml`, `scripts/export_sarif.py`,
+- local: `schemas/threat-model.output.schema.yaml`, `scripts/exporters/export_sarif.py`,
   `skills/export-threat-model/SKILL.md`

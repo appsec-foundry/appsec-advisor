@@ -1,4 +1,4 @@
-"""Tests for scripts/diagnostic_bundle.py — the anonymised user→maintainer
+"""Tests for scripts/runtime/diagnostic_bundle.py — the anonymised user→maintainer
 error-report bundle.
 
 The central guarantee is negative: a bundle must NEVER contain threat-model
@@ -14,8 +14,8 @@ import json
 import tarfile
 from pathlib import Path
 
-import diagnostic_bundle as db
 import pytest
+import runtime.diagnostic_bundle as db
 
 REPO_ROOT = "/home/victim/private-repo"
 REPO_NAME = "private-repo"

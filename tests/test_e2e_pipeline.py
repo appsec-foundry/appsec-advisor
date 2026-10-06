@@ -15,17 +15,17 @@ What is covered:
 
     * Rendering        — compose_threat_model.render() on the fixture produces
                          a markdown document with the canonical MS structure.
-    * Annotation       — annotate_architecture.py + annotate_sequences.py run
+    * Annotation       — renderers/annotate_architecture.py + renderers/annotate_sequences.py run
                          idempotently on the rendered output (ok exit).
-    * QA loop          — qa_checks.py all converges to zero fixable issues.
-    * Intermediates    — validate_intermediate.py accepts every artifact
+    * QA loop          — validators/qa_checks.py all converges to zero fixable issues.
+    * Intermediates    — validators/validate_intermediate.py accepts every artifact
                          (threats_merged, triage_flags, stride). The
                          legacy dep_scan validator was removed 2026-05.
-    * Pentest pipeline — render_pentest_tasks.py consumes .threats-merged.json
+    * Pentest pipeline — renderers/render_pentest_tasks.py consumes .threats-merged.json
                          and emits a schema-valid pentest-tasks.yaml.
-    * Export chain     — export_sarif.py consumes the produced threat-model.yaml
+    * Export chain     — exporters/export_sarif.py consumes the produced threat-model.yaml
                          and emits a schema-valid SARIF v2.1.0 (one result per
-                         threat, no silent drops); export_html.py / export_pdf.py
+                         threat, no silent drops); exporters/export_html.py / exporters/export_pdf.py
                          consume the composed markdown (skipped when their
                          converter tooling — pandoc / weasyprint+chrome — is
                          absent). Closes the gap where the exporters were only
@@ -40,7 +40,7 @@ What is covered:
                          byte-pinned against committed goldens, so ANY renderer /
                          contract / fragment / exporter change that alters output
                          fails the suite (regenerate with APPSEC_UPDATE_GOLDEN=1).
-    * Incremental      — baseline_state.py update + check_fingerprint round
+    * Incremental      — baseline/baseline_state.py update + check_fingerprint round
                          trip against a fresh synthetic repo, then detects a
                          mutation correctly.
 
@@ -127,10 +127,11 @@ def _load_module(name: str, path: Path):
     return module
 
 
-compose = _load_module("compose_threat_model", SCRIPTS / "compose_threat_model.py")
-qa_checks = _load_module("qa_checks", SCRIPTS / "qa_checks.py")
-apply_prose_fixes = _load_module("apply_prose_fixes", SCRIPTS / "apply_prose_fixes.py")
-inline_code_formatter = _load_module("inline_code_formatter", SCRIPTS / "inline_code_formatter.py")
+compose = _load_module("renderers.compose_threat_model", SCRIPTS / "renderers/compose_threat_model.py")
+qa_checks = _load_module("validators.qa_checks", SCRIPTS / "validators/qa_checks.py")
+apply_prose_fixes = _load_module("repairs.apply_prose_fixes", SCRIPTS / "repairs/apply_prose_fixes.py")
+inline_code_formatter = _load_module("renderers.inline_code_formatter", SCRIPTS / "renderers/inline_code_formatter.py")
+light_images = _load_module("renderers.figure_theme", SCRIPTS / "renderers/figure_theme.py").light_images
 
 # Reuse the canonical SARIF validator that test_export_sarif.py uses, rather
 # than re-implementing structural checks here (single source of truth).
@@ -179,7 +180,7 @@ def rendered_run(e2e_run: Path) -> Path:
 def test_report_and_figure_explain_actual_actor_groupings(e2e_run, monkeypatch, registration, public_source, fallback):
     import xml.etree.ElementTree as ET
 
-    import figure1_dfd
+    import renderers.figure1_dfd as figure1_dfd
 
     model_path = e2e_run / "threat-model.yaml"
     model = yaml.safe_load(model_path.read_text())
@@ -224,7 +225,8 @@ def test_report_and_figure_explain_actual_actor_groupings(e2e_run, monkeypatch, 
         assert ("Public-source readers" in svg_text) == public_source
         assert ("Login / privileges: per finding" in svg_text) == (registration or public_source)
     assert "it is shown distinctly" not in markdown
-    assert "| Privileged User |" in markdown
+    # The privileged attacker keeps its own row, coded like its Figure 1 card.
+    assert re.search(r"^\| (A\d+ · )?Privileged User \| Attacker \|", markdown, re.M)
     assert yaml.safe_load(model_path.read_text()) == model
 
 
@@ -264,7 +266,7 @@ def test_annotate_architecture_runs_idempotently(rendered_run: Path) -> None:
     threats = rendered_run / ".threats-merged.json"
 
     r1 = _run_script(
-        "annotate_architecture.py",
+        "renderers/annotate_architecture.py",
         "--markdown",
         str(md_path),
         "--threats",
@@ -275,7 +277,7 @@ def test_annotate_architecture_runs_idempotently(rendered_run: Path) -> None:
     after_first = md_path.read_text(encoding="utf-8")
 
     r2 = _run_script(
-        "annotate_architecture.py",
+        "renderers/annotate_architecture.py",
         "--markdown",
         str(md_path),
         "--threats",
@@ -284,7 +286,7 @@ def test_annotate_architecture_runs_idempotently(rendered_run: Path) -> None:
     assert r2.returncode == 0, r2.stderr
 
     assert md_path.read_text(encoding="utf-8") == after_first, (
-        "annotate_architecture.py must be idempotent — second run changed the file"
+        "renderers/annotate_architecture.py must be idempotent — second run changed the file"
     )
 
 
@@ -294,7 +296,7 @@ def test_annotate_sequences_runs_without_error(rendered_run: Path) -> None:
     threats = rendered_run / ".threats-merged.json"
 
     result = _run_script(
-        "annotate_sequences.py",
+        "renderers/annotate_sequences.py",
         "--markdown",
         str(md_path),
         "--threats",
@@ -309,7 +311,7 @@ def test_qa_checks_all_converges(rendered_run: Path) -> None:
     md_path = rendered_run / "threat-model.md"
 
     result = _run_script(
-        "qa_checks.py",
+        "validators/qa_checks.py",
         "all",
         str(md_path),
         str(rendered_run),
@@ -327,7 +329,7 @@ def test_qa_checks_all_converges(rendered_run: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 2. Intermediate artifacts: every file validate_intermediate.py knows about
+# 2. Intermediate artifacts: every file validators/validate_intermediate.py knows about
 # ---------------------------------------------------------------------------
 
 
@@ -342,7 +344,7 @@ def test_qa_checks_all_converges(rendered_run: Path) -> None:
 )
 def test_validate_intermediate_accepts_fixture(e2e_run: Path, schema: str, filename: str) -> None:
     result = _run_script(
-        "validate_intermediate.py",
+        "validators/validate_intermediate.py",
         schema,
         str(e2e_run / filename),
     )
@@ -361,7 +363,7 @@ def test_pentest_pipeline_produces_schema_valid_tasks(e2e_run: Path) -> None:
     out = e2e_run / "pentest-tasks.yaml"
 
     result = _run_script(
-        "render_pentest_tasks.py",
+        "renderers/render_pentest_tasks.py",
         "--merged",
         str(merged),
         "--output",
@@ -375,7 +377,7 @@ def test_pentest_pipeline_produces_schema_valid_tasks(e2e_run: Path) -> None:
     assert out.is_file()
 
     # Schema validation via the same validator the real pipeline uses.
-    validate = _run_script("validate_intermediate.py", "pentest_tasks", str(out))
+    validate = _run_script("validators/validate_intermediate.py", "pentest_tasks", str(out))
     assert validate.returncode == 0, validate.stdout
 
     doc = yaml.safe_load(out.read_text(encoding="utf-8"))
@@ -399,7 +401,7 @@ def test_pentest_pipeline_strix_dialect(e2e_run: Path) -> None:
     out = e2e_run / "pentest-tasks-strix.yaml"
 
     result = _run_script(
-        "render_pentest_tasks.py",
+        "renderers/render_pentest_tasks.py",
         "--merged",
         str(merged),
         "--output",
@@ -429,7 +431,7 @@ def _seed_repo(dst: Path) -> Path:
 
 
 def test_baseline_update_writes_cache(tmp_path: Path, e2e_run: Path) -> None:
-    """`baseline_state.py update` writes a schema-valid cache file."""
+    """`baseline/baseline_state.py update` writes a schema-valid cache file."""
     repo = _seed_repo(tmp_path)
 
     # Remove the pre-baked fixture cache so we observe a real update.
@@ -437,7 +439,7 @@ def test_baseline_update_writes_cache(tmp_path: Path, e2e_run: Path) -> None:
     cache_path.unlink()
 
     result = _run_script(
-        "baseline_state.py",
+        "baseline/baseline_state.py",
         "update",
         "--output-dir",
         str(e2e_run),
@@ -463,7 +465,7 @@ def test_incremental_fast_path_on_unchanged_repo(tmp_path: Path, e2e_run: Path) 
     (e2e_run / ".appsec-cache" / "baseline.json").unlink()
 
     update = _run_script(
-        "baseline_state.py",
+        "baseline/baseline_state.py",
         "update",
         "--output-dir",
         str(e2e_run),
@@ -475,7 +477,7 @@ def test_incremental_fast_path_on_unchanged_repo(tmp_path: Path, e2e_run: Path) 
     assert update.returncode == 0, update.stderr
 
     check = _run_script(
-        "baseline_state.py",
+        "baseline/baseline_state.py",
         "check-fingerprint",
         "--output-dir",
         str(e2e_run),
@@ -495,7 +497,7 @@ def test_incremental_detects_manifest_mutation(tmp_path: Path, e2e_run: Path) ->
     (e2e_run / ".appsec-cache" / "baseline.json").unlink()
 
     _run_script(
-        "baseline_state.py",
+        "baseline/baseline_state.py",
         "update",
         "--output-dir",
         str(e2e_run),
@@ -512,7 +514,7 @@ def test_incremental_detects_manifest_mutation(tmp_path: Path, e2e_run: Path) ->
     pkg.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
     check = _run_script(
-        "baseline_state.py",
+        "baseline/baseline_state.py",
         "check-fingerprint",
         "--output-dir",
         str(e2e_run),
@@ -552,14 +554,14 @@ def test_compose_is_deterministic_across_runs(tmp_path: Path, e2e_run: Path) -> 
 
 
 def test_export_sarif_from_yaml(e2e_run: Path) -> None:
-    """export_sarif.py consumes the frozen threat-model.yaml and emits a
+    """exporters/export_sarif.py consumes the frozen threat-model.yaml and emits a
     schema-valid SARIF v2.1.0 with one result per threat (no silent drops).
     Pure Python — always runs, no external converter needed."""
     yml = e2e_run / "threat-model.yaml"
     out = e2e_run / "threat-model.sarif.json"
-    result = _run_script("export_sarif.py", "--threat-model", str(yml), "--output", str(out))
+    result = _run_script("exporters/export_sarif.py", "--threat-model", str(yml), "--output", str(out))
     assert result.returncode == 0, (
-        f"export_sarif.py failed (exit {result.returncode}):\nstdout={result.stdout}\nstderr={result.stderr}"
+        f"exporters/export_sarif.py failed (exit {result.returncode}):\nstdout={result.stdout}\nstderr={result.stderr}"
     )
     assert out.is_file() and out.stat().st_size > 0, "SARIF output missing/empty"
 
@@ -578,37 +580,37 @@ def test_export_sarif_from_yaml(e2e_run: Path) -> None:
 
 
 def test_export_html_from_markdown(rendered_run: Path) -> None:
-    """export_html.py consumes the composed markdown. Gated on its own
+    """exporters/export_html.py consumes the composed markdown. Gated on its own
     --check-only preflight so a box without pandoc skips instead of failing.
     --no-mermaid keeps the assertion on the HTML conversion itself, not on
     diagram rendering (which needs mmdc/chrome)."""
     md = rendered_run / "threat-model.md"
-    preflight = _run_script("export_html.py", "--check-only", "--input", str(md))
+    preflight = _run_script("exporters/export_html.py", "--check-only", "--input", str(md))
     if preflight.returncode != 0:
         pytest.skip("export_html preflight failed (pandoc absent)")
 
     out = rendered_run / "threat-model.html"
-    result = _run_script("export_html.py", "--input", str(md), "--output", str(out), "--no-mermaid")
+    result = _run_script("exporters/export_html.py", "--input", str(md), "--output", str(out), "--no-mermaid")
     assert result.returncode == 0, (
-        f"export_html.py failed (exit {result.returncode}):\nstdout={result.stdout}\nstderr={result.stderr}"
+        f"exporters/export_html.py failed (exit {result.returncode}):\nstdout={result.stdout}\nstderr={result.stderr}"
     )
     assert out.is_file() and out.stat().st_size > 0, "HTML output missing/empty"
     assert "<html" in out.read_text(encoding="utf-8", errors="ignore").lower(), "no <html> element"
 
 
 def test_export_pdf_from_markdown(rendered_run: Path) -> None:
-    """export_pdf.py consumes the composed markdown. Gated on its own
+    """exporters/export_pdf.py consumes the composed markdown. Gated on its own
     --check-only preflight (with --no-mermaid, so only weasyprint is required)
     so a box without the PDF converter skips instead of failing."""
     md = rendered_run / "threat-model.md"
-    preflight = _run_script("export_pdf.py", "--check-only", "--input", str(md), "--no-mermaid")
+    preflight = _run_script("exporters/export_pdf.py", "--check-only", "--input", str(md), "--no-mermaid")
     if preflight.returncode != 0:
         pytest.skip("export_pdf preflight failed (weasyprint/chrome absent)")
 
     out = rendered_run / "threat-model.pdf"
-    result = _run_script("export_pdf.py", "--input", str(md), "--output", str(out), "--no-mermaid")
+    result = _run_script("exporters/export_pdf.py", "--input", str(md), "--output", str(out), "--no-mermaid")
     assert result.returncode == 0, (
-        f"export_pdf.py failed (exit {result.returncode}):\nstdout={result.stdout}\nstderr={result.stderr}"
+        f"exporters/export_pdf.py failed (exit {result.returncode}):\nstdout={result.stdout}\nstderr={result.stderr}"
     )
     assert out.is_file(), "PDF output missing"
     assert out.stat().st_size > 1024, f"PDF suspiciously small ({out.stat().st_size} bytes)"
@@ -726,10 +728,26 @@ def test_composed_report_has_no_inline_code_residue(e2e_run: Path) -> None:
     assert report.warnings == []
 
 
+def test_composed_figures_stay_live_images_through_every_prose_pass(e2e_run: Path) -> None:
+    rendered, _ = compose.render(CONTRACT, e2e_run)
+    figures = [line for line in rendered.splitlines() if "<picture>" in line]
+    assert figures, "the frozen run must render at least one figure as a file"
+    for line in figures:
+        assert "`<" not in line, line
+    assert len(re.findall(r"!\[Figure [^\]]*\]\([\w.-]+\.svg\)", light_images(rendered))) == len(figures)
+
+    after_prose, _ = apply_prose_fixes.apply_fixes(rendered)
+    md = e2e_run / "threat-model.md"
+    md.write_text(after_prose, encoding="utf-8")
+    qa_checks._run_autofix(md, SYNTHETIC_REPO)
+    final = md.read_text(encoding="utf-8")
+    assert all(line in final for line in figures)
+
+
 def test_export_sarif_matches_golden(e2e_run: Path) -> None:
     yml = e2e_run / "threat-model.yaml"
     out = e2e_run / "threat-model.sarif.json"
-    result = _run_script("export_sarif.py", "--threat-model", str(yml), "--output", str(out))
+    result = _run_script("exporters/export_sarif.py", "--threat-model", str(yml), "--output", str(out))
     assert result.returncode == 0, result.stderr
     produced = out.read_text(encoding="utf-8")
     golden = GOLDEN / "threat-model.sarif.json"
@@ -804,7 +822,8 @@ def test_weakness_register_renders_and_is_qa_safe(e2e_run: Path) -> None:
     assert rendered.index("### Top Weaknesses") < rendered.index("## 7. Weakness Register")
     # Findings and systemic weaknesses are reported as separate evidence types.
     assert "**Assessment evidence:**" in rendered
-    assert "confirmed-exploitable finding(s)" in rendered
+    assert "finding(s) confirmed in code" in rendered
+    assert "**Weakness classes:**" in rendered
     # QA invariants pass on the rendered document (the block adds no anchor /
     # section that check_invariants would reject).
     (e2e_run / "threat-model.md").write_text(rendered, encoding="utf-8")

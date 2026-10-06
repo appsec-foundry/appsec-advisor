@@ -27,20 +27,15 @@ labels: bug
 
 <!-- e.g. create-threat-model runtime, appsec-stride-analyzer-v2, appsec-qa-reviewer, etc. -->
 
-**Diagnostic bundle (recommended — anonymised)**
+**Optional diagnostic bundle**
 
-Instead of pasting raw output, attach an **anonymised** diagnostic bundle. In the
-Claude Code session where the error happened, run:
+To investigate the error and prepare a separate issue draft with explicit publication approval, use `/appsec-advisor:report-error`. To create only a local support archive for this issue, run:
 
+```text
+/appsec-advisor:report-error --bundle-only
 ```
-/appsec-advisor:report-error
-```
 
-This writes an `appsec-diag-<id>.tgz` containing only tool/plugin versions, the
-run shape (phases reached, timings, aggregate counts), and scrubbed logs —
-**no threat-model results, findings, source, or repo paths**. The tool makes no
-network calls; you choose whether to attach it. It prints a summary so you can
-review it first, then drag the `.tgz` onto this issue.
+The bundle helper makes no network calls. Its log scrubbing is best effort; inspect the entire archive for confidential or identifying data before attaching it manually. Never paste raw logs or source from the scanned repository.
 
 If you cannot produce a bundle, paste only a **non-sensitive** error message:
 

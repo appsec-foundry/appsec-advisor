@@ -1,0 +1,398 @@
+#!/usr/bin/env python3
+"""analyzers/authz_confirm.py — route-inventory-driven IDOR/BOLA + missing-route-auth
+instance confirmer (cross-language).
+
+The deterministic regex scanner (analyzers/source_auth_scanner.py) covers IDOR (AUTHZ-002)
+and missing route auth (AUTHZ-008) for Node/Express only, because those rules
+key on an *inline* request marker (`req.params`). Other stacks have no such
+inline marker, so a flat regex would flag every `findById(id)` call.
+
+This module closes that gap without high false positives by REUSING the
+multi-language `analyzers/route_inventory.py` output (`.route-inventory.json`; its
+module docstring lists the supported frameworks) for per-route
+`handler_file:handler_line` + `missing_authz_suspect` / `missing_auth_suspect`
+flags, and then reading the handler *function body* to confirm the gap. For the
+frameworks in `handler_resolver.RESOLVED_FRAMEWORKS` the body comes from
+`HandlerResolver.handler_code` (the registration line is not the handler);
+other frameworks read the function at `handler_line`:
+
+  * `missing_authz_suspect` (authn present, no authz signal, `:id` path param —
+    the BOLA/IDOR primitive) → emit **AUTHZ-301** (CWE-639) UNLESS the handler
+    body contains an ownership / tenant / policy predicate.
+  * `missing_auth_suspect` on a route whose authentication the inventory proved
+    `absent` (every chain element resolved, no credential read — FE-14) → emit
+    **AUTHZ-302** (CWE-862) UNLESS the body contains an authentication check.
+    An `unknown` route stays a hypothesis: a guard the inventory cannot see
+    (another file, a framework security config) is not evidence of absence.
+
+A suspect the reader cannot resolve (no handler file/line, file missing, body
+not extractable) is deliberately NOT emitted — it stays a design-level
+hypothesis via the architecture-coverage ARCH-BOLA-001 / ARCH-AUTHN-001 rules,
+and its `route_id` is listed in `unresolved_suspects` so a consumer can tell it
+from a suspect whose body was read and cleared.
+We only upgrade to a *confirmed* instance when the body affirmatively shows the
+predicate is absent. This keeps the confirmed-instance channel low-FP (a false
+negative on suppression — over-including a neighbouring function's ownership
+check — errs toward NOT emitting, never toward a spurious finding).
+
+Output: `<output_dir>/.authz-confirm-findings.json` in the
+`schemas/source-auth-findings.schema.yaml` shape. `model/merge_threats.py` ingests it
+beside `.source-auth-findings.json` → `source=source-scan` → folds into the
+`missing_authz` weakness class (idor-object-authz / missing-route-auth groups).
+"""
+
+from __future__ import annotations
+
+# Direct CLI execution must resolve the same packages as imports from scripts/.
+import sys as _sys
+from pathlib import Path as _Path
+
+if not __package__:
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
+
+
+import argparse
+import json
+import re
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from shared._path_guard import is_safe_to_read  # noqa: E402
+from shared._source_lex import code_only, without_comments  # noqa: E402
+
+from analyzers.handler_resolver import RESOLVED_FRAMEWORKS, HandlerResolver  # noqa: E402
+from analyzers.source_auth_scanner import _source_type_for  # noqa: E402  (reuse ext→enum map)
+
+# --- handler-body extraction ------------------------------------------------
+
+_C_FAMILY = (
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".cjs",
+    ".ts",
+    ".tsx",
+    ".java",
+    ".kt",
+    ".go",
+    ".cs",
+    ".php",
+    ".swift",
+    ".dart",
+    ".scala",
+)
+_MAX_BODY_LINES = 80
+
+
+_STRING_LITERAL_RE = re.compile(r'"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'|`(?:[^`\\]|\\.)*`')
+
+
+def _extract_brace_body(lines: list[str], i0: int, max_lines: int) -> str:
+    """Body of a C-family handler: from the first `{` at/after i0, brace-match
+    to its close. String literals are stripped before counting so a literal
+    brace (e.g. the `{id}` path template in `@GetMapping("/orders/{id}")`) does
+    not terminate the block early. An over-included body only risks a false
+    NEGATIVE on emit (safe direction)."""
+    depth = 0
+    started = False
+    out: list[str] = []
+    for idx in range(i0, min(len(lines), i0 + max_lines)):
+        out.append(lines[idx])
+        stripped = _STRING_LITERAL_RE.sub("", lines[idx])
+        for ch in stripped:
+            if ch == "{":
+                depth += 1
+                started = True
+            elif ch == "}":
+                depth -= 1
+                if started and depth <= 0:
+                    return "\n".join(out)
+    return ""  # A truncated or unbalanced body cannot prove absence of a guard.
+
+
+def _indent(line: str) -> int:
+    return len(line) - len(line.lstrip(" \t"))
+
+
+def _extract_python_body(lines: list[str], i0: int, max_lines: int) -> str:
+    """Body of a Python handler: find the `def`/`async def` at/after i0 (the
+    route decorator may sit on handler_line), then take the indent block."""
+    n = len(lines)
+    def_idx = None
+    for idx in range(i0, min(n, i0 + 5)):
+        if re.match(r"\s*(async\s+)?def\s", lines[idx]):
+            def_idx = idx
+            break
+    if def_idx is None:
+        return "\n".join(lines[i0 : i0 + 30])
+    base = _indent(lines[def_idx])
+    out = [lines[def_idx]]
+    for idx in range(def_idx + 1, min(n, def_idx + max_lines)):
+        line = lines[idx]
+        if not line.strip():
+            out.append(line)
+            continue
+        if _indent(line) <= base:
+            break
+        out.append(line)
+    return "\n".join(out)
+
+
+def extract_body(lines: list[str], handler_line_1based: int, path: Path) -> str:
+    """Best-effort handler-body text. Brace-matched for C-family, indent-based
+    for Python, bounded forward window otherwise (Ruby, unknown)."""
+    if handler_line_1based is None or handler_line_1based < 1:
+        return ""
+    i0 = handler_line_1based - 1
+    if i0 < 0 or i0 >= len(lines):
+        return ""
+    ext = path.suffix.lower()
+    if ext == ".py":
+        return _extract_python_body(lines, i0, _MAX_BODY_LINES)
+    if ext in _C_FAMILY:
+        return _extract_brace_body(lines, i0, _MAX_BODY_LINES)
+    return "\n".join(lines[i0 : i0 + 30])
+
+
+# --- predicates -------------------------------------------------------------
+
+_AUTH_RE = re.compile(
+    r"(?i)("
+    r"authenticate|require_?auth|requireLogin|login_required|@PreAuthorize"
+    r"|@Secured|@RolesAllowed|\[Authorize\]|before_action[^\n]*(auth|login)"
+    r"|verify_?token|verify_?jwt|\bjwt\b|current_?user|\breq(?:uest)?\.user\b"
+    r"|isAuthenticated|passport\.authenticate|ensureLoggedIn|unauthorized|\b401\b"
+    r")"
+)
+
+
+def has_ownership_predicate(body: str) -> bool:
+    text = code_only(without_comments(without_comments(body or ""), python=True))
+    identity = r"(?:current_?user|req(?:uest)?\.user|principal|session)\b"
+    owner = r"(?:owner_?id|user_?id|tenant_?id|account_?id|customer_?id|getOwnerId\(\))"
+    # A rejecting comparison must precede the result being returned. Merely
+    # logging an identity, or mentioning an owner in a comment, is not a gate.
+    for match in re.finditer(r"\bif\b[^\n]*(?:\n[^\n]*)?", text, re.I):
+        guard = match[0]
+        resource = re.search(rf"\b(\w+)\.{owner}", guard, re.I)
+        returned = resource and re.search(
+            rf"\breturn\s+{re.escape(resource[1])}\b|\.(?:json|send)\s*\(\s*{re.escape(resource[1])}\b",
+            text[: match.start()],
+        )
+        bound_resource = not _object_access(text) or (
+            resource
+            and re.search(
+                rf"\b{re.escape(resource[1])}\s*=\s*(?:await\s+)?[\w.]+"
+                r"\.(?:findById|findByPk|findOne|findUnique|findFirst|get)\s*\(",
+                text[: match.start()],
+            )
+        )
+        if (
+            re.search(owner, guard, re.I)
+            and re.search(identity, guard, re.I)
+            and re.search(r"!=|!\s*[\w.]+(?:\(\))?\.equals\s*\(", guard)
+            and re.search(r"\b(?:throw|raise|deny|abort)\b|return\s+.*\b40[13]\b", guard)
+            and not returned
+            and bound_resource
+        ):
+            return True
+    # Only recognize an ownership-scoped lookup when its identity argument is
+    # server-derived, not another request parameter.
+    return bool(
+        re.search(rf"\.(?:byOwner|findByOwner|findByTenant)\s*\([^\n]*{identity}", text, re.I)
+        or re.search(rf"\.(?:findOne|findFirst|findMany|where)\s*\([^;\n]*\b{owner}\s*[:=]\s*{identity}", text, re.I)
+    )
+
+
+def has_auth_check(body: str) -> bool:
+    raw = without_comments(without_comments(body or ""), python=True)
+    if re.search(r"@PreAuthorize\(\s*['\"]isAuthenticated\(\)['\"]\s*\)|@(?:Secured|RolesAllowed)\(", raw):
+        return True
+    text = code_only(raw)
+    return bool(_AUTH_RE.search(text) and re.search(r"\b(?:if|throw|raise|abort)\b", text))
+
+
+def _object_access(body: str) -> bool:
+    """A local data operation actually consumes an object identifier."""
+    text = code_only(body)
+    return bool(
+        re.search(
+            r"\.(?:findById|findByPk|findOne|findUnique|findFirst|get|update|destroy|delete)"
+            r"\s*\([^;\n]*\b(?:id|[A-Za-z_]\w*[Ii]d|[A-Za-z_]\w*_id)\b",
+            text,
+        )
+    )
+
+
+# --- confirmation -----------------------------------------------------------
+
+_SNIPPET_MAX = 160
+
+
+def _snippet(body: str) -> str:
+    first = (body or "").strip().splitlines()
+    return first[0][:_SNIPPET_MAX] if first else ""
+
+
+def _is_examined(route: dict) -> bool:
+    """Whether the confirmer reads this route's handler: an IDOR suspect, or a
+    missing-auth suspect whose authentication the inventory proved `absent`."""
+    return bool(
+        route.get("missing_authz_suspect")
+        or (route.get("missing_auth_suspect") and route.get("authn_signal") == "absent")
+    )
+
+
+def _examine(repo_root: Path, inventory: dict) -> tuple[list[dict], list[str]]:
+    """Return the confirmed findings and the `route_id`s of examined suspects
+    whose handler body could not be read. A suspect in neither list was read
+    and cleared by its predicate."""
+    routes = inventory.get("routes") if isinstance(inventory, dict) else None
+    if not isinstance(routes, list):
+        return [], []
+    findings: list[dict] = []
+    unresolved: list[str] = []
+    seq = 0
+    resolver = HandlerResolver(repo_root)
+    for r in routes:
+        if not isinstance(r, dict) or not _is_examined(r):
+            continue
+        body = _handler_body(repo_root, resolver, r)
+        if not body:
+            if isinstance(r.get("route_id"), str):
+                unresolved.append(r["route_id"])
+            continue
+        hf = r["handler_file"].strip()
+        hl = r["handler_line"]
+        method = (r.get("method") or "").upper()
+        route_path = r.get("path") or ""
+
+        check_id = cwe = ft = title = None
+        if r.get("missing_authz_suspect") and not has_ownership_predicate(body):
+            if not _object_access(body):
+                # A service call may enforce policy out of view. Keep it open;
+                # neither a route parameter nor readable code proves IDOR.
+                if isinstance(r.get("route_id"), str):
+                    unresolved.append(r["route_id"])
+                continue
+            check_id, cwe, ft = "AUTHZ-301", "CWE-639", "FT-040"
+            title = f"IDOR / broken object-level authorization — {method} {route_path}"
+            scenario = (
+                f"The `{method} {route_path}` handler ({hf}:{hl}) loads a resource by "
+                f"a request-supplied id and enforces authentication but no ownership "
+                f"predicate in the handler body, so any authenticated user can access "
+                f"another user's object."
+            )
+        elif r.get("missing_auth_suspect") and r.get("authn_signal") == "absent" and not has_auth_check(body):
+            check_id, cwe, ft = "AUTHZ-302", "CWE-862", "FT-042"
+            title = f"Missing authorization on sensitive route — {method} {route_path}"
+            scenario = (
+                f"The state-changing / management route `{method} {route_path}` "
+                f"({hf}:{hl}) has no authentication or authorization check in its "
+                f"handler body, so it is reachable by an unauthenticated caller."
+            )
+        if not check_id:
+            continue
+
+        seq += 1
+        findings.append(
+            {
+                "local_id": f"SAF-{seq:03d}",
+                "check_id": check_id,
+                "source_type": _source_type_for(hf),
+                "file": hf,
+                "line": hl,
+                "title": title,
+                "scenario": scenario,
+                "severity": "High",
+                "cwe": [cwe],
+                "finding_type_id": ft,
+                # AUTHZ-301's attacker holds an account; AUTHZ-302's needs none.
+                "breach_vector": "Internet User" if check_id == "AUTHZ-301" else "Internet Anon",
+                "evidence_snippet": _snippet(body),
+            }
+        )
+    return findings, unresolved
+
+
+def _handler_body(repo_root: Path, resolver: HandlerResolver, route: dict) -> str:
+    """The route's handler body, or "" when the file or the body cannot be read."""
+    hf = (route.get("handler_file") or "").strip()
+    hl = route.get("handler_line")
+    if not hf or not isinstance(hl, int) or route.get("framework") == "graphql":
+        return ""
+    # `handler_file` comes from a sidecar: an absolute or escaping path, or a
+    # symlink out of the repository, is never read.
+    path = repo_root / hf
+    if not path.is_file() or not is_safe_to_read(path, repo_root):
+        return ""
+    try:
+        if path.stat().st_size > 1_000_000:
+            return ""
+        text = path.read_text(encoding="utf-8", errors="replace")
+        lines = without_comments(text, python=path.suffix == ".py").splitlines()
+    except OSError:
+        return ""
+    # A call-registered route's line is its registration, not its handler: read the
+    # handler through the shared resolver, and emit nothing when it does not resolve.
+    if route.get("framework") in RESOLVED_FRAMEWORKS:
+        return without_comments(resolver.handler_code(route) or "", python=path.suffix == ".py")
+    return extract_body(lines, hl, path)
+
+
+def confirm_instances(repo_root: Path, inventory: dict) -> list[dict]:
+    """Return schema-shaped findings for confirmed IDOR / missing-route-auth."""
+    return _examine(repo_root, inventory)[0]
+
+
+def build_document(repo_root: Path, inventory: dict, checks_run: int = 2) -> dict:
+    """Wrap the confirmed findings for `inventory` in the sidecar document; `checks_run` is reported as given."""
+    findings, unresolved = _examine(repo_root, inventory)
+    return {
+        "version": 1,
+        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "checks_run": checks_run,
+        "violations": len(findings),
+        "findings": findings,
+        "unresolved_suspects": unresolved,
+    }
+
+
+def _load_inventory(output_dir: Path) -> dict | None:
+    path = output_dir / ".route-inventory.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--repo-root", required=True, type=Path)
+    ap.add_argument("--output-dir", required=True, type=Path)
+    ap.add_argument("--stdout", action="store_true", help="print the document instead of writing")
+    args = ap.parse_args(argv)
+
+    inventory = _load_inventory(args.output_dir)
+    if inventory is None:
+        # No route inventory → nothing to confirm; emit an empty (valid) doc so
+        # merge ingestion is uniform. Absence is the default on repos without
+        # a detected route surface.
+        inventory = {"routes": []}
+    doc = build_document(args.repo_root, inventory)
+
+    if args.stdout:
+        print(json.dumps(doc, indent=2))
+        return 0
+    out = args.output_dir / ".authz-confirm-findings.json"
+    out.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+    sys.stderr.write(f"authz_confirm: wrote {doc['violations']} confirmed authz instance(s) to {out}\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

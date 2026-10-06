@@ -7,7 +7,7 @@ from pathlib import Path
 PLUGIN_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
 
-import resolve_config  # noqa: E402
+import runtime.resolve_config as resolve_config  # noqa: E402
 
 SKILL_DIR = PLUGIN_ROOT / "skills" / "create-threat-model"
 SKILL_MD = SKILL_DIR / "SKILL.md"

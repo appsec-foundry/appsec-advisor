@@ -1,4 +1,4 @@
-"""Tests for scripts/_yaml_io.py — load_yaml read semantics.
+"""Tests for scripts/shared/_yaml_io.py — load_yaml read semantics.
 
 Covers the three declared semantics:
   * raise on error (no default)
@@ -11,10 +11,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import _yaml_io
 import pytest
+import shared._yaml_io as _yaml_io
 import yaml
-from _yaml_io import load_yaml
+from shared._yaml_io import load_yaml
 
 
 def test_successful_parse(tmp_path: Path):

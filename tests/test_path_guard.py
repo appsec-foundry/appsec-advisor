@@ -1,4 +1,4 @@
-"""Tests for scripts/_path_guard.py — symlink-escape detection."""
+"""Tests for scripts/shared/_path_guard.py — symlink-escape detection."""
 
 from __future__ import annotations
 
@@ -6,10 +6,12 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import _path_guard as guard  # noqa: E402
+import shared._path_guard as guard  # noqa: E402
 
 
 def test_is_within_repo_true_for_nested_path(tmp_path):
@@ -40,6 +42,28 @@ def test_is_safe_to_read_accepts_internal_symlink(tmp_path):
     link = tmp_path / "link.txt"
     os.symlink(target, link)
     assert guard.is_safe_to_read(link, tmp_path)
+
+
+@pytest.mark.parametrize("kind", ["fifo", "directory", "device_symlink"])
+def test_is_safe_to_read_rejects_what_is_not_a_regular_file(tmp_path, kind):
+    """A FIFO would block its reader; a directory or device is no source file."""
+    path = tmp_path / "config.yml"
+    if kind == "fifo":
+        os.mkfifo(path)
+    elif kind == "directory":
+        path.mkdir()
+    else:
+        inner = tmp_path / "dev"
+        inner.mkdir()
+        os.symlink("/dev/zero", inner / "zero")
+        os.symlink(inner / "zero", path)
+    assert guard.is_safe_to_read(path, tmp_path) is False
+
+
+def test_is_safe_to_read_accepts_a_regular_file(tmp_path):
+    path = tmp_path / "config.yml"
+    path.write_text("ok", encoding="utf-8")
+    assert guard.is_safe_to_read(path, tmp_path) is True
 
 
 def test_iter_escaping_symlinks_finds_file_escape(tmp_path):

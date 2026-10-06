@@ -1,11 +1,11 @@
 # Phase budgets — single source of truth for phase wall-time thresholds.
 #
 # Consumed by:
-#   - scripts/acquire_lock.py     (heartbeat-stale classification, M3.6)
-#   - scripts/check_state.py      (hung-state classification, M3.6)
-#   - scripts/watch_run.py        (live STALL detection)
-#   - scripts/aggregate_run_issues.py (post-run perf_anomaly flagging)
-#   - scripts/skill_watchdog.py   (per-component timeout escalation)
+#   - scripts/runtime/acquire_lock.py     (heartbeat-stale classification, M3.6)
+#   - scripts/runtime/check_state.py      (hung-state classification, M3.6)
+#   - scripts/runtime/watch_run.py        (live STALL detection)
+#   - scripts/runtime/aggregate_run_issues.py (post-run perf_anomaly flagging)
+#   - scripts/runtime/skill_watchdog.py   (per-component timeout escalation)
 #
 # Format
 # ------
@@ -55,7 +55,7 @@ defaults:
   # Threshold used when phase IS known but has no entry in the budget
   # table (Phase 4/5/6/7/8 — these have no discrete bash boundary so they
   # share a generic budget). Multiplied by stall_multiplier downstream.
-  # Kept at the historical watch_run.py value of 180.
+  # Kept at the historical runtime/watch_run.py value of 180.
   unlisted_phase_fallback_seconds: 180
 
   # Hard ceiling: any wall-time beyond this is *always* a stall, regardless
@@ -64,6 +64,6 @@ defaults:
   hard_ceiling_seconds: 1800
 
   # Multiplier applied to phase budget before flagging STALL. Mirrors the
-  # historical watch_run.py default; gives legitimately-slow phases a
+  # historical runtime/watch_run.py default; gives legitimately-slow phases a
   # 50 percent grace window before the watchdog fires.
   stall_multiplier: 1.5

@@ -25,8 +25,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-import walkthrough_renderer as renderer  # noqa: E402
-from apply_prose_fixes import _merge_split_code_spans, _wrap_line  # noqa: E402
+import renderers.walkthrough_renderer as renderer  # noqa: E402
+from repairs.apply_prose_fixes import _merge_split_code_spans, _wrap_line  # noqa: E402
 
 
 def _fmt(text: str) -> str:
@@ -325,7 +325,7 @@ class TestTemplatePrependGate:
             "An attacker then reaches every admin-gated view."
         )
         steps = renderer.render_attack_steps(_threat(scenario), template={})
-        assert "crafts a request targeting the weak spot" not in " ".join(steps)
+        assert "crafts a request that reaches the code" not in " ".join(steps)
         assert len(steps) == 3
 
     def test_padding_still_applies_when_no_attacker_action_is_present(self):

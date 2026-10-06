@@ -33,17 +33,17 @@ if str(SCRIPTS) not in sys.path:
 
 
 def _load(name: str):
-    spec = importlib.util.spec_from_file_location(name, SCRIPTS / f"{name}.py")
+    spec = importlib.util.spec_from_file_location(name, SCRIPTS / (name.replace(".", "/") + ".py"))
     mod = importlib.util.module_from_spec(spec)
     sys.modules[name] = mod
     spec.loader.exec_module(mod)
     return mod
 
 
-compose = _load("compose_threat_model")
-rcs = _load("render_completion_summary")
-ari = _load("aggregate_run_issues")
-qa = _load("qa_checks")
+compose = _load("renderers.compose_threat_model")
+rcs = _load("renderers.render_completion_summary")
+ari = _load("runtime.aggregate_run_issues")
+qa = _load("validators.qa_checks")
 
 
 def _entry(sid, in_scope, outcome, expected=None, present=None):

@@ -1,8 +1,9 @@
-"""Tests for scripts/export_pdf.py."""
+"""Tests for scripts/exporters/export_pdf.py."""
 
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -11,7 +12,7 @@ from unittest.mock import patch
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-import export_pdf as ep
+import exporters.export_pdf as ep
 
 PRINT_CSS = Path(__file__).parent.parent / "scripts" / "assets" / "print.css"
 
@@ -159,6 +160,34 @@ class TestPreflight:
             ok, msgs = ep.preflight(require_mermaid=True)
         assert ok is False
         assert any("mmdc" in m and "cannot render" in m for m in msgs)
+
+    def test_sandbox_blocked_chrome_is_not_reported_as_missing_chrome(self):
+        """Under the Bash sandbox Chrome dies on its process_singleton socket().
+        The probe must name the sandbox, not send the operator to reinstall
+        a working Chrome."""
+        stderr = (
+            "Error: Failed to launch the browser process!\n"
+            "[1:1:0927/193656.187060:FATAL:chrome/browser/process_singleton_posix.cc:297] "
+            "Check failed: . socket() failed: Operation not permitted (1)\n"
+            "    at ChildProcess._handle.onexit (node:internal/child_process:293:12)\n"
+        )
+        failed = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr=stderr)
+        with patch.object(ep.subprocess, "run", return_value=failed):
+            ok, info = ep.probe_mmdc()
+        assert ok is False
+        assert info == ep.MMDC_SANDBOX_BLOCKED
+
+        with (
+            patch.object(ep, "check_tool", return_value="/usr/bin/mmdc"),
+            patch.object(ep, "probe_runs", return_value=(True, "ok")),
+            patch.object(ep, "probe_mmdc", return_value=(False, ep.MMDC_SANDBOX_BLOCKED)),
+        ):
+            ok, msgs = ep.preflight(require_mermaid=True)
+        joined = "\n".join(msgs)
+        assert ok is False
+        assert "unsandboxed" in joined
+        assert "install:" not in joined
+        assert "--no-mermaid" not in joined
 
     def test_mmdc_render_probe_success_passes(self):
         with (
@@ -914,6 +943,15 @@ def test_wrap_wide_figure1_keeps_a_tall_figure_in_portrait(tmp_path: Path) -> No
     assert ep._wrap_wide_figure1(html, tmp_path) == html
 
 
+def test_large_tall_figure1_keeps_heading_and_image_on_a3_portrait(tmp_path: Path) -> None:
+    out = ep._wrap_wide_figure1(_FIG1_HTML.format(src=_svg_data_uri(1198, 1331)), tmp_path)
+    m = re.search(r'<div class="figure-portrait">\n(.*?)\n</div>', out, re.DOTALL)
+    assert m, out
+    assert m.group(1).startswith('<h3 id="security-posture--top-threats">')
+    assert 'alt="Figure 1' in m.group(1)
+    assert "Figure 2" not in m.group(1)
+
+
 def test_wrap_wide_figure1_keeps_a_figure_that_fits_the_portrait_column(tmp_path: Path) -> None:
     # The tier-stack fallback is 760 px wide: portrait shows it at ~1:1, so a
     # landscape page would cost a page turn for nothing.
@@ -946,8 +984,92 @@ def test_wrap_wide_figure1_is_a_noop_without_dimensions_or_figure(tmp_path: Path
 
 def test_print_css_declares_the_landscape_figure_page() -> None:
     css = PRINT_CSS.read_text(encoding="utf-8")
-    assert re.search(r"@page landscape\s*\{[^}]*size:\s*A4 landscape", css)
+    assert re.search(r"@page landscape\s*\{[^}]*size:\s*A3 landscape", css)
     assert re.search(r"\.figure-landscape\s*\{[^}]*page:\s*landscape", css)
+    assert re.search(r"@page figure-portrait\s*\{[^}]*size:\s*A3 portrait", css)
+    assert re.search(r"\.figure-portrait\s*\{[^}]*page:\s*figure-portrait", css)
     # WeasyPrint keeps `page: auto` content on the page it is already on, so
     # the body needs its own named page for portrait to resume after the figure.
     assert re.search(r"\bbody\s*\{[^}]*page:\s*main", css) and re.search(r"@page main\s*\{[^}]*size:\s*A4\s*;", css)
+
+
+# --------------------------------------------------------------------------
+# Figure 1 detail appendix
+# --------------------------------------------------------------------------
+
+
+def _detail_md(tmp_path, count, topology, prefix, *, stem, embedded):
+    import base64
+
+    import renderers.figure1_dfd as figure1_dfd
+
+    from tests.test_figure1_detail import model
+
+    data = model(count, topology, prefix)
+    svg, errors = figure1_dfd.check_diagram(data, {}, {})
+    assert errors == []
+    ref = f"{stem}.figure1-detail.svg"
+    (tmp_path / ref).write_text(svg)
+    if embedded:
+        ref = "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
+    return data, f"# Review\n\nIntro.\n\n[Detailed architecture diagram]({ref})\n\n## Next\n\nBody.\n", ref
+
+
+@pytest.mark.parametrize("embedded", [True, False])
+@pytest.mark.parametrize(
+    ("count", "topology", "prefix", "stem"),
+    [(9, "star", "dispatch", "report"), (20, "chain", "telemetry", "custom-run")],
+)
+def test_paged_detail_moves_into_linked_appendix(tmp_path, count, topology, prefix, stem, embedded):
+    import base64
+    import xml.etree.ElementTree as ET
+
+    data, md, ref = _detail_md(tmp_path, count, topology, prefix, stem=stem, embedded=embedded)
+    out = ep._append_architecture_detail(md, tmp_path)
+    assert ref not in out  # neither a sibling path nor a clickable data URI survives as a link
+    assert "[Detailed architecture diagram](#appendix-detailed-architecture-diagram)" in out
+    assert out.index("## Next") < out.index("## Appendix: Detailed architecture diagram")
+    seen = set()
+    for encoded in re.findall(r"data:image/svg\+xml;base64,([A-Za-z0-9+/=]+)", out):
+        page = ET.fromstring(base64.b64decode(encoded))
+        seen.update(g.get("data-component-id") for g in page.iter() if g.get("data-component-id"))
+    assert seen == {c["id"] for c in data["components"]}
+
+
+def test_unpaged_detail_keeps_its_single_image(tmp_path):
+    _, md, ref = _detail_md(tmp_path, 3, "star", "orders", stem="report", embedded=False)
+    out = ep._append_architecture_detail(md, tmp_path)
+    assert f"![Architecture detail]({ref})" in out
+    assert f"]({ref})" not in out.split("## Appendix")[0]
+
+
+@pytest.mark.parametrize("escapes", [False, True])
+def test_unreadable_detail_drops_the_dead_link(tmp_path, escapes):
+    inside = tmp_path / "inside"
+    inside.mkdir()
+    ref = "report.figure1-detail.svg"
+    if escapes:
+        (tmp_path / "outside.svg").write_text('<svg data-paged-detail="true"/>')
+        (inside / ref).symlink_to(tmp_path / "outside.svg")
+    md = f"# Review\n\n[Detailed architecture diagram]({ref})\n"
+    out = ep._append_architecture_detail(md, inside)
+    assert "Detailed architecture diagram" not in out and "Appendix" not in out
+
+
+def test_report_without_detail_link_is_unchanged(tmp_path):
+    md = "# Review\n\nSee [Detailed architecture diagram](https://example.invalid/x.svg).\n"
+    assert ep._append_architecture_detail(md, tmp_path) == md
+
+
+@pytest.mark.skipif(not shutil.which("pandoc"), reason="pandoc is not installed")
+def test_appendix_anchor_matches_pandoc_heading_id(tmp_path):
+    _, md, _ = _detail_md(tmp_path, 3, "star", "orders", stem="report", embedded=True)
+    src = tmp_path / "in.md"
+    src.write_text(ep._append_architecture_detail(md, tmp_path))
+    css = tmp_path / "print.css"
+    css.write_text("body { color: black; }")
+    html_path = tmp_path / "out.html"
+    ep.md_to_html(src, html_path, css, "t")
+    html = html_path.read_text()
+    assert 'href="#appendix-detailed-architecture-diagram"' in html
+    assert 'id="appendix-detailed-architecture-diagram"' in html

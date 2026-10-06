@@ -1,5 +1,5 @@
 """
-Tests for scripts/security_score.py.
+Tests for scripts/analyzers/security_score.py.
 
 Covers:
   * The denominator: `not_applicable` rules never count as passes.
@@ -18,15 +18,18 @@ Covers:
 
 from __future__ import annotations
 
+import json
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import security_score as ss  # noqa: E402
+import analyzers.security_score as ss  # noqa: E402
 
 
 def _rule(rule_id: str, status: str, decision: str = "emit_control_only", evidence: list | None = None) -> dict:
@@ -331,16 +334,16 @@ def test_the_list_is_capped():
     assert len(ss.top_findings(findings)) == ss.TOP_FINDINGS
 
 
-def test_a_config_check_is_named_by_its_open_action_not_its_target_state():
-    """The check name states the desired state and would read as a pass."""
+def test_a_config_check_uses_the_producer_violation_title():
+    """Current producers name the violation separately from its mitigation."""
     finding = {
         "severity": "Medium",
-        "title": "package-lock.json present and committed",
+        "title": "Dependency lockfile missing",
         "recommended_mitigation_title": "Commit package-lock.json; use `npm ci` in CI",
         "_scanner": "config-iac",
     }
 
-    assert ss.finding_title(finding) == "Commit package-lock.json; use `npm ci` in CI"
+    assert ss.finding_title(finding) == "Dependency lockfile missing"
 
 
 def test_a_source_finding_is_named_by_its_weakness_class():
@@ -511,7 +514,7 @@ def test_warnings_are_rendered():
     [(["present"] * 5, 0), (["present"] * 2, 2)],
 )
 def test_exit_code_signals_undetermined(monkeypatch, capsys, tmp_path, statuses, expected_exit):
-    monkeypatch.setattr(ss, "collect", lambda repo, work: (_rules(*statuses), [], []))
+    monkeypatch.setattr(ss, "collect", lambda repo, work: (_rules(*statuses), [], [], _complete()))
 
     assert ss.main(["--repo", str(tmp_path)]) == expected_exit
     assert capsys.readouterr().out.strip()
@@ -520,3 +523,321 @@ def test_exit_code_signals_undetermined(monkeypatch, capsys, tmp_path, statuses,
 def test_missing_repository_is_an_error(capsys, tmp_path):
     assert ss.main(["--repo", str(tmp_path / "nope")]) == 1
     assert "not a directory" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://gitlab.com/example-team/service-a.git",
+        "https://github.com/another-org/worker-b.git",
+    ],
+)
+def test_https_repository_is_cloned_scanned_and_removed(monkeypatch, capsys, url):
+    checkouts = []
+
+    def fake_clone(argv, **kwargs):
+        checkout = Path(argv[-1])
+        checkout.mkdir()
+        (checkout / "source.txt").write_text("scan me", encoding="utf-8")
+        checkouts.append(checkout)
+        assert argv[-2] == url
+        assert argv[-3] == "--"
+        assert kwargs["env"]["GIT_TERMINAL_PROMPT"] == "0"
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    def fake_collect(repo, work):
+        assert repo == checkouts[-1]
+        assert (repo / "source.txt").read_text(encoding="utf-8") == "scan me"
+        return _rules(*(["present"] * 5)), [], [], _complete()
+
+    monkeypatch.setattr(ss.subprocess, "run", fake_clone)
+    monkeypatch.setattr(ss, "collect", fake_collect)
+
+    assert ss.main(["--repo", url, "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["repo"] == url
+    assert len(checkouts) == 1
+    assert not checkouts[0].exists()
+
+
+def test_local_repository_does_not_clone(monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(ss.subprocess, "run", lambda *a, **kw: pytest.fail("local path triggered a clone"))
+    monkeypatch.setattr(ss, "collect", lambda repo, work: (_rules(*(["present"] * 5)), [], [], _complete()))
+
+    assert ss.main(["--repo", str(tmp_path), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["repo"] == str(tmp_path)
+
+
+@pytest.mark.parametrize("statuses", [["present"] * 5, ["present"] * 2])
+def test_yaml_contains_the_same_result_as_json(monkeypatch, capsys, tmp_path, statuses):
+    findings = [_hit("High", "CHECK-1", "Unsafe rendering", "src/über.ts")]
+    monkeypatch.setattr(
+        ss, "collect", lambda repo, work: (_rules(*statuses), findings, ["scanner: partial result"], _complete())
+    )
+
+    json_exit = ss.main(["--repo", str(tmp_path), "--json"])
+    json_output = capsys.readouterr()
+    json_result = json.loads(json_output.out)
+    yaml_exit = ss.main(["--repo", str(tmp_path), "--yaml"])
+    yaml_output = capsys.readouterr().out
+
+    assert yaml_exit == json_exit
+    assert json_output.err == ""
+    assert yaml.safe_load(yaml_output) == json_result
+    assert "über.ts" in yaml_output
+
+
+def test_json_and_yaml_cannot_be_requested_together(monkeypatch, capsys):
+    monkeypatch.setattr(ss, "collect", lambda repo, work: pytest.fail("conflicting formats triggered a scan"))
+
+    with pytest.raises(SystemExit) as exc:
+        ss.main(["--json", "--yaml"])
+
+    assert exc.value.code == 2
+    assert "not allowed with argument" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("argument,exit_code", [("--help", 0), ("--unknown-option", 2)])
+def test_help_and_unknown_options_exit_before_scanning(monkeypatch, capsys, argument, exit_code):
+    monkeypatch.setattr(ss, "collect", lambda repo, work: pytest.fail("argument validation triggered a scan"))
+
+    with pytest.raises(SystemExit) as exc:
+        ss.main([argument])
+
+    output = capsys.readouterr()
+    assert exc.value.code == exit_code
+    assert "usage:" in (output.out if exit_code == 0 else output.err)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://gitlab.com/team/repo.git",
+        "file:///tmp/repo.git",
+        "https://user:token@gitlab.com/team/repo.git",
+        "https://github.com/team/repo.git?ref=main",
+        "https://gitlab.com/team/repo.git#",
+        "https://gitlab.com/team/other repo.git",
+        "https://[broken/team/repo.git",
+        "https://gitlab.com/team/../repo.git",
+        "https://github.com/team/%2e%2e/repo.git",
+        "https://gitlab.com//team/repo.git",
+        "https://gitlab.com\\@github.com/team/repo.git",
+    ],
+)
+def test_unsafe_remote_url_is_rejected_before_clone(monkeypatch, capsys, url):
+    monkeypatch.setattr(ss.subprocess, "run", lambda *a, **kw: pytest.fail("invalid URL triggered a clone"))
+
+    assert ss.main(["--repo", url]) == 1
+    assert "error:" in capsys.readouterr().err
+
+
+def test_clone_failure_stops_without_scanning(monkeypatch, capsys):
+    url = "https://gitlab.com/neutral/project.git"
+    checkouts = []
+
+    def fake_clone(argv, **kw):
+        checkout = Path(argv[-1])
+        checkout.mkdir()
+        checkouts.append(checkout)
+        return subprocess.CompletedProcess(argv, 128, "", "fatal: repository not found")
+
+    monkeypatch.setattr(
+        ss.subprocess,
+        "run",
+        fake_clone,
+    )
+    monkeypatch.setattr(ss, "collect", lambda repo, work: pytest.fail("failed clone was scanned"))
+
+    assert ss.main(["--repo", url]) == 1
+    assert "repository not found" in capsys.readouterr().err
+    assert len(checkouts) == 1
+    assert not checkouts[0].exists()
+
+
+def test_clone_timeout_is_an_error(monkeypatch, capsys):
+    url = "https://github.com/neutral/project.git"
+
+    def fake_timeout(argv, **kw):
+        raise subprocess.TimeoutExpired(argv, ss.CLONE_TIMEOUT_S)
+
+    monkeypatch.setattr(ss.subprocess, "run", fake_timeout)
+    monkeypatch.setattr(ss, "collect", lambda repo, work: pytest.fail("timed-out clone was scanned"))
+
+    assert ss.main(["--repo", url]) == 1
+    assert "timed out" in capsys.readouterr().err
+
+
+def test_remote_checkout_with_escaping_symlink_is_not_scanned(monkeypatch, capsys, tmp_path):
+    outside = tmp_path / "outside.txt"
+    outside.write_text("private data", encoding="utf-8")
+    checkouts = []
+
+    def fake_clone(argv, **kw):
+        checkout = Path(argv[-1])
+        checkout.mkdir()
+        (checkout / "source.txt").symlink_to(outside)
+        checkouts.append(checkout)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(ss.subprocess, "run", fake_clone)
+    monkeypatch.setattr(ss, "collect", lambda repo, work: pytest.fail("escaping symlink was scanned"))
+
+    assert ss.main(["--repo", "https://github.com/neutral/project.git"]) == 1
+    assert "symlink outside the repository" in capsys.readouterr().err
+    assert not checkouts[0].exists()
+
+
+def test_clone_command_creates_a_working_tree(tmp_path):
+    source = tmp_path / "neutral-source"
+    source.mkdir()
+    subprocess.run(["git", "init", str(source)], check=True, capture_output=True)
+    (source / "source.txt").write_text("scan me", encoding="utf-8")
+    subprocess.run(["git", "-C", str(source), "add", "source.txt"], check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(source),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.test",
+            "commit",
+            "-m",
+            "add neutral source",
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+    checkout = tmp_path / "checkout"
+    ss._clone(str(source), checkout)
+
+    assert (checkout / "source.txt").read_text(encoding="utf-8") == "scan me"
+
+
+def _complete():
+    return dict.fromkeys(ss.SCANNER_SCHEMAS, "complete")
+
+
+@pytest.fixture(scope="module")
+def scanner_outputs(tmp_path_factory):
+    root = tmp_path_factory.mktemp("score-source")
+    work = tmp_path_factory.mktemp("score-output")
+    (root / "service.py").write_text(
+        'import jwt\njwt.decode(token, algorithms=["HS256"], options={"verify_signature": False})\n'
+    )
+    _, findings, warnings, statuses = ss.collect(root, work)
+    assert statuses == _complete(), warnings
+    assert findings
+    return {p.name: p.read_text() for p in work.iterdir() if p.is_file()}
+
+
+@pytest.mark.parametrize("label", list(ss.SCANNER_SCHEMAS))
+@pytest.mark.parametrize("corruption", ["missing", "list", "object", "numeric", "failed", "timeout", "stub"])
+def test_invalid_or_failed_producer_withholds_headline(
+    monkeypatch, tmp_path, capsys, scanner_outputs, label, corruption
+):
+    sidecars = dict(
+        zip(
+            ss.SCANNER_SCHEMAS,
+            [".route-inventory.json", ".architecture-coverage.json", ".config-scan.json", ".source-auth-findings.json"],
+        )
+    )
+    original_run = ss._run
+
+    def run(argv, warnings, current):
+        out = (
+            Path(argv[argv.index("--output-dir") + 1])
+            if "--output-dir" in argv
+            else Path(argv[argv.index("--output") + 1]).parent
+        )
+        path = out / sidecars[current]
+        path.write_text(scanner_outputs[path.name])
+        if current != label:
+            return True
+        if corruption in {"failed", "timeout"}:
+
+            def fail(*args, **kwargs):
+                if corruption == "timeout":
+                    raise subprocess.TimeoutExpired(args[0], 600)
+                return subprocess.CompletedProcess(args[0], 1, "", "scanner failed")
+
+            monkeypatch.setattr(ss.subprocess, "run", fail)
+            return original_run(argv, warnings, current)
+        if corruption == "missing":
+            path.unlink()
+        else:
+            path.write_text(
+                {
+                    "list": "[]",
+                    "object": "{}",
+                    "numeric": '{"findings":42}',
+                    "stub": '{"parse_error":"bad source", "findings":[]}',
+                }[corruption]
+            )
+        return True
+
+    monkeypatch.setattr(ss, "_run", run)
+    assert ss.main(["--repo", str(tmp_path), "--json"]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["verdict"] == "incomplete"
+    assert result["score"] is None
+    assert result["scanner_status"][label] != "complete"
+    assert result["warnings"]
+    if label != "source-auth":
+        assert result["top_findings"]
+    schema = yaml.safe_load((ss.HERE.parent / "schemas/security-score.schema.yaml").read_text())
+    ss.jsonschema.validate(result, schema)
+
+
+def test_real_empty_scan_is_complete(tmp_path):
+    repo, work = tmp_path / "repo", tmp_path / "work"
+    repo.mkdir()
+    work.mkdir()
+    _, findings, warnings, statuses = ss.collect(repo, work)
+    assert statuses == _complete(), warnings
+    assert not [f for f in findings if f["_scanner"] == "source-auth"]
+
+
+def test_sparse_coverage_keeps_findings_and_warnings_visible():
+    findings = [_hit("Critical", "CHECK-2", "Untrusted command execution", "app.py")]
+    result = ss.compute(_rules("present"), findings)
+    result.update(top_findings=ss.top_findings(findings), warnings=["Scanner diagnostic"])
+    text = ss.render_text(result)
+    assert "undetermined" in text and "Untrusted command execution" in text
+    assert "1 critical" in text and "Scanner diagnostic" in text
+
+
+def test_comparability_tracks_coverage_not_control_status():
+    first = ss.compute(_rules(*(["present"] * 5)), [])
+    changed = ss.compute(_rules(*(["missing"] * 5)), [])
+    additional = ss.compute(_rules(*(["present"] * 6)), [])
+    assert first["comparability"] == changed["comparability"]
+    assert first["comparability"]["coverage_fingerprint"] != additional["comparability"]["coverage_fingerprint"]
+
+
+@pytest.mark.parametrize("name", ["outside.py", "linked/service.js"])
+def test_local_score_rejects_external_symlinks(monkeypatch, tmp_path, capsys, name):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    outside = tmp_path / "outside"
+    outside.write_text("secret")
+    link = repo / name
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(outside)
+    monkeypatch.setattr(ss, "collect", lambda *args: pytest.fail("unsafe repo scanned"))
+    assert ss.main(["--repo", str(repo)]) == 1
+    assert "symlink outside" in capsys.readouterr().err
+
+
+def test_unscored_and_excluded_findings_are_prominent():
+    critical = {**_hit("Critical", "CHECK-CRITICAL", "Dangerous sink", "app.py"), "cwe": ["CWE-89"]}
+    low = _hit("Low", "CHECK-LOW", "Build practice", "Dockerfile")
+    result = ss.compute(_rules(*(["present"] * 5)), [critical, low])
+    assert result["score"] == 100
+    assert result["unscored_findings"] == {"critical": 1}
+    assert result["excluded_findings"] == {"low": 1}
+    text = ss.render_text(result)
+    assert "Findings without a scored baseline: 1 critical" in text
+    assert "Findings excluded by severity policy: 1 low" in text

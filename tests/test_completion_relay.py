@@ -1,7 +1,7 @@
 """Guards for completion_relay: the run's closing message carries the printed summary.
 
 Runs rewrote the completion summary in their closing message and dropped Next
-Steps with its team questions. These tests drive the rule the way the host
+Steps. These tests drive the rule the way the host
 does — the summary script records what it printed, the outermost Stop hook
 reviews the closing message — on neutral repositories.
 """
@@ -14,19 +14,19 @@ import subprocess
 import sys
 from pathlib import Path
 
-import acquire_lock
-import completion_relay as relay
-import hook_payload
 import pytest
-import render_completion_summary as rcs
+import renderers.render_completion_summary as rcs
+import runtime.acquire_lock as acquire_lock
+import runtime.completion_relay as relay
+import runtime.hook_payload as hook_payload
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-AGENT_LOGGER = REPO_ROOT / "scripts" / "agent_logger.py"
+AGENT_LOGGER = REPO_ROOT / "scripts" / "runtime/agent_logger.py"
 RUN_IDENTITY_VARS = ("APPSEC_RUN_ID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID", "OUTPUT_DIR")
 RUN_ID = "run-1788592678-3277507"
 
 
-def _summary(root: str, finding: str = "F-003", weakness: str = "W-001") -> str:
+def _summary(root: str) -> str:
     report = f"{root}/docs/security/threat-model.md"
     rule = "═" * 62
     return (
@@ -34,9 +34,6 @@ def _summary(root: str, finding: str = "F-003", weakness: str = "W-001") -> str:
         "Next Steps\n"
         f'  - Open the report — {report} → start at "Management Summary"\n'
         "  - Triage the findings — /appsec-advisor:review-threat-model\n"
-        "  - Open questions for the team:\n"
-        f"      - [{weakness}](<{report}#{weakness.lower()}>): [{finding}](<{report}#{finding.lower()}>)"
-        " — Which services accept these tokens?\n"
         "  - Or just ask me:\n"
         '      "What should I fix first?"\n\n'
         "Logs\n"
@@ -84,10 +81,10 @@ class TestMissingLines:
         text = _summary("/srv/app")
         assert relay.missing_lines(text, relay_of(text)) == []
 
-    def test_a_rewrite_misses_next_steps_and_the_team_questions(self):
+    def test_a_rewrite_misses_next_steps(self):
         missing = relay.missing_lines(_summary("/srv/app"), _rewrite("/srv/app"))
         assert "Next Steps" in missing
-        assert "- Open questions for the team:" in missing
+        assert "- Triage the findings — /appsec-advisor:review-threat-model" in missing
 
     def test_a_dropped_block_is_named(self):
         text = _summary("/srv/app")
@@ -98,6 +95,34 @@ class TestMissingLines:
         text = _summary("/srv/app")
         head, logs = text.split("\nLogs\n")
         assert relay.missing_lines(text, "Logs\n" + logs + head)
+
+
+class TestTrailingLines:
+    @pytest.mark.parametrize(
+        "relay_of",
+        [
+            lambda text: text,
+            lambda text: "Here is the completion summary:\n```\n" + text + "```\n",
+        ],
+        ids=["as-printed", "fenced-with-lead-in"],
+    )
+    def test_a_lead_in_and_fences_are_not_trailing_text(self, relay_of):
+        text = _summary("/srv/app")
+        assert relay.trailing_lines(text, relay_of(text)) == []
+
+    def test_a_note_after_the_summary_is_trailing_text(self):
+        text = _summary("/srv/app")
+        note = "---\nHTML export note: run exporters/export_html.py from your terminal."
+        assert relay.trailing_lines(text, text + note) == [
+            "---",
+            "HTML export note: run exporters/export_html.py from your terminal.",
+        ]
+
+    def test_an_appended_note_is_returned_once(self, run_dir):
+        relay.persist(run_dir, _summary("/srv/app"))
+        message = _summary("/srv/app") + "\nA note of my own."
+        assert relay.review_final_message(run_dir, "", message, retry=False) == ["A note of my own."]
+        assert relay.review_final_message(run_dir, "", message, retry=False) == []
 
 
 class TestPersist:
@@ -233,7 +258,7 @@ class TestTheOutermostStop:
         return result.stdout
 
     @staticmethod
-    def _completed_run(tmp_path, monkeypatch, name: str, **names) -> tuple[Path, Path, str]:
+    def _completed_run(tmp_path, monkeypatch, name: str) -> tuple[Path, Path, str]:
         """Record a printed summary under the run's lock, then release the lock."""
         repo = tmp_path / name
         output = repo / "docs" / "security"
@@ -241,18 +266,18 @@ class TestTheOutermostStop:
         _clear_run_identity(monkeypatch)
         monkeypatch.setenv("APPSEC_RUN_ID", RUN_ID)
         acquire_lock._write_lock(output / ".appsec-lock", 4242, 1788592678, RUN_ID)
-        summary = _summary(str(repo), **names)
+        summary = _summary(str(repo))
         relay.persist(output, summary)
         (output / ".appsec-lock").unlink()
         return repo, output, summary
 
     @pytest.mark.parametrize(
-        ("name", "names"),
-        [("service-a", {}), ("billing/api gateway", {"finding": "F-114", "weakness": "W-007"})],
+        "name",
+        ["service-a", "billing/api gateway"],
         ids=["neutral", "other-names-and-paths"],
     )
-    def test_a_rewritten_summary_is_returned_once(self, tmp_path, monkeypatch, name, names):
-        repo, output, _ = self._completed_run(tmp_path, monkeypatch, name, **names)
+    def test_a_rewritten_summary_is_returned_once(self, tmp_path, monkeypatch, name):
+        repo, output, _ = self._completed_run(tmp_path, monkeypatch, name)
         decision = json.loads(self._stop(repo, _rewrite(str(repo))))
         assert decision == {"decision": "block", "reason": relay.RETRY_INSTRUCTION}
         assert "SUMMARY_NOT_RELAYED" in (output / ".hook-events.log").read_text(encoding="utf-8")
@@ -274,3 +299,48 @@ class TestTheOutermostStop:
         repo, output, _ = self._completed_run(tmp_path, monkeypatch, "service-a")
         assert self._stop(repo, "Unrelated answer.", run_id="run-1788000000-1") == ""
         assert (output / relay.RECORD).exists()
+
+
+def _transcript(tmp_path, records):
+    path = tmp_path / "transcript.jsonl"
+    path.write_text("\n".join(json.dumps({"message": record}) for record in records), encoding="utf-8")
+    return str(path)
+
+
+def _turn(summary_text, closing="Done."):
+    return [
+        {"role": "user", "content": "create the threat model"},
+        {"role": "assistant", "content": [{"type": "text", "text": summary_text}]},
+        {"role": "assistant", "content": [{"type": "tool_use", "name": "Bash", "input": {}}]},
+        {"role": "user", "content": [{"type": "tool_result", "content": '{"offer": false}'}]},
+        {"role": "assistant", "content": [{"type": "text", "text": closing}]},
+    ]
+
+
+class TestSummaryDeliveredEarlierInTheTurn:
+    @pytest.mark.parametrize("root", ["/srv/app", "/work/other-repo"])
+    def test_a_verbatim_summary_before_a_later_tool_call_is_not_demanded_again(self, run_dir, tmp_path, root):
+        relay.persist(run_dir, _summary(root))
+        transcript = _transcript(tmp_path, _turn(_summary(root)))
+        message = relay.final_message(transcript)
+        assert relay.missing_lines(_summary(root), message)
+        earlier = relay.turn_texts(transcript)
+        assert relay.review_final_message(run_dir, "", message, retry=False, earlier=earlier) == []
+
+    @pytest.mark.parametrize(
+        "earlier_text",
+        [_rewrite("/srv/app"), _summary("/srv/app") + "\nA note of my own."],
+        ids=["rewrite", "appended-note"],
+    )
+    def test_an_earlier_rewrite_or_appended_note_does_not_count(self, run_dir, tmp_path, earlier_text):
+        relay.persist(run_dir, _summary("/srv/app"))
+        transcript = _transcript(tmp_path, _turn(earlier_text))
+        missing = relay.review_final_message(
+            run_dir, "", relay.final_message(transcript), retry=False, earlier=relay.turn_texts(transcript)
+        )
+        assert missing
+
+    def test_a_summary_from_a_previous_turn_does_not_count(self, tmp_path):
+        records = _turn(_summary("/srv/app")) + [{"role": "user", "content": "and now?"}]
+        records.append({"role": "assistant", "content": [{"type": "text", "text": "Done."}]})
+        assert relay.turn_texts(_transcript(tmp_path, records)) == ["Done."]

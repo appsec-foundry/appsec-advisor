@@ -1,0 +1,42 @@
+/appsec-advisor:authnz-review — Cross-component AuthN/AuthZ review
+
+USAGE
+  /appsec-advisor:authnz-review [--repo <path>] [--requirements <path>]
+                                 [--with-threat-model] [--save] [--gate]
+                                 [--pentest-tasks | --no-pentest-tasks]
+                                 [--pentest-format <fmt>] [--pentest-target <url>]
+                                 [--slug <value>]
+
+OPTIONS
+  --repo <path>           Repository root to analyze (default: current directory)
+  --requirements <path>   Requirements YAML;
+                          findings are annotated with violated requirement IDs
+  --with-threat-model     Deduplicate EoP findings already covered by a prior
+                          STRIDE run in docs/security/
+  --save                  Write authnz-report.md + .authnz-report.json to
+                          docs/security/ in addition to console output
+  --pentest-tasks         Write docs/security/pentest-tasks-authnz.yaml —
+                          verification tasks for an AI pentest agent, one per
+                          finding with an eligible CWE and file:line evidence
+  --no-pentest-tasks      Skip that export even if the org profile enables it
+  --pentest-format <fmt>  generic (default) or strix
+  --pentest-target <url>  Base URL of the running target, e.g.
+                          http://localhost:3000
+  --slug <value>          Name the task file pentest-tasks-authnz-<value>.yaml,
+                          matching create-threat-model --slug; 1-64 characters
+                          from [A-Za-z0-9._-]
+
+  The three pentest values default to the organization profile's outputs
+  block (pentest_tasks, pentest_format, pentest_target) when one is active.
+  --gate                  Exit non-zero when Critical or High findings exist
+
+WHAT IT ANALYZES
+  Phase 1  Route inventory         — every route, its auth middleware, handler
+  Phase 2  Auth-check scan         — JWT misconfig, mass assignment, missing guards
+  Phase 3  IDOR/BOLA confirmation  — handler body reads to confirm suspects
+  Phase 4  Cross-component reasoning — auth coverage, escalation chains, AuthN↔AuthZ
+  Phase 5  Requirements annotation — maps findings to violated req IDs (opt-in)
+
+EXIT CODES
+  0   No Critical/High findings (or --gate not passed)
+  1   Critical or High findings found (only with --gate)

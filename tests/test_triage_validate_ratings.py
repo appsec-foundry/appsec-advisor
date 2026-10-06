@@ -1,4 +1,4 @@
-"""Unit tests for triage_validate_ratings.py — deterministic pre-flight
+"""Unit tests for validators/triage_validate_ratings.py — deterministic pre-flight
 rating validation (Steps 1–5) for `.threats-merged.json`.
 
 Tests target the step implementations directly (fast, precise coverage) plus
@@ -20,7 +20,7 @@ from jsonschema import Draft202012Validator
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
 
-import triage_validate_ratings as tvr  # noqa: E402  (sys.path set above)
+import validators.triage_validate_ratings as tvr  # noqa: E402  (sys.path set above)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -377,7 +377,7 @@ def test_step5_no_cvss_no_flag_for_optional_source():
 
 
 def _run_main(monkeypatch, output_dir, *extra):
-    monkeypatch.setattr(sys, "argv", ["triage_validate_ratings.py", str(output_dir), *extra])
+    monkeypatch.setattr(sys, "argv", ["validators/triage_validate_ratings.py", str(output_dir), *extra])
     return tvr.main()
 
 
@@ -482,7 +482,7 @@ def test_main_unknown_args_warned_not_fatal(monkeypatch, tmp_path, capsys):
 def test_main_falls_back_to_env_output_dir(monkeypatch, tmp_path):
     (tmp_path / ".threats-merged.json").write_text(json.dumps({"threats": []}), encoding="utf-8")
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
-    monkeypatch.setattr(sys, "argv", ["triage_validate_ratings.py"])  # no positional
+    monkeypatch.setattr(sys, "argv", ["validators/triage_validate_ratings.py"])  # no positional
     assert tvr.main() == 0
     assert (tmp_path / ".triage-flags.json").is_file()
 
@@ -540,6 +540,16 @@ def test_step5b_purpose_alone_produces_nothing():
     assert tvr._step5b_business_impact_alignment([_threat(impact="Low")], declared, "standard") == []
 
 
+@pytest.mark.parametrize(
+    "text", ["No material harm; synthetic records only.", "Kein fachlicher Schaden bei reinen Testdaten."]
+)
+def test_step5b_explicit_no_harm_does_not_request_higher_impact(text):
+    context = {"impact_if_compromised": text, "impact_is_material": False}
+    assert tvr._step5b_business_impact_alignment([_threat(impact="Low")], {"comp-api": context}, "standard") == []
+    context["sensitive_assets"] = ["Real customer payment mandates"]
+    assert len(tvr._step5b_business_impact_alignment([_threat(impact="Low")], {"comp-api": context}, "standard")) == 1
+
+
 def test_declared_business_context_reads_analyst_artifact(tmp_path):
     (tmp_path / ".stride-analyst-context.json").write_text(
         json.dumps({"comp-api": {"business_context": {"sensitive_assets": ["funds"]}}, "comp-ui": {"controls": "n/a"}}),
@@ -568,7 +578,7 @@ def _schema_flag_types() -> set[str]:
     return set(schema["properties"]["flags"]["items"]["properties"]["type"]["enum"])
 
 
-@pytest.mark.parametrize("producer", ["triage_validate_ratings.py", "triage_compute_ranking.py"])
+@pytest.mark.parametrize("producer", ["validators/triage_validate_ratings.py", "model/triage_compute_ranking.py"])
 def test_every_emitted_flag_type_is_in_the_contract(producer):
     source = (PLUGIN_ROOT / "scripts" / producer).read_text(encoding="utf-8")
     emitted = set(re.findall(r'"type": "([a-z][a-z_-]*)"', source))
@@ -579,7 +589,7 @@ def test_every_emitted_flag_type_is_in_the_contract(producer):
 def test_every_written_flag_validates_against_its_schema(monkeypatch, tmp_path):
     """Every deterministic step at once, including the one that only fires when
     the repository declares business context. Scope is the flag entries: this
-    writer owns those, while `triage_compute_ranking.py` completes the document
+    writer owns those, while `model/triage_compute_ranking.py` completes the document
     into the v2 shape the boundary validates.
     """
     threats = [

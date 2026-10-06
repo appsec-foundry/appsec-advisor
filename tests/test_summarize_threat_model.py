@@ -1,4 +1,4 @@
-"""Tests for scripts/summarize_threat_model.py.
+"""Tests for scripts/renderers/summarize_threat_model.py.
 
 Drives the module via its public API plus CLI smoke tests. Fixtures write
 minimal ``threat-model.yaml`` files to a tmp OUTPUT_DIR so each test
@@ -15,16 +15,18 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "summarize_threat_model.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "renderers/summarize_threat_model.py"
 
 
 def _load_module():
-    if "summarize_threat_model" in sys.modules:
-        return sys.modules["summarize_threat_model"]
-    spec = importlib.util.spec_from_file_location("summarize_threat_model", SCRIPT_PATH)
+    if "renderers.summarize_threat_model" in sys.modules:
+        return sys.modules["renderers.summarize_threat_model"]
+    spec = importlib.util.spec_from_file_location("renderers.summarize_threat_model", SCRIPT_PATH)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["summarize_threat_model"] = mod
+    sys.modules["renderers.summarize_threat_model"] = mod
     assert spec.loader is not None
     spec.loader.exec_module(mod)
     return mod
@@ -191,15 +193,16 @@ def test_worst_case_prefers_the_persisted_verdict(tmp_path):
     summary = stm.build_summary(data, tmp_path)
     out = stm.render_text(summary, None, show_all=False)
 
-    assert "Verdict    🔴 not production-ready" in out
+    assert "Verdict    🔴 critical security concerns" in out
     assert "anyone can reach admin data today" in out
     assert "Fix the credential handling" in out
-    # The shared worst-case table: ✓, outcome, the finding's weakness class.
-    label = stm.verdict_class_labels(data["threats"])["F-001"][0]
-    assert f"\n  ✓  Full admin takeover  via {label}\n" in out
+    # The shared worst-case table: ✓, the scenario sentence, then the finding's CWE and the finding.
+    assert "\n  ✓  Anyone can sign in as an administrator without a password. (CWE-798 → F-001)\n" in out
+    # The outcome title repeats the sentence and appears only without one.
+    assert "Full admin takeover" not in out
     assert stm.WORST_CASE_LEGEND in out
-    # the sentence stays in the report; the weak fallback must not also render
-    assert "Anyone can sign in as an administrator" not in out
+    # The scenario sentence survives; the weak fallback must not also render.
+    assert "Anyone can sign in as an administrator" in out
     assert "→ M-001 (P1)" not in out
 
 
@@ -545,3 +548,19 @@ def test_render_text_names_the_ask_and_review_lanes(tmp_path):
     ask_at = next(i for i, ln in enumerate(lines) if "ask-threat-model" in ln)
     findings_at = next(i for i, ln in enumerate(lines) if ln.startswith("Findings"))
     assert ask_at < findings_at
+
+
+@pytest.mark.parametrize(
+    ("bullet", "rows"),
+    [
+        (
+            {"title": "Data exposed", "body": "Anyone reads every record.", "cwes": ["CWE-639"], "findings": ["F-2"]},
+            ["•  Anyone reads every record. (CWE-639 → F-2)"],
+        ),
+        ({"title": "Data exposed", "body": "Anyone reads every record."}, ["•  Anyone reads every record."]),
+        ({"title": "Data exposed", "cwes": ["CWE-639"], "findings": ["F-2"]}, ["•  Data exposed (CWE-639)  → F-2"]),
+    ],
+    ids=["sentence-with-refs", "sentence-only", "title-fallback"],
+)
+def test_worst_case_row_leads_with_the_scenario_sentence(bullet, rows):
+    assert stm.render_worst_case_table([bullet], indent="") == rows

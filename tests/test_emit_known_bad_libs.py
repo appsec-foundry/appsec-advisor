@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import emit_known_bad_libs as kbl
+import model.emit_known_bad_libs as kbl
 
 
 def _write(path: Path, text: str) -> None:

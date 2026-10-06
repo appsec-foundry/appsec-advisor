@@ -75,7 +75,7 @@ the standard-depth economic lever is fixed-overhead / batching, not per-componen
 > `deployment_zones` (`application-zone`/`data-zone`/`build-zone`) that matched no zone set, so the
 > zonal exposure/ci-cd classification was silently inert (a Spring web API was not flagged
 > `internet`-exposed; ci-cd was only caught by a text-hint). Fixed separately in
-> `build_stride_dispatch_manifest.py` (off-vocab zones now fail-safe to exposure-unknown + a
+> `orchestrator/build_stride_dispatch_manifest.py` (off-vocab zones now fail-safe to exposure-unknown + a
 > `ZONE_DRIFT` warning) and the recon prompt (canonical-zone enumeration). Not part of this proposal.
 
 ---
@@ -97,11 +97,11 @@ the standard-depth economic lever is fixed-overhead / batching, not per-componen
 ## Current state (verified)
 
 - **Component count is capped but lifts.** `resolve_config.STRIDE_COMPONENT_CEILING = 10`
-  (`resolve_config.py:266`), depth-independent; it *lifts* rather than drops exposed /
+  (`runtime/resolve_config.py:266`), depth-independent; it *lifts* rather than drops exposed /
   crown-jewel components, so a broadly-exposed repo can dispatch 30–50 STRIDE agents. Waves
   bound concurrency (`STRIDE_DISPATCH_CONCURRENCY = 8`), **not** total token cost — cost
   scales linearly with component count today.
-- **Security priority is known at manifest time.** `build_stride_dispatch_manifest.py`:
+- **Security priority is known at manifest time.** `orchestrator/build_stride_dispatch_manifest.py`:
   `_is_crown_jewel:311` (`handles_sensitive_data`), `_is_exposed`, `_is_internal_only:315`,
   `_priority:335` (0 auth · 1 frontend · 2 llm/exposed · 3 crown-jewel/upload/realtime ·
   4 ci-cd · 5 internal-only). These land in `.stride-selection.json` (`priority`, `reasons`).
@@ -150,10 +150,10 @@ small-footprint — precisely the long tail of a 30–50-component inventory.
 
 ## Implementation sketch (bidirectional)
 
-1. **Producer — `build_stride_dispatch_manifest.py`:** compute a `depth_tier`
+1. **Producer — `orchestrator/build_stride_dispatch_manifest.py`:** compute a `depth_tier`
    (`deep` / `standard` / `light`) per component from the existing predicates + the gating
    (depth, component count); pass it into `classify_component.classify(...)`.
-2. **Budget — `classify_component.py`:** accept the tier; apply it to the base `TURN_BUDGETS`
+2. **Budget — `analyzers/classify_component.py`:** accept the tier; apply it to the base `TURN_BUDGETS`
    lookup *before* the footprint floor (floor still wins upward). Surface the tier in the
    returned `reason` for observability, like `_footprint_turn_floor` already does.
 3. **Manifest / dispatch:** carry `depth_tier` through to `.stride-dispatch-manifest.json`

@@ -1,4 +1,4 @@
-"""Guards for `scripts/requirements_hook.py`.
+"""Guards for `scripts/requirements/requirements_hook.py`.
 
 The hook acts before a direct implementation edit. These tests pin both halves:
 the decision register requires explicit user approval, and every governed file
@@ -17,10 +17,10 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import requirements_hook  # noqa: E402
+import requirements.requirements_hook as requirements_hook  # noqa: E402
 
 
-def payload(tool: str = "Edit", path: str = "scripts/merge_threats.py") -> dict:
+def payload(tool: str = "Edit", path: str = "scripts/model/merge_threats.py") -> dict:
     field = "notebook_path" if tool == "NotebookEdit" else "file_path"
     return {
         "hook_event_name": "PreToolUse",
@@ -53,7 +53,7 @@ def test_catalog_approval_is_left_to_the_specification_guard():
 
 def test_governed_file_carries_its_requirements():
     context = output(requirements_hook.decide(payload()))["additionalContext"]
-    assert "scripts/merge_threats.py" in context
+    assert "scripts/model/merge_threats.py" in context
     assert "REQ-MOD-001" in context
     assert "Guard coverage: partial" in context
 
@@ -124,40 +124,40 @@ def test_a_harmless_command_is_allowed(command):
 @pytest.mark.parametrize(
     "command",
     [
-        "sed -i 's/a/b/' scripts/merge_threats.py",
-        "cat > scripts/merge_threats.py <<'EOF'\nx\nEOF",
-        "cp /tmp/patched.py scripts/merge_threats.py",
+        "sed -i 's/a/b/' scripts/model/merge_threats.py",
+        "cat > scripts/model/merge_threats.py <<'EOF'\nx\nEOF",
+        "cp /tmp/patched.py scripts/model/merge_threats.py",
     ],
 )
 def test_a_shell_write_to_a_governed_file_carries_its_requirements(command):
     context = output(requirements_hook.decide(bash(command)))["additionalContext"]
-    assert "Requirements governing scripts/merge_threats.py:" in context
+    assert "Requirements governing scripts/model/merge_threats.py:" in context
     assert "REQ-MOD-001" in context
 
 
 def test_a_shell_write_to_an_ungoverned_file_is_left_alone():
-    assert requirements_hook.decide(bash("sed -i 's/a/b/' scripts/agent_logger.py")) is None
+    assert requirements_hook.decide(bash("sed -i 's/a/b/' scripts/runtime/agent_logger.py")) is None
 
 
 def test_a_read_only_command_naming_a_governed_file_is_left_alone():
-    assert requirements_hook.decide(bash("grep -n threat scripts/merge_threats.py")) is None
+    assert requirements_hook.decide(bash("grep -n threat scripts/model/merge_threats.py")) is None
 
 
 def test_shell_targets_ignore_flags_and_paths_outside_the_repository():
-    command = "sed -i -e s/a/b/ scripts/merge_threats.py /tmp/elsewhere.py"
-    assert requirements_hook.shell_edit_targets(command) == ["scripts/merge_threats.py"]
+    command = "sed -i -e s/a/b/ scripts/model/merge_threats.py /tmp/elsewhere.py"
+    assert requirements_hook.shell_edit_targets(command) == ["scripts/model/merge_threats.py"]
 
 
 def test_shell_targets_stop_at_the_reporting_cap():
     files = " ".join(
         f"scripts/{name}.py"
         for name in (
-            "merge_threats",
-            "compose_threat_model",
-            "export_sarif",
-            "export_html",
-            "export_pdf",
-            "query_threat_model",
+            "model/merge_threats",
+            "renderers/compose_threat_model",
+            "exporters/export_sarif",
+            "exporters/export_html",
+            "exporters/export_pdf",
+            "model/query_threat_model",
         )
     )
     targets = requirements_hook.shell_edit_targets(f"sed -i 's/a/b/' {files}")
@@ -172,7 +172,7 @@ def test_project_settings_wire_every_write_surface_to_the_hook():
         for group in groups
         if group.get("matcher") == "Edit|Write|MultiEdit|NotebookEdit|Bash"
         and any(
-            "requirements_hook.py" in " ".join([hook.get("command", ""), *hook.get("args", [])])
+            "requirements/requirements_hook.py" in " ".join([hook.get("command", ""), *hook.get("args", [])])
             for hook in group.get("hooks", [])
         )
     ]

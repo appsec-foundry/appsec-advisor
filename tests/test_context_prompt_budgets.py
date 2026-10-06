@@ -33,22 +33,28 @@ SURFACE_MAX_BYTES_RATCHET = {
     # replaces. See the note in data/context-budgets.yaml.
     "thin_stage1d_runtime": 4000,
     # 3600 -> 3800, 8000 -> 8200, 3600 -> 3800 (2026-09-12): the post-Stage-1d
-    # runtimes join their asynchronous agent calls with wait_agent_calls.py.
+    # runtimes join their asynchronous agent calls with orchestrator/wait_agent_calls.py.
     # See the notes in data/context-budgets.yaml.
     "thin_stage2_runtime": 3800,
     "thin_stage3_runtime": 8200,
     "thin_stage4_runtime": 3800,
     "thin_completion_runtime": 6000,
     "shared_threat_analysis_kernel": 16000,
-    "architecture_analyst_role": 12000,
+    # 12000 -> 13000 (2026-09-17): role units, capability labels, and concrete
+    # access-group and `none` rules. See the note in data/context-budgets.yaml.
+    "architecture_analyst_role": 13000,
     "control_analyst_role": 12000,
     "post_stride_synthesizer_role": 12000,
     # 12000 -> 14500 (2026-08-30): requirements and blueprint provenance grew
     # the role to 12764 bytes, past the hard budget and inside the headroom
     # band. See the note in data/context-budgets.yaml.
-    "stride_analyzer_role": 14500,
+    # 14500 -> 17500 (2026-09-24): gate-enforced mechanism_trace contract and
+    # the retry repair brief. See the note in data/context-budgets.yaml.
+    "stride_analyzer_role": 17500,
     "stride_lens_llm": 7000,
     "stride_lens_agentic": 8000,
+    "stride_lens_rag": 2600,
+    "stride_lens_mcp": 3300,
     "stride_lens_spa": 3500,
     "stride_lens_mobile": 2500,
     "stride_lens_supply_chain": 14000,
@@ -155,7 +161,8 @@ def test_thin_runtime_uses_bounded_stage_reads():
     assert "ORG_PROFILE_PATH = org_profile_path" in text
     assert "▶ Stage 1a/<TOTAL_STAGES>" in text
     assert "secret gate is never optional" in text
-    assert "There is no legacy range or fallback" in text
+    assert "SKILL-impl.md" not in text
+    assert "SKILL-thin-stage1.md" not in text
 
 
 def test_thin_full_cumulative_stage2_context_is_bounded():
@@ -192,7 +199,7 @@ def test_compact_stage_contracts_preserve_level0_dispatch_and_gates():
     # dispatch in the wave.
     assert "Pass no `run_in_background`" in stage1d
     assert "launching the wave" in stage1d and "in ONE message" in stage1d
-    assert "wait_abuse_progress.py" in stage1d
+    assert "orchestrator/wait_abuse_progress.py" in stage1d
     assert "model alias" in stage1d
     assert "without reproducing evidence or artifact content" in stage1d
     assert "must not silently drop candidates" in stage1d
@@ -217,7 +224,8 @@ def test_thin_rerender_runtime_starts_at_stage2():
     assert "SKILL-thin-stage3.md" in text
     assert "SKILL-thin-stage4.md" in text
     assert "SKILL-thin-completion.md" in text
-    assert "There is no legacy slice" in text
+    assert "SKILL-impl.md" not in text
+    assert "SKILL-thin-stage1.md" not in text
 
 
 def test_context_v2_stage1_runtime_is_bounded():
@@ -236,7 +244,7 @@ def test_context_v2_stage1_runtime_preserves_dispatch_and_boundary_contract():
     # removed parameter voided every dispatch in the wave.
     assert "in ONE assistant message" in flat
     assert "Pass no `run_in_background`" in text
-    assert "wait_stride_progress.py" in text
+    assert "orchestrator/wait_stride_progress.py" in text
     assert "Never wait for one STRIDE job before launching the next" in flat
     assert "Do not end your turn after dispatching" in text
     assert "Never re-dispatch an agent that already returned" in text
@@ -253,11 +261,12 @@ def test_context_v2_stage1_runtime_preserves_dispatch_and_boundary_contract():
     # Per-role measurement must be executable, not a prose suggestion. R9
     # recorded only abuse verification and rendering despite dispatching all
     # Stage-1 roles.
-    assert "WAVE_START_ISO" in text
+    assert "capture no timestamp" in flat
     assert "group the returned jobs by `semantic_role`, `agent_type`, and `model`" in flat
     assert "`total_tokens`, `tool_uses`, and `duration_ms`" in text
     assert '--variant "<semantic_role>"' in text
-    assert '--subagent-type "<agent_type>" --since-iso "$WAVE_START_ISO"' in flat
+    assert '--subagent-type "<agent_type>" || true` in the same Bash call' in flat
+    assert "WAVE_START_ISO" not in text
 
     # The skill must never select a producer itself.
     assert "semantic_role" in text

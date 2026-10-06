@@ -18,7 +18,7 @@ rendering, exports, orchestration, and release gates.
 - `specs/requirements.md` contains stable product behavior a user relies on.
 - `data/requirement-bindings.yaml` maps each requirement to affected paths,
   decisions, documents, and exact test evidence.
-- `docs/internal/decisions.md` contains costly or non-obvious technical choices.
+- `docs/internal/decisions.md` records costly or non-obvious technical choices. An entry states in a few sentences what holds and cites its guard. Mappings, rankings, limits, and algorithms stay in the code, data file, or contract the entry cites.
 - Schemas and data files define artifact shapes, values, limits, and vocabularies.
 - Code defines algorithms and runtime sequencing; tests guard behavior and drift.
 
@@ -36,6 +36,7 @@ reviewed implementation work.
 - `main` carries releases only. It changes through two paths: a `dev` → `main` merge at a release, and a hotfix. Both end in a `v*` tag.
 - A hotfix branches from `main` and targets `main`, and is merged back into `dev` right after the tag so the next release keeps the fix.
 - Never commit to `main` directly, and never merge any other branch into it.
+- Before a release, follow `docs/releasing.md`, including the signed baseline sync and commit before tagging; `release-check` runs offline on the tagged commit.
 
 ### Fix the source, not the symptom
 
@@ -72,7 +73,7 @@ reviewed implementation work.
 
 - Write code comments, docstrings, commits, and repository documents in English.
 - For new or substantively edited Markdown prose, follow `docs/internal/documentation-style.md`. Keep each prose paragraph, including prose in list items, on one source line; separate paragraphs with one blank line; and do not reflow untouched prose solely for formatting. Local contracts override the external style reference.
-- `CHANGELOG.md` records only changes that materially affect users' capabilities, results, workflows, compatibility, or reliability. Omit internal implementation details, minor cosmetic changes, refactors, tests, documentation edits, and routine maintenance. Before adding a bullet, review all `Unreleased` entries and merge changes describing the same user-facing outcome, including fixes to unreleased features. Add a separate bullet only for a distinct relevant outcome. Keep each bullet to one short sentence describing the user impact.
+- `CHANGELOG.md` is opt-in: add an entry only when completed work materially changes users' capabilities, results, workflows, compatibility, or reliability. Do not add entries for internal implementation details, minor cosmetic changes, refactors, tests, documentation edits, or routine maintenance. Before adding an entry, review every `Unreleased` bullet. Update or replace an existing bullet whenever the change advances, corrects, or refines the same unreleased user-facing outcome, including across `Added`, `Changed`, and `Fixed`; do not add a parallel bullet. Add a separate bullet only for a distinct relevant outcome. Keep each bullet to one short sentence describing the user impact.
 - Documentation states what something does, when it applies, and what breaks if
   it is wrong. Algorithms, tie-breaking, limits, and fallbacks stay in their
   authoritative technical source.
@@ -97,9 +98,9 @@ reviewed implementation work.
 |---|---|---|
 | Agent definitions and tools | `agents/appsec-*.md`, decisions `OR-1`, `OR-2` | `tests/test_agent_definitions.py` |
 | Report structure and fragments | `data/sections-contract.yaml`, `schemas/`, schema invariants | schema, compose, and QA tests |
-| Runtime routing and depth | `scripts/resolve_config.py`, `docs/model-selection.md`, decisions `MD-*`, `DT-*`, `DP-*` | resolver and routing tests |
-| Orchestration and retries | `scripts/orchestration_controller.py`, `docs/internal/contracts/orchestration-actions.md`, decisions `OR-*`, `ST-*` | controller tests |
-| Context routing and budgets | `docs/internal/contracts/context-routing.md`, `data/context-routing/`, `data/context-budgets.yaml`, decisions `CR-*`, `CE-*` | context and prompt-budget tests |
+| Runtime routing and depth | `scripts/runtime/resolve_config.py`, `docs/model-selection.md`, decisions `MD-*`, `DT-*`, `DP-*` | resolver and routing tests |
+| Orchestration and retries | `scripts/orchestrator/orchestration_controller.py`, `docs/internal/contracts/orchestration-actions.md`, decisions `OR-*`, `ST-*` | controller tests |
+| Context routing and budgets | `docs/internal/contracts/context-routing.md`, `data/context-routing-catalog.yaml`, `data/context-routing-bindings.json`, `data/context-budgets.yaml`, decisions `CR-*`, `CE-*` | context and prompt-budget tests |
 | Severity, CVSS, and evidence | severity data, decisions `FE-*`, `WK-*`, active report bindings | triage and validation tests |
 | Report prose and references | `agents/shared/prose-style.md`, `docs/internal/contracts/schema-invariants.md`, decisions `RA-*`, `RN-*` | prose, compose, and QA tests |
 | Cleanup and preserved state | `docs/internal/contracts/cleanup-whitelist.md`, `docs/internal/contracts/audit-artifacts.md`, decision `RA-6` | `tests/test_runtime_cleanup.py` |
@@ -115,9 +116,14 @@ reviewed implementation work.
 
 ## Before finishing
 
-- Run the relevant subset from `CONTRIBUTING.md` → Targeted tests. If the
-  repository is already red, capture a baseline and distinguish regressions.
-- Match broader gates to the change's blast radius instead of running them by default. Run `make lint` after changing Python in `scripts/`, `tests/`, or `hooks/`. Use `make validate test-quick` and the relevant `make test-group GROUP=<name>` for bounded implementation changes, adding tests for affected producers and consumers. Run `make check` when a change affects shared runtime behavior, spans multiple runtime modules or contracts, or cannot be covered confidently by targeted tests, and at release boundaries. It includes the complete suite without coverage; do not also run `make test-full` or `make test` unless a separate coverage measurement is needed. `make test` retains the complete coverage gate. Documentation, examples, fixtures, and isolated tests do not require the full suite when their applicable validators and targeted tests pass. Agent and skill Markdown is runtime input, not a documentation-only exception.
+- Run only the tests required to verify the current task's changes and affected interfaces. Choose the smallest sufficient selection from the reviewed routes and applicable contracts. Do not add unrelated tests, broad test groups, coverage runs, or full-suite runs for extra confidence. The default is the routed selection from `make test-plan` and `make test-changed`, which maps changed files to their reviewed tests. `make check` and `make test` do not route; they run the full suite, which is not a default or a safety net; run it only under the conditions listed below and state the concrete reason before running it.
+
+- Keep test scope tied to the current task in a mixed working tree. Unrelated commits or pre-existing local changes do not justify expanding this task's test run. If either test plan includes unrelated work, inspect the routes for the task's files and run their required checks directly. Preserve all checks required for changed controls and affected producers and consumers.
+- Run the relevant subset from `CONTRIBUTING.md` → Targeted tests. Do not run tests before a change to capture a baseline. When a selected test fails, rerun only the failing tests at the merge base as `CONTRIBUTING.md` describes; a failure that also occurs there is pre-existing, any other failure is a regression.
+- Inspect `make test-plan BASE=origin/dev` for the reviewed branch selection and its reasons. When the branch already contains unrelated local commits and the current work is separately bounded, also inspect `make test-plan BASE=HEAD` to select staged, unstaged, and untracked work without re-testing those commits. For bounded implementation changes covered by reviewed routes, run `make validate test-changed BASE=origin/dev`; when the reviewed worktree-only plan is the applicable scope, use `make validate test-changed BASE=HEAD`. Run `make lint` after changing Python in `scripts/`, `tests/`, or `hooks/`. Source routes select reviewed producer and consumer modules directly, while requirement bindings retain exact pytest selectors. `make validate` owns shared drift checks, so a clean comparison runs no tests. Review affected producers and consumers before accepting a focused selection; use `make check` if its scope is insufficient.
+- Exact group membership, manual test roles, and source-to-test routes live in `scripts/run_tests.py`. Update them when adding or renaming tests or changing producer/consumer relationships. `make validate` rejects missing assignments and stale paths. After changing a route, run `make audit-test-routes`; it measures whether the route contains every test that executes or reads its file. Requirement bindings supplement these routes; they do not replace dependency review.
+- Run `make check` when a change affects foundational runtime behavior whose consumers are not bounded by reviewed routes, spans coupled runtime modules or contracts beyond those routes, cannot be bounded confidently, or reaches a release boundary. Multiple source files with complete reviewed routes use the union of those routes; multiple files alone do not require the full suite. Unknown paths and shared inputs make the automatic selection fall back to the full suite. During iteration or for separately bounded work in a mixed working tree, use `make validate test-quick` and the relevant `make test-group GROUP=<name>`, adding affected producer and consumer tests. Documentation, examples, fixtures, and isolated tests need only their applicable validators and targeted tests when their impact is bounded. Markdown under `agents/` and `skills/` is plugin runtime input; the root `AGENTS.md` is repository guidance and follows its reviewed tooling route.
+- Stop testing when the required checks pass. Expand or repeat the selection only when a subsequent change, failure, or uncovered affected behavior gives a concrete reason. Reuse successful checks while the code, contracts, dependencies, and test environment they cover remain unchanged. `make check` includes the base checks and complete suite without coverage; do not repeat them or run `make test` afterward unless a separate coverage measurement is required. Full compatibility and coverage checks remain in CI.
 - Add a matching `tests/test_*.py` for each new `scripts/` module and cover core
   behavior and failure paths.
 - For heuristic or scanner changes, use application-agnostic signals, neutral

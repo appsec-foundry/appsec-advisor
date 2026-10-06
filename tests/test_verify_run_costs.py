@@ -1,4 +1,4 @@
-"""Unit tests for scripts/verify_run_costs.py.
+"""Unit tests for scripts/runtime/verify_run_costs.py.
 
 Covers parsing (SESSION_STOP, ASSESSMENT_TOKENS, AGENT_SPAWN), run-window
 detection, delta aggregation, cross-check, sub-agent estimate signals,
@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 import pytest
-import verify_run_costs as vrc
+import runtime.verify_run_costs as vrc
 
 SONNET = vrc.PRICING_MODELS["sonnet-4-6"]
 
@@ -224,6 +224,118 @@ class TestRunWindow:
         assert start is None and end is None
 
 
+def _canonical(ts: str, event: str, detail: str = "", *, component: str | None = None, sid: str = "--------") -> str:
+    """One line in the shape event_log.format_line writes."""
+    if component is None:
+        return f"{ts}  [{sid}]  INFO   {event:<18}  {detail}\n"
+    return f"{ts}  [{sid}]  INFO   {component:<18}  {event:<18}  {detail}\n"
+
+
+def _epoch(ts: str) -> str:
+    from datetime import datetime, timezone
+
+    return str(int(datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()))
+
+
+class TestRecordedRunWindow:
+    """Compact runs: the controller's start and the Stop hook's end bound the window."""
+
+    def test_the_recorded_epoch_starts_the_window_not_a_logged_command(self, tmp_path):
+        (tmp_path / ".scan-start-epoch").write_text(_epoch("2026-01-01T00:00:00Z"))
+        write_logs(
+            tmp_path,
+            agent_lines=[
+                _canonical("2026-01-01T00:00:00Z", "PREFLIGHT_CLEANUP", "mode=full", component="skill-controller")
+            ],
+            hook_lines=[
+                session_stop("2026-01-01T00:10:00Z", "5a1", in_=10, cost=0.1),
+                _canonical("2026-01-01T05:00:00Z", "BASH_OK", "cmd=grep -c SCAN_START .agent-run.log", sid="5a1"),
+            ],
+        )
+        start, end = vrc.find_run_window(tmp_path / ".agent-run.log", tmp_path / ".hook-events.log")
+        assert (start, end) == ("2026-01-01T00:00:00Z", None)
+
+    def test_the_stop_hook_end_marker_closes_the_window(self, tmp_path):
+        (tmp_path / ".scan-start-epoch").write_text(_epoch("2026-03-04T10:00:00Z"))
+        write_logs(
+            tmp_path,
+            agent_lines=[
+                _canonical("2026-03-04T10:00:01Z", "ASSESSMENT_START", "mode=rebuild", component="skill-controller"),
+                _canonical("2026-03-04T11:30:00Z", "ASSESSMENT_END", "session=77aa", component="hook-logger"),
+                _canonical("2026-03-04T15:00:00Z", "SESSION_STOP", "in=5", component="shared-session"),
+            ],
+            hook_lines=[],
+        )
+        start, end = vrc.find_run_window(tmp_path / ".agent-run.log", tmp_path / ".hook-events.log")
+        assert (start, end) == ("2026-03-04T10:00:01Z", "2026-03-04T11:33:00Z")
+
+    def test_a_run_logged_before_the_end_marker_ends_at_its_closing_summary(self, tmp_path):
+        (tmp_path / ".scan-start-epoch").write_text(_epoch("2026-02-02T08:00:00Z"))
+        write_logs(
+            tmp_path,
+            agent_lines=[
+                _canonical("2026-02-02T09:00:00Z", "ASSESSMENT_SUMMARY", "mode=full", component="hook-logger")
+            ],
+            hook_lines=[],
+        )
+        _, end = vrc.find_run_window(tmp_path / ".agent-run.log", tmp_path / ".hook-events.log")
+        assert end == "2026-02-02T09:03:00Z"
+
+    def test_a_rerender_opens_its_own_window_after_the_assessed_run(self, tmp_path):
+        (tmp_path / ".scan-start-epoch").write_text(_epoch("2026-01-01T00:00:00Z"))
+        write_logs(
+            tmp_path,
+            agent_lines=[
+                _canonical("2026-01-01T00:00:00Z", "ASSESSMENT_START", "mode=full", component="skill-controller"),
+                _canonical("2026-01-01T01:00:00Z", "ASSESSMENT_END", "session=5a1", component="hook-logger"),
+                _canonical("2026-01-01T03:00:00Z", "ASSESSMENT_START", "mode=rerender", component="skill-controller"),
+            ],
+            hook_lines=[],
+        )
+        start, end = vrc.find_run_window(tmp_path / ".agent-run.log", tmp_path / ".hook-events.log")
+        assert (start, end) == ("2026-01-01T03:00:00Z", None)
+
+    def test_marker_names_inside_details_do_not_move_the_window(self, tmp_path):
+        (tmp_path / ".scan-start-epoch").write_text(_epoch("2026-01-01T00:00:00Z"))
+        write_logs(
+            tmp_path,
+            agent_lines=[
+                _canonical(
+                    "2026-01-01T00:20:00Z",
+                    "ORCHESTRATION_GATE_WARN",
+                    "gate expected ASSESSMENT_END and ASSESSMENT_START",
+                    component="skill-controller",
+                ),
+            ],
+            hook_lines=[_canonical("2026-01-01T02:00:00Z", "BASH_OK", "cmd=grep ASSESSMENT_START log", sid="5a1")],
+        )
+        start, end = vrc.find_run_window(tmp_path / ".agent-run.log", tmp_path / ".hook-events.log")
+        assert (start, end) == ("2026-01-01T00:00:00Z", None)
+
+    def test_usage_after_the_run_ended_is_not_priced(self, tmp_path):
+        (tmp_path / ".scan-start-epoch").write_text(_epoch("2026-01-01T00:00:00Z"))
+        write_logs(
+            tmp_path,
+            agent_lines=[
+                _canonical("2026-01-01T00:00:00Z", "PREFLIGHT_CLEANUP", "mode=full", component="skill-controller"),
+                _canonical("2026-01-01T00:30:00Z", "ASSESSMENT_END", "session=5a1", component="hook-logger"),
+            ],
+            hook_lines=[
+                session_stop("2026-01-01T00:29:00Z", "5a1", in_=1_000_000, cost=3.0),
+                _canonical("2026-01-01T04:00:00Z", "BASH_OK", "cmd=grep SCAN_START .agent-run.log", sid="5a1"),
+                session_stop("2026-01-01T04:00:05Z", "5a1", in_=9_000_000, cost=27.0),
+            ],
+        )
+        res = vrc.verify_run_costs(tmp_path)
+        assert res["run_window"] == {"start": "2026-01-01T00:00:00Z", "end": "2026-01-01T00:33:00Z"}
+        assert res["totals"]["in"] == 1_000_000
+        assert res["totals"]["cost"] == pytest.approx(3.0)
+
+    def test_a_missing_start_names_its_kind(self, tmp_path):
+        write_logs(tmp_path, hook_lines=["irrelevant\n"], agent_lines=["nothing\n"])
+        assert vrc.verify_run_costs(tmp_path)["error_kind"] == "no_run_window"
+
+
 # ===========================================================================
 # Duration
 # ===========================================================================
@@ -312,20 +424,15 @@ class TestModels:
     def test_detect_no_yaml(self, tmp_path):
         assert vrc._detect_agent_models(tmp_path) == {}
 
-    def test_detect_agent_models(self, tmp_path):
+    def test_detect_reads_the_stride_model_from_meta_only(self, tmp_path):
         (tmp_path / "threat-model.yaml").write_text(
-            "meta:\n"
-            '  model: "claude-sonnet-4-6"\n'
-            "  agent_models:\n"
-            '    stride-analyzer: "claude-opus-4-6"\n'
-            '    qa-reviewer: "sonnet"\n'
-            "  other: x\n"
+            'components:\n- id: api\n  model: "claude-haiku-4-5"\nmeta:\n  model: "claude-opus-4-6"\n  other: x\n'
         )
-        models = vrc._detect_agent_models(tmp_path)
-        assert models["stride-analyzer"] == "opus-4-6"
-        assert models["qa-reviewer"] == "sonnet-4-6"
-        # orchestrator added under base model
-        assert models["threat-analyst"] == "sonnet-4-6"
+        assert vrc._detect_agent_models(tmp_path) == {"stride-analyzer": "opus-4-6"}
+
+    def test_detect_without_meta_model(self, tmp_path):
+        (tmp_path / "threat-model.yaml").write_text("meta:\n  mode: full\ncomponents: []\n")
+        assert vrc._detect_agent_models(tmp_path) == {}
 
 
 # ===========================================================================
@@ -388,6 +495,26 @@ class TestSessionAgents:
         agents = vrc.find_session_agents(hook, "2026-01-01T00:00:00Z", "2026-01-01T00:30:00Z")
         assert agents["5a1"] == sorted(["threat-analyst", "stride-analyzer"])
         assert "5a2" not in agents
+
+    def test_current_spawn_lines_are_named_by_their_agent_type(self, tmp_path):
+        hook = tmp_path / "h.log"
+        hook.write_text(
+            _canonical(
+                "2026-01-01T00:05:00Z",
+                "AGENT_SPAWN",
+                "agent_call_id=toolu_01AbC  agent_type=appsec-advisor:appsec-recon-scanner  model=haiku",
+                sid="5a1",
+            )
+            + _canonical(
+                "2026-01-01T00:06:00Z",
+                "AGENT_SPAWN",
+                "agent_call_id=toolu_02XyZ  agent_type=review-helper  model=sonnet",
+                sid="5a1",
+            )
+        )
+        window = ("2026-01-01T00:00:00Z", "2026-01-01T00:30:00Z")
+        assert vrc.find_session_agents(hook, *window) == {"5a1": ["recon-scanner", "review-helper"]}
+        assert vrc.find_session_agent_counts(hook, *window) == {"5a1": {"recon-scanner": 1, "review-helper": 1}}
 
     def test_counts(self, tmp_path):
         hook = tmp_path / "h.log"
@@ -619,9 +746,7 @@ class TestVerifyRunCosts:
 
     def test_mixed_model_costs(self, tmp_path):
         self._good_run(tmp_path, cost_final=10.0)
-        (tmp_path / "threat-model.yaml").write_text(
-            'meta:\n  model: "claude-sonnet-4-6"\n  agent_models:\n    stride-analyzer: "claude-opus-4-6"\n'
-        )
+        (tmp_path / "threat-model.yaml").write_text('meta:\n  model: "claude-opus-4-6"\n')
         res = vrc.verify_run_costs(tmp_path)
         assert res["mixed_model_costs"] is not None
         assert "opus-4-6" in res["mixed_model_costs"]
@@ -629,9 +754,7 @@ class TestVerifyRunCosts:
 
     def test_verbose_prints(self, tmp_path, capsys):
         self._good_run(tmp_path, cost_final=26.78)
-        (tmp_path / "threat-model.yaml").write_text(
-            'meta:\n  model: "claude-sonnet-4-6"\n  agent_models:\n    stride-analyzer: "claude-opus-4-6"\n'
-        )
+        (tmp_path / "threat-model.yaml").write_text('meta:\n  model: "claude-opus-4-6"\n')
         res = vrc.verify_run_costs(tmp_path, verbose=True)
         err = capsys.readouterr().err
         assert "Run window:" in err
@@ -683,7 +806,7 @@ class TestPrintVerbose:
             "mixed_model_costs": {
                 "opus-4-6": {"cached": 1.0, "no_cache": 2.0, "pricing": vrc.PRICING_MODELS["opus-4-6"]}
             },
-            "agent_models": {"threat-analyst": "sonnet-4-6"},
+            "agent_models": {"stride-analyzer": "sonnet-4-6"},
             "subagent_estimate": {
                 "assessment_tokens_cost": 5.0,
                 "multiplier_estimate": 4.0,
@@ -729,27 +852,27 @@ class TestCLI:
     def test_cli_not_a_directory(self, run_plugin_script, tmp_path):
         f = tmp_path / "file.txt"
         f.write_text("x")
-        r = run_plugin_script("verify_run_costs.py", str(f), check=False)
+        r = run_plugin_script("runtime/verify_run_costs.py", str(f), check=False)
         assert r.returncode == 2
         assert "is not a directory" in r.stderr
 
     def test_cli_error_json(self, run_plugin_script, tmp_path):
         # empty dir -> no hook log -> error path with --json
-        r = run_plugin_script("verify_run_costs.py", str(tmp_path), "--json", check=False)
+        r = run_plugin_script("runtime/verify_run_costs.py", str(tmp_path), "--json", check=False)
         assert r.returncode == 2
         out = json.loads(r.stdout)
         assert "error" in out
 
     def test_cli_default_output(self, run_plugin_script, tmp_path):
         self._setup_good(tmp_path)
-        r = run_plugin_script("verify_run_costs.py", str(tmp_path), check=False)
+        r = run_plugin_script("runtime/verify_run_costs.py", str(tmp_path), check=False)
         assert r.returncode == 0
         assert "Tokens:" in r.stdout
         assert "Sub-agent estimate" in r.stdout
 
     def test_cli_json_output(self, run_plugin_script, tmp_path):
         self._setup_good(tmp_path)
-        r = run_plugin_script("verify_run_costs.py", str(tmp_path), "--json", check=False)
+        r = run_plugin_script("runtime/verify_run_costs.py", str(tmp_path), "--json", check=False)
         assert r.returncode == 0
         out = json.loads(r.stdout)
         assert out["totals"]["cross_check"] == "OK"
@@ -757,13 +880,13 @@ class TestCLI:
 
     def test_cli_verbose(self, run_plugin_script, tmp_path):
         self._setup_good(tmp_path)
-        r = run_plugin_script("verify_run_costs.py", str(tmp_path), "--verbose", check=False)
+        r = run_plugin_script("runtime/verify_run_costs.py", str(tmp_path), "--verbose", check=False)
         assert r.returncode == 0
         assert "Run window:" in r.stderr
 
     def test_cli_actual_cost_host_path(self, run_plugin_script, tmp_path):
         self._setup_good(tmp_path)
-        r = run_plugin_script("verify_run_costs.py", str(tmp_path), "--actual-cost", "50.0", check=False)
+        r = run_plugin_script("runtime/verify_run_costs.py", str(tmp_path), "--actual-cost", "50.0", check=False)
         assert r.returncode == 0
         assert "Calibration recorded" in r.stderr
         cal = json.loads((tmp_path / ".appsec-cache" / vrc._CALIBRATION_FILE).read_text())
@@ -775,7 +898,7 @@ class TestCLI:
         agent = "2026-01-01T00:00:00Z INFO ASSESSMENT_START\n2026-01-01T00:40:00Z INFO ASSESSMENT_END\n"
         (tmp_path / ".hook-events.log").write_text(hook)
         (tmp_path / ".agent-run.log").write_text(agent)
-        r = run_plugin_script("verify_run_costs.py", str(tmp_path), "--actual-cost", "20.0", check=False)
+        r = run_plugin_script("runtime/verify_run_costs.py", str(tmp_path), "--actual-cost", "20.0", check=False)
         assert r.returncode == 0
         assert "per-minute rate" in r.stderr
         cal = json.loads((tmp_path / ".appsec-cache" / vrc._CALIBRATION_FILE).read_text())

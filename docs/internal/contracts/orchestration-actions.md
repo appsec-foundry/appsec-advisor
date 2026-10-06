@@ -1,8 +1,12 @@
 # Orchestration Action Contract
 
-`scripts/orchestration_controller.py` is the deterministic control plane for the single full/rebuild and rerender runtimes. Its stdout is one compact JSON line, validated against `schemas/orchestration-action.schema.json` before the skill consumes it. The printed action is the exact action the effective plan binds, so no field may be dropped from it to save context.
+`scripts/orchestrator/orchestration_controller.py` is the deterministic control plane for the single full/rebuild and rerender runtimes. Its stdout is one compact JSON line, validated against `schemas/orchestration-action.schema.json` before the skill consumes it. The printed action is the exact action the effective plan binds, so no field may be dropped from it to save context.
 
 ## Control-plane invariants
+
+The interactive skill calls `prepare --interactive-context`. After run admission, lock acquisition, cleanup, and any explicit context capture, it returns `decision_required` with the plugin-owned business-context mode before expensive prepasses or requirements fetching. `contexts/business_context_preview.py` owns the local discovery limits and validates `.business-context-preview.json`; its source excerpts are untrusted preliminary evidence, never a complete inventory. The session interprets this packet once, confirms or corrects the use case, then derives a business-harm question from that answer, without further discovery or agent dispatch. There are at most two question calls; technical attack mechanisms are not business-harm choices. Headless and skip-context runs bypass this decision.
+
+`review-business-impact` advances the pending dialog from use case to worst-case review exactly once for the run holding the lock. It returns the plugin-owned impact mode without starting scanners. `complete-preflight` rejects a dialog that has not reached that step and accepts `answered`, `skip`, or `unchanged` for the pending run ID and lock owner. Only a fixed, bounded `.business-context-raw.md` supplies answers; the controller validates it, preserves existing context, and captures the combined source for this run before starting prepasses. It also saves substantive answers in `docs/security/business-context.md`, preserving repository context without persisting explicit run-only imports. Repository context uses the new path first and the legacy `docs/business-context.md` only when that path is absent. Saving answers carries effective legacy context into the new file without modifying the legacy file. Both combined inputs must fit the analysis window before either is written. An invalid submitted answer rejects continuation. Stage-1 entry and `next` reject a pending dialog. Skipping leaves repository context unchanged. Recon receives the validated overview through the context-routing catalog and reads the effective post-dialog business context. Later runs read the saved context before formulating questions.
 
 Python controls execution and validates state. Models decide security meaning
 only at explicit semantic boundaries, and contracted filesystem artifacts are
@@ -20,14 +24,16 @@ the second.
 ### Agent call lifecycle and budget telemetry
 
 Every Agent tool invocation uses the host `tool_use_id` as its immutable
-`agent_call_id`. `scripts/agent_lifecycle.py` persists the schema-v1 lifecycle
+`agent_call_id`. `scripts/runtime/agent_lifecycle.py` persists the schema-v1 lifecycle
 under `.active-tool-calls/agent-lifecycle.json` and permits only
 `AGENT_SPAWN -> AGENT_RUNNING -> AGENT_DONE | AGENT_FAILED`. Replayed terminal
 events are no-ops; missing, reordered, or conflicting transitions emit
 `AGENT_LIFECYCLE_REJECTED`. The host `agent_id` binds SubagentStart and
 SubagentStop usage to the call. SubagentStop reads the child-specific
 `agent_transcript_path` and retires the budget; a missing or later Agent
-PostToolUse cannot reopen the call. The common `transcript_path` belongs to the
+PostToolUse cannot reopen the call. A child's own `SubagentHandback` ends its
+turns and every join once it came on the last allowed turn, when no
+SubagentStop can follow, or the child stayed silent after it (OR-29). The common `transcript_path` belongs to the
 parent session. A headless session persists neither transcript: SubagentStop
 then defers the outcome instead of recording a failure, and the Agent
 PostToolUse terminalizes the call and supplies its usage. A run or session ID
@@ -40,18 +46,21 @@ context-routing ledger, persisted dispatch-wave active claim, and promoted
 attempt remain authoritative. Lifecycle state, `.active-tool-calls`, hook
 events, and status output are observational.
 
-`scripts/budget_watchdog.py` opens one schema-v2 counter at call admission and
+`scripts/runtime/budget_watchdog.py` opens one schema-v2 counter at call admission and
 retires it with the terminal call. Budget markers retain the compatible JSON
 list envelope but each new entry must validate against
 `schemas/agent-call-budget-marker.schema.json`. Entries without a current
 `agent_call_id + action_id + job_id + component_id + attempt` identity are
-inert. Consumers use `budget_watchdog.py active-critical`; they never branch on
-marker-file existence. Terminal cleanup first emits `AGENT_FAILED` for any
+inert.
+
+Agents use `runtime/budget_watchdog.py active-job-critical --action-id <ACTION_ID> --job-id <JOB_ID>` with their controller dispatch identity. The STRIDE analyzer gets the same check as the `budget` field of each `runtime/stride_attempt_writer.py category` call. Only a critical marker belonging to that job's unique current call authorizes its wrap-up. Missing or ambiguous identity supplies no wrap-up signal and never falls back to another job. Controller gates retain the global `active-critical` query. Neither consumer branches on marker-file existence.
+
+Terminal cleanup first emits `AGENT_FAILED` for any
 remaining calls, retires their counters and markers, then removes
 `.active-tool-calls/`.
 
 A run that does not finish cleanly still reaches one terminal state.
-`scripts/terminate_run.py` is that single terminator: it records `RUN_ABORTED`
+`scripts/runtime/terminate_run.py` is that single terminator: it records `RUN_ABORTED`
 unless a controller verdict already stands, closes the checkpoint, terminalizes
 remaining calls, removes live markers, aggregates run issues, and releases the
 lock when the run owns it. All of that is scoped to the run that owns the
@@ -87,22 +96,20 @@ The standing contract surfaces are:
 - context catalog and effective-plan policy in
   `docs/internal/contracts/context-routing.md`.
 
-Dispatch and mutation ownership is global: Level-0 dispatch belongs to the
-compact runtime acting on controller actions, and no agent recurses through
-`Agent`. One controller boundary owns each state mutation and producer output.
+Dispatch and mutation ownership is global: native Level-0 Agent dispatch belongs to the compact runtime acting on controller actions, and no agent recurses through `Agent`. The enabled architect review runs before triage as controller-dispatched `architect_reviewer` jobs; `scripts/analyzers/architect_review_runtime.py` plans, collects and applies them, and the agent has no recursive tool surface. One controller boundary owns each state mutation and producer output.
 
 ## Ownership
 
-- `resolve_config.py` remains the source of truth for flags, paths, modes,
+- `runtime/resolve_config.py` remains the source of truth for flags, paths, modes,
   models, depth, and output settings.
-- `orchestration_controller.py` owns thin-runtime selection, full/rebuild preflight mutations, Stage-1a topology/finalization gate, Stage-1b candidate promotion and coverage gate, Stage-1c post-analysis gates and checkpoint freshness, Stage-1 task transitions, abuse-case match/finalize, Stage-2 structural preparation, rerender artifact preconditions, fixed next-action classification, and compact dispatch values.
+- `orchestrator/orchestration_controller.py` owns thin-runtime selection, full/rebuild preflight mutations, Stage-1a topology/finalization gate, Stage-1b candidate promotion and coverage gate, Stage-1c post-analysis gates and checkpoint freshness, Stage-1 task transitions, abuse-case match/finalize, Stage-2 structural preparation, rerender artifact preconditions, fixed next-action classification, and compact dispatch values.
 - `prepare-stage2` returns an explicit renderer profile. Default Quick uses only
   the Management Summary specialist, enriched architecture uses both
   specialists, and the full renderer remains the bounded recovery profile.
   Every profile converges on the same controller-owned fragment validation,
   strict compose, prose-fix, and QA-autofix tail before Stage 3.
 - `SKILL-full-runtime.md`, `SKILL-thin-stage1-v2.md`, `SKILL-thin-stage1d.md`, `SKILL-thin-stage2.md`, and `SKILL-rerender-runtime.md` own user-visible output, apply controller-owned Task lifecycle, and Level-0 producer calls for their modes. `SKILL-thin-stage3.md`, `SKILL-thin-stage4.md`, and `SKILL-thin-completion.md` own the bounded review, repair, release-gate, export, and cleanup calls selected by the controller.
-- `stride_dispatch_waves.py` owns deterministic bounded-wave scheduling,
+- `orchestrator/stride_dispatch_waves.py` owns deterministic bounded-wave scheduling,
   persisted two-attempt counters, resume selection, and the selected-component
   completion gate. It never changes component selection or analyzer prompts.
 - Registered agents own semantic analysis and prose. The controller and its
@@ -132,7 +139,7 @@ contracts, paths, projectors, trust and sensitivity classes, and hard limits.
 Repository content cannot select or modify either execution surfaces or core
 required and forbidden assignments.
 
-For every emitted context-v2 semantic action, `scripts/context_routing.py`
+For every emitted context-v2 semantic action, `scripts/contexts/context_routing.py`
 validates both files, binds them to the controller role registry, and appends a
 decision to `.context-routing-plan.json`. The exact-byte
 `.context-routing-plan.receipt.json` detects plan mutation. Unmigrated entries
@@ -155,7 +162,7 @@ the existing metadata inventory and never copy their contents.
 
 ## Context-v2 STRIDE admission
 
-`scripts/build_stride_evidence_bundles.py` projects each selected component
+`scripts/contexts/build_stride_evidence_bundles.py` projects each selected component
 into `.dispatch-context/<component-id>/evidence-bundle.json`, validated by
 `schemas/stride-evidence-bundle.schema.json`. The bundle is capped at 65,536
 serialized bytes, 16,384 estimated tokens, 400 referenced source lines, 24
@@ -242,24 +249,24 @@ itself. The table is the producer contract for that path.
 
 | Boundary | Validated inputs | Writer and output contract | Gate and exit class | Checkpoint, retry, and next action |
 |---|---|---|---|---|
-| Phase 1/2 recon wave | `.skill-config.json`; current repository fingerprint and cache decision; bounded contained project documents; optional schema-valid `known-threats.schema.yaml`; optional receipted `recon-patterns.schema.json` v1 | `build_threat_modeling_context.py` writes bounded `threat-modeling-context-markdown-v1` and the declared related-repository sidecars before dispatch; `recon_scanner` writes the `recon-summary-markdown-v1` numbered security sections plus `recon-signals.schema.json` v2; the controller invokes `config_iac_scanner.py` to write `config-scan-findings.schema.yaml` when an IaC surface exists | Context-v2 performs no model dispatch for project-context selection, rendering, or Config/IaC catalog evaluation. The builder caps admitted files and bytes, rejects escaping symlinks, fences repository and endpoint text, validates configured URLs and redirects, rejects malformed or oversized known-threat inputs, and validates the completed Markdown before the recon wave. The deterministic pattern producer retains at most 12 findings per category and 96 across the run with pre-cap counts and omission metadata. The recon role admits at most 22 discovery tool calls and reserves at least ten calls for one-shot template loading, publication, shared validation, bounded correction, and completion; repository size may extend deterministic pre-passes but not the model discovery allowance. `validate_recon_summary.py` runs at the producer and controller boundaries. A `Key files` entry is one observed contained regular-file and single-line reference; its deterministic normalizer may only delete malformed, missing, directory, range, or out-of-range entries and replace an empty list with `none detected`. Recon signal evidence is structured and every location must resolve to a contained regular file and existing line at both producer and controller gates; malformed evidence is never parsed or repaired. The Config/IaC producer evaluates every canonical catalog entry, contains resolved files beneath the repository, and binds counters and finding metadata to that catalog. Context headings, non-nested fences, recon safety limits, bounded recon-signal schema, unique hint IDs, and config completeness are validated before the next boundary; config enrichment failure is non-fatal | No checkpoint; one bounded recon wave plus deterministic Config/IaC enrichment; then deterministic Phase-2.6 projection and actor selection |
-| Phase 2.7 actors | Receipted `recon-summary-context.schema.json` v1 capped at 200 retained lines, `recon-signals.schema.json` v2, `actors-merged-static.schema.yaml` v1, and the actor-input fingerprint | `resolve_actors.py` exclusively writes and validates the static actor catalog; `actor_discoverer` may write `actors-discovered.schema.yaml`; the resolver then exclusively writes `actors-resolved.schema.yaml` | Projection source hashes, schema, omission counts, and receipts block; discovery is skipped at quick depth or on a valid cache hit; resolver validation is authoritative; discovery failure degrades to the static actor set | No implicit redispatch after an Agent returns; then `architecture_analyst` |
-| Phases 3–6 architecture | Receipted recon projection, `architecture-route-context.schema.json` v1 capped at 96 risk-shaped and framework-diverse routes, and resolved actors | `architecture_analyst` writes version-1 components, data-flows, assets, and attack-surface-overrides fragments; every non-route attack-surface addition carries a boolean authentication verdict; the data-flow inventory fingerprint is provisional | Projection source hashes, schemas, omission counts, `validate_fragment.py`, controller-owned component finalization, deterministic data-flow fingerprint binding, receipt validation, and assessment-input construction block; the complete route inventory remains with deterministic consumers; null authentication or structural failure blocks | The controller writes `phase=6 status=completed need_boundary_assessment=true` only after every gate passes; failure blocks without implicit redispatch; then `trust_boundary_analyst` |
-| Phase 7 boundary | `trust-boundary-assessment-input` contract v1 and its exact receipt | `trust_boundary_analyst` writes `trust-boundary-candidates.schema.json` v1 | `prepare_trust_boundary_context.py promote` owns normalization and coverage; non-zero is blocking | `phase=7 status=completed need_threat_analysis=true`; persisted Stage-1b retry behavior; then `control_analyst` |
-| Phase 8 controls | Controller-bounded path list for final components, boundaries, and architecture-control signals | `control_analyst` writes `security-controls.schema.json` v1 and the bounded semantic overlays needed by known component IDs in `stride-analyst-context.schema.json` v1; it omits empty component placeholders and never owns the reserved `_stride_profile` routing value | The producer gate and controller both validate routing hints against repository existence and finalized component ownership. The controller also drops a producer-authored `_stride_profile`, rejects unknown component IDs or an overlay above the byte cap, derives the manifest profile from resolved run configuration, and runs `validate_fragment.py security-controls`; bundle construction independently repeats normalization and containment checks before dispatch, and every non-zero gate remains blocking | Phase-8 checkpoint; failure blocks without implicit redispatch; then bundle and manifest construction |
-| Phase 9 STRIDE | One receipted component context plan binding a fresh `stride-evidence-bundle` v1, hashed taxonomy slice, lens IDs, analysis policy, independently selected security-category projections, and only the related roots cited by that component's admitted source slices | `stride_analyzer` writes `stride.schema.yaml`; no other writer may write the same component file | Manifest, bundle, component-plan, security-context, and repository-projection schema and source-hash validation, active effective-plan binding, immediate receipt re-hash, merge-owned mechanical normalization, per-file `validate_intermediate.py stride`, and `stride_dispatch_waves.py verify`; optional branches that fail the schema are pruned before validation and remaining invalid output is fatal | Persisted two-attempt component budget in background waves of at most five; each job carries its controller-owned attempt identity; the deterministic waiter joins exactly the persisted active claim and retains one cumulative deadline across bounded host-Bash slices before `context-v2-post-stride` — derived from the widest `max_turns` in the wave, floored at 15 minutes and capped at 60; an unjoined claim cannot be claimed again |
-| Phase 9 merge | Valid STRIDE outputs and bounded `merge-review-context` v1 projected from `merge-candidates` v1 | `merge_threats.py collect/finalize` owns ordering and T-IDs; `threat_merger` writes `merge-decisions.schema.json` v2 only when candidate groups exist | Candidate-free collect immediately finalizes; context-v2 binds the projection to the full source hash, requires at least one decision per admitted group, validates disjoint partial-cluster subsets, and re-hashes decisions before finalize | No checkpoint; one merger dispatch for at most 64 groups within the 262,144-byte projection cap; then passive posture emitters |
+| Phase 1/2 recon wave | `.skill-config.json`; current repository fingerprint and cache decision; bounded contained project documents; optional schema-valid `known-threats.schema.yaml`; optional receipted `recon-patterns.schema.json` v1 | `contexts/build_threat_modeling_context.py` writes bounded `threat-modeling-context-markdown-v1` and the declared related-repository sidecars before dispatch; `recon_scanner` writes the `recon-summary-markdown-v1` numbered security sections plus `recon-signals.schema.json` v2; the controller invokes `analyzers/config_iac_scanner.py` to write `config-scan-findings.schema.yaml` when an IaC surface exists | Context-v2 performs no model dispatch for project-context selection, rendering, or Config/IaC catalog evaluation. The builder caps admitted files and bytes, rejects escaping symlinks, fences repository and endpoint text, validates configured URLs and redirects, rejects malformed or oversized known-threat inputs, and validates the completed Markdown before the recon wave. The deterministic pattern producer retains at most 12 findings per category and 96 across the run with pre-cap counts and omission metadata. The recon role admits at most 22 discovery tool calls and reserves at least ten calls for one-shot template loading, publication, shared validation, bounded correction, and completion; repository size may extend deterministic pre-passes but not the model discovery allowance. `validators/validate_recon_summary.py` runs at the producer and controller boundaries. A `Key files` entry is one observed contained regular-file and single-line reference; its deterministic normalizer may only delete malformed, missing, directory, range, or out-of-range entries and replace an empty list with `none detected`. Recon signal evidence is structured and every location must resolve to a contained regular file and existing line at both producer and controller gates; malformed evidence is never parsed or repaired. The Config/IaC producer evaluates every canonical catalog entry, contains resolved files beneath the repository, and binds counters and finding metadata to that catalog. Context headings, non-nested fences, recon safety limits, bounded recon-signal schema, unique hint IDs, and config completeness are validated before the next boundary; config enrichment failure is non-fatal | No checkpoint; one bounded recon wave plus deterministic Config/IaC enrichment; then deterministic Phase-2.6 projection and actor selection |
+| Phase 2.7 actors | Receipted `recon-summary-context.schema.json` v1 capped at 200 retained lines, `recon-signals.schema.json` v2, `actors-merged-static.schema.yaml` v1, and the actor-input fingerprint | `model/resolve_actors.py` exclusively writes and validates the static actor catalog; `actor_discoverer` may write `actors-discovered.schema.yaml`; the resolver then exclusively writes `actors-resolved.schema.yaml` | Projection source hashes, schema, omission counts, and receipts block; discovery is skipped at quick depth or on a valid cache hit; resolver validation is authoritative; discovery failure degrades to the static actor set | No implicit redispatch after an Agent returns; then `architecture_analyst` |
+| Phases 3–6 architecture | Receipted recon projection, `architecture-route-context.schema.json` v1 capped at 96 risk-shaped and framework-diverse routes, and resolved actors | `architecture_analyst` writes version-1 components, data-flows, assets, and attack-surface-overrides fragments; every non-route attack-surface addition carries a boolean authentication verdict; the data-flow inventory fingerprint is provisional | Projection source hashes, schemas, omission counts, `validators/validate_fragment.py`, controller-owned component finalization, deterministic data-flow fingerprint binding, receipt validation, and assessment-input construction block; the complete route inventory remains with deterministic consumers; null authentication or structural failure blocks | The controller writes `phase=6 status=completed need_boundary_assessment=true` only after every gate passes; failure blocks without implicit redispatch; then `trust_boundary_analyst` |
+| Phase 7 boundary | `trust-boundary-assessment-input` contract v1 and its exact receipt | `trust_boundary_analyst` writes `trust-boundary-candidates.schema.json` v1 | `contexts/prepare_trust_boundary_context.py promote` owns normalization and coverage; non-zero is blocking | `phase=7 status=completed need_threat_analysis=true`; persisted Stage-1b retry behavior; then `control_analyst` |
+| Phase 8 controls | Controller-bounded path list for final components, boundaries, and architecture-control signals | `control_analyst` writes `security-controls.schema.json` v1 and the bounded semantic overlays needed by known component IDs in `stride-analyst-context.schema.json` v1; it omits empty component placeholders and never owns the reserved `_stride_profile` routing value | The producer gate and controller both validate routing hints against repository existence and finalized component ownership. The controller also drops a producer-authored `_stride_profile`, rejects unknown component IDs or an overlay above the byte cap, derives the manifest profile from resolved run configuration, and runs `validators/validate_fragment.py security-controls`; bundle construction independently repeats normalization and containment checks before dispatch, and every non-zero gate remains blocking | Phase-8 checkpoint; failure blocks without implicit redispatch; then bundle and manifest construction |
+| Phase 9 STRIDE | One receipted component context plan binding a fresh `stride-evidence-bundle` v1, hashed taxonomy slice, lens IDs, analysis policy, independently selected security-category projections, and only the related roots cited by that component's admitted source slices | `stride_analyzer` writes `stride.schema.yaml`; no other writer may write the same component file | Manifest, bundle, component-plan, security-context, and repository-projection schema and source-hash validation, active effective-plan binding, immediate receipt re-hash, merge-owned mechanical normalization, per-file `validators/validate_intermediate.py stride`, and `orchestrator/stride_dispatch_waves.py verify`; optional branches that fail the schema are pruned before validation and remaining invalid output is fatal | Persisted two-attempt component budget in background waves of at most five; each job carries its controller-owned attempt identity; the deterministic waiter joins exactly the persisted active claim and retains one cumulative deadline across bounded host-Bash slices before `context-v2-post-stride` — derived from the widest `max_turns` in the wave, floored at 15 minutes and capped at 60; an unjoined claim cannot be claimed again |
+| Phase 9 merge | Valid STRIDE outputs and bounded `merge-review-context` v1 projected from `merge-candidates` v1 | `model/merge_threats.py collect/finalize` owns ordering and T-IDs; `threat_merger` writes `merge-decisions.schema.json` v2 only when candidate groups exist | Candidate-free collect immediately finalizes; context-v2 binds the projection to the full source hash, requires at least one decision per admitted group, validates disjoint partial-cluster subsets, and re-hashes decisions before finalize | No checkpoint; one merger dispatch for at most 64 groups within the 262,144-byte projection cap; then passive posture emitters |
 | Phase 10/10a evidence | Receipted `evidence-verifier-context.schema.json` v1 with at most 256 deterministically selected findings, a 524,288-byte cap, and exact-source-bound 11-line citation windows | Passive posture scripts own their existing sidecars; `evidence_verifier` writes only `evidence-verification.schema.json` v1; the controller exclusively applies accepted verdicts to the canonical merged threats | The controller reconstructs sampling from depth and cap, re-hashes merged threats and every source file, compares every projected window, validates counts and selected T-IDs, applies only evidence verdict fields, and revalidates the canonical artifact; invalid enrichment supplies no semantic signal; the guard retains its degenerate-verdict fallback | No model retry for a deterministic emitter; the complete merged artifact and direct repository reads are forbidden to the verifier; semantic source-window bounds and serialized-artifact line bounds remain separate; then deterministic triage |
-| Phase 10b triage | `threats-merged.schema.yaml` v1 and optional evidence verdicts | `triage_validate_ratings.py` and `triage_compute_ranking.py --force --bootstrap-yaml` write `triage-flags.schema.yaml` v2 | Rating validation is blocking; a ranking failure selects the focused triage fallback, while every path revalidates both the mutated merged artifact and triage flags before synthesis | No specialist on deterministic success; then optional post-STRIDE synthesis |
-| Phase 10b synthesis | Separate receipted generated-threat and proposed-mitigation projections, each capped at 512 records and 524,288 bytes and bound to exact merged-threat and component hashes | `post_stride_synthesizer` writes only the requested version-1 mitigation-overrides or tier-root-causes fragment | The controller reconstructs both projections before dispatch; complete merged threats and triage flags are forbidden; `validate_fragment.py` gates each output, which is receipted and re-hashed before YAML consumption | Failure blocks without implicit redispatch; then `context-v2-finalize` |
-| YAML handoff | Validated Phase-3 through Phase-10b sidecars | `build_threat_model_yaml.py` writes the Stage-1 canonical `threat-model.yaml` with the bounded business-context trace; the shared deterministic auto-emitter pass then backfills scanner remediation and hydrates mitigation details; Stage 1d atomically adds the completed abuse-case analysis; after strict Stage-2 composition, `emit_requirement_trace_to_model.py` atomically adds the complete configured requirements assessment, provenance, and mitigation trace | Initial `validate_intermediate.py threat_model_output`, mitigation-quality validation after enrichment, build completeness, the abuse-case export, and the post-compose requirements export are blocking | `phase=10b status=completed need_render=true runtime_generation=context-v2`; then Stage 1d when enabled, Stage 2, and the mandatory post-compose model update |
+| Phase 10b triage | `threats-merged.schema.yaml` v1 and optional evidence verdicts | `validators/triage_validate_ratings.py` and `model/triage_compute_ranking.py --force --bootstrap-yaml` write `triage-flags.schema.yaml` v2 | Rating validation is blocking; a ranking failure selects the focused triage fallback, while every path validates the mutated merged artifact, runs `model/merge_threats.py refresh-weaknesses`, and revalidates the rebuilt register and triage flags before synthesis | No specialist on deterministic success; then optional post-STRIDE synthesis |
+| Phase 10b synthesis | Separate receipted generated-threat and proposed-mitigation projections, each capped at 512 records and 524,288 bytes and bound to exact merged-threat and component hashes | `post_stride_synthesizer` writes only the requested version-1 mitigation-overrides or tier-root-causes fragment | The controller reconstructs both projections before dispatch; complete merged threats and triage flags are forbidden; `validators/validate_fragment.py` gates each output, which is receipted and re-hashed before YAML consumption | Failure blocks without implicit redispatch; then `context-v2-finalize` |
+| YAML handoff | Validated Phase-3 through Phase-10b sidecars | `model/build_threat_model_yaml.py` writes the Stage-1 canonical `threat-model.yaml` with the bounded business-context trace; the shared deterministic auto-emitter pass then backfills scanner remediation and hydrates mitigation details; Stage 1d atomically adds the completed abuse-case analysis; after strict Stage-2 composition, `model/emit_requirement_trace_to_model.py` atomically adds the complete configured requirements assessment, provenance, and mitigation trace | Initial `validators/validate_intermediate.py threat_model_output`, mitigation-quality validation after enrichment, build completeness, the abuse-case export, and the post-compose requirements export are blocking | `phase=10b status=completed need_render=true runtime_generation=context-v2`; then Stage 1d when enabled, Stage 2, and the mandatory post-compose model update |
 
 `context-v2-prepare-stride` validates the Phase-8 outputs, builds and validates
 the v2 manifest and bundles, and returns one bounded job per selected component.
 The compact runtime issues every job of the wave as an Agent call in one
 assistant message, which is what runs them concurrently; the Agent tool exposes
 no per-call background flag, so dispatch shape is not gated at PreToolUse.
-`check_stride_dispatch.py` remains the enforcement point — it fails the run on
+`orchestrator/check_stride_dispatch.py` remains the enforcement point — it fails the run on
 an inline-shortcut bypass and reports a serially dispatched wave as DEGRADED.
 The blocking waiter applies wave completion validation, so a write-first seed
 remains pending.
@@ -268,8 +275,9 @@ either returns a bounded merger job or reaches the next boundary.
 The merger reads `.merge-context/candidates.json`; the full
 `.merge-candidates.json` remains a deterministic-finalizer input and is rejected
 if it changes after projection.
-`context-v2-post-merge`, `context-v2-post-evidence`, and
-`context-v2-post-triage` continue from the corresponding focused output;
+`context-v2-post-merge`, `context-v2-post-evidence`,
+`context-v2-post-architect-review`, and `context-v2-post-triage` continue from
+the corresponding focused output;
 `context-v2-finalize` consumes the optional synthesis output. An empty merge
 candidate set skips the merger. The deterministic ranking success path skips
 the triage agent; its focused fallback is selected only when deterministic
@@ -299,7 +307,7 @@ bounded retry validates and redispatches only the affected component. Adding a
 semantic role without one of these enforcement paths is a controller contract
 error.
 
-Before boundary assessment, the architecture handoff reconciles evidenced OAuth/OIDC/SAML client endpoints into `.data-flows.json` through `scripts/discover_identity_providers.py` and binds the finalized component fingerprint. It validates the complete enriched fragment and repository evidence before replacing the accepted artifact. Ambiguous ownership or invalid enrichment blocks this handoff. This reconciliation adds no dispatch, network request, or separate sidecar.
+Before boundary assessment, the architecture handoff reconciles evidenced OAuth/OIDC/SAML client endpoints into `.data-flows.json` through `scripts/analyzers/discover_identity_providers.py` and binds the finalized component fingerprint. It validates the complete enriched fragment and repository evidence before replacing the accepted artifact. Ambiguous ownership or invalid enrichment blocks this handoff. This reconciliation adds no dispatch, network request, or separate sidecar.
 
 ## Security and schema rules
 
@@ -357,6 +365,12 @@ Before boundary assessment, the architecture handoff reconciles evidenced OAuth/
 - A context-v2 terminal abort has no continuation action. A later `--full`
   starts Stage 1 again; retained runtime artifacts are diagnostic evidence, not
   a merge-only recovery checkpoint.
+- The controller terminates its own abort through `runtime/terminate_run.py`
+  (outcome `controller_abort`): `RUN_ABORTED` once, run issues, live calls
+  closed, and this run's lock released, so the support offer can follow at
+  once. A directory another live run holds is left untouched. `clear-abort`
+  re-acquires the run's lock before reopening it and rejects while another live
+  run holds the directory.
 - A current-run `RUN_ABORTED` is enforced both by context-v2 controller entry
   points and the PreToolUse hook. Abort aggregation removes live-only
   `.active-tool-calls` state, while headless runs export their resolved output
@@ -364,11 +378,11 @@ Before boundary assessment, the architecture handoff reconciles evidenced OAuth/
   run-local location.
 - Rebuild archives the live changelog audit before deletion and fails closed if
   archiving fails.
-- All new event lines use `event_log.py`.
+- All new event lines use `runtime/event_log.py`.
 
 ## Runtime generation
 
-Every new run is prepared as `context-v2`, and `resolve_config.py` persists that
+Every new run is prepared as `context-v2`, and `runtime/resolve_config.py` persists that
 generation in `.skill-config.json` together with the artifact schema versions
 used to reconstruct successor actions. Environment variables cannot select a
 different generation. A boundary refuses a missing, pre-cutover, or
@@ -387,3 +401,13 @@ mutation with the supported alternatives.
 the cost of the last run of the same mode and depth and, for a mode that
 analyzes source, against the depth's floor; a budget that cannot hold the run
 aborts on the same read-only path, before the output directory exists.
+
+## Semantic architect review
+
+When `architect_review` is enabled, `_context_v2_after_evidence` reviews canonical findings after evidence handling and component reconciliation, before triage or synthesis. The runtime admits packets, groups them into one job per component chunk and returns them in waves of the STRIDE concurrency as a `dispatch_parallel` of `architect_reviewer` jobs with `next_boundary` `context-v2-post-architect-review`. Each job reads only its receipted `.dispatch-context/architect/<component>.json` and writes only `.dispatch-context/architect/<component>.proposals.json`. The boundary collects every returned job once, dispatches the next wave, and applies all proposals in one transaction after the last wave; a missing or invalid proposal file leaves its packets unreviewed and is never dispatched again. The resolved architect model selects the job model. Limits are defined in `scripts/analyzers/architect_review_runtime.py`.
+
+The controller persists `.architect-review.json` under `schemas/architect-review-runtime.schema.json`. The transaction binds the run, original canonical input, analyst context, scoring profile, policy, admitted packets, proposals and accepted output. Every consumer reconstructs the application with the correction core and the recorded scoring profile, including after transient configuration cleanup. A scoring-profile change during an in-flight review blocks publication. Completed transactions recover publication without dispatching again. Re-entered boundaries retain already returned results and never dispatch a returned or missing job again.
+
+The YAML builder projects accepted fixes after mitigation grouping and before requirement annotation. Changed ratings rederive priorities on linked fix cards through their existing deterministic policy; unrelated authored priorities and separate review or investigation tasks remain intact. Old override cards have no source-bound exception proof and cannot override a changed rating or replace an accepted fix. Shared cards retain unrelated members. Enrichment and Stage 4 reject lost corrections; a finding legitimately below the configured report floor remains in the audit.
+
+Stage 4 performs deterministic preservation and existing release gates only. It never dispatches a second editorial pass. Its `status: pass` means preservation gates passed; `outcome` distinguishes `reviewed`, `incomplete`, `unavailable`, and `not_run`; `unavailable` means no finding was reviewed and carries `reason` (`not_dispatched`, `no_proposals`, or `rejected_proposals`) together with `reviewed`, `jobs_dispatched` and `jobs_returned`, and the controller logs an `ORCHESTRATION_GATE_WARN`. Older rerenders without a transaction report `not_run`. New full/rebuild runs with enabled review cannot close without the transaction. Missing agent results degrade the optional semantic enrichment to explicit incomplete or unavailable coverage, while invalid required source data and corrupted transactions block publication.

@@ -19,13 +19,13 @@
 # Where the actual security boundary lives
 # ────────────────────────────────────────
 # Containment is enforced in code, not by this allow-list:
-#   • scripts/preflight_untrusted.py  — rejects repo-owned hooks/settings and
+#   • scripts/validators/preflight_untrusted.py  — rejects repo-owned hooks/settings and
 #     out-of-repo symlinks before an untrusted scan (run-headless.sh
 #     --trust-mode untrusted)
-#   • scripts/_path_guard.py          — blocks symlink escapes during file reads
-#   • scripts/_url_guard.py           — SSRF / cloud-metadata defence on fetches
-#   • scripts/postscan_secret_check.py — fails the run on leaked secret values
-#   • scripts/redact_known_secrets.py  — exact-value redaction of source-found
+#   • scripts/shared/_path_guard.py          — blocks symlink escapes during file reads
+#   • scripts/shared/_url_guard.py           — SSRF / cloud-metadata defence on fetches
+#   • scripts/validators/postscan_secret_check.py — fails the run on leaked secret values
+#   • scripts/validators/redact_known_secrets.py  — exact-value redaction of source-found
 #     secrets across all artifacts (prose included); fails closed on residual
 # For real isolation, run against a throwaway git worktree (see below) or in a
 # container.
@@ -35,8 +35,22 @@
 # compound commands / pipelines / VAR=$(...) chains still prompt. A single
 # Bash(*) is the only way to keep an interactive run prompt-free. It is wide
 # open by design; the guards above are what bound the blast radius.
-# Maintainer commands such as scripts/run_tests.py and make test-group use
-# the existing Bash(*) rule; test selection adds no permission entries.
+# A configured permissions.defaultMode of auto or bypassPermissions already
+# keeps the run prompt-free, so the create-threat-model preflight does not
+# require this list then (check_permissions.PROMPT_FREE_MODES).
+# model/authnz_report.py finalize --require-inputs and gate use the existing
+# Bash(*) and OUTPUT_DIR dotfile rules; reconciliation writes only .authnz-report.json.
+# Maintainer commands such as scripts/run_tests.py --changed-against,
+# make test-plan, make test-changed, and make test-group use the existing
+# Bash(*) rule; local Git diffs and test selection add no permission entries.
+# scripts/calibrate_architect_review.py uses the same maintainer rule. It is
+# offline, calls no model, and writes only architect-calibration.json in its
+# chosen output directory. It does not enable review or mutate a threat-model run.
+# Enabled semantic reviews run as dispatched architect_reviewer agents, so no
+# nested model process needs network access from the Bash sandbox;
+# analyzers/architect_review_runtime.py uses existing output-directory access for its
+# durable .architect-review.json, .dispatch-context/architect job and proposal
+# files, and final .architect-status.json gate receipt.
 #
 # Placeholders expanded at check-time:
 #   ${OUTPUT_DIR}   — from --output-dir / $OUTPUT_DIR / <repo>/docs/security
@@ -60,12 +74,16 @@ required:
     reason: "agents and deterministic resolvers read scanned-repository evidence, including external entity roles, sensitive-data handling, asset locations, and optional data-only inputs such as .appsec/trust-boundaries.yaml"
     category: file
 
+  - entry: "Write(${REPO_ROOT}/docs/security/business-context.md)"
+    reason: "complete-preflight validates and saves substantive early-dialog answers alongside existing repository business context for later analyses; explicit --context imports remain run-only"
+    category: file
+
   - entry: "Read(${PLUGIN_ROOT}/**)"
-    reason: "agents and scripts read plugin data files, including schemas, templates, CWE taxonomy, and the human context catalog with its internal runtime bindings"
+    reason: "agents and scripts read plugin data files, including the Figure 2 presentation schema, other schemas, templates, CWE taxonomy, and the human context catalog with its internal runtime bindings"
     category: file
 
   - entry: "Read(${HOME}/.claude/projects/**)"
-    reason: "scripts/detect_session_model.py reads the host CC session transcript to resolve the session model for routing transparency (fail-safe, read-only)"
+    reason: "scripts/analyzers/detect_session_model.py reads the host CC session transcript to resolve the session model for routing transparency (fail-safe, read-only)"
     category: file
 
   - entry: "Read(${OUTPUT_DIR}/**)"
@@ -77,11 +95,11 @@ required:
     category: file
 
   - entry: "Write(${OUTPUT_DIR}/**)"
-    reason: "deterministic preparers, context projectors, build_stride_evidence_bundles.py, compose_threat_model.py, fragment writers, and annotators write under OUTPUT_DIR, including run-bound .dispatch-context/editorial/plan-<batch>.json packets and gate comparison receipts, bounded .dispatch-context/architecture recon/route inputs, .dispatch-context/post-stride evidence/threat/mitigation inputs, .dispatch-context/abuse-cases candidate inputs, and fingerprinted .dispatch-context/<component> evidence, business, architecture, security, plan, and repository-root artifacts"
+    reason: "deterministic preparers, context projectors, contexts/build_stride_evidence_bundles.py, renderers/compose_threat_model.py (including paired figure1 and figure1-detail SVGs, and the figure2 SVG), fragment writers, and annotators write under OUTPUT_DIR, including neutral report-error reproductions under .plugin-issue-repro/ and run-bound .dispatch-context/editorial/plan-<batch>.json packets and gate comparison receipts, bounded .dispatch-context/architecture recon/route inputs, .dispatch-context/post-stride evidence/threat/mitigation inputs, .dispatch-context/abuse-cases candidate inputs, .dispatch-context/architect review jobs and proposals, and fingerprinted .dispatch-context/<component> evidence, business, architecture, security, plan, and repository-root artifacts"
     category: file
 
   - entry: "Write(${OUTPUT_DIR}/.*)"
-    reason: "agents and deterministic preparers, including config_iac_scanner.py, write direct dotfile sidecars such as the config scan, effective context-routing plan and receipt, finalized components/data flows, and candidate/canonical/coverage trust-boundary artifacts; Claude Code's /** glob does NOT match direct dotfile children"
+    reason: "agents and deterministic preparers, including analyzers/config_iac_scanner.py, analyzers/deployment_inventory.py (.deployment-inventory.json) and model/merge_threats.py refresh-weaknesses (.impl-strategy.json, .impl-design-signals.json, .finding-design-signals.json), write report-error .plugin-issue-input.json, .plugin-issue-draft.json, per-digest submission receipts, and direct dotfile sidecars such as the config scan, effective context-routing plan and receipt, finalized components/data flows, and candidate/canonical/coverage trust-boundary artifacts; Claude Code's /** glob does NOT match direct dotfile children; the early business-context dialog writes .business-context-preview.json and .business-context-raw.md using prepare --interactive-context and complete-preflight"
     category: file
 
   - entry: "Edit(${OUTPUT_DIR}/**)"
@@ -105,7 +123,7 @@ required:
     category: file
 
   - entry: "Write(${REPO_ROOT}/.eval-out/**)"
-    reason: "eval_threat_model.py and appsec-eval-judge write the brief, candidate/verdict sidecars, and EVAL-REVIEW.md under the default eval output dir"
+    reason: "validators/eval_threat_model.py and appsec-eval-judge write the brief, candidate/verdict sidecars, and EVAL-REVIEW.md under the default eval output dir"
     category: file
 
   - entry: "Write(${REPO_ROOT}/.appsec-triage/**)"
@@ -113,7 +131,7 @@ required:
     category: file
 
   - entry: "Write(${REPO_ROOT}/docs/known-threats.yaml)"
-    reason: "review-threat-model skill's explicit, opt-in 'promote accepted risks' action (Step 6b) merges accept-risk decisions into docs/known-threats.yaml as status: accepted entries via `review_threat_model.py promote-accepted`. This is a create-threat-model INPUT (re-read each scan; accepted entries are skipped by the STRIDE analyzer, not re-raised), never the generated threat-model.yaml. Only reached on explicit user confirmation; team-authored entries are preserved and the file is schema-validated before write."
+    reason: "review-threat-model skill's explicit, opt-in 'promote accepted risks' action (Step 6b) merges accept-risk decisions into docs/known-threats.yaml as status: accepted entries via `validators/review_threat_model.py promote-accepted`. This is a create-threat-model INPUT (re-read each scan; accepted entries are skipped by the STRIDE analyzer, not re-raised), never the generated threat-model.yaml. Only reached on explicit user confirmation; team-authored entries are preserved and the file is schema-validated before write."
     category: file
 
   - entry: "Edit(${REPO_ROOT}/**)"
@@ -131,7 +149,8 @@ required:
   # sidecars do NOT need their own per-file entries — the /.*  entries cover them.
 
   # --- Shell — one entry covers all commands without per-command maintenance ---
-  # enrichment_pass.py uses this shell rule and the existing OUTPUT_DIR YAML write rule.
+  # model/enrichment_pass.py uses this shell rule and the existing OUTPUT_DIR YAML write rule.
+  # runtime/budget_watchdog.py active-job-critical reads existing lifecycle and marker files through this rule.
   #
   # Why Bash(*) instead of per-command entries:
   #   Claude Code's Bash allow-list matches only the FIRST TOKEN of a simple command.
@@ -146,5 +165,5 @@ required:
   #   containment boundary. Real containment lives in the guard scripts — see the
   #   header comment at the top of this file.
   - entry: "Bash(*)"
-    reason: "all shell commands used by agents, recommend_fixes.py --diagnosis recommendation refresh, compact runtime instructions, deterministic editorial_gate.py prepare/check/close, build_editorial_context.py, apply_editorial_plan.py, orchestration_controller.py, config_iac_scanner.py, build_threat_modeling_context.py, build_stride_evidence_bundles.py, validate_recon_summary.py, validate_threat_modeling_context.py, and prepare_trust_boundary_context.py invocations, mitigation-quality gates, and scripts; per-command entries cannot cover compound commands and variable-assignment chains — see comment above"
+    reason: "all shell commands used by agents, baseline/update_baseline.py delegation to a signature-verified AISCB installer with --refresh-installed and a fixed project/user scope (never repository-owned executables), baseline/install_baseline.py --modular/--complete/--migrate and the digest-pinned policy_loader.py in project .appsec-baseline/releases or user ~/.claude/.appsec-baseline/releases (existing Bash coverage only; no new execution grant), report-error dispatch timestamp and orchestrator/wait_agent_calls.py join, runtime/report_plugin_issue.py offer/prepare/preview/publish and its explicitly approved gh api POST to github.com/appsec-foundry/appsec-advisor (Bash coverage is not publication consent), runtime/recommend_fixes.py --diagnosis recommendation refresh, compact runtime instructions, deterministic validators/editorial_gate.py prepare/check/close, contexts/build_editorial_context.py, repairs/apply_editorial_plan.py, orchestrator/orchestration_controller.py, analyzers/security_score.py including an explicit remote clone, analyzers/config_iac_scanner.py, contexts/build_threat_modeling_context.py, contexts/build_stride_evidence_bundles.py, validators/validate_recon_summary.py, validators/validate_threat_modeling_context.py, and contexts/prepare_trust_boundary_context.py invocations, mitigation-quality gates, and scripts; per-command entries cannot cover compound commands and variable-assignment chains — see comment above"
     category: shell

@@ -1,5 +1,5 @@
 """
-Tests for scripts/build_editorial_context.py — the bounded Stage-4 input.
+Tests for scripts/contexts/build_editorial_context.py — the bounded Stage-4 input.
 
 Covers:
   * every emitted block is an address the applier's allow-list admits;
@@ -21,9 +21,9 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import apply_editorial_plan as applier  # noqa: E402
-import build_editorial_context as builder  # noqa: E402
-import check_editorial_diff as guard  # noqa: E402
+import contexts.build_editorial_context as builder  # noqa: E402
+import repairs.apply_editorial_plan as applier  # noqa: E402
+import validators.check_editorial_diff as guard  # noqa: E402
 
 
 def _threat(index: int, severity: str) -> dict:

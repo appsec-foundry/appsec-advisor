@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import orchestration_controller as controller
+import orchestrator.orchestration_controller as controller
 
 SKILLS = Path(controller.PLUGIN_ROOT) / "skills" / "create-threat-model"
 FULL_RUNTIME = SKILLS / "SKILL-full-runtime.md"

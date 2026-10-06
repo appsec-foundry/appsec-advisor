@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import validate_evidence_lines as vel
+import pytest
+import validators.validate_evidence_lines as vel
+from shared._finding_state import is_confirmed
 
 
 def _write(path: Path, text: str) -> None:
@@ -110,8 +112,11 @@ def test_validate_yaml_marks_evidence_outcomes_and_merges_flags(tmp_path: Path) 
     threats = {t["id"]: t for t in updated["threats"] if isinstance(t, dict)}
 
     assert threats["valid"]["evidence_check"] == "verified"
-    assert threats["file-only"]["evidence_check"] == "verified"
-    assert threats["bad-line-token"]["evidence_check"] == "verified"
+    # A file without a usable line proves nothing about the defect.
+    assert threats["file-only"]["evidence_check"] == "ambiguous"
+    assert threats["file-only"]["evidence_flags"] == ["no_line_cited"]
+    assert threats["bad-line-token"]["evidence_check"] == "ambiguous"
+    assert threats["bad-line-token"]["evidence_flags"] == ["no_line_cited"]
     assert threats["missing-file"]["evidence_check"] == "refuted"
     assert threats["missing-file"]["evidence_flags"] == ["file_missing"]
     assert threats["comment"]["evidence_check"] == "ambiguous"
@@ -126,7 +131,7 @@ def test_validate_yaml_marks_evidence_outcomes_and_merges_flags(tmp_path: Path) 
     assert threats["mixed-import"]["evidence_flags"] == ["some_import_lines"]
     assert threats["no-evidence"]["evidence_check"] == "ambiguous"
     assert threats["no-evidence"]["evidence_flags"] == ["no_evidence"]
-    assert stats == {"sampled": 11, "verified": 6, "refuted": 1, "ambiguous": 4, "skipped": 0}
+    assert stats == {"sampled": 11, "verified": 4, "refuted": 1, "ambiguous": 6, "skipped": 0}
 
 
 def test_validate_yaml_respects_prior_verdicts_and_non_list_threats(tmp_path: Path) -> None:
@@ -243,6 +248,40 @@ def _merged(*t_ids: str, evidence_check: str | None = None) -> dict:
     return {"threats": threats}
 
 
+@pytest.mark.parametrize(
+    ("evidence", "check", "basis"),
+    [
+        ({"file": "src/app.ts", "line": 1}, "verified", "pointer-resolved"),
+        ({"file": "lib/handlers/upload.py", "line": 2}, "verified", "pointer-resolved"),
+        ({"file": "src/missing.ts", "line": 1}, "refuted", "refuted"),
+        ({"file": "src/app.ts", "line": 2}, "ambiguous", "ambiguous"),
+    ],
+)
+def test_a_resolved_pointer_is_verified_but_not_confirmed(tmp_path: Path, evidence, check, basis) -> None:
+    repo = tmp_path / "repo"
+    _write(repo / "src" / "app.ts", "const sql = query(req.body.id)\n// comment only\n")
+    _write(repo / "lib" / "handlers" / "upload.py", "import os\nopen(request.files['f'].filename, 'wb')\n")
+
+    updated, _ = vel.validate_yaml({"threats": [_threat("T-1", evidence)]}, repo)
+
+    threat = updated["threats"][0]
+    assert (threat["evidence_check"], threat["evidence_basis"]) == (check, basis)
+    # Finding the cited line does not establish the finding.
+    assert not is_confirmed(threat)
+
+
+def test_a_verifier_verdict_keeps_its_basis(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _write(repo / "src" / "app.ts", "const sql = query(req.body.id)\n")
+    threat = _threat("T-1", {"file": "src/app.ts", "line": 1}, evidence_check="verified")
+    threat["evidence_basis"] = "llm-verified"
+
+    updated, _ = vel.validate_yaml({"threats": [threat]}, repo)
+
+    assert updated["threats"][0]["evidence_basis"] == "llm-verified"
+    assert is_confirmed(updated["threats"][0])
+
+
 def test_persist_to_merged_mirrors_verdicts_and_respects_prior(tmp_path: Path) -> None:
     out = tmp_path / "out"
     out.mkdir()
@@ -261,7 +300,7 @@ def test_persist_to_merged_mirrors_verdicts_and_respects_prior(tmp_path: Path) -
     )
     data = {
         "threats": [
-            _threat("T-001", evidence_check="verified", flags=["ok"]),
+            {**_threat("T-001", evidence_check="verified", flags=["ok"]), "evidence_basis": "pointer-resolved"},
             _threat("T-002", evidence_check="refuted", flags=["file_missing"]),
             _threat("T-003", evidence_check="ambiguous"),
         ]
@@ -272,6 +311,7 @@ def test_persist_to_merged_mirrors_verdicts_and_respects_prior(tmp_path: Path) -
     merged = vel.json.loads((out / ".threats-merged.json").read_text(encoding="utf-8"))
     by_id = {t["t_id"]: t for t in merged["threats"]}
     assert by_id["T-001"]["evidence_check"] == "verified"
+    assert by_id["T-001"]["evidence_basis"] == "pointer-resolved"
     assert by_id["T-001"]["evidence_flags"] == ["ok"]
     # Refuted is retained in the merged intermediate for audit — the drop
     # happens only in the active model.
@@ -299,7 +339,7 @@ def test_floor_verdicts_survive_yaml_rebuild(tmp_path: Path) -> None:
     This is the regression the previous test suite could not catch — it
     asserted the floor ran, never that its output reached the final artifact.
     """
-    import build_threat_model_yaml as btm
+    import model.build_threat_model_yaml as btm
 
     repo = tmp_path / "repo"
     out = tmp_path / "out"
@@ -375,3 +415,67 @@ def test_code_source_on_same_line_still_verifies(tmp_path: Path) -> None:
     data = {"threats": [t]}
     vel.validate_yaml(data, repo)
     assert data["threats"][0]["evidence_check"] == "verified"
+
+
+SIGNED = "      - run: cosign sign img\n"
+PUSHING_WORKFLOW = """\
+jobs:
+  image:
+    steps:
+      - uses: docker/build-push-action@v6
+        with:
+          push: true
+"""
+
+
+def _absence_threat(check_id: str, file: str, searched: list[str]) -> dict:
+    finding = _threat(
+        "T-050",
+        {"file": file, "line": 0, "kind": "absence", "searched_files": searched, "searched_file_count": len(searched)},
+    )
+    finding.update(source="config-scan", config_check_id=check_id)
+    return finding
+
+
+def test_a_repository_absence_is_verified_by_rerunning_its_check_not_by_a_line(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    workflow = repo / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text(PUSHING_WORKFLOW, encoding="utf-8")
+    finding = _absence_threat("IAC-040", ".github/workflows/*.yml", [".github/workflows/release.yml"])
+
+    updated, _ = vel.validate_yaml({"threats": [dict(finding)]}, repo)
+    assert updated["threats"][0]["evidence_check"] == "verified"
+    assert updated["threats"][0]["evidence_flags"] == ["absence_confirmed"]
+    assert updated["threats"][0]["evidence_basis"] == "absence-verified"
+    assert is_confirmed(updated["threats"][0])
+
+    workflow.write_text(PUSHING_WORKFLOW + SIGNED, encoding="utf-8")
+    updated, _ = vel.validate_yaml({"threats": [dict(finding)]}, repo)
+    assert updated["threats"][0]["evidence_check"] == "refuted"
+    assert updated["threats"][0]["evidence_flags"] == ["absence_contradicted"]
+
+
+def test_an_absent_file_absence_is_refuted_once_the_file_exists(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    finding = _absence_threat("IAC-050", "package-lock.json", [])
+
+    updated, _ = vel.validate_yaml({"threats": [dict(finding)]}, repo)
+    assert updated["threats"][0]["evidence_check"] == "verified"
+
+    (repo / "package-lock.json").write_text("{}", encoding="utf-8")
+    updated, _ = vel.validate_yaml({"threats": [dict(finding)]}, repo)
+    assert updated["threats"][0]["evidence_check"] == "refuted"
+
+
+def test_absence_evidence_on_a_non_config_finding_is_not_trusted(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app.py").write_text("x = 1\n", encoding="utf-8")
+    finding = _threat("T-051", {"file": "app.py", "line": 0, "kind": "absence", "searched_files": ["app.py"]})
+    finding["source"] = "stride"
+
+    updated, _ = vel.validate_yaml({"threats": [finding]}, repo)
+    assert updated["threats"][0]["evidence_check"] == "ambiguous"
+    assert updated["threats"][0]["evidence_flags"] == ["no_line_cited"]

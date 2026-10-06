@@ -7,7 +7,7 @@ maxTurns: 45
 ---
 
 INTERNAL AGENT — do not invoke directly. Called by the `create-threat-model`
-skill's re-render loop only after `qa_checks.py repair_plan` or the architect
+skill's re-render loop only after `validators/qa_checks.py repair_plan` or the architect
 reviewer writes a structured repair plan. A repair is a fragment-scoped edit and
 recompose, never re-analysis.
 
@@ -26,7 +26,7 @@ This agent runs on the model passed via the Agent-tool `model` parameter at disp
 ## Inputs (provided in the invocation prompt)
 
 - `REPAIR_MODE=true`
-- `REPAIR_PLAN_PATH` — absolute path to `.qa-repair-plan.json` or `.architect-repair-plan.json`. The plan schema is produced by `scripts/qa_checks.py build_repair_plan()` (QA) or by the architect reviewer.
+- `REPAIR_PLAN_PATH` — absolute path to `.qa-repair-plan.json` or `.architect-repair-plan.json`. The plan schema is produced by `scripts/validators/qa_checks.py build_repair_plan()` (QA) or by the architect reviewer.
 - `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`, `MODEL_ID`, and all other configuration variables — passed through unchanged so the regenerated fragments use the same context as the original render.
 
 ## Scope discipline — this is why the agent is lean
@@ -47,15 +47,15 @@ This agent runs on the model passed via the Agent-tool `model` parameter at disp
    - The authoritative guides are `schemas/fragments/` (for `data`/JSON fragments) and the subsection rules in `data/sections-contract.yaml` (for `markdown` fragments). Read the relevant rule block once when the action concerns it.
    - **§6.2 Identity and Authentication Controls** (`security-architecture.md`): H4 headings name canonical auth **mechanisms** (Password-Based Authentication, OAuth/OIDC, SAML/SSO, TOTP/2FA/MFA, Passkey/WebAuthn, Magic Link, mTLS, Webhook HMAC, API Key, Bearer Token, Cloud IAM, Anonymous Access) — never primitives (`Password Hashing`, `Login Rate Limiting`, `Credential Storage`), token formats (`JWT-RS256`), library names, or exploit/attack-flow names. **JWT issuance/verification/signing belongs in §6.3, not §6.2.** Each flow-method H4 carries its own positive-flow `sequenceDiagram`. This mirrors the `auth_method_decomposition` contract rule (`enforcement: error`).
    - When re-authoring a narrative/prose fragment, load `agents/shared/prose-style.md` once so the regenerated prose matches the house style the QA reviewer enforces.
-   - For `type: table_schema_drift` — re-run `compose_threat_model.py` first (the drift is usually a prior renderer bypass); only re-author the source fragment if the drift persists after a clean render.
+   - For `type: table_schema_drift` — re-run `renderers/compose_threat_model.py` first (the drift is usually a prior renderer bypass); only re-author the source fragment if the drift persists after a clean render.
    - For `type: report_integrity` — the named section is in scope (its condition is true) but rendered **empty/degraded** because its fragment is missing or empty (surfaced by `.render-integrity.json`). Re-author the listed `fragments_to_rewrite` **from scratch**, using `threat-model.yaml` as the data source plus the schema (`schemas/fragments/`) and `data/sections-contract.yaml` rules for that section — this is fresh authoring of a dropped fragment, not an edit of an existing one. If `fragments_to_rewrite` is empty, the section is deterministic/computed and a re-render cannot fix it (a renderer bug, not a missing fragment) — emit `REPAIR_SKIPPED` for that action and do not loop on it.
-   - For `type: fragment_schema_violation` — written by `validate_fragment.py pre-render-gate --write-repair-plan` into `.pre-render-repair-plan.json` when an authored JSON fragment fails its schema **before** compose runs. `raw_issue` carries the exact JSON path and reason (e.g. `ai_risks/0/findings/2/label: … is too long`). Read the schema named in `remediation`, correct **only** the offending field, and preserve every other value — this is a targeted edit, never a re-authoring. The schema's length and enum limits are authoritative over any prose example in the authoring contract; when a value is too long, shorten the text rather than dropping the entry. Re-run `validate_fragment.py pre-render-gate "$OUTPUT_DIR"` before step 3 and only continue on exit 0.
+   - For `type: fragment_schema_violation` — written by `validators/validate_fragment.py pre-render-gate --write-repair-plan` into `.pre-render-repair-plan.json` when an authored JSON fragment fails its schema **before** compose runs. `raw_issue` carries the exact JSON path and reason (e.g. `ai_risks/0/findings/2/label: … is too long`). Read the schema named in `remediation`, correct **only** the offending field, and preserve every other value — this is a targeted edit, never a re-authoring. The schema's length and enum limits are authoritative over any prose example in the authoring contract; when a value is too long, shorten the text rather than dropping the entry. Re-run `validators/validate_fragment.py pre-render-gate "$OUTPUT_DIR"` before step 3 and only continue on exit 0.
    - For `type: unclassified` — inspect `raw_issue`, make a best-effort fragment repair, log the action.
 3. After all fragments are written, re-invoke the renderer with strict enforcement:
    ```bash
    OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
    CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py" \
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/renderers/compose_threat_model.py" \
        --output-dir "$OUTPUT_DIR" --strict --skip-changelog-audit
    ```
    A non-zero exit is a repair failure — emit `RENDER_FAILED` and let the skill's loop count this iteration as unsuccessful.
@@ -64,13 +64,13 @@ This agent runs on the model passed via the Agent-tool `model` parameter at disp
    OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
    REPO_ROOT="<REPO_ROOT from the dispatch>"
    CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/apply_prose_fixes.py" "$OUTPUT_DIR/threat-model.md"
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" gate \
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/repairs/apply_prose_fixes.py" "$OUTPUT_DIR/threat-model.md"
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/qa_checks.py" gate \
        "$OUTPUT_DIR/threat-model.md" "$OUTPUT_DIR" "$REPO_ROOT"
    ```
-   `apply_prose_fixes.py` re-backticks bare code tokens. `qa_checks.py gate` then re-applies the links / anchors / MS-structure / cell-format passes **and the §4/§5 GFM→HTML fixed-layout table conversion + `A-NN`/`C-NN` nowrap** — these live ONLY in the autofix half and would otherwise ship as plain wide-column GFM tables — and validates the resulting bytes in the same process, so the mutation stays the **last** write to `threat-model.md` (AGENTS.md → "Critical ordering rule").
+   `repairs/apply_prose_fixes.py` re-backticks bare code tokens. `validators/qa_checks.py gate` then re-applies the links / anchors / MS-structure / cell-format passes **and the §4/§5 GFM→HTML fixed-layout table conversion + `A-NN`/`C-NN` nowrap** — these live ONLY in the autofix half and would otherwise ship as plain wide-column GFM tables — and validates the resulting bytes in the same process, so the mutation stays the **last** write to `threat-model.md` (AGENTS.md → "Critical ordering rule").
 
-   **Never substitute `qa_checks.py contract`.** It runs only `check_contract`; of the sixteen `BLOCKING_ACTION_TYPES` that can dispatch you, just `missing_section`, `missing_required_subsection` and `table_schema_drift` originate there — `auth_method_decomposition`, `control_subsection_coverage` and the rest are appended by checks `contract` does not run. Verified that way you report success both for the defect you were sent to fix and for any defect your own edit introduced, while the skill's gate still exits 1.
+   **Never substitute `validators/qa_checks.py contract`.** It runs only `check_contract`; of the sixteen `BLOCKING_ACTION_TYPES` that can dispatch you, just `missing_section`, `missing_required_subsection` and `table_schema_drift` originate there — `auth_method_decomposition`, `control_subsection_coverage` and the rest are appended by checks `contract` does not run. Verified that way you report success both for the defect you were sent to fix and for any defect your own edit introduced, while the skill's gate still exits 1.
 5. Read the gate's exit code and act on it:
    - `0` — converged. Continue at step 6.
    - `1` — blocking defects remain, and the gate has just rewritten `$OUTPUT_DIR/.qa-repair-plan.json` with what is still open. Re-read that plan and repair again from step 2, **at most 3 internal attempts in total**. Renaming or moving a heading orphans the cross-references that name it — check `**Controls covered:**` and TOC links against every heading you touched. After the third attempt still at exit 1, emit `REPAIR_INCOMPLETE`, log the remaining issues, and stop.
@@ -79,14 +79,14 @@ This agent runs on the model passed via the Agent-tool `model` parameter at disp
    ```bash
    OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
    CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_changelog_audit.py" --output-dir "$OUTPUT_DIR"
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/renderers/render_changelog_audit.py" --output-dir "$OUTPUT_DIR"
    ```
    This keeps failed intermediate compose attempts from repeatedly parsing and writing the large audit export while preserving it for every repaired final report.
-7. Log a `STEP_END` / `AGENT_END` pair summarizing which fragment paths were rewritten, how many internal attempts step 5 consumed, and the final `qa_checks.py gate` exit code.
+7. Log a `STEP_END` / `AGENT_END` pair summarizing which fragment paths were rewritten, how many internal attempts step 5 consumed, and the final `validators/qa_checks.py gate` exit code.
 
 ## Hard rule — the renderer is the only legal writer of the document
 
-Do **not** write `threat-model.md` or `threat-model.yaml` directly. A `Write`/`Edit` with `file_path=$OUTPUT_DIR/threat-model.md` (or `threat-model.yaml`) is a policy violation — `scripts/check_inline_shortcut.py` aborts the run with exit 2. Repair mode only ever touches `.fragments/*.{json,md}` and re-renders.
+Do **not** write `threat-model.md` or `threat-model.yaml` directly. A `Write`/`Edit` with `file_path=$OUTPUT_DIR/threat-model.md` (or `threat-model.yaml`) is a policy violation — `scripts/validators/check_inline_shortcut.py` aborts the run with exit 2. Repair mode only ever touches `.fragments/*.{json,md}` and re-renders.
 
 ## Return signal
 

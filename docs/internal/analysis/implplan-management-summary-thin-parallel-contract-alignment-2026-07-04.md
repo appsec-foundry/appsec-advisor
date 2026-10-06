@@ -50,7 +50,7 @@ section. It is not a Management Summary subsection.
 Square brackets above mean conditionally rendered.
 
 The current deterministic owner is
-`scripts/compose_threat_model.py:_render_management_summary`. The structural
+`scripts/renderers/compose_threat_model.py:_render_management_summary`. The structural
 validator agrees on the four mandatory subsections:
 
 ```python
@@ -65,8 +65,8 @@ validator agrees on the four mandatory subsections:
 Authoritative current surfaces:
 
 - `data/sections-contract.yaml`
-- `scripts/compose_threat_model.py:_render_management_summary`
-- `scripts/qa_checks.py:_MS_REQUIRED_SUBSECTIONS`
+- `scripts/renderers/compose_threat_model.py:_render_management_summary`
+- `scripts/validators/qa_checks.py:_MS_REQUIRED_SUBSECTIONS`
 - current golden/example reports
 
 ### Retired layout — do not restore
@@ -171,14 +171,14 @@ LLM-authored fragment fields.
 
 ### Thin finalize backstop
 
-`orchestration_controller.py next` already contains a deterministic compose
+`orchestrator/orchestration_controller.py next` already contains a deterministic compose
 backstop for the observed 2026-07-02 Thin/Parallel failure where fragments
 existed but `threat-model.md` did not. Preserve this behavior and its ordering:
 
 ```text
-compose_threat_model.py --strict
-apply_prose_fixes.py
-qa_checks.py autofix
+renderers/compose_threat_model.py --strict
+repairs/apply_prose_fixes.py
+validators/qa_checks.py autofix
 ```
 
 The backstop also regenerates `ms-ai-exposure.json` and
@@ -199,7 +199,7 @@ It still requires:
 - loading `agents/shared/ms-template.md`;
 - authoring a complete `.management-summary-draft.md`;
 - five retired subsections;
-- passing that draft through `qa_checks.py ms_structure`.
+- passing that draft through `validators/qa_checks.py ms_structure`.
 
 The current `ms_structure` contract requires `Top Mitigations`, not
 `Mitigations`, and renames `Top Findings` to `Security Posture & Top Threats`.
@@ -330,7 +330,7 @@ Root fix:
 
 Severity: medium.
 
-`scripts/check_fragment_registry.py` reports no errors while:
+`scripts/validators/check_fragment_registry.py` reports no errors while:
 
 ```text
 qa_only_section_ids: ['top_findings']
@@ -377,7 +377,7 @@ Verified behavior:
 `KNOWN_UNDOCUMENTED_FLAGS`, hiding real behavior drift.
 
 Thin/Parallel relationship: this issue is directly related to the new universal
-`orchestration_controller.py route` boundary. Any advertised flag must be
+`orchestrator/orchestration_controller.py route` boundary. Any advertised flag must be
 accepted and preserved by the router before either Thin or legacy runtime loads.
 
 Do not solve this only by adding rows to the SKILL table. Decide per flag whether
@@ -391,7 +391,7 @@ it belongs to interactive `create-threat-model`:
 
 Severity: low.
 
-`resolve_config.py` currently resolves the standard default to:
+`runtime/resolve_config.py` currently resolves the standard default to:
 
 ```text
 reasoning_model = sonnet-economy
@@ -433,8 +433,8 @@ multiple accepted layouts.
 3. Capture baseline tests before edits:
 
    ```bash
-   python3 scripts/validate_config.py
-   python3 scripts/check_fragment_registry.py
+   python3 scripts/validators/validate_config.py
+   python3 scripts/validators/check_fragment_registry.py
    pytest tests/test_contract_integrity.py
    pytest tests/test_schema_integrity.py
    pytest tests/test_agent_definitions.py
@@ -529,7 +529,7 @@ Do not hand-edit example reports to hide prompt drift.
    - current section ID and correct repair target;
    - blocking/no-fragment + cosmetic/writable -> manual review or blocking QA,
      never `cosmetic_advisory`.
-4. Make `check_fragment_registry.py` reject extra keys in every registry map
+4. Make `validators/check_fragment_registry.py` reject extra keys in every registry map
    unless explicitly exempted with rationale.
 5. Remove stale `top_findings` QA-map entry.
 
@@ -560,7 +560,7 @@ Security/trust flags must never be silently downgraded.
 2. Update prose samples to fields/fragments the active renderer actually authors.
 3. Correct the Skill pipeline overview.
 4. Correct AGENTS runtime-model defaults.
-5. Add a small parser-based doc-drift test sourced from `resolve_config.py`
+5. Add a small parser-based doc-drift test sourced from `runtime/resolve_config.py`
    rather than duplicating model routing in test constants.
 
 ### Phase 8 — verification

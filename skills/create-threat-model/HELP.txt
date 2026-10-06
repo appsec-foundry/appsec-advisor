@@ -68,9 +68,9 @@ DEPTH & MODEL
                                also skips Stage 3 QA and detailed walkthroughs
   --thorough                   Shortcut for --assessment-depth thorough
   --stride-cap <N>             Opt-in cost lever: keep at most N threats per
-                               STRIDE category per component (Critical-safe —
-                               Criticals are never dropped). Trims the
-                               High/Medium/Low tail to cut tokens; full depth
+                               STRIDE category per component (Critical and
+                               High findings are never dropped). Trims the
+                               Medium/Low tail to cut tokens; full depth
                                (CVSS, evidence, greps) otherwise unchanged.
                                Off by default.
   --cheap-stride               Cost lever: light-depth STRIDE for the internal
@@ -150,7 +150,7 @@ TARGET & SCAN
                                Applies to a new or rebuilt analysis; refused
                                on a run that cannot read it
   --skip-context               Run without business context: no question, and
-                               docs/business-context.md is left unread
+                               docs/security/business-context.md is left unread
 
 MODES
   --full                       Re-analyze everything; preserve changelog history
@@ -188,7 +188,7 @@ CLEANUP
 TRUST MODE (untrusted by default — see SECURITY.md → Known issues)
   --trust-mode <mode>          untrusted (default) | trusted
                                In untrusted mode the run will:
-                                 - run preflight_untrusted.py first and abort
+                                 - run validators/preflight_untrusted.py first and abort
                                    if the repo contains its own Claude Code
                                    hooks/settings, out-of-repo symlinks, or
                                    suspicious docs/related-repos.yaml URLs;
@@ -213,6 +213,8 @@ ACTOR LAYER
   Actor-tagged findings are produced at all depths.
 
   Custom actors: place <repo>/.appsec/actors.yaml in the target repository.
+  Roles whose login lives outside the repository: declare them under
+  legitimate_roles in the same file.
   Org-wide actors: use org-profile actors/ directory (see docs/org-profiles.md).
 
 ADVANCED

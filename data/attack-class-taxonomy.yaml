@@ -1,17 +1,17 @@
-# attack-class-taxonomy.yaml — the seven canonical attack classes the
+# attack-class-taxonomy.yaml — the eight canonical attack classes the
 # Security Posture heatmap aggregates findings into. Each class becomes
-# one numbered red arrow (① … ⑦) in the Mermaid diagram and one bullet
+# one numbered red arrow (① … ⑧) in the Mermaid diagram and one bullet
 # in the **Attack paths** list below the diagram.
 #
 # Consumed by:
-#   - scripts/compose_threat_model.py (renderer assigns each finding to
+#   - scripts/renderers/compose_threat_model.py (renderer assigns each finding to
 #     a class via `cwes` membership, picks the canonical actor + tier
 #     for each class, and emits the class as one labelled arrow + one
 #     narrative bullet)
 #   - schemas/fragments/security-posture-attack-paths.schema.json
 #     (the `class` field is enum-validated against the ids below)
 #   - agents/appsec-threat-renderer.md (authors the optional attack-path
-#     fragment) and scripts/compose_threat_model.py (deterministic fallback)
+#     fragment) and scripts/renderers/compose_threat_model.py (deterministic fallback)
 #
 # A finding is assigned to the FIRST class whose `cwes` list contains
 # the finding's CWE. That makes ordering load-bearing — keep
@@ -26,7 +26,7 @@ schema_version: 1
 # The fixed glyph sequence. Length = max number of classes the renderer
 # will emit. Position-based: classes are emitted in `classes` list order,
 # so the first non-empty class gets ①, the second gets ②, …
-glyph_sequence: ["①", "②", "③", "④", "⑤", "⑥", "⑦"]
+glyph_sequence: ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧"]
 
 classes:
   - id: injection
@@ -209,3 +209,27 @@ classes:
       - CWE-942  # Permissive Cross-domain Policy with Untrusted Domains
     default_impacts:
       - customer-session-hijack
+
+  # Owns every finding attributed only to the build-time actor group, whatever
+  # its CWE, and CWE-matches the attribution rule's build-time list otherwise.
+  # `cwes_from` keeps one list: compose_threat_model loads it from
+  # data/actor-attribution-rules.yaml → restricted_groups.<group>.cwes.
+  - id: supply-chain
+    label: "Supply Chain"
+    short_label: "Supply Chain"
+    diagram_label: "Compromise the Build or Its Inputs"
+    threat_label: "Build Pipeline & Dependency Integrity"
+    stride: "T·E"
+    description: >-
+      a dependency, build input, pipeline step or published artifact can be
+      replaced or altered, so attacker-controlled code reaches the shipped
+      application.
+    default_actor: build-time
+    default_target_tier: application
+    # The §6 heading (without its number) that assesses this class's controls; the
+    # Management Summary row and the Figure 1b caption link to it.
+    control_section: "Operations Runtime and Supply Chain Controls"
+    cwes_from: build-time
+    default_impacts:
+      - full-server-compromise
+      - customer-data-exfiltration

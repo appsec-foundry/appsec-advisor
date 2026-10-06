@@ -1,4 +1,4 @@
-"""Tests for scripts/emit_verdict_to_model.py.
+"""Tests for scripts/model/emit_verdict_to_model.py.
 
 The emitter exists because the assessment's own verdict lived only in the
 rendered Markdown and in `.fragments/ms-verdict.json`, which cleanup deletes —
@@ -15,7 +15,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-import emit_verdict_to_model as emitter  # noqa: E402,I001
+import model.emit_verdict_to_model as emitter  # noqa: E402,I001
 
 FRAGMENT = {
     "severity": "red",
@@ -136,3 +136,26 @@ def test_cli(tmp_path, capsys):
     assert emitter.main([str(out)]) == 0
     assert "emit_verdict_to_model: written" in capsys.readouterr().out
     assert emitter.main([]) == 2
+
+
+def test_no_harm_scope_survives_export_without_lowering_technical_severity(tmp_path):
+    model = {
+        "components": [{"id": "test-console"}],
+        "threats": [{"id": "T-003", "component": "test-console", "risk": "Critical"}],
+        "business_context_trace": {
+            "status": "applied",
+            "component_coverage": [{"component_id": "test-console", "impact_is_material": False}],
+        },
+    }
+    out = _setup(tmp_path, model=model)
+    emitter.emit(out)
+    doc = _persisted(out)
+    assert doc["threats"] == model["threats"]
+    assert doc["verdict"]["severity"] == "red"
+    assert "no material harm for the application" in doc["verdict"]["business_context_note"]
+    import jsonschema
+
+    schema = yaml.safe_load(
+        (Path(__file__).resolve().parent.parent / "schemas/threat-model.output.schema.yaml").read_text()
+    )
+    jsonschema.Draft202012Validator(schema["properties"]["verdict"]).validate(doc["verdict"])

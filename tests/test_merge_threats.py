@@ -1,4 +1,4 @@
-"""Unit tests for scripts/merge_threats.py.
+"""Unit tests for scripts/model/merge_threats.py.
 
 Covers the collect → finalize round-trip, the mechanical exact-dedup, the
 candidate grouping, and the deterministic T-NNN sort. Does NOT exercise the
@@ -17,20 +17,20 @@ import pytest
 import yaml
 from jsonschema import Draft202012Validator
 
-SCRIPT_PATH = Path(__file__).parent.parent / "scripts" / "merge_threats.py"
+SCRIPT_PATH = Path(__file__).parent.parent / "scripts" / "model/merge_threats.py"
 
 
 @pytest.fixture(scope="module")
 def mt():
-    # merge_threats.py imports `_atomic_io` as a sibling module; that resolution
+    # model/merge_threats.py imports `_atomic_io` as a sibling module; that resolution
     # only works if scripts/ is on sys.path. CLI invocation gets this for free
     # via Python's script-dir injection, but spec_from_file_location does not.
     scripts_dir = str(SCRIPT_PATH.parent)
     if scripts_dir not in sys.path:
         sys.path.insert(0, scripts_dir)
-    spec = importlib.util.spec_from_file_location("merge_threats", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("model.merge_threats", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["merge_threats"] = module
+    sys.modules["model.merge_threats"] = module
     spec.loader.exec_module(module)
     return module
 
@@ -56,7 +56,7 @@ def _stride_threat_schema() -> dict:
     pre-gate repairs in merge_threats have to agree with exactly."""
     import yaml
 
-    schema = yaml.safe_load((SCRIPT_PATH.parent.parent / "schemas" / "stride.schema.yaml").read_text(encoding="utf-8"))
+    schema = yaml.safe_load((SCRIPT_PATH.parents[2] / "schemas" / "stride.schema.yaml").read_text(encoding="utf-8"))
     return schema["$defs"]["normal"]["properties"]["threats"]["items"]["properties"]
 
 
@@ -225,6 +225,32 @@ class TestEvidenceDedup:
         assert result[0]["config_check_id"] == "IAC-010"
         assert result[0]["mitigation_title"] == "Set an explicit permissions block"
 
+    def test_folded_rule_hit_keeps_its_source_on_the_instance(self, mt):
+        """A deterministic source-rule hit absorbed by a model-authored finding
+        stays recognizable per instance, so rule-only consumers still see it."""
+        evidence = {"file": "handlers/xml_import.py", "line": 12}
+        stride = _threat(cwe="CWE-611", risk="Critical", title="XXE in import", evidence=dict(evidence))
+        rule = _threat(
+            cwe="CWE-611",
+            risk="High",
+            title="XML parsed with external entities enabled",
+            source="source-scan",
+            source_scan_ref="SAF-007",
+            evidence=dict(evidence),
+        )
+
+        [kept] = mt._dedupe_evidence([stride, rule])
+
+        assert kept["source"] == "stride"
+        assert [(i.get("source"), i.get("source_ref")) for i in kept["instances"]] == [
+            ("stride", None),
+            ("source-scan", "SAF-007"),
+        ]
+        # A member that already carries instances keeps each instance's own source.
+        flattened = mt._instances_of({"risk": "High", "source": "stride", "instances": [dict(kept["instances"][1])]})
+        assert flattened[0]["source"] == "source-scan"
+        assert mt._instances_of({"risk": "High", "evidence": dict(evidence)})[0].get("source") is None
+
     def test_higher_risk_member_wins(self, mt):
         ev = {"file": "routes/x.ts", "line": 9}
         low = _threat(
@@ -351,6 +377,32 @@ class TestEvidenceDedup:
             title="Signing key disclosed in committed source",
         )
         assert len(mt._dedupe_title_locator(mt._dedupe_evidence([spoof, disclose]))) == 2
+
+    @pytest.mark.parametrize(("cwe_a", "cwe_b"), [("CWE-95", "CWE-94"), ("CWE-494", "CWE-829"), ("CWE-732", "CWE-250")])
+    def test_same_line_sibling_labels_from_two_sources_collapse(self, mt, cwe_a, cwe_b):
+        # One sink reported by two producers under sibling CWEs (an eval found by
+        # STRIDE as CWE-95 and by the source scan as CWE-94) is one finding.
+        ev = {"file": "routes/userProfile.ts", "line": 61}
+        a = _threat(component_id="c", cwe=cwe_a, stride="Tampering", evidence=dict(ev), title="Eval of username")
+        b = _threat(component_id="c", cwe=cwe_b, stride="Tampering", evidence=dict(ev), title="Input passed to eval")
+        assert len(mt._dedupe_evidence([a, b])) == 1
+
+    def test_same_file_different_lines_never_share_identity(self, mt):
+        a = _threat(component_id="c", cwe="CWE-95", evidence={"file": "routes/x.ts", "line": 61})
+        b = _threat(component_id="c", cwe="CWE-94", evidence={"file": "routes/x.ts", "line": 87})
+        assert mt._evidence_identity_key(a) != mt._evidence_identity_key(b)
+
+    def test_narrow_cross_run_families_stay_inside_one_broad_family(self, mt):
+        # build_threat_model_yaml's file-only families claim "same finding". If one
+        # spanned two broad families, a pair merged across runs would be kept apart
+        # within a run (and vice versa).
+        from model.build_threat_model_yaml import _CWE_FAMILIES
+
+        broad: dict[str, set[str]] = {}
+        for cwe, family in _CWE_FAMILIES.items():
+            broad.setdefault(family, set()).add(mt._cwe_family(cwe))
+        spanning = {family: kinds - {"other"} for family, kinds in broad.items() if len(kinds - {"other"}) > 1}
+        assert spanning == {}
 
     def test_same_line_other_family_falls_back_to_exact_cwe(self, mt):
         # Two findings whose CWEs both land in the catch-all "other" family must
@@ -556,6 +608,48 @@ class TestConsolidateConfigChecks:
         assert len(result) == 1
         assert result[0]["risk"] == "High"
 
+    @pytest.mark.parametrize(
+        ("check_id", "carrier_file", "hit_files"),
+        [
+            ("IAC-011", ".github/workflows/deploy.yml", (".github/workflows/ci.yml", ".github/workflows/scan.yml")),
+            ("IAC-001", "docker/api.Dockerfile", ("docker/worker.Dockerfile",)),
+        ],
+    )
+    def test_carrier_of_a_folded_config_hit_joins_the_checks_finding(self, mt, check_id, carrier_file, hit_files):
+        # _dedupe_evidence folded a config hit into a STRIDE finding at the same
+        # line, so that finding now carries the check id; the check's remaining
+        # hits must fold into it instead of becoming a second finding.
+        carrier = _threat(component_id="pipeline", evidence={"file": carrier_file, "line": 33}, risk="High")
+        carrier["source"] = "stride"
+        carrier["config_check_id"] = check_id
+        carrier["instances"] = [
+            {"file": carrier_file, "line": 33, "source": "stride"},
+            {"file": carrier_file, "line": 33, "source": "config-scan"},
+        ]
+        hits = [_config_threat(check_id, f, line=7) for f in hit_files]
+
+        result = mt._consolidate_config_checks([carrier, *hits])
+
+        assert len(result) == 1
+        survivor = result[0]
+        assert survivor["source"] == "stride" and survivor["risk"] == "High"
+        assert [(i["file"], i["line"]) for i in survivor["instances"]] == [
+            (carrier_file, 33),
+            *((f, 7) for f in hit_files),
+        ]
+        assert survivor["instance_count"] == 1 + len(hit_files)
+
+    def test_carrier_of_a_check_without_config_hits_stays_separate(self, mt):
+        carrier = _threat(component_id="pipeline")
+        carrier["source"] = "stride"
+        carrier["config_check_id"] = "IAC-011"
+        other = _config_threat("IAC-010", "ci.yml")
+
+        result = mt._consolidate_config_checks([carrier, other])
+
+        assert len(result) == 2
+        assert all("instances" not in r for r in result)
+
     def test_non_config_source_never_consolidated(self, mt):
         # A STRIDE finding that happens to carry a config_check_id-like field
         # must NOT be touched (guard keys on source == 'config-scan').
@@ -636,6 +730,73 @@ class TestScenarioRefRemap:
         threats = [{"id": "F-001", "t_id": "T-001", "scenario": "Plain prose, no refs."}]
         out = mt._remap_scenario_local_refs(threats)
         assert out[0]["scenario"] == "Plain prose, no refs."
+
+
+class TestMergerReviewRegressions:
+    @pytest.mark.parametrize("path", ["src/handler.py", "lib/query.rb"])
+    @pytest.mark.parametrize("risks", [("Low", "High"), ("High", "Low"), ("High", "High")])
+    def test_exact_duplicate_retains_high_risk_through_yaml(self, mt, tmp_path, path, risks):
+        from model.build_threat_model_yaml import build_threats
+
+        records = [
+            _threat(
+                local_id=f"F-{index:03d}",
+                risk=risk,
+                likelihood=risk,
+                impact=risk,
+                scenario="User input reaches SQL query construction.",
+                evidence={"file": path, "line": 42},
+            )
+            for index, risk in enumerate(risks, 1)
+        ]
+        _write_stride(tmp_path, "service", records)
+        assert mt.main(["collect", "--output-dir", str(tmp_path)]) == 0
+        assert mt.main(["finalize", "--output-dir", str(tmp_path)]) == 0
+        merged = json.loads((tmp_path / ".threats-merged.json").read_text())
+        survivor = merged["threats"][0]
+        assert len(merged["threats"]) == 1
+        assert (survivor["risk"], survivor["likelihood"], survivor["impact"]) == ("High", "High", "High")
+        assert survivor["local_id"] == records[risks.index("High")]["local_id"]
+        assert [row["severity"] for row in survivor["instances"]] == list(risks)
+        delivered, _ = build_threats(merged)
+        assert len(delivered) == 1
+        assert delivered[0]["risk"] == "High"
+
+    @pytest.mark.parametrize("paths", [("src/Handler.py", "src/handler.py"), ("lib/Query.rb", "lib/query.rb")])
+    @pytest.mark.parametrize("dedupe", ["_dedupe_evidence", "_dedupe_title_locator"])
+    def test_case_distinct_paths_are_not_identity(self, mt, paths, dedupe):
+        records = [_threat(evidence={"file": path, "line": 42}) for path in paths]
+        assert len(getattr(mt, dedupe)(records)) == 2
+
+    @pytest.mark.parametrize("path", ["src/Handler.py", "lib/Query.rb"])
+    @pytest.mark.parametrize("dedupe", ["_dedupe_evidence", "_dedupe_title_locator"])
+    def test_identical_case_paths_still_deduplicate(self, mt, path, dedupe):
+        records = [_threat(evidence={"file": path, "line": 42}) for _ in range(2)]
+        assert len(getattr(mt, dedupe)(records)) == 1
+
+    @pytest.mark.parametrize("local_ids", [("F-009", "F-017", "F-025"), ("F-027", "F-035", "F-043")])
+    @pytest.mark.parametrize("prefix", ["F", "T"])
+    def test_local_references_follow_folded_findings_and_instances(self, mt, tmp_path, local_ids, prefix):
+        refs = [prefix + local_id[1:] for local_id in local_ids]
+        scenario = f"Combined with {', '.join(refs)}, this enables data access."
+        records = [
+            _threat(local_id=local_id, scenario=scenario, risk=risk)
+            for local_id, risk in zip(local_ids, ["Low", "High", "Medium"])
+        ]
+        _write_stride(tmp_path, "service", records)
+        assert mt.main(["collect", "--output-dir", str(tmp_path)]) == 0
+        assert mt.main(["finalize", "--output-dir", str(tmp_path)]) == 0
+        first = json.loads((tmp_path / ".threats-merged.json").read_text())
+        survivor = first["threats"][0]
+        expected = "Combined with T-001, T-001, T-001, this enables data access."
+        assert survivor["scenario"] == expected
+        assert all(instance["scenario"] == expected for instance in survivor["instances"])
+        assert mt.main(["finalize", "--output-dir", str(tmp_path)]) == 0
+        assert json.loads((tmp_path / ".threats-merged.json").read_text()) == first
+
+    def test_canonical_local_id_takes_precedence_over_legacy_id(self, mt):
+        records = [{"local_id": "F-009", "id": "F-088", "t_id": "T-001", "scenario": "See F-009 and F-088."}]
+        assert mt._remap_scenario_local_refs(records)[0]["scenario"] == "See T-001 and F-088."
 
 
 # ---------------------------------------------------------------------------
@@ -970,6 +1131,71 @@ class TestBoundaryRepeatability:
         assert candidates["threat_count_raw"] == 2
 
 
+def _finalize_ref(boundary_id: str, origin: str, line: int = 9) -> dict:
+    return {
+        "boundary_id": boundary_id,
+        "origin_component_id": origin,
+        "rationale": f"The handler input crosses {boundary_id} without the assumed control.",
+        "evidence_locations": [{"file": "api.py", "line": line}],
+    }
+
+
+class TestFinalizeRevalidatesBoundaryRefs:
+    """Merging unions members' references and rebuilds survivors' instances with
+    its own helpers, so finalize reapplies the shared finding rule before it
+    writes: the merged register never carries a reference the gate rejects."""
+
+    @pytest.mark.parametrize(
+        ("refs", "kept"),
+        [
+            pytest.param([_finalize_ref("tb-1", "api"), _finalize_ref("tb-1", "api")], ["tb-1"], id="duplicate-key"),
+            pytest.param(
+                [_finalize_ref("tb-1", "api"), _finalize_ref("tb-2", "store")], ["tb-1", "tb-2"], id="two-origins"
+            ),
+            pytest.param([_finalize_ref("tb-1", "api", line=77)], [], id="evidence-not-owned"),
+            pytest.param([_finalize_ref("tb-9", "api")], [], id="unknown-boundary"),
+        ],
+    )
+    def test_finalize_writes_only_references_the_gate_accepts(self, mt, tmp_path, refs, kept):
+        import validators.validate_intermediate as vi
+
+        (tmp_path / ".components.json").write_text(json.dumps({"components": [{"id": "api"}, {"id": "store"}]}))
+        (tmp_path / ".trust-boundaries.json").write_text(
+            json.dumps(
+                {
+                    "trust_boundaries": [
+                        {
+                            "id": "tb-1",
+                            "from": "external",
+                            "to": "api",
+                            "confidence": "confirmed",
+                            "resolution_status": "resolved",
+                        },
+                        {
+                            "id": "tb-2",
+                            "from": "api",
+                            "to": "store",
+                            "confidence": "confirmed",
+                            "resolution_status": "resolved",
+                        },
+                    ]
+                }
+            )
+        )
+        _write_stride(tmp_path, "api", [_threat(evidence={"file": "api.py", "line": 9})])
+        assert mt.main(["collect", "--output-dir", str(tmp_path)]) == 0
+        cand_path = tmp_path / ".merge-candidates.json"
+        candidates = json.loads(cand_path.read_text())
+        candidates["threats"][0]["boundary_refs"] = refs
+        cand_path.write_text(json.dumps(candidates))
+
+        assert mt.main(["finalize", "--output-dir", str(tmp_path)]) == 0
+
+        merged = json.loads((tmp_path / ".threats-merged.json").read_text())
+        assert vi._check_boundary_refs(merged) == []
+        assert [ref["boundary_id"] for ref in merged["threats"][0].get("boundary_refs", [])] == kept
+
+
 class TestEndToEnd:
     def test_collect_produces_candidates_file(self, mt, tmp_path):
         _write_stride(tmp_path, "auth", [_threat(scenario="Attacker reaches the first unsafe SQL sink.")])
@@ -989,7 +1215,9 @@ class TestEndToEnd:
         assert member["scenario_excerpt"] == "Attacker reaches the first unsafe SQL sink."
         assert member["cwe"] == "CWE-89"
         assert member["source"] == "stride"
-        assert member["instances"] == [{"file": "src/auth/login.py", "line": 42, "severity": "High"}]
+        assert member["instances"] == [
+            {"file": "src/auth/login.py", "line": 42, "severity": "High", "source": "stride"}
+        ]
 
     def test_collect_drops_an_empty_boundary_refs_list(self, mt, tmp_path):
         """An analyzer that found no crossing still emits the key as `[]`. Both
@@ -1084,7 +1312,7 @@ class TestEndToEnd:
 class TestInvalidStrideJSONDiagnostics:
     """A 2026-05-07 juice-shop run lost ~5 minutes after one STRIDE analyzer
     emitted invalid JSON: the agent inline-rebuilt the merge in Python instead
-    of fixing the single file and re-invoking merge_threats.py. The error path
+    of fixing the single file and re-invoking model/merge_threats.py. The error path
     must now print enough context that the orchestrator can make the correct
     fix locally — and an explicit "do NOT inline-rebuild" instruction."""
 
@@ -1210,14 +1438,57 @@ class TestConsolidateByGroup:
         ]
         out = mt._consolidate_by_group(members)
         survivors = [t for t in out if t.get("consolidation_group") == "jwt-verification"]
-        assert len(survivors) == 1, "all JWT-verification hits collapse to ONE finding"
+        assert len(survivors) == 1, "all algorithm-allowlist hits collapse to ONE finding"
         s = survivors[0]
         assert s["systemic"] is True
         assert s["title"] == "Insecure JWT Verification"
-        assert s["instance_count"] == 5
+        assert s["instance_count"] == 3
         assert s["risk"] == "Critical"  # survivor = highest-risk member
         assert "lib/insecurity.ts" in s["affected_files"]
+        unverified = [t for t in out if t.get("consolidation_group") == "jwt-signature-unverified"]
+        assert len(unverified) == 1
+        assert unverified[0]["instance_count"] == 2
+        assert {i["line"] for i in unverified[0]["instances"]} == {58}
         assert "routes/chatbot.ts" in s["affected_files"]
+
+    def test_unverified_token_identity_stays_out_of_algorithm_allowlist_finding(self, mt):
+        # A call site that reads token claims without any signature check is not
+        # a manifestation of a verifier that lacks an algorithm allowlist: pinning
+        # algorithms at the verifier leaves the call site exploitable.
+        allowlist = _jwt("src/auth/tokens.py", 40, component_id="orders", control_scope="")
+        unverified = _jwt(
+            "src/handlers/assistant.py",
+            12,
+            title="Assistant trusts unverified JWT identity",
+            component_id="orders",
+            control_scope="",
+        )
+        second_allowlist = _jwt("src/auth/session.py", 77, component_id="orders", control_scope="")
+        out = mt._consolidate_by_group([allowlist, unverified, second_allowlist])
+        by_file = {t["evidence"]["file"]: t for t in out if not t.get("systemic")}
+        algorithm = next(t for t in out if t.get("consolidation_group") == "jwt-verification")
+        assert {i["file"] for i in algorithm["instances"]} == {"src/auth/tokens.py", "src/auth/session.py"}
+        assert by_file["src/handlers/assistant.py"].get("consolidation_group") is None
+
+    @pytest.mark.parametrize(
+        ("check_id", "title", "group"),
+        [
+            ("AUTHZ-006", "Token payload read without check", "jwt-signature-unverified"),
+            ("AUTHZ-201", "Token parsed without check", "jwt-signature-unverified"),
+            ("AUTHZ-005", "Verifier accepts any algorithm", "jwt-verification"),
+            ("AUTHZ-103", "JWT decode missing algorithms allowlist", "jwt-verification"),
+        ],
+    )
+    def test_scanner_checks_select_group_by_mechanism(self, mt, check_id, title, group):
+        threat = _threat(cwe="CWE-347", title=title, evidence={"file": "app/x.py", "line": 1})
+        threat["source_check_id"] = check_id
+        assert mt._match_consolidation_group(threat, mt._load_consolidation_groups())["id"] == group
+
+    def test_unverified_non_token_signature_is_not_a_jwt_finding(self, mt):
+        webhook = _threat(
+            cwe="CWE-345", title="Unverified webhook payload accepted", evidence={"file": "app/hooks.py", "line": 9}
+        )
+        assert mt._match_consolidation_group(webhook, mt._load_consolidation_groups()) is None
 
     def test_path_traversal_splits_read_vs_upload(self, mt):
         # CWE-22 spans two sink families with different fixes: a READ traversal
@@ -1650,7 +1921,7 @@ class TestCweTaxonomyMap:
         # the module __file__ to a child of tmp_path so parent.parent == tmp_path.
         scripts_dir = tmp_path / "scripts"
         scripts_dir.mkdir()
-        monkeypatch.setattr(mt, "__file__", str(scripts_dir / "merge_threats.py"))
+        monkeypatch.setattr(mt, "__file__", str(scripts_dir / "model/merge_threats.py"))
         mt._load_cwe_to_th_map.cache_clear()
         result = mt._load_cwe_to_th_map()
         assert result["CWE-1"] == "TH-01"
@@ -1662,7 +1933,7 @@ class TestCweTaxonomyMap:
         # lines 76-77: unreadable / missing file → {}
         scripts_dir = tmp_path / "no_data_here" / "scripts"
         scripts_dir.mkdir(parents=True)
-        monkeypatch.setattr(mt, "__file__", str(scripts_dir / "merge_threats.py"))
+        monkeypatch.setattr(mt, "__file__", str(scripts_dir / "model/merge_threats.py"))
         mt._load_cwe_to_th_map.cache_clear()
         assert mt._load_cwe_to_th_map() == {}
         mt._load_cwe_to_th_map.cache_clear()
@@ -1787,6 +2058,7 @@ class TestConfigFindingToThreat:
             "title": "CORS wildcard",
             "scenario": "any origin allowed",
             "severity": "High",
+            "stride": "Information Disclosure",
             "cwe": ["CWE-942"],
             "file": "app.js",
             "line": 7,
@@ -1802,24 +2074,103 @@ class TestConfigFindingToThreat:
         assert out["config_check_slug"] == "cors-wildcard"
         assert out["control_scope"] == "edge-cors-policy"
 
+    def test_absence_evidence_is_carried_into_the_threat(self, mt):
+        out = mt._config_finding_to_threat(
+            {
+                "stride": "Tampering",
+                "file": ".github/workflows/*.yml",
+                "line": 0,
+                "evidence_kind": "absence",
+                "searched_files": ["a.yml", "b.yml"],
+                "searched_file_count": 2,
+            }
+        )
+        assert out["evidence"] == {
+            "file": ".github/workflows/*.yml",
+            "line": 0,
+            "kind": "absence",
+            "searched_files": ["a.yml", "b.yml"],
+            "searched_file_count": 2,
+        }
+
+    def test_location_evidence_stays_file_and_line(self, mt):
+        assert mt._config_finding_to_threat({"stride": "Tampering", "file": "Dockerfile", "line": 3})["evidence"] == {
+            "file": "Dockerfile",
+            "line": 3,
+        }
+
     def test_defaults_when_missing(self, mt):
-        out = mt._config_finding_to_threat({})
+        out = mt._config_finding_to_threat({"stride": "Tampering"})
         assert out["risk"] == "Medium"
         assert out["cwe"] == ""
         assert out["breach_distance"] is None
 
+    def test_stride_comes_from_the_catalog_check_when_the_finding_has_none(self, mt):
+        """A finding written before `stride` existed still resolves through its check."""
+        out = mt._config_finding_to_threat({"check_id": "IAC-002", "file": "Dockerfile", "line": 1})
+        assert out["stride"] == "Elevation of Privilege"
 
-class TestGuessComponentFromPath:
-    def test_frontend_prefix(self, mt):
-        assert mt._guess_component_from_path("frontend/app.ts") == ("frontend", "Frontend SPA")
-        assert mt._guess_component_from_path("client/main.js") == ("frontend", "Frontend SPA")
+    def test_a_finding_stride_wins_over_the_catalog(self, mt):
+        out = mt._config_finding_to_threat({"check_id": "IAC-002", "stride": "Tampering"})
+        assert out["stride"] == "Tampering"
 
-    def test_data_layer_prefix(self, mt):
-        assert mt._guess_component_from_path("models/user.ts") == ("data-layer", "Data Layer")
-        assert mt._guess_component_from_path("prisma/schema.prisma") == ("data-layer", "Data Layer")
+    @pytest.mark.parametrize(
+        "finding",
+        [
+            {},
+            {"check_slug": "cors-wildcard"},
+            {"check_id": "IAC-9999"},
+            {"stride": "Information-Disclosure"},
+            {"check_id": "IAC-002", "stride": "bogus"},
+        ],
+        ids=["empty", "synthesised-without-stride", "unknown-check", "misspelt-stride", "invalid-stride"],
+    )
+    def test_no_valid_category_is_rejected_not_defaulted(self, mt, finding):
+        with pytest.raises(ValueError, match="STRIDE category"):
+            mt._config_finding_to_threat(finding)
 
-    def test_backend_default(self, mt):
-        assert mt._guess_component_from_path("routes/order.ts") == ("backend-api", "Backend API")
+    def test_every_catalog_check_declares_a_valid_stride(self, mt):
+        """The catalog is the source of the category, so none may lack one."""
+        catalog = mt._config_catalog_stride()
+        ids = {row["id"] for row in yaml.safe_load(mt.CONFIG_CATALOG_PATH.read_text(encoding="utf-8"))["checks"]}
+        assert set(catalog) == ids
+        assert set(catalog.values()) <= set(mt._STRIDE_ORDER)
+
+
+class TestSourceScanOwner:
+    REGISTRY = [
+        {"id": "frontend", "name": "Admin Web", "paths": ["web/**"]},
+        {"id": "portal", "name": "Customer Portal", "paths": ["frontend/**"]},
+        {"id": "api", "name": "API", "paths": ["src/server.ts", "src/**"]},
+        {"id": "auth", "name": "Auth", "paths": ["src/auth/session.ts"]},
+    ]
+
+    @pytest.mark.parametrize(
+        ("file", "owner"),
+        [
+            # A guessed id that is also a registered component must not win.
+            ("frontend/app.ts", ("portal", "Customer Portal")),
+            ("web/admin/main.js", ("frontend", "Admin Web")),
+            # Overlapping globs resolve to the most specific owner.
+            ("src/auth/session.ts", ("auth", "Auth")),
+            # No glob matches: the primary component owns it.
+            ("Dockerfile", ("api", "API")),
+        ],
+    )
+    def test_owner_comes_from_the_registry(self, mt, file, owner):
+        threat = mt._source_auth_finding_to_threat({"check_id": "AUTHZ-002", "file": file}, self.REGISTRY)
+        assert (threat["component_id"], threat["component_name"]) == owner
+
+    def test_without_a_registry_the_placeholder_waits_for_reclassify(self, mt):
+        threat = mt._source_auth_finding_to_threat({"check_id": "AUTHZ-002", "file": "frontend/app.ts"})
+        assert threat["component_id"] == "backend-api"
+
+    def test_loader_reads_the_registry(self, mt, tmp_path):
+        (tmp_path / ".components.json").write_text(json.dumps({"schema_version": 1, "components": self.REGISTRY}))
+        (tmp_path / ".source-auth-findings.json").write_text(
+            json.dumps({"findings": [{"check_id": "AUTHZ-002", "file": "frontend/app.ts", "line": 3}]})
+        )
+        assert [t["component_id"] for t in mt._load_source_auth_findings(tmp_path)] == ["portal"]
 
 
 class TestSourceAuthFindingToThreat:
@@ -1923,7 +2274,7 @@ class TestLoadConfigScanFindings:
 
     def test_valid_findings_converted(self, mt, tmp_path):
         (tmp_path / ".config-scan-findings.json").write_text(
-            json.dumps({"findings": [{"title": "x", "file": "ci.yml"}]}),
+            json.dumps({"findings": [{"title": "x", "file": "ci.yml", "stride": "Tampering"}]}),
             encoding="utf-8",
         )
         out = mt._load_config_scan_findings(tmp_path)
@@ -2089,7 +2440,7 @@ class TestBackfillBoundaryLeg:
     def test_vocabulary_matches_the_schema_enum(self, mt):
         """The drop rule reads the crossing vocabulary; a leg the schema accepts
         but the vocabulary omits would be silently deleted from every finding."""
-        from prepare_trust_boundary_context import CROSSING_TYPE_LEGS
+        from contexts.prepare_trust_boundary_context import CROSSING_TYPE_LEGS
 
         enum = _stride_threat_schema()["boundary_refs"]["items"]["properties"]["leg"]["enum"]
         assert {leg for legs in CROSSING_TYPE_LEGS.values() for leg in legs} == set(enum)
@@ -2153,7 +2504,7 @@ class TestConsolidationInternals:
         # lines 828-829: missing catalog → ().
         scripts_dir = tmp_path / "x" / "scripts"
         scripts_dir.mkdir(parents=True)
-        monkeypatch.setattr(mt, "__file__", str(scripts_dir / "merge_threats.py"))
+        monkeypatch.setattr(mt, "__file__", str(scripts_dir / "model/merge_threats.py"))
         mt._load_consolidation_groups.cache_clear()
         assert mt._load_consolidation_groups() == ()
         mt._load_consolidation_groups.cache_clear()
@@ -2255,6 +2606,17 @@ class TestConsolidationInternals:
         threats = [_threat()]
         out = mt._consolidate_by_group(threats)
         assert out == threats and out is not threats
+
+    def test_consolidate_by_group_keeps_every_member_lens_tag(self, mt, monkeypatch):
+        group = {"id": "g", "title": "Shared", "match_any": [{"cwe": ["CWE-89"]}]}
+        monkeypatch.setattr(mt, "_load_consolidation_groups", lambda: (group,))
+        threats = [
+            _threat(component_id="a", risk="Critical", evidence={"file": "a.ts", "line": 1}),
+            _threat(component_id="a", evidence={"file": "b.ts", "line": 2}, owasp_llm_ids=["LLM05"]),
+        ]
+        out = mt._consolidate_by_group(threats)
+        assert len(out) == 1
+        assert out[0]["owasp_llm_ids"] == ["LLM05"]
 
 
 def g_first(groups):
@@ -2422,6 +2784,28 @@ class TestApplyDecisionsBranches:
         assert merged["mitigation_ids"] == ["M-001", "M-002"]
         assert any(threat["component_id"] == "c" for threat in out)
 
+    def test_consolidate_keeps_every_member_lens_tag(self, mt):
+        threats = [
+            {"component_id": "a", **_threat(evidence={"file": "a.py", "line": 1}, owasp_llm_ids=["LLM10"])},
+            {"component_id": "b", **_threat(evidence={"file": "b.py", "line": 2}, owasp_asi_ids=["ASI08"])},
+            {"component_id": "c", **_threat(evidence={"file": "c.py", "line": 3}, risk="Critical")},
+        ]
+        gid = mt._group_candidates(threats)[0]["group_id"]
+        out = mt._apply_decisions(
+            threats,
+            [
+                {
+                    "group_id": gid,
+                    "action": "consolidate",
+                    "merge_target_index": 2,
+                    "consolidated_title": "Systemic SQL Injection",
+                }
+            ],
+        )
+        assert len(out) == 1
+        assert out[0]["owasp_llm_ids"] == ["LLM10"]
+        assert out[0]["owasp_asi_ids"] == ["ASI08"]
+
     def test_consolidate_bad_target_skipped(self, mt):
         # line 1396: consolidate out-of-range target → continue.
         threats = self._two_group()
@@ -2445,7 +2829,10 @@ class TestCmdCollectFinalizeBranches:
         # lines 1454, 1460: config + source-auth threats appended in collect.
         _write_stride(tmp_path, "backend", [_threat()])
         (tmp_path / ".config-scan-findings.json").write_text(
-            json.dumps({"findings": [{"title": "CORS", "file": "ci.yml", "line": 1}]}), encoding="utf-8"
+            json.dumps(
+                {"findings": [{"title": "CORS", "file": "ci.yml", "line": 1, "stride": "Information Disclosure"}]}
+            ),
+            encoding="utf-8",
         )
         (tmp_path / ".source-auth-findings.json").write_text(
             json.dumps(
@@ -3022,3 +3409,90 @@ def test_finding_type_supplies_the_category_when_the_cwe_map_cannot(mt):
     assert mt._threat_category_id_for({"cwe": "CWE-89", "finding_type_id": "FT-143"}) == "TH-01"
     # Neither source resolves — the finding stays unclassified rather than guessed.
     assert mt._threat_category_id_for({"cwe": "CWE-99999", "finding_type_id": None}) is None
+
+
+@pytest.mark.parametrize(
+    "threat, expected",
+    [
+        ({"cwe": "CWE-347", "finding_type_id": "FT-148"}, "TH-14"),  # unsigned release artifact
+        ({"cwe": "CWE-345", "finding_type_id": "FT-030"}, "TH-02"),  # token accepted without verification
+        ({"cwe": "CWE-345"}, "TH-14"),  # no check: the CWE map still answers
+        ({"cwe": "CWE-311", "finding_type_id": "FT-164"}, "TH-03"),  # other CWEs keep the map's precedence
+    ],
+)
+def test_a_signature_cwe_takes_the_category_of_the_check_that_found_it(mt, threat, expected):
+    """CWE-345/347 name both artifact and token signatures; only the finding type knows which."""
+    assert mt._threat_category_id_for(threat) == expected
+
+
+# ---------------------------------------------------------------------------
+# GC- pass: a config-scan finding and an analyzer finding of one mechanism
+# ---------------------------------------------------------------------------
+
+
+def _scan(**overrides):
+    return _threat(**{"source": "config-scan", "config_check_id": "IAC-900", **overrides})
+
+
+@pytest.mark.parametrize(
+    "analyzer_cwe, scanner_cwe",
+    [("CWE-345", "CWE-347"), ("CWE-829", "CWE-1104")],
+)
+def test_a_scanner_and_an_analyzer_finding_of_one_mechanism_become_candidates(mt, analyzer_cwe, scanner_cwe):
+    threats = [
+        _threat(component_id="pipeline", cwe=analyzer_cwe, stride="Spoofing", threat_category_id="TH-14"),
+        _scan(component_id="pipeline", cwe=scanner_cwe, stride="Tampering", threat_category_id="TH-14"),
+    ]
+    (group,) = [g for g in mt._group_candidates(threats) if g["group_key"] == "config_label"]
+    assert group["group_id"].startswith("GC-") and group["member_count"] == 2
+    assert mt._reconstruct_group_member_indices(threats)[group["group_id"]] == [0, 1]
+
+
+@pytest.mark.parametrize(
+    "threats",
+    [
+        # only scanner findings, only analyzer findings, two components, two categories
+        [_scan(component_id="p", cwe="CWE-345"), _scan(component_id="p", cwe="CWE-347", config_check_id="IAC-901")],
+        [_threat(component_id="p", cwe="CWE-345"), _threat(component_id="p", cwe="CWE-347", stride="Spoofing")],
+        [_threat(component_id="p", cwe="CWE-345"), _scan(component_id="q", cwe="CWE-347")],
+        [
+            _threat(component_id="p", cwe="CWE-345", threat_category_id="TH-02"),
+            _scan(component_id="p", cwe="CWE-347", threat_category_id="TH-14"),
+        ],
+    ],
+)
+def test_no_config_label_group_without_one_mechanism_one_category_and_both_kinds(mt, threats):
+    assert not [g for g in mt._group_candidates(threats) if g["group_key"] == "config_label"]
+
+
+def test_a_config_label_group_never_repeats_a_member_set_another_pass_exposes(mt):
+    threats = [_threat(component_id="p", cwe="CWE-829"), _scan(component_id="p", cwe="CWE-829")]
+    assert [g["group_key"] for g in mt._group_candidates(threats)] == ["cwe_stride"]
+
+
+def test_a_finding_in_two_groups_is_merged_once_whatever_the_decision_order(mt):
+    threats = [
+        _threat(component_id="p", cwe="CWE-829", title="Lockfile disabled", evidence={"file": ".npmrc", "line": 1}),
+        _threat(
+            component_id="p", cwe="CWE-829", title="Action pinned to a branch", evidence={"file": "ci.yml", "line": 9}
+        ),
+        _scan(component_id="p", cwe="CWE-1104", title="Missing lockfile", evidence={"file": "package.json", "line": 1}),
+    ]
+    groups = {g["group_key"]: g for g in mt._group_candidates(threats)}
+    primary, config = groups["cwe_stride"], groups["config_label"]
+    decisions = [
+        {"group_id": config["group_id"], "action": "merge", "member_indices": [1, 2], "merge_target_index": 1},
+        {"group_id": primary["group_id"], "action": "merge", "member_indices": [0, 1], "merge_target_index": 0},
+    ]
+    result = mt._apply_decisions([dict(t) for t in threats], decisions)
+    # Candidate order puts the G- decision first; the GC- decision then finds member 1 claimed.
+    assert [t["title"] for t in result] == ["Lockfile disabled", "Missing lockfile"]
+
+
+def test_a_source_scanner_finding_does_not_open_a_config_label_group(mt):
+    # Source scanners report the analyzer's own sink; passes 1 and 2 pair those.
+    threats = [
+        _threat(component_id="api", cwe="CWE-862", threat_category_id="TH-06"),
+        _threat(component_id="api", cwe="CWE-639", threat_category_id="TH-06", source_check_id="AUTHZ-900"),
+    ]
+    assert not [g for g in mt._group_candidates(threats) if g["group_key"] == "config_label"]

@@ -1,0 +1,56 @@
+# Where Figure 1b shows a config/IaC finding, and which attack entry it can establish (RA-30).
+#
+# `element` places the finding on a supply-chain element: repository, package
+# (one row per ecosystem), github_action, base_image, remote_script, ci (the CI
+# system that owns the cited file) or artifact (a release artifact). `entry`
+# names the attack mechanism the finding establishes; a check without `entry`
+# is shown on its element and never draws an attack arrow. `requires: pushed`
+# limits the entry to repositories that push a container image.
+#
+# `runtime` lists checks about the running system. Their findings stay on the
+# runtime components of Figure 1a. On a build-plane component, which Figure 1a
+# does not draw, Figure 1b lists them without an owner and without an entry.
+#
+# Every check in data/config-iac-checks.yaml appears exactly once, in `checks`
+# or in `runtime` (tests/test_build_supply_chain_view.py).
+
+entries: [dependency, ci-input, repository, artifact]
+
+checks:
+  IAC-001: {element: base_image, entry: ci-input}
+  IAC-004: {element: package}
+  IAC-005: {element: package, entry: dependency}
+  IAC-010: {element: ci}
+  IAC-011: {element: github_action, entry: ci-input}
+  IAC-012: {element: ci, entry: repository}
+  IAC-013: {element: ci, entry: repository}
+  IAC-014: {element: ci}
+  IAC-015: {element: ci}
+  IAC-030: {element: repository}
+  IAC-031: {element: repository}
+  IAC-032: {element: repository}
+  IAC-033: {element: repository}
+  IAC-034: {element: repository}
+  IAC-035: {element: repository}
+  IAC-040: {element: artifact, entry: artifact, requires: pushed}
+  IAC-041: {element: artifact}
+  IAC-050: {element: package, entry: dependency, ecosystem: npm}
+  IAC-051: {element: package, entry: dependency, ecosystem: npm}
+  IAC-060: {element: repository}
+  IAC-061: {element: repository}
+  IAC-062: {element: repository}
+  IAC-063: {element: repository}
+  IAC-064: {element: repository}
+  IAC-065: {element: repository}
+  IAC-066: {element: repository}
+  IAC-067: {element: repository}
+  IAC-068: {element: repository}
+  IAC-069: {element: repository}
+  IAC-070: {element: repository}
+  IAC-071: {element: repository, entry: repository}
+  IAC-072: {element: repository}
+  IAC-073: {element: repository}
+  IAC-074: {element: repository}
+  IAC-075: {element: repository}
+
+runtime: [IAC-002, IAC-003, IAC-020, IAC-021, IAC-022, IAC-023, IAC-024, IAC-080, IAC-081, IAC-082, IAC-083, IAC-084, IAC-085, IAC-086, IAC-090, IAC-091, IAC-092, IAC-093, IAC-094, IAC-095, IAC-096, IAC-097]

@@ -54,8 +54,8 @@ def _load(name: str, path: Path):
     return mod
 
 
-pregen = _load("pregenerate_fragments", _SCRIPTS / "pregenerate_fragments.py")
-compose = _load("compose_threat_model", _SCRIPTS / "compose_threat_model.py")
+pregen = _load("renderers.pregenerate_fragments", _SCRIPTS / "renderers/pregenerate_fragments.py")
+compose = _load("renderers.compose_threat_model", _SCRIPTS / "renderers/compose_threat_model.py")
 
 
 # ---------------------------------------------------------------------------
@@ -414,7 +414,7 @@ class TestRenderOperationalStrengthsAutoDerive:
         # it only inspects threats. The mitigates_cell function in
         # _render_operational_strengths chooses yaml-explicit over derived.
         # We verify that here at the source-contract level.
-        src = (REPO_ROOT / "scripts" / "compose_threat_model.py").read_text()
+        src = (REPO_ROOT / "scripts" / "renderers/compose_threat_model.py").read_text()
         # The decision check must appear in the body.
         assert "_derive_control_mitigates" in src
         # Pattern: the renderer falls back to derive only when mits is empty.
@@ -428,7 +428,7 @@ class TestRenderOperationalStrengthsAutoDerive:
 import re
 import textwrap
 
-qa = _load("qa_checks", _SCRIPTS / "qa_checks.py")
+qa = _load("validators.qa_checks", _SCRIPTS / "validators/qa_checks.py")
 
 
 class TestCrossReferenceTitleCoverageEndToEnd:

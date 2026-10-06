@@ -1,4 +1,4 @@
-"""Unit tests for scripts/pregenerate_fragments.py.
+"""Unit tests for scripts/renderers/pregenerate_fragments.py.
 
 The pre-generator produces 7 deterministic structural fragments from
 threat-model.yaml. Tests verify per-generator output shape (heading
@@ -19,15 +19,15 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "pregenerate_fragments.py"
+SCRIPT = REPO_ROOT / "scripts" / "renderers/pregenerate_fragments.py"
 
 
 def _load_module():
-    if "pregenerate_fragments" in sys.modules:
-        return sys.modules["pregenerate_fragments"]
-    spec = importlib.util.spec_from_file_location("pregenerate_fragments", SCRIPT)
+    if "renderers.pregenerate_fragments" in sys.modules:
+        return sys.modules["renderers.pregenerate_fragments"]
+    spec = importlib.util.spec_from_file_location("renderers.pregenerate_fragments", SCRIPT)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["pregenerate_fragments"] = module
+    sys.modules["renderers.pregenerate_fragments"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
@@ -136,12 +136,12 @@ class TestSystemOverview:
         what kind of model this is, so the section is not read as design-time
         coverage."""
         md = pf.gen_system_overview(minimal_yaml_data)
-        assert "**Basis:** a code-derived threat model at implementation level" in md
+        assert f"**Basis:** {pf.METHOD_SENTENCE}" in md
         assert "as built, not as designed" in md
 
     def test_method_boundary_is_independent_of_meta_scope(self):
         md = pf.gen_system_overview({"meta": {}, "components": []})
-        assert "**Basis:** a code-derived threat model at implementation level" in md
+        assert f"**Basis:** {pf.METHOD_SENTENCE}" in md
 
 
 class TestArchitectureDiagrams:
@@ -149,18 +149,18 @@ class TestArchitectureDiagrams:
         md = pf.gen_architecture_diagrams(minimal_yaml_data)
         assert md.startswith("## 2. Architecture Diagrams\n")
 
-    def test_has_all_four_required_subsections(self, minimal_yaml_data):
+    def test_has_all_three_required_subsections(self, minimal_yaml_data):
         md = pf.gen_architecture_diagrams(minimal_yaml_data)
         assert "### 2.1 System Context" in md
         assert "### 2.2 Container Architecture" in md
         assert "### 2.3 Components" in md
-        assert "### 2.4 Technology Architecture" in md
+        assert "### 2.4" not in md
 
     def test_contains_at_least_one_mermaid_block(self, minimal_yaml_data):
         md = pf.gen_architecture_diagrams(minimal_yaml_data)
         assert "```mermaid" in md
-        # At least 3 — one per C4 level + boundary diagram
-        assert md.count("```mermaid") >= 3
+        # One per subsection when no detail view replaces a diagram
+        assert md.count("```mermaid") == 3
 
     def test_no_forbidden_section_25(self, minimal_yaml_data):
         md = pf.gen_architecture_diagrams(minimal_yaml_data)
@@ -175,9 +175,9 @@ class TestArchitectureDiagrams:
     def test_each_section_2_diagram_has_key_takeaway(self, minimal_yaml_data):
         """Bug #2 regression: QA Check 8.0 requires a `**Key takeaway:**` after
         every §2 Mermaid block. The generator must emit one for each of
-        §2.1–§2.4 so the check passes by construction (no placeholder)."""
+        §2.1–§2.3 so the check passes by construction (no placeholder)."""
         md = pf.gen_architecture_diagrams(minimal_yaml_data)
-        assert md.count("**Key takeaway:**") == 4
+        assert md.count("**Key takeaway:**") == 3
         # The placeholder the QA reviewer inserts when the takeaway is missing
         # must never appear in the generated baseline.
         assert "QA: missing" not in md
@@ -502,7 +502,7 @@ class TestAiExposure:
         the LLM→ASI crosswalk is gated on a real agentic surface."""
         out = pf.gen_ai_exposure(self._LLM_YAML)
         data = json.loads(out)
-        assert all("owasp_asi_id" not in r for r in data["ai_risks"])
+        assert _asi_pairs(data["ai_risks"]) == set()
 
     def test_asi_crosswalk_on_agentic_surface(self):
         """When a threat evidences an agentic surface (here: tool-calling /
@@ -525,7 +525,8 @@ class TestAiExposure:
         data = json.loads(out)
         by_id = {r["owasp_llm_id"]: r for r in data["ai_risks"]}
         assert "LLM06" in by_id
-        assert by_id["LLM06"].get("owasp_asi_id") == "ASI02"
+        assert by_id["LLM06"]["findings"][0]["owasp_asi_ids"] == ["ASI02"]
+        assert "owasp_asi_id" not in by_id["LLM06"]
 
     def test_explicit_owasp_ids_override_title_heuristics_and_surface_asi_only_risk(self):
         d = {
@@ -549,10 +550,11 @@ class TestAiExposure:
             ],
         }
         data = json.loads(pf.gen_ai_exposure(d))
-        by_asi = {r.get("owasp_asi_id"): r for r in data["ai_risks"]}
+        by_asi = {r.get("owasp_asi_id"): r for r in data["ai_risks"] if r.get("owasp_asi_id")}
         assert by_asi["ASI03"]["name"] == "Agent Identity & Privilege Abuse"
         assert by_asi["ASI03"]["findings"][0]["ref"] == "T-071"
-        assert by_asi["ASI02"]["owasp_llm_id"] == "LLM06"
+        by_llm = {r["owasp_llm_id"]: r for r in data["ai_risks"] if r.get("owasp_llm_id")}
+        assert by_llm["LLM06"]["findings"] == [{"ref": "T-072", "label": "Generic Finding", "owasp_asi_ids": ["ASI02"]}]
 
     def test_ai_exposure_schema_declares_asi_enum(self):
         """The ai-exposure fragment schema must accept owasp_asi_id ASI01..ASI10
@@ -562,6 +564,16 @@ class TestAiExposure:
         )
         enum = schema["properties"]["ai_risks"]["items"]["properties"]["owasp_asi_id"]["enum"]
         assert enum == [f"ASI{n:02d}" for n in range(1, 11)]
+
+
+def _asi_pairs(rows: list[dict]) -> set[tuple[str, str]]:
+    """(finding, ASI id) pairs a fragment states: per finding on LLM rows, per row on ASI-only rows."""
+    pairs = set()
+    for row in rows:
+        for finding in row["findings"]:
+            ids = finding.get("owasp_asi_ids") or ([row["owasp_asi_id"]] if row.get("owasp_asi_id") else [])
+            pairs |= {(finding["ref"], asi) for asi in ids}
+    return pairs
 
 
 class TestCriticalAttackTree:
@@ -705,7 +717,7 @@ class TestVerdict:
     def test_red_posture_when_critical_present(self):
         data = json.loads(pf.gen_verdict(self._YAML))
         assert data["severity"] == "red"
-        assert data["opening"].startswith("Not production-ready")
+        assert data["opening"].startswith("Critical security concerns")
 
     def test_yellow_posture_when_high_no_critical(self):
         y = {
@@ -729,29 +741,58 @@ class TestVerdict:
 
     def test_bullets_carry_valid_refs_grouped_by_stride(self):
         data = json.loads(pf.gen_verdict(self._YAML))
-        # 5 threats across 5 distinct STRIDE classes → 5 scenario bullets.
-        assert len(data["bullets"]) == 5
+        # 5 STRIDE classes, but on a red posture the Medium-only Repudiation
+        # scenario is no worst case (RA-23) → 4 scenario bullets.
+        assert len(data["bullets"]) == 4
         seen_refs = set()
         for b in data["bullets"]:
             assert 1 <= len(b["refs"]) <= 5
             for r in b["refs"]:
                 assert re.match(r"^[FT]-\d{3,4}$", r)
                 seen_refs.add(r)
-        assert {"T-001", "T-002", "T-003", "T-004", "T-005"} <= seen_refs
+        assert seen_refs == {"T-001", "T-002", "T-003", "T-004"}
+
+    @pytest.mark.parametrize(
+        "threats",
+        [
+            pytest.param(
+                [("Critical", "Tampering", None)] * 7 + [("Medium", "Repudiation", None)], id="7-critical-one-class"
+            ),
+            pytest.param(
+                [("Critical", s, None) for s in ("Tampering", "Spoofing", "Denial of Service") * 4], id="12-critical"
+            ),
+            pytest.param([("Medium", "Tampering", "Critical"), ("Low", "Spoofing", None)], id="effective-critical"),
+            pytest.param([("High", "Spoofing", None), ("Medium", "Tampering", None)], id="yellow"),
+            pytest.param([("Medium", "Tampering", None), ("Low", "Spoofing", None)], id="green"),
+        ],
+    )
+    def test_floor_passes_the_verdict_gate_it_backs_up(self, tmp_path, threats):
+        import validators.validate_fragment as validate_fragment
+
+        model = {
+            "threats": [
+                {"id": f"T-{i:03d}", "title": "x", "risk": risk, "stride": stride}
+                | ({"effective_severity": eff} if eff else {})
+                for i, (risk, stride, eff) in enumerate(threats, start=1)
+            ]
+        }
+        (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(model), encoding="utf-8")
+        verdict = json.loads(pf.gen_verdict(model))
+        assert validate_fragment.verdict_floor_errors(tmp_path, verdict) == []
 
     def test_worst_severity_scenario_leads(self):
         # A Critical Tampering finding must surface its scenario before a Medium.
         data = json.loads(pf.gen_verdict(self._YAML))
-        assert data["bullets"][0]["title"] == "Business data read or altered"
+        assert data["bullets"][0]["title"] == "Data integrity concerns"
 
-    def test_synthesises_second_bullet_when_single_scenario(self):
-        # One finding → one STRIDE scenario, but the schema needs >=2 bullets.
+    def test_single_supported_concern_is_not_padded(self):
+        # One finding supports one concern; a second would invent evidence.
         y = {"threats": [{"id": "T-001", "title": "X — a.ts:1", "risk": "Critical", "stride": "Tampering"}]}
         import jsonschema
 
         data = json.loads(pf.gen_verdict(y))
         jsonschema.validate(data, self._schema())
-        assert len(data["bullets"]) == 2
+        assert len(data["bullets"]) == 1
 
     def test_returns_none_for_threatless_model(self):
         assert pf.gen_verdict({"threats": []}) is None
@@ -802,7 +843,7 @@ class TestAttackSurface:
         assert "/api/bar" in md
 
     # M3.2 — schema-tolerance regression tests. The 2026-04-26 19:55 run
-    # crashed pregenerate_fragments.py with `'str' object has no attribute
+    # crashed renderers/pregenerate_fragments.py with `'str' object has no attribute
     # 'get'` because the orchestrator emitted attack_surface as a
     # dict-with-entries (v1.1 schema) rather than a flat list. These tests
     # lock in tolerance for all three valid shapes plus an explicit
@@ -1019,6 +1060,66 @@ class TestArchitectureDataFlows:
         # Legacy fallback edge MUST NOT appear when explicit flows render.
         assert "HTTPS REST" not in md  # legacy hard-coded label
 
+    def test_flows_collapsing_onto_one_label_draw_a_single_edge(self):
+        """Two flows between the same pair share protocol and class — one line says it."""
+        flow = {
+            "from": "spa",
+            "to": "api",
+            "protocol": "HTTPS",
+            "data_classification": "Confidential",
+        }
+        data = {
+            "meta": {"project": {"name": "TestApp"}},
+            "components": [
+                {"id": "spa", "name": "SPA", "paths": ["frontend/**"]},
+                {"id": "api", "name": "API", "paths": ["server.ts"]},
+            ],
+            "data_flows": [
+                {**flow, "id": "df-1", "diagram_label": "Login credentials"},
+                {**flow, "id": "df-2", "diagram_label": "Password reset request"},
+            ],
+            "trust_boundaries": [],
+        }
+
+        edges = pf._data_flow_edges(data, data["components"])
+
+        assert edges == ["spa -->|HTTPS · Confidential| api"]
+
+    @pytest.mark.parametrize(
+        ("flows", "expected"),
+        [
+            (
+                [("HTTP", "", "Confidential"), ("HTTP", "", "Public")],
+                ["spa -->|HTTP · Confidential| api"],
+            ),
+            (
+                [("HTTP", "", "Public"), ("HTTP", "", "Restricted")],
+                ["spa -->|HTTP · Restricted| api"],
+            ),
+            (
+                [("HTTP", "", "Internal"), ("HTTP", "", "Internal")],
+                ["spa -->|HTTP · Internal| api"],
+            ),
+            (
+                [("HTTP", "JWT", "Confidential"), ("HTTP", "", "Confidential")],
+                ["spa -->|HTTP / JWT · Confidential| api", "spa -->|HTTP · Confidential| api"],
+            ),
+            (
+                [("HTTP", "", "Confidential"), ("WebSocket", "", "Confidential")],
+                ["spa -->|HTTP · Confidential| api", "spa -.->|WebSocket · Confidential| api"],
+            ),
+        ],
+    )
+    def test_parallel_flows_collapse_per_protocol_and_auth_keeping_the_most_sensitive_class(self, flows, expected):
+        data = {
+            "components": [{"id": "spa", "name": "SPA"}, {"id": "api", "name": "API"}],
+            "data_flows": [
+                {"id": f"df-{i}", "from": "spa", "to": "api", "protocol": p, "auth_method": a, "data_classification": c}
+                for i, (p, a, c) in enumerate(flows)
+            ],
+        }
+        assert pf._data_flow_edges(data, data["components"]) == expected
+
     def test_falls_back_to_tier_heuristic_when_data_flows_empty(self):
         data = {
             "meta": {"project": {"name": "TestApp"}},
@@ -1064,13 +1165,6 @@ class TestArchitectureDataFlows:
         md = pf.gen_architecture_diagrams(data)
         # Edge to nonexistent component must NOT render.
         assert "broken" not in md
-
-
-# NOTE: TestEnforcementColumn was removed in 2026-05. The Enforcement
-# column on the §2.4 trust-boundary table is no longer rendered — §2.4 is
-# now a compact technology-stack mermaid diagram (Application Tier / Data
-# Tier subgraphs) without per-boundary enforcement strings. Trust boundary
-# detail moved to §1.x infobox metadata + §6.x control catalogue.
 
 
 class TestSecurityArchitectureCWEMapping:
@@ -1172,74 +1266,132 @@ class TestSection612Surfaces:
 
 
 class TestSystemContextDiagram:
-    """§2.1 mermaid is now derived from yaml actors / surface / threats."""
+    """§2.1 draws the Figure 1 actor set, the system and its modelled external systems."""
 
-    def _data(self, **overrides):
-        base = {
-            "meta": {"project": {"name": "TestApp"}},
-            "components": [],
-            "trust_boundaries": [],
-            "attack_surface": {},
-            "threats": [],
-            "security_controls": [],
+    @staticmethod
+    def _person(name, kind="role", slug=None, privileged=False, flow_ids=()):
+        return {
+            "name": name,
+            "kind": kind,
+            "slug": slug,
+            "subtitle": "",
+            "code": None,
+            "scenarios": [],
+            "privileged": privileged,
+            "flow_ids": list(flow_ids),
         }
-        base.update(overrides)
-        return base
 
-    def test_falls_back_to_user_plus_attacker_when_no_actors(self):
-        md = pf.gen_architecture_diagrams(self._data())
-        assert "USER[" in md
-        assert "ATTACKER[" in md
+    def _data(self, project="TestApp", member="Member"):
+        return {
+            "meta": {"project": {"name": project}},
+            "components": [{"id": "api", "name": "API", "paths": ["server.ts"]}],
+            "trust_boundaries": [],
+            "external_entities": [
+                {"id": "ext-member", "kind": "legitimate-role", "name": member, "access": "internet-user"},
+                {"id": "ext-pay", "kind": "external-service", "name": "Payment Gateway"},
+                {"id": "ext-idp", "kind": "identity-provider", "name": "Identity Provider"},
+                {"id": "ext-mail", "kind": "external-service", "name": "Mail Relay"},
+            ],
+            "data_flows": [
+                {
+                    "id": "df-1",
+                    "from": "external",
+                    "from_entity": "ext-member",
+                    "to": "api",
+                    "interaction": True,
+                    "protocol": "HTTPS",
+                },
+                {
+                    "id": "df-2",
+                    "from": "api",
+                    "to": "external",
+                    "to_entity": "ext-pay",
+                    "label": "Card charge",
+                    "protocol": "HTTPS",
+                },
+                {
+                    "id": "df-3",
+                    "from": "external",
+                    "from_entity": "ext-idp",
+                    "to": "api",
+                    "label": "ID token",
+                    "protocol": "OIDC",
+                },
+            ],
+            "threats": [{"id": "T-1", "title": "Admin panel SQL injection", "risk": "High"}],
+        }
 
-    def test_authenticated_user_appears_when_auth_surface_populated(self):
-        data = self._data(
-            attack_surface={
-                "authenticated": [
-                    {"endpoint": "GET /api/orders", "method": "GET"},
-                ]
-            }
-        )
-        md = pf.gen_architecture_diagrams(data)
-        assert "AUTHED[" in md
+    def _section(self, md):
+        return md.split("### 2.1 System Context")[1].split("### 2.2")[0]
 
-    def test_admin_actor_appears_when_threats_mention_admin(self):
-        data = self._data(
-            threats=[
-                {"id": "T-1", "title": "Admin panel SQL injection", "risk": "High"},
-            ]
-        )
-        md = pf.gen_architecture_diagrams(data)
-        assert "ADMIN[" in md
+    @pytest.mark.parametrize(
+        ("attacker", "member", "operator"),
+        [("Web Attacker", "Portal Member", "Portal Operator"), ("Internet Attacker", "Clinic Nurse", "Clinic Admin")],
+    )
+    def test_context_draws_exactly_the_actor_set_it_is_given(self, attacker, member, operator):
+        people = [
+            self._person(attacker, "attacker", "internet-anon"),
+            self._person("Pipeline Attacker", "attacker", "build-time"),
+            self._person(member, flow_ids=["df-1"]),
+            self._person(operator, privileged=True),
+        ]
+        section = self._section(pf.gen_architecture_diagrams(self._data(member=member), people=people))
 
-    def test_external_services_appear_for_ssrf_threats(self):
-        data = self._data(
-            threats=[
-                {"id": "T-1", "cwe": "CWE-918", "title": "SSRF via image fetcher", "risk": "High"},
-            ]
-        )
-        md = pf.gen_architecture_diagrams(data)
-        assert "EXTERNAL[" in md
-        # D1.5: when the SSRF heuristic fires, the auto-added external
-        # node carries protocol "HTTPS" so the edge reads "outbound · HTTPS".
-        assert "outbound" in md
+        labels = re.findall(r'^\s*[ARS]\w*\["([^"]*)"\]', section, re.M)
+        assert labels == [attacker, "Pipeline Attacker", member, operator, "TestApp"]
+        assert 'A0 -.->|"via public interface"| SYSTEM' in section
+        assert 'A1 -.->|"via build pipeline"| SYSTEM' in section
+        assert 'R2 -->|"Uses the application (HTTPS)"| SYSTEM' in section
+        assert "class R3 admin" in section and "class R2 user" in section
+        for invented in ("End User", "Anonymous", "Admin User", "Authenticated User"):
+            assert invented not in section
 
-    def test_attacker_uses_dotted_arrow(self):
-        md = pf.gen_architecture_diagrams(self._data())
-        assert "ATTACKER -.->" in md  # dashed arrow distinguishes attacker
+    @pytest.mark.parametrize("attacker", ["Web Attacker", "Clinic Intruder"])
+    def test_the_shared_legend_never_explains_the_context_arrows(self, attacker):
+        """§2.1 dashes attack routes and names its own arrows; the §2 legend's async bullet must not claim them."""
+        people = [self._person(attacker, "attacker", "internet-anon"), self._person("Portal Member", flow_ids=["df-1"])]
+        tables = {
+            key: {"markdown": f"<!-- detail-table -->\n| A | B |\n|---|---|\n| {key} | x |", "takeaway": "t"}
+            for key in ("2.2", "2.3")
+        }
+        md = pf.gen_architecture_diagrams(self._data(), figures=tables, people=people)
+        assert "-.->" in self._section(md) and "-->" in self._section(md)
+        assert "**Legend:**" not in md
+        # Without the detail views the Mermaid fallbacks draw arrows, and the legend explains those.
+        assert "**Legend:**" in pf.gen_architecture_diagrams(self._data(), people=people)
 
-    def test_actors_yaml_takes_priority(self):
-        data = self._data(
-            meta={
-                "project": {"name": "x"},
-                "actors": [
-                    {"id": "qa", "name": "QA Engineer", "role": "user"},
-                    {"id": "auditor", "name": "Compliance Auditor", "role": "admin"},
-                ],
-            }
-        )
-        md = pf.gen_architecture_diagrams(data)
-        assert "QA Engineer" in md
-        assert "Compliance Auditor" in md
+    def test_external_systems_come_from_the_model_with_their_flow_direction(self):
+        section = self._section(pf.gen_architecture_diagrams(self._data(), people=[]))
+
+        assert 'SYSTEM -->|"Card charge (HTTPS)"| E0' in section
+        assert 'E1 -->|"ID token (OIDC)"| SYSTEM' in section
+        # A modelled system without a flow is still in the context, undirected.
+        assert "SYSTEM --- E2" in section
+        assert "Mail Relay" in section
+
+    def test_without_the_actor_set_only_modelled_roles_appear(self):
+        """The pre-generator has no attack paths yet: it names the Figure 1 role cards and invents no attacker."""
+        section = self._section(pf.gen_architecture_diagrams(self._data()))
+
+        assert '["TestApp User"]' in section
+        assert "-.->" not in section
+        assert "Admin User" not in section and "Anonymous" not in section
+
+    def test_takeaway_names_what_the_diagram_draws(self):
+        people = [self._person("Web Attacker", "attacker", "internet-anon"), self._person("Member", flow_ids=["df-1"])]
+        section = self._section(pf.gen_architecture_diagrams(self._data(), people=people))
+
+        takeaway = next(line for line in section.splitlines() if line.startswith("**Key takeaway:**"))
+        assert "TestApp serves Member" in takeaway
+        assert "Payment Gateway, Identity Provider and Mail Relay" in takeaway
+        assert "Web Attacker attacks it" in takeaway
+
+    def test_imported_names_cannot_break_the_mermaid_block(self):
+        people = [self._person('Evil "role" | [x]', flow_ids=["df-1"])]
+        section = self._section(pf.gen_architecture_diagrams(self._data(), people=people))
+
+        node = next(line for line in section.splitlines() if line.strip().startswith("R0["))
+        assert node.count('"') == 2 and "|" not in node and "[x]" not in node
 
 
 class TestSection2TrustBoundaries:
@@ -1283,9 +1435,9 @@ class TestSection2TrustBoundaries:
         md = pf.gen_architecture_diagrams(self._data([self._tb("tb-1", "external", "api")]))
         block = self._block(md, "2.1 System Context")
 
-        assert 'subgraph TBEDGE["Trust boundary · external → api (tb-1)"]' in block
-        # Actors stay OUTSIDE, so every edge into the system crosses the box.
-        assert block.index("ATTACKER[") < block.index("subgraph TBEDGE")
+        assert 'subgraph TBEDGE["Trust boundary"]' in block
+        # The context names no boundary IDs; the §1 catalogue lists them.
+        assert "tb-1" not in md.split("### 2.1 System Context")[1].split("### 2.2")[0]
         assert block.count("subgraph") == block.count("\n    end")
 
     def test_container_diagram_groups_the_server_side_behind_the_ingress(self):
@@ -1300,31 +1452,6 @@ class TestSection2TrustBoundaries:
         assert block.index("subgraph TBSERVER") < block.index("subgraph Application")
         assert block.index("subgraph Client") < block.index("subgraph TBSERVER")
         assert block.count("subgraph ") == 4  # contract ceiling for §2.2
-
-    def test_system_context_resolves_the_title_overflow_count(self):
-        """The TBEDGE title names only the first crossings and declares the rest
-        as `+N more`. That count must resolve somewhere, or the reader is told
-        something is hidden with nowhere to look."""
-        md = pf.gen_architecture_diagrams(
-            self._data(
-                [
-                    self._tb("tb-1", "external", "api"),
-                    self._tb("tb-2", "external", "spa"),
-                    self._tb("tb-3", "external", "auth"),
-                    self._tb("tb-4", "api", "db"),
-                ]
-            )
-        )
-        section = md.split("### 2.1 System Context")[1].split("### ")[0]
-        caption = [ln for ln in section.splitlines() if ln.startswith("*Trust boundaries")]
-
-        assert "+1 more" in section.split("```")[1]  # title truncated one ingress crossing
-        assert caption, "title declared '+N more' but no caption resolves it"
-        # The unnamed ingress crossing AND the boundary this diagram cannot
-        # carry are both named, and §1 is one click away.
-        assert "external → auth (tb-3)" in caption[0]
-        assert "api → db (tb-4)" in caption[0]
-        assert "#trust-boundaries" in caption[0]
 
     def test_system_context_has_no_caption_when_the_title_named_everything(self):
         md = pf.gen_architecture_diagrams(self._data([self._tb("tb-1", "external", "api")]))
@@ -1355,6 +1482,84 @@ class TestSection2TrustBoundaries:
 
         assert "*Trust boundaries not drawn above: api → db (tb-2), api → external (tb-3)" in md
         assert "[§1 Trust Boundaries](#trust-boundaries)" in md
+
+    @pytest.mark.parametrize(
+        ("axes", "interface"),
+        [
+            ({"surface": "in-process", "transition": []}, True),
+            ({"kind": "process"}, True),
+            ({"surface": "network", "transition": []}, False),
+            ({"surface": "in-process", "transition": ["privilege"]}, False),
+            ({"kind": "network"}, False),
+        ],
+    )
+    def test_internal_interfaces_are_named_apart_from_trust_boundaries(self, axes, interface):
+        """An in-process call without a trust transition (an embedded store) is
+        an enforcement interface, as Figure 1 and the §1 catalogue treat it;
+        §2.2 must neither draw nor caption it as a trust boundary."""
+        md = pf.gen_architecture_diagrams(
+            self._data([self._tb("tb-1", "external", "api"), {**self._tb("tb-2", "api", "db"), **axes}])
+        )
+        block = self._block(md, "2.2 Container Architecture")
+        section = md.split("### 2.2 Container Architecture")[1].split("### ")[0]
+        not_drawn = [ln for ln in section.splitlines() if ln.startswith("*Trust boundaries not drawn above")]
+        interfaces = [ln for ln in section.splitlines() if ln.startswith("*Internal interfaces")]
+
+        assert "tb-2" not in block
+        if interface:
+            assert not not_drawn
+            assert interfaces and "api → db (tb-2)" in interfaces[0]
+        else:
+            assert not_drawn and "api → db (tb-2)" in not_drawn[0]
+            assert not interfaces
+
+    @pytest.mark.parametrize(
+        ("axes", "embedded"),
+        [
+            ({"surface": "in-process", "transition": []}, True),
+            ({"kind": "process"}, True),
+            ({"surface": "network", "transition": []}, False),
+            ({"surface": "in-process", "transition": ["privilege"]}, False),
+        ],
+    )
+    def test_container_intro_names_embedded_components_only_for_interfaces(self, axes, embedded):
+        """The separate-process claim stays for every box unless a component is
+        reached through an internal interface; a network database keeps it."""
+        md = pf.gen_architecture_diagrams(
+            self._data([self._tb("tb-1", "external", "api"), {**self._tb("tb-2", "api", "db"), **axes}])
+        )
+        section = md.split("### 2.2 Container Architecture")[1].split("```")[0]
+
+        assert "Each box is a separate runtime process or service container" in section
+        assert ("runs inside its caller's process" in section) is embedded
+
+    def test_container_intro_is_unchanged_without_boundaries(self):
+        md = pf.gen_architecture_diagrams(self._data([]))
+        section = md.split("### 2.2 Container Architecture")[1].split("```")[0]
+
+        assert "Each box is a separate runtime process or service container; arrows show" in section
+        assert "caller's process" not in section
+
+    @pytest.mark.parametrize(
+        ("names", "phrase"),
+        [
+            (["A"], "except A, which runs inside its caller's process"),
+            (["A", "B"], "except A and B, which run inside their caller's process"),
+            (["A", "B", "C"], "except A, B and C, which run inside"),
+            (["A", "B", "C", "D", "E"], "except A, B, C and 2 more, which run inside"),
+        ],
+    )
+    def test_container_intro_lists_embedded_names(self, names, phrase):
+        assert phrase in pf._container_intro(names)
+
+    def test_an_interface_is_never_drawn_as_the_data_boundary(self):
+        md = pf.gen_architecture_diagrams(
+            self._data([{**self._tb("tb-9", "api", "db"), "surface": "in-process", "transition": []}])
+        )
+        block = self._block(md, "2.2 Container Architecture")
+
+        assert "subgraph TBDATA" not in block
+        assert "*Internal interfaces (in-process, no trust transition): api → db (tb-9)" in md
 
     def test_unresolved_boundaries_are_never_drawn(self):
         md = pf.gen_architecture_diagrams(self._data([self._tb("tb-1", "external", "api", status="unresolved")]))
@@ -1679,88 +1884,6 @@ class TestActorIdBySlug:
         assert pf._actor_id_by_slug([], "internet-anon") is None
 
 
-class TestTechnologyArchitectureDiagram:
-    """§2.4 mermaid uses trust_level → tier mapping (M3.3 / D1)."""
-
-    def _data(self):
-        return {
-            "meta": {"project": {"name": "x"}},
-            "components": [
-                {"id": "spa", "name": "SPA", "tier": "client", "paths": ["frontend/**"]},
-                {"id": "api", "name": "API", "tier": "application", "paths": ["server.ts"]},
-                {"id": "service", "name": "Service", "tier": "application", "paths": ["lib/**"]},
-                {"id": "db", "name": "DB", "tier": "data", "paths": ["models/**"]},
-            ],
-            "trust_boundaries": [
-                {"id": "public", "name": "Public Internet", "trust_level": "untrusted"},
-                {"id": "app-process", "name": "Application Process", "trust_level": "trusted"},
-                {"id": "data-tier", "name": "Data Tier", "trust_level": "restricted"},
-            ],
-            "data_flows": [
-                {
-                    "from": "spa",
-                    "to": "api",
-                    "label": "REST",
-                    "protocol": "HTTPS",
-                    "data_classification": "JWT-bearing",
-                },
-                {
-                    "from": "api",
-                    "to": "db",
-                    "label": "ORM",
-                    "protocol": "Sequelize",
-                    "data_classification": "Confidential",
-                },
-            ],
-        }
-
-    def test_each_boundary_renders_a_subgraph(self):
-        md = pf.gen_architecture_diagrams(self._data())
-        sec_2_4 = md.split("### 2.4")[1].split("##")[0]
-        # Contract v2 uses the compact technology-stack mermaid diagram with
-        # Application Tier / Data Tier subgraphs. The per-boundary table
-        # (`| public | Public Internet | ... |`) was retired in 2026-05 —
-        # trust-boundary detail now lives in the §1.x infobox + §6.x catalogue.
-        assert 'subgraph APP["Application Tier"]' in sec_2_4
-        assert 'subgraph DATA["Data Tier"]' in sec_2_4
-
-    def test_application_components_placed_in_trusted_boundary(self):
-        md = pf.gen_architecture_diagrams(self._data())
-        sec_2_4 = md.split("### 2.4")[1].split("##")[0]
-        app_subgraph = sec_2_4.split('subgraph APP["Application Tier"]')[1].split("end")[0]
-        assert "Application Code" in app_subgraph
-
-    def test_client_component_routed_to_application_tier(self):
-        # Post-2026-05 — the boundary table that used to flag `| public |`
-        # rows is gone; the technology-stack diagram now places the client-
-        # facing entry under the Application Tier subgraph.
-        md = pf.gen_architecture_diagrams(self._data())
-        sec_2_4 = md.split("### 2.4")[1].split("##")[0]
-        app_subgraph = sec_2_4.split('subgraph APP["Application Tier"]')[1].split("end")[0]
-        assert "ROUTES" in app_subgraph or "Application Code" in app_subgraph
-
-    def test_data_component_placed_in_restricted_boundary(self):
-        md = pf.gen_architecture_diagrams(self._data())
-        sec_2_4 = md.split("### 2.4")[1].split("##")[0]
-        data_sg = sec_2_4.split('subgraph DATA["Data Tier"]')[1].split("end")[0]
-        assert "LOCAL_FS" in data_sg
-        assert "Local FS" in data_sg
-
-    def test_cross_boundary_edges_rendered_thick(self):
-        md = pf.gen_architecture_diagrams(self._data())
-        sec_2_4 = md.split("### 2.4")[1].split("##")[0]
-        assert 'ROUTES -->|"file I/O"| LOCAL_FS' in sec_2_4
-
-    def test_falls_back_to_stub_when_no_boundaries(self):
-        data = self._data()
-        data["trust_boundaries"] = []
-        md = pf.gen_architecture_diagrams(data)
-        sec_2_4 = md.split("### 2.4")[1].split("##")[0]
-        assert 'subgraph APP["Application Tier"]' in sec_2_4
-        assert 'subgraph DATA["Data Tier"]' in sec_2_4
-        assert "TB1" not in sec_2_4
-
-
 # ---------------------------------------------------------------------------
 # D1.5 — refined diagram enrichments (C/D/E/F/G/J/L/A/B)
 # ---------------------------------------------------------------------------
@@ -1889,53 +2012,18 @@ class TestD15CriticalHighlight:
         assert "class hot critical" in sec
         assert "class hot warning" not in sec  # critical wins over warning
 
-
-class TestD15FilesystemFill:
-    """F — Filesystem subgraph fills with path-stem ghost nodes."""
-
-    def test_fs_paths_render_as_ghost_nodes(self):
-        data = {
-            "meta": {"project": {"name": "x"}},
-            "components": [
-                {"id": "api", "name": "API", "paths": ["server.ts"]},
-            ],
-            "trust_boundaries": [
-                {"id": "app", "name": "App Process", "trust_level": "trusted"},
-                {"id": "filesystem", "name": "Server Filesystem", "trust_level": "restricted"},
-            ],
-            "data_flows": [],
-            "attack_surface": {
-                "unauthenticated": [
-                    {"endpoint": "GET /ftp/foo.bak", "method": "GET"},
-                    {"endpoint": "GET /encryptionkeys/key.pem", "method": "GET"},
-                ],
-            },
+    @pytest.mark.parametrize("risk,count", [("Critical", 3), ("High", 2)])
+    def test_legend_explains_borders_only_while_a_diagram_draws_them(self, risk, count):
+        """The borders exist only in the §2.2 container diagram; a detail view in its place draws none."""
+        threats = [{"id": f"T-{i}", "component_id": "hot", "risk": risk} for i in range(count)]
+        data = self._data_with_threats(threats)
+        assert "**red border**" in pf.gen_architecture_diagrams(data)
+        table = {
+            "markdown": "<!-- detail-table -->\n| Layer | What runs there |\n|---|---|\n| Container | x |",
+            "takeaway": "t",
         }
-        md = pf.gen_architecture_diagrams(data)
-        sec = md.split("### 2.4")[1]
-        # The compact §2.4 diagram shows the filesystem as a tier node; exact
-        # exposed route stems live in §5.1 instead of bloating the diagram.
-        assert "LOCAL_FS" in sec
-        assert "uploads · logs · keys" in sec
-        assert 'LOCAL_FS["fa:fa-folder-open Local FS' in sec
-
-    def test_no_fs_paths_when_no_fs_boundary(self):
-        data = {
-            "meta": {"project": {"name": "x"}},
-            "components": [
-                {"id": "api", "name": "API", "paths": ["server.ts"]},
-            ],
-            "trust_boundaries": [
-                {"id": "app", "name": "App Process", "trust_level": "trusted"},
-            ],
-            "data_flows": [],
-            "attack_surface": {
-                "unauthenticated": [{"endpoint": "GET /ftp/x", "method": "GET"}],
-            },
-        }
-        md = pf.gen_architecture_diagrams(data)
-        sec = md.split("### 2.4")[1]
-        assert "/ftp/* (see §5.1)" not in sec
+        md = pf.gen_architecture_diagrams(data, figures={"2.2": table})
+        assert "classDef critical" not in md and "**red border**" not in md
 
 
 class TestD15EngineAnnotation:
@@ -2034,12 +2122,50 @@ class TestD15Legend:
         md = pf.gen_architecture_diagrams(data)
         assert "asynchronous" in md.lower()
 
+    @pytest.mark.parametrize(
+        ("people", "expected"),
+        [
+            (
+                [
+                    {"kind": "attacker", "slug": "internet-anon", "name": "Web Attacker"},
+                    {"kind": "role", "name": "Shop Admin", "privileged": True},
+                    {"kind": "role", "name": "Shop Customer", "privileged": False},
+                ],
+                {"INTERNET_ANON": "Web Attacker", "VICTIM_REQUIRED": "Shop Customer"},
+            ),
+            (
+                [
+                    {"kind": "attacker", "slug": "internet-user", "name": "Portal Intruder"},
+                    {"kind": "attacker", "slug": "repo-read", "name": "Source Reader"},
+                ],
+                {"INTERNET_ANON": "Portal Intruder", "REPO_READ": "Source Reader"},
+            ),
+        ],
+    )
+    def test_components_fallback_names_only_the_figure1_actors(self, people, expected):
+        actors = pf._select_external_actors_for_diagram(pf._load_posture_actor_labels_for_pregen())
+        assert {a["id"] for a in actors} >= {"INTERNET_ANON", "VICTIM_REQUIRED", "REPO_READ"}
+        aligned = pf._align_actors_with_people(actors, people)
+        assert {a["id"]: a["label"].split(" ", 1)[1] for a in aligned} == expected
+        assert all(a["label"].startswith("fa:fa-") for a in aligned)
+
+    @pytest.mark.parametrize("protocol", ["WebSocket", "AMQP queue"])
+    def test_legend_explains_async_arrows_when_no_diagram_draws_a_sync_one(self, protocol):
+        data = {
+            "meta": {"project": {"name": "x"}},
+            "components": [{"id": "p", "name": "P", "paths": ["p"]}, {"id": "q", "name": "Q", "paths": ["q"]}],
+            "data_flows": [{"from": "p", "to": "q", "protocol": protocol}],
+            "trust_boundaries": [],
+        }
+        md = pf.gen_architecture_diagrams(data, people=[])
+        assert "-.->" in md and "-->|" not in md
+        legend = next(line for line in md.splitlines() if line.startswith("> **Legend:**"))
+        assert "asynchronous" in legend and "synchronous request/response" not in legend
+
     def test_legend_never_advertises_an_arrow_no_diagram_draws(self):
         """juice-shop 2026-07-30 — the `==>` bullet was gated on model shape
-        (`trust_boundaries` non-empty AND flows exist), not on emission. The only
-        `==>` emitter is the legacy §2.4 boundary-subgraph builder, which the
-        contract-driven compact path short-circuits past, so §2 advertised a
-        cross-boundary arrow style no rendered diagram drew.
+        (`trust_boundaries` non-empty AND flows exist), not on emission, so §2
+        advertised a cross-boundary arrow style no rendered diagram drew.
 
         §2.3 now marks INGRESS crossings with `==>`, so the fixture uses an
         EGRESS boundary (application → external) — one no §2 diagram can place
@@ -2089,83 +2215,6 @@ class TestD15Legend:
             "```mermaid\nflowchart TD\n  A --> B\n```\n"
         )
         assert pf._diagram_arrow_tokens(rendered) == {"-->"}
-
-
-class TestD15ExternalServicesCategorised:
-    """A — meta.external_services[] categorised by direction."""
-
-    def test_inbound_external_renders_with_inbound_edge(self):
-        data = {
-            "meta": {
-                "project": {"name": "x"},
-                "external_services": [
-                    {"id": "google-sso", "name": "Google SSO", "direction": "inbound", "protocol": "OIDC"},
-                ],
-            },
-            "components": [],
-            "trust_boundaries": [],
-            "data_flows": [],
-            "threats": [],
-            "attack_surface": {},
-            "security_controls": [],
-        }
-        md = pf.gen_architecture_diagrams(data)
-        sec = md.split("### 2.1")[1].split("### 2.2")[0]
-        assert "Google SSO" in sec
-        # inbound edge points TO system
-        assert "GOOGLE_SSO -->" in sec
-
-    def test_outbound_external_renders_with_outbound_edge(self):
-        data = {
-            "meta": {
-                "project": {"name": "x"},
-                "external_services": [
-                    {
-                        "id": "stripe",
-                        "name": "Stripe",
-                        "direction": "outbound",
-                        "protocol": "HTTPS",
-                        "category": "payment",
-                    },
-                ],
-            },
-            "components": [],
-            "trust_boundaries": [],
-            "data_flows": [],
-            "threats": [],
-            "attack_surface": {},
-            "security_controls": [],
-        }
-        md = pf.gen_architecture_diagrams(data)
-        sec = md.split("### 2.1")[1].split("### 2.2")[0]
-        assert "Stripe" in sec
-        assert "SYSTEM -->|outbound · HTTPS| STRIPE" in sec
-
-    def test_external_db_renders_with_extdb_classDef(self):
-        data = {
-            "meta": {
-                "project": {"name": "x"},
-                "external_services": [
-                    {
-                        "id": "rds",
-                        "name": "Order DB (RDS)",
-                        "direction": "bidirectional",
-                        "protocol": "PostgreSQL",
-                        "category": "database",
-                    },
-                ],
-            },
-            "components": [],
-            "trust_boundaries": [],
-            "data_flows": [],
-            "threats": [],
-            "attack_surface": {},
-            "security_controls": [],
-        }
-        md = pf.gen_architecture_diagrams(data)
-        sec = md.split("### 2.1")[1].split("### 2.2")[0]
-        assert "Order DB (RDS)" in sec
-        assert "class RDS extdb" in sec
 
 
 class TestD15RuntimeColumn:
@@ -2301,6 +2350,19 @@ class TestOutOfScope:
         assert md.startswith("## 11. Out of Scope\n")
         assert "Third-party hosted dependencies" in md  # default
 
+    @pytest.mark.parametrize("scope", [None, {"out_of_scope": ["DNS infra"]}])
+    def test_opt_in_actors_not_enabled_are_listed_once_as_not_assessed(self, scope):
+        rows = [
+            {"id": "ACT-D-04", "scope_note": "Malicious insiders with repository or pipeline access"},
+            {"id": "ACT-D-08", "scope_note": "Attackers holding a user's device"},
+        ]
+        md = pf.gen_out_of_scope({"meta": {"scope": scope, "opt_in_actors_not_enabled": rows}})
+        excluded = md.split("### Excluded from This Assessment", 1)[1]
+        bullets = [line for line in excluded.splitlines() if "Opt-in threat actors" in line]
+        assert len(bullets) == 1
+        assert all(row["scope_note"].lower() in bullets[0].lower() for row in rows)
+        assert "Opt-in threat actors" not in pf.gen_out_of_scope({"meta": {"scope": scope}})
+
     def test_method_boundary_precedes_the_system_exclusions(self, minimal_yaml_data):
         """§11 carries two boundaries. The method boundary holds for every target
         repository and every depth, so it is stated first and unconditionally."""
@@ -2311,8 +2373,8 @@ class TestOutOfScope:
 
     def test_method_boundary_names_what_the_model_cannot_see(self, minimal_yaml_data):
         md = pf.gen_out_of_scope(minimal_yaml_data)
-        assert "code-derived threat model at implementation level" in md
-        assert "does not replace a design-time review" in md
+        assert pf.METHOD_SENTENCE in md
+        assert pf.limits_statement(minimal_yaml_data.get("meta") or {}) in md
         assert "Design intent" in md
         assert "Runtime behaviour, deployment topology and production-only configuration." in md
         assert "review input, not sign-off" in md
@@ -2520,7 +2582,7 @@ class TestComponentsDiagramFolding:
         }
 
     def _section_2_3(self, md: str) -> str:
-        return md.split("### 2.3")[1].split("### 2.4")[0]
+        return md.split("### 2.3")[1].split("> **Legend:**")[0]
 
     def test_threat_count_sums_the_folded_group(self):
         block = self._section_2_3(pf.gen_architecture_diagrams(self._data(3)))
@@ -2676,11 +2738,12 @@ class TestAttackSurfaceRiskColumn:
             },
         }
 
-    def test_promoted_finding_sets_the_row_risk(self):
+    def test_row_risk_follows_the_register_not_the_promotion(self):
+        """RA-20: the Risk column matches the finding dot, which is the register rating."""
         out = pf.gen_attack_surface(self._model(risk="High", effective_severity="Critical"))
         row = next(ln for ln in out.splitlines() if "/fetch" in ln)
-        assert "🔴 Critical" in row
-        assert "🟠 High" not in row
+        assert "🟠 High" in row
+        assert "🔴 Critical" not in row
 
     def test_falls_back_to_risk_when_untriaged(self):
         out = pf.gen_attack_surface(self._model(risk="High"))
@@ -2824,7 +2887,7 @@ class TestCli:
         result = _run_cli(str(output_dir), "--force", "--only", "security-architecture.md")
         assert result.returncode == 2
         assert "refusing to --force overwrite security-architecture.md" in result.stderr
-        assert "apply_content_repair.py" in result.stderr
+        assert "repairs/apply_content_repair.py" in result.stderr
         assert filled.read_text() == before, "fragment must be untouched on refusal"
 
     def test_force_allow_narrative_loss_overwrites(self, output_dir):
@@ -2918,7 +2981,7 @@ class TestCli:
         _run_cli(str(output_dir))
         # Hard gate must still trip on the 2 LLM fragments + Phase-9/10b artifacts
         gate = subprocess.run(
-            [sys.executable, str(REPO_ROOT / "scripts" / "check_inline_shortcut.py"), str(output_dir)],
+            [sys.executable, str(REPO_ROOT / "scripts" / "validators/check_inline_shortcut.py"), str(output_dir)],
             capture_output=True,
             text=True,
         )
@@ -3431,9 +3494,9 @@ def test_system_overview_renders_component_selection_transparency():
     yaml_data = {"meta": {"project": {"name": "Acme"}, "component_selection": cs}, "components": comps}
     out = mod.gen_system_overview(yaml_data)
     assert "**2 of 4**" in out
-    assert "not individually analyzed" in out
-    assert "Worker" in out and "Database" in out
+    assert "Not analysed at this depth: Worker, Database" in out
     assert "Selection criteria" in out
+    assert "business-critical surface" not in out
 
 
 def test_system_overview_no_selection_falls_back_to_plain_scope():
@@ -3445,202 +3508,10 @@ def test_system_overview_no_selection_falls_back_to_plain_scope():
 
 # ---------------------------------------------------------------------------
 # Coverage campaign additions (2026-06-14)
-# Target the large uncovered blocks: legacy boundary-driven §2.4 mermaid,
-# filesystem ghost-nodes, layer tables (per-layer split), the v2 control
-# emitters (grouped / subcontrol / legacy), heading verdicts, and the
-# §6.2 auth-mechanism inventory.
+# Target the large uncovered blocks: the v2 control emitters (grouped /
+# subcontrol / legacy), heading verdicts, and the §6.2 auth-mechanism
+# inventory.
 # ---------------------------------------------------------------------------
-
-
-class TestTechnologyArchitectureMermaidLegacy:
-    """`_technology_architecture_mermaid` boundary-driven path (only reached
-    when the contract has NO `diagram_compactness."2.4 ..."` opt-in). We
-    monkeypatch `_load_diagram_compactness` to {} so the legacy builder runs."""
-
-    @pytest.fixture(autouse=True)
-    def _no_compact(self, monkeypatch):
-        monkeypatch.setattr(pf, "_load_diagram_compactness", lambda: {})
-
-    def test_stub_when_no_boundaries(self):
-        out = pf._technology_architecture_mermaid({}, [], [])
-        # Falls back to the TB1/TB2/TB3 stub.
-        assert out == pf._technology_architecture_stub()
-        assert any("Public Internet" in l for l in out)
-
-    def test_boundary_subgraphs_and_cross_boundary_edge(self):
-        components = [
-            {"id": "spa", "name": "Angular SPA", "tier": "client"},
-            {"id": "api", "name": "Express API", "tier": "application"},
-            {"id": "db", "name": "SQLite", "tier": "data"},
-        ]
-        boundaries = [
-            {"id": "TB-INTERNET", "name": "Public Internet", "trust_level": "untrusted"},
-            {"id": "TB-APP", "name": "App Process", "trust_level": "trusted"},
-            {"id": "TB-DATA", "name": "Data Tier", "trust_level": "restricted"},
-        ]
-        yaml_data = {
-            "components": components,
-            "trust_boundaries": boundaries,
-            "data_flows": [
-                {"from": "spa", "to": "api", "protocol": "https", "auth_method": "JWT", "data_classification": "PII"},
-                {"from": "api", "to": "db", "protocol": "websocket"},
-            ],
-            "threats": [
-                {"id": "T-1", "component_id": "api", "risk": "critical"},
-                {"id": "T-2", "component_id": "api", "risk": "critical"},
-                {"id": "T-3", "component_id": "api", "risk": "critical"},
-                {"id": "T-4", "component_id": "db", "risk": "high"},
-                {"id": "T-5", "component_id": "db", "risk": "high"},
-            ],
-        }
-        out = pf._technology_architecture_mermaid(yaml_data, components, boundaries)
-        joined = "\n".join(out)
-        assert out[0] == "```mermaid"
-        assert "subgraph" in joined
-        # untrusted→trusted crossing uses the thick arrow
-        assert "==>|" in joined
-        # async (websocket) crossing between trusted/data uses the dashed arrow
-        assert "-.->|" in joined
-        # critical/warning classDefs emitted (api has 3 critical, db has 2 high)
-        assert "classDef critical" in joined
-        assert "class" in joined
-
-    def test_no_cross_boundary_flows_emits_comment(self):
-        components = [{"id": "api", "name": "API", "tier": "application"}]
-        boundaries = [{"id": "TB-APP", "name": "App", "trust_level": "trusted"}]
-        out = pf._technology_architecture_mermaid(
-            {"components": components, "trust_boundaries": boundaries}, components, boundaries
-        )
-        assert any("No cross-boundary data flows" in l for l in out)
-
-    def test_filesystem_ghost_nodes_rendered(self):
-        components = [{"id": "api", "name": "API", "tier": "application"}]
-        boundaries = [
-            {"id": "TB-APP", "name": "App", "trust_level": "trusted"},
-            {"id": "TB-FS", "name": "Filesystem Storage", "trust_level": "restricted"},
-        ]
-        # Use a real fs-prefix so a ghost node is derived.
-        prefixes = pf._load_fs_route_prefixes()
-        yaml_data = {"components": components, "trust_boundaries": boundaries}
-        if prefixes:
-            ep = prefixes[0] + "/secret.bak"
-            yaml_data["attack_surface"] = {"unauthenticated": [{"endpoint": "GET " + ep}]}
-        out = pf._technology_architecture_mermaid(yaml_data, components, boundaries)
-        joined = "\n".join(out)
-        # filesystem subgraph present
-        assert "Filesystem Storage" in joined
-        if prefixes:
-            assert "see §5.1" in joined
-
-    def test_component_engine_annotation_and_name_dedup(self):
-        components = [
-            {"id": "db", "name": "Data Store", "tier": "data", "engine": "PostgreSQL"},
-            {"id": "db2", "name": "Redis cache", "tier": "data", "engine": "Redis"},
-        ]
-        boundaries = [{"id": "TB-DATA", "name": "Data Tier", "trust_level": "restricted"}]
-        out = pf._technology_architecture_mermaid(
-            {"components": components, "trust_boundaries": boundaries}, components, boundaries
-        )
-        joined = "\n".join(out)
-        # engine not in name → appended on its own line
-        assert "PostgreSQL" in joined
-        # engine already in name (case-insensitive) → not duplicated
-        assert joined.count("Redis") == 1
-
-
-class TestFilesystemPathsPerBoundary:
-    def test_no_fs_boundary_returns_empty(self):
-        boundaries = [{"id": "TB-APP", "name": "App Process"}]
-        assert pf._filesystem_paths_per_boundary({}, boundaries) == {}
-
-    def test_no_matching_routes_returns_empty(self):
-        boundaries = [{"id": "TB-FS", "name": "Filesystem"}]
-        yaml_data = {"attack_surface": {"unauthenticated": [{"endpoint": "GET /api/users"}]}}
-        assert pf._filesystem_paths_per_boundary(yaml_data, boundaries) == {}
-
-    def test_matching_prefix_yields_stem(self):
-        prefixes = pf._load_fs_route_prefixes()
-        if not prefixes:
-            pytest.skip("no fs prefixes configured")
-        boundaries = [{"id": "TB-FS", "name": "Filesystem Storage"}]
-        ep = prefixes[0].rstrip("/") + "/dump.bak"
-        yaml_data = {"attack_surface": {"unauthenticated": [{"path": ep}]}}
-        result = pf._filesystem_paths_per_boundary(yaml_data, boundaries)
-        assert "TB-FS" in result
-        assert result["TB-FS"], "expected at least one stem"
-
-    def test_unauth_dict_with_entries_key(self):
-        prefixes = pf._load_fs_route_prefixes()
-        if not prefixes:
-            pytest.skip("no fs prefixes configured")
-        boundaries = [{"id": "TB-DISK", "name": "disk store"}]
-        ep = prefixes[0].rstrip("/") + "/x"
-        yaml_data = {"attack_surface": {"unauthenticated": {"entries": [{"route": ep}]}}}
-        result = pf._filesystem_paths_per_boundary(yaml_data, boundaries)
-        assert "TB-DISK" in result
-
-
-class TestLoadFsRoutePrefixes:
-    def test_returns_tuple_of_slash_prefixes(self):
-        prefixes = pf._load_fs_route_prefixes()
-        assert isinstance(prefixes, tuple)
-        for p in prefixes:
-            assert p.startswith("/")
-
-
-class TestRenderLayerTables:
-    """`_render_layer_tables` — consolidated (≤5 comps) and per-layer (>5)."""
-
-    def _comp(self, cid, tier, threat_ids=None):
-        return {"id": cid, "name": cid.upper(), "tier": tier, "threat_ids": threat_ids or []}
-
-    def test_consolidated_when_few_components(self):
-        comps = [self._comp("a", "client"), self._comp("b", "application")]
-        yaml_data = {"components": comps, "threats": []}
-        out = pf._render_layer_tables(yaml_data, comps)
-        joined = "\n".join(out)
-        # consolidated layout has the single 'Layer' header, not per-layer H4s
-        assert "| Component | Layer | Linked Threats | Risk |" in joined
-        assert "#### 2.4.1" not in joined
-
-    def test_per_layer_split_when_many_components(self):
-        comps = [
-            self._comp("c1", "client", ["T-1"]),
-            self._comp("c2", "client"),
-            self._comp("a1", "application", ["T-2"]),
-            self._comp("a2", "application"),
-            self._comp("d1", "data"),
-            self._comp("d2", "data"),
-        ]
-        threats = [
-            {"id": "T-1", "title": "Client XSS", "severity": "high", "cwe": "CWE-79"},
-            {"id": "T-2", "title": "Auth bypass", "severity": "critical", "cwe": "CWE-287"},
-        ]
-        yaml_data = {"components": comps, "threats": threats}
-        out = pf._render_layer_tables(yaml_data, comps)
-        joined = "\n".join(out)
-        assert "#### 2.4.1 Layer 1 Client" in joined
-        assert "#### 2.4.4 Layer 4 Data" in joined
-        # linked threats rendered with finding-label links + risk emoji
-        assert "🟠 High" in joined or "🔴 Critical" in joined
-
-    def test_forward_index_fallback_when_no_reverse_links(self):
-        # components carry no threat_ids; threats reference component via field.
-        comps = [self._comp("api", "application")]
-        threats = [{"id": "T-009", "title": "SQLi", "severity": "critical", "component": "api"}]
-        yaml_data = {"components": comps, "threats": threats}
-        out = pf._render_layer_tables(yaml_data, comps)
-        joined = "\n".join(out)
-        # T-009 normalises to the canonical visible F-009 label.
-        assert "F-009" in joined
-
-    def test_empty_layer_placeholder_in_split_view(self):
-        # 6 comps all in one tier → other layers render the placeholder row.
-        comps = [self._comp(f"a{i}", "application") for i in range(6)]
-        yaml_data = {"components": comps, "threats": []}
-        out = pf._render_layer_tables(yaml_data, comps)
-        joined = "\n".join(out)
-        assert "_no components in this layer_" in joined
 
 
 class TestControlVerdictForHeading:
@@ -3739,8 +3610,11 @@ class TestEmitV2GroupedControl:
         # bare heading (no section_id/idx)
         assert joined.startswith("#### ")
         assert "NARRATIVE_PLACEHOLDER" in joined  # impl + assessment + diagram placeholders
-        # CWE-routed fallback finding link present
-        assert "[F-005](#f-005)" in joined
+        # A finding routed to the section by CWE alone is not attributed to this control;
+        # the section lists it once (`_v2_insert_unattributed`).
+        assert "[F-005](#f-005)" not in joined
+        # ...but the reader is pointed at the category's other findings.
+        assert "- None linked to this control; see the other findings of this category." in joined
 
     def test_grouped_block_no_findings_anywhere(self):
         lines: list[str] = []
@@ -3748,7 +3622,7 @@ class TestEmitV2GroupedControl:
         subs = [{"title": "Stage", "effectiveness": "weak"}]
         pf._emit_v2_grouped_control(lines, c, subs, [], "6.6 Misc")
         joined = "\n".join(lines)
-        assert "No dedicated finding routed in this assessment." in joined
+        assert "- None." in joined  # no finding in the whole category
 
 
 class TestEmitV2SubcontrolBlock:
@@ -3818,7 +3692,7 @@ class TestEmitV2SubcontrolBlock:
         sub = {"title": "X", "effectiveness": "adequate", "assessment": "ok"}
         pf._emit_v2_subcontrol_block(lines, sub, [], "6.11 Logging")
         joined = "\n".join(lines)
-        assert "No dedicated finding routed in this assessment." in joined
+        assert "- None." in joined
 
 
 class TestEmitV2SubcontrolLegacy:
@@ -4032,7 +3906,8 @@ class TestOverviewVerdictBranches:
         md = pf.gen_security_architecture_v2(data)
         row = next(l for l in md.splitlines() if l.startswith("| [") and "Identity and Authentication" in l)
         assert "🟢 Adequate" in row
-        assert "no routed findings" in row
+        assert "no findings in this category" in row
+        assert "routed" not in row
 
     def test_weak_no_controls_routed_finding(self):
         # A finding routes to §6.4 (CWE-862 authz) but no control catalogued there.
@@ -4183,11 +4058,13 @@ class TestContainerDiagramNodeCap:
 
 
 def _load_qa():
-    if "qa_checks" in sys.modules:
-        return sys.modules["qa_checks"]
-    spec = importlib.util.spec_from_file_location("qa_checks", REPO_ROOT / "scripts" / "qa_checks.py")
+    if "validators.qa_checks" in sys.modules:
+        return sys.modules["validators.qa_checks"]
+    spec = importlib.util.spec_from_file_location(
+        "validators.qa_checks", REPO_ROOT / "scripts" / "validators/qa_checks.py"
+    )
     module = importlib.util.module_from_spec(spec)
-    sys.modules["qa_checks"] = module
+    sys.modules["validators.qa_checks"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
@@ -4226,3 +4103,537 @@ class TestControlCoverageSparseFallback:
         report = qa.check_control_subsection_coverage(p)
         flagged = [i for i in report.issues if "6.8" in i]
         assert not flagged, f"§6.8 still trips control_subsection_coverage: {flagged}"
+
+
+def _selection(n_full: int, n_screen: int, n_excluded: int) -> dict:
+    selected = [{"id": f"f{i}", "name": f"Full {i}", "reasons": ["internet-exposed"]} for i in range(n_full)]
+    selected += [
+        {"id": f"s{i}", "name": f"Light {i}", "reasons": ["ci-cd"], "analysis_depth": "screening"}
+        for i in range(n_screen)
+    ]
+    excluded = [{"id": f"x{i}", "name": f"Left {i}", "reason": "not selected"} for i in range(n_excluded)]
+    return {"total": n_full + n_screen + n_excluded, "selected": selected, "excluded": excluded}
+
+
+def test_assessment_intro_states_the_method_and_the_model_size():
+    model = {
+        "meta": {"project_name": "Shop", "project": "shop-repo"},
+        "components": [
+            {"id": "web", "name": "Web Client", "tier": "client"},
+            {"id": "api", "name": "Order API", "tier": "application"},
+        ],
+        "external_entities": [
+            {"id": "user", "name": "Customer", "kind": "legitimate-role"},
+            {"id": "pay", "name": "Payment Provider", "kind": "external-service"},
+        ],
+    }
+    assert pf.assessment_intro(model) == (
+        "**About this assessment:** An AI-assisted threat model derived from the implementation of Shop. "
+        "It reconstructs the implemented architecture (2 components and 1 external service, see "
+        "[§2](#2-architecture-diagrams)) and identifies threats and control gaps in it."
+    )
+
+
+def test_assessment_intro_states_the_confirmed_use_case_in_plain_words():
+    model = {
+        "meta": {"project_name": "Shop"},
+        "components": [{"id": "api", "name": "Order API"}],
+        "business_context_trace": {"confirmed_use_case": "a training shop [link](x) for `CTF` practice."},
+    }
+    intro = pf.assessment_intro(model)
+    assert intro.endswith(" Confirmed use case: a training shop linkx for CTF practice.")
+    assert "Confirmed use case" not in pf.assessment_intro({**model, "business_context_trace": {"status": "skipped"}})
+
+
+@pytest.mark.parametrize(
+    "model,expected",
+    [
+        ({"components": []}, ""),
+        (
+            {"components": [{"id": f"c{i}", "name": f"Service {i}", "tier": "application"} for i in range(8)]},
+            "**About this assessment:** An AI-assisted threat model derived from the implementation of the system. "
+            "It reconstructs the implemented architecture (8 components, see [§2](#2-architecture-diagrams)) "
+            "and identifies threats and control gaps in it.",
+        ),
+        (
+            {"meta": {"project": "[x](http://e.invalid)`<b>`"}, "components": [{"id": "a", "tier": "edge"}]},
+            "**About this assessment:** An AI-assisted threat model derived from the implementation of "
+            "xhttp://e.invalidb. It reconstructs the implemented architecture (1 component, see "
+            "[§2](#2-architecture-diagrams)) and identifies threats and control gaps in it.",
+        ),
+    ],
+    ids=["empty", "no-services", "markup"],
+)
+def test_assessment_intro_shapes(model, expected):
+    assert pf.assessment_intro(model) == expected
+
+
+@pytest.mark.parametrize(
+    "floor,expected",
+    [
+        ("informational", None),
+        ("low", None),
+        ("medium", "Low and Informational findings not reported (threshold: medium)"),
+        ("high", "Medium, Low and Informational findings not reported (threshold: high)"),
+        ("critical", "High, Medium, Low and Informational findings not reported (threshold: critical)"),
+    ],
+)
+def test_method_and_limits_names_the_tiers_the_register_floor_dropped(floor, expected):
+    """The verdict's Low cell reads `n/a` under a floor above low; the limits line
+    is where the reader learns which tiers are missing and why."""
+    block = pf.method_and_limits({"register_severity_floor": floor})
+    if expected is None:
+        assert "not reported" not in block
+    else:
+        assert expected in block
+    assert block.count(". ") == 0
+
+
+@pytest.mark.parametrize("depth", ["quick", "standard", "thorough", None])
+@pytest.mark.parametrize(
+    "shape", [(3, 0, 0), (2, 1, 0), (2, 0, 2), (1, 2, 1)], ids=["full", "screened", "excluded", "mixed"]
+)
+@pytest.mark.parametrize("context", [None, "docs/business-context.md", ".business-context-input.md"])
+def test_method_and_limits_states_depth_coverage_and_context_plainly(depth, shape, context):
+    """One method block per variant: depth, coverage and business context come from
+    the model, every surface shares the wording, and no template jargon remains."""
+    n_full, n_screen, n_excluded = shape
+    meta = {"component_selection": _selection(*shape), "assessment_depth": depth, "business_context_source": context}
+    comps = [{"id": e["id"], "name": e["name"]} for e in meta["component_selection"]["selected"]]
+    comps += [{"id": e["id"], "name": e["name"]} for e in meta["component_selection"]["excluded"]]
+    block = pf.method_and_limits(meta)
+    overview = pf.gen_system_overview({"meta": meta, "components": comps})
+    out_of_scope = pf.gen_out_of_scope({"meta": meta})
+
+    assert block.startswith(f"**Method and limits:** {pf.METHOD_SHORT}")
+    assert block.endswith("— see [§1 Scope](#scope) and [§11 Out of Scope](#11-out-of-scope).")
+    assert block.count(". ") == 0, "the Management Summary method line is one sentence"
+    assert pf.METHOD_SENTENCE in overview and pf.METHOD_SENTENCE in out_of_scope
+    assert pf.limits_statement(meta) in out_of_scope
+    total = n_full + n_screen + n_excluded
+    if n_screen or n_excluded:
+        assert f"**{n_full} of {total}**" in overview
+    else:
+        assert f"All {total} modeled components were analysed with full STRIDE." in overview
+    assert ("only screened" in block) is bool(n_screen)
+    assert ("not analysed" in block) is bool(n_excluded)
+    if context:
+        assert ".business-context-input.md" not in block + overview + out_of_scope
+        assert "beyond the supplied business context" in out_of_scope
+    else:
+        assert (
+            "business context, design intent, runtime behaviour and production configuration are not covered"
+            in out_of_scope
+        )
+        assert "that leave the code" in out_of_scope
+    for text in (block, overview, out_of_scope):
+        for jargon in ("(s)", "reduced-budget", "verification greps", "business-critical surface", "code-derived"):
+            assert jargon not in text
+
+
+@pytest.mark.parametrize("agent_name", ["Worker", "Renamed coordinator"])
+def test_ai_exposure_does_not_spread_agentic_classification(agent_name):
+    data = {
+        "components": [{"id": "plain", "name": "LLM API"}, {"id": "agent", "name": agent_name}],
+        "threats": [
+            {
+                "id": "T-801",
+                "component": "plain",
+                "title": "Prompt injection in answer",
+                "risk": "High",
+                "owasp_llm_ids": ["LLM01"],
+            },
+            {
+                "id": "T-802",
+                "component": "agent",
+                "title": "Tool-calling prompt injection",
+                "risk": "High",
+                "owasp_llm_ids": ["LLM01"],
+                "owasp_asi_ids": ["ASI01"],
+            },
+            {
+                "id": "T-803",
+                "component": "agent",
+                "title": "Model API consumption",
+                "risk": "Medium",
+                "owasp_llm_ids": ["LLM10"],
+            },
+        ],
+    }
+    output = json.loads(pf.gen_ai_exposure(data))["ai_risks"]
+    pairs = _asi_pairs(output)
+    assert {ref for ref, _ in pairs} == {"T-802"}
+    assert pairs == {("T-802", "ASI01")}
+    # T-801 shares the LLM01 row with T-802 without inheriting its agentic id.
+    llm01 = next(row for row in output if row.get("owasp_llm_id") == "LLM01")
+    assert {f["ref"] for f in llm01["findings"]} == {"T-801", "T-802"}
+    assert "owasp_asi_id" not in llm01
+
+
+def test_ai_exposure_retains_asi_only_findings_after_same_category_was_paired():
+    threats = [
+        {
+            "id": "T-811",
+            "title": "Authorized title independent classification",
+            "risk": "High",
+            "owasp_llm_ids": ["LLM06"],
+            "owasp_asi_ids": ["ASI02", "ASI03"],
+        },
+        {"id": "T-812", "title": "Independent operation bypass", "risk": "High", "owasp_asi_ids": ["ASI02"]},
+    ]
+    output = json.loads(pf.gen_ai_exposure({"threats": threats}))["ai_risks"]
+    assert _asi_pairs(output) == {("T-811", "ASI02"), ("T-811", "ASI03"), ("T-812", "ASI02")}
+    asi_only = [row for row in output if row.get("owasp_asi_id")]
+    assert [(row["owasp_asi_id"], [f["ref"] for f in row["findings"]]) for row in asi_only] == [("ASI02", ["T-812"])]
+
+
+@pytest.mark.parametrize("component_flag", ["capability", "name-hint"])
+def test_ai_exposure_needs_the_findings_own_llm_prose_not_its_component(component_flag):
+    """In a monolith the LLM component carries every route. An untagged finding
+    whose own prose never names the model surface stays out, however its
+    title matches a keyword; one whose prose does name it is still grouped."""
+    component = {"id": "backend", "name": "API Backend"}
+    if component_flag == "capability":
+        component["capabilities"] = [{"capability": "llm-calls", "evidence": [{"file": "src/chat.ts", "line": 9}]}]
+    else:
+        component["name"] = "Chatbot API Backend"
+    threats = [
+        {
+            "id": "T-901",
+            "component": "backend",
+            "title": "Model call unbounded",
+            "risk": "High",
+            "owasp_llm_ids": ["LLM10"],
+        },
+        {"id": "T-902", "component": "backend", "title": "No rate limiting on login", "risk": "Medium"},
+        {"id": "T-903", "component": "backend", "title": "Reset rate limit keyed on client header", "risk": "Medium"},
+        {
+            "id": "T-904",
+            "component": "backend",
+            "title": "Unauthenticated rate-unlimited chat endpoint",
+            "risk": "Medium",
+            "impact_description": "Each request spends quota on a metered external LLM API.",
+        },
+    ]
+    rows = json.loads(pf.gen_ai_exposure({"components": [component], "threats": threats}))["ai_risks"]
+    grouped = {f["ref"] for row in rows for f in row["findings"]}
+    assert grouped == {"T-901", "T-904"}
+
+
+def test_ai_exposure_lists_each_llm_category_once():
+    threats = [
+        {
+            "id": "T-911",
+            "title": "Tool call issues coupons",
+            "risk": "High",
+            "owasp_llm_ids": ["LLM01", "LLM06"],
+            "owasp_asi_ids": ["ASI01", "ASI02"],
+        },
+        {
+            "id": "T-912",
+            "title": "Chat tool trusts unverified identity",
+            "risk": "Medium",
+            "owasp_llm_ids": ["LLM06"],
+            "owasp_asi_ids": ["ASI03"],
+        },
+    ]
+    rows = json.loads(pf.gen_ai_exposure({"threats": threats}))["ai_risks"]
+    ids = [row.get("owasp_llm_id") for row in rows]
+    assert sorted(ids) == ["LLM01", "LLM06"]
+    llm06 = next(row for row in rows if row["owasp_llm_id"] == "LLM06")
+    assert {f["ref"]: f["owasp_asi_ids"] for f in llm06["findings"]} == {
+        "T-911": ["ASI01", "ASI02"],
+        "T-912": ["ASI03"],
+    }
+    assert next(row for row in rows if row["owasp_llm_id"] == "LLM01")["name"] == "Prompt Injection"
+
+
+def test_model_owned_ai_fragment_is_rebuilt_and_removed_with_the_model(tmp_path):
+    """No agent authors ms-ai-exposure.json: a copy left on disk never wins over
+    the current model, and it disappears when the model has no LLM surface."""
+    frag = tmp_path / ".fragments" / "ms-ai-exposure.json"
+    frag.parent.mkdir(parents=True)
+    frag.write_text(
+        json.dumps(
+            {
+                "ai_risks": [
+                    {
+                        "name": "Stale risk",
+                        "description": "A risk group copied from an earlier run that cites an old finding id.",
+                        "findings": [{"ref": "T-999", "label": "Old finding label"}],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    model = {
+        "threats": [{"id": "T-001", "title": "Prompt injection in chat", "risk": "High", "owasp_llm_ids": ["LLM01"]}]
+    }
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(model), encoding="utf-8")
+
+    result = _run_cli(str(tmp_path), "--only", "ms-ai-exposure.json")
+    assert result.returncode == 0, result.stderr
+    rebuilt = json.loads(frag.read_text(encoding="utf-8"))
+    assert [f["ref"] for row in rebuilt["ai_risks"] for f in row["findings"]] == ["T-001"]
+
+    model["threats"] = [{"id": "T-001", "title": "SQL injection in search", "risk": "High"}]
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(model), encoding="utf-8")
+    result = _run_cli(str(tmp_path), "--only", "ms-ai-exposure.json")
+    assert result.returncode == 0, result.stderr
+    assert not frag.exists()
+
+
+def test_ordinary_agent_consumption_does_not_imply_a_cascade():
+    threat = {"id": "T-821", "title": "Agentic model token consumption", "risk": "Medium", "owasp_llm_ids": ["LLM10"]}
+    output = json.loads(pf.gen_ai_exposure({"threats": [threat]}))["ai_risks"]
+    assert _asi_pairs(output) == set()
+    threat["evidence_summary"] = "A recursive agent loop amplifies tool retries across agents."
+    output = json.loads(pf.gen_ai_exposure({"threats": [threat]}))["ai_risks"]
+    assert _asi_pairs(output) == {("T-821", "ASI08")}
+
+
+def test_component_table_uses_evidenced_ai_function_labels(minimal_yaml_data):
+    before = pf.gen_architecture_diagrams(minimal_yaml_data)
+    component = minimal_yaml_data["components"][0]
+    component["capabilities"] = [{"capability": "rag-retrieval", "evidence": []}]
+    assert pf.gen_architecture_diagrams(minimal_yaml_data) == before
+    component["capabilities"] = [
+        {"capability": value, "evidence": [{"file": "src/run.py", "line": 3}]}
+        for value in ("rag-retrieval", "mcp-client", "agent-delegation")
+    ]
+    after = pf.gen_architecture_diagrams(minimal_yaml_data)
+    assert "RAG retrieval" in after and "MCP client" in after and "Agent delegation" in after
+    assert "Adequate" not in after
+
+
+def test_ai_summary_discloses_bounded_risk_group_selection():
+    # Ten LLM categories plus one agentic category no LLM row covers: 11 groups.
+    threats = [
+        {
+            "id": f"T-{830 + i}",
+            "title": "Explicitly classified finding",
+            "risk": "High",
+            "owasp_llm_ids": [f"LLM{i:02d}"],
+        }
+        for i in range(1, 11)
+    ]
+    threats.append({"id": "T-850", "title": "Another classified finding", "risk": "High", "owasp_asi_ids": ["ASI05"]})
+    result = json.loads(pf.gen_ai_exposure({"threats": threats}))
+    assert len(result["ai_risks"]) == 10
+    assert "10 of 11" in result["summary"]
+    assert "Findings Register" in result["summary"]
+
+
+@pytest.mark.parametrize(
+    "tid, title",
+    [
+        ("T-071", "Regular account reaches one restricted business action"),
+        ("F-208", "Editor may change another workspace setting"),
+    ],
+)
+def test_verdict_fallback_never_infers_system_takeover_from_privilege_category(tmp_path, tid, title):
+    import jsonschema
+    import validators.validate_ms_compactness as validate_ms_compactness
+
+    model = {"threats": [{"id": tid, "title": title, "risk": "High", "stride": "Elevation of Privilege"}]}
+    data = json.loads(pf.gen_verdict(model))
+    schema = json.loads((REPO_ROOT / "schemas/fragments/verdict.schema.json").read_text())
+    jsonschema.validate(data, schema)
+    assert len(data["bullets"]) == 1
+    assert data["bullets"][0]["refs"] == [tid]
+    assert data["bullets"][0]["title"] == "Permission boundary concerns"
+    assert "Full system takeover" not in json.dumps(data)
+    assert "Layered defences missing" not in json.dumps(data)
+    assert "prerequisites" in data["bullets_intro"]
+    path = tmp_path / "ms-verdict.json"
+    path.write_text(json.dumps(data))
+    errors = []
+    validate_ms_compactness._check_verdict(path, errors)
+    assert errors == []
+
+
+@pytest.mark.parametrize("count", [0, 9])
+def test_verdict_schema_still_rejects_empty_or_oversized_scenario_lists(count):
+    import jsonschema
+
+    data = json.loads(pf.gen_verdict({"threats": [{"id": "T-071", "risk": "High", "stride": "Spoofing"}]}))
+    data["bullets"] *= count
+    schema = json.loads((REPO_ROOT / "schemas/fragments/verdict.schema.json").read_text())
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(data, schema)
+
+
+@pytest.mark.parametrize("offset,prefix", [(0, "T"), (200, "F")])
+def test_ranked_verdict_floor_matches_the_gate(tmp_path, offset, prefix):
+    """A neutral reproduction and renamed variant of the >8-Critical ranking defect."""
+    import validators.validate_fragment as validate_fragment
+
+    ids = [f"{prefix}-{offset + i:03d}" for i in range(1, 13)]
+    model = {"threats": [{"id": tid, "risk": "Critical", "stride": "Tampering"} for tid in ids]}
+    triage = {"ranking": {"views": {"top_findings": {"findings_ranked": [{"id": tid} for tid in reversed(ids)]}}}}
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(model))
+    (tmp_path / ".triage-flags.json").write_text(json.dumps(triage))
+    assert pf.main([str(tmp_path), "--only", "ms-verdict.json"]) == 0
+    verdict = json.loads((tmp_path / ".fragments/ms-verdict.json").read_text())
+    assert validate_fragment.verdict_floor_errors(tmp_path, verdict) == []
+    cited = {ref for b in verdict["bullets"] for ref in b["refs"]}
+    assert set(ids[-8:]) <= cited
+
+
+@pytest.mark.parametrize("wid,risk", [("W-031", "Critical"), ("W-204", "High")])
+def test_verdict_design_risk_has_its_own_evidence(tmp_path, wid, risk):
+    import validators.validate_fragment as validate_fragment
+    import validators.validate_ms_compactness as validate_ms_compactness
+
+    model = {
+        "threats": [{"id": "T-071", "risk": "Medium", "stride": "Repudiation"}],
+        "weaknesses": [{"id": wid, "kind": "design", "severity_basis": "design-risk", "severity": risk}],
+    }
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(model))
+    assert pf.main([str(tmp_path), "--only", "ms-verdict.json"]) == 0
+    verdict = json.loads((tmp_path / ".fragments/ms-verdict.json").read_text())
+    assert verdict["severity"] == ("red" if risk == "Critical" else "yellow")
+    assert any(wid in b["refs"] for b in verdict["bullets"])
+    assert validate_fragment.ms_renderer_schema_errors(tmp_path) == []
+    language = []
+    validate_ms_compactness._check_verdict(tmp_path / ".fragments/ms-verdict.json", language)
+    assert language == []
+    assert "production-ready" not in verdict["opening"].lower()
+    model["threats"] = []
+    assert json.loads(pf.gen_verdict(model))["bullets"][0]["refs"] == [wid]
+
+
+def test_verdict_fallback_ignores_refuted_findings():
+    model = {
+        "threats": [
+            {"id": "T-071", "risk": "Critical", "evidence_check": "refuted"},
+            {"id": "T-072", "risk": "Medium", "stride": "Repudiation"},
+        ]
+    }
+    verdict = json.loads(pf.gen_verdict(model))
+    assert verdict["severity"] == "green"
+    assert [ref for b in verdict["bullets"] for ref in b["refs"]] == ["T-072"]
+    assert "does not establish" in verdict["opening"]
+
+
+# ---------------------------------------------------------------------------
+# §6 routing authority, control placement and per-control findings
+# ---------------------------------------------------------------------------
+
+
+def _section(md: str, number: str) -> str:
+    return md.split(f"### {number} ", 1)[1].split("\n### ", 1)[0]
+
+
+def test_section_6_routing_is_the_contract_and_names_each_cwe_once():
+    contract = yaml.safe_load((REPO_ROOT / "data" / "sections-contract.yaml").read_text(encoding="utf-8"))
+    routing = contract["sections"]["security_architecture"]["schema_v2"]["finding_routing"]
+    cwes = [cwe for rule in routing.values() for cwe in rule.get("cwes") or []]
+    assert len(cwes) == len(set(cwes))
+    assert pf._V2_CWE_ROUTING == {cwe: h for h, rule in routing.items() for cwe in rule.get("cwes") or []}
+
+
+def test_a_control_without_a_section_6_heading_stops_the_fragment():
+    data = {"components": [], "threats": [], "security_controls": [{"control": "Bespoke thing", "domain": "Misc"}]}
+    with pytest.raises(ValueError, match="Bespoke thing"):
+        pf.gen_security_architecture_v2(data)
+
+
+@pytest.mark.parametrize("cwe", ["CWE-345", "CWE-79"])
+def test_a_finding_on_a_build_component_is_listed_in_6_11_whatever_its_cwe(cwe):
+    data = {
+        "components": [
+            {"id": "pipeline", "paths": [".github/workflows/*"]},
+            {"id": "api", "paths": ["src/**"]},
+        ],
+        "threats": [
+            {"id": "T-001", "cwe": cwe, "component": "pipeline", "title": "build"},
+            {"id": "T-002", "cwe": cwe, "component": "api", "title": "runtime"},
+        ],
+        "security_controls": [
+            {
+                "domain": "Operations Runtime and Supply Chain Controls",
+                "control": "Lockfile hygiene",
+                "effectiveness": "Missing",
+            },
+        ],
+    }
+    md = pf.gen_security_architecture_v2(data)
+    assert "[F-001]" in _section(md, "6.11") and "[F-002]" not in _section(md, "6.11")
+
+
+def test_controls_list_only_their_findings_and_the_section_lists_the_rest_once():
+    threats = [{"id": f"T-{n:03d}", "cwe": "CWE-1104", "title": f"dep {n}"} for n in range(1, 7)]
+    data = {
+        "components": [],
+        "threats": threats,
+        "security_controls": [
+            {
+                "domain": "Operations Runtime and Supply Chain Controls",
+                "control": "Automated SCA scanning",
+                "effectiveness": "Missing",
+            },
+            {
+                "domain": "Operations Runtime and Supply Chain Controls",
+                "control": "Lockfile hygiene",
+                "effectiveness": "Missing",
+                "linked_threats": ["T-002"],
+            },
+        ],
+    }
+    section = _section(pf.gen_security_architecture_v2(data), "6.11")
+    rest = re.search(r"\*\*Findings in this category without a control:\*\*\n\n((?:- .+\n)+)", section).group(1)
+    assert re.findall(r"^- \[(F-\d+)\]\(#f-\d+\)$", rest, re.MULTILINE) == ["F-001", "F-003", "F-004", "F-005", "F-006"]
+    assert section.count("[F-002]") == 1  # only under the control it is attributed to
+    assert "- None linked to this control; see the other findings of this category." in section
+
+
+def test_a_section_whose_controls_are_all_missing_says_so_instead_of_inviting_an_inventory():
+    def implemented(controls):
+        data = {"components": [], "threats": [], "security_controls": controls}
+        return re.search(
+            r"\*\*Implemented controls:\*\*(.*)", _section(pf.gen_security_architecture_v2(data), "6.11")
+        ).group(1)
+
+    missing = {
+        "domain": "Operations Runtime and Supply Chain Controls",
+        "control": "Lockfile hygiene",
+        "effectiveness": "Missing",
+    }
+    partial = dict(missing, control="Automated SCA scanning", effectiveness="Partial")
+    assert implemented([missing]).strip() == "No control in this category is evidenced in the repository."
+    # Only the controls that are in place are named; locators and the raw
+    # implementation text stay out of the inventory line.
+    located = dict(partial, implementation="Detected in scope: `.github/workflows/ci.yml:33`")
+    assert implemented([missing, located]).strip() == "Automated SCA scanning."
+
+
+def test_h4_intro_is_authored_from_the_implementation_note_not_printed_verbatim():
+    data = {
+        "components": [],
+        "threats": [],
+        "security_controls": [
+            {
+                "domain": "Operations Runtime and Supply Chain Controls",
+                "control": "Automated SCA scanning",
+                "effectiveness": "Partial",
+                "implementation": "Detected in scope: `.github/workflows/ci.yml:33`",
+            }
+        ],
+    }
+    section = _section(pf.gen_security_architecture_v2(data), "6.11")
+    body = section.split("#### ", 1)[1]
+    assert "\nDetected in scope" not in body  # never a reader line
+    assert "Model implementation note (facts for the intro): Detected in scope" in body
+    assert "at most 50 words" in body
+    assert "no file:line" in body.split("**Security assessment**", 1)[1]
+
+
+def test_defense_in_depth_summary_has_no_verdict_and_no_overview_row():
+    md = pf.gen_security_architecture_v2({"components": [], "threats": [], "security_controls": []})
+    summary = _section(md, "6.13")
+    assert "**Verdict:**" not in summary
+    assert "at most 120 words" in summary and "Repair first" in summary
+    overview = _section(md, "6.1")
+    assert "Defense-in-Depth Summary" not in overview

@@ -6,8 +6,7 @@ description: >-
   dispatches a specialized agent that reasons over the combined output:
   cross-component IDOR chains, RBAC coverage gaps, JWT misconfiguration, and
   privilege-escalation signals. Optionally annotates findings with violated
-  requirement IDs from a requirements catalog or Phase 8b violations index,
-  and exports the findings as pentest tasks for an AI pentest agent. Does NOT
+  requirement IDs from a requirements catalog, and exports the findings as pentest tasks for an AI pentest agent. Does NOT
   require a prior threat model run. Prints results to the console; file output
   only with --save or --pentest-tasks.
 ---
@@ -61,49 +60,13 @@ performing the described action. No trailing summaries, no preamble, no
 
 ---
 
-## `--help` — inline help (early exit)
+## `--help` — help (early exit)
 
-If the user's arguments contain `--help` or `-h`, print this block verbatim and exit.
+If the user's arguments contain `--help` or `-h`, run the following Bash command,
+output its stdout verbatim, then exit. Do not read any other file besides `HELP.txt`.
 
-```
-/appsec-advisor:authnz-review — Cross-component AuthN/AuthZ review
-
-USAGE
-  /appsec-advisor:authnz-review [--repo <path>] [--requirements <path>]
-                                 [--with-threat-model] [--save] [--gate]
-                                 [--pentest-tasks | --no-pentest-tasks]
-                                 [--pentest-format <fmt>] [--pentest-target <url>]
-
-OPTIONS
-  --repo <path>           Repository root to analyze (default: current directory)
-  --requirements <path>   Requirements YAML or Phase 8b violations JSON;
-                          findings are annotated with violated requirement IDs
-  --with-threat-model     Deduplicate EoP findings already covered by a prior
-                          STRIDE run in docs/security/
-  --save                  Write authnz-report.md + .authnz-report.json to
-                          docs/security/ in addition to console output
-  --pentest-tasks         Write docs/security/pentest-tasks-authnz.yaml —
-                          verification tasks for an AI pentest agent, one per
-                          finding with an eligible CWE and file:line evidence
-  --no-pentest-tasks      Skip that export even if the org profile enables it
-  --pentest-format <fmt>  generic (default) or strix
-  --pentest-target <url>  Base URL of the running target, e.g.
-                          http://localhost:3000
-
-  The three pentest values default to the organization profile's outputs
-  block (pentest_tasks, pentest_format, pentest_target) when one is active.
-  --gate                  Exit non-zero when Critical or High findings exist
-
-WHAT IT ANALYZES
-  Phase 1  Route inventory         — every route, its auth middleware, handler
-  Phase 2  Auth-check scan         — JWT misconfig, mass assignment, missing guards
-  Phase 3  IDOR/BOLA confirmation  — handler body reads to confirm suspects
-  Phase 4  Cross-component reasoning — RBAC matrix, escalation chains, AuthN↔AuthZ
-  Phase 5  Requirements annotation — maps findings to violated req IDs (opt-in)
-
-EXIT CODES
-  0   No Critical/High findings (or --gate not passed)
-  1   Critical or High findings found (only with --gate)
+```bash
+cat "<base-dir>/HELP.txt"
 ```
 
 ---
@@ -113,8 +76,7 @@ EXIT CODES
 Parse the user's message or slash-command arguments:
 - `--repo <path>` → `REPO_ROOT` (default: current working directory)
 - `--requirements <path>` → `REQUIREMENTS_PATH` (default: `none`; also
-  auto-detect `$REPO_ROOT/docs/security/.phase-8b-violations.json` then
-  `$REPO_ROOT/docs/security/requirements.yaml` — use first that exists)
+  auto-detect `$REPO_ROOT/docs/security/requirements.yaml` when it exists)
 - `--with-threat-model` → `WITH_THREAT_MODEL=true`
 - `--save` → `SAVE_FILES=true`; set `OUTPUT_DIR=<REPO_ROOT>/docs/security`
   and run `mkdir -p "$OUTPUT_DIR"`
@@ -124,6 +86,10 @@ Parse the user's message or slash-command arguments:
 - `--pentest-format <fmt>` → `PENTEST_FORMAT` (`generic` | `strix`; reject any
   other value with a one-line error and stop)
 - `--pentest-target <url>` → `PENTEST_TARGET`
+- `--slug <value>` → `SLUG` (reject a value that is not 1-64 characters from
+  `[A-Za-z0-9._-]` with a one-line error and stop); set
+  `PENTEST_FILE=pentest-tasks-authnz-<SLUG>.yaml`, else
+  `PENTEST_FILE=pentest-tasks-authnz.yaml`
 - `--gate` → `GATE_MODE=true`
 
 Then resolve the organization defaults for the three pentest values — the
@@ -131,7 +97,7 @@ same `outputs` block `create-threat-model` honours, so both skills answer to
 one profile:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_org_profile.py" --repo "$REPO_ROOT"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/resolve_org_profile.py" --repo "$REPO_ROOT"
 ```
 
 The resolver prints JSON and writes nothing. Read `defaults.write_pentest_tasks`,
@@ -143,17 +109,17 @@ exit, unparseable output) leaves all three at those defaults — a broken profil
 must not silently change what a review writes. Record `PENTEST_SOURCE` as
 `flag` or `org profile <preset>` for the introduction block.
 
-When `SAVE_FILES` is not set, use a temp dir for scanner sidecar files:
+When `SAVE_FILES` is not set, use a temp dir for scanner sidecar files.
+Shell state does not survive between Bash calls, so print the path once and
+write it literally as `OUTPUT_DIR` in every later command:
 ```bash
-SCRATCH_DIR="$(mktemp -d)"
-trap 'rm -rf "$SCRATCH_DIR"' EXIT
-OUTPUT_DIR="$SCRATCH_DIR"
+mktemp -d
 ```
+Set `SCRATCH_DIR` and `OUTPUT_DIR` to the printed path.
 
-The pentest exporter reads the report from disk, so set
-`AGENT_SAVE_MODE=true` when `SAVE_FILES=true` **or** `PENTEST_TASKS=true`,
-else `false`. With `--pentest-tasks` but no `--save`, the report is written
-into the temp dir and removed on exit — only the task file survives.
+The analyzer always writes `.authnz-report.json` into `OUTPUT_DIR`. Without
+`--save`, that is the temp dir, which Step 10 removes — with `--pentest-tasks`
+only the task file survives.
 
 Record start time: `START_EPOCH=$(date +%s)`
 
@@ -181,17 +147,22 @@ Phase 1/5 · Route inventory                             [  0%]
 
 Run:
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/route_inventory.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/analyzers/route_inventory.py" \
   --repo-root "$REPO_ROOT" \
   --output-dir "$OUTPUT_DIR"
 ```
 
 If non-zero exit, print the stderr and stop.
 
-Read `$OUTPUT_DIR/.route-inventory.json`. Print:
+Read `$OUTPUT_DIR/.route-inventory.json`. Take every count from its
+`coverage` block — `route_count`, `authenticated_count`, `authn_absent_count`,
+`authn_unknown_count`, `missing_authz_suspect_count`,
+`missing_auth_suspect_count` — and never recount routes yourself. A route is
+unauthenticated only when the inventory proved it (`absent`); `unknown` may sit
+behind a guard the scanner cannot see. Print:
 ```
-  🟢 <N> routes parsed across <M> files
-     authenticated <A>  ·  public <P>  ·  unknown <U>
+  🟢 <N> routes parsed
+     authenticated <A>  ·  no authentication <B>  ·  unknown <U>
      suspects: missing authz <X>  ·  missing auth <Y>
 
 Phase 1/5 complete                                      [ 20%]
@@ -207,26 +178,30 @@ Print:
 ```
 Phase 2/5 · Auth-check scan                             [ 20%]
   Running pattern checks across all source files…
-  AUTHZ-001 BFLA  ·  AUTHZ-002 IDOR  ·  AUTHZ-003/004 mass-assign
-  AUTHZ-005/006/007 JWT algorithm     ·  AUTHZ-008 missing route auth
-  + equivalents for Python · Java · Go · C# · PHP · Ruby · Android
+  IDOR · missing route auth · mass assignment · JWT verification · credential policy
 ```
 
 Run:
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/source_auth_scanner.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/analyzers/source_auth_scanner.py" \
   --repo-root "$REPO_ROOT" \
   --output-dir "$OUTPUT_DIR"
 ```
 
 If non-zero exit, print the stderr and stop.
 
-Read `$OUTPUT_DIR/.source-auth-findings.json`. Count findings by category
-(`jwt` = AUTHZ-005/006/007/103/201; `mass_assign` = AUTHZ-003/004/101/102;
-`route_auth` = AUTHZ-001/008; `other` = rest). Print:
+Count the findings by category; never count them yourself:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/authnz_report.py" counts --output-dir "$OUTPUT_DIR"
+```
+
+If non-zero exit, print the stderr and stop. From its `scanner` object, print
+(`<N>` is `in_scope`; omit the `out of scope` token when it is 0):
 
 ```
-  <circle> <N> findings  (JWT <jwt>  ·  mass-assign <ma>  ·  route auth <ra>  ·  other <o>)
+  <circle> <N> findings  (IDOR <idor>  ·  route auth <route_auth>  ·  mass-assign <mass_assign>  ·  JWT <jwt>  ·  credential <credential>)
+     <out_of_scope> out of scope (injection, crypto, mobile) — not part of this review
 
 Phase 2/5 complete                                      [ 40%]
 ```
@@ -247,60 +222,23 @@ Phase 3/5 · IDOR/BOLA confirmation                      [ 40%]
 
 Run:
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/authz_confirm.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/analyzers/authz_confirm.py" \
   --repo-root "$REPO_ROOT" \
   --output-dir "$OUTPUT_DIR"
 ```
 
 If non-zero exit, print the stderr and stop.
 
-Read `$OUTPUT_DIR/.authz-confirm-findings.json`. Print:
+Run the `counts` command from Phase 2 again and, from its `confirmed` object,
+print (omit the second line when `unresolved_suspects` is 0):
 ```
-  <circle> <confirmed> confirmed  (<idor> IDOR/BOLA  ·  <mra> missing route auth)
-     <unresolvable> suspects unresolvable — kept as design-level hypotheses
+  <circle> <total> confirmed  (<idor> IDOR/BOLA  ·  <route_auth> missing route auth)
+     <unresolved_suspects> suspects unresolvable — kept as design-level hypotheses
 
 Phase 3/5 complete                                      [ 60%]
 ```
 
 Circle: 🟢 for 0 confirmed, 🟡 for 1–2, 🔴 for 3+.
-
----
-
-## Step 4b — No-auth-layer early exit
-
-After reading the Phase 1–3 results, check whether the repository has any
-authentication or authorization signals at all:
-
-- `authenticated_routes == 0` (from `.route-inventory.json`)
-- scanner findings == 0 (from `.source-auth-findings.json`)
-- confirmed instances == 0 (from `.authz-confirm-findings.json`)
-
-When **all three** are true, skip Steps 5–9b and print (when
-`PENTEST_TASKS=true`, add `⚪ --pentest-tasks: no findings with code evidence
-— no task file written` after the finding block):
-
-```
-Phase 4/5 · Cross-component reasoning                   [ 60%]
-  Skipped — no authentication or authorization layer detected.
-
-Results · <repo name> · 1 finding
-
-  🟠 High       1
-  ──────────────────────────────────────
-  completed in  <Xm Ys>
-
-🟠 **[AZ-001] No authentication layer detected**
-
-   *Evidence*    <N> routes scanned, 0 authenticated
-   *Attack path* Any endpoint in the application is reachable without
-                 credentials — there is no token, session, or access guard
-                 to bypass.
-   *Fix*         Introduce an authentication middleware (e.g. JWT, session)
-                 at the framework router level before any route handler.
-   *Reference*   CWE-306 — Missing Authentication for Critical Function
-```
-
-Then proceed to Step 10 (gate check).
 
 ---
 
@@ -333,8 +271,8 @@ Dispatch `appsec-advisor:appsec-authnz-analyzer` with this prompt
 ```
 REPO_ROOT=<REPO_ROOT>
 OUTPUT_DIR=<OUTPUT_DIR>
+CLAUDE_PLUGIN_ROOT=<CLAUDE_PLUGIN_ROOT>
 MODEL_ID=<session model, e.g. sonnet>
-SAVE_MODE=<AGENT_SAVE_MODE>
 
 SOURCE_AUTH_FINDINGS_PATH=<OUTPUT_DIR>/.source-auth-findings.json
 ROUTE_INVENTORY_PATH=<OUTPUT_DIR>/.route-inventory.json
@@ -345,26 +283,28 @@ STRIDE_FINDINGS_GLOB=<STRIDE_FINDINGS_GLOB>
 COMPONENT_INVENTORY_PATH=<$REPO_ROOT/docs/security/.components.json if exists, else none>
 ```
 
-Wait for the agent to complete.
+Wait for the agent to complete, then validate the report and compute its
+summary:
 
-**When `AGENT_SAVE_MODE=false`:** extract the JSON from the agent's final
-message between the `AUTHNZ_REPORT_START` and `AUTHNZ_REPORT_END` markers.
-Parse it into memory as `REPORT`. Do not read from disk.
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/authnz_report.py" finalize --report "$OUTPUT_DIR/.authnz-report.json" --require-inputs
+```
 
-**When `AGENT_SAVE_MODE=true`:** read `$OUTPUT_DIR/.authnz-report.json` into
-memory as `REPORT`.
-
-Extract the `summary` block from `REPORT`.
+If non-zero exit, print the stderr and stop: an invalid report is never
+printed. Otherwise read `$OUTPUT_DIR/.authnz-report.json` into memory as
+`REPORT`; every count below comes from `REPORT.summary`. When `REPORT.partial`
+is `true`, the analyzer stopped early: print
+`  ⚪ partial report — the analyzer stopped after <last_step>` before the counts.
 
 Print:
 ```
   🔴 Critical <critical>  🟠 High <high>  🟡 Medium <medium>  🔵 Low <low>
-     IDOR confirmed <idor_confirmed>  ·  chains <chain_count>  ·  STRIDE deduped <stride_deduplicated>
+     IDOR confirmed <idor_confirmed>  ·  chains <chains>  ·  STRIDE deduped <stride_deduplicated>
 
 Phase 4/5 complete                                      [ 80%]
 ```
 
-Use `chain_count = len(chain_findings)` from the report. Omit the `STRIDE deduped` token when `stride_deduplicated == 0`.
+Omit the `STRIDE deduped` token when `stride_deduplicated == 0`.
 
 ---
 
@@ -382,8 +322,8 @@ If `REQUIREMENTS_PATH` is `none`:
                                                         [100%]
 ```
 
-Otherwise the authnz-analyzer already performed annotation in its Step 5.
-From `REPORT`, count findings where `requirement_id` is non-null, and print:
+Otherwise the analyzer has already annotated the findings. Print, with
+`<N>` = `summary.requirements_annotated`:
 ```
   🟢 <N> of <total> findings linked to requirement IDs  (<source>)
      <M> findings use OWASP/CWE fallback references
@@ -399,23 +339,25 @@ Use `REPORT` (already in memory from Step 6). Do not read from disk.
 
 ### 8a — Results header
 
-Print exactly this fixed block — never as prose:
+Print exactly this fixed block — never as prose. Every count is the named
+`REPORT.summary` field; never recount findings:
 
 ```
-Results · <repo name> · <total> findings
+Results · <repo name> · <total_findings> findings
 
-  🔴 Critical  <N>
-  🟠 High      <N>
-  🟡 Medium    <N>
-  🔵 Low       <N>
+  🔴 Critical  <critical>
+  🟠 High      <high>
+  🟡 Medium    <medium>
+  🔵 Low       <low>
   ──────────────────────────────────────
-  IDOR confirmed          <N>
-  Missing auth (routes)   <N>
-  JWT misconfigurations   <N>
-  Privilege escalation    <N>
+  IDOR confirmed          <idor_confirmed>
+  Missing auth (routes)   <missing_auth>
+  JWT misconfigurations   <jwt_findings>
+  Credential policy       <credential_findings>
+  Privilege escalation    <privilege_escalation>
   ──────────────────────────────────────
-  Req. violations linked  <N>        ← omit row when REQUIREMENTS_PATH=none
-  STRIDE deduplicated     <N>        ← omit row when STRIDE_FINDINGS_GLOB=none
+  Req. violations linked  <requirements_annotated>   ← omit row when REQUIREMENTS_PATH=none
+  STRIDE deduplicated     <stride_deduplicated>   ← omit row when STRIDE_FINDINGS_GLOB=none
   ──────────────────────────────────────
   completed in            <Xm Ys>
 ```
@@ -483,104 +425,29 @@ Low findings
 
 ### 8f — Clean result
 
-When total findings == 0:
+When total findings == 0 and `REPORT.partial` is false:
 ```
 🟢 No AuthN/AuthZ findings.
 ```
 
 ---
 
-## Step 9 — Save files (only when --save)
+## Step 9 — Save files and pentest tasks (only when --save or --pentest-tasks)
 
-Only when `SAVE_FILES=true`.
-
-Write `$OUTPUT_DIR/authnz-report.md` using the same circles and bold/link
-conventions as the console output, with full Markdown heading structure:
-
-```markdown
-# AuthN/AuthZ Review — <repo name>
-
-**Repository:** <REPO_ROOT>
-**Date:** <ISO date>
-**Requirements:** <REQUIREMENTS_PATH or: none>
-
-## Summary
-
-| Severity  | Count |
-|-----------|------:|
-| 🔴 Critical | <N> |
-| 🟠 High     | <N> |
-| 🟡 Medium   | <N> |
-| 🔵 Low      | <N> |
-
-| Signal                 | Count |
-|------------------------|------:|
-| IDOR confirmed         | <N>   |
-| Missing auth (routes)  | <N>   |
-| JWT misconfigurations  | <N>   |
-| Privilege escalation   | <N>   |
-
-## AuthN → AuthZ Chains
-<!-- omit section when no chains -->
-...
-
-## Critical and High Findings
-...
-
-## Medium Findings
-...
-
-## Low Findings
-...
-```
-
-Write `$OUTPUT_DIR/.authnz-report.json` from `REPORT` (serialize to JSON).
-
-Print:
-```
-  Saved → docs/security/authnz-report.md
-  Saved → docs/security/.authnz-report.json
-```
-
----
-
-## Step 9b — Pentest tasks (only when --pentest-tasks)
-
-Only when `PENTEST_TASKS=true`. Run:
-
-```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_pentest_tasks.py" \
-  --authnz "$OUTPUT_DIR/.authnz-report.json" \
-  --route-inventory "$OUTPUT_DIR/.route-inventory.json" \
-  --output "$REPO_ROOT/docs/security/pentest-tasks-authnz.yaml" \
-  --dialect "$PENTEST_FORMAT" \
-  --project "<repo name>"
-```
-
-Append `--target-url "$PENTEST_TARGET"` when `PENTEST_TARGET` is not `none`.
-The exporter emits one verification task per finding whose CWE is on
-`data/pentest-eligible-cwes.yaml` and whose evidence carries file **and**
-line — design-level findings without code evidence are dropped, so the task
-count is normally lower than the finding count. Every task carries a
-`safety` block declaring the run read-only; the target URL is written to
-`meta.target.base_url` and never contacted.
-
-If non-zero exit, print the stderr and continue to Step 10 — a failed export
-does not invalidate the review.
-
-Print (task count from the exporter's `VALID: wrote <N> pentest tasks` line):
-```
-  Saved → docs/security/pentest-tasks-authnz.yaml  (<N> tasks, <PENTEST_FORMAT>, target <PENTEST_TARGET or: none>)
-```
+When `SAVE_FILES=true` or `PENTEST_TASKS=true`, read `<base-dir>/save-and-export.md`
+in full and follow it: Step 9 writes the Markdown and JSON report, Step 9b exports
+the pentest task file. Otherwise skip to Step 10.
 
 ---
 
 ## Step 10 — Gate check
 
-If `GATE_MODE=true` and Critical or High findings exist:
-```
-  GATE FAILED — <N> Critical/High findings require attention.
-```
-Exit non-zero by printing `exit_code: 1` as the final line.
+When `GATE_MODE=true`, run the deterministic gate after saving any requested artifacts:
 
-Otherwise (no Critical/High, or gate not set): no extra line needed.
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/authnz_report.py" gate --report "$OUTPUT_DIR/.authnz-report.json"
+```
+
+Exit code 1 means incomplete analysis or Critical/High findings; print `GATE FAILED` with the returned reason. Exit code 2 means invalid or unreadable analysis data and also fails the gate. Only exit code 0 passes. A partial report is never described as clean, even when its finding list is empty.
+
+When `SCRATCH_DIR` is set, remove it last: `rm -rf "<SCRATCH_DIR>"`. Preserve the gate result when reporting completion.

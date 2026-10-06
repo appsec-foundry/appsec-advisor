@@ -1,4 +1,4 @@
-"""Tests for scripts/check_fragment_registry.py — fragment-registry drift linter.
+"""Tests for scripts/validators/check_fragment_registry.py — fragment-registry drift linter.
 
 Covers the AST literal extractor (literal, annotated-assign, non-literal,
 not-found), the contract-section parser, on-disk schema enumeration, the
@@ -16,7 +16,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import check_fragment_registry as cfr  # noqa: E402
+import validators.check_fragment_registry as cfr  # noqa: E402
 
 # ---------- _extract_dict_literal ----------------------------------------
 

@@ -1,34 +1,10 @@
-# security-libraries.yaml — P2 implementation-strategy axis
-# (docs/internal/analysis/implplan-weakness-class-evidence-model.md §P2).
-#
-# Per weakness class, the vetted library/protocol names whose PRESENCE (in
-# package.json deps or a source import) is exculpatory, and the bespoke-pattern
-# regexes whose presence is a "home-grown / misused" signal. The strategy is
-# derived by scripts/detect_impl_strategy.py:
-#
-#   vetted present  AND  no bespoke signal   → standard-vetted  (exculpatory)
-#   vetted present  AND  bespoke signal      → standard-misused (a finding)
-#   no vetted       AND  bespoke signal      → home-grown       (risk multiplier)
-#   neither                                  → none             (strongest signal)
-#
-# RULE (proposal §2 / I2-adjacent): standard-vetted requires a *detected lib*
-# AND *no misuse signal* — never library-presence alone (else alg:none gets a
-# free pass). The detector enforces this; do not weaken it here.
-#
-# Keys are data/weakness-classes.yaml cluster ids so the reconciler can map a
-# strategy straight onto the matching weakness.
-
+# Supported JS/TS implementation signals and runtime dependency inventory.
+# Library presence never establishes enforcement or suppresses a weakness.
+# The detector records source practices; it cannot prove global control absence.
+# `central_control` selects a reviewed mechanism with source-backed wording.
+# Domains without it retain inventory only and do not emit weakness signals.
+# Values are canonical classes from data/weakness-classes.yaml.
 version: 1
-#
-# `central_control` (optional, per domain) — P4/Gap-A marker for a security
-# control that SHOULD be centralized (input validation, output encoding, access
-# control, authentication). When such a domain has a `bespoke_hit` and NO vetted
-# library (strategy `home-grown` / `standard-misused`), detect_impl_strategy
-# emits a design signal so the reconciler surfaces a *design-risk weakness* even
-# when no concrete SQLi/XSS/IDOR instance was confirmed — the observable backing
-# is the bespoke sink's own file:line (I2). `statement` is the weakness text.
-# Domains WITHOUT `central_control` (weak_crypto — covered by crypto-checks.yaml;
-# server_side_exposure) never emit this signal, to avoid double-surfacing.
 domains:
   injection:
     # Parameterized ORMs / query builders + input-validation schema libs.
@@ -36,9 +12,8 @@ domains:
       [sequelize, prisma, "@prisma/client", typeorm, knex, "drizzle-orm", mikro-orm,
        zod, joi, "@hapi/joi", yup, ajv, "express-validator", "class-validator"]
     bespoke_patterns:
-      - '\.query\(\s*[`''"][^`''"]*\$\{'      # template-literal SQL interpolation
-      - '\.query\(\s*[`''"][^`''"]*\+\s*'      # string-concatenation SQL
-      - 'sequelize\.query\('                    # raw query beside the ORM
+      - '(?i)\.query\s*\(\s*`\s*(?:select|insert|update|delete|with|replace)\b[^`]*\$\{\s*[A-Za-z_$]'
+      - '(?i)\.query\s*\(\s*(?:"\s*(?:select|insert|update|delete|with|replace)\b[^"]*"|''\s*(?:select|insert|update|delete|with|replace)\b[^'']*'')\s*\+\s*[A-Za-z_$]'
     central_control:
       principle: "input validation / query parametrization"
       mechanism_id: database-query-concatenation
@@ -51,30 +26,27 @@ domains:
       [passport, next-auth, "@auth/core", "openid-client", "express-session",
        jsonwebtoken, jose, "@fastify/jwt"]
     bespoke_patterns:
-      - 'jwt\.decode\('                         # decode without verify
       - "algorithms\\s*:\\s*\\[\\s*['\"]none"    # verify with alg:none accepted
-      - 'crypto\.randomBytes\([^)]*\)\s*.{0,40}token'   # hand-rolled session token
     central_control:
       principle: "authentication / token verification"
-      mechanism_id: hand-rolled-token-verification
+      mechanism_id: unsigned-token-acceptance
       cwe: CWE-347
-      weakness_title: "Authentication relies on hand-rolled token verification"
-      statement: "Token verification is implemented in application code rather than behind one vetted and consistently configured authentication path."
+      weakness_title: "Token verification permits unsigned tokens"
+      statement: "A token-verification configuration explicitly permits the unsigned algorithm."
 
   weak_crypto:
     vetted_libs:
       [argon2, bcrypt, bcryptjs, "libsodium-wrappers", libsodium, scrypt, "node-forge"]
     bespoke_patterns:
-      - "crypto\\.createHash\\(\\s*['\"`]md5"   # md5 as a hash primitive
-      - "crypto\\.createHash\\(\\s*['\"`]sha1"  # sha1 as a hash primitive
-      - 'Math\.random\(\)'                       # non-CSPRNG for tokens/keys
+      - '(?i)crypto\.createHash\(\s*[''"`](?:md5|sha1)[''"`]\s*\)\.update\(\s*(?:pw|password|secret|token)\b'
+      - '(?i)\b(?:token|secret|sessionKey)\s*=\s*Math\.random\(\)'
 
   output_xss_csp:
-    vetted_libs: [dompurify, "sanitize-html", xss, helmet]
+    vetted_libs: [dompurify, "sanitize-html", xss]
     bespoke_patterns:
-      - 'dangerouslySetInnerHTML'
-      - '\.innerHTML\s*='
-      - 'bypassSecurityTrustHtml'
+      - 'dangerouslySetInnerHTML\s*=\s*\{\s*\{\s*__html\s*:\s*(?!(?:DOMPurify\.sanitize|sanitizeHtml)\b)[A-Za-z_$][\w.$]*(?:\s*[,}])'
+      - '\.innerHTML\s*=\s*(?!(?:DOMPurify\.sanitize|sanitizeHtml)\b)[A-Za-z_$][\w.$]*(?:\s*[;\n]|\s*$)'
+      - 'bypassSecurityTrustHtml\s*\(\s*(?:[A-Za-z_$][\w.$]*|`[^`]*\$\{)'
     central_control:
       principle: "output encoding / sanitization"
       mechanism_id: frontend-output-encoding
@@ -83,17 +55,12 @@ domains:
       statement: "Browser rendering paths write HTML or DOM content directly without one enforced contextual-encoding or sanitisation boundary."
 
   missing_authz:
-    vetted_libs: ["@casl/ability", casl, accesscontrol, "express-jwt", "@nestjs/passport"]
+    vetted_libs: ["@casl/ability", casl, accesscontrol]
     bespoke_patterns:
       - "req\\.user\\.(role|isAdmin)\\s*==="    # ad-hoc per-handler role check
-    central_control:
-      principle: "authorization / access control"
-      mechanism_id: route-by-route-authorization
-      cwe: CWE-862
-      weakness_title: "Authorization is implemented route by route"
-      statement: "Authorization depends on per-handler checks instead of a policy boundary that consistently enforces role, ownership, and tenant scope."
+    # A local role check alone does not prove a missing authorization policy.
 
   server_side_exposure:
-    vetted_libs: [ssrf-req-filter, helmet]
+    vetted_libs: [ssrf-req-filter]
     bespoke_patterns:
       - 'axios\.(get|post)\(\s*req\.'            # user-controlled outbound request

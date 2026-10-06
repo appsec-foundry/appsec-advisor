@@ -11,10 +11,10 @@ with the verified findings below
 
 Implemented in this change:
 
-- `scripts/context_window_report.py` measures resident context and authoritative
+- `scripts/runtime/context_window_report.py` measures resident context and authoritative
   `compact_boundary` events while separating main and subagent sessions;
 - `data/context-budgets.yaml` and regression tests cap every live prompt surface;
-- `scripts/orchestration_controller.py` owns full/rebuild config, cleanup, lock,
+- `scripts/orchestrator/orchestration_controller.py` owns full/rebuild config, cleanup, lock,
   prepass, requirements, and filesystem-rehydrated next-action decisions;
 - `schemas/orchestration-action.schema.json` rejects arbitrary action/command fields;
 - `skills/create-threat-model/SKILL-full-runtime.md` keeps Agent/Task calls at
@@ -27,7 +27,7 @@ slice versus 78,235 bytes for router + compact runtime + Stage-1 slice (63.2%
 smaller).
 This is a static prompt-size result, not yet a claim of zero runtime compactions.
 The latter still requires fresh quick/standard/thorough benchmark runs and
-`context_window_report.py` verification.
+`runtime/context_window_report.py` verification.
 
 Incremental, rerender, resume, dry-run, wall-time/cost-limited, and live-phase
 invocations deliberately remain on `SKILL-impl.md` until the dedicated parity
@@ -158,7 +158,7 @@ The live prefix before the boundary contains:
 | Section | Bytes | Assessment |
 |---|---:|---|
 | Prerequisites and session checks | 35.5k | partly deterministic; much can move to scripts |
-| Argument parsing | 13.3k | already owned semantically by `resolve_config.py` |
+| Argument parsing | 13.3k | already owned semantically by `runtime/resolve_config.py` |
 | Configuration resolution | 14.8k | extraction boilerplate is deterministic |
 | Incremental/precheck/fast-path cluster | about 25k | dead weight in full/rebuild runs |
 | Configuration summary and operational setup | 40.4k | largest pre-Stage-1 consolidation target |
@@ -392,7 +392,7 @@ cleanup.
 3. Replace shell snippets in the live skill with fixed script invocations.
 4. Keep interactive choice rendering in the thin skill; persist the chosen result.
 5. Make every transition idempotent and safe to replay after a compact/resume.
-6. Route every new log event through `scripts/event_log.py`; do not introduce
+6. Route every new log event through `scripts/runtime/event_log.py`; do not introduce
    controller-specific log formatting.
 
 Every new `scripts/` module requires a matching `tests/test_*.py`. Any new command or
@@ -477,7 +477,7 @@ Using the current local evidence, criterion 3 implies a reference target below a
 Compare baseline versus candidate runs using deterministic and semantic gates:
 
 - all fragment/intermediate schemas pass;
-- `qa_checks.py all` passes where required;
+- `validators/qa_checks.py all` passes where required;
 - component inventory and selected STRIDE roles are unchanged;
 - no loss of threats attributable to missing phase context;
 - every prior finding and known threat retains coverage;

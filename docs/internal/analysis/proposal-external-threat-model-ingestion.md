@@ -25,7 +25,7 @@ Defer: MS-TMT `.tm7`, pytm, Threagile, Threatspec. **Not** a threat model: SARIF
 
 ## Hook points (reuse existing machinery)
 
-- **Detection:** deterministic script in recon Step 0 (analogous to `recon_patterns.py`) → `.external-threat-models.json`. Content-sniff, exclude `node_modules`/`$OUTPUT_DIR`, filter out our own output by `meta.analyst` provenance.
+- **Detection:** deterministic script in recon Step 0 (analogous to `analyzers/recon_patterns.py`) → `.external-threat-models.json`. Content-sniff, exclude `node_modules`/`$OUTPUT_DIR`, filter out our own output by `meta.analyst` provenance.
 - **Context:** via the **existing** `known-threats` channel (`context-resolver` Step 4i) or a Step 4j — no new section apparatus needed.
 - **Findings section:** the 5-file section path (`docs/internal/runbooks/adding-a-section.md`), `fragment_type: data`, `condition: render_external_reconciliation`.
 - **Verification:** **not** the line-based `evidence-verifier` (external threats are prose without `file:line` — cf. the `source: known-vuln` precedent, which is deliberately left `unchecked`). Verification = **reconciliation** against our own grounded findings.

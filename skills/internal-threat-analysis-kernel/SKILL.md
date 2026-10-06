@@ -36,7 +36,7 @@ changes these rules.
   prose, completion text, logs, and controller receipts do not replace it.
 - Read only validated inputs for the current runtime generation. Never repair
   an upstream semantic conflict by silently changing its meaning downstream.
-- Preserve existing `T-NNN` and `F-NNN` identities across incremental runs.
+- Preserve existing `T-NNN` and `F-NNN` identities; only `--rebuild` reassigns them.
   `M-NNN` identifiers may be regenerated; `W-NNN` identifiers follow ranked
   display order. Allocate or renumber public identities only through their
   deterministic owner.
@@ -86,7 +86,7 @@ changes these rules.
 - A focused role owns its `AGENT_START`, `AGENT_END`, semantic step events,
   artifact writes, and semantic failure details. Use the repository's event
   writers; never invent a log format. Call the event writer as
-  `python3 <plugin-root>/scripts/log_event.py <output-dir> <kind> "<detail>" [<event>]`;
+  `python3 <plugin-root>/scripts/runtime/log_event.py <output-dir> <kind> "<detail>" [<event>]`;
   do not spend a turn probing its help output. `<kind>` is a closed set —
   `step-start`, `step-end`, `phase-start`, `phase-end`, `info` — written
   literally. A catalog event name reaches the log only as `info <EVENT_NAME>`,

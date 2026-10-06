@@ -1,6 +1,6 @@
-"""Unit tests for scripts/wait_stride_progress.py.
+"""Unit tests for scripts/orchestrator/wait_stride_progress.py.
 
-The script polls stride_progress.py in a bounded loop. We stub time.sleep and
+The script polls runtime/stride_progress.py in a bounded loop. We stub time.sleep and
 the subprocess-running helper so the loop is fast and deterministic.
 """
 
@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from pathlib import Path
 
-import stride_dispatch_waves as waves
-import wait_stride_progress as wsp
+import orchestrator.stride_dispatch_waves as waves
+import orchestrator.wait_stride_progress as wsp
 
 
 # ---------------------------------------------------------------------------
@@ -25,7 +26,7 @@ def test_run_progress_returns_code_and_progress_text(monkeypatch, capsys):
         return subprocess.CompletedProcess(cmd, 0, stdout="hello-out", stderr="hello-err")
 
     monkeypatch.setattr(wsp.subprocess, "run", fake_run)
-    rc, progress = wsp._run_progress(Path("/x/stride_progress.py"), Path("/out"), 3, force=False)
+    rc, progress = wsp._run_progress(Path("/x/runtime/stride_progress.py"), Path("/out"), 3, force=False)
     assert rc == 0
     # Progress text is handed back rather than printed, so the poll loop can
     # decide whether this round says anything the previous one did not.
@@ -61,7 +62,7 @@ def test_main_expected_non_positive_returns_zero(tmp_path):
 
 
 def test_main_missing_progress_script_returns_2(tmp_path, monkeypatch):
-    # plugin_root points at a dir with no scripts/stride_progress.py
+    # plugin_root points at a dir with no scripts/runtime/stride_progress.py
     empty_root = tmp_path / "empty_root"
     (empty_root / "scripts").mkdir(parents=True)
     rc = wsp.main([str(tmp_path), "2", "--plugin-root", str(empty_root)])
@@ -73,8 +74,8 @@ def test_main_missing_progress_script_returns_2(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 def _make_root_with_progress(tmp_path: Path) -> Path:
     root = tmp_path / "root"
-    (root / "scripts").mkdir(parents=True)
-    (root / "scripts" / "stride_progress.py").write_text("# stub\n")
+    (root / "scripts" / "runtime").mkdir(parents=True)
+    (root / "scripts" / "runtime/stride_progress.py").write_text("# stub\n")
     return root
 
 
@@ -82,7 +83,7 @@ def test_main_returns_0_on_first_round_success(tmp_path, monkeypatch):
     root = _make_root_with_progress(tmp_path)
     calls = []
 
-    def fake_run_progress(script, output_dir, expected, *, force):
+    def fake_run_progress(script, output_dir, expected, *, force, components=None):
         calls.append(force)
         return 0, ""  # ready immediately
 
@@ -220,7 +221,7 @@ def test_main_default_plugin_root(tmp_path, monkeypatch):
     # circuit the loop with a ready first round.
     monkeypatch.setattr(wsp, "_run_progress", lambda *a, **k: (0, ""))
     monkeypatch.setattr(wsp.time, "sleep", lambda s: None)
-    # Real repo has scripts/stride_progress.py, so the is_file() guard passes.
+    # Real repo has scripts/runtime/stride_progress.py, so the is_file() guard passes.
     rc = wsp.main([str(tmp_path), "2"])
     assert rc == 0
 
@@ -351,3 +352,13 @@ def test_live_wave_calls_select_this_waves_unstopped_analyzers(tmp_path, monkeyp
     monkeypatch.setattr(wsp.agent_lifecycle, "running_calls", lambda _out: calls)
 
     assert [call["agent_call_id"] for call in wsp._live_wave_calls(tmp_path, ["ci-cd"])] == ["a"]
+
+
+def test_an_analyzer_that_handed_back_on_its_last_turn_holds_no_wave(tmp_path, monkeypatch):
+    calls = [
+        {"component_id": "billing", "agent_call_id": "d", "handback_at": 1, "handback_at_turn_limit": True},
+        {"component_id": "billing", "agent_call_id": "e", "handback_at": int(time.time())},
+    ]
+    monkeypatch.setattr(wsp.agent_lifecycle, "running_calls", lambda _out: calls)
+
+    assert [call["agent_call_id"] for call in wsp._live_wave_calls(tmp_path, ["billing"])] == ["e"]

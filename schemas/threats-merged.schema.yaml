@@ -9,7 +9,24 @@ description: |
 
 type: object
 required: [version, generated_at, threats]
+$defs:
+  mechanism_location:
+    type: object
+    additionalProperties: false
+    required: [file, line]
+    properties:
+      file:
+        type: string
+        minLength: 1
+        maxLength: 512
+        not:
+          pattern: "^(?:/|[A-Za-z]:[\\\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)|\\\\"
+      line: {type: integer, minimum: 1}
 properties:
+  severity_policy_version:
+    description: Present on policy-normalized merged output; legacy input is normalized by the YAML producer before publication.
+    type: integer
+    const: 1
 
   version:
     const: 1
@@ -21,7 +38,7 @@ properties:
     # Incremental re-scan only. Union of every analyzed component's
     # `resolved_prior_findings[]` (stride.schema.yaml) — prior findings the
     # re-scan affirmatively confirmed FIXED. Consumed by the deterministic
-    # reconciler in build_threat_model_yaml.py to resolve (vs carry) a dropped
+    # reconciler in model/build_threat_model_yaml.py to resolve (vs carry) a dropped
     # prior threat. Optional; absent on full/first runs.
     type: array
     items:
@@ -69,6 +86,10 @@ properties:
         risk:
           type: string
           enum: [Critical, High, Medium, Low]
+        risk_before_policy:
+          description: Original analyst risk retained when a deterministic policy ceiling lowers individual risk; never a ranking input.
+          type: string
+          enum: [Critical, High, Medium, Low]
         owasp_llm_ids:
           type: array
           uniqueItems: true
@@ -109,6 +130,23 @@ properties:
           properties:
             file: { type: string }
             line: { type: [integer, "null"] }
+        mechanism_trace:
+          description: Source and sink evidence for a confirmed input-to-sink STRIDE finding; the sink repeats the primary evidence location.
+          type: object
+          additionalProperties: false
+          required: [input, sink, connection, control]
+          properties:
+            input: {$ref: "#/$defs/mechanism_location"}
+            sink: {$ref: "#/$defs/mechanism_location"}
+            connection: {type: string, minLength: 20, maxLength: 500}
+            control:
+              type: object
+              additionalProperties: false
+              required: [status, location, explanation]
+              properties:
+                status: {enum: [absent-at-sink, ineffective, bypassed]}
+                location: {$ref: "#/$defs/mechanism_location"}
+                explanation: {type: string, minLength: 20, maxLength: 500}
         boundary_refs:
           type: array
           maxItems: 2
@@ -167,7 +205,7 @@ properties:
             - architecture-coverage
             - threat-hypothesis
             - config-scan
-            # Static source-auth scanner output (source_auth_scanner.py →
+            # Static source-auth scanner output (analyzers/source_auth_scanner.py →
             # AUTHZ-001..008). Ingested by merge_threats.py:443 with file/line
             # evidence. Lock-step with _shared_sources.CODE_LEVEL_SOURCES and
             # threat-model.output.schema.yaml.
@@ -181,8 +219,8 @@ properties:
             # ratings.
             - configuration-defect
             # NOTE: `dep-scan` was removed in 2026-05. Supply-chain posture
-            # is surfaced as §7.11 control rows (emit_sca_practice.py) and
-            # meta-findings (emit_known_bad_libs.py + sca-practice), not as
+            # is surfaced as §7.11 control rows (model/emit_sca_practice.py) and
+            # meta-findings (model/emit_known_bad_libs.py + sca-practice), not as
             # per-CVE threats. Persisted threats from prior runs with
             # `source: dep-scan` are no longer valid — see CHANGELOG for
             # the migration path.
@@ -245,13 +283,24 @@ properties:
           # in effective_severity decisions (a refuted finding is not
           # elevated by compound-chain membership).
           # `carried-unverified-shallower-depth` — set by the deterministic
-          # incremental reconciler (build_threat_model_yaml.py) or the analyzer
+          # incremental reconciler (model/build_threat_model_yaml.py) or the analyzer
           # at reduced depth on a prior threat carried forward because the
           # current scan was too shallow to re-confirm it. Triage must NOT
           # elevate it; QA must NOT demand fresh evidence for it.
           type: [string, "null"]
           enum: [verified, verified-prior, refuted, ambiguous, unchecked,
                  carried-unverified-shallower-depth, null]
+        evidence_basis:
+          # How the `evidence_check` verdict was established, written with it
+          # (shared/_finding_state.record_evidence). `verified` splits into
+          # `llm-verified` (a verifier read the code), `pointer-resolved` (the
+          # deterministic check found the cited line, which confirms nothing)
+          # and `absence-verified` (a re-run check still finds it missing).
+          # Only llm-verified, absence-verified and verified-prior confirm a
+          # finding. Absent on runs written before the field existed.
+          type: [string, "null"]
+          enum: [llm-verified, pointer-resolved, absence-verified, verified-prior,
+                 refuted, ambiguous, unchecked, carried-unverified-shallower-depth, null]
         evidence_tier:
           # P1 (weakness-class evidence model): the evidence BASIS of the
           # threat — distinct from `evidence_check` (verification state); do
@@ -259,10 +308,21 @@ properties:
           # CVSS-eligible, appears as a weakness instances[] entry;
           # `insecure-practice` = definite bad-practice site, exploit chain
           # unproven, no CVSS, folded as the weakness's practice_evidence[].
-          # Default (applied by merge_threats.py): confirmed-exploitable when a
+          # Default (applied by model/merge_threats.py): confirmed-exploitable when a
           # sink is proven, else insecure-practice.
           type: [string, "null"]
           enum: [confirmed-exploitable, insecure-practice, null]
+        dispatch_component:
+          # Raw intake (FE-22): the component the producing analysis worked
+          # under or guessed from a path. A hint — `component_id` is derived
+          # from it by model/finding_intake.py until the finalize pass owns it.
+          type: string
+          minLength: 1
+        claimed_tier:
+          # Raw intake (FE-22): the producer's evidence-basis claim, before the
+          # verification verdict is applied. `evidence_tier` is derived from it
+          # by model/finding_intake.py until the finalize pass owns it.
+          enum: [confirmed-exploitable, insecure-practice]
         evidence_flags:
           # Annotated by the appsec-evidence-verifier. Parallel to
           # triage_flags. Each entry carries a flag_id (EV-NNN),
@@ -272,14 +332,14 @@ properties:
           type: array
         controls_absent_evidence:
           # Passed through from .stride-*.json. Records the absence-grep
-          # that supports a "control X is not present" claim. qa_checks.py
+          # that supports a "control X is not present" claim. validators/qa_checks.py
           # re-runs each grep deterministically during the pre-pass and
           # flags drift via evidence_integrity.issues. See stride.schema.
           type: [array, "null"]
         cvss_v4:
           # Optional CVSS v4.0 score. Eligibility (which threats may carry
           # this field) is enforced as a post-check in
-          # validate_intermediate.py against
+          # validators/validate_intermediate.py against
           # data/cvss-eligible-cwes.yaml; the structural shape is
           # defined here.
           oneOf:
@@ -309,9 +369,26 @@ properties:
                   type: [string, "null"]
                   enum: ["3.1", null]
 
+  actor_attribution_corrections:
+    description: Findings whose actor attribution data/actor-attribution-rules.yaml changed after the merge; absent when none changed.
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required: [finding, removed, added, actor_ids]
+      properties:
+        finding: {type: string, pattern: "^T-\\d{3,}$"}
+        removed: {type: array, items: {type: string, pattern: "^ACT-[A-Z]-\\d+$"}}
+        added: {type: array, items: {type: string, pattern: "^ACT-[A-Z]-\\d+$"}}
+        actor_ids: {type: array, items: {type: string, pattern: "^ACT-[A-Z]-\\d+$"}}
+        superseded:
+          description: Internet actors dropped because a less privileged internet actor already exploits the finding.
+          type: array
+          items: {type: string, pattern: "^ACT-[A-Z]-\\d+$"}
+
   weaknesses:
     # P1 (weakness-class evidence model) — the unified register's PARENT rows.
-    # Produced by the merge_threats.py reconciler: grouping key
+    # Produced by the model/merge_threats.py reconciler: grouping key
     # (weakness_class × scope), with the weakness as the heading and confirmed
     # threats folded in as instances[] (proposal §4a/§4d-bis). Arch-coverage
     # design signals (formerly threat_hypotheses[]) collapse into the matching
@@ -420,7 +497,7 @@ properties:
               poc_hint: { type: [string, "null"] }
 
 # Additional invariants enforced by Python post-checks in
-# validate_intermediate.py (not expressible in Draft 2020-12):
+# validators/validate_intermediate.py (not expressible in Draft 2020-12):
 #   - t_id values are unique within threats[]
 #   - t_id values form a contiguous sequence starting at T-001
 #   - cvss_v4 eligibility per source/cwe/evidence (see cvss-eligible-cwes.yaml):

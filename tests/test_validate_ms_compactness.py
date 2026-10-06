@@ -1,4 +1,4 @@
-"""Unit tests for scripts/validate_ms_compactness.py."""
+"""Unit tests for scripts/validators/validate_ms_compactness.py."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ import re
 from pathlib import Path
 
 import pytest
-import validate_fragment
-import validate_ms_compactness as mod
+import validators.validate_fragment as validate_fragment
+import validators.validate_ms_compactness as mod
 
 # --- helpers ---------------------------------------------------------------
 
@@ -85,7 +85,7 @@ def test_check_verdict_rejects_technical_detail_and_multiple_sentences(tmp_path)
     v: list[str] = []
     mod._check_verdict(tmp_path / ".fragments" / "ms-verdict.json", v)
     assert any("opening contains technical detail 'JWT'" in issue for issue in v)
-    assert any("closing contains technical detail 'SQL'" in issue for issue in v)
+    assert any("closing names an attack 'SQL'" in issue for issue in v)
     assert any("title contains technical detail 'JWT'" in issue for issue in v)
     assert any("body has 2 sentences" in issue for issue in v)
     assert any("body contains technical detail 'middleware'" in issue for issue in v)
@@ -93,7 +93,7 @@ def test_check_verdict_rejects_technical_detail_and_multiple_sentences(tmp_path)
 
 def test_check_verdict_body_may_name_the_weakness_class(tmp_path):
     bodies = [
-        "Database query injection (SQL injection) in the product search lets anyone dump every customer record.",
+        "SQL injection in the product search lets anyone dump every customer record.",
         "Stored cross-site scripting (XSS) in product reviews lets an attacker hijack any visitor's session.",
         "XML external entity injection (XXE) in the invoice import lets any customer read server files.",
         "Missing ownership checks (IDOR) let any signed-in customer read another customer's orders.",
@@ -105,20 +105,34 @@ def test_check_verdict_body_may_name_the_weakness_class(tmp_path):
     assert v == []
 
 
-def test_check_verdict_keeps_weakness_class_out_of_outcome_fields(tmp_path):
+def test_check_verdict_opening_and_titles_may_name_the_weakness_class(tmp_path):
     _write_verdict(
         tmp_path,
         {
             "opening": "Not production-ready. SQL injection exposes every customer account.",
-            "closing": "Fix the XSS before release.",
+            "closing": "Any customer data processed by this deployment must be treated as already breached.",
             "bullets": [{"title": "IDOR on orders", "body": "Anyone can read another customer's orders."}],
         },
     )
     v: list[str] = []
     mod._check_verdict(tmp_path / ".fragments" / "ms-verdict.json", v)
-    assert any("opening contains technical detail 'SQL'" in issue for issue in v)
-    assert any("closing contains technical detail 'XSS'" in issue for issue in v)
-    assert any("title contains technical detail 'IDOR'" in issue for issue in v)
+    assert v == []
+
+
+@pytest.mark.parametrize(
+    ("closing", "term"),
+    [
+        ("Fix the XSS before release.", "XSS"),
+        ("Fix database injection and mass assignment first.", "injection"),
+        ("Then address stored scripting and token forgery.", "scripting"),
+        ("Remove the hard-coded wallet phrase next.", "hard-coded"),
+    ],
+)
+def test_check_verdict_closing_names_no_attack_even_paraphrased(tmp_path, closing, term):
+    _write_verdict(tmp_path, {"closing": closing})
+    v: list[str] = []
+    mod._check_verdict(tmp_path / ".fragments" / "ms-verdict.json", v)
+    assert v and f"closing names an attack '{term}'" in v[0]
 
 
 def test_check_verdict_body_still_rejects_technology_terms(tmp_path):
@@ -190,7 +204,7 @@ _CLEAN_VERDICT = {
 
 
 def test_main_fragment_absent_passes(tmp_path, capsys, monkeypatch):
-    monkeypatch.setattr("sys.argv", ["validate_ms_compactness.py", str(tmp_path)])
+    monkeypatch.setattr("sys.argv", ["validators/validate_ms_compactness.py", str(tmp_path)])
     rc = mod.main()
     assert rc == 0
     assert "PASS" in capsys.readouterr().out
@@ -198,7 +212,7 @@ def test_main_fragment_absent_passes(tmp_path, capsys, monkeypatch):
 
 def test_main_clean_passes(tmp_path, capsys, monkeypatch):
     _write_verdict(tmp_path, _CLEAN_VERDICT)
-    monkeypatch.setattr("sys.argv", ["validate_ms_compactness.py", str(tmp_path)])
+    monkeypatch.setattr("sys.argv", ["validators/validate_ms_compactness.py", str(tmp_path)])
     rc = mod.main()
     assert rc == 0
     assert "PASS" in capsys.readouterr().out
@@ -207,7 +221,7 @@ def test_main_clean_passes(tmp_path, capsys, monkeypatch):
 def test_main_violation_fails(tmp_path, capsys, monkeypatch):
     long_opening = " ".join(["word"] * (mod.VERDICT_OPENING_MAX_WORDS + 5))
     _write_verdict(tmp_path, {"opening": long_opening})
-    monkeypatch.setattr("sys.argv", ["validate_ms_compactness.py", str(tmp_path)])
+    monkeypatch.setattr("sys.argv", ["validators/validate_ms_compactness.py", str(tmp_path)])
     rc = mod.main()
     assert rc == 1
     out = capsys.readouterr().out
@@ -218,7 +232,7 @@ def test_main_violation_fails(tmp_path, capsys, monkeypatch):
 def test_main_malformed_fragment_does_not_block(tmp_path, capsys, monkeypatch):
     (tmp_path / ".fragments").mkdir()
     (tmp_path / ".fragments" / "ms-verdict.json").write_text("{ broken", encoding="utf-8")
-    monkeypatch.setattr("sys.argv", ["validate_ms_compactness.py", str(tmp_path)])
+    monkeypatch.setattr("sys.argv", ["validators/validate_ms_compactness.py", str(tmp_path)])
     rc = mod.main()
     assert rc == 0  # parse error warned, not blocked
     err = capsys.readouterr()
@@ -289,7 +303,7 @@ def _ai_exposure(components: list) -> dict:
 
 
 def _run(tmp_path: Path, monkeypatch) -> int:
-    monkeypatch.setattr("sys.argv", ["validate_ms_compactness.py", str(tmp_path)])
+    monkeypatch.setattr("sys.argv", ["validators/validate_ms_compactness.py", str(tmp_path)])
     return mod.main()
 
 
@@ -319,14 +333,22 @@ def test_a_component_slug_compose_repairs_is_not_a_violation(tmp_path, capsys, m
     (tmp_path / "threat-model.yaml").write_text(
         "components:\n  - id: billing-api\n  - id: web-client\n", encoding="utf-8"
     )
-    path = _write(tmp_path, "ms-ai-exposure.json", _ai_exposure(["web-client"]))
+    path = _write(tmp_path, "ms-anti-patterns.json", _anti_patterns(_prose(60), ["web-client"]))
     before = path.read_bytes()
     assert _run(tmp_path, monkeypatch) == 0
     assert path.read_bytes() == before, "the renderer's gate must not rewrite its fragments"
 
-    _write(tmp_path, "ms-ai-exposure.json", _ai_exposure(["no-such-component"]))
+    _write(tmp_path, "ms-anti-patterns.json", _anti_patterns(_prose(60), ["no-such-component"]))
     assert _run(tmp_path, monkeypatch) == 1
-    assert "ms-ai-exposure.json: ai_risks/0/affected_components/0" in capsys.readouterr().out
+    assert "ms-anti-patterns.json: anti_patterns/0/affected_components/0" in capsys.readouterr().out
+
+
+def test_the_renderer_gate_does_not_judge_the_model_owned_ai_fragment(tmp_path, monkeypatch):
+    """ms-ai-exposure.json is generated from the model; the MS renderer cannot
+    re-author it, so its gate leaves it to the pre-render gate."""
+    (tmp_path / "threat-model.yaml").write_text("components:\n  - id: web-client\n", encoding="utf-8")
+    _write(tmp_path, "ms-ai-exposure.json", _ai_exposure(["no-such-component"]))
+    assert _run(tmp_path, monkeypatch) == 0
 
 
 @pytest.mark.parametrize(

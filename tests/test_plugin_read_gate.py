@@ -1,7 +1,7 @@
-"""Tests for scripts/plugin_read_gate.py.
+"""Tests for scripts/runtime/plugin_read_gate.py.
 
 The gate exists because a prompt-level rule did not hold: the orchestrator read
-`walkthrough_renderer.py` mid-run, filled its context, and compacted twice. So
+`renderers/walkthrough_renderer.py` mid-run, filled its context, and compacted twice. So
 the cases that matter are the ones a prompt would miss — a read reached through
 `..` or a symlink — plus the boundary that keeps the pipeline working: the
 directories it is *supposed* to read must stay open.
@@ -19,9 +19,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-import plugin_read_gate as gate  # noqa: E402
+import runtime.plugin_read_gate as gate  # noqa: E402
 
-SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "plugin_read_gate.py"
+SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "runtime/plugin_read_gate.py"
 
 
 def _payload(path: str, tool: str = "Read", event: str = "PreToolUse") -> dict:
@@ -40,7 +40,7 @@ def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 class TestDenies:
     def test_reading_an_implementation_file_is_blocked(self, root: Path):
-        response = gate.decide(_payload(str(root / "scripts" / "walkthrough_renderer.py")))
+        response = gate.decide(_payload(str(root / "scripts" / "renderers/walkthrough_renderer.py")))
         assert response is not None
         decision = response["hookSpecificOutput"]
         assert decision["permissionDecision"] == "deny"
@@ -48,14 +48,15 @@ class TestDenies:
 
     @pytest.mark.parametrize("tool", ["Read", "Grep", "Glob"])
     def test_every_read_shaped_tool_is_covered(self, root: Path, tool: str):
-        assert gate.decide(_payload(str(root / "scripts" / "qa_checks.py"), tool=tool)) is not None
+        assert gate.decide(_payload(str(root / "scripts" / "validators/qa_checks.py"), tool=tool)) is not None
 
     def test_a_traversal_path_cannot_walk_back_in(self, root: Path):
-        sneaky = str(root / "agents" / ".." / "scripts" / "qa_checks.py")
+        sneaky = str(root / "agents" / ".." / "scripts" / "validators/qa_checks.py")
         assert gate.decide(_payload(sneaky)) is not None
 
     def test_a_symlink_into_scripts_cannot_evade_the_check(self, root: Path):
-        target = root / "scripts" / "compose_threat_model.py"
+        target = root / "scripts" / "renderers/compose_threat_model.py"
+        target.parent.mkdir()
         target.write_text("x\n", encoding="utf-8")
         link = root / "agents" / "shortcut.py"
         link.symlink_to(target)
@@ -75,13 +76,13 @@ class TestAllows:
 
     def test_developer_mode_lifts_the_gate(self, root: Path, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("APPSEC_PLUGIN_DEV", "1")
-        assert gate.decide(_payload(str(root / "scripts" / "qa_checks.py"))) is None
+        assert gate.decide(_payload(str(root / "scripts" / "validators/qa_checks.py"))) is None
 
     def test_a_write_tool_is_not_this_gate_s_business(self, root: Path):
-        assert gate.decide(_payload(str(root / "scripts" / "qa_checks.py"), tool="Edit")) is None
+        assert gate.decide(_payload(str(root / "scripts" / "validators/qa_checks.py"), tool="Edit")) is None
 
     def test_a_non_pretooluse_event_is_ignored(self, root: Path):
-        payload = _payload(str(root / "scripts" / "qa_checks.py"), event="PostToolUse")
+        payload = _payload(str(root / "scripts" / "validators/qa_checks.py"), event="PostToolUse")
         assert gate.decide(payload) is None
 
 
@@ -109,7 +110,7 @@ def test_end_to_end_through_the_process(root: Path):
     env.pop("APPSEC_PLUGIN_DEV", None)
     result = subprocess.run(
         [sys.executable, str(SCRIPT)],
-        input=json.dumps(_payload(str(root / "scripts" / "qa_checks.py"))),
+        input=json.dumps(_payload(str(root / "scripts" / "validators/qa_checks.py"))),
         capture_output=True,
         text=True,
         env=env,

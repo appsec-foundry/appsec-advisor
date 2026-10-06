@@ -1,4 +1,4 @@
-"""Tests for scripts/_url_guard.py — SSRF defence helpers."""
+"""Tests for scripts/shared/_url_guard.py — SSRF defence helpers."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import _url_guard as guard  # noqa: E402
+import shared._url_guard as guard  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

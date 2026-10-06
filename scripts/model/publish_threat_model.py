@@ -1,0 +1,415 @@
+#!/usr/bin/env python3
+"""model/publish_threat_model.py — pre-flight checks and .gitignore patching for
+/appsec-advisor:publish-threat-model.
+
+Exit codes:
+  0  — all checks passed (or --check-only with no blockers)
+  1  — blocker found (secrets detected, no threat-model.yaml, etc.)
+  2  — bad arguments / missing required files
+  3  — git operation failed
+"""
+
+from __future__ import annotations
+
+# Direct CLI execution must resolve the same packages as imports from scripts/.
+import sys as _sys
+from pathlib import Path as _Path
+
+if not __package__:
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
+
+
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+from validators.secret_scan import scan_file as _scan_file_for_secrets
+
+# ---------------------------------------------------------------------------
+# Publishable files — tiers
+# ---------------------------------------------------------------------------
+
+# Always published when present
+TIER1 = ["threat-model.md", "threat-model.yaml"]
+
+# Published automatically when present (no flag needed). figure1.svg is the
+# hand-built Figure-1 image that threat-model.md references; without it the
+# published Markdown shows a broken image, so it travels with the document.
+TIER2 = [
+    "threat-model.sarif.json",
+    "threat-model.threatdragon.json",
+    "threat-model.pdf",
+    "figure1.svg",
+    "figure1-detail.svg",
+    "threat-model.figure1.svg",
+    "threat-model.figure1-detail.svg",
+    # Figure 2 and the supply-chain Figure 1b are referenced from the Management Summary.
+    "figure1b.svg",
+    "figure2.svg",
+    "threat-model.figure1b.svg",
+    "threat-model.figure2.svg",
+    # §2 detail figures (Figures 3–4) that threat-model.md references.
+    *(f"{stem}figure{n}.svg" for n in range(3, 5) for stem in ("", "threat-model.")),
+    # Dark-background variants the report's <picture> elements select (figure_theme.dark_basename).
+    *(f"{stem}figure{n}-dark.svg" for n in ("1", "1b", "2", "3", "4") for stem in ("", "threat-model.")),
+    ".architect-review.md",
+]
+
+# Never published — get explicit "never publish" exceptions in .gitignore
+NEVER_PUBLISH = [
+    ".plugin-issue-*.json",
+    ".plugin-issue-repro/",
+    "pentest-tasks.yaml",
+    ".dep-scan.json",
+    ".threat-modeling-context.md",
+    ".recon-summary.md",
+    ".triage-flags.json",
+    ".threats-merged.json",
+    ".stride-*.json",
+]
+
+# Secret-leak detection lives in scripts/validators/secret_scan.py and is shared with
+# the per-run QA gate (validators/qa_checks.py → check_unmasked_secrets).
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _run(cmd: list[str], cwd: Path, check: bool = True) -> subprocess.CompletedProcess:
+    return subprocess.run(cmd, capture_output=True, text=True, cwd=str(cwd), check=check)
+
+
+def _git_root(path: Path) -> Path | None:
+    try:
+        r = _run(["git", "rev-parse", "--show-toplevel"], cwd=path, check=False)
+        if r.returncode == 0:
+            return Path(r.stdout.strip())
+    except FileNotFoundError:
+        pass
+    return None
+
+
+def check_repo_visibility(repo_root: Path) -> tuple[bool, str]:
+    """Returns (is_public, message). Non-fatal — warn only."""
+    try:
+        r = _run(["gh", "repo", "view", "--json", "isPrivate", "--jq", ".isPrivate"], cwd=repo_root, check=False)
+        if r.returncode == 0:
+            is_private = r.stdout.strip().lower() == "true"
+            if not is_private:
+                return True, (
+                    "⚠  This repository appears to be PUBLIC. Publishing a threat model\n"
+                    "   to a public repo exposes vulnerability details to attackers.\n"
+                    "   Proceed only if you have reviewed the report for sensitive content."
+                )
+            return False, ""
+    except FileNotFoundError:
+        pass
+    return False, ""  # gh not available — skip silently
+
+
+# Published as bytes — reading them as text yields noise, not evidence.
+_BINARY_SUFFIXES = {".pdf"}
+
+
+def scan_for_secrets(path: Path) -> list[str]:
+    """Return formatted warning lines for any unmasked secret hits.
+
+    Delegates to ``secret_scan.scan_file``. Properly masked snippets
+    (``AIza****``, ``**** (12 chars)``, ``[REDACTED]``) are ignored. The file
+    name travels with each hit because the pre-flight scans every publishable
+    file, not only the report.
+    """
+    return [f"   {path.name} — possible secret near: {hit.render()}" for hit in _scan_file_for_secrets(path)]
+
+
+def patch_gitignore(gitignore_path: Path, output_dir: Path, files_to_publish: list[Path]) -> bool:
+    """Insert negation exceptions into .gitignore for published files.
+
+    Idempotent — re-running adds no duplicates. Returns True when the file
+    was modified, False when it was already up-to-date.
+    """
+    text = gitignore_path.read_text() if gitignore_path.exists() else ""
+
+    # Address the directory the run actually used. This was hardcoded to
+    # "docs/security", so a run with --output wrote negations for a path that
+    # did not exist while the real output directory stayed ignored, leaving no
+    # way to publish at all. Harmless before the output directory was ignored
+    # by default, because then nothing needed lifting out.
+    try:
+        rel = output_dir.resolve().relative_to(gitignore_path.parent.resolve()).as_posix()
+    except ValueError:
+        rel = "docs/security"
+    # An output directory that IS the repository root leaves no prefix; "./name"
+    # is not a pattern git matches the way it reads.
+    prefix = "" if rel in ("", ".") else f"{rel}/"
+
+    # Collect names already negated (strip trailing comments like "# published …")
+    existing_negations = set()
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(f"!{prefix}") or stripped.startswith(f"! {prefix}"):
+            # normalize: drop leading "!" and any trailing "  # …" comment
+            base = stripped.lstrip("!").split("#")[0].strip()
+            existing_negations.add(base)
+            existing_negations.add(f"!{base}")
+
+    new_lines: list[str] = []
+    from datetime import date
+
+    today = date.today().isoformat()
+
+    # Comments must stand on their own line. git only treats "#" as a comment
+    # at the start of a line, so a trailing "  # published <date>" became part
+    # of the pattern and the negation matched nothing — the deliverable stayed
+    # ignored and publishing silently did nothing. This went unnoticed while no
+    # base rule for the directory existed, because then nothing was ignored in
+    # the first place.
+    pending = [f"!{prefix}{f.name}" for f in files_to_publish if f"{prefix}{f.name}" not in existing_negations]
+    if pending:
+        new_lines.append(f"# published {today}")
+        new_lines.extend(pending)
+
+    # Never-publish explicit guards (add once, idempotent)
+    never_marker = "# appsec-advisor: never-publish guards (do not remove)"
+    if never_marker not in text:
+        new_lines.append("")
+        new_lines.append(never_marker)
+        for name in NEVER_PUBLISH:
+            new_lines.append(f"{prefix}{name}")
+
+    if not new_lines:
+        return False
+
+    # Insert after the base ignore rule for the output directory
+    lines = text.splitlines()
+    insert_idx = None
+    for i, line in enumerate(lines):
+        if line.strip() in (f"{rel}/", f"{rel}/**", f"{rel}/*"):
+            insert_idx = i + 1
+            break
+
+    if insert_idx is not None:
+        lines[insert_idx:insert_idx] = new_lines
+    else:
+        lines += [""] + new_lines
+
+    gitignore_path.write_text("\n".join(lines) + "\n")
+    return True
+
+
+def extract_commit_metadata(yaml_path: Path) -> dict:
+    """Pull version + threat counts + top-2 finding titles from threat-model.yaml."""
+    try:
+        import yaml  # type: ignore
+
+        data = yaml.safe_load(yaml_path.read_text())
+    except Exception:
+        return {}
+
+    meta = data.get("meta", {})
+    version = meta.get("version", "")
+
+    threats = data.get("threats", []) or []
+    counts: dict[str, int] = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0}
+    top: list[str] = []
+    for t in threats:
+        sev = t.get("risk", t.get("severity", ""))
+        if sev in counts:
+            counts[sev] += 1
+        if len(top) < 2 and sev in ("Critical", "High"):
+            tid = t.get("id", t.get("t_id", ""))
+            title = t.get("title", "")
+            if tid and title:
+                top.append(f"{tid} {title[:60]}")
+
+    return {"version": version, "counts": counts, "top": top, "total": len(threats)}
+
+
+def build_commit_message(output_dir: Path, yaml_path: Path, published: list[Path]) -> str:
+    meta = extract_commit_metadata(yaml_path)
+    counts = meta.get("counts", {})
+    total = meta.get("total", 0)
+    version = meta.get("version", "")
+    top = meta.get("top", [])
+
+    ver_str = f" v{version}" if version else ""
+    c = counts.get("Critical", 0)
+    h = counts.get("High", 0)
+    m = counts.get("Medium", 0)
+    lo = counts.get("Low", 0)
+
+    subject = f"security: publish threat model{ver_str} ({total} threats: {c} Critical, {h} High)"
+
+    body_lines = [
+        "",
+        "Components analyzed: see threat-model.yaml",
+        f"Severity breakdown : Critical={c}, High={h}, Medium={m}, Low={lo}",
+    ]
+    if top:
+        body_lines.append("Top findings       :")
+        for t in top:
+            body_lines.append(f"  - {t}")
+
+    published_names = ", ".join(f.name for f in published)
+    body_lines.append(f"Published files    : {published_names}")
+    body_lines.append("")
+    body_lines.append("threat-model.yaml enables other repos to declare this service as a")
+    body_lines.append("dependency via docs/related-repos.yaml for cross-repo STRIDE analysis.")
+
+    return subject + "\n" + "\n".join(body_lines)
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Pre-flight checks and .gitignore patching for publishing a threat model."
+    )
+    parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--repo-root", required=True, type=Path)
+    parser.add_argument("--check-only", action="store_true", help="Run checks but do not modify .gitignore or commit")
+    parser.add_argument("--commit", action="store_true", help="Create a git commit after patching .gitignore")
+    parser.add_argument(
+        "--json", action="store_true", dest="json_out", help="Emit results as JSON (for skill consumption)"
+    )
+    args = parser.parse_args()
+
+    output_dir: Path = args.output_dir.resolve()
+    repo_root: Path = args.repo_root.resolve()
+
+    results: dict = {
+        "blockers": [],
+        "warnings": [],
+        "files_to_publish": [],
+        "gitignore_patched": False,
+        "committed": False,
+        "commit_message": "",
+    }
+
+    # --- Check threat-model.yaml exists (required for cross-repo consumption) ---
+    yaml_path = output_dir / "threat-model.yaml"
+    if not yaml_path.exists():
+        results["blockers"].append("threat-model.yaml not found — run /appsec-advisor:create-threat-model --yaml first")
+
+    md_path = output_dir / "threat-model.md"
+    if not md_path.exists():
+        results["blockers"].append("threat-model.md not found in output directory")
+
+    if results["blockers"]:
+        _print_results(results, args.json_out)
+        return 1
+
+    # --- Repo visibility check ---
+    is_public, vis_msg = check_repo_visibility(repo_root)
+    if vis_msg:
+        results["warnings"].append(vis_msg)
+
+    # --- Determine files to publish ---
+    files_to_publish: list[Path] = []
+    for name in TIER1:
+        p = output_dir / name
+        if p.exists():
+            files_to_publish.append(p)
+
+    for name in TIER2:
+        p = output_dir / name
+        if p.exists():
+            files_to_publish.append(p)
+
+    results["files_to_publish"] = [str(f) for f in files_to_publish]
+
+    # --- Secret scan ---
+    # Every publishable file, not just the report. The scan used to cover
+    # threat-model.md alone while threat-model.yaml, the SARIF export and
+    # .architect-review.md were published unscanned — and those carry the same
+    # evidence snippets the report does, so a credential in one of them reached
+    # git with the pre-flight reporting no blockers. Runs after the publish set
+    # is known so the two can never drift apart again.
+    secret_hits: list[str] = []
+    for candidate in files_to_publish:
+        if candidate.suffix.lower() in _BINARY_SUFFIXES:
+            continue
+        secret_hits.extend(scan_for_secrets(candidate))
+    if secret_hits:
+        results["blockers"].append(
+            "Possible secrets detected in files staged for publication:\n" + "\n".join(secret_hits) + "\n"
+            "   Review and redact before publishing."
+        )
+
+    if results["blockers"]:
+        _print_results(results, args.json_out)
+        return 1
+
+    if args.check_only:
+        _print_results(results, args.json_out)
+        return 0
+
+    # --- Find .gitignore ---
+    git_root = _git_root(output_dir) or repo_root
+    gitignore_path = git_root / ".gitignore"
+
+    # --- Patch .gitignore ---
+    patched = patch_gitignore(gitignore_path, output_dir, files_to_publish)
+    results["gitignore_patched"] = patched
+
+    # --- Commit ---
+    if args.commit:
+        commit_msg = build_commit_message(output_dir, yaml_path, files_to_publish)
+        results["commit_message"] = commit_msg
+        try:
+            stage_files = [str(gitignore_path)] + [str(f) for f in files_to_publish]
+            _run(["git", "add"] + stage_files, cwd=git_root)
+            _run(["git", "commit", "-m", commit_msg], cwd=git_root)
+            results["committed"] = True
+        except subprocess.CalledProcessError as e:
+            results["blockers"].append(f"git commit failed: {e.stderr.strip()}")
+            _print_results(results, args.json_out)
+            return 3
+
+    _print_results(results, args.json_out)
+    return 0
+
+
+def _print_results(results: dict, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(results, indent=2))
+        return
+
+    if results["blockers"]:
+        print("\n✗ Publish blocked:\n")
+        for b in results["blockers"]:
+            print(f"  {b}")
+        print()
+        return
+
+    if results["warnings"]:
+        for w in results["warnings"]:
+            print(f"\n{w}")
+
+    files = results["files_to_publish"]
+    if files:
+        print("\nFiles to publish:")
+        for f in files:
+            print(f"  {f}")
+
+    if results["gitignore_patched"]:
+        print("\n✓ .gitignore updated with negation exceptions")
+    else:
+        print("\n✓ .gitignore already up-to-date")
+
+    if results["committed"]:
+        print("✓ Committed to git")
+        if results["commit_message"]:
+            subject = results["commit_message"].splitlines()[0]
+            print(f"  {subject}")
+    print()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

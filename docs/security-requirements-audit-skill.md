@@ -1,4 +1,4 @@
-# Requirements Audit
+# Requirements audit
 
 `/appsec-advisor:audit-security-requirements` grades a repository against a security requirements catalog. It is narrower than a full threat model and can be used for pull-request gates or audit preparation.
 
@@ -92,7 +92,7 @@ The audit needs a requirements catalog in YAML format.
 
 | Where | How |
 |-------|-----|
-| Internal pages (Confluence, Antora, HTML) | Convert them with `scripts/harvest_requirements.py`; see the [harvester guide](harvester.md) |
+| Internal pages (Confluence, Antora, HTML) | Convert them with `scripts/requirements/harvest_requirements.py`; see the [harvester guide](harvester.md) |
 | Reference baseline | Adapt `data/appsec-requirements-fallback.yaml` and publish it over HTTP or a raw Git URL |
 | Local repo file | Drop `docs/security/requirements.yaml` into the repo |
 | Packaged org profile | Included in your organization's plugin and selected automatically |
@@ -131,7 +131,7 @@ Minimum contract: a YAML mapping with a `categories[]` array, each category and 
 Invalid structure, such as a downloaded 404 page or truncated file, stops the run. Missing recommended fields and duplicate IDs produce warnings. Validate a catalog with:
 
 ```text
-python3 scripts/requirements_state.py --validate path/to/catalog.yaml [--strict]
+python3 scripts/requirements/requirements_state.py --validate path/to/catalog.yaml [--strict]
 ```
 
 The harvester validates its output the same way.
@@ -159,7 +159,7 @@ The command accepts these flags:
 | `--demo` | Audit against the packaged example catalog; report is stamped **DEMO** |
 | `--status` | Show which requirements would be used (source, date, count, freshness), then exit |
 | `--clear-requirements` | Forget the remembered source and delete the cached catalog, then exit |
-| `<CATEGORY_FILTER>` | Grade only requirements whose ID/category matches (e.g. `SEC-AUTH`, `AUTH`) — narrows scope; an unfiltered run grades the whole catalog |
+| `<CATEGORY_FILTER>` | Grade requirements whose ID or category matches (e.g. `SEC-AUTH`, `AUTH`). Without a filter, grade the whole catalog. |
 | `--org-profile <path>` / `--preset <name>` / `--no-org-profile` | Control org-profile source resolution |
 | `--md` / `--pdf` / `--json` | Save the report as Markdown / PDF / JSON (`--pdf` also writes the Markdown it is converted from; needs pandoc + weasyprint) |
 | `--save` | Save all formats (`--md`, `--pdf`, `--json`) |

@@ -1,7 +1,7 @@
 """Drift-guard tests for the sonnet-economy routing tier.
 
 Pins the per-depth × per-agent model assignment so future edits to
-``scripts/resolve_config.py → EXTENDED_MODEL_MATRIX`` cannot silently
+``scripts/runtime/resolve_config.py → EXTENDED_MODEL_MATRIX`` cannot silently
 drift away from the documented routing policy.
 
 Routing policy (verified against agent specs). At quick / thorough every
@@ -43,7 +43,7 @@ import pytest
 def _load_resolver():
     spec = importlib.util.spec_from_file_location(
         "_rc",
-        Path(__file__).parent.parent / "scripts" / "resolve_config.py",
+        Path(__file__).parent.parent / "scripts" / "runtime/resolve_config.py",
     )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

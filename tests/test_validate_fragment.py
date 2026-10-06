@@ -1,6 +1,6 @@
-"""Unit tests for scripts/validate_fragment.py.
+"""Unit tests for scripts/validators/validate_fragment.py.
 
-validate_fragment.py is a hard gate: it runs between LLM fragment output and
+validators/validate_fragment.py is a hard gate: it runs between LLM fragment output and
 the renderer. These tests verify the CLI contract (exit codes, stdout/stderr)
 and the FRAGMENT_SCHEMAS registry directly.
 """
@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "validate_fragment.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "validators/validate_fragment.py"
 SCHEMAS_DIR = REPO_ROOT / "schemas" / "fragments"
 
 
@@ -26,7 +26,7 @@ def _load_module(name: str, path: Path):
     return module
 
 
-vf = _load_module("validate_fragment", SCRIPT_PATH)
+vf = _load_module("validators.validate_fragment", SCRIPT_PATH)
 
 
 def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -355,6 +355,75 @@ def test_data_flow_repo_gate_rejects_missing_file_and_line(tmp_path: Path):
     assert "line 2 exceeds" in result.stderr
 
 
+def _two_flows(first_label: str, second_label: str) -> dict:
+    data = _data_flows([{"file": "routes/login.ts", "line": 2}])
+    second = dict(data["data_flows"][0], id="df-002", label=second_label)
+    data["data_flows"][0]["label"] = first_label
+    data["data_flows"].append(second)
+    return data
+
+
+def test_one_self_check_reports_every_schema_violation(tmp_path: Path):
+    """An agent fixes what one run reports; a first-error check cost a turn per violation."""
+    frag = tmp_path / ".data-flows.json"
+    frag.write_text(json.dumps(_two_flows("x" * 130, "y" * 125)), encoding="utf-8")
+
+    result = _run(["data-flows", str(frag)])
+
+    assert result.returncode == 1
+    assert "schema violation at data_flows/0/label" in result.stderr
+    assert "schema violation at data_flows/1/label" in result.stderr
+
+
+def test_schema_violations_of_different_kinds_arrive_in_document_order(tmp_path: Path):
+    data = _two_flows("Session token", "Profile read")
+    data["data_flows"][1]["protocol"] = 7
+    data["component_inventory_fingerprint"] = "md5:abc"
+    for index in range(10, 12):
+        data["data_flows"].append(dict(data["data_flows"][0], id=f"df-{index:03d}", label="z" * 121))
+    frag = tmp_path / "flows.json"
+    frag.write_text(json.dumps(data), encoding="utf-8")
+
+    result = _run(["data-flows", str(frag)])
+
+    places = [line.split(" at ", 1)[1].split(":", 1)[0] for line in result.stderr.splitlines()]
+    assert places == [
+        "component_inventory_fingerprint",
+        "data_flows/1/protocol",
+        "data_flows/2/label",
+        "data_flows/3/label",
+    ]
+
+
+def test_repository_and_relational_violations_arrive_in_the_same_run(tmp_path: Path, monkeypatch, capsys):
+    repo = tmp_path / "repo"
+    (repo / "routes").mkdir(parents=True)
+    (repo / "routes" / "login.ts").write_text("only\n", encoding="utf-8")
+    frag = tmp_path / ".data-flows.json"
+    frag.write_text(json.dumps(_data_flows([{"file": "routes/login.ts", "line": 2}])), encoding="utf-8")
+    monkeypatch.setattr(vf, "fragment_invariant_errors", lambda *_args, **_kwargs: ["df-001: relational rule"])
+
+    assert vf.validate("data-flows", frag, repo_root=repo) == 1
+
+    err = capsys.readouterr().err
+    assert "line 2 exceeds" in err
+    assert "df-001: relational rule" in err
+
+
+def test_a_valid_fragment_still_passes_and_a_long_report_is_capped(tmp_path: Path, monkeypatch, capsys):
+    frag = tmp_path / ".data-flows.json"
+    frag.write_text(json.dumps(_two_flows("Session token", "Profile read")), encoding="utf-8")
+    assert vf.validate("data-flows", frag) == 0
+
+    monkeypatch.setattr(vf, "MAX_REPORTED_VIOLATIONS", 2)
+    monkeypatch.setattr(vf, "fragment_invariant_errors", lambda *_args, **_kwargs: [f"rule {n}" for n in range(5)])
+    capsys.readouterr()
+    assert vf.validate("data-flows", frag) == 1
+    err = capsys.readouterr().err.splitlines()
+    assert len(err) == 3
+    assert err[-1].endswith("3 more violation(s) not shown")
+
+
 # ---------------------------------------------------------------------------
 # In-process tests (drive functions directly for coverage of error branches)
 # ---------------------------------------------------------------------------
@@ -623,7 +692,7 @@ def test_repair_plan_is_actionable_on_schema_violation(tmp_path: Path):
 
 
 def test_repair_plan_not_actionable_when_only_required_fragments_missing(tmp_path: Path):
-    """Missing required fragments are owned by pregenerate_fragments.py — the
+    """Missing required fragments are owned by renderers/pregenerate_fragments.py — the
     fixer must not hand-author them, so the plan stays non-actionable."""
     frag = tmp_path / ".fragments"
     frag.mkdir()
@@ -661,7 +730,7 @@ def test_repair_plan_only_written_when_flag_passed(tmp_path: Path):
 
 
 def test_repair_plan_shares_composes_attempt_counter(tmp_path: Path):
-    """The gate and compose_threat_model.py write the SAME plan file, so the
+    """The gate and renderers/compose_threat_model.py write the SAME plan file, so the
     three-attempt cap has to count both producers. A gate that reset the
     counter would hand the repair agent an unbounded loop."""
     frag = _complete_fragment_set(tmp_path)
@@ -737,7 +806,7 @@ def test_client_side_capable_engines_are_not_on_the_deny_list():
 def test_tier_contradiction_fails_the_cli_gate(tmp_path):
     """The check must be reachable from the real CLI, not just importable.
 
-    `scripts/canonicalize_component_id.py` is the cautionary case: fully
+    `scripts/model/canonicalize_component_id.py` is the cautionary case: fully
     implemented and unit-tested, but called from nowhere in the pipeline. A
     validator nothing invokes protects nothing, so this drives the actual
     entry point and asserts the run stops.
@@ -774,7 +843,7 @@ def test_tier_contradiction_fails_the_cli_gate(tmp_path):
 # compose_threat_model repairs that before it validates. This gate runs FIRST
 # and did not, so it hard-failed fragments compose accepts and consumed both
 # repair retries while a direct compose run succeeded. Both now share
-# scripts/_ms_component_refs.py.
+# scripts/shared/_ms_component_refs.py.
 # ---------------------------------------------------------------------------
 
 import yaml  # noqa: E402
@@ -887,6 +956,64 @@ def test_external_entity_references_resolve_and_remain_external():
     assert vf.architecture_reference_errors(data)
 
 
+def _role_model(client="spa", role="ext-shopper", *, interaction=True, access=None, behind=("none", "cookie")):
+    components = [
+        {"id": client, "tier": "client"},
+        {"id": "api", "tier": "application"},
+        {"id": "db", "tier": "data"},
+    ]
+    entity = {"id": role, "name": "Shopper", "kind": "legitimate-role", **({"access": access} if access else {})}
+    flows = [
+        {"id": "df-001", "from": "external", "from_entity": role, "to": "api"},
+        {"id": "df-002", "from": client, "to": "api"},
+        {"id": "df-003", "from": "api", "to": "db"},
+    ]
+    flows[0]["authentication"] = {"scheme": behind[0]}
+    flows[1]["authentication"] = {"scheme": behind[1]}
+    if interaction:
+        flows.append({"id": "df-004", "from": "external", "from_entity": role, "to": client, "interaction": True})
+    return {"external_entities": [entity], "data_flows": flows}, components
+
+
+@pytest.mark.parametrize("client,role", [("spa", "ext-shopper"), ("web-portal", "ext-member")])
+def test_roles_must_use_the_client_and_reach_one_privilege_level(client, role):
+    data, components = _role_model(client, role, interaction=False, behind=("none", "none"))
+    errors = vf.fragment_invariant_errors("data-flows", data, context={"components": components})
+    assert [e for e in errors if "uses the client" in e] == [
+        f"no legitimate role uses the client component(s) {client}: add an interaction flow "
+        f"from the role that uses each client ({role})"
+    ]
+    data, components = _role_model(client, role)
+    errors = vf.fragment_invariant_errors("data-flows", data, context={"components": components})
+    assert [e for e in errors if "cannot be derived" in e] == [
+        f"{role}: its request path reaches unauthenticated hops (df-001) and authenticated hops (df-002), "
+        "so its access cannot be derived; set `access`, modelling one role per privilege level"
+    ]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"access": "internet-user"},
+        {"behind": ("none", "none")},
+        {"behind": ("bearer", "cookie")},
+        {"behind": ("none", "unknown")},
+    ],
+    ids=["classified", "anonymous", "authenticated", "unknown"],
+)
+def test_derivable_or_classified_roles_that_use_the_client_pass(change):
+    data, components = _role_model(**change)
+    assert vf.legitimate_role_errors(data, components) == []
+
+
+def test_role_rules_skip_models_without_a_client_or_roles_and_published_models():
+    data, components = _role_model(interaction=False)
+    api_only = [c for c in components if c["tier"] != "client"]
+    assert [e for e in vf.legitimate_role_errors(data, api_only) if "client" in e] == []
+    assert vf.legitimate_role_errors({"external_entities": [], "data_flows": data["data_flows"]}, components) == []
+    assert vf.architecture_reference_errors({**data, "components": components}) == []
+
+
 def test_architecture_evidence_must_be_real_contained_source(tmp_path):
     (tmp_path / "roles.ts").write_text('export const roles = ["operator"]\n')
     data = {"external_entities": [{"id": "ext-operator", "evidence": [{"file": "roles.ts", "line": 1}]}]}
@@ -908,6 +1035,80 @@ def test_architecture_evidence_must_be_real_contained_source(tmp_path):
     }
     assert vf.repository_path_errors("assets", assets, tmp_path) == []
     assert vf.architecture_reference_errors(assets)
+
+
+def test_capability_and_service_role_evidence_must_be_real_contained_source(tmp_path):
+    (tmp_path / "upload.ts").write_text("export function upload() {}\n")
+    capability = {"capability": "file-upload", "evidence": [{"file": "upload.ts", "line": 1}]}
+    role = {"role": "llm-inference", "evidence": [{"file": "upload.ts", "line": 1}]}
+    components = {
+        "components": [{"id": "api", "tier": "application", "paths": ["upload.ts"], "capabilities": [capability]}]
+    }
+    flows = {"data_flows": [], "external_entities": [{"id": "ext-model", "evidence": [], "service_roles": [role]}]}
+    assert vf.repository_path_errors("components", components, tmp_path) == []
+    assert vf.repository_path_errors("data-flows", flows, tmp_path) == []
+    for bad in (
+        {"file": "upload.ts", "line": 2},
+        {"file": "../outside.ts", "line": 1},
+        {"file": "missing.ts", "line": 1},
+    ):
+        capability["evidence"][0] = role["evidence"][0] = bad
+        assert any("capability file-upload" in e for e in vf.repository_path_errors("components", components, tmp_path))
+        assert any("service role llm-inference" in e for e in vf.repository_path_errors("data-flows", flows, tmp_path))
+
+
+@pytest.mark.parametrize(
+    ("source", "rejected_for_claims", "rejected_for_authentication"),
+    [
+        ("export function upload(req) { return store(req.file) }", False, False),
+        ("const token = jwt.sign(user, key, { algorithm: 'RS256' })", False, False),
+        ("client = OpenAI(api_key=settings.KEY)", False, False),
+        ("   ", True, True),
+        ("// uploads are handled below", True, True),
+        (" * Copyright (c) the contributors", True, True),
+        ("/* SPDX-License-Identifier: MIT */", True, True),
+        ("# verifies the second factor", True, True),
+        ("-- grants the service account", True, True),
+        ("<!-- login form -->", True, True),
+        ("import { tool } from 'ai'", True, False),
+        ("from openai import OpenAI", True, False),
+        ("const multer = require('multer')", True, False),
+        ("const { WebSocketProvider } = await import('ethers')", True, False),
+        ("using Microsoft.Identity.Web;", True, False),
+        ("use jsonwebtoken::encode;", True, False),
+        ("#include <openssl/evp.h>", True, False),
+        ('#[post("/upload")]', False, False),
+        ("package com.example.auth;", True, False),
+    ],
+)
+def test_function_claims_must_cite_implementing_code(
+    tmp_path, source, rejected_for_claims, rejected_for_authentication
+):
+    (tmp_path / "src.txt").write_text("first line\n" + source + "\n")
+    evidence = [{"file": "src.txt", "line": 2}]
+    components = {
+        "components": [
+            {
+                "id": "api",
+                "tier": "application",
+                "paths": ["src.txt"],
+                "capabilities": [{"capability": "file-upload", "evidence": evidence}],
+            }
+        ]
+    }
+    flows = {
+        "data_flows": [{"id": "df-001", "authentication": {"scheme": "bearer", "evidence": evidence}}],
+        "external_entities": [
+            {"id": "ext-model", "evidence": [], "service_roles": [{"role": "llm-inference", "evidence": evidence}]}
+        ],
+    }
+    component_errors = vf.repository_path_errors("components", components, tmp_path)
+    flow_errors = vf.repository_path_errors("data-flows", flows, tmp_path)
+    assert bool(component_errors) is rejected_for_claims
+    assert any("service role" in error for error in flow_errors) is rejected_for_claims
+    assert any("authentication" in error for error in flow_errors) is rejected_for_authentication
+    plain = {"data_flows": [{"id": "df-001", "evidence": evidence}]}
+    assert vf.repository_path_errors("data-flows", plain, tmp_path) == []
 
 
 def test_xss_on_database_is_rejected_even_when_a_model_path_matches():
@@ -933,7 +1134,11 @@ def test_optional_architecture_schema_shapes_stay_aligned():
         fragments["data-flows"]["external_entities"]["items"]["properties"]
         == canonical["external_entities"]["items"]["properties"]
     )
-    for field, owner in [("sensitive_data", "components"), ("component_refs", "assets")]:
+    for field, owner in [
+        ("sensitive_data", "components"),
+        ("capabilities", "components"),
+        ("component_refs", "assets"),
+    ]:
         assert (
             fragments[owner][owner]["items"]["properties"][field]["items"]["properties"]
             == canonical[owner]["items"]["properties"][field]["items"]["properties"]
@@ -953,3 +1158,180 @@ def test_orm_ownership_cannot_be_evaded_by_clearing_the_framework_label(tmp_path
     data["components"].pop()
     path.write_text("// import { DataTypes } from 'sequelize'\n// Account.init({ email: DataTypes.STRING })\n")
     assert vf.repository_path_errors("components", data, tmp_path) == []
+
+
+def test_a_lossless_form_slip_is_repaired_and_persisted(tmp_path: Path, monkeypatch, capsys):
+    schema = {
+        "type": "object",
+        "required": ["flows"],
+        "properties": {"flows": {"type": "array"}, "note": {"type": "string"}, "tier": {"enum": ["High", "Low"]}},
+        "additionalProperties": False,
+    }
+    monkeypatch.setattr(vf, "_load_schema", lambda _type: schema)
+    monkeypatch.setattr(vf, "fragment_invariant_errors", lambda *_args, **_kwargs: [])
+    frag = tmp_path / ".data-flows.json"
+    frag.write_text(json.dumps({"flows": [], "note": None, "tier": "high"}), encoding="utf-8")
+
+    assert vf.validate("data-flows", frag) == 0
+
+    assert json.loads(frag.read_text(encoding="utf-8")) == {"flows": [], "tier": "High"}
+    assert "CANONICALIZED" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# verdict Critical floor (RA-23)
+# ---------------------------------------------------------------------------
+
+import pytest  # noqa: E402
+
+
+def _finding(n: int, risk: str, **extra) -> dict:
+    return {"id": f"T-{n:03d}", "title": "x", "risk": risk, "stride": "Tampering", **extra}
+
+
+def _verdict(*bullet_refs: list[str], severity: str = "red") -> dict:
+    return {
+        "severity": severity,
+        "opening": "o" * 80,
+        "bullets": [{"title": "Outcome headline", "body": "b" * 40, "refs": refs} for refs in bullet_refs],
+        "closing": "c" * 60,
+    }
+
+
+def _floor_errors(tmp_path: Path, threats: list[dict], verdict: dict, ranked: list[str] | None = None) -> list[str]:
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump({"threats": threats}), encoding="utf-8")
+    if ranked is not None:
+        triage = {"ranking": {"views": {"top_findings": {"findings_ranked": [{"id": r} for r in ranked]}}}}
+        (tmp_path / ".triage-flags.json").write_text(json.dumps(triage), encoding="utf-8")
+    return vf.verdict_floor_errors(tmp_path, verdict)
+
+
+@pytest.mark.parametrize(
+    ("threats", "verdict", "ranked", "expected"),
+    [
+        pytest.param(
+            [_finding(1, "Critical"), _finding(2, "Critical")],
+            _verdict(["T-001"], ["F-001"]),
+            None,
+            ["F-002"],
+            id="uncited-critical",
+        ),
+        pytest.param(
+            [_finding(1, "Critical"), _finding(2, "Medium", effective_severity="Critical")],
+            _verdict(["T-001"], ["T-001"]),
+            None,
+            ["F-002"],
+            id="effective-critical-counts",
+        ),
+        pytest.param(
+            [_finding(1, "Critical"), _finding(2, "Critical", evidence_check="refuted")],
+            _verdict(["T-001"], ["T-001"]),
+            None,
+            [],
+            id="refuted-is-not-required",
+        ),
+        pytest.param(
+            [_finding(n, "Critical") for n in range(1, 11)],
+            _verdict(*[[f"T-{n:03d}"] for n in range(3, 11)]),
+            [f"T-{n:03d}" for n in range(3, 11)] + ["T-001", "T-002"],
+            [],
+            id="beyond-the-limit-the-lowest-ranked-are-optional",
+        ),
+        pytest.param(
+            [_finding(1, "Critical"), _finding(2, "Medium")],
+            _verdict(["T-001"], ["T-002"]),
+            None,
+            ["bullets[1]"],
+            id="medium-only-bullet-on-red",
+        ),
+        pytest.param(
+            [_finding(1, "Medium"), _finding(2, "Low")],
+            _verdict(["T-001"], ["T-002"], severity="green"),
+            None,
+            [],
+            id="green-may-cite-residual-risks",
+        ),
+        pytest.param(
+            [_finding(1, "High")],
+            _verdict(["T-001"], ["T-999"], severity="yellow"),
+            None,
+            ["unavailable"],
+            id="unknown-ref-is-rejected",
+        ),
+    ],
+)
+def test_verdict_floor(tmp_path: Path, threats, verdict, ranked, expected):
+    errors = _floor_errors(tmp_path, threats, verdict, ranked)
+    assert len(errors) == len(expected)
+    for error, fragment in zip(errors, expected):
+        assert fragment in error
+
+
+def test_verdict_floor_without_model_judges_nothing(tmp_path: Path):
+    assert vf.verdict_floor_errors(tmp_path, _verdict(["T-001"], ["T-002"])) == []
+
+
+def test_pre_render_gate_turns_an_uncited_critical_into_a_repair_action(tmp_path: Path):
+    frag = tmp_path / ".fragments"
+    frag.mkdir()
+    (tmp_path / "threat-model.yaml").write_text(
+        yaml.safe_dump({"threats": [_finding(1, "Critical"), _finding(2, "Critical")]}), encoding="utf-8"
+    )
+    (frag / "ms-verdict.json").write_text(json.dumps(_verdict(["T-001"], ["T-001"])), encoding="utf-8")
+    assert vf.run_pre_render_gate(tmp_path, write_repair_plan=True) == 1
+    plan = json.loads((tmp_path / ".pre-render-repair-plan.json").read_text(encoding="utf-8"))
+    action = plan["actions"][0]
+    assert "F-002" in action["raw_issue"]
+    assert "Critical findings named in the violation" in action["remediation"]
+    # The renderer's own gate reports the same violation the pre-render gate fails on.
+    assert any("F-002" in e for e in vf.ms_renderer_schema_errors(tmp_path))
+
+
+@pytest.mark.parametrize("tid", ["T-071", "F-208"])
+@pytest.mark.parametrize("case", ["green-critical", "yellow-critical", "unknown", "refuted", "approval"])
+def test_verdict_rejects_inconsistent_colour_and_refs(tmp_path, tid, case):
+    model = {"threats": [{"id": tid, "risk": "Critical"}]}
+    verdict = _verdict([tid])
+    expected = "severity must be red"
+    if case in ("green-critical", "yellow-critical"):
+        verdict["severity"] = case.split("-")[0]
+    elif case == "unknown":
+        verdict["bullets"].append(_verdict(["T-999"])["bullets"][0])
+        expected = "unavailable"
+    elif case == "refuted":
+        model["threats"].append({"id": "T-999", "risk": "Critical", "evidence_check": "refuted"})
+        verdict["bullets"].append(_verdict(["T-999"])["bullets"][0])
+        expected = "unavailable"
+    else:
+        verdict["opening"] = (
+            "Production-ready with reservations: review the listed security concerns before deployment."
+        )
+        expected = "release readiness"
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(model))
+    frag = tmp_path / ".fragments"
+    frag.mkdir()
+    (frag / "ms-verdict.json").write_text(json.dumps(verdict))
+    assert any(expected in error for error in vf.ms_renderer_schema_errors(tmp_path))
+    vf.run_pre_render_gate(tmp_path, write_repair_plan=True)
+    report = json.loads((tmp_path / ".pre-render-report.json").read_text())
+    assert any(row["file"] == "ms-verdict.json" and expected in row["error"] for row in report["failed"])
+
+
+def test_verdict_accepts_residual_risk_without_release_approval(tmp_path):
+    verdict = _verdict(["T-071"], severity="green")
+    verdict["opening"] = (
+        "No high security concerns were reported in the assessed scope; unexamined surfaces remain outside this conclusion."
+    )
+    assert _floor_errors(tmp_path, [_finding(71, "Medium")], verdict) == []
+
+
+def test_verdict_rejects_non_design_weakness_as_direct_evidence(tmp_path):
+    model = {
+        "threats": [_finding(1, "High")],
+        "weaknesses": [
+            {"id": "W-071", "severity": "High", "severity_basis": "observed-practice"},
+        ],
+    }
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(model))
+    errors = vf.verdict_floor_errors(tmp_path, _verdict(["W-071"], severity="yellow"))
+    assert any("W-071" in error and "unavailable" in error for error in errors)

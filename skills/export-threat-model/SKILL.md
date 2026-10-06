@@ -34,6 +34,10 @@ FLAGS
                            request it explicitly.
   --pentest-format <name>  Pentest dialect: generic|strix (default: generic)
   --pentest-target <url>   Optional base URL for the pentest target
+  --slug <value>           Insert -<value> into every export filename
+                           (threat-model-<value>.pdf, pentest-tasks-<value>.yaml,
+                           …), matching create-threat-model --slug.
+                           1-64 characters from [A-Za-z0-9._-].
   --no-mermaid             Skip Mermaid SVG pre-rendering for PDF/HTML
   --require-mermaid        Fail preflight if mmdc is not installed
   --keep-html              Keep intermediate HTML next to the PDF (debug; pdf only)
@@ -58,6 +62,7 @@ OUTPUTS
   <exports-dir>/threat-model.sarif.json          (when sarif ∈ formats)
   <exports-dir>/pentest-tasks.yaml               (when pentest ∈ formats)
   <exports-dir>/threat-model.threatdragon.json   (when threatdragon ∈ formats)
+  With --slug, each name carries -<slug> after its prefix.
 
 THREAT DRAGON EXPORT (ALPHA)
   OWASP Threat Dragon v2 JSON. Opens in Threat Dragon and imports into OWASP
@@ -74,6 +79,7 @@ EXAMPLES
   /appsec-advisor:export-threat-model --formats pdf --no-mermaid
   /appsec-advisor:export-threat-model --formats pdf --input ./report.md --output-pdf ./report.pdf
   /appsec-advisor:export-threat-model --pentest-target https://staging.example.com
+  /appsec-advisor:export-threat-model --formats pentest --slug a3f9
   /appsec-advisor:export-threat-model --check-only
 
 The skill is idempotent and side-effect-free apart from writing the requested
@@ -95,11 +101,11 @@ Recognized flags:
 
   `--repo <path>`  `--output <path>`  `--exports-dir <path>`
   `--input <path>`  `--output-pdf <path>`  `--formats <csv>`
-  `--pentest-format <name>`  `--pentest-target <url>`
+  `--pentest-format <name>`  `--pentest-target <url>`  `--slug <value>`
   `--no-mermaid`  `--require-mermaid`  `--keep-html`  `--check-only`
   `--help` | `-h`
 
-Parse these and set `REPO_ROOT`, `OUTPUT_DIR`, `EXPORTS_DIR`, `INPUT_MD_OVERRIDE`, `OUTPUT_PDF_OVERRIDE`, `FORMATS`, `FORMATS_EXPLICIT`, `PENTEST_FORMAT`, `PENTEST_TARGET_URL`, `NO_MERMAID`, `REQUIRE_MERMAID`, `KEEP_HTML`, `CHECK_ONLY`.
+Parse these and set `REPO_ROOT`, `OUTPUT_DIR`, `EXPORTS_DIR`, `INPUT_MD_OVERRIDE`, `OUTPUT_PDF_OVERRIDE`, `FORMATS`, `FORMATS_EXPLICIT`, `PENTEST_FORMAT`, `PENTEST_TARGET_URL`, `SLUG`, `NO_MERMAID`, `REQUIRE_MERMAID`, `KEEP_HTML`, `CHECK_ONLY`.
 
 Defaults:
 - `REPO_ROOT` → current working directory
@@ -110,6 +116,7 @@ Defaults:
 - `FORMATS` → `pdf,html,sarif,pentest` (when `all`, or no `--formats` flag)
 - `PENTEST_FORMAT` → `generic`
 - `PENTEST_TARGET_URL` → unset
+- `SLUG` → unset
 
 If `--output-pdf` is provided and `--formats` is not provided, set
 `FORMATS=pdf` so the single-output PDF workflow remains available through
@@ -136,6 +143,13 @@ For each requested format, verify the inputs and dependencies exist. Print each 
 INPUT_MD="$OUTPUT_DIR/threat-model.md"
 INPUT_YAML="$OUTPUT_DIR/threat-model.yaml"
 [ -n "$INPUT_MD_OVERRIDE" ] && INPUT_MD="$INPUT_MD_OVERRIDE"
+
+# The slug becomes part of every export filename, so only filename-safe values pass.
+if [ -n "$SLUG" ] && ! printf '%s' "$SLUG" | grep -Eqx '[A-Za-z0-9._-]{1,64}'; then
+  echo "ERROR: --slug must be 1-64 filename-safe characters ([A-Za-z0-9._-])." >&2
+  exit 2
+fi
+SFX="${SLUG:+-$SLUG}"
 mkdir -p "$EXPORTS_DIR"
 
 PREFLIGHT_FAIL=0
@@ -146,9 +160,9 @@ if [ "$DO_SARIF" = "true" ] || [ "$DO_PENTEST" = "true" ] || [ "$DO_THREATDRAGON
     echo "ERROR: threat-model.yaml not found at $INPUT_YAML" >&2
     PREFLIGHT_FAIL=2
   else
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" \
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_intermediate.py" \
       threat_model_output "$INPUT_YAML" >/dev/null 2>&1 || {
-        echo "ERROR: threat-model.yaml is schema-invalid (run validate_intermediate.py for details)" >&2
+        echo "ERROR: threat-model.yaml is schema-invalid (run validators/validate_intermediate.py for details)" >&2
         PREFLIGHT_FAIL=3
       }
   fi
@@ -160,20 +174,20 @@ if { [ "$DO_PDF" = "true" ] || [ "$DO_HTML" = "true" ]; } && [ ! -f "$INPUT_MD" 
   PREFLIGHT_FAIL=2
 fi
 
-# PDF dependencies — delegate to export_pdf.py --check-only (pandoc + weasyprint)
+# PDF dependencies — delegate to exporters/export_pdf.py --check-only (pandoc + weasyprint)
 if [ "$DO_PDF" = "true" ]; then
   PDF_CHECK_ARGS="--check-only --input $INPUT_MD"
   [ "$NO_MERMAID"      = "true" ] && PDF_CHECK_ARGS="$PDF_CHECK_ARGS --no-mermaid"
   [ "$REQUIRE_MERMAID" = "true" ] && PDF_CHECK_ARGS="$PDF_CHECK_ARGS --require-mermaid"
-  python3 "$CLAUDE_PLUGIN_ROOT/scripts/export_pdf.py" $PDF_CHECK_ARGS || PREFLIGHT_FAIL=1
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/exporters/export_pdf.py" $PDF_CHECK_ARGS || PREFLIGHT_FAIL=1
 fi
 
-# HTML dependencies — delegate to export_html.py --check-only (pandoc only)
+# HTML dependencies — delegate to exporters/export_html.py --check-only (pandoc only)
 if [ "$DO_HTML" = "true" ]; then
   HTML_CHECK_ARGS="--check-only --input $INPUT_MD"
   [ "$NO_MERMAID"      = "true" ] && HTML_CHECK_ARGS="$HTML_CHECK_ARGS --no-mermaid"
   [ "$REQUIRE_MERMAID" = "true" ] && HTML_CHECK_ARGS="$HTML_CHECK_ARGS --require-mermaid"
-  python3 "$CLAUDE_PLUGIN_ROOT/scripts/export_html.py" $HTML_CHECK_ARGS || PREFLIGHT_FAIL=1
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/exporters/export_html.py" $HTML_CHECK_ARGS || PREFLIGHT_FAIL=1
 fi
 
 [ "$PREFLIGHT_FAIL" != "0" ] && exit "$PREFLIGHT_FAIL"
@@ -184,45 +198,45 @@ fi
 
 Execute the requested format helpers in order: SARIF → pentest → Threat Dragon → HTML → PDF (markup outputs last). Each helper's exit code propagates the first non-zero result back to the user.
 
-**Run the HTML/PDF helpers UNSANDBOXED.** Mermaid rendering (used by both `export_html.py` and `export_pdf.py`) shells out to a headless Chrome via mmdc/Puppeteer, whose `process_singleton` calls `socket()` at launch — a syscall the Bash sandbox blocks (`Operation not permitted`, EPERM, path-independent). Sandboxed, `export_pdf.py` aborts with "Mermaid renderer cannot run …" and writes **no** PDF (a diagram-less PDF is a broken deliverable, not a silent fallback). Dispatch this block with the **sandbox disabled** so diagrams render. The abort message means the sandbox — re-run unsandboxed; do **not** reach for `--no-mermaid` (that is only for a deliberately diagram-less export).
+**Run the HTML/PDF helpers UNSANDBOXED.** Mermaid rendering (used by both `exporters/export_html.py` and `exporters/export_pdf.py`) shells out to a headless Chrome via mmdc/Puppeteer, whose `process_singleton` calls `socket()` at launch — a syscall the Bash sandbox blocks (`Operation not permitted`, EPERM, path-independent). Sandboxed, `exporters/export_pdf.py` aborts with "Mermaid renderer cannot run …" and writes **no** PDF (a diagram-less PDF is a broken deliverable, not a silent fallback). Dispatch this block with the **sandbox disabled** so diagrams render. The abort message means the sandbox — re-run unsandboxed; do **not** reach for `--no-mermaid` (that is only for a deliberately diagram-less export).
 
 ```bash
 EXIT_CODE=0
 
 if [ "$DO_SARIF" = "true" ]; then
-  python3 "$CLAUDE_PLUGIN_ROOT/scripts/export_sarif.py" \
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/exporters/export_sarif.py" \
     --threat-model "$INPUT_YAML" \
-    --output       "$EXPORTS_DIR/threat-model.sarif.json" \
+    --output       "$EXPORTS_DIR/threat-model$SFX.sarif.json" \
     || EXIT_CODE=4
 fi
 
 if [ "$DO_PENTEST" = "true" ] && [ "$EXIT_CODE" = "0" ]; then
   PENTEST_ARGS="--threat-model $INPUT_YAML \
-                --output $EXPORTS_DIR/pentest-tasks.yaml \
+                --output $EXPORTS_DIR/pentest-tasks$SFX.yaml \
                 --dialect $PENTEST_FORMAT"
   [ -n "$PENTEST_TARGET_URL" ] && PENTEST_ARGS="$PENTEST_ARGS --target-url $PENTEST_TARGET_URL"
-  python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_pentest_tasks.py" $PENTEST_ARGS \
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/renderers/render_pentest_tasks.py" $PENTEST_ARGS \
     || EXIT_CODE=4
 fi
 
 if [ "$DO_THREATDRAGON" = "true" ] && [ "$EXIT_CODE" = "0" ]; then
-  python3 "$CLAUDE_PLUGIN_ROOT/scripts/export_threat_dragon.py" \
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/exporters/export_threat_dragon.py" \
     --threat-model "$INPUT_YAML" \
-    --output       "$EXPORTS_DIR/threat-model.threatdragon.json" \
+    --output       "$EXPORTS_DIR/threat-model$SFX.threatdragon.json" \
     || EXIT_CODE=4
 fi
 
 if [ "$DO_HTML" = "true" ] && [ "$EXIT_CODE" = "0" ]; then
   HTML_ARGS="--input $INPUT_MD \
-             --output $EXPORTS_DIR/threat-model.html"
+             --output $EXPORTS_DIR/threat-model$SFX.html"
   [ "$NO_MERMAID"      = "true" ] && HTML_ARGS="$HTML_ARGS --no-mermaid"
   [ "$REQUIRE_MERMAID" = "true" ] && HTML_ARGS="$HTML_ARGS --require-mermaid"
-  python3 "$CLAUDE_PLUGIN_ROOT/scripts/export_html.py" $HTML_ARGS \
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/exporters/export_html.py" $HTML_ARGS \
     || EXIT_CODE=4
 fi
 
 if [ "$DO_PDF" = "true" ] && [ "$EXIT_CODE" = "0" ]; then
-  OUTPUT_PDF="$EXPORTS_DIR/threat-model.pdf"
+  OUTPUT_PDF="$EXPORTS_DIR/threat-model$SFX.pdf"
   [ -n "$OUTPUT_PDF_OVERRIDE" ] && OUTPUT_PDF="$OUTPUT_PDF_OVERRIDE"
   mkdir -p "$(dirname "$OUTPUT_PDF")"
   PDF_ARGS="--input $INPUT_MD \
@@ -230,7 +244,7 @@ if [ "$DO_PDF" = "true" ] && [ "$EXIT_CODE" = "0" ]; then
   [ "$NO_MERMAID"      = "true" ] && PDF_ARGS="$PDF_ARGS --no-mermaid"
   [ "$REQUIRE_MERMAID" = "true" ] && PDF_ARGS="$PDF_ARGS --require-mermaid"
   [ "$KEEP_HTML"       = "true" ] && PDF_ARGS="$PDF_ARGS --keep-html"
-  python3 "$CLAUDE_PLUGIN_ROOT/scripts/export_pdf.py" $PDF_ARGS \
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/exporters/export_pdf.py" $PDF_ARGS \
     || EXIT_CODE=4
 fi
 

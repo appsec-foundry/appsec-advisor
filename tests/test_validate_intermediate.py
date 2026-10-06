@@ -1,6 +1,6 @@
-"""Unit tests for scripts/validate_intermediate.py.
+"""Unit tests for scripts/validators/validate_intermediate.py.
 
-validate_intermediate.py is the schema + invariant gate for all intermediate
+validators/validate_intermediate.py is the schema + invariant gate for all intermediate
 JSON artifacts (stride, threats_merged, triage_flags, …). These tests
 exercise the public API and CLI contract directly. The dep_scan validator
 was removed in 2026-05 alongside the in-tree SCA producer.
@@ -17,7 +17,7 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "validate_intermediate.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "validators/validate_intermediate.py"
 SCHEMAS_DIR = REPO_ROOT / "schemas"
 
 
@@ -29,7 +29,70 @@ def _load_module(name: str, path: Path):
     return module
 
 
-vi = _load_module("validate_intermediate", SCRIPT_PATH)
+vi = _load_module("validators.validate_intermediate", SCRIPT_PATH)
+
+
+@pytest.mark.parametrize("scope", ["valid", "unknown-component", "unknown-asset", "skipped", "wrong-field"])
+def test_business_answer_trace_requires_matching_coverage_and_asset(scope):
+    trace = {
+        "status": "applied",
+        "source": "docs/business-context.md",
+        "sha256": "a" * 64,
+        "fields_present": ["impact_if_compromised"],
+        "applied_finding_count": 0,
+        "component_coverage": [{"component_id": "service", "fields": ["impact_if_compromised"]}],
+        "answered_questions": [
+            {
+                "component_id": "service",
+                "topic": "asset-criticality",
+                "asset_name": "Ledger",
+                "context_field": "impact_if_compromised",
+                "source_quote_sha256": "b" * 64,
+            }
+        ],
+    }
+    answer = trace["answered_questions"][0]
+    if scope == "unknown-component":
+        answer["component_id"] = "other"
+    elif scope == "unknown-asset":
+        answer["asset_name"] = "Other Asset"
+    elif scope == "skipped":
+        trace["status"] = "skipped"
+    elif scope == "wrong-field":
+        answer["context_field"] = "security_assumptions"
+    model = {"business_context_trace": trace, "components": [{"id": "service"}], "assets": [{"name": "Ledger"}]}
+    errors = vi._check_export_trace_invariants(model)
+    assert bool(errors) == (scope != "valid"), errors
+
+
+@pytest.mark.parametrize("skip_context", [False, True])
+def test_analyst_gate_rejects_an_answer_without_source_provenance(tmp_path, monkeypatch, skip_context):
+    import json
+
+    import contexts.load_business_context as load_business_context
+
+    (tmp_path / ".components.json").write_text(json.dumps({"components": [{"id": "service", "paths": ["src"]}]}))
+    overlay = {
+        "service": {
+            "business_context": {"security_assumptions": ["Support may access other tenants after approval."]},
+            "answered_questions": [
+                {
+                    "topic": "route-by-route-authorization",
+                    "context_field": "security_assumptions",
+                    "source_quote": "Support may access other tenants after approval.",
+                }
+            ],
+        }
+    }
+    if skip_context:
+        (tmp_path / ".skill-config.json").write_text(json.dumps({"skip_business_context": True}))
+
+        def reject_source_read(*args):
+            pytest.fail("skipped business context must not be read")
+
+        monkeypatch.setattr(load_business_context, "effective_source", reject_source_read)
+    ok, errors = vi.validate_stride_analyst_context(overlay, output_dir=tmp_path, repo_root=tmp_path)
+    assert not ok and any("business context" in error for error in errors)
 
 
 def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -341,6 +404,116 @@ def test_stride_verification_non_string_rejected():
     assert not ok
 
 
+def _confirmed_input_to_sink_threat() -> dict:
+    data = _stride_threat_with_code_example(None)
+    threat = data["threats"][0]
+    threat.update(
+        cwe="CWE-89",
+        evidence_tier="confirmed-exploitable",
+        evidence={"file": "src/query.py", "line": 18},
+    )
+    return data
+
+
+def test_confirmed_input_to_sink_finding_requires_trace():
+    data = _confirmed_input_to_sink_threat()
+    ok, errors = vi.validate_stride(data)
+    assert not ok
+    assert any("mechanism_trace" in error for error in errors)
+
+
+def test_input_to_sink_trace_must_end_at_finding_anchor():
+    data = _confirmed_input_to_sink_threat()
+    data["threats"][0]["mechanism_trace"] = {
+        "input": {"file": "src/route.py", "line": 7},
+        "sink": {"file": "src/other.py", "line": 18},
+        "connection": "The route value reaches the query builder without binding.",
+        "control": {
+            "status": "ineffective",
+            "location": {"file": "src/other.py", "line": 18},
+            "explanation": "The query is assembled without parameter binding.",
+        },
+    }
+    ok, errors = vi.validate_stride(data)
+    assert not ok
+    assert any("mechanism_trace.sink" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    ("entry", "sink"),
+    [("src/route.py", "src/query.py"), ("api/receive.py", "storage/execute.py")],
+)
+def test_confirmed_input_to_sink_trace_accepts_distinct_entry_and_sink(entry, sink):
+    data = _confirmed_input_to_sink_threat()
+    data["threats"][0]["evidence"]["file"] = sink
+    data["threats"][0]["mechanism_trace"] = {
+        "input": {"file": entry, "line": 7},
+        "sink": {"file": sink, "line": 18},
+        "connection": "The route value reaches the query builder without binding.",
+        "control": {
+            "status": "ineffective",
+            "location": {"file": sink, "line": 18},
+            "explanation": "The query is assembled without parameter binding.",
+        },
+    }
+    ok, errors = vi.validate_stride(data)
+    assert ok, errors
+
+
+def test_unproven_input_to_sink_practice_does_not_require_trace():
+    data = _confirmed_input_to_sink_threat()
+    data["threats"][0]["evidence_tier"] = "insecure-practice"
+    ok, errors = vi.validate_stride(data)
+    assert ok, errors
+
+
+def test_absent_at_sink_control_cannot_cite_an_unrelated_location():
+    data = _confirmed_input_to_sink_threat()
+    data["threats"][0]["mechanism_trace"] = {
+        "input": {"file": "src/route.py", "line": 7},
+        "sink": {"file": "src/query.py", "line": 18},
+        "connection": "The route value reaches the query builder without binding.",
+        "control": {
+            "status": "absent-at-sink",
+            "location": {"file": "src/other.py", "line": 3},
+            "explanation": "No binding is applied at the query execution site.",
+        },
+    }
+    ok, errors = vi.validate_stride(data)
+    assert not ok
+    assert any("mechanism_trace.control.location" in error for error in errors)
+
+
+def test_input_to_sink_trace_rejects_noncode_or_missing_locations(tmp_path):
+    data = _confirmed_input_to_sink_threat()
+    data["threats"][0]["mechanism_trace"] = {
+        "input": {"file": "route.py", "line": 1},
+        "sink": {"file": "query.py", "line": 1},
+        "connection": "The route value reaches the query builder without binding.",
+        "control": {
+            "status": "ineffective",
+            "location": {"file": "query.py", "line": 1},
+            "explanation": "The query is assembled without parameter binding.",
+        },
+    }
+    data["threats"][0]["evidence"] = {"file": "query.py", "line": 1}
+    (tmp_path / "route.py").write_text("# request input\n")
+    (tmp_path / "query.py").write_text("execute(query)\n")
+
+    ok, errors = vi.validate_stride(data, repo_root=tmp_path)
+    assert not ok
+    assert any("mechanism_trace.input" in error and "comment" in error for error in errors)
+
+    (tmp_path / "route.py").write_text("value = request.query\n")
+    ok, errors = vi.validate_stride(data, repo_root=tmp_path)
+    assert ok, errors
+
+    (tmp_path / "query.py").unlink()
+    ok, errors = vi.validate_stride(data, repo_root=tmp_path)
+    assert not ok
+    assert any("mechanism_trace.sink" in error and "missing or unsafe" in error for error in errors)
+
+
 def test_stride_owasp_ai_ids_are_schema_validated():
     data = _stride_threat_with_code_example(None)
     data["threats"][0]["owasp_llm_ids"] = ["LLM06"]
@@ -550,7 +723,7 @@ def _model_two_components(threat_component: str, evidence_file: str) -> dict:
 
 
 def test_glob_advisory_suppressed_for_single_sibling_match():
-    """The case reclassify_components.py self-heals (evidence matches exactly
+    """The case model/reclassify_components.py self-heals (evidence matches exactly
     one OTHER component) must NOT emit an advisory — it is pure noise."""
     data = _model_two_components("data-persistence", "routes/search.ts")
     advisories = vi._check_component_path_glob_consistency(data)
@@ -1149,6 +1322,27 @@ def test_export_trace_cross_references_fail_closed():
     assert any("verification_complete does not match" in error for error in errors)
 
 
+def test_no_harm_context_counts_as_applied_without_priority_basis():
+    data = {
+        "components": [{"id": "practice-api"}],
+        "threats": [{"id": "T-001", "component": "practice-api"}],
+        "business_context_trace": {
+            "status": "applied",
+            "source_kind": "repository",
+            "source": "docs/business-context.md",
+            "sha256": "a" * 64,
+            "fields_present": ["impact_if_compromised"],
+            "component_coverage": [
+                {"component_id": "practice-api", "fields": ["impact_if_compromised"], "impact_is_material": False}
+            ],
+            "applied_finding_count": 1,
+        },
+    }
+    assert vi._check_export_trace_invariants(data) == []
+    data["business_context_trace"]["applied_finding_count"] = 0
+    assert any("applied_finding_count" in error for error in vi._check_export_trace_invariants(data))
+
+
 def test_requirement_references_are_unresolved_not_invalid_without_a_compliance_section():
     """Absent authority is "unknown", never "invalid".
 
@@ -1553,7 +1747,7 @@ def test_main_threat_model_output_with_advisory(tmp_path):
 
 
 def _main_exit(monkeypatch, argv):
-    monkeypatch.setattr(vi.sys, "argv", ["validate_intermediate.py", *argv])
+    monkeypatch.setattr(vi.sys, "argv", ["validators/validate_intermediate.py", *argv])
     with pytest.raises(SystemExit) as ei:
         vi.main()
     code = ei.value.code
@@ -1618,14 +1812,14 @@ def test_main_inproc_invalid_stride_prints_errors(monkeypatch, tmp_path, capsys)
 
 def test_main_inproc_invalid_threats_merged_names_its_producer(monkeypatch, tmp_path, capsys):
     """`.threats-merged.json` is deterministic Python output, so a rejected
-    artifact must point at `merge_threats.py`. Without it a reader blames the
+    artifact must point at `model/merge_threats.py`. Without it a reader blames the
     analysis agents and hand-edits the file (juice-shop thorough abort)."""
     p = tmp_path / ".threats-merged.json"
     p.write_text(_json.dumps({"threats": [], "weaknesses": [{"id": "W-001", "mechanism_id": "bad_id"}]}))
     assert _main_exit(monkeypatch, ["threats_merged", str(p)]) == 1
     out = capsys.readouterr().out
     assert "INVALID:" in out
-    assert "merge_threats.py" in out
+    assert "model/merge_threats.py" in out
 
 
 def test_main_inproc_stride_failure_does_not_claim_a_python_producer(monkeypatch, tmp_path, capsys):
@@ -1795,3 +1989,46 @@ def test_stride_analyst_context_cli_applies_cross_artifact_routing_gate(tmp_path
 
     assert completed.returncode == 1
     assert "outside the component paths" in completed.stdout
+
+
+_ROUTE_SOURCE = "// route\nconst wallets = new Set()\n\nrouter.post('/w', (req) => wallets.add(req.body.a))\n"
+
+
+@pytest.mark.parametrize(
+    ("evidence", "expected"),
+    [
+        ({"file": "route.ts", "line": 4}, None),
+        ({"file": "route.ts", "line": 0}, None),
+        ({"file": "route.ts", "line": None}, None),
+        (None, None),
+        ({"file": "route.ts", "line": 144}, "line 144 exceeds"),
+        ({"file": "gone.ts", "line": 2}, "missing or unsafe"),
+        ({"file": "route.ts", "line": 1}, "a comment"),
+        ({"file": "route.ts", "line": 3}, "a blank line"),
+    ],
+)
+def test_stride_evidence_must_cite_a_code_line_inside_its_file(tmp_path, evidence, expected):
+    """Every finding's evidence is checked against the repository, not only
+    mechanism traces: a line past the end of its file (as `cat -n` over several
+    files produces) is rejected at the STRIDE gate, where OR-31 repair can fix it."""
+    (tmp_path / "route.ts").write_text(_ROUTE_SOURCE)
+    data = _stride_threat_with_code_example(None)
+    data["threats"][0]["evidence"] = evidence
+
+    ok, errors = vi.validate_stride(data, repo_root=tmp_path)
+
+    location_errors = [error for error in errors if error.startswith("threats[0].evidence")]
+    if expected is None:
+        assert not location_errors, location_errors
+    else:
+        assert not ok
+        assert any(expected in error for error in location_errors), errors
+
+
+def test_stride_evidence_is_not_checked_without_a_repository_root():
+    data = _stride_threat_with_code_example(None)
+    data["threats"][0]["evidence"] = {"file": "nowhere.ts", "line": 999}
+
+    _ok, errors = vi.validate_stride(data)
+
+    assert not any(error.startswith("threats[0].evidence") for error in errors)

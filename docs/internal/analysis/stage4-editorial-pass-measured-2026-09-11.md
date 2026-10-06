@@ -4,7 +4,7 @@ State on 2026-09-11, branch `feature/figure1-dfd`, after `a528be34`. This contin
 
 ## What the stage is today
 
-Stage 4 runs once, at thorough depth by default, after the Stage-3 QA gate. `build_editorial_context.py` projects the prose the pass may rewrite into `.dispatch-context/editorial/blocks.json`, `check_editorial_diff.py snapshot` records the guarded files, and `architect_structural_checks.py all` produces advisory warnings for the receipt. One `appsec-architect-reviewer` dispatch on Sonnet reads the projection and `agents/shared/prose-style.md`, then writes one `plan.json`. `apply_editorial_plan.py` performs every write, `check_editorial_diff.py verify --restore` reverts the whole pass when anything but wording moved, and the canonical tail re-renders. `render_editorial_receipt.py` writes `.architect-status.json` and one `EDITORIAL_PASS` log line. The agent judges nothing, opens nothing but the projection and the style rules, and edits nothing itself.
+Stage 4 runs once, at thorough depth by default, after the Stage-3 QA gate. `contexts/build_editorial_context.py` projects the prose the pass may rewrite into `.dispatch-context/editorial/blocks.json`, `validators/check_editorial_diff.py snapshot` records the guarded files, and `analyzers/architect_structural_checks.py all` produces advisory warnings for the receipt. One `appsec-architect-reviewer` dispatch on Sonnet reads the projection and `agents/shared/prose-style.md`, then writes one `plan.json`. `repairs/apply_editorial_plan.py` performs every write, `validators/check_editorial_diff.py verify --restore` reverts the whole pass when anything but wording moved, and the canonical tail re-renders. `renderers/render_editorial_receipt.py` writes `.architect-status.json` and one `EDITORIAL_PASS` log line. The agent judges nothing, opens nothing but the projection and the style rules, and edits nothing itself.
 
 The deterministic layer is sound. The applier locks every action to the field's current value, the guard pins identifiers, locators, numbers, headings and list lengths, rejected actions never abort the run, and a QA regression costs the polish rather than the run. The problems below are in the shape of the one LLM dispatch, in what the stage reports when that dispatch fails, and in one gate rule the stage inherited unexamined.
 
@@ -20,15 +20,15 @@ Deterministic tail, replayed on a copy of the output directory against the live 
 
 | Step | Seconds |
 |---|---|
-| `build_editorial_context.py` | 0.7 |
-| `check_editorial_diff.py snapshot` | 0.0 |
-| `architect_structural_checks.py all` | 5.2 |
-| `compose_threat_model.py --strict` | 4.8 |
-| `apply_prose_fixes.py` | 0.8 |
-| `qa_checks.py gate` | 5.0 |
-| `section_integrity.py` | 0.2 |
-| `qa_checks.py unmasked_secrets` | 0.4 |
-| `check_editorial_diff.py verify` | 0.1 |
+| `contexts/build_editorial_context.py` | 0.7 |
+| `validators/check_editorial_diff.py snapshot` | 0.0 |
+| `analyzers/architect_structural_checks.py all` | 5.2 |
+| `renderers/compose_threat_model.py --strict` | 4.8 |
+| `repairs/apply_prose_fixes.py` | 0.8 |
+| `validators/qa_checks.py gate` | 5.0 |
+| `validators/section_integrity.py` | 0.2 |
+| `validators/qa_checks.py unmasked_secrets` | 0.4 |
+| `validators/check_editorial_diff.py verify` | 0.1 |
 | Total | 17.2 |
 
 ### The agent, 2026-08-30: worked
@@ -51,20 +51,20 @@ The 2026-08-30 design estimated "roughly six tool calls" and set the turn ceilin
 
 The fix is to bound the output per message, not to raise the cap. `CLAUDE_CODE_MAX_OUTPUT_TOKENS` would move the wall, and the plugin does not control the environment the harness inherits in any case. Two changes bound it structurally:
 
-- **Chunked plans.** The applier accepts `plan.json`; let it accept `plan-*.json` and merge them in name order. The agent instruction then says: write at most 20 actions per file, write each file as soon as its actions are ready, never hold rewrites back for a final message. Each `Write` ends a message, which resets the output budget, and a pass that dies after three chunks has delivered three chunks. `render_editorial_receipt.py` sums the chunks.
-- **Shards in parallel.** `build_editorial_context.py` can emit `blocks-1.json` through `blocks-N.json`, split by source (`threat-model.yaml` findings and mitigations, the §6 fragment, the Management-Summary fragments), and the skill dispatches N reviewers in one message, the way Stage 1c fans out STRIDE and Stage 2 renders §7 and the Management Summary in parallel. The snapshot and guard stay single because they cover files, not blocks. Wall clock divides by the shard count, a lost shard costs a third of the polish rather than all of it, and the per-shard projection fits one `Read`.
+- **Chunked plans.** The applier accepts `plan.json`; let it accept `plan-*.json` and merge them in name order. The agent instruction then says: write at most 20 actions per file, write each file as soon as its actions are ready, never hold rewrites back for a final message. Each `Write` ends a message, which resets the output budget, and a pass that dies after three chunks has delivered three chunks. `renderers/render_editorial_receipt.py` sums the chunks.
+- **Shards in parallel.** `contexts/build_editorial_context.py` can emit `blocks-1.json` through `blocks-N.json`, split by source (`threat-model.yaml` findings and mitigations, the §6 fragment, the Management-Summary fragments), and the skill dispatches N reviewers in one message, the way Stage 1c fans out STRIDE and Stage 2 renders §7 and the Management Summary in parallel. The snapshot and guard stay single because they cover files, not blocks. Wall clock divides by the shard count, a lost shard costs a third of the polish rather than all of it, and the per-shard projection fits one `Read`.
 
 Chunking is the smaller change and removes the all-or-nothing loss; sharding is the wall-clock lever. They compose.
 
 ### F2. The receipt calls a failed dispatch a clean bill of health
 
-`render_editorial_receipt.py` already refuses to print "no rewrite needed" for a plan the applier rejected, with a comment explaining why. It does not apply the same care to a plan that never existed: with `apply_report_missing=true` and `edits_proposed=0` it falls into the final branch and prints `No rewrite needed across 232 blocks`. `.architect-status.json` has to say `pass`, because `_status_passes` in the controller would re-dispatch the stage for any other value, and the 2026-08-30 document accepted that. The console line and the `EDITORIAL_PASS` log line have no such constraint. Both should say that the pass produced no plan, and `aggregate_run_issues.py` should surface it as a run issue, so that a stage which cost 41 minutes and delivered nothing is visible at the end of the run.
+`renderers/render_editorial_receipt.py` already refuses to print "no rewrite needed" for a plan the applier rejected, with a comment explaining why. It does not apply the same care to a plan that never existed: with `apply_report_missing=true` and `edits_proposed=0` it falls into the final branch and prints `No rewrite needed across 232 blocks`. `.architect-status.json` has to say `pass`, because `_status_passes` in the controller would re-dispatch the stage for any other value, and the 2026-08-30 document accepted that. The console line and the `EDITORIAL_PASS` log line have no such constraint. Both should say that the pass produced no plan, and `runtime/aggregate_run_issues.py` should surface it as a run issue, so that a stage which cost 41 minutes and delivered nothing is visible at the end of the run.
 
 ### F3. Stage 4 aborts a run whose QA gate exited 3 before the pass ran
 
-`SKILL-thin-stage4.md` §3 treats a QA gate exit of `1`, `2` or `3` after the re-render as "the rewrite disagrees with a gate the pre-edit report passed": restore the snapshot, re-render, and treat a second non-zero exit as a hard abort. The premise is false for exit `3`. `qa_checks.py gate` returns `3` for status `manual_review`, and `SKILL-thin-stage3.md` §2 does not require that exit to become `0`: it dispatches the QA reviewer, and a `.qa-status.json` of `pass` that survives `qa_release_gate.py` closes Stage 3. The 2026-09-11 run took exactly that path: `QA_GATE verdict=pass gate_exit=3 repairs=1 dispatched=1 open_actions=1`, the open action being F-066 `reference_format` with disposition `manual_review_item`. The replayed gate on the unedited bytes exits `3` for the same reason.
+`SKILL-thin-stage4.md` §3 treats a QA gate exit of `1`, `2` or `3` after the re-render as "the rewrite disagrees with a gate the pre-edit report passed": restore the snapshot, re-render, and treat a second non-zero exit as a hard abort. The premise is false for exit `3`. `validators/qa_checks.py gate` returns `3` for status `manual_review`, and `SKILL-thin-stage3.md` §2 does not require that exit to become `0`: it dispatches the QA reviewer, and a `.qa-status.json` of `pass` that survives `validators/qa_release_gate.py` closes Stage 3. The 2026-09-11 run took exactly that path: `QA_GATE verdict=pass gate_exit=3 repairs=1 dispatched=1 open_actions=1`, the open action being F-066 `reference_format` with disposition `manual_review_item`. The replayed gate on the unedited bytes exits `3` for the same reason.
 
-The rule did not fire on this run only because no plan was applied and `files_touched` stayed empty. On a run where the pass succeeds, the tail after `apply_editorial_plan.py` exits `3`, the stage restores and re-renders, the gate exits `3` again, and the instruction says abort. Every thorough run whose Stage 3 ends in a triaged `manual_review` is in the same position, and that is the common case, since a `manual_review` item is by definition one the fixer could not clear.
+The rule did not fire on this run only because no plan was applied and `files_touched` stayed empty. On a run where the pass succeeds, the tail after `repairs/apply_editorial_plan.py` exits `3`, the stage restores and re-renders, the gate exits `3` again, and the instruction says abort. Every thorough run whose Stage 3 ends in a triaged `manual_review` is in the same position, and that is the common case, since a `manual_review` item is by definition one the fixer could not clear.
 
 The fix is to compare against the pre-edit gate rather than against zero. `.qa-status.json` already records `gate_exit`; the prep step can additionally keep the pre-edit `.qa-repair-plan.json`. A re-render result counts as a regression only when the exit code rises or the set of blocking action ids grows. Restore then applies to regressions alone, and a second identical `3` is the run's known state, not an abort.
 
@@ -88,7 +88,7 @@ The advisory structural pre-pass takes 5 seconds and does not feed the agent; it
 
 ### F8. Maintenance debt the redesign left behind
 
-`agents/shared/architect-{coherence-rules,coverage-signals,depth-matrix,repair-classifier}.md` have no consumer; the 2026-08-30 document kept them so a deep review could return behind a flag. `architect_structural_checks.py` still documents a `REVIEW_SCOPE=judgment` pass that no longer exists, and `data/breach-vector-taxonomy.yaml` still names the reviewer's Check 8. `tests/test_agent_definitions.py` keeps a turn floor of 12 with a comment that the first measured run replaces it; the measured runs used 9 and 5 tool calls. None of this costs runtime; it costs the next reader.
+`agents/shared/architect-{coherence-rules,coverage-signals,depth-matrix,repair-classifier}.md` have no consumer; the 2026-08-30 document kept them so a deep review could return behind a flag. `analyzers/architect_structural_checks.py` still documents a `REVIEW_SCOPE=judgment` pass that no longer exists, and `data/breach-vector-taxonomy.yaml` still names the reviewer's Check 8. `tests/test_agent_definitions.py` keeps a turn floor of 12 with a comment that the first measured run replaces it; the measured runs used 9 and 5 tool calls. None of this costs runtime; it costs the next reader.
 
 ## Recommendation, in order
 

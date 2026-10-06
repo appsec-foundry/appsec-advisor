@@ -31,10 +31,10 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import aggregate_run_issues  # noqa: E402
-import check_stride_dispatch  # noqa: E402
-import event_log  # noqa: E402
-import record_component_durations  # noqa: E402
+import orchestrator.check_stride_dispatch as check_stride_dispatch  # noqa: E402
+import runtime.aggregate_run_issues as aggregate_run_issues  # noqa: E402
+import runtime.event_log as event_log  # noqa: E402
+import runtime.record_component_durations as record_component_durations  # noqa: E402
 
 CORPUS = Path(__file__).parent / "fixtures" / "logs" / "context-v2-run.log"
 

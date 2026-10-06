@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/architect-review-proposals.schema.json",
+  "title": "Architect review agent proposals",
+  "description": "One architect_reviewer agent's correction proposals, keyed by the packet they answer. Each proposal is validated against architect-corrections.schema.json when the review is applied.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "job_id": {
+      "type": "string",
+      "pattern": "^architect-review:[A-Za-z0-9][A-Za-z0-9._-]{0,99}:[0-9]{1,3}$"
+    },
+    "proposals": {
+      "type": "object",
+      "maxProperties": 24,
+      "patternProperties": {
+        "^packet-[0-9]{4,}$": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema_version",
+    "job_id",
+    "proposals"
+  ],
+  "additionalProperties": false
+}

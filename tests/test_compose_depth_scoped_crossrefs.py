@@ -3,7 +3,7 @@
 Regression cover for the 2026-08-02 defect class: a cross-reference emitter
 decided on a *proxy* signal while the target of that reference was emitted from
 the real render scope. At ``--quick`` the two diverged and the hard
-``qa_checks.py toc_closure`` release gate failed on every run.
+``validators/qa_checks.py toc_closure`` release gate failed on every run.
 
 Two instances, both fixed by gating on the predicate the section-presence check
 already uses:
@@ -27,7 +27,7 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "compose_threat_model.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "renderers/compose_threat_model.py"
 
 
 def _load(name: str, path: Path):

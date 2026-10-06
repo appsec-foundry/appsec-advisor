@@ -1,5 +1,5 @@
 """
-Tests for scripts/scan_excludes.py — the centralised scan-exclusion loader
+Tests for scripts/analyzers/scan_excludes.py — the centralised scan-exclusion loader
 (Sprint 1 Item F).
 
 Three responsibilities covered:
@@ -19,11 +19,11 @@ import pytest
 import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-import scan_excludes  # noqa: E402
+import analyzers.scan_excludes as scan_excludes  # noqa: E402
 
 PLUGIN_ROOT = Path(__file__).parent.parent
 YAML_FILE = PLUGIN_ROOT / "data" / "scan-excludes.yaml"
-SCRIPT = PLUGIN_ROOT / "scripts" / "scan_excludes.py"
+SCRIPT = PLUGIN_ROOT / "scripts" / "analyzers/scan_excludes.py"
 
 
 def _minimal_excludes(**overrides):
@@ -45,6 +45,19 @@ def _minimal_excludes(**overrides):
 def _write_yaml(path: Path, data):
     path.write_text(yaml.safe_dump(data), encoding="utf-8")
     return path
+
+
+@pytest.mark.parametrize("base", ["results", "audit-output"])
+def test_support_products_are_not_scanned_as_application_source(base):
+    for name in (
+        ".plugin-issue-input.json",
+        ".plugin-issue-draft.json",
+        ".plugin-issue-" + "a" * 64 + ".receipt.json",
+        ".plugin-issue-repro/example.py",
+    ):
+        assert scan_excludes.is_excluded(f"{base}/{name}")
+    assert not scan_excludes.is_excluded(f"{base}/issue_handler.py")
+    assert not scan_excludes.is_excluded(f"{base}/plugin-issue-settings.json")
 
 
 @pytest.fixture(autouse=True)

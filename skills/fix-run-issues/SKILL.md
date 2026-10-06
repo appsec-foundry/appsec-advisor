@@ -54,7 +54,7 @@ Read `.run-issues.json`. If `issues` is empty, report that there are no recorded
 Do not trust cached `auto_applicable` flags or edit actions, including those produced by older plugin versions. Run the fixed command below; append `--dry-run` when requested:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/recommend_fixes.py" "$OUTPUT_DIR" --diagnosis
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/recommend_fixes.py" "$OUTPUT_DIR" --diagnosis
 ```
 
 The script validates `.run-bugs.json` and matches its source snapshot, issue IDs, titles, and counts. It emits only manual recommendations. On nonzero exit, print the error and stop without applying or auditing fixes. Explain that `diagnose-run` must regenerate a missing, old, or invalid diagnosis. Do not fall back to the cached actions.

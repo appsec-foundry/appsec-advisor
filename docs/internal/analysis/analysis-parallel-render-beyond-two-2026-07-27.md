@@ -88,7 +88,7 @@ inter-phase gaps of a few seconds each).
 §6 enrichment alone is 13m12s = **12.8 % of the whole run** — second-largest single work item
 after the STRIDE fan-out, and the largest one that is a single agent rather than a fan-out.
 
-Worth noting separately: the 3m58s block at 04:25:55 is pure loss. `validate_intermediate.py`
+Worth noting separately: the 3m58s block at 04:25:55 is pure loss. `validators/validate_intermediate.py`
 failed three times with `INVALID: threats[66]: 'scenario' is a required property` (logged as
 `RUN_ABORTED`) before the run recovered. That is a producer-side schema defect, not a
 performance-tuning question, and it is cheaper to fix than anything discussed above.
@@ -187,7 +187,7 @@ or exact manifest is safer than shared, reusable filenames.
 **LOW TO MEDIUM — dangling cross-references, contradictions, and tone drift.** §6 prose cross-links between sections
 (`§6.2 Password Storage` → `§6.9.2`). All anchors are pregenerated and therefore known *before*
 dispatch, so passing each agent the full anchor list removes the guesswork. `prose-style.md` +
-`prose-samples.md` are already shared, and `normalize_security_architecture.py` plus the existing
+`prose-samples.md` are already shared, and `model/normalize_security_architecture.py` plus the existing
 QA link checks catch structural link drift. They do not prove semantic agreement between two
 independently authored verdict narratives. Quality parity therefore needs a golden replay plus a
 semantic review, not only contract-pass results.
@@ -303,7 +303,7 @@ diagrams, excerpts, and §6.13 still require authored or newly contracted source
 
 ### Defect found while measuring
 
-`_emit_v2_subcontrol_legacy` (`scripts/pregenerate_fragments.py:4540`) never reads
+`_emit_v2_subcontrol_legacy` (`scripts/renderers/pregenerate_fragments.py:4540`) never reads
 `c["assessment"]` — it always emits the "2-4 sentences" placeholder. Its sibling
 `_emit_v2_subcontrol_block` (`:4445`) *does* pass `sub["assessment"]` through verbatim. The legacy
 path is taken whenever an emitted control has no `subcontrols[]`, which was true for all 23 control
@@ -325,7 +325,7 @@ not evidence that the repository runs the dedicated dependency-review action doc
 The LLM rewrite is also wrong: it claims `npm audit` runs in `.github/workflows/ci.yml`, but that
 workflow contains no `npm audit` invocation.
 
-The root defect is therefore upstream in `emit_sca_practice.py`: raw line-token matching credits
+The root defect is therefore upstream in `model/emit_sca_practice.py`: raw line-token matching credits
 tool names inside non-executable data, and its CodeQL token is treated as sufficient SCA evidence.
 The legacy emitter creates a second defect by discarding source provenance, but substituting or
 seeding the current SCA assessment without fixing its producer would preserve incorrect evidence.
@@ -336,7 +336,7 @@ Savings below are hypotheses to benchmark, not measured effects.
 
 | # | Lever | Attacks | Saving hypothesis | Quality / contract risk |
 |---|---|---|---:|---|
-| L0 | Correct `emit_sca_practice.py`: parse executable workflow steps, exclude comments/regex/script data, and require a real SCA or dependency-review invocation | false Stage-1 evidence | performance-neutral | reduces report risk; prerequisite for reusing SCA assessments |
+| L0 | Correct `model/emit_sca_practice.py`: parse executable workflow steps, exclude comments/regex/script data, and require a real SCA or dependency-review invocation | false Stage-1 evidence | performance-neutral | reduces report risk; prerequisite for reusing SCA assessments |
 | L1 | Build a pre-resolved evidence pack for each emitted H4: routed finding ID, title, CWE, severity, canonical file:line, bounded excerpt, and the Stage-1 assessment as an untrusted seed | repeated lookup in the 8m15s middle | −3 to −5 min target | low only with schema/validation, canonical escaping, size caps, secret masking, and data-only labeling |
 | L2 | Pre-fill category verdicts for §6.2–§6.11 from the same helper that owns §6.1; keep §6.13 authored. Put the validated seed and evidence next to each H4 placeholder, but do not render the seed verbatim | 10 verdict placeholders + H4 lookup | −1 min target | low after L0/L1; source assessments remain seeds, not authoritative prose |
 | L3 | Replace full-file reproduction with contracted prose patches or validated per-section slices plus a deterministic assembler | 16.8k echoed characters | −1 to −1.5 min target | low to medium; new artifacts, validation, stale-part isolation, and atomic assembly required |
@@ -488,7 +488,7 @@ Before enabling it by default, demonstrate:
 
 §6 is not the lever for whole-run wall-clock. Two larger items in the same run:
 
-- **3m58s of pure loss** from three `RUN_ABORTED` retries on `validate_intermediate.py`
+- **3m58s of pure loss** from three `RUN_ABORTED` retries on `validators/validate_intermediate.py`
   (`threats[66]: 'scenario' is a required property`). A producer-side schema defect, cheaper to fix
   than anything above — but unverified, see the note in the full-run context section.
 - **STRIDE totals 27m50s (27 %)** — prep 3m04s, fan-out 18m55s, merge 5m51s — of which roughly

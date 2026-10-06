@@ -14,9 +14,9 @@ from pathlib import Path
 SCRIPTS = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-import budget_watchdog as budget  # noqa: E402
 import live_canary  # noqa: E402
-from event_log import format_line  # noqa: E402
+import runtime.budget_watchdog as budget  # noqa: E402
+from runtime.event_log import format_line  # noqa: E402
 
 AGENT = "appsec-advisor:appsec-recon-scanner"
 

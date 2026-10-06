@@ -4,8 +4,8 @@ This rule applies to **every agent and every artifact** in the pipeline:
 recon-summary, intermediate JSON sidecars, prose fragments, `threat-model.md`,
 `threat-model.yaml`, logs, and console output.
 
-A deterministic backstop (`scripts/secret_scan.py`, wired into
-`scripts/qa_checks.py → check_unmasked_secrets`) blocks release if a raw,
+A deterministic backstop (`scripts/validators/secret_scan.py`, wired into
+`scripts/validators/qa_checks.py → check_unmasked_secrets`) blocks release if a raw,
 unmasked secret slips through. The rule below ensures you do not trigger it.
 
 ## The rule
@@ -51,7 +51,7 @@ Stripe live secret: sk_live_51HzMxKLuNgT4Y...
 
 ## Backstop behavior
 
-`scripts/secret_scan.py` recognizes the following masking markers and treats
+`scripts/validators/secret_scan.py` recognizes the following masking markers and treats
 matched values as already-redacted:
 
 ```

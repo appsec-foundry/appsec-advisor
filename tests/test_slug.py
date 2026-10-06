@@ -1,9 +1,9 @@
-"""Tests for scripts/_slug.py — canonical GitHub-flavoured Markdown slugs."""
+"""Tests for scripts/shared/_slug.py — canonical GitHub-flavoured Markdown slugs."""
 
 from __future__ import annotations
 
-import _slug
-from _slug import github_render_slug, github_slug, slugify, v2_slug
+import shared._slug as _slug
+from shared._slug import github_render_slug, github_slug, slugify, v2_slug
 
 
 def test_heading_with_hashes_and_numbers():

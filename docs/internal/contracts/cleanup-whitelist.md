@@ -1,10 +1,10 @@
 # Runtime Cleanup Whitelist
 
-Files and directories that `scripts/runtime_cleanup.py` always wipes from `$OUTPUT_DIR/` after a successful run (unless `--keep-runtime-files` / `KEEP_RUNTIME_FILES=true` is set).
+Files and directories that `scripts/runtime/runtime_cleanup.py` always wipes from `$OUTPUT_DIR/` after a successful run (unless `--keep-runtime-files` / `KEEP_RUNTIME_FILES=true` is set).
 
 The pipeline invokes `--stage post-qa`, which carries this wave when QA came back clean. A run that ended with QA unclean keeps every artifact below, because that is what a diagnosis reads.
 
-Single source of truth: `scripts/runtime_cleanup.py` (`ALWAYS_FILES`, `ALWAYS_DIRS` constants). This file mirrors the same list and is pinned by `tests/test_runtime_cleanup.py::TestCleanupWhitelistDoc::test_filename_mentioned_in_docs` so the two cannot drift.
+Single source of truth: `scripts/runtime/runtime_cleanup.py` (`ALWAYS_FILES`, `ALWAYS_DIRS` constants). This file mirrors the same list and is pinned by `tests/test_runtime_cleanup.py::TestCleanupWhitelistDoc::test_filename_mentioned_in_docs` so the two cannot drift.
 
 Audit artifacts (`docs/internal/contracts/audit-artifacts.md`) and incremental anchors (`.appsec-cache/baseline.json`) are **never** in this list.
 
@@ -46,13 +46,13 @@ Audit artifacts (`docs/internal/contracts/audit-artifacts.md`) and incremental a
 .appsec-progress.json
 .skill-watchdog.tick
 .business-context-input.md
+.business-context-preview.json
+.business-context-raw.md
 .pending-dispatch.json
 .receipt-verification.json
 ```
 
-`.business-context-input.md` is business context the user supplied for one run
-without persisting it to `docs/business-context.md`. It is cleaned like any other
-run input so it cannot shape a later scan unnoticed.
+`.business-context-input.md` is business context the user supplied for one run without persisting it to `docs/security/business-context.md`. It is cleaned like any other run input so it cannot shape a later scan unnoticed. Persistent `business-context.md` is never a run-cleanup target, including when the output directory is `docs/security/`.
 
 `.pending-dispatch.json` and `.receipt-verification.json` record which dispatch
 is waiting for its receipts to be re-hashed and which ones were. Both belong to
@@ -79,3 +79,7 @@ The outer-session `Stop` hook and a controller `RUN_ABORTED` terminal gate remov
 first fail any running call and retire its budget counter and marker, so cleanup
 cannot erase an unterminated lifecycle silently. Nested Agent stops must not
 clear it while the parent run still owns the lock.
+
+## Durable architect review
+
+Successful cleanup preserves `.architect-review.json` because later YAML rebuilds and rerenders use it to preserve accepted corrections. Full and rebuild preflight remove it before new analysis. Transient packets remain inside the durable transaction; no additional dispatch directory survives cleanup. `.architect-status.json` is still transient and records final gate success separately from semantic coverage.

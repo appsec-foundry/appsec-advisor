@@ -1,5 +1,5 @@
 """
-Tests for scripts/repo_profile.py.
+Tests for scripts/analyzers/repo_profile.py.
 
 Covers:
   * Sizes: the totals are ``st_size`` sums of exactly the files in the tree, and
@@ -29,7 +29,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import repo_profile as rp  # noqa: E402
+import analyzers.repo_profile as rp  # noqa: E402
 
 HAS_GIT = shutil.which("git") is not None
 

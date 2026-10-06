@@ -1,4 +1,4 @@
-"""Tests for scripts/log_event.py — the unified phase/step event emitter.
+"""Tests for scripts/runtime/log_event.py — the unified phase/step event emitter.
 
 Pins the dual-write contract:
   * canonical log entry appended to .agent-run.log (same format as legacy raw echoes)
@@ -17,11 +17,11 @@ import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "log_event.py"
+SCRIPT = REPO_ROOT / "scripts" / "runtime/log_event.py"
 
 
 def _load_module():
-    spec = importlib.util.spec_from_file_location("log_event", SCRIPT)
+    spec = importlib.util.spec_from_file_location("runtime.log_event", SCRIPT)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
@@ -180,7 +180,7 @@ class TestCliBehaviour:
 
     def test_stderr_mirror_is_not_gated_on_verbose_env(self, tmp_path: Path, monkeypatch):
         """The user must see progress lines even without APPSEC_VERBOSE — that's
-        the whole point of log_event.py vs. the legacy echo+hook path."""
+        the whole point of runtime/log_event.py vs. the legacy echo+hook path."""
         monkeypatch.delenv("APPSEC_VERBOSE", raising=False)
         out = tmp_path / "output"
         out.mkdir()
@@ -266,18 +266,18 @@ class TestWriteErrorBranches:
 
 class TestMainArgErrors:
     def test_agent_flag_missing_value(self, capsys):
-        rc = log_event.main(["log_event.py", "--agent"])
+        rc = log_event.main(["runtime/log_event.py", "--agent"])
         assert rc == 2
         assert "--agent requires a value" in capsys.readouterr().err
 
     def test_too_few_args(self, capsys):
-        rc = log_event.main(["log_event.py", "outdir", "phase-start"])
+        rc = log_event.main(["runtime/log_event.py", "outdir", "phase-start"])
         assert rc == 2
         assert "usage:" in capsys.readouterr().err
 
     def test_empty_output_dir_is_rejected(self, capsys, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        rc = log_event.main(["log_event.py", "", "step-end", "AGENT_END component=x"])
+        rc = log_event.main(["runtime/log_event.py", "", "step-end", "AGENT_END component=x"])
         assert rc == 2
         assert "$OUTPUT_DIR" in capsys.readouterr().err
         assert not (tmp_path / ".appsec-progress.json").exists()
@@ -285,13 +285,13 @@ class TestMainArgErrors:
 
     def test_option_in_output_dir_slot_is_rejected(self, capsys, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        rc = log_event.main(["log_event.py", "--event", "step-end", "detail"])
+        rc = log_event.main(["runtime/log_event.py", "--event", "step-end", "detail"])
         assert rc == 2
         assert "looks like an option" in capsys.readouterr().err
         assert not (tmp_path / "--event").exists()
 
     def test_info_requires_event_and_detail(self, capsys, tmp_path):
-        rc = log_event.main(["log_event.py", str(tmp_path), "info", "ONLY_EVENT"])
+        rc = log_event.main(["runtime/log_event.py", str(tmp_path), "info", "ONLY_EVENT"])
         assert rc == 2
         assert "`info` requires" in capsys.readouterr().err
 
@@ -301,5 +301,5 @@ class TestMainArgErrors:
             raise OSError("broken pipe")
 
         monkeypatch.setattr(sys.stderr, "write", boom)
-        rc = log_event.main(["log_event.py", str(tmp_path), "phase-start", "[Phase 1/2] go"])
+        rc = log_event.main(["runtime/log_event.py", str(tmp_path), "phase-start", "[Phase 1/2] go"])
         assert rc == 0

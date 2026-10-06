@@ -1,15 +1,15 @@
 """Tests for the --reasoning-model flag resolution matrix.
 
-Since M3.2 the actual resolver lives in ``scripts/resolve_config.py`` and is
+Since M3.2 the actual resolver lives in ``scripts/runtime/resolve_config.py`` and is
 covered in depth by ``tests/test_resolve_config.py``. The tests here guard
 against drift between the resolver (Python) and the downstream consumers
 that still reference the resolved env-vars by name — i.e. the agent
 definitions and compact runtimes that dispatch sub-agents with these model
 parameters. Touching any of:
 
-    * scripts/resolve_config.py                  (source of truth)
+    * scripts/runtime/resolve_config.py                  (source of truth)
     * skills/create-threat-model/SKILL.md        (must mention the flag + delegate)
-    * scripts/orchestration_controller.py        (must own role routing)
+    * scripts/orchestrator/orchestration_controller.py        (must own role routing)
     * docs/model-selection.md                    (user-facing model choices)
 
 without updating the others will surface here.
@@ -29,16 +29,16 @@ SKILL_FULL_RUNTIME_MD = ROOT / "skills" / "create-threat-model" / "SKILL-full-ru
 SKILL_RERENDER_RUNTIME_MD = ROOT / "skills" / "create-threat-model" / "SKILL-rerender-runtime.md"
 HELP_TXT = ROOT / "skills" / "create-threat-model" / "HELP.txt"
 MODEL_SELECTION_MD = ROOT / "docs" / "model-selection.md"
-RESOLVE_CONFIG_PY = ROOT / "scripts" / "resolve_config.py"
-CONTROLLER_PY = ROOT / "scripts" / "orchestration_controller.py"
+RESOLVE_CONFIG_PY = ROOT / "scripts" / "runtime/resolve_config.py"
+CONTROLLER_PY = ROOT / "scripts" / "orchestrator/orchestration_controller.py"
 
 
 def _load_resolver():
-    if "resolve_config" in sys.modules:
-        return sys.modules["resolve_config"]
-    spec = importlib.util.spec_from_file_location("resolve_config", RESOLVE_CONFIG_PY)
+    if "runtime.resolve_config" in sys.modules:
+        return sys.modules["runtime.resolve_config"]
+    spec = importlib.util.spec_from_file_location("runtime.resolve_config", RESOLVE_CONFIG_PY)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["resolve_config"] = mod
+    sys.modules["runtime.resolve_config"] = mod
     assert spec.loader is not None
     spec.loader.exec_module(mod)
     return mod
@@ -59,7 +59,7 @@ def skill_router_text() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Flag is documented + skill delegates to resolve_config.py
+# Flag is documented + skill delegates to runtime/resolve_config.py
 # ---------------------------------------------------------------------------
 
 
@@ -68,7 +68,7 @@ class TestFlagDocumented:
         assert "--reasoning-model" in skill_text, "SKILL.md must document --reasoning-model"
 
     def test_controller_delegates_to_resolve_config(self):
-        assert "import resolve_config" in CONTROLLER_PY.read_text()
+        assert "import runtime.resolve_config as resolve_config" in CONTROLLER_PY.read_text()
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +95,7 @@ class TestResolverMatrix:
     def test_opus_cheap_differentiator(self):
         """opus-cheap's raison d'être: STRIDE + triage on Sonnet, merger on Opus.
 
-        Triage stays on Sonnet because scripts/triage_validate_ratings.py is
+        Triage stays on Sonnet because scripts/validators/triage_validate_ratings.py is
         the deterministic floor — the agent only does judgment validation on
         top of structured input. Opus reasoning here is overkill.
         """
@@ -224,7 +224,9 @@ class TestEnvVarOverrides:
         ],
     )
     def test_env_var_referenced_in_resolver(self, env):
-        assert env in RESOLVE_CONFIG_PY.read_text(), f"{env} must appear as an escape hatch in resolve_config.py"
+        assert env in RESOLVE_CONFIG_PY.read_text(), (
+            f"{env} must appear as an escape hatch in runtime/resolve_config.py"
+        )
 
     def test_env_var_beats_tier(self, monkeypatch):
         rc = _load_resolver()

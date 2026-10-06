@@ -1,0 +1,2024 @@
+#!/usr/bin/env python3
+"""Build the Full-M1 STRIDE dispatch manifest from on-disk Stage-1 artifacts.
+
+Hybrid handoff: this script assembles every per-component dispatch parameter
+that IS deterministically derivable from disk (identity, paths, complexity,
+max_turns, the per-component context paths), and
+merges the small set of CONTEXTUAL fields that only the analyst can supply
+(interfaces, controls, known_*) from an optional analyst-context JSON. The
+result, ``$OUTPUT_DIR/.stride-dispatch-manifest.json``, is validated by
+``validators/validate_dispatch_manifest.py`` and consumed by the skill's parallel
+``appsec-stride-analyzer-v2`` fan-out.
+
+This minimises the LLM-authored surface to the contextual fields only — the
+load-bearing identity/budget/path fields are deterministic and testable.
+
+Usage:
+    orchestrator/build_stride_dispatch_manifest.py <output_dir> --depth {quick,standard,thorough}
+        [--analyst-context <path.json>] [--plugin-root <dir>]
+
+The analyst-context JSON (optional) maps component_id → a dict of any of:
+``interfaces``, ``controls``, ``known_secrets``, ``known_vulns``,
+``known_llm_patterns``, ``supply_chain_findings``, ``estimated_threat_count``,
+``business_context``, ``architecture_context``, ``focus_paths``,
+``exclude_paths``.
+"""
+
+from __future__ import annotations
+
+# Direct CLI execution must resolve the same packages as imports from scripts/.
+import sys as _sys
+from pathlib import Path as _Path
+
+if not __package__:
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
+
+
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from shared._path_guard import run_path_arg  # noqa: E402
+
+_AI_SOURCE_SUFFIXES = {
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".mjs",
+    ".cjs",
+    ".java",
+    ".kt",
+    ".scala",
+    ".go",
+    ".rb",
+    ".php",
+    ".cs",
+    ".rs",
+}
+_AI_SIGNAL_KINDS = {
+    "llm-sdk",
+    "llm-invoke",
+    "vector-db",
+    "agent-framework",
+    "agent-memory",
+    "prompt-framework",
+    "tokenizer",
+    "model-name",
+    "prompt-construction",
+    "model-config",
+    "vector-semantic",
+    "tool-use",
+}
+_AI_CONFIG_DIRS = {".claude", ".cursor", ".continue", ".codeium", ".aider", ".windsurf", ".kiro", ".vscode"}
+
+
+def _owned_ai_signals(output_dir: Path, paths: list) -> list[dict]:
+    """Retain source leads owned by this component; configuration is not autonomy."""
+    data = _read_json(output_dir / ".recon-patterns.json", {})
+    findings = (data.get("categories", {}).get("13", {}) or {}).get("findings", [])
+    return [
+        f
+        for f in findings
+        if isinstance(f, dict)
+        and f.get("subcategory") in _AI_SIGNAL_KINDS
+        and isinstance(f.get("file"), str)
+        and Path(f["file"]).suffix.lower() in _AI_SOURCE_SUFFIXES
+        and not set(Path(f["file"]).parts) & _AI_CONFIG_DIRS
+        and _path_owns(paths, f["file"])
+    ]
+
+
+def _cat13_supplement(output_dir: Path, paths: list | None = None) -> str:
+    """Preserve owned signal kinds independently of the ten-location excerpt cap."""
+    findings = _owned_ai_signals(output_dir, paths or [])
+    kinds = sorted({f["subcategory"] for f in findings})
+    if not kinds:
+        return ""
+    parts, seen = [], set()
+    for f in sorted(findings, key=lambda f: (f["subcategory"], f["file"], str(f.get("line", "")))):
+        key = (f["subcategory"], f["file"])
+        if key in seen:
+            continue
+        seen.add(key)
+        if len(parts) < 10:
+            parts.append(f"{f['subcategory']}: {f['file']}:{f.get('line', '')}")
+    omitted = len(seen) - len(parts)
+    suffix = f"; {omitted} owned signal locations omitted" if omitted else ""
+    return "Signal kinds: " + ", ".join(kinds) + "; " + "; ".join(parts) + suffix
+
+
+# max_turns per (depth, complexity) — single source of truth is
+# resolve_config.DEPTH_PARAMS; imported when available, else a synced fallback
+# (kept identical by tests/test_dispatch_manifest.py::test_depth_params_in_sync).
+_FALLBACK_DEPTH_PARAMS = {
+    "quick": {"simple": 10, "moderate": 15, "complex": 20},
+    "standard": {"simple": 15, "moderate": 22, "complex": 31},
+    "thorough": {"simple": 20, "moderate": 28, "complex": 35},
+}
+
+
+def _depth_params() -> dict:
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from runtime.resolve_config import DEPTH_PARAMS  # type: ignore
+
+        return DEPTH_PARAMS
+    except Exception:
+        return _FALLBACK_DEPTH_PARAMS
+
+
+def _read_json(path: Path, default):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return default
+
+
+# ---------------------------------------------------------------------------
+# Criteria-derived STRIDE-component selection (replaces the hard-coded 3/5/8
+# count). Depth selects which *predicates* are active; the component count is
+# the EMERGENT result of applying them to the full inventory in .components.json.
+#
+# Exposure classes are derived from each component's deployment_zones[] (the
+# access-zone vocabulary in data/actors/default-library.yaml). These sets are
+# the selection *criteria*, not a count — defining "exposed" is policy that has
+# to live somewhere; it is exactly the "general criteria" the count derives from.
+# ---------------------------------------------------------------------------
+# Internet/client-reachable zones. The architecture phase emits these as free
+# text, so the SAME exposure is labelled many ways — a juice-shop run tagged its
+# Socket.IO channel and Multer file-upload handler `internet-facing` (and others
+# `external` / `browser`), none of which matched the old narrow set, so both
+# genuinely-exposed components were mis-classified internal-only and dropped at
+# standard depth. Match the common synonyms, not just the canonical token.
+EXPOSED_ZONES = frozenset(
+    {
+        "internet",
+        "internet-facing",
+        "internet-exposed",
+        "public-internet",
+        "public",
+        "public-facing",
+        "publicly-accessible",
+        "externally-reachable",
+        "external",
+        "edge",
+        "dmz",
+        "client-device",
+        "mobile-device",
+        "browser",
+        "web-browser",
+    }
+)
+# CI/CD zones. Same synonym rule as EXPOSED_ZONES above: the architecture phase
+# writes these free-text, so a run that tagged its GitHub-Actions component `ci`
+# matched none of the canonical tokens and lost the zonal supply-chain signal
+# (juice-shop 2026-07-24 — it survived only because _is_cicd falls back to text
+# hints). Match the common shorthands, not just the canonical token.
+CICD_ZONES = frozenset(
+    {
+        "ci-cd-runtime",
+        "ci-cd-secrets",
+        "build-pipeline",
+        "deployment-pipeline",
+        "ci",
+        "cicd",
+        "ci-cd",
+        "ci-runner",
+        "build",
+        "build-server",
+        "pipeline",
+        "release-pipeline",
+    }
+)
+# Canonical NON-exposed placement zones from the access-zone vocabulary
+# (data/actors/default-library.yaml / schemas/fragments/components.schema.json).
+# A component tagged with one of these has a KNOWN internal placement — it is
+# "proven-internal" (sheddable at the ceiling), NOT exposure-unknown.
+INTERNAL_ZONES = frozenset({"internal-network", "peer-service", "prod-env", "prod-write-db"})
+# Pure runtime / where-it-runs zones carry NO internet-reachability signal. A
+# component tagged ONLY with these is exposure-UNKNOWN for selection purposes
+# and must hit the fail-safe inclusion branch, not be treated as "internal-only"
+# and dropped. (2026-06-12: b2b-api — a JWT-protected /b2b/v2 REST API with a
+# vm.runInContext RCE — was tagged only `docker-container` and silently excluded
+# at standard depth, leaving the whole component unanalyzed.)
+# (2026-07-24 juice-shop: the analyst tagged 7 of 11 components `server` — the
+# server-vs-browser TIER, which is a separate field — so every one of them fell
+# off-vocabulary. The exposure fail-safe still included them, but nothing could
+# be proven internal either, so the operational ceiling had to be lifted. These
+# tokens say "where it runs", never "how reachable it is", so they belong here:
+# recognised, but still exposure-UNKNOWN.)
+RUNTIME_ONLY_ZONES = frozenset(
+    {
+        "docker-container",
+        "container",
+        "kubernetes",
+        "k8s",
+        "pod",
+        "vm",
+        "virtual-machine",
+        "serverless",
+        "lambda",
+        "function",
+        "host",
+        "process",
+        "runtime",
+        "server",
+        "server-side",
+        "backend",
+        "app-server",
+        "application-server",
+        "service",
+        "worker",
+        "daemon",
+        "on-premise",
+        "on-prem",
+        "cloud",
+    }
+)
+_AUTH_HINTS = ("auth", "identity", "login", "session", "jwt", "oauth", "iam", "2fa", "mfa")
+_FRONTEND_HINTS = ("frontend", "spa", "web-client", "react", "angular", "vue")
+
+
+def _component_text(c: dict) -> str:
+    # Role detection matches id/name/type only — NOT description. The prose
+    # description over-matches (a chatbot whose description mentions "session"
+    # or "auth" would be mis-tagged auth); id+name+type are the stable labels.
+    return " ".join(str(c.get(k, "")) for k in ("id", "name", "type")).lower()
+
+
+def _zones(c: dict) -> set:
+    z = c.get("deployment_zones") or []
+    return {str(x).strip().lower() for x in z if str(x).strip()}
+
+
+# Zone tokens that carry a RECOGNISED placement/reachability signal. A token
+# outside this vocabulary tells us nothing about reachability and must NOT be
+# read as "proven internal".
+_REACHABILITY_VOCAB = EXPOSED_ZONES | CICD_ZONES | INTERNAL_ZONES
+
+
+def _reachability_zones(c: dict) -> set:
+    """Deployment zones that actually carry an internet-reachability signal.
+
+    Only tokens in the canonical zone vocabulary count. Two kinds of token are
+    filtered out so the selection's exposure-UNKNOWN fail-safe fires instead of
+    the "zones present → treat as internal-only" path that silently drops a
+    component:
+
+    * runtime/where-it-runs tags (``RUNTIME_ONLY_ZONES``) — a component tagged
+      only ``docker-container`` is exposure-unknown, not internal (2026-06-12
+      b2b-api regression);
+    * off-vocabulary labels the LLM invented (e.g. ``application-zone`` /
+      ``data-zone`` / ``build-zone``) — these matched no zone set, so the whole
+      zonal exposure/ci-cd signal was silently inert and an off-vocab component
+      was mis-read as proven-internal (2026-07-23 spring-app regression).
+    """
+    return _zones(c) & _REACHABILITY_VOCAB
+
+
+def _unknown_zone_tokens(c: dict) -> set:
+    """Zone tokens matching no known vocabulary (neither a placement/reachability
+    zone nor a runtime tag). These are analyst drift and make the zonal exposure
+    signal silently inert — surfaced so the upstream output gets corrected."""
+    return _zones(c) - _REACHABILITY_VOCAB - RUNTIME_ONLY_ZONES
+
+
+def _is_auth(c: dict) -> bool:
+    t = _component_text(c)
+    return any(h in t for h in _AUTH_HINTS)
+
+
+def _is_frontend(c: dict) -> bool:
+    if (c.get("tier") or "").lower() == "client":
+        return True
+    t = _component_text(c)
+    return any(h in t for h in _FRONTEND_HINTS)
+
+
+# A central request-handling backend — the API/gateway layer every other
+# component is reached THROUGH. Matched on id/name/type like the other role
+# anchors (never on the prose description, which over-matches). Deliberately
+# tight: "service" and "core" are omitted because they name half the components
+# in a microservice repo and would spare everything. "server" is omitted too —
+# it is a runtime word ("report-server"), not a role.
+_CORE_BACKEND_HINTS = ("api", "gateway", "backend", "rest", "graphql", "bff", "monolith")
+
+
+def _is_core_backend(c: dict) -> bool:
+    t = _component_text(c)
+    return any(h in t for h in _CORE_BACKEND_HINTS)
+
+
+def _is_cicd(c: dict) -> bool:
+    if _zones(c) & CICD_ZONES:
+        return True
+    t = _component_text(c)
+    return "ci-cd" in t or "cicd" in t or "pipeline" in t
+
+
+# Word-boundary matched — short tokens like "sse" must NOT match inside
+# unrelated words ("a-sse-t service", "cla-sse-s"). Substring matching (as the
+# pre-existing _is_auth/_is_cicd hints use) would spuriously mark a file-upload
+# / asset component as a realtime role and suppress the realtime injection.
+_REALTIME_RE = re.compile(r"\b(socket\.?io|web-?socket|real-?time|socket|stomp|sse|pub-?sub)\b", re.I)
+
+
+def _is_realtime(c: dict) -> bool:
+    return bool(_REALTIME_RE.search(_component_text(c)))
+
+
+# Web3 / wallet / NFT role. Matched against id/name/type only (via
+# _component_text), so a generic backend that merely *mentions* web3 in its
+# prose description does NOT count as carrying the role — only a component
+# whose stable label is actually a web3/wallet/NFT unit suppresses injection.
+_WEB3_HINTS = (
+    "web3",
+    "nft",
+    "blockchain",
+    "ethereum",
+    "wallet",
+    "smart-contract",
+    "smartcontract",
+    "dapp",
+    "defi",
+    "crypto-wallet",
+)
+
+
+def _is_web3(c: dict) -> bool:
+    return any(h in _component_text(c) for h in _WEB3_HINTS)
+
+
+# AI/LLM role. An LLM/AI-agent surface carries inherent OWASP-LLM-Top-10 risk
+# (prompt injection, excessive agency, system-prompt leakage, unbounded
+# consumption) regardless of deployment zone — an "internal" LLM endpoint is
+# still reachable through the data it ingests. So an AI/LLM component is
+# MANDATORY at every depth and is never shed as internal-only (2026-06-23:
+# juice-shop's `llm-chat-service`, tagged zone=internal, was dropped at standard
+# depth — "out-of-scope at depth=standard" — leaving the whole chatbot prompt-
+# injection / tool-use surface unanalyzed; cf. the deterministic recon cat-13
+# detector that now reliably identifies these components). Word-boundary matched
+# against id/name/type AND the structured tech_stack[] (NOT the prose
+# description, which over-matches — same rule as the other role predicates).
+_LLM_RE = re.compile(
+    r"\b(llm|chat-?bot|gen-?ai|generative-ai|openai|anthropic|langchain"
+    r"|llama-?index|ollama|copilot|gpt-?[0-9]|claude-[0-9a-z]|gemini-[0-9]"
+    r"|bedrock|vertex-ai|ai-(?:chat|agent|assistant|service|gateway))\b",
+    re.I,
+)
+
+
+def _is_llm(c: dict) -> bool:
+    # A populated `known_llm_patterns` is an affirmative analyst/recon flag that
+    # this component carries an LLM surface — honour it even when id/name/type
+    # and tech_stack name no LLM token. The enumerator sometimes FOLDS a chatbot
+    # into a generically-named unit (e.g. juice-shop's chat route folded into
+    # "express-backend"); the LLM signal then lives ONLY in known_llm_patterns.
+    # Without this branch the mandatory floor, the OWASP-LLM-Top-10 dispatch
+    # reason, and the Cat-13 supplement (all gated on _is_llm) silently skip the
+    # folded component, dropping LLM07/LLM10 and the AI/LLM Exposure section.
+    if any(
+        isinstance(row, dict)
+        and row.get("evidence")
+        and row.get("capability") in {"llm-calls", "llm-tools", "agent-delegation"}
+        for row in c.get("capabilities") or []
+    ):
+        return True
+    klp = c.get("known_llm_patterns")
+    if klp and (klp if isinstance(klp, str) else " ".join(str(x) for x in klp)).strip():
+        return True
+    stack = " ".join(str(x) for x in (c.get("tech_stack") or []))
+    return bool(_LLM_RE.search(_component_text(c)) or _LLM_RE.search(stack))
+
+
+def _stride_lens_ids(component: dict, context: dict) -> list[str]:
+    """Select fixed plugin-owned lens enums; input can never select a path."""
+    lenses: set[str] = set()
+    text = _component_text(component)
+    known_llm = str(context.get("known_llm_patterns") or "").lower()
+    # Supplemental source paths are evidence locators, never capability names.
+    # Only the allow-listed kind summary participates in lens selection.
+    authored, separator, supplement = known_llm.partition("signal kinds: ")
+    if separator:
+        known_llm = authored + " " + supplement.split(";", 1)[0]
+    capabilities = {
+        row.get("capability")
+        for row in component.get("capabilities") or []
+        if isinstance(row, dict) and row.get("evidence")
+    }
+    if _is_llm(component) or known_llm or capabilities & {"llm-calls", "llm-tools", "agent-delegation"}:
+        lenses.add("llm")
+    if capabilities & {"llm-tools", "agent-delegation"} or any(
+        marker in known_llm for marker in ("agent-framework", "tool-use", "crewai", "autogen")
+    ):
+        lenses.add("agentic")
+    if capabilities & {"rag-retrieval", "rag-ingestion", "agent-memory"} or any(
+        marker in known_llm for marker in ("vector-db", "vector-semantic", "agent-memory")
+    ):
+        lenses.add("rag")
+    if capabilities & {"mcp-client", "mcp-server"}:
+        lenses.add("mcp")
+    if _is_frontend(component):
+        lenses.add("spa")
+    if any(marker in text for marker in ("mobile", "android", "ios", "react-native", "flutter")):
+        lenses.add("mobile")
+    if _is_cicd(component) or context.get("supply_chain_findings") not in (None, "", [], "none"):
+        lenses.add("supply-chain")
+    return sorted(lenses)
+
+
+# File-upload / file-processing role. A unit that accepts and parses
+# user-supplied files carries severe, zone-independent risk — unrestricted
+# upload (CWE-434), zip/path traversal, XXE, archive bombs, parser/
+# deserialization RCE — even when deployed "internally". Matched on id/name/type
+# AND tech_stack[] (multer/busboy/formidable/multipart parsers); description is
+# excluded for the same over-match reason as the other role predicates.
+_FILE_UPLOAD_RE = re.compile(
+    r"\b(file-?upload|upload(?:er|s)?|multer|busboy|formidable|multipart"
+    r"|attachment|media-?upload|image-?upload|document-?upload|file-?(?:handler|processor|ingest))\b",
+    re.I,
+)
+
+
+def _is_file_upload(c: dict) -> bool:
+    stack = " ".join(str(x) for x in (c.get("tech_stack") or []))
+    return bool(_FILE_UPLOAD_RE.search(_component_text(c)) or _FILE_UPLOAD_RE.search(stack))
+
+
+# Data-store / persistence / secrets / queue role. A component that stores or
+# brokers data carries STRIDE-relevant risk — SQL/NoSQL injection, tampering,
+# information disclosure, and (for secrets stores / queues) credential exposure
+# and message spoofing — REGARDLESS of the `handles_sensitive_data` flag. Recon
+# under-tagging a SQL DB as non-sensitive must NOT drop it: a type-anchor exactly
+# like _is_file_upload (CWE-434), independent of the crown-jewel flag. The real
+# .components.json carries no `component_type`/`type` field, so the store signal
+# lives in id/name (via _component_text) and the structured `framework` /
+# `tech_stack` engine tokens — component_type is matched too for forward-compat
+# with recon component-hints. Description is excluded (same over-match rule as
+# the other role predicates). Word-boundary matched so short tokens (`db`, `mq`)
+# do not fire inside unrelated words.
+_DATASTORE_RE = re.compile(
+    r"\b(store|datastore|data-?layer|data-?persistence|persistence|database|db"
+    r"|message-?queue|mq|rabbitmq|kafka|sqs|secrets?-?(?:store|manager)|vault"
+    r"|cache|redis|memcached|postgres(?:ql)?|mysql|mariadb|sqlite|mssql"
+    r"|sql-?server|oracle-?db|mongo(?:db)?|dynamo(?:db)?|cassandra)\b",
+    re.I,
+)
+
+
+def _is_datastore(c: dict) -> bool:
+    structured = " ".join(
+        str(x)
+        for x in (
+            *(c.get("tech_stack") or []),
+            c.get("framework") or "",
+            c.get("component_type") or "",
+        )
+    )
+    return bool(_DATASTORE_RE.search(_component_text(c)) or _DATASTORE_RE.search(structured))
+
+
+def _is_exposed(c: dict) -> bool:
+    # `_route_exposed` is a derived enrichment set by _enrich_from_route_inventory
+    # when the static route inventory shows this component owns at least one HTTP
+    # handler.  It catches monolith packages labelled `internal-network` by the
+    # architect that are served on the same internet-facing port as the entry service.
+    return bool(_zones(c) & EXPOSED_ZONES) or bool(c.get("_route_exposed"))
+
+
+def _business_assets(c: dict) -> list:
+    """Assets the declared business context says this component handles.
+
+    Written by the control analyst from `docs/business-context.md` into
+    `.stride-analyst-context.json` (`business_context.sensitive_assets`), so it
+    exists only where a human stated it. `handles_sensitive_data` is an
+    inventory judgement and over-tags; a named asset is a stated fact.
+    """
+    ctx = c.get("business_context")
+    if not isinstance(ctx, dict):
+        return []
+    assets = ctx.get("sensitive_assets")
+    return [a for a in assets if isinstance(a, str) and a.strip()] if isinstance(assets, list) else []
+
+
+def _is_crown_jewel(c: dict) -> bool:
+    # Union, never a replacement: declared assets add components the inventory
+    # flag missed, and removing the flag would silently narrow selection.
+    return bool(c.get("handles_sensitive_data")) or bool(_business_assets(c))
+
+
+def _is_internal_only(c: dict) -> bool:
+    """A component selected only for thorough completeness: it has explicit
+    zones, none exposed/ci-cd, and it is not crown-jewel/auth/frontend. These
+    are the ONLY components the operational ceiling may shed — everything that
+    earned selection by a positive criterion (or exposure-unknown fail-safe) is
+    never silently dropped."""
+    if not _reachability_zones(c):
+        return False  # exposure-unknown → fail-safe, never silently dropped
+    return not (
+        _is_exposed(c)
+        or _is_cicd(c)
+        or _is_crown_jewel(c)
+        or _is_datastore(c)
+        or _is_auth(c)
+        or _is_frontend(c)
+        or _is_llm(c)
+        or _is_realtime(c)
+        or _is_file_upload(c)
+    )
+
+
+def _priority(c: dict) -> int:
+    """Lower = kept first when an operational ceiling forces overflow drops."""
+    if _is_auth(c):
+        return 0  # M3.4 invariant — never drop
+    if _is_frontend(c):
+        return 1  # frontend attack-surface invariant — never drop
+    if _is_llm(c):
+        return 2  # AI/LLM surface — OWASP LLM Top-10 risk, never drop
+    if _is_exposed(c):
+        return 2  # directly reachable by an external actor — never drop (cap lifts)
+    if _is_crown_jewel(c) or _is_datastore(c):
+        return 3  # crown-jewel / data-store — SQLi/tampering/info-disclosure, never drop
+    if _is_file_upload(c) or _is_realtime(c):
+        return 3  # untrusted-input entry point (upload parser / realtime channel) — never drop
+    if _is_cicd(c):
+        return 4
+    return 5  # internal-only / transitively-reachable — drop first
+
+
+def _cheap_stride_target(c: dict) -> bool:
+    """Is this component in the --cheap-stride screening set (the internal tail)?
+
+    Spared at full depth: priority <=2 (auth / frontend / LLM / internet-exposed)
+    plus four role anchors — file-upload parsers and realtime channels
+    (untrusted-input ENTRY POINTS), data stores, and the central request-handling
+    backend (``_is_core_backend``: the API / gateway layer everything else is
+    reached through). Auth is already covered by its priority-0 floor, so the two
+    roles a reviewer would never accept at screening depth — authentication and
+    the core API — are both unconditionally at full depth.
+
+    The data-store carve-out is measured, not precautionary
+    (docs/internal/analysis/analysis-cheap-stride-vs-standard-2026-07-25.md):
+    screening the juice-shop datastores at 8 turns kept the "data at rest"
+    findings but lost every model-DESIGN finding the same code yielded at full
+    depth (conditional-sanitize bypass, DB file placement, missing query
+    timeouts) — that class is what the verification round buys. ``_is_datastore``
+    is a type anchor (component_type / tech_stack / framework), independent of
+    the sensitivity flag, so sparing on it stays selective: 2 of 11 components in
+    that run, 1 of 8 in the standard run.
+
+    Crown-jewel is deliberately NOT a spare criterion. ``_is_crown_jewel`` reads
+    the analyst's ``handles_sensitive_data`` flag, which over-tags — 6 of 11 and
+    6 of 8 components carried it in the two juice-shop runs. Sparing on it would
+    leave ci-cd as the only screenable component and make the flag inert. The
+    same A/B measured no coverage loss for the screened crown-jewel API (18
+    findings, 4 Criticals at 8 turns), so the evidence does not ask for it.
+
+    Exposure-UNKNOWN is never screened — the same fail-safe ``_droppable_at_ceiling``
+    already applies to ceiling drops, extended to depth. Screening claims a
+    component is tail; absent reachability zones nothing has been *proven* internal,
+    so the claim is unfounded. This is what put juice-shop's internet-facing REST
+    API into the screening set: the analyst wrote the runtime tier (``server``, a
+    RUNTIME_ONLY zone) instead of a reachability zone, so `_is_exposed` stayed
+    False. The comparison run tagged the same component ``internet-facing`` and it
+    was spared — depth must not hinge on which synonym the analyst picked.
+
+    ci-cd is the one exception: it is identified by ROLE (``_is_cicd``), not by
+    reachability, and the same A/B measured ~zero loss for screening it (its
+    substance comes from the deterministic config-scanner, not from STRIDE).
+    """
+    # Role-identified tail, measured safe — survives an absent zone vocabulary.
+    if _is_cicd(c) and not _is_exposed(c):
+        return True
+    if not _reachability_zones(c):
+        return False
+    return _priority(c) > 2 and not (_is_file_upload(c) or _is_realtime(c) or _is_datastore(c) or _is_core_backend(c))
+
+
+def _owns_file(pattern: str, file: str) -> bool:
+    """Canonical component-glob ownership, as in reconcile_privileged_roles._owns.
+
+    A catch-all pattern (``**``) is a fallback scope, not ownership evidence.
+    """
+    from model.reclassify_components import _glob_to_regex
+
+    if pattern.strip("/") in {"**", "**/*"}:
+        return False
+    if _glob_to_regex(pattern).fullmatch(file):
+        return True
+    return not re.search(r"[*?\[]", pattern) and file.startswith(pattern.rstrip("/") + "/")
+
+
+def _enrich_from_route_inventory(all_components: list, output_dir: Path) -> None:
+    """Set ``_route_exposed=True`` on any component that owns at least one HTTP
+    handler in ``.route-inventory.json``.
+
+    Mutates each matching component dict in place.  The underscore prefix marks
+    the field as derived (not analyst-authored) so downstream code can
+    distinguish the two exposure sources.
+
+    Best-effort: silently skips when the inventory is absent or unreadable so
+    the pipeline is never blocked by a missing optional artifact.
+    """
+    inv_path = output_dir / ".route-inventory.json"
+    if not inv_path.is_file():
+        return
+    try:
+        inv = json.loads(inv_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    routes = inv.get("routes") if isinstance(inv, dict) else None
+    handler_files = [
+        r["handler_file"]
+        for r in routes or []
+        if isinstance(r, dict) and isinstance(r.get("handler_file"), str) and r["handler_file"]
+    ]
+    if not handler_files:
+        return
+    for c in all_components:
+        if not isinstance(c, dict) or c.get("_route_exposed"):
+            continue
+        patterns = [str(p) for p in c.get("paths") or [] if p]
+        if any(_owns_file(p, hf) for p in patterns for hf in handler_files):
+            c["_route_exposed"] = True
+
+
+def _selection_reasons(c: dict, depth: str) -> list:
+    reasons = []
+    if _is_auth(c):
+        reasons.append("auth (M3.4 mandatory)")
+    if _is_frontend(c):
+        reasons.append("frontend attack surface (mandatory)")
+    if _is_llm(c):
+        reasons.append("AI/LLM surface (OWASP LLM Top-10 — prompt injection / excessive agency, mandatory)")
+    if _is_exposed(c):
+        zone_labels = sorted(_zones(c) & EXPOSED_ZONES)
+        if zone_labels:
+            reasons.append(f"internet-exposed ({','.join(zone_labels)})")
+        else:
+            reasons.append("internet-exposed (route-inventory)")
+    if depth != "quick" and _is_cicd(c):
+        reasons.append("ci-cd / deployment (supply-chain boundary)")
+    if depth != "quick" and _is_crown_jewel(c):
+        assets = _business_assets(c)
+        if assets and not c.get("handles_sensitive_data"):
+            reasons.append(f"crown-jewel (declared business assets: {', '.join(assets[:3])})")
+        else:
+            reasons.append("crown-jewel (credentials/PII/payment/secrets)")
+    if depth != "quick" and _is_datastore(c) and not _is_crown_jewel(c):
+        reasons.append("data-store (SQLi/tampering/info-disclosure — type anchor, sensitive-flag-independent)")
+    if depth != "quick" and _is_file_upload(c):
+        reasons.append("file-upload surface (CWE-434 / zip-path traversal / XXE / parser RCE, mandatory)")
+    if depth != "quick" and _is_realtime(c):
+        reasons.append("real-time channel (message injection / channel authz, mandatory)")
+    if depth == "thorough" and not reasons:
+        reasons.append("transitively reachable (thorough)")
+    if not _reachability_zones(c) and not _is_auth(c) and not _is_frontend(c):
+        reasons.append("exposure-unknown (fail-safe inclusion)")
+    return reasons
+
+
+def _in_scope(c: dict, depth: str) -> bool:
+    # Role-floor: auth + frontend + AI/LLM are mandatory at every depth.
+    if _is_auth(c) or _is_frontend(c) or _is_llm(c):
+        return True
+    if _is_exposed(c):
+        return True
+    if not _reachability_zones(c):
+        # Exposure-unknown (no zones, or runtime-only zones like docker-container
+        # that carry no reachability signal): fail-safe toward inclusion at EVERY
+        # depth, including quick. A component whose reachability cannot be proven
+        # internal could be an internet-facing door — the 2026-06-12 b2b-api RCE,
+        # tagged only `docker-container`, is the canonical case, and runtime-only
+        # tagging is the COMMON outcome in containerised/serverless repos, not an
+        # edge case. Skipping it in quick would recreate the silent whole-component
+        # blind spot. Only PROVEN-internal components (a reachability zone present,
+        # none of them exposed) are dropped from the fast path below.
+        return True
+    if depth == "quick":
+        # Quick = role-floor + directly-exposed + exposure-unknown (handled above).
+        # Proven-internal / ci-cd / crown-jewel are deferred to standard+.
+        return False
+    # standard + thorough
+    if _is_cicd(c) or _is_crown_jewel(c) or _is_datastore(c) or _is_file_upload(c) or _is_realtime(c):
+        return True
+    # Reachability zones present but none exposed/cicd → internal-only: thorough only.
+    return depth == "thorough"
+
+
+# ---------------------------------------------------------------------------
+# Enumeration-completeness reconciliation.
+#
+# Phase-3 component enumeration is LLM-authored and occasionally FOLDS a
+# security-relevant deployable unit into a coarser parent (e.g. the auth
+# surface, the real-time channel, and the CI/CD pipeline collapsed into one
+# "backend" component) or drops it entirely. The deterministic selector can
+# only act on what is enumerated, so a folded unit becomes a silent
+# whole-component blind spot — never analyzed AND never surfaced as
+# out-of-scope. This pass restores ROLE completeness: when hard repo evidence
+# shows a security-relevant unit exists but no enumerated component carries
+# that role, inject a minimal component so the selector (and the §1 scope
+# rendering) can see it. Role-coverage, not path-coverage: an auth surface
+# folded inside a backend's routes/** still earns its own component (dedicated
+# STRIDE pass + the priority-0 auth floor that _is_auth would otherwise never
+# fire for a generically-named monolith).
+#
+# Idempotent: a unit whose role is already carried by an enumerated component
+# is never duplicated, so on a repo where Phase-3 already split it out (or on a
+# re-run over an already-augmented inventory) this is a no-op.
+# ---------------------------------------------------------------------------
+_CI_GLOBS = (
+    ".github/workflows/*.yml",
+    ".github/workflows/*.yaml",
+    ".gitlab-ci.yml",
+    "Jenkinsfile",
+    ".circleci/config.yml",
+    "azure-pipelines.yml",
+    "bitbucket-pipelines.yml",
+)
+# Supply-chain / build-config file surface owned by the ci-cd-pipeline
+# component. These are the files the config/IaC scanner reports against and
+# that merge_threats binds to component_id="ci-cd-pipeline"; the component's
+# `paths` must glob them so those findings are not flagged as cross-component
+# drift. See _detect_cicd().
+_CICD_SUPPLYCHAIN_GLOBS = (
+    "Dockerfile",
+    "**/Dockerfile",
+    "Dockerfile.*",
+    "**/Dockerfile.*",
+    "*.Dockerfile",
+    "**/*.Dockerfile",
+    "docker-compose*.yml",
+    "docker-compose*.yaml",
+    "compose*.yml",
+    "compose*.yaml",
+    ".dockerignore",
+    "package.json",
+    "**/package.json",
+    "package-lock.json",
+    "**/package-lock.json",
+    "npm-shrinkwrap.json",
+    "**/npm-shrinkwrap.json",
+    "yarn.lock",
+    "**/yarn.lock",
+    "pnpm-lock.yaml",
+    "**/pnpm-lock.yaml",
+    ".npmrc",
+    ".github/dependabot.yml",
+    ".github/dependabot.yaml",
+    ".github/renovate.json",
+    "renovate.json",
+    ".renovaterc",
+    ".renovaterc.json",
+)
+_AUTH_FILE_RE = re.compile(
+    r"(login|logout|register|signup|auth|oauth|jwt|session|2fa|mfa|otp|"
+    r"reset.?password|forgot.?password|insecurity|identity|credential)",
+    re.I,
+)
+_AUTH_SCAN_DIRS = ("routes", "lib", "src", "controllers", "middleware", "app", "api")
+_SRC_SUFFIXES = (".ts", ".js", ".tsx", ".jsx", ".mjs", ".cjs", ".py", ".go", ".java", ".rb")
+
+
+def _guess_repo_root(output_dir: Path) -> Path:
+    """Best-effort repo root from the assessment output dir. Side-effect-free;
+    detectors guard on file existence, so a wrong guess simply yields no
+    injection (safe no-op)."""
+    cur = output_dir.resolve()
+    if cur.name == "security" and cur.parent.name == "docs":
+        return cur.parent.parent  # conventional <repo>/docs/security layout
+    for cand in (cur, *list(cur.parents)[:6]):
+        if (cand / ".git").exists() or (cand / "package.json").is_file():
+            return cand
+    return cur
+
+
+def _auth_evidence_files(output_dir: Path) -> list[str]:
+    """Files the deterministic source-auth scanner flagged, or [] if unavailable."""
+    try:
+        raw = json.loads((output_dir / ".source-auth-findings.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    findings = raw.get("findings", raw) if isinstance(raw, dict) else raw
+    if not isinstance(findings, list):
+        return []
+    return sorted({f.get("file", "") for f in findings if isinstance(f, dict) and f.get("file")})
+
+
+def _evidence_complexity_floor(paths: list, auth_files: list[str], claimed: str) -> tuple[str, str]:
+    """Raise a component's complexity when it owns authentication code.
+
+    The complexity that reaches this module comes from `.components.json`, which
+    is authored by the analyst LLM -- so it is a judgement, not a measurement,
+    and it drifts between runs of the same commit. On 2026-07-20 the component
+    holding JWT signing, password hashing, login and 2FA was named `auth-service`
+    and rated *moderate*; an earlier run of the same repo rated the same code
+    *complex*. The smaller tier gave it the smaller turn budget, and it stalled.
+
+    Naming rules cannot fix this: the next inventory may call it
+    `identity-provider` or `session-manager`. `.source-auth-findings.json` is
+    produced by a deterministic scanner during pre-flight, before any of this
+    runs, so "does this component own authentication code" is answerable from
+    evidence rather than from what the component was called.
+    """
+    if not auth_files or claimed == "complex":
+        return claimed, ""
+    owned = [f for f in auth_files if _path_owns(paths, f)]
+    if not owned:
+        return claimed, ""
+    sample = ", ".join(owned[:2]) + (" …" if len(owned) > 2 else "")
+    return "complex", f"auth evidence in {len(owned)} file(s) ({sample})"
+
+
+# Flat screening budget for --cheap-stride components. Deliberately bypasses the
+# footprint floor: the analyzer runs the ESTIMATED_THREAT_COUNT=low pacing (all
+# six STRIDE letters, skip verification greps, no file re-reads) within it — the
+# documented thin-component path (compact Stage-1 runtime: bounded turns +
+# ESTIMATED_THREAT_COUNT=low"). 8, not 6, to keep the ≥2-turn write reserve.
+CHEAP_STRIDE_TURNS = 8
+
+
+def _etc_label(count: object) -> str:
+    """Band an ``estimated_threat_count`` integer into the analyzer's pacing label.
+
+    The manifest schema stores the count as an integer, but the analyzer's turn
+    budget self-regulation branches on the LABEL (`appsec-stride-analyzer-v2.md` —
+    ``low`` ≤3 / ``moderate`` 4–7 / ``high`` ≥8) and silently falls back to
+    ``moderate`` for anything it does not recognise. Emitting the label next to
+    the count is what makes the count actually reach the pacing rules; without it
+    a cheapened component runs `moderate` pacing (verification greps) inside an
+    8-turn budget and dies on the write-first pre-seed.
+    """
+    try:
+        n = int(count)
+    except (TypeError, ValueError):
+        return "moderate"
+    if n <= 3:
+        return "low"
+    if n <= 7:
+        return "moderate"
+    return "high"
+
+
+def _component_turn_budget(repo_root: Path, patterns, tier_turns: int, cheap: bool = False) -> tuple[int, bool, int]:
+    """Turn budget for one component: complexity tier raised by file footprint.
+
+    Returns ``(max_turns, sampling_required, file_count)``. ``sampling_required``
+    is True when an exhaustive pass over the component does not fit the granted
+    budget; the dispatch prompt must forward it so the analyzer samples
+    deliberately instead of reading until the harness kills it (2026-08-02
+    insecure-spring-app: `spring-web-app`, 47 files, needed 65 turns, granted 48,
+    killed at 56 twice with zero categories written).
+
+    Under ``cheap`` (--cheap-stride, see _cheap_stride_target) the component gets a
+    flat CHEAP_STRIDE_TURNS screening budget that intentionally skips the
+    footprint floor — cheapening is the whole point, so a wide footprint must not
+    re-inflate the budget. Cheap screening is sampling by definition, so the flag
+    is set whenever the footprint exceeds that flat budget.
+
+    Globbing is best-effort -- an unreadable or pathological pattern falls back
+    to the tier budget rather than failing manifest construction.
+    """
+    try:
+        import analyzers.classify_component as classify_component  # noqa: PLC0415
+
+        file_count = len(_glob_files(repo_root, _expand_recursive(patterns or [])))
+        if cheap:
+            needed = classify_component.footprint_turns_needed(file_count)
+            return CHEAP_STRIDE_TURNS, needed > CHEAP_STRIDE_TURNS, file_count
+        floored, _, clamped = classify_component._footprint_turn_floor(file_count, tier_turns)
+        return int(floored), bool(clamped), file_count
+    except Exception:
+        return (CHEAP_STRIDE_TURNS if cheap else int(tier_turns)), False, 0
+
+
+def _expand_recursive(patterns) -> list[str]:
+    """Rewrite a trailing bare ``**`` to ``**/*`` so files are counted.
+
+    ``Path.glob("routes/**")`` yields only DIRECTORIES -- the recursive wildcard
+    matches path segments, not the entries inside them. Since ``_glob_files``
+    keeps only ``is_file()`` hits, a bare ``**`` pattern counts zero. Component
+    inventories use exactly that form (``routes/**``, ``frontend/**``), so the
+    footprint floor was blind to the widest components: backend-api counted 2
+    files instead of ~700, frontend-spa 0 instead of 637.
+    """
+    expanded: list[str] = []
+    for pattern in patterns:
+        expanded.append(pattern)
+        if pattern.endswith("**"):
+            expanded.append(f"{pattern}/*")
+    return expanded
+
+
+def _glob_files(repo_root: Path, patterns) -> list[str]:
+    hits: set[str] = set()
+    for pat in patterns:
+        try:
+            for p in repo_root.glob(pat):
+                if p.is_file():
+                    hits.add(p.relative_to(repo_root).as_posix())
+        except (OSError, ValueError):
+            continue
+    return sorted(hits)
+
+
+def _package_deps(repo_root: Path) -> dict:
+    pj = repo_root / "package.json"
+    if not pj.is_file():
+        return {}
+    try:
+        data = json.loads(pj.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    deps: dict = {}
+    for k in ("dependencies", "devDependencies", "optionalDependencies"):
+        d = data.get(k)
+        if isinstance(d, dict):
+            deps.update(d)
+    return deps
+
+
+def _detect_cicd(repo_root: Path) -> dict | None:
+    files = _glob_files(repo_root, _CI_GLOBS)
+    if not files:
+        return None
+    paths: list[str] = []
+    if any(f.startswith(".github/workflows/") for f in files):
+        paths.append(".github/workflows/**")
+    paths += [f for f in files if not f.startswith(".github/workflows/")]
+    # The config/IaC scanner (config-iac-checks.yaml) emits its findings against
+    # the build/supply-chain file surface — Dockerfile, container compose,
+    # package manifests + lockfiles, and Dependabot/Renovate config — and
+    # `merge_threats._config_finding_to_threat` hardcodes them to this
+    # ci-cd-pipeline component. Without these globs in the component's `paths`,
+    # every such finding tripped the `validate_intermediate` path-glob advisory
+    # (evidence file vs component globs) AND `reclassify_components` could not
+    # move it anywhere (no other component globs a root Dockerfile/package.json),
+    # so the advisory was emitted on every run with no way to self-heal. The
+    # ci-cd-pipeline component IS the supply-chain boundary, so files that
+    # actually exist legitimately belong to it. Do not retain speculative
+    # globs: finalized component paths are repository-backed evidence.
+    for g in _CICD_SUPPLYCHAIN_GLOBS:
+        if g not in paths and _glob_files(repo_root, [g]):
+            paths.append(g)
+    sample = ", ".join(files[:4]) + (", …" if len(files) > 4 else "")
+    return {
+        "id": "ci-cd-pipeline",
+        "name": "CI/CD Pipeline",
+        "description": (
+            f"Continuous-integration / deployment workflows ({sample}). Build and "
+            "release automation holding repository, registry and deploy credentials, "
+            "with supply-chain reach into the produced artifact."
+        ),
+        "paths": paths or files,
+        "tier": "application",
+        "complexity": "simple",
+        "framework": None,
+        "deployment_zones": ["ci-cd-runtime", "build-pipeline"],
+        "handles_sensitive_data": True,
+        "origin": "reconciliation",
+    }
+
+
+def _detect_realtime(repo_root: Path) -> dict | None:
+    deps = _package_deps(repo_root)
+    # socket.io is the SERVER lib; socket.io-client is the browser side — a
+    # client-only dependency is not its own server component, so ignore it.
+    lib = next((d for d in ("socket.io", "ws", "@socket.io/admin-ui") if d in deps), None)
+    if not lib:
+        return None
+    # Precise paths: the source files that actually wire the realtime server,
+    # so the incremental dirty-set does not couple every lib/ change to it.
+    needle = "socket.io" if lib in ("socket.io", "@socket.io/admin-ui") else lib
+    sites: list[str] = []
+    for rel in ("server.ts", "server.js", "app.ts", "app.js"):
+        sites += _grep_paths(repo_root, rel, needle)
+    for d in ("lib", "src"):
+        sites += _grep_paths(repo_root, d, needle)
+    paths = sorted(set(sites))[:12]
+    if not paths:
+        return None
+    return {
+        "id": "realtime-channel",
+        "name": "Real-time WebSocket Channel",
+        "description": (
+            f"Server-side {lib} real-time channel pushing live events to connected "
+            "browsers. Internet-facing WebSocket surface with its own connection "
+            "auth/origin checks and message-handler trust boundary."
+        ),
+        "paths": paths,
+        "tier": "application",
+        "complexity": "simple",
+        "framework": lib,
+        "deployment_zones": ["internet", "dmz"],
+        "handles_sensitive_data": False,
+        "origin": "reconciliation",
+    }
+
+
+def _grep_paths(repo_root: Path, rel: str, needle: str, *, limit: int = 400) -> list[str]:
+    """Relative paths of source files under ``rel`` whose content mentions
+    ``needle``. Bounded scan; returns [] on any error or missing path."""
+    base = repo_root / rel
+    out: list[str] = []
+    try:
+        if base.is_file():
+            cands = [base]
+        elif base.is_dir():
+            cands = [p for p in base.rglob("*") if p.is_file() and p.suffix.lower() in _SRC_SUFFIXES][:limit]
+        else:
+            return []
+        for p in cands:
+            try:
+                if not p.resolve().is_relative_to(repo_root.resolve()) or p.stat().st_size > 512_000:
+                    continue
+                if needle in p.read_text(encoding="utf-8", errors="ignore"):
+                    out.append(p.relative_to(repo_root).as_posix())
+            except OSError:
+                continue
+    except OSError:
+        return []
+    return out
+
+
+def _detect_auth(repo_root: Path) -> dict | None:
+    cands: set[str] = set()
+    for d in _AUTH_SCAN_DIRS:
+        base = repo_root / d
+        if not base.is_dir():
+            continue
+        try:
+            for p in base.rglob("*"):
+                if p.is_file() and p.suffix.lower() in _SRC_SUFFIXES and _AUTH_FILE_RE.search(p.stem):
+                    rel = p.relative_to(repo_root).as_posix()
+                    if not p.resolve().is_relative_to(repo_root.resolve()) or re.search(
+                        r"(?:^|/)(?:tests?|__tests__|node_modules)/|\.(?:test|spec)\.", rel
+                    ):
+                        continue
+                    cands.add(rel)
+        except OSError:
+            continue
+    paths = sorted(cands, key=lambda path: (not bool(re.search(r"login|session|jwt|token", path, re.I)), path))[:25]
+    if not paths:
+        return None
+    sample = ", ".join(paths[:4]) + (", …" if len(paths) > 4 else "")
+    return {
+        "id": "auth",
+        "name": "Authentication & Session Surface",
+        "description": (
+            f"Login, token/session issuance, password-reset and MFA handlers ({sample}). "
+            "The credential-bearing entry surface — the highest-value authentication "
+            "boundary in the system."
+        ),
+        "paths": paths,
+        "tier": "application",
+        "complexity": "moderate",
+        "framework": None,
+        "deployment_zones": ["internet", "dmz"],
+        "handles_sensitive_data": True,
+        "origin": "reconciliation",
+    }
+
+
+# Web3/wallet/NFT crypto-asset surface. A distinct, high-value security unit
+# (on-chain key material, wallet-ownership proofs, NFT minting) that Phase-3
+# routinely FOLDS into a generic backend at standard depth — the deterministic
+# route inventory sees `/rest/web3/*` but no `web3` component is enumerated, so
+# the selector has nothing to pick and a whole crypto surface is never analyzed
+# (2026-06-21 juice-shop: standard missed the Critical hardcoded BIP-39 mnemonic
+# in routes/checkKeys.ts; thorough carved out `web3-nft` and found it). Detected
+# by a web3 dependency (ethers/web3/bip39/…) OR web3-signalling source content.
+_WEB3_DEPS = (
+    "ethers",
+    "web3",
+    "web3.js",
+    "ethereumjs-wallet",
+    "ethereumjs-tx",
+    "ethereumjs-util",
+    "bip39",
+    "bip32",
+    "hdkey",
+    "@ethersproject/wallet",
+    "hardhat",
+    "solc",
+    "merkletreejs",
+    "keccak",
+    "@openzeppelin/contracts",
+)
+# Content signal — word-boundary matched so a stray "ether" inside another word
+# does not fire. Deliberately omits the bare token "wallet" (too broad in
+# content) while keeping the specific web3Wallet/walletNFT identifiers.
+_WEB3_CONTENT_RE = re.compile(
+    r"\b(web3|ethers|nft|mnemonic|blockchain|ethereum|bip-?39|bip-?32|"
+    r"web3wallet|walletnft|smart[- ]?contract)\b",
+    re.I,
+)
+# Scan route-handler / contract dirs only — NOT shared `lib/` (where a web3
+# token in e.g. lib/insecurity.ts would wrongly claim the auth component's file
+# for web3-nft and create cross-component path overlap). The web3 surface is its
+# route handlers; the dep signal already covers detection regardless of layout.
+_WEB3_SCAN_DIRS = ("routes", "src", "contracts", "blockchain", "api")
+
+
+def _detect_web3(repo_root: Path) -> dict | None:
+    deps = _package_deps(repo_root)
+    dep_lib = next((d for d in _WEB3_DEPS if d in deps), None)
+    sites: set[str] = set()
+    for d in _WEB3_SCAN_DIRS:
+        base = repo_root / d
+        if not base.is_dir():
+            continue
+        try:
+            cands = [p for p in base.rglob("*") if p.is_file() and p.suffix.lower() in _SRC_SUFFIXES][:400]
+        except OSError:
+            continue
+        for p in cands:
+            try:
+                if _WEB3_CONTENT_RE.search(p.read_text(encoding="utf-8", errors="ignore")):
+                    sites.add(p.relative_to(repo_root).as_posix())
+            except OSError:
+                continue
+    paths = sorted(sites)[:12]
+    if not dep_lib and not paths:
+        return None  # no evidence — safe no-op
+    if not paths:
+        paths = ["routes/**"]  # dep present but no source matched — broad fallback
+    return {
+        "id": "web3-nft",
+        "name": "Web3 / Wallet / NFT Surface",
+        "description": (
+            "Blockchain/web3 endpoints handling wallet addresses, NFT minting, and "
+            "on-chain key material"
+            + (f" ({dep_lib})" if dep_lib else "")
+            + ". Internet-facing crypto-asset surface with its own key-handling and "
+            "ownership-verification trust boundary."
+        ),
+        "paths": paths,
+        "tier": "application",
+        "complexity": "moderate",
+        "framework": dep_lib,
+        "deployment_zones": ["internet", "dmz"],
+        "handles_sensitive_data": True,
+        "origin": "reconciliation",
+    }
+
+
+# (role-predicate, detector) pairs. A detected unit is injected only when NO
+# enumerated component already carries the role.
+_RECONCILE_DETECTORS = (
+    (_is_auth, _detect_auth),
+    (_is_cicd, _detect_cicd),
+    (_is_realtime, _detect_realtime),
+    (_is_web3, _detect_web3),
+)
+
+
+_ROLE_UNIT_NAMES = {
+    _detect_auth: "authentication",
+    _detect_cicd: "ci-cd",
+    _detect_realtime: "realtime",
+    _detect_web3: "web3",
+}
+
+
+def role_unit_candidates(repo_root: Path) -> list[dict]:
+    """Role-bearing units that inventory finalization would otherwise add.
+
+    The architecture analyst receives these before it writes data flows. A unit
+    modelled under its ID carries its role, so ``reconcile_inventory`` adds
+    nothing afterwards and the unit keeps the flows the analyst evidenced.
+    """
+    units = []
+    for _predicate, detect in _RECONCILE_DETECTORS:
+        card = detect(repo_root)
+        if card:
+            units.append({**card, "role": _ROLE_UNIT_NAMES[detect]})
+    units.extend({**card, "role": "embedded-store"} for card in _detect_embedded_stores(repo_root))
+    return units
+
+
+def _nonempty(value: object) -> bool:
+    """True for a value worth carrying — a real datum, not a blank/empty container.
+    ``False``/``0`` count (meaningful flags); ``None``/``""``/``[]``/``{}`` do not."""
+    return value is not None and value != "" and value != [] and value != {}
+
+
+def _merge_component_group(entries: list) -> dict:
+    """Collapse ≥2 components that share an ``id`` into one. The enumerated entry
+    (the analyst's own — identified by NOT carrying ``origin: "reconciliation"``)
+    is the base and wins scalar conflicts; fields it left blank are filled from the
+    duplicate, and ``paths`` are unioned so file coverage from both authorings is
+    kept. This is how a reconciliation-injected unit and its later-enumerated twin
+    for the same canonical id become one card instead of duplicate C-NN rows."""
+    base = next((e for e in entries if e.get("origin") != "reconciliation"), entries[0])
+    out = dict(base)
+    for entry in entries:
+        if entry is base:
+            continue
+        for key, value in entry.items():
+            if key == "origin":
+                continue  # the duplicate's audit stamp, not merged onto the base
+            if key == "paths" and isinstance(value, list) and isinstance(out.get(key), list):
+                out[key] = out[key] + [p for p in value if p not in out[key]]
+            elif not _nonempty(out.get(key)) and _nonempty(value):
+                out[key] = value
+    return out
+
+
+def _merge_same_id_components(components: list) -> list:
+    """Return ``components`` with same-``id`` duplicates collapsed, order-preserving
+    (merged at the first occurrence). Entries without an ``id`` pass through. This
+    is the guard reconcile_inventory's inject-time checks cannot provide: those
+    prevent a NEW duplicate injection, but a same-id twin already present in the
+    inventory (e.g. a reconciliation entry from an earlier pass plus a later
+    LLM-enumerated one) survives to compose as duplicate rows unless collapsed."""
+    groups: dict = {}
+    for c in components:
+        if isinstance(c, dict) and _nonempty(c.get("id")):
+            groups.setdefault(c["id"], []).append(c)
+    out: list = []
+    emitted: set = set()
+    for c in components:
+        if not isinstance(c, dict) or not _nonempty(c.get("id")):
+            out.append(c)
+            continue
+        cid = c["id"]
+        if cid in emitted:
+            continue
+        emitted.add(cid)
+        group = groups[cid]
+        out.append(group[0] if len(group) == 1 else _merge_component_group(group))
+    return out
+
+
+def _detect_embedded_stores(repo_root: Path) -> list[dict]:
+    """Require a runtime dependency, source import, and engine constructor.
+
+    An installed SDK, comment, test, or model declaration is insufficient.
+    Keep each engine distinct; an existing SQL store does not cover a document store.
+    """
+    deps = _package_deps(repo_root)
+    stores = []
+    for engine, constructor in (
+        ("marsdb", "Collection"),
+        ("nedb", ""),
+        ("@seald-io/nedb", ""),
+        ("lokijs", ""),
+        ("pouchdb", ""),
+    ):
+        if engine not in deps:
+            continue
+        paths = []
+        for directory in ("data", "src", "lib", "server", "app"):
+            for rel in _grep_paths(repo_root, directory, engine):
+                path = repo_root / rel
+                if not path.resolve().is_relative_to(repo_root.resolve()) or re.search(
+                    r"(?:^|/)(?:tests?|__tests__|node_modules)/|\.(?:test|spec)\.", rel
+                ):
+                    continue
+                try:
+                    if path.stat().st_size > 512_000:
+                        continue
+                    source = path.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                source = re.sub(r"/\*[\s\S]*?\*/|^[ \t]*//[^\n]*", "", source, flags=re.M)
+                imported = re.search(
+                    r"(?:import\s+(?:\*\s+as\s+)?|(?:const|let|var)\s+)([A-Za-z_$][\w$]*)\s*(?:from\s*|=\s*require\(\s*)['\"]"
+                    + re.escape(engine)
+                    + r"['\"]",
+                    source,
+                )
+                if imported and re.search(
+                    r"\bnew\s+" + re.escape(imported[1]) + (r"\." + constructor if constructor else "") + r"\s*\(",
+                    source,
+                ):
+                    paths.append(rel)
+        if paths:
+            stores.append(
+                {
+                    "id": re.sub(r"[^a-z0-9]+", "-", engine).strip("-") + "-store",
+                    "name": f"{engine} Embedded Store",
+                    "description": f"Embedded {engine} persistence instantiated in application code.",
+                    "paths": sorted(set(paths)),
+                    "tier": "data",
+                    "framework": engine,
+                    "complexity": "simple",
+                    "deployment_zones": [],
+                    "handles_sensitive_data": False,
+                    "origin": "reconciliation",
+                }
+            )
+    return stores
+
+
+def _reconcile_orm_ownership(components: list, repo_root: Path) -> list[dict]:
+    """Give executable ORM source an application owner without turning it into a database engine."""
+    from model.reclassify_components import _glob_to_regex, orm_source_files
+
+    source_files = orm_source_files(components, repo_root)
+    owners = [_glob_to_regex(p) for c in components if c.get("tier") == "application" for p in c.get("paths") or []]
+    missing = {path: framework for path, framework in source_files.items() if not any(p.search(path) for p in owners)}
+    added = []
+    for framework in sorted(set(missing.values())):
+        paths = sorted(path for path, value in missing.items() if value == framework)
+        cid = f"{framework}-data-access"
+        existing = next((c for c in components if c.get("id") == cid), None)
+        if existing:
+            if existing.get("tier") == "application":
+                existing["paths"] = sorted(set(existing.get("paths") or []) | set(paths))
+            continue
+        component = {
+            "id": cid,
+            "name": f"{framework.title()} application data access",
+            "description": "Executable ORM model definitions, setters, and query construction in the application process.",
+            "paths": paths,
+            "tier": "application",
+            "framework": framework,
+            "complexity": "simple",
+            "deployment_zones": [],
+            "handles_sensitive_data": False,
+            "origin": "reconciliation",
+        }
+        components.append(component)
+        added.append(component)
+    if source_files:
+        for component in components:
+            if component.get("tier") == "data":
+                if str(component.get("framework") or "").lower() in {"sequelize", "typeorm", "mongoose"}:
+                    component["framework"] = None
+                component["name"] = re.sub(
+                    r"\s+(?:via|with)\s+(?:Sequelize|TypeORM|Mongoose)\s*$",
+                    "",
+                    component.get("name") or component["id"],
+                    flags=re.I,
+                )
+    return added
+
+
+def reconcile_inventory(components: list, repo_root: Path) -> tuple:
+    """Inject security-relevant deployable units that hard repo evidence shows
+    exist but Phase-3 did not enumerate as their own role-bearing component.
+
+    Returns ``(augmented_components, injected)``. Idempotent: a role already
+    carried by an enumerated (or already-injected) component is never added
+    twice, and same-``id`` duplicates already in the inventory are collapsed into
+    one. Injected components carry ``origin: "reconciliation"`` for audit.
+    """
+    existing = _merge_same_id_components([c for c in components if isinstance(c, dict)])
+    augmented = list(existing)
+    injected: list[dict] = []
+    for role_pred, detect in _RECONCILE_DETECTORS:
+        covered = [c for c in augmented if role_pred(c)]
+        if covered:
+            if detect is _detect_auth:
+                candidate = detect(repo_root)
+                if candidate:
+                    owner = covered[0]
+                    owner["paths"] = list(dict.fromkeys([*(owner.get("paths") or []), *candidate["paths"]]))
+            elif detect is _detect_cicd:
+                candidate = detect(repo_root)
+                if candidate:
+                    _adopt_unowned_paths(covered[0], candidate["paths"], augmented, repo_root)
+            continue  # role already covered; its owner still needs the role's repository files
+        cand = detect(repo_root)
+        if cand and not any(c.get("id") == cand.get("id") for c in augmented):
+            augmented.append(cand)
+            injected.append(cand)
+    for candidate in _detect_embedded_stores(repo_root):
+        if not any(_covers_embedded_store(c, candidate) for c in augmented):
+            if not any(c.get("id") == candidate["id"] for c in augmented):
+                augmented.append(candidate)
+                injected.append(candidate)
+    injected.extend(_reconcile_orm_ownership(augmented, repo_root))
+    return augmented, injected
+
+
+def _adopt_unowned_paths(owner: dict, candidate_paths: list, components: list, repo_root: Path) -> None:
+    """Give an existing role owner the detector's repository-backed paths.
+
+    The CI/CD detector globs the supply-chain surface (``_CICD_SUPPLYCHAIN_GLOBS``)
+    only when it injects the component itself; an analyst-authored CI/CD
+    component kept its narrow globs, leaving e.g. a nested Dockerfile without
+    an owner. Precedence: a file another component already globs stays with
+    that component. A glob whose files are all unowned is adopted as written;
+    otherwise only its unowned files are adopted, as literal paths."""
+    paths = list(owner.get("paths") or [])
+    others = [c for c in components if c is not owner]
+    for pattern in candidate_paths:
+        if pattern in paths:
+            continue
+        files = _glob_files(repo_root, [pattern])
+        unowned = [f for f in files if not any(_path_owns(c.get("paths") or [], f) for c in others)]
+        if files and len(unowned) == len(files):
+            paths.append(pattern)
+        else:
+            paths.extend(f for f in unowned if f not in paths and not _path_owns(paths, f))
+    owner["paths"] = paths
+
+
+def _covers_embedded_store(component: dict, candidate: dict) -> bool:
+    """A data component already models the engine it names or whose instantiation it owns.
+
+    A declared different framework never covers the engine, so an SQL store
+    with a broad path glob still leaves a document store separate.
+    """
+    if component.get("tier") != "data":
+        return False
+    framework = (component.get("framework") or "").lower()
+    if framework:
+        return framework == candidate["framework"]
+    return all(_path_owns(component.get("paths") or [], path) for path in candidate["paths"])
+
+
+def _path_owns(paths: list, fpath: str) -> bool:
+    """Match canonical repository paths using the inventory's segment-aware globs."""
+    from model.reclassify_components import _glob_to_regex
+
+    if not isinstance(fpath, str) or not fpath or "\\" in fpath or fpath.startswith("/"):
+        return False
+    if any(part in {"", ".", ".."} for part in fpath.split("/")) or ":" in fpath:
+        return False
+    for path in paths or []:
+        if not isinstance(path, str) or "\\" in path or path.startswith("/") or ":" in path:
+            continue
+        pattern = path.rstrip("/")
+        if not pattern or any(part in {"", ".", ".."} for part in pattern.split("/")):
+            continue
+        if _glob_to_regex(pattern).fullmatch(fpath):
+            return True
+        if not any(token in pattern for token in "*?") and fpath.startswith(pattern + "/"):
+            return True
+    return False
+
+
+def _seed_business_context(components: list, analyst_context: dict) -> list:
+    """Make declared business assets visible to the selection predicates.
+
+    Same reason as `_seed_llm_role`: build() merges analyst-context fields into
+    the OUTPUT component long after selection decided scope, so a component the
+    inventory did not flag but whose business context names funds, personal
+    data, or credentials would never reach `_is_crown_jewel`.
+
+    Mutates and returns `components`."""
+    if not isinstance(analyst_context, dict):
+        return components
+    for c in components:
+        if not isinstance(c, dict) or not c.get("id"):
+            continue
+        ctx = analyst_context.get(c["id"])
+        business = ctx.get("business_context") if isinstance(ctx, dict) else None
+        if isinstance(business, dict) and business and not c.get("business_context"):
+            c["business_context"] = business
+    return components
+
+
+def _seed_llm_role(components: list, output_dir: Path, analyst_context: dict) -> list:
+    """Make the LLM role visible to the selection predicates BEFORE the analyst-
+    context merge runs (build() merges `known_llm_patterns` only into the OUTPUT
+    component, long after selection has already decided scope). Without this, a
+    chatbot folded into a generically-named unit escapes the mandatory _is_llm
+    floor, the OWASP-LLM-Top-10 dispatch reason, and the Cat-13 supplement.
+
+    Two deterministic sources, in order:
+      1. analyst_context[cid]['known_llm_patterns'] — the analyst's own flag.
+      2. Cat-13 recon STRONG findings whose file falls under a component's
+         `paths` — a code-traceable LLM surface even when the analyst omitted
+         the flag. This is the fully deterministic bridge from recon to STRIDE.
+
+    Mutates and returns `components`."""
+    if isinstance(analyst_context, dict):
+        for c in components:
+            if isinstance(c, dict) and c.get("id"):
+                klp = analyst_context.get(c["id"], {}).get("known_llm_patterns")
+                if klp and not c.get("known_llm_patterns"):
+                    c["known_llm_patterns"] = klp
+    for c in components:
+        if not isinstance(c, dict) or c.get("known_llm_patterns"):
+            continue
+        owned = _owned_ai_signals(output_dir, c.get("paths") or [])
+        if any(f.get("strength") == "strong" for f in owned):
+            c["known_llm_patterns"] = _cat13_supplement(output_dir, c.get("paths") or [])
+    return components
+
+
+def select_stride_components(components: list, depth: str, ceiling: int | None = None) -> tuple:
+    """Derive the STRIDE-analyzed subset from criteria — count is emergent.
+
+    Returns ``(selected, report)``. ``report`` is a JSON-serializable dict with
+    the included/excluded sets, their reasons, and whether an operational ceiling
+    forced (logged) overflow drops.
+
+    Back-compat / fail-safe: when NO component carries deployment_zones (an
+    un-migrated .components.json — today's shape, already LLM-pre-selected), the
+    predicate is skipped and ALL components pass through. This makes the change
+    strictly non-regressive until the Phase-3 full-inventory authoring lands.
+    """
+    comps = [c for c in components if isinstance(c, dict) and c.get("id")]
+    migrated = any(_zones(c) for c in comps)
+
+    if not migrated:
+        report = {
+            "mode": "passthrough",
+            "depth": depth,
+            "reason": "no deployment_zones in .components.json — un-migrated",
+            "selected": [c["id"] for c in comps],
+            "excluded": [],
+            "lifted": False,
+            "ceiling": ceiling,
+        }
+        return comps, report
+
+    selected = [c for c in comps if _in_scope(c, depth)]
+    excluded = [c for c in comps if c not in selected]
+    lifted = False
+    overflow_dropped = []
+
+    if ceiling and len(selected) > ceiling:
+        # The ceiling may ONLY shed genuinely-internal components (selected at
+        # thorough purely for completeness). Anything that earned its place by a
+        # positive criterion — exposure, ci-cd/supply-chain, crown-jewel, auth,
+        # frontend, or exposure-unknown fail-safe — is NEVER silently dropped;
+        # the ceiling lifts (logged) instead. Dropping those would recreate the
+        # whole-component blind spots this redesign exists to remove.
+        internal = [c for c in selected if _is_internal_only(c)]
+        n_over = len(selected) - ceiling
+        overflow_dropped = internal[:n_over] if n_over > 0 else []
+        selected = [c for c in selected if c not in overflow_dropped]
+        lifted = len(selected) > ceiling  # earned set alone still exceeds ceiling
+        excluded = excluded + overflow_dropped
+
+    report = {
+        "mode": "criteria",
+        "depth": depth,
+        "ceiling": ceiling,
+        "lifted": lifted,
+        "selected": [
+            {"id": c["id"], "priority": _priority(c), "reasons": _selection_reasons(c, depth)} for c in selected
+        ],
+        "excluded": [
+            {
+                "id": c["id"],
+                "reason": ("ceiling-overflow" if c in overflow_dropped else "out-of-scope at depth=" + depth),
+            }
+            for c in excluded
+        ],
+    }
+    return selected, report
+
+
+def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path, ceiling: int | None = None) -> dict:
+    import datetime as _dt
+
+    dp = _depth_params()
+    turns = dp.get(depth, dp.get("standard"))
+
+    cj = _read_json(output_dir / ".components.json", {})
+    all_components = cj.get("components", cj) if isinstance(cj, dict) else cj
+    if not isinstance(all_components, list):
+        all_components = []
+
+    # Stamp the dispatched STRIDE reasoning model into the manifest so the
+    # model that runs each component is auditable from the intermediates. The
+    # .stride-<id>.json outputs carry no model field, and .stage-stats.jsonl is
+    # LLM-extracted (unreliable under turn pressure), so this deterministic
+    # record is the config→execution cross-check. Uniform across components for
+    # a given run (read from the resolved skill-config; "unknown" if absent).
+    stride_model = _read_json(output_dir / ".skill-config.json", {}).get("stride_model") or "unknown"
+
+    # Opt-in --cheap-stride: screening-depth pass for the internal tail. Applies
+    # to selection-priority >2 components minus the file-upload / realtime / data-store
+    # anchors — flat CHEAP_STRIDE_TURNS budget + forced estimated_threat_count=low,
+    # keeping all six STRIDE categories. See _cheap_stride_target for which anchors
+    # spare a component and why crown-jewel is not one of them.
+    cheap_stride = bool(_read_json(output_dir / ".skill-config.json", {}).get("cheap_stride", False))
+
+    # Component reconciliation belongs to the Stage-1a finalization gate. Once
+    # its receipt exists, manifest construction is read-only with respect to
+    # component identity: any drift is a blocking producer defect.
+    #
+    # The receipt-less branch remains temporarily readable for old cached runs
+    # and direct module callers. Operational runtimes always run
+    # model/finalize_component_inventory.py before boundary assessment.
+    repo_root = _guess_repo_root(output_dir)
+    auth_evidence = _auth_evidence_files(output_dir)
+    finalization_receipt = output_dir / ".component-inventory-finalization.json"
+    if finalization_receipt.is_file():
+        from model.finalize_component_inventory import validate_receipt
+
+        validate_receipt(output_dir)
+        reconciled, injected = reconcile_inventory(all_components, repo_root)
+        if injected or reconciled != all_components:
+            raise ValueError(
+                "component inventory would change after trust-boundary assessment; "
+                "rerun model/finalize_component_inventory.py before Stage 1b"
+            )
+    else:
+        orig_components = all_components
+        all_components, injected = reconcile_inventory(all_components, repo_root)
+        if injected or all_components != orig_components:
+            from shared._atomic_io import atomic_write_json
+
+            payload = dict(cj) if isinstance(cj, dict) else {"schema_version": 1}
+            payload["components"] = all_components
+            try:
+                atomic_write_json(output_dir / ".components.json", payload, sort_keys=False)
+            except OSError:
+                pass
+            if injected:
+                sys.stderr.write(
+                    "RECONCILE: injected "
+                    + ", ".join(row["id"] for row in injected)
+                    + " (receipt-less compatibility path; new runtimes finalize before Stage 1b).\n"
+                )
+            else:
+                sys.stderr.write(
+                    "RECONCILE_COMPAT: receipt-less legacy inventory changed during manifest build; "
+                    "new runtimes must finalize it before Stage 1b.\n"
+                )
+
+    # Seed the LLM role onto components from analyst-context / Cat-13 recon
+    # BEFORE selection, so a folded chatbot is floored into STRIDE scope.
+    all_components = _seed_llm_role(all_components, output_dir, analyst_context)
+    all_components = _seed_business_context(all_components, analyst_context)
+
+    # Actor slices depend on the finalized Phase-3 inventory, so Phase 2.7
+    # cannot produce them correctly. Build them here, after reconciliation and
+    # before the dispatch manifest resolves each relevant_actors path.
+    if (output_dir / ".actors-resolved.json").is_file():
+        try:
+            import contexts.slice_actors as slice_actors
+
+            slice_actors.write_actor_slices(
+                str(plugin_root),
+                str(output_dir),
+                all_components,
+                verbose=False,
+            )
+        except (OSError, ValueError, json.JSONDecodeError) as e:
+            sys.stderr.write(f"ACTOR_SLICES: could not build actor slices: {e}\n")
+
+    # Enrich components from the deterministic route inventory before selection
+    # so that a monolith package labelled `internal-network` by the architect but
+    # carrying its own HTTP handlers is treated as internet-exposed.
+    _enrich_from_route_inventory(all_components, output_dir)
+    components, selection_report = select_stride_components(all_components, depth, ceiling)
+    # Prepare optional boundary context only for the already-selected STRIDE
+    # set. This is deliberately downstream of inventory reconciliation and the
+    # selector; the helper cannot expand `components`.
+    try:
+        from contexts.prepare_trust_boundary_context import prepare_contexts
+
+        prepare_contexts(
+            repo_root=repo_root,
+            output_dir=output_dir,
+            component_ids=[c.get("id") for c in components if isinstance(c, dict)],
+            depth=depth,
+        )
+    except Exception as exc:
+        # Boundary enrichment is best-effort. Core STRIDE dispatch remains
+        # valid with `none`, and must not retry or fail for optional context.
+        sys.stderr.write(f"TRUST_BOUNDARY_CONTEXT_OMITTED: {exc}\n")
+    # Resolve the --cheap-stride screening set once, before the selection sidecar
+    # is written: a screened component is NOT a fully-analyzed one, so the
+    # rationale the report and the console banner are built from has to say so.
+    cheap_ids = {
+        c.get("id")
+        for c in components
+        if cheap_stride and isinstance(c, dict) and c.get("id") and _cheap_stride_target(c)
+    }
+    # A no-op lever must say so. The flag is a user-asserted cost tradeoff; when
+    # every selected component bears surface or has unknown reachability, nothing
+    # qualifies and the run costs exactly as much as without the flag. Silence
+    # would read as "the tail was cheapened" — which is what ZONE_DRIFT repos get.
+    if cheap_stride and not cheap_ids:
+        sys.stderr.write(
+            "CHEAP_STRIDE_INERT: --cheap-stride screened no component — every selected "
+            "component either carries attack surface / holds data, or has no canonical "
+            "reachability zone (exposure-unknown is never screened). The run pays full "
+            "depth throughout. Fix deployment_zones to use canonical access-zone tokens "
+            "if an internal tail was expected.\n"
+        )
+    selected_entries = selection_report.get("selected") or []
+    for i, entry in enumerate(selected_entries):
+        entry_id = entry.get("id") if isinstance(entry, dict) else entry
+        if entry_id not in cheap_ids:
+            continue
+        if not isinstance(entry, dict):
+            # mode=passthrough persists a flat id list; screening applies there
+            # too, so promote the entry rather than losing the disclosure.
+            entry = {"id": entry_id, "reasons": []}
+            selected_entries[i] = entry
+        entry["analysis_depth"] = "screening"
+        entry["reasons"] = [*(entry.get("reasons") or []), "light depth (--cheap-stride)"]
+    # Persist the selection rationale so a run is auditable (which components were
+    # analyzed and why) and so EXPOSURE_CAP_LIFT can be post-hoc verified.
+    try:
+        (output_dir / ".stride-selection.json").write_text(json.dumps(selection_report, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+    out_components = []
+    for c in components:
+        if not isinstance(c, dict):
+            continue
+        cid = c.get("id")
+        if not cid:
+            continue
+        ctx = analyst_context.get(cid, {}) if isinstance(analyst_context, dict) else {}
+        complexity = (c.get("complexity") or "moderate").lower()
+
+        def _idx(rel: str) -> str:
+            p = output_dir / rel
+            return str(p) if p.is_file() else "none"
+
+        tax = output_dir / ".taxonomy-slices" / cid
+        raw_paths = c.get("paths") or []
+        # The claimed complexity is an LLM judgement and drifts between runs;
+        # scanner evidence is not. A component that owns authentication code is
+        # rated complex whatever the inventory called it.
+        complexity, floor_reason = _evidence_complexity_floor(raw_paths, auth_evidence, complexity)
+        if floor_reason:
+            sys.stderr.write(f"FLOOR: {cid} → complex ({floor_reason})\n")
+        if not raw_paths:
+            sys.stderr.write(
+                f"WARN: {cid} has no paths in .components.json — using ['**'] (broad fallback). "
+                "Set explicit paths in the component inventory to narrow scope.\n"
+            )
+        drift_zones = _unknown_zone_tokens(c)
+        if drift_zones:
+            sys.stderr.write(
+                f"ZONE_DRIFT: {cid} has off-vocabulary deployment_zones {sorted(drift_zones)} — "
+                "not in the canonical access-zone vocabulary, so the zonal exposure/ci-cd signal "
+                "is inert and the component is treated as exposure-unknown (fail-safe). Fix the "
+                "recon/analyst output to use canonical zones (internet, dmz, internal-network, "
+                "ci-cd-runtime, build-pipeline, prod-write-db, …).\n"
+            )
+        # --cheap-stride (Variant 1): screen the internal tail, spare the
+        # attack surface — see _cheap_stride_target. Keyed on exposure/role, NOT
+        # on the over-tagged handles_sensitive_data flag.
+        cheap_this = cid in cheap_ids
+        budget_turns, needs_sampling, comp_file_count = _component_turn_budget(
+            repo_root,
+            raw_paths,
+            int(turns.get(complexity, turns.get("moderate", 22))),
+            cheap=cheap_this,
+        )
+        if needs_sampling:
+            sys.stderr.write(
+                f"SAMPLING: {cid} → {comp_file_count} files do not fit {budget_turns} turns; "
+                "analyzer will be told to sample instead of reading exhaustively\n"
+            )
+        comp = {
+            "component_id": cid,
+            "component_name": c.get("name", cid),
+            "component_description": c.get("description", ""),
+            "component_paths": raw_paths or ["**"],
+            "component_complexity": complexity if complexity in ("simple", "moderate", "complex") else "moderate",
+            # Turn budget is max(complexity budget, file-footprint floor). The
+            # complexity tier is a risk signal and says nothing about how many
+            # files the analyzer has to read; a mid-size component whose paths
+            # span more files than its tier allows turns for cannot finish. See
+            # classify_component._footprint_turn_floor.
+            "max_turns": budget_turns,
+            # True when an exhaustive read of component_paths does not fit
+            # max_turns. Forwarded to the analyzer as SAMPLING_REQUIRED so it
+            # samples on purpose instead of being killed mid-read.
+            "sampling_required": needs_sampling,
+            "file_count": comp_file_count,
+            "taxonomy_slice_dir": str(tax) if tax.is_dir() else str(plugin_root / "data"),
+            # Carry the selection-criteria inputs through to the manifest so the
+            # selection is auditable downstream (and not silently dropped here).
+            "deployment_zones": c.get("deployment_zones") or [],
+            "handles_sensitive_data": bool(c.get("handles_sensitive_data", False)),
+            "index_paths": {
+                "prior_findings": _idx(f".dispatch-context/{cid}/prior-findings.json"),
+                "known_threats": _idx(f".dispatch-context/{cid}/known-threats.json"),
+                "cross_repo": _idx(f".dispatch-context/{cid}/cross-repo.json"),
+                "requirements_violations": _idx(f".dispatch-context/{cid}/requirements-violations.json"),
+                "relevant_actors": _idx(f".actors-for-{cid}.json"),
+                "trust_boundaries": _idx(f".dispatch-context/{cid}/trust-boundaries.json"),
+            },
+        }
+        # Merge contextual (analyst-supplied) fields when present. The analyst
+        # is an LLM and sometimes emits a richer dict shape (e.g. controls as a
+        # {control: description} map) where the manifest schema + the STRIDE
+        # analyzer expect a flat text string. Normalize dict-shaped text fields
+        # to "key: value; ..." here at the deterministic LLM→schema boundary so
+        # validators/validate_dispatch_manifest.py does not reject the manifest.
+        for k in (
+            "interfaces",
+            "controls",
+            "known_secrets",
+            "known_vulns",
+            "known_llm_patterns",
+            "supply_chain_findings",
+            "estimated_threat_count",
+            "business_context",
+            "architecture_context",
+            "focus_paths",
+            "exclude_paths",
+        ):
+            if k in ctx and ctx[k] not in (None, "", []):
+                v = ctx[k]
+                if isinstance(v, dict) and k not in {"business_context", "architecture_context"}:
+                    v = "; ".join(f"{kk}: {vv}" for kk, vv in v.items())
+                # Schema requires estimated_threat_count as integer; the LLM
+                # sometimes emits it as a string label ("low", "high", …).
+                if k == "estimated_threat_count":
+                    _etc_map = {"low": 3, "medium": 6, "high": 12, "very_high": 20}
+                    if isinstance(v, int):
+                        pass  # already correct type
+                    elif isinstance(v, str):
+                        label = v.lower().strip()
+                        if label in _etc_map:
+                            v = _etc_map[label]
+                        else:
+                            try:
+                                v = int(label)
+                            except ValueError:
+                                v = 3
+                    else:
+                        try:
+                            v = int(v)
+                        except (TypeError, ValueError):
+                            v = 3
+                comp[k] = v
+        # Route only this component's evidence. Keep every signal kind even when
+        # the analyst already supplied a long description or excerpts are capped.
+        existing = comp.get("known_llm_patterns") or c.get("known_llm_patterns") or ""
+        supplement = _cat13_supplement(output_dir, c.get("paths") or [])
+        if existing or supplement:
+            comp["known_llm_patterns"] = "; ".join(dict.fromkeys(str(x) for x in (existing, supplement) if x))
+        comp["model"] = stride_model
+        if cheap_this:
+            # Drive the analyzer's thin-component pace (all six STRIDE letters in
+            # ≤6 turns, skip verification greps, no re-reads). estimated_threat_count
+            # is advisory pacing only — the analyzer may still record more when
+            # evidence warrants — so setting it here is
+            # its intended use, not a truth-claim. Override any analyst value.
+            comp["estimated_threat_count"] = 3  # "low" (matches _etc_map["low"])
+            comp["cheap_stride"] = True  # manifest audit marker
+        # The dispatch prompt passes the LABEL (the analyzer's pacing rules do not
+        # read the integer). Emit it only when a count exists — an absent count
+        # keeps the analyzer's documented `moderate` default.
+        if "estimated_threat_count" in comp:
+            comp["estimated_threat_count_label"] = _etc_label(comp["estimated_threat_count"])
+        comp["lens_ids"] = _stride_lens_ids(c, comp)
+        out_components.append(comp)
+
+    return {
+        "schema_version": 1,
+        "generated_at": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "assessment_depth": depth,
+        "stride_model": stride_model,
+        "stride_profile": analyst_context.get("_stride_profile", "full")
+        if isinstance(analyst_context, dict)
+        else "full",
+        "components": out_components,
+    }
+
+
+def format_selection_console(sel: dict) -> str:
+    """Render the STRIDE component selection as a human-readable console block:
+    which components are analyzed (and why) and which are skipped (and why).
+
+    Reads the already-persisted ``.stride-selection.json`` shape, so it handles
+    both ``mode=criteria`` (selected/excluded are reason-bearing dicts) and the
+    ``mode=passthrough`` fail-safe (selected is a flat id list, excluded empty).
+    """
+    mode = sel.get("mode", "?")
+    depth = sel.get("depth", "?")
+    selected = sel.get("selected", []) or []
+    excluded = sel.get("excluded", []) or []
+    lines = [f"STRIDE component selection (depth={depth}, mode={mode}):"]
+
+    if mode == "passthrough":
+        # A --cheap-stride entry is promoted to a dict carrying analysis_depth —
+        # mark it so the banner never presents a screened component as fully
+        # analyzed, even in the un-migrated fail-safe mode.
+        ids = [
+            s
+            if isinstance(s, str)
+            else s.get("id", "?") + (" (light)" if s.get("analysis_depth") == "screening" else "")
+            for s in selected
+        ]
+        lines.append(f"  ANALYZED ({len(ids)}): " + (", ".join(ids) or "(none)"))
+        lines.append(
+            "  SKIPPED (0): per-component criteria unavailable — un-migrated "
+            "inventory (no deployment_zones); all components analyzed."
+        )
+        return "\n".join(lines)
+
+    lines.append(f"  ANALYZED ({len(selected)}):")
+    for c in selected:
+        reasons = "; ".join(c.get("reasons") or []) or "selected"
+        lines.append(f"    - {c.get('id', '?')} — {reasons}")
+    lines.append(f"  SKIPPED ({len(excluded)}):")
+    if not excluded:
+        lines.append("    (none)")
+    for c in excluded:
+        lines.append(f"    - {c.get('id', '?')} — {c.get('reason', 'excluded')}")
+    return "\n".join(lines)
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="build_stride_dispatch_manifest.py")
+    ap.add_argument("output_dir", type=run_path_arg)
+    ap.add_argument("--depth", default="standard", choices=["quick", "standard", "thorough"])
+    ap.add_argument("--analyst-context", type=Path, default=None)
+    ap.add_argument("--plugin-root", type=Path, default=Path(__file__).resolve().parents[2])
+    ap.add_argument(
+        "--context-v2",
+        action="store_true",
+        help="Internal shadow rollout: build bounded evidence bundles and fingerprint them in the manifest.",
+    )
+    ap.add_argument(
+        "--repo-root",
+        type=Path,
+        default=None,
+        help="Analyzed repository root for --context-v2 (otherwise derived from output_dir).",
+    )
+    ap.add_argument(
+        "--repository-registry",
+        type=Path,
+        default=None,
+        help="Controller-owned related-repository registry for --context-v2.",
+    )
+    ap.add_argument(
+        "--ceiling",
+        type=int,
+        default=None,
+        help="Operational safety ceiling on the selected component count "
+        "(merge/turn-budget guard). NOT the selection number — auth/"
+        "frontend/exposed are never dropped (cap lifts with a log). "
+        "Omit for unbounded (the recon hint cap already bounds the inventory).",
+    )
+    ap.add_argument(
+        "--print-selection",
+        action="store_true",
+        help="Read the already-written .stride-selection.json and print the "
+        "human-readable ANALYZED/SKIPPED console block, then exit. Does not "
+        "rebuild — for re-surfacing the selection to the user.",
+    )
+    ns = ap.parse_args(argv)
+
+    if ns.print_selection:
+        sel = _read_json(ns.output_dir / ".stride-selection.json", {})
+        if not sel:
+            print("No .stride-selection.json yet — selection not computed.", file=sys.stderr)
+            return 1
+        print(format_selection_console(sel))
+        return 0
+
+    ctx = _read_json(ns.analyst_context, {}) if ns.analyst_context else {}
+    manifest = build(ns.output_dir, ns.depth, ctx, ns.plugin_root, ceiling=ns.ceiling)
+    if not manifest["components"]:
+        print("ERROR: no components found in .components.json — nothing to dispatch.", file=sys.stderr)
+        return 1
+    if ns.context_v2:
+        from contexts.build_stride_evidence_bundles import BundleError, build_all
+
+        resolved_profile = _read_json(ns.output_dir / ".skill-config.json", {}).get("stride_profile")
+        manifest["stride_profile"] = resolved_profile if isinstance(resolved_profile, (dict, str)) else "full"
+        try:
+            manifest = build_all(
+                ns.output_dir,
+                ns.repo_root or _guess_repo_root(ns.output_dir),
+                manifest,
+                repository_registry=ns.repository_registry,
+            )
+        except BundleError as exc:
+            print(f"ERROR: context-v2 evidence bundle build failed: {exc}", file=sys.stderr)
+            return 2
+    from shared._artifact_stamp import carry_generated_at
+
+    sel = _read_json(ns.output_dir / ".stride-selection.json", {})
+    out = ns.output_dir / ".stride-dispatch-manifest.json"
+    manifest = carry_generated_at(out, manifest)
+    out.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    print(
+        f"OK: wrote {out} ({len(manifest['components'])} components, depth={ns.depth}, "
+        f"selection={sel.get('mode', '?')})"
+    )
+    print(format_selection_console(sel))
+    if sel.get("lifted"):
+        n_sel = len(sel.get("selected", []))
+        n_drop = len([e for e in sel.get("excluded", []) if e.get("reason") == "ceiling-overflow"])
+        tail = f"; dropped {n_drop} internal-only component(s)" if n_drop else ""
+        print(
+            f"EXPOSURE_CAP_LIFT: {n_sel} earned components exceed the operational ceiling "
+            f"({ns.ceiling}) — analyzing all (no exposed/ci-cd/crown-jewel/auth/frontend "
+            f"component dropped; STRIDE merge/turn-budget may be stressed){tail}."
+        )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

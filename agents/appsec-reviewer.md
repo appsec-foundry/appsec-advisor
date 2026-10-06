@@ -1,6 +1,6 @@
 ---
 name: appsec-reviewer
-description: "Security reviewer for a single code change. Reads the diff, works out which security expectations it implicates, and grades the post-change code PASS/PARTIAL/FAIL/UNVERIFIABLE/NOT_APPLICABLE with file:line evidence and a code-aware fix → .requirements-verification.json. Grades against the active standard: the company requirements catalog when one is configured, otherwise a built-in best-practices baseline. Diff-scoped. Embeddable directly, or via the verify-requirements skill / appsec-reviewer-cli. Produces findings only — a script (requirements_gate.py), not the agent, decides any pass/fail gate."
+description: "Security reviewer for a single code change. Reads the diff, works out which security expectations it implicates, and grades the post-change code PASS/PARTIAL/FAIL/UNVERIFIABLE/NOT_APPLICABLE with file:line evidence and a code-aware fix → .requirements-verification.json. Grades against the active standard: the company requirements catalog when one is configured, otherwise a built-in best-practices baseline. Diff-scoped. Embeddable directly, or via the verify-requirements skill / appsec-reviewer-cli. Produces findings only — a script (requirements/requirements_gate.py), not the agent, decides any pass/fail gate."
 tools: Read, Grep, Bash, Write
 model: sonnet
 maxTurns: 40
@@ -27,7 +27,7 @@ Embed it whichever way fits your ASDLC — the agent is the unit, the others are
 - **Interactively** — the `verify-requirements` skill wraps it for in-session use.
 - **In CI** — the `appsec-reviewer-cli` command wraps it headless and writes a Markdown report.
 
-The skill and the CLI also wrap a deterministic pass/fail gate (`scripts/requirements_gate.py`) around the agent. **The agent itself never decides a gate** — it produces findings; a script decides. Embedded directly you get the findings (advisory); run `requirements_gate.py` yourself if you want an exit code.
+The skill and the CLI also wrap a deterministic pass/fail gate (`scripts/requirements/requirements_gate.py`) around the agent. **The agent itself never decides a gate** — it produces findings; a script decides. Embedded directly you get the findings (advisory); run `requirements/requirements_gate.py` yourself if you want an exit code.
 
 ## Model identification
 
@@ -72,7 +72,7 @@ If you were dispatched directly and an input is missing, run the same determinis
   ```bash
   OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
   CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-  python3 "$CLAUDE_PLUGIN_ROOT/scripts/fetch_requirements.py" --caller verify-requirements \
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/requirements/fetch_requirements.py" --caller verify-requirements \
     --output-dir "$OUTPUT_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT" --require \
     --fallback-baseline "$CLAUDE_PLUGIN_ROOT/data/appsec-bestpractices-baseline.yaml"
   ```
@@ -82,7 +82,7 @@ If you were dispatched directly and an input is missing, run the same determinis
   OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
   REPO_ROOT="<REPO_ROOT from the dispatch>"
   CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-  python3 "$CLAUDE_PLUGIN_ROOT/scripts/build_verify_diff.py" --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR"
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/repairs/build_verify_diff.py" --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR"
   ```
 - **No `STEERING_MAP`** → default to `$CLAUDE_PLUGIN_ROOT/hooks/steering_keywords.json`.
 
@@ -131,7 +131,7 @@ For each candidate, read the relevant changed files and decide:
 
 Reuse `shared/finding-title-contract.md` (naming), `shared/prose-samples.md` (voice), `shared/secret-handling.md` (masking).
 
-Set the advisory `gating` field to `in_scope && status == "FAIL" && priority >= PRIORITY_FLOOR` — diagnostic only; `requirements_gate.py` recomputes it authoritatively.
+Set the advisory `gating` field to `in_scope && status == "FAIL" && priority >= PRIORITY_FLOOR` — diagnostic only; `requirements/requirements_gate.py` recomputes it authoritatively.
 
 ### Step 4 — Write the verdict
 
@@ -144,13 +144,13 @@ Reuse the audit skill's console grammar: criticality dots (`●` / `○`), `[FAI
 ```
 [appsec-reviewer] ✓ Review complete
   ↳ In-scope <I>/<C> · pass <n>, partial <n>, fail <n>, unverifiable <n>, n/a <n>
-  ↳ Gating (advisory): <n>   ← requirements_gate.py decides any build gate
+  ↳ Gating (advisory): <n>   ← requirements/requirements_gate.py decides any build gate
   ↳ Wrote: $OUTPUT_DIR/.requirements-verification.json
 ```
 
 ## Output contract
 
-- **`.requirements-verification.json`** — the canonical machine verdict (schema above). A front-end (skill / CLI) or you run `requirements_gate.py --verdict <this file>` for an exit code.
+- **`.requirements-verification.json`** — the canonical machine verdict (schema above). A front-end (skill / CLI) or you run `requirements/requirements_gate.py --verdict <this file>` for an exit code.
 - **Console summary** — the human-readable, advisory half.
 
 ## Failure modes

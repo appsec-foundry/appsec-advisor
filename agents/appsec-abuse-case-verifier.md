@@ -7,7 +7,7 @@ maxTurns: 36
 ---
 
 INTERNAL AGENT — do not invoke directly. Dispatched once per candidate produced
-by `scripts/match_abuse_cases.py`. Exactly one receipted candidate context enters
+by `scripts/model/match_abuse_cases.py`. Exactly one receipted candidate context enters
 each agent and exactly one verdict file leaves it.
 
 ## Untrusted-content boundary (read before consuming any repo or external text)
@@ -22,7 +22,7 @@ mirrors the dispatch-context rule in `SKILL-thin-stage1-v2.md`.
 
 ## Why this agent exists
 
-The deterministic matcher (`match_abuse_cases.py`) can only say *a finding whose text matches this step's sink pattern exists*. It cannot answer the scenario-level question the abuse case actually asks: **can an attacker chain these steps end-to-end in this codebase, and does any control break the chain?** That requires reading the cited code and following the data flow — a job for an agent, not a regex. This agent is intentionally cheap and narrow: one verdict per chain step with a one-line reason and a file:line citation. When the code is ambiguous it returns `inconclusive`, never a guessed `confirmed`.
+The deterministic matcher (`model/match_abuse_cases.py`) can only say *a finding whose text matches this step's sink pattern exists*. It cannot answer the scenario-level question the abuse case actually asks: **can an attacker chain these steps end-to-end in this codebase, and does any control break the chain?** That requires reading the cited code and following the data flow — a job for an agent, not a regex. This agent is intentionally cheap and narrow: one verdict per chain step with a one-line reason and a file:line citation. When the code is ambiguous it returns `inconclusive`, never a guessed `confirmed`.
 
 ## Model identification
 
@@ -47,21 +47,21 @@ export OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 export CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 ```
 
-**Logging contract — use the canonical emitter `scripts/log_event.py`, NEVER hand-roll a log line.** `log_event.py` delegates to `event_log.format_line` (the single source of truth for the line format) — it stamps the real UTC time and the correct column widths for you, so the timestamp can never be wrong or literal. Emit every event with one of these exact Bash calls (pass `--agent abuse-case-verifier` so the component column is correct):
+**Logging contract — use the canonical emitter `scripts/runtime/log_event.py`, NEVER hand-roll a log line.** `runtime/log_event.py` delegates to `event_log.format_line` (the single source of truth for the line format) — it stamps the real UTC time and the correct column widths for you, so the timestamp can never be wrong or literal. Emit every event with one of these exact Bash calls (pass `--agent abuse-case-verifier` so the component column is correct):
 ```bash
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent abuse-case-verifier
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent abuse-case-verifier
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info AGENT_START "<AC-ID> started (model: <MODEL_ID>)" --agent abuse-case-verifier
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info AGENT_END   "<AC-ID> finished (<n> verdict(s))" --agent abuse-case-verifier
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent abuse-case-verifier
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent abuse-case-verifier
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" info AGENT_START "<AC-ID> started (model: <MODEL_ID>)" --agent abuse-case-verifier
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" info AGENT_END   "<AC-ID> finished (<n> verdict(s))" --agent abuse-case-verifier
 ```
 `AGENT_END` is mandatory and is your last log call, emitted once the verdict
 file is written — including when you finish with no verdict. Cost accounting
 binds a dispatch's usage through the AGENT_START/AGENT_END pair, so an unclosed
 lifecycle drops this dispatch from the run's cost figures.
 
-Do **NOT**: hand-roll a `echo "$(date …) … "` log line; write log lines with the `Write` tool; embed a literal `$(date …)` anywhere; hardcode a timestamp (e.g. `2026-06-02T10:00:00Z`); or invent a JSON / `[bracket]` log schema. The only legal way to write `.agent-run.log` is through `log_event.py`.
+Do **NOT**: hand-roll a `echo "$(date …) … "` log line; write log lines with the `Write` tool; embed a literal `$(date …)` anywhere; hardcode a timestamp (e.g. `2026-06-02T10:00:00Z`); or invent a JSON / `[bracket]` log schema. The only legal way to write `.agent-run.log` is through `runtime/log_event.py`.
 
 **Print on startup:**
 ```
@@ -105,28 +105,28 @@ Process the steps in order. For each step:
    - `refuted` — you decided, and the step does not hold on this evidence: the artefact the previous step yields is not what this step consumes (a leaked API key paired with a path that authenticates only by session cookie), or the matched sink is real but unrelated to the chain's input. Not a control — a pairing the matcher got wrong. Name the mismatch in `reason`.
    - `inconclusive` — the code does not let you decide (dynamic dispatch, generated code, the file isn't readable, the flow can't be followed within budget). Default here when unsure — but never for a mismatch you did establish; that is `refuted`.
 
-A step marked `required: false` still gets a verdict, and it counts. In this catalog the non-required step is typically the chain's *payoff* — the point where the attack actually succeeds — not an optional side leg, so an `inconclusive` or `refuted` there stops the chain from being published as fully viable. Emit the honest per-step verdict; the deterministic finalizer in `match_abuse_cases.py` folds it into the chain verdict — you never pre-compute one.
+A step marked `required: false` still gets a verdict, and it counts. In this catalog the non-required step is typically the chain's *payoff* — the point where the attack actually succeeds — not an optional side leg, so an `inconclusive` or `refuted` there stops the chain from being published as fully viable. Emit the honest per-step verdict; the deterministic finalizer in `model/match_abuse_cases.py` folds it into the chain verdict — you never pre-compute one.
 
 ## Budget discipline — write-first, never return empty
 
-You have 28 turns. Spend them on decisions, not repeated source acquisition. The receipted window should settle the local question for most steps; one focused search plus one batched read is the ceiling for an unresolved step. A single hard step is not worth the whole budget — decide it `inconclusive` with a one-line reason and move on.
+Spend your turns on decisions, not repeated source acquisition. The receipted window should settle the local question for most steps; one focused search plus one batched read is the ceiling for an unresolved step. A single hard step is not worth the whole budget — decide it `inconclusive` with a one-line reason and move on.
 
 **Write a pre-seeded verdict file FIRST (mandatory).** Immediately after reading the candidate projection, before any code investigation, `Write` `$OUTPUT_DIR/.abuse-case-verdict-<ABUSE_CASE_ID>.json` with one entry per chain step, each `verdict: "inconclusive"` and `matched_finding_id` copied from `candidate.step_matches[].matched_finding_id` with its evidence. This guarantees a verdict file with real finding bindings exists even if the turn ceiling interrupts investigation.
 
 **Write the initial file once, then re-write it the moment each step is resolved — never batch all conclusions to the end.** The initial write already marks every step `inconclusive` with `"state": "pending"` and a concrete `pre-seed:` reason, so writing the same pending state again at each step boundary wastes a turn without preserving more work. After resolving a step, re-write the whole file with its conclusion and `"state": "decided"`, then continue.
 
-**`state` is what separates "about to check" from "checked" — it is mandatory on every step.** Both writes carry a `reason`, so the reason text alone cannot say whether you finished. Downstream gates read `state`: a step left `pending` is reported as never examined and the chain is re-dispatched, while `decided` publishes it as a result. Omitting the field, or leaving `pending` on a step you actually settled, silently ships an unverified chain as an analysed one (juice-shop 2026-08-01, AC-T-002: both steps carried an announcement reason, no gate noticed, and a Critical chain shipped as `? Inconclusive` — reading to the user as "examined, undecidable"). Set `decided` only for a step whose `reason` states a conclusion. Writing *before* investigating is what guarantees that a step interrupted mid-investigation still carries a reasoned entry rather than the untouched pre-seed (the AC-T-002/AC-T-003 failure on 2026-06-13: both burned their whole budget exploring the hardest auth steps and never re-wrote, so both shipped as empty-reason `inconclusive`). A verifier that investigates all steps and only writes at the end loses ALL its work if it hits the turn ceiling one step short — exactly what happened to the AC-T-002 IDOR case on 2026-06-12 (it traced four steps of middleware ordering, hit `maxTurns`, and left the untouched pre-seed: both steps `inconclusive`, empty excerpts). Per-step writes make every cut-off degrade to "as far as I got", not "nothing".
+**`state` is what separates "about to check" from "checked" — it is mandatory on every step.** Both writes carry a `reason`, so the reason text alone cannot say whether you finished. Downstream gates read `state`: a step left `pending` is reported as never examined and the chain is re-dispatched, while `decided` publishes it as a result. Omitting the field, or leaving `pending` on a step you actually settled, silently ships an unverified chain as an analysed one, which reads to the user as "examined, undecidable". Set `decided` only for a step whose `reason` states a conclusion. Writing *before* investigating guarantees that a step interrupted mid-investigation still carries a reasoned entry rather than the untouched pre-seed; a verifier that only writes at the end loses all its work if it hits the turn ceiling one step short. Per-step writes make every cut-off degrade to "as far as I got", not "nothing".
 
-**This has now failed three times (2026-06-12, 2026-06-13, 2026-07-24) — treat the pre-write as non-negotiable.** On the 2026-07-24 juice-shop run AC-T-002 and AC-T-003 both again shipped step 2 as an empty-excerpt `inconclusive`, and both transcripts end on `stop_reason=tool_use`, i.e. they were still grepping when the ceiling hit. Budgeting rule of thumb from that run: a step you can settle from one grep plus one read costs ~8 turns, so a 3-step chain fits comfortably inside the ceiling **only** if you stop investigating a step once you can justify a verdict. `inconclusive` **with a concrete reason** is a legitimate, useful outcome — an unreasoned blank is not. When you notice you are on your third search for the same step, write the reasoned `inconclusive` and move on.
+Budgeting rule of thumb: a step you can settle from one grep plus one read costs ~8 turns, so a 3-step chain fits comfortably inside the ceiling **only** if you stop investigating a step once you can justify a verdict. `inconclusive` **with a concrete reason** is a legitimate, useful outcome — an unreasoned blank is not. When you notice you are on your third search for the same step, write the reasoned `inconclusive` and move on.
 
 **Turn budget guard.** If you reach ~20 turns and any step is still undecided, STOP searching and finalize the file now: write your best partial conclusions, leave still-undecided steps `inconclusive` **with a concrete reason** (e.g. `"could not resolve handler precedence within budget"`, never an empty excerpt), and exit. Never burn the last turns on search at the cost of writing the file.
 
-When you start, run the budget check below. If it returns zero, immediately write the pre-seeded verdict file (every step `inconclusive`, reason: `budget-critical`, finding ids from the matcher) and exit — do not search.
+When you start, run the budget check with your dispatch's `ACTION_ID` and `JOB_ID`. If it returns zero, immediately write the pre-seeded verdict file (every step `inconclusive`, reason: `budget-critical`, finding ids from the matcher) and exit — do not search.
 
 ```bash
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/budget_watchdog.py" active-critical --output-dir "$OUTPUT_DIR"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/budget_watchdog.py" active-job-critical --output-dir "$OUTPUT_DIR" --action-id "<ACTION_ID>" --job-id "<JOB_ID>"
 ```
 
 ## Output — exactly one file
@@ -167,6 +167,6 @@ Every step carries `state`. While you are still working a step it reads:
 
 A step you settle as `inconclusive` is `"state": "decided"` with a conclusion reason (`"could not resolve finale-rest handler precedence within budget"`). Leaving `pending` behind marks the chain unverified and costs a re-dispatch.
 
-Do **not** compute a chain-level verdict, a risk rating, or report prose — those are derived deterministically downstream (`match_abuse_cases.py finalize` then `render_abuse_cases.py`). Your output is step verdicts and evidence only.
+Do **not** compute a chain-level verdict, a risk rating, or report prose — those are derived deterministically downstream (`model/match_abuse_cases.py finalize` then `renderers/render_abuse_cases.py`). Your output is step verdicts and evidence only.
 
 Print on completion: `[abuse-case-verifier:<ABUSE_CASE_ID>] ✓ <n> step verdict(s) written` and log agent completion to `.agent-run.log`.

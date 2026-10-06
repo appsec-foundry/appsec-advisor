@@ -27,7 +27,7 @@ Never infer a completed stage solely from conversation memory."*).
   state, the durable `.skill-config.json`, `.stage-stats.jsonl`).
 
 On resume the orchestrator re-derives "where are we + what is pending" **from
-disk** via the mandatory finalize gate (`orchestration_controller.py next`), not
+disk** via the mandatory finalize gate (`orchestrator/orchestration_controller.py next`), not
 from memory. In the 2026-07-16 run the resume was clean: it re-established the
 Stage 2→3 boundary correctly, ran every remaining stage, and produced a correct
 report (§1–11 contiguous, priorities labeled, all gates green). That is the
@@ -40,10 +40,10 @@ enforced by a deterministic gate can be dropped by a compaction summary. This is
 exactly the historical `renumber_sections` / `style_priority_circles`
 finalization-skip bug — both of those scripts have since been **removed**;
 section numbering and priority styling are now deterministic inside
-`compose_threat_model.py`, so that specific bug class is closed. The plugin has
+`renderers/compose_threat_model.py`, so that specific bug class is closed. The plugin has
 been systematically de-risking compaction by moving finalization into
-deterministic gates: the mandatory finalize gate, `section_integrity.py`,
-`assert_completeness.py`, and recompose-from-fragments.
+deterministic gates: the mandatory finalize gate, `validators/section_integrity.py`,
+`validators/assert_completeness.py`, and recompose-from-fragments.
 
 Compaction becomes genuinely risky only when:
 1. it happens **repeatedly** in one run (thrashing → more overhead + higher
@@ -71,11 +71,11 @@ rejected. The gate outputs are already small or already redirected:
 
 | Gate call | stdout | Σ per run |
 |---|---|---|
-| `qa_checks.py repair_plan` | ~100 tok | ~150 |
-| `qa_checks.py autofix` | ~10 tok | ~20 |
-| `compose_threat_model.py` | ~260 tok | ~700 |
-| `orchestration_controller.py next` | ~730 tok | ~2 200 |
-| `qa_checks.py all` / `unmasked_secrets` | — | already `> file` |
+| `validators/qa_checks.py repair_plan` | ~100 tok | ~150 |
+| `validators/qa_checks.py autofix` | ~10 tok | ~20 |
+| `renderers/compose_threat_model.py` | ~260 tok | ~700 |
+| `orchestrator/orchestration_controller.py next` | ~730 tok | ~2 200 |
+| `validators/qa_checks.py all` / `unmasked_secrets` | — | already `> file` |
 
 Total addressable ≈ **3 000 tokens** across a whole run. Context growth is
 dominated by the **27 agent dispatches** (each STRIDE/abuse dispatch prompt is

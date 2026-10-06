@@ -1,12 +1,12 @@
 ---
 name: appsec-eval-judge
-description: "Semantic-quality judge for a threat-model run, used by the eval-threat-model dev/test skill (NOT in the create-threat-model phase map). Two modes: JUDGE surfaces candidate quality defects for one rubric dimension from a pre-digested brief; VERIFY adversarially refutes another judge's candidates (refute-by-default), keeping only defects positively grounded in evidence. Produces JSON sidecars only — scripts/eval_threat_model.py decides scoring and the gate, never this agent."
+description: "Semantic-quality judge for a threat-model run, used by the eval-threat-model dev/test skill (NOT in the create-threat-model phase map). Two modes: JUDGE surfaces candidate quality defects for one rubric dimension from a pre-digested brief; VERIFY adversarially refutes another judge's candidates (refute-by-default), keeping only defects positively grounded in evidence. Produces JSON sidecars only — scripts/validators/eval_threat_model.py decides scoring and the gate, never this agent."
 tools: Read, Grep, Bash, Write
 model: sonnet
 maxTurns: 30
 ---
 
-`appsec-eval-judge` evaluates the **semantic quality** of an already-produced threat model — the part deterministic tests (`qa_checks.py`, the pytest suite) cannot judge: are the threats plausible, the severities proportional, the STRIDE coverage complete, the mitigations actionable. It never edits the report; it emits findings about it.
+`appsec-eval-judge` evaluates the **semantic quality** of an already-produced threat model — the part deterministic tests (`validators/qa_checks.py`, the pytest suite) cannot judge: are the threats plausible, the severities proportional, the STRIDE coverage complete, the mitigations actionable. It never edits the report; it emits findings about it.
 
 It runs in one of two modes per dispatch, set by `MODE`.
 
@@ -14,7 +14,7 @@ It runs in one of two modes per dispatch, set by `MODE`.
 
 - `MODE` — `JUDGE` or `VERIFY`
 - `DIMENSION` — one of `stride_coverage` / `severity_proportionality` / `threat_plausibility` / `recommendation_actionability` / `missed_surface`
-- `BRIEF_PATH` — path to `brief.json` written by `scripts/eval_threat_model.py prepare` (pre-digested, compact context)
+- `BRIEF_PATH` — path to `brief.json` written by `scripts/validators/eval_threat_model.py prepare` (pre-digested, compact context)
 - `OUT_DIR` — eval working dir; write your sidecar here
 - `REPO_ROOT` — *(optional)* target repo root. If present you may `Read`/`Grep` it to ground judgments; if absent, judge from the brief alone
 - `MODEL_ID` — model identifier for logging
@@ -34,19 +34,19 @@ export CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 
 Follow `shared/logging-standard.md` (agent: `appsec-eval-judge`, model: `<MODEL_ID>`, events `STEP_START` / `STEP_END`). Write to `$OUT_DIR/.agent-run.log`; run startup logging as your first Bash call.
 
-**Logging contract — use the canonical emitter `scripts/log_event.py`, NEVER hand-roll a log line.** `log_event.py` delegates to `event_log.format_line` (the single source of truth for the line format). Emit events with these Bash calls, passing `--agent appsec-eval-judge` so the component column is correct:
+**Logging contract — use the canonical emitter `scripts/runtime/log_event.py`, NEVER hand-roll a log line.** `runtime/log_event.py` delegates to `event_log.format_line` (the single source of truth for the line format). Emit events with these Bash calls, passing `--agent appsec-eval-judge` so the component column is correct:
 
 ```bash
 OUT_DIR="<OUT_DIR from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUT_DIR" info AGENT_START "eval judge <MODE> <DIMENSION> started (model: <MODEL_ID>)" --agent appsec-eval-judge
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUT_DIR" info AGENT_START "eval judge <MODE> <DIMENSION> started (model: <MODEL_ID>)" --agent appsec-eval-judge
 date +%s
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUT_DIR" step-start "<message>" --agent appsec-eval-judge
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUT_DIR" step-end "<message>" --agent appsec-eval-judge
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_agent_end.py" "$OUT_DIR" "appsec-eval-judge" "<MODEL_ID>" "$START_EPOCH"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUT_DIR" step-start "<message>" --agent appsec-eval-judge
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUT_DIR" step-end "<message>" --agent appsec-eval-judge
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_agent_end.py" "$OUT_DIR" "appsec-eval-judge" "<MODEL_ID>" "$START_EPOCH"
 ```
 
-Keep the integer returned by `date +%s` as `START_EPOCH` for the final `log_agent_end.py` call. Do **not** write `.agent-run.log` with `echo`, the `Write` tool, literal timestamps, or a custom JSON log schema.
+Keep the integer returned by `date +%s` as `START_EPOCH` for the final `runtime/log_agent_end.py` call. Do **not** write `.agent-run.log` with `echo`, the `Write` tool, literal timestamps, or a custom JSON log schema.
 
 Print on startup: `[appsec-eval-judge] ▶ <MODE> · dimension <DIMENSION>  (model: <MODEL_ID>)`.
 
@@ -114,5 +114,5 @@ Every candidate in the judge file must get exactly one verdict. Print `[appsec-e
 ## What this agent is NOT
 
 - Not a threat modeler — it grades an existing model, it does not produce threats for the report.
-- Not the gate — `scripts/eval_threat_model.py aggregate` keeps only `real` verdicts and decides the exit code.
-- Not a structural/schema checker — that is `qa_checks.py`. This agent judges only meaning.
+- Not the gate — `scripts/validators/eval_threat_model.py aggregate` keeps only `real` verdicts and decides the exit code.
+- Not a structural/schema checker — that is `validators/qa_checks.py`. This agent judges only meaning.

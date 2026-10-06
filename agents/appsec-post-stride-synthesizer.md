@@ -72,10 +72,10 @@ set -e
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 if [ -f "$OUTPUT_DIR/.mitigation-overrides.json" ]; then
-  python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" mitigation-overrides "$OUTPUT_DIR/.mitigation-overrides.json"
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_fragment.py" mitigation-overrides "$OUTPUT_DIR/.mitigation-overrides.json"
 fi
 if [ -f "$OUTPUT_DIR/.tier-root-causes.json" ]; then
-  python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" tier-root-causes "$OUTPUT_DIR/.tier-root-causes.json"
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_fragment.py" tier-root-causes "$OUTPUT_DIR/.tier-root-causes.json"
 fi
 ```
 
@@ -91,16 +91,16 @@ export OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 export CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 ```
 
-Use `scripts/log_event.py` for `AGENT_START`, semantic step events, and
+Use `scripts/runtime/log_event.py` for `AGENT_START`, semantic step events, and
 `AGENT_END` in `$OUTPUT_DIR/.agent-run.log`. Emit every event with one of these
 exact Bash calls — `AGENT_START` is an event name passed to the `info` kind, not
 a kind of its own, and `--agent` is what fills the component column:
 ```bash
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info AGENT_START "<message>" --agent post-stride-synthesizer
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent post-stride-synthesizer
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent post-stride-synthesizer
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" info AGENT_START "<message>" --agent post-stride-synthesizer
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent post-stride-synthesizer
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent post-stride-synthesizer
 ```
 Never emit controller-owned
 `AGENT_INVOKE`, `AGENT_DONE`, dispatch, phase, gate, or routing events. Batch

@@ -1,7 +1,7 @@
 """A repair executor must self-verify with the command that decides about it.
 
-`qa_checks.py contract` runs only `check_contract` — section order/presence,
-forbidden Management-Summary patterns, table column counts. `qa_checks.py gate`
+`validators/qa_checks.py contract` runs only `check_contract` — section order/presence,
+forbidden Management-Summary patterns, table column counts. `validators/qa_checks.py gate`
 runs the autofix tail plus `cmd_repair_plan`, which appends roughly twenty
 further structural checks to that report. Of the sixteen
 `BLOCKING_ACTION_TYPES` that can dispatch `appsec-fragment-fixer`, only
@@ -36,7 +36,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import qa_checks as qa  # noqa: E402
+import validators.qa_checks as qa  # noqa: E402
 
 FIXER_AGENT = REPO_ROOT / "agents" / "appsec-fragment-fixer.md"
 STAGE3_SKILL = REPO_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage3.md"
@@ -77,7 +77,7 @@ def test_contract_cannot_observe_a_defect_the_gate_blocks_on(tmp_path):
     clean = _write(tmp_path, "clean", CLEAN_MD)
     broken = _write(tmp_path, "broken", BROKEN_MD)
 
-    # 1. `check_contract` — what `qa_checks.py contract` reports — is blind to
+    # 1. `check_contract` — what `validators/qa_checks.py contract` reports — is blind to
     #    the difference. Compared as a delta so the stub's own unrelated
     #    section-order issues cannot mask the assertion.
     assert qa.check_contract(clean).issues == qa.check_contract(broken).issues
@@ -109,10 +109,10 @@ def test_blocking_types_outside_check_contract_are_not_named_by_the_contract_che
     `check_contract` builds a single `Report("contract")`; the additive checks
     each build their own named report and are appended by `build_repair_plan`.
     A blocking type whose check lives outside `check_contract` therefore cannot
-    be verified by `qa_checks.py contract` at all.
+    be verified by `validators/qa_checks.py contract` at all.
     """
     assert hasattr(qa, "check_contract")
-    src = (REPO_ROOT / "scripts" / "qa_checks.py").read_text(encoding="utf-8")
+    src = (REPO_ROOT / "scripts" / "validators/qa_checks.py").read_text(encoding="utf-8")
     start = src.index("def check_contract(")
     end = src.index("\ndef ", start + 1)
     assert action_type not in src[start:end], (
@@ -124,11 +124,11 @@ def test_blocking_types_outside_check_contract_are_not_named_by_the_contract_che
 def test_fixer_self_verifies_with_the_deciding_gate():
     text = _normalize(FIXER_AGENT.read_text(encoding="utf-8"))
     assert re.search(r'qa_checks\.py"? gate ', text), (
-        "appsec-fragment-fixer must verify its own repair with `qa_checks.py gate` — "
+        "appsec-fragment-fixer must verify its own repair with `validators/qa_checks.py gate` — "
         "the command Stage 3 uses to decide whether the repair converged"
     )
     assert not re.search(r'qa_checks\.py"? contract ', text), (
-        "`qa_checks.py contract` is a strict subset of the gate and reports success "
+        "`validators/qa_checks.py contract` is a strict subset of the gate and reports success "
         "for most blocking defects; it must not be used as a repair self-check"
     )
 
@@ -147,12 +147,12 @@ def test_skill_repair_block_prescribes_the_gate_not_the_contract_check():
     text = STAGE3_SKILL.read_text(encoding="utf-8")
     start = text.index("## 3. Bounded repair")
     block = _normalize(text[start:])
-    assert "`qa_checks.py gate`" in block, (
-        "the Re-Render-Loop repair block must prescribe `qa_checks.py gate` as the "
+    assert "`validators/qa_checks.py gate`" in block, (
+        "the Re-Render-Loop repair block must prescribe `validators/qa_checks.py gate` as the "
         "fixer's self-check — the command the loop itself decides on"
     )
     # `contract` may be *named* in the block (the prohibition explains why it is
     # wrong); it must not be prescribed as a command to run.
     assert not re.search(r'python3 [^`\n]*qa_checks\.py"? contract ', block), (
-        "`qa_checks.py contract` must not be prescribed as the repair self-check"
+        "`validators/qa_checks.py contract` must not be prescribed as the repair self-check"
     )

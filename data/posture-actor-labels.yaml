@@ -6,28 +6,43 @@
 # rendering.
 #
 # Consumed by:
-#   - scripts/compose_threat_model.py (renders one Mermaid actor card
+#   - scripts/renderers/compose_threat_model.py (renders one Mermaid actor card
 #     per non-empty actor present in the threat register; reads
 #     `default_subtitle` to fill the second line of the card)
 #   - schemas/fragments/security-posture-attack-paths.schema.json (the
 #     `actor` field on each attack-class entry is enum-validated against
 #     the keys below)
 #
-# Slug semantics: each key MUST exist as a vektor id in
+# Slug semantics: each key except `insider` MUST exist as a vektor id in
 # breach-vector-taxonomy.yaml. The renderer uses the vektor id from a
-# threat record to look up the actor card here.
+# threat record to look up the actor card here. `insider` is a display
+# group of attributed actors only; no finding vector names it.
+#
+# `legitimate_role_noun` names a legitimate role of that access class in
+# Figure 1 as "<project> <noun>"; `open_registration_role_noun` replaces it
+# when self-registration is open.
 #
 # Extension contract: additive only. Renaming a key breaks the cross-
 # reference with the breach-vector taxonomy.
 
 schema_version: 1
 
+# `diagram_position` below is NOT consumed by any renderer, and wiring it as
+# written would make figures worse. Measured over eight repositories, placing
+# every attacker at the bottom changed the summed attacker edge length by -12.6%
+# (juice-shop2) to +28.7% (juice-shop): `build-time` targets CI/CD low in the
+# figure and does improve, while `internet-anon`/`internet-user` target the
+# frontend at the top and get longer. The build-time case is handled instead by
+# the `build-threat` zone in renderers/figure1_dfd.py, which seats that actor beside the
+# build zone. Derive placement from an actor's targets before trusting this field.
 actors:
   internet-anon:
     legitimate_role_label: "Anonymous user"
     legitimate_role_subtitle: "no account required"
     open_registration_role_label: "User"
     open_registration_role_subtitle: "anonymous or self-registered"
+    legitimate_role_noun: "Visitor"
+    open_registration_role_noun: "User"
     label: "Anonymous Internet Attacker"
     default_subtitle: "no account or prior foothold"
     role: attacker
@@ -39,6 +54,7 @@ actors:
   internet-user:
     legitimate_role_label: "Authenticated user"
     legitimate_role_subtitle: "regular account"
+    legitimate_role_noun: "User"
     label: "Authenticated Internet Attacker"
     default_subtitle: "owns a regular account; logged in"
     role: attacker
@@ -53,6 +69,7 @@ actors:
     fa_icon: "fa:fa-user-secret"
 
   internet-priv-user:
+    legitimate_role_noun: "Admin"
     label: "Privileged User"
     default_subtitle: "elevated rights inside the application"
     role: attacker
@@ -85,22 +102,32 @@ actors:
     # runtime adversary — same icon the architecture diagram uses for the repo.
     fa_icon: "fa:fa-code-branch"
 
+  insider:
+    # Repository write or production access is privileged access (RA-10): it
+    # never folds into the anonymous internet attacker, even for a public repo.
+    label: "Malicious Insider"
+    default_subtitle: "repository write, pipeline or production access"
+    role: attacker
+    diagram_position: bottom
+    severity_class: actorAnon
+    fa_icon: "fa:fa-user-secret"
+
   victim-required:
-    label: "Shop User"
+    label: "End User"
     # Subtitle stays generic; the renderer rewrites it at composition
     # time from the actual victim-targeting attack classes present in
     # the heatmap so a report without CSRF findings doesn't claim
     # CSRF coverage in the actor card.
-    default_subtitle: "legitimate customer; target of client-side attacks"
+    default_subtitle: "legitimate end user; target of client-side attacks"
     role: victim
     diagram_position: top       # placed above the attacker so the
                                 # reverse arrows from the Client Tier
                                 # are short and route over the top edge
     severity_class: actorShopUser
-    # Generic fa:fa-user per audit actor convention — the customer-vs-attacker contrast
+    # Generic fa:fa-user per audit actor convention — the victim-vs-attacker contrast
     # is carried by the icon-pair (user vs user-secret), not by domain-
-    # specific glyphs like fa:fa-shopping-cart. The label "Shop User"
-    # already encodes the customer role.
+    # specific glyphs like fa:fa-shopping-cart. The label stays domain-neutral
+    # because this taxonomy is rendered for every scanned repository.
     fa_icon: "fa:fa-user"
 
 # Default order in the ACTORS subgraph (top → bottom). The renderer
@@ -113,3 +140,4 @@ order:
   - internet-priv-user
   - build-time
   - repo-read
+  - insider

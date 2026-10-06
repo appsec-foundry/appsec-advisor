@@ -35,12 +35,12 @@ copy both out of the tree before doing that.
 INVALID: threats[66]: 'scenario' is a required property
 ```
 
-`validate_intermediate.py` exited 1 against `threat-model.yaml`, `RUN_ABORTED`. In the
+`validators/validate_intermediate.py` exited 1 against `threat-model.yaml`, `RUN_ABORTED`. In the
 juice-shop run this was T-070 (`ARCH-TLS-001`, "Data disclosure through cleartext
 transport"). Only one coverage threat existed, hence exactly one failure — with more
 rules firing it fails just as hard.
 
-**Root cause.** `scripts/arch_coverage_to_threats.py::_build_threat` never set
+**Root cause.** `scripts/analyzers/arch_coverage_to_threats.py::_build_threat` never set
 `scenario`, and nothing backfills it downstream (`merge_threats.py:1598/1724` only
 rewrite an existing value). Meanwhile `schemas/threat-model.output.schema.yaml` lists it
 in `required` for `threats[]`:
@@ -53,13 +53,13 @@ So **any** promoted coverage/hypothesis threat fails the gate. Verify the root c
 still present with:
 
 ```bash
-grep -c scenario scripts/arch_coverage_to_threats.py   # 0 == bug present
+grep -c scenario scripts/analyzers/arch_coverage_to_threats.py   # 0 == bug present
 ```
 
 **Fix.** New helper `_scenario_for_threat()` synthesises the prose deterministically from
 fields the record already carries, and `_build_threat` sets `"scenario"` right after
 `"title"`. This copies the pattern of the sibling coverage emitter
-`coverage_checks.py` (`suggested_threat.scenario`, lines ~149 and ~413) — an f-string
+`analyzers/coverage_checks.py` (`suggested_threat.scenario`, lines ~149 and ~413) — an f-string
 over existing fields. No LLM, and no new YAML field to keep in sync across the 15
 shipped rules.
 
@@ -72,7 +72,7 @@ Two deliberate design points, both load-bearing:
   `validate_intermediate._check_scenario_stripped_length` (≥ 10 non-whitespace chars).
   The no-evidence branch still has to produce a sentence.
 
-Inserted above `_build_threat` in `scripts/arch_coverage_to_threats.py`:
+Inserted above `_build_threat` in `scripts/analyzers/arch_coverage_to_threats.py`:
 
 ```python
 def _scenario_for_threat(
@@ -155,7 +155,7 @@ It is non-actionable because the string is *composed*, not authored in any fragm
 
 ### Cause 2a — `_PATH_RE` cannot match a leading dot segment
 
-`scripts/apply_prose_fixes.py`, the pattern began `[A-Za-z]`, so on
+`scripts/repairs/apply_prose_fixes.py`, the pattern began `[A-Za-z]`, so on
 `.github/workflows/image_actions.yml:33` the match started one char late at `github`.
 The adjacency guard further down (`if before in "._": continue`, ~line 735) then
 *correctly* discarded it — wrapping would have produced a half-formatted
@@ -249,15 +249,15 @@ End-to-end on a **copy** of the real report (original untouched):
 
 ```bash
 cp docs/security/threat-model.md /tmp/tm.md
-python3 scripts/check_reference_format.py /tmp/tm.md   # 1 violation
-python3 scripts/apply_prose_fixes.py      /tmp/tm.md
-python3 scripts/check_reference_format.py /tmp/tm.md   # reference-format: clean
+python3 scripts/validators/check_reference_format.py /tmp/tm.md   # 1 violation
+python3 scripts/repairs/apply_prose_fixes.py      /tmp/tm.md
+python3 scripts/validators/check_reference_format.py /tmp/tm.md   # reference-format: clean
 diff docs/security/threat-model.md /tmp/tm.md          # exactly 2 lines
 ```
 
 The diff touches only line 102 (the reported F-010 locator) and line 98
 (`routes/search.ts:23`) — a second latent bare path the same blockquote skip had been
-hiding, which `check_reference_format.py` does not flag because it only inspects
+hiding, which `validators/check_reference_format.py` does not flag because it only inspects
 parenthesised locators. No collateral rewrites.
 
 Full suite after both fixes: **10341 passed, 93 skipped, 0 failed** (~8m38s).

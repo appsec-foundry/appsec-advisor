@@ -21,9 +21,9 @@ import pytest
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import classify_component  # noqa: E402
-import orchestration_controller as oc  # noqa: E402
-import stride_dispatch_waves as waves  # noqa: E402
+import analyzers.classify_component as classify_component  # noqa: E402
+import orchestrator.orchestration_controller as oc  # noqa: E402
+import orchestrator.stride_dispatch_waves as waves  # noqa: E402
 
 # --------------------------------------------------------------------------
 # D2a — turn budget must account for how much reading a component requires
@@ -141,7 +141,7 @@ def test_genuine_partial_keeps_the_original_reason(tmp_path: Path) -> None:
 
 def test_seed_only_validates_against_the_stride_schema(tmp_path: Path) -> None:
     """The sentinel must not break schema validation of the pre-seed."""
-    from validate_intermediate import validate_stride
+    from validators.validate_intermediate import validate_stride
 
     payload = {
         "component_id": "x",
@@ -204,7 +204,7 @@ def test_post_stage1_names_blocked_coverage_not_missing_artifacts(tmp_path: Path
     real_run_script = oc._run_script
 
     def run_script(name, args, **kwargs):
-        if name == "validate_dispatch_manifest.py":
+        if name == "validators/validate_dispatch_manifest.py":
             return None
         return real_run_script(name, args, **kwargs)
 
@@ -234,7 +234,7 @@ def test_footprint_count_sees_bare_recursive_patterns(tmp_path: Path) -> None:
     out at 2 files instead of ~700 and got no floor at all, defeating the fix
     for precisely the components that need it most.
     """
-    import build_stride_dispatch_manifest as bm  # noqa: PLC0415
+    import orchestrator.build_stride_dispatch_manifest as bm  # noqa: PLC0415
 
     pkg = tmp_path / "routes"
     pkg.mkdir()
@@ -250,7 +250,7 @@ def test_footprint_count_sees_bare_recursive_patterns(tmp_path: Path) -> None:
 
 def test_recursive_pattern_component_gets_a_raised_budget(tmp_path: Path) -> None:
     """A component declared as `models/**` must still earn its floor."""
-    import build_stride_dispatch_manifest as bm  # noqa: PLC0415
+    import orchestrator.build_stride_dispatch_manifest as bm  # noqa: PLC0415
 
     models = tmp_path / "models"
     models.mkdir()
@@ -266,7 +266,7 @@ def test_recursive_pattern_component_gets_a_raised_budget(tmp_path: Path) -> Non
 
 
 def test_expand_recursive_leaves_explicit_patterns_alone() -> None:
-    import build_stride_dispatch_manifest as bm  # noqa: PLC0415
+    import orchestrator.build_stride_dispatch_manifest as bm  # noqa: PLC0415
 
     out = bm._expand_recursive(["server.ts", "frontend/**/*.ts"])
     assert out == ["server.ts", "frontend/**/*.ts"]
@@ -293,7 +293,7 @@ def test_auth_evidence_raises_complexity_regardless_of_name(tmp_path: Path) -> N
     smaller tier carried the smaller turn budget and it stalled. A naming rule
     cannot fix this — the next inventory may call it `identity-provider`.
     """
-    import build_stride_dispatch_manifest as bm  # noqa: PLC0415
+    import orchestrator.build_stride_dispatch_manifest as bm  # noqa: PLC0415
 
     out = _auth_run(tmp_path, ["lib/insecurity.ts"])
     auth = bm._auth_evidence_files(out)
@@ -306,7 +306,7 @@ def test_auth_evidence_raises_complexity_regardless_of_name(tmp_path: Path) -> N
 
 def test_components_without_auth_code_are_untouched(tmp_path: Path) -> None:
     """The floor must not inflate every component."""
-    import build_stride_dispatch_manifest as bm  # noqa: PLC0415
+    import orchestrator.build_stride_dispatch_manifest as bm  # noqa: PLC0415
 
     out = _auth_run(tmp_path, ["lib/insecurity.ts"])
     auth = bm._auth_evidence_files(out)
@@ -316,7 +316,7 @@ def test_components_without_auth_code_are_untouched(tmp_path: Path) -> None:
 
 
 def test_floor_never_lowers_a_claimed_complexity(tmp_path: Path) -> None:
-    import build_stride_dispatch_manifest as bm  # noqa: PLC0415
+    import orchestrator.build_stride_dispatch_manifest as bm  # noqa: PLC0415
 
     out = _auth_run(tmp_path, ["lib/insecurity.ts"])
     auth = bm._auth_evidence_files(out)
@@ -326,7 +326,7 @@ def test_floor_never_lowers_a_claimed_complexity(tmp_path: Path) -> None:
 
 def test_missing_scanner_artifact_is_not_fatal(tmp_path: Path) -> None:
     """Classification must survive a missing or corrupt evidence file."""
-    import build_stride_dispatch_manifest as bm  # noqa: PLC0415
+    import orchestrator.build_stride_dispatch_manifest as bm  # noqa: PLC0415
 
     assert bm._auth_evidence_files(tmp_path) == []
     (tmp_path / ".source-auth-findings.json").write_text("{ not json", encoding="utf-8")

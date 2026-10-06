@@ -15,7 +15,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-import emit_auth_coverage as eac  # noqa: E402
+import model.emit_auth_coverage as eac  # noqa: E402
 
 
 def _routes(*pairs):

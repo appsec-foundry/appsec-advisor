@@ -2,11 +2,11 @@
 
 Status: Element 1+2 **IMPLEMENTED** 2026-06-20 (branch feature/skill-impl-sonnet-cleanup),
 Element 3 **IMPLEMENTED** 2026-07-25 from a different source than this plan assumed
-(`scripts/headless_usage.py`, see that section). Three display elements in a
+(`scripts/runtime/headless_usage.py`, see that section). Three display elements in a
 periodic headless liner + end summary: (1) rough percent progress, (2) net
 runtime (total − standby), (3) cost (actual + API-equivalent).
 
-IMPLEMENTATION Element 1+2 (`scripts/skill_watchdog.py`): new `RUN_PROGRESS` event in the
+IMPLEMENTATION Element 1+2 (`scripts/runtime/skill_watchdog.py`): new `RUN_PROGRESS` event in the
 60s watchdog loop (section 7d). Weights from `estimate_duration._PHASE_DURATION`
 (guarded import), depth from `.skill-config.json`, phase from `.appsec-checkpoint`,
 wall from `.scan-start-epoch`, standby = cumulative RUN_RESUMED peaks (`idle_total`).
@@ -23,14 +23,14 @@ All deterministic Python in the existing 60s watchdog loop + end summary.
 
 The building blocks exist:
 - The current phase is durably on disk: `.appsec-checkpoint` (`phase=<N>`),
-  parsed in `acquire_lock.py:181-230` (`_current_phase_label`).
-- A periodic emitter exists: `skill_watchdog.py:593-647`, 60s loop, knows the phase,
+  parsed in `runtime/acquire_lock.py:181-230` (`_current_phase_label`).
+- A periodic emitter exists: `runtime/skill_watchdog.py:593-647`, 60s loop, knows the phase,
   calls `event_log.format_line()`. New line is additive, no schema constraint.
 - Weighting: TWO independent phase-weight tables exist (not one!) —
   choose, don't mix:
   - `data/phase-budgets.yaml` — wall-time budget per phase × depth; maintained for
     watchdog stall classification. Only 1/2/3/9/10b/11 explicit, 4–8 = fallback.
-  - `scripts/estimate_duration.py:164` `_PHASE_DURATION` — its own hardcoded
+  - `scripts/runtime/estimate_duration.py:164` `_PHASE_DURATION` — its own hardcoded
     minutes table per depth, WITH fractional weights (line 451-457: ×0.5/×0.3 for
     phases 3–6). The sum-over-phases pattern already exists there (resume remaining time).
   - Recommendation: `_PHASE_DURATION` is the finer basis (covers 4–8), but for
@@ -62,8 +62,8 @@ More effort per phase, low added value for "just an impression". Omit.
 
 The building blocks exist:
 - Run start durable: `.scan-start-epoch` (written `SKILL-impl.md:1866`,
-  read `run_timing.py:226`). Wall = `now − scan-start-epoch`, trivial.
-- **The end summary already computes net**: `render_completion_summary.py:918` →
+  read `runtime/run_timing.py:226`). Wall = `now − scan-start-epoch`, trivial.
+- **The end summary already computes net**: `renderers/render_completion_summary.py:918` →
   `run_timing.compute_timing(output_dir)` returns `net_compute_secs`, `wall_secs`,
   `standby_secs`; standby from event gaps (`_standby_from_event_gaps`). Renders
   "Net agent compute" + "Idle / standby". → **Nothing to build for the end.**
@@ -126,7 +126,7 @@ in the end summary, there tier 1/2/3 per the signal above.
 
 ## Element 3 — cost: ONLY at the end, ONLY /cost-accurate  (effort: MEDIUM — blocked by the source)
 
-**RESOLVED 2026-07-25 — `scripts/headless_usage.py`.** The blocker below is about
+**RESOLVED 2026-07-25 — `scripts/runtime/headless_usage.py`.** The blocker below is about
 the *hook* source. It was never the only source: `claude -p --output-format json`
 ends with a result object carrying `total_cost_usd` and a per-model `modelUsage`
 breakdown, produced by Claude Code itself. That satisfies the policy in this
@@ -134,22 +134,22 @@ document directly — no pricing table, no reconstruction, sub-agents included, 
 parity with `/cost` is not an approximation to be proven but the same number.
 `run-headless.sh` captures the object and prints a per-model table at the end.
 The rest of this section stands as the record of why the hook-log route was
-rejected: `cost_running_total.py` remains the fallback for runs that are killed
+rejected: `runtime/cost_running_total.py` remains the fallback for runs that are killed
 before the object exists, and is labelled `ESTIMATE` there.
 
 ### What already exists AND is wired
-- Pricing table: `config.json:7-11` + `verify_run_costs.py:49-68` `PRICING_MODELS`
+- Pricing table: `config.json:7-11` + `runtime/verify_run_costs.py:49-68` `PRICING_MODELS`
   (sonnet/opus/haiku, input/output/cache_write/cache_read).
-- Calculation + banner: `cost_running_total.py` (`aggregate_running_total`,
+- Calculation + banner: `runtime/cost_running_total.py` (`aggregate_running_total`,
   `format_banner` → "↳ running total: 45k tokens, $0.18").
 - Already called: `appsec-threat-analyst.md:356` (after phase 8, non-fatal),
   `SKILL-impl.md:1742` (budget check). **So the banner is already in the pipeline flow.**
 - Model attribution: each `agents/*.md` frontmatter `model:`; dispatch override
-  logged in AGENT_SPAWN (`agent_logger.py:_agent_model`).
+  logged in AGENT_SPAWN (`runtime/agent_logger.py:_agent_model`).
 
 ### The real blocker (empirically verified 2026-06-20)
 Token source = `SESSION_STOP` lines that the `Stop`/`SubagentStop` hook
-(`agent_logger.py:handle_stop`, parses `transcript_path` usage) is supposed to write.
+(`runtime/agent_logger.py:handle_stop`, parses `transcript_path` usage) is supposed to write.
 Hooks are registered (`hooks/hooks.json:33-48`).
 
 **BUT: 0 SESSION_STOP in 3 real run logs** (`/tmp/tm-sonnet-standard`,
@@ -194,7 +194,7 @@ Recommended sequence if implemented:
 2. Element 3 ONLY as an end-summary field, separately, AFTER:
    (a) root cause why SESSION_STOP/transcript usage isn't aggregated headless,
    (b) correct price-per-model attribution (not flat sonnet). WATCH OUT for price
-       drift: `PRICING_MODELS` (verify_run_costs.py:49-68) has keys `opus-4-6`/
+       drift: `PRICING_MODELS` (runtime/verify_run_costs.py:49-68) has keys `opus-4-6`/
        `sonnet-4-6`/`haiku-4-5` — `opus-4-6` is outdated vs. the current Opus 4.8;
        such stale keys are exactly the cause of earlier wrong values → the table must
        be checked against the actually used model IDs,

@@ -1,4 +1,4 @@
-"""Unit tests for scripts/acquire_lock.py — heartbeat + hung-lock detection."""
+"""Unit tests for scripts/runtime/acquire_lock.py — heartbeat + hung-lock detection."""
 
 from __future__ import annotations
 
@@ -9,13 +9,13 @@ import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "acquire_lock.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "runtime/acquire_lock.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("acquire_lock", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("runtime.acquire_lock", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["acquire_lock"] = module
+    sys.modules["runtime.acquire_lock"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
@@ -149,7 +149,7 @@ def test_acquire_after_hung_lock_reaps_it(tmp_path: Path, capsys):
     lp = _lock_path(tmp_path)
     acquire_lock._write_lock(lp, os.getpid(), int(time.time()) - 600)
     # Call main() — it should detect hung and overwrite.
-    rc = acquire_lock.main(["acquire_lock.py", str(lp)])
+    rc = acquire_lock.main(["runtime/acquire_lock.py", str(lp)])
     assert rc == 0
     _, hb = acquire_lock._parse_lock(lp)
     assert hb is not None
@@ -160,7 +160,7 @@ def test_acquire_after_hung_lock_reaps_it(tmp_path: Path, capsys):
 def test_acquire_blocks_on_fresh_lock(tmp_path: Path):
     lp = _lock_path(tmp_path)
     acquire_lock._write_lock(lp, os.getpid(), int(time.time()))
-    rc = acquire_lock.main(["acquire_lock.py", str(lp)])
+    rc = acquire_lock.main(["runtime/acquire_lock.py", str(lp)])
     assert rc == 1
 
 
@@ -243,7 +243,7 @@ def test_emit_hook_event_swallows_oserror(tmp_path: Path, monkeypatch):
 def test_heartbeat_phase_step_via_main_flag(tmp_path: Path):
     lp = _lock_path(tmp_path)
     acquire_lock._write_lock(lp, os.getpid(), int(time.time()) - 30)
-    rc = acquire_lock.main(["acquire_lock.py", str(lp), "--heartbeat", "--phase=11", "--step=compose"])
+    rc = acquire_lock.main(["runtime/acquire_lock.py", str(lp), "--heartbeat", "--phase=11", "--step=compose"])
     assert rc == 0
     log = _hook_log(tmp_path)
     content = log.read_text()
@@ -498,14 +498,14 @@ def test_v1_dead_pid_classifies_dead(tmp_path: Path):
 
 def test_main_usage_error_returns_2(tmp_path: Path, capsys):
     # No positional lock path → usage error (exit 2).
-    rc = acquire_lock.main(["acquire_lock.py", "--heartbeat"])
+    rc = acquire_lock.main(["runtime/acquire_lock.py", "--heartbeat"])
     assert rc == 2
     assert "usage:" in capsys.readouterr().err
 
 
 def test_main_reset_dirs(tmp_path: Path, capsys):
     lp = _lock_path(tmp_path)
-    rc = acquire_lock.main(["acquire_lock.py", str(lp), "--reset-dirs"])
+    rc = acquire_lock.main(["runtime/acquire_lock.py", str(lp), "--reset-dirs"])
     assert rc == 0
     assert "DIRS_RESET" in capsys.readouterr().out
     assert (lp.parent / ".progress").is_dir()
@@ -514,7 +514,7 @@ def test_main_reset_dirs(tmp_path: Path, capsys):
 def test_main_reaps_dead_pid_lock(tmp_path: Path, capsys):
     lp = _lock_path(tmp_path)
     lp.write_text("99999999\n")  # v1 dead PID
-    rc = acquire_lock.main(["acquire_lock.py", str(lp)])
+    rc = acquire_lock.main(["runtime/acquire_lock.py", str(lp)])
     assert rc == 0
     err = capsys.readouterr().err
     assert "dead PID" in err
@@ -526,7 +526,7 @@ def test_main_reaps_stale_mtime_lock(tmp_path: Path, capsys):
     lp.write_text(f"{os.getpid()}\n")  # v1 live PID
     old = time.time() - 4000
     os.utime(lp, (old, old))
-    rc = acquire_lock.main(["acquire_lock.py", str(lp)])
+    rc = acquire_lock.main(["runtime/acquire_lock.py", str(lp)])
     assert rc == 0
     assert "mtime" in capsys.readouterr().err
 
@@ -534,7 +534,7 @@ def test_main_reaps_stale_mtime_lock(tmp_path: Path, capsys):
 def test_main_reaps_malformed_lock(tmp_path: Path, capsys):
     lp = _lock_path(tmp_path)
     lp.write_text("garbage no pid here")
-    rc = acquire_lock.main(["acquire_lock.py", str(lp)])
+    rc = acquire_lock.main(["runtime/acquire_lock.py", str(lp)])
     assert rc == 0
     out = capsys.readouterr()
     assert "malformed" in out.err
@@ -544,7 +544,7 @@ def test_main_reaps_malformed_lock(tmp_path: Path, capsys):
 def test_main_reaps_hung_lock_message(tmp_path: Path, capsys):
     lp = _lock_path(tmp_path)
     acquire_lock._write_lock(lp, os.getpid(), int(time.time()) - 600)
-    rc = acquire_lock.main(["acquire_lock.py", str(lp)])
+    rc = acquire_lock.main(["runtime/acquire_lock.py", str(lp)])
     assert rc == 0
     err = capsys.readouterr().err
     assert "heartbeat" in err
@@ -575,7 +575,7 @@ def test_reentrant_same_run_id_is_granted(tmp_path: Path, capsys):
     lp = _lock_path(tmp_path)
     # Skill pre-acquires with a run-id; watchdog keeps the heartbeat fresh.
     acquire_lock._write_lock(lp, 999999, int(time.time()), "RUN-A")
-    rc = acquire_lock.main(["acquire_lock.py", str(lp), "--run-id=RUN-A"])
+    rc = acquire_lock.main(["runtime/acquire_lock.py", str(lp), "--run-id=RUN-A"])
     assert rc == 0
     assert "LOCK_ACQUIRED" in capsys.readouterr().out
     # Run-id survives the re-acquire so later heartbeats keep it.
@@ -585,7 +585,7 @@ def test_reentrant_same_run_id_is_granted(tmp_path: Path, capsys):
 def test_foreign_run_id_still_blocks(tmp_path: Path, capsys):
     lp = _lock_path(tmp_path)
     acquire_lock._write_lock(lp, os.getpid(), int(time.time()), "RUN-A")
-    rc = acquire_lock.main(["acquire_lock.py", str(lp), "--run-id=RUN-B"])
+    rc = acquire_lock.main(["runtime/acquire_lock.py", str(lp), "--run-id=RUN-B"])
     assert rc == 1
     assert "LOCK_BLOCKED" in capsys.readouterr().out
 
@@ -593,7 +593,7 @@ def test_foreign_run_id_still_blocks(tmp_path: Path, capsys):
 def test_no_run_id_preserves_legacy_block(tmp_path: Path, capsys):
     lp = _lock_path(tmp_path)
     acquire_lock._write_lock(lp, os.getpid(), int(time.time()), "RUN-A")
-    rc = acquire_lock.main(["acquire_lock.py", str(lp)])
+    rc = acquire_lock.main(["runtime/acquire_lock.py", str(lp)])
     assert rc == 1
     assert "LOCK_BLOCKED" in capsys.readouterr().out
 
@@ -602,7 +602,7 @@ def test_run_id_from_env(tmp_path: Path, capsys, monkeypatch):
     lp = _lock_path(tmp_path)
     acquire_lock._write_lock(lp, 999999, int(time.time()), "RUN-A")
     monkeypatch.setenv("APPSEC_RUN_ID", "RUN-A")
-    rc = acquire_lock.main(["acquire_lock.py", str(lp)])
+    rc = acquire_lock.main(["runtime/acquire_lock.py", str(lp)])
     assert rc == 0
     assert "LOCK_ACQUIRED" in capsys.readouterr().out
 
@@ -610,7 +610,7 @@ def test_run_id_from_env(tmp_path: Path, capsys, monkeypatch):
 def test_heartbeat_preserves_run_id(tmp_path: Path):
     lp = _lock_path(tmp_path)
     acquire_lock._write_lock(lp, os.getpid(), int(time.time()), "RUN-A")
-    acquire_lock.main(["acquire_lock.py", str(lp), "--heartbeat"])
+    acquire_lock.main(["runtime/acquire_lock.py", str(lp), "--heartbeat"])
     assert acquire_lock.read_run_id(lp) == "RUN-A"
 
 
@@ -647,7 +647,7 @@ def test_a_lock_that_never_heartbeated_is_reaped_once_past_its_grace(tmp_path: P
     grace = acquire_lock.NEVER_HEARTBEATED_GRACE_SECONDS
     lp = _abandoned_lock(tmp_path, grace + 10)
     assert acquire_lock._classify_lock(lp)[0] == "abandoned"
-    assert acquire_lock.main(["acquire_lock.py", str(lp), "--run-id=RUN-NEW"]) == 0
+    assert acquire_lock.main(["runtime/acquire_lock.py", str(lp), "--run-id=RUN-NEW"]) == 0
     assert "LOCK_ACQUIRED" in capsys.readouterr().out
 
 
@@ -656,7 +656,7 @@ def test_a_lock_inside_the_never_heartbeated_grace_still_blocks(tmp_path: Path, 
     # waiting on an interactive prompt — is not taken over underneath it.
     lp = _abandoned_lock(tmp_path, max(1, acquire_lock.NEVER_HEARTBEATED_GRACE_SECONDS // 4))
     assert acquire_lock._classify_lock(lp)[0] == "fresh"
-    assert acquire_lock.main(["acquire_lock.py", str(lp), "--run-id=RUN-NEW"]) == 1
+    assert acquire_lock.main(["runtime/acquire_lock.py", str(lp), "--run-id=RUN-NEW"]) == 1
     assert "LOCK_BLOCKED" in capsys.readouterr().out
 
 
@@ -724,7 +724,7 @@ def test_the_acquisition_stamp_is_read_by_label_not_position(tmp_path: Path):
 
 def test_an_acquired_lock_records_its_acquisition_stamp(tmp_path: Path):
     lp = _lock_path(tmp_path)
-    assert acquire_lock.main(["acquire_lock.py", str(lp), "--run-id=RUN-NEW"]) == 0
+    assert acquire_lock.main(["runtime/acquire_lock.py", str(lp), "--run-id=RUN-NEW"]) == 0
     assert acquire_lock._read_acquired_ts(lp) is not None
 
 
@@ -739,7 +739,7 @@ def test_the_blocked_message_never_presents_the_stored_pid_as_holder_liveness(tm
     # as "safe to delete" on a run that is very much alive.
     lp = _lock_path(tmp_path)
     acquire_lock._write_lock(lp, DEAD_PID, int(time.time()), "RUN-LIVE")
-    acquire_lock.main(["acquire_lock.py", str(lp), "--run-id=RUN-NEW"])
+    acquire_lock.main(["runtime/acquire_lock.py", str(lp), "--run-id=RUN-NEW"])
     out = capsys.readouterr().out
     assert "LOCK_BLOCKED" in out
     assert str(DEAD_PID) not in out
@@ -748,7 +748,7 @@ def test_the_blocked_message_never_presents_the_stored_pid_as_holder_liveness(tm
 def test_the_blocked_message_offers_both_a_wait_and_a_takeover_path(tmp_path: Path, capsys):
     lp = _lock_path(tmp_path)
     acquire_lock._write_lock(lp, DEAD_PID, int(time.time()), "RUN-LIVE")
-    acquire_lock.main(["acquire_lock.py", str(lp), "--run-id=RUN-NEW"])
+    acquire_lock.main(["runtime/acquire_lock.py", str(lp), "--run-id=RUN-NEW"])
     out = capsys.readouterr().out
     assert "clears itself" in out  # wait path, with an ETA
     assert str(lp) in out  # takeover path names the exact file
@@ -757,5 +757,5 @@ def test_the_blocked_message_offers_both_a_wait_and_a_takeover_path(tmp_path: Pa
 
 def test_the_blocked_message_names_the_never_heartbeated_cause(tmp_path: Path, capsys):
     lp = _abandoned_lock(tmp_path, max(1, acquire_lock.NEVER_HEARTBEATED_GRACE_SECONDS // 4))
-    acquire_lock.main(["acquire_lock.py", str(lp), "--run-id=RUN-NEW"])
+    acquire_lock.main(["runtime/acquire_lock.py", str(lp), "--run-id=RUN-NEW"])
     assert "never heartbeated" in capsys.readouterr().out

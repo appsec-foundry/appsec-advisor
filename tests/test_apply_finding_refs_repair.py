@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import apply_finding_refs_repair as repair
+import repairs.apply_finding_refs_repair as repair
 
 
 def _write(path: Path, text: str) -> None:
@@ -16,7 +16,7 @@ def _write_plan(path: Path, actions: list[dict]) -> None:
 
 
 def _run_main(monkeypatch, *args: object) -> int:
-    monkeypatch.setattr(repair.sys, "argv", ["apply_finding_refs_repair.py", *[str(a) for a in args]])
+    monkeypatch.setattr(repair.sys, "argv", ["repairs/apply_finding_refs_repair.py", *[str(a) for a in args]])
     return repair.main()
 
 

@@ -14,10 +14,10 @@ Use the second form only when the invocation contains the skill-only `--force`
 flag:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" \
   prepare -- <invocation-arguments>
 
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" \
   prepare --force -- <invocation-arguments>
 ```
 
@@ -118,16 +118,17 @@ Emit this handoff banner:
 
 Read `SKILL-thin-stage2.md` in full and follow it. Do not load any Stage-1
 runtime. When a stage runtime says to start the heartbeat, run `python3
-"$CLAUDE_PLUGIN_ROOT/scripts/skill_watchdog.py" "$OUTPUT_DIR" --plugin-root
+"$CLAUDE_PLUGIN_ROOT/scripts/runtime/skill_watchdog.py" "$OUTPUT_DIR" --plugin-root
 "$CLAUDE_PLUGIN_ROOT" --heartbeat-interval 60` with `run_in_background: true`
-and keep its task id. The final heartbeat is `python3
-"$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock"
+and Bash timeout `7200000`, and keep its task id; restart it unchanged on a
+`killed` notification before the stage ends. The final heartbeat is `python3
+"$CLAUDE_PLUGIN_ROOT/scripts/runtime/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock"
 --heartbeat --phase=skill`; then stop the watchdog with `TaskStop`.
 
 After the renderer returns, and again before the completion summary, run:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" \
   next --output-dir "$OUTPUT_DIR"
 ```
 
@@ -136,5 +137,4 @@ Once the deterministic report exists, load `SKILL-thin-stage3.md` in full once,
 including for Quick and `SKIP_QA=true`; its secret gate is never optional.
 Then honor only controller-returned plugin files: `SKILL-thin-stage4.md` for
 Stage 4 and `SKILL-thin-completion.md` for completion. Never emit a completion
-summary while `$OUTPUT_DIR/threat-model.md` is absent. There is no legacy slice
-or fallback.
+summary while `$OUTPUT_DIR/threat-model.md` is absent.

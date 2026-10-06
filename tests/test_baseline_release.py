@@ -1,4 +1,4 @@
-"""Tests for scripts/baseline_release.py.
+"""Tests for scripts/baseline/baseline_release.py.
 
 One property carries the weight: nothing a release serves reaches the caller
 unless a configured key signed its manifest and the baseline matches that
@@ -28,7 +28,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import baseline_release as br  # noqa: E402
+import baseline.baseline_release as br  # noqa: E402
 
 REPOSITORY = "example-org/baseline"
 TAG = "aiscb-0.2.0"
@@ -236,6 +236,63 @@ def test_a_redirect_away_from_the_api_host_is_refused():
         br._SameHostRedirect().redirect_request(request, None, 302, "Found", {}, "https://example.invalid/elsewhere")
 
 
+@pytest.mark.parametrize("name", ["service with spaces", "neutral-worker"])
+def test_signed_updater_delegation_previews_then_activates_without_running_local_code(key, tmp_path, monkeypatch, name):
+    import baseline.update_baseline as ub
+
+    repo = tmp_path / name
+    repo.mkdir()
+    local_installer = repo / ".aiscb/install.py"
+    local_installer.parent.mkdir()
+    local_installer.write_text("raise AssertionError('repository code executed')")
+    installer = b"""UPDATE_PROTOCOL = "aiscb-refresh-installed-v1"
+import argparse
+from pathlib import Path
+p = argparse.ArgumentParser()
+p.add_argument('--refresh-installed', action='store_true', required=True)
+p.add_argument('--into', required=True)
+p.add_argument('--dry-run', action='store_true')
+a = p.parse_args()
+if not a.dry_run:
+    (Path(a.into) / 'updated').write_text('verified release')
+print('preview' if a.dry_run else 'activated')
+"""
+    helper = b"# authenticated helper\n"
+    document = json.loads(manifest_for(TEXT))
+    for path, raw in (("scripts/install.py", installer), ("scripts/show_baseline_version.py", helper)):
+        document["files"][path] = {"size": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+    manifest = json.dumps(document).encode()
+    files = {
+        "bundle.json": manifest,
+        "bundle.json.sig": sign(key[0], manifest),
+        br.BASELINE_FILE: TEXT.encode(),
+        "install.py": installer,
+        "show_baseline_version.py": helper,
+    }
+    fetch = br.fetch_latest
+
+    def published_updater(release, minimum, **kwargs):
+        return fetch(
+            release,
+            minimum,
+            **kwargs,
+            fetch_json=lambda url: {"tag_name": TAG, "assets": [{"name": n} for n in files]},
+            fetch_asset=lambda url, limit: files[url.rsplit("/", 1)[-1]],
+        )
+
+    monkeypatch.setattr(br, "fetch_latest", published_updater)
+    config = {"id": "aiscb-0.1.17", "release": trusting(key)}
+    steps = ub.update_upstream([(repo, False)], config, dry_run=True, offline=False)
+    assert "preview" in steps and not (repo / "updated").exists()
+    steps = ub.update_upstream([(repo, False)], config, dry_run=False, offline=False)
+    assert "activated" in steps and (repo / "updated").read_text() == "verified release"
+    before = (repo / "updated").stat().st_mtime_ns
+    files["show_baseline_version.py"] = b"# modified helper"
+    with pytest.raises(ub.UpdateError, match="no unverified installer"):
+        ub.update_upstream([(repo, False)], config, dry_run=False, offline=False)
+    assert (repo / "updated").stat().st_mtime_ns == before
+
+
 # ---------- what this build ships ------------------------------------------
 
 
@@ -246,3 +303,64 @@ def test_the_shipped_baseline_comes_from_a_signed_release():
     assert block["release"]["repository"] == "appsec-foundry/aiscb"
     assert block["release"]["allowed_signers"]
     assert all(line.split()[0] == br.SIGNER_PRINCIPAL for line in block["release"]["allowed_signers"])
+
+
+@pytest.mark.parametrize("repository", ["example-org/baseline", "neutral-team/security-policy"])
+def test_release_assets_are_verified_without_reading_the_git_tree(key, repository):
+    import ast
+
+    installer = (REPO_ROOT / "data/baselines/aiscb/install.py").read_bytes()
+    # The real distribution is only data to this test; its manifest is signed
+    # with the test publisher's disposable key.
+    assert ast.parse(installer)
+    document = json.loads(manifest_for(TEXT))
+    document["files"]["scripts/install.py"] = {"size": len(installer), "sha256": hashlib.sha256(installer).hexdigest()}
+    manifest = json.dumps(document).encode()
+    files = {
+        "bundle.json": manifest,
+        "bundle.json.sig": sign(key[0], manifest),
+        "secure-coding-baseline.md": TEXT.encode(),
+        "install.py": installer,
+    }
+    config = {"repository": repository, "allowed_signers": [key[1]]}
+
+    def metadata(url):
+        assert url == f"https://api.github.com/repos/{repository}/releases/latest"
+        return {
+            "tag_name": TAG,
+            "assets": [{"name": name, "browser_download_url": "https://untrusted.invalid/payload"} for name in files],
+        }
+
+    def asset(url, limit):
+        assert url.startswith(f"https://github.com/{repository}/releases/download/{TAG}/")
+        return files[url.rsplit("/", 1)[-1]]
+
+    result = br.fetch_latest(config, "aiscb-0.1.14", fetch_json=metadata, fetch_asset=asset, include_bundle=True)
+    assert result.text == TEXT and result.bundle["install.py"] == installer
+    files["install.py"] = b'print("untrusted")'
+    with pytest.raises(br.ReleaseError, match="signed manifest"):
+        br.fetch_latest(config, "aiscb-0.1.14", fetch_json=metadata, fetch_asset=asset, include_bundle=True)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://github.com/file",
+        "https://attacker.invalid/file",
+        "https://github.com@attacker.invalid/file",
+        "https://github.com:444/file",
+        "https://user:pass@github.com/file",
+    ],
+)
+def test_asset_redirects_reject_untrusted_destinations(url):
+    with pytest.raises(br.ReleaseError):
+        br._asset_url(url)
+
+
+def test_missing_release_asset_never_falls_back_to_unsigned_tree(key):
+    def metadata(url):
+        assert url.endswith("/releases/latest")
+        return {"tag_name": TAG, "assets": [{"name": "unrelated.zip"}]}
+
+    with pytest.raises(br.ReleaseError, match="unique bundle.json"):
+        br.fetch_latest(trusting(key), None, fetch_json=metadata)

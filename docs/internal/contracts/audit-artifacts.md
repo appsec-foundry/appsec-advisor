@@ -4,14 +4,19 @@ Files that runtime cleanup MUST preserve. Deleting them breaks post-run audit, S
 
 | Path | Purpose |
 |------|---------|
+| `.plugin-issue-input.json`, `.plugin-issue-draft.json`, `.plugin-issue-<digest>.receipt.json` | Local support draft and submission audit; no publication without review and explicit approval of the exact draft |
 | `.threat-modeling-context.md` | Captured project context (recon summary + scope) |
 | `.org-context.md`, `.org-context-manifest.json` | Preset-selected organization reference data and its per-document load, omission, size, and hash records |
 | `.recon-summary.md` | Authoritative recon-scanner output; semantic consumers receive bounded runtime projections |
 | `.recon-signals.json` | Contracted actor, exposure, and deployable-unit signals required for validated recon reuse |
 | `.config-scan-findings.json` | Complete deterministic Config/IaC catalog results consumed by merge and retained for finding audit |
 | `.dep-scan.json` | Dependency scan findings |
+| `.deployment-inventory.json` | Deterministic deployment inventory under `schemas/deployment-inventory.schema.json`; the only input of the §2.2 Deployment and Technology figure, so a re-render draws the state of the scan. Its optional `topology` block lists compose and Kubernetes workloads with the zones they sit in (compose networks, namespaces with their NetworkPolicy state) under the declared names, plus the workloads that bridge zones; it adds no environment to the figure |
+| `.supply-chain-view.json` | Supply-chain view under `schemas/supply-chain-view.schema.json`, the input of Figure 1b; every compose rebuilds it from `.deployment-inventory.json`, the `supply_chain_facts` in `.config-scan-findings.json` and the threat model, and records their fingerprint |
 | `.stride-<component-id>.json`, `.stride-dispatch-manifest.json`, `.stride-selection.json`, `.stride-analyst-context.json` | Per-component STRIDE fragments and the three durable pre-fan-out sidecars below; the analyst context contains bounded component business and architecture projections |
 | `.threats-merged.json` | Canonical merged threat set |
+| `.arch-design-signals.json`, `.impl-design-signals.json`, `.finding-design-signals.json` | Validated mechanism observations and source provenance under `schemas/weakness-signals.schema.json`; see [weakness derivation](weakness-derivation.md) |
+| `.impl-strategy.json` | Dependency inventory and bounded source observations under `schemas/impl-strategy.schema.json` |
 | `.triage-flags.json` | Triage-validator verdicts |
 | `.trust-boundary-diagnostics.json` | Canonical endpoint-resolution failures and ambiguity audit |
 | `.trust-boundary-renumber.json` | `{counter id: delivered id}` map from the contiguous `tb-1 … tb-N` delivery renumbering — lets post-build emitters translate the ids `.triage-flags.json` recorded |
@@ -19,13 +24,14 @@ Files that runtime cleanup MUST preserve. Deleting them breaks post-run audit, S
 | `.component-inventory-finalization.json` | Final component-ID set and endpoint-field fingerprint used by Stage 1b |
 | `.data-flows.json` | Validated architecture topology handed from Stage 1a to Stage 1b |
 | `.context-routing-plan.json`, `.context-routing-plan.receipt.json` | Human-labelled context-v2 delivery decisions, active bindings, and the exact-byte receipt for the plan |
+| `.architect-review.json` | Durable semantic-review transaction, packet coverage, proposals, accepted before/after values and bounded host telemetry; rebuild and final gates validate it against its schema and replay its application |
 | `.architect-review.md` | Advisory output of the former Stage-4 architect review. No stage writes it since the editorial pass replaced that role; a copy from an earlier run is still preserved rather than reaped |
 | `.agent-run.log` | Structured agent run log |
 | `.hook-events.log` | Hook timing/diagnostic events |
 | `.appsec-cache/` | Carry-forward cache directory |
 | `.appsec-cache/baseline.json` | **Critical** — incremental anchor; deleting forces cold full scan and breaks T-ID stability |
 
-Canonical enforcement: `scripts/runtime_cleanup.py` (the cleanup script must never list these), drift-guarded by `tests/test_runtime_cleanup.py`.
+Canonical enforcement: `scripts/runtime/runtime_cleanup.py` (the cleanup script must never list these), drift-guarded by `tests/test_runtime_cleanup.py`.
 
 ## The `.stride-` prefix is shared
 
@@ -35,7 +41,7 @@ Four sidecars share the prefix and are written **before** the Phase-9 fan-out:
 | Path | What it really is |
 |------|-------------------|
 | `.stride-dispatch-manifest.json` | Dispatch plan (`schemas/stride-dispatch-manifest.schema.yaml`) |
-| `.stride-selection.json` | Component-selection report (`build_stride_dispatch_manifest.py`) |
+| `.stride-selection.json` | Component-selection report (`orchestrator/build_stride_dispatch_manifest.py`) |
 | `.stride-analyst-context.json` | Analyst-A per-component context |
 | `.stride-repository-registry.json` | Controller-only context-v2 mapping from declared local related repositories to validated roots; component projections under `.dispatch-context/` are the only mappings sent to STRIDE analyzers, and runtime cleanup removes both |
 | `.dispatch-context/post-stride/` | Receipted evidence-sample, generated-threat, and proposed-mitigation projections; each binds exact canonical sources and is removed by normal runtime cleanup |
@@ -43,7 +49,7 @@ Four sidecars share the prefix and are written **before** the Phase-9 fan-out:
 
 Cleanup and never-publish lists keep the broad `.stride-*.json` pattern on
 purpose. Anything that **reads or counts** per-component results must go
-through `scripts/stride_outputs.py` — a bare glob counts the sidecars as
+through `scripts/runtime/stride_outputs.py` — a bare glob counts the sidecars as
 finished components (it disabled the watchdog's Phase-9 canary, inflated the
 progress widget, and put `dispatch-manifest` / `analyst-context` into the
 merge audit trail and the incremental baseline). A new sidecar must be added

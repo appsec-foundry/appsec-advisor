@@ -13,9 +13,7 @@ Open an issue before substantial changes so the approach can be agreed before im
 3. Run the relevant tests and lint checks.
 4. Complete the pull request template.
 
-Maintainers are listed in [`.github/CODEOWNERS`](.github/CODEOWNERS) and review
-all changes to `main`. Security issues follow a separate path — see
-[Reporting security issues](#reporting-security-issues).
+Maintainers are listed in [`.github/CODEOWNERS`](.github/CODEOWNERS) and review all changes to `main`. For security issues, follow [Reporting security issues](#reporting-security-issues).
 
 ## Dev environment setup
 
@@ -47,6 +45,9 @@ PDF export (mermaid drives a headless Chrome over a local socket) and any write 
 ```bash
 make test-quick                    # shared base drift guards
 make test-group GROUP=report        # focused report and export tests
+make test-plan BASE=origin/dev      # explain the selection without running tests
+make test-changed BASE=origin/dev   # branch and local changes plus requirement guards
+make test-plan BASE=HEAD            # explain only staged, unstaged, and untracked work
 make test-full                     # complete suite without coverage
 make check                         # lint, validators, and complete suite
 make test                          # complete suite with coverage
@@ -107,24 +108,35 @@ Select tests by the affected behavior. Include the changed producer, its consume
 | Shared runtime behavior or uncertain impact | `make check`. The `runtime` group supports iteration but does not replace this gate. |
 | Release | `make release-check` and the prescribed live E2E checks. |
 
-Base checks for non-trivial implementation changes:
+Inspect the automatic selection before using it for a bounded implementation change:
 
 ```bash
-make validate test-quick
+make test-plan BASE=origin/dev
+make validate test-changed BASE=origin/dev
 ```
 
-Run `make lint` whenever Python changes in `scripts/`, `tests/`, or `hooks/`. Use `make check` for changes spanning multiple runtime modules or contracts, or when targeted coverage cannot be bounded confidently. Its full suite includes the base tests, so do not rerun them separately after that gate passes.
+The selection includes commits since the merge base with `BASE`, staged changes, unstaged changes, and untracked files. `BASE` defaults to the local `origin/dev` reference; the runner does not fetch it. Use `make test-plan BASE=HEAD` for separately bounded work when the current branch already contains unrelated local commits. An invalid reference fails before pytest starts. Each routed source path selects its reviewed producer and consumer test modules directly. Changed test modules run directly, and applicable requirement bindings retain their exact pytest selectors. A clean comparison runs no tests because `make validate` owns the shared drift checks.
 
-The shared groups are `quick`, `report`, `scanner`, `prompts`, `runtime`, `incremental`, and `e2e`. Their file selections live in [`scripts/run_tests.py`](scripts/run_tests.py). They are starting sets; add tests for affected behavior outside the group. The `e2e` group replays a frozen run without model calls.
+Source routes cover explicitly reviewed producers, consumers, prompts, schemas, templates, and repository documents. Routes for multiple changed source files are united. Unknown paths, shared inputs without a reviewed route, and deleted files fall back to the full suite. Every Python script has a reviewed route or an explicit full-suite reason in `scripts/run_tests.py`. The plan lists every changed path that requires this fallback, so repairing one route does not conceal another missing route. Review the plan against the behavior changed; an existing route does not prove that a new dependency is covered. Full compatibility and coverage runs remain in CI while the local selection is evaluated.
+
+Run `make lint` whenever Python changes in `scripts/`, `tests/`, or `hooks/`. Use `make check` for foundational runtime changes whose consumers are not bounded by reviewed routes, coupled runtime or contract changes beyond those routes, or uncertain impact. A module having several known consumers does not by itself require the full suite when its reviewed route covers them. For iteration or separately bounded work in a mixed working tree, use `make validate test-quick` and the affected groups plus any additional consumer tests. Reuse successful checks until relevant source, contracts, dependencies, or the test environment changes. The full gate already includes the base checks.
+
+Group membership and source routes live in [`scripts/run_tests.py`](scripts/run_tests.py). The groups are `quick`, `prose-formatting`, `report`, `scanner`, `prompts`, `runtime`, `incremental`, `e2e`, `qa-repair`, `findings`, `config`, `requirements`, `baseline`, `packaging`, `context`, `trust`, `shared`, `tooling`, and `integration`. The `e2e` group retains the frozen-run replay without model calls; `integration` covers other deterministic integration tests and drivers. Manual live-run assertions have a separate role and are not added to focused groups.
+
+When adding or renaming a test, update its exact membership or its justified manual role. When adding a Python script, give it a measured producer and consumer route or a justified entry in `FULL_SUITE_SOURCES`; the routing tests reject silent gaps. When changing a producer or consumer, review the source routes and the tests at that boundary. `make validate` checks the inventory and rejects unassigned tests, stale paths, and invalid routes. File assignment prevents omission but does not prove semantic coverage. Do not infer sufficient coverage from filenames or Python imports alone; tests also invoke subprocesses and read schemas, templates, and prompts.
+
+Run `make audit-test-routes` after adding or changing a source route. It runs every test module under coverage, including subprocesses, and records the repository files each test reads. It fails when a route misses a test that executes the routed script, uses one of its module-level constants or classes, or reads the routed file. It also reports routed tests without a measured dependency; remove them only when they were not skipped or failed during the measurement and do not stop a subprocess with a signal other than SIGTERM. The audit runs eight test modules in parallel by default; `python3 scripts/audit_test_routes.py --jobs <n>` sets another number.
 
 ```bash
 make test-group GROUP=scanner
 python3 scripts/run_tests.py --list report  # inspect the selected files
 python3 scripts/run_tests.py report -x -q   # forward pytest options
 scripts/run-tests.sh group report          # same selection with dependency setup
+scripts/run-tests.sh changed origin/dev -q # changed-file selection
+scripts/run-tests.sh pattern 'golden' -q    # explicit pytest name filter
 ```
 
-`scripts/run-tests.sh quick` and `make test-quick` use the same selection. The wrapper prefers `.venv`, then an installed system interpreter, then `.venv-tests`; it installs test dependencies into `.venv-tests` if needed. Unknown names passed through `group` fail. The legacy `scripts/run-tests.sh <pattern>` form still forwards the pattern to pytest's `-k` option.
+`scripts/run-tests.sh quick` and `make test-quick` use the same selection. The wrapper prefers `.venv`, then an installed system interpreter, then `.venv-tests`; it installs test dependencies into `.venv-tests` if needed. A missing group name fails before dependency setup. Unknown names passed through `group` fail. The legacy `scripts/run-tests.sh <pattern>` form retains pytest's `-k` filtering: `scripts/run-tests.sh scanner` is a name filter, while `scripts/run-tests.sh group scanner` selects the reviewed group.
 
 #### Deterministic end-to-end (no LLM)
 
@@ -138,13 +150,22 @@ APPSEC_UPDATE_GOLDEN=1 python3 -m pytest tests/test_e2e_pipeline.py -k golden
 
 Do not edit golden output by hand to hide a producer defect.
 
-If the repo already has failing tests, capture the baseline and clearly distinguish pre-existing failures from new failures caused by the current change. Do not normalize or hide new failures. When targeted tests fail outside touched files, report failing test names and error heads instead of stale global counts.
+Do not run tests before a change to capture a baseline. When a selected test fails, rerun only the failing tests at the merge base in a temporary worktree. Replace `<failing test ids>` with the pytest node IDs from the failed run, and omit tests whose file does not exist at the merge base; they belong to the current change. Use `HEAD` instead of the merge base when the selection used `BASE=HEAD`.
+
+```bash
+base_dir=$(mktemp -d)
+GIT_LFS_SKIP_SMUDGE=1 git worktree add -d "$base_dir" "$(git merge-base origin/dev HEAD)"
+(cd "$base_dir" && python3 -m pytest <failing test ids> -q)
+git worktree remove --force "$base_dir"
+```
+
+A test that also fails at the merge base is a pre-existing failure. A test that passes there is a regression caused by the current change. A test that is skipped there has no baseline; tests that read git-ignored local data, such as `tests/fixtures/e2e/_last-run`, skip in the worktree. Do not normalize or hide new failures. When targeted tests fail outside touched files, report failing test names and error heads instead of stale global counts.
 
 ### Validation scripts
 
 ```bash
-python3 scripts/validate_config.py .              # config schema validation
-python3 scripts/validate_intermediate.py <file.json>  # intermediate file schema
+python3 scripts/validators/validate_config.py .              # config schema validation
+python3 scripts/validators/validate_intermediate.py <file.json>  # intermediate file schema
 ```
 
 ### Development utilities
@@ -152,16 +173,16 @@ python3 scripts/validate_intermediate.py <file.json>  # intermediate file schema
 ```bash
 python3 scripts/mock-server.py [port]             # mock REST endpoints: context + requirements (default 4444)
 ./scripts/run-headless.sh --repo /path --output /out --yaml --sarif
-python3 scripts/harvest_requirements.py           # regenerate fallback requirements YAML (use --format all for spec exports)
+python3 scripts/requirements/harvest_requirements.py           # regenerate fallback requirements YAML (use --format all for spec exports)
 python3 scripts/threat_fixture.py freeze --run /out --into tests/fixtures/golden/<name> --repo /path
 python3 scripts/threat_fixture.py replay --fixture tests/fixtures/golden/<name> --repo /path
-python3 scripts/diagnostic_bundle.py collect --run /out --into . --repo-root /path  # user → maintainer
-python3 scripts/diagnostic_bundle.py inspect --bundle appsec-diag-<id>.tgz          # maintainer triage
+python3 scripts/runtime/diagnostic_bundle.py collect --run /out --into . --repo-root /path  # user → maintainer
+python3 scripts/runtime/diagnostic_bundle.py inspect --bundle appsec-diag-<id>.tgz          # maintainer triage
 ```
 
 `threat_fixture.py` captures and replays completed runs without another scan. See the [threat fixture runbook](docs/internal/runbooks/threat-fixture.md).
 
-`diagnostic_bundle.py` creates a scrubbed bundle for maintainer triage. Inspect every bundle before sharing it.
+`runtime/diagnostic_bundle.py` creates a scrubbed bundle for maintainer triage. Inspect every bundle before sharing it.
 
 ## Repository layout
 
@@ -176,8 +197,8 @@ python3 scripts/diagnostic_bundle.py inspect --bundle appsec-diag-<id>.tgz      
 | `schemas/` | YAML/JSON schemas for intermediate files and output |
 | `templates/` | Report templates (management summary, sections) |
 | `data/` | Requirements, policy, and rule data |
-| `scripts/` | Python helpers used by agents/hooks plus user-facing CLI wrappers (`run-headless.sh`, `harvest_requirements.py`, `mock-server.py`) |
-| `tests/` | Pytest suite — agent definitions, integration, steering, SARIF, schemas |
+| `scripts/` | Domain packages plus maintainer tools and shell entry points; see the [script layout](scripts/README.md). |
+| `tests/` | Pytest suite: agent definitions, integration, steering, SARIF, schemas |
 | `examples/` | Example requirements catalogs, blueprints, abuse cases, and audit outputs |
 | `docs/` | User and maintainer documentation |
 | `config.json` | Plugin config (external context, pricing, logging) |
@@ -203,7 +224,7 @@ Add type hints to new public functions. `mypy` is not currently enforced.
 
 ## Adding components
 
-When adding a new section to the generated threat model, see [`docs/internal/runbooks/adding-a-section.md`](docs/internal/runbooks/adding-a-section.md). It walks through the five registry maps that must stay aligned — those maps are documented at [`docs/internal/contracts/schema-invariants.md` §4f](docs/internal/contracts/schema-invariants.md#4f-fragment-registry-maps--single-source-of-truth).
+When adding a new section to the generated threat model, see [`docs/internal/runbooks/adding-a-section.md`](docs/internal/runbooks/adding-a-section.md). It covers the five registry maps that must stay aligned. Their contracts are documented in [`docs/internal/contracts/schema-invariants.md` §4f](docs/internal/contracts/schema-invariants.md#4f-fragment-registry-maps--single-source-of-truth).
 
 ## Reporting security issues
 

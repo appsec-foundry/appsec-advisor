@@ -40,14 +40,14 @@ exactly what makes a verbatim §3 carry (Gap A's fix) unsafe.
 
 | Concern | §7 (has carry-forward) | §3 (dropped) |
 |---|---|---|
-| Resolver | `_resolve_security_arch_override` `compose_threat_model.py:1284` | none |
+| Resolver | `_resolve_security_arch_override` `renderers/compose_threat_model.py:1284` | none |
 | Extractor | `_extract_section_verbatim(..., top_level_number=7)` `:1353` (already generic — takes any N) | n/a |
 | Stability gate | `_verbatim_fnnn_refs_match` `:1539` (F-NNN title-drift guard) | n/a |
 | ctx field | `security_arch_override` `:224`, set `:14306` | n/a |
 | eval flag | `render_security_architecture` `:14313` | `skip_attack_walkthroughs` `:14292` (set true when depth==quick) |
 | consume | body handler `:8559`; TOC respects flag | contract condition `not skip_attack_walkthroughs` `sections-contract.yaml:83,147,179` |
 
-§3 current render path: handler `compose_threat_model.py:8718` → intro injector
+§3 current render path: handler `renderers/compose_threat_model.py:8718` → intro injector
 `:8778` over fragment `.fragments/attack-walkthroughs.md`. Quick sets
 `skip_attack_walkthroughs` → composer drops heading, body, TOC entry, the §8
 back-link, and emits the quick-notice bullet `:1828`.
@@ -55,7 +55,7 @@ back-link, and emits the quick-notice bullet `:1828`.
 **§3-specific hard constraint that §7 does not have:** §3 is **per-Critical**
 (one `### 3.N` block per Critical finding; contract requires *exactly N* H3
 blocks, `sections-contract.yaml:~825`). QA `check_walkthrough_coverage`
-(`qa_checks.py:~6380`) enforces the 1:1 Critical↔§3.N mapping and **cannot be
+(`validators/qa_checks.py:~6380`) enforces the 1:1 Critical↔§3.N mapping and **cannot be
 bypassed** the way the §7 pattern checks can. So a verbatim §3 carried from a run
 whose Critical set differs from the current run is not just stylistically stale —
 it **fails QA** (wrong H3 count) and cites T-NNN that may no longer exist.
@@ -86,9 +86,9 @@ it **fails QA** (wrong H3 count) and cites T-NNN that may no longer exist.
   2. **The reconciliation it relies on doesn't exist for dirty components.**
      `resolved.threats` is only ever populated for **removed components**
      (`phase-group-threats.md:62`); the changelog builder initialises it empty
-     (`build_threat_model_yaml.py:968`) and `carried_forward_components` is
+     (`model/build_threat_model_yaml.py:968`) and `carried_forward_components` is
      initialised `[]` (`:961`) and never populated by the pipeline (only *read*
-     back by `render_completion_summary.py:300,323`). So a prior threat that the
+     back by `renderers/render_completion_summary.py:300,323`). So a prior threat that the
      analyzer "does not emit" for a still-present, changed component is **neither
      kept nor recorded as resolved-with-reason — it silently vanishes.**
 
@@ -128,7 +128,7 @@ than QA-failing or mis-referenced.**
   governs whether the **carried** body renders. (`:83,147,179` and the
   `required_patterns_condition` / `per_critical_subsection_condition` at
   `~815,817,870`.)
-- `check_walkthrough_coverage` (`qa_checks.py:~6380`): when §3 is a verbatim
+- `check_walkthrough_coverage` (`validators/qa_checks.py:~6380`): when §3 is a verbatim
   carry, it must validate against the **current** Critical set — which the gate
   guarantees matches, so the check passes by construction. Add a test asserting
   it does not fire on a stable-Critical carry and *does* drop the carry on a
@@ -176,9 +176,9 @@ baseline yaml) against `threats emitted in the new .stride-<id>.json`:
 - prior present, not emitted, **no** affirmative fix → **carry forward** (re-inject
   the prior threat) rather than drop. Belt-and-suspenders behind B1 in case the
   analyzer drops it anyway.
-Populate `carried_forward_components` (`build_threat_model_yaml.py:961`) and the
+Populate `carried_forward_components` (`model/build_threat_model_yaml.py:961`) and the
 changelog `resolved/changed` buckets so the completion summary
-(`render_completion_summary.py:300,323`) stops reading an always-empty field.
+(`renderers/render_completion_summary.py:300,323`) stops reading an always-empty field.
 
 ### Schema / touchpoints
 - `schemas/threats-merged.schema.yaml`: add the `evidence_check` enum value
@@ -223,7 +223,7 @@ drop §3 more often than necessary whenever B's instability is present.
    observation, and component-removal keeps its existing resolved path
    (`phase-group-threats.md:62`) untouched.
 6. **Requirements-drop hard-abort already guards one downgrade hazard**
-   (`resolve_config.py:976`) — these fixes are orthogonal to it; don't disturb it.
+   (`runtime/resolve_config.py:976`) — these fixes are orthogonal to it; don't disturb it.
 7. **Prior MD must exist on disk** for both §3 and §7 carries (incremental keeps
    `threat-model.md`; verify cleanup whitelist `docs/internal/contracts/audit-artifacts.md`
    doesn't reap it).

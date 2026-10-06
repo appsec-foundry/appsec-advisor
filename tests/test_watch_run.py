@@ -1,4 +1,4 @@
-"""Unit tests for scripts/watch_run.py.
+"""Unit tests for scripts/runtime/watch_run.py.
 
 watch() streams in an infinite loop in follow mode, but in --once mode it is
 deadline-bounded. Tests drive --once with a stubbed time source so the loop
@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 
 import pytest
-import watch_run as wr
+import runtime.watch_run as wr
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +203,7 @@ def test_watch_once_empty_dir_snapshot(tmp_path, monkeypatch, capsys):
 
 
 def test_watch_once_tracks_phase_and_progress(tmp_path, monkeypatch, capsys):
-    # NOTE: the log read-and-relay block (lines ~245-259 of watch_run.py) is
+    # NOTE: the log read-and-relay block (lines ~245-259 of runtime/watch_run.py) is
     # effectively dead because `fh.tell()` inside `for raw in fh` raises
     # OSError("telling position disabled by next() call"), which the
     # surrounding `except OSError: pass` swallows. So we cannot assert on
@@ -465,7 +465,7 @@ def test_watch_module_entrypoint_print_budgets():
     import sys as _sys
     from pathlib import Path as _P
 
-    script = _P(__file__).resolve().parents[1] / "scripts" / "watch_run.py"
+    script = _P(__file__).resolve().parents[1] / "scripts" / "runtime/watch_run.py"
     r = subprocess.run(
         [_sys.executable, str(script), "--print-budgets"],
         capture_output=True,

@@ -1,0 +1,65 @@
+/appsec-advisor:audit-security-requirements — Audit a repo against your security requirements.
+
+USAGE
+  /appsec-advisor:audit-security-requirements [CATEGORY_FILTER] [FLAGS]
+
+  CATEGORY_FILTER is an optional substring matched against requirement IDs and
+  category IDs (e.g. "SEC-AUTH" or "AUTH"). When given, ONLY matching
+  requirements are graded — the filter narrows scope for a focused review of
+  one area. An unfiltered run grades the whole catalog.
+
+WHERE REQUIREMENTS COME FROM (highest priority first)
+  1. --requirements <src>      explicit source for this run (no cache fallback)
+  2. --demo                    packaged example catalog (clearly stamped DEMO)
+  3. docs/security/requirements.yaml   a local repo catalog, if present
+                               (beats the org profile; surfaced in the banner)
+  4. the active org profile's configured source
+  5. the legacy configured source
+  6. the remembered source     the URL the catalog was last fetched from,
+                               served from the plugin cache
+  On first use with none of the above, the audit explains what to pass and
+  offers to run against --demo.
+
+SOURCE FLAGS
+  --requirements <src>     http(s):// URL or local file path (abs/rel/~).
+  --update                 force a fresh re-fetch from the remembered/configured
+                           source and refresh the cache.
+  --cache-only             use the plugin cache only; never touch the network.
+  --demo                   audit against the packaged example catalog (DEMO).
+  --status                 show which requirements WOULD be used (source, date,
+                           count, freshness) and exit — no audit, no fetch.
+  --clear-requirements     forget the remembered source + cached catalog, exit.
+  --org-profile <path>     use this org profile for source resolution.
+  --preset <name>          use a specific preset from the active org profile.
+  --no-org-profile         ignore packaged/env-pointed org profiles.
+
+OUTPUT FLAGS
+  --md                     save the rendered report as
+                           docs/security/appsec-requirements-report.md
+  --pdf                    save a PDF (docs/security/appsec-requirements-report.pdf);
+                           also writes the Markdown it is converted from
+  --json                   copy the structured verdict to
+                           docs/security/appsec-requirements-report.json
+  --save                   --md, --pdf and --json
+  --quiet                  suppress the banner + findings; print only a one-line
+                           status and the saved file path(s). Use with a save flag.
+
+GATE FLAGS (CI / merge gate — advisory by default)
+  --gate                   exit non-zero when a gating requirement fails.
+  --gate-on <fail|partial> what gates: fail (default) or fail+partial.
+  --priority-floor <MUST|SHOULD|MAY>
+                           lowest priority that may gate (default MUST).
+  The --gate / --gate-on / --priority-floor defaults can be preset in the active
+  org profile (preset requirements.gate); an explicit flag here overrides it.
+
+DEFAULT BEHAVIOUR
+  A plain run prints a banner (catalog, source, fetch date, count, freshness),
+  grades the catalog, and prints the open requirements — no files written.
+  --md/--pdf additionally write the human report. --json or --gate additionally
+  build a deterministic structured verdict
+  (docs/security/.requirements-audit.json, schema-validated, counts recomputed)
+  and run the gate. A fresh cache (< 30 days) is reused without a network
+  round-trip; a stale cache triggers a refresh that falls back to the cache.
+
+See `/appsec-advisor:status` for plugin & configuration status, and
+`docs/security-requirements-audit-skill.md` for the full source-resolution rules.

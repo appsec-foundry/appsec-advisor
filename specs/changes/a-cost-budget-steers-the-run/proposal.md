@@ -4,7 +4,7 @@
 
 A user who wants to bound what a run spends has two flags today, and neither does the job.
 
-`--max-cost` is refused before anything happens. `_unsupported_runtime_reason` in `scripts/orchestration_controller.py` returns `--max-cost is not implemented by the compact runtime`, routing aborts with exit 2, and no output directory, run state, or dispatch is created. An organization preset carries the same value through `guardrails.max_cost_usd`, which `_apply_org_profile` writes into the same `max_cost_usd` key when no CLI flag was passed. `--config-summary` prints it as an active limit (`Limits    : cost $10.00`), and every run using that preset then aborts at routing. The example in `docs/org-profiles.md` still shows that guardrail as usable.
+`--max-cost` is refused before anything happens. `_unsupported_runtime_reason` in `scripts/orchestrator/orchestration_controller.py` returns `--max-cost is not implemented by the compact runtime`, routing aborts with exit 2, and no output directory, run state, or dispatch is created. An organization preset carries the same value through `guardrails.max_cost_usd`, which `_apply_org_profile` writes into the same `max_cost_usd` key when no CLI flag was passed. `--config-summary` prints it as an active limit (`Limits    : cost $10.00`), and every run using that preset then aborts at routing. The example in `docs/org-profiles.md` still shows that guardrail as usable.
 
 `--max-budget` in `scripts/run-headless.sh` is not the plugin's. It is passed through as `--max-budget-usd` to the `claude` CLI and takes effect only under API billing; under a subscription the wrapper drops it with a warning. When the host cuts the session, it cuts it wherever the run happens to be. The run is not resumable mid-analysis, and the only salvageable state is a completed Stage 1, which `--rerender` can still turn into a report. Everything earlier is spent money with no product.
 
@@ -12,7 +12,7 @@ So the choice is between a flag that refuses to start and a flag that destroys w
 
 ## Measured cost shape
 
-One run, so the numbers are shape and not a general law: juice-shop, 2026-08-31, window 07:38–09:13 UTC, standard depth, seven components, output `docs/security`, read with `scripts/cost_running_total.py --format json`.
+One run, so the numbers are shape and not a general law: juice-shop, 2026-08-31, window 07:38–09:13 UTC, standard depth, seven components, output `docs/security`, read with `scripts/runtime/cost_running_total.py --format json`.
 
 The run cost $29.59, of which the host session carried $9.94 and 24 sub-agents carried $19.65. Nothing was unmetered in this run and `cost_is_floor` was false, so the mid-run figure was a real total rather than a lower bound. The host session emitted 183 cumulative `SESSION_STOP` snapshots, so cost is observable continuously and not only at the end.
 
@@ -35,7 +35,7 @@ A declared budget bounds what a run spends and still leaves a complete report. A
 
 The plumbing exists and is wired end to end under a name that has to change.
 
-`--max-cost <usd>` on the skill is parsed by `resolve_config.py` and lands in `cfg["max_cost_usd"]`. `presets.<name>.guardrails.max_cost_usd` in an organization profile is in `schemas/org-profile.schema.yaml` and merged by `_apply_org_profile` whenever the flag was not passed. `run-headless.sh --max-cost` is parsed, marked `UNSUPPORTED_RUNTIME_OPTION`, and dies with "not supported by the compact runtime". Removing those three refusals is what turns the parameter on.
+`--max-cost <usd>` on the skill is parsed by `runtime/resolve_config.py` and lands in `cfg["max_cost_usd"]`. `presets.<name>.guardrails.max_cost_usd` in an organization profile is in `schemas/org-profile.schema.yaml` and merged by `_apply_org_profile` whenever the flag was not passed. `run-headless.sh --max-cost` is parsed, marked `UNSUPPORTED_RUNTIME_OPTION`, and dies with "not supported by the compact runtime". Removing those three refusals is what turns the parameter on.
 
 The name is wrong for what the flag now does. A value that may be exceeded by 20% is not a maximum, and a reader meets the name on the command line rather than in the documentation. Beside the wrapper's `--max-budget` it is worse: two flags both saying "max", one of which kills the run.
 
@@ -45,9 +45,9 @@ The compatibility cost of renaming the published key is close to zero, which is 
 
 ## Mechanism
 
-The decision belongs to the controller at its existing boundaries, not to a background watcher and not to the orchestrator's judgement. `scripts/cost_running_total.py` already answers the question deterministically and with no model tokens, in 83 ms against this run's logs including interpreter startup.
+The decision belongs to the controller at its existing boundaries, not to a background watcher and not to the orchestrator's judgement. `scripts/runtime/cost_running_total.py` already answers the question deterministically and with no model tokens, in 83 ms against this run's logs including interpreter startup.
 
-Admission happens before the run starts. Project the total from the last-run cache for this output directory when one exists, otherwise parametrically from the component count the dispatch manifest will select and the depth, the way `scripts/estimate_duration.py` already projects wall time. A refusal before the first dispatch costs nothing; a refusal at $18 costs $18.
+Admission happens before the run starts. Project the total from the last-run cache for this output directory when one exists, otherwise parametrically from the component count the dispatch manifest will select and the depth, the way `scripts/runtime/estimate_duration.py` already projects wall time. A refusal before the first dispatch costs nothing; a refusal at $18 costs $18.
 
 ### Sizing the run at admission
 

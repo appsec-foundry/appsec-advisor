@@ -1,4 +1,4 @@
-"""Tests for scripts/cost_running_total.py — running token + cost
+"""Tests for scripts/runtime/cost_running_total.py — running token + cost
 aggregation since the assessment start.
 
 Verifies:
@@ -21,11 +21,11 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).parent.parent
-SCRIPT = ROOT / "scripts" / "cost_running_total.py"
+SCRIPT = ROOT / "scripts" / "runtime/cost_running_total.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("_crt", ROOT / "scripts" / "cost_running_total.py")
+    spec = importlib.util.spec_from_file_location("_crt", ROOT / "scripts" / "runtime/cost_running_total.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -415,6 +415,22 @@ class TestSubagentUsage:
         agent_log = tmp_path / ".agent-run.log"
         agent_log.write_text(line + line)
         assert crt.aggregate_subagent_usage(agent_log)["subagent_count"] == 1
+
+    def test_a_resumed_childs_usage_growth_adds_to_its_call(self, tmp_path):
+        crt = _load()
+        agent_log = tmp_path / ".agent-run.log"
+        agent_log.write_text(
+            "2026-05-01T10:05:00Z  [abc]  INFO   architecture-analyst  AGENT_USAGE  "
+            "agent_call_id=toolu_1  model=sonnet  in=0  out=1000  cache_write=0  cache_read=0\n"
+            "2026-05-01T10:25:00Z  [abc]  INFO   architecture-analyst  AGENT_USAGE_RESUMED  "
+            "agent_call_id=toolu_1  model=sonnet  in=0  out=500  cache_write=0  cache_read=0\n"
+            "2026-05-01T10:26:00Z  [abc]  INFO   architecture-analyst  AGENT_USAGE_RESUMED  "
+            "agent_call_id=toolu_1  model=sonnet  in=0  out=500  cache_write=0  cache_read=0\n"
+        )
+        result = crt.aggregate_subagent_usage(agent_log)
+        assert result["subagent_count"] == 1
+        assert result["subagent_snapshot"].out_tokens == 2000
+        assert result["subagent_cost"] == pytest.approx(0.030, abs=1e-6)
 
     def test_spawn_without_usage_is_counted_as_unmetered(self, tmp_path):
         crt = _load()

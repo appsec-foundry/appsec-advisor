@@ -6,7 +6,7 @@ commands, and org-packaging awareness.
 
 ## Goal
 
-Rewrite the `SessionStart` status banner (`scripts/session_banner.py`) so that:
+Rewrite the `SessionStart` status banner (`scripts/runtime/session_banner.py`) so that:
 
 1. It is obvious **who** is speaking (plugin identity + help).
 2. **Threat model** and **coding baseline** are separate domains with fixed labels.
@@ -249,7 +249,7 @@ missing / other / unloaded?       → line + install command if skill exists
 
 ## Implementation sketch
 
-Primary file: `scripts/session_banner.py`  
+Primary file: `scripts/runtime/session_banner.py`
 Tests: `tests/test_session_banner.py`  
 Docs touchpoints if behavior is user-visible: `docs/org-profiles.md` (session banner
 section), possibly a short note in README only if the banner is described there.
@@ -327,8 +327,8 @@ touched.
 
 ## References
 
-- `scripts/session_banner.py` — current implementation and constraints
-- `scripts/baseline_check.py` — baseline status / summary
+- `scripts/runtime/session_banner.py` — current implementation and constraints
+- `scripts/baseline/baseline_check.py` — baseline status / summary
 - `docs/org-profiles.md` — `banner` and `baseline` packaging
 - `schemas/org-profile.schema.yaml` — field contracts
 - `scripts/package_internal_plugin.py` — resolves banner/baseline into `config.json`,

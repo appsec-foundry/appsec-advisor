@@ -18,7 +18,7 @@ auditing the context-v2 surface around it.
 
 ## F1 — The run invalidated its own evidence bundles (fixed)
 
-`repository_fingerprint` in `scripts/build_stride_evidence_bundles.py` binds an
+`repository_fingerprint` in `scripts/contexts/build_stride_evidence_bundles.py` binds an
 evidence bundle to HEAD plus a `dirty_worktree_sha256` over every dirty and
 untracked file in the analyzed repository. Its `excluded_root` covers only
 `$OUTPUT_DIR` (`docs/security/`).
@@ -31,7 +31,7 @@ Of 592 fingerprint inputs, exactly one changed between the bundle build
 03:20:32Z  .gitignore                <-- the scan session's own hypothesis, 3h too early
 ```
 
-`scripts/log_event.py` took `output_dir = Path(argv[1])` unvalidated. An unset
+`scripts/runtime/log_event.py` took `output_dir = Path(argv[1])` unvalidated. An unset
 `$OUTPUT_DIR` reaches it as an empty string, and `Path("")` is `Path(".")` —
 the agent's working directory, which is the analyzed repository root. The STRIDE
 analyst for `sqlite-db` logged its `AGENT_END` there at 07:17:06Z, changing the
@@ -52,7 +52,7 @@ Older strays from the same class sit in that checkout: a `--event/` directory
 containing `.agent-run.log` and `.appsec-progress.json`, and a `--help` file —
 both from invocations where the argument shifted into the `output_dir` slot.
 
-**Fix.** `log_event.py` now rejects an empty `output_dir` argument and one that
+**Fix.** `runtime/log_event.py` now rejects an empty `output_dir` argument and one that
 starts with `-`, instead of logging to an arbitrary directory. Covered by
 `tests/test_log_event.py::TestMainArgErrors::test_empty_output_dir_is_rejected`
 and `::test_option_in_output_dir_slot_is_rejected`, which also assert that no
@@ -64,7 +64,7 @@ there.
 
 ## F2 — The fingerprint bound the whole worktree, not the evidence (fixed)
 
-`build_stride_dispatch_manifest.py:1686` calls `build_all` once, for every
+`orchestrator/build_stride_dispatch_manifest.py:1686` calls `build_all` once, for every
 selected component, when the manifest is written. Wave 2's bundles were built at
 06:59:08Z and first validated at 07:19:38Z — after wave 1's agents had run for
 15 minutes. With a whole-worktree fingerprint, that required the analyzed
@@ -167,7 +167,7 @@ Against the real log the detector now reads all five dispatch times and returns
 
 ## F4 — The STRIDE depth check is bypassed by omission (fixed)
 
-`log_event.py` validates a logged `depth` against the authoritative dispatch
+`runtime/log_event.py` validates a logged `depth` against the authoritative dispatch
 call only under `if agent == "stride-analyzer-v2"`, which requires the caller to
 pass `--agent stride-analyzer-v2 --component-id`. A caller that omits the flags
 writes whatever depth text it likes.
@@ -239,7 +239,7 @@ The wave ran from 07:02:59Z to 07:19:19Z. Every value is fabricated.
 
 These are not cosmetic. `record_component_durations._stride_durations` ranked
 them **first**, above every measurement, and merges the result into
-`.appsec-cache/baseline.json` — the baseline `estimate_duration.py` reads to
+`.appsec-cache/baseline.json` — the baseline `runtime/estimate_duration.py` reads to
 predict the next run:
 
 | component | self-reported | actual |
@@ -265,7 +265,7 @@ measured. It takes priority; the self-reported values drop to rank 2 for logs
 that predate the controller events. Replayed against this run's log it returns
 801 / 623 / 927 / 773 / 359 — the wall-clock spans in the log.
 
-`scripts/record_component_durations.py` had no test module, against the repo
+`scripts/runtime/record_component_durations.py` had no test module, against the repo
 rule. `tests/test_record_component_durations.py` now covers the source priority,
 the dispatch-is-not-completion trap, a still-running component, bounds, and the
 baseline merge.
@@ -299,7 +299,7 @@ behaved correctly throughout.
 
 | ID | Finding | Status |
 |---|---|---|
-| F1 | `log_event.py` writes into the analyzed repository root | fixed |
+| F1 | `runtime/log_event.py` writes into the analyzed repository root | fixed |
 | F2 | Fingerprint bound the whole worktree instead of the evidence | fixed |
 | F3 | Prior output directories counted as repository state | fixed with F2 |
 | F4 | Depth validation was opt-in and was bypassed | fixed |
@@ -392,7 +392,7 @@ Nine lines in `.agent-run.log` are raw JSON:
 {"ts":"2026-08-16T06:39:37Z","agent":"actor-discoverer","event":"STEP_START",…}
 ```
 
-AGENTS.md is explicit that `log_event.py` and the documented shell fallback are
+AGENTS.md is explicit that `runtime/log_event.py` and the documented shell fallback are
 the only legal writers and that no other format may be invented. These lines are
 invisible to every consumer, including `parse_line`, which correctly rejects
 them. The fix belongs in the actor-discoverer prompt; left open.

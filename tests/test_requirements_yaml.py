@@ -17,7 +17,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
-import requirements_state as rstate
+import requirements.requirements_state as rstate
 import yaml
 
 EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
@@ -31,7 +31,7 @@ BLUEPRINT_FILES = {
 VALID_PRIORITIES = {"MUST", "SHOULD", "MAY"}
 
 # The example models a catalog published on one organization-internal portal, the
-# shape `harvest_requirements.py` produces: a requirement page per category, a
+# shape `requirements/harvest_requirements.py` produces: a requirement page per category, a
 # requirement anchored on its page, a blueprint page per blueprint, a blueprint
 # section anchored on its page. Every link in the file stays inside that host.
 CATALOG_HOST = "https://appsec.int.example.com"

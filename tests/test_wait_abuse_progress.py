@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-import wait_abuse_progress as wap
+import orchestrator.wait_abuse_progress as wap
 
 
 def _write_verdict(path, candidate_id: str, *, state: str, reason: str) -> None:
@@ -97,3 +97,37 @@ def test_an_unchanged_count_is_reported_once(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert out.count("abuse verification 0/1 complete") == 1
     assert out.count("abuse verification 1/1 complete") == 1
+
+
+def _live_call(job_id: str, spawned_at: float) -> dict:
+    return {"state": "running", "job_id": job_id, "spawned_at": spawned_at}
+
+
+def test_a_slice_ending_on_a_live_verifier_is_repeatable_and_closes_nothing(tmp_path, monkeypatch):
+    """A verifier can outlive one Bash call; the waiter must hand back exit 75
+    instead of closing a running job, or finalize-abuse re-dispatches a
+    duplicate next to it."""
+    monkeypatch.setattr(wap, "candidate_status", lambda _o, _c: "pending")
+    monkeypatch.setattr(wap.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(
+        wap.agent_lifecycle, "running_calls", lambda _o: [_live_call("phase10c-abuse-AC-T-003", wap.time.time())]
+    )
+    closed = []
+    monkeypatch.setattr(wap, "_close_jobs", lambda _o, ids, **kw: closed.append((ids, kw)))
+
+    assert wap.main([str(tmp_path), "AC-T-003", "--rounds", "2"]) == wap.PENDING_EXIT_CODE
+    assert closed == [([], {"success": True})] * 2
+
+
+def test_a_stopped_or_expired_verifier_still_closes_at_the_cap(tmp_path, monkeypatch):
+    monkeypatch.setattr(wap, "candidate_status", lambda _o, _c: "pending")
+    monkeypatch.setattr(wap.time, "sleep", lambda _s: None)
+    expired = wap.time.time() - wap.wait_agent_calls.DEFAULT_DEADLINE_MINUTES * 60 - 1
+    monkeypatch.setattr(
+        wap.agent_lifecycle, "running_calls", lambda _o: [_live_call("phase10c-abuse-AC-T-003", expired)]
+    )
+    closed = []
+    monkeypatch.setattr(wap, "_close_jobs", lambda _o, ids, **kw: closed.append((ids, kw)))
+
+    assert wap.main([str(tmp_path), "AC-T-003", "--rounds", "1"]) == 1
+    assert closed[-1] == (["AC-T-003"], {"success": False, "reason": "join_deadline_expired"})

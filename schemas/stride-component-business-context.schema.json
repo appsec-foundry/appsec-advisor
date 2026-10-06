@@ -18,14 +18,16 @@
     "attributes": {
       "type": "object",
       "minProperties": 1,
-      "maxProperties": 5,
+      "maxProperties": 6,
       "properties": {
         "business_purpose": { "$ref": "#/$defs/context_text" },
         "impact_if_compromised": { "$ref": "#/$defs/context_text" },
+        "impact_is_material": { "type": "boolean" },
         "sensitive_assets": { "$ref": "#/$defs/context_list" },
         "security_obligations": { "$ref": "#/$defs/context_list" },
         "security_assumptions": { "$ref": "#/$defs/context_list" }
       },
+      "dependentRequired": { "impact_is_material": ["impact_if_compromised"] },
       "additionalProperties": false
     }
   },

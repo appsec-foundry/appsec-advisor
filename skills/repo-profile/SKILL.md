@@ -64,12 +64,10 @@ if [ -z "$PLUGIN_ROOT" ]; then
   # several checkouts, and a search picks an arbitrary one.
   PLUGIN_ROOT=$(cd "<base-dir>/../.." && pwd)
 fi
-python3 "$PLUGIN_ROOT/scripts/repo_profile.py" [--repo <path>] [--json]
+python3 "$PLUGIN_ROOT/scripts/analyzers/repo_profile.py" [--repo <path>] [--json]
 ```
 
 Use exactly `Profiling the repository` as the tool call's description.
-
-Do not announce the run in prose beside it. The description line already says what is happening; "Let me profile the repository first" and its kin are forbidden even though they are true. Just run it.
 
 The script walks the tree and reads no file content, so it finishes in well under a second on an ordinary repository and touches nothing.
 

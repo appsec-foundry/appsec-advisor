@@ -1,4 +1,4 @@
-"""Tests for scripts/version_status.py.
+"""Tests for scripts/runtime/version_status.py.
 
 Two properties carry the weight here.
 
@@ -21,10 +21,10 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "version_status.py"
+SCRIPT = REPO_ROOT / "scripts" / "runtime/version_status.py"
 sys.path.insert(0, str(SCRIPT.parent))
 
-import version_status as vs  # noqa: E402
+import runtime.version_status as vs  # noqa: E402
 
 BASELINE_DOCUMENT = "# Baseline\n\n`baseline-id: test-1.2`. When asked, answer.\n"
 
@@ -304,15 +304,40 @@ def test_version_comparison(local: str, published: str, expected: str) -> None:
 
 
 @pytest.mark.parametrize(
+    "upstream", ["https://github.com/sample-tools/risk-plugin", "https://github.com/other-team/audit-kit.git"]
+)
+@pytest.mark.parametrize("released,expected", [("2.3.0", "current"), ("2.4.0", "behind")])
+def test_update_check_compares_releases_not_default_branch(monkeypatch, upstream, released, expected):
+    """A newer default-branch build must not masquerade as an available release."""
+    repository = upstream.removeprefix("https://github.com/").removesuffix(".git")
+    prefix = f"https://raw.githubusercontent.com/{repository}"
+    requested = _served(
+        monkeypatch,
+        {
+            f"{prefix}/main/.claude-plugin/plugin.json": json.dumps({"version": released}).encode(),
+            f"{prefix}/HEAD/.claude-plugin/plugin.json": b'{"version": "3.0.0-beta.1"}',
+        },
+    )
+    block = vs._core_block(
+        {"version": "2.3.0", "appsec_advisor_core_ref": "main"},
+        {"upstream_url": upstream},
+        check_updates=True,
+    )
+    assert block["state"] == expected
+    assert block["published_version"] == released
+    assert requested == [f"{prefix}/main/.claude-plugin/plugin.json"]
+
+
+@pytest.mark.parametrize(
     ("url", "expected"),
     [
         (
             "https://github.com/appsec-foundry/appsec-advisor",
-            "https://raw.githubusercontent.com/appsec-foundry/appsec-advisor/HEAD/.claude-plugin/plugin.json",
+            "https://raw.githubusercontent.com/appsec-foundry/appsec-advisor/main/.claude-plugin/plugin.json",
         ),
         (
             "https://github.com/appsec-foundry/appsec-advisor.git",
-            "https://raw.githubusercontent.com/appsec-foundry/appsec-advisor/HEAD/.claude-plugin/plugin.json",
+            "https://raw.githubusercontent.com/appsec-foundry/appsec-advisor/main/.claude-plugin/plugin.json",
         ),
         ("https://gitlab.example.test/team/appsec-advisor.git", ""),
         ("git@github.com:appsec-foundry/appsec-advisor.git", ""),
@@ -353,3 +378,24 @@ def test_a_switched_off_baseline_is_named_as_such() -> None:
     loaded = {"status": "switched_off", "scopes": ["user"], "switched_off": [{"id": "test-1.2", "scope": "user"}]}
     block = vs._baseline_block({"enabled": True, "id": "test-1.2"}, loaded, check_updates=False)
     assert vs._loaded_text(block) == "test-1.2 (this machine), switched off by AISCB_DISABLE=1"
+
+
+def test_modular_status_distinguishes_available_from_loaded_bodies():
+    loaded = {
+        "status": "installed",
+        "scopes": ["project"],
+        "matches": [
+            {
+                "id": "aiscb-0.1.17",
+                "mode": "modular",
+                "available_modules": ["aiscb:data-handling"],
+                "loaded_modules": None,
+            }
+        ],
+    }
+    block = vs._baseline_block({"enabled": True, "id": "aiscb-0.1.17"}, loaded, check_updates=False)
+    assert block["loaded_modules"] is None
+    assert block["available_modules"] == ["aiscb:data-handling"]
+    assert "loaded bodies unknown" in vs._loaded_text(block)
+    block["loaded_status"] = "invalid"
+    assert "invalid modular installation" in vs._loaded_text(block)

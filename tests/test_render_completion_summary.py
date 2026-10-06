@@ -1,4 +1,4 @@
-"""Tests for scripts/render_completion_summary.py.
+"""Tests for scripts/renderers/render_completion_summary.py.
 
 Drives the module via its public API plus a handful of CLI smoke tests.
 Fixtures build minimal fake OUTPUT_DIR layouts on disk so each test
@@ -17,15 +17,15 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "render_completion_summary.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "renderers/render_completion_summary.py"
 
 
 def _load_module():
-    if "render_completion_summary" in sys.modules:
-        return sys.modules["render_completion_summary"]
-    spec = importlib.util.spec_from_file_location("render_completion_summary", SCRIPT_PATH)
+    if "renderers.render_completion_summary" in sys.modules:
+        return sys.modules["renderers.render_completion_summary"]
+    spec = importlib.util.spec_from_file_location("renderers.render_completion_summary", SCRIPT_PATH)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["render_completion_summary"] = mod
+    sys.modules["renderers.render_completion_summary"] = mod
     assert spec.loader is not None
     spec.loader.exec_module(mod)
     return mod
@@ -109,7 +109,7 @@ class TestExtractMetrics:
         mp = m["mitigations_by_priority"]
         assert (mp["P1"], mp["P2"], mp["P3"]) == (2, 1, 2)
         assert sum(mp.values()) + m["mitigations_unprioritised"] == m["mitigations_total"] == 5
-        assert "Mitigations: 5 linked | 2 P1 | 1 P2 | 2 P3" in "\n".join(rcs.render_metrics(m, {}))
+        assert "Mitigations : 5 linked | 2 P1 | 1 P2 | 2 P3" in "\n".join(rcs.render_metrics(m, {}))
 
     def test_unprioritised_mitigations_get_their_own_bucket(self):
         # Same reconciliation rule the control-effectiveness line learned: a
@@ -121,7 +121,7 @@ class TestExtractMetrics:
 
     def test_no_priority_split_when_there_are_no_mitigations(self):
         rendered = "\n".join(rcs.render_metrics(rcs.extract_metrics({"mitigations": []}, ""), {}))
-        assert "  Mitigations: 0 linked" in rendered
+        assert "  Mitigations : 0 linked" in rendered
         assert "P1" not in rendered
 
     def test_components_count_from_yaml(self):
@@ -138,14 +138,14 @@ class TestExtractMetrics:
 
         assert metrics["n_components"] == 8
         assert metrics["n_stride_components"] == 6
-        assert "  Components : 6 STRIDE-analyzed | 8 modeled" in rendered
+        assert "  Components  : 6 STRIDE-analyzed | 8 modeled" in rendered
 
     def test_invalid_stride_selection_is_not_reported_as_analyzed(self):
         yaml_data = {"components": [{"id": "api"}]}
         metrics = rcs.extract_metrics(yaml_data, "", {"selected": [{"id": "invented"}]})
 
         assert metrics["n_stride_components"] is None
-        assert "  Components : 1 modeled" in rcs.render_metrics(metrics, {})
+        assert "  Components  : 1 modeled" in rcs.render_metrics(metrics, {})
 
     def test_components_fallback_to_md_headings(self):
         md = "## 2. Architecture\n### 2.3 Component A\n### 2.3 Component B\n"
@@ -212,7 +212,7 @@ class TestSeverityBasisMatchesTheReport:
     )
     def test_tally_is_the_shared_rollup_basis(self, model):
         """Whatever the model's shape, the console tally is the rollup's."""
-        import _severity_rollup
+        import renderers._severity_rollup as _severity_rollup
 
         counts = _severity_rollup.risk_distribution_counts(model)
         m = rcs.extract_metrics(model, "")
@@ -243,7 +243,7 @@ class TestSeverityBasisMatchesTheReport:
         assert m["threats_by_sev"]["High"] == 1
         assert m["threats_total"] == 2
         rendered = "\n".join(rcs.render_metrics(m, {}))
-        assert "  Threats    : 2 total | 1 Critical | 1 High | 0 Medium | n/a Low" in rendered
+        assert "  Threats     : 2 total | 1 Critical | 1 High | 0 Medium" in rendered
 
     def test_design_risk_weakness_is_visible_in_the_headline(self):
         """It has no instance in threats[] and would otherwise be invisible
@@ -272,7 +272,7 @@ class TestSeverityBasisMatchesTheReport:
         Low finding could reach `threats[]`, so the cell is not a count."""
         model = self._model([{"risk": "High"}], floor="medium")
         rendered = "\n".join(rcs.render_metrics(rcs.extract_metrics(model, ""), {}))
-        assert "n/a Low" in rendered
+        assert "Low and Informational not reported" in rendered
 
     def test_low_reads_a_count_when_the_register_floor_kept_it(self):
         model = self._model([{"risk": "High"}, {"risk": "Low"}], floor="low")
@@ -282,7 +282,8 @@ class TestSeverityBasisMatchesTheReport:
     def test_informational_stays_off_the_line_when_absent(self):
         model = self._model([{"risk": "High"}])
         rendered = "\n".join(rcs.render_metrics(rcs.extract_metrics(model, ""), {}))
-        assert "Informational" not in rendered
+        threat_line = next(line for line in rendered.splitlines() if line.strip().startswith("Threats"))
+        assert "Informational" not in threat_line
 
 
 # ---------------------------------------------------------------------------
@@ -569,21 +570,21 @@ class TestCostExtraction:
     def test_extract_costs_skips_subprocess_without_usage_signal(self, tmp_path: Path, monkeypatch):
         plugin_root = tmp_path / "plugin"
         scripts = plugin_root / "scripts"
-        scripts.mkdir(parents=True)
-        (scripts / "verify_run_costs.py").write_text("# exists\n")
+        (scripts / "runtime").mkdir(parents=True)
+        (scripts / "runtime/verify_run_costs.py").write_text("# exists\n")
         (tmp_path / ".hook-events.log").write_text("AGENT_SPAWN model=sonnet\n")
 
         def fail_run(*args, **kwargs):
-            raise AssertionError("verify_run_costs.py should not be called")
+            raise AssertionError("runtime/verify_run_costs.py should not be called")
 
         monkeypatch.setattr(rcs.subprocess, "run", fail_run)
-        assert rcs.extract_costs(tmp_path, plugin_root) is None
+        assert rcs.extract_costs(tmp_path, plugin_root)["error_kind"] == "no_usage_data"
 
     def test_extract_costs_runs_when_usage_signal_exists(self, tmp_path: Path, monkeypatch):
         plugin_root = tmp_path / "plugin"
         scripts = plugin_root / "scripts"
-        scripts.mkdir(parents=True)
-        (scripts / "verify_run_costs.py").write_text("# exists\n")
+        (scripts / "runtime").mkdir(parents=True)
+        (scripts / "runtime/verify_run_costs.py").write_text("# exists\n")
         (tmp_path / ".hook-events.log").write_text("ASSESSMENT_TOKENS input=1 output=2\n")
 
         class Result:
@@ -592,6 +593,35 @@ class TestCostExtraction:
 
         monkeypatch.setattr(rcs.subprocess, "run", lambda *args, **kwargs: Result())
         assert rcs.extract_costs(tmp_path, plugin_root) == {"ok": True}
+
+    def test_a_failed_measurement_keeps_its_reason_for_the_summary(self, tmp_path: Path, monkeypatch):
+        plugin_root = tmp_path / "plugin"
+        scripts = plugin_root / "scripts"
+        (scripts / "runtime").mkdir(parents=True)
+        (scripts / "runtime/verify_run_costs.py").write_text("# exists\n")
+        (tmp_path / ".hook-events.log").write_text("SESSION_STOP in=1 out=2\n")
+
+        class Result:
+            returncode = 2
+            stdout = '{"error": "Could not determine run start", "error_kind": "no_run_window"}'
+
+        monkeypatch.setattr(rcs.subprocess, "run", lambda *args, **kwargs: Result())
+        cost = rcs.extract_costs(tmp_path, plugin_root)
+
+        assert rcs._summary_cost(cost) == "unavailable (run start not recorded)"
+        stats = {
+            "assess_secs": 60,
+            "qa_secs": None,
+            "arch_secs": None,
+            "phases": [],
+            "stage_rows": [],
+            "agents": {},
+            "total_secs_from_stages": None,
+            "wall_secs": 120,
+            "timing": {},
+        }
+        lines = rcs.render_run_statistics(stats, cost, verbose=True)
+        assert "  Tokens/Cost         : unavailable (run start not recorded)" in lines
 
 
 # ---------------------------------------------------------------------------
@@ -633,6 +663,11 @@ class TestManualReviewStep:
             self.report(findings, weaknesses) if report is None else report,
         )
 
+    @staticmethod
+    def bullets(text):
+        """The question bullets alone — each one's `→ …` consequence line is a continuation."""
+        return [line for line in text.splitlines() if line.startswith("- ")]
+
     def test_selects_three_distinct_decisions_with_real_finding_links(self):
         findings = [
             self.finding(41),
@@ -648,17 +683,24 @@ class TestManualReviewStep:
         ]
         text = self.render(findings, weaknesses)
         lines = text.splitlines()
+        questions = self.bullets(text)
         assert lines[0] == rcs.TEAM_QUESTIONS_HEADER
-        # Same severity everywhere: the register's decisions come before the
-        # unclassified takeover signal (F-041), and the cap holds at three.
-        assert [re.findall(r"\b(W-\d+)\b", line) for line in lines[1:]] == [["W-002"], ["W-003"], ["W-004"]]
+        # Same severity everywhere: W-002 settles two findings and outranks the
+        # single-instance registers; the unclassified takeover signal (F-041)
+        # comes last and the cap holds at three.
+        assert [re.findall(r"\b(W-\d+)\b", line) for line in questions] == [["W-002"], ["W-003"], ["W-004"]]
         assert re.findall(r"\b(F-\d+)\b", text) == ["F-001", "F-002", "F-020", "F-030"]
-        assert "which single policy layer should enforce ownership" in lines[1]
-        assert "who\nrotates".replace("\n", " ") in lines[2]
-        assert "intentionally public" in lines[3]
-        assert len(lines) == 4
+        assert "Which operations on other users' or tenants' data in this application are intended" in questions[0]
+        assert "still accept credentials exposed in the history" in questions[1]
+        assert "intended to be available without login" in questions[2]
+        assert len(questions) == 3
+        # Every question states what its answer decides, on its own line.
+        assert [line for line in lines[1:] if not line.startswith("- ")] == [
+            line for line in lines[1:] if line.startswith("  → ")
+        ]
+        assert len(lines) == 7
         # RA-13: plain IDs after each question, no link target and no report path.
-        assert all(line.startswith("- ") and line.endswith(")") for line in lines[1:])
+        assert all(line.endswith(")") for line in questions)
         assert "](" not in text and "/tmp/assessment" not in text
         assert "T-" not in text
         assert self.render(list(reversed(findings)), list(reversed(weaknesses))) == text
@@ -685,44 +727,29 @@ class TestManualReviewStep:
     def test_unproven_evidence_keeps_its_status(self, state):
         text = self.render([self.finding(1, evidence_check=state)])
         assert "F-001 (unproven)" in text
-        assert "could a takeover" in text
-        assert text.splitlines()[-1] == (
-            "- Unverified evidence: confirm or rule out what the code alone could not establish "
-            "before scheduling the fix. (F-001)"
-        )
+        assert "which other services, secrets or credentials can that process reach?" in text
+        # Confirming the finding is triage work, not a separate team question.
+        assert len(self.bullets(text)) == 1
 
     def test_practice_evidence_does_not_become_confirmed_exploitation(self):
         text = self.render([self.finding(1, evidence_tier="insecure-practice")])
         assert "(unproven)" in text
         # The insecure state is observed and verified: nothing left to confirm.
-        assert "Unverified evidence" not in text
+        assert "The code alone could not confirm" not in text
 
-    def test_unverified_findings_close_the_block_outside_the_question_cap(self):
+    def test_unverified_findings_add_no_question_beyond_the_cap(self):
         findings = [self.finding(n, "CWE-639", "Object owner not checked") for n in range(1, 5)]
         findings.append(self.finding(9, "CWE-89", "SQL injection in invoice search", evidence_check="ambiguous"))
-        findings.append(self.finding(10, "CWE-328", "Unsalted MD5 password hash", evidence_tier="insecure-practice"))
         weaknesses = [
             self.weakness(1, "route-by-route-authorization", 1),
             self.weakness(2, "secrets-committed-to-source", 2),
             self.weakness(3, "missing-endpoint-authentication", 3),
             self.weakness(4, "build-pipeline-mutable-refs", 4),
         ]
-        lines = self.render(findings, weaknesses).splitlines()
-        assert len(lines) == 5
-        assert [re.findall(r"\b(W-\d+)\b", line) for line in lines[1:4]] == [["W-001"], ["W-002"], ["W-003"]]
-        # The verified practice-tier F-010 is not listed; only the ambiguous F-009.
-        assert lines[4] == (
-            "- Unverified evidence: confirm or rule out what the code alone could not establish "
-            "before scheduling the fix. (F-009)"
-        )
-        # A verified-only model raises no closing line; six unverified findings list five.
-        assert "Unverified evidence" not in self.render(findings[:4], weaknesses[:1])
+        questions = self.bullets(self.render(findings, weaknesses))
+        assert [re.findall(r"\b(W-\d+)\b", line) for line in questions] == [["W-001"], ["W-002"], ["W-003"]]
         many = [self.finding(n, "CWE-89", "SQL injection", evidence_check="ambiguous") for n in range(1, 7)]
-        assert self.render(many).splitlines() == [
-            rcs.TEAM_QUESTIONS_HEADER,
-            "- Unverified evidence: confirm or rule out what the code alone could not establish "
-            "before scheduling the fix. (" + ", ".join(f"F-{n:03}" for n in range(1, 6)) + " +1 more)",
-        ]
+        assert self.render(many) == ""
 
     @pytest.mark.parametrize(
         "report",
@@ -747,24 +774,28 @@ class TestManualReviewStep:
         finding = self.finding(1, evidence=[{"file": ".github/workflows/package.yml", "line": 20}])
         assert self.render([finding]) == ""
         text = self.render([finding], [self.weakness(6, "build-pipeline-mutable-refs", 1)])
-        assert "Who can change build inputs or publish artifacts" in text
-        assert "takeover" not in text
+        assert "Who can publish the build inputs used by this application" in text
+        assert "that process reach" not in text
 
     def test_weakness_questions_come_from_mechanism_guidance_not_cwe_membership(self):
-        # AC-7: the same CWE-639 finding asks nothing on its own, asks the
-        # register's question under the mechanism that carries one, and stays
-        # silent under a mechanism whose fix is mechanical.
+        # AC-7: the same CWE-639 finding asks nothing on its own and asks the
+        # register's question under whichever mechanism carries one. An
+        # unregistered mechanism stays silent — membership in a CWE never
+        # invents a question.
         owner = self.finding(1, "CWE-639", "Object owner not checked")
         assert self.render([owner]) == ""
         text = self.render([owner], [self.weakness(2, "route-by-route-authorization", 1)])
-        assert text.splitlines()[1].endswith(" (W-002: F-001)")
-        assert "which single policy layer should enforce ownership" in text
-        assert self.render([owner], [self.weakness(2, "database-query-concatenation", 1)]) == ""
+        assert self.bullets(text)[0].endswith(" (W-002: F-001)")
+        assert "Which operations on other users' or tenants' data in this application are intended" in text
         assert self.render([owner], [self.weakness(2, "no-such-mechanism", 1)]) == ""
         questions = rcs.mechanism_team_questions()
         assert set(questions) >= {"route-by-route-authorization", "secrets-committed-to-source"}
-        assert "database-query-concatenation" not in questions
         assert all(q.endswith("?") and "\n" not in q for q in questions.values())
+        # A mechanism whose fix is mechanical still asks — about the impact the
+        # code cannot show (what the reachable schema holds), never about the fix.
+        mechanical = self.render([owner], [self.weakness(2, "database-query-concatenation", 1)])
+        assert "sensitive business records" in mechanical
+        assert "parameteris" not in mechanical and "prepared statement" not in mechanical
 
     def test_weakness_line_links_three_worst_instances_and_counts_the_rest(self):
         findings = [self.finding(n, "CWE-862", "Missing ownership check", risk="High") for n in range(1, 5)]
@@ -788,12 +819,15 @@ class TestManualReviewStep:
         no_tools = self.finding(1, "CWE-1427", "LLM prompt injection")
         assert self.render([no_tools]) == ""
         tools = {**no_tools, "evidence_summary": "The language model invokes a purchase tool without approval."}
-        assert "which business decisions need authorization outside the assistant?" in self.render([tools])
+        assert self.render([tools]) == ""  # App-owned action checks are source-analysis work.
+        tools["evidence_summary"] = "The language model invokes a purchase tool from an external tool registry."
+        assert "Which production actions are enabled for the model" in self.render([tools])
+        assert "outside this repository?" in self.render([tools])
 
     def test_ssrf_question_does_not_assert_process_takeover(self):
         text = self.render([self.finding(1, "CWE-918", "Unrestricted URL fetching")])
-        assert "Server-side requests" in text
-        assert "takeover" not in text
+        assert "can server-side requests from" in text
+        assert "that process reach" not in text
 
     @staticmethod
     def chain_analysis(**overrides):
@@ -817,10 +851,10 @@ class TestManualReviewStep:
     def test_unresolved_investigated_chain_gets_priority_without_becoming_a_finding(self):
         findings = [self.finding(1), self.finding(2, "CWE-89", "SQL injection in invoice search")]
         text = self.render(findings, abuse_case_analysis=self.chain_analysis())
-        assert "Unproven attack chain" in text.splitlines()[1]
+        assert "Which production data or identities connect these attack paths" in text.splitlines()[1]
         assert "F-001" in text.splitlines()[1] and "F-002" in text.splitlines()[1]
         assert "Critical" not in text
-        assert "takeover" not in text  # Already addressed by the chain question.
+        assert "that process reach" not in text  # Already addressed by the chain question.
 
     def test_multiple_inconclusive_chains_are_stable_and_do_not_repeat_the_question(self):
         findings = [self.finding(n) for n in range(1, 5)]
@@ -832,7 +866,7 @@ class TestManualReviewStep:
             )["cases"][0]
         )
         text = self.render(findings, abuse_case_analysis=analysis)
-        assert text.count("Unproven attack chain") == 1
+        assert text.count("Which production data or identities connect these attack paths") == 1
         analysis["cases"].reverse()
         assert self.render(findings, abuse_case_analysis=analysis) == text
 
@@ -875,9 +909,9 @@ class TestManualReviewStep:
         finding = self.finding(1, title="Command injection\n[click](https://example.invalid)\x1b[2J")
         text = rcs.build_manual_review_step({"threats": [finding]}, self.report([finding]))
         assert "example.invalid" not in text and "\x1b" not in text and "](" not in text
-        assert len(text.splitlines()) == 2
+        assert len(self.bullets(text)) == 1
 
-    def test_next_steps_places_linked_questions_before_ask_without_mutating_artifacts(self, tmp_path):
+    def test_next_steps_omits_report_questions_without_mutating_artifacts(self, tmp_path):
         import yaml
 
         findings = [self.finding(1)]
@@ -887,14 +921,15 @@ class TestManualReviewStep:
         report.write_text(self.report(findings))
         before = {path: path.read_bytes() for path in (model, report)}
         steps = rcs.build_next_steps(tmp_path, tmp_path, {"threats_by_sev": {"Critical": 1}}, {})
-        assert steps[2].startswith(rcs.TEAM_QUESTIONS_HEADER)
+        assert len(steps) == 3
         assert steps[-1].startswith("Or just ask me:")
         rendered = "\n".join(rcs.render_next_steps(steps))
-        assert re.search(r"^      - .+ \(F-001\)$", rendered, re.M)
+        assert "Open questions for the team" not in rendered
+        assert "Top mitigations:" not in rendered
         assert "Also" not in rendered
         assert {path: path.read_bytes() for path in (model, report)} == before
 
-    def test_manual_review_and_architect_review_fit_the_next_steps_cap(self, tmp_path):
+    def test_architect_review_fits_the_next_steps_cap(self, tmp_path):
         import yaml
 
         findings = [self.finding(1)]
@@ -904,8 +939,8 @@ class TestManualReviewStep:
         steps = rcs.build_next_steps(
             tmp_path, tmp_path, {"threats_by_sev": {"Critical": 1}}, {"architect_review": True}
         )
-        assert len(steps) == 5
-        assert any(step.startswith(rcs.TEAM_QUESTIONS_HEADER) for step in steps)
+        assert len(steps) == 4
+        assert not any(step.startswith(rcs.TEAM_QUESTIONS_HEADER) for step in steps)
         assert any(step.startswith("Read the architect review") for step in steps)
         assert steps[-1].startswith("Or just ask me:")
 
@@ -1199,7 +1234,7 @@ class TestRenderRunIssues:
     def test_report_error_pointer_shown_by_default(self):
         lines = rcs.render_run_issues(self._make_data())
         assert any("report-error" in l for l in lines)
-        assert any("Nothing is sent." in l for l in lines)
+        assert any("publication requires your review and approval" in l for l in lines)
 
     def test_report_error_pointer_hidden_with_plugin_dev(self):
         lines = rcs.render_run_issues(self._make_data(), plugin_dev=True)
@@ -1638,7 +1673,7 @@ class TestRenderRunStatistics:
     def test_net_compute_is_labelled_partial_when_dispatches_are_unrecorded(self):
         """A net compute covering some agents must not read as the whole run.
 
-        `record_stage_stats.py` runs per wave and fails non-blocking, so a run
+        `runtime/record_stage_stats.py` runs per wave and fails non-blocking, so a run
         can lose the call and report a fraction of its real compute. The
         2026-08-15 juice-shop run recorded 5 of 23 dispatches and presented the
         partial sum as its net compute.
@@ -1846,7 +1881,7 @@ class TestRenderRunStatistics:
             "timing": {"net_compute_secs": 10, "wall_secs": 10, "standby_secs": 0, "stages": []},
         }
         out = "\n".join(rcs.render_run_statistics(stats, None, verbose=True))
-        assert "verify_run_costs.py failed" in out
+        assert "runtime/verify_run_costs.py failed" in out
 
 
 class TestRenderFiles:
@@ -1872,29 +1907,22 @@ class TestRenderFiles:
         out = "\n".join(rcs.render_files(tmp_path, {"write_yaml": True}))
         assert "Threat Dragon" not in out
 
-    def test_skill_passes_threatdragon_flag_at_every_call_site(self):
-        """The summary prints the line only when the compact completion passes the flag.
-        Regression guard: `--write-threatdragon` was once defined but no
-        completion call site used it, so the artifact was written and never reported.
-        Every site that passes `--write-sarif` must also pass this pair.
+    def test_completion_runtime_passes_only_the_output_dir(self):
+        """RA-8: the run config carries identity and switches; the runtime argv cannot drift from it.
 
-        This used to grep the doc for the phrase "the true/false pairs", which
-        proved nothing: the prose it matched described an argv the parser had
-        long stopped accepting, and the call still aborted with exit 2. Assert
-        the documented invocation itself instead.
+        A long documented argv once described flags the parser no longer
+        accepted, and an auto-mode classifier refused another. Every documented
+        call passes the output directory only, and the parser accepts it.
         """
         impl = (
             Path(__file__).resolve().parents[1] / "skills" / "create-threat-model" / "SKILL-thin-completion.md"
         ).read_text(encoding="utf-8")
-        invocation = re.search(r"scripts/render_completion_summary\.py\"?(?P<args>(?:\\\n|[^\n`])*)", impl)
-        assert invocation, "the runtime doc must show a literal render_completion_summary.py invocation"
-        args = invocation.group("args")
-
-        for flag in ("--repo-root", "--reasoning-model", "--assessment-depth"):
-            assert flag in args, f"{flag} is required by the parser and must appear in the documented argv"
-        for pair in ("write-sarif", "write-threatdragon", "write-yaml"):
-            assert re.search(rf"--(?:no-)?{pair}\b", args), f"--[no-]{pair} must be passed explicitly"
-        assert "PDF and HTML have no summary flags" in impl
+        calls = re.findall(r"scripts/renderers/render_completion_summary\.py\"?((?:\\\n|[^\n`])*)", impl)
+        assert len(calls) == 2, calls
+        for args in calls:
+            flags = set(re.findall(r"--[a-z-]+", args))
+            assert flags <= {"--output-dir", "--patch-placeholders", "--no-print"}, flags
+            assert "--output-dir" in flags
 
 
 class TestRunIssues:
@@ -2180,8 +2208,8 @@ class TestSummaryHelpers:
         assert rcs._summary_duration({"timing": {"wall_secs": 90}}) == "1m 30s"
 
     def test_summary_cost_variants(self):
-        assert rcs._summary_cost(None) == "unavailable"
-        assert rcs._summary_cost({"error": "x"}) == "unavailable"
+        assert rcs._summary_cost(None) == "unavailable (runtime/verify_run_costs.py failed)"
+        assert rcs._summary_cost({"error": "x"}) == "unavailable (x)"
         assert rcs._summary_cost({"billing": "subscription", "totals": {}}) == "subscription"
         assert rcs._summary_cost({"billing": "api", "totals": {"cost": 1.5}}) == "$1.50"
         assert rcs._summary_cost({"billing": "api", "totals": {"cost": 0}}) == "not captured"
@@ -2273,7 +2301,7 @@ class TestVerdictEcho:
     def test_render_verdict_default_on(self):
         block = rcs.render_verdict(_VERDICT_MD, {})
         joined = "\n".join(block)
-        assert "-- Verdict" in joined
+        assert "\nVerdict\n" in joined
         assert "Broad attack surface" in joined
 
     def test_render_verdict_quiet_suppresses(self):
@@ -2291,23 +2319,28 @@ class TestVerdictEcho:
         )
         verdict = {
             "bullets": [
-                {"title": "Admin takeover via forged JWT", "classes": ["Hard-coded Key"], "verified_attack_path": True}
+                {
+                    "title": "Admin takeover via forged JWT",
+                    "cwes": ["CWE-798"],
+                    "findings": ["F-006", "F-008"],
+                    "verified_attack_path": True,
+                }
             ]
         }
         joined = "\n".join(rcs.render_verdict(md, {}, verdict))
-        assert "  ✓  Admin takeover via forged JWT  via Hard-coded Key" in joined
-        assert rcs.summarize_threat_model.WORST_CASE_LEGEND in joined
-        # The sentence and the reference clause (ids, titles, locations) stay in the report.
+        assert "  •  Admin takeover via forged JWT (CWE-798)  → F-006, F-008" in joined
+        assert "✓" not in joined
+        # The report's reference clause (weakness, titles, locations) stays in the report.
         assert "key committed" not in joined
-        assert "F-006" not in joined and "W-004" not in joined
+        assert "Hardcoded Key" not in joined and "W-004" not in joined
         assert "lib/insecurity.ts:23" not in joined
-        # Lines outside the bullet list are untouched.
-        assert "**Risk distribution:** 🔴 Critical: 24" in joined
+        # The duplicate tally is omitted; the report's closing statement survives.
+        assert "Risk distribution:" not in joined
         assert "Rotate the key before production." in joined
 
     def test_render_verdict_without_persisted_bullets_keeps_the_report_lines(self):
         joined = "\n".join(rcs.render_verdict(_VERDICT_MD, {}))
-        assert "- **Admin takeover via forged JWT** — key committed at lib/insecurity.ts:23." in joined
+        assert "- Admin takeover via forged JWT — key committed at lib/insecurity.ts:23." in joined
 
     def test_render_verdict_collapses_blank_runs(self):
         body = rcs.render_verdict(_VERDICT_MD.replace("\n\n", "\n\n\n\n"), {})[3:]
@@ -2328,7 +2361,7 @@ class TestVerdictEcho:
             text=True,
         )
         assert r.returncode == 0
-        assert "-- Verdict" in r.stdout
+        assert "\nVerdict\n" in r.stdout
         assert "Broad attack surface" in r.stdout
         assert "<blockquote" not in r.stdout
 
@@ -2362,7 +2395,7 @@ class TestVerdictEcho:
         assert "Results" in quiet.stdout
         assert "Outputs" in quiet.stdout
         # verdict + verbose/narrative blocks dropped
-        assert "-- Verdict" not in quiet.stdout
+        assert "\nVerdict\n" not in quiet.stdout
         assert "Broad attack surface" not in quiet.stdout
         assert "Next Steps" not in quiet.stdout
         assert "-- Run Statistics" not in quiet.stdout
@@ -2370,7 +2403,7 @@ class TestVerdictEcho:
         # quiet really is shorter than the default
         assert len(quiet.stdout) < len(full.stdout)
         # default (non-quiet) still shows the dropped blocks
-        assert "Next Steps" in full.stdout and "-- Verdict" in full.stdout
+        assert "Next Steps" in full.stdout and "\nVerdict\n" in full.stdout
 
 
 # ---------------------------------------------------------------------------
@@ -2393,7 +2426,7 @@ class TestStampSlugBackstop:
         monkeypatch.setattr(rcs.subprocess, "run", lambda *a, **k: calls.append(a[0]) or None)
         rcs._stamp_slug_if_configured(tmp_path)
         assert len(calls) == 1
-        assert "stamp_threat_model.py" in " ".join(calls[0])
+        assert "model/stamp_threat_model.py" in " ".join(calls[0])
         assert "my-slug" in calls[0]
 
     def test_noop_when_no_slug(self, tmp_path: Path, monkeypatch):
@@ -2516,12 +2549,39 @@ class TestExportDeliverablesBackstop:
         )
         rcs._export_deliverables_if_configured(tmp_path)
 
+    @pytest.mark.parametrize(("slug", "stamped"), [("abc", "pentest-tasks-abc.yaml"), (None, None)])
+    def test_pentest_tasks_are_stamped_when_a_slug_is_set(self, tmp_path: Path, slug, stamped):
+        import json as _json
+
+        cfg = {"write_pentest_tasks": True, **({"slug": slug} if slug else {})}
+        self._seed(tmp_path, **cfg)
+        (tmp_path / "threat-model.md").write_text("Tasks: `pentest-tasks.yaml`.\n", encoding="utf-8")
+        threat = {
+            "t_id": "T-001",
+            "component_id": "api",
+            "component_name": "API Server",
+            "stride": "Tampering",
+            "risk": "High",
+            "title": "SQL injection in login endpoint",
+            "cwe": "CWE-89",
+            "evidence": {"file": "routes/login.ts", "line": 34},
+            "source": "stride",
+        }
+        (tmp_path / ".threats-merged.json").write_text(_json.dumps({"version": 1, "threats": [threat]}))
+
+        rcs._export_deliverables_if_configured(tmp_path)
+        rcs._stamp_slug_if_configured(tmp_path)
+
+        assert (tmp_path / "pentest-tasks.yaml").is_file()
+        stamped_files = sorted(p.name for p in tmp_path.glob("pentest-tasks-*.yaml"))
+        assert stamped_files == ([stamped] if stamped else [])
+
     def test_export_table_matches_the_controller(self):
         """Both anchors must cover the same artefact set — a flag wired into one
         and not the other reintroduces the silent-drop for that flag."""
         import importlib.util
 
-        path = Path(__file__).resolve().parents[1] / "scripts" / "orchestration_controller.py"
+        path = Path(__file__).resolve().parents[1] / "scripts" / "orchestrator/orchestration_controller.py"
         spec = importlib.util.spec_from_file_location("_oc_for_export_parity", path)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
@@ -2562,6 +2622,16 @@ class TestRequestedDeliverablesAreReported:
         assert body.count("MISSING — requested but not produced") == 5
         assert "5 requested deliverable(s) missing" in body
 
+    def test_a_missing_pdf_or_html_prints_its_export_command(self, tmp_path):
+        mod = _load_module()
+        (tmp_path / "threat-model.pdf").write_text("x", encoding="utf-8")
+        body = "\n".join(mod.render_files(tmp_path, {"write_pdf": True, "write_html": True, "write_sarif": True}))
+        commands = [line.strip() for line in body.splitlines() if line.strip().startswith("python3 ")]
+        assert len(commands) == 1
+        assert "exporters/export_html.py --require-mermaid --input" in commands[0]
+        assert commands[0].endswith(str(tmp_path / "threat-model.html"))
+        assert "--no-mermaid" not in body
+
     def test_present_deliverable_is_listed_normally(self, tmp_path):
         mod = _load_module()
         (tmp_path / "threat-model.pdf").write_text("x", encoding="utf-8")
@@ -2580,7 +2650,7 @@ class TestRequestedDeliverablesAreReported:
         """A future `--foo` flag cannot ship a deliverable with no producer."""
         mod = _load_module()
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-        import orchestration_controller as oc
+        import orchestrator.orchestration_controller as oc
 
         produced = {k for k, _s, _b in oc._YAML_DERIVED_EXPORTS} | {oc._PENTEST_TASKS_EXPORT[0]}
         # PDF/HTML need an unsandboxed shell, so they stay skill-owned by design.

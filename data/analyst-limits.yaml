@@ -1,0 +1,21 @@
+# Limits the on-demand threat analysis controller enforces outside the model.
+# Status provisional: values are starting ceilings from work package 1, not
+# measurements. Replace each with measured evidence before marking measured.
+schema_version: 1
+status: provisional
+limits:
+  job_seconds: {value: 900, unit: seconds}
+  call_seconds: {value: 300, unit: seconds}
+  host_calls: {value: 4, unit: calls}
+  evidence_rounds: {value: 2, unit: rounds}
+  question_rounds: {value: 2, unit: rounds}
+  transport_retries: {value: 1, unit: retries}
+  admitted_files: {value: 200, unit: files}
+  file_kib: {value: 64, unit: KiB}
+  job_kib: {value: 400, unit: KiB}
+  response_kib: {value: 64, unit: KiB}
+  selected_questions: {value: 40, unit: questions}
+  packages: {value: 10, unit: packages}
+  package_kib: {value: 256, unit: KiB}
+  answer_hours: {value: 72, unit: hours}
+  result_days: {value: 30, unit: days}

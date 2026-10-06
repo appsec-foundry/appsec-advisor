@@ -1,4 +1,4 @@
-"""Coverage-pushing tests for scripts/compose_threat_model.py (round 3).
+"""Coverage-pushing tests for scripts/renderers/compose_threat_model.py (round 3).
 
 Targets the largest still-uncovered render/helper branches. Test files ONLY;
 pins current behavior. Companion to test_compose_threat_model_cov{,2}.py.
@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT_PATH = REPO_ROOT / "scripts" / "compose_threat_model.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "renderers/compose_threat_model.py"
 
 
 def _load_module(name: str, path: Path):
@@ -26,7 +26,7 @@ def _load_module(name: str, path: Path):
     return mod
 
 
-compose = _load_module("compose_threat_model", SCRIPT_PATH)
+compose = _load_module("renderers.compose_threat_model", SCRIPT_PATH)
 
 
 def _mk_ctx(tmp_path, **kw):
@@ -242,7 +242,7 @@ class TestRenderIdentifiedActorsExtra:
         )
         out = compose._render_identified_actors(ctx, None, {})
         rows = [ln for ln in out.splitlines() if ln.startswith("| ") and "Role" not in ln and "---" not in ln]
-        assert "Shop User" in rows[0] and "victim" in rows[0]  # order puts victim first
+        assert "End User" in rows[0] and "victim" in rows[0]  # order puts victim first
 
 
 # ---------------------------------------------------------------------------
@@ -251,22 +251,18 @@ class TestRenderIdentifiedActorsExtra:
 
 
 class TestIdentifiedActorsConsolidation:
-    def test_fold_map_open_self_registration_and_always_insider(self):
-        # low-priv folds into anon only when open_user_registration; insider-ops
-        # folds into insider-dev unconditionally (always rule).
+    def test_fold_map_open_self_registration_keeps_enabled_insiders_split(self):
+        # low-priv folds into anon only when open_user_registration; enabled
+        # opt-in insiders are an explicit operator choice and never fold.
         active = {"ACT-D-01", "ACT-D-02", "ACT-D-04", "ACT-D-05"}
         folded, reason = compose._actor_fold_map(active, {"open_user_registration": True})
-        assert folded["ACT-D-02"] == "ACT-D-01"
-        assert folded["ACT-D-05"] == "ACT-D-04"
-        assert "ACT-D-01" not in folded and "ACT-D-04" not in folded
+        assert folded == {"ACT-D-02": "ACT-D-01"}
         assert reason["ACT-D-02"] == "open-self-registration"
-        assert reason["ACT-D-05"] == "no-distinct-production-environment"
 
-    def test_fold_map_no_open_reg_keeps_lowpriv_but_still_folds_insider(self):
+    def test_fold_map_no_open_reg_folds_nothing(self):
         active = {"ACT-D-01", "ACT-D-02", "ACT-D-04", "ACT-D-05"}
         folded, _ = compose._actor_fold_map(active, {})
-        assert "ACT-D-02" not in folded  # open-reg gate not met
-        assert folded["ACT-D-05"] == "ACT-D-04"  # always rule fires regardless
+        assert folded == {}
 
     def test_fold_skipped_when_primary_inactive(self):
         # ACT-D-01 disabled → not active → its class members are NOT folded away.

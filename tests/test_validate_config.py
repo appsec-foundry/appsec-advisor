@@ -1,4 +1,4 @@
-"""Unit tests for scripts/validate_config.py.
+"""Unit tests for scripts/validators/validate_config.py.
 
 The validator is exercised by the integration test suite end-to-end, but the
 schema rules themselves were never directly tested. These cases lock in the
@@ -13,15 +13,15 @@ from pathlib import Path
 
 import pytest
 
-VALIDATE_CONFIG_PATH = Path(__file__).parent.parent / "scripts" / "validate_config.py"
+VALIDATE_CONFIG_PATH = Path(__file__).parent.parent / "scripts" / "validators/validate_config.py"
 
 
 @pytest.fixture(scope="module")
 def validate_config():
-    """Import scripts/validate_config.py as a module."""
-    spec = importlib.util.spec_from_file_location("validate_config", VALIDATE_CONFIG_PATH)
+    """Import scripts/validators/validate_config.py as a module."""
+    spec = importlib.util.spec_from_file_location("validators.validate_config", VALIDATE_CONFIG_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["validate_config"] = module
+    sys.modules["validators.validate_config"] = module
     spec.loader.exec_module(module)
     return module
 
@@ -555,13 +555,13 @@ class TestMainCli:
         (tmp_path / "config.json").write_text(
             '{"external_context": {"enabled": false, "rest_url": null}}', encoding="utf-8"
         )
-        result = run_plugin_script("validate_config.py", str(tmp_path), check=False)
+        result = run_plugin_script("validators/validate_config.py", str(tmp_path), check=False)
         assert result.returncode == 0
         assert "VALID:" in result.stdout
 
     def test_main_invalid_exits_1(self, run_plugin_script, tmp_path: Path):
         # missing config.json → file not found error → exit 1
-        result = run_plugin_script("validate_config.py", str(tmp_path), check=False)
+        result = run_plugin_script("validators/validate_config.py", str(tmp_path), check=False)
         assert result.returncode == 1
         assert "INVALID:" in result.stdout
 
@@ -569,6 +569,8 @@ class TestMainCli:
         (tmp_path / "config.json").write_text(
             '{"external_context": {"enabled": false, "rest_url": null}}', encoding="utf-8"
         )
-        result = run_plugin_script("validate_config.py", env={"CLAUDE_PLUGIN_ROOT": str(tmp_path)}, check=False)
+        result = run_plugin_script(
+            "validators/validate_config.py", env={"CLAUDE_PLUGIN_ROOT": str(tmp_path)}, check=False
+        )
         assert result.returncode == 0
         assert "VALID:" in result.stdout

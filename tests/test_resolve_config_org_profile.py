@@ -1,4 +1,4 @@
-"""Tests for the org-profile slice of scripts/resolve_config.py.
+"""Tests for the org-profile slice of scripts/runtime/resolve_config.py.
 
 Asserts that:
   * legacy invocations without an org profile keep their existing output
@@ -20,16 +20,16 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "resolve_config.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "runtime/resolve_config.py"
 FIXTURE = REPO_ROOT / "tests" / "fixtures" / "org-profiles" / "acme" / "org-profile.yaml"
 
 
 def _load_module():
-    if "resolve_config" in sys.modules:
-        return sys.modules["resolve_config"]
-    spec = importlib.util.spec_from_file_location("resolve_config", SCRIPT_PATH)
+    if "runtime.resolve_config" in sys.modules:
+        return sys.modules["runtime.resolve_config"]
+    spec = importlib.util.spec_from_file_location("runtime.resolve_config", SCRIPT_PATH)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["resolve_config"] = mod
+    sys.modules["runtime.resolve_config"] = mod
     assert spec.loader is not None
     spec.loader.exec_module(mod)
     return mod

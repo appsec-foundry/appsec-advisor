@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "merged": {
+    "version": 1,
+    "generated_at": "2026-09-27T00:00:00Z",
+    "threats": [
+      {
+        "t_id": "T-001",
+        "component_id": "account-api",
+        "component_name": "Account API",
+        "stride": "Tampering",
+        "risk": "Low",
+        "likelihood": "Low",
+        "impact": "Low",
+        "title": "Missing account ownership check on record updates",
+        "cwe": "CWE-862",
+        "evidence": {
+          "file": "src/records.py",
+          "line": 17
+        },
+        "source": "stride",
+        "architectural_violation": false,
+        "evidence_check": "verified",
+        "threat_category_id": "TH-01",
+        "mitigation_ids": [
+          "M-001"
+        ],
+        "scenario": "Any signed-in account can change a record belonging to another account by submitting its public sequential ID. The update executes without checking record ownership. Production customer records are affected.",
+        "evidence_summary": "The verifier confirmed that the update selects only by record ID and has no account predicate or authorization check before writing.",
+        "mitigation_title": "Scope record updates to the authenticated account",
+        "remediation": {
+          "effort": "Medium",
+          "steps": [
+            "Resolve the record by both record ID and the authenticated account ID.",
+            "Reject a foreign record before applying the update."
+          ],
+          "verification": "A foreign account cannot update the record and its contents remain unchanged; its owner can still update it."
+        }
+      },
+      {
+        "t_id": "T-002",
+        "component_id": "account-api",
+        "component_name": "Account API",
+        "stride": "Tampering",
+        "risk": "High",
+        "likelihood": "High",
+        "impact": "High",
+        "title": "Missing account ownership check on record deletion",
+        "cwe": "CWE-862",
+        "evidence": {
+          "file": "src/records.py",
+          "line": 39
+        },
+        "source": "stride",
+        "architectural_violation": false,
+        "evidence_check": "verified",
+        "threat_category_id": "TH-01",
+        "mitigation_ids": [
+          "M-002"
+        ],
+        "scenario": "Any signed-in account can delete a record belonging to another account by submitting its public sequential ID. The deletion executes without checking record ownership. Production customer records are affected.",
+        "evidence_summary": "The verifier confirmed that deletion selects only by record ID, without an account predicate or an authorization check.",
+        "mitigation_title": "Log record deletions",
+        "remediation": {
+          "effort": "Low",
+          "steps": [
+            "Write a log when a record is deleted."
+          ],
+          "verification": "Check that the deletion appears in the log."
+        }
+      },
+      {
+        "t_id": "T-003",
+        "component_id": "account-api",
+        "component_name": "Account API",
+        "stride": "Information Disclosure",
+        "risk": "High",
+        "likelihood": "High",
+        "impact": "High",
+        "title": "Missing account ownership check on record downloads",
+        "cwe": "CWE-862",
+        "evidence": {
+          "file": "src/records.py",
+          "line": 62
+        },
+        "source": "stride",
+        "architectural_violation": false,
+        "evidence_check": "verified",
+        "threat_category_id": "TH-01",
+        "mitigation_ids": [
+          "M-003"
+        ],
+        "scenario": "Any signed-in account can download another account's private customer record using its public sequential ID. The handler returns the record without checking ownership.",
+        "evidence_summary": "The verifier confirmed that the download selects by record ID alone and returns private customer data without checking the account.",
+        "mitigation_title": "Scope record downloads to the authenticated account",
+        "remediation": {
+          "effort": "Medium",
+          "steps": [
+            "Resolve downloads by record ID and the authenticated account ID.",
+            "Reject records outside that account before returning their contents."
+          ],
+          "verification": "A foreign account receives no record content; the owner can still download it."
+        }
+      }
+    ]
+  },
+  "analyst_context": {
+    "account-api": {
+      "business_context": {
+        "business_purpose": "Manage private customer records",
+        "impact_if_compromised": "Unauthorized changes, deletion or disclosure affect customers.",
+        "impact_is_material": true
+      },
+      "architecture_context": {
+        "security_role": "Authenticated accounts must be isolated from one another"
+      }
+    }
+  },
+  "rubric": [
+    {
+      "t_id": "T-001",
+      "assessment": "corrected",
+      "remediation": "unchanged",
+      "check": "Explain why arbitrary cross-account production writes are not Low. Preserve the existing ownership fix. No evidence, CWE or CVSS edits."
+    },
+    {
+      "t_id": "T-002",
+      "assessment": "unchanged",
+      "remediation": "corrected",
+      "check": "Replace logging-only remediation with a pre-deletion ownership check; verification must demonstrate denied foreign deletion and successful owner deletion."
+    },
+    {
+      "t_id": "T-003",
+      "assessment": "unchanged",
+      "remediation": "unchanged",
+      "check": "Preserve the supported High assessment and the already actionable ownership fix. Do not perform cosmetic rewrites."
+    }
+  ]
+}

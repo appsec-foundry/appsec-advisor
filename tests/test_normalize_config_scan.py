@@ -1,4 +1,4 @@
-"""Tests for scripts/normalize_config_scan.py (deterministic generated_at fix)."""
+"""Tests for scripts/model/normalize_config_scan.py (deterministic generated_at fix)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ REPO_ROOT = Path(__file__).parent.parent
 if str(REPO_ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import normalize_config_scan as nc  # noqa: E402
+import model.normalize_config_scan as nc  # noqa: E402
 
 
 def test_strips_microseconds():

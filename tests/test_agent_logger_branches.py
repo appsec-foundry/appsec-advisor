@@ -1,10 +1,10 @@
-"""Branch/error coverage for scripts/agent_logger.py.
+"""Branch/error coverage for scripts/runtime/agent_logger.py.
 
 Targets the error paths, config-driven branches, and handler edges that the
 existing in-process suites (test_agent_logger_cov.py /
 test_agent_logger_checkpoint_abort.py) leave uncovered. All tests run the
 module in-process via an importlib spec with stdin/stderr neutralised, since
-agent_logger.py calls main() at import time.
+runtime/agent_logger.py calls main() at import time.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "agent_logger.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "runtime/agent_logger.py"
 
 
 def _load(monkeypatch, tmp_path, *, env=None, name="agent_logger"):
@@ -232,7 +232,7 @@ class TestCheckpointAbortFallback:
         real_import = builtins.__import__
 
         def fake_import(name, *a, **k):
-            if name == "_atomic_io":
+            if name == "shared._atomic_io":
                 raise ImportError("no atomic io")
             return real_import(name, *a, **k)
 
@@ -329,6 +329,21 @@ class TestHandleStopBranches:
         assert not (tmp_path / ".appsec-tracing").exists()
         assert not (tmp_path / ".appsec-verbose").exists()
 
+    def test_the_released_run_is_closed_by_one_end_marker(self, al, tmp_path):
+        (tmp_path / ".agent-run.log").write_text("")
+        (tmp_path / ".hook-events.log").write_text("2026-06-14T10:00:00Z  [sidone12]  INFO   SCAN_START  repo=/r\n")
+        al.handle_stop({"stop_reason": "end_turn"}, "sidone12", "Stop")
+        al.handle_stop({"stop_reason": "end_turn"}, "sidone12", "Stop")
+        run_log = (tmp_path / ".agent-run.log").read_text()
+        assert run_log.count("ASSESSMENT_END") == 1
+
+    def test_a_stop_inside_the_running_run_does_not_end_it(self, monkeypatch, tmp_path):
+        logger = _load(monkeypatch, tmp_path, name="al_running_stop_end_marker")
+        (tmp_path / ".agent-run.log").write_text("")
+        monkeypatch.setattr(logger, "_run_lock_is_ours", lambda sid: True)
+        logger.handle_stop({"stop_reason": "end_turn"}, "sidrun12", "Stop")
+        assert "ASSESSMENT_END" not in (tmp_path / ".agent-run.log").read_text()
+
     def test_stop_while_the_run_holds_its_lock_keeps_markers(self, monkeypatch, tmp_path):
         (tmp_path / ".appsec-tracing").write_text("")
         traced = _load(monkeypatch, tmp_path, name="al_traced_running_stop")
@@ -392,7 +407,7 @@ class TestPostToolAgentBranches:
 
     def test_watchdog_crossing_logged(self, al, monkeypatch):
         # Force a budget crossing so the WARN event is written (lines 2130-2131).
-        import budget_watchdog
+        import runtime.budget_watchdog as budget_watchdog
 
         monkeypatch.setattr(budget_watchdog, "tally_and_check", lambda *a, **k: {"event": "BUDGET_WARN", "agent": "x"})
         monkeypatch.setattr(budget_watchdog, "format_detail", lambda c: "detail")
@@ -452,7 +467,7 @@ class TestPreToolUseBranches:
 
         for tool, tool_input in (
             ("Read", {"file_path": str(tmp_path / ".run-issues.json")}),
-            ("Bash", {"command": "python3 scripts/appsec_status.py --live"}),
+            ("Bash", {"command": "python3 scripts/runtime/appsec_status.py --live"}),
             ("Skill", {"skill": "appsec-advisor:fix-run-issues"}),
         ):
             al.handle_pre_tool_use({"tool_name": tool, "tool_input": tool_input}, "sid")
@@ -472,7 +487,7 @@ class TestPreToolUseBranches:
             {
                 "tool_name": "Bash",
                 "tool_input": {
-                    "command": 'python3 "$CLAUDE_PLUGIN_ROOT/scripts/skill_watchdog.py" "$OUTPUT_DIR" --heartbeat-interval 60',
+                    "command": 'python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/skill_watchdog.py" "$OUTPUT_DIR" --heartbeat-interval 60',
                     "run_in_background": True,
                 },
             },
@@ -488,7 +503,7 @@ class TestPreToolUseBranches:
             {
                 "tool_name": "Bash",
                 "tool_input": {
-                    "command": "python3 scripts/skill_watchdog.py; rm -rf /",
+                    "command": "python3 scripts/runtime/skill_watchdog.py; rm -rf /",
                     "run_in_background": True,
                 },
             },
@@ -502,7 +517,7 @@ class TestPreToolUseBranches:
             {
                 "tool_name": "Bash",
                 "tool_input": {
-                    "command": 'python3 "$CLAUDE_PLUGIN_ROOT/scripts/skill_watchdog.py" "$OUTPUT_DIR"',
+                    "command": 'python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/skill_watchdog.py" "$OUTPUT_DIR"',
                     "run_in_background": False,
                 },
             },
@@ -574,7 +589,7 @@ class TestMirrorPhaseEvents:
         real_import = builtins.__import__
 
         def fake_import(name, *a, **k):
-            if name == "log_event":
+            if name == "runtime.log_event":
                 raise ImportError("no")
             return real_import(name, *a, **k)
 

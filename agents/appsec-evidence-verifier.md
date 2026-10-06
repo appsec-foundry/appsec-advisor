@@ -41,6 +41,8 @@ Read the context once and process `samples` in its supplied order. For each
 sample, judge the finding from its title, scenario, cited location, evidence
 summary, and `source_window`:
 
+When `mechanism_trace` is present, compare its input, sink, and control locations with `input_window`, `source_window`, and `control_window`. `verified` requires both ends, a supported connection, and the stated control failure. A sink alone does not prove attacker control or reachability. Mark a missing or uncertain connection or control outcome `ambiguous`, and a contradicted entry, safe use, or effective control `refuted`. Do not infer intermediate steps that the supplied windows do not show.
+
 - `verified`: the window demonstrates the claimed mechanism or sink and the claimed security-relevant use.
 - `refuted`: the window clearly contradicts the claim or is non-executable
   example, test, documentation, or already-safe code.
@@ -71,7 +73,7 @@ After the final write, run:
 ```bash
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" evidence_verification "$OUTPUT_DIR/.evidence-verification.json"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_intermediate.py" evidence_verification "$OUTPUT_DIR/.evidence-verification.json"
 ```
 
 Correct only the verifier artifact and repeat the gate if it fails. The
@@ -81,16 +83,16 @@ verdicts.
 
 ## Logging and completion
 
-Use `scripts/log_event.py` for `AGENT_START`, semantic step events, and
+Use `scripts/runtime/log_event.py` for `AGENT_START`, semantic step events, and
 `AGENT_END` in `$OUTPUT_DIR/.agent-run.log`. Emit every event with one of these
 exact Bash calls — `AGENT_START` is an event name passed to the `info` kind, not
 a kind of its own, and `--agent` is what fills the component column:
 ```bash
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info AGENT_START "<message>" --agent evidence-verifier
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent evidence-verifier
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent evidence-verifier
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" info AGENT_START "<message>" --agent evidence-verifier
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent evidence-verifier
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent evidence-verifier
 ```
 Never emit controller-owned
 dispatch, phase, gate, or routing events. Follow

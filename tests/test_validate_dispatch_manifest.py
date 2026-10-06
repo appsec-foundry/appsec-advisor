@@ -1,4 +1,4 @@
-"""Unit tests for scripts/validate_dispatch_manifest.py.
+"""Unit tests for scripts/validators/validate_dispatch_manifest.py.
 
 The dispatch-manifest gate is exercised end-to-end by the pipeline, but its
 branches (schema errors, missing index files, phantom components, coverage
@@ -14,17 +14,17 @@ import json
 import sys
 from pathlib import Path
 
-import build_stride_evidence_bundles as evidence_bundles
+import contexts.build_stride_evidence_bundles as evidence_bundles
 import pytest
 
-SCRIPT_PATH = Path(__file__).parent.parent / "scripts" / "validate_dispatch_manifest.py"
+SCRIPT_PATH = Path(__file__).parent.parent / "scripts" / "validators/validate_dispatch_manifest.py"
 
 
 @pytest.fixture(scope="module")
 def vdm():
-    spec = importlib.util.spec_from_file_location("validate_dispatch_manifest", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("validators.validate_dispatch_manifest", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["validate_dispatch_manifest"] = module
+    sys.modules["validators.validate_dispatch_manifest"] = module
     spec.loader.exec_module(module)
     return module
 
@@ -453,7 +453,7 @@ class TestSubprocess:
     def test_cli_valid(self, run_plugin_script, tmp_path):
         _write_manifest(tmp_path, _minimal_manifest())
         result = run_plugin_script(
-            "validate_dispatch_manifest.py",
+            "validators/validate_dispatch_manifest.py",
             str(tmp_path / ".stride-dispatch-manifest.json"),
             str(tmp_path),
             check=False,
@@ -466,7 +466,7 @@ class TestSubprocess:
         del bad["schema_version"]
         _write_manifest(tmp_path, bad)
         result = run_plugin_script(
-            "validate_dispatch_manifest.py",
+            "validators/validate_dispatch_manifest.py",
             str(tmp_path / ".stride-dispatch-manifest.json"),
             str(tmp_path),
             check=False,

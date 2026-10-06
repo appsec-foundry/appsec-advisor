@@ -39,10 +39,23 @@ $defs:
     type: string
     enum: [Critical, High, Medium, Low]
 
+  mechanism_location:
+    type: object
+    additionalProperties: false
+    required: [file, line]
+    properties:
+      file:
+        type: string
+        minLength: 1
+        maxLength: 512
+        not:
+          pattern: "^(?:/|[A-Za-z]:[\\\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)|\\\\"
+      line: {type: integer, minimum: 1}
+
   cvss_v4:
     # Optional CVSS v4.0 score block. Only permitted when the threat's CWE
     # is on the eligibility list (data/cvss-eligible-cwes.yaml) AND
-    # concrete file:line evidence exists. See validate_intermediate.py for
+    # concrete file:line evidence exists. See validators/validate_intermediate.py for
     # the eligibility post-check that enforces this rule across sources.
     type: object
     required: [vector, base_score, severity, source]
@@ -102,6 +115,26 @@ $defs:
       # starting" from "honestly found nothing" -- and the retry budget burns on
       # a component that needs a bigger budget, not another identical attempt.
       seed_only:      { type: boolean }
+      # Written by the wave gate on a retry pre-seeded from an earlier partial
+      # attempt; the analyzer keeps its threats and works only the skipped
+      # categories (scripts/orchestrator/stride_dispatch_waves.py::seed_resumed_attempt).
+      resumed_from_attempt: { type: integer, minimum: 1 }
+      # Analyzer's own count of its turns the model declined. Self-reported, so
+      # it only words the gate's diagnosis when no transcript can confirm it;
+      # it never declares a coverage gap.
+      declined_turns: { type: integer, minimum: 1 }
+      # Written only by the wave gate when the model declined the component's
+      # analysis through the whole retry budget; the report states it as a
+      # coverage gap (scripts/orchestrator/stride_dispatch_waves.py::_declare_declined).
+      coverage_declined:
+        type: object
+        required: [reason, attempts, categories]
+        properties:
+          reason:     { type: string, enum: [model_refusal] }
+          attempts:   { type: integer, minimum: 1 }
+          categories:
+            type: array
+            items: { $ref: "#/$defs/stride_category" }
       skipped_categories:
         type: array
         items: { $ref: "#/$defs/stride_category" }
@@ -113,7 +146,7 @@ $defs:
         # Incremental re-scan only. Prior findings this re-scan affirmatively
         # confirmed FIXED (disposition #2 in appsec-stride-analyzer-v2.md
         # "prior-finding disposition"). The deterministic reconciler in
-        # build_threat_model_yaml.py uses this to mark them resolved instead
+        # model/build_threat_model_yaml.py uses this to mark them resolved instead
         # of carrying them forward. Advisory: when omitted, the reconciler
         # conservatively carries unconfirmed priors at shallower depth.
         type: array
@@ -152,7 +185,31 @@ $defs:
                   pattern: "^(?:/|[A-Za-z]:[\\\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)|\\\\"
             lens:
               type: [string, "null"]
-              enum: [agentic, llm, mobile, spa, supply-chain, null]
+              enum: [agentic, llm, mcp, mobile, rag, spa, supply-chain, null]
+
+      lens_coverage:
+        # One disposition per OWASP LLM / Agentic Top-10 item when the `llm` or
+        # `agentic` lens is selected; completeness and consistency are checked
+        # by validate_intermediate.lens_coverage_errors.
+        type: array
+        maxItems: 20
+        items:
+          type: object
+          additionalProperties: false
+          required: [item, disposition]
+          properties:
+            item:
+              type: string
+              pattern: "^(LLM|ASI)(0[1-9]|10)$"
+            disposition:
+              type: string
+              enum: [finding, controlled, not-applicable, no-evidence]
+            local_ids:
+              type: array
+              uniqueItems: true
+              items: { type: string, minLength: 1 }
+            evidence: { $ref: "#/$defs/mechanism_location" }
+            reason: { type: string, minLength: 10, maxLength: 300 }
 
       threats:
         type: array
@@ -165,7 +222,7 @@ $defs:
             scenario:
               type: string
               # JSONSchema cannot check "stripped length >= 10"; Python
-              # post-check in validate_intermediate.py enforces that.
+              # post-check in validators/validate_intermediate.py enforces that.
               minLength: 10
             attack_steps:
               # OPTIONAL attacker-voice step list for §3. `scenario` stays the
@@ -241,6 +298,25 @@ $defs:
               properties:
                 file: { type: string }
                 line: { type: [integer, "null"], minimum: 0 }
+            mechanism_trace:
+              # Required by validators/validate_intermediate.py for confirmed input-to-sink
+              # CWEs. The primary evidence anchor is the sink, so a reader can
+              # check the dangerous use without following an unrelated citation.
+              type: object
+              additionalProperties: false
+              required: [input, sink, connection, control]
+              properties:
+                input: {$ref: "#/$defs/mechanism_location"}
+                sink: {$ref: "#/$defs/mechanism_location"}
+                connection: {type: string, minLength: 20, maxLength: 500}
+                control:
+                  type: object
+                  additionalProperties: false
+                  required: [status, location, explanation]
+                  properties:
+                    status: {enum: [absent-at-sink, ineffective, bypassed]}
+                    location: {$ref: "#/$defs/mechanism_location"}
+                    explanation: {type: string, minLength: 20, maxLength: 500}
             boundary_refs:
               type: array
               maxItems: 2
@@ -304,14 +380,14 @@ $defs:
               #     but the exploit chain is not (yet) proven; no CVSS; folds as
               #     the weakness's practice_evidence[].
               # Default when omitted: confirmed-exploitable if a sink is proven,
-              # else insecure-practice (applied by merge_threats.py).
+              # else insecure-practice (applied by model/merge_threats.py).
               type: [string, "null"]
               enum: [confirmed-exploitable, insecure-practice, null]
             controls_absent_evidence:
               # Records the absence-grep that supports the "control X is
               # not present" claim used to justify this threat. Written
               # by the STRIDE analyzer when a verification grep returned
-              # zero hits. qa_checks.py replays the grep deterministically
+              # zero hits. validators/qa_checks.py replays the grep deterministically
               # and flags drift. Omitted when the threat is not absence-
               # based (e.g. positive evidence of vulnerable code).
               type: [array, "null"]

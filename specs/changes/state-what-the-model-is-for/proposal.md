@@ -12,19 +12,19 @@ architecture verdict, actionable mitigations, the triage and query skills, and
 the repository-level configuration surface. Six decision areas — `SA`, `EXP`,
 `RR`, `TA`, `ST`, `RP` — are cited by no requirement at all.
 
-Two consequences. Somebody changing `prepare_trust_boundary_context.py` or
-`normalize_security_architecture.py` gets `check_specs.py --for` output that
+Two consequences. Somebody changing `contexts/prepare_trust_boundary_context.py` or
+`model/normalize_security_architecture.py` gets `check_specs.py --for` output that
 tells them nothing about the promise they are touching. And a requirement that
 never states the purpose cannot catch a change that keeps every rule and loses
 the point.
 
-The second problem is reach. `requirements_hook.py` puts the governing
+The second problem is reach. `requirements/requirements_hook.py` puts the governing
 requirements in front of an agent at the moment it edits a file — the one moment
 they can still change the edit — and holds `specs/requirements.md` behind an
 operator prompt. That machinery works. It governs 23 of 228 top-level scripts.
-`_url_guard.py`, `_path_guard.py`, `export_sarif.py`, `redact_known_secrets.py`,
-`validate_mitigation_quality.py`, `normalize_security_architecture.py`,
-`resolve_abuse_cases.py`, and `runtime_cleanup.py` are all edited without a
+`shared/_url_guard.py`, `shared/_path_guard.py`, `exporters/export_sarif.py`, `validators/redact_known_secrets.py`,
+`validators/validate_mitigation_quality.py`, `model/normalize_security_architecture.py`,
+`model/resolve_abuse_cases.py`, and `runtime/runtime_cleanup.py` are all edited without a
 requirement in sight. Filling the gaps above is therefore not documentation
 work: it is what makes the existing guard fire where the pipeline is actually
 changed.
@@ -94,7 +94,7 @@ Reworded entries keep their ID. Sentences below are the text to approve.
 > declaration never suppresses a detected one and never asserts that its control
 > works.
 
-**Applies to:** `scripts/prepare_trust_boundary_context.py`, `schemas/trust-boundaries-repo.schema.yaml`
+**Applies to:** `scripts/contexts/prepare_trust_boundary_context.py`, `schemas/trust-boundaries-repo.schema.yaml`
 **Source:** `docs/threat-modeler.md` → Trust-boundary declarations, decisions `TB-1`, `TB-8`
 **Guard:** `test_repository_declaration_is_additive_and_cannot_self_confirm`,
 `test_partial_leg_declaration_adds_a_condition_but_never_removes_a_leg`
@@ -106,7 +106,7 @@ Reworded entries keep their ID. Sentences below are the text to approve.
 > turned off. A case decides what is checked; it never decides how the run
 > behaves.
 
-**Applies to:** `scripts/resolve_abuse_cases.py`, `data/abuse-cases/**`, `schemas/abuse-cases.schema.yaml`
+**Applies to:** `scripts/model/resolve_abuse_cases.py`, `data/abuse-cases/**`, `schemas/abuse-cases.schema.yaml`
 **Source:** `docs/org-profiles.md` → Abuse cases, principle `P-4`
 **Guard:** `test_library_loads_mandatory_cases`, `test_repo_local_honours_disable`,
 `test_explicit_case_file_cannot_escape_repo`
@@ -119,7 +119,7 @@ Reworded entries keep their ID. Sentences below are the text to approve.
 > followed, and it neither suppresses a finding the repository supports nor
 > creates one on its own.
 
-**Applies to:** `scripts/load_business_context.py`, `scripts/build_threat_modeling_context.py`
+**Applies to:** `scripts/contexts/load_business_context.py`, `scripts/contexts/build_threat_modeling_context.py`
 **Source:** `docs/threat-modeler.md` → Business context, principle `P-4`, decision `RC-1`
 **Guard:** `test_external_context_is_policy_validated_and_fenced`,
 `test_run_only_business_context_replaces_the_repository_file`
@@ -132,7 +132,7 @@ Reworded entries keep their ID. Sentences below are the text to approve.
 > from a missing one.
 
 **Applies to:** `data/architecture-coverage-rules.yaml`, `data/architectural-controls.yaml`,
-`scripts/normalize_security_architecture.py`
+`scripts/model/normalize_security_architecture.py`
 **Source:** decisions `SA-1`, `SA-2`, `SA-3`, `FE-2`
 **Guard:** `test_cookie_no_signal_is_not_applicable`, `test_empty_repo_all_rules_not_applicable`,
 `test_normalizer_makes_all_three_gates_pass`
@@ -154,8 +154,8 @@ Reworded entries keep their ID. Sentences below are the text to approve.
 > its steps and how to verify it. A code example is anchored to a real source
 > location, never invented to look concrete.
 
-**Applies to:** `scripts/validate_mitigation_quality.py`, `scripts/emit_finding_fix_mitigations.py`,
-`scripts/hydrate_mitigation_details.py`
+**Applies to:** `scripts/validators/validate_mitigation_quality.py`, `scripts/model/emit_finding_fix_mitigations.py`,
+`scripts/model/hydrate_mitigation_details.py`
 **Source:** `docs/threat-modeler.md` → What you get, decision `RQ-5`
 **Guard:** `test_urgent_fix_requires_steps_and_verification`,
 `test_urgent_code_example_needs_a_source_location`,
@@ -169,7 +169,7 @@ Reworded entries keep their ID. Sentences below are the text to approve.
 > silently applied.
 
 **Applies to:** `skills/ask-threat-model/**`, `skills/review-threat-model/**`,
-`scripts/query_threat_model.py`
+`scripts/model/query_threat_model.py`
 **Source:** `docs/threat-modeler.md` → Threat model lifecycle
 **Guard:** `test_display_id_maps_t_to_f`, `test_reconcile_ranks_and_marks_untriaged`,
 `test_reconcile_merges_sidecar_decisions`, `test_reconcile_flags_stale_entries`
@@ -181,8 +181,8 @@ Reworded entries keep their ID. Sentences below are the text to approve.
 > against its schema. None of them suppresses a finding the repository's
 > evidence supports.
 
-**Applies to:** `scripts/resolve_actors.py`, `scripts/resolve_abuse_cases.py`,
-`scripts/build_threat_modeling_context.py`, `schemas/known-threats.schema.yaml`
+**Applies to:** `scripts/model/resolve_actors.py`, `scripts/model/resolve_abuse_cases.py`,
+`scripts/contexts/build_threat_modeling_context.py`, `schemas/known-threats.schema.yaml`
 **Source:** `docs/threat-modeler.md` → Repo-local context, decisions `RC-1`, `RC-3`
 **Guard:** `test_resolver_never_writes_actor_choices_back_to_repo`,
 `test_rejects_invalid_known_threats_before_context_publication`
@@ -196,7 +196,7 @@ Reworded entries keep their ID. Sentences below are the text to approve.
 > written holds. The requirements governing a file are put in front of whoever
 > edits it, at the moment of the edit.
 
-**Applies to:** `specs/requirements.md`, `scripts/check_specs.py`, `scripts/requirements_hook.py`
+**Applies to:** `specs/requirements.md`, `scripts/check_specs.py`, `scripts/requirements/requirements_hook.py`
 **Source:** `specs/README.md` → Who writes what, What is enforced
 **Guard:** `test_held_files_require_user_approval`, `test_governed_file_carries_its_requirements`,
 `test_project_settings_wire_every_write_surface_to_the_hook`
@@ -233,12 +233,12 @@ governed by nothing today:
 
 | Entry | Add to `Applies to` |
 |---|---|
-| `REQ-TRU-001` | `scripts/_path_guard.py`, `scripts/_url_guard.py` |
-| `REQ-TRU-002` | `scripts/redact_known_secrets.py` |
-| `REQ-RPT-001` | `scripts/emit_severity_rationale.py`, `scripts/_severity_rollup.py` |
-| `REQ-MOD-003` | `scripts/build_trust_boundary_assessment_input.py`, `scripts/_boundary_adjacency.py` |
-| `REQ-MOD-004` | `scripts/match_abuse_cases.py`, `scripts/verify_abuse_cases.py`, `scripts/abuse_case_gate.py` |
-| `REQ-INC-002` | `scripts/runtime_cleanup.py` |
+| `REQ-TRU-001` | `scripts/shared/_path_guard.py`, `scripts/shared/_url_guard.py` |
+| `REQ-TRU-002` | `scripts/validators/redact_known_secrets.py` |
+| `REQ-RPT-001` | `scripts/model/emit_severity_rationale.py`, `scripts/renderers/_severity_rollup.py` |
+| `REQ-MOD-003` | `scripts/contexts/build_trust_boundary_assessment_input.py`, `scripts/shared/_boundary_adjacency.py` |
+| `REQ-MOD-004` | `scripts/model/match_abuse_cases.py`, `scripts/validators/verify_abuse_cases.py`, `scripts/validators/abuse_case_gate.py` |
+| `REQ-INC-002` | `scripts/runtime/runtime_cleanup.py` |
 
 This is the part that makes the difference for future work: a requirement that
 governs no file is a sentence nobody meets while changing the pipeline.

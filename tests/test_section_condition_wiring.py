@@ -2,15 +2,15 @@
 
 The report's shape is declared in ``data/sections-contract.yaml``. Sections and
 sub-sections may carry a ``condition`` gate (e.g. ``{ id: requirements_compliance,
-condition: "check_requirements" }``). At render time ``compose_threat_model.py``
+condition: "check_requirements" }``). At render time ``renderers/compose_threat_model.py``
 evaluates each gate against its ``eval_context`` dict via the restricted grammar
-in ``scripts/_safe_cond.py``. That resolver does ``env.get(name)`` — so a condition
+in ``scripts/shared/_safe_cond.py``. That resolver does ``env.get(name)`` — so a condition
 referencing a variable the renderer never puts into ``eval_context`` silently
 resolves to ``False`` and the section disappears from every report, with no error.
 
 This is the recurring failure mode behind a string of "authored but never
 rendered" bugs (§Requirements Compliance, the MS AI/LLM Exposure callout, the
-Critical Attack Tree). ``check_fragment_registry.py`` guards the *structural*
+Critical Attack Tree). ``validators/check_fragment_registry.py`` guards the *structural*
 bijection (schema ↔ disk ↔ map ↔ contract) but does NOT evaluate conditions, so
 none of those bugs were caught by a test.
 
@@ -42,18 +42,18 @@ import yaml
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
 CONTRACT = REPO_ROOT / "data" / "sections-contract.yaml"
-COMPOSE = SCRIPTS / "compose_threat_model.py"
+COMPOSE = SCRIPTS / "renderers/compose_threat_model.py"
 
 
 def _import(name: str):
-    spec = importlib.util.spec_from_file_location(name, SCRIPTS / f"{name}.py")
+    spec = importlib.util.spec_from_file_location(name, SCRIPTS / (name.replace(".", "/") + ".py"))
     mod = importlib.util.module_from_spec(spec)
     sys.modules[name] = mod
     spec.loader.exec_module(mod)
     return mod
 
 
-_safe_cond = _import("_safe_cond")
+_safe_cond = _import("shared._safe_cond")
 
 
 # ---------------------------------------------------------------------------
@@ -160,5 +160,5 @@ def test_every_condition_variable_is_provided_by_eval_context() -> None:
     assert not missing, (
         "section condition references a variable the renderer never provides; "
         "the section will silently never render. Add the key to eval_context in "
-        "compose_threat_model.py (or fix the condition):\n" + "\n".join(missing)
+        "renderers/compose_threat_model.py (or fix the condition):\n" + "\n".join(missing)
     )

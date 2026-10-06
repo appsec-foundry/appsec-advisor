@@ -1,4 +1,4 @@
-"""Coverage band 3 tests for scripts/qa_checks.py (lines ~5416-7700).
+"""Coverage band 3 tests for scripts/validators/qa_checks.py (lines ~5416-7700).
 
 Targets the compactness / walkthrough / prose / IAM-bridge family of
 checks plus their small helper functions. Each test calls the function
@@ -13,15 +13,15 @@ import sys
 import textwrap
 from pathlib import Path
 
-SCRIPT_PATH = Path(__file__).parent.parent / "scripts" / "qa_checks.py"
+SCRIPT_PATH = Path(__file__).parent.parent / "scripts" / "validators/qa_checks.py"
 
 
 def _load():
-    if "qa_checks" in sys.modules:
-        return sys.modules["qa_checks"]
-    spec = importlib.util.spec_from_file_location("qa_checks", SCRIPT_PATH)
+    if "validators.qa_checks" in sys.modules:
+        return sys.modules["validators.qa_checks"]
+    spec = importlib.util.spec_from_file_location("validators.qa_checks", SCRIPT_PATH)
     m = importlib.util.module_from_spec(spec)
-    sys.modules["qa_checks"] = m
+    sys.modules["validators.qa_checks"] = m
     assert spec.loader is not None
     spec.loader.exec_module(m)
     return m

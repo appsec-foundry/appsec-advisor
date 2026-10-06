@@ -137,3 +137,6 @@ dist/
 npm-debug.log*
 # Recorded log samples under tests/fixtures/logs/ are fixtures, not run output.
 !tests/fixtures/logs/*.log
+
+# Windows download markers created when files cross the WSL boundary.
+*:Zone.Identifier

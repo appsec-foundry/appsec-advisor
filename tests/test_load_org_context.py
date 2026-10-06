@@ -1,4 +1,4 @@
-"""Tests for scripts/load_org_context.py."""
+"""Tests for scripts/contexts/load_org_context.py."""
 
 from __future__ import annotations
 
@@ -9,17 +9,17 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "load_org_context.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "contexts/load_org_context.py"
 FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "org-profiles" / "acme"
 FIXTURE_PATH = FIXTURE_DIR / "org-profile.yaml"
 
 
 def _load_module():
-    if "load_org_context" in sys.modules:
-        return sys.modules["load_org_context"]
-    spec = importlib.util.spec_from_file_location("load_org_context", SCRIPT_PATH)
+    if "contexts.load_org_context" in sys.modules:
+        return sys.modules["contexts.load_org_context"]
+    spec = importlib.util.spec_from_file_location("contexts.load_org_context", SCRIPT_PATH)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["load_org_context"] = mod
+    sys.modules["contexts.load_org_context"] = mod
     assert spec.loader is not None
     spec.loader.exec_module(mod)
     return mod

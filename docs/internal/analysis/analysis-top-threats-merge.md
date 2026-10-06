@@ -1,6 +1,6 @@
 # Analysis: merging "Top Findings" + "Architecture Assessment" → "Top Threats"
 
-Basis: last rendered output `<workspace>/juice-shop/docs/security/threat-model.md` (2026-05-29) and the two generators in `scripts/compose_threat_model.py`.
+Basis: last rendered output `<workspace>/juice-shop/docs/security/threat-model.md` (2026-05-29) and the two generators in `scripts/renderers/compose_threat_model.py`.
 
 ## Verdict
 
@@ -12,7 +12,7 @@ Basis: last rendered output `<workspace>/juice-shop/docs/security/threat-model.m
 |---|---|---|
 | Unit of a row | one finding (F-NNN) | one weakness *class* (groups N findings) |
 | Lens | severity-ranked list | design-control / threat-modeling |
-| Provenance | **100 % deterministic** — `triage.ranking.views.top_findings` (compose_threat_model.py:4857) | **LLM fragment** `weaknesses[]` (category/description), components+findings auto-derived (5033–5103) |
+| Provenance | **100 % deterministic** — `triage.ranking.views.top_findings` (renderers/compose_threat_model.py:4857) | **LLM fragment** `weaknesses[]` (category/description), components+findings auto-derived (5033–5103) |
 | Carries criticality? | ✅ per row (🔴/🟠) | ❌ one global verdict only |
 | Carries mitigations? | ✅ M-NNN + priority per row | ❌ none |
 | Carries explanation? | ❌ | ✅ "why systemic" prose |
@@ -73,7 +73,7 @@ They are near-isomorphic but split F-001/F-007/F-010 differently, so one must wi
 
 ## Effort / feasibility
 
-- Hybrid deterministic+LLM section is **precedented** — "Security Posture at a Glance" is already a "contract v2 hybrid renderer" (compose_threat_model.py:1888, 4480). Same pattern applies.
+- Hybrid deterministic+LLM section is **precedented** — "Security Posture at a Glance" is already a "contract v2 hybrid renderer" (renderers/compose_threat_model.py:1888, 4480). Same pattern applies.
 - Deterministic columns (criticality, mitigations, path) are pure functions already written — reusable.
 - The only genuinely new work: (1) pick the canonical taxonomy, (2) gap-fill the missing threat classes in the fragment schema/prompt, (3) per-threat criticality = max(member severities), (4) drop the now-redundant table.
 - Risk: the LLM-authored class list must be constrained so it can never drop a ≥High finding — add a deterministic post-check (every Critical/High F-NNN appears in exactly one Top-Threat row) to QA, mirroring existing coverage guarantees.
@@ -114,10 +114,10 @@ Do it, but scope it as a **3→1 collapse under the existing diagram**, not "mer
 # Worked example — the central "Security Posture & Top Threats" section (rendered)
 
 > **STATUS: IMPLEMENTED IN THE GENERATOR (2026-05).** This section is no longer a mock-up — it is produced by the live pipeline. The generator collapses *Security Posture at a Glance* + *Top Findings* + *Architecture Assessment* into one `### Security Posture & Top Threats` section: **Figure 1** (optional architecture diagram from `.fragments/top-threats-architecture.md`) → **Figure 2** (the forward-only risk-flow heatmap) → the **Top Threats table**. Source of truth:
-> - `scripts/compose_threat_model.py` — `_render_security_posture_at_a_glance` (composition + forward-only heatmap) and `_compute_top_threats_rows` (the table).
-> - `templates/fragments/top-threats.md.j2`, `data/attack-class-taxonomy.yaml` (`threat_label` / `stride`), `data/sections-contract.yaml`, `scripts/qa_checks.py`.
+> - `scripts/renderers/compose_threat_model.py` — `_render_security_posture_at_a_glance` (composition + forward-only heatmap) and `_compute_top_threats_rows` (the table).
+> - `templates/fragments/top-threats.md.j2`, `data/attack-class-taxonomy.yaml` (`threat_label` / `stride`), `data/sections-contract.yaml`, `scripts/validators/qa_checks.py`.
 >
-> The block below is the **verbatim rendered output** for the juice-shop fixture (re-render: `python3 scripts/compose_threat_model.py --output-dir <out>`). The taxonomy has **7 attack classes** (glyph ①–⑦, taxonomy order — agreeing with the heatmap arrows), not the 8 of the original sketch: the sketch's separate "File-Parser" class is folded into *Injection* (XXE) and *Sensitive File & Secret Exposure* (SSRF, ZIP-slip) by the canonical taxonomy.
+> The block below is the **verbatim rendered output** for the juice-shop fixture (re-render: `python3 scripts/renderers/compose_threat_model.py --output-dir <out>`). The taxonomy has **7 attack classes** (glyph ①–⑦, taxonomy order — agreeing with the heatmap arrows), not the 8 of the original sketch: the sketch's separate "File-Parser" class is folded into *Injection* (XXE) and *Sensitive File & Secret Exposure* (SSRF, ZIP-slip) by the canonical taxonomy.
 
 ---
 
@@ -237,7 +237,7 @@ flowchart LR
 
 Each row is one **threat** (an attack class), not one finding — ordered by the canonical taxonomy (glyph ①–⑦, agreeing with the heatmap). *Threat Description* states the general architectural weakness (STRIDE in brackets); *Findings* lists the concrete instances, each linked to §8 Threat Register with its component; *Risk & Impact* combines severity with business consequence; *Fix* links the primary mitigation(s).
 
-> The table below is the **actual rendered output** of the implemented `top_threats` section (compose_threat_model.py `_compute_top_threats_rows` + `templates/fragments/top-threats.md.j2`), re-rendered from the juice-shop artifacts. Links target anchors in the full `threat-model.md` (§8 rows `#f-nnn`, §2.3 components `#c-nn`, §9 mitigations `#m-nnn`, heatmap path bullets `#path-<class>`).
+> The table below is the **actual rendered output** of the implemented `top_threats` section (renderers/compose_threat_model.py `_compute_top_threats_rows` + `templates/fragments/top-threats.md.j2`), re-rendered from the juice-shop artifacts. Links target anchors in the full `threat-model.md` (§8 rows `#f-nnn`, §2.3 components `#c-nn`, §9 mitigations `#m-nnn`, heatmap path bullets `#path-<class>`).
 
 | # | Threat Description | Findings (→ Component) | Risk & Impact | Fix |
 |---|--------------------|------------------------|---------------|-----|

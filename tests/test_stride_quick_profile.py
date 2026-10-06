@@ -1,13 +1,13 @@
 """Drift-guard tests for the Quick-mode STRIDE depth profile.
 
 Pins the A-F depth-reduction values so future edits to
-``scripts/resolve_config.py → QUICK_STRIDE_PROFILE`` cannot silently
+``scripts/runtime/resolve_config.py → QUICK_STRIDE_PROFILE`` cannot silently
 drift away from the documented Quick-mode contract.
 
 Profile (A-F, applies only when reasoning_mode=sonnet-economy AND
 depth=quick):
   A. skip_verification_greps = True
-  B. max_threats_per_category = 1   (Critical-safe: Criticals never dropped)
+  B. max_threats_per_category = 1   (Critical/High-safe: never dropped)
   C. skip_code_examples = False     (R9 — flipped 2026-05, kept actionable)
   D. skip_evidence_excerpt = False  (P3 — kept, restores §8 evidence)
   E. skip_cvss_scoring = True
@@ -25,7 +25,7 @@ import pytest
 def _load_resolver():
     spec = importlib.util.spec_from_file_location(
         "_rc",
-        Path(__file__).parent.parent / "scripts" / "resolve_config.py",
+        Path(__file__).parent.parent / "scripts" / "runtime/resolve_config.py",
     )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

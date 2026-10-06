@@ -105,10 +105,6 @@
       "$comment": "Set on a LOCK_BLOCKED abort only. false means no operator can answer (headless run): stop on exit_code, do not ask, do not delete the lock.",
       "type": "boolean"
     },
-    "business_context_prompt_needed": {
-      "$comment": "Whether the runtime asks the business-context question at §2b. false covers all three reasons not to ask — headless, --skip-context, or a source already captured from --context — so the runtime never has to read the environment to find out.",
-      "type": "boolean"
-    },
     "config_path": {
       "type": "string",
       "minLength": 1,
@@ -233,6 +229,14 @@
     "renderer_profile": {
       "enum": ["ms-only", "parallel", "full"]
     },
+    "renderer_inputs": {
+      "$comment": "Run values every Stage-2 renderer prompt carries verbatim as KEY=value lines.",
+      "type": "object",
+      "required": ["ENRICH_ARCH_FRAGMENTS"],
+      "propertyNames": {"pattern": "^[A-Z][A-Z0-9_]{0,63}$"},
+      "additionalProperties": {"type": "string", "maxLength": 4096},
+      "maxProperties": 16
+    },
     "semantic_role": {
       "$ref": "#/$defs/semantic_role"
     },
@@ -247,6 +251,7 @@
         "context-v2-post-stride",
         "context-v2-post-merge",
         "context-v2-post-evidence",
+        "context-v2-post-architect-review",
         "context-v2-post-triage",
         "context-v2-finalize",
         "finalize-abuse"
@@ -390,6 +395,7 @@
       "enum": [
         "actor_discoverer",
         "abuse_case_verifier",
+        "architect_reviewer",
         "architecture_analyst",
         "config_scanner",
         "context_resolver",
@@ -444,6 +450,7 @@
           "enum": [
             "appsec-advisor:appsec-actor-discoverer",
             "appsec-advisor:appsec-abuse-case-verifier",
+            "appsec-advisor:appsec-architect-reviewer",
             "appsec-advisor:appsec-architecture-analyst",
             "appsec-advisor:appsec-config-scanner",
             "appsec-advisor:appsec-context-resolver",
@@ -482,10 +489,10 @@
         },
         "lens_ids": {
           "type": "array",
-          "maxItems": 5,
+          "maxItems": 7,
           "uniqueItems": true,
           "items": {
-            "enum": ["agentic", "llm", "mobile", "spa", "supply-chain"]
+            "enum": ["agentic", "llm", "mcp", "mobile", "rag", "spa", "supply-chain"]
           }
         },
         "evidence_bundle_sha256": {

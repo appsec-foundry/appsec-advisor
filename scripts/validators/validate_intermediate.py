@@ -1,0 +1,2173 @@
+#!/usr/bin/env python3
+"""
+validators/validate_intermediate.py — schema validator for appsec-advisor intermediate files.
+
+Structural validation is driven by the YAML JSONSchema contracts in
+`schemas/` (single source of truth). Custom invariants that JSONSchema
+Draft 2020-12 cannot express are enforced as Python post-checks:
+
+  - Sequential T-NNN ordering and uniqueness in `.threats-merged.json`
+  - Snippet redaction rule on `hardcoded_secrets[].snippet`
+  - Trimmed length >= 10 chars on stride `scenario`
+  - Boundary-reference uniqueness and evidence ownership
+
+`prune_optional_schema_violations` is the pre-gate counterpart to
+`validate_stride`: it removes OPTIONAL branches that fail the schema so a
+complete component is not lost to advisory metadata, while every core-evidence
+violation stays fatal. `scripts/orchestrator/stride_dispatch_waves.py` calls it immediately
+before its schema gate; see that function's docstring for the two invariants
+(drop-never-truncate, and schema-confirmed optionality).
+
+Can be used in two ways:
+
+  1. As a module:
+       from validators.validate_intermediate import validate_stride
+       ok, errors = validate_stride(data)
+
+  2. As a CLI tool (called from agent shell steps):
+       python3 validators/validate_intermediate.py stride   /path/to/.stride-auth.json
+
+Exit codes: 0 = valid, 1 = invalid, 2 = usage error.
+Stdout: "VALID: <summary>" or "INVALID: <error list>"
+"""
+
+from __future__ import annotations
+
+# Direct CLI execution must resolve the same packages as imports from scripts/.
+import sys as _sys
+from pathlib import Path as _Path
+
+if not __package__:
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
+
+
+import copy
+import json
+import os
+import re
+import sys
+from functools import cache, lru_cache
+from pathlib import Path
+from typing import Any
+
+import yaml
+from jsonschema import Draft202012Validator
+from referencing import Registry, Resource
+
+# RC.C — central source-enum module. Keep this validator's existing
+# permissive union semantics; the module just removes hard-coded drift.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from shared._boundary_adjacency import is_adjacent  # noqa: E402
+from shared._shared_sources import (  # noqa: E402
+    ARCH_ALL_SOURCES,
+    ARCH_COVERAGE_SOURCES,
+)
+
+from validators.validate_fragment import repository_evidence_errors  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# Schema loading
+# ---------------------------------------------------------------------------
+
+_SCHEMAS_DIR = Path(__file__).resolve().parents[2] / "schemas"
+
+_SCHEMA_FILES = {
+    "stride": "stride.schema.yaml",
+    "threats_merged": "threats-merged.schema.yaml",
+    "triage_flags": "triage-flags.schema.yaml",
+    "threat_model_output": "threat-model.output.schema.yaml",
+    "known_threats": "known-threats.schema.yaml",
+    "pentest_tasks": "pentest-tasks.schema.yaml",
+    "config_scan_findings": "config-scan-findings.schema.yaml",
+    "source_auth_findings": "source-auth-findings.schema.yaml",
+    "db_privilege_separation": "db-privilege-separation.schema.yaml",
+    "actors_discovered": "actors-discovered.schema.yaml",
+    "actors_merged_static": "actors-merged-static.schema.yaml",
+    "actors_resolved": "actors-resolved.schema.yaml",
+    "actors_repo": "actors-repo.schema.yaml",
+    "actor": "actors.schema.yaml",
+    "recon_signals": "recon-signals.schema.json",
+    "stride_analyst_context": "stride-analyst-context.schema.json",
+    "evidence_verification": "evidence-verification.schema.json",
+    "merge_decisions": "merge-decisions.schema.json",
+}
+
+
+@cache
+def _load_schema(kind: str) -> dict:
+    path = _SCHEMAS_DIR / _SCHEMA_FILES[kind]
+    with path.open() as f:
+        return yaml.safe_load(f)
+
+
+def _validator(kind: str) -> Draft202012Validator:
+    # Build a fresh validator per call so tests that patch the schema don't
+    # hit stale state; the schema dict itself is LRU-cached.
+    return Draft202012Validator(_load_schema(kind), registry=_schema_registry())
+
+
+@cache
+def _schema_registry() -> Registry:
+    """Registry for the actor schemas that reference one another by ``$id``."""
+    registry = Registry()
+    for filename in (
+        "actors.schema.yaml",
+        "actors-discovered.schema.yaml",
+        "actors-merged-static.schema.yaml",
+        "actors-resolved.schema.yaml",
+        "actors-repo.schema.yaml",
+    ):
+        contents = yaml.safe_load((_SCHEMAS_DIR / filename).read_text(encoding="utf-8"))
+        registry = registry.with_resource(contents["$id"], Resource.from_contents(contents))
+    return registry
+
+
+def _format_error_path(err) -> str:
+    parts: list[str] = []
+    for p in err.absolute_path:
+        if isinstance(p, int):
+            parts.append(f"[{p}]")
+        else:
+            parts.append(f".{p}" if parts else str(p))
+    return "".join(parts) or "root"
+
+
+def _schema_errors(kind: str, data: Any) -> list[str]:
+    errs = []
+    for e in _validator(kind).iter_errors(data):
+        errs.append(f"{_format_error_path(e)}: {e.message}")
+    return errs
+
+
+# ---------------------------------------------------------------------------
+# Post-check invariants (not expressible in Draft 2020-12)
+# ---------------------------------------------------------------------------
+
+_VALID_SEVERITY = {"Critical", "High", "Medium", "Low"}
+_T_ID_RE = re.compile(r"^T-(\d{3,})$")
+_TF_ID_RE = re.compile(r"^TF-(\d{3,})$")
+_PT_ID_RE = re.compile(r"^PT-(\d{3,})$")
+_CWE_RE = re.compile(r"^CWE-(\d+)$")
+
+# Sources for which a CVSS v4 vector is required rather than optional.
+# `dep-scan` was removed in 2026-05 — the in-tree SCA producer no longer
+# exists. `known-vuln` remains for externally ingested advisories.
+_CVSS_REQUIRED_SOURCES = {"known-vuln"}
+# Sources for which a CVSS v4 vector MUST NOT be attached — these describe
+# design/policy/coverage/architecture-coverage gaps that cannot be honestly
+# scored on the CVSS Base metrics.
+_CVSS_FORBIDDEN_SOURCES = {"requirements-compliance"} | ARCH_ALL_SOURCES
+# Sources whose individual effective_severity MUST NOT be Critical (arch.md
+# §Severity-Policy and critical-criteria.yaml CWE-942/-347/-307 caps).
+_SEVERITY_CRITICAL_FORBIDDEN_SOURCES = ARCH_COVERAGE_SOURCES
+# Sources whose threats MUST carry a rule_id (and MUST NOT carry a
+# synthetic requirement_id).
+_RULE_ID_SOURCES = ARCH_COVERAGE_SOURCES
+_RULE_ID_RE = re.compile(r"^ARCH-[A-Z]+-[0-9]{3}$")
+_HYP_ID_RE = re.compile(r"^ARCH-HYP-[A-Z]+-[0-9]{3}$")
+# CVSS severity band → risk-level mapping (used for cross-field coherence).
+_CVSS_BAND = {"None": 0, "Low": 1, "Medium": 2, "High": 3, "Critical": 4}
+_RISK_BAND = {"Low": 1, "Medium": 2, "High": 3, "Critical": 4}
+
+
+@lru_cache(maxsize=1)
+def _eligible_cwes() -> frozenset[str]:
+    """Load the CVSS eligibility positive list. Cached — the file is small
+    and loaded once per process."""
+    path = Path(__file__).resolve().parents[2] / "data" / "cvss-eligible-cwes.yaml"
+    try:
+        with path.open() as f:
+            doc = yaml.safe_load(f) or {}
+    except OSError:
+        return frozenset()
+    entries = doc.get("eligible_cwes") or []
+    return frozenset(e["cwe"] for e in entries if isinstance(e, dict) and "cwe" in e)
+
+
+def cvss_v4_permitted(threat: dict) -> bool:
+    """Whether a cvss_v4 *already present* on ``threat`` is permitted by the
+    eligibility rules — source-forbidden, or source=stride on an ineligible /
+    evidence-less CWE. Does NOT cover the known-vuln "required" case or the
+    severity-band coherence warning (those are not permit/strip decisions).
+
+    Single source of truth for the permit decision: _check_cvss_eligibility
+    (below) enforces it as an error, and merge_threats.strip_ineligible_cvss_v4
+    enforces it as a deterministic repair — so the check and the strip can never
+    diverge. test_cvss_eligibility pins that equivalence.
+    """
+    source = threat.get("source")
+    if source in _CVSS_FORBIDDEN_SOURCES:
+        return False
+    if source == "stride":
+        cwe = threat.get("cwe")
+        evidence = threat.get("evidence") or {}
+        line = evidence.get("line") if isinstance(evidence, dict) else None
+        if not (isinstance(cwe, str) and _CWE_RE.match(cwe)):
+            return False
+        if cwe not in _eligible_cwes():
+            return False
+        if line is None:
+            return False
+    return True
+
+
+def _check_cvss_eligibility(data: dict, skip_cvss_required: bool = False) -> list[str]:
+    """Enforce CVSS v4 eligibility rules on merged threats:
+
+      * source == known-vuln               → cvss_v4 required
+                                             (waived when skip_cvss_required=True,
+                                              i.e. stride_profile.skip_cvss_scoring=true)
+      * source == stride                   → allowed iff CWE in positive
+                                             list AND evidence.line set
+      * source in {requirements-compliance,
+                   architectural-anti-pattern,
+                   coverage-gap}           → forbidden
+
+    Also verifies that cvss.severity is within one band of the threat's
+    risk rating — a larger gap indicates inconsistent scoring.
+
+    Note: `dep-scan` source was removed in 2026-05. Supply-chain frame
+    is now meta-finding-shaped (not CVSS-eligible).
+    """
+    errors: list[str] = []
+    eligible = _eligible_cwes()
+    for i, t in enumerate(data.get("threats", []) or []):
+        if not isinstance(t, dict):
+            continue
+        source = t.get("source")
+        cvss = t.get("cvss_v4")
+        has_cvss = isinstance(cvss, dict)
+
+        if source in _CVSS_REQUIRED_SOURCES and not has_cvss:
+            if skip_cvss_required:
+                continue  # stride_profile.skip_cvss_scoring=true — not required
+            errors.append(f"threats[{i}].cvss_v4 is required for source='{source}'")
+            continue
+
+        if source in _CVSS_FORBIDDEN_SOURCES and has_cvss:
+            errors.append(
+                f"threats[{i}].cvss_v4 is not permitted for "
+                f"source='{source}' (design/policy gaps are not CVSS-scorable)"
+            )
+            continue
+
+        if source == "stride" and has_cvss:
+            cwe = t.get("cwe")
+            evidence = t.get("evidence") or {}
+            line = evidence.get("line") if isinstance(evidence, dict) else None
+            if not isinstance(cwe, str) or not _CWE_RE.match(cwe):
+                errors.append(f"threats[{i}].cvss_v4 requires a valid CWE reference")
+            elif cwe not in eligible:
+                errors.append(f"threats[{i}].cvss_v4 is not permitted for {cwe} (not in cvss-eligible-cwes.yaml)")
+            if line is None:
+                errors.append(f"threats[{i}].cvss_v4 requires evidence.line (concrete code location)")
+
+        if has_cvss:
+            sev = cvss.get("severity")
+            # CVSS describes the assessed weakness; policy caps only its risk.
+            risk = t.get("risk_before_policy") or t.get("risk")
+            if sev in _CVSS_BAND and risk in _RISK_BAND:
+                # Map CVSS "None" to risk band 1 (Low) for the gap check —
+                # None severity on a real threat row is itself suspicious
+                # but handled as a separate plausibility concern.
+                cvss_band = max(_CVSS_BAND[sev], 1)
+                if abs(cvss_band - _RISK_BAND[risk]) >= 2:
+                    errors.append(
+                        f"threats[{i}].cvss_v4.severity='{sev}' is more than one band away from risk='{risk}'"
+                    )
+    return errors
+
+
+def _check_snippet_redaction(data: dict) -> list[str]:
+    """Hardcoded secret snippets must be redacted with `****` and may expose
+    no more than 4 pre-redaction characters. Schema-level validation can't
+    express this rule."""
+    errors: list[str] = []
+    secrets = data.get("hardcoded_secrets") or []
+    if not isinstance(secrets, list):
+        return errors
+    for i, s in enumerate(secrets):
+        if not isinstance(s, dict):
+            continue
+        snippet = s.get("snippet", "")
+        if not isinstance(snippet, str) or not snippet:
+            continue
+        if "****" not in snippet:
+            errors.append(f"hardcoded_secrets[{i}].snippet is not redacted (must contain '****')")
+        elif len(snippet.replace("****", "")) > 4:
+            errors.append(f"hardcoded_secrets[{i}].snippet exposes more than 4 characters before '****'")
+    return errors
+
+
+def _check_scenario_stripped_length(data: dict) -> list[str]:
+    """Stride scenarios must have >= 10 non-whitespace characters. JSONSchema
+    minLength counts whitespace — this check enforces the stripped form."""
+    errors: list[str] = []
+    for i, t in enumerate(data.get("threats", []) or []):
+        if not isinstance(t, dict):
+            continue
+        scenario = t.get("scenario")
+        if isinstance(scenario, str) and len(scenario.strip()) < 10:
+            errors.append(f"threats[{i}].scenario must be at least 10 characters (got {len(scenario.strip())} chars)")
+    return errors
+
+
+def _check_stride_evidence_locations(data: dict, repo_root: Path | None = None) -> list[str]:
+    """Each finding's evidence must name an existing file and, if it gives a line, a code line in it.
+
+    The analyzer reads source through tools whose numbering it can misread
+    (``cat -n`` over several files keeps counting across them), so a cited line
+    can lie past the end of its file. Checked here, the error reaches the
+    analyzer as an OR-31 repair brief; unchecked, it surfaced only at the
+    post-merge evidence sample and aborted the whole run. ``line`` 0 or null
+    cites the file as a whole.
+    """
+    errors: list[str] = []
+    threats = data.get("threats")
+    if repo_root is None or not isinstance(threats, list):
+        return errors
+    for index, threat in enumerate(threats):
+        evidence = threat.get("evidence") if isinstance(threat, dict) else None
+        if not isinstance(evidence, dict) or not isinstance(evidence.get("file"), str):
+            continue
+        errors.extend(
+            repository_evidence_errors(
+                [{"file": evidence["file"], "line": evidence.get("line") or None}],
+                repo_root,
+                label=f"threats[{index}].evidence",
+                require_code=True,
+            )
+        )
+    return errors
+
+
+_INPUT_TO_SINK_CWES = frozenset({"CWE-78", "CWE-79", "CWE-89", "CWE-94", "CWE-95", "CWE-918", "CWE-1336"})
+
+
+def _check_stride_mechanism_traces(data: dict, repo_root: Path | None = None) -> list[str]:
+    """Require an independently inspectable entry and sink for proven flows."""
+    errors: list[str] = []
+    threats = data.get("threats")
+    if not isinstance(threats, list):
+        return errors
+    for index, threat in enumerate(threats):
+        if not isinstance(threat, dict) or threat.get("cwe") not in _INPUT_TO_SINK_CWES:
+            continue
+        if threat.get("evidence_tier") == "insecure-practice":
+            continue
+        trace = threat.get("mechanism_trace")
+        if not isinstance(trace, dict):
+            errors.append(f"threats[{index}].mechanism_trace is required for a confirmed input-to-sink finding")
+            continue
+        sink = trace.get("sink")
+        anchor = threat.get("evidence")
+        if (
+            isinstance(sink, dict)
+            and isinstance(anchor, dict)
+            and (sink.get("file") != anchor.get("file") or sink.get("line") != anchor.get("line"))
+        ):
+            errors.append(f"threats[{index}].mechanism_trace.sink must equal the finding evidence location")
+        elif not isinstance(anchor, dict):
+            errors.append(f"threats[{index}].evidence must cite the mechanism_trace.sink")
+        control = trace.get("control")
+        if isinstance(control, dict) and control.get("status") == "absent-at-sink" and control.get("location") != sink:
+            errors.append(f"threats[{index}].mechanism_trace.control.location must equal the sink for absent-at-sink")
+        if repo_root is not None:
+            locations = {"input": trace.get("input"), "sink": sink}
+            if isinstance(control, dict):
+                locations["control"] = control.get("location")
+            for role, location in locations.items():
+                if isinstance(location, dict):
+                    errors.extend(
+                        repository_evidence_errors(
+                            [location],
+                            repo_root,
+                            label=f"threats[{index}].mechanism_trace.{role}",
+                            require_line=True,
+                            require_code=True,
+                        )
+                    )
+    return errors
+
+
+_TH_ID_RE = re.compile(r"^TH-[0-9]{2}$")
+
+
+def _check_threat_category_id_set(data: dict) -> list[str]:
+    """RC.G.1 / RC.I — hard-gate ``threat_category_id`` presence.
+
+    The STRIDE-analyzer prompt declares ``threat_category_id`` REQUIRED for
+    every threat (Phase 3 / v2 schema). In the 2026-05 juice-shop run all
+    36 threats nonetheless shipped with ``threat_category_id: null`` — the
+    LLM silently ignored the requirement, the downstream merger's
+    ``same-TH-required`` dedup gate became a no-op, and §8 architectural
+    grouping collapsed.
+
+    This deterministic check catches that drift at build time:
+
+      * Every threat with ``source: stride`` MUST carry a non-empty
+        ``threat_category_id`` matching ``^TH-[0-9]{2}$``.
+      * Architecture-coverage / threat-hypothesis sources already enforce
+        the field via ``_check_architecture_coverage_invariants``; this
+        check defers to that callsite.
+      * Other sources (known-vuln, configuration-defect,
+        requirements-compliance) are exempt — they predate the v2 schema.
+
+    Set ``APPSEC_SKIP_TH_CHECK=1`` to downgrade to a warning while data
+    is being backfilled (transitional, not for production).
+    """
+    if os.environ.get("APPSEC_SKIP_TH_CHECK") == "1":
+        return []
+    errors: list[str] = []
+    for i, t in enumerate(data.get("threats", []) or []):
+        if not isinstance(t, dict):
+            continue
+        source = t.get("source")
+        # Only STRIDE-sourced threats hit this gate. Arch-coverage sources
+        # are covered by `_check_architecture_coverage_invariants` which
+        # cares about rule_id / hypothesis_id presence rather than TH-NN.
+        # The schema for those allows TH-NN; this check just avoids
+        # double-reporting on the same row.
+        if source != "stride":
+            continue
+        tcid = t.get("threat_category_id")
+        if not isinstance(tcid, str) or not _TH_ID_RE.match(tcid):
+            local = t.get("t_id") or t.get("local_id") or f"threats[{i}]"
+            errors.append(
+                f"{local}.threat_category_id is required for source='stride' "
+                f"and MUST match ^TH-[0-9]{{2}}$ (got {tcid!r}); the v2 schema "
+                f"is the cwe→TH→§8 grouping contract — without it the §8 "
+                f"register collapses and the merger's same-TH dedup gate "
+                f"becomes a no-op. See data/threat-category-taxonomy.yaml."
+            )
+    return errors
+
+
+def _check_threat_category_id_warning(data: dict) -> list[str]:
+    """Soft variant used by import sites that record advisories instead of
+    rejecting the input. Same contract as ``_check_threat_category_id_set``
+    but always returns the messages even when the env override is on, so
+    a CI lane can print them as warnings while production stays hard."""
+    errors: list[str] = []
+    for i, t in enumerate(data.get("threats", []) or []):
+        if not isinstance(t, dict):
+            continue
+        if t.get("source") != "stride":
+            continue
+        tcid = t.get("threat_category_id")
+        if not isinstance(tcid, str) or not _TH_ID_RE.match(tcid):
+            local = t.get("t_id") or t.get("local_id") or f"threats[{i}]"
+            errors.append(f"WARN: {local} missing threat_category_id")
+    return errors
+
+
+def _check_stride_remediation_nonempty(data: dict) -> list[str]:
+    """Every STRIDE threat must carry a non-null remediation with at least one
+    step. An empty/null remediation causes the Mitigation Register to render
+    with no Why/How/Steps/Code for that finding."""
+    errors: list[str] = []
+    for i, t in enumerate(data.get("threats", []) or []):
+        if not isinstance(t, dict):
+            continue
+        rem = t.get("remediation")
+        if rem is None:
+            errors.append(
+                f"threats[{i}].remediation is null — every threat MUST carry "
+                f"actionable remediation steps for the Mitigation Register."
+            )
+            continue
+        if isinstance(rem, dict):
+            steps = rem.get("steps")
+            if not steps or (isinstance(steps, list) and len(steps) == 0):
+                errors.append(
+                    f"threats[{i}].remediation.steps is empty — provide at least one concrete remediation step."
+                )
+    return errors
+
+
+def _check_title_not_blank(data: dict) -> list[str]:
+    """Merged threats must have a non-blank title. JSONSchema minLength counts
+    whitespace, so `"   "` would pass — this catches the stripped-empty case.
+    Also catches titles that were truncated with "..." — a Phase 11 LLM
+    compliance violation (finalization spec: "Copy verbatim — Do NOT truncate").
+    """
+    errors: list[str] = []
+    for i, t in enumerate(data.get("threats", []) or []):
+        if not isinstance(t, dict):
+            continue
+        title = t.get("title")
+        if isinstance(title, str) and not title.strip():
+            errors.append(f"threats[{i}].title must not be empty")
+        if isinstance(title, str) and title.rstrip().endswith("..."):
+            errors.append(
+                f"threats[{i}].title ends with '...' — title was truncated "
+                f"during Phase 11 YAML write. Copy the full title verbatim "
+                f"from .threats-merged.json (spec: 'Do NOT truncate')."
+            )
+    return errors
+
+
+def _check_t_id_sequence(data: dict) -> list[str]:
+    """`.threats-merged.json` uses global T-NNN IDs that must be unique and
+    form a contiguous sequence starting at T-001."""
+    errors: list[str] = []
+    seen: set[str] = set()
+    expected = 1
+    for i, t in enumerate(data.get("threats", []) or []):
+        if not isinstance(t, dict):
+            continue
+        t_id = t.get("t_id")
+        if not isinstance(t_id, str):
+            continue
+        m = _T_ID_RE.match(t_id)
+        if not m:
+            continue  # structural issue already reported by schema
+        if t_id in seen:
+            errors.append(f"threats[{i}].t_id '{t_id}' is duplicated")
+            continue
+        seen.add(t_id)
+        n = int(m.group(1))
+        if n != expected:
+            errors.append(f"threats[{i}].t_id '{t_id}' breaks sequential order (expected T-{expected:03d})")
+        expected = n + 1
+    return errors
+
+
+def _check_tf_id_sequence(data: dict) -> list[str]:
+    """`.triage-flags.json` uses TF-NNN IDs that must be unique and form a
+    contiguous sequence starting at TF-001."""
+    errors: list[str] = []
+    seen: set[str] = set()
+    expected = 1
+    for i, f in enumerate(data.get("flags", []) or []):
+        if not isinstance(f, dict):
+            continue
+        fid = f.get("flag_id")
+        if not isinstance(fid, str):
+            continue
+        m = _TF_ID_RE.match(fid)
+        if not m:
+            continue
+        if fid in seen:
+            errors.append(f"flags[{i}].flag_id '{fid}' is duplicated")
+            continue
+        seen.add(fid)
+        n = int(m.group(1))
+        if n != expected:
+            errors.append(f"flags[{i}].flag_id '{fid}' breaks sequential order (expected TF-{expected:03d})")
+        expected = n + 1
+    return errors
+
+
+def _check_triage_summary(data: dict) -> list[str]:
+    """Summary counters in `.triage-flags.json` must be consistent with the
+    flags array (total == len(flags); warnings + info == total)."""
+    errors: list[str] = []
+    flags = data.get("flags") or []
+    summary = data.get("summary") or {}
+    if not isinstance(flags, list) or not isinstance(summary, dict):
+        return errors
+    total = summary.get("total_flags")
+    warnings = summary.get("warnings")
+    info = summary.get("info")
+    if isinstance(total, int) and total != len(flags):
+        errors.append(f"summary.total_flags={total} does not match flags length ({len(flags)})")
+    if isinstance(total, int) and isinstance(warnings, int) and isinstance(info, int) and warnings + info != total:
+        errors.append(
+            f"summary.warnings ({warnings}) + summary.info ({info}) does not equal summary.total_flags ({total})"
+        )
+    actual_warnings = sum(1 for f in flags if isinstance(f, dict) and f.get("severity") == "warning")
+    actual_info = sum(1 for f in flags if isinstance(f, dict) and f.get("severity") == "info")
+    if isinstance(warnings, int) and warnings != actual_warnings:
+        errors.append(f"summary.warnings={warnings} does not match actual warning flag count ({actual_warnings})")
+    if isinstance(info, int) and info != actual_info:
+        errors.append(f"summary.info={info} does not match actual info flag count ({actual_info})")
+    return errors
+
+
+def _check_known_threats_unique_ids(data: dict) -> list[str]:
+    """`docs/known-threats.yaml` entries must have unique `id` values — they
+    are used downstream as `prior_finding_ref`."""
+    errors: list[str] = []
+    seen: set[str] = set()
+    for i, t in enumerate(data.get("threats", []) or []):
+        if not isinstance(t, dict):
+            continue
+        tid = t.get("id")
+        if not isinstance(tid, str):
+            continue
+        if tid in seen:
+            errors.append(f"threats[{i}].id '{tid}' is duplicated")
+        seen.add(tid)
+    return errors
+
+
+def _finding_evidence_locations(finding: dict) -> set[tuple[str, int | None]]:
+    locations: set[tuple[str, int | None]] = set()
+    evidence = finding.get("evidence")
+    rows = evidence if isinstance(evidence, list) else [evidence]
+    for item in [*rows, *(finding.get("instances") or [])]:
+        if isinstance(item, dict) and isinstance(item.get("file"), str):
+            locations.add((item["file"], item.get("line")))
+    return locations
+
+
+def _check_boundary_refs(data: dict) -> list[str]:
+    """Boundary references are local traceability, never independent evidence."""
+    errors: list[str] = []
+    for i, finding in enumerate(data.get("threats", []) or []):
+        if not isinstance(finding, dict):
+            continue
+        seen: set[tuple[str, str]] = set()
+        evidence = _finding_evidence_locations(finding)
+        for j, ref in enumerate(finding.get("boundary_refs") or []):
+            if not isinstance(ref, dict):
+                continue
+            key = (str(ref.get("boundary_id") or ""), str(ref.get("origin_component_id") or ""))
+            if key in seen:
+                errors.append(
+                    f"threats[{i}].boundary_refs[{j}] duplicates "
+                    f"(boundary_id={key[0]!r}, origin_component_id={key[1]!r})"
+                )
+            seen.add(key)
+            for k, location in enumerate(ref.get("evidence_locations") or []):
+                if not isinstance(location, dict):
+                    continue
+                candidate = (location.get("file"), location.get("line"))
+                if candidate not in evidence:
+                    errors.append(
+                        f"threats[{i}].boundary_refs[{j}].evidence_locations[{k}] "
+                        "must repeat a location owned by the finding"
+                    )
+    return errors
+
+
+def _check_final_boundary_links(data: dict) -> list[str]:
+    """Final references must target one resolved, confirmed adjacent boundary."""
+    errors: list[str] = []
+    by_id: dict[str, dict] = {}
+    for i, boundary in enumerate(data.get("trust_boundaries", []) or []):
+        if not isinstance(boundary, dict):
+            continue
+        boundary_id = boundary.get("id")
+        if boundary_id in by_id:
+            errors.append(f"trust_boundaries[{i}].id {boundary_id!r} is duplicated")
+        elif isinstance(boundary_id, str):
+            by_id[boundary_id] = boundary
+    for i, finding in enumerate(data.get("threats", []) or []):
+        if not isinstance(finding, dict):
+            continue
+        for j, ref in enumerate(finding.get("boundary_refs") or []):
+            if not isinstance(ref, dict):
+                continue
+            boundary = by_id.get(ref.get("boundary_id"))
+            prefix = f"threats[{i}].boundary_refs[{j}]"
+            if boundary is None:
+                errors.append(f"{prefix}.boundary_id targets no canonical trust boundary")
+                continue
+            if boundary.get("resolution_status") != "resolved" or boundary.get("confidence") != "confirmed":
+                errors.append(f"{prefix}.boundary_id must target a resolved, confirmed trust boundary")
+            if not is_adjacent(ref.get("origin_component_id"), boundary):
+                errors.append(f"{prefix}.origin_component_id is not adjacent to the referenced boundary")
+    return errors
+
+
+# ---------------------------------------------------------------------------
+# Public validators
+# ---------------------------------------------------------------------------
+
+
+def validate_stride(data: Any, repo_root: Path | None = None) -> tuple[bool, list[str]]:
+    """Validate a parsed .stride-*.json object."""
+    if not isinstance(data, dict):
+        return False, ["root must be a JSON object"]
+    errors = _schema_errors("stride", data)
+    if "parse_error" not in data:
+        errors.extend(_check_scenario_stripped_length(data))
+        errors.extend(_check_stride_remediation_nonempty(data))
+        errors.extend(_check_stride_evidence_locations(data, repo_root))
+        errors.extend(_check_stride_mechanism_traces(data, repo_root))
+        # RC.G.1 / RC.I — STRIDE-analyzer prompt mandates threat_category_id.
+        # Inject `source: stride` on each row before the check (per-component
+        # STRIDE files do not carry the field; the merge step adds it).
+        # Only run when threats[] is a list — non-list inputs already
+        # produced their own schema error above; we must NOT crash here.
+        raw_threats = data.get("threats")
+        if isinstance(raw_threats, list):
+            _data_with_source = dict(data)
+            _data_with_source["threats"] = [{**t, "source": "stride"} for t in raw_threats if isinstance(t, dict)]
+            errors.extend(_check_threat_category_id_set(_data_with_source))
+        errors.extend(_check_boundary_refs(data))
+    return len(errors) == 0, errors
+
+
+#: Root array whose elements ARE the findings. Its elements are never pruned:
+#: dropping one would silently delete a threat instead of failing loudly.
+_STRIDE_CORE_ARRAY = "threats"
+#: Bound on the prune fixpoint. Each round removes at most one branch, so this
+#: caps work on a payload whose optional metadata is broken in many places.
+_PRUNE_MAX_ROUNDS = 12
+
+
+def _error_signatures(errors) -> set[str]:
+    return {f"{list(e.absolute_path)}|{e.validator}|{e.message}" for e in errors}
+
+
+def _signatures_after_delete(errors, target: list) -> set[str]:
+    """The signatures ``errors`` would carry once ``target`` is deleted.
+
+    Deleting array element k renumbers every later sibling, so its unchanged
+    errors would otherwise read as new ones and veto the element in favour of
+    the whole branch. Errors inside the deleted element are dropped.
+    """
+    if not target or not isinstance(target[-1], int):
+        return _error_signatures(errors)
+    prefix, index = list(target[:-1]), target[-1]
+    depth = len(prefix)
+    signatures: set[str] = set()
+    for error in errors:
+        path = list(error.absolute_path)
+        if path[:depth] == prefix and len(path) > depth and isinstance(path[depth], int):
+            if path[depth] == index:
+                continue
+            if path[depth] > index:
+                path[depth] -= 1
+        signatures.add(f"{path}|{error.validator}|{error.message}")
+    return signatures
+
+
+def _format_target(target: list) -> str:
+    """Render a prune target the way _format_error_path renders an error path."""
+    parts: list[str] = []
+    for segment in target:
+        if isinstance(segment, int):
+            parts.append(f"[{segment}]")
+        else:
+            parts.append(f".{segment}" if parts else str(segment))
+    return "".join(parts)
+
+
+def _prune_targets(path: list) -> list[list]:
+    """Prune candidates for one error path, finest carrier first.
+
+    A path ending in an int deletes that array element; otherwise the whole
+    property is deleted. Innermost array elements come first so a single bad
+    entry does not cost its entire branch.
+    """
+    targets: list[list] = []
+    for i in range(len(path) - 1, -1, -1):
+        if isinstance(path[i], int):
+            targets.append(path[: i + 1])
+    if path and isinstance(path[0], str):
+        targets.append([path[0]])
+    seen: set[str] = set()
+    unique: list[list] = []
+    for target in targets:
+        key = repr(target)
+        if key not in seen:
+            seen.add(key)
+            unique.append(target)
+    return unique
+
+
+def _is_core_evidence(target: list) -> bool:
+    """True for `threats` itself and for a whole `threats[i]` element."""
+    if not target:
+        return True
+    if target[0] != _STRIDE_CORE_ARRAY:
+        return False
+    return len(target) <= 2
+
+
+def _delete_at(data: Any, target: list) -> bool:
+    node = data
+    for segment in target[:-1]:
+        try:
+            node = node[segment]
+        except (KeyError, IndexError, TypeError):
+            return False
+    last = target[-1]
+    try:
+        if isinstance(last, int):
+            if not isinstance(node, list) or last >= len(node):
+                return False
+            node.pop(last)
+        elif isinstance(node, dict) and last in node:
+            del node[last]
+        else:
+            return False
+    except (KeyError, IndexError, TypeError):
+        return False
+    return True
+
+
+def prune_optional_schema_violations(data: dict) -> list[str]:
+    """Drop optional branches that fail the STRIDE schema.
+
+    Returns the formatted paths that were removed, in the order removed; an
+    empty list means the payload was left untouched. The caller is expected to
+    surface a non-empty result: `discovery_escapes` in particular records where
+    the analyzer could NOT resolve evidence, so dropping it silently would make
+    a component look more certain than it is.
+
+    A STRIDE component that fails its schema is never promoted, so it stays
+    `incomplete`, burns its two-attempt budget and aborts the run (OR-14). That
+    is right for core evidence and wrong for advisory metadata: four times an
+    otherwise complete component was lost to one over-long or malformed
+    OPTIONAL field (2026-07-20 seed_only, 2026-07-31 skipped_categories and
+    empty attack_steps, 2026-08-02 a 272-char attack step, 2026-08-20 a 232-char
+    `resolved_prior_findings[].reason` against maxLength 200). Each was repaired
+    field by field afterwards, so the next unlisted field repeats the outage.
+
+    This is that repair as a rule instead of a list, and it binds every optional
+    branch — including ones no run has hit yet.
+
+    Two invariants make it safe:
+
+    * **Drop, never truncate.** Shortening looks tempting for prose but the same
+      `maxLength` guards `discovery_escapes[].search_paths` (500),
+      `boundary_refs[].evidence_locations[].file` (512) and
+      `origin_component_id` (128). A truncated path or ID VALIDATES and points
+      nowhere — silent corruption, strictly worse than the loud failure. Prose
+      fields that are worth preserving keep their dedicated trimmers in
+      model/merge_threats.py, which run before this net.
+    * **The schema decides what is optional, not a list here.** A candidate is
+      applied only when it strictly shrinks the error set without introducing a
+      new one. Pruning a required branch raises a fresh `required` error and is
+      rolled back, so core fields (`component_id`, `component_name`,
+      `analyzed_at`, `threats`, and each threat's `local_id`, `stride`,
+      `scenario`, `likelihood`, `impact`, `risk`) stay fatal by construction.
+      `threats[i]` elements are additionally never candidates — dropping one
+      would shrink the error set while deleting a finding. Deleting an array
+      element renumbers its later siblings; their errors are compared under
+      the new index, so one bad element never costs the whole branch.
+
+    Scope — sibling surfaces deliberately NOT routed through this, so the next
+    reader does not "finish the job" by reflex:
+
+    * The recon producer (`orchestration_controller._recon_producer_retry`)
+      already answers this failure class properly: it redispatches the producer
+      WITH the validator errors, so the analyzer can correct the exact field.
+      That is strictly better than dropping the branch. STRIDE now has the same
+      path for what this net must leave fatal: a retry after a gate rejection
+      carries the errors and the rejected threats in its context plan
+      (`stride_dispatch_waves.rejection_brief`). Pruning still runs first,
+      because an optional branch is not worth a retry at all.
+    * The other context-v2 boundary producers (`.stride-analyst-context.json`,
+      the post-STRIDE synthesis artifacts) do carry optional LLM-written text
+      under `maxLength` and would fail the same way, but each writes a single
+      artifact: there is no set of already-valid siblings to save, so the
+      trade-off that justifies pruning here does not transfer unexamined.
+      Extend this only against a real incident, not on suspicion.
+    """
+    if not isinstance(data, dict):
+        return []
+    validator = _validator("stride")
+    pruned: list[str] = []
+    for _ in range(_PRUNE_MAX_ROUNDS):
+        errors = list(validator.iter_errors(data))
+        if not errors:
+            break
+        before = _error_signatures(errors)
+        progressed = False
+        for error in errors:
+            for target in _prune_targets(list(error.absolute_path)):
+                if _is_core_evidence(target):
+                    continue
+                trial = copy.deepcopy(data)
+                if not _delete_at(trial, target):
+                    continue
+                after = _error_signatures(validator.iter_errors(trial))
+                if after <= _signatures_after_delete(errors, target) and len(after) < len(before):
+                    data.clear()
+                    data.update(trial)
+                    pruned.append(_format_target(target))
+                    progressed = True
+                    break
+            if progressed:
+                break
+        if not progressed:
+            break
+    return pruned
+
+
+def canonicalize_stride(data: dict) -> list[str]:
+    """Lossless null/enum-spelling repairs; runs before the lossy prune net."""
+    from model.schema_canonicalize import canonicalize_lossless
+
+    return [str(change) for change in canonicalize_lossless(data, _validator("stride"))]
+
+
+LENS_CHECKLISTS = {
+    "llm": tuple(f"LLM{n:02d}" for n in range(1, 11)),
+    "agentic": tuple(f"ASI{n:02d}" for n in range(1, 11)),
+}
+_LENS_ID_FIELD = {"LLM": "owasp_llm_ids", "ASI": "owasp_asi_ids"}
+
+
+def lens_coverage_errors(data: dict, lens_ids: list[str], repo_root: Path | None = None) -> list[str]:
+    """Every checklist item of a selected lens needs one consistent disposition."""
+    items = [item for lens in lens_ids for item in LENS_CHECKLISTS.get(lens, ())]
+    if not items or not isinstance(data, dict):
+        return []
+    threats = [t for t in data.get("threats") or [] if isinstance(t, dict)]
+    tagged: dict[str, set[str]] = {}
+    errors: list[str] = []
+    for index, threat in enumerate(threats):
+        ids = [*(threat.get("owasp_llm_ids") or []), *(threat.get("owasp_asi_ids") or [])]
+        for item in ids:
+            tagged.setdefault(item, set()).add(str(threat.get("local_id")))
+        evidence = threat.get("evidence")
+        if ids and not (isinstance(evidence, dict) and evidence.get("file")):
+            errors.append(f"threats[{index}] carries {', '.join(ids)} without a code evidence location")
+    entries: dict[str, dict] = {}
+    for entry in data.get("lens_coverage") or []:
+        if not isinstance(entry, dict) or entry.get("item") not in items:
+            continue
+        if entry["item"] in entries:
+            errors.append(f"lens_coverage lists {entry['item']} more than once")
+        entries[entry["item"]] = entry
+    missing = [item for item in items if item not in entries]
+    if missing:
+        errors.append(f"lens_coverage has no disposition for {', '.join(missing)}")
+    known = {str(t.get("local_id")) for t in threats}
+    for item, entry in entries.items():
+        disposition = entry.get("disposition")
+        local_ids = set(entry.get("local_ids") or [])
+        field = _LENS_ID_FIELD[item[:3]]
+        if disposition == "finding":
+            if not local_ids:
+                errors.append(f"lens_coverage {item} is a finding without local_ids")
+            for local_id in sorted(local_ids - known):
+                errors.append(f"lens_coverage {item} names unknown threat {local_id}")
+            for local_id in sorted((local_ids & known) - tagged.get(item, set())):
+                errors.append(f"lens_coverage {item} names {local_id}, which lacks {item} in {field}")
+        elif item in tagged:
+            errors.append(f"lens_coverage {item} is {disposition} but {', '.join(sorted(tagged[item]))} carries {item}")
+        if disposition == "controlled":
+            if not isinstance(entry.get("evidence"), dict):
+                errors.append(f"lens_coverage {item} is controlled without the control's evidence location")
+            elif repo_root is not None:
+                errors.extend(
+                    repository_evidence_errors(
+                        [entry["evidence"]],
+                        repo_root,
+                        label=f"lens_coverage {item}.evidence",
+                        require_line=True,
+                        require_code=True,
+                    )
+                )
+        if disposition in {"controlled", "not-applicable", "no-evidence"} and not entry.get("reason"):
+            errors.append(f"lens_coverage {item} is {disposition} without a reason")
+    return errors
+
+
+def _check_architecture_coverage_invariants(data: dict) -> list[str]:
+    """Enforce arch.md §Pipeline-Integration invariants for the new
+    architecture-coverage / threat-hypothesis sources:
+
+      * rule_id MUST be present and match ARCH-<TOKEN>-NNN
+      * requirement_id MUST NOT be present (use rule_id, not a synthetic id)
+      * hypothesis_id is only allowed for source=threat-hypothesis
+      * effective_severity (or risk) MUST NOT be Critical individually
+      * threat_id format remains T-NNN — rule_id is a separate trace field
+    """
+    errors: list[str] = []
+    for i, t in enumerate(data.get("threats", []) or []):
+        if not isinstance(t, dict):
+            continue
+        source = t.get("source")
+        if source not in _RULE_ID_SOURCES:
+            if t.get("rule_id"):
+                errors.append(f"threats[{i}].rule_id is only permitted for source in {sorted(_RULE_ID_SOURCES)}")
+            if t.get("hypothesis_id"):
+                errors.append(f"threats[{i}].hypothesis_id is only permitted for source=threat-hypothesis")
+            continue
+        rule_id = t.get("rule_id")
+        if not isinstance(rule_id, str) or not _RULE_ID_RE.match(rule_id):
+            errors.append(
+                f"threats[{i}].rule_id is required for source='{source}' and MUST match ^ARCH-[A-Z]+-[0-9]{{3}}$"
+            )
+        if t.get("requirement_id"):
+            errors.append(
+                f"threats[{i}].requirement_id MUST NOT be set for source='{source}' "
+                f"(use rule_id; see arch.md §Pipeline-Integration Punkt 5)"
+            )
+        if source == "threat-hypothesis":
+            hyp = t.get("hypothesis_id")
+            if not isinstance(hyp, str) or not _HYP_ID_RE.match(hyp):
+                errors.append(
+                    f"threats[{i}].hypothesis_id is required for source='threat-hypothesis' "
+                    f"and MUST match ^ARCH-HYP-[A-Z]+-[0-9]{{3}}$"
+                )
+        if source in _SEVERITY_CRITICAL_FORBIDDEN_SOURCES:
+            for fld in ("risk", "effective_severity"):
+                val = t.get(fld)
+                if val == "Critical":
+                    errors.append(
+                        f"threats[{i}].{fld} MUST NOT be Critical for source='{source}' "
+                        f"(arch.md §Severity-Policy; promotion path goes through compound chains)"
+                    )
+    return errors
+
+
+def _check_threat_hypotheses_invariants(data: dict) -> list[str]:
+    """Hypotheses live in threat_hypotheses[] (Phase 11 export), NOT in
+    threats[] until promoted. Enforce:
+
+      * id matches HYP-NNN
+      * proof_state in {control-derived, evidence-backed, confirmed}
+      * promoted_threat_id is only set when proof_state=confirmed
+      * id MUST NOT collide with any threats[].threat_id
+    """
+    errors: list[str] = []
+    hyps = data.get("threat_hypotheses")
+    if not isinstance(hyps, list):
+        return errors
+    hyp_id_re = re.compile(r"^HYP-\d{3,}$")
+    t_ids = {t.get("threat_id") for t in (data.get("threats") or []) if isinstance(t, dict)}
+    seen: set[str] = set()
+    for i, h in enumerate(hyps):
+        if not isinstance(h, dict):
+            errors.append(f"threat_hypotheses[{i}] must be an object")
+            continue
+        hid = h.get("id")
+        if not isinstance(hid, str) or not hyp_id_re.match(hid):
+            errors.append(f"threat_hypotheses[{i}].id MUST match ^HYP-\\d{{3,}}$")
+        elif hid in seen:
+            errors.append(f"threat_hypotheses[{i}].id={hid!r} is duplicated")
+        else:
+            seen.add(hid)
+        if hid in t_ids:
+            errors.append(f"threat_hypotheses[{i}].id={hid!r} collides with a threats[].threat_id")
+        if h.get("promoted_threat_id") and h.get("proof_state") != "confirmed":
+            errors.append(
+                f"threat_hypotheses[{i}].promoted_threat_id is set but proof_state != 'confirmed' "
+                f"(promotion requires confirmed evidence per arch.md)"
+            )
+    return errors
+
+
+def _read_stride_profile(output_dir: Path | None) -> dict:
+    """Return the resolved stride_profile as a dict, or {}.
+
+    The authoritative source is ``.skill-config.json`` (written by
+    ``resolve_config.resolve_stride_profile`` — always the full
+    ``QUICK_STRIDE_PROFILE``-shaped dict with ``skip_cvss_scoring``). The
+    ``.stride-dispatch-manifest.json`` is a fallback, but its ``stride_profile``
+    is analyst-authored (``_stride_profile`` in ``.stride-analyst-context.json``)
+    and may be a bare label *string* like ``"quick (depth-reduced via
+    sonnet-economy)"`` rather than the dict — normalize so callers can read
+    flags like ``skip_cvss_scoring`` without crashing on ``str.get``.
+    """
+    if output_dir is None:
+        return {}
+    for fname in (".skill-config.json", ".stride-dispatch-manifest.json"):
+        try:
+            doc = json.loads((output_dir / fname).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(doc, dict):
+            continue
+        profile = doc.get("stride_profile")
+        if isinstance(profile, dict):
+            return profile
+        # A bare label string only ever names the depth-reduced quick profile,
+        # which skips CVSS scoring (QUICK_STRIDE_PROFILE flag E). "full" and
+        # the empty/absent case carry no waivers.
+        if isinstance(profile, str) and profile and profile != "full":
+            return {"stride_profile_label": profile, "skip_cvss_scoring": True}
+    return {}
+
+
+def _check_weakness_register(data: dict) -> list[str]:
+    """P1 (weakness-class evidence model) invariants on `weaknesses[]`:
+
+    * I2 — every weakness MUST carry an observable backing: at least one of
+      `observable_backing.absent_control_signal[]` / `practice_evidence[]` is
+      non-empty (schema requires the object; this enforces non-emptiness, the
+      proposal §0 emission rule — no speculation reaches the user).
+    * W-NNN ids are unique within the register.
+    """
+    errors: list[str] = []
+    weaknesses = data.get("weaknesses")
+    if not isinstance(weaknesses, list):
+        return errors
+    seen_ids: set[str] = set()
+    for i, w in enumerate(weaknesses):
+        if not isinstance(w, dict):
+            continue
+        wid = w.get("id") or f"index {i}"
+        if wid in seen_ids:
+            errors.append(f"weaknesses: duplicated weakness id {wid}")
+        seen_ids.add(wid)
+        backing = w.get("observable_backing") or {}
+        has_backing = bool(backing.get("absent_control_signal")) or bool(backing.get("practice_evidence"))
+        if not has_backing:
+            errors.append(
+                f"weaknesses: {wid} has empty observable_backing — a weakness "
+                "MUST carry an absent-control signal or practice evidence (I2 / "
+                "proposal §0); speculation is dropped, never emitted."
+            )
+    return errors
+
+
+def validate_threats_merged(data: Any, output_dir: Path | None = None) -> tuple[bool, list[str]]:
+    """Validate a parsed .threats-merged.json object.
+
+    The file is the canonical merged threat list produced by Phase 9 after
+    global T-NNN assignment. Downstream tools (diagram annotator, YAML/SARIF
+    export, changelog writer) consume it as structured input, so schema drift
+    breaks them silently — this validator is the contract check.
+
+    output_dir: when provided, the stride_profile is read from the manifest
+    to waive CVSS requirements that the profile explicitly opted out of.
+    """
+    if not isinstance(data, dict):
+        return False, ["root must be a JSON object"]
+    stride_profile = _read_stride_profile(output_dir)
+    skip_cvss_required = bool(stride_profile.get("skip_cvss_scoring"))
+    errors = _schema_errors("threats_merged", data)
+    errors.extend(_check_title_not_blank(data))
+    errors.extend(_check_t_id_sequence(data))
+    errors.extend(_check_cvss_eligibility(data, skip_cvss_required=skip_cvss_required))
+    from shared._severity_policy import policy_errors
+
+    # Historical merged artifacts predate policy normalization. They remain
+    # readable; the YAML producer normalizes them before the final strict gate.
+    if data.get("severity_policy_version") == 1:
+        errors.extend(policy_errors(data.get("threats") or []))
+    errors.extend(_check_architecture_coverage_invariants(data))
+    # RC.G.1 / RC.I — TH gate on merged output.
+    errors.extend(_check_threat_category_id_set(data))
+    errors.extend(_check_boundary_refs(data))
+    # P1 — weakness-class register emission invariant (I2 + W-NNN uniqueness).
+    errors.extend(_check_weakness_register(data))
+    return len(errors) == 0, errors
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
+
+
+def validate_triage_flags(data: Any) -> tuple[bool, list[str]]:
+    """Validate a parsed `.triage-flags.json` object produced by Phase 10b."""
+    if not isinstance(data, dict):
+        return False, ["root must be a JSON object"]
+    errors = _schema_errors("triage_flags", data)
+    errors.extend(_check_tf_id_sequence(data))
+    errors.extend(_check_triage_summary(data))
+    # M3.3: when analysis_version >= 2 the file must carry the v2 ranking
+    # block. A v1 file means Phase 10b Step 6 silently skipped — surface
+    # as SCHEMA_DRIFT (non-fatal at validation time; downstream renderers
+    # already degrade gracefully when ranking is absent).
+    version = data.get("version")
+    if isinstance(version, int) and version < 2 and "ranking" not in data:
+        errors.append(
+            "SCHEMA_DRIFT: .triage-flags.json is version 1 with no ranking block. "
+            "Phase 10b Step 6 (effective_severity, breach_distance, ranking) was "
+            "skipped or crashed — re-run with APPSEC_TRIAGE_DETERMINISTIC=1 to "
+            "enable the deterministic Python implementation."
+        )
+    return len(errors) == 0, errors
+
+
+def _check_security_controls_shape(data: dict) -> list[str]:
+    """``security_controls`` is documented as ``array<object>`` per
+    schemas/threat-model.output.schema.yaml, but Phase 8 occasionally
+    emits a degenerate list-of-strings. The renderers now normalize
+    via ``_normalize_security_controls`` so the run does not crash, but
+    we still surface the drift here as a hard validation error so it
+    propagates to ``.run-issues.json`` and the SCHEMA_DRIFT signal in
+    the Run Statistics appendix.
+    """
+    errors: list[str] = []
+    items = data.get("security_controls")
+    if not isinstance(items, list):
+        return errors
+    str_count = sum(1 for c in items if isinstance(c, str))
+    if str_count and isinstance(data.get("meta"), dict):
+        # Don't fail-hard on legacy/v1 baselines; only flag for v2+.
+        analysis_v = (data.get("meta") or {}).get("analysis_version", 1)
+        try:
+            analysis_v = int(analysis_v)
+        except (TypeError, ValueError):
+            analysis_v = 1
+        if analysis_v >= 2:
+            errors.append(
+                f"SCHEMA_DRIFT: security_controls contains {str_count} bare-string "
+                f"entries (expected dict). Renderers will coerce, but Phase 8 "
+                f"is emitting a degenerate shape — review agent prompt."
+            )
+    return errors
+
+
+def _check_attack_surface_shape(data: dict) -> list[str]:
+    """``attack_surface`` schema (M3.3): each entry must carry ``path``
+    (or legacy ``route``), ``method``, and ideally ``threats[]`` so
+    renderers/pregenerate_fragments.py can render meaningful tables. A degenerate
+    entry shape was the proximate cause of the 2026-04-26 §5 "?" rendering
+    bug. Surface as SCHEMA_DRIFT so the user sees it without crashing.
+
+    Also checks for missing ``auth_required`` fields — without this boolean
+    the §5 generator cannot split unauthenticated vs authenticated entry
+    points and §5.2 renders "(0)".
+    """
+    errors: list[str] = []
+    surface = data.get("attack_surface")
+    if isinstance(surface, dict):
+        entries = []
+        for bucket in ("unauthenticated", "authenticated"):
+            entries.extend(surface.get(bucket) or [])
+    elif isinstance(surface, list):
+        entries = surface
+    else:
+        return errors
+
+    bad_path = 0
+    missing_auth = 0
+    for entry in entries:
+        if not isinstance(entry, dict):
+            bad_path += 1
+            continue
+        if not (entry.get("path") or entry.get("route") or entry.get("entry_point")):
+            bad_path += 1
+        if entry.get("auth_required") is None and not entry.get("authenticated"):
+            missing_auth += 1
+
+    if bad_path:
+        errors.append(
+            f"SCHEMA_DRIFT: attack_surface has {bad_path} entries missing required "
+            f"`entry_point`/`path` field. §5 will render with `?` placeholders."
+        )
+    if missing_auth:
+        errors.append(
+            f"[advisory] attack_surface has {missing_auth} entries where `auth_required` "
+            f"is null. The §5 generator cannot split unauthenticated vs authenticated "
+            f"entry points — §5.2 will render '(0)'. Set `auth_required: true/false` "
+            f"on every attack_surface entry."
+        )
+    return errors
+
+
+def _check_triage_flags_version(data: dict) -> list[str]:
+    """``.triage-flags.json`` should be ``version: 2`` for analysis_version >= 2.
+    A v1 file (no ``ranking`` block) means Phase 10b Step 6 either was
+    skipped or crashed — surface so the user sees Phase 10b output is
+    incomplete. Used by triage-flags JSON schema check.
+    """
+    # This validator runs on threat-model.yaml; triage-flags.json is checked
+    # via validate_triage_flags() at line 424. Cross-link for visibility.
+    return []
+
+
+def _check_requirements_compliance_invariants(data: dict) -> list[str]:
+    """Reconcile §7b counters and rows beyond what JSON Schema can express."""
+    compliance = data.get("requirements_compliance")
+    if not isinstance(compliance, dict):
+        return []
+    total = compliance.get("total")
+    rows = compliance.get("requirements")
+    bucket_names = ("pass", "fail", "partial", "unverifiable", "not_applicable")
+    if not isinstance(total, int) or not isinstance(rows, list):
+        return []  # Shape errors are reported by the schema validator.
+    errors: list[str] = []
+    bucket_values = [compliance.get(name) for name in bucket_names]
+    if all(isinstance(value, int) for value in bucket_values) and sum(bucket_values) != total:
+        errors.append("requirements_compliance: status buckets must sum to total")
+    if len(rows) != total:
+        errors.append("requirements_compliance: requirements row count must equal total")
+    ids = [row.get("id") for row in rows if isinstance(row, dict)]
+    if len(ids) != len(set(ids)):
+        errors.append("requirements_compliance: requirement IDs must be unique")
+    return errors
+
+
+def _finding_id(raw_id: Any) -> str:
+    """Return the report-facing finding id for a canonical threat id."""
+    if not isinstance(raw_id, str):
+        return ""
+    value = raw_id.strip().upper()
+    if value.startswith("T-"):
+        return "F-" + value[2:]
+    return value
+
+
+def _check_export_trace_invariants(data: dict) -> list[str]:
+    """Validate cross-field references and trace summaries in the final export."""
+    from validators.validate_fragment import architecture_reference_errors
+
+    errors: list[str] = architecture_reference_errors(data)
+    threats = [row for row in (data.get("threats") or []) if isinstance(row, dict)]
+    mitigations = [row for row in (data.get("mitigations") or []) if isinstance(row, dict)]
+    components = [row for row in (data.get("components") or []) if isinstance(row, dict)]
+    finding_ids = {_finding_id(row.get("id") or row.get("t_id")) for row in threats}
+    finding_ids.discard("")
+    mitigation_ids = {str(row.get("id") or row.get("m_id") or "").strip().upper() for row in mitigations}
+    mitigation_ids.discard("")
+    component_ids = {str(row.get("id") or "").strip() for row in components}
+    component_ids.discard("")
+
+    compliance = data.get("requirements_compliance")
+    provenance = data.get("requirements_provenance")
+    requirement_ids: set[str] = set()
+    if isinstance(compliance, dict):
+        requirement_rows = [row for row in (compliance.get("requirements") or []) if isinstance(row, dict)]
+        requirement_ids = {str(row.get("id") or "").strip() for row in requirement_rows}
+        requirement_ids.discard("")
+        if not isinstance(provenance, dict):
+            errors.append("requirements_provenance: required when requirements_compliance is present")
+        elif provenance.get("count") != compliance.get("total"):
+            errors.append("requirements_provenance.count must equal requirements_compliance.total")
+        for row in requirement_rows:
+            req_id = str(row.get("id") or "").strip() or "(unknown)"
+            for fid in row.get("finding_ids") or []:
+                if isinstance(fid, str) and fid not in finding_ids:
+                    errors.append(f"requirements_compliance {req_id}: finding_id {fid!r} does not resolve")
+    elif isinstance(provenance, dict):
+        errors.append("requirements_provenance: requirements_compliance is missing")
+
+    # Only an actually populated compliance section can resolve a requirement
+    # reference. It is derived from the Stage-2 `.fragments/requirements-compliance.md`
+    # table, so `build_threat_model_yaml.build_requirements_compliance` returns
+    # None by design at Stage-1 finalize and omits the key — leaving this set
+    # empty. Checking references against an empty set then rejected all 116 of
+    # them on a run whose 30 distinct IDs were every one of them declared in
+    # `.requirements.yaml` (juice-shop 2026-08-30), and the abort was read as
+    # analyzers inventing IDs. Absent authority is "unknown", never "invalid";
+    # the catalog stays enforced in the producer, by
+    # `_filter_violated_requirements` on the threat side and by
+    # `annotate_requirements_and_blueprints` on the mitigation side, and
+    # post-Stage-2 the strict emitter requires the section to cover the whole
+    # catalog.
+    if requirement_ids:
+        for threat in threats:
+            fid = _finding_id(threat.get("id") or threat.get("t_id")) or "(unknown)"
+            for req_id in threat.get("violated_requirements") or []:
+                if isinstance(req_id, str) and req_id not in requirement_ids:
+                    errors.append(f"threat {fid}: violated requirement {req_id!r} does not resolve")
+        for mitigation in mitigations:
+            mid = str(mitigation.get("id") or mitigation.get("m_id") or "").strip() or "(unknown)"
+            for req_id in mitigation.get("fulfills_requirements") or []:
+                if isinstance(req_id, str) and req_id not in requirement_ids:
+                    errors.append(f"mitigation {mid}: fulfilled requirement {req_id!r} does not resolve")
+
+    business = data.get("business_context_trace")
+    if isinstance(business, dict):
+        status = business.get("status")
+        coverage = [row for row in (business.get("component_coverage") or []) if isinstance(row, dict)]
+        covered_fields = {field for row in coverage for field in (row.get("fields") or []) if isinstance(field, str)}
+        fields_present = {field for field in (business.get("fields_present") or []) if isinstance(field, str)}
+        if fields_present != covered_fields:
+            errors.append("business_context_trace.fields_present must equal component_coverage field union")
+        for row in coverage:
+            component_id = str(row.get("component_id") or "").strip()
+            if component_id not in component_ids:
+                errors.append(f"business_context_trace: component_id {component_id!r} does not resolve")
+        asset_names = {row.get("name") for row in data.get("assets", []) if isinstance(row, dict)}
+        for answer in business.get("answered_questions", []):
+            cid = answer.get("component_id")
+            if status != "applied" or not any(
+                row.get("component_id") == cid and answer.get("context_field") in row.get("fields", [])
+                for row in coverage
+            ):
+                errors.append("business_context_trace: answered question requires applied component coverage")
+            if answer.get("topic") == "asset-criticality" and answer.get("asset_name") not in asset_names:
+                errors.append("business_context_trace: answered question asset does not resolve")
+        no_harm = {row.get("component_id") for row in coverage if row.get("impact_is_material") is False}
+        applied_count = sum(
+            bool(row.get("business_context_basis")) or (row.get("component") or row.get("component_id")) in no_harm
+            for row in threats
+        )
+        if business.get("applied_finding_count") != applied_count:
+            errors.append("business_context_trace.applied_finding_count does not match threats with declared context")
+        if status == "applied":
+            if not business.get("source") or not business.get("sha256"):
+                errors.append("business_context_trace: applied status requires source and sha256")
+        elif (
+            coverage
+            or business.get("fields_present")
+            or business.get("applied_finding_count")
+            or business.get("confirmed_use_case")
+        ):
+            errors.append("business_context_trace: non-applied status must not claim coverage or findings")
+
+    analysis = data.get("abuse_case_analysis")
+    if isinstance(analysis, dict):
+        cases = [row for row in (analysis.get("cases") or []) if isinstance(row, dict)]
+        if analysis.get("status") != "completed" and cases:
+            errors.append("abuse_case_analysis: non-completed status must not contain cases")
+        for case in cases:
+            case_id = str(case.get("id") or "").strip() or "(unknown)"
+            steps = [row for row in (case.get("steps") or []) if isinstance(row, dict)]
+            step_numbers = [row.get("step") for row in steps]
+            if step_numbers != list(range(1, len(steps) + 1)):
+                errors.append(f"abuse_case_analysis {case_id}: step numbers must be contiguous from 1")
+            step_findings = {row.get("finding_id") for row in steps if isinstance(row.get("finding_id"), str)}
+            matched_findings = {fid for fid in (case.get("matched_finding_ids") or []) if isinstance(fid, str)}
+            if step_findings != matched_findings:
+                errors.append(f"abuse_case_analysis {case_id}: matched finding ids must equal step finding ids")
+            for fid in matched_findings:
+                if fid not in finding_ids:
+                    errors.append(f"abuse_case_analysis {case_id}: finding_id {fid!r} does not resolve")
+            for mid in case.get("blocking_mitigation_ids") or []:
+                if isinstance(mid, str) and mid not in mitigation_ids:
+                    errors.append(f"abuse_case_analysis {case_id}: mitigation_id {mid!r} does not resolve")
+            unverified_steps = {
+                row.get("step")
+                for row in steps
+                if row.get("unverified") and isinstance(row.get("step"), int) and not isinstance(row.get("step"), bool)
+            }
+            declared_unverified = {
+                step
+                for step in (case.get("unverified_steps") or [])
+                if isinstance(step, int) and not isinstance(step, bool)
+            }
+            if unverified_steps != declared_unverified:
+                errors.append(f"abuse_case_analysis {case_id}: unverified_steps do not match step flags")
+            if case.get("verification_complete") != (not unverified_steps):
+                errors.append(f"abuse_case_analysis {case_id}: verification_complete does not match step flags")
+    return errors
+
+
+def validate_threat_model_output(data: Any) -> tuple[bool, list[str]]:
+    """Validate the final `$OUTPUT_DIR/threat-model.yaml` export.
+
+    This is the machine-readable contract consumed by CI/CD, DefectDojo,
+    SonarQube, and sibling threat-model cross-repo discovery. Schema drift
+    breaks integrations silently, so producers should validate before emit.
+
+    The parsed document is validated unchanged. Legacy field migration belongs
+    to an explicit producer or migration step; validation never turns invalid
+    on-disk bytes into an in-memory pass.
+    """
+    if not isinstance(data, dict):
+        return False, ["root must be a mapping"]
+    errors = _schema_errors("threat_model_output", data)
+    from shared._severity_policy import policy_errors
+
+    errors.extend(policy_errors(data.get("threats") or []))
+    errors.extend(_check_security_controls_shape(data))
+    errors.extend(_check_attack_surface_shape(data))
+    errors.extend(_check_mitigations_nonempty(data))
+    errors.extend(_check_architecture_coverage_invariants(data))
+    errors.extend(_check_threat_hypotheses_invariants(data))
+    errors.extend(_check_boundary_refs(data))
+    errors.extend(_check_final_boundary_links(data))
+    errors.extend(_check_requirements_compliance_invariants(data))
+    errors.extend(_check_export_trace_invariants(data))
+    advisories: list[str] = []
+    # Detect F-NNN numbering gaps. A gap (e.g. F-001..F-013, F-015..) means
+    # the threat-analyst dropped a finding without reflowing the IDs, leaving
+    # a phantom F-NNN in the legacy_id_map and tombstone slots in cross-refs.
+    # Surfaced as advisory because compaction needs cross-fragment rewrites
+    # (yaml + .fragments/*.md + .stride-*.json) — the LLM repair-plan path
+    # is more reliable than a deterministic in-script reflow.
+    advisories.extend(_check_finding_id_contiguity(data))
+    # M-1: Warn (do not fail) when threat.component disagrees with the
+    # component whose paths globs match the threat's evidence files. This is
+    # the canonical signal that Stage 1 mis-classified a finding by attack
+    # target rather than by control location.
+    advisories.extend(_check_component_path_glob_consistency(data))
+    # Advisory-prefixed entries that individual checks routed into `errors`
+    # (e.g. the recoverable empty-mitigations case) must NOT fail validity —
+    # main() already displays them as ADVISORY. Compute validity from the
+    # hard errors only, mirroring the advisory split at the CLI layer.
+    advisory_prefixes = ("[advisory] ",)
+    hard_errors = [e for e in errors if not e.startswith(advisory_prefixes)]
+    return len(hard_errors) == 0, errors + advisories
+
+
+def _check_component_path_glob_consistency(data: dict) -> list[str]:
+    """M-1: Cross-check `threats[].component` against `components[].paths`.
+
+    For every threat with non-empty `evidence[].file`, verify that at least
+    one of its evidence files matches a `paths` glob of the component the
+    threat claims. Mismatches are emitted as `[advisory]` lines — never hard
+    errors — because today's YAMLs have mixed glob conventions and a
+    hard-fail would block every existing run.
+
+    Tolerated cases (no advisory):
+      - threat has no evidence at all (config-scan / hypothesis-only)
+      - all evidence entries lack `file` field
+      - component is unknown (other validators catch that)
+      - any one evidence.file matches any one of the component's globs
+    """
+    from model.reclassify_components import _glob_to_regex
+
+    def matches(path: str, pattern: str) -> bool:
+        return bool(_glob_to_regex(pattern).search(path))
+
+    advisories: list[str] = []
+    components = data.get("components") or []
+    if not isinstance(components, list):
+        return advisories
+    comp_paths_by_id: dict[str, list[str]] = {}
+    for c in components:
+        if not isinstance(c, dict):
+            continue
+        cid = (c.get("id") or "").strip()
+        paths = c.get("paths") or []
+        if cid and isinstance(paths, list):
+            comp_paths_by_id[cid] = [p for p in paths if isinstance(p, str)]
+
+    threats = data.get("threats") or []
+    if not isinstance(threats, list):
+        return advisories
+    for t in threats:
+        if not isinstance(t, dict):
+            continue
+        tid = (t.get("id") or "?").strip()
+        comp = (t.get("component") or "").strip()
+        if not comp or comp not in comp_paths_by_id:
+            continue  # other validator catches unknown component
+        evidence = t.get("evidence") or []
+        if not isinstance(evidence, list):
+            continue
+        files = [(e.get("file") or "").strip() for e in evidence if isinstance(e, dict) and e.get("file")]
+        if not files:
+            continue  # no evidence files to compare — tolerated
+
+        globs = comp_paths_by_id[comp]
+        if not globs:
+            continue
+        # Match if ANY file matches ANY glob. Use the same recursive-glob
+        # semantics as the deterministic reclassifier: ``**/`` may match zero
+        # directory levels.
+        matched = False
+        for f in files:
+            for g in globs:
+                if matches(f, g):
+                    matched = True
+                    break
+            if matched:
+                break
+        if matched:
+            continue
+
+        # No match — find candidate components whose globs DO match, to give
+        # a helpful suggestion in the advisory.
+        suggestions: list[str] = []
+        for other_cid, other_globs in comp_paths_by_id.items():
+            if other_cid == comp:
+                continue
+            for f in files:
+                for g in other_globs:
+                    if matches(f, g):
+                        suggestions.append(other_cid)
+                        break
+                else:
+                    continue
+                break
+        distinct_suggestions = sorted(set(suggestions))
+        # Suppress the advisory for exactly the case the downstream auto-emitter
+        # pass self-heals: model/reclassify_components.py reassigns a threat when its
+        # evidence file matches exactly ONE other component's globs. Emitting an
+        # advisory here for that threat is pure noise — it reads like a
+        # validation failure to the user even though the very next pipeline step
+        # silently fixes it. Keep the advisory only when reclassify will NOT act:
+        #   - no sibling matches (genuine orphan evidence — operator must look)
+        #   - 2+ siblings match (ambiguous — reclassify leaves it alone)
+        if len(distinct_suggestions) == 1:
+            continue
+        sugg_part = f" — consider one of component={distinct_suggestions!r}" if distinct_suggestions else ""
+        advisories.append(
+            f"[advisory] {tid}: component={comp!r} but evidence file(s) "
+            f"{files[:3]!r} do not match any of its paths globs "
+            f"{globs[:3]!r}{sugg_part}. Likely Stage-1 classified by "
+            f"attack-target tier instead of control-location tier."
+        )
+    return advisories
+
+
+def _check_finding_id_contiguity(data: dict) -> list[str]:
+    """Flag gaps in the F-NNN sequence of `threats[]`.
+
+    A clean run produces F-001, F-002, …, F-N with no gaps. A gap means a
+    finding was dropped (LLM consolidated or omitted it) without reflowing
+    the IDs, producing dead F-NNN refs across the document. Returns a list
+    of `[advisory]`-prefixed strings — non-fatal but visible to operators.
+    """
+    advisories: list[str] = []
+    threats = data.get("threats") or []
+    if not isinstance(threats, list):
+        return advisories
+    f_ids: list[int] = []
+    for t in threats:
+        if not isinstance(t, dict):
+            continue
+        fid = (t.get("id") or "").strip().upper()
+        m = re.match(r"^F-(\d+)$", fid)
+        if m:
+            f_ids.append(int(m.group(1)))
+    if not f_ids:
+        return advisories
+    f_ids.sort()
+    gaps: list[int] = []
+    for n in range(1, max(f_ids) + 1):
+        if n not in f_ids:
+            gaps.append(n)
+    if gaps:
+        gap_str = ", ".join(f"F-{n:03d}" for n in gaps[:6]) + (", …" if len(gaps) > 6 else "")
+        advisories.append(
+            f"[advisory] F-NNN numbering has {len(gaps)} gap(s) in "
+            f"sequence ({gap_str}). Cause: a threat was dropped between "
+            f".threats-merged.json and yaml.threats[] without reflowing "
+            f"IDs. Cross-refs to the missing F-NNN(s) become tombstones. "
+            f"Recommended fix: restore the dropped threat OR run a "
+            f"compaction pass that renumbers F-NNNs sequentially across "
+            f"yaml + .fragments/ + .stride-*.json."
+        )
+    return advisories
+
+
+def _threat_is_backfillable(threat: dict) -> bool:
+    """True when the deterministic mitigation backfill (run by the skill's
+    auto-emitter pass BEFORE compose) would synthesize a mitigation card for
+    this threat. Mirrors the eligibility of model/emit_config_scan_mitigations.py
+    (config-scan source) and model/emit_finding_fix_mitigations.py (non-config-scan
+    threat carrying remediation content: a mitigation_title, remediation.steps,
+    or a remediation string). Keep in sync with those emitters."""
+    if not isinstance(threat, dict):
+        return False
+    if (threat.get("source") or "") == "config-scan":
+        return True  # emit_config_scan_mitigations synthesizes a fix card
+    if (threat.get("mitigation_title") or "").strip():
+        return True
+    rem = threat.get("remediation")
+    if isinstance(rem, dict):
+        steps = rem.get("steps")
+        if isinstance(steps, list) and any(str(s).strip() for s in steps):
+            return True
+    elif isinstance(rem, str) and rem.strip():
+        return True
+    return False
+
+
+def _check_mitigations_nonempty(data: dict) -> list[str]:
+    """Enforce the mitigation synthesis invariant: when P1/P2/P3 threats exist,
+    `mitigations[]` MUST be non-empty — UNLESS the empty register is recoverable
+    by the deterministic backfill that always runs before compose.
+
+    An empty register is the dominant symptom of Phase 11 failing to execute
+    the mandatory mitigation synthesis step in `model/build_threat_model_yaml.py`.
+    The compose renderer renders all four priority buckets as
+    `_No P-N mitigations._` which makes the §9 section useless.
+
+    Root-cause note (2026-06-16): the LLM Phase-11 yaml-write routinely returns
+    ranked threats with `mitigation_ids: []` (build_mitigations then yields an
+    empty register), but those threats DO carry `remediation`/`mitigation_title`
+    content. The skill's auto-emitter pass (model/emit_finding_fix_mitigations.py +
+    model/emit_config_scan_mitigations.py) deterministically backfills the register
+    from that content BEFORE compose. So an empty register whose ranked threats
+    are all backfillable is RECOVERABLE — surfaced as an advisory, not a hard
+    failure. Only an empty register with NO backfillable source (true Phase-3-8
+    data loss) is a hard error. Returns an `[advisory]`-prefixed message for the
+    recoverable case so it is reported without failing validity.
+    """
+    errors: list[str] = []
+    mitigations = data.get("mitigations") or []
+    if mitigations:
+        return errors
+    threats = data.get("threats") or []
+    _RISK_BAND = {"Critical": 1, "High": 2, "Medium": 3, "Low": 4}
+    ranked_threats = [
+        t for t in threats if isinstance(t, dict) and _RISK_BAND.get(t.get("risk") or t.get("severity") or "", 99) <= 3
+    ]
+    if not ranked_threats:
+        return errors
+    if any(_threat_is_backfillable(t) for t in ranked_threats):
+        # Recoverable: the deterministic backfill will populate the register
+        # before compose. Advisory only — does not fail validation.
+        errors.append(
+            "[advisory] mitigations[] is empty but ranked threats carry "
+            "remediation content — the deterministic backfill "
+            "(model/emit_finding_fix_mitigations.py / model/emit_config_scan_mitigations.py) "
+            "will populate the register before compose."
+        )
+        return errors
+    errors.append(
+        "mitigations[] is empty but P1/P2/P3-ranked threats exist and none "
+        "carry remediation content the backfill can use. Phase 11 must "
+        "synthesize at least one M-NNN entry per CWE cluster (see "
+        "model/build_threat_model_yaml.py mitigation synthesis). "
+        "Fix: re-run Stage 2 or manually populate mitigations[] before compose."
+    )
+    return errors
+
+
+def _check_pt_id_sequence(data: dict) -> list[str]:
+    """`pentest-tasks.yaml` uses PT-NNN IDs that must be unique and
+    contiguous starting at PT-001."""
+    errors: list[str] = []
+    seen: set[str] = set()
+    expected = 1
+    for i, t in enumerate(data.get("tasks", []) or []):
+        if not isinstance(t, dict):
+            continue
+        pid = t.get("task_id")
+        if not isinstance(pid, str):
+            continue
+        m = _PT_ID_RE.match(pid)
+        if not m:
+            continue
+        if pid in seen:
+            errors.append(f"tasks[{i}].task_id '{pid}' is duplicated")
+            continue
+        seen.add(pid)
+        n = int(m.group(1))
+        if n != expected:
+            errors.append(f"tasks[{i}].task_id '{pid}' breaks sequential order (expected PT-{expected:03d})")
+        expected = n + 1
+    return errors
+
+
+def validate_pentest_tasks(data: Any) -> tuple[bool, list[str]]:
+    """Validate a `pentest-tasks.yaml` export."""
+    if not isinstance(data, dict):
+        return False, ["root must be a mapping"]
+    errors = _schema_errors("pentest_tasks", data)
+    errors.extend(_check_pt_id_sequence(data))
+    return len(errors) == 0, errors
+
+
+def validate_known_threats(data: Any) -> tuple[bool, list[str]]:
+    """Validate a user-supplied `docs/known-threats.yaml` file before it is
+    passed to downstream agents. Fails fast on malformed team input."""
+    if not isinstance(data, dict):
+        return False, ["root must be a mapping with a top-level `threats` key"]
+    errors = _schema_errors("known_threats", data)
+    errors.extend(_check_known_threats_unique_ids(data))
+    return len(errors) == 0, errors
+
+
+def validate_config_scan_findings(data: Any) -> tuple[bool, list[str]]:
+    """Validate `.config-scan-findings.json` written by appsec-config-scanner
+    in Phase 2.5. Error-stub-or-normal pattern."""
+    if not isinstance(data, dict):
+        return False, ["root must be a mapping"]
+    errors = _schema_errors("config_scan_findings", data)
+    # A shape-valid partial catalog scan is still incomplete. Bind the producer
+    # to the shipped catalog and to its own counters so an LLM cannot silently
+    # skip checks or rewrite authoritative check metadata.
+    if "parse_error" not in data:
+        from analyzers.config_iac_scanner import canonical_finding_fields  # noqa: PLC0415
+
+        catalog_path = Path(__file__).resolve().parents[2] / "data" / "config-iac-checks.yaml"
+        try:
+            catalog_doc = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
+            catalog = {
+                row["id"]: row
+                for row in catalog_doc.get("checks", [])
+                if isinstance(row, dict) and isinstance(row.get("id"), str)
+            }
+        except (OSError, yaml.YAMLError, AttributeError) as exc:
+            errors.append(f"cannot load canonical config check catalog: {exc}")
+            catalog = {}
+        if data.get("checks_run") != len(catalog):
+            errors.append(f"checks_run must equal the complete catalog size ({len(catalog)})")
+        findings = data.get("findings", []) or []
+        if isinstance(findings, list) and data.get("violations") != len(findings):
+            errors.append("violations must equal findings length")
+        seen: set[str] = set()
+        for i, f in enumerate(findings):
+            if not isinstance(f, dict):
+                continue
+            lid = f.get("local_id")
+            if not isinstance(lid, str):
+                continue
+            expected_id = f"CFG-{i + 1:03d}"
+            if lid != expected_id:
+                errors.append(f"findings[{i}].local_id must be sequential {expected_id}")
+            if lid in seen:
+                errors.append(f"findings[{i}].local_id '{lid}' is duplicated")
+            else:
+                seen.add(lid)
+            check_id = f.get("check_id")
+            if not isinstance(check_id, str):
+                continue
+            check = catalog.get(check_id)
+            if check is None:
+                errors.append(f"findings[{i}].check_id '{check_id}' is not in the canonical catalog")
+                continue
+            for field, expected in canonical_finding_fields(check).items():
+                if f.get(field) != expected:
+                    errors.append(f"findings[{i}].{field} differs from canonical check {check_id}")
+    return len(errors) == 0, errors
+
+
+def validate_source_auth_findings(data: Any) -> tuple[bool, list[str]]:
+    """Validate `.source-auth-findings.json` written by
+    `scripts/analyzers/source_auth_scanner.py`. Same error-stub-or-normal pattern
+    as config_scan_findings."""
+    if not isinstance(data, dict):
+        return False, ["root must be a mapping"]
+    errors = _schema_errors("source_auth_findings", data)
+    if "parse_error" not in data:
+        seen: set[str] = set()
+        for i, f in enumerate(data.get("findings", []) or []):
+            if not isinstance(f, dict):
+                continue
+            lid = f.get("local_id")
+            if not isinstance(lid, str):
+                continue
+            if lid in seen:
+                errors.append(f"findings[{i}].local_id '{lid}' is duplicated")
+            else:
+                seen.add(lid)
+    return len(errors) == 0, errors
+
+
+def validate_db_privilege_separation(data: Any) -> tuple[bool, list[str]]:
+    """Validate the thorough-only database-principal separation sidecar."""
+    if not isinstance(data, dict):
+        return False, ["root must be a mapping"]
+    errors = _schema_errors("db_privilege_separation", data)
+    seen: set[str] = set()
+    for section in ("confirmed_findings", "hypotheses"):
+        for i, record in enumerate(data.get(section, []) or []):
+            if not isinstance(record, dict) or not isinstance(record.get("local_id"), str):
+                continue
+            local_id = record["local_id"]
+            if local_id in seen:
+                errors.append(f"{section}[{i}].local_id '{local_id}' is duplicated")
+            seen.add(local_id)
+    return len(errors) == 0, errors
+
+
+def validate_actors_discovered(data: Any) -> tuple[bool, list[str]]:
+    """Validate the Phase-2.7 LLM actor-discovery sidecar."""
+    if not isinstance(data, dict):
+        return False, ["root must be a mapping"]
+    errors = _schema_errors("actors_discovered", data)
+    return len(errors) == 0, errors
+
+
+def validate_actors_merged_static(data: Any) -> tuple[bool, list[str]]:
+    """Validate the static actor catalog consumed by semantic discovery."""
+    if not isinstance(data, dict):
+        return False, ["root must be a mapping"]
+    errors = _schema_errors("actors_merged_static", data)
+    if errors:
+        return False, errors
+
+    catalog = data.get("catalog_actors", [])
+    resolved = data.get("resolved_actors", [])
+    disabled = data.get("disabled_actors", [])
+    catalog_by_id = {actor["id"]: actor for actor in catalog}
+    if len(catalog_by_id) != len(catalog):
+        errors.append("catalog_actors contains duplicate actor IDs")
+
+    resolved_ids: set[str] = set()
+    for index, actor in enumerate(resolved):
+        actor_id = actor["id"]
+        if actor_id in resolved_ids:
+            errors.append(f"resolved_actors[{index}].id '{actor_id}' is duplicated")
+        resolved_ids.add(actor_id)
+        if catalog_by_id.get(actor_id) != actor:
+            errors.append(f"resolved_actors[{index}] is not the matching catalog actor")
+        if actor.get("_provenance", {}).get("active") is not True:
+            errors.append(f"resolved_actors[{index}] is not marked active")
+
+    disabled_ids: set[str] = set()
+    for index, record in enumerate(disabled):
+        actor_id = record["id"]
+        if actor_id in disabled_ids:
+            errors.append(f"disabled_actors[{index}].id '{actor_id}' is duplicated")
+        disabled_ids.add(actor_id)
+        actor = catalog_by_id.get(actor_id)
+        if actor is None:
+            errors.append(f"disabled_actors[{index}].id '{actor_id}' is absent from catalog_actors")
+            continue
+        provenance = actor.get("_provenance", {})
+        if provenance.get("disabled_by") != record["disabled_by"]:
+            errors.append(f"disabled_actors[{index}].disabled_by disagrees with catalog_actors")
+        if provenance.get("disable_reason") != record["disable_reason"]:
+            errors.append(f"disabled_actors[{index}].disable_reason disagrees with catalog_actors")
+        if provenance.get("active") is not False:
+            errors.append(f"disabled_actors[{index}] is not marked inactive in catalog_actors")
+
+    overlap = sorted(resolved_ids & disabled_ids)
+    if overlap:
+        errors.append(f"actors cannot be both resolved and disabled: {', '.join(overlap)}")
+    return len(errors) == 0, errors
+
+
+def validate_actors_resolved(data: Any) -> tuple[bool, list[str]]:
+    """Validate the authoritative resolver output consumed downstream."""
+    if not isinstance(data, dict):
+        return False, ["root must be a mapping"]
+    errors = _schema_errors("actors_resolved", data)
+    return len(errors) == 0, errors
+
+
+def validate_actors_repo(data: Any) -> tuple[bool, list[str]]:
+    """Validate ``<repo>/.appsec/actors.yaml`` before applying overrides."""
+    if not isinstance(data, dict):
+        return False, ["root must be a mapping"]
+    errors = _schema_errors("actors_repo", data)
+    return len(errors) == 0, errors
+
+
+def validate_actor(data: Any) -> tuple[bool, list[str]]:
+    """Validate one fully merged static or discovery actor record."""
+    if not isinstance(data, dict):
+        return False, ["root must be a mapping"]
+    errors = _schema_errors("actor", data)
+    return len(errors) == 0, errors
+
+
+def _validate_schema_only(kind: str, data: Any) -> tuple[bool, list[str]]:
+    """Validate a closed JSON sidecar with no additional semantic rules."""
+    if not isinstance(data, dict):
+        return False, ["root must be a mapping"]
+    errors = _schema_errors(kind, data)
+    return len(errors) == 0, errors
+
+
+def validate_recon_signals(data: Any, repo_root: Path | None = None) -> tuple[bool, list[str]]:
+    ok, errors = _validate_schema_only("recon_signals", data)
+    if not isinstance(data, dict) or not ok:
+        return ok, errors
+    hints = data.get("component_hints")
+    if isinstance(hints, list):
+        ids = [hint.get("component_id") for hint in hints if isinstance(hint, dict)]
+        if len(ids) != len(set(ids)):
+            errors.append("component_hints contains duplicate component_id values")
+    signals = data["signals"]
+    evidence = data["signal_evidence"]
+    for signal, active in signals.items():
+        status = evidence[signal]["status"]
+        if active and status != "supporting":
+            errors.append(f"signal_evidence.{signal}.status must be 'supporting' when the signal is true")
+        if not active and status == "supporting":
+            errors.append(f"signal_evidence.{signal}.status cannot be 'supporting' when the signal is false")
+        if repo_root is not None:
+            errors.extend(
+                repository_evidence_errors(
+                    evidence[signal]["locations"],
+                    repo_root,
+                    label=f"signal_evidence.{signal}.locations",
+                    require_line=True,
+                )
+            )
+    return len(errors) == 0, errors
+
+
+def validate_stride_analyst_context(
+    data: Any,
+    output_dir: Path | None = None,
+    repo_root: Path | None = None,
+) -> tuple[bool, list[str]]:
+    """Validate the semantic overlay and optional component-owned routing."""
+    ok, errors = _validate_schema_only("stride_analyst_context", data)
+    if not ok or output_dir is None or repo_root is None:
+        return ok, errors
+
+    from contexts.load_business_context import project_answered_questions  # noqa: PLC0415
+
+    try:
+        project_answered_questions(data, repo_root, output_dir)
+    except ValueError as exc:
+        errors.append(str(exc))
+
+    components_path = output_dir / ".components.json"
+    try:
+        components_document = json.loads(components_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        errors.append(f"cannot validate routing ownership without {components_path}: {exc}")
+        return False, errors
+    components = components_document.get("components") if isinstance(components_document, dict) else None
+    if not isinstance(components, list):
+        errors.append("components-v1 artifact has no components array")
+        return False, errors
+    by_id = {
+        component.get("id"): component
+        for component in components
+        if isinstance(component, dict) and isinstance(component.get("id"), str)
+    }
+
+    from contexts.build_stride_evidence_bundles import (  # noqa: PLC0415
+        BundleError,
+        validate_component_routing_values,
+    )
+
+    for component_id, overlay in data.items():
+        if component_id == "_stride_profile" or not isinstance(overlay, dict):
+            continue
+        component = by_id.get(component_id)
+        if component is None:
+            errors.append(f"unknown component ID in stride analyst context: {component_id}")
+            continue
+        if not any(key in overlay for key in ("focus_paths", "exclude_paths")):
+            continue
+        paths = component.get("paths")
+        if not isinstance(paths, list) or not all(isinstance(value, str) for value in paths):
+            errors.append(f"component {component_id} has no valid paths array")
+            continue
+        try:
+            validate_component_routing_values(component_id, paths, overlay, repo_root)
+        except BundleError as exc:
+            errors.append(str(exc))
+    return len(errors) == 0, errors
+
+
+def validate_evidence_verification(data: Any) -> tuple[bool, list[str]]:
+    ok, errors = _validate_schema_only("evidence_verification", data)
+    if not isinstance(data, dict) or not ok:
+        return ok, errors
+    summary = data["summary"]
+    sampled = summary["sampled"]
+    total = summary["total_threats"]
+    resolved = sum(summary[key] for key in ("verified", "refuted", "ambiguous"))
+    if sampled > total:
+        errors.append("sampled count exceeds total_threats")
+    if resolved + summary["unchecked"] != sampled:
+        errors.append("outcome counts do not partition sampled")
+    flags = data["flags"]
+    if len(flags) != resolved:
+        errors.append("flag count does not match resolved outcomes")
+    flag_ids = [flag["flag_id"] for flag in flags]
+    expected_ids = [f"EV-{index:03d}" for index in range(1, len(flags) + 1)]
+    if flag_ids != expected_ids:
+        errors.append("flag_id values must be sequential from EV-001")
+    threat_ids = [flag["t_id"] for flag in flags]
+    if len(threat_ids) != len(set(threat_ids)):
+        errors.append("flags contain duplicate t_id values")
+    for verdict in ("verified", "refuted", "ambiguous"):
+        actual = sum(flag["verdict"] == verdict for flag in flags)
+        if actual != summary[verdict]:
+            errors.append(f"{verdict} count does not match flags")
+    return len(errors) == 0, errors
+
+
+def validate_merge_decisions(data: Any) -> tuple[bool, list[str]]:
+    return _validate_schema_only("merge_decisions", data)
+
+
+_VALIDATORS = {
+    "stride": validate_stride,
+    "threats_merged": validate_threats_merged,
+    "triage_flags": validate_triage_flags,
+    "threat_model_output": validate_threat_model_output,
+    "known_threats": validate_known_threats,
+    "pentest_tasks": validate_pentest_tasks,
+    "config_scan_findings": validate_config_scan_findings,
+    "source_auth_findings": validate_source_auth_findings,
+    "db_privilege_separation": validate_db_privilege_separation,
+    "actors_discovered": validate_actors_discovered,
+    "actors_merged_static": validate_actors_merged_static,
+    "actors_resolved": validate_actors_resolved,
+    "actors_repo": validate_actors_repo,
+    "actor": validate_actor,
+    "recon_signals": validate_recon_signals,
+    "stride_analyst_context": validate_stride_analyst_context,
+    "evidence_verification": validate_evidence_verification,
+    "merge_decisions": validate_merge_decisions,
+}
+
+
+def main() -> None:
+    repo_root: Path | None = None
+    if len(sys.argv) == 5 and sys.argv[3] == "--repo-root":
+        repo_root = Path(sys.argv[4])
+    elif len(sys.argv) != 3:
+        print(
+            f"Usage: {sys.argv[0]} <{'|'.join(_VALIDATORS)}> <path-to-json-file> [--repo-root <path>]",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    if sys.argv[1] not in _VALIDATORS or (
+        repo_root is not None and sys.argv[1] not in {"recon_signals", "stride_analyst_context", "stride"}
+    ):
+        print(
+            f"Usage: {sys.argv[0]} <{'|'.join(_VALIDATORS)}> <path-to-json-file> [--repo-root <path>]",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    schema_type = sys.argv[1]
+    path = Path(sys.argv[2])
+
+    # YAML-native artifacts (user-supplied known-threats, final
+    # threat-model.yaml export) are parsed with yaml.safe_load so the CLI
+    # works against both `.json` and `.yaml` inputs.
+    use_yaml = schema_type in ("threat_model_output", "known_threats", "pentest_tasks") or path.suffix in (
+        ".yaml",
+        ".yml",
+    )
+    try:
+        with path.open() as f:
+            if use_yaml:
+                data = yaml.safe_load(f)
+            else:
+                data = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"INVALID JSON: {e}")
+        sys.exit(1)
+    except yaml.YAMLError as e:
+        print(f"INVALID YAML: {e}")
+        sys.exit(1)
+    except OSError as e:
+        print(f"INVALID: cannot read file: {e}")
+        sys.exit(1)
+
+    # Pass the output_dir (parent of the file) so validators that need
+    # sibling files (e.g. .stride-dispatch-manifest.json) can find them.
+    if schema_type == "recon_signals":
+        is_valid, errors = validate_recon_signals(data, repo_root=repo_root)
+    elif schema_type == "stride_analyst_context":
+        is_valid, errors = validate_stride_analyst_context(data, output_dir=path.parent, repo_root=repo_root)
+    elif schema_type == "stride":
+        is_valid, errors = validate_stride(data, repo_root=repo_root)
+    else:
+        try:
+            is_valid, errors = _VALIDATORS[schema_type](data, path.parent)
+        except TypeError:
+            # Validators that don't accept output_dir (all except threats_merged).
+            is_valid, errors = _VALIDATORS[schema_type](data)
+
+    # Non-fatal structural advisories remain visible without changing validity.
+    advisory_prefixes = ("[advisory] ",)
+    advisories = [e for e in errors if e.startswith(advisory_prefixes)]
+    real_errors = [e for e in errors if not e.startswith(advisory_prefixes)]
+
+    for note in advisories:
+        print(f"ADVISORY: {note}")
+
+    if is_valid and not real_errors:
+        if schema_type in ("stride", "threats_merged", "known_threats"):
+            n_threats = len(data.get("threats", []) or [])
+            summary = f"{n_threats} threats"
+        elif schema_type == "triage_flags":
+            summary = f"{len(data.get('flags', []) or [])} flags"
+        elif schema_type == "pentest_tasks":
+            summary = f"{len(data.get('tasks', []) or [])} tasks"
+        elif schema_type == "threat_model_output":
+            summary = (
+                f"{len(data.get('threats', []) or [])} threats, {len(data.get('mitigations', []) or [])} mitigations"
+            )
+        else:
+            summary = "ok"
+        print(f"VALID: {summary}")
+        sys.exit(0)
+    else:
+        for e in real_errors:
+            print(f"INVALID: {e}")
+        if schema_type == "threats_merged":
+            # The merged register is deterministic Python output, not an agent
+            # artifact. Without this, a reader assumes the analysis agents wrote
+            # the offending value and edits the file — which re-runs identically.
+            print(
+                "PRODUCER: this artifact is written by scripts/model/merge_threats.py (finalize) and rewritten "
+                "in place by later deterministic passes such as scripts/model/reclassify_components.py; the "
+                "pass that ran right before this check wrote the offending value. Fix that producer and "
+                "start a new run; editing the artifact does not fix the defect."
+            )
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

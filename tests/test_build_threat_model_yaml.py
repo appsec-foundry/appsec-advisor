@@ -1,4 +1,4 @@
-"""Unit tests for scripts/build_threat_model_yaml.py field normalizers
+"""Unit tests for scripts/model/build_threat_model_yaml.py field normalizers
 (2026-06-02): title/affected_parameter clamps + cvss_v4 shape coercion, so the
 deterministic Phase-11-Substep-2 builder always yields a schema-valid yaml even
 when STRIDE analyzers emit verbose titles or a non-canonical cvss_v4."""
@@ -15,17 +15,19 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = ROOT / "scripts" / "build_threat_model_yaml.py"
+SCRIPT = ROOT / "scripts" / "model/build_threat_model_yaml.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("build_threat_model_yaml", SCRIPT)
+    spec = importlib.util.spec_from_file_location("model.build_threat_model_yaml", SCRIPT)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
 
 
 b = _load()
+import model.emit_clean_finding_titles as ecf  # noqa: E402  (scripts/ is on sys.path via the builder)
+from shared._finding_state import is_confirmed  # noqa: E402
 
 
 def test_clamp_title_short_passthrough():
@@ -139,7 +141,7 @@ def _title_pattern():
     schema = yaml.safe_load(OUTPUT_SCHEMA.read_text(encoding="utf-8"))
     for n in _walk(schema):
         p = n.get("pattern") if isinstance(n, dict) else None
-        if isinstance(p, str) and p.startswith("^[A-Z][^()@"):
+        if isinstance(p, str) and p.startswith("^(?:[A-Z]|[0-9]+[A-Za-z])[^()@"):
             return p
     raise AssertionError("threats[].title pattern not found in output schema")
 
@@ -535,6 +537,34 @@ def test_build_meta_records_the_register_severity_floor():
     assert _meta(register_severity_floor="low")["register_severity_floor"] == "low"
 
 
+@pytest.mark.parametrize(
+    "manifest,content,name",
+    [
+        ("package.json", '{"name": "order-portal"}', "Order Portal"),
+        ("pyproject.toml", '[project]\nname = "billing_worker"\n', "Billing Worker"),
+        ("package.json", '{"name": "@acme/shop"}', "@acme/shop"),
+    ],
+)
+def test_build_meta_records_the_manifest_display_name_of_the_repository(tmp_path, manifest, content, name):
+    """The name comes from the scanned repository, wherever the report is written."""
+    repo = tmp_path / "checkout-7"
+    repo.mkdir()
+    (repo / manifest).write_text(content, encoding="utf-8")
+    (tmp_path / "package.json").write_text('{"name": "enclosing-directory"}', encoding="utf-8")
+    meta = b.build_meta(skill_cfg={}, org=None, recon_project=None, plugin_root=ROOT, repo_root=repo, prior_yaml=None)
+    assert meta["project_name"] == name
+    assert meta["project"] == "checkout-7"
+
+
+def test_build_meta_without_a_manifest_records_no_display_name(tmp_path):
+    (tmp_path / "package.json").write_text('{"name": "enclosing-directory"}', encoding="utf-8")
+    (tmp_path / "repo").mkdir()
+    meta = b.build_meta(
+        skill_cfg={}, org=None, recon_project=None, plugin_root=ROOT, repo_root=tmp_path / "repo", prior_yaml=None
+    )
+    assert "project_name" not in meta
+
+
 def _business_meta(tmp_path):
     repo = tmp_path / "repo"
     (repo / "docs").mkdir(parents=True, exist_ok=True)
@@ -562,9 +592,11 @@ def test_build_meta_records_which_file_the_context_digest_came_from(tmp_path):
     assert m["business_context_sha256"]
 
 
-def test_build_meta_records_the_repository_file_as_its_own_source(tmp_path):
+@pytest.mark.parametrize("relative", ["docs/business-context.md", "docs/security/business-context.md"])
+def test_build_meta_records_the_repository_file_as_its_own_source(tmp_path, relative):
     repo, output = _business_meta(tmp_path)
-    (repo / "docs" / "business-context.md").write_text("Stored context.\n", encoding="utf-8")
+    (repo / relative).parent.mkdir(parents=True, exist_ok=True)
+    (repo / relative).write_text("Stored context.\n", encoding="utf-8")
 
     m = b.build_meta(
         skill_cfg={"output_dir": str(output)},
@@ -575,7 +607,7 @@ def test_build_meta_records_the_repository_file_as_its_own_source(tmp_path):
         prior_yaml=None,
     )
 
-    assert m["business_context_source"] == "docs/business-context.md"
+    assert m["business_context_source"] == relative
 
 
 def test_build_meta_leaves_the_context_source_empty_without_context(tmp_path):
@@ -715,7 +747,7 @@ def test_cli_merges_supply_chain_sidecars_into_meta_findings(tmp_path: Path):
 
 
 def _write_min_intermediates(out: Path) -> None:
-    """Minimal sidecar set so build_threat_model_yaml.py main() runs cleanly."""
+    """Minimal sidecar set so model/build_threat_model_yaml.py main() runs cleanly."""
     _write_json(
         out / ".skill-config.json",
         {
@@ -835,7 +867,7 @@ def test_cli_persists_validated_data_flow_sidecar_into_yaml(tmp_path: Path):
 def test_changelog_recovers_history_from_cache_mirror_when_yaml_lost(tmp_path: Path):
     """A lost/deleted threat-model.yaml must not silently reset the changelog to
     'first full scan'. main() rehydrates the prior history from the
-    .appsec-cache/baseline.json changelog_mirror (written by baseline_state.py
+    .appsec-cache/baseline.json changelog_mirror (written by baseline/baseline_state.py
     cmd_update). Regression for the 2026-06-26 juice-shop "--full reset my
     changelog" report."""
     repo = tmp_path / "repo"
@@ -1001,7 +1033,7 @@ def test_component_selection_none_when_absent():
 #
 # build_changelog historically read the prior history from
 # $CLAUDE_PLUGIN_ROOT/.appsec-cache/baseline.json — a file that the writer
-# (baseline_state.py) puts in $OUTPUT_DIR and that never carries a `changelog`
+# (baseline/baseline_state.py) puts in $OUTPUT_DIR and that never carries a `changelog`
 # key. So `existing` was always [] and every run reset changelog to a single
 # entry. The fix seeds `existing` from the prior threat-model.yaml's
 # changelog[] (the committed, accumulating store). These tests pin "extend".
@@ -1278,6 +1310,87 @@ def test_changelog_stable_across_cwe_and_title_drift_same_file(tmp_path):
         "lib/insecurity.ts|hardcoded-key",
         "lib/insecurity.ts|sig-verify",
     ]
+
+
+_DOT_DIR_THREATS = [
+    {
+        "id": "T-001",
+        "component": "comp-a",
+        "cwe": "CWE-732",
+        "title": "Workflow permissions",
+        "evidence": {"file": ".github/workflows/ci.yml", "line": 3},
+    },
+    {
+        "id": "T-002",
+        "component": "comp-a",
+        "cwe": "CWE-732",
+        "title": "Copied workflow",
+        "evidence": {"file": "github/workflows/ci.yml", "line": 3},
+    },
+    {
+        "id": "T-003",
+        "component": "comp-a",
+        "cwe": "CWE-89",
+        "title": "SQL injection",
+        "evidence": {"file": "./routes/login.ts", "line": 34},
+    },
+]
+
+
+def test_match_key_keeps_hidden_directories_distinct():
+    """The identity strips a ``./`` prefix, never the dot of a hidden directory:
+    `.github/x` and `github/x` are different files and keep different keys."""
+    b = _load()
+    keys = [b._match_key(t) for t in _DOT_DIR_THREATS]
+    assert keys[0].startswith(".github/")
+    assert keys[0] != keys[1]
+    assert keys[2].startswith("routes/login.ts|")
+
+
+@pytest.mark.parametrize("threats", [_DOT_DIR_THREATS, _DOT_DIR_THREATS[:1], _DOT_DIR_THREATS[2:]])
+def test_changelog_diff_against_version1_keys_does_not_churn(tmp_path, threats):
+    """An entry persisted before MATCH_KEY_VERSION 2 holds keys normalized the old
+    way. Re-scanning the same findings must report zero churn against it, and the
+    new entry persists version-2 keys so the following run diffs exactly."""
+    b = _load()
+    run1 = b.build_changelog(_CL_CFG, threats, _CL_COMPS, [], None, tmp_path, current_sha="sha-1", run_id="1")
+    v1 = dict(run1[0])
+    v1["match_keys"] = [b._match_key(t, legacy=True) for t in threats]
+    v1.pop("match_key_version", None)
+    run2 = b.build_changelog(_CL_CFG, threats, _CL_COMPS, [], [v1], tmp_path, current_sha="sha-2", run_id="2")
+    e2 = run2[0]
+    assert e2["delta_basis"] == "fingerprint"
+    assert e2["added"]["threats"] == []
+    assert e2["resolved"]["fingerprints"] == []
+    assert e2["match_key_version"] == b.MATCH_KEY_VERSION
+    assert e2["match_keys"] == [b._match_key(t) for t in threats]
+    run3 = b.build_changelog(_CL_CFG, threats, _CL_COMPS, [], run2, tmp_path, current_sha="sha-3", run_id="3")
+    assert run3[0]["added"]["threats"] == []
+    assert run3[0]["resolved"]["fingerprints"] == []
+
+
+@pytest.mark.parametrize("stored_cwe", ["CWE-95", "CWE-94"])
+def test_changelog_family_extension_keeps_prior_keys_matching(tmp_path, stored_cwe):
+    """A prior entry stored before a CWE joined a family keeps the bare CWE in
+    its match_keys; the next run must still recognise the same finding."""
+    b = _load()
+    prior = {
+        "fingerprints": [f"backend|{stored_cwe}|Eval of username"],
+        "match_keys": [f"routes/userprofile.ts|{stored_cwe}"],
+        "run_id": "1000",
+        "current_sha": "sha-1",
+    }
+    keys, _, _ = b._prior_match_index(prior)
+    current = {
+        "id": "T-006",
+        "component": "backend",
+        "cwe": "CWE-95",
+        "title": "Eval of username",
+        "evidence": {"file": "routes/userProfile.ts", "line": 61},
+    }
+    assert b._match_key(current) in keys
+    assert b._refamily_match_key("lib/x.ts|hardcoded-key") == "lib/x.ts|hardcoded-key"
+    assert b._refamily_match_key("lib/x.ts|CWE-79") == "lib/x.ts|CWE-79"
 
 
 def test_changelog_distinct_findings_same_file_stay_separate(tmp_path):
@@ -1627,12 +1740,17 @@ def test_reanalyzed_component_ids_none_without_baseline(tmp_path):
 
 def test_reconcile_carries_dropped_prior_threat_at_shallower_depth(tmp_path):
     _setup_incremental(tmp_path, prior_depth="thorough", stride={"auth": (b"old", b"new")})
-    prior = {"threats": [_prior_threat("T-007", "auth", "CWE-287", "Weak auth (login.ts:10)")]}
+    prior_threat = _prior_threat("T-007", "auth", "CWE-287", "Weak auth (login.ts:10)")
+    prior_threat.update(evidence_check="verified", evidence_basis="llm-verified")
+    prior = {"threats": [prior_threat]}
     new_threats = [{"id": "T-001", "component": "auth", "cwe": "CWE-89", "title": "SQLi (db.ts:3)"}]
     out, recon = b.reconcile_incremental_threats(new_threats, prior, [{"id": "auth"}], tmp_path, "quick", {})
     carried = [t for t in out if t.get("evidence_check") == "carried-unverified-shallower-depth"]
     assert len(carried) == 1
     assert carried[0]["title"] == "Weak auth (login.ts:10)"
+    # The prior verdict's basis does not travel with an unverified carry-forward.
+    assert carried[0]["evidence_basis"] == "carried-unverified-shallower-depth"
+    assert not is_confirmed(carried[0])
     # fresh, collision-free id (continues after T-001)
     assert carried[0]["id"] == "T-002"
     assert recon is not None
@@ -1941,7 +2059,7 @@ def _copy_run(src: Path, tmp_path: Path) -> Path:
 
 
 def _run_main(monkeypatch, argv):
-    monkeypatch.setattr(sys, "argv", ["build_threat_model_yaml.py", *argv])
+    monkeypatch.setattr(sys, "argv", ["model/build_threat_model_yaml.py", *argv])
     return b.main()
 
 
@@ -1977,7 +2095,7 @@ def test_main_writes_and_schema_validates(tmp_path, monkeypatch, capsys):
     real_run = b.subprocess.run
 
     def fake_run(cmd, *a, **k):
-        if any("validate_intermediate.py" in str(c) for c in cmd):
+        if any("validators/validate_intermediate.py" in str(c) for c in cmd):
             return _OkProc()
         return real_run(cmd, *a, **k)
 
@@ -2028,8 +2146,8 @@ def test_main_schema_validation_failure_returns_5(tmp_path, monkeypatch, capsys)
     real_run = b.subprocess.run
 
     def fake_run(cmd, *a, **k):
-        # Only intercept the validate_intermediate.py invocation.
-        if any("validate_intermediate.py" in str(c) for c in cmd):
+        # Only intercept the validators/validate_intermediate.py invocation.
+        if any("validators/validate_intermediate.py" in str(c) for c in cmd):
             return _FakeProc()
         return real_run(cmd, *a, **k)
 
@@ -2046,7 +2164,7 @@ def test_main_schema_validation_failure_returns_5(tmp_path, monkeypatch, capsys)
 def test_main_fails_closed_when_validator_absent(tmp_path, monkeypatch, capsys):
     """No validator means no canonical output publication."""
     run = _copy_run(_LAST_RUN, tmp_path)
-    # Point plugin-root at an empty dir lacking scripts/validate_intermediate.py.
+    # Point plugin-root at an empty dir lacking scripts/validators/validate_intermediate.py.
     fake_plugin = tmp_path / "empty_plugin"
     fake_plugin.mkdir()
     prior = (run / "threat-model.yaml").read_bytes()
@@ -2912,7 +3030,7 @@ def test_main_delivers_contiguous_boundary_ids_from_a_sparse_ledger(tmp_path, mo
         b.subprocess,
         "run",
         lambda cmd, *a, **k: (
-            _OkProc() if any("validate_intermediate.py" in str(c) for c in cmd) else real_run(cmd, *a, **k)
+            _OkProc() if any("validators/validate_intermediate.py" in str(c) for c in cmd) else real_run(cmd, *a, **k)
         ),
     )
     assert _run_main(monkeypatch, [str(run), "--plugin-root", str(ROOT)]) == 0
@@ -2944,7 +3062,7 @@ def test_main_delivers_contiguous_boundary_ids_from_a_sparse_ledger(tmp_path, mo
 # letter, so the acceptance criterion here is the schema's own pattern applied
 # to arbitrary input.
 
-_TITLE_PATTERN = re.compile(r"^[A-Z][^()@`]+?(?:\s*\([^()]+\))?$")
+_TITLE_PATTERN = re.compile(r"^(?:[A-Z]|[0-9]+[A-Za-z])[^()@`]+?(?:\s*\([^()]+\))?$")
 
 _HOSTILE_TITLES = [
     "14 Named Accounts Seeded with Hardcoded Password (SecurityConfig.java:71)",
@@ -2999,10 +3117,42 @@ def test_conform_title_is_identity_on_conforming_input():
 
 
 def test_lossy_repair_is_reported_and_stashes_the_original():
-    threat = {"title": "404 handler leaks stack traces (ErrorController.java:18)"}
+    threat = {"title": "/admin routes are unauthenticated (SecurityConfig.java:41)"}
     assert b._conform_title(threat) is True
-    assert threat["_title_source"] == "404 handler leaks stack traces (ErrorController.java:18)"
-    assert threat["title"].startswith("Handler leaks stack traces")
+    assert threat["_title_source"] == "/admin routes are unauthenticated (SecurityConfig.java:41)"
+    assert threat["title"].startswith("Admin routes are unauthenticated")
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "2FA not enforced for non-enrolled accounts",
+        "3DS challenge skipped for saved cards (Checkout.kt:12)",
+        "5G modem firmware accepted unsigned",
+    ],
+)
+def test_digit_led_acronym_conforms_without_loss(raw):
+    """A digit joined to letters in one token is a name, not a count; it leads a title as it stands."""
+    threat = {"title": raw}
+    assert b._conform_title(threat) is False
+    assert threat["title"] == raw and "_title_source" not in threat
+    assert re.match(_TITLE_PATTERN, raw)
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("__2fa secret logged in debug mode", "2fa secret logged in debug mode"),
+        ("14 Named Accounts Seeded with Hardcoded Password", "Named Accounts Seeded with Hardcoded Password"),
+        ("404 handler leaks stack traces", "Handler leaks stack traces"),
+        ("--mfa bypass flag", "Mfa bypass flag"),
+    ],
+)
+def test_dropped_lead_never_cuts_a_letter_or_digit_out_of_a_token(raw, expected):
+    """A bare count or punctuation lead is dropped whole; the kept token loses nothing."""
+    assert b._ensure_pattern_lead(raw) == (expected, True)
+    assert ecf._force_pattern_lead(raw) == expected
+    assert re.match(_TITLE_PATTERN, expected)
 
 
 def test_lowercase_lead_is_repaired_without_loss():
@@ -3032,7 +3182,7 @@ def test_dropping_the_lead_frees_budget_for_the_locator():
     lead and nothing else.
     """
     body = "Unauthenticated Admin Promotion Allows Role Escalation Everywhere"
-    raw = f"14 {body} (Sec.java:41)"
+    raw = f"// {body} (Sec.java:41)"
     assert len(raw) > 80 and len(raw) - 3 <= 80, "fixture must sit in the band where the lead alone overflows"
 
     single_pass, lossy = b._ensure_pattern_lead(b._clean_title(raw))
@@ -3147,6 +3297,30 @@ def test_declared_context_marks_the_findings_of_its_component(tmp_path):
     assert "business_context_basis" not in threats[2]
 
 
+def test_no_harm_context_is_applied_without_a_priority_basis(tmp_path):
+    _analyst_context(
+        tmp_path,
+        {
+            "practice-service": {
+                "business_context": {
+                    "impact_if_compromised": "No material business harm with only synthetic data.",
+                    "impact_is_material": False,
+                }
+            }
+        },
+    )
+    threats = [{"id": "T-001", "component": "practice-service", "business_context_basis": ["impact_if_compromised"]}]
+    assert b._apply_business_context_basis(threats, tmp_path, {}) == 1
+    assert "business_context_basis" not in threats[0]
+    assert b._business_context_component_coverage(tmp_path) == [
+        {
+            "component_id": "practice-service",
+            "fields": ["impact_if_compromised"],
+            "impact_is_material": False,
+        }
+    ]
+
+
 def test_business_context_basis_never_carries_the_business_prose(tmp_path):
     """The delivered model records which fields applied, never what they said."""
     secret_prose = "Settles payouts for merchant ACME under contract 4711."
@@ -3194,9 +3368,142 @@ def test_business_context_trace_records_safe_provenance_without_prose(tmp_path):
             }
         ],
         "applied_finding_count": 3,
+        "declared_asset_names": [],
     }
     assert len(trace["sha256"]) == 64
     assert secret_prose not in json.dumps(trace)
+
+
+@pytest.mark.parametrize("marked", [True, False])
+def test_trace_carries_only_the_marked_use_case_from_the_context(tmp_path, marked):
+    repo, output = _business_meta(tmp_path)
+    secret_prose = "Settles confidential merchant balances under contract 4711."
+    marker = "<!-- appsec-advisor: use-case choice=confirmed -->\n" if marked else ""
+    (output / ".business-context-input.md").write_text(
+        f"## Business purpose\n{marker}\n**Question:** I understand this application as a merchant payout "
+        f"service. Is that the use case to assess?\n\n**Answer:** Yes, assess this use case\n\n{secret_prose}\n",
+        encoding="utf-8",
+    )
+    _analyst_context(output, {"payments-svc": {"business_context": {"business_purpose": "Pays merchants."}}})
+
+    trace = b.build_business_context_trace({"output_dir": str(output)}, repo, 0)
+
+    assert trace.get("confirmed_use_case") == ("a merchant payout service" if marked else None)
+    assert secret_prose not in json.dumps(trace)
+
+
+def test_trace_names_the_model_assets_the_context_describes(tmp_path):
+    repo, output = _business_meta(tmp_path)
+    (output / ".business-context-input.md").write_text(
+        "## Sensitive assets\n- merchant balances: revenue critical, audited yearly\n", encoding="utf-8"
+    )
+    assets = [{"name": "Merchant Balances"}, {"name": "Session Tokens"}, {"name": "Balances"}]
+
+    trace = b.build_business_context_trace({"output_dir": str(output)}, repo, 0, assets)
+
+    # Model names only, matched as whole phrases; the business prose stays out.
+    assert trace["declared_asset_names"] == ["Merchant Balances", "Balances"]
+    assert "revenue critical" not in json.dumps(trace)
+
+
+@pytest.mark.parametrize("name", ["Shipment Ledger", "Dispatch Schedule"])
+def test_sourced_asset_answer_reaches_stride_and_settles_only_its_question(tmp_path, name):
+    import renderers.team_questions as team_questions
+
+    repo, output = _business_meta(tmp_path)
+    quote = f"{name} manipulation can interrupt scheduled deliveries for one day."
+    (output / ".business-context-input.md").write_text(quote)
+    _analyst_context(
+        output,
+        {
+            "dispatch": {
+                "business_context": {"impact_if_compromised": quote},
+                "answered_questions": [
+                    {
+                        "topic": "asset-criticality",
+                        "asset_name": name,
+                        "context_field": "impact_if_compromised",
+                        "source_quote": quote,
+                    }
+                ],
+            }
+        },
+    )
+    assets = [{"name": name, "classification": "Confidential", "linked_threats": ["T-001"]}]
+    trace = b.build_business_context_trace({"output_dir": str(output)}, repo, 1, assets)
+    model = {
+        "business_context_trace": trace,
+        "assets": assets,
+        "threats": [
+            {"id": "T-001", "component": "dispatch", "risk": "High", "evidence": [{"file": "src/dispatch.py"}]}
+        ],
+    }
+    assert quote not in json.dumps(trace)
+    answer = trace["answered_questions"][0]
+    assert answer["component_id"] == "dispatch" and len(answer["source_quote_sha256"]) == 64
+    assert team_questions.select_open_questions(model, {"f-001"}) == {"questions": []}
+    model["threats"][0]["component"] = "other"
+    assert team_questions.select_open_questions(model, {"f-001"})["questions"]
+
+
+@pytest.mark.parametrize(
+    "defect", ["invented-quote", "not-delivered", "truncated", "unknown-topic", "wrong-shape", "impact-not-delivered"]
+)
+def test_answer_provenance_rejects_untrusted_or_undelivered_claims(tmp_path, defect):
+    repo, output = _business_meta(tmp_path)
+    quote = "Support staff may read records across tenants only after customer approval."
+    source = quote if defect != "truncated" else "\n" * 201 + quote
+    (output / ".business-context-input.md").write_text(source)
+    answer = {"topic": "route-by-route-authorization", "context_field": "security_assumptions", "source_quote": quote}
+    if defect == "invented-quote":
+        answer["source_quote"] = "All callers may access every tenant without restriction."
+    if defect == "unknown-topic":
+        answer["topic"] = "execute-command"
+    overlay = {"business_context": {"security_assumptions": [quote]}, "answered_questions": [answer]}
+    if defect == "not-delivered":
+        overlay["business_context"] = {"business_purpose": "Serves customers."}
+    if defect == "wrong-shape":
+        overlay["answered_questions"] = {"all": True}
+    if defect == "impact-not-delivered":
+        answer.update(topic="asset-criticality", asset_name="Customer Records")
+    _analyst_context(output, {"support": overlay})
+    with pytest.raises(ValueError):
+        b.build_business_context_trace({"output_dir": str(output)}, repo, 1)
+
+
+def test_skipped_context_cannot_export_answer_claims(tmp_path):
+    repo, output = _business_meta(tmp_path)
+    _analyst_context(output, {"support": {"answered_questions": [{"topic": "forged"}]}})
+    trace = b.build_business_context_trace({"output_dir": str(output), "skip_business_context": True}, repo, 0)
+    assert "answered_questions" not in trace
+
+
+def test_invalid_answer_aborts_publication_without_logging_business_prose(tmp_path, monkeypatch, capsys):
+    _write_min_intermediates(tmp_path)
+    cfg_path = tmp_path / ".skill-config.json"
+    cfg = json.loads(cfg_path.read_text())
+    cfg["output_dir"] = str(tmp_path)
+    cfg_path.write_text(json.dumps(cfg))
+    private_prose = "Confidential dispatch plans for the next quarter."
+    (tmp_path / ".business-context-input.md").write_text(private_prose)
+    _analyst_context(
+        tmp_path,
+        {
+            "api": {
+                "business_context": {"impact_if_compromised": private_prose},
+                "answered_questions": [
+                    {"topic": "invalid", "context_field": "impact_if_compromised", "source_quote": private_prose}
+                ],
+            }
+        },
+    )
+    prior = "meta: {}\n"
+    (tmp_path / "threat-model.yaml").write_text(prior)
+    assert _run_main(monkeypatch, [str(tmp_path), "--repo-root", str(tmp_path), "--plugin-root", str(ROOT)]) == 5
+    assert (tmp_path / "threat-model.yaml").read_text() == prior
+    error = capsys.readouterr().err
+    assert "invalid answered-question projection" in error
+    assert private_prose not in error and "Traceback" not in error
 
 
 def test_business_context_trace_distinguishes_skipped_and_absent(tmp_path):
@@ -3254,7 +3561,7 @@ def test_meta_reports_no_business_context_when_the_run_skipped_it(tmp_path):
 #
 # The Markdown report carried the full §7b table while the YAML carried
 # nothing, so a consumer of the export saw no requirements dimension at all and
-# render_completion_summary.py reported "0 checked" for a run that had assessed
+# renderers/render_completion_summary.py reported "0 checked" for a run that had assessed
 # 73 of them (run a2a0e355).
 # ---------------------------------------------------------------------------
 
@@ -3419,6 +3726,12 @@ def test_builder_preserves_named_entities_and_resolved_registration_equivalence(
                     "data_classification": "Public",
                     "label": "Settings request",
                     "diagram_label": "Settings updates",
+                    "authentication": {
+                        "scheme": "basic",
+                        "scope": "Settings access",
+                        "transport": "protected",
+                        "evidence": [{"file": "roles.ts", "line": 1}],
+                    },
                     "provenance": "architecture",
                     "evidence": [{"file": "roles.ts", "line": 1}],
                 }
@@ -3433,11 +3746,82 @@ def test_builder_preserves_named_entities_and_resolved_registration_equivalence(
     assert model["external_entities"] == [entity]
     assert model["data_flows"][0]["from_entity"] == "ext-operator"
     assert model["data_flows"][0]["diagram_label"] == "Settings updates"
+    assert model["data_flows"][0]["authentication"]["scheme"] == "basic"
+    assert model["data_flows"][0]["authentication"]["evidence"] == [{"file": "roles.ts", "line": 1}]
+    # The same canonical producer must preserve explicit alternatives and steps,
+    # rather than leaving them usable only by a standalone preview renderer.
+    flow_path = tmp_path / ".data-flows.json"
+    data = json.loads(flow_path.read_text())
+    first = data["data_flows"][0]
+    for mode in ("alternatives", "sequence"):
+        data["data_flows"] = [
+            {
+                **first,
+                "id": f"df-{i:03d}",
+                "access_group": {
+                    "id": "access",
+                    "mode": mode,
+                    "label": "Settings access",
+                    **({"step": i} if mode == "sequence" else {}),
+                },
+            }
+            for i in (1, 2)
+        ]
+        flow_path.write_text(json.dumps(data))
+        replay = subprocess.run(
+            [sys.executable, str(SCRIPT), str(tmp_path), "--repo-root", str(tmp_path)], capture_output=True, text=True
+        )
+        assert replay.returncode == 0, replay.stderr
+        rebuilt = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+        assert rebuilt["data_flows"] == data["data_flows"]
     assert model["meta"]["open_user_registration"] is (True if owner is None else owner)
     assert model["meta"]["open_registration_source"] == "actor-resolution"
+    assert model["actors"] == []  # Unused automatic roles are analysis input, not report conclusions.
     if owner is not None:
         assert model["meta"]["open_registration_resolution"] == actors["open_registration_resolution"]
-        import match_abuse_cases
+        import model.match_abuse_cases as match_abuse_cases
 
         signals = match_abuse_cases._effective_registration_signal({"has_auth_surface"}, tmp_path)
         assert ("has_open_self_registration" in signals) is owner
+
+
+def test_linked_checks_resolve_to_the_final_findings_only():
+    """A producer names config checks; only findings that survived the run are linked."""
+    controls = [
+        {
+            "control": "Build controls",
+            "linked_checks": ["IAC-050", "IAC-011"],
+            "linked_threats": ["T-009"],
+            "subcontrols": [
+                {"title": "Lockfile", "linked_checks": ["IAC-050"]},
+                {"title": "Pinning", "linked_checks": ["IAC-011"], "relevant_findings": ["T-002"]},
+                {"title": "Other"},
+            ],
+        },
+        {"control": "Unrelated", "linked_threats": ["T-004"]},
+    ]
+    threats = [
+        {"id": "T-001", "config_check_id": "IAC-050"},
+        {"id": "T-002", "config_check_id": "IAC-011"},
+        {"id": "T-003", "config_check_id": "IAC-040"},
+    ]
+    linked = b.link_checked_controls(controls, threats)
+    assert linked[0]["linked_threats"] == ["T-009", "T-001", "T-002"]
+    assert [s.get("relevant_findings") for s in linked[0]["subcontrols"]] == [["T-001"], ["T-002"], None]
+    assert linked[1] == {"control": "Unrelated", "linked_threats": ["T-004"]}
+    # A check whose finding the run filtered out links nothing.
+    assert b.link_checked_controls([{"control": "X", "linked_checks": ["IAC-099"]}], threats)[0]["linked_threats"] == []
+
+
+def test_a_meta_finding_whose_gap_a_finding_reports_is_dropped():
+    sidecar = {
+        "findings": [
+            {"title": "Lockfile hygiene: missing", "source": "sca-practice", "linked_checks": ["IAC-050"]},
+            {"title": "Automated SCA scanning: missing", "source": "sca-practice", "linked_checks": []},
+        ]
+    }
+    reported = [{"id": "T-001", "config_check_id": "IAC-050"}]
+    titles = [m["title"] for m in b.build_meta_findings(None, [sidecar], reported)]
+    assert titles == ["Automated SCA scanning: missing"]
+    titles = [m["title"] for m in b.build_meta_findings(None, [sidecar], [])]
+    assert titles == ["Lockfile hygiene: missing", "Automated SCA scanning: missing"]

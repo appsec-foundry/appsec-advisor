@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-import build_trust_boundary_assessment_input as builder  # noqa: E402
-import finalize_component_inventory as finalizer  # noqa: E402
+import contexts.build_trust_boundary_assessment_input as builder  # noqa: E402
+import model.finalize_component_inventory as finalizer  # noqa: E402
 
 SIGNAL_KEYS = (
     "has_public_routes",
@@ -329,11 +329,89 @@ def test_named_external_roles_survive_boundary_input_and_keep_flow_identity(tmp_
     data["data_flows"][0].update(
         {"from": "external", "from_entity": "ext-operator", "diagram_label": "Settings updates"}
     )
+    data["data_flows"][0]["authentication"] = {
+        "scheme": "bearer",
+        "scope": "Settings access",
+        "transport": "protected",
+        "evidence": [{"file": "src/flow.ts", "line": 1}],
+    }
     path.write_text(json.dumps(data))
     result = builder.build(repo, output, "standard")
     assert result["external_entities"] == data["external_entities"]
     assert result["data_flows"][0]["from_entity"] == "ext-operator"
     assert result["data_flows"][0]["diagram_label"] == "Settings updates"
+    assert result["data_flows"][0]["authentication"] == data["data_flows"][0]["authentication"]
     unnamed = dict(data["data_flows"][0])
     unnamed.pop("from_entity")
     assert builder._flow_identity(unnamed) != builder._flow_identity(data["data_flows"][0])
+
+
+@pytest.mark.parametrize("mode", ["alternatives", "sequence"])
+def test_access_groups_survive_boundary_handoff_and_invalid_groups_block(tmp_path, mode):
+    repo, output, receipt = _setup(tmp_path)
+    _write_flows(output, receipt)
+    path = output / ".data-flows.json"
+    data = json.loads(path.read_text())
+    first = data["data_flows"][0]
+    data["data_flows"] = [{**first, "id": f"df-{i:03d}"} for i in (1, 2)]
+    for i, flow in enumerate(data["data_flows"], 1):
+        flow["authentication"] = {
+            "scheme": "password" if i == 1 else "bearer",
+            "scope": "Receiving access",
+            "evidence": [{"file": "src/flow.ts", "line": 1}],
+        }
+        flow["access_group"] = {
+            "id": "access",
+            "mode": mode,
+            "label": "Related operations",
+            **({"step": i} if mode == "sequence" else {}),
+        }
+    path.write_text(json.dumps(data))
+    assert builder.build(repo, output, "standard")["data_flows"] == data["data_flows"]
+    data["data_flows"][1]["to"] = "database"
+    path.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="access_group"):
+        builder.build(repo, output, "standard")
+
+
+def _zone_card(cid: str, deployment_zones: list[str], workload_zones: list[str] | None = None) -> dict:
+    row = {"id": cid, "name": cid, "tier": "application", "deployment_zones": deployment_zones, "paths": ["src"]}
+    if workload_zones is not None:
+        row["workload_zones"] = workload_zones
+    return builder._component_cards([row])[0]
+
+
+def _cross_zone(left: dict, right: dict) -> list[str]:
+    flow = {"from": left["id"], "to": right["id"], "label": "call", "protocol": "HTTP"}
+    specs = builder._signal_specs(flow, {left["id"]: left, right["id"]: right})
+    return [trigger for signal_class, trigger, _ in specs if signal_class == "cross-zone-flow"]
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "crosses"),
+    [
+        (["compose:edge"], ["compose:core"], True),
+        (["compose:edge", "compose:core"], ["compose:core"], True),
+        (["compose:core"], ["compose:core"], False),
+        (["compose:front"], ["kubernetes:back"], False),
+        (["compose:core", "kubernetes:a"], ["compose:core", "kubernetes:b"], True),
+        (["compose:public-net"], ["compose:vault-net"], True),
+    ],
+)
+def test_flows_between_different_network_zones_are_cross_zone_signals(left, right, crosses) -> None:
+    triggers = _cross_zone(_zone_card("gateway", ["dmz"], left), _zone_card("ledger", ["dmz"], right))
+    assert bool(triggers) is crosses
+    assert all("network zones" in trigger for trigger in triggers)
+
+
+def test_a_canonical_zone_difference_keeps_its_own_single_signal() -> None:
+    triggers = _cross_zone(
+        _zone_card("gateway", ["internet"], ["compose:edge"]), _zone_card("store", ["prod-write-db"], ["compose:data"])
+    )
+    assert triggers == ["resolved flow endpoints have materially different deployment zones"]
+
+
+def test_a_component_without_workload_zones_keeps_its_previous_card_and_signals() -> None:
+    plain = _zone_card("gateway", ["dmz"])
+    assert "workload_zones" not in plain
+    assert _cross_zone(plain, _zone_card("ledger", ["dmz"], ["compose:core"])) == []

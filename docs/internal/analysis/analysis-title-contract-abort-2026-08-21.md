@@ -22,7 +22,7 @@ Jede Aussage ist am Code oder empirisch verifiziert.
 
 ### D1 · `_clean_title` ist für nicht-kasusfähige Erstzeichen ein No-Op *(die Ursache)*
 
-`scripts/build_threat_model_yaml.py:1019-1020`:
+`scripts/model/build_threat_model_yaml.py:1019-1020`:
 
 ```python
 if s and not s[0].isupper():
@@ -64,14 +64,14 @@ wenn sie verlustbehaftet erkauft wurde.
 
 ### D2 · Docstring-Absicht ≠ Code — Residuen sind nicht „warnings", sondern terminal
 
-`build_threat_model_yaml.py:985-987`:
+`model/build_threat_model_yaml.py:985-987`:
 
 > *„Titles that still fail after cleanup are surfaced as schema warnings — the
 > migration plan moves first-class title cleanup into stride-analyzer output
 > later. For v1 we accept residual warnings on edge cases."*
 
 Tatsächlich: `:2658-2662` schreibt `FATAL: schema validation failed` und gibt
-`5` zurück; `orchestration_controller.py:4746` ruft den Builder über
+`5` zurück; `orchestrator/orchestration_controller.py:4746` ruft den Builder über
 `_run_script` ohne `acceptable`-Erweiterung → `ControllerError` → `RUN_ABORTED`.
 Ein „akzeptierter Edge Case" kostet einen vollständigen Stage-1-Lauf.
 
@@ -87,11 +87,11 @@ Das Repo hat zwei:
 | Normalisierer | Läuft | Regeln | Am Gate wirksam? |
 |---|---|---|---|
 | `_clean_title` / `_clamp_title` (im Builder, `:1126`) | **vor** der Schema-Validierung | Pattern, `@`, Backtick, Parens, Blocklist, Länge | **ja** |
-| `emit_clean_finding_titles.py` (`auto_emitter_pass.sh:94`) | **nach** dem Gate (`orchestration_controller.py:4765`) | Weakness-Klasse + Locator, Länge | **nein** |
+| `model/emit_clean_finding_titles.py` (`auto_emitter_pass.sh:94`) | **nach** dem Gate (`orchestrator/orchestration_controller.py:4765`) | Weakness-Klasse + Locator, Länge | **nein** |
 
 `agents/shared/finding-title-contract.md:4-20` erklärt ausdrücklich
 *„Deterministically enforced — authoring is a soft guide, not the guard"* und
-benennt als Garanten **`emit_clean_finding_titles.py`** — also den, der erst
+benennt als Garanten **`model/emit_clean_finding_titles.py`** — also den, der erst
 nach dem tödlichen Gate läuft. Der tatsächliche Garant `_clean_title` wird im
 Contract-Dokument nicht erwähnt.
 
@@ -99,7 +99,7 @@ Contract-Dokument nicht erwähnt.
 angesetzt:
 
 ```
-$ python3 scripts/emit_clean_finding_titles.py <copy-of-output-dir>
+$ python3 scripts/model/emit_clean_finding_titles.py <copy-of-output-dir>
 emit_clean_finding_titles: cleaned 52 finding title(s)
 → Pattern-/Längenverstöße: 25 vorher → 1 nachher
 → verbleibend: '14 Named Accounts Seeded with Hardcoded Password — SecurityConfig.java:71'
@@ -139,7 +139,7 @@ am komponierten Artefakt.
 
 ### D5 · Die Abbruchmeldung maskiert ihre eigene Ursache
 
-`_validate_action` (`orchestration_controller.py:786-798`) validiert die
+`_validate_action` (`orchestrator/orchestration_controller.py:786-798`) validiert die
 Abort-Action gegen `schemas/orchestration-action.schema.json`, wo
 `reason` `maxLength: 1000` trägt. `_run_script:1120-1123` legt die **volle**
 stdout/stderr des Builders in den Reason. Der Builder gibt zusätzlich zum
@@ -201,7 +201,7 @@ und in beiden ist die dokumentierte Semantik weicher als die implementierte.
 |---|---|---|
 | Verletztes Feld | `signal_classification` (Enum) | `threats[].title` (Pattern) |
 | Producer des Werts | Recon-Scanner (Haiku), **direkt** | STRIDE-Analyzer, **indirekt über Komposition** |
-| Validierender Producer | derselbe LLM-Artefakt-Validator | `build_threat_model_yaml.py` (**deterministisch**) |
+| Validierender Producer | derselbe LLM-Artefakt-Validator | `model/build_threat_model_yaml.py` (**deterministisch**) |
 | Zeit bis Abbruch | ~4 min | ~75 min |
 | Deterministischer Normalisierer vorhanden? | nein | **ja, aber lückenhaft** (D1) |
 | Contract dem Producer bekannt? | ja, aber verwechselbar (D1 dort) | **nein** (D4 hier) |
@@ -212,7 +212,7 @@ und in beiden ist die dokumentierte Semantik weicher als die implementierte.
 M3 („Fehlerklasse am Erkennungsort nach `producer=llm` wählen") und M4
 („Retry rollen-generisch") knüpfen daran, dass der **Schreiber der validierten
 Datei** ein LLM ist. Bei `context-v2-finalize` ist der Schreiber
-`build_threat_model_yaml.py` — ein Skript. Nach der Invariante `:474-476`
+`model/build_threat_model_yaml.py` — ein Skript. Nach der Invariante `:474-476`
 (*„Deterministische Producer bleiben terminal"*) bliebe dieser Abbruch also auch
 **nach vollständiger Umsetzung von M3 und M4 terminal**.
 
@@ -324,10 +324,10 @@ kennt, ohne Regel, welche gilt:
 
 | Doktrin | Stelle | Verhalten |
 |---|---|---|
-| normalisieren | `build_threat_model_yaml.py:1126` | Titel wird umgeschrieben |
+| normalisieren | `model/build_threat_model_yaml.py:1126` | Titel wird umgeschrieben |
 | verwerfen | `merge_threats.py:262` | zu kurze `attack_steps` fliegen raus |
-| normalisieren + warnen | `orchestration_controller.py:3589` (`RECON_KEY_FILES_NORMALIZED`) | Wert wird korrigiert, Event gesetzt |
-| **abbrechen** | `build_threat_model_yaml.py:2658-2662` | Lauf stirbt |
+| normalisieren + warnen | `orchestrator/orchestration_controller.py:3589` (`RECON_KEY_FILES_NORMALIZED`) | Wert wird korrigiert, Event gesetzt |
+| **abbrechen** | `model/build_threat_model_yaml.py:2658-2662` | Lauf stirbt |
 
 Welche greift, ist eine Frage dessen, welcher Codepfad wann geschrieben wurde —
 keine Entscheidung. Mein Lauf ist der Fall, in dem der Zufall auf „abbrechen"
@@ -353,13 +353,13 @@ wird, hat dieser Lauf bewiesen.
 
 | Datei | Änderung |
 |---|---|
-| `scripts/build_threat_model_yaml.py` | `_ensure_pattern_lead()` totalisiert den `^[A-Z]`-Lead und meldet, ob das verlustbehaftet war; `_fallback_title()` deckt den unrettbaren Rest; `_conform_title()` ersetzt die Zeile am Aufrufort, stasht bei Verlust das Original in `_title_source` und zählt die Fälle; ein `warnings`-Eintrag macht die Rate sichtbar |
-| `scripts/orchestration_controller.py` | `_cap_reason()` hält den Abbruchgrund unter `reason.maxLength`; Kopf **und** Ende bleiben erhalten, weil das Urteil eines Subprozesses an beiden Enden stehen kann |
+| `scripts/model/build_threat_model_yaml.py` | `_ensure_pattern_lead()` totalisiert den `^[A-Z]`-Lead und meldet, ob das verlustbehaftet war; `_fallback_title()` deckt den unrettbaren Rest; `_conform_title()` ersetzt die Zeile am Aufrufort, stasht bei Verlust das Original in `_title_source` und zählt die Fälle; ein `warnings`-Eintrag macht die Rate sichtbar |
+| `scripts/orchestrator/orchestration_controller.py` | `_cap_reason()` hält den Abbruchgrund unter `reason.maxLength`; Kopf **und** Ende bleiben erhalten, weil das Urteil eines Subprozesses an beiden Enden stehen kann |
 | `tests/test_build_threat_model_yaml.py` | Property-Test über 14 feindliche Leads gegen das **aus dem Schema geladene** Pattern; Identitätstest auf konformen Titeln; Tests für Verlustmeldung, `_title_source`, Anführungszeichen-Waise, Fallback und Locator-Rückgewinnung |
 | `tests/test_orchestration_controller.py` | `TestFailureReasonFitsTheActionSchema` — gekappter Grund erhält beide Enden und die Abort-Action besteht ihr eigenes Schema |
 
 **End-to-End gegen das Artefakt, das den Lauf getötet hat:** der Build läuft
-durch (`EXIT=0`), `validate_intermediate.py threat_model_output` meldet
+durch (`EXIT=0`), `validators/validate_intermediate.py threat_model_output` meldet
 `VALID: 53 threats, 53 mitigations`, und der Receipt weist die Reparatur aus:
 
 ```
@@ -448,8 +448,8 @@ festschrieb, war selbst der Defekt und wurde ersetzt.
 **Zwei weitere Befunde aus der Suche:**
 
 *Der Auto-Emitter-Pass läuft nach der einzigen Schema-Validierung.*
-`_context_v2_finalize` prüft das Modell (`validate_intermediate.py`,
-`orchestration_controller.py:4792`), lässt danach **neun Emitter** darüber
+`_context_v2_finalize` prüft das Modell (`validators/validate_intermediate.py`,
+`orchestrator/orchestration_controller.py:4792`), lässt danach **neun Emitter** darüber
 laufen (`:4800`) und validiert nie erneut. Das Dokument, für das die Garantie
 gilt, existiert nach dem Pass nicht mehr. Geprüft und derzeit unschädlich:
 `emit_clean_finding_titles` trägt denselben `s[0].upper()`-No-Op (`:138`), kann
@@ -476,7 +476,7 @@ eines Abbruch-Fixes.
 
 **M6b — der Abbruch ist reversibel.** `detect_abort()` wertet nicht mehr das
 erste `RUN_ABORTED` aus, sondern das **jüngste** Abbruch/Clear-Paar im
-Lauffenster; `orchestration_controller.py clear-abort --reason …` hängt ein
+Lauffenster; `orchestrator/orchestration_controller.py clear-abort --reason …` hängt ein
 `RUN_ABORT_CLEARED` an. Es wird **nichts gelöscht** — die `RUN_ABORTED`-Zeile
 bleibt stehen. Ein zweiter Abbruch nach einem Clear latcht wieder.
 
@@ -494,7 +494,7 @@ Log filtern). Genau deshalb gibt es jetzt den sanktionierten Pfad.
 > die §5b als fehlend benannte, liegt damit vor.
 
 **N7 — Re-Validierung nach dem Emitter-Pass**, fatal nach dem Vorbild von
-`orchestration_controller.py:5284` („the yaml on disk is invalid and must not
+`orchestrator/orchestration_controller.py:5284` („the yaml on disk is invalid and must not
 reach Stage 2"). Mit M6b darunter kostet ein Fehlschlag hier die Diagnose, nicht
 den Lauf.
 
@@ -539,3 +539,5 @@ Vorbestehend, unabhängig von diesen Änderungen.
 | `minLength`-Verstoß auf Prosa (`attack_steps`, `rationale`) | nicht deterministisch reparierbar — nur der Producer kann das | N6 (Producer-Klassifikation, `bb8e158c`) |
 | Titel wird still zu Unsinn umgeschrieben | V3 — verlustbehaftete Notreparatur ohne Signal | N1b |
 | Lauf stirbt erst in `context-v2-finalize`, Stage 1 komplett bezahlt | D4 — Regel existiert nicht am Attempt-Schema | N3 (Qualität), N1 (Sicherheit) |
+
+**Follow-up (FE-13).** The lead rule later cut digit-led acronyms mid-token (`2FA not enforced …` became `FA not enforced …`). The schema now also accepts a digit run joined to a letter in the same token (`2FA`, `3DS`), a bare count such as `14 Named Accounts` still does not conform as argued in §5, and the repair drops only whole non-conforming leading tokens or punctuation.

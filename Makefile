@@ -101,9 +101,21 @@ test-quick:  ## Run shared base drift guards without coverage
 	@$(PYTHON) scripts/run_tests.py quick -q
 
 .PHONY: test-group
-test-group:  ## Run a focused group: make test-group GROUP=report|scanner|prompts|runtime|incremental|e2e
+test-group:  ## Run a focused group: make test-group GROUP=<name> (see scripts/run_tests.py --help)
 	@test -n "$(GROUP)" || { echo "ERROR: set GROUP=<test group>; see scripts/run_tests.py --help"; exit 2; }
 	@$(PYTHON) scripts/run_tests.py "$(GROUP)" -q
+
+.PHONY: test-changed
+test-changed:  ## Run reviewed tests for branch and local changes: make test-changed BASE=origin/dev
+	@$(PYTHON) scripts/run_tests.py --changed-against "$(or $(BASE),origin/dev)" all -q
+
+.PHONY: test-plan
+test-plan:  ## Explain changed-file selection without running pytest: make test-plan BASE=origin/dev
+	@$(PYTHON) scripts/run_tests.py --list --changed-against "$(or $(BASE),origin/dev)"
+
+.PHONY: audit-test-routes
+audit-test-routes:  ## Verify source routes by measuring every test module under coverage (slow)
+	@$(PYTHON) scripts/audit_test_routes.py
 
 .PHONY: lint
 lint:  ## Ruff check + format check
@@ -116,7 +128,7 @@ fix:  ## Auto-repair the mechanical gate failures (ruff lint + format), then lis
 	@echo ">> ruff format"; ruff format scripts/ tests/ hooks/
 	@echo ""
 	@echo "Auto-repair done. Stages 3-6 are NOT auto-fixable by design (fix the producer, not the symptom):"
-	@echo "  - validate_config.py        -> correct the offending config field"
+	@echo "  - validators/validate_config.py        -> correct the offending config field"
 	@echo "  - check_fragment_registry   -> align the registry maps (docs/internal/runbooks/adding-a-section.md)"
 	@echo "  - check_target_specificity  -> make the rule generic, or move the target name into a comment"
 	@echo "  - pytest / coverage         -> separate pre-existing from new failures; add tests, don't lower the floor"
@@ -135,7 +147,7 @@ fix:  ## Auto-repair the mechanical gate failures (ruff lint + format), then lis
 
 .PHONY: baseline-sync
 baseline-sync:  ## Re-vendor data/baselines/ from the published baseline: make baseline-sync [DRY=1] [ACCEPT_ID=aisec-0.2]
-	@$(PYTHON) scripts/sync_baseline.py \
+	@$(PYTHON) scripts/baseline/sync_baseline.py \
 		$(if $(DRY),--dry-run,) \
 		$(if $(ACCEPT_ID),--accept-id "$(ACCEPT_ID)",)
 
@@ -157,10 +169,11 @@ check:  ## Continuous gate: lint, format, config, drift, full test suite (no cov
 
 .PHONY: validate
 validate:  ## Validate config, registry, target neutrality, and requirement bindings without pytest
-	@$(PYTHON) scripts/validate_config.py .
-	@$(PYTHON) scripts/check_fragment_registry.py
+	@$(PYTHON) scripts/validators/validate_config.py .
+	@$(PYTHON) scripts/validators/check_fragment_registry.py
 	@$(PYTHON) scripts/check_target_specificity.py
 	@$(PYTHON) scripts/check_specs.py
+	@$(PYTHON) scripts/run_tests.py --check-groups
 
 .PHONY: release-check
 release-check:  ## Release-boundary gate: `check` + version/tag/changelog consistency
@@ -199,12 +212,12 @@ setup-target:  ## Write required CC permissions into a target repo (default: cwd
 .PHONY: diagnostic-bundle
 diagnostic-bundle:  ## Build an anonymised diagnostic .tgz from a run: make diagnostic-bundle RUN=<repo>/docs/security [REPO_ROOT=<repo>] [INTO=.]
 	@test -n "$(RUN)" || { echo "ERROR: set RUN=<run OUTPUT_DIR>, e.g. make diagnostic-bundle RUN=<repo>/docs/security"; exit 2; }
-	@$(PYTHON) scripts/diagnostic_bundle.py collect --run "$(RUN)" --into "$(or $(INTO),.)" $(if $(REPO_ROOT),--repo-root "$(REPO_ROOT)",)
+	@$(PYTHON) scripts/runtime/diagnostic_bundle.py collect --run "$(RUN)" --into "$(or $(INTO),.)" $(if $(REPO_ROOT),--repo-root "$(REPO_ROOT)",)
 
 .PHONY: inspect-bundle
 inspect-bundle:  ## Print a triage summary of a diagnostic bundle: make inspect-bundle BUNDLE=appsec-diag-<id>.tgz
 	@test -n "$(BUNDLE)" || { echo "ERROR: set BUNDLE=<path to .tgz or unpacked dir>"; exit 2; }
-	@$(PYTHON) scripts/diagnostic_bundle.py inspect --bundle "$(BUNDLE)"
+	@$(PYTHON) scripts/runtime/diagnostic_bundle.py inspect --bundle "$(BUNDLE)"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Ad-hoc headless analysis against an arbitrary target repo

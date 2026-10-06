@@ -13,7 +13,7 @@
         "repo": "appsec-foundry/appsec-advisor",
         "ref": "main"
       },
-      "description": "Code-derived STRIDE threat modeling. Derives the architecture model from the repository and produces Markdown reports, structured exports, SARIF, and PDFs.",
+      "description": "Build an implementation-level threat model from your codebase, mapping architecture, data flows, trust boundaries, and potential attack paths. Complement manual threat modeling with prioritized findings, code references, and actionable remediation guidance for developers.",
       "homepage": "https://github.com/appsec-foundry/appsec-advisor",
       "repository": "https://github.com/appsec-foundry/appsec-advisor",
       "license": "Apache-2.0"

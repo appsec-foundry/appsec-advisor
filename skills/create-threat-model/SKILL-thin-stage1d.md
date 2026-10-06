@@ -2,8 +2,8 @@
 
 Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; use no other Stage-1d instructions.
 
-1. Mark Stage 1d in progress, capture `STAGE_ABUSE_START_ISO`, print the banner,
-   and start the heartbeat:
+1. Mark Stage 1d in progress, print the banner, and start the heartbeat, in one
+   message with step 2:
 
    ```text
    ▶ Stage 1d - Abuse case verification starting  (deterministic match + per-candidate sonnet verifier fan-out)
@@ -11,14 +11,12 @@ Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; use no other Stage-1d instru
 2. Run:
 
    ```bash
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" \
      prepare-abuse --output-dir "$OUTPUT_DIR"
    ```
 
-3. Call `verify-receipts --action-id <context_plan.action_id>` as the final
-   filesystem action. Then launch every job as an
-   `appsec-advisor:appsec-abuse-case-verifier` call, launching the wave
-   in ONE message. Pass no `run_in_background`. Description:
+3. Launch every job as an `appsec-advisor:appsec-abuse-case-verifier` call,
+   launching the wave in ONE message (the Agent hook runs `verify-receipts`). Pass no `run_in_background`. Description:
    `Abuse case: <candidate_id> — <title>`; use the ID if its title is missing.
    Each prompt contains:
 
@@ -36,15 +34,15 @@ Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; use no other Stage-1d instru
    Use the job model alias — `dispatch_jobs[].model`, else
    `dispatch_values.abuse_verifier_model_alias`; `MODEL_ID` keeps the operator
    id, which the Agent tool rejects. Never replace a versioned ID with 4.6. Run
-   one blocking waiter with every job's candidate id:
+   one blocking waiter (Bash timeout 600000) with every job's candidate id:
 
    ```bash
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/wait_abuse_progress.py" "$OUTPUT_DIR" \
-     <candidate ids from dispatch_jobs[]> --interval 20 --rounds 45
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/wait_abuse_progress.py" "$OUTPUT_DIR" \
+     <candidate ids from dispatch_jobs[]>
    ```
 
-   The waiter's exit status is informational; step 4 owns the retry, so do not
-   branch on it or repeat steps 2-3 yourself. Aggregate usage.
+   Exit `75`: repeat it unchanged. Other exits are informational; step 4 owns
+   the retry, so do not branch on them or repeat steps 2-3 yourself. Aggregate usage.
    Require concise status without reproducing evidence or artifact content.
    Abort or overflow is fatal and must not silently drop candidates.
    `dispatch_jobs[]` is the only dispatch authority: `run_gate` needs no
@@ -54,7 +52,7 @@ Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; use no other Stage-1d instru
 4. Run:
 
    ```bash
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" \
      finalize-abuse --output-dir "$OUTPUT_DIR"
    ```
 
@@ -63,17 +61,16 @@ Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; use no other Stage-1d instru
    `dispatch_parallel` is its one retry for verifiers that decided nothing:
    dispatch that wave as in step 3, wait, then call `finalize-abuse` again.
    The retry budget is persisted, so this cannot loop.
-5. Send the final heartbeat, stop the watchdog, record aggregated stats, and
-   mark the task completed:
+5. In one message, send the final heartbeat and record aggregated stats in one
+   Bash call, stop the watchdog, and mark the task completed:
 
    ```bash
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/record_stage_stats.py" "$OUTPUT_DIR" \
        --stage 1 --variant abuse-verification --name "Abuse Case Verification" \
        --agent appsec-advisor:appsec-abuse-case-verifier \
        --model "<job model alias from step 3>" \
        --duration-ms <ms> --tool-uses <n> --tokens <n> \
-       --subagent-type appsec-advisor:appsec-abuse-case-verifier \
-       --since-iso "$STAGE_ABUSE_START_ISO" 2>/dev/null || true
+       --subagent-type appsec-advisor:appsec-abuse-case-verifier 2>/dev/null || true
    ```
 
    With no candidates, record a zero-token deterministic row instead: same call

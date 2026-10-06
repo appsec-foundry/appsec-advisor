@@ -1,12 +1,13 @@
 # Threat Modeler
 
-`/appsec-advisor:create-threat-model` derives the implemented architecture from a repository and applies STRIDE. **Code-derived threat modeling** means that code and configuration are the primary evidence, rather than a manually maintained diagram.
+`/appsec-advisor:create-threat-model` performs **automated, code-derived threat modeling**. It reconstructs the architecture visible in code and configuration and applies STRIDE to identify threats and control gaps. The analysis covers architectural assumptions and implementation weaknesses, with repository evidence supporting its findings.
 
 → [Back to README](../README.md)
 
 ## Contents
 
 - [What you get](#what-you-get)
+- [Using the model in design reviews](#using-the-model-in-design-reviews)
 - [Threat model lifecycle](#threat-model-lifecycle)
 - [Example report](#example-report-owasp-juice-shop)
 - [What it checks](#what-it-checks)
@@ -24,8 +25,8 @@ An assessment generates an architecture and security report from repository evid
 
 **Default outputs**
 
-- `threat-model.md` — report for engineers, architects, and security reviewers.
-- `threat-model.yaml` — canonical structured model used by automation and exports, including requirements assessment and provenance, verified abuse-case outcomes, and bounded business-context provenance without the source prose.
+- `threat-model.md`: report for engineers, architects, and security reviewers.
+- `threat-model.yaml`: canonical structured model used by automation and exports, including requirements assessment and provenance, verified abuse-case outcomes, and bounded business-context provenance without the source prose.
 
 **Optional outputs**
 
@@ -54,9 +55,19 @@ Generate optional formats from an existing assessment without running the analys
 
 SARIF, pentest tasks, and Threat Dragon are generated from `threat-model.yaml`. PDF and HTML are converted from `threat-model.md`; rendered diagrams also require `mmdc` and Chrome or Chromium. Check dependencies with `/appsec-advisor:export-threat-model --check-only`, or use `--no-mermaid` to export PDF or HTML without rendered diagrams. See [Threat Dragon export](threat-dragon-export.md) for that format's limits.
 
+## Using the model in design reviews
+
+Review the generated model with developers, architects, and security reviewers. Compare its data flows and trust boundaries with the intended design, investigate findings, and resolve assumptions that repository evidence cannot settle. If no documented threat model exists, use the generated model as a starting point.
+
+Supply business purpose, sensitive assets, and security assumptions through [repo-local context](#repo-local-context). Use [trust-boundary declarations](#trust-boundary-declarations--appsectrust-boundariesyaml) to clarify deployment, tenancy, or ownership that the source does not establish. Declarations provide context; they do not prove that a control works. The analysis cannot verify runtime behavior or production-only controls.
+
+Use the review to decide which design changes and fixes are needed. After implementation changes, reassess the repository to check the revised design against the available code and configuration.
+
 ## Threat model lifecycle
 
-Treat the threat model as a maintained review artifact. Create the initial model, review its findings, and update it as the repository changes.
+The plugin automates repository analysis and report generation. The team validates findings, resolves open assumptions, and decides on design changes, remediation, or risk acceptance. Rerun the assessment as the implementation changes to keep the model current.
+
+The Management Summary verdict rates security concerns in the assessed scope: red indicates Critical concerns, yellow indicates High concerns, and green means neither was reported. It includes finding priorities and design risks without changing individual finding ratings. Green does not establish deployment safety or coverage of unexamined surfaces. When you explicitly declare no material business harm, the verdict shows the component scope of that declaration separately; technical findings and their severity remain available for benchmarking. Design-risk citations link directly to weaknesses and do not assert confirmed exploitation; the team retains the deployment decision.
 
 ```mermaid
 flowchart LR
@@ -100,11 +111,15 @@ Decisions are stored separately from the generated model and survive reassessmen
 
 `/appsec-advisor:export-threat-model` creates exports from an existing model. `/appsec-advisor:publish-threat-model` is the separate path for making reviewed report files trackable in version control.
 
+Figure 1 presents the Architecture and Threat Overview with attack paths and hexagonal authentication markers at component accesses. Equal methods share a number; `0` marks evidenced absence of separate authentication and `?` marks uncertainty. Marker colours describe method properties, not a security verdict. Dashed lines mark trust boundaries; the Trust Boundaries table lists them with their IDs. Matching E-labelled rows inside components name the peer and direction of connections whose lines are omitted. A model too large for one diagram also links a detail view that retains the data-flow and boundary catalogues. Existing models without authentication evidence need a new analysis to populate these markers; exporting does not infer missing controls.
+
+Figure 2 connects actors, attack routes, underlying weaknesses and impact using the same numbers as Figure 1 and the Top Threats table. Each route names one example finding with its access prerequisite. Existing weakness links appear as W-IDs in parentheses; without a register link the card says so and never substitutes finding text. Impact shows the group's potential business harm. Consecutive routes of one actor share an actor card. The attack step, component and technical consequence remain in the linked findings and SVG tooltips.
+
 ## Example report: OWASP Juice Shop
 
-The [OWASP Juice Shop example](https://github.com/appsec-foundry/appsec-advisor-examples/blob/main/threat-modeler/threat-model-juice-shop-thorough-v0.6.0b3.md) shows a thorough assessment with evidence links, abuse cases, and attack paths.
+The [OWASP Juice Shop example](https://github.com/appsec-foundry/appsec-advisor-examples/blob/main/threat-modeler/threat-model-juice-shop-thorough-v0.6.0b4.md) shows a thorough assessment with evidence links, abuse cases, and attack paths.
 
-![Threat Model Juice Shop Thorough](https://raw.githubusercontent.com/appsec-foundry/appsec-advisor-examples/main/threat-modeler/threat-model-juice-shop-thorough-v0.6.0b3.figure1.svg)
+![Figure 1a of the Juice Shop threat model](images/figure1-example.svg)
 
 ## What it checks
 
@@ -221,22 +236,22 @@ Thorough increases both component coverage and per-component analysis depth.
 
 ### Measured cost by depth
 
-The following OWASP Juice Shop runs used a Sonnet 4.6 Claude Code session on 0.5.2-dev. The linked thorough sample is a later 0.6.0-beta.3 run and is shown for report structure, not for the cost figure beside it. Results vary with repository, cache state, and model routing.
+The following OWASP Juice Shop runs used a Sonnet 4.6 Claude Code session. Quick and standard were measured on 0.5.2-dev, thorough on 0.6.0-beta.4. Results vary with repository, cache state, and model routing.
 
 | Mode | Best fit | Review depth | Measured API cost and time |
 |---|---|---|---|
 | **Quick** `--assessment-depth quick` | Early feedback and low-risk changes | Reduced analysis; no abuse-case validation or final model-based QA | $15.06 and 97 minutes ([sample](https://github.com/appsec-foundry/appsec-advisor-examples/blob/main/threat-modeler/threat-model-juice-shop-quick-v0.5.2.md)) |
 | **Standard** *(default)* | Normal security reviews | Full analysis, abuse-case validation, and QA | $25.39 and 124 minutes |
-| **Thorough** `--assessment-depth thorough` | High-risk services and major releases | Deeper component and architecture review | $35.15 and about 138 minutes ([sample](https://github.com/appsec-foundry/appsec-advisor-examples/blob/main/threat-modeler/threat-model-juice-shop-thorough-v0.6.0b3.md)) |
+| **Thorough** `--assessment-depth thorough` | High-risk services and major releases | Deeper component and architecture review | $32.14 and 99 minutes ([sample](https://github.com/appsec-foundry/appsec-advisor-examples/blob/main/threat-modeler/threat-model-juice-shop-thorough-v0.6.0b4.md)) |
 
-The standard run included one STRIDE retry. Cost follows the number and complexity of analyzed components more closely than raw repository size.
+The standard and thorough runs each included one STRIDE retry. Cost follows the number and complexity of analyzed components more closely than raw repository size.
 
 ### Additional controls
 
 | Option | Effect |
 |---|---|
 | `--cheap-stride` / `--no-cheap-stride` | Use or disable the light pass for proven-internal components. It is on by default for quick and standard and off for thorough. All six STRIDE categories still run. |
-| `--stride-cap N` | Limit non-Critical findings per STRIDE category and component. Off by default. |
+| `--stride-cap N` | Limit Medium and Low findings per STRIDE category and component; Critical and High are never dropped. Off by default. |
 | `--evidence-verifier-cap N` | Limit non-Critical findings sent through evidence verification. Critical findings are always selected first. |
 | `--register-severity-floor LEVEL` | Set the lowest severity included in the report and exports. Default: `medium`, which reports the Low tally as `n/a` rather than `0`. |
 
@@ -286,7 +301,10 @@ The hard cut requires an `ANTHROPIC_API_KEY`; the soft budget and time limits al
 
 Four optional files provide context that cannot be derived from code. The plugin treats their contents as data, and they cannot suppress a finding supported by repository evidence.
 
-### Business context — `docs/business-context.md`
+<a id="business-context--docsbusiness-contextmd"></a>
+### Business context: `docs/security/business-context.md`
+
+The plugin reads `docs/business-context.md` only when `docs/security/business-context.md` is absent. If both exist, the file under `docs/security/` takes precedence. Saving dialog answers preserves effective legacy context in the new file and leaves the legacy file unchanged. The persistent file survives run cleanup.
 
 Use this file for business facts that are not visible in code:
 
@@ -307,19 +325,28 @@ Applicable policy, contractual, legal, or regulatory duties.
 Conditions you assume rather than enforce in code.
 ```
 
-Partial answers are fine. Named sensitive assets keep their components in standard scope and protect them from ceiling drops. They do not by themselves disable cheap STRIDE. Declared compromise impact and the sensitive assets an attack path actually reaches weight the impact rating of a finding the repository evidence already supports; they never create a finding, raise likelihood, or relax a severity cap. When technical ranking scores are equal, mapped compromise impact, sensitive assets, or obligations place affected findings and mitigations first.
+Partial answers are fine. The Management Summary asks only questions tied to relevant findings and a decision their answer changes. Describe concrete disclosure, manipulation, or outage harm for each named asset; naming an asset alone does not answer its criticality. Answers already supplied for the affected component are omitted when the analysis can trace them to the context source. Partial or uncertain answers remain open. Named sensitive assets keep their components in standard scope and protect them from ceiling drops. They do not by themselves disable cheap STRIDE. Declared compromise impact and the sensitive assets an attack path actually reaches weight the impact rating of a finding the repository evidence already supports; they never create a finding, raise likelihood, or relax a severity cap. Within the same priority, Top Mitigations and the completion summary's `Fix first` list put measures for findings that reach declared context first and name the declared asset they protect; declared context never moves a measure to another priority.
 
 The report's run statistics name the file the context came from and how many findings it applied to, and each of those findings records which declared fields apply. A declared context that maps to no component is reported as a run issue.
 
-On a fresh interactive run, you can paste this context or provide a raw Markdown or plain-text URL. The URL is checked before it is fetched, and content containing a credential is refused. `--skip-context` runs without business context at all: no question, and a stored `docs/business-context.md` is left unread. A stored file carrying what looks like a credential is withheld from the analysis and reported instead, the same way a supplied source is refused. A headless run accepts `--context <url|path>` for that run only; it never writes `docs/business-context.md`. The run captures that source itself before the analysis starts, so a URL the policy rejects, an oversized file, or a source carrying a credential stops the run with the reason instead of scanning as if nothing had been passed.
+Interactive full and rebuild runs first build a small application overview, then ask up to two optional questions before expensive scanning. The English dialog first asks you to confirm or correct the proposed use case, then uses your answer to ask for the worst plausible consequence for the business or its users. Free-text answers are preserved in their original language. The choices describe harm to people or business operations, not technical attack mechanisms. It omits topics explicitly answered by existing context; confirming the use case alone does not answer the worst-case question. Deployment and asset inventories are not standard questions. The answers inform the relevant components’ business purpose and compromise impact, the impact ratings and descriptions of supported findings, and mitigation ordering within the existing technical priorities. Answers apply before analysis begins and are saved in `docs/security/business-context.md` alongside existing repository context. Later analyses reuse them without asking answered questions again. Edit that file when the use case or relevant harm changes. Explicit `--context` imports remain run-only. The overview uses bounded local excerpts and does not run the full reconnaissance scanner. Its target is a 30–60 second delay before questions, although host and model latency can vary. Unknown or skipped answers remain uncertain rather than being inferred.
+
+Supply reusable context in `docs/security/business-context.md`, or use `--context <url|path>` for a single run. `--skip-context` skips both the dialog and stored business context. Headless runs never ask questions and still accept `--context`. Supplied sources are validated before use; a rejected source stops the run. Remaining questions appear in the report; answers added to the persistent file take effect on the next full analysis. The read-only ask skill does not save answers or update ratings.
+
+The impact choices follow the confirmed use case, with the most plausible option recommended first for your confirmation. A training or demo application with synthetic data and no important business operations can have no material business harm; that option states its assumptions instead of treating the application label as proof. Confirmed no-harm context is saved and reported as applied, without adding a business-priority bonus or asking to raise impact merely because an answer exists. Unknown or skipped impact is not a no-harm declaration. Technical findings and independently declared sensitive assets or obligations remain relevant.
 
 Changing persistent context does not re-rate an existing model automatically. Run `--full` to apply it to every finding. Keep actor definitions, abuse cases, trust boundaries, threat ratings, and claimed controls out of this file; they have separate inputs or require repository evidence.
 
-### Actor layer — `.appsec/actors.yaml`
+<a id="actor-layer--appsecactorsyaml"></a>
+### Actor layer: `.appsec/actors.yaml`
 
-Use this file to add, change, or disable actors for the repository. It is checked against a schema before the scan starts. Organization actors are inherited by default; set `inherit_org: false` to leave them out. A repository cannot re-enable an actor disabled by the organization.
+Use this file to add, change, enable, or disable actors for the repository. It is checked against a schema before the scan starts. Organization actors are inherited by default; set `inherit_org: false` to leave them out. A repository cannot re-enable an actor disabled by the organization.
+
+Malicious insiders (`ACT-D-04` repository or pipeline access, `ACT-D-05` production access) and attackers holding a user's device (`ACT-D-08`) are opt-in: the code cannot show that such a threat applies, so they are not assessed until `enable:` names them here or under `actors.enable` in the org profile. §11 of the report lists the ones a run did not assess.
 
 ```yaml
+enable:
+  - ACT-D-04
 disable:
   - id: ACT-D-1
     reason: This repository has no direct customer accounts.
@@ -330,7 +357,23 @@ inherit_org: true
 
 Actor choices made in conversation apply only to that run. Commit `.appsec/actors.yaml` when a choice must persist.
 
-### Known threats — `docs/known-threats.yaml`
+A legitimate role is shown as signed in (`internet-user` or `internet-priv-user`) only when its request path includes authentication. A path without an authenticating hop is shown as anonymous. An admin role requires a cited access check in code; a file header is not evidence.
+
+The check cannot see external controls such as ingress SSO, an authenticating proxy, or VPN restrictions. Declare roles that depend on these controls under `legitimate_roles`. A declaration replaces a modeled role with the same `id` or adds a new role. It retains its name in Figure 1 and is never downgraded. The run log identifies withdrawn roles with `ROLE_ACCESS_WITHDRAWN`. Signed-in classes must state where login occurs:
+
+```yaml
+legitimate_roles:
+  - id: ext-employee
+    name: Employee
+    access: internet-user
+    description: Staff using the portal.
+    authentication: SSO via oauth2-proxy at the ingress
+```
+
+Figures group actors linked to displayed findings by access category. Adding twenty roles does not create twenty diagram nodes. Identified Actors has one row for each attacker and legitimate role that Figure 1 draws, under the same name, and names your configured roles inside the attacker group that draws them. §2.1, the threat-actor legend and the abuse cases use the same names. A role whose group Figure 1 does not draw does not appear in the report. Grouping does not imply that the roles share every permission.
+
+<a id="known-threats--docsknown-threatsyaml"></a>
+### Known threats: `docs/known-threats.yaml`
 
 Use this file for prior pentest findings, accepted risks, or issues that each assessment should revisit. Schema validation runs before analysis, and an invalid entry stops the assessment.
 
@@ -355,7 +398,8 @@ threats:
 
 Optional fields are `evidence`, `pentest_ref`, `accepted_risk`, and `mitigation_ref`.
 
-### Trust-boundary declarations — `.appsec/trust-boundaries.yaml`
+<a id="trust-boundary-declarations--appsectrust-boundariesyaml"></a>
+### Trust-boundary declarations: `.appsec/trust-boundaries.yaml`
 
 Use this file when deployment, tenancy, or ownership is not clear from the source. A declaration can add a boundary or clarify one the scan found. It cannot remove a detected boundary, claim that a control works, or change a rating on its own.
 
@@ -391,6 +435,12 @@ related:
 
 The imported model remains untrusted context. It may produce a hypothesis for local verification, but it cannot establish a finding, assign a CVSS score, or override target-repository evidence. Actor definitions are not imported from related repositories.
 
+### Architect review
+
+Thorough assessments enable architect review automatically; `--architect-review` enables it explicitly and `--no-architect-review` disables it. `--architect-model` selects its model. The reviewer checks findings before prioritization and independently proposes corrections to ratings and remediation steps. Accepted corrections remain in later report rebuilds.
+
+The completion receipt distinguishes reviewed, incomplete and not-run coverage. Timeouts, missing evidence and findings outside the bounded review remain visible as gaps; they do not mean the findings were approved. The review does not edit CVSS, evidence, CWE mappings or general report prose. Rerendering an older model does not run a new analysis.
+
 ## Architecture
 
 Agents read the repository and make the security judgments. Python checks their structured output and builds the report. The report does not come from one free-form model response.
@@ -411,6 +461,7 @@ Agents read the repository and make the security judgments. Python checks their 
 | `/appsec-advisor:security-score` | Score the repository 0-100 from the scanner layer alone, without a threat model. |
 | `/appsec-advisor:clean-run-state` | Remove stale state after an interrupted run. |
 | `/appsec-advisor:fix-run-issues` | Show manual plugin-fix guidance from a validated diagnosis of the previous run. |
+| `/appsec-advisor:report-error` | Investigate a run error locally, review an anonymised issue draft, and optionally approve publication to the plugin repository; `--bundle-only` keeps the manual diagnostic-bundle workflow. |
 | `/appsec-advisor:status` | Show plugin version, configuration, and last-run state. |
 | `/appsec-advisor:check-permissions` | Check or update permissions for unattended runs. |
 

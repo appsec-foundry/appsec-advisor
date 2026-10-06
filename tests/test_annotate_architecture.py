@@ -1,5 +1,5 @@
 """
-Tests for annotate_architecture.py — post-Phase-9 Mermaid diagram annotator.
+Tests for renderers/annotate_architecture.py — post-Phase-9 Mermaid diagram annotator.
 
 The annotator reads a Markdown file with C4 diagrams and a .threats-merged.json,
 and rewrites every ``graph`` block to attach severity badges, classes, and click
@@ -13,7 +13,7 @@ from pathlib import Path
 
 PLUGIN_SCRIPTS = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(PLUGIN_SCRIPTS))
-from annotate_architecture import (  # noqa: E402
+from renderers.annotate_architecture import (  # noqa: E402
     _aggregate,
     annotate_markdown,
 )
@@ -341,7 +341,7 @@ def test_idempotent_file_write_noop(tmp_path: Path):
 
 
 def test_cli_rewrites_file_in_place(tmp_path: Path):
-    from annotate_architecture import main
+    from renderers.annotate_architecture import main
 
     md_path = tmp_path / "threat-model.md"
     md_path.write_text(SIMPLE_MD, encoding="utf-8")

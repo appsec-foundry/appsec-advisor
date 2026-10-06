@@ -1,4 +1,4 @@
-"""Tests for scripts/preflight_untrusted.py."""
+"""Tests for scripts/validators/preflight_untrusted.py."""
 
 from __future__ import annotations
 
@@ -10,10 +10,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "preflight_untrusted.py"
+SCRIPT = REPO_ROOT / "scripts" / "validators/preflight_untrusted.py"
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import preflight_untrusted as pre  # noqa: E402
+import validators.preflight_untrusted as pre  # noqa: E402
 
 
 def _run(repo_root: Path, *extra: str) -> tuple[int, str]:

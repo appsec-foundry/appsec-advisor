@@ -1,4 +1,4 @@
-"""Unit tests for scripts/aggregate_run_issues.py — phase pairing + run scoping.
+"""Unit tests for scripts/runtime/aggregate_run_issues.py — phase pairing + run scoping.
 
 These tests lock in the M3.2 fixes for the bugs surfaced during the
 2026-04-26 19:55 ``--rebuild --verbose`` run:
@@ -23,16 +23,17 @@ import json
 import sys
 from pathlib import Path
 
-from event_log import format_line
+import pytest
+from runtime.event_log import format_line
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "aggregate_run_issues.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "runtime/aggregate_run_issues.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("aggregate_run_issues", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("runtime.aggregate_run_issues", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["aggregate_run_issues"] = module
+    sys.modules["runtime.aggregate_run_issues"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
@@ -862,9 +863,11 @@ class TestSoftCrossingKeepsItsRecommender:
     def test_soft_crossing_still_gets_a_non_degraded_recommendation(self, tmp_path):
         import importlib.util as _ilu
 
-        spec = _ilu.spec_from_file_location("recommend_fixes", REPO_ROOT / "scripts" / "recommend_fixes.py")
+        spec = _ilu.spec_from_file_location(
+            "runtime.recommend_fixes", REPO_ROOT / "scripts" / "runtime/recommend_fixes.py"
+        )
         rf = _ilu.module_from_spec(spec)
-        sys.modules["recommend_fixes"] = rf
+        sys.modules["runtime.recommend_fixes"] = rf
         spec.loader.exec_module(rf)
 
         # Source column must carry the real emitter so the recommender can locate
@@ -887,7 +890,7 @@ class TestBashWarnFolding:
     attempts as findings made a single wrong invocation look systemic on the
     2026-08-23 insecure-large-spring-app run."""
 
-    def _warn(self, resp: str, cmd: str = "python3 /plugin/scripts/log_event.py --log-file /x") -> str:
+    def _warn(self, resp: str, cmd: str = "python3 /plugin/scripts/runtime/log_event.py --log-file /x") -> str:
         return _hline("2026-08-23T09:40:03Z", "BASH_WARN", f"cmd={cmd}  resp={{'stdout': \"{resp}\"}}  dur=0s")
 
     def test_same_cause_folds_to_one_issue_with_a_count(self):
@@ -908,8 +911,8 @@ class TestBashWarnFolding:
 
     def test_same_message_from_a_different_script_is_a_different_cause(self):
         log = [
-            (1, self._warn("boom", cmd="python3 /plugin/scripts/log_event.py x")),
-            (2, self._warn("boom", cmd="python3 /plugin/scripts/write_stride_progress.py x")),
+            (1, self._warn("boom", cmd="python3 /plugin/scripts/runtime/log_event.py x")),
+            (2, self._warn("boom", cmd="python3 /plugin/scripts/runtime/write_stride_progress.py x")),
         ]
         assert len(agg._extract_warnings(log)) == 2
 
@@ -941,6 +944,53 @@ class TestExtractBudgetEvents:
 
     def test_irrelevant_event_skipped(self):
         assert agg._extract_budget_events([(1, _line("2026-04-26T18:00:00Z", "PHASE_START", "x"))]) == []
+
+
+def _controller_line(event: str, detail: str, level: str) -> str:
+    return format_line(event, detail, level=level, component="skill-controller", sid="--------")
+
+
+class TestControllerGateEvents:
+    def test_a_tolerated_gate_failure_is_not_a_clean_run(self, tmp_path):
+        (tmp_path / ".agent-run.log").write_text(
+            _controller_line(
+                "ORCHESTRATION_GATE_WARN",
+                "validate_intermediate.py failed with exit 1: INVALID: findings[0].title differs",
+                "WARN",
+            ),
+            encoding="utf-8",
+        )
+        data = agg.aggregate(tmp_path, "standard")
+        (issue,) = [i for i in data["issues"] if i["category"] == "orchestration_gate_warn"]
+        assert data["run_status"] == "issues"
+        assert issue["severity"] == "warning"
+        assert issue["evidence"]["script"] == "validate_intermediate.py"
+        assert issue["evidence"]["exit_code"] == 1
+
+    def test_repeats_of_another_script_collapse_with_a_count(self):
+        detail = "enrichment_pass.sh failed with exit 3: step timed out"
+        log = [(n, _controller_line("ORCHESTRATION_GATE_WARN", detail, "WARN")) for n in (4, 9)]
+        (issue,) = agg._extract_controller_gate_events(log)
+        assert issue["evidence"]["script"] == "enrichment_pass.sh"
+        assert issue["evidence"]["occurrences"] == 2
+        assert issue["evidence"]["log_line"] == 4
+
+    def test_a_withheld_config_scan_is_an_error(self, tmp_path):
+        (tmp_path / ".agent-run.log").write_text(
+            _controller_line("CONFIG_SCAN_INVALID", "config_iac_scanner.py failed with exit 2: bad catalog", "ERROR"),
+            encoding="utf-8",
+        )
+        data = agg.aggregate(tmp_path, "standard")
+        (issue,) = [i for i in data["issues"] if i["category"] == "config_scan_invalid"]
+        assert issue["severity"] == "error"
+        assert data["summary"]["errors"] >= 1
+
+    def test_other_controller_warnings_and_info_events_stay_silent(self):
+        log = [
+            (1, _controller_line("RECON_SUMMARY_TARGET_EXCEEDED", "lines=535 target=200", "WARN")),
+            (2, _controller_line("ORCHESTRATION_READY", "mode=full", "INFO")),
+        ]
+        assert agg._extract_controller_gate_events(log) == []
 
 
 class TestExtractWarnings:
@@ -1285,7 +1335,7 @@ class TestMainCLI:
 
     def test_recommend_enrichment_attempted(self, tmp_path, monkeypatch, capsys):
         # Force the import to fail so we hit the except branch (warning).
-        monkeypatch.setitem(sys.modules, "recommend_fixes", None)
+        monkeypatch.setitem(sys.modules, "runtime.recommend_fixes", None)
         rc = agg.main([str(tmp_path), "--depth", "standard"])
         # Either enrichment ran or warning printed — both return 0 & write file.
         assert rc == 0
@@ -1440,7 +1490,7 @@ def test_run_outcome_flags_external_stop_after_analysis_started(tmp_path):
 
 def test_run_outcome_preserves_authoritative_abort_reason(tmp_path):
     (tmp_path / ".threats-merged.json").write_text("{}", encoding="utf-8")
-    reason = "build_post_stride_contexts.py failed: threat 'T-007' references unknown component"
+    reason = "contexts/build_post_stride_contexts.py failed: threat 'T-007' references unknown component"
     log = [
         (41, _line("2026-08-14T18:06:41Z", "RUN_ABORTED", reason)),
     ]
@@ -1506,7 +1556,7 @@ def test_canary_fires_on_degraded_recommendation():
     assert canary["evidence"]["reasons"] == ["missing_recommender_input"]
     assert canary["evidence"]["degraded_issue_ids"] == ["ISSUE-001"]
     # It must point at the producing component, not at the scanned repository.
-    assert canary["fix_recommendation"]["actions"][0]["target"] == "scripts/recommend_fixes.py"
+    assert canary["fix_recommendation"]["actions"][0]["target"] == "scripts/runtime/recommend_fixes.py"
     assert data["summary"]["warnings"] == 1
 
 
@@ -1585,6 +1635,16 @@ def test_declared_context_mapping_to_no_component_is_surfaced(tmp_path):
     assert issues[0]["category"] == "business_context_unmapped"
     assert issues[0]["severity"] == "warning"
     assert "components_with_business_context=0 of 2" in issues[0]["evidence"]["raw_event"]
+
+
+def test_preferred_business_context_mapping_to_no_component_is_surfaced(tmp_path):
+    out = _context_run(tmp_path, {"api": {}})
+    repo = tmp_path / "repo"
+    (repo / "docs/security").mkdir()
+    (repo / "docs/business-context.md").rename(repo / "docs/security/business-context.md")
+    issues = agg._extract_business_context_reach(out)
+    assert len(issues) == 1
+    assert issues[0]["category"] == "business_context_unmapped"
 
 
 def test_mapped_business_context_produces_no_issue(tmp_path):
@@ -1796,3 +1856,344 @@ def test_latest_editorial_receipt_controls_the_outcome():
     assert agg._extract_editorial_outcome(log) == []
     log.append((3, _line("2026-09-11T15:02:00Z", "EDITORIAL_PASS", "outcome=partial")))
     assert agg._extract_editorial_outcome(log)[0]["evidence"]["outcome"] == "partial"
+
+
+def test_lost_reviewer_actions_raise_the_editorial_issue_to_error():
+    """A discarded packet is an agent output that never reached the deliverable,
+    which is exactly what `user_visible_issues` lets through — so filing it as a
+    warning suppressed the diagnosis offer for a real loss."""
+    log = [(4, _line("2026-09-19T21:15:00Z", "EDITORIAL_PASS", "outcome=partial dropped=12 unaccounted=0"))]
+    issue = agg._extract_editorial_outcome(log)[0]
+    assert issue["severity"] == "error"
+    assert issue["evidence"]["actions_lost"] == 12
+    assert "12 reviewer action(s) lost" in issue["title"]
+
+
+def test_an_unaccounted_gap_reports_even_when_the_outcome_reads_applied():
+    """The balance decides, not the outcome label — a loss path with no detector
+    of its own still raises."""
+    log = [(4, _line("2026-09-19T21:15:00Z", "EDITORIAL_PASS", "outcome=applied dropped=0 unaccounted=3"))]
+    issue = agg._extract_editorial_outcome(log)[0]
+    assert issue["severity"] == "error"
+    assert issue["evidence"]["actions_lost"] == 3
+
+
+def test_a_balanced_pass_stays_silent():
+    log = [(4, _line("2026-09-19T21:15:00Z", "EDITORIAL_PASS", "outcome=applied dropped=0 unaccounted=0"))]
+    assert agg._extract_editorial_outcome(log) == []
+
+
+# ---------------------------------------------------------------------------
+# A component added by inventory finalization that no data flow reaches
+# ---------------------------------------------------------------------------
+
+
+def _inventory_run(tmp_path, injected, flows):
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / ".component-inventory-finalization.json").write_text(
+        json.dumps({"injected_component_ids": injected}), encoding="utf-8"
+    )
+    (out / ".data-flows.json").write_text(json.dumps({"data_flows": flows}), encoding="utf-8")
+    return out
+
+
+def test_injected_component_without_flows_is_surfaced_once_per_component(tmp_path):
+    flows = [{"id": "df-001", "from": "external", "to": "realtime"}, {"id": "df-002", "from": "api", "to": "store"}]
+    out = _inventory_run(tmp_path, ["realtime", "store", "pipeline", "wallet"], flows)
+
+    issues = agg._extract_unconnected_injected_components(out)
+
+    assert [issue["component_id"] for issue in issues] == ["pipeline", "wallet"]
+    assert {issue["category"] for issue in issues} == {"injected_component_without_flows"}
+    assert {issue["severity"] for issue in issues} == {"warning"}
+    assert all(issue["component_id"] in issue["title"] for issue in issues)
+
+
+def test_connected_or_absent_injections_produce_no_issue(tmp_path):
+    assert agg._extract_unconnected_injected_components(tmp_path) == []
+    out = _inventory_run(tmp_path, ["api"], [{"id": "df-001", "from": "api", "to": "external"}])
+    assert agg._extract_unconnected_injected_components(out) == []
+    (out / ".data-flows.json").write_text("not json", encoding="utf-8")
+    assert agg._extract_unconnected_injected_components(out) == []
+
+
+def _cost_run(tmp_path, *, start: str, stop_at: str | None, usage: bool = True) -> Path:
+    from datetime import datetime, timezone
+
+    epoch = int(datetime.strptime(start, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp())
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".scan-start-epoch").write_text(str(epoch), encoding="utf-8")
+    (tmp_path / ".agent-run.log").write_text(
+        f"{start}  [--------]  INFO   skill-controller    PREFLIGHT_CLEANUP   mode=full\n", encoding="utf-8"
+    )
+    tokens = "in=1,000 out=10 cache_write=0 cache_read=0 cost=$0.01" if usage else "cost=n/a"
+    stop = f"{stop_at}  [5a1bc2d3]  INFO   SESSION_STOP        {tokens}\n" if stop_at else ""
+    (tmp_path / ".hook-events.log").write_text(stop, encoding="utf-8")
+    return tmp_path
+
+
+def _ended_run(tmp_path, *after_end: str) -> Path:
+    """A run whose Stop hook closed it at 10:30, with later lines appended."""
+    from datetime import datetime, timezone
+
+    start = int(datetime(2026, 5, 6, 10, 0, tzinfo=timezone.utc).timestamp())
+    (tmp_path / ".scan-start-epoch").write_text(str(start), encoding="utf-8")
+    (tmp_path / ".agent-run.log").write_text(
+        "2026-05-06T10:00:00Z  [--------]  INFO   skill-controller    ASSESSMENT_START    mode=full\n"
+        "2026-05-06T10:20:00Z  [--------]  ERROR  stride-analyzer     TOOL_ERROR          in-run tool failure\n"
+        "2026-05-06T10:30:00Z  [--------]  INFO   hook-logger         ASSESSMENT_END      session=5a1bc2d3\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".hook-events.log").write_text(
+        "2026-05-06T10:10:00Z  [5a1bc2d3]  WARN   BASH_WARN           cmd=python3 build.py  resp=in-run warning\n"
+        + "".join(after_end),
+        encoding="utf-8",
+    )
+    return tmp_path
+
+
+def _reported(out: Path) -> list[str]:
+    return [issue["evidence"]["raw_event"] for issue in agg.aggregate(out, "standard")["issues"]]
+
+
+def test_warnings_logged_after_the_run_ended_are_not_the_runs_issues(tmp_path):
+    out = _ended_run(
+        tmp_path,
+        "2026-05-06T13:00:00Z  [5a1bc2d3]  WARN   BASH_WARN           cmd=grep x  resp=post-run warning\n",
+    )
+    reported = _reported(out)
+    assert not any("post-run" in raw for raw in reported)
+    assert any("in-run warning" in raw for raw in reported)
+
+
+def test_errors_logged_after_the_run_ended_are_not_the_runs_issues(tmp_path):
+    out = _ended_run(
+        tmp_path,
+        "2026-05-06T14:45:00Z  [5a1bc2d3]  ERROR  TOOL_ERROR          Edit failed after the run\n",
+    )
+    reported = _reported(out)
+    assert not any("after the run" in raw for raw in reported)
+    assert any("in-run tool failure" in raw for raw in reported)
+
+
+def test_reaggregating_an_ended_run_keeps_one_reconciliation_line(tmp_path):
+    out = _ended_run(tmp_path)
+    (out / "threat-model.md").write_text("# report\n", encoding="utf-8")
+    with (out / ".agent-run.log").open("a", encoding="utf-8") as handle:
+        handle.write("2026-05-06T10:05:00Z  [--------]  WARN   skill-controller    SESSION_ABORTED_MIDRUN  resumed\n")
+    agg.aggregate(out, "standard")
+    agg.aggregate(out, "standard")
+    assert (out / ".agent-run.log").read_text(encoding="utf-8").count("RUN_RECONCILED") == 1
+
+
+def test_a_run_window_without_its_usage_is_surfaced(tmp_path):
+    out = _cost_run(tmp_path, start="2026-05-06T12:00:00Z", stop_at="2026-05-06T11:00:00Z")
+
+    issues = agg._extract_cost_accounting(out)
+
+    assert [(issue["category"], issue["severity"]) for issue in issues] == [("cost_accounting_failed", "warning")]
+    assert issues[0]["evidence"]["error_kind"] == "no_window_activity"
+
+
+def test_measured_or_host_unlogged_usage_is_not_a_cost_issue(tmp_path):
+    measured = _cost_run(tmp_path / "measured", start="2026-05-06T12:00:00Z", stop_at="2026-05-06T12:10:00Z")
+    unlogged = _cost_run(
+        tmp_path / "unlogged", start="2026-05-06T12:00:00Z", stop_at="2026-05-06T12:10:00Z", usage=False
+    )
+
+    unstarted = _cost_run(tmp_path / "unstarted", start="2026-05-06T12:00:00Z", stop_at="2026-05-06T11:00:00Z")
+    (unstarted / ".scan-start-epoch").unlink()
+
+    assert agg._extract_cost_accounting(measured) == []
+    assert agg._extract_cost_accounting(unlogged) == []
+    assert agg._extract_cost_accounting(unstarted) == []
+    assert agg._extract_cost_accounting(tmp_path / "absent") == []
+
+
+def test_pillar_cwe_findings_are_reported_and_base_cwes_are_not(tmp_path):
+    threats = [
+        {"t_id": "T-001", "cwe": "CWE-284"},
+        {"t_id": "T-002", "cwe": "cwe-693 "},
+        {"t_id": "T-003", "cwe": "CWE-321"},
+        {"t_id": "T-004"},
+    ]
+    (tmp_path / ".threats-merged.json").write_text(json.dumps({"threats": threats}))
+    issues = agg._extract_pillar_cwe_findings(tmp_path)
+    assert [(i["category"], i["severity"], i["findings"]) for i in issues] == [
+        ("pillar_cwe_finding", "warning", ["T-001", "T-002"])
+    ]
+    (tmp_path / ".threats-merged.json").write_text(json.dumps({"threats": threats[2:]}))
+    assert agg._extract_pillar_cwe_findings(tmp_path) == []
+
+
+def _model(tmp_path, *threats):
+    (tmp_path / "threat-model.yaml").write_text(json.dumps({"components": [], "threats": list(threats)}))
+    return tmp_path
+
+
+def _finding(tid, file="lib/store.py", line=12, cwe="CWE-89", **over):
+    row = {
+        "id": tid,
+        "cwe": cwe,
+        "evidence": [{"file": file, "line": line}],
+        "evidence_check": "verified",
+        "evidence_basis": "llm-verified",
+    }
+    row.update(over)
+    return row
+
+
+@pytest.mark.parametrize(
+    ("threats", "violated"),
+    [
+        # Same object and weakness family reported twice (CWE-89 and CWE-943 are injection).
+        ((_finding("T-001"), _finding("T-002", cwe="CWE-943")), "unique_identity"),
+        ((_finding("T-001", file="cmd/run.go", line=40, evidence_basis=None),), "confirmed_needs_verified"),
+    ],
+)
+def test_a_violated_run_invariant_names_it_and_only_a_regression_is_an_error(tmp_path, threats, violated):
+    from renderers.render_completion_summary import user_visible_issues
+    from validators.run_invariants import KNOWN_OPEN
+
+    issues = agg._extract_run_invariants(_model(tmp_path, *threats))
+    known_open = violated in KNOWN_OPEN
+    assert [(i["category"], i["severity"], i["evidence"]["outcome"]) for i in issues] == [
+        ("run_invariant_violated", "warning" if known_open else "error", violated)
+    ]
+    assert bool(issues[0]["evidence"].get("known_open")) is known_open
+    # End users see, and are offered a report for, regressions only.
+    assert bool(user_visible_issues(issues)) is not known_open
+
+
+def test_holding_invariants_and_a_missing_model_report_nothing(tmp_path):
+    assert agg._extract_run_invariants(tmp_path) == []
+    distinct = (_finding("T-001"), _finding("T-002", cwe="CWE-79"), _finding("T-003", line=13))
+    assert agg._extract_run_invariants(_model(tmp_path, *distinct)) == []
+
+
+def test_the_frozen_run_reports_its_known_violations():
+    frozen = Path(__file__).parent / "fixtures" / "run_invariants" / "juice-shop-thorough"
+    outcomes = {i["evidence"]["outcome"] for i in agg._extract_run_invariants(frozen)}
+    assert outcomes == {"confirmed_needs_verified", "unique_identity"}
+
+
+def test_uncovered_iac_surface_becomes_one_warning(tmp_path):
+    (tmp_path / ".config-scan-findings.json").write_text(
+        json.dumps(
+            {
+                "findings": [],
+                "uncovered_iac": [
+                    {"iac_type": "helm", "file_count": 2, "files": ["a/Chart.yaml", "b/Chart.yaml"]},
+                    {"iac_type": "bicep", "file_count": 1, "files": ["main.bicep"]},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    (issue,) = agg._extract_config_scan_uncovered_iac(tmp_path)
+
+    assert issue["category"] == "config_scan_uncovered_iac"
+    assert issue["severity"] == "warning"
+    assert issue["evidence"]["iac_types"] == ["bicep", "helm"]
+    assert "3 IaC file(s)" in issue["title"]
+
+
+def test_covered_or_missing_config_scan_raises_no_uncovered_warning(tmp_path):
+    assert agg._extract_config_scan_uncovered_iac(tmp_path) == []
+    path = tmp_path / ".config-scan-findings.json"
+    for payload in ({"findings": []}, {"parse_error": "x", "findings": []}, {"uncovered_iac": []}):
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        assert agg._extract_config_scan_uncovered_iac(tmp_path) == [], payload
+
+
+# ---------------------------------------------------------------------------
+# _extract_stage_coverage_collapse
+# ---------------------------------------------------------------------------
+
+
+def _coverage_run(tmp_path, *, enabled=True, recorded=4, unreviewed=4, unresolved=0, flags=1, threats=2):
+    (tmp_path / ".skill-config.json").write_text(json.dumps({"architect_review": enabled}))
+    status = {"status": "pass", "outcome": "incomplete", "findings_recorded": recorded}
+    status["unreviewed"] = unreviewed
+    status["unresolved"] = unresolved
+    (tmp_path / ".architect-status.json").write_text(json.dumps(status))
+    jobs = [{"packet_id": "p1", "status": "stage_exhausted"}, {"packet_id": "p2", "status": "failed"}]
+    (tmp_path / ".architect-review.json").write_text(json.dumps({"jobs": jobs}))
+    (tmp_path / ".threats-merged.json").write_text(
+        json.dumps({"threats": [{"t_id": f"T-{n}"} for n in range(threats)]})
+    )
+    evidence = {"summary": {"sampled": flags}, "flags": [{"t_id": "T-0"}] * flags}
+    (tmp_path / ".evidence-verification.json").write_text(json.dumps(evidence))
+    return tmp_path
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "stages"),
+    [
+        ({}, ["architect_review"]),
+        ({"enabled": False}, []),
+        ({"unreviewed": 0}, []),
+        ({"unreviewed": 2}, []),
+        ({"recorded": 0, "unreviewed": 0}, []),
+        ({"flags": 0}, ["architect_review", "evidence_verification"]),
+        ({"flags": 0, "threats": 0, "unreviewed": 1}, []),
+        ({"unreviewed": 0, "unresolved": 4}, []),
+    ],
+    ids=[
+        "architect-none",
+        "disabled",
+        "full",
+        "partial",
+        "no-findings",
+        "both-none",
+        "nothing-to-verify",
+        "all-reviewed-but-left-open",
+    ],
+)
+def test_a_stage_that_covered_nothing_is_a_run_issue(tmp_path, kwargs, stages):
+    issues = agg._extract_stage_coverage_collapse(_coverage_run(tmp_path, **kwargs))
+    assert [issue["evidence"]["stage"] for issue in issues] == stages
+    assert all(issue["category"] == "stage_coverage_collapsed" for issue in issues)
+
+
+def test_collapse_names_the_job_states(tmp_path):
+    (issue,) = agg._extract_stage_coverage_collapse(_coverage_run(tmp_path))
+    assert issue["evidence"]["job_states"] == {"failed": 1, "stage_exhausted": 1}
+    assert "failed=1, stage_exhausted=1" in issue["title"]
+
+
+def _regression_run(tmp_path, previous, risks, depth="thorough"):
+    (tmp_path / ".appsec-cache").mkdir(exist_ok=True)
+    (tmp_path / ".appsec-cache" / "baseline.json").write_text(json.dumps({"severity_counts": previous}))
+    (tmp_path / ".skill-config.json").write_text(json.dumps({"assessment_depth": depth}))
+    threats = [{"id": f"T-{n}", "risk": risk} for n, risk in enumerate(risks)]
+    (tmp_path / "threat-model.yaml").write_text(_json.dumps({"threats": threats}))
+    return tmp_path
+
+
+@pytest.mark.parametrize(
+    ("previous", "risks", "depth", "labels"),
+    [
+        ({"depth": "thorough", "critical": 12, "high": 20}, ["Critical"] * 5 + ["High"] * 20, "thorough", ["Critical"]),
+        (
+            {"depth": "standard", "critical": 4, "high": 10},
+            ["Critical"] * 1 + ["High"] * 4,
+            "thorough",
+            ["Critical", "High"],
+        ),
+        ({"depth": "thorough", "critical": 12, "high": 20}, ["Critical"] * 5, "standard", []),
+        ({"depth": "thorough", "critical": 8, "high": 20}, ["Critical"] * 4 + ["High"] * 10, "thorough", []),
+        ({"depth": "thorough", "critical": 1, "high": 1}, [], "thorough", []),
+    ],
+    ids=["critical-halved", "both-halved", "shallower-run", "exactly-half", "too-few-to-compare"],
+)
+def test_a_halved_severity_tier_is_a_run_issue(tmp_path, previous, risks, depth, labels):
+    issues = agg._extract_severity_regression(_regression_run(tmp_path, previous, risks, depth))
+    assert [issue["evidence"]["severity_label"] for issue in issues] == labels
+
+
+def test_no_previous_counts_raise_nothing(tmp_path):
+    (tmp_path / "threat-model.yaml").write_text("threats: []")
+    assert agg._extract_severity_regression(tmp_path) == []

@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "assets": [
+    {
+      "id": "A-001",
+      "name": "Order records",
+      "classification": "Confidential",
+      "description": "Customer orders the API persists",
+      "component_refs": [
+        {"component_id": "store", "relation": "stored", "evidence": [{"file": "src/store/schema.sql", "line": 1}]},
+        {"component_id": "api", "relation": "processed", "evidence": [{"file": "src/api/handler.ts", "line": 1}]}
+      ],
+      "linked_threats": []
+    }
+  ]
+}

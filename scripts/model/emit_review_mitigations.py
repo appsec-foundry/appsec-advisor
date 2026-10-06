@@ -1,0 +1,534 @@
+#!/usr/bin/env python3
+"""M-15 / M-16 / M-17 / M-20: Synthesize review/investigate mitigations.
+
+Reads `$OUTPUT_DIR/threat-model.yaml` (post-Phase-11) and appends auto-
+generated mitigations for findings that warrant a human-review step rather
+than a concrete code fix:
+
+  M-15: evidence_check == "ambiguous" → kind=review, "Manual review:
+        verify <weakness> at <file:line>" (P3).
+  M-16: the architect reviewer left a finding's assessment or remediation
+        unresolved → its reason joins that finding's M-15 card, or a new
+        review card. When the assessment is open and the evidence does not
+        confirm the finding (``_finding_state.review_before_fix``), the review
+        card takes the severity priority (Critical → P1) and every fix card
+        covering only such findings drops one band; the band it had is kept in
+        ``priority_before_review`` so a re-run does not drop it again.
+  M-17: source ∈ {architectural-anti-pattern, coverage-gap}
+        → kind=investigate, ONE card per architectural_theme cluster
+        (volume control per verification report) (P2).
+  M-20: affected_parameter set + cwe ∈ injection-classes + no M-NNN already
+        linked → append PoC hint to the synthesized review/investigate
+        card OR a new one when no other auto-card applies.
+
+The script is idempotent — it strips any prior `auto_emitted: true`
+mitigations from `mitigations[]` before re-computing, so re-running
+produces the same output regardless of run history.
+
+M-NNN ID allocation: uses `baseline_state._scan_max_id` semantics — finds
+the highest existing M-NNN in the yaml and starts numbering above it. This
+avoids collision with the next run's `baseline_state` counter (which also
+re-scans the yaml at L255-256).
+
+Idempotency note: synthesized mitigations carry `auto_emitted: true` and
+an `auto_source` discriminator so a re-run can clear and regenerate them.
+
+Usage:
+    python3 model/emit_review_mitigations.py <output_dir>
+"""
+
+from __future__ import annotations
+
+# Direct CLI execution must resolve the same packages as imports from scripts/.
+import sys as _sys
+from pathlib import Path as _Path
+
+if not __package__:
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
+
+
+import re
+import sys
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+# Local shared modules — single source of truth for source-string enums.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from analyzers.architect_review_runtime import open_decisions  # noqa: E402
+from shared._critical_findings_sync import resync_critical_findings  # noqa: E402
+from shared._finding_locator import is_code_locator, strip_trailing_locator  # noqa: E402
+from shared._finding_state import review_before_fix  # noqa: E402
+from shared._shared_sources import ARCH_ALL_SOURCES  # noqa: E402
+
+from model.emit_finding_fix_mitigations import after_review_priority, severity_priority  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# CWE → injection-class allowlist for M-20 PoC hints.
+# ---------------------------------------------------------------------------
+
+_INJECTION_CWES = frozenset(
+    {
+        "CWE-89",  # SQL injection
+        "CWE-90",  # LDAP injection
+        "CWE-78",  # OS command injection
+        "CWE-79",  # XSS
+        "CWE-91",  # XML injection
+        "CWE-94",  # Code injection / eval
+        "CWE-95",  # Server-side template injection
+        "CWE-611",  # XXE
+        "CWE-639",  # IDOR (BOLA)
+        "CWE-918",  # SSRF
+        "CWE-601",  # Open redirect
+        "CWE-943",  # NoSQL injection
+    }
+)
+
+
+_M_ID_RE = re.compile(r"\bM-(\d{3,})\b")
+
+
+def _scan_max_m_id(data: dict) -> int:
+    """Highest M-NNN already in use across mitigations[]. Used to allocate
+    fresh IDs above that ceiling so baseline_state's next-run rescan picks
+    up the new IDs naturally."""
+    max_n = 0
+    for m in data.get("mitigations") or []:
+        if not isinstance(m, dict):
+            continue
+        mid = (m.get("id") or "").strip()
+        mt = _M_ID_RE.fullmatch(mid)
+        if mt:
+            max_n = max(max_n, int(mt.group(1)))
+    return max_n
+
+
+def _evidence_file(threat: dict) -> tuple[str, int | None]:
+    ev = threat.get("evidence") or []
+    first: dict[str, Any] = {}
+    if isinstance(ev, list) and ev:
+        first = ev[0] if isinstance(ev[0], dict) else {}
+    elif isinstance(ev, dict):
+        first = ev
+    f = (first.get("file") or "").strip()
+    ln = first.get("line") if isinstance(first.get("line"), int) else None
+    return f, ln
+
+
+# A review title becomes a register heading (`M-NNN — <title>`), which QA
+# blocks above 100 characters; the full path stays in `review_target`.
+_REVIEW_TITLE_MAX = 80
+
+
+def _review_title(verb: str, threat: dict) -> str:
+    weakness = _short_weakness(threat.get("title") or "")
+    f, ln = _evidence_file(threat)
+    base = re.split(r"[\\/]", f)[-1]
+    where = f"{base}:{ln}" if (base and ln) else base
+    title = f"Manual review: {verb} {weakness}"
+    with_where = f"{title} at {where}" if where else title
+    return with_where if len(with_where) <= _REVIEW_TITLE_MAX else title
+
+
+def _short_weakness(title: str) -> str:
+    """The weakness noun phrase of a finding title, without its locator — the
+    review title names the location once, after "at"."""
+    t = strip_trailing_locator((title or "").strip())
+    # Drop trailing em-dash + remainder (legacy format).
+    t = t.split(" — ")[0].strip()
+    if is_code_locator(t.strip("()")):
+        return "the finding"
+    return t or "the finding"
+
+
+def _clear_prior_auto_mitigations(data: dict) -> None:
+    """Drop any prior auto_emitted mitigation so re-runs are idempotent."""
+    items = data.get("mitigations") or []
+    if not isinstance(items, list):
+        return
+    surviving = [m for m in items if not (isinstance(m, dict) and m.get("auto_emitted") is True)]
+    # Also unlink dropped M-NNNs from both the canonical threat-side field and
+    # the legacy alias some older runs may still carry.
+    dropped_ids = {(m.get("id") or "").strip() for m in items if isinstance(m, dict) and m.get("auto_emitted") is True}
+    if dropped_ids:
+        for t in data.get("threats") or []:
+            if not isinstance(t, dict):
+                continue
+            for field in ("mitigation_ids", "mitigations"):
+                if isinstance(t.get(field), list):
+                    t[field] = [mid for mid in t[field] if mid not in dropped_ids]
+    data["mitigations"] = surviving
+
+
+def _allocate_next_m_id(state: dict) -> str:
+    """Mint the next M-NNN and bump the counter in ``state``."""
+    state["counter"] += 1
+    return f"M-{state['counter']:03d}"
+
+
+def _link_threat_to_mitigation(threats_by_id: dict, tid: str, mid: str) -> None:
+    """Append `mid` to `threats[tid].mitigation_ids[]` if not already there.
+
+    The canonical threat-side field per `threat-model.output.schema.yaml` is
+    `mitigation_ids` (`_ids` suffix). Earlier revisions of this helper wrote
+    to a field named `mitigations` which is not part of the output schema —
+    the renderer accepts both as a back-compat read, but yaml downstream
+    consumers (and `build_mitigations` cross-referencing) only look at
+    `mitigation_ids`. Writing the canonical name unblocks both."""
+    t = threats_by_id.get(tid)
+    if t is None:
+        return
+    mit_ids = t.get("mitigation_ids")
+    if not isinstance(mit_ids, list):
+        mit_ids = []
+        t["mitigation_ids"] = mit_ids
+    if mid not in mit_ids:
+        mit_ids.append(mid)
+
+
+# ---------------------------------------------------------------------------
+# M-15: evidence_check == ambiguous
+# ---------------------------------------------------------------------------
+
+
+def _synthesize_evidence_review(data: dict, state: dict, threats_by_id: dict) -> list[dict]:
+    """One review card per threat with ambiguous evidence."""
+    new_cards: list[dict] = []
+    for t in data.get("threats") or []:
+        if not isinstance(t, dict):
+            continue
+        ec = (t.get("evidence_check") or "").strip().lower()
+        if ec != "ambiguous":
+            continue
+        tid = (t.get("id") or "").strip()
+        if not tid:
+            continue
+        f, ln = _evidence_file(t)
+        target = f"{f}:{ln}" if (f and ln) else (f or "the cited location")
+        mid = _allocate_next_m_id(state)
+        title = _review_title("verify", t)
+        how = (
+            "The evidence-verifier sample could not confirm or refute "
+            "the claim from the cited snippet alone. Have a developer "
+            "familiar with this code path read ±20 lines around the "
+            f"cited location ({target}) and decide whether to keep, "
+            "downgrade, or remove this finding."
+        )
+        reason = "evidence-verifier returned ambiguous"
+        new_cards.append(
+            {
+                "id": mid,
+                "title": title,
+                "kind": "review",
+                "priority": "P3",
+                "threat_ids": [tid],
+                "how": how,
+                "review_target": target,
+                "review_reason": reason,
+                "auto_emitted": True,
+                "auto_source": f"evidence-check-{ec}",
+            }
+        )
+        _link_threat_to_mitigation(threats_by_id, tid, mid)
+    return new_cards
+
+
+# ---------------------------------------------------------------------------
+# M-16: architect review left a decision open
+# ---------------------------------------------------------------------------
+
+
+def _is_fix(card: dict) -> bool:
+    return (card.get("kind") or "fix").strip().lower() == "fix"
+
+
+def _restore_review_demotions(data: dict) -> None:
+    """Undo a previous run's review demotion so it is applied exactly once."""
+    for card in data.get("mitigations") or []:
+        if isinstance(card, dict) and card.get("priority_before_review"):
+            card["priority"] = card.pop("priority_before_review")
+
+
+def _synthesize_architect_review(
+    data: dict, state: dict, threats_by_id: dict, decisions: dict[str, dict], cards: list[dict]
+) -> list[dict]:
+    """Carry each open architect decision to a manual-review card; schedule
+    the review before the fix when the finding is unconfirmed."""
+    new_cards: list[dict] = []
+    review_first = {tid for tid, decision in decisions.items() if review_before_fix(threats_by_id.get(tid), decision)}
+    demoted: dict[str, list[str]] = {tid: [] for tid in review_first}
+    for card in data.get("mitigations") or []:
+        if not isinstance(card, dict):
+            continue
+        ids = card.get("threat_ids") or []
+        if not (_is_fix(card) and ids and set(ids) <= review_first):
+            continue
+        card["priority_before_review"] = card.get("priority") or "P3"
+        card["priority"] = after_review_priority(card["priority_before_review"])
+        for tid in ids:
+            demoted[tid].append(card.get("id") or "")
+    for tid in sorted(decisions):
+        threat = threats_by_id.get(tid)
+        if threat is None:
+            continue
+        decision = decisions[tid]
+        parts = [part for part in ("assessment", "remediation") if decision[part] == "unresolved"]
+        what = " and ".join(parts)
+        note = f"The architect review left the {what} open" + (f": {decision['reason']}" if decision["reason"] else ".")
+        card = next(
+            (c for c in cards if c.get("kind") == "review" and c.get("threat_ids") == [tid]),
+            None,
+        )
+        if card is None:
+            f, ln = _evidence_file(threat)
+            target = f"{f}:{ln}" if (f and ln) else (f or "the cited location")
+            card = {
+                "id": _allocate_next_m_id(state),
+                "title": _review_title("confirm", threat),
+                "kind": "review",
+                "priority": "P3",
+                "threat_ids": [tid],
+                "how": "Have a developer familiar with this code path decide whether to keep, re-rate, or "
+                "remove this finding.",
+                "review_target": target,
+                "review_reason": f"architect review left the {what} open",
+                "auto_emitted": True,
+                "auto_source": "architect-unresolved",
+            }
+            new_cards.append(card)
+            _link_threat_to_mitigation(threats_by_id, tid, card["id"])
+        else:
+            card["review_reason"] = f"{card['review_reason']}; architect review left the {what} open"
+        card["how"] = f"{note} {card['how']}"
+        if tid in review_first:
+            card["priority"] = severity_priority(threat.get("risk") or "")
+            fixes = f" ({', '.join(sorted(demoted[tid]))})" if demoted[tid] else ""
+            card["how"] += f" Confirm the finding before implementing its fix{fixes}."
+    return new_cards
+
+
+# ---------------------------------------------------------------------------
+# M-17: architectural-anti-pattern / coverage-gap — clustered investigate
+# ---------------------------------------------------------------------------
+
+# bugs2 Bug 2 + RC.C — use the union of design-level + coverage-engine arch
+# sources from `_shared_sources`. The legacy set (architectural-anti-pattern,
+# coverage-gap) silently excluded threats produced by the Phase-2.6 bridge
+# (architecture-coverage, threat-hypothesis) from M-17 clustering.
+_ARCH_SOURCES = ARCH_ALL_SOURCES
+
+
+def _arch_theme_key(threat: dict) -> str:
+    """Bucket key for clustering architectural findings into ONE
+    investigate card per theme. Prefer explicit `architectural_theme` /
+    `rule_id` when present; fall back to (cwe, component) so unknown
+    themes still cluster reasonably."""
+    for k in ("architectural_theme", "rule_id"):
+        v = (threat.get(k) or "").strip()
+        if v:
+            return v
+    cwe = (threat.get("cwe") or "").strip() or "UNKNOWN-CWE"
+    comp = (threat.get("component") or threat.get("component_id") or "").strip() or "any"
+    return f"{cwe}@{comp}"
+
+
+def _synthesize_architectural_investigate(data: dict, state: dict, threats_by_id: dict) -> list[dict]:
+    """ONE investigate card per architectural_theme cluster (volume control).
+    Each card aggregates all T-NNNs in the cluster into its threat_ids."""
+    clusters: dict[str, list[dict]] = {}
+    for t in data.get("threats") or []:
+        if not isinstance(t, dict):
+            continue
+        src = (t.get("source") or "").strip()
+        if src not in _ARCH_SOURCES:
+            continue
+        # Skip if the threat already has an LLM-authored mitigation
+        # (architectural findings sometimes come with a domain-level
+        # recommendation already; we only auto-emit when none exists).
+        if t.get("mitigations"):
+            continue
+        clusters.setdefault(_arch_theme_key(t), []).append(t)
+
+    new_cards: list[dict] = []
+    for theme, members in clusters.items():
+        if not members:
+            continue
+        # Title: use the first member's title as the descriptor, prefixed
+        # with the architectural marker. Strip the (file) suffix so the
+        # title reads as a class.
+        descriptor = _short_weakness(members[0].get("title") or theme)
+        component = members[0].get("component") or members[0].get("component_id") or "the affected component"
+        mid = _allocate_next_m_id(state)
+        tids = sorted({(t.get("id") or "").strip() for t in members if t.get("id")})
+        how = (
+            f"This is an architectural / coverage-gap finding — the analyser "
+            f"inferred {descriptor!r} from architectural reasoning, not from "
+            f"a confirmed source-to-sink path. Schedule a focused review of "
+            f"{component} to validate the assumption: read the relevant "
+            f"control implementation, sample 2–3 representative call paths, "
+            f"and decide whether to convert the finding into a concrete "
+            f"defect (with file:line evidence) or accept the residual risk. "
+            f"This single review card covers {len(members)} clustered "
+            f"finding(s) under the same theme to avoid §9 inflation."
+        )
+        new_cards.append(
+            {
+                "id": mid,
+                "title": f"Architecture review: validate {descriptor} in {component}",
+                "kind": "investigate",
+                "priority": "P2",
+                "threat_ids": tids,
+                "how": how,
+                "review_target": component,
+                "review_reason": f"source ∈ {{architectural-anti-pattern, coverage-gap}}; theme={theme}",
+                "auto_emitted": True,
+                "auto_source": "architectural-theme-cluster",
+            }
+        )
+        for tid in tids:
+            _link_threat_to_mitigation(threats_by_id, tid, mid)
+    return new_cards
+
+
+# ---------------------------------------------------------------------------
+# M-20: affected_parameter PoC hint
+# ---------------------------------------------------------------------------
+
+_CWE_TO_POC_TEMPLATE: dict[str, str] = {
+    "CWE-89": '{method} {route} with {{{param}: "\' OR 1=1--"}}  (SQL injection)',
+    "CWE-90": '{method} {route} with {{{param}: "*)(uid=*)"}}  (LDAP injection)',
+    "CWE-78": '{method} {route} with {{{param}: "; id"}}  (OS command injection)',
+    "CWE-79": '{method} {route} with {{{param}: "<svg onload=alert(1)>"}}  (XSS payload)',
+    "CWE-91": '{method} {route} with {{{param}: "<![CDATA[<script>...</script>]]>"}}  (XML injection)',
+    "CWE-94": "{method} {route} with {{{param}: \"require('child_process').exec('id')\"}}  (code injection)",
+    "CWE-95": "{method} {route} with {{{param}: \"{{constructor.constructor('return process')()}}\"}}  (template injection)",
+    "CWE-611": '{method} {route} with body containing <!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd"]>  (XXE)',
+    "CWE-639": "{method} {route} with {{{param}: <other-user-id>}}  (IDOR)",
+    "CWE-918": '{method} {route} with {{{param}: "http://169.254.169.254/latest/meta-data/"}}  (SSRF)',
+    "CWE-601": '{method} {route} with {{{param}: "//evil.example.com"}}  (open redirect)',
+    "CWE-943": '{method} {route} with {{{param}: {{"$gt": ""}}}}  (NoSQL injection)',
+}
+
+
+def _synthesize_poc_hints(data: dict, threats_by_id: dict) -> int:
+    """Append a `poc_hint` field to threats whose affected_parameter is set
+    AND whose CWE is in the injection allowlist. Does NOT create new M-NNN
+    cards — the hint is appended to the threat itself so the composer can
+    render it under §8 Findings Register without inflating §9.
+
+    Returns the number of threats annotated.
+    """
+    count = 0
+    for t in data.get("threats") or []:
+        if not isinstance(t, dict):
+            continue
+        param = (t.get("affected_parameter") or "").strip()
+        if not param:
+            continue
+        cwe = (t.get("cwe") or "").strip()
+        if cwe not in _INJECTION_CWES:
+            continue
+        # Skip when the threat already carries a manual PoC hint.
+        if (t.get("poc_hint") or "").strip():
+            continue
+        # Synthesize PoC from CWE template + extracted route.
+        route = _extract_route_for_threat(t)
+        method = _extract_method_for_threat(t)
+        template = _CWE_TO_POC_TEMPLATE.get(cwe, "{method} {route} with {{{param}: <payload>}}")
+        hint = template.format(method=method, route=route, param=param)
+        t["poc_hint"] = hint
+        count += 1
+    return count
+
+
+def _extract_route_for_threat(threat: dict) -> str:
+    """Best-effort route extraction from evidence.file or attack_surface
+    cross-reference. Falls back to the file path itself."""
+    f, _ = _evidence_file(threat)
+    if "/" in f:
+        # `routes/login.ts` → `/<inferred>` (heuristic; users will refine)
+        base = f.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+        return f"/{base.lower()}"
+    return "/<endpoint>"
+
+
+def _extract_method_for_threat(threat: dict) -> str:
+    """Heuristic: derive HTTP method from common keywords in title/scenario."""
+    text = f"{threat.get('title', '')} {threat.get('scenario', '')}".lower()
+    for verb in ("POST", "PUT", "DELETE", "PATCH", "GET"):
+        if verb.lower() in text:
+            return verb
+    return "POST"
+
+
+# ---------------------------------------------------------------------------
+# Driver
+# ---------------------------------------------------------------------------
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 1:
+        print("Usage: model/emit_review_mitigations.py <output_dir>", file=sys.stderr)
+        return 2
+    output_dir = Path(argv[0])
+    yaml_path = output_dir / "threat-model.yaml"
+    if not yaml_path.is_file():
+        print(f"emit_review_mitigations: no yaml at {yaml_path}", file=sys.stderr)
+        return 1
+    try:
+        data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    except (yaml.YAMLError, OSError) as exc:
+        print(
+            f"emit_review_mitigations: could not parse {yaml_path}: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+    if not isinstance(data, dict):
+        print("emit_review_mitigations: yaml did not parse to a mapping", file=sys.stderr)
+        return 1
+
+    # Idempotent re-run: drop prior auto_emitted entries first.
+    _clear_prior_auto_mitigations(data)
+    _restore_review_demotions(data)
+
+    threats_by_id = {
+        (t.get("id") or "").strip(): t for t in (data.get("threats") or []) if isinstance(t, dict) and t.get("id")
+    }
+
+    state = {"counter": _scan_max_m_id(data)}
+
+    new_cards: list[dict] = []
+    new_cards.extend(_synthesize_evidence_review(data, state, threats_by_id))
+    new_cards.extend(
+        _synthesize_architect_review(data, state, threats_by_id, open_decisions(output_dir), list(new_cards))
+    )
+    new_cards.extend(_synthesize_architectural_investigate(data, state, threats_by_id))
+    poc_count = _synthesize_poc_hints(data, threats_by_id)
+
+    if new_cards:
+        existing = data.get("mitigations") or []
+        if not isinstance(existing, list):
+            existing = []
+        data["mitigations"] = existing + new_cards
+
+    # This emitter relinks threats[].mitigation_ids, which makes the builder's
+    # critical_findings[].mitigation_id stale. Re-derive before persisting.
+    resync_critical_findings(data)
+
+    yaml_path.write_text(
+        yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096, default_flow_style=False),
+        encoding="utf-8",
+    )
+
+    print(
+        f"emit_review_mitigations: appended {len(new_cards)} auto-mitigation(s) "
+        f"({sum(1 for c in new_cards if c['kind'] == 'review')} review · "
+        f"{sum(1 for c in new_cards if c['kind'] == 'investigate')} investigate); "
+        f"annotated {poc_count} threat(s) with poc_hint"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

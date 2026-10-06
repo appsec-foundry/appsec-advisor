@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-import postscan_secret_check as postscan
+import validators.postscan_secret_check as postscan
 
 
 def _write(path: Path, text: str) -> None:

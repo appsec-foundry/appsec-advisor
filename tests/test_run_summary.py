@@ -14,7 +14,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-import run_summary  # noqa: E402
+import runtime.run_summary as run_summary  # noqa: E402
 
 
 def _write(tmp_path: Path, data: dict) -> str:
@@ -41,7 +41,7 @@ def test_requirements_counts_and_source_names(tmp_path, capsys):
             "blueprints": [{"id": "BP-1"}, {"id": "BP-2"}],
         },
     )
-    assert run_summary.main(["run_summary.py", "requirements", path]) == 0
+    assert run_summary.main(["runtime/run_summary.py", "requirements", path]) == 0
     out = capsys.readouterr().out
     assert "3 requirements" in out
     assert "2 blueprints" in out
@@ -57,7 +57,7 @@ def test_requirements_falls_back_to_description(tmp_path, capsys):
             "blueprints": [],
         },
     )
-    run_summary.main(["run_summary.py", "requirements", path])
+    run_summary.main(["runtime/run_summary.py", "requirements", path])
     out = capsys.readouterr().out
     assert "1 requirements, 0 blueprints" in out
     assert "Generic OWASP baseline" in out
@@ -65,7 +65,7 @@ def test_requirements_falls_back_to_description(tmp_path, capsys):
 
 def test_requirements_empty_prints_nothing(tmp_path, capsys):
     path = _write(tmp_path, {"categories": [], "blueprints": []})
-    run_summary.main(["run_summary.py", "requirements", path])
+    run_summary.main(["runtime/run_summary.py", "requirements", path])
     assert capsys.readouterr().out == ""
 
 
@@ -84,7 +84,7 @@ def test_findings_lists_critical_then_high(tmp_path, capsys):
             ]
         },
     )
-    run_summary.main(["run_summary.py", "findings", path])
+    run_summary.main(["runtime/run_summary.py", "findings", path])
     out = capsys.readouterr().out
     assert "Critical: 2, High: 1" in out
     # Medium is excluded; Criticals are listed before Highs.
@@ -103,7 +103,7 @@ def test_findings_severity_field_precedence(tmp_path, capsys):
             ]
         },
     )
-    run_summary.main(["run_summary.py", "findings", path])
+    run_summary.main(["runtime/run_summary.py", "findings", path])
     out = capsys.readouterr().out
     assert "Critical: 1, High: 1" in out
 
@@ -117,7 +117,7 @@ def test_findings_none_prints_nothing(tmp_path, capsys):
             ]
         },
     )
-    run_summary.main(["run_summary.py", "findings", path])
+    run_summary.main(["runtime/run_summary.py", "findings", path])
     assert capsys.readouterr().out == ""
 
 
@@ -125,12 +125,12 @@ def test_findings_none_prints_nothing(tmp_path, capsys):
 
 
 def test_missing_file_is_silent_rc0(capsys):
-    assert run_summary.main(["run_summary.py", "findings", "/no/such.yaml"]) == 0
+    assert run_summary.main(["runtime/run_summary.py", "findings", "/no/such.yaml"]) == 0
     assert capsys.readouterr().out == ""
 
 
 def test_bad_usage_returns_2():
-    assert run_summary.main(["run_summary.py", "bogus", "x"]) == 2
+    assert run_summary.main(["runtime/run_summary.py", "bogus", "x"]) == 2
 
 
 # --- edge / error branches -------------------------------------------------
@@ -160,7 +160,7 @@ def test_requirements_non_dict_yaml_silent(tmp_path, capsys):
     # _load returns None for a non-dict top-level -> _summarize early 0 (line 43).
     p = tmp_path / "list.yaml"
     p.write_text("- a\n- b\n", encoding="utf-8")
-    assert run_summary.main(["run_summary.py", "requirements", str(p)]) == 0
+    assert run_summary.main(["runtime/run_summary.py", "requirements", str(p)]) == 0
     assert capsys.readouterr().out == ""
 
 
@@ -174,7 +174,7 @@ def test_requirements_long_name_truncated(tmp_path, capsys):
             "blueprints": [],
         },
     )
-    run_summary.main(["run_summary.py", "requirements", path])
+    run_summary.main(["runtime/run_summary.py", "requirements", path])
     out = capsys.readouterr().out
     assert "…" in out
     # 77 chars + ellipsis, no full 200-char title.
@@ -188,7 +188,7 @@ def test_severity_returns_empty_when_absent():
 def test_findings_non_dict_yaml_silent(tmp_path, capsys):
     p = tmp_path / "list.yaml"
     p.write_text("- a\n", encoding="utf-8")
-    assert run_summary.main(["run_summary.py", "findings", str(p)]) == 0
+    assert run_summary.main(["runtime/run_summary.py", "findings", str(p)]) == 0
     assert capsys.readouterr().out == ""
 
 
@@ -199,7 +199,7 @@ def test_findings_skips_non_dict_threat(tmp_path, capsys):
         "threats:\n  - just-a-string\n  - {id: T-1, title: real, effective_severity: Critical}\n",
         encoding="utf-8",
     )
-    run_summary.main(["run_summary.py", "findings", str(p)])
+    run_summary.main(["runtime/run_summary.py", "findings", str(p)])
     out = capsys.readouterr().out
     assert "Critical: 1, High: 0" in out
     assert "T-1" in out
@@ -211,7 +211,7 @@ def test_findings_long_title_truncated(tmp_path, capsys):
         tmp_path,
         {"threats": [{"id": "T-1", "title": long_title, "effective_severity": "Critical"}]},
     )
-    run_summary.main(["run_summary.py", "findings", path])
+    run_summary.main(["runtime/run_summary.py", "findings", path])
     out = capsys.readouterr().out
     assert "…" in out
     assert long_title not in out
@@ -221,7 +221,7 @@ def test_main_module_entrypoint(tmp_path):
     # Execute the module as __main__ to cover line 115.
     import subprocess
 
-    script = Path(__file__).resolve().parents[1] / "scripts" / "run_summary.py"
+    script = Path(__file__).resolve().parents[1] / "scripts" / "runtime/run_summary.py"
     r = subprocess.run(
         [sys.executable, str(script), "findings", "/no/such.yaml"],
         capture_output=True,

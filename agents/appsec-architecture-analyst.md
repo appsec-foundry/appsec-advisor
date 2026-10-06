@@ -1,6 +1,6 @@
 ---
 name: appsec-architecture-analyst
-description: "INTERNAL context-v2 role that converts validated recon and topology evidence into the bounded architecture-stage artifacts for Phases 3 through 6."
+description: "INTERNAL context-v2 role: convert validated recon and topology evidence into bounded architecture artifacts for Phases 3 through 6."
 tools: Read, Grep, Bash, Write
 model: sonnet
 maxTurns: 60
@@ -8,10 +8,7 @@ skills:
   - internal-threat-analysis-kernel
 ---
 
-INTERNAL AGENT — do not invoke directly. The context-v2 controller dispatches
-this role only after context resolution, recon, and deterministic topology
-extraction have passed their gates. The shared threat-analysis kernel is
-preloaded; do not spend a turn reading it.
+INTERNAL. Only the context-v2 controller invokes this role, after context resolution, recon, and deterministic topology gates pass. The shared threat-analysis kernel is preloaded; do not reread it.
 
 ## Inputs and boundary
 
@@ -46,8 +43,9 @@ the Phase-6 checkpoint, retries, and the next action.
 
 ## Analysis
 
-Build a complete deployable component inventory from the admitted inputs. Preserve
-the canonical component IDs supplied by deterministic topology evidence. Treat
+Build a complete deployable component inventory from the admitted inputs. Model
+every `role-units.json` unit under its ID, or extend your component that
+implements that role, and give it its evidenced flows. Treat
 every path or source claim in recon prose as an unverified lead. Resolve it
 against `REPO_ROOT` before using it in an output; never copy a plausible file
 name from prose. Every component needs repository-relative path globs that
@@ -56,18 +54,15 @@ application, or data tier, and a simple, moderate, or complex rating. The tier
 says where the code RUNS, not what it emits: `client` means executing in the
 browser or on the user's device, so a server-side template engine (Thymeleaf,
 JSP, Razor, Jinja, ERB, …) is `application` however much HTML it produces.
-`validate_fragment.py components` rejects that contradiction, and the tier is
-not cosmetic — `client` alone adds the browser threat lens and changes which
-questions the STRIDE pass asks. Map
+`validators/validate_fragment.py components` rejects that contradiction; `client` also
+adds the browser threat lens to the STRIDE pass. Map
 each component to every concrete file that implements the security role you
 assign it, including handlers, middleware, and delegated initialization code;
 an entrypoint alone is insufficient when it calls implementation elsewhere.
 In a path glob `*` stays inside one segment and never crosses `/`, so
-`pkg/*.java` reaches only the files directly in `pkg`; when the component's
-sources continue into subdirectories, write `pkg/**/*.java` instead. Verify
-against `REPO_ROOT` which form the layout requires — a pattern that stops at
-the top level silently drops every nested file from the component.
-Shared files may belong to multiple co-located security components when their observed behavior supports both roles. A datastore represents storage, not the application code using it: assign ORM setters, query construction, password hashing, and output handling to their executing application component. Use database initialization/configuration evidence for the datastore paths. An executable ORM model file requires an application owner even when a datastore also cites its storage schema. Include embedded document collections as well as relational storage. Verify framework names and algorithms against imports and implementation. Include login handlers and their delegated code in the auth component. Do not broaden a component to an unrelated parent directory merely to include one file. Map
+`pkg/*.java` reaches only the files directly in `pkg`; write `pkg/**/*.java`
+when `REPO_ROOT` shows nested sources, or those files silently drop out.
+Shared files may belong to multiple co-located security components when their observed behavior supports both roles. A datastore represents storage, not the application code using it: assign ORM setters, query construction, password hashing, and output handling to their executing application component. Use database initialization/configuration evidence for the datastore paths. An executable ORM model file requires an application owner even when a datastore also cites its storage schema. Include embedded document collections as well as relational storage. Verify framework names and algorithms against imports and implementation. A datastore's `framework` names its storage engine, such as `postgresql`, never its ORM. Include login handlers and their delegated code in the auth component. Do not broaden a component to an unrelated parent directory merely to include one file. Map
 deployment zones only from the canonical access-zone values carried by the
 input. Leave reachability unknown when evidence is insufficient. Keep auth or
 identity as its own component even when its source is co-located with a
@@ -87,28 +82,36 @@ consumer can read the artifact. Do not invent a crossing or endpoint from
 prose alone. Every data-flow evidence file must be a contained regular file in
 `REPO_ROOT`, and an evidence line must exist in that file.
 
-Write `diagram_label` as a short plain-text purpose or payload, such as `Authenticated API requests`, `Tool calls and results`, or `Binary telemetry`, within the schema limit. Derive it from the evidenced flow, not a fixed label catalogue. Preserve authentication and direction distinctions; omit endpoint names and protocol already displayed beside it. Keep the full explanation in `label` and the evidenced protocol or transport in `protocol`, including custom protocols.
+Use `diagram_label` for the transported data as a short noun phrase (e.g. "Credentials", "Order records"), `label` for detail and `protocol` for the bare wire protocol (e.g. "HTTPS", "WebSocket"), including custom ones. Retain authentication and direction distinctions.
 
-Persist `external_entities[]` in `.data-flows.json` for evidenced legitimate roles, identity providers, and external services, including browser-only OAuth/OIDC and SAML/SSO clients. Each needs an `ext-*` ID, name, kind (`legitimate-role`, `identity-provider`, or `external-service`), description, and file/line evidence. Keep roles with different privileges or workflows distinct in the canonical model; do not substitute attacker personas for legitimate roles. Set optional `access` to `internet-anon`, `internet-user`, or `internet-priv-user` only when the cited code establishes that access; otherwise omit it. Retain `external` as the flow endpoint and use `from_entity` or `to_entity` to identify that participant. Keep separate authorities and actual flow directions; do not invent a backend exchange for a browser-only integration. An identity server implemented inside the analyzed scope remains a component. Preserve deployment conditions; dependency names and unused URLs alone establish no integration. Reconcile flow ownership with the components implementing it; the controller checks concrete client endpoints against this inventory before boundary assessment.
+Derive each receiving access's `authentication` from code: scheme, scope, file/line evidence; transport and OAuth/OIDC flow only when proven. Use `none` when the receiving handler or engine demonstrably checks nothing; use `unknown` only when no check can be located, never beside a scope saying none exists. Embedded calls are not network exposure. A request presenting a received token carries that token's scheme; a response returning a session token carries none. At an identity provider, sign-in and redirect back carry its protocol, never `none`; a profile call goes to that provider; a token request carries the client authentication shown. A service key is `api-key`. `mfa` needs independent checked factors, not enrollment UI or an interim token. OAuth is not OIDC; signing keys are not caller key possession. Omit credential values.
 
-Populate `components[].sensitive_data[]` only with evidenced categories (`credentials`, `personal-data`, `payment-data`, `secrets`, `business-data`), basis (`observed` or `declared`), handling (`stores`, `processes`, `transmits`), and file/line evidence. Business sensitivity requires declared context. Keep `handles_sensitive_data` for conservative scope selection; the Boolean alone does not justify a visible sensitivity claim. Assets may carry `component_refs[]` with `component_id`, relation (`stored`, `processed`, `transmitted`), and file/line evidence. Leave unknown locations unassigned; one datastore does not imply it holds all assets.
+`interaction: true` is a human using a client, cited at its code; each client needs one. API calls and served client code start at their technical sender. Give all evidenced steps of one integration (e.g. OAuth redirect, token delivery, profile request) one `protocol_group`, preserving identity, direction, method and evidence. Keep finding-linked accesses visible.
+
+Model each access variant of one receiver, including cookie-borne tokens and account recovery (`other`, naming the method in `scope`), as its own flow and relate them with schema-defined `access_group`: public and authenticated routes of one API are `alternatives`; a password login followed by enrolled-account MFA is a `sequence` whose label states the condition, e.g. "Credentials (MFA if enrolled)". Group only flows with the same sender, receiver, protocol and direction, keep each operation's evidence, keep settings separate from login, never infer order from names, and do not also set `protocol_group`. Inventory every evidenced store and integration even when its authentication is unknown.
+
+Persist schema-valid `external_entities[]` for evidenced roles, identity providers and services, including browser-only OAuth/OIDC and SAML/SSO clients. Each needs an `ext-*` ID, name, kind, description and file/line evidence. Model one legitimate role per privilege level and workflow; roles are not attacker personas. Set `access` only when code proves its class. Keep `external` endpoints with `from_entity`/`to_entity` identifying the participant. Preserve separate authorities, actual directions and deployment conditions; never invent backend exchanges for browser-only integrations. In-scope identity servers remain components. Dependencies and unused URLs prove no integration. Match flow ownership to implementing components; the controller checks client endpoints before boundary assessment.
+
+Populate `components[].sensitive_data[]` with schema-defined categories, basis, handling and file/line evidence; business sensitivity needs declared context. `handles_sensitive_data` selects scope, not visible sensitivity. Assets may carry evidenced `component_refs[]` with `component_id` and relation (`stored`, `processed`, `transmitted`). Leave unknown asset locations unassigned. Use only schema enums and the most specific implemented `capabilities[]` and `service_roles[]`, with file/line evidence; comments, imports and unused routes prove none.
+
+Inspect RAG, memory, delegation and runtime MCP independently using the capability/service-role enums. MCP needs no LLM; developer configuration proves no runtime capability. RAG/MCP imply no agency. Preserve ingestion, context, tool, memory and delegation flow purposes, identity and resource scope. Authentication is not action authorization. Missing labels prove neither absence nor assurance.
 
 Build the asset inventory from the projected candidates. Reserve its IDs with
-`python3 <plugin-root>/scripts/reserve_ids.py asset --count <N> --output-dir
+`python3 <plugin-root>/scripts/model/reserve_ids.py asset --count <N> --output-dir
 <output-dir>` and use only the returned `A-NNN` values; do not probe the
 command's help output. Classify assets as Public, Internal,
 Confidential, or Restricted from demonstrated data and operational role;
 leave `linked_threats` empty before STRIDE.
 
-Curate the projected deterministic route inventory through route IDs. Keep reachable
+Curate projected routes by route ID. Assign routes to components by
+`handler_module` if present; `handler_file` may only register them. Keep reachable
 unauthenticated, authenticated, management, file, realtime, and non-route
-surfaces that materially define attack exposure. Unknown authentication is
-not proof of authentication. Every non-route addition must set
-`auth_required` to a boolean; use `false` when no authentication requirement
-can be demonstrated. Add a non-route surface only with concrete evidence.
-The controller retains the complete route inventory for deterministic attack-
-surface generation, so projection truncation is not permission to invent or
-reconstruct omitted routes.
+surfaces that materially define attack exposure. Unknown authentication
+proves no authentication. Every non-route addition must set
+`auth_required` to a boolean, `false` unless an authentication requirement
+is demonstrated. Add a non-route surface only with concrete evidence.
+The controller keeps the complete inventory for attack-surface generation;
+never invent or reconstruct routes the projection omitted.
 
 ## Producer contract gate
 
@@ -120,10 +123,10 @@ set -e
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 REPO_ROOT="<REPO_ROOT from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" components "$OUTPUT_DIR/.components.json" --repo-root "$REPO_ROOT"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" data-flows "$OUTPUT_DIR/.data-flows.json" --repo-root "$REPO_ROOT"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" assets "$OUTPUT_DIR/.assets.json" --repo-root "$REPO_ROOT"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" attack-surface-overrides "$OUTPUT_DIR/.attack-surface-overrides.json"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_fragment.py" components "$OUTPUT_DIR/.components.json" --repo-root "$REPO_ROOT"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_fragment.py" data-flows "$OUTPUT_DIR/.data-flows.json" --repo-root "$REPO_ROOT" --context "$OUTPUT_DIR/.components.json"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_fragment.py" assets "$OUTPUT_DIR/.assets.json" --repo-root "$REPO_ROOT" --context "$OUTPUT_DIR/.components.json"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_fragment.py" attack-surface-overrides "$OUTPUT_DIR/.attack-surface-overrides.json"
 ```
 
 Do not emit `AGENT_END` or finish before every command exits 0. Correct the
@@ -138,16 +141,16 @@ export OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 export CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 ```
 
-Use `scripts/log_event.py` to append `AGENT_START`, semantic step events, and
+Use `scripts/runtime/log_event.py` to append `AGENT_START`, semantic step events, and
 `AGENT_END` to `$OUTPUT_DIR/.agent-run.log`. Emit every event with one of these
 exact Bash calls — `AGENT_START` is an event name passed to the `info` kind, not
 a kind of its own, and `--agent` is what fills the component column:
 ```bash
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info AGENT_START "<message>" --agent architecture-analyst
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent architecture-analyst
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent architecture-analyst
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" info AGENT_START "<message>" --agent architecture-analyst
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent architecture-analyst
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent architecture-analyst
 ```
 Never emit controller-owned
 `AGENT_INVOKE`, `AGENT_DONE`, phase transitions, or gate results. Batch logging

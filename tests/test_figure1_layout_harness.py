@@ -1,7 +1,7 @@
 """Soft layout-quality guard for Figure 1 (Top-Threats architecture diagram).
 
 Renders the Figure-1 generator for a matrix of synthetic models via ``mmdc``
-and measures the actual drawn geometry (see ``scripts/figure1_harness.py``).
+and measures the actual drawn geometry (see ``scripts/renderers/figure1_harness.py``).
 The intent is *minimise crossings where possible, accept the unavoidable* — so
 the crossing assertions are SOFT budgets with headroom, NOT a forced zero. Two
 properties ARE hard, because they are always achievable and a violation is a
@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-import figure1_harness as H  # noqa: E402
+import renderers.figure1_harness as H  # noqa: E402
 
 pytestmark = pytest.mark.skipif(not H.mmdc_available(), reason="mmdc + Chrome not available — layout render skipped")
 

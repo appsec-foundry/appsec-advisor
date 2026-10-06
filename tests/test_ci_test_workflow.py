@@ -58,7 +58,12 @@ def test_static_checks_run_once_and_gate_existing_pytest_jobs():
 
 def test_shared_validator_target_retains_all_drift_guards():
     result = subprocess.run(["make", "--dry-run", "validate"], cwd=ROOT, capture_output=True, text=True, check=True)
-    for script in ("validate_config.py", "check_fragment_registry.py", "check_target_specificity.py", "check_specs.py"):
+    for script in (
+        "validators/validate_config.py",
+        "validators/check_fragment_registry.py",
+        "check_target_specificity.py",
+        "check_specs.py",
+    ):
         assert f"scripts/{script}" in result.stdout
     assert "pytest" not in result.stdout
 

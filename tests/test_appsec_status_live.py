@@ -1,4 +1,4 @@
-"""Unit tests for ``appsec_status.py --live`` (M3.6 #4)."""
+"""Unit tests for ``runtime/appsec_status.py --live`` (M3.6 #4)."""
 
 from __future__ import annotations
 
@@ -12,14 +12,14 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "appsec_status.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "runtime/appsec_status.py"
 
 
 @pytest.fixture
 def appsec_status():
-    spec = importlib.util.spec_from_file_location("appsec_status", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("runtime.appsec_status", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["appsec_status"] = module
+    sys.modules["runtime.appsec_status"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module

@@ -1,0 +1,121 @@
+# Core question package of the on-demand threat analysis. Always loaded.
+# Questions are adapted from the pinned aiscb release; source_rules name the
+# rules each question was derived from. Questions guide investigation only:
+# they confer no policy authority and are not aiscb compliance checks.
+schema_version: 1
+kind: questions
+id: appsec/core
+version: 1.0.0
+title: Core threat analysis questions
+provenance:
+  source: AI Secure Coding Baseline (aiscb), adapted questions
+  revision: aiscb-0.1.19
+  url: https://github.com/appsec-foundry/aiscb
+  license: CC BY 4.0
+  notes: Questions are adaptations, not the original rules. The rule text remains authoritative only where an organization explicitly integrates aiscb as policy.
+questions:
+  - id: authz-scope
+    topic: authorization
+    applies_when: [new_entry_point, changed_permission, sensitive_data]
+    asks: Which identities may perform the new or changed operation, and on which resources, and where is that decision enforced on the server?
+    purpose: An operation without a server-side authorization decision bound to the caller and the resource allows horizontal or vertical privilege abuse.
+    evidence: [route or handler definitions, authorization middleware or policy checks, resource ownership lookups]
+    negative_tests: [A caller acting on another tenant's or user's resource is refused.]
+    source_rules: [aiscb-ACCESS-001, aiscb-DESIGN-001]
+  - id: authn-entry
+    topic: authentication
+    applies_when: [new_entry_point, credential_handling]
+    asks: Does every new entry point require an authenticated identity, and which mechanism establishes it?
+    purpose: An unauthenticated path to a protected operation bypasses every identity-bound control behind it.
+    evidence: [entry point registration, authentication middleware order, session or token validation]
+    negative_tests: [A request without valid credentials is rejected before the operation runs.]
+    source_rules: [aiscb-ACCESS-001, aiscb-AUTH-001]
+  - id: network-position
+    topic: authorization
+    applies_when: [new_entry_point, configuration_change]
+    asks: Does any decision rely on network position, an internal segment, or a source address instead of identity?
+    purpose: Network position is not an identity and does not replace authentication or authorization.
+    evidence: [allow-lists, proxy or gateway configuration, handler checks of client addresses]
+    source_rules: [aiscb-ACCESS-001]
+  - id: untrusted-input
+    topic: input_handling
+    applies_when: [untrusted_input, new_entry_point]
+    asks: Which inputs cross a trust boundary in this change, and how are type, range, and format validated before use in queries, paths, commands, or markup?
+    purpose: Unvalidated input reaching an interpreter or a file path enables injection or traversal.
+    evidence: [parsing and validation code, query construction, file path handling, output encoding]
+    negative_tests: [Malformed or oversized input is rejected without side effects.]
+    source_rules: [aiscb-INPUT-001]
+  - id: untrusted-files
+    topic: input_handling
+    applies_when: [untrusted_input]
+    asks: If the change accepts files or archives, how are type, size, storage name, and extraction bounded?
+    purpose: Uploaded content can execute, escape its directory, or exhaust resources.
+    evidence: [upload handlers, storage path construction, archive extraction limits]
+    negative_tests: [A traversal name or a decompression bomb is rejected.]
+    source_rules: [aiscb-FILES-001]
+  - id: sensitive-data-flow
+    topic: sensitive_data
+    applies_when: [sensitive_data, business_operation]
+    asks: Which sensitive data does the change read, export, log, or return, and to whom does it become visible?
+    purpose: Widened visibility of personal or business data is a disclosure risk even when authentication is intact.
+    evidence: [queries and serializers, response fields, export or logging code]
+    source_rules: [aiscb-INPUT-001, aiscb-ERRORS-001]
+  - id: secrets-handling
+    topic: secrets
+    applies_when: [credential_handling, configuration_change]
+    asks: Does the change introduce, load, log, or expose credentials, keys, or tokens, and where do they come from?
+    purpose: Committed, logged, or default credentials give an attacker durable access.
+    evidence: [configuration loading, secret store access, log statements, default values]
+    source_rules: [aiscb-SECRETS-001, aiscb-BOOTSTRAP-001]
+  - id: removed-control
+    topic: configuration
+    applies_when: [removed_control, configuration_change, any_change]
+    asks: Does the change remove, bypass, or weaken an existing security control, including through a flag or environment setting?
+    purpose: A removed or switchable control re-exposes risks the previous design addressed.
+    evidence: [diff of middleware, configuration defaults, feature flags]
+    source_rules: [aiscb-PRESERVE-001, aiscb-DEFAULTS-001]
+  - id: outbound-destinations
+    topic: external_integration
+    applies_when: [external_integration, untrusted_input]
+    asks: Can input influence an outbound destination, and which schemes, hosts, and address ranges are allowed?
+    purpose: Input-influenced requests can reach internal services or cloud metadata endpoints.
+    evidence: [HTTP client calls, URL construction, allow-lists, redirect handling]
+    negative_tests: [A request to a loopback, link-local, or metadata address is refused.]
+    source_rules: [aiscb-EGRESS-001]
+  - id: business-invariant
+    topic: business_integrity
+    applies_when: [business_operation]
+    asks: Which business invariant does the change affect, such as a price, quota, balance, or approval step, and what prevents a user from violating it?
+    purpose: Business logic abuse needs no conventional vulnerability and is invisible to keyword review.
+    evidence: [calculation code, server-side recomputation, state transitions, idempotency handling]
+    negative_tests: [A client-supplied price, discount, or status is ignored or rejected.]
+    source_rules: [aiscb-DESIGN-001]
+  - id: resource-bounds
+    topic: availability
+    applies_when: [untrusted_input, new_entry_point]
+    asks: Is input-driven work bounded by time, size, count, or pagination?
+    purpose: Unbounded work lets a single caller exhaust shared resources.
+    evidence: [loops over input, query limits, timeouts, rate limits]
+    source_rules: [aiscb-LIMITS-001]
+  - id: error-exposure
+    topic: logging
+    applies_when: [new_entry_point, any_change]
+    asks: Do errors or logs of the changed code expose internal details or sensitive values, and are security-relevant events recorded?
+    purpose: Verbose errors aid attackers and logged secrets outlive the request.
+    evidence: [error handlers, log statements, response bodies on failure]
+    source_rules: [aiscb-ERRORS-001]
+  - id: dependency-change
+    topic: supply_chain
+    applies_when: [dependency_or_build]
+    asks: Does the change add or update dependencies, build steps, or CI actions, and are they pinned and from the expected source?
+    purpose: Unpinned or unexpected sources let a third party change what is built and deployed.
+    evidence: [manifests and lockfiles, CI workflow definitions, install scripts]
+    source_rules: [aiscb-DEPS-001, aiscb-DEPLOYMENT-001]
+  - id: model-authority
+    topic: llm_and_agents
+    applies_when: [model_or_agent]
+    asks: Can model output select tools, commands, resources, or permissions, and what validates and authorizes those actions outside the model?
+    purpose: Model output is untrusted; letting it choose actions turns prompt injection into privilege abuse.
+    evidence: [tool definitions, output parsing, authorization of model-selected actions, limits]
+    negative_tests: [An injected instruction cannot trigger an unauthorized tool call.]
+    source_rules: [aiscb-LLM-001, aiscb-AGENCY-001, aiscb-AGENTAUTH-001]

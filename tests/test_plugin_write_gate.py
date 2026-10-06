@@ -1,4 +1,4 @@
-"""Tests for scripts/plugin_write_gate.py.
+"""Tests for scripts/runtime/plugin_write_gate.py.
 
 The gate's whole value is that it holds when the prompt does not, so the cases
 that matter are the ones a prompt-level rule would miss: a write reached through
@@ -18,9 +18,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-import plugin_write_gate as gate  # noqa: E402
+import runtime.plugin_write_gate as gate  # noqa: E402
 
-SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "plugin_write_gate.py"
+SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "runtime/plugin_write_gate.py"
 
 
 def _payload(path: str, tool: str = "Edit", event: str = "PreToolUse") -> dict:
@@ -44,7 +44,7 @@ class TestDenies:
         "rel",
         [
             "agents/appsec-run-diagnostician.md",
-            "scripts/merge_threats.py",
+            "scripts/model/merge_threats.py",
             "skills/fix-run-issues/SKILL.md",
             "data/severity-caps.yaml",
             "config.json",
@@ -62,24 +62,24 @@ class TestDenies:
         assert gate.decide(_payload(str(root / "scripts/x.py"), tool=tool)) is not None
 
     def test_dot_dot_traversal_cannot_walk_in(self, root: Path):
-        sneaky = str(root / "docs" / ".." / "scripts" / "merge_threats.py")
+        sneaky = str(root / "docs" / ".." / "scripts" / "model/merge_threats.py")
         assert gate.decide(_payload(sneaky)) is not None
 
     def test_symlink_cannot_walk_in(self, root: Path, tmp_path: Path):
         link = tmp_path.parent / "link-to-scripts"
         link.symlink_to(root / "scripts")
-        assert gate.decide(_payload(str(link / "merge_threats.py"))) is not None
+        assert gate.decide(_payload(str(link / "model/merge_threats.py"))) is not None
 
 
 class TestAllows:
     def test_developer_mode_allows_everything(self, root: Path, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("APPSEC_PLUGIN_DEV", "1")
-        assert gate.decide(_payload(str(root / "scripts/merge_threats.py"))) is None
+        assert gate.decide(_payload(str(root / "scripts/model/merge_threats.py"))) is None
 
     @pytest.mark.parametrize("value", ["0", "", "true", "yes"])
     def test_only_the_literal_1_opens_the_gate(self, root: Path, monkeypatch: pytest.MonkeyPatch, value: str):
         monkeypatch.setenv("APPSEC_PLUGIN_DEV", value)
-        assert gate.decide(_payload(str(root / "scripts/merge_threats.py"))) is not None
+        assert gate.decide(_payload(str(root / "scripts/model/merge_threats.py"))) is not None
 
     def test_the_deliverable_stays_writable(self, root: Path):
         """PLUGIN_ROOT == scanned repo in a dev checkout; the run must still work."""

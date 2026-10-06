@@ -1,4 +1,4 @@
-"""Tests for the ``--slug`` flag of scripts/resolve_config.py.
+"""Tests for the ``--slug`` flag of scripts/runtime/resolve_config.py.
 
 ``--slug`` (optionally with a value) makes a run emit an additional
 postfix-stamped, copy-ready deliverable set so several models can share one
@@ -15,7 +15,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-SCRIPT_PATH = Path(__file__).resolve().parent.parent / "scripts" / "resolve_config.py"
+SCRIPT_PATH = Path(__file__).resolve().parent.parent / "scripts" / "runtime/resolve_config.py"
 
 
 def _run(*argv: str) -> subprocess.CompletedProcess:

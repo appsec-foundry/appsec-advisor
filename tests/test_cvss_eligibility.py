@@ -1,4 +1,4 @@
-"""Tests for CVSS v4 vector eligibility rules in validate_intermediate.py.
+"""Tests for CVSS v4 vector eligibility rules in validators/validate_intermediate.py.
 
 Locks in the policy that:
   * known-vuln threats MUST carry a vector (dep-scan source removed 2026-05)
@@ -16,14 +16,14 @@ from pathlib import Path
 
 import pytest
 
-VALIDATE_PATH = Path(__file__).parent.parent / "scripts" / "validate_intermediate.py"
+VALIDATE_PATH = Path(__file__).parent.parent / "scripts" / "validators/validate_intermediate.py"
 
 
 @pytest.fixture(scope="module")
 def vi():
-    spec = importlib.util.spec_from_file_location("validate_intermediate", VALIDATE_PATH)
+    spec = importlib.util.spec_from_file_location("validators.validate_intermediate", VALIDATE_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["validate_intermediate"] = module
+    sys.modules["validators.validate_intermediate"] = module
     spec.loader.exec_module(module)
     return module
 
@@ -284,7 +284,7 @@ class TestHardcodedSecretFamily:
     """The hardcoded-secret CWEs must be treated alike.
 
     CWE-321 was missing from the positive list while CWE-798/CWE-259 were on
-    it, so `enforce_yaml_invariants.py` stripped the vector off a Critical
+    it, so `model/enforce_yaml_invariants.py` stripped the vector off a Critical
     hardcoded-signing-key finding while its CWE-798 sibling in the same report
     kept one (juice-shop 2026-08-02). The list has no exclusion mechanism, so
     absence was indistinguishable from an oversight — this pins the decision.

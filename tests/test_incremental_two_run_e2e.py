@@ -1,4 +1,4 @@
-"""Deterministic 2-run incremental E2E — drives scripts/build_threat_model_yaml.py
+"""Deterministic 2-run incremental E2E — drives scripts/model/build_threat_model_yaml.py
 `main()` TWICE in sequence (run1 full → mutate → run2 incremental) against a
 self-built minimal output dir, with NO LLM and NO `_last-run` fixture dependency.
 
@@ -21,7 +21,7 @@ Hermetic strategy:
   * --repo-root → a non-git tmp dir, so build_meta's git lookups resolve to
     "unknown" → fully deterministic output.
   * baseline.json + .stride-<id>.json are seeded by hand between the two runs
-    exactly as the real skill (baseline_state.py) would write them — that is the
+    exactly as the real skill (baseline/baseline_state.py) would write them — that is the
     LLM-free seam the reconciler reads from.
 """
 
@@ -36,11 +36,11 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = ROOT / "scripts" / "build_threat_model_yaml.py"
+SCRIPT = ROOT / "scripts" / "model/build_threat_model_yaml.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("build_threat_model_yaml", SCRIPT)
+    spec = importlib.util.spec_from_file_location("model.build_threat_model_yaml", SCRIPT)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -98,7 +98,7 @@ def _seed_sidecars(out: Path, repo: Path, *, mode: str, depth: str, threats: lis
 
 def _seed_baseline(out: Path, *, prior_depth: str, stride: dict[str, tuple[bytes, bytes]]) -> None:
     """Seed .appsec-cache/baseline.json + on-disk .stride-<id>.json exactly as
-    baseline_state.py would, so the reconciler's sha-diff dirty-detection fires.
+    baseline/baseline_state.py would, so the reconciler's sha-diff dirty-detection fires.
 
     stride: {cid: (baseline_bytes, current_bytes)} — a component is "re-analyzed"
     when current != baseline (on-disk stride no longer matches the recorded hash).
@@ -116,7 +116,7 @@ def _run_main(monkeypatch, out: Path, plugin_root: Path, repo: Path) -> int:
     monkeypatch.setattr(
         sys,
         "argv",
-        ["build_threat_model_yaml.py", str(out), "--plugin-root", str(plugin_root), "--repo-root", str(repo)],
+        ["model/build_threat_model_yaml.py", str(out), "--plugin-root", str(plugin_root), "--repo-root", str(repo)],
     )
     return b.main()
 

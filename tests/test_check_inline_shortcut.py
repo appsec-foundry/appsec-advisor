@@ -1,4 +1,4 @@
-"""Unit tests for scripts/check_inline_shortcut.py.
+"""Unit tests for scripts/validators/check_inline_shortcut.py.
 
 The hard gate is invoked as a subprocess from skills/create-threat-model/
 The compact Stage-3 runtime uses this gate and expects it to:
@@ -19,9 +19,9 @@ from pathlib import Path
 from typing import Iterable
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "check_inline_shortcut.py"
+SCRIPT = REPO_ROOT / "scripts" / "validators/check_inline_shortcut.py"
 
-# The 7 fragment names mirror REQUIRED_FRAGMENTS in qa_checks.py. Kept as a
+# The 7 fragment names mirror REQUIRED_FRAGMENTS in validators/qa_checks.py. Kept as a
 # local constant so test assertions don't depend on importing qa_checks at
 # module load time.
 ALL_FRAGMENTS = (
@@ -113,7 +113,7 @@ def test_fragments_dir_partial_under_minimum_trips_gate(tmp_path):
 
 
 def test_fragments_dir_at_minimum_does_not_trip_a2(tmp_path):
-    # Exactly 3 fragments → A2 not tripped, but qa_checks.py fragments will
+    # Exactly 3 fragments → A2 not tripped, but validators/qa_checks.py fragments will
     # still complain about the other 5 missing required ones (Indicator B
     # in qa_checks's own classification).
     out = _make_clean_output_dir(tmp_path, fragments=ALL_FRAGMENTS[:3])
@@ -121,7 +121,7 @@ def test_fragments_dir_at_minimum_does_not_trip_a2(tmp_path):
     # Still trips because qa_checks reports missing required fragments.
     assert result.returncode == 2
     assert "contains only" not in result.stderr  # A2 specifically did NOT trip
-    assert "qa_checks.py fragments exit code: 1" in result.stderr
+    assert "validators/qa_checks.py fragments exit code: 1" in result.stderr
 
 
 # ---------------------------------------------------------------------------
@@ -178,18 +178,18 @@ def test_triage_flags_missing_does_not_trip_at_quick_depth(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# qa_checks.py fragments OR-merge — REQUIRED_FRAGMENTS-derived signal
+# validators/qa_checks.py fragments OR-merge — REQUIRED_FRAGMENTS-derived signal
 # ---------------------------------------------------------------------------
 
 
 def test_qa_checks_required_fragments_signal_trips_gate(tmp_path):
     # 5 of 8 fragments present (above MIN=3), threats-merged + triage present,
-    # threat-model.md present — A1/A2/B/C all clean. But qa_checks.py will
+    # threat-model.md present — A1/A2/B/C all clean. But validators/qa_checks.py will
     # still complain about the other 3 missing required fragments.
     out = _make_clean_output_dir(tmp_path, fragments=ALL_FRAGMENTS[:5])
     result = _run_gate(out)
     assert result.returncode == 2
-    assert "qa_checks.py fragments exit code: 1" in result.stderr
+    assert "validators/qa_checks.py fragments exit code: 1" in result.stderr
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +256,7 @@ def test_banner_lists_every_tripped_indicator(tmp_path):
     # C
     assert ".triage-flags.json missing" in result.stderr
     # qa_checks aggregator
-    assert "qa_checks.py fragments exit code:" in result.stderr
+    assert "validators/qa_checks.py fragments exit code:" in result.stderr
     # Root-cause prose
     assert "Phase 11 Substep 4" in result.stderr or "fragment authoring" in result.stderr
     # Closing rule

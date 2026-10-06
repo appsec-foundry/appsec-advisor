@@ -1,4 +1,4 @@
-"""Tests for ``scripts/build_verify_diff.py`` — verify-requirements change-set
+"""Tests for ``scripts/repairs/build_verify_diff.py`` — verify-requirements change-set
 builder.
 
 Covers:
@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-import build_verify_diff as bvd  # noqa: E402
+import repairs.build_verify_diff as bvd  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Real-git fixtures
@@ -261,7 +261,7 @@ class TestCLI:
         _commit(repo, "a.txt", "one\n", "init")
         _commit(repo, "b.txt", "two\n", "add b")
         out = tmp_path / "out"
-        script = Path(__file__).parent.parent / "scripts" / "build_verify_diff.py"
+        script = Path(__file__).parent.parent / "scripts" / "repairs/build_verify_diff.py"
         proc = subprocess.run(
             [
                 sys.executable,

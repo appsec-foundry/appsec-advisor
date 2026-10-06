@@ -24,7 +24,7 @@
           "description",
           "evidence"
         ],
-        "dependentSchemas": {"access": {"properties": {"kind": {"const": "legitimate-role"}}}},
+        "dependentSchemas": {"access": {"properties": {"kind": {"const": "legitimate-role"}}}, "service_roles": {"properties": {"kind": {"enum": ["identity-provider", "external-service"]}}}},
         "properties": {
           "id": {
             "type": "string",
@@ -45,10 +45,20 @@
             ]
           },
           "access": {"type": "string", "enum": ["internet-anon", "internet-user", "internet-priv-user"]},
+          "service_roles": {"type": "array", "maxItems": 4, "items": {"type": "object", "additionalProperties": false, "required": ["role", "evidence"], "properties": {"role": {"type": "string", "enum": ["oauth-authorization-server", "oauth-resource-server", "oidc-provider", "saml-identity-provider", "llm-inference", "mcp-service", "retrieval-store", "blockchain-rpc", "payment-provider", "email-delivery", "object-storage", "message-broker", "telemetry-service", "package-registry"]}, "evidence": {"type": "array", "minItems": 1, "maxItems": 4, "items": {"type": "object", "additionalProperties": false, "required": ["file", "line"], "properties": {"file": {"type": "string", "minLength": 1, "maxLength": 512, "not": {"pattern": "^(?:/|[A-Za-z]:[\\\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)|\\\\"}}, "line": {"type": "integer", "minimum": 1}}}}}}},
           "description": {
             "type": "string",
             "minLength": 1,
             "maxLength": 240
+          },
+          "declared": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source"],
+            "properties": {
+              "source": {"const": ".appsec/actors.yaml"},
+              "authentication": {"type": "string", "minLength": 1, "maxLength": 240}
+            }
           },
           "evidence": {
             "type": "array",
@@ -132,9 +142,35 @@
         "label": {"type": "string", "minLength": 1, "maxLength": 120},
         "diagram_label": {
           "type": "string", "minLength": 1, "maxLength": 48, "pattern": "^[^\\r\\n\\t]+$",
-          "description": "Short plain-text purpose or payload for Figure 1, preserving authentication or direction distinctions. Omit repeated endpoint names and protocol. The full label remains authoritative; optional for older inventories."
+          "description": "Short plain-text name of the transported data for Figure 1 (e.g. Credentials, Order records), preserving authentication or direction distinctions. Omit repeated endpoint names and protocol. The full label remains authoritative; optional for older inventories."
         },
         "protocol": {"type": "string", "minLength": 1, "maxLength": 80},
+        "authentication": {
+          "type": "object", "additionalProperties": false,
+          "required": ["scheme","scope","evidence"],
+          "properties": {
+            "scheme": {"type":"string","enum":["unknown","none","password","basic","bearer","cookie","api-key","oauth2","oidc","saml","mtls","private-key","client-secret","mfa","other"]},
+            "scope": {"type":"string","minLength":1,"maxLength":240,"pattern":"^[^\\r\\n\\t]+$"},
+            "transport": {"type":"string","enum":["protected","cleartext","unknown"]},
+            "flow": {"type":"string","enum":["implicit","authorization-code","authorization-code-pkce","client-credentials","device-code"]},
+            "factors": {"type":"array","minItems":2,"maxItems":4,"uniqueItems":true,"items":{"type":"string","enum":["password","totp","webauthn","hardware-key","push","sms","email","biometric"]}},
+            "evidence": {"type":"array","minItems":1,"maxItems":8,"items":{"type":"object","additionalProperties":false,"required":["file","line"],"properties":{"file":{"type":"string","minLength":1,"maxLength":512,"not":{"pattern":"^(?:/|[A-Za-z]:[\\\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)|\\\\"}},"line":{"type":"integer","minimum":1}}}}
+          },
+          "allOf": [{"if":{"properties":{"scheme":{"const":"mfa"}}},"then":{"required":["factors"],"properties":{"factors":{"contains":{"enum":["password","biometric"]}}}},"else":{"not":{"required":["factors"]}}},{"if":{"required":["flow"]},"then":{"properties":{"scheme":{"enum":["oauth2","oidc"]}}}}]
+        },
+        "access_group": {
+          "type": "object", "additionalProperties": false,
+          "required": ["id", "mode", "label"],
+          "properties": {
+            "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$", "maxLength": 80},
+            "mode": {"type": "string", "enum": ["alternatives", "sequence"]},
+            "label": {"type": "string", "minLength": 1, "maxLength": 48, "pattern": "^[^\\r\\n\\t]+$"},
+            "step": {"type": "integer", "minimum": 1, "maximum": 500}
+          },
+          "allOf": [{"if": {"properties": {"mode": {"const": "sequence"}}}, "then": {"required": ["step"]}, "else": {"not": {"required": ["step"]}}}]
+        },
+        "interaction": {"type": "boolean", "description": "Human interaction with a client, not a technical API request."},
+        "protocol_group": {"type": "string", "minLength": 1, "maxLength": 80, "description": "Evidenced multi-step integration; may use endpoint references in the overview."},
         "data_classification": {"type": "string", "minLength": 1, "maxLength": 80},
         "direction": {
           "type": "string",

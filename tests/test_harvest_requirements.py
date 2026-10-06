@@ -2,9 +2,9 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-import harvest_requirements as harvester
 import pytest
 import requests
+import requirements.harvest_requirements as harvester
 
 
 def _args(
@@ -1585,7 +1585,7 @@ def test_main_parses_cli_arguments_and_exits(monkeypatch, tmp_path):
         harvester.sys,
         "argv",
         [
-            "harvest_requirements.py",
+            "requirements/harvest_requirements.py",
             "--config",
             str(tmp_path / "config.json"),
             "--output",

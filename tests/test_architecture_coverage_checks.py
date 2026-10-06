@@ -1,4 +1,4 @@
-"""Tests for scripts/architecture_coverage_checks.py (arch.md §Erste Lieferung)."""
+"""Tests for scripts/analyzers/architecture_coverage_checks.py (arch.md §Erste Lieferung)."""
 
 from __future__ import annotations
 
@@ -10,12 +10,12 @@ from pathlib import Path
 import jsonschema
 
 REPO_ROOT = Path(__file__).parent.parent
-ENGINE = REPO_ROOT / "scripts" / "architecture_coverage_checks.py"
-ROUTE_INV = REPO_ROOT / "scripts" / "route_inventory.py"
+ENGINE = REPO_ROOT / "scripts" / "analyzers/architecture_coverage_checks.py"
+ROUTE_INV = REPO_ROOT / "scripts" / "analyzers/route_inventory.py"
 SCHEMA = json.loads((REPO_ROOT / "schemas" / "architecture-coverage.schema.json").read_text())
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
-import architecture_coverage_checks as acc  # noqa: E402
+import analyzers.architecture_coverage_checks as acc  # noqa: E402
 
 ALL_RULE_IDS = {
     "ARCH-COOKIE-001",
@@ -188,7 +188,7 @@ def test_prior_run_output_is_not_scanned_as_source(tmp_path: Path, monkeypatch) 
     verdicts cited as code findings.
     """
     monkeypatch.delenv("APPSEC_ARCH_INCLUDE_VENDOR", raising=False)
-    import scan_excludes as se
+    import analyzers.scan_excludes as se
 
     se._reset_cache_for_tests()
 
@@ -773,7 +773,7 @@ def test_run_control_and_hypothesis_emits_linked_control(tmp_path: Path) -> None
 
 # ---------------------------------------------------------------------------
 # Inventory-flag hypotheses — ARCH-BOLA-001 / ARCH-AUTHN-001
-# (consume route_inventory.py missing_authz_suspect / missing_auth_suspect)
+# (consume analyzers/route_inventory.py missing_authz_suspect / missing_auth_suspect)
 # ---------------------------------------------------------------------------
 
 

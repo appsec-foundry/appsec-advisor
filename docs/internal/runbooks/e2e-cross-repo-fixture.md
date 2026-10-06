@@ -96,7 +96,7 @@ APPSEC_CROSS_REPO_E2E_OUTPUT=/path/to/outputs/cross-repo-threat-fixture-e2e \
 
 The script exits with `0` only when:
 
-- `scripts/load_related_repos.py` can validate and load the consumer's `docs/related-repos.yaml`.
+- `scripts/contexts/load_related_repos.py` can validate and load the consumer's `docs/related-repos.yaml`.
 - All declared local producer `threat-model.yaml` exports are available.
 - `scripts/run-headless.sh` completes successfully against the consumer repo.
 - `threat-model.md` and `threat-model.yaml` exist in the output directory.

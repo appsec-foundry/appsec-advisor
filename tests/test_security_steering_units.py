@@ -1,4 +1,4 @@
-"""In-process unit tests for scripts/security_steering.py helpers.
+"""In-process unit tests for scripts/analyzers/security_steering.py helpers.
 
 The shipped test_security_steering.py drives the whole module as a subprocess
 (matching production), which is slow and cannot reach several helper branches
@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "security_steering.py"
+SCRIPT = REPO_ROOT / "scripts" / "analyzers/security_steering.py"
 SCRIPTS_DIR = REPO_ROOT / "scripts"
 
 
@@ -33,9 +33,9 @@ def _load_module():
     real_stdin = sys.stdin
     sys.stdin = io.StringIO('{"prompt": ""}')
     try:
-        spec = importlib.util.spec_from_file_location("security_steering", SCRIPT)
+        spec = importlib.util.spec_from_file_location("analyzers.security_steering", SCRIPT)
         module = importlib.util.module_from_spec(spec)
-        sys.modules["security_steering"] = module
+        sys.modules["analyzers.security_steering"] = module
         try:
             spec.loader.exec_module(module)
         except SystemExit:

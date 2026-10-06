@@ -1,4 +1,4 @@
-"""Unit tests for scripts/check_stride_dispatch.py.
+"""Unit tests for scripts/orchestrator/check_stride_dispatch.py.
 
 The hard gate is invoked as a subprocess from skills/create-threat-model/
 The compact Stage-1 runtime's precondition gate is expected to:
@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "check_stride_dispatch.py"
+SCRIPT = REPO_ROOT / "scripts" / "orchestrator/check_stride_dispatch.py"
 
 
 # ---------------------------------------------------------------------------
@@ -74,7 +74,7 @@ def _init_waves(output_dir: Path, concurrency: int = 5) -> None:
     result = subprocess.run(
         [
             sys.executable,
-            str(REPO_ROOT / "scripts" / "stride_dispatch_waves.py"),
+            str(REPO_ROOT / "scripts" / "orchestrator/stride_dispatch_waves.py"),
             "init",
             str(output_dir),
             "--concurrency",

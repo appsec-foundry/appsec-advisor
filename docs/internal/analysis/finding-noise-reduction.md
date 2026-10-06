@@ -37,12 +37,12 @@ Daraus die bindende Design-Regel für alles Weitere:
 
 **Erreichbarkeits-/Pfadfilterung bringt nichts.** Von 68 Findings zeigt genau
 **eines** auf einen Test-/Demo-Pfad (`test/smoke/Dockerfile`, Medium). Alle 68
-haben eine `evidence.file`. Die Input-Filter (`security_relevance_filter.py`,
+haben eine `evidence.file`. Die Input-Filter (`analyzers/security_relevance_filter.py`,
 `scan-excludes.yaml`) arbeiten bereits sauber. Diese Idee ist tot.
 
 **Mehr Dedup bringt nichts.** 68 Findings verteilen sich auf ~45 verschiedene
 CWEs, Long Tail mit 1–2 Treffern je CWE. Es gibt keine Duplikat-Masse.
-`merge_threats.py` fährt ohnehin schon 7 Konsolidierungsstufen.
+`model/merge_threats.py` fährt ohnehin schon 7 Konsolidierungsstufen.
 
 **`register_severity_floor` anheben bringt nichts.** Steht default auf
 `medium`, Lows sind längst weg. Auf `high` würde 12 Mediums killen und die
@@ -68,7 +68,7 @@ in die Phase-Datei propagiert, die die Agent-Parameter tatsächlich trägt.
 Haiku stempelt dokumentiert jedes Finding `ambiguous` (0 verified / 0 refuted).
 
 **(b) Der deterministische Floor wird überschrieben.**
-`scripts/validate_evidence_lines.py:340` liest und schreibt ausschließlich
+`scripts/validators/validate_evidence_lines.py:340` liest und schreibt ausschließlich
 `threat-model.yaml` — nie `.threats-merged.json`. Rund 150 Zeilen später in
 derselben Stage regeneriert `skills/create-threat-model/SKILL-impl.md:2711-2712`
 `threat-model.yaml` aus `.threats-merged.json` und löscht damit jeden
@@ -76,7 +76,7 @@ Floor-Verdict.
 
 Das erklärt die kontraintuitive Verteilung: **quick verifiziert mehr als
 standard**, weil Abuse-Case-Verification auf quick übersprungen wird
-(`resolve_config.py:355-364`), der Rebuild dort also nie feuert.
+(`runtime/resolve_config.py:355-364`), der Rebuild dort also nie feuert.
 
 | Lauf | verified | unchecked | fehlt |
 |---|---|---|---|
@@ -84,7 +84,7 @@ standard**, weil Abuse-Case-Verification auf quick übersprungen wird
 | standard | **0** | 56 | 12 |
 | thorough | 20 | 33 | 7 |
 
-`guard_evidence_verification.py` greift nicht: `MIN_SAMPLE=5`, und
+`validators/guard_evidence_verification.py` greift nicht: `MIN_SAMPLE=5`, und
 `is_degenerate` liefert bei `sampled < MIN_SAMPLE` False. Der Guard fängt
 *all-ambiguous*, nicht *all-nothing*.
 
@@ -123,7 +123,7 @@ Reiner Bugfix, kein neues Konzept.
    Never-lower-Regel gilt auch hier: ein echtes LLM-Verdict wird nie
    überschrieben. Fehlende/kaputte Merged-Datei ist kein Fehler.
 2. **Modell-Routing:** `evidence_verifier` fehlte komplett in
-   `resolve_config.py` — deshalb stand im Dispatch ein Literal (`haiku`) statt
+   `runtime/resolve_config.py` — deshalb stand im Dispatch ein Literal (`haiku`) statt
    einer Variable wie bei *jeder* anderen Rolle. Jetzt reguläre Rolle, auf
    `SONNET` gepinnt für alle Tier/Depth-Kombinationen inkl. sonnet-economy,
    übersteuerbar via `APPSEC_EVIDENCE_VERIFIER_MODEL`. Dispatch nutzt
@@ -137,7 +137,7 @@ Reiner Bugfix, kein neues Konzept.
    Fixture-Regenerationen unentdeckt.
 
 Wirkung: Die drei Konsumenten sind bereits verdrahtet — `refuted` fällt hart
-raus (`build_threat_model_yaml.py:850`), `ambiguous` verliert Chain-Elevation.
+raus (`model/build_threat_model_yaml.py:850`), `ambiguous` verliert Chain-Elevation.
 
 **Risiko für Architektur-Weaknesses: keines.** `refuted` heißt, die zitierte
 `file:line` existiert nicht — ein Phantom-Finding per Definition. Der Floor

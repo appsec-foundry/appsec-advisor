@@ -1,11 +1,11 @@
 # Single source of truth for scan exclusions across recon-scanner,
-# stride-analyzer, and security_relevance_filter.py.
+# stride-analyzer, and analyzers/security_relevance_filter.py.
 #
 # Consumers:
-#   - scripts/scan_excludes.py (Python loader; whitelist-wins logic)
+#   - scripts/analyzers/scan_excludes.py (Python loader; whitelist-wins logic)
 #   - agents/appsec-recon-scanner.md  (glob used in Step 3 Grep calls)
 #   - agents/appsec-stride-analyzer-v2.md (glob used for bounded component discovery)
-#   - scripts/security_relevance_filter.py (incremental mode file classification)
+#   - scripts/analyzers/security_relevance_filter.py (incremental mode file classification)
 #
 # Schema contract:
 #   always_include wins over every other rule. This is how AsciiDoc source
@@ -156,6 +156,7 @@ directories:
   # Runtime artifacts
   - .cache
   - .appsec-cache   # plugin's own cache — avoid self-reference scan
+  - .plugin-issue-repro  # synthetic support reproduction, never application evidence
   - .active-tool-calls
   - tmp
 
@@ -390,14 +391,19 @@ file_patterns:
   - ".appsec-progress.json"
   - ".appsec-tracing"
   - ".appsec-verbose"
+  - ".authz-confirm-findings.json"
   - ".config-scan-findings.json"
   - ".headless-result.json"
   - ".hook-events.log"
+  - ".mass-assignment-findings.json"
   - ".recon-patterns.json"
   - ".recon-signals.json"
   - ".recon-summary.md"
   - ".route-inventory.json"
   - ".run-issues.json"
+  - ".plugin-issue-input.json"
+  - ".plugin-issue-draft.json"
+  - ".plugin-issue-*.receipt.json"
   - ".skill-config.json"
   - ".source-auth-findings.json"
   - ".stage-stats.jsonl"

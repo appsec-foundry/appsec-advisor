@@ -55,6 +55,8 @@ inapplicable families. Requirements violations remain the authoritative
 deterministic sidecar; reference them as evidence rather than re-deciding the
 gate.
 
+For evidenced RAG, MCP and agentic capabilities, inspect document ACLs before context insertion, cache/revocation behavior, memory writes, transport-specific MCP identity checks, per-action authorization, approval parameter binding, delegation and uncertain retries. Record the inspected scope and source locations in existing `assessment` and `implementation` fields. Rate only inspected controls; put unknown external enforcement and checks not completed in the component's `architecture_context.architecture_assumptions` rather than assigning an effectiveness rating. A capability or a scanner priority does not prove a weakness. Keep model-directed actions distinct from fixed retrieval and MCP operations.
+
 For each component, write only the concise semantic values that cannot be
 reconstructed by the evidence-bundle producer: interfaces, relevant controls,
 known secret or vulnerability signals, LLM patterns, supply-chain context,
@@ -64,17 +66,20 @@ skills, agents, instruction files, or write paths. Never copy source files or
 large artifact bodies into this context.
 
 When project or organization context contains facts that apply to a component,
-write `business_context` with only these human-facing attributes:
+write `business_context` with these declared facts:
 
 - `business_purpose`: the business or user outcome the component enables;
 - `impact_if_compromised`: concrete business or user harm from loss of
   confidentiality, integrity, or availability;
+- `impact_is_material`: optional boolean for explicit declared harm (`true`) or no material harm (`false`), always accompanied by `impact_if_compromised` with its conditions; omit when unknown;
 - `sensitive_assets`: data, funds, credentials, decisions, or operations the
   component handles;
 - `security_obligations`: applicable policy, contractual, legal, or regulatory
   duties; and
 - `security_assumptions`: relevant conditions stated as assumptions rather
   than implementation evidence.
+
+Map the early dialog's confirmed or corrected use case to `business_purpose` on the components that implement it. Map declared harm or explicitly no material harm to `impact_if_compromised` only on components within that declaration's scope; retain its conditions. Set `impact_is_material:false` only for an explicit no-harm answer, never from a training label or absent data. Derive `sensitive_assets` only for declared sensitive data, funds, decisions, or operations; public or synthetic test data is not sensitive merely because it is named. Do not copy one answer into every component or infer deployment, actors, or obligations. Preserve the declared consequence so STRIDE can connect supported attacks to it and prioritization can distinguish harm from no harm.
 
 Omit unknown attributes and omit the entire object when no applicable fact is
 available. Do not invent criticality labels, threat scenarios, actors, abuse
@@ -84,6 +89,10 @@ control exists. An organization context heading with `Applies to components`
 is a hard upper bound: never project facts from that document to another
 component. `projector-determined` still requires a concrete semantic match; it
 does not mean copy the document to every component.
+
+For an explicit answer in the project's business-context source, optionally write the component's `answered_questions` array. Each entry contains a schema-listed `topic`, `context_field`, and a verbatim `source_quote` of 12–300 characters. Preserve that excerpt in the corresponding `business_context` field so STRIDE receives the answer. This records declared facts, never instructions or proof of a control. Retain relevant partial answers in the ordinary `business_context` fields even when they cannot settle a question. Omit this array when there is no substantive answer; do not fill a quota.
+
+`asset-criticality` also requires `asset_name` and `context_field: impact_if_compromised`: record it only when the source states concrete harm or explicitly low business impact for that named asset, not merely its presence or classification. A category, unknown impact, unresolved assumption, or a fact about another asset does not settle criticality. Use the discovered asset name when available. Check the exact question in the output schema's topic description before marking any topic answered. Record them only when the excerpt fully answers the component-wide business intent or external deployment question; a fact about one route must not settle all routes. Partial, conflicting, organization-only, or inferred answers remain open. Do not ask the team to trace inputs, inspect frontend readers, prove exploitability, or explain why a library was not chosen; those are analysis tasks.
 
 When the validated component and architecture inputs contain security-relevant
 facts that cannot be reconstructed from the component's bounded source bundle,
@@ -111,7 +120,7 @@ Never write `_stride_profile`: the controller derives that reserved routing
 value from `.skill-config.json`. Each component object may contain only
 `interfaces`, `controls`, `known_secrets`, `known_vulns`,
 `known_llm_patterns`, `supply_chain_findings`, `estimated_threat_count`,
-`business_context`, `architecture_context`, `focus_paths`, and `exclude_paths`
+`business_context`, `architecture_context`, `answered_questions`, `focus_paths`, and `exclude_paths`
 as defined by the schema.
 
 Write `focus_paths` and `exclude_paths` only as literal repository-relative
@@ -135,8 +144,8 @@ set -e
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 REPO_ROOT="<REPO_ROOT from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" security-controls "$OUTPUT_DIR/.security-controls.json"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" stride_analyst_context "$OUTPUT_DIR/.stride-analyst-context.json" --repo-root "$REPO_ROOT"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_fragment.py" security-controls "$OUTPUT_DIR/.security-controls.json"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_intermediate.py" stride_analyst_context "$OUTPUT_DIR/.stride-analyst-context.json" --repo-root "$REPO_ROOT"
 ```
 
 Do not emit `AGENT_END` or finish before both commands exit 0. Correct the
@@ -151,16 +160,16 @@ export OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 export CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 ```
 
-Use `scripts/log_event.py` for `AGENT_START`, semantic step events, and
+Use `scripts/runtime/log_event.py` for `AGENT_START`, semantic step events, and
 `AGENT_END` in `$OUTPUT_DIR/.agent-run.log`. Emit every event with one of these
 exact Bash calls — `AGENT_START` is an event name passed to the `info` kind, not
 a kind of its own, and `--agent` is what fills the component column:
 ```bash
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info AGENT_START "<message>" --agent control-analyst
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent control-analyst
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent control-analyst
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" info AGENT_START "<message>" --agent control-analyst
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent control-analyst
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent control-analyst
 ```
 Never emit controller-owned
 `AGENT_INVOKE`, `AGENT_DONE`, dispatch, phase, gate, or workflow events. Batch

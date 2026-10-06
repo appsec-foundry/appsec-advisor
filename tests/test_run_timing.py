@@ -1,4 +1,4 @@
-"""Tests for scripts/run_timing.py — net-vs-wall with standby isolation."""
+"""Tests for scripts/runtime/run_timing.py — net-vs-wall with standby isolation."""
 
 from __future__ import annotations
 
@@ -9,13 +9,13 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "run_timing.py"
+SCRIPT = REPO_ROOT / "scripts" / "runtime/run_timing.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("run_timing", SCRIPT)
+    spec = importlib.util.spec_from_file_location("runtime.run_timing", SCRIPT)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["run_timing"] = mod
+    sys.modules["runtime.run_timing"] = mod
     spec.loader.exec_module(mod)
     return mod
 

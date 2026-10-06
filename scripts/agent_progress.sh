@@ -23,6 +23,6 @@ if [ -z "${OUTPUT_DIR:-}" ]; then
   exit 0
 fi
 
-python3 "${CLAUDE_PLUGIN_ROOT:?}/scripts/write_stride_progress.py" \
+python3 "${CLAUDE_PLUGIN_ROOT:?}/scripts/runtime/write_stride_progress.py" \
   "$OUTPUT_DIR" "$1" "$2" "$3" "$4" "$5" \
   --plugin-root "$CLAUDE_PLUGIN_ROOT"

@@ -1,11 +1,14 @@
-"""Tests for scripts/stamp_threat_model.py — postfix-stamped copy-ready sets."""
+"""Tests for scripts/model/stamp_threat_model.py — postfix-stamped copy-ready sets."""
 
 import re
 import subprocess
 import sys
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "stamp_threat_model.py"
+import pytest
+
+SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "model/stamp_threat_model.py"
+sys.path.insert(0, str(SCRIPT.parent))
 
 
 def _seed_model(d: Path, *, figure2: bool = True, optional_outputs: bool = False) -> None:
@@ -59,6 +62,17 @@ def test_default_slug_is_random_hex(tmp_path):
     assert len(stamped) == 1
     slug = re.fullmatch(r"threat-model-([0-9a-f]{4})\.md", stamped[0].name)
     assert slug, stamped[0].name
+
+
+def test_detail_diagram_travels_with_stamped_report(tmp_path):
+    _seed_model(tmp_path)
+    model = tmp_path / "threat-model.md"
+    model.write_text(model.read_text() + "\n[Details](threat-model.figure1-detail.svg)\n")
+    (tmp_path / "threat-model.figure1-detail.svg").write_text("<svg/>\n")
+    result = _run("--output-dir", str(tmp_path), "--slug", "detail")
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "threat-model-detail.figure1-detail.svg").is_file()
+    assert "(threat-model-detail.figure1-detail.svg)" in (tmp_path / "threat-model-detail.md").read_text()
 
 
 def test_missing_model_errors(tmp_path):
@@ -177,3 +191,39 @@ def test_invalid_slug_rejected(tmp_path):
     r = _run("--output-dir", str(tmp_path), "--slug", "bad/slug")
     assert r.returncode == 2
     assert "slug" in r.stderr.lower()
+
+
+@pytest.mark.parametrize("dropped", ["threat-model.figure2.svg", "threat-model.figure1-detail.svg"])
+def test_a_stamped_figure_the_report_no_longer_has_is_removed(tmp_path, dropped):
+    _seed_model(tmp_path)
+    (tmp_path / "threat-model.figure1-detail.svg").write_text("<svg/>\n")
+    assert _run("--output-dir", str(tmp_path), "--slug", "keep").returncode == 0
+    assert _run("--output-dir", str(tmp_path), "--slug", "other").returncode == 0
+    stamped = tmp_path / dropped.replace("threat-model", "threat-model-keep")
+    assert stamped.is_file()
+
+    (tmp_path / dropped).unlink()
+    from model.stamp_threat_model import stamped_set_is_current
+
+    assert not stamped_set_is_current(tmp_path, "keep")
+    r = _run("--output-dir", str(tmp_path), "--slug", "keep")
+
+    assert r.returncode == 0, r.stderr
+    assert not stamped.exists() and "removed" in r.stdout
+    assert (tmp_path / "threat-model-keep.figure1.svg").is_file()
+    # Another model's stamped set in the same directory is not touched.
+    assert (tmp_path / dropped.replace("threat-model", "threat-model-other")).is_file()
+    assert stamped_set_is_current(tmp_path, "keep")
+
+
+def test_a_stamped_export_that_was_switched_off_is_removed(tmp_path):
+    _seed_model(tmp_path, optional_outputs=True)
+    dest = tmp_path / "collection"
+    assert _run("--output-dir", str(tmp_path), "--slug", "exp", "--dest", str(dest)).returncode == 0
+    (tmp_path / "threat-model.pdf").unlink()
+
+    r = _run("--output-dir", str(tmp_path), "--slug", "exp", "--dest", str(dest))
+
+    assert r.returncode == 0, r.stderr
+    assert not (dest / "threat-model-exp.pdf").exists()
+    assert (dest / "threat-model-exp.html").is_file() and (dest / "threat-model-exp.md").is_file()

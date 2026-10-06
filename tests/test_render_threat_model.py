@@ -1,5 +1,5 @@
 """
-Tests for scripts/render_threat_model.py (Step 1 of the template migration).
+Tests for scripts/renderers/render_threat_model.py (Step 1 of the template migration).
 
 Covers:
   - marker parsing (required and optional forms, whitespace tolerance)
@@ -24,8 +24,8 @@ import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPTS_DIR = REPO_ROOT / "scripts"
-SCRIPT_PATH = SCRIPTS_DIR / "render_threat_model.py"
-SCHEMA_PATH = SCRIPTS_DIR / "render_threat_model_schema.py"
+SCRIPT_PATH = SCRIPTS_DIR / "renderers/render_threat_model.py"
+SCHEMA_PATH = SCRIPTS_DIR / "renderers/render_threat_model_schema.py"
 TEMPLATE_PATH = REPO_ROOT / "templates" / "threat-model.template.md"
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "render"
 
@@ -39,8 +39,8 @@ def _load_module(name: str, path: Path):
     return module
 
 
-renderer = _load_module("render_threat_model", SCRIPT_PATH)
-schema = _load_module("render_threat_model_schema", SCHEMA_PATH)
+renderer = _load_module("renderers.render_threat_model", SCRIPT_PATH)
+schema = _load_module("renderers.render_threat_model_schema", SCHEMA_PATH)
 
 
 # ---------------------------------------------------------------------------

@@ -1,7 +1,8 @@
-"""Tests for scripts/publish_threat_model.py."""
+"""Tests for scripts/model/publish_threat_model.py."""
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -9,7 +10,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-import publish_threat_model as ptm
+import model.publish_threat_model as ptm
 
 # ---------------------------------------------------------------------------
 # Secret scanning
@@ -522,6 +523,8 @@ class TestPreflightScansEveryPublishableFile:
             ("threat-model.yaml", 'evidence:\n  snippet: "password: Pr0dP4ss!2024xyz"\n'),
             ("threat-model.sarif.json", '{"text":"DB_PASSWORD=Pr0dP4ss!2024xyz"}'),
             (".architect-review.md", "Observed `api_key: AKIAIOSFODNN7EXAMPLE`\n"),
+            ("threat-model.figure1-detail.svg", "<svg><text>DB_PASSWORD=Pr0dP4ss!2024xyz</text></svg>"),
+            ("threat-model.figure2-dark.svg", "<svg><text>DB_PASSWORD=Pr0dP4ss!2024xyz</text></svg>"),
         ],
     )
     def test_a_secret_in_any_published_file_is_found(self, tmp_path, name, content):
@@ -535,3 +538,18 @@ class TestPreflightScansEveryPublishableFile:
         out = self._output_dir(tmp_path)
         (out / "threat-model.pdf").write_bytes(b"%PDF-1.4 password=binarynoise123 \xff\xfe")
         assert self._scan_publishable(out) == []
+
+
+def test_support_drafts_and_reproductions_are_never_published():
+    from model.publish_threat_model import NEVER_PUBLISH
+
+    assert ".plugin-issue-*.json" in NEVER_PUBLISH
+    assert ".plugin-issue-repro/" in NEVER_PUBLISH
+
+
+def test_every_published_report_figure_travels_with_its_dark_variant():
+    from model.publish_threat_model import TIER2
+    from renderers.figure_theme import dark_basename
+
+    figures = [n for n in TIER2 if re.fullmatch(r"(threat-model\.)?figure\d+b?\.svg", n)]
+    assert figures and all(dark_basename(n) in TIER2 for n in figures)

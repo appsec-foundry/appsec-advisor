@@ -4,13 +4,13 @@ import copy
 import json
 from pathlib import Path
 
-import discover_identity_providers as discovery
-import figure1_dfd
+import analyzers.discover_identity_providers as discovery
 import jsonschema
-import orchestration_controller as controller
+import orchestrator.orchestration_controller as controller
 import pytest
-from build_trust_boundary_assessment_input import _semantic_flow_validation
-from validate_fragment import repository_path_errors
+import renderers.figure1_dfd as figure1_dfd
+from contexts.build_trust_boundary_assessment_input import _semantic_flow_validation
+from validators.validate_fragment import repository_path_errors
 
 
 def _write(root, rel, text):
@@ -245,6 +245,168 @@ def test_reconciles_existing_generic_flow_without_duplicate(tmp_path):
     assert result["data_flows"][0]["to_entity"] == result["external_entities"][0]["id"]
 
 
+@pytest.mark.parametrize("provenance", ["recon", "architecture", "repo-declared"])
+def test_authored_flow_to_the_provider_is_not_duplicated_whatever_its_provenance(tmp_path, provenance):
+    _write(
+        tmp_path,
+        "src/login.ts",
+        'const authorize = "https://id.example/oauth2/authorize";\nwindow.location.assign(authorize);\n',
+    )
+    doc = _flows()
+    doc["external_entities"] = [
+        {
+            "id": "ext-staff",
+            "kind": "identity-provider",
+            "name": "Staff sign-in",
+            "description": "Company identity service",
+            "evidence": [{"file": "src/login.ts", "line": 1}],
+        }
+    ]
+    authored = {
+        "id": "df-004",
+        "from": "client",
+        "to": "external",
+        "to_entity": "ext-staff",
+        "label": "Browser redirect to the staff sign-in page",
+        "provenance": provenance,
+        "evidence": [{"file": "src/login.ts", "line": 2}],
+    }
+    doc["data_flows"] = [authored]
+    # Not duplicated; its unknown authentication is filled from the sign-in step (FE-14).
+    flows = discovery.reconcile(tmp_path, _components(), doc)["data_flows"]
+    assert [{k: v for k, v in f.items() if k != "authentication"} for f in flows] == [authored]
+    assert flows[0]["authentication"]["scheme"] == "oauth2"
+
+    generated_other_role = {**authored, "label": "OAuth token exchange", "provenance": "recon"}
+    doc["data_flows"] = [generated_other_role]
+    labels = [f["label"] for f in discovery.reconcile(tmp_path, _components(), doc)["data_flows"]]
+    assert labels == ["OAuth token exchange", "OAuth authorization"]
+
+
+_WRAPPER_SOURCES = {
+    "typescript": (
+        "src/services/account.ts",
+        "export class AccountClient {\n"
+        "  constructor (private readonly http: HttpClient) {}\n"
+        "\n"
+        "  fetchProfile (token: string) {\n"
+        "    return this.http.get('https://accounts.example.net/oauth2/v3/userinfo?access_token=' + token)\n"
+        "  }\n"
+        "}\n",
+        "src/pages/callback.ts",
+        "export class CallbackPage {\n"
+        "  init (): void {\n"
+        "    this.accounts.fetchProfile(this.tokenFromHash()).subscribe({\n"
+        "      next: (profile) => {\n"
+        "        this.session.start(profile.email)\n"
+        "      }\n"
+        "    })\n"
+        "  }\n"
+        "}\n",
+        5,
+    ),
+    "python": (
+        "src/identity/gateway.py",
+        "import requests\n"
+        "\n"
+        "\n"
+        "def load_member(token):\n"
+        '    reply = requests.get("https://login.example.org/oidc/userinfo", headers={"Authorization": token})\n'
+        "    return reply.json()\n",
+        "src/web/views.py",
+        "from identity.gateway import load_member\n"
+        "\n"
+        "def dashboard(request):\n"
+        '    member = load_member(request.session["token"])\n'
+        "    return render(request, member)\n",
+        4,
+    ),
+}
+
+
+def _authored_profile_flow(caller, line, entity="ext-accounts"):
+    return {
+        "id": "df-003",
+        "from": "client",
+        "to": "external",
+        "to_entity": entity,
+        "label": "Profile lookup with the received access token",
+        "provenance": "architecture",
+        "evidence": [{"file": caller, "line": line}],
+    }
+
+
+def _entities(*ids):
+    return [
+        {
+            "id": entity,
+            "kind": "identity-provider",
+            "name": f"Provider {entity}",
+            "description": "Account provider",
+            "evidence": [{"file": "src/pages/other.ts", "line": 1}],
+        }
+        for entity in ids
+    ]
+
+
+@pytest.mark.parametrize("language", sorted(_WRAPPER_SOURCES))
+def test_request_modelled_at_its_wrapper_call_is_not_duplicated(tmp_path, language):
+    wrapper, wrapper_text, caller, caller_text, line = _WRAPPER_SOURCES[language]
+    _write(tmp_path, wrapper, wrapper_text)
+    _write(tmp_path, caller, caller_text)
+    _write(tmp_path, "src/pages/other.ts", "export {}\n")
+    doc = _flows()
+    doc["external_entities"] = _entities("ext-accounts")
+    doc["data_flows"] = [_authored_profile_flow(caller, line)]
+    result = discovery.reconcile(tmp_path, _components(), doc)
+    assert [flow["id"] for flow in result["data_flows"]] == ["df-003"]
+    assert [entity["id"] for entity in result["external_entities"]] == ["ext-accounts"]
+    url_line = next(n for n, text in enumerate(wrapper_text.splitlines(), 1) if "userinfo" in text)
+    assert {"file": wrapper, "line": url_line} in result["data_flows"][0]["evidence"]
+    assert repository_path_errors("data-flows", result, tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    "caller_text,entities",
+    [
+        # The authored flow cites code that never calls the wrapper.
+        ("export class CallbackPage {\n  init (): void {\n    this.orders.load()\n  }\n}\n", ["ext-accounts"]),
+        # Two providers claim the same call; neither representation is chosen.
+        (_WRAPPER_SOURCES["typescript"][3], ["ext-accounts", "ext-backup"]),
+    ],
+)
+def test_unrelated_or_ambiguous_callers_keep_the_generated_request(tmp_path, caller_text, entities):
+    wrapper, wrapper_text, caller, _text, line = _WRAPPER_SOURCES["typescript"]
+    _write(tmp_path, wrapper, wrapper_text)
+    _write(tmp_path, caller, caller_text)
+    _write(tmp_path, "src/pages/other.ts", "export {}\n")
+    doc = _flows()
+    doc["external_entities"] = _entities(*entities)
+    doc["data_flows"] = [
+        {**_authored_profile_flow(caller, line if "fetchProfile" in caller_text else 3, entity), "id": f"df-00{i}"}
+        for i, entity in enumerate(entities, 3)
+    ]
+    authored = copy.deepcopy(doc["data_flows"])
+    result = discovery.reconcile(tmp_path, _components(), doc)
+    assert result["data_flows"][: len(authored)] == authored
+    assert [flow["label"] for flow in result["data_flows"][len(authored) :]] == ["OAuth profile request"]
+
+
+def test_every_discovered_role_is_recognised_as_generated(tmp_path):
+    sources = {
+        "src/a.ts": 'fetch("https://id.example/oauth/token")',
+        "src/b.py": 'requests.get("https://id.example/oidc/userinfo")',
+        "src/c.ts": 'new UserManager({authority: "https://login.example/realms/staff"})',
+        "src/d.js": 'new SAMLStrategy({entryPoint: "https://sso.example/signin"})',
+        "src/e.ts": 'new SAMLStrategy({metadataUrl: "https://sso.example/metadata"})',
+        "src/f.ts": 'window.location.assign("https://id.example/oauth/authorize")',
+    }
+    for rel, text in sources.items():
+        _write(tmp_path, rel, text)
+    roles = {integration.role for integration in discovery.discover(tmp_path)}
+    assert len(roles) == 6 and roles <= discovery._ROLES
+
+
 def test_respects_evidenced_internal_identity_server(tmp_path):
     _write(tmp_path, "src/login.ts", 'fetch("https://id.example/oauth/token");')
     doc = _flows()
@@ -333,3 +495,363 @@ def test_controller_does_not_publish_invalid_enrichment(tmp_path, monkeypatch):
     with pytest.raises(controller.ControllerError, match="schema validation"):
         controller._bind_finalized_component_fingerprint(out, tmp_path)
     assert (out / ".data-flows.json").read_bytes() == previous
+
+
+# ---------------------------------------------------------------------------
+# Authentication of identity-provider steps (sign-in, profile, token, metadata)
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "rel,source,expected",
+    [
+        (  # browser sign-in, implicit grant
+            "src/login.ts",
+            'const u = "https://id.example/o/oauth2/v2/auth";\n'
+            "location.replace(`${u}?client_id=${id}&response_type=token&scope=email`);",
+            {"scheme": "oauth2", "flow": "implicit", "transport": "protected"},
+        ),
+        (  # OIDC sign-in with PKCE
+            "src/login.ts",
+            'window.location.assign("https://id.example/oauth2/authorize?response_type=code&scope=openid&code_challenge=" + c);',
+            {"scheme": "oidc", "flow": "authorization-code-pkce", "transport": "protected"},
+        ),
+        (  # sign-in without a stated grant
+            "src/login.ts",
+            'window.location.assign("https://id.example/oauth2/authorize");',
+            {"scheme": "oauth2", "transport": "protected"},
+        ),
+        (  # SAML in code and in configuration
+            "src/sso.js",
+            'new SAMLStrategy({entryPoint: "https://sso.example/signin"});',
+            {"scheme": "saml", "transport": "protected"},
+        ),
+        (
+            "config/sso.yaml",
+            "saml:\n  entryPoint: https://sso.example/signin\n",
+            {"scheme": "saml", "transport": "protected"},
+        ),
+        (  # profile request with the user's access token
+            "src/profile.py",
+            'requests.get("https://identity.example/oidc/userinfo")',
+            {"scheme": "bearer", "transport": "protected"},
+        ),
+        (  # token request: client secret, private_key_jwt, PKCE-only public client
+            "src/token.py",
+            'requests.post("https://id.example/oauth/token", data={"client_secret": secret, "code": code})',
+            {"scheme": "client-secret", "transport": "protected"},
+        ),
+        (
+            "src/token.py",
+            'requests.post("https://id.example/oauth/token", data={"client_assertion": jwt})',
+            {"scheme": "private-key", "transport": "protected"},
+        ),
+        (
+            "src/token.ts",
+            'fetch("https://id.example/oauth/token", {method: "POST", body: `code_verifier=${v}`});',
+            {"scheme": "oauth2", "flow": "authorization-code-pkce", "transport": "protected"},
+        ),
+        (  # public metadata
+            "src/client.ts",
+            'Issuer.discover("https://identity.example")',
+            {"scheme": "none", "transport": "protected"},
+        ),
+    ],
+)
+def test_identity_provider_steps_carry_the_authentication_their_protocol_proves(tmp_path, rel, source, expected):
+    _write(tmp_path, rel, source)
+    result = discovery.reconcile(tmp_path, _components(), _flows())
+    auth = result["data_flows"][0]["authentication"]
+    assert {k: auth[k] for k in expected} == expected
+    assert set(auth) - set(expected) == {"scope", "evidence"}
+    schema = json.loads((Path(__file__).parents[1] / "schemas/fragments/data-flows.schema.json").read_text())
+    jsonschema.validate(result, schema)
+    assert result["external_entities"][0]["service_roles"][0]["evidence"] == result["data_flows"][0]["evidence"]
+
+
+def test_an_unproven_client_authentication_stays_unknown(tmp_path):
+    _write(tmp_path, "src/login.js", 'fetch("https://identity.example/oauth/token", {method:"POST"});')
+    assert "authentication" not in discovery.reconcile(tmp_path, _components(), _flows())["data_flows"][0]
+
+
+@pytest.mark.parametrize(
+    "authored,filled",
+    [
+        (None, "oauth2"),
+        ({"scheme": "unknown", "scope": "not determined", "evidence": [{"file": "src/login.ts", "line": 2}]}, "oauth2"),
+        ({"scheme": "cookie", "scope": "authored", "evidence": [{"file": "src/login.ts", "line": 2}]}, "cookie"),
+    ],
+)
+def test_only_an_unknown_authored_scheme_is_filled(tmp_path, authored, filled):
+    _write(tmp_path, "src/login.ts", 'const a = "https://id.example/oauth2/authorize";\nwindow.location.assign(a);\n')
+    doc = _flows()
+    doc["external_entities"] = [
+        {
+            "id": "ext-staff",
+            "kind": "identity-provider",
+            "name": "Staff sign-in",
+            "description": "IdP",
+            "evidence": [{"file": "src/login.ts", "line": 1}],
+        }
+    ]
+    flow = {
+        "id": "df-001",
+        "from": "client",
+        "to": "external",
+        "to_entity": "ext-staff",
+        "label": "Sign-in",
+        "provenance": "architecture",
+        "evidence": [{"file": "src/login.ts", "line": 2}],
+    }
+    if authored:
+        flow["authentication"] = authored
+    doc["data_flows"] = [flow]
+    assert discovery.reconcile(tmp_path, _components(), doc)["data_flows"][0]["authentication"]["scheme"] == filled
+
+
+@pytest.mark.parametrize(
+    "source,cited_line,errors",
+    [
+        ('const a = "https://id.example/oauth2/authorize";\nwindow.location.assign(a);\n', 2, 1),
+        ('requests.get("https://identity.example/oidc/userinfo")\n', 1, 1),
+        ('new SAMLStrategy({entryPoint: "https://sso.example/signin"});\n', 1, 1),
+        ('Issuer.discover("https://identity.example")\n', 1, 0),  # public metadata may be unauthenticated
+    ],
+)
+def test_self_check_rejects_none_on_a_step_where_the_provider_authenticates(tmp_path, source, cited_line, errors):
+    _write(tmp_path, "src/login.ts", source)
+    flow = {
+        "id": "df-001",
+        "from": "client",
+        "to": "external",
+        "to_entity": "ext-x",
+        "label": "Step",
+        "evidence": [{"file": "src/login.ts", "line": cited_line}],
+        "authentication": {
+            "scheme": "none",
+            "scope": "authored",
+            "evidence": [{"file": "src/login.ts", "line": cited_line}],
+        },
+    }
+    assert len(discovery.identity_authentication_errors(tmp_path, [flow])) == errors
+
+
+def test_identity_provider_pill_names_the_idp_and_machine_servers_keep_the_protocol_term():
+    vocabulary = figure1_dfd._capability_vocabulary()[1]
+    role = [{"role": "oauth-authorization-server", "evidence": [{"file": "a.ts", "line": 1}]}]
+    idp = figure1_dfd._capability_rows(role, vocabulary, "role", "Staff sign-in", label_key="identity_provider_label")
+    m2m = figure1_dfd._capability_rows(role, vocabulary, "role", "Token service")
+    assert idp[0]["label"] == "IdP · OAuth 2.0" and m2m[0]["label"] == "OAuth authorization server"
+
+
+def _sign_in_doc(providers=("ext-accounts",), group="social-login", back=None):
+    doc = _flows()
+    doc["external_entities"] = _entities(*providers)
+    doc["data_flows"] = [
+        {
+            "id": f"df-00{index}",
+            "from": "client",
+            "to": "external",
+            "to_entity": provider,
+            "label": "Sign-in redirect",
+            "protocol": "HTTPS",
+            "data_classification": "Confidential",
+            "direction": "request-response",
+            "protocol_group": group,
+            "provenance": "architecture",
+            "evidence": [{"file": "src/pages/other.ts", "line": 1}],
+            "authentication": {
+                "scheme": "oauth2",
+                "flow": "implicit",
+                "scope": "The provider authenticates the user",
+                "transport": "protected",
+                "evidence": [{"file": "src/pages/other.ts", "line": 1}],
+            },
+        }
+        for index, provider in enumerate(providers, 1)
+    ]
+    if back is not None:
+        doc["data_flows"].append(
+            {
+                "id": "df-009",
+                "from": "external",
+                "from_entity": providers[0],
+                "to": "client",
+                "label": "Token delivery to the callback route",
+                "protocol": "HTTPS",
+                "data_classification": "Confidential",
+                "direction": "request-response",
+                "protocol_group": group,
+                "provenance": "architecture",
+                "evidence": [{"file": "src/pages/other.ts", "line": 1}],
+                **({"authentication": back} if back else {}),
+            }
+        )
+    return doc
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'requests.get("https://api.example/oauth2/v1/userinfo")\n',
+        'fetch("https://profile.example/oidc/userinfo?alt=json")\n',
+    ],
+)
+def test_profile_request_calls_the_provider_the_user_signed_in_at(tmp_path, source):
+    _write(tmp_path, "src/profile.ts", source)
+    _write(tmp_path, "src/pages/other.ts", "export {}\n")
+    result = discovery.reconcile(tmp_path, _components(), _sign_in_doc())
+    assert [e["id"] for e in result["external_entities"]] == ["ext-accounts"]
+    profile = next(f for f in result["data_flows"] if f["label"] == "OAuth profile request")
+    assert profile["to_entity"] == "ext-accounts" and profile["protocol_group"] == "social-login"
+    assert profile["authentication"]["scheme"] == "bearer"
+    roles = [r["role"] for r in result["external_entities"][0]["service_roles"]]
+    assert roles == ["oauth-resource-server"]
+
+
+def test_profile_request_keeps_its_own_party_when_several_providers_sign_users_in(tmp_path):
+    _write(tmp_path, "src/profile.ts", 'requests.get("https://api.example/oauth2/v1/userinfo")\n')
+    _write(tmp_path, "src/pages/other.ts", "export {}\n")
+    result = discovery.reconcile(tmp_path, _components(), _sign_in_doc(("ext-accounts", "ext-staff")))
+    profile = next(f for f in result["data_flows"] if f["label"] == "OAuth profile request")
+    assert profile["to_entity"].startswith("ext-idp-") and "protocol_group" not in profile
+
+
+@pytest.mark.parametrize(
+    "back",
+    [
+        {},
+        {"scheme": "none", "scope": "Redirect response", "evidence": [{"file": "src/pages/other.ts", "line": 1}]},
+        {"scheme": "unknown", "scope": "not determined", "evidence": [{"file": "src/pages/other.ts", "line": 1}]},
+    ],
+)
+def test_the_redirect_back_completes_the_sign_in_and_carries_its_protocol(tmp_path, back):
+    result = discovery.reconcile(tmp_path, _components(), _sign_in_doc(back=back))
+    auth = result["data_flows"][-1]["authentication"]
+    assert (auth["scheme"], auth["flow"], auth["transport"]) == ("oauth2", "implicit", "protected")
+    assert auth["evidence"] == [{"file": "src/pages/other.ts", "line": 1}]
+    schema = json.loads((Path(__file__).parents[1] / "schemas/fragments/data-flows.schema.json").read_text())
+    jsonschema.validate(result, schema)
+
+
+def test_the_redirect_back_keeps_an_authored_scheme_and_needs_a_matching_sign_in(tmp_path):
+    authored = {"scheme": "cookie", "scope": "authored", "evidence": [{"file": "src/pages/other.ts", "line": 1}]}
+    kept = discovery.reconcile(tmp_path, _components(), _sign_in_doc(back=authored))
+    assert kept["data_flows"][-1]["authentication"]["scheme"] == "cookie"
+    other_group = _sign_in_doc(back={})
+    other_group["data_flows"][-1]["protocol_group"] = "unrelated"
+    assert "authentication" not in discovery.reconcile(tmp_path, _components(), other_group)["data_flows"][-1]
+
+
+def _two_tier():
+    return [
+        {
+            "id": "client",
+            "name": "Web client",
+            "tier": "client",
+            "paths": ["web/**"],
+            "deployment_zones": ["client-device"],
+        },
+        {
+            "id": "server",
+            "name": "Backend",
+            "tier": "application",
+            "paths": ["srv/**", "config/**"],
+            "deployment_zones": ["dmz"],
+        },
+    ]
+
+
+def _with_sign_in(doc=None):
+    doc = doc or _sign_in_doc()
+    for flow in doc["data_flows"]:
+        flow["evidence"] = flow["authentication"]["evidence"] = [{"file": "web/login.ts", "line": 1}]
+    for entity in doc["external_entities"]:
+        entity["evidence"] = [{"file": "web/login.ts", "line": 1}]
+    return doc
+
+
+_CONFIDENTIAL_CLIENTS = {
+    "passport": (
+        "srv/auth.ts",
+        "passport.use(new GoogleStrategy({\n  clientID: process.env.GOOGLE_ID,\n"
+        "  clientSecret: process.env.GOOGLE_SECRET,\n  callbackURL: '/auth/callback',\n}, verify));\n",
+        1,
+    ),
+    "authlib": (
+        "srv/app.py",
+        "oauth.register(\n    name='staff',\n    client_id=CONFIG['id'],\n    client_secret=CONFIG['secret'],\n"
+        "    client_kwargs={'scope': 'openid email'},\n)\n",
+        1,
+    ),
+    "spring-yaml": (
+        "config/application.yml",
+        "spring:\n  security:\n    oauth2:\n      client:\n        registration:\n          staff:\n"
+        "            client-id: portal\n            client-secret: ${STAFF_SECRET}\n",
+        8,
+    ),
+    "properties": (
+        "config/application.properties",
+        "spring.security.oauth2.client.registration.staff.client-id=portal\n"
+        "spring.security.oauth2.client.registration.staff.client-secret=${STAFF_SECRET}\n",
+        2,
+    ),
+    "json-sibling": (
+        "config/auth.json",
+        '{"google": {"clientID": "abc", "clientSecret": "from-vault", "callback": "/cb"}}',
+        1,
+    ),
+}
+
+
+@pytest.mark.parametrize("shape", sorted(_CONFIDENTIAL_CLIENTS))
+def test_a_library_token_request_shows_the_client_secret_it_is_configured_with(tmp_path, shape):
+    rel, source, line = _CONFIDENTIAL_CLIENTS[shape]
+    _write(tmp_path, rel, source)
+    _write(tmp_path, "web/login.ts", "export {}\n")
+    result = discovery.reconcile(tmp_path, _two_tier(), _with_sign_in())
+    token = [f for f in result["data_flows"] if f["label"] == "OAuth token exchange"]
+    assert len(token) == 1
+    assert (token[0]["from"], token[0]["to_entity"], token[0]["protocol_group"]) == (
+        "server",
+        "ext-accounts",
+        "social-login",
+    )
+    auth = token[0]["authentication"]
+    assert (auth["scheme"], auth["transport"], auth["evidence"]) == (
+        "client-secret",
+        "protected",
+        [{"file": rel, "line": line}],
+    )
+    assert "secret" not in json.dumps(token[0]["evidence"]).lower().replace(rel.lower(), "")
+    schema = json.loads((Path(__file__).parents[1] / "schemas/fragments/data-flows.schema.json").read_text())
+    jsonschema.validate(result, schema)
+    assert discovery.reconcile(tmp_path, _two_tier(), result) == result
+
+
+@pytest.mark.parametrize(
+    "variant", ["no-provider", "two-providers", "public-client", "token-url-already-drawn", "no-oauth-context"]
+)
+def test_no_token_request_is_invented_without_a_provider_or_secret(tmp_path, variant):
+    rel, source, _line = _CONFIDENTIAL_CLIENTS["passport"]
+    doc = _with_sign_in()
+    if variant == "no-provider":
+        doc = {**_flows(), "external_entities": [], "data_flows": []}
+    elif variant == "two-providers":
+        doc = _with_sign_in(_sign_in_doc(("ext-accounts", "ext-staff")))
+    elif variant == "public-client":
+        source = source.replace("  clientSecret: process.env.GOOGLE_SECRET,\n", "")
+    elif variant == "token-url-already-drawn":
+        source = (
+            "const client = new OAuth2({clientId: ID, clientSecret: SECRET, "
+            "tokenUrl: 'https://tokens.example/oauth/token'});\nclient.post('https://tokens.example/oauth/token');\n"
+        )
+    else:
+        source = "app.register(cache, {clientId: 'x', clientSecret: 'y'});\n"
+    _write(tmp_path, rel, source)
+    _write(tmp_path, "web/login.ts", "export {}\n")
+    result = discovery.reconcile(tmp_path, _two_tier(), doc)
+    token = [f for f in result["data_flows"] if "token exchange" in f["label"]]
+    if variant == "token-url-already-drawn":
+        # Only the URL-derived requests remain; none is added towards the sign-in provider.
+        assert token and all(f["to_entity"] != "ext-accounts" for f in token)
+    else:
+        assert token == []

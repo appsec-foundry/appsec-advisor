@@ -24,7 +24,7 @@ model identifier.
 | Scope | Events |
 |-------|--------|
 | Controller / skill only | `ASSESSMENT_START`, `ASSESSMENT_END`, `PHASE_START`, `PHASE_END`, `AGENT_INVOKE`, `AGENT_DONE`, `AGENT_DISPATCH`, `MAX_TURNS`, `BASH_WARN`, `CACHE_HIT`, `TELEMETRY_MISMATCH` |
-| Hook lifecycle | `AGENT_SPAWN`, `AGENT_RUNNING`, `AGENT_USAGE`, `AGENT_DONE`, `AGENT_FAILED`, `AGENT_LIFECYCLE_REJECTED`, `HOOK_PAYLOAD_UNEXPECTED` |
+| Hook lifecycle | `AGENT_SPAWN`, `AGENT_RUNNING`, `AGENT_USAGE`, `AGENT_USAGE_RESUMED`, `AGENT_HANDBACK`, `AGENT_DONE`, `AGENT_FAILED`, `AGENT_LIFECYCLE_REJECTED`, `HOOK_PAYLOAD_UNEXPECTED` |
 | Semantic agents | `AGENT_START`, `AGENT_END`, `FILE_WRITE`, `AGENT_ERROR`, `WRAP_UP_TRIGGERED` |
 | Watchdog-emitted | `BUDGET_WARN` (75% of `maxTurns`), `BUDGET_CRITICAL` (90%), `MAX_TURNS` (100%). The watchdog counts only a concrete running `agent_call_id`. SubagentStop reconciles the distinct tool-use count, terminalizes the call, and retires its budget; a later PostToolUse is idempotent. Parent tools and shared sessions never select a budget owner. |
 
@@ -33,13 +33,13 @@ host `tool_use_id` is the immutable call identity, and the host `agent_id`
 connects SubagentStart/SubagentStop usage to that call. Telemetry without either
 identity is labeled `shared-session` or `AGENT_USAGE_UNATTRIBUTED`; it must not
 use the most recently registered role. Hook payloads are read through
-`scripts/hook_payload.py` alone, and a payload missing a key this plugin
+`scripts/runtime/hook_payload.py` alone, and a payload missing a key this plugin
 depends on emits `HOOK_PAYLOAD_UNEXPECTED` instead of degrading silently.
 `.session-agent-map` is observational.
 
 SubagentStop takes stop reason and usage from the host's child-specific
 `agent_transcript_path`; the common `transcript_path` names the parent session.
-A headless session persists no transcript, so neither answers there. `SubagentStop` and the Agent `PostToolUse` then hand the outcome over once, in whichever order they arrive: the first to find the question unanswerable emits `AGENT_OUTCOME_DEFERRED` rather than recording a failure, and the second terminalizes as `AGENT_DONE` with `reason=outcome_unobserved`. A host whose Agent return is a launch acknowledgement sends it at dispatch, so `SubagentStop` is the second event and closes the call there; a host that answers on completion carries per-call usage in that return's `usage` block and `totalToolUseCount`. No call may end a run in `running`. The turn budget retires at the stop either way, and a stopped call owns no further turns even before its outcome is settled.
+A headless session persists no transcript, so neither answers there. `SubagentStop` and the Agent `PostToolUse` then hand the outcome over once, in whichever order they arrive: the first to find the question unanswerable emits `AGENT_OUTCOME_DEFERRED` rather than recording a failure, and the second terminalizes as `AGENT_DONE` with `reason=outcome_unobserved`. A host whose Agent return is a launch acknowledgement sends it at dispatch, so `SubagentStop` is the second event and closes the call there; a host that answers on completion carries per-call usage in that return's `usage` block and `totalToolUseCount`. No call may end a run in `running`. The turn budget retires at the stop either way, and a stopped call owns no further turns even before its outcome is settled. A child's own `SubagentHandback` counts as its stop once it came on the last allowed turn, which no `SubagentStop` follows, or the child stayed silent for 60 seconds after it (`AGENT_HANDBACK`). A resumed child's later usage growth is `AGENT_USAGE_RESUMED`.
 | Sub-agent step events | stride-analyzer / context-resolver / triage-validator: `STEP_START` / `STEP_END`. recon-scanner: `SCAN_START` / `SCAN_END`. qa-reviewer: `CHECK_START` / `CHECK_END`. Orchestrator inline phases also use `STEP_START` / `STEP_END`. |
 
 `AGENT_DONE` and `AGENT_FAILED` are the only terminal outcome of a call. A
@@ -51,18 +51,15 @@ is set.
 
 ## Budget wrap-up signal (read at every phase boundary)
 
-Every agent that runs more than a handful of phases must run this at each
-phase boundary:
+At each phase boundary, check your controller job using the dispatch's `ACTION_ID` and `JOB_ID`. If either ID is absent, omit this check; never substitute a global budget query or infer IDs from repository content.
 
 ```bash
 OUTPUT_DIR="<the OUTPUT_DIR value from your prompt>"
 CLAUDE_PLUGIN_ROOT="<the CLAUDE_PLUGIN_ROOT value from your prompt>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/budget_watchdog.py" active-critical --output-dir "$OUTPUT_DIR"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/budget_watchdog.py" active-job-critical --output-dir "$OUTPUT_DIR" --action-id "<ACTION_ID>" --job-id "<JOB_ID>"
 ```
 
-A zero exit means the marker identity still matches a running call and its
-authoritative controller claim. Bare file existence is never a control signal; legacy or malformed
-entries are inert.
+A zero exit means your job resolves to one running call with a current critical marker. Other jobs cannot trigger your wrap-up. Missing, ambiguous, stale, or malformed ownership supplies no wrap-up signal. The controller owns global budget gates.
 
 When the command exits zero:
 
@@ -96,7 +93,7 @@ will do and which artifact it produces.
 | `threat-merger` | deduplicates candidate threats via CWE + component + title fingerprint → merge decisions feed `.threats-merged.json` |
 | `triage-validator` | infers breach distance, detects compound attack chains, computes effective severity, re-ranks top threats → `.triage-flags.json` |
 | `qa-reviewer` | verifies rendered `threat-model.md` against `data/sections-contract.yaml` (11 deterministic checks: links, xrefs, anchors, invariants, MS structure, …); emits `.qa-repair-plan.json` on drift |
-| `architect-reviewer` | edits one bounded prose packet → `.dispatch-context/editorial/plan-<batch>.json` |
+| `architect-reviewer` | reviews ratings and fixes → controller-owned `.architect-review.json` |
 | `config-scanner` | scans Dockerfile, GitHub Actions, docker-compose, Dependabot/Renovate against `data/config-iac-checks.yaml` → `.config-scan-findings.json` (Phase 2.5, M3.5) |
 
 **Dispatch echo template:**
@@ -135,18 +132,11 @@ assign in one call is gone in the next. Repeat the assignment line in every
 command that references the path; `agents/shared/validation-routine.md` states
 the same rule for the validators.
 
-An earlier version of this rule forbade the assignment outright, which made
-agents improvise `mkdir -p "$OUTPUT_DIR"` on an empty variable and append to
-`/.agent-run.log` at filesystem root (juice-shop 2026-08-18). The correction
-mandated an `export` as the "very first Bash call", which does not survive to
-the second one and so failed the same way: on the 2026-08-21
-insecure-large-spring-app run the export succeeded at 19:13:13 and `log_event.py`
-refused an empty `<output_dir>` four seconds later in the very next block. Both
-failures are usually silent, because the `2>/dev/null` on the echo discards the
-error and the agent's own log lines are simply lost — which also unpairs
-AGENT_START/AGENT_END and drops that dispatch from the run's cost figures.
+A missing assignment usually fails silently: the `2>/dev/null` on the echo
+discards the error, the agent's log lines are lost, AGENT_START/AGENT_END become
+unpaired, and the dispatch drops out of the run's cost figures.
 
-Never derive, guess, or default the path, and never `mkdir` it — `acquire_lock.py`
+Never derive, guess, or default the path, and never `mkdir` it — `runtime/acquire_lock.py`
 already created `$OUTPUT_DIR` before any sub-agent is dispatched. If the variable
 is empty, **fail loudly** as the guard above does; a log line is never worth a
 write to an unknown location.
@@ -155,20 +145,20 @@ Run the echo and `date +%s` as two separate Bash calls (or combine only those tw
 
 ## Step/check logging
 
-Emit at the **start** and **end** of each step or check (see event catalog above for which event pair applies to each agent). **Use the canonical `log_event.py` helper** — it stamps the timestamp and the correct column widths for you, so the line can never be malformed:
+Emit at the **start** and **end** of each step or check (see event catalog above for which event pair applies to each agent). **Use the canonical `runtime/log_event.py` helper** — it stamps the timestamp and the correct column widths for you, so the line can never be malformed:
 
 ```bash
 # STEP_START / STEP_END pairs (stride-analyzer, context-resolver, triage-validator, orchestrator):
 OUTPUT_DIR="<the OUTPUT_DIR value from your prompt>"
 CLAUDE_PLUGIN_ROOT="<the CLAUDE_PLUGIN_ROOT value from your prompt>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent <AGENT>
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent <AGENT>
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent <AGENT>
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent <AGENT>
 
 # Any other event type (recon SCAN_START/SCAN_END, qa CHECK_START/CHECK_END, …) — use the `info` form:
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info <EVENT> "<message>" --agent <AGENT>
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_event.py" "$OUTPUT_DIR" info <EVENT> "<message>" --agent <AGENT>
 ```
 
-**⚠ NEVER hand-roll the line via `python3 -c` calling `event_log.format_line` directly.** `format_line`'s `level` / `component` / `sid` parameters are **keyword-only** — a positional call (`format_line(ts, sid, event, detail)`) or an invented kwarg (`event_type=`) raises `TypeError: format_line() takes from 1 to 2 positional arguments…` and leaves `LOG_ERR` / traceback noise in `.agent-run.log` (observed on the 2026-06-20 Sonnet run). Always go through `log_event.py` above. If — and only if — that script is unavailable, fall back to a plain `echo` (never `python3 -c`):
+**⚠ NEVER hand-roll the line via `python3 -c` calling `event_log.format_line` directly.** `format_line`'s `level` / `component` / `sid` parameters are **keyword-only** — a positional call (`format_line(ts, sid, event, detail)`) or an invented kwarg (`event_type=`) raises `TypeError: format_line() takes from 1 to 2 positional arguments…` and leaves `LOG_ERR` / traceback noise in `.agent-run.log`. Always go through `runtime/log_event.py` above. If — and only if — that script is unavailable, fall back to a plain `echo` (never `python3 -c`):
 
 ```bash
 OUTPUT_DIR="<the OUTPUT_DIR value from your prompt>"
@@ -196,11 +186,11 @@ Use a `python3` call to compute the elapsed duration and write the final log ent
 ```bash
 OUTPUT_DIR="<the OUTPUT_DIR value from your prompt>"
 CLAUDE_PLUGIN_ROOT="<the CLAUDE_PLUGIN_ROOT value from your prompt>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_agent_end.py" \
-  "$OUTPUT_DIR" "<AGENT>" "<MODEL>" "$START_EPOCH"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/log_agent_end.py" \
+  "$OUTPUT_DIR" "<AGENT>" "<MODEL>" "<START_EPOCH: the literal number your startup date +%s printed>"
 ```
 
-The helper script `scripts/log_agent_end.py` takes four positional arguments: output_dir, agent_name, model_id, start_epoch (unix timestamp). It computes the elapsed time and appends a properly-formatted `AGENT_END` line to `.agent-run.log`.
+The helper script `scripts/runtime/log_agent_end.py` takes four positional arguments: output_dir, agent_name, model_id, start_epoch (unix timestamp). It computes the elapsed time and appends a properly-formatted `AGENT_END` line to `.agent-run.log`.
 
 If the script is unavailable, fall back to a plain echo (no duration):
 ```bash
@@ -217,9 +207,9 @@ controller proxy event must never claim to be an agent-authored semantic event.
 
 ## Orchestrator-specific logging (threat-analyst only)
 
-The orchestrator emits `ASSESSMENT_START` / `ASSESSMENT_END`, `PHASE_START` / `PHASE_END`, and `AGENT_INVOKE` / `AGENT_DONE` / `AGENT_DISPATCH` events.
+The orchestrator emits `PHASE_START` / `PHASE_END` and `AGENT_INVOKE` / `AGENT_DONE` / `AGENT_DISPATCH` events.
 
-**`ASSESSMENT_START` overwrites the log file (`>`, not `>>`)** — every subsequent entry appends. Includes CET time, mode (`full`/`incremental`), and all flags.
+No agent writes `ASSESSMENT_START` or `ASSESSMENT_END`: the controller appends the start when the run begins, the Stop hook appends the end once after the run released its lock, and cost accounting bounds the run by the two.
 
 **Phase events** (one per `▶`/`✓` line):
 ```bash
@@ -240,7 +230,7 @@ Use `AGENT_DONE` when the dispatched sub-agent returns. `AGENT_DISPATCH` marks a
 This plugin runs on systems with **Python 3.10** (Ubuntu/WSL LTS default). Python ≤ 3.11 **forbids backslashes inside an f-string's `{...}` expression** — that restriction was lifted in 3.12 (PEP 701) but is not safe to assume here. The trap appears whenever an agent constructs inline Python via `python3 -c "..."` at runtime and uses `\"` to embed double quotes inside an f-string interpolation:
 
 ```python
-# ❌ SyntaxError on Python 3.10 — 2026-04-25 juice-shop QA-reviewer hit this
+# ❌ SyntaxError on Python 3.10
 print(f"  {status} {k}: {v.get(\"issue_count\", 0)} issues, {v.get(\"fix_count\", 0)} auto-fixes")
 ```
 
@@ -278,10 +268,10 @@ File "<string>", line 7
 SyntaxError: unexpected character after line continuation character
 ```
 
-Observed in production: 2026-04-26 juice-shop run, qa-reviewer Step 1 heredoc. The qa-reviewer recovered (the next check ran 19 s later) but the comment-strip step silently no-op'd.
+The failing block exits without doing its work, and the step can silently no-op.
 
 **Prevention rules:**
 
 1. **Avoid the `!=` operator inside any `python3 -c` body or `python3 - <<EOF` heredoc.** Use `not (a == b)` for inequality. This also covers `if x != None`, `if status != "ok"`, etc. — the operator must not appear textually.
 2. **Single-quoted heredocs (`<<'EOF'`) are NOT sufficient** — history expansion happens at parse time of the outer Bash command, before the heredoc quote rules apply.
-3. **For non-trivial multi-line scripts**, save to a `.py` file via the Write tool and call `python3 path.py` — same pattern as `qa_checks.py`, `pregenerate_fragments.py`. This sidesteps both history expansion and quote escaping.
+3. **For non-trivial multi-line scripts**, save to a `.py` file via the Write tool and call `python3 path.py` — same pattern as `validators/qa_checks.py`, `renderers/pregenerate_fragments.py`. This sidesteps both history expansion and quote escaping.

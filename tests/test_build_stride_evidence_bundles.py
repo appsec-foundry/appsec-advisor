@@ -6,7 +6,7 @@ import os
 import subprocess
 from pathlib import Path
 
-import build_stride_evidence_bundles as bundles
+import contexts.build_stride_evidence_bundles as bundles
 import pytest
 
 
@@ -97,6 +97,84 @@ def test_build_all_emits_bounded_valid_component_bundle(tmp_path):
     assert not (output / ".dispatch-context/backend-api/architecture-context.json").exists()
 
 
+def _many_signals(repo: Path, output: Path, count: int) -> None:
+    (repo / "src" / "app.py").write_text("".join(f"x{n} = {n}\n" for n in range(count)), encoding="utf-8")
+    findings = [{"file": "src/app.py", "line": n + 1, "rule_id": f"AUTH-{n}"} for n in range(count)]
+    (output / ".source-auth-findings.json").write_text(json.dumps({"findings": findings}), encoding="utf-8")
+
+
+def _signal_repo(tmp_path: Path, count: int = 100) -> tuple[Path, Path]:
+    repo, output = _repo(tmp_path)
+    _many_signals(repo, output, count)
+    return repo, output
+
+
+def _bundle_for_depth(repo: Path, output: Path, depth: str | None) -> tuple[dict, bytes]:
+    manifest = _manifest()
+    if depth is not None:
+        manifest["assessment_depth"] = depth
+    component = bundles.build_all(output, repo, manifest)["components"][0]
+    payload = (output / component["evidence_bundle_path"]).read_bytes()
+    parsed = bundles.validate_bundle(
+        output / component["evidence_bundle_path"],
+        {"primary": repo},
+        expected_component_id="backend-api",
+        expected_sha256=component["evidence_bundle_sha256"],
+        output_dir=output,
+    )
+    return parsed, payload
+
+
+def test_thorough_depth_admits_more_signals_and_slices_within_content_budgets(tmp_path):
+    repo, output = _signal_repo(tmp_path)
+    standard, _ = _bundle_for_depth(repo, output, "standard")
+    thorough, _ = _bundle_for_depth(repo, output, "thorough")
+    assert len(standard["source_slices"]) == bundles.MAX_SOURCE_SLICES
+    assert len(standard["evidence"]["recon_signals"]) <= bundles.MAX_CLASS_VALUES
+    assert len(thorough["source_slices"]) > bundles.MAX_SOURCE_SLICES
+    assert len(thorough["evidence"]["recon_signals"]) > bundles.MAX_CLASS_VALUES
+    assert thorough["limits"]["estimated_tokens"] <= bundles.MAX_ESTIMATED_TOKENS
+    assert thorough["limits"]["referenced_source_lines"] <= bundles.MAX_SOURCE_LINES
+    caps = {row["signal_class"]: row["cap"] for row in thorough["truncation"]}
+    assert caps.get("source_slices", bundles.DEPTH_LIMITS["thorough"].source_slices) == (
+        bundles.DEPTH_LIMITS["thorough"].source_slices
+    )
+
+
+@pytest.mark.parametrize("depth", ["standard", "quick", "unknown-depth"])
+def test_non_thorough_depth_keeps_the_bundle_byte_identical(tmp_path, depth):
+    repo, output = _signal_repo(tmp_path)
+    _, baseline = _bundle_for_depth(repo, output, None)
+    _, payload = _bundle_for_depth(repo, output, depth)
+    assert payload == baseline
+
+
+def test_decode_only_route_handler_reaches_the_bundle_and_other_routes_do_not(tmp_path):
+    repo, output = _repo(tmp_path)
+    route = {"method": "POST", "path": "/login", "authn_handler_signal": "decode_only"}
+    routes = [
+        route | {"authn_handler_evidence": [{"file": "src/app.py", "line": 2}]},
+        route | {"authn_handler_signal": "verified", "authn_handler_evidence": [{"file": "src/app.py", "line": 1}]},
+    ]
+    (output / ".route-inventory.json").write_text(json.dumps({"routes": routes}), encoding="utf-8")
+    manifest = bundles.build_all(output, repo, _manifest())
+
+    component = manifest["components"][0]
+    parsed = bundles.validate_bundle(
+        output / component["evidence_bundle_path"],
+        {"primary": repo},
+        expected_component_id="backend-api",
+        expected_sha256=component["evidence_bundle_sha256"],
+        output_dir=output,
+    )
+    route_slices = [row for row in parsed["source_slices"] if row["signal_kind"] == "route-auth"]
+    assert [(row["path"], row["start_line"]) for row in route_slices] == [("src/app.py", 2)]
+    signals = [json.loads(row["value"]) for row in parsed["evidence"]["recon_signals"]]
+    lead = next(signal for signal in signals if signal["signal_kind"] == "route-auth")
+    assert lead["check_id"] == "route-decode-only" and lead["severity"] == "High"
+    assert "POST /login" in lead["message"]
+
+
 def test_build_all_reconstructs_its_canonical_empty_routing_lists(tmp_path):
     repo, output = _repo(tmp_path)
     manifest = _manifest(_component())
@@ -160,6 +238,8 @@ def test_business_context_is_normalized_and_receipted_per_component(tmp_path):
     ("business_context", "message"),
     [
         ({"criticality_weight": 9}, "unknown attributes"),
+        ({"impact_is_material": False}, "requires impact_if_compromised"),
+        ({"impact_if_compromised": "No material harm.", "impact_is_material": "false"}, "must be boolean"),
         ({"business_purpose": "   "}, "empty or oversized"),
         ({"sensitive_assets": []}, "must contain 1-8 items"),
         ({"security_obligations": [f"obligation-{index}" for index in range(9)]}, "must contain 1-8 items"),
@@ -169,6 +249,50 @@ def test_business_context_rejects_technical_unknown_empty_and_oversized_values(t
     repo, output = _repo(tmp_path)
     with pytest.raises(bundles.BundleError, match=message):
         bundles.build_all(output, repo, _manifest(_component(business_context=business_context)))
+
+
+def test_declared_material_impact_reaches_validated_component_context(tmp_path):
+    repo, output = _repo(tmp_path)
+    context = {
+        "impact_if_compromised": "The user's declared consequence and its conditions.",
+        "impact_is_material": True,
+    }
+    manifest = bundles.build_all(output, repo, _manifest(_component(business_context=context)))
+    component = manifest["components"][0]
+    projection = bundles.validate_business_context_bytes(
+        (output / component["business_context_path"]).read_bytes(),
+        expected_component_id=component["component_id"],
+        expected_sha256=component["business_context_sha256"],
+    )
+    assert projection["attributes"] == context
+
+
+def test_a_no_harm_declaration_is_withheld_from_the_stride_rating(tmp_path):
+    """A no-harm declaration cannot raise a technical rating and must not lower
+    one, so it carries nothing for STRIDE. Delivered, it pulled impact to Low
+    on juice-shop2 2026-09-27 (18 of 19 Low findings cited it)."""
+    repo, output = _repo(tmp_path)
+    context = {
+        "business_purpose": "Security training platform.",
+        "impact_if_compromised": "No material business harm; synthetic data only.",
+        "impact_is_material": False,
+    }
+    manifest = bundles.build_all(output, repo, _manifest(_component(business_context=context)))
+    component = manifest["components"][0]
+    projection = bundles.validate_business_context_bytes(
+        (output / component["business_context_path"]).read_bytes(),
+        expected_component_id=component["component_id"],
+        expected_sha256=component["business_context_sha256"],
+    )
+    assert projection["attributes"] == {"business_purpose": "Security training platform."}
+    assert component["business_context"] == context
+
+
+def test_a_bare_no_harm_declaration_delivers_no_business_context(tmp_path):
+    repo, output = _repo(tmp_path)
+    context = {"impact_if_compromised": "No material business harm.", "impact_is_material": False}
+    manifest = bundles.build_all(output, repo, _manifest(_component(business_context=context)))
+    assert manifest["components"][0].get("business_context_path") is None
 
 
 def test_bundle_rejects_tampered_business_context_receipt(tmp_path):
@@ -521,6 +645,63 @@ def test_focus_directory_matches_component_glob_with_file_suffix(tmp_path):
     )
 
 
+def _many_file_component(repo: Path, directory: str, suffix: str, count: int = 40) -> list[str]:
+    root = repo / directory
+    root.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for index in range(count):
+        path = f"{directory}/h{index:02d}{suffix}"
+        (repo / path).write_text(f"handler_{index} = True\n", encoding="utf-8")
+        paths.append(path)
+    return paths
+
+
+@pytest.mark.parametrize("directory,suffix", [("routes", ".ts"), ("handlers/admin", ".py")])
+def test_a_component_scope_beyond_the_listed_cap_keeps_its_evidence_and_focus(tmp_path, directory, suffix):
+    """The bundle lists 32 component paths; the scope is still every path.
+
+    A focus path and a scanner signal on a file past the cap stay in scope, and
+    the validator checks ownership against the dispatch entry's full paths.
+    """
+    repo, output = _repo(tmp_path)
+    paths = _many_file_component(repo, directory, suffix)
+    late = paths[35]
+    _write_signal(output, file=paths[36])
+    component = _component(component_paths=paths, focus_paths=[late])
+    manifest = bundles.build_all(output, repo, _manifest(component))
+    entry = manifest["components"][0]
+    bundle_path = output / entry["evidence_bundle_path"]
+    bundle = json.loads(bundle_path.read_text())
+
+    assert bundle["component"]["paths"] == paths[: bundles.MAX_COMPONENT_PATHS]
+    assert [row["omitted_count"] for row in bundle["truncation"] if row["signal_class"] == "component_paths"] == [8]
+    assert "degraded" not in bundle["path_routing"]
+    assert bundle["path_routing"]["focus_admission"][0]["status"] == "admitted"
+    assert {late, paths[36]} <= {row["path"] for row in bundle["source_slices"]}
+    expected = dict(
+        expected_component_id="backend-api",
+        expected_sha256=entry["evidence_bundle_sha256"],
+        expected_focus_paths=[late],
+        expected_exclude_paths=[],
+        output_dir=output,
+    )
+    bundles.validate_bundle(bundle_path, {"primary": repo}, expected_component_paths=paths, **expected)
+    with pytest.raises(bundles.BundleError, match="capped"):
+        bundles.validate_bundle(bundle_path, {"primary": repo}, **expected)
+    without_focus = [path for path in paths if path != late]
+    with pytest.raises(bundles.BundleError, match="escapes component paths"):
+        bundles.validate_bundle(bundle_path, {"primary": repo}, expected_component_paths=without_focus, **expected)
+    with pytest.raises(bundles.BundleError, match="do not match the dispatch entry"):
+        bundles.validate_bundle(bundle_path, {"primary": repo}, expected_component_paths=paths[1:], **expected)
+
+
+def test_a_focus_path_outside_a_large_component_is_still_rejected(tmp_path):
+    repo, output = _repo(tmp_path)
+    paths = _many_file_component(repo, "routes", ".ts")
+    with pytest.raises(bundles.BundleError, match="outside the component paths"):
+        bundles.build_all(output, repo, _manifest(_component(component_paths=paths, focus_paths=["src/app.py"])))
+
+
 def test_focus_directory_drops_files_the_component_glob_does_not_own(tmp_path):
     """A typed component glob plus any non-matching file in the focus directory.
 
@@ -706,7 +887,7 @@ def test_containment_does_not_mask_a_failure_unrelated_to_routing(tmp_path, monk
     """Without routing hints to drop there is nothing to degrade — raise as before."""
     repo, output = _repo(tmp_path)
 
-    def always_fails(output_dir, component, registry):
+    def always_fails(output_dir, component, registry, **kwargs):
         raise bundles.BundleError("genuine contract violation")
 
     monkeypatch.setattr(bundles, "build_bundle", always_fails)
@@ -1694,8 +1875,54 @@ def test_schema_slice_caps_track_the_code_constant():
     asserted together rather than kept in sync by hand.
     """
     schema = json.loads(bundles.SCHEMA_PATH.read_text(encoding="utf-8"))
-    assert schema["properties"]["source_slices"]["maxItems"] == bundles.MAX_SOURCE_SLICES
+    all_limits = [bundles.STANDARD_LIMITS, *bundles.DEPTH_LIMITS.values()]
+    largest_slices = max(limits.source_slices for limits in all_limits)
+    assert schema["properties"]["source_slices"]["maxItems"] == largest_slices
 
     focus = schema["properties"]["path_routing"]["properties"]["focus_admission"]
     projected = focus["items"]["properties"]["projected_files"]
-    assert projected["maxItems"] == bundles.MAX_SOURCE_SLICES
+    assert projected["maxItems"] == largest_slices
+    assert schema["$defs"]["record_array"]["maxItems"] == max(limits.class_values for limits in all_limits)
+
+
+def _severity_rows(levels, *, key="severity", prefix="row"):
+    return [
+        {key: level, "name": f"{prefix}-{index}"} if level else {"name": f"{prefix}-{index}"}
+        for index, level in enumerate(levels)
+    ]
+
+
+@pytest.mark.parametrize(
+    "levels",
+    [
+        ["Low", "Critical", "Medium", "High", "Info", None] * 12,
+        ["high", "CRITICAL", "informational", "medium"] * 20,
+    ],
+    ids=["mixed-case-titled", "mixed-case-variants"],
+)
+@pytest.mark.parametrize("key", ["severity", "risk", "_severity"])
+def test_class_cap_keeps_the_most_severe_rows(levels, key):
+    """Truncation must keep severity order, never content-hash order."""
+    values = _severity_rows(levels, key=key, prefix=key)
+    retained, stats = bundles._bounded_records("recon_signals", values)
+
+    assert stats["original"] == len(values) > bundles.MAX_CLASS_VALUES
+    kept = [bundles._severity_priority(json.loads(row["value"])) for row in retained]
+    dropped = sorted(bundles._severity_priority(value) for value in values)[bundles.MAX_CLASS_VALUES :]
+    assert kept == sorted(kept)
+    assert max(kept) <= min(dropped)
+
+
+def test_class_cap_is_stable_for_equal_severity_and_unranked_rows():
+    values = _severity_rows(["High"] * 40) + _severity_rows([None] * 5, prefix="plain") + ["bare string"]
+    first, _ = bundles._bounded_records("interfaces", values)
+    second, _ = bundles._bounded_records("interfaces", list(reversed(values)))
+    assert first == second
+    assert all(bundles._severity_priority(json.loads(row["value"])) == 1 for row in first)
+
+
+def test_rows_under_the_cap_are_all_retained():
+    values = _severity_rows(["Low", None, "Critical"])
+    retained, stats = bundles._bounded_records("controls", values)
+    assert stats["original"] == len(retained) == 3
+    assert bundles._severity_priority(json.loads(retained[0]["value"])) == 0

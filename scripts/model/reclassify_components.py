@@ -1,0 +1,825 @@
+#!/usr/bin/env python3
+"""model/reclassify_components.py — fix attack-target-tier vs control-location-tier
+drift in Stage-1 threat→component classification.
+
+Background: the threat-analyst merge step classifies threats by what is
+being *attacked* (data tier, identity tier, …) rather than by where the
+defect *lives* (express handler, model class, frontend component). When
+the attack target and the control location are in different components,
+the result is a finding like `T-024 component=data-layer evidence=routes/
+updateProductReviews.ts:16` — visible to `validators/validate_intermediate.py` as an
+ADVISORY (paths-glob mismatch) but never repaired.
+
+This script applies a conservative deterministic reassignment:
+
+  - For every threat with `evidence.file` that does NOT match its current
+    `component`'s paths globs, scan all other components.
+  - If exactly ONE other component's paths globs match the evidence file,
+    reassign the threat to that component. Add `evidence_flags` entry
+    `tier_reclassified_from_<old>` so the change is auditable.
+  - If 0 or >1 other components match (ambiguous), leave the threat alone
+    and emit an advisory line on stderr — same shape as the existing
+    validators/validate_intermediate.py advisory.
+  - Instance `component_id`s and `merged_from` entries that name a datastore
+    or no registered component resolve by the same rule; an unclaimed
+    placeholder site stays with its finding (FE-12).
+
+The normal mode mutates both `threat-model.yaml.threats[].component` and
+`.threats-merged.json.threats[].component_id` (when present) so the two
+artefacts stay consistent. `--merged-only` performs the same repair against
+the Stage-1 component registry before a YAML report exists. Both modes are
+idempotent.
+
+Usage:
+    python3 model/reclassify_components.py [--merged-only] <output_dir>
+"""
+
+from __future__ import annotations
+
+# Direct CLI execution must resolve the same packages as imports from scripts/.
+import sys as _sys
+from pathlib import Path as _Path
+
+if not __package__:
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
+
+
+import copy
+import json
+import re
+import sys
+from pathlib import Path
+
+import yaml
+
+from model.enrichment_pass import EnrichmentContinuation
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from shared._atomic_io import atomic_write_json  # noqa: E402
+
+
+def orm_source_files(components: list, repo_root: Path) -> dict[str, str]:
+    """Find contained executable ORM files claimed by stores, excluding tests and comments."""
+    from analyzers.source_auth_scanner import _without_js_comments
+
+    root = repo_root.resolve()
+    found, inspected = {}, set()
+    for component in components:
+        if component.get("tier") != "data":
+            continue
+        for pattern in component.get("paths") or []:
+            if not isinstance(pattern, str) or Path(pattern).is_absolute() or ".." in Path(pattern).parts:
+                continue
+            expanded = pattern + "/*" if pattern.endswith("**") else pattern
+            for index, path in enumerate(root.glob(expanded)):
+                if index >= 1000:
+                    break
+                relative = path.relative_to(root).as_posix()
+                if relative in inspected or path.suffix not in {".js", ".ts", ".mjs", ".cjs"}:
+                    continue
+                inspected.add(relative)
+                if re.search(r"(?:^|/)(?:tests?|__tests__|node_modules)/|\.(?:test|spec)\.", relative):
+                    continue
+                try:
+                    if not path.resolve().is_relative_to(root) or not path.is_file() or path.stat().st_size > 512_000:
+                        continue
+                    source = _without_js_comments(path.read_text(encoding="utf-8", errors="replace"))
+                except (OSError, RuntimeError):
+                    continue
+                strings = list(re.finditer(r"'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"|`(?:\\.|[^`\\])*`", source, re.S))
+                imported = next(
+                    (
+                        match
+                        for match in re.finditer(
+                            r"(?:from|require\s*\()\s*['\"](sequelize|typeorm|mongoose)['\"]", source
+                        )
+                        if not any(span.start() <= match.start() < span.end() for span in strings)
+                    ),
+                    None,
+                )
+                executable_source = list(source)
+                for span in strings:
+                    executable_source[span.start() : span.end()] = " " * (span.end() - span.start())
+                executable = re.search(
+                    r"\.(?:define|init|query|model)\s*\(|@(?:Entity|Column)\s*\(|\bnew\s+(?:\w+\.)?(?:Schema|Sequelize|DataSource)\s*\(",
+                    "".join(executable_source),
+                )
+                if imported and executable:
+                    found[relative] = imported.group(1)
+    return found
+
+
+def _glob_to_regex(glob: str) -> re.Pattern[str]:
+    """Convert a gitignore-style glob to a regex. `**` matches any depth."""
+    parts: list[str] = []
+    i = 0
+    while i < len(glob):
+        ch = glob[i]
+        if ch == "*":
+            if i + 1 < len(glob) and glob[i + 1] == "*":
+                parts.append(".*")
+                i += 2
+                # Skip a trailing slash so `routes/**` matches `routes/foo`.
+                if i < len(glob) and glob[i] == "/":
+                    i += 1
+            else:
+                parts.append("[^/]*")
+                i += 1
+        elif ch == "?":
+            parts.append("[^/]")
+            i += 1
+        elif ch in r".+()[]{}|^$\\":
+            parts.append(re.escape(ch))
+            i += 1
+        else:
+            parts.append(ch)
+            i += 1
+    return re.compile(r"\A" + "".join(parts) + r"\Z")
+
+
+def _build_matcher(component: dict) -> tuple[str, list[re.Pattern[str]]]:
+    cid = component.get("id") or "<anon>"
+    raw = component.get("paths") or []
+    patterns: list[re.Pattern[str]] = []
+    if isinstance(raw, list):
+        for g in raw:
+            if isinstance(g, str) and g.strip():
+                patterns.append(_glob_to_regex(g.strip()))
+    return cid, patterns
+
+
+def _evidence_files(threat: dict) -> list[str]:
+    ev = threat.get("evidence")
+    out: list[str] = []
+    if isinstance(ev, dict):
+        f = (ev.get("file") or "").strip()
+        if f:
+            out.append(f)
+    elif isinstance(ev, list):
+        for e in ev:
+            if isinstance(e, dict):
+                f = (e.get("file") or "").strip()
+                if f:
+                    out.append(f)
+    return out
+
+
+def _component_for(file_path: str, matchers: list[tuple[str, list[re.Pattern[str]]]]) -> list[str]:
+    """Return component IDs whose globs match this file path."""
+    hits: list[str] = []
+    for cid, pats in matchers:
+        if any(p.search(file_path) for p in pats):
+            hits.append(cid)
+    return hits
+
+
+def _glob_specificity(glob: str) -> int:
+    """Higher = more specific. An exact file path (`routes/memory.ts`) outranks
+    a broad directory glob (`routes/**`): we score the literal (non-wildcard)
+    character count and subtract one per `*` so wildcards never beat literals
+    of the same prefix length."""
+    return len(glob.replace("*", "")) - glob.count("*")
+
+
+def _most_specific_candidate(
+    files: list[str],
+    candidate_ids,
+    raw_glob_index: dict[str, list[str]],
+    primary_id: str,
+) -> str:
+    """Pick the registered component whose MATCHING path glob is most specific.
+
+    Used only to resolve a non-registered placeholder component (see the
+    `reclassify` driver) when an evidence file is claimed by >1 component via
+    overlapping globs — e.g. `routes/memory.ts` matched by both
+    `express-backend:routes/**` and `file-upload-service:routes/memory.ts`.
+    The exact-path owner wins (here file-upload-service), which both resolves
+    the dangling §8 anchor AND is the semantically correct owner. Ties break
+    toward `primary_id`, then lexicographically for run-to-run determinism.
+    """
+
+    def _best_spec(cid: str) -> int:
+        best = -1
+        for g in raw_glob_index.get(cid, []):
+            pat = _glob_to_regex(g)
+            if any(pat.search(f) for f in files):
+                best = max(best, _glob_specificity(g))
+        return best
+
+    return max(candidate_ids, key=lambda cid: (_best_spec(cid), cid == primary_id, cid))
+
+
+def _sort_tid(tid: str) -> tuple[int, str]:
+    """Sort key that keeps T-NNN in numeric order."""
+    try:
+        return (int(tid.split("-", 1)[1]), tid)
+    except (IndexError, ValueError):
+        return (10**9, tid)
+
+
+def _sync_component_threat_ids(components: list, changes: list[dict]) -> None:
+    """Apply `changes` to components[].threat_ids[] so the per-component list
+    stays in sync with the mutated threats[]."""
+    by_id = {c["id"]: c for c in components if isinstance(c, dict) and c.get("id")}
+    for c in changes:
+        if c.get("instance_only"):
+            continue
+        old = by_id.get(c["from"])
+        new = by_id.get(c["to"])
+        tid = c["id"]
+        if old and isinstance(old.get("threat_ids"), list) and tid in old["threat_ids"]:
+            old["threat_ids"].remove(tid)
+        if new and isinstance(new.get("threat_ids"), list):
+            if tid not in new["threat_ids"]:
+                new["threat_ids"].append(tid)
+                new["threat_ids"].sort(key=_sort_tid)
+        elif new is not None:
+            new["threat_ids"] = [tid]
+
+
+def _primary_component_id(components: list) -> str:
+    """Best-effort 'primary application component' — the one whose paths host
+    the server entrypoint. Used as the reassignment target for non-DFD
+    pseudo-component threats (Dockerfile / CI findings) whose evidence file
+    matches no component glob, so their §8 Component link resolves to a real
+    `#c-NN` anchor instead of dangling at `#ci-cd-pipeline`. Falls back to the
+    first component with an id."""
+    entry_re = re.compile(r"(?:^|/)(?:server|app|main|index)\.(?:ts|js)\b")
+    for c in components:
+        if not isinstance(c, dict):
+            continue
+        for g in c.get("paths") or []:
+            if isinstance(g, str) and entry_re.search(g):
+                return (c.get("id") or "").strip()
+    for c in components:
+        if isinstance(c, dict) and (c.get("id") or "").strip():
+            return (c.get("id") or "").strip()
+    return ""
+
+
+def resolve_owner(file_path: str, components: list) -> tuple[str, str] | None:
+    """The registered (id, name) owning an evidence file; None without a registry.
+
+    One matching glob wins; overlapping globs resolve to the most specific one;
+    a file no glob matches falls back to the primary component. Producers that
+    know no owner of their own (source scans, promoted abuse-case steps) use
+    this at intake, so a path never lands on a guessed id that happens to be a
+    registered component.
+    """
+    registered = [c for c in components if isinstance(c, dict) and (c.get("id") or "").strip()]
+    if not registered:
+        return None
+    primary = _primary_component_id(registered)
+    hits = _component_for(file_path, [_build_matcher(c) for c in registered])
+    if not hits:
+        cid = primary
+    elif len(hits) == 1:
+        cid = hits[0]
+    else:
+        glob_index = {
+            (c.get("id") or "").strip(): [g for g in (c.get("paths") or []) if isinstance(g, str)] for c in registered
+        }
+        cid = _most_specific_candidate([file_path], hits, glob_index, primary)
+    name = next((str(c.get("name") or cid) for c in registered if (c.get("id") or "").strip() == cid), cid)
+    return cid, name
+
+
+def _reassign_instance_owner(threat: dict, old: str, new: str) -> None:
+    """Keep overview ownership aligned while retaining the original instance attribution."""
+    if isinstance(threat.get("merged_from"), list):
+        threat["merged_from"] = list(dict.fromkeys(new if cid == old else cid for cid in threat["merged_from"]))
+    for instance in threat.get("instances") or []:
+        if isinstance(instance, dict) and instance.get("component_id") == old:
+            instance.setdefault("original_component_id", old)
+            instance["component_id"] = new
+
+
+def _sync_weakness_owners(data: dict) -> None:
+    """Keep parent weakness scope aligned with the corrected finding provenance."""
+    by_id = {key: t for t in data.get("threats") or [] for key in (t.get("id"), t.get("t_id")) if key}
+    for weakness in data.get("weaknesses") or []:
+        evidence = (weakness.get("observable_backing") or {}).get("practice_evidence") or []
+        linked = {i.get("id") for i in [*(weakness.get("instances") or []), *evidence] if isinstance(i, dict)}
+        findings = [by_id[tid] for tid in linked if tid in by_id]
+        if findings:
+            weakness["affected_components"] = sorted(
+                {
+                    owner
+                    for t in findings
+                    for owner in [
+                        t.get("component") or t.get("component_id"),
+                        *(t.get("merged_from") or []),
+                        *(i.get("component_id") for i in t.get("instances") or [] if isinstance(i, dict)),
+                    ]
+                    if owner
+                }
+            )
+
+
+def reclassify(data: dict) -> tuple[dict, list[dict]]:
+    components = data.get("components") or []
+    if not isinstance(components, list) or not components:
+        return data, []
+
+    matchers = [_build_matcher(c) for c in components if isinstance(c, dict)]
+    matchers = [m for m in matchers if m[1]]  # drop components without paths
+    if not matchers:
+        return data, []
+    matcher_index = {cid: pats for cid, pats in matchers}
+    known_ids = {(c.get("id") or "").strip() for c in components if isinstance(c, dict)}
+    boundaries = {b.get("id"): b for b in data.get("trust_boundaries") or [] if isinstance(b, dict) and b.get("id")}
+    primary_id = _primary_component_id(components)
+    # Raw path globs per component — needed to score glob specificity when a
+    # placeholder component has to be resolved against an evidence file that
+    # multiple components' globs match (see `_most_specific_candidate`).
+    raw_glob_index = {
+        (c.get("id") or "").strip(): [g.strip() for g in (c.get("paths") or []) if isinstance(g, str) and g.strip()]
+        for c in components
+        if isinstance(c, dict) and (c.get("id") or "").strip()
+    }
+
+    tiers = {c.get("id"): c.get("tier") for c in components if isinstance(c, dict)}
+    changes: list[dict] = []
+    threats = data.get("threats") or []
+    if not isinstance(threats, list):
+        return data, []
+
+    for t in threats:
+        if not isinstance(t, dict):
+            continue
+        current = (t.get("component") or t.get("component_id") or "").strip()
+        files = _evidence_files(t)
+        if not files:
+            continue
+        # If ANY evidence file matches the current component, accept the
+        # current assignment (the threat may have multi-file evidence
+        # spanning the component boundary).
+        rendering_sink = str(t.get("cwe") or "").upper() in {"CWE-79", "CWE-80"}
+        application_source = all(re.search(r"\.(?:[cm]?js|tsx?|py|java|cs|rb)$", f) for f in files)
+        app_owners = {cid for f in files for cid in _component_for(f, matchers) if tiers.get(cid) == "application"}
+        storage_control = str(t.get("cwe") or "").upper() in {"CWE-311", "CWE-312", "CWE-922", "CWE-276", "CWE-732"}
+        incompatible_store = tiers.get(current) == "data" and (
+            rendering_sink or (application_source and app_owners and not storage_control)
+        )
+        current_pats = None if incompatible_store else matcher_index.get(current)
+        if current_pats and any(any(p.search(f) for p in current_pats) for f in files):
+            continue
+        # Find candidate components matching at least one evidence file.
+        candidate_hits: dict[str, int] = {}
+        for f in files:
+            for cid in _component_for(f, matchers):
+                if cid == current or ((rendering_sink or incompatible_store) and tiers.get(cid) == "data"):
+                    continue
+                candidate_hits[cid] = candidate_hits.get(cid, 0) + 1
+        if len(candidate_hits) == 1:
+            new_cid = next(iter(candidate_hits))
+            token = f"tier_reclassified_from_{current or 'unknown'}"
+        elif current and current not in known_ids and primary_id:
+            # `current` is a NON-REGISTERED placeholder/phantom component id —
+            # the "backend-api" placeholder a producer emits when no registry
+            # exists yet (resolve_owner), or a pseudo component
+            # like "ci-cd-pipeline". It has no §2.3 component section, so the
+            # §8/§6/§3 Component link dangles at a missing anchor (the
+            # 2026-06-13 juice-shop T-002 dead `#backend-api` link). Unlike a
+            # real registered component there is nothing legitimate to preserve,
+            # so the resolver MUST land it on a registered component:
+            #   • >=2 candidates (evidence file claimed by overlapping globs,
+            #     e.g. routes/memory.ts hit by both `routes/**` and an exact
+            #     `routes/memory.ts`) → the MOST SPECIFIC glob wins (exact path
+            #     beats a broad dir/**), which is also the correct owner.
+            #   • 0 candidates (Dockerfile, .github/* — evidence matches no
+            #     component glob) → fall back to the primary application
+            #     component so the link resolves to a real `#c-NN` anchor.
+            if candidate_hits:
+                new_cid = _most_specific_candidate(files, candidate_hits.keys(), raw_glob_index, primary_id)
+                token = f"phantom_component_resolved_from_{current}"
+            elif primary_id != current:
+                new_cid = primary_id
+                token = f"pseudo_component_reassigned_from_{current}"
+            else:
+                continue
+        else:
+            # `current` is a REAL registered component whose evidence merely
+            # spans a boundary, or a genuinely ambiguous real-component case —
+            # do NOT move a legitimately-assigned threat just because its
+            # evidence crosses a glob.
+            continue
+        _reassign_instance_owner(t, current, new_cid)
+        if t.get("component"):
+            t["component"] = new_cid
+        if t.get("component_id"):
+            t["component_id"] = new_cid
+        if t.get("component_name"):
+            t["component_name"] = next(c.get("name") or new_cid for c in components if c.get("id") == new_cid)
+        if isinstance(t.get("boundary_refs"), list):
+            # A merged survivor can cite one boundary from two origins. Moving it
+            # rewrites both origins to the new owner, so the pair collapses onto
+            # one (boundary_id, origin) key; only the shared rule dedupes that.
+            from contexts.prepare_trust_boundary_context import (
+                validate_finding_boundary_refs,  # noqa: PLC0415 (import cycle)
+            )
+
+            t["boundary_refs"] = [
+                {**ref, "origin_component_id": new_cid} for ref in t["boundary_refs"] if isinstance(ref, dict)
+            ]
+            reconciled_refs, diagnostics = validate_finding_boundary_refs(
+                t,
+                boundaries=boundaries.values(),
+                origin_component_id=new_cid,
+                candidate_ids=None,
+                require_candidate=False,
+                known_component_ids=known_ids,
+            )
+            for diagnostic in diagnostics:
+                print(
+                    f"reclassify_components: {t.get('t_id') or t.get('id') or '<anon>'}: {diagnostic}",
+                    file=sys.stderr,
+                )
+            if reconciled_refs:
+                t["boundary_refs"] = reconciled_refs
+            else:
+                t.pop("boundary_refs", None)
+        flags = list(t.get("evidence_flags") or [])
+        if token not in flags:
+            flags.append(token)
+        t["evidence_flags"] = flags
+        changes.append(
+            {
+                "id": t.get("t_id") or t.get("id") or "<anon>",
+                "from": current or "<unset>",
+                "to": new_cid,
+                "evidence_files": files,
+                "boundary_refs": t.get("boundary_refs"),
+                "component_name": t.get("component_name"),
+                "evidence_flags": flags,
+            }
+        )
+
+    # Consolidation provenance can still name a datastore even when the primary
+    # finding already belongs to the application, or a scanner's provisional
+    # owner that is no registered component. Reconcile those instance sites with
+    # the same rule as a finding; a site no component claims stays with its finding.
+    for threat in threats:
+        replacements: dict[str, set[str]] = {}
+        unresolved: set[str] = set()
+        home = (threat.get("component") or threat.get("component_id") or "").strip()
+        home = home if home in known_ids else None
+        for instance in threat.get("instances") or []:
+            if not isinstance(instance, dict):
+                continue
+            owner = instance.get("component_id")
+            if not owner:
+                local_id = instance.get("local_id") or instance.get("source_ref") or ""
+                matches = [cid for cid in known_ids if local_id.startswith(cid + "-")]
+                owner = max(matches, key=len) if matches else None
+            placeholder = bool(owner) and owner not in known_ids
+            if tiers.get(owner) != "data" and not placeholder:
+                continue
+            probe = {"id": threat.get("id"), "component": owner, "cwe": threat.get("cwe"), "evidence": [instance]}
+            result, moved = reclassify({"components": copy.deepcopy(components), "threats": [probe]})
+            claimed = moved and not any(
+                flag.startswith("pseudo_component_reassigned_from_")
+                for flag in result["threats"][0].get("evidence_flags") or []
+            )
+            if claimed:
+                new_owner = result["threats"][0]["component"]
+            elif placeholder and home:
+                new_owner = home
+            else:
+                unresolved.add(owner)
+                continue
+            instance.setdefault("original_component_id", owner)
+            instance["component_id"] = new_owner
+            replacements.setdefault(owner, set()).add(new_owner)
+        for owner in threat.get("merged_from") or []:
+            if owner and owner not in known_ids and owner not in replacements and home:
+                replacements[owner] = {home}
+        if replacements:
+            merged = threat.get("merged_from") or []
+            threat["merged_from"] = sorted(
+                {
+                    target
+                    for owner in merged
+                    for target in (
+                        replacements[owner] if owner in replacements and owner not in unresolved else {owner}
+                    )
+                }
+                | {target for targets in replacements.values() for target in targets}
+            )
+            change = {
+                "id": threat.get("t_id") or threat.get("id"),
+                "from": threat.get("component") or threat.get("component_id"),
+                "to": threat.get("component") or threat.get("component_id"),
+                "instance_only": True,
+                "merged_from": threat["merged_from"],
+            }
+            if "instances" in threat:
+                change["instances"] = threat["instances"]
+            changes.append(change)
+
+    if changes:
+        _sync_component_threat_ids(components, changes)
+        _sync_weakness_owners(data)
+
+    return data, changes
+
+
+def unresolved_phantoms(data: dict, *, instances: bool = True) -> list[tuple[str, str]]:
+    """Postcondition check: return (threat_id, component) for every owner that is
+    NOT a registered components[].id after reclassification.
+
+    The contract is "every threats[].component, instances[].component_id and
+    merged_from entry ∈ registered set". A primary phantom dangles the §8/§6/§3
+    Component link at a missing anchor; an instance or merged_from phantom
+    misattributes the finding in Figure 1, weaknesses and exports. With
+    `instances=False` only primary owners count — the rendered-anchor gate
+    (`--check`) uses that, because instance owners render no anchor and every
+    curing pass resolves them first. Violations surface instead of shipping.
+    """
+    components = data.get("components") or []
+    known = {(c.get("id") or "").strip() for c in components if isinstance(c, dict) and (c.get("id") or "").strip()}
+    if not known:
+        return []
+    out: list[tuple[str, str]] = []
+    for t in data.get("threats") or []:
+        if not isinstance(t, dict):
+            continue
+        owners = [(t.get("component") or t.get("component_id") or "").strip()]
+        if instances:
+            owners += [str(c).strip() for c in t.get("merged_from") or [] if isinstance(c, str)]
+            owners += [
+                str(i.get("component_id") or "").strip() for i in t.get("instances") or [] if isinstance(i, dict)
+            ]
+        tid = t.get("t_id") or t.get("id") or "<anon>"
+        out.extend((tid, cur) for cur in dict.fromkeys(owners) if cur and cur not in known)
+    return out
+
+
+def _warn_instance_owners(owners: list[tuple[str, str]], primary: list[tuple[str, str]]) -> None:
+    """Report on-disk instance and merged_from phantoms the anchor gate does not block on."""
+    misattributed = [row for row in owners if row not in primary]
+    if misattributed:
+        sample = ", ".join(f"{tid}:{cid}" for tid, cid in misattributed[:6])
+        print(
+            f"WARNING reclassify_components: {len(misattributed)} instance or merged_from owner(s) "
+            f"(on disk) are no registered component [{sample}]; a curing pass reassigns them.",
+            file=sys.stderr,
+        )
+
+
+def _sync_threats_merged(output_dir: Path, changes: list[dict]) -> int:
+    """Mirror reclassification onto `.threats-merged.json`.
+
+    RC.J — historical bug: the lookup keyed off `t["id"]`, but
+    `.threats-merged.json` stores the **finding** id (F-NNN) under `id` and
+    the **threat** id (T-NNN) under `t_id`. The YAML's `threats[].id` is
+    the T-NNN. The two id-namespaces have zero overlap, so this function
+    silently produced `n=0` on every run (observed on the 2026-05
+    juice-shop assessment: 9 reclassified in YAML, 0 mirrored in merged).
+    Fix: prefer `t_id` and fall back to `id` so both old and new merged
+    schemas are covered.
+    """
+    if not changes:
+        return 0
+    path = output_dir / ".threats-merged.json"
+    if not path.is_file():
+        return 0
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return 0
+    threats = doc.get("threats")
+    if not isinstance(threats, list):
+        return 0
+    by_id: dict[str, list[dict]] = {}
+    for change in changes:
+        by_id.setdefault(change["id"], []).append(change)
+    n = 0
+    for t in threats:
+        if not isinstance(t, dict):
+            continue
+        # RC.J — merged file uses `t_id` for the T-NNN threat id; the
+        # `id` field is the F-NNN finding id. Try both keys.
+        lookup_id = t.get("t_id") or t.get("id")
+        matching = by_id.get(lookup_id)
+        if not matching:
+            continue
+        for instance_change in matching:
+            if instance_change.get("instance_only"):
+                if "instances" in instance_change:
+                    t["instances"] = instance_change["instances"]
+                t["merged_from"] = instance_change["merged_from"]
+        c = next((item for item in matching if not item.get("instance_only")), None)
+        if c is None:
+            n += 1
+            continue
+        _reassign_instance_owner(t, c["from"], c["to"])
+        if t.get("component_id"):
+            t["component_id"] = c["to"]
+        if t.get("component"):
+            t["component"] = c["to"]
+        if c.get("component_name"):
+            t["component_name"] = c["component_name"]
+        if c.get("evidence_flags"):
+            t["evidence_flags"] = list(dict.fromkeys([*(t.get("evidence_flags") or []), *c["evidence_flags"]]))
+        if c.get("boundary_refs"):
+            t["boundary_refs"] = c["boundary_refs"]
+        else:
+            t.pop("boundary_refs", None)
+        n += 1
+    if n:
+        _sync_weakness_owners(doc)
+        atomic_write_json(path, doc, sort_keys=False)
+    return n
+
+
+def _load_json_mapping(path: Path, label: str) -> dict | None:
+    if not path.is_file():
+        print(f"reclassify_components: no {label} at {path}", file=sys.stderr)
+        return None
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        print(f"reclassify_components: could not parse {path}: {exc}", file=sys.stderr)
+        return None
+    if not isinstance(value, dict):
+        print(f"reclassify_components: {path} did not parse to a mapping", file=sys.stderr)
+        return None
+    return value
+
+
+def _run_merged_only(output_dir: Path, *, strict: bool, check_only: bool) -> int:
+    """Repair the canonical merged register before threat-model.yaml exists."""
+    merged_path = output_dir / ".threats-merged.json"
+    components_path = output_dir / ".components.json"
+    merged = _load_json_mapping(merged_path, "merged threat register")
+    components_doc = _load_json_mapping(components_path, "component registry")
+    if merged is None or components_doc is None:
+        return 1
+    threats = merged.get("threats")
+    components = components_doc.get("components")
+    if not isinstance(threats, list):
+        print(f"reclassify_components: {merged_path} has no threats array", file=sys.stderr)
+        return 1
+    if not isinstance(components, list) or not components:
+        print(f"reclassify_components: {components_path} has no non-empty components array", file=sys.stderr)
+        return 1
+
+    boundaries: list = []
+    boundaries_path = output_dir / ".trust-boundaries.json"
+    if boundaries_path.is_file():
+        boundaries_doc = _load_json_mapping(boundaries_path, "trust-boundary registry")
+        if boundaries_doc is None:
+            return 1
+        raw_boundaries = boundaries_doc.get("trust_boundaries")
+        if isinstance(raw_boundaries, list):
+            boundaries = raw_boundaries
+
+    # Keep the canonical threats list by reference so reclassify mutates the
+    # loaded merged artifact without manufacturing a second stage contract.
+    working = {
+        "components": components,
+        "trust_boundaries": boundaries,
+        "threats": threats,
+        "weaknesses": merged.get("weaknesses") or [],
+    }
+    on_disk_phantoms = unresolved_phantoms(working, instances=False)
+    on_disk_owners = unresolved_phantoms(working)
+    working, changes = reclassify(working)
+    if changes and not check_only:
+        from analyzers.actor_attribution import merge_corrections, reconcile_output_dir
+
+        moved = {c["id"] for c in changes}
+        corrections = reconcile_output_dir(output_dir, [t for t in threats if t.get("t_id") in moved])
+        if corrections:
+            merged["actor_attribution_corrections"] = merge_corrections(
+                merged.get("actor_attribution_corrections") or [], corrections
+            )
+        atomic_write_json(merged_path, merged, sort_keys=False)
+
+    if changes:
+        details = ", ".join(f"{c['id']}:{c['from']}→{c['to']}" for c in changes[:8])
+        more = f" (+{len(changes) - 8} more)" if len(changes) > 8 else ""
+        action = "would reassign" if check_only else "reassigned"
+        print(f"reclassify_components: {action} {len(changes)} merged threat(s) [{details}{more}]")
+    else:
+        print("reclassify_components: no merged tier-confusion drift found — nothing to reassign")
+
+    if check_only:
+        _warn_instance_owners(on_disk_owners, on_disk_phantoms)
+    leftovers = on_disk_phantoms if check_only else unresolved_phantoms(working)
+    if leftovers:
+        sample = ", ".join(f"{tid}:{cid}" for tid, cid in leftovers[:6])
+        where = "(on disk) carry a" if check_only else "still carry a"
+        msg = (
+            f"reclassify_components: {len(leftovers)} merged threat(s) {where} "
+            f"non-registered component [{sample}]. Check components[].paths cover "
+            "the evidence files."
+        )
+        if strict:
+            print(f"ERROR {msg}", file=sys.stderr)
+            return 3
+        print(f"WARNING {msg}", file=sys.stderr)
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    # Optional flags (order-independent), exactly one positional <output_dir>:
+    #   --strict  exit non-zero (3) when a phantom component remains after
+    #             reclassification instead of only warning to stderr. A leftover
+    #             phantom dangles the §8/§6/§3 Component link at a missing anchor
+    #             (the broken-link gate would otherwise catch it late with a
+    #             cryptic "unresolved anchor #<id>" message). Use at gating
+    #             call sites; the best-effort auto-emitter pass omits it.
+    #   --check   read-only: detect + (with --strict) gate without rewriting the
+    #             yaml / .threats-merged.json. For the pre-PDF link gate, where
+    #             the report is already composed and a rewrite alone cannot cure
+    #             the already-rendered anchor — fail closed with a clear message.
+    strict = "--strict" in argv
+    check_only = "--check" in argv
+    merged_only = "--merged-only" in argv
+    positionals = [a for a in argv if not a.startswith("--")]
+    if len(positionals) != 1:
+        print(
+            "Usage: model/reclassify_components.py [--strict] [--check] [--merged-only] <output_dir>",
+            file=sys.stderr,
+        )
+        return 2
+    output_dir = Path(positionals[0])
+    if merged_only:
+        return _run_merged_only(output_dir, strict=strict, check_only=check_only)
+    yaml_path = output_dir / "threat-model.yaml"
+    if not yaml_path.is_file():
+        print(f"reclassify_components: no yaml at {yaml_path}", file=sys.stderr)
+        return 1
+    try:
+        data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    except (yaml.YAMLError, OSError) as exc:
+        print(f"reclassify_components: could not parse {yaml_path}: {exc}", file=sys.stderr)
+        return 1
+    if not isinstance(data, dict):
+        print(f"reclassify_components: {yaml_path} did not parse to a mapping", file=sys.stderr)
+        return 1
+
+    # Snapshot phantoms in the ON-DISK state BEFORE reclassify mutates `data`.
+    # This is what the gate (--check) must judge: the composed report reflects
+    # the yaml as it is on disk, so a phantom here means a dangling §8 anchor
+    # ALREADY shipped — even if reclassify could resolve it in memory, that cure
+    # is worthless until the yaml is rewritten AND the report recomposed.
+    on_disk_phantoms = unresolved_phantoms(data, instances=False)
+    on_disk_owners = unresolved_phantoms(data)
+
+    continuation = EnrichmentContinuation(data)
+    data, changes = reclassify(data)
+    if changes and not check_only:
+        continuation.refresh(data)
+        yaml_path.write_text(
+            yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096, default_flow_style=False),
+            encoding="utf-8",
+        )
+        n_merged = _sync_threats_merged(output_dir, changes)
+        details = ", ".join(f"{c['id']}:{c['from']}→{c['to']}" for c in changes[:8])
+        more = f" (+{len(changes) - 8} more)" if len(changes) > 8 else ""
+        print(
+            f"reclassify_components: reassigned {len(changes)} threat(s) "
+            f"[{details}{more}]; updated .threats-merged.json={n_merged}"
+        )
+    elif changes and check_only:
+        details = ", ".join(f"{c['id']}:{c['from']}→{c['to']}" for c in changes[:8])
+        more = f" (+{len(changes) - 8} more)" if len(changes) > 8 else ""
+        print(
+            f"reclassify_components: --check: {len(changes)} threat(s) WOULD be "
+            f"reassigned [{details}{more}] (no files written)"
+        )
+    else:
+        print("reclassify_components: no tier-confusion drift found — nothing to reassign")
+
+    # Postcondition: every threats[].component must be a registered component id.
+    # A leftover phantom dangles the §8/§6/§3 Component link at a missing anchor.
+    #   • --check (gate): judge the on-disk state — what the composed report
+    #     reflects. Catches the "reclassify was skipped on resume / Re-Render
+    #     Loop" case, where the cure exists in memory but never reached disk.
+    #   • normal (curing): judge the post-reassignment state — only truly
+    #     unresolvable phantoms (evidence file matches no component glob) remain.
+    if check_only:
+        _warn_instance_owners(on_disk_owners, on_disk_phantoms)
+    leftovers = on_disk_phantoms if check_only else unresolved_phantoms(data)
+    if leftovers:
+        sample = ", ".join(f"{tid}:{cid}" for tid, cid in leftovers[:6])
+        # "(on disk) carry" for the read-only gate; "still carry" after a curing
+        # pass tried and failed to resolve them.
+        where = "(on disk) carry a" if check_only else "still carry a"
+        msg = (
+            f"reclassify_components: {len(leftovers)} threat(s) {where} "
+            f"non-registered component [{sample}] — their §8 Component link will "
+            f"dangle. Check components[].paths cover the evidence files."
+        )
+        if strict:
+            print(f"ERROR {msg}", file=sys.stderr)
+            return 3
+        print(f"WARNING {msg}", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

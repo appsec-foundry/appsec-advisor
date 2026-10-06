@@ -13,7 +13,7 @@ from jsonschema import Draft202012Validator
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-import prepare_trust_boundary_context as prep  # noqa: E402
+import contexts.prepare_trust_boundary_context as prep  # noqa: E402
 
 
 def _write_json(path: Path, value: object) -> None:
@@ -1350,6 +1350,43 @@ def test_ingress_to_embedded_component_folds_into_its_host(tmp_path: Path) -> No
     assert any("folded ingress boundary" in w for w in warnings)
 
 
+@pytest.mark.parametrize(
+    ("host_point", "embedded_point", "folds"),
+    [
+        (None, None, True),
+        ("expressJwt middleware", "expressJwt middleware", True),
+        ("expressJwt middleware", "isAuthorized() route guard", True),
+        ("expressJwt middleware", None, False),
+        (None, "socket handshake token check", False),
+    ],
+)
+def test_ingress_fold_never_lends_a_control_to_a_row_without_one(
+    tmp_path: Path, host_point: str | None, embedded_point: str | None, folds: bool
+) -> None:
+    """Shared code is one perimeter, not one control: an embedded endpoint that
+    names no enforcement point must not appear guarded by its host's."""
+    components = [
+        {"id": "web-api", "name": "Web API", "paths": ["src/**/*.py"], "handles_sensitive_data": True},
+        {"id": "ws-gateway", "name": "WS Gateway", "paths": ["src/ws.py"]},
+    ]
+    host = _resolved(id="tb-1", name="Internet to API", to="web-api")
+    embedded = _resolved(id="tb-2", name="Internet to WS", to="ws-gateway")
+    for row, point in ((host, host_point), (embedded, embedded_point)):
+        if point:
+            row["enforcement_point"] = point
+    rows, _warnings = _normalized(tmp_path, [host, embedded], components)
+
+    if folds:
+        assert [row["to"] for row in rows] == ["web-api"]
+        assert "ws-gateway" in rows[0]["covers_components"]
+    else:
+        by_target = {row["to"]: row for row in rows}
+        assert sorted(by_target) == ["web-api", "ws-gateway"]
+        for row, point in ((by_target["web-api"], host_point), (by_target["ws-gateway"], embedded_point)):
+            assert row.get("enforcement_point") == point
+            assert "covers_components" not in row
+
+
 def test_ingress_rows_to_unrelated_components_are_both_kept(tmp_path: Path) -> None:
     """Folding is justified by shared code, not by both being internet-facing."""
     components = [
@@ -1740,6 +1777,34 @@ def test_paths_contained_uses_glob_semantics_not_zone_labels():
     assert not prep._paths_contained(["a/b/c.ts"], ["a/*"])
 
 
+@pytest.mark.parametrize(
+    ("inner", "outer"),
+    [
+        (["routes/login.ts"], ["routes/**/*.ts"]),
+        (["routes/admin/users.ts"], ["routes/**/*.ts"]),
+        (["lib/startup/ws.ts", "lib/utils.ts"], ["lib/**/*.ts"]),
+        (["lib/**/*.ts"], ["lib/**"]),
+        (["src/app.py"], ["src/**/*.ts"]),
+        (["a/b/c.ts"], ["a/*"]),
+        (["worker/**"], ["routes/**"]),
+    ],
+)
+def test_deployable_containment_agrees_with_the_ingress_fold(inner: list[str], outer: list[str]):
+    """Both containment checks answer one question; when they disagreed, the
+    candidate merge kept apart what the later ingress fold joined."""
+    assert prep._paths_contained(inner, outer) == prep._contained_in({"paths": inner}, {"paths": outer})
+
+
+def test_deployable_root_reaches_the_host_through_a_suffix_glob():
+    components = {
+        "api": {"id": "api", "paths": ["server.ts", "routes/**/*.ts", "lib/**/*.ts"]},
+        "ws": {"id": "ws", "paths": ["lib/startup/ws.ts", "lib/challenge.ts"]},
+        "web3": {"id": "web3", "paths": ["routes/checkKeys.ts"]},
+    }
+    assert prep._deployable_root("ws", components) == "api"
+    assert prep._deployable_root("web3", components) == "api"
+
+
 def _repo_with(tmp_path: Path, rel: str, body: str) -> Path:
     repo = tmp_path / "repo"
     target = repo / rel
@@ -1841,7 +1906,9 @@ def test_cross_run_identity_survives_contiguous_delivery_renumbering(tmp_path: P
     """
     import importlib.util
 
-    spec = importlib.util.spec_from_file_location("build_threat_model_yaml", SCRIPTS / "build_threat_model_yaml.py")
+    spec = importlib.util.spec_from_file_location(
+        "model.build_threat_model_yaml", SCRIPTS / "model/build_threat_model_yaml.py"
+    )
     builder = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(builder)
 
@@ -1937,7 +2004,7 @@ def test_cross_run_identity_survives_contiguous_delivery_renumbering(tmp_path: P
 # Client-side code is not a trust zone
 # ---------------------------------------------------------------------------
 
-from _boundary_adjacency import is_adjacent  # noqa: E402
+from shared._boundary_adjacency import is_adjacent  # noqa: E402
 
 _TIERED_COMPONENTS = {
     "api": {"id": "api", "tier": "application", "paths": ["server.ts", "routes/**"]},

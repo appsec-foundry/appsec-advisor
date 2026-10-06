@@ -65,7 +65,7 @@ EXIT CODES
   2  usage / requirements-load / verdict error
 
 See `/appsec-advisor:audit-security-requirements` for the full-repo audit and
-`docs/configuration.md` → "Security Requirements Management" for source rules.
+`docs/dev-security-helper-usage.md` → "Requirements source" for source rules.
 ```
 
 After printing, exit. Do not read any files or perform any other action.
@@ -106,12 +106,9 @@ Resolve the plugin root (same block as the audit skill):
 
 ```bash
 if [ -z "$CLAUDE_PLUGIN_ROOT" ]; then
-  SKILL_MD_PATH=$(find /root /home /opt -maxdepth 6 \
-    -path "*/appsec-advisor/skills/verify-requirements/SKILL.md" \
-    2>/dev/null | head -1)
-  if [ -n "$SKILL_MD_PATH" ]; then
-    CLAUDE_PLUGIN_ROOT=$(dirname "$(dirname "$(dirname "$SKILL_MD_PATH")")")
-  fi
+  # <base-dir> from the invocation line. Never search the filesystem: several
+  # checkouts may exist and the first hit is arbitrary.
+  CLAUDE_PLUGIN_ROOT=$(cd "<base-dir>/../.." && pwd)
 fi
 export CLAUDE_PLUGIN_ROOT
 if [ -z "$CLAUDE_PLUGIN_ROOT" ] || [ ! -d "$CLAUDE_PLUGIN_ROOT" ]; then
@@ -134,7 +131,7 @@ ORG_ARGS=()
 [ -n "$PRESET_OVERRIDE" ] && ORG_ARGS+=(--preset "$PRESET_OVERRIDE")
 [ "$NO_ORG_PROFILE" = "true" ] && ORG_ARGS+=(--no-org-profile)
 
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_org_profile.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/resolve_org_profile.py" \
   --output-dir "$OUTPUT_DIR" --emit-file "${ORG_ARGS[@]}" >/dev/null || exit $?
 
 FETCH_ARGS=(--caller verify-requirements --output-dir "$OUTPUT_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT" \
@@ -150,7 +147,7 @@ else
   FETCH_ARGS+=(--require)
 fi
 
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/fetch_requirements.py" "${FETCH_ARGS[@]}"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/requirements/fetch_requirements.py" "${FETCH_ARGS[@]}"
 REQ_FETCH_EXIT=$?
 if [ "$REQ_FETCH_EXIT" -ne 0 ]; then
   # Only happens when an EXPLICIT --requirements source was named and could not
@@ -200,7 +197,7 @@ DIFF_ARGS=(--repo-root "$PWD" --output-dir "$OUTPUT_DIR")
 [ -n "$BASE_REF" ] && DIFF_ARGS+=(--base "$BASE_REF")
 [ "$STAGED" = "true" ] && DIFF_ARGS+=(--staged)
 
-CHANGED_COUNT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/build_verify_diff.py" "${DIFF_ARGS[@]}")
+CHANGED_COUNT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/repairs/build_verify_diff.py" "${DIFF_ARGS[@]}")
 DIFF_EXIT=$?
 if [ "$DIFF_EXIT" -ne 0 ]; then
   echo "✗ Could not compute the diff (exit $DIFF_EXIT)." >&2
@@ -213,7 +210,7 @@ dispatch the subagent** — an empty diff costs nothing.
 
 ## Step 4 — Dispatch the verifier subagent
 
-Use the Task tool to launch the `appsec-reviewer` subagent. Pass
+Use the Agent tool to launch the `appsec-reviewer` subagent. Pass
 inputs in Group A → B → C order (stable → scalars → volatile paths):
 
 ```
@@ -241,11 +238,11 @@ GATE_ARGS=(--verdict "$OUTPUT_DIR/.requirements-verification.json" \
   --priority-floor "$PRIORITY_FLOOR" --gate-on "$GATE_ON")
 [ "$GATE_MODE" = "true" ] && GATE_ARGS+=(--gate)
 
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/requirements_gate.py" "${GATE_ARGS[@]}"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/requirements/requirements_gate.py" "${GATE_ARGS[@]}"
 GATE_EXIT=$?
 ```
 
-`requirements_gate.py` prints the verdict line and is the single authority on
+`requirements/requirements_gate.py` prints the verdict line and is the single authority on
 the outcome. Propagate its exit code:
 
 - advisory mode (`--gate` absent) → it always exits 0; the skill exits 0 but the

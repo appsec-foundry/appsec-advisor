@@ -1,5 +1,5 @@
 """
-Tests for scripts/apply_editorial_plan.py — the deterministic applier for the
+Tests for scripts/repairs/apply_editorial_plan.py — the deterministic applier for the
 Stage-4 editorial plan.
 
 Covers:
@@ -24,7 +24,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import apply_editorial_plan as applier  # noqa: E402
+import repairs.apply_editorial_plan as applier  # noqa: E402
 
 MODEL = {
     "threats": [
@@ -321,7 +321,7 @@ def test_dry_run_writes_nothing(output_dir: Path) -> None:
 
 def test_local_rejection_and_global_guard_both_protect_evidence(output_dir: Path) -> None:
     """Reject an unsafe action locally; retain the global guard against other writers."""
-    import check_editorial_diff as guard
+    import validators.check_editorial_diff as guard
 
     (output_dir / "threat-model.yaml").write_text(
         yaml.safe_dump(
@@ -362,7 +362,7 @@ def test_field_path_parsing_rejects_junk() -> None:
 
 
 def _packets(output_dir):
-    import build_editorial_context as builder
+    import contexts.build_editorial_context as builder
 
     assert builder.main([str(output_dir)]) == 0
     return json.loads((output_dir / builder.CONTEXT_DIR / builder.BLOCKS_NAME).read_text())
@@ -429,7 +429,7 @@ def test_invalid_packet_cannot_write_the_model(output_dir, defect, tmp_path):
 
 
 def test_completed_packet_survives_missing_sibling(output_dir, capsys):
-    import build_editorial_context as builder
+    import contexts.build_editorial_context as builder
 
     model = _model(output_dir)
     model["threats"] = [{**model["threats"][0], "id": f"F-{i:03d}"} for i in range(1, 16)]
@@ -448,6 +448,62 @@ def test_completed_packet_survives_missing_sibling(output_dir, capsys):
     assert report["complete"] is False
     assert report["batches_completed"] == 1
     assert report["blocks_reviewed"] <= builder.MAX_BATCH_BLOCKS
+
+
+def test_advisory_violation_does_not_discard_the_packet(output_dir, capsys):
+    """A constraint on a field no consumer reads may not cost a packet its edits.
+
+    A juice-shop run lost all twelve edits of one packet because a single
+    `rationale` ran 257 characters against a 240 cap — a comment field that
+    never reaches the report.
+    """
+    work = _packets(output_dir)
+    block = next(b for b in work["blocks"] if b["path"] == "threats[0].scenario")
+    for batch in work["batches"]:
+        actions = (
+            [
+                {
+                    "id": block["id"],
+                    "replace": "The handler concatenates the id into the statement.",
+                    "rationale": "y" * 500,
+                }
+            ]
+            if block["id"] in batch["block_ids"]
+            else []
+        )
+        _packet_plan(output_dir, work, batch, actions)
+    capsys.readouterr()
+    assert applier.main([str(output_dir)]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["applied_count"] == 1
+    assert report["dropped_actions"] == 0
+    assert report["invalid_batches"] == []
+
+
+def test_a_discarded_packet_reports_its_size_and_its_reason(output_dir, capsys):
+    """`invalid_batches` used to carry a bare id nothing read, so a dropped
+    packet left no trace of how much work it held or why it failed."""
+    work = _packets(output_dir)
+    target = work["batches"][0]
+    for batch in work["batches"]:
+        actions = (
+            [
+                {"id": batch["block_ids"][0], "replace": "Replacement one."},
+                {"id": "b999999", "replace": "Replacement two."},
+            ]
+            if batch["id"] == target["id"]
+            else []
+        )
+        _packet_plan(output_dir, work, batch, actions)
+    capsys.readouterr()
+    assert applier.main([str(output_dir)]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["dropped_actions"] == 2
+    assert len(report["invalid_batches"]) == 1
+    entry = report["invalid_batches"][0]
+    assert entry["batch"] == target["id"]
+    assert entry["actions"] == 2
+    assert "unassigned" in entry["reason"]
 
 
 def test_local_invariant_violation_does_not_discard_good_neighbor(output_dir, capsys):
@@ -515,7 +571,55 @@ def test_unchanged_markdown_is_not_counted_as_a_rewrite(output_dir, capsys):
     assert applier.main([str(output_dir)]) == 0
     report = json.loads(capsys.readouterr().out)
     assert report["applied_count"] == 0
+    assert report["unchanged_count"] == 1
     assert report["files_touched"] == []
+
+
+def test_unchanged_field_is_counted_so_the_balance_closes(output_dir, capsys):
+    before = (output_dir / "threat-model.yaml").read_text(encoding="utf-8")
+    _plan(
+        output_dir,
+        [
+            {
+                "file": "threat-model.yaml",
+                "path": "threats[0].scenario",
+                "find": "The handler concatenates the id.",
+                "replace": "The handler concatenates the id.",
+            },
+            {
+                "file": "threat-model.yaml",
+                "path": "mitigations[0].verification",
+                "find": "Re-run the scanner.",
+                "replace": "Re-run the SAST scanner.",
+            },
+        ],
+    )
+    assert applier.main([str(output_dir)]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert (report["applied_count"], report["unchanged_count"], report["rejected_count"]) == (1, 1, 0)
+    assert report["applied_count"] + report["unchanged_count"] + report["rejected_count"] == report["proposed_count"]
+    assert _model(output_dir)["threats"][0]["scenario"] == "The handler concatenates the id."
+    assert before != (output_dir / "threat-model.yaml").read_text(encoding="utf-8")
+
+
+def test_an_all_unchanged_structured_plan_touches_no_file(output_dir, capsys):
+    before = (output_dir / "threat-model.yaml").read_text(encoding="utf-8")
+    _plan(
+        output_dir,
+        [
+            {
+                "file": "threat-model.yaml",
+                "path": "threats[0].scenario",
+                "find": "The handler concatenates the id.",
+                "replace": "The handler concatenates the id.",
+            }
+        ],
+    )
+    assert applier.main([str(output_dir)]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert (report["applied_count"], report["unchanged_count"]) == (0, 1)
+    assert report["files_touched"] == []
+    assert (output_dir / "threat-model.yaml").read_text(encoding="utf-8") == before
 
 
 def test_markdown_target_cannot_alias_another_run_artifact(output_dir):

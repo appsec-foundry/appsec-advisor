@@ -5,12 +5,10 @@ repository — without ``docs/related-repos.yaml``, without ``.gitmodules``,
 without sibling repos with threat models — must NOT see any cross-repo
 artifacts in the output. In particular, the deterministic helpers must:
 
-  * load_related_repos.py            → empty result, no errors
-  * build_cross_repo_register.py     → empty entries, ``skipped_sibling_discovery: true``
+  * contexts/load_related_repos.py            → empty result, no errors
+  * contexts/build_cross_repo_register.py     → empty entries, ``skipped_sibling_discovery: true``
                                        when the workspace has 0/1 sibling dirs or is $HOME
   * slice_cross_repo_for_component   → ``[]``
-  * coverage_checks.check_cross_repo → no missing_tm, no uncovered_boundaries,
-                                       no CWE-1059 gap-threats
   * aggregate_threat_summary         → single-repo summary, no shared_cwes,
                                        no chain_candidates
 
@@ -20,18 +18,16 @@ by future expansion of cross-repo discovery logic.
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
 import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-import aggregate_threat_summary as ats  # noqa: E402
-import build_cross_repo_register as bcrr  # noqa: E402
-import coverage_checks as cc  # noqa: E402
-import load_related_repos as lrr  # noqa: E402
-import slice_cross_repo_for_component as slicer  # noqa: E402
+import contexts.build_cross_repo_register as bcrr  # noqa: E402
+import contexts.load_related_repos as lrr  # noqa: E402
+import contexts.slice_cross_repo_for_component as slicer  # noqa: E402
+import model.aggregate_threat_summary as ats  # noqa: E402
 
 
 def _make_single_repo(tmp_path: Path, name: str = "myrepo") -> Path:
@@ -80,45 +76,6 @@ class TestSingleRepoNoSpuriousArtifacts:
             trust_boundaries_file=None,
         )
         assert sliced == []
-
-    def test_coverage_check_emits_no_cross_repo_gaps(self, tmp_path: Path) -> None:
-        repo = _make_single_repo(tmp_path)
-        out_dir = repo / "docs" / "security"
-        # Build register (will be empty + skipped). Write it to OUTPUT_DIR.
-        reg = bcrr.build(repo, declared_json_path=None, recon_summary_path=None)
-        (out_dir / ".cross-repo-register.json").write_text(json.dumps(reg))
-        report = cc.check_cross_repo(
-            out_dir / ".threat-modeling-context.md",
-            threats=[{"t_id": "T-1", "title": "SQLi", "cwe": "CWE-89"}],
-            register_path=out_dir / ".cross-repo-register.json",
-        )
-        assert report["register_used"] is True
-        assert report["total_deps"] == 0
-        assert report["missing_tm_count"] == 0
-        assert report["uncovered_boundaries"] == []
-
-    def test_run_all_no_spurious_cwe_1059(self, tmp_path: Path) -> None:
-        """The single-repo flow must not produce CWE-1059 gap-threats just
-        because unrelated workspace dirs lack threat models."""
-        repo = _make_single_repo(tmp_path)
-        out_dir = repo / "docs" / "security"
-        reg = bcrr.build(repo, declared_json_path=None, recon_summary_path=None)
-        (out_dir / ".cross-repo-register.json").write_text(json.dumps(reg))
-        (out_dir / ".threats-merged.json").write_text(
-            json.dumps(
-                {
-                    "version": 1,
-                    "threats": [{"t_id": "T-1", "cwe": "CWE-89"}],
-                }
-            )
-        )
-        report = cc.run_all(out_dir)
-        cwe1059 = [
-            b
-            for b in report["cross_repo"].get("uncovered_boundaries", [])
-            if b.get("suggested_threat", {}).get("cwe") == "CWE-1059"
-        ]
-        assert cwe1059 == [], f"unexpected CWE-1059 gap-threats: {cwe1059}"
 
     def test_aggregator_single_repo_has_no_shared_or_chain_artifacts(
         self,

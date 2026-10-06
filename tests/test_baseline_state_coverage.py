@@ -1,4 +1,4 @@
-"""Coverage-focused unit tests for scripts/baseline_state.py.
+"""Coverage-focused unit tests for scripts/baseline/baseline_state.py.
 
 Drives the CLI subcommands (update / show / validate / check-fingerprint /
 check-compat / check-changes / filter-diff-paths / dirty-set / last-run-info /
@@ -22,9 +22,9 @@ SCRIPTS = Path(__file__).parent.parent / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-_spec = importlib.util.spec_from_file_location("baseline_state", SCRIPTS / "baseline_state.py")
+_spec = importlib.util.spec_from_file_location("baseline.baseline_state", SCRIPTS / "baseline/baseline_state.py")
 baseline_state = importlib.util.module_from_spec(_spec)
-sys.modules["baseline_state"] = baseline_state
+sys.modules["baseline.baseline_state"] = baseline_state
 assert _spec.loader is not None
 _spec.loader.exec_module(baseline_state)
 
@@ -926,7 +926,7 @@ def test_classify_relevance_fallback_on_import_error(tmp_path: Path, monkeypatch
     real_import = builtins.__import__
 
     def fake_import(name, *a, **k):
-        if name == "security_relevance_filter":
+        if name == "analyzers.security_relevance_filter":
             raise ImportError("boom")
         return real_import(name, *a, **k)
 
@@ -944,7 +944,7 @@ def test_filter_diff_paths_helper_import_error(tmp_path: Path, monkeypatch):
     real_import = builtins.__import__
 
     def fake_import(name, *a, **k):
-        if name == "scan_excludes":
+        if name == "analyzers.scan_excludes":
             raise ImportError("boom")
         return real_import(name, *a, **k)
 
@@ -1263,3 +1263,21 @@ def test_main_dirty_set_dispatch(tmp_path: Path, capsys):
     (out / "threat-model.yaml").write_text("components: []\n")
     rc = bs.main(["dirty-set", "--output-dir", str(out), "--no-stdin", "--files"])
     assert rc == 2
+
+
+def test_cmd_update_records_severity_counts_for_the_next_comparison(tmp_path: Path):
+    repo = _make_git_repo(tmp_path)
+    out = repo / "docs" / "security"
+    out.mkdir(parents=True)
+    (out / ".skill-config.json").write_text(json.dumps({"assessment_depth": "thorough"}))
+    (out / "threat-model.yaml").write_text(
+        "threats:\n  - {id: T-001, risk: Critical}\n  - {id: T-002, risk: High}\n  - {id: T-003, risk: High}\n"
+    )
+    assert bs.cmd_update(_ns(output_dir=str(out), repo_root=str(repo), mode="full", manifest_hashes=None)) == 0
+    data = json.loads((out / ".appsec-cache" / "baseline.json").read_text())
+    assert data["severity_counts"] == {"depth": "thorough", "critical": 1, "high": 2}
+
+    (out / "threat-model.yaml").unlink()
+    assert bs.cmd_update(_ns(output_dir=str(out), repo_root=str(repo), mode="full", manifest_hashes=None)) == 0
+    carried = json.loads((out / ".appsec-cache" / "baseline.json").read_text())
+    assert carried["severity_counts"] == data["severity_counts"]

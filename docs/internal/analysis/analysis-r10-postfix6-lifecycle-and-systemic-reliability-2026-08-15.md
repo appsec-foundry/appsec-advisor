@@ -50,7 +50,7 @@ Claude Code supplies two transcript paths on `SubagentStop`:
 The distinction is explicit in the
 [Claude Code hooks reference](https://code.claude.com/docs/en/hooks#subagentstop).
 
-`scripts/agent_logger.py::handle_stop` read `transcript_path` for stop reason,
+`scripts/runtime/agent_logger.py::handle_stop` read `transcript_path` for stop reason,
 usage, and distinct tool-use count regardless of event type. On postfix6 it
 therefore found no usable child terminal record or child usage and fell back to
 `stop_reason=unknown`, `in=0`, and `out=0`. The lifecycle consumer accepts only
@@ -100,12 +100,12 @@ The postfix5 implementation in force before postfix6 was:
 
 | Implemented plan contract | Current implementation owner | Postfix6 result |
 |---|---|---|
-| Host `tool_use_id` is the immutable call identity | `scripts/agent_logger.py`, `scripts/agent_lifecycle.py` | Passed: recon used one call ID across spawn, running, budget, and terminal records |
-| `agent_id` binds SubagentStart and SubagentStop to that call | `scripts/agent_logger.py`, lifecycle schema v1 | Passed: the recon runtime agent ID resolved to the correct call |
-| SubagentStop reconciles usage, terminalizes the call, and retires its budget | `scripts/agent_logger.py`, `scripts/budget_watchdog.py` | Partially failed: the correct call was closed, but usage and outcome came from the parent transcript |
+| Host `tool_use_id` is the immutable call identity | `scripts/runtime/agent_logger.py`, `scripts/runtime/agent_lifecycle.py` | Passed: recon used one call ID across spawn, running, budget, and terminal records |
+| `agent_id` binds SubagentStart and SubagentStop to that call | `scripts/runtime/agent_logger.py`, lifecycle schema v1 | Passed: the recon runtime agent ID resolved to the correct call |
+| SubagentStop reconciles usage, terminalizes the call, and retires its budget | `scripts/runtime/agent_logger.py`, `scripts/runtime/budget_watchdog.py` | Partially failed: the correct call was closed, but usage and outcome came from the parent transcript |
 | Parent tools cannot charge a completed child | call-scoped budget schema v2 | Passed: recon disappeared from budget state before architecture started |
 | A delayed PostToolUse cannot reopen or create another start | lifecycle terminal idempotency | Passed: no second `AGENT_SPAWN` or `AGENT_INVOKE` was emitted |
-| The renderer emits one start and one terminal state per call | `scripts/render_progress.py` | Failed at presentation scope: `SCAN_END` was rendered as an additional apparent terminal completion |
+| The renderer emits one start and one terminal state per call | `scripts/renderers/render_progress.py` | Failed at presentation scope: `SCAN_END` was rendered as an additional apparent terminal completion |
 | Terminal cleanup closes remaining calls and removes live markers | outer Stop hook and wrapper cleanup | Passed for live markers after the operator interrupt |
 
 The immediate code correction completes the intended postfix5
@@ -134,7 +134,7 @@ cost gate remain open exactly as stated in the active plan.
 
 ### Duplicate terminal presentation
 
-`scripts/render_progress.py` renders semantic `SCAN_END` as
+`scripts/renderers/render_progress.py` renders semantic `SCAN_END` as
 `recon-scanner done`. It separately renders hook `AGENT_DONE` or
 `AGENT_FAILED` as a terminal lifecycle line. The transcript correction would
 turn the second line into a successful `AGENT_DONE`, but the operator would
@@ -186,7 +186,7 @@ removed `.active-tool-calls`.
 
 The wrapper deliberately skipped post-run parsing, leaving an empty
 `.headless-result.json`, a retained lock, and no authoritative `RUN_ABORTED`
-record. `appsec_status.py --live` continued to show an unknown phase until the
+record. `runtime/appsec_status.py --live` continued to show an unknown phase until the
 heartbeat aged out. This is not the cause of the recon failure, but it leaves
 operator-interrupted runs without one immediately consistent terminal outcome.
 
@@ -268,7 +268,7 @@ All five items are implemented; see "Verification state at handoff" below.
 
 1. **Done.** The child-transcript correction landed with a red-before /
    green-after lifecycle regression.
-2. **Done.** `render_progress.py` renders `SCAN_END` as
+2. **Done.** `renderers/render_progress.py` renders `SCAN_END` as
    `<owner> output ready`; only `AGENT_DONE` and `AGENT_FAILED` render a
    terminal outcome. `test_render_progress.py` replays the postfix6 order
    (`AGENT_SPAWN -> SCAN_END -> SubagentStop -> delayed PostToolUse`) and
@@ -279,7 +279,7 @@ All five items are implemented; see "Verification state at handoff" below.
    schema. `tests/test_hook_payload_contract.py` drives the full sequence and
    pins parent/child transcript ownership, usage attribution, and delayed
    `PostToolUse` idempotency.
-4. **Done.** `scripts/telemetry_consistency.py` cross-checks accepted output,
+4. **Done.** `scripts/runtime/telemetry_consistency.py` cross-checks accepted output,
    lifecycle terminal state, child usage attribution, budget retirement, and
    stage-stats tokens for the calls of the most recent dispatch action. Every
    context-v2 boundary that runs after a producer returned calls it. It emits
@@ -361,10 +361,10 @@ agents/shared/logging-standard.md
 docs/internal/contracts/orchestration-actions.md
 docs/internal/decisions.md
 docs/internal/analysis/analysis-r10-postfix6-lifecycle-and-systemic-reliability-2026-08-15.md
-scripts/agent_logger.py
-scripts/orchestration_controller.py
-scripts/render_progress.py
-scripts/telemetry_consistency.py
+scripts/runtime/agent_logger.py
+scripts/orchestrator/orchestration_controller.py
+scripts/renderers/render_progress.py
+scripts/runtime/telemetry_consistency.py
 tests/fixtures/hook-payloads/claude-code-2.1.233.json
 tests/test_agent_lifecycle.py
 tests/test_hook_payload_contract.py

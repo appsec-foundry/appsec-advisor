@@ -1,18 +1,100 @@
-"""Unit tests for scripts/export_html.py.
+"""Unit tests for scripts/exporters/export_html.py.
 
 Covers preflight (pandoc present/missing/broken, mmdc present/missing/
 require-mermaid render-ok/render-bad/skip), export_html (with and without
 mermaid), and main() dispatch (check-only, missing input, missing css,
 conversion error, success, abort).
 
-The heavy external tools (pandoc, mmdc) are never actually invoked: the
-export_pdf helpers (check_tool, probe_runs, probe_mmdc, render_mermaid_blocks,
-md_to_html) are monkeypatched on the export_html module namespace.
+Most tests replace the external tools. One optional pandoc smoke test verifies
+that the detail diagram is embedded in the standalone HTML.
 """
 
 from __future__ import annotations
 
-import export_html
+import base64
+import shutil
+import xml.etree.ElementTree as ET
+
+import exporters.export_html as export_html
+import exporters.export_pdf as export_pdf  # noqa: E402
+import pytest
+
+
+@pytest.mark.parametrize("embedded", [True, False])
+def test_paged_architecture_expands_into_inert_self_contained_views(tmp_path, embedded):
+    import renderers.figure1_dfd as figure1_dfd
+
+    from tests.test_figure1_detail import model
+
+    svg, errors = figure1_dfd.check_diagram(model(9), {}, {})
+    assert errors == []
+    ref = "custom.figure1-detail.svg"
+    (tmp_path / ref).write_text(svg)
+    if embedded:
+        ref = "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
+    markdown = export_html._expand_architecture_detail(f"[Detailed architecture diagram]({ref})", tmp_path)
+    assert "<object" not in markdown and "<iframe" not in markdown and "<script" not in markdown
+    assert markdown.count("<details>") > 2
+    import re
+
+    seen = set()
+    for encoded in re.findall(r"data:image/svg\+xml;base64,([A-Za-z0-9+/=]+)", markdown):
+        page = ET.fromstring(base64.b64decode(encoded))
+        seen.update(g.get("data-component-id") for g in page.iter() if g.get("data-component-id"))
+        assert page.findall(".//{*}a[@data-detail-nav]") == []
+    assert seen == {f"dispatch-{i}" for i in range(9)}
+
+
+def test_detail_expansion_does_not_read_a_sibling_symlink_escape(tmp_path):
+    outside = tmp_path / "outside.svg"
+    outside.write_text('data-paged-detail="true"')
+    inside = tmp_path / "report"
+    inside.mkdir()
+    (inside / "figure1-detail.svg").symlink_to(outside)
+    md = export_html._expand_architecture_detail("[Detailed architecture diagram](figure1-detail.svg)", inside)
+    assert "![Detailed architecture diagram](figure1-detail.svg)" in md
+
+
+@pytest.mark.parametrize("stem", ["figure1", "service-review.figure1"])
+def test_architecture_detail_is_an_embeddable_collapsed_image(stem):
+    ref = f"{stem}-detail.svg"
+    result = export_html._expand_architecture_detail(f"[Detailed architecture diagram]({ref})")
+    assert "<details>" in result
+    assert f"![Detailed architecture diagram]({ref})" in result
+
+
+@pytest.mark.parametrize("ref", ["../figure1-detail.svg", "https://example.test/figure1-detail.svg", "notes.svg"])
+def test_architecture_detail_does_not_expand_other_links(ref):
+    text = f"[Detailed architecture diagram]({ref})"
+    assert export_html._expand_architecture_detail(text) == text
+
+
+def test_architecture_detail_embedded_form_stays_self_contained():
+    ref = "data:image/svg+xml;base64,PHN2Zy8+"
+    result = export_html._expand_architecture_detail(f"[Detailed architecture diagram]({ref})")
+    assert f"![Detailed architecture diagram]({ref})" in result
+
+
+@pytest.mark.skipif(not shutil.which("pandoc"), reason="pandoc is not installed")
+def test_architecture_detail_standalone_html_smoke(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    detail = "neutral-review.figure1-detail.svg"
+    (source / detail).write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="40"><text y="20">Detail</text></svg>'
+    )
+    report = source / "report.md"
+    report.write_text(f"# Review\n\n[Detailed architecture diagram]({detail})\n")
+    css = tmp_path / "print.css"
+    css.write_text("body { color: black; }")
+    output = tmp_path / "standalone.html"
+    assert export_html.export_html(report, output, use_mermaid=False, css_path=css) == 0
+    html = output.read_text()
+    assert "<details>" in html
+    assert '<img src="data:image/svg+xml;base64,' in html or "<svg" in html
+    assert f'href="{detail}"' not in html
+    assert f'src="{detail}"' not in html
+
 
 # --------------------------------------------------------------------------
 # preflight()
@@ -98,6 +180,22 @@ def test_preflight_mmdc_present_require_render_bad(monkeypatch):
     joined = "\n".join(messages)
     assert "[bad]  mmdc" in joined
     assert "--no-mermaid" in joined
+
+
+def test_preflight_sandbox_blocked_render_asks_for_unsandboxed_rerun(monkeypatch):
+    monkeypatch.setattr(
+        export_html,
+        "check_tool",
+        lambda name: "/usr/bin/pandoc" if name == "pandoc" else "/usr/bin/mmdc",
+    )
+    monkeypatch.setattr(export_html, "probe_runs", lambda name: (True, "2.x"))
+    monkeypatch.setattr(export_html, "probe_mmdc", lambda: (False, export_pdf.MMDC_SANDBOX_BLOCKED))
+    ok, messages = export_html.preflight(require_mermaid=True)
+    assert ok is False
+    joined = "\n".join(messages)
+    assert "unsandboxed" in joined
+    assert "install:" not in joined
+    assert "--no-mermaid" not in joined
 
 
 def test_preflight_mmdc_present_not_required(monkeypatch):
@@ -198,7 +296,7 @@ def test_main_css_missing(monkeypatch, tmp_path):
     inp.write_text("# t\n", encoding="utf-8")
     monkeypatch.setattr(export_html, "preflight", lambda require_mermaid: (True, []))
     # Point __file__-derived css lookup at a dir with no assets/print.css
-    monkeypatch.setattr(export_html, "__file__", str(tmp_path / "export_html.py"))
+    monkeypatch.setattr(export_html, "__file__", str(tmp_path / "exporters/export_html.py"))
     rc = export_html.main(["--input", str(inp), "--output", str(tmp_path / "o.html")])
     assert rc == 3
 
@@ -253,7 +351,7 @@ def test_cli_input_not_found_exit_2(run_plugin_script, tmp_path):
     # accept exit 1, otherwise input-not-found gives exit 2. Either way the
     # __main__ wrapper + argparse path is exercised.
     result = run_plugin_script(
-        "export_html.py",
+        "exporters/export_html.py",
         "--input",
         str(tmp_path / "does-not-exist.md"),
         check=False,
@@ -262,6 +360,6 @@ def test_cli_input_not_found_exit_2(run_plugin_script, tmp_path):
 
 
 def test_cli_help_exit_0(run_plugin_script):
-    result = run_plugin_script("export_html.py", "--help", check=False)
+    result = run_plugin_script("exporters/export_html.py", "--help", check=False)
     assert result.returncode == 0
     assert "export_html.py" in result.stdout

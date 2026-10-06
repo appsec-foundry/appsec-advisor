@@ -1,0 +1,31 @@
+# Example advisory threat analysis for merge requests (GitLab CI).
+# Include it explicitly; the plugin never adds CI checks.
+#
+# Trust model:
+# - The job runs no merge-request-owned setup, build, test, or install step.
+# - The plugin is cloned at a pinned commit from a trusted project, never
+#   taken from the checkout under review.
+# - ANTHROPIC_API_KEY is a masked, protected CI/CD variable. Protected
+#   variables are not available to pipelines for untrusted branches or forks.
+# - Findings are advisory; failed, incomplete, or invalid analysis fails the job.
+threat-analysis:
+  stage: test
+  image: <pinned-image-with-python3-git-node@sha256:digest>
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  variables:
+    GIT_DEPTH: "0"
+  script:
+    - git clone --no-checkout https://<host>/<group>/appsec-advisor.git "$CI_BUILDS_DIR/appsec-advisor"
+    - git -C "$CI_BUILDS_DIR/appsec-advisor" checkout --detach <pinned-release-commit-sha>
+    - npm install --global --ignore-scripts @anthropic-ai/claude-code@<pinned-version>
+    - >
+      python3 "$CI_BUILDS_DIR/appsec-advisor/scripts/appsec-analyst-cli" review --ci
+      --repo "$CI_PROJECT_DIR"
+      --base "$CI_MERGE_REQUEST_DIFF_BASE_SHA" --head "$CI_COMMIT_SHA"
+      --state-dir "$CI_BUILDS_DIR/analyst-state"
+      --output "$CI_PROJECT_DIR/analyst-report"
+  artifacts:
+    when: always
+    paths:
+      - analyst-report/

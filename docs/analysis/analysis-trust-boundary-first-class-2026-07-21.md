@@ -55,13 +55,13 @@ deterministic Python over LLM for final artifacts (AGENTS.md).
   LLM as sidecar `.trust-boundaries.json`
   (`agents/phases/phase-group-architecture.md:1311–1360`,
   `agents/appsec-threat-analyst.md:414`), aggregated deterministically into the
-  master yaml (`scripts/build_threat_model_yaml.py:1969–2133`, with
+  master yaml (`scripts/model/build_threat_model_yaml.py:1969–2133`, with
   `_carry_forward` fallback for incremental runs).
 - **Forward join**: `from`/`to` → `components[].id`. Consumed by the Figure 1
   attack diagram (🛡 marker on the tier-pair edge,
-  `scripts/compose_threat_model.py:6528–6598`;
-  `scripts/figure1_svg.py:117–163,442`) and injected as **per-component STRIDE
-  dispatch context** (`scripts/build_stride_dispatch_manifest.py:100,1023,1068`).
+  `scripts/renderers/compose_threat_model.py:6528–6598`;
+  `scripts/renderers/figure1_svg.py:117–163,442`) and injected as **per-component STRIDE
+  dispatch context** (`scripts/orchestrator/build_stride_dispatch_manifest.py:100,1023,1068`).
 - **Latent weakness hook**: emitted boundary objects already carry a `weakness`
   field — declared in **neither** schema, pure `additionalProperties` passthrough
   (`docs/security/threat-model.yaml` boundary rows).
@@ -151,7 +151,7 @@ exposed routes, `authn_signal`), not reachability. The only hard-wired
 deterministic zone is `mobile-device`. Dockerfile is scanned for base images but
 **`EXPOSE`/ports/ingress are not turned into an exposure signal** — a cheap
 deterministic win left on the table. Unknown exposure **fail-safes toward
-inclusion** (`build_stride_dispatch_manifest.py:375`), so nothing is silently
+inclusion** (`orchestrator/build_stride_dispatch_manifest.py:375`), so nothing is silently
 dropped, but exposure is over-included rather than precise.
 
 **Recommendation — deterministic-first, human confirms only the residual:**
@@ -226,10 +226,10 @@ dropped, but exposure is over-included rather than precise.
 
 `schemas/fragments/trust-boundaries.schema.json`,
 `schemas/threat-model.output.schema.yaml:317`,
-`scripts/build_threat_model_yaml.py:1969–2133`,
-`scripts/build_stride_dispatch_manifest.py:100–1068`,
-`scripts/compose_threat_model.py:6528–6598`, `scripts/figure1_svg.py:117–163`,
-`scripts/pregenerate_fragments.py:485–734`,
+`scripts/model/build_threat_model_yaml.py:1969–2133`,
+`scripts/orchestrator/build_stride_dispatch_manifest.py:100–1068`,
+`scripts/renderers/compose_threat_model.py:6528–6598`, `scripts/renderers/figure1_svg.py:117–163`,
+`scripts/renderers/pregenerate_fragments.py:485–734`,
 `agents/phases/phase-group-architecture.md:65,1311–1360`,
 `agents/appsec-threat-analyst.md:414`,
 `data/sections-contract.yaml:691–701,1407`.

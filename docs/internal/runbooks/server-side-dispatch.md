@@ -117,6 +117,6 @@ The gate confirms that evidence exists, but it cannot confirm the diagnosis. The
   deliberately unset; it would override and switch billing to per-token.
 - **Untrusted by design.** The target is a third-party checkout. The sanitize
   step strips repo-owned `.claude` / IDE task config (the injection vectors
-  `scripts/preflight_untrusted.py` refuses on); escaping symlinks are surfaced
+  `scripts/validators/preflight_untrusted.py` refuses on); escaping symlinks are surfaced
   as warnings, not auto-removed, and the untrusted preflight aborts on them.
 - **Concurrency.** Runs are serialized per target and depth (`group: threat-model-<target>-<depth>`, without cancellation) because matching runs share an output directory.

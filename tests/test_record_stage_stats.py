@@ -1,4 +1,4 @@
-"""Tests for scripts/record_stage_stats.py — JSONL append + idempotency."""
+"""Tests for scripts/runtime/record_stage_stats.py — JSONL append + idempotency."""
 
 from __future__ import annotations
 
@@ -10,13 +10,13 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "record_stage_stats.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "runtime/record_stage_stats.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("record_stage_stats", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("runtime.record_stage_stats", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["record_stage_stats"] = module
+    sys.modules["runtime.record_stage_stats"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
@@ -36,7 +36,7 @@ def _argv(output_dir: Path, **overrides) -> list[str]:
         "--tokens": "93066",
     }
     base.update({k: str(v) for k, v in overrides.items()})
-    args = ["record_stage_stats.py", str(output_dir)]
+    args = ["runtime/record_stage_stats.py", str(output_dir)]
     for k, v in base.items():
         args.extend([k, v])
     return args
@@ -89,7 +89,7 @@ def test_multiple_stages_append_in_order(tmp_path):
 def test_missing_output_dir_errors(tmp_path):
     """Required positional arg + no env fallback → exit 2 from argparse."""
     argv = [
-        "record_stage_stats.py",
+        "runtime/record_stage_stats.py",
         "--stage",
         "1",
         "--name",
@@ -111,7 +111,7 @@ def test_missing_output_dir_errors(tmp_path):
 def test_output_dir_via_env(tmp_path, monkeypatch):
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
     argv = [
-        "record_stage_stats.py",
+        "runtime/record_stage_stats.py",
         "--stage",
         "1",
         "--name",
@@ -296,6 +296,72 @@ def test_dispatch_derivation_unknown_subagent_omits_fields(tmp_path):
     record = json.loads((tmp_path / ".stage-stats.jsonl").read_text().strip())
     assert "dispatch_count" not in record
     assert "wall_secs_observed" not in record
+
+
+# The hook log always records the namespaced agent type; the orchestrator may
+# pass it bare. Both shapes of hook line (call-id and legacy positional) must
+# match either spelling, and nothing else.
+_CALL_ID_LOG = """\
+2026-10-02T22:00:00Z  [229ac997]  INFO   AGENT_SPAWN  agent_call_id=toolu_a  agent_type=appsec-advisor:appsec-architect-reviewer  model=sonnet
+2026-10-02T22:00:01Z  [229ac997]  INFO   AGENT_SPAWN  agent_call_id=toolu_b  agent_type=appsec-advisor:appsec-architect-reviewer  model=sonnet
+2026-10-02T22:02:00Z  [229ac997]  INFO   AGENT_DONE   agent_call_id=toolu_a  agent_type=appsec-advisor:appsec-architect-reviewer  model=sonnet
+2026-10-02T22:03:00Z  [229ac997]  INFO   AGENT_DONE   agent_call_id=toolu_b  agent_type=appsec-advisor:appsec-architect-reviewer  model=sonnet
+"""
+_LEGACY_LOG = """\
+2026-10-02T22:00:00Z  [run]  INFO   AGENT_SPAWN  appsec-advisor:appsec-architect-reviewer  model=sonnet
+2026-10-02T22:00:01Z  [run]  INFO   AGENT_SPAWN  appsec-advisor:appsec-architect-reviewer  model=sonnet
+2026-10-02T22:03:00Z  [run]  INFO   AGENT_INVOKE  appsec-advisor:appsec-architect-reviewer  model=sonnet
+"""
+
+
+@pytest.mark.parametrize("log_body", [_CALL_ID_LOG, _LEGACY_LOG], ids=["call-id", "legacy"])
+@pytest.mark.parametrize(
+    "subagent_type",
+    ["appsec-advisor:appsec-architect-reviewer", "appsec-architect-reviewer", " appsec-architect-reviewer "],
+    ids=["namespaced", "bare", "padded"],
+)
+def test_dispatch_derivation_matches_bare_and_namespaced_agent_type(tmp_path, capsys, log_body, subagent_type):
+    _write_hook_log(tmp_path, log_body)
+    argv = _argv(tmp_path, **{"--subagent-type": subagent_type, "--since-iso": "2026-10-02T21:59:00Z"})
+    assert rec.main(argv) == 0
+    record = json.loads((tmp_path / ".stage-stats.jsonl").read_text().strip())
+    assert record["dispatch_count"] == 2
+    assert "no AGENT_SPAWN" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("log_body", [_CALL_ID_LOG, _LEGACY_LOG], ids=["call-id", "legacy"])
+def test_dispatch_derivation_keeps_foreign_namespace_distinct(tmp_path, log_body):
+    _write_hook_log(tmp_path, log_body)
+    assert (
+        rec._derive_dispatch_stats(tmp_path / ".hook-events.log", "other-plugin:appsec-architect-reviewer", "") is None
+    )
+
+
+def test_dispatch_derivation_warns_when_no_spawn_matches(tmp_path, capsys):
+    _write_hook_log(tmp_path, _CALL_ID_LOG)
+    argv = _argv(
+        tmp_path, **{"--subagent-type": "appsec-advisor:appsec-missing", "--since-iso": "2026-10-02T21:59:00Z"}
+    )
+    assert rec.main(argv) == 0
+    assert "no AGENT_SPAWN" in capsys.readouterr().err
+    record = json.loads((tmp_path / ".stage-stats.jsonl").read_text().strip())
+    assert "dispatch_count" not in record
+
+
+def test_deterministic_row_without_subagent_type_stays_silent(tmp_path, capsys):
+    _write_hook_log(tmp_path, _CALL_ID_LOG)
+    argv = _argv(
+        tmp_path,
+        **{
+            "--agent": "deterministic:qa_checks.py",
+            "--model": "none",
+            "--tokens": "0",
+            "--tool-uses": "0",
+            "--duration-ms": "0",
+        },
+    )
+    assert rec.main(argv) == 0
+    assert "no AGENT_SPAWN" not in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
@@ -949,3 +1015,18 @@ def test_a_whole_log_fallback_does_not_cap_future_dispatches(tmp_path):
     assert row["dispatch_count"] == 2
     assert len(row["dispatch_event_ids"]) == 2
     assert "dispatch_count_ceiling" not in row
+
+
+def test_dispatch_derivation_defaults_to_the_controller_window(tmp_path):
+    """Without --since-iso the controller's dispatch window bounds the derivation."""
+    (tmp_path / ".hook-events.log").write_text(
+        "2026-08-28T21:19:10Z  [s]  INFO   AGENT_SPAWN  appsec-advisor:appsec-threat-renderer  model=sonnet\n"
+        "2026-08-28T21:29:10Z  [s]  INFO   AGENT_SPAWN  appsec-advisor:appsec-threat-renderer  model=sonnet\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".dispatch-window.json").write_text(json.dumps({"since": "2026-08-28T21:20:00Z"}), encoding="utf-8")
+
+    rec.main(_argv(tmp_path, **{"--subagent-type": "appsec-advisor:appsec-threat-renderer"}))
+
+    row = json.loads((tmp_path / ".stage-stats.jsonl").read_text().splitlines()[-1])
+    assert row["dispatch_count"] == 1

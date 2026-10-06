@@ -1,4 +1,4 @@
-"""Tests for scripts/_critical_findings_sync.py.
+"""Tests for scripts/shared/_critical_findings_sync.py.
 
 `critical_findings[].mitigation_id` is derived from `threats[].mitigation_ids[0]`
 by the yaml builder. The auto-emitter pass then runs AFTER the builder and
@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from _critical_findings_sync import resync_critical_findings  # noqa: E402
+from shared._critical_findings_sync import resync_critical_findings  # noqa: E402
 
 
 def _model(threat_mids: dict, curated: dict) -> dict:
@@ -76,9 +76,9 @@ def test_every_emitter_resyncs_before_persisting():
     call the resync on its write path, or the bug silently returns."""
     scripts = Path(__file__).resolve().parents[1] / "scripts"
     for name in (
-        "emit_finding_fix_mitigations.py",
-        "emit_config_scan_mitigations.py",
-        "emit_review_mitigations.py",
+        "model/emit_finding_fix_mitigations.py",
+        "model/emit_config_scan_mitigations.py",
+        "model/emit_review_mitigations.py",
     ):
         text = (scripts / name).read_text(encoding="utf-8")
         assert "resync_critical_findings(data)" in text, f"{name} persists without resyncing critical_findings"

@@ -342,6 +342,36 @@ def test_component_repository_roots_reject_primary_and_identical_duplicates() ->
     assert list(validator.iter_errors(roots)), "identical repository rows must not validate twice"
 
 
+def _threat_taxonomy_validator() -> Draft202012Validator:
+    from referencing import Registry, Resource
+
+    registry = Registry()
+    for name in ("threat-taxonomy-slice.schema.yaml", "threat-category-taxonomy.schema.yaml"):
+        contents = yaml.safe_load((SCHEMAS_DIR / name).read_text())
+        registry = registry.with_resource(contents["$id"], Resource.from_contents(contents))
+    source = yaml.safe_load((SCHEMAS_DIR / "threat-category-taxonomy.schema.yaml").read_text())
+    return Draft202012Validator(source, registry=registry)
+
+
+def test_threat_category_taxonomy_validates_source_schema() -> None:
+    taxonomy = yaml.safe_load((ROOT / "data" / "threat-category-taxonomy.yaml").read_text())
+    errors = list(_threat_taxonomy_validator().iter_errors(taxonomy))
+    assert not errors, "\n".join(
+        f"{'.'.join(str(p) for p in error.absolute_path) or 'root'}: {error.message}" for error in errors
+    )
+    category_ids = {category["id"] for category in taxonomy["categories"]}
+    dangling = {th for targets in taxonomy["cwe_to_th"].values() for th in targets} - category_ids
+    assert not dangling, f"cwe_to_th targets absent categories: {sorted(dangling)}"
+
+
+@pytest.mark.parametrize("location", ["top", "category"])
+def test_threat_category_taxonomy_rejects_undeclared_keys(location: str) -> None:
+    taxonomy = yaml.safe_load((ROOT / "data" / "threat-category-taxonomy.yaml").read_text())
+    target = taxonomy if location == "top" else taxonomy["categories"][0]
+    target["undeclared_key"] = True
+    assert list(_threat_taxonomy_validator().iter_errors(taxonomy))
+
+
 def test_default_actor_library_validates_actor_schema() -> None:
     schema = yaml.safe_load((SCHEMAS_DIR / "actors.schema.yaml").read_text())
     library = yaml.safe_load((ROOT / "data" / "actors" / "default-library.yaml").read_text())

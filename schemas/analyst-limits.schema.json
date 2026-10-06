@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/analyst-limits.schema.json",
+  "title": "Threat analyst limits",
+  "description": "Finite limits the analyst controller enforces outside the model, with explicit units and the evidence status of each value.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "limits"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "status": {
+      "enum": [
+        "provisional",
+        "measured"
+      ]
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "job_seconds",
+        "call_seconds",
+        "host_calls",
+        "evidence_rounds",
+        "question_rounds",
+        "transport_retries",
+        "admitted_files",
+        "file_kib",
+        "job_kib",
+        "response_kib",
+        "selected_questions",
+        "packages",
+        "package_kib",
+        "answer_hours",
+        "result_days"
+      ],
+      "patternProperties": {
+        "^[a-z_]+$": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "value",
+            "unit"
+          ],
+          "properties": {
+            "value": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "unit": {
+              "enum": [
+                "seconds",
+                "calls",
+                "rounds",
+                "retries",
+                "files",
+                "KiB",
+                "questions",
+                "packages",
+                "hours",
+                "days"
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

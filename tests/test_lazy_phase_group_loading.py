@@ -16,29 +16,25 @@ def _read(path: Path) -> str:
 def test_business_context_reaches_the_default_full_runtime():
     runtime = _read(SKILL_DIR / "SKILL-full-runtime.md")
     router = _read(SKILL_DIR / "SKILL.md")
-    mode = _read(MODES_DIR / "business-context.md")
 
     assert "BUSINESS_CONTEXT_SOURCE = business_context_source" in runtime
-    assert runtime.count("modes/business-context.md") == 1
     assert "SKIP_BUSINESS_CONTEXT = skip_business_context" in runtime
-    # §2b states no condition of its own. All three reasons not to ask — a
-    # source already captured, --skip-context, and a run with no operator — are
-    # resolved by the controller and arrive as one field. The wording used to be
-    # pinned here instead, and it told the runtime to read APPSEC_HEADLESS,
-    # which it cannot see.
-    section = runtime.split("### 2b.")[1].split("## 3.")[0]
-    assert "ACTION.business_context_prompt_needed" in section
-    assert "APPSEC_HEADLESS" not in section
-    assert runtime.index("modes/business-context.md") < runtime.index("## 3. Bind compact state")
-    assert "load_business_context.py" in mode
-    assert "business-context question" in router
-
-    # The mode file is the interactive question only. A `--context` source is
-    # captured by the controller pre-flight, so the supplied document no longer
-    # depends on this instruction being followed.
-    assert "Step 0" not in mode
-    assert "interactive question only" in mode
-    assert "business_context_prompt_needed" in mode
+    assert "prepare --interactive-context --" in runtime
+    assert "prepare --force --interactive-context --" in runtime
+    assert "ACTION.action=decision_required" in runtime
+    assert "modes/business-context.md" in runtime
+    mode = _read(MODES_DIR / "business-context.md")
+    assert "in English" in mode
+    assert "No, a different use case" in mode
+    assert "bare “No”" in mode
+    impact = _read(MODES_DIR / "business-impact.md")
+    assert "in English" in impact
+    assert "No material business harm" in impact
+    assert "wait for explicit selection" in impact
+    assert "including stated conditions" in impact
+    assert "AskUserQuestion" in mode
+    assert "complete-preflight" in mode
+    assert "business-context dialog" in router
 
 
 def test_full_runtime_loads_only_controller_returned_stage_surfaces():
@@ -56,7 +52,8 @@ def test_full_runtime_loads_only_controller_returned_stage_surfaces():
         "SKILL-thin-completion.md",
     ):
         assert name in runtime
-    assert "There is no legacy range or fallback" in runtime
+    assert "SKILL-impl.md" not in runtime
+    assert "SKILL-thin-stage1.md" not in runtime
 
 
 def test_rerender_runtime_uses_the_same_release_tail():
@@ -67,7 +64,8 @@ def test_rerender_runtime_uses_the_same_release_tail():
     assert "SKILL-thin-stage4.md" in runtime
     assert "SKILL-thin-completion.md" in runtime
     assert "secret gate is never optional" in runtime
-    assert "There is no legacy slice" in runtime
+    assert "SKILL-impl.md" not in runtime
+    assert "SKILL-thin-stage1.md" not in runtime
 
 
 def test_stage3_preserves_the_secret_gate_and_canonical_mutation_order():
@@ -76,55 +74,36 @@ def test_stage3_preserves_the_secret_gate_and_canonical_mutation_order():
     assert "unmasked_secrets" in stage3
     assert "Never skip this" in stage3 and "Quick" in stage3
     assert "SKIP_QA=true" in stage3
-    assert "compose --strict → apply_prose_fixes → qa_checks.py gate" in stage3
+    assert "compose --strict → apply_prose_fixes → validators/qa_checks.py gate" in stage3
     assert "MAX_REPAIR_ITERATIONS" in stage3
     assert "appsec-advisor:appsec-fragment-fixer" in stage3
-    assert stage3.rindex("unmasked_secrets") > stage3.index('qa_checks.py" gate')
+    assert stage3.rindex("unmasked_secrets") > stage3.index('validators/qa_checks.py" gate')
 
 
 def test_completion_owns_cross_path_release_gates_in_order():
     completion = _read(SKILL_DIR / "SKILL-thin-completion.md")
 
     patch = completion.index("--patch-placeholders --no-print")
-    final_structure = completion.index('qa_checks.py" final_structure')
-    completeness = completion.index("assert_completeness.py")
-    integrity = completion.index("section_integrity.py")
+    final_structure = completion.index('validators/qa_checks.py" final_structure')
+    completeness = completion.index("validators/assert_completeness.py")
+    integrity = completion.index("validators/section_integrity.py")
     exports = completion.index("## 2. Exports and summary")
     assert patch < final_structure < completeness < integrity < exports
-    assert "reclassify_components.py" in completion
+    assert "model/reclassify_components.py" in completion
     assert "toc_closure" in completion
-    assert "runtime_cleanup.py" in completion
+    assert "runtime/runtime_cleanup.py" in completion
 
 
-def test_stage4_is_one_editorial_pass_with_no_repair_loop():
-    """Stage 4 judges nothing, so it has nothing to repair.
-
-    It used to review the report, classify defects and hand them back through
-    Stage 3 under MAX_REPAIR_ITERATIONS. That loop is gone: the stage dispatches
-    once, a deterministic applier performs every write, and a rejected result is
-    restored rather than re-reviewed.
-    """
+def test_stage4_preserves_semantic_corrections_without_a_second_review():
     stage4 = _read(SKILL_DIR / "SKILL-thin-stage4.md")
-
     assert ".architect-status.json" in stage4
-    assert "runs **once**" in stage4
-    assert "Never dispatch it twice." in stage4
-    assert "at most three concurrent calls" in stage4
-    assert "Do not retry a failed packet." in stage4
-    assert "secret gate" not in stage4  # the tail is spelled out as commands now
-    assert "qa_checks.py" in stage4 and "unmasked_secrets" in stage4
-
-    # Between waves the console stays silent; progress notes are output too.
-    assert "printing nothing, not even wave notes" in stage4
-
-    # The removed loop stays removed.
-    assert "repair_required" not in stage4
+    assert "analyzers/architect_review_runtime.py" in stage4
+    assert "Do not dispatch another review" in stage4
+    assert "repairs/apply_editorial_plan.py" not in stage4
+    assert "contexts/build_editorial_context.py" not in stage4
+    assert "unmasked_secrets" in stage4
+    assert "Every non-zero exit blocks completion" in stage4
     assert "MAX_REPAIR_ITERATIONS" not in stage4
-    assert "SKILL-thin-stage3.md" not in stage4
-
-    # A rejected pass is rolled back, not handed to a repair agent.
-    assert "check_editorial_diff.py restore" in stage4
-    assert "apply_editorial_plan.py" in stage4
 
 
 def test_removed_legacy_runtime_surfaces_are_absent():
@@ -132,6 +111,21 @@ def test_removed_legacy_runtime_surfaces_are_absent():
     assert not (MODES_DIR / "rerender.md").exists()
     assert not (MODES_DIR / "rebuild-wipe.md").exists()
     assert not (MODES_DIR / "full-scan-recommendation.md").exists()
+
+
+def test_every_watchdog_launch_outlives_the_default_background_limit():
+    # Claude Code stops a background command after 30 minutes unless its Bash
+    # timeout is raised; a stage can run longer than that.
+    launches = [
+        path
+        for path in sorted((PLUGIN_ROOT / "skills").rglob("*.md"))
+        if "skill_watchdog.py" in (text := _read(path)) and "run_in_background: true" in text
+    ]
+    assert {p.name for p in launches} >= {"SKILL-full-runtime.md", "SKILL-rerender-runtime.md"}
+    for path in launches:
+        text = " ".join(_read(path).split())
+        assert "Bash timeout `7200000`" in text, path
+        assert "`killed` notification" in text, path
 
 
 def test_agents_md_describes_the_compact_runtime_only():

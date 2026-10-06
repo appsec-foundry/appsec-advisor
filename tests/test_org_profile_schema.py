@@ -1,4 +1,4 @@
-"""Tests for scripts/validate_org_profile.py.
+"""Tests for scripts/validators/validate_org_profile.py.
 
 Validates the bundled fixture profile, then exercises each semantic rule
 through tiny mutations on a deep-copied dict instead of writing many YAML
@@ -15,17 +15,17 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "validate_org_profile.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "validators/validate_org_profile.py"
 FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "org-profiles" / "acme"
 FIXTURE_PATH = FIXTURE_DIR / "org-profile.yaml"
 
 
 def _load_module():
-    if "validate_org_profile" in sys.modules:
-        return sys.modules["validate_org_profile"]
-    spec = importlib.util.spec_from_file_location("validate_org_profile", SCRIPT_PATH)
+    if "validators.validate_org_profile" in sys.modules:
+        return sys.modules["validators.validate_org_profile"]
+    spec = importlib.util.spec_from_file_location("validators.validate_org_profile", SCRIPT_PATH)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["validate_org_profile"] = mod
+    sys.modules["validators.validate_org_profile"] = mod
     assert spec.loader is not None
     spec.loader.exec_module(mod)
     return mod

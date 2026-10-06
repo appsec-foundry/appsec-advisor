@@ -1,4 +1,4 @@
-"""Unit tests for scripts/apply_prose_fixes.py."""
+"""Unit tests for scripts/repairs/apply_prose_fixes.py."""
 
 from __future__ import annotations
 
@@ -9,15 +9,15 @@ import textwrap
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "apply_prose_fixes.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "repairs/apply_prose_fixes.py"
 
 
 def _load_apply_prose_fixes():
-    if "apply_prose_fixes" in sys.modules:
-        return sys.modules["apply_prose_fixes"]
-    spec = importlib.util.spec_from_file_location("apply_prose_fixes", SCRIPT_PATH)
+    if "repairs.apply_prose_fixes" in sys.modules:
+        return sys.modules["repairs.apply_prose_fixes"]
+    spec = importlib.util.spec_from_file_location("repairs.apply_prose_fixes", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["apply_prose_fixes"] = module
+    sys.modules["repairs.apply_prose_fixes"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
@@ -793,3 +793,15 @@ def test_html_header_match_decodes_entities_before_comparing():
     out, _ = prose.apply_code_formatting(table)
     assumption_cell = re.findall(r"<td[^>]*>(.*?)</td>", out, re.S)[4]
     assert "<code>" not in assumption_cell and "`" not in assumption_cell
+
+
+def test_span_after_br_tag_is_not_merged_into_the_previous_span():
+    # The text between two spans in a table cell can be a bare `<br/>`; the
+    # dotted-split repair must not pair ticks across it.
+    for cell, span in [
+        ("| a | `x`<br/>.gitlab-ci.yml |", "`.gitlab-ci.yml`"),
+        ("| a | `x`<br/>`.gitlab-ci.yml` |", "`.gitlab-ci.yml`"),
+    ]:
+        out, _ = prose.apply_code_formatting(cell)
+        assert span in out
+        assert "`-" not in out and out.count("`") % 2 == 0

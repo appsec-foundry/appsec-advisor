@@ -1,4 +1,4 @@
-"""In-process coverage tests for scripts/check_inline_shortcut.py.
+"""In-process coverage tests for scripts/validators/check_inline_shortcut.py.
 
 The existing test_check_inline_shortcut.py drives the gate as a subprocess.
 These tests import the module directly to deterministically exercise the
@@ -17,7 +17,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import check_inline_shortcut as cis  # noqa: E402
+import validators.check_inline_shortcut as cis  # noqa: E402
 
 
 def _make_full_run(d: Path):
@@ -64,14 +64,14 @@ def test_indicator_d_unparseable_yaml(tmp_path):
 
 
 def test_qa_check_missing_qa_script(tmp_path, monkeypatch):
-    monkeypatch.setattr(cis, "PLUGIN_ROOT", tmp_path)  # scripts/qa_checks.py absent
+    monkeypatch.setattr(cis, "PLUGIN_ROOT", tmp_path)  # scripts/validators/qa_checks.py absent
     assert cis._run_qa_fragments_check(tmp_path) == 3
 
 
 def test_qa_check_subprocess_error(tmp_path, monkeypatch):
     qa = tmp_path / "scripts"
-    qa.mkdir()
-    (qa / "qa_checks.py").write_text("# stub", encoding="utf-8")
+    (qa / "validators").mkdir(parents=True)
+    (qa / "validators/qa_checks.py").write_text("# stub", encoding="utf-8")
     monkeypatch.setattr(cis, "PLUGIN_ROOT", tmp_path)
 
     def boom(*a, **k):
@@ -162,7 +162,7 @@ def test_list_missing_fragments_import_fails(tmp_path, monkeypatch):
     real_import = builtins.__import__
 
     def fake_import(name, *a, **k):
-        if name == "qa_checks":
+        if name == "validators.qa_checks":
             raise ImportError("nope")
         return real_import(name, *a, **k)
 

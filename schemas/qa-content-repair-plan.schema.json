@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://appsec-advisor/schemas/qa-content-repair-plan.schema.json",
   "title": "QA Content Repair Plan",
-  "description": "Sprint 3A (M3.5): structured emission from the QA reviewer for content-level fixes the reviewer cannot apply directly because of the CLAUDE.md §2.4 invariant (only compose_threat_model.py may write threat-model.md). Each action targets a fragment under .fragments/ — applied deterministically by scripts/apply_content_repair.py, then re-rendered via compose. Disjoint from .qa-repair-plan.json (which is for contract violations). The two plans can both fire in the same run.",
+  "description": "Sprint 3A (M3.5): structured emission from the QA reviewer for content-level fixes the reviewer cannot apply directly because of the CLAUDE.md §2.4 invariant (only renderers/compose_threat_model.py may write threat-model.md). Each action targets a fragment under .fragments/ — applied deterministically by scripts/repairs/apply_content_repair.py, then re-rendered via compose. Disjoint from .qa-repair-plan.json (which is for contract violations). The two plans can both fire in the same run.",
   "type": "object",
   "required": ["schema_version", "generated", "status", "actions"],
   "additionalProperties": false,

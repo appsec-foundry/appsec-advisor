@@ -10,13 +10,13 @@ INTERNAL AGENT — do not invoke directly. Dispatched by the orchestration contr
 
 ## Model identification
 
-This agent runs on the model passed via the Agent-tool `model` parameter at dispatch time (resolved from `$CONTEXT_RESOLVER_MODEL` — `haiku` under `--reasoning-model sonnet-economy`, otherwise `sonnet`). Use the `MODEL_ID` value passed in the prompt for all logging and the startup banner. The frontmatter `model: sonnet` is only a fallback for direct/test invocation; do NOT hardcode `sonnet` in log lines.
+This agent runs on the model passed via the Agent-tool `model` parameter at dispatch time (resolved from `$CONTEXT_RESOLVER_MODEL` — `haiku` at every depth and reasoning tier). Use the `MODEL_ID` value passed in the prompt for all logging and the startup banner. The frontmatter `model: sonnet` is only a fallback for direct/test invocation; do NOT hardcode `sonnet` in log lines.
 
 ## Progress format
 
 Every print statement in this agent uses the prefix `[context-resolver]`. Print each line immediately before performing the described action — do not batch prints at the end.
 
-## Mandatory logging — CRITICAL
+## Mandatory logging
 
 **Follow the logging standard in `shared/logging-standard.md`** (agent: `context-resolver`, model: `<MODEL_ID>` — the value passed in the prompt, NOT a hardcoded `sonnet`, event types: `STEP_START`/`STEP_END`). Write all log entries to `$OUTPUT_DIR/.agent-run.log`. Execute the startup logging command as your VERY FIRST Bash command, before any file reads. Log every step start/end, file write, error, and agent completion.
 
@@ -127,7 +127,7 @@ Two variables are passed from the orchestrator:
 - `CHECK_REQUIREMENTS` — `true` or `false` (default `false` if not present). Determines whether requirements are needed.
 - `REQUIREMENTS_URL_OVERRIDE` — a URL string (optional). If set, this URL takes precedence over the configured `requirements_yaml_url`.
 
-**If `$OUTPUT_DIR/.requirements.yaml` already exists and is non-empty:** the skill's deterministic **Requirements pre-fetch gate** (`scripts/fetch_requirements.py`, run before Stage 1) already resolved the source — it fetched the remote (or fell back to cache, or wrote the `skipped` stub) and would have **aborted the whole run** if a requested source was unreachable. Trust it: record `requirements_status` as `"skipped"` when its content is the `{"source": "skipped"}` stub, otherwise `"provided"`, and **skip the rest of Step 2b** (do NOT re-fetch). This is the normal path; the fetch logic below is the fallback for older orchestrators that did not run the gate.
+**If `$OUTPUT_DIR/.requirements.yaml` already exists and is non-empty:** the skill's deterministic **Requirements pre-fetch gate** (`scripts/requirements/fetch_requirements.py`, run before Stage 1) already resolved the source — it fetched the remote (or fell back to cache, or wrote the `skipped` stub) and would have **aborted the whole run** if a requested source was unreachable. Trust it: record `requirements_status` as `"skipped"` when its content is the `{"source": "skipped"}` stub, otherwise `"provided"`, and **skip the rest of Step 2b** (do NOT re-fetch). This is the normal path; the fetch logic below is the fallback for older orchestrators that did not run the gate.
 
 **If `CHECK_REQUIREMENTS=false`:** write stub `{source: "skipped", categories: [], blueprints: []}` to `$OUTPUT_DIR/.requirements.yaml`, store `requirements_status: "skipped"`. Print: `↳ Requirements: skipped (not requested)`. **Skip the rest of Step 2b** and continue to Step 3.
 
@@ -222,13 +222,13 @@ Log `AGENT_ERROR` with `requirements unavailable (CHECK_REQUIREMENTS=true) — a
 
 ### Step 3 — Read business context file
 
-**Print now:** `[context-resolver] ▶ Step 3/5 — Checking for docs/business-context.md…`
+**Print now:** `[context-resolver] ▶ Step 3/5 — Checking for docs/security/business-context.md…`
 
-Check whether `docs/business-context.md` exists in the repository root.
+Select `$OUTPUT_DIR/.business-context-input.md` when present; otherwise select `docs/security/business-context.md`, falling back to `docs/business-context.md` only when the new path is absent. Use the selected path as the source label below. Reject repository symlinks and paths resolving outside the repository.
 
 - If it exists, read it in full (up to 200 lines) and store the content **verbatim**. This file is purpose-written to inform threat modeling; summarizing it loses the precise language about revenue-critical flows, regulatory drivers, and security requirements that threat analysts need. If the file exceeds 200 lines, read the first 200 lines and append a note: `_(truncated at 200 lines)_`.
   **Print now:** `[context-resolver]   ↳ business-context.md: found — <word count> words`
-  Record `business_context_file: "found (docs/business-context.md)"` for the header table.
+  Record `business_context_file: "found (<selected path>)"` for the header table.
 - If it does not exist, record `business_context_file: "not found"` and continue.
   **Print now:** `[context-resolver]   ↳ business-context.md: not found`
 
@@ -352,7 +352,7 @@ Validate the complete input. Invalid team-provided threats are a blocking input 
 ```bash
 REPO_ROOT="<REPO_ROOT from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" known_threats "$REPO_ROOT/docs/known-threats.yaml"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_intermediate.py" known_threats "$REPO_ROOT/docs/known-threats.yaml"
 ```
 
 Print:
@@ -371,8 +371,8 @@ This step has two distinct sub-steps with different purposes:
 
 **Deterministic helpers (use these — do NOT re-implement the parsing in Bash + LLM):**
 
-- `scripts/load_related_repos.py` — validates `docs/related-repos.yaml` against `schemas/related-repos.schema.yaml`, fetches each `threat_model` reference, applies the documented severity/status/component filters, and writes `$OUTPUT_DIR/.related-repos-loaded.json`.
-- `scripts/build_cross_repo_register.py` — merges declared deps (output of the loader), sibling/submodule discovery, and Recon Section 7.25 into a single `$OUTPUT_DIR/.cross-repo-register.json` validated against `schemas/cross-repo-register.schema.json`.
+- `scripts/contexts/load_related_repos.py` — validates `docs/related-repos.yaml` against `schemas/related-repos.schema.yaml`, fetches each `threat_model` reference, applies the documented severity/status/component filters, and writes `$OUTPUT_DIR/.related-repos-loaded.json`.
+- `scripts/contexts/build_cross_repo_register.py` — merges declared deps (output of the loader), sibling/submodule discovery, and Recon Section 7.25 into a single `$OUTPUT_DIR/.cross-repo-register.json` validated against `schemas/cross-repo-register.schema.json`.
 
 Run them via Bash. Stage 1 builds the register from `docs/related-repos.yaml` (declared deep-read) + filesystem-sibling/`.gitmodules` discovery only — `--recon-summary` is intentionally **omitted** because `.recon-summary.md` does not exist yet. The controller rebuilds the register after recon to merge Category 25:
 
@@ -380,224 +380,17 @@ Run them via Bash. Stage 1 builds the register from `docs/related-repos.yaml` (d
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 REPO_ROOT="<REPO_ROOT from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/load_related_repos.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/contexts/load_related_repos.py" \
     --repo-root "$REPO_ROOT" \
     --output    "$OUTPUT_DIR/.related-repos-loaded.json"
 
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/build_cross_repo_register.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/contexts/build_cross_repo_register.py" \
     --repo-root      "$REPO_ROOT" \
     --declared-json  "$OUTPUT_DIR/.related-repos-loaded.json" \
     --output         "$OUTPUT_DIR/.cross-repo-register.json"
 ```
 
 Read the two JSON files to render the Markdown table in §5 (Step 5 below). All filtering, schema enforcement, finding-cap, outdated-detection, and dedup rules live in the helpers — the prompt only renders.
-
-The remainder of this sub-step (A1–A4, B0–B4 below) is retained as the **specification** that the helpers implement. It is no longer the runtime path — read the JSON output instead — but it documents the contract those scripts must honour. The deterministic helpers are drift-guarded by `tests/test_load_related_repos.py` and `tests/test_build_cross_repo_register.py`.
-
----
-
-**Sub-step A — Load declared dependencies from `docs/related-repos.yaml` (primary, specification)**
-
-Check whether `docs/related-repos.yaml` exists at `REPO_ROOT`.
-
-If it exists, validate minimal structure: the file must contain a top-level `related:` key that is a YAML list. Each entry must have at minimum `name` and `threat_model`. If the file exists but fails basic parsing, print a warning and continue with an empty declared list.
-
-For each entry in `related[]`:
-
-**A1 — Resolve the threat model path or URL.**
-
-The `threat_model` field accepts three forms:
-- Relative path (from `REPO_ROOT`): resolve to absolute.
-- Absolute local path: use as-is.
-- HTTP/HTTPS URL: fetch with `curl -sf --max-time 10`.
-
-```bash
-REPO_ROOT="<REPO_ROOT from the dispatch>"
-tm_field="<entry.threat_model>"
-if echo "$tm_field" | grep -qE '^https?://'; then
-  # HTTP fetch
-  TM_CONTENT=$(curl -sf --max-time 10 "$tm_field") && TM_SOURCE="remote" || TM_SOURCE="unavailable"
-elif echo "$tm_field" | grep -qE '^/'; then
-  # Absolute local path
-  [ -f "$tm_field" ] && TM_SOURCE="local" || TM_SOURCE="not found"
-else
-  # Relative path from REPO_ROOT
-  abs="$REPO_ROOT/$tm_field"
-  [ -f "$abs" ] && TM_SOURCE="local" && tm_field="$abs" || TM_SOURCE="not found"
-fi
-```
-
-**A2 — Read metadata.** From the resolved `threat-model.yaml` (local read or fetched content), extract:
-- `meta.generated` — last analysis timestamp
-- `meta.mode` — full or incremental
-- `meta.git.commit_sha`
-- `components[].name` — full list
-
-Mark as `outdated` if `meta.generated` is older than 90 days.
-
-**A3 — Read interface-relevant findings (deep-read).** This is the key step that distinguishes declared dependencies from auto-discovered siblings.
-
-Read the full `threats[]` (or `threat_categories[].findings[]` for schema v2) from the dependency's `threat-model.yaml`. Filter to findings that are relevant to the declared interface:
-
-1. **By status:** include only `status: open` findings. Skip `mitigated`, `accepted`, `false-positive`.
-2. **By severity:** include `Critical` and `High` unconditionally. Include `Medium` only when the finding's component matches `entry.components[]` (if declared).
-3. **By component (when `entry.components[]` is declared):** include only findings whose `component` field matches one of the declared component names. When `entry.components[]` is omitted, include findings from all components.
-4. **Context cap:** include at most 12 findings per dependency, prioritised by severity (Critical first, then High, then Medium). If more exist, record the count of excluded findings.
-
-For each included finding, extract:
-```yaml
-- id: <threat_id>          # e.g. T-042
-  title: <summary>
-  stride: <category>
-  cwe: <CWE-NNN>
-  severity: <Critical|High|Medium>
-  component: <component name in dependency>
-  status: open
-  evidence_file: <evidence.file if present, else null>
-```
-
-Do NOT include description, scenario text, or mitigation detail — title + CWE + severity is sufficient for the STRIDE analyzer to reason about propagation risk.
-
-**A4 — Record result.** For each entry, build a structured record:
-
-```yaml
-- name: <entry.name>
-  source: declared
-  interface: <entry.interface or null>
-  threat_model:
-    status: found | outdated | not found | unavailable
-    path: <resolved path or URL>
-    generated: <ISO timestamp or null>
-    commit_sha: <sha or null>
-    components: [<name>, ...]
-    threats_total: <int>
-    threats_critical: <int>
-    threats_high: <int>
-    threats_open: <int>
-  interface_findings:             # populated only when status is found or outdated
-    included: <int>
-    excluded_count: <int>         # findings above the cap
-    findings:
-      - id: T-042
-        title: "..."
-        stride: Spoofing
-        cwe: CWE-347
-        severity: High
-        component: "TokenService"
-        status: open
-        evidence_file: "src/auth/token.py"
-```
-
-Print per entry:
-- Found: `[context-resolver]     · <name> (<interface|no interface declared>): ✓ found (<n> open C/H findings loaded, <n> excluded)`
-- Outdated: `[context-resolver]     · <name>: ⚠ outdated (generated <date>) — <n> findings loaded`
-- Not found: `[context-resolver]     · <name>: ✗ not found at <path>`
-- Unavailable: `[context-resolver]     · <name>: ✗ unavailable (fetch failed: <url>)`
-
----
-
-**Sub-step B — Filesystem sibling and submodule discovery (secondary, discovery-only)**
-
-This sub-step annotates the C4 diagram and trust boundaries — it does NOT perform a findings deep-read.
-
-**B0 — Skip-when-no-signal (M3.1 perf fix).** Sub-step B is the dominant cost in Phase 1 on large monorepos: probing every sibling directory for `docs/security/threat-model.yaml` is O(N siblings) syscalls plus N ENOENT checks. Skip the entire sub-step when the repo gives no signal that cross-repo work is relevant — i.e. when **all** of the following are true:
-
-1. `docs/related-repos.yaml` is absent (no declared dependencies in Sub-step A).
-2. `.gitmodules` is absent at `REPO_ROOT` (no submodules to scan in B3).
-3. `WORKSPACE_ROOT` is the same as `$HOME` or `/`, OR contains zero or one sibling directories.
-
-```bash
-REPO_ROOT="<REPO_ROOT from the dispatch>"
-WORKSPACE_ROOT="$(dirname "$REPO_ROOT")"
-CURRENT_REPO_NAME="$(basename "$REPO_ROOT")"
-SIBLING_COUNT=$(find "$WORKSPACE_ROOT" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l)
-
-SKIP_SUBSTEP_B=false
-if [ ! -f "$REPO_ROOT/docs/related-repos.yaml" ] \
-   && [ ! -f "$REPO_ROOT/.gitmodules" ] \
-   && { [ "$WORKSPACE_ROOT" = "$HOME" ] || [ "$WORKSPACE_ROOT" = "/" ] || [ "${SIBLING_COUNT:-0}" -le 1 ]; }; then
-  SKIP_SUBSTEP_B=true
-  echo "[context-resolver]   ↳ Cross-repo discovery: skipped (no related-repos.yaml, no .gitmodules, workspace has ${SIBLING_COUNT:-0} siblings)"
-fi
-```
-
-When `SKIP_SUBSTEP_B=true`, write an empty `cross_repo_dependencies[]` register and continue to Step 5. Skip B1-B4 entirely.
-
-When `SKIP_SUBSTEP_B=false`, proceed with B1-B4 below.
-
-**B1 — Identify workspace root.**
-
-```bash
-REPO_ROOT="<REPO_ROOT from the dispatch>"
-WORKSPACE_ROOT="$(dirname "$REPO_ROOT")"
-CURRENT_REPO_NAME="$(basename "$REPO_ROOT")"
-```
-
-**B2 — Probe sibling directories.** List all sibling directories and check each for `docs/security/threat-model.yaml`. Skip any repo already in the declared list from Sub-step A.
-
-```bash
-REPO_ROOT="<REPO_ROOT from the dispatch>"
-WORKSPACE_ROOT="$(dirname "$REPO_ROOT")"
-CURRENT_REPO_NAME="$(basename "$REPO_ROOT")"
-for dir in "$WORKSPACE_ROOT"/*/; do
-  sibling="$(basename "$dir")"
-  [ "$sibling" = "$CURRENT_REPO_NAME" ] && continue
-  tm="$dir/docs/security/threat-model.yaml"
-  if [ -f "$tm" ]; then
-    echo "FOUND:$sibling:$tm"
-  else
-    echo "MISSING:$sibling"
-  fi
-done
-```
-
-**B3 — Probe `.gitmodules` paths.** If `.gitmodules` exists at `REPO_ROOT`, parse each submodule `path` and check for `<path>/docs/security/threat-model.yaml`. Skip repos already in the declared list.
-
-```bash
-REPO_ROOT="<REPO_ROOT from the dispatch>"
-if [ -f "$REPO_ROOT/.gitmodules" ]; then
-  grep 'path = ' "$REPO_ROOT/.gitmodules" | sed 's/.*path = //' | while read -r subpath; do
-    tm="$REPO_ROOT/$subpath/docs/security/threat-model.yaml"
-    if [ -f "$tm" ]; then
-      echo "SUBMODULE_FOUND:$subpath:$tm"
-    else
-      echo "SUBMODULE_MISSING:$subpath"
-    fi
-  done
-fi
-```
-
-**B4 — Read metadata only (no findings).** For each discovered sibling/submodule with a found `threat-model.yaml`, read only the first 100 lines to extract:
-- `meta.generated`, `meta.mode`, `meta.git.commit_sha`
-- `components[].name`
-- `threats[]` counts by severity and status
-
-Do NOT read findings detail. Record as:
-
-```yaml
-- name: <sibling name>
-  source: sibling | submodule
-  resolved_path: <absolute path>
-  threat_model:
-    status: found | missing | outdated
-    path: <absolute path or null>
-    generated: <ISO timestamp or null>
-    commit_sha: <sha or null>
-    threats_total: <int>
-    threats_critical: <int>
-    threats_high: <int>
-    threats_open: <int>
-    components: [<name>, ...]
-  interface_findings: null        # never populated for auto-discovered repos
-```
-
-Cap at 8 auto-discovered repos to avoid context bloat.
-
----
-
-**Build the combined cross-repo dependency register.** Merge Sub-step A (declared, with findings) and Sub-step B (discovered, counts only) into a single `cross_repo_dependencies[]` list. Declared entries always appear first.
-
-Store this register for inclusion in `.threat-modeling-context.md` (Step 5).
 
 **Print summary:**
 - `[context-resolver]   ↳ Cross-repo threat models: <n> declared (<n> with findings loaded), <n> auto-discovered (<n> found / <n> missing)`
@@ -627,8 +420,8 @@ Create `$OUTPUT_DIR` if it does not exist. Write `$OUTPUT_DIR/.threat-modeling-c
 | Repository | <REPO_ID> |
 | Repo Root | <REPO_ROOT> |
 | External Context | <provided | not configured | disabled | unavailable> |
-| Business Context File | <found (docs/business-context.md) | not found> |
-| Requirements YAML | <remote | cached | fallback | disabled | unavailable> |
+| Business Context File | <found (<selected path>) | not found> |
+| Requirements YAML | <remote | cached | provided | skipped> |
 | Known Threats | <n entries | not found | invalid> |
 | Related Repos | <n declared, n with findings | not declared> |
 | Cross-Repo TMs | <n found, n missing (auto-discovered) | no siblings> |
@@ -645,9 +438,9 @@ If not configured or unavailable: "No external context endpoint configured. Set 
 
 ## Business Context
 
-<untrusted-data source="docs/business-context.md">
-<Verbatim content of docs/business-context.md (up to 200 lines).
-If not found: "docs/business-context.md not present in this repository.">
+<untrusted-data source="<selected path>">
+<Verbatim content of the selected context file (up to 200 lines).
+If not found: "docs/security/business-context.md not present in this repository.">
 </untrusted-data>
 
 ## Security Policy
@@ -749,7 +542,7 @@ must be:
 ```bash
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_threat_modeling_context.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_threat_modeling_context.py" \
   --repair-missing-headings "$OUTPUT_DIR/.threat-modeling-context.md"
 ```
 
@@ -763,7 +556,7 @@ fails, correct the source document and run the same validator again.
 [context-resolver] ✓ Done — $OUTPUT_DIR/.threat-modeling-context.md written
   ↳ External context : <provided (REST: <url>)|not configured|disabled|unavailable>
   ↳ Business context : <found (<n> words)|not found>
-  ↳ Requirements YAML: <remote|cached|fallback|disabled|unavailable>
+  ↳ Requirements YAML: <remote|cached|provided|skipped>
   ↳ Known threats    : <n entries (<n> open, <n> accepted)|not found>
   ↳ Related repos    : <n declared, n with findings loaded | not declared>
   ↳ Cross-repo TMs   : <n found, n missing (auto-discovered) | no siblings detected>

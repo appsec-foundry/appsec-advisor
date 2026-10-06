@@ -21,29 +21,29 @@ import pytest
 
 PLUGIN_ROOT = Path(__file__).parent.parent
 SCRIPT = PLUGIN_ROOT / "scripts" / "auto_emitter_pass.sh"
-CONTROLLER = PLUGIN_ROOT / "scripts" / "orchestration_controller.py"
+CONTROLLER = PLUGIN_ROOT / "scripts" / "orchestrator/orchestration_controller.py"
 
 # The exact emitter sequence lifted from the inline block — order is contractual
 # (comments in the script explain each "runs AFTER/BEFORE" dependency).
 EXPECTED_SEQUENCE = [
-    "validate_evidence_lines.py",
-    "emit_meta_findings.py",
-    "emit_review_mitigations.py",
-    "emit_config_scan_mitigations.py",
-    "emit_finding_fix_mitigations.py",
-    "emit_clean_finding_titles.py",
-    "emit_general_mitigation_titles.py",
-    "hydrate_mitigation_details.py",
-    "sanitize_perimeter_claims.py",
-    "reclassify_components.py",
-    "enforce_control_taxonomy.py",
-    "emit_auth_coverage.py",
-    "emit_threat_vektors.py",
-    "emit_severity_rationale.py",
-    "detect_open_registration.py",
-    "detect_public_repo.py",
-    "enrich_asset_links.py",
-    "secret_scan.py",
+    "validators/validate_evidence_lines.py",
+    "model/emit_meta_findings.py",
+    "model/emit_review_mitigations.py",
+    "model/emit_config_scan_mitigations.py",
+    "model/emit_finding_fix_mitigations.py",
+    "model/emit_clean_finding_titles.py",
+    "model/emit_general_mitigation_titles.py",
+    "model/hydrate_mitigation_details.py",
+    "model/sanitize_perimeter_claims.py",
+    "model/reclassify_components.py",
+    "model/enforce_control_taxonomy.py",
+    "model/emit_auth_coverage.py",
+    "model/emit_threat_vektors.py",
+    "model/emit_severity_rationale.py",
+    "analyzers/detect_open_registration.py",
+    "analyzers/detect_public_repo.py",
+    "model/enrich_asset_links.py",
+    "validators/secret_scan.py",
 ]
 
 MINIMAL_YAML = "meta: {}\nthreats: []\nsecurity_controls: []\nassets: []\nmitigations: []\n"
@@ -78,7 +78,7 @@ def test_controller_calls_script_not_inline():
     controller = CONTROLLER.read_text(encoding="utf-8")
     assert 'str(SCRIPT_DIR / "auto_emitter_pass.sh")' in controller
     assert "_run_auto_emitter_pass(output_dir, cfg, receipts)" in controller
-    assert '"emit_meta_findings.py"' not in controller
+    assert '"model/emit_meta_findings.py"' not in controller
 
 
 def test_smoke_run_logs_markers_and_preserves_yaml(tmp_path):
@@ -148,7 +148,7 @@ def test_repeated_pass_does_not_duplicate_cards_or_controls(tmp_path, route):
     import json
 
     import yaml
-    from enrichment_pass import valid_receipt
+    from model.enrichment_pass import valid_receipt
 
     data = yaml.safe_load(MINIMAL_YAML)
     data["threats"] = [

@@ -1,4 +1,4 @@
-"""Additional coverage tests for scripts/agent_logger.py.
+"""Additional coverage tests for scripts/runtime/agent_logger.py.
 
 Targets the helper functions and handler branches that the existing
 test_agent_logger.py / test_agent_logger_checkpoint_abort.py suites do not
@@ -22,21 +22,21 @@ import threading
 import time
 from pathlib import Path
 
-import budget_watchdog
-import orchestration_controller
+import orchestrator.orchestration_controller as orchestration_controller
 import pytest
+import runtime.budget_watchdog as budget_watchdog
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "agent_logger.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "runtime/agent_logger.py"
 
 
 @pytest.fixture
 def al(tmp_path, monkeypatch):
     """Import agent_logger fresh with OUTPUT_DIR -> tmp_path."""
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
-    spec = importlib.util.spec_from_file_location("agent_logger", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("runtime.agent_logger", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["agent_logger"] = module
+    sys.modules["runtime.agent_logger"] = module
     assert spec.loader is not None
     with contextlib.redirect_stderr(io.StringIO()):
         spec.loader.exec_module(module)
@@ -340,6 +340,110 @@ class TestUsageFromTranscript:
         t = tmp_path / "t3.jsonl"
         t.write_text(json.dumps({"message": {"role": "user", "content": "hi"}}) + "\n")
         assert al._usage_from_transcript(str(t)) == {}
+
+    def test_output_completeness_counts_messages_without_a_final_usage(self, al, tmp_path):
+        # Only the record carrying stop_reason holds the message's final
+        # output_tokens; a message without one reports its streaming start value.
+        def line(message_id, stop_reason, output_tokens):
+            message = {"role": "assistant", "id": message_id, "stop_reason": stop_reason}
+            message["usage"] = {"input_tokens": 1, "output_tokens": output_tokens}
+            return json.dumps({"type": "assistant", "message": message})
+
+        t = tmp_path / "t4.jsonl"
+        t.write_text(
+            "\n".join([line("m1", None, 8), line("m1", "tool_use", 640), line("m2", None, 16), line("m3", None, 9)])
+        )
+        assert al._output_completeness(str(t)) == (2, 3)
+
+    def test_output_completeness_without_transcript_is_unknown(self, al):
+        assert al._output_completeness("") == (0, 0)
+        assert al._output_completeness("/no/such/file.jsonl") == (0, 0)
+
+    @staticmethod
+    def _line(message_id, block, **usage):
+        message = {"role": "assistant", "content": [{"type": block}], "usage": usage}
+        if message_id:
+            message["id"] = message_id
+        return json.dumps({"type": "assistant", "message": message})
+
+    @pytest.mark.parametrize(
+        ("lines", "per_message"),
+        [
+            pytest.param(
+                [("m1", "thinking"), ("m1", "text"), ("m1", "tool_use")],
+                [
+                    {
+                        "input_tokens": 3,
+                        "output_tokens": 40,
+                        "cache_creation_input_tokens": 900,
+                        "cache_read_input_tokens": 7000,
+                    }
+                ],
+                id="one-message-three-blocks",
+            ),
+            pytest.param(
+                [("m1", "text"), ("m2", "tool_use"), ("m2", "text")],
+                [
+                    {
+                        "input_tokens": 3,
+                        "output_tokens": 40,
+                        "cache_creation_input_tokens": 900,
+                        "cache_read_input_tokens": 7000,
+                    },
+                    {
+                        "input_tokens": 3,
+                        "output_tokens": 40,
+                        "cache_creation_input_tokens": 900,
+                        "cache_read_input_tokens": 7000,
+                    },
+                ],
+                id="two-messages",
+            ),
+            pytest.param(
+                [(None, "text"), (None, "text")],
+                [
+                    {
+                        "input_tokens": 3,
+                        "output_tokens": 40,
+                        "cache_creation_input_tokens": 900,
+                        "cache_read_input_tokens": 7000,
+                    },
+                    {
+                        "input_tokens": 3,
+                        "output_tokens": 40,
+                        "cache_creation_input_tokens": 900,
+                        "cache_read_input_tokens": 7000,
+                    },
+                ],
+                id="lines-without-id-each-count",
+            ),
+        ],
+    )
+    def test_each_api_message_counts_once(self, al, tmp_path, lines, per_message):
+        usage = per_message[0]
+        t = tmp_path / "blocks.jsonl"
+        t.write_text("\n".join(self._line(mid, block, **usage) for mid, block in lines) + "\n")
+        expected = {key: sum(row[key] for row in per_message) for key in usage}
+        assert al._usage_from_transcript(str(t)) == expected
+
+    def test_streamed_partial_output_counts_its_final_value(self, al, tmp_path):
+        t = tmp_path / "stream.jsonl"
+        t.write_text(
+            "\n".join(
+                [
+                    self._line("m1", "thinking", input_tokens=2, output_tokens=8, cache_read_input_tokens=500),
+                    self._line("m1", "tool_use", input_tokens=2, output_tokens=310, cache_read_input_tokens=500),
+                    json.dumps({"type": "user", "message": {"role": "user", "content": "tool result"}}),
+                ]
+            )
+            + "\n"
+        )
+        assert al._usage_from_transcript(str(t)) == {
+            "input_tokens": 2,
+            "output_tokens": 310,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 500,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -816,7 +920,7 @@ class TestHandleStop:
 
     def _register_bound_call(self, tmp_path, call_id="toolu_stopcase", agent_id="agentabc123"):
         sys.path.insert(0, str(SCRIPT_PATH.parent))
-        import agent_lifecycle
+        import runtime.agent_lifecycle as agent_lifecycle
 
         agent_lifecycle.register_call(
             tmp_path,

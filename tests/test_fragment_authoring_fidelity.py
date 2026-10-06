@@ -27,17 +27,17 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "compose_threat_model.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "renderers/compose_threat_model.py"
 RENDERER_DOC = REPO_ROOT / "agents" / "appsec-threat-renderer.md"
 POSTURE_SCHEMA = REPO_ROOT / "schemas" / "fragments" / "security-posture-attack-paths.schema.json"
 
 
 def _load_compose():
-    spec = importlib.util.spec_from_file_location("compose_threat_model", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("renderers.compose_threat_model", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
     # Register before exec so the @dataclass forward-ref resolution in
     # RenderContext can see the module in sys.modules (Python 3.10+).
-    sys.modules["compose_threat_model"] = module
+    sys.modules["renderers.compose_threat_model"] = module
     spec.loader.exec_module(module)
     return module
 

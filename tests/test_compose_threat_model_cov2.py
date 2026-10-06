@@ -1,4 +1,4 @@
-"""Additional coverage tests for scripts/compose_threat_model.py.
+"""Additional coverage tests for scripts/renderers/compose_threat_model.py.
 
 Targets the largest still-uncovered blocks after test_compose_threat_model.py
 and test_compose_threat_model_cov.py: the CLI ``main()`` paths (argparse,
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -23,7 +24,7 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT_PATH = REPO_ROOT / "scripts" / "compose_threat_model.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "renderers/compose_threat_model.py"
 CONTRACT = REPO_ROOT / "data" / "sections-contract.yaml"
 FIXTURE = Path(__file__).parent / "fixtures" / "compose"
 
@@ -37,7 +38,7 @@ def _load_module(name: str, path: Path):
     return mod
 
 
-compose = _load_module("compose_threat_model", SCRIPT_PATH)
+compose = _load_module("renderers.compose_threat_model", SCRIPT_PATH)
 
 
 def _prepare_output_dir(tmp_path: Path) -> Path:
@@ -67,7 +68,7 @@ class TestComposeOptimizationFlags:
         calls: list[Path] = []
         fake_qa = ModuleType("qa_checks")
         fake_qa.check_mermaid_syntax = lambda path: (calls.append(path) or SimpleNamespace(issues=[]))
-        monkeypatch.setitem(sys.modules, "qa_checks", fake_qa)
+        monkeypatch.setitem(sys.modules, "validators.qa_checks", fake_qa)
         monkeypatch.setattr(compose, "render", lambda *args, **kwargs: ("# Report\n", []))
 
         assert compose.main(["--output-dir", str(out), "--defer-mermaid-validation", "--skip-changelog-audit"]) == 0
@@ -76,10 +77,10 @@ class TestComposeOptimizationFlags:
     def test_skip_changelog_audit_omits_only_the_auxiliary_export(self, tmp_path, monkeypatch):
         out = tmp_path / "out"
         out.mkdir()
-        fake_audit = ModuleType("render_changelog_audit")
+        import renderers.render_changelog_audit as audit
+
         audit_calls: list[Path] = []
-        fake_audit.write_audit = lambda output_dir: audit_calls.append(output_dir)
-        monkeypatch.setitem(sys.modules, "render_changelog_audit", fake_audit)
+        monkeypatch.setattr(audit, "write_audit", lambda output_dir: audit_calls.append(output_dir))
         monkeypatch.setattr(compose, "render", lambda *args, **kwargs: ("# Report\n", []))
 
         assert compose.main(["--output-dir", str(out), "--defer-mermaid-validation", "--skip-changelog-audit"]) == 0
@@ -762,7 +763,8 @@ class TestRenderAppendixRunStatistics:
         assert "| Invocation |" in out
         # no per-stage / agent-dispatch / tokens blocks
         assert "### Per-Stage Breakdown" not in out
-        assert "No per-phase timing captured" in out
+        assert "Per-Phase Duration Breakdown" not in out
+        assert "No per-phase timing captured" not in out
         # --stride-cap row omitted when no cap is active
         assert "STRIDE per-category cap" not in out
 
@@ -770,7 +772,7 @@ class TestRenderAppendixRunStatistics:
         ctx = _bare_ctx(tmp_path, {"meta": {"stride_per_category_cap": 2}})
         out = compose._render_appendix_run_statistics(ctx, None, {})
         assert "| STRIDE per-category cap | 2 threat(s) per category" in out
-        assert "Critical-safe" in out
+        assert "Critical/High-safe" in out
 
     def test_reasoning_models_row_rendered(self, tmp_path):
         ctx = _bare_ctx(
@@ -778,6 +780,22 @@ class TestRenderAppendixRunStatistics:
         )
         out = compose._render_appendix_run_statistics(ctx, None, {})
         assert "| Reasoning models | STRIDE sonnet, triage opus, merger sonnet |" in out
+
+    def test_orchestrator_row_not_taken_from_stride_model(self, tmp_path):
+        # meta.model carries the STRIDE model; it must not be labelled as the
+        # orchestrator (session) model.
+        ctx = _bare_ctx(tmp_path, {"meta": {"model": "opus"}})
+        out = compose._render_appendix_run_statistics(ctx, None, {})
+        assert "Orchestrator model" not in out
+
+    def test_grouped_stage_row_names_every_agent(self, tmp_path):
+        (tmp_path / ".stage-stats.jsonl").write_text(
+            '{"stage": 2, "name": "Render", "agent": "appsec-advisor:appsec-secarch-renderer,'
+            'appsec-advisor:appsec-ms-renderer", "model": "s", "duration_ms": 1000, "tool_uses": 1, "tokens": 10}\n'
+        )
+        ctx = _bare_ctx(tmp_path, {"meta": {}})
+        out = compose._render_appendix_run_statistics(ctx, None, {})
+        assert "| appsec-secarch-renderer, appsec-ms-renderer |" in out
 
     def test_reasoning_models_row_omitted_when_unknown(self, tmp_path):
         ctx = _bare_ctx(tmp_path, {"meta": {}})
@@ -1046,6 +1064,8 @@ class TestRenderMitigationRegisterBranches:
         assert "Prevents CWEs" in rendered
         # extra-snippet block label for the second CWE class
         assert "Additional example implementation" in rendered
+        # A catalog snippet never claims to be code from the reported location.
+        assert "_Generic CWE-89 pattern, not code from this repository:_" in rendered
 
     def test_operational_strengths_all_demoted_empty_banner(self, tmp_path):
         out = _prepare_output_dir(tmp_path)
@@ -1094,6 +1114,46 @@ class TestRenderThreatCardEvidenceSnippet:
         assert "Raw SQL string concatenation" in rendered
         # snippet code block present (the real source line read from repo)
         assert "const q = 'SELECT ' + email;" in rendered
+
+    @staticmethod
+    def _render_snippet_block(tmp_path, source: str, rel: str, line: int, **threat) -> str:
+        out = _prepare_output_dir(tmp_path)
+        repo = tmp_path / "repo"
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(source)
+        (out / ".skill-config.json").write_text(json.dumps({"repo_root": str(repo)}))
+        data = _load_fixture_yaml(out)
+        data["threats"][0].update({"cwe": "CWE-89", "evidence": {"file": rel, "line": line}, **threat})
+        _write_yaml(out, data)
+        rendered, _ = compose.render(CONTRACT, out)
+        blocks = re.findall(r"```[a-z]*\n(.*?)\n```", rendered, re.S)
+        return next(b for b in blocks if "│" in b)
+
+    def test_single_location_snippet_is_numbered_without_header(self, tmp_path):
+        block = self._render_snippet_block(
+            tmp_path, "line1\nline2\nconst q = 'SELECT ' + email;\nline4\nline5\n", "routes/login.ts", 3
+        )
+        # The Location field names file:line, so no `// file:line` header line.
+        assert "routes/login.ts" not in block
+        assert "→ 3 │ const q = 'SELECT ' + email;" in block.splitlines()
+        # Window starts at the file's first line, not before it.
+        assert block.splitlines()[0].startswith("  1 │ ")
+
+    def test_consolidated_snippet_names_its_file_in_a_caption(self, tmp_path):
+        block = self._render_snippet_block(
+            tmp_path,
+            "a\nb\nuser = find(req.body.UserId)\nd\n",
+            "src/api/orders.py",
+            3,
+            instances=[
+                {"file": "src/api/orders.py", "line": 3, "severity": "critical"},
+                {"file": "src/api/carts.py", "line": 8, "severity": "high"},
+            ],
+        )
+        lines = block.splitlines()
+        # Plain caption: `//` is not a comment in Python, YAML or shell.
+        assert lines[0] == "src/api/orders.py"
+        assert "→ 3 │ user = find(req.body.UserId)" in lines
 
     def test_evidence_as_list_shape(self, tmp_path):
         out = _prepare_output_dir(tmp_path)
@@ -1477,3 +1537,20 @@ class TestRenderAbuseChainAndBoundaries:
         _write_yaml(out, data)
         rendered, _ = compose.render(CONTRACT, out)
         assert rendered
+
+
+class TestNumberSnippetLines:
+    def test_marks_only_the_evidence_line(self):
+        out = compose._number_snippet_lines("a\nb\nc", 41, 42)
+        assert out.splitlines() == ["  41 │ a", "→ 42 │ b", "  43 │ c"]
+
+    def test_aligns_numbers_across_a_digit_boundary(self):
+        out = compose._number_snippet_lines("a\nb\nc", 8, 9)
+        assert out.splitlines() == ["   8 │ a", "→  9 │ b", "  10 │ c"]
+
+    def test_blank_source_line_keeps_its_number(self):
+        out = compose._number_snippet_lines("a\n\nc", 1, 3)
+        assert out.splitlines() == ["  1 │ a", "  2 │", "→ 3 │ c"]
+
+    def test_evidence_line_outside_window_marks_nothing(self):
+        assert "→" not in compose._number_snippet_lines("a\nb", 5, 99)

@@ -1,4 +1,4 @@
-"""Tests for scripts/_severity_rollup.py — the shared finding-severity rules.
+"""Tests for scripts/renderers/_severity_rollup.py — the shared finding-severity rules.
 
 The module exists because two surfaces disagreed about the same model: the
 report bucketed findings on `risk` while the show-threat-model overview ranked
@@ -14,7 +14,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-import _severity_rollup as sr  # noqa: E402,I001
+import renderers._severity_rollup as sr  # noqa: E402,I001
 
 
 # ---------------------------------------------------------------------------
@@ -175,10 +175,12 @@ def test_weakness_basis_breakdown_none_without_register():
 def test_weakness_basis_breakdown_excludes_design_sources_and_bad_evidence():
     data = _model(
         [
-            {"risk": "High"},
-            {"risk": "High", "source": "coverage-gap"},
+            {"risk": "High", "evidence_check": "verified"},
+            {"risk": "High", "source": "coverage-gap", "evidence_check": "verified"},
             {"risk": "High", "evidence_check": "refuted"},
-            {"risk": "High", "evidence_tier": "insecure-practice"},
+            {"risk": "High", "evidence_check": "unchecked"},
+            {"risk": "High"},
+            {"risk": "High", "evidence_tier": "insecure-practice", "evidence_check": "verified"},
         ],
         weaknesses=[
             {"kind": "implementation"},
@@ -191,10 +193,38 @@ def test_weakness_basis_breakdown_excludes_design_sources_and_bad_evidence():
     assert combined == 4
 
 
+@pytest.mark.parametrize("with_register", [True, False])
+def test_finding_confirmation_counts_the_risk_distribution_findings(with_register):
+    """In "X of N findings confirmed", N is exactly the threats the Risk distribution
+    tallies (no design-risk weakness, no folded practice site), and X is the
+    finding-state authority, so a stored tier alone confirms nothing."""
+    threats = [
+        {"risk": "High", "evidence_tier": "confirmed-exploitable", "evidence_check": "verified"},
+        {"risk": "Medium", "evidence_tier": "confirmed-exploitable", "evidence_check": "ambiguous"},
+        {"risk": "Medium", "evidence_tier": "confirmed-exploitable"},
+        {"risk": "High", "source": "coverage-gap", "evidence_check": "verified"},
+        {"risk": "High", "evidence_tier": "insecure-practice", "evidence_check": "verified"},
+        {"risk": "Critical", "evidence_check": "refuted"},
+        {"risk": "unrated", "evidence_check": "verified"},
+    ]
+    weaknesses = (
+        [{"kind": "design", "severity_basis": "design-risk", "severity": "Critical"}, {"kind": "implementation"}]
+        if with_register
+        else []
+    )
+    data = _model(threats, weaknesses=weaknesses)
+    confirmed, findings = sr.finding_confirmation(data)
+    design_risk = sum(1 for w in weaknesses if w.get("severity_basis") == "design-risk")
+    assert findings == sum(sr.risk_distribution_counts(data).values()) - design_risk
+    assert findings == (5 if with_register else 6)
+    assert confirmed == 1
+    assert 0 <= confirmed <= findings
+
+
 def test_composer_delegates_to_this_module():
     """The composer's Management-Summary tally and this module must not drift
     apart again — they are the same function."""
-    import compose_threat_model as compose
+    import renderers.compose_threat_model as compose
 
     data = _model(
         [{"risk": "Critical"}, {"risk": "High", "evidence_tier": "insecure-practice"}],
@@ -234,3 +264,68 @@ def test_low_cell_reports_na_only_when_nothing_could_be_counted():
     assert sr.low_cell({"meta": {"register_severity_floor": "medium"}}, counts) == "n/a"
     assert sr.low_cell({"meta": {"register_severity_floor": "low"}}, counts) == "0"
     assert sr.low_cell({"meta": {"register_severity_floor": "low"}}, {"low": 3}) == "3"
+
+
+# ---------------------------------------------------------------------------
+# per-finding display basis (RA-20)
+# ---------------------------------------------------------------------------
+
+_DISPLAY_SHAPES = [
+    pytest.param({"risk": "High", "effective_severity": "Critical", "chain_role": "keystone"}, id="chain-elevated"),
+    pytest.param({"risk": "Medium", "effective_severity": "High", "chain_role": "contributor"}, id="contributor"),
+    pytest.param({"risk": "Critical", "effective_severity": "Critical"}, id="same-rating"),
+    pytest.param({"severity": "Low"}, id="legacy-severity"),
+    pytest.param({"risk": "high"}, id="lower-case"),
+]
+
+
+@pytest.mark.parametrize("shape", _DISPLAY_SHAPES)
+def test_every_per_finding_surface_shows_the_register_severity(tmp_path, shape):
+    """A finding's dot, index entry and walkthrough phrase all equal its §8 heading."""
+    import renderers.compose_threat_model as compose
+    import renderers.walkthrough_renderer as wr
+
+    threat = {"id": "T-001", "title": "X", **shape}
+    expected = sr.register_severity(threat)
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={"threats": [threat]},
+        triage={},
+        fragments_dir=tmp_path / ".fragments",
+    )
+    assert ctx.severity_for_ref("F-001") == expected
+    assert compose._severity_by_finding_num([threat])[1] == (expected or "low").lower()
+    phrase = wr.SEVERITY_PHRASES.get(expected.lower(), wr.SEVERITY_PHRASES["high"])
+    assert wr.render_business_impact(threat, []).startswith(phrase)
+
+
+@pytest.mark.parametrize(
+    "threats,weaknesses,expected",
+    [
+        ([{"id": "T-081", "risk": "Critical"}], [], "red"),
+        ([{"id": "F-207", "risk": "Medium", "effective_severity": "Critical"}], [], "red"),
+        ([{"id": "T-081", "risk": "High"}], [], "yellow"),
+        ([{"id": "T-081", "risk": "Medium"}], [], "green"),
+        ([{"id": "T-081", "risk": "Critical", "evidence_check": "refuted"}], [], "green"),
+        ([], [{"id": "W-031", "kind": "design", "severity_basis": "design-risk", "severity": "Critical"}], "red"),
+        ([], [{"id": "W-044", "kind": "design", "severity_basis": "design-risk", "severity": "High"}], "yellow"),
+        ([], [{"id": "W-031", "severity_basis": "observed-practice", "severity": "Critical"}], "green"),
+    ],
+)
+def test_verdict_concern_basis(threats, weaknesses, expected):
+    import copy
+
+    model = {"threats": threats, "weaknesses": weaknesses}
+    before = copy.deepcopy(model)
+    assert sr.verdict_severity(model) == expected
+    assert model == before  # overall concern never rewrites a finding's rating/evidence
+
+
+def test_verdict_practice_concern_does_not_claim_confirmation():
+    model = {
+        "threats": [{"id": "T-081", "risk": "High", "evidence_tier": "insecure-practice"}],
+        "weaknesses": [{"id": "W-001", "kind": "implementation", "severity_basis": "observed-practice"}],
+    }
+    assert sr.verdict_basis(model) == {"F-081": "High"}
+    assert sr.weakness_basis_breakdown(model)[1] == 0

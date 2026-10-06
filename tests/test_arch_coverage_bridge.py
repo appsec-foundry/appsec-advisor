@@ -9,13 +9,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).parent.parent
-BRIDGE = REPO_ROOT / "scripts" / "arch_coverage_to_threats.py"
-VALIDATOR = REPO_ROOT / "scripts" / "validate_intermediate.py"
+BRIDGE = REPO_ROOT / "scripts" / "analyzers/arch_coverage_to_threats.py"
+VALIDATOR = REPO_ROOT / "scripts" / "validators/validate_intermediate.py"
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
-import arch_coverage_to_threats as bridge  # noqa: E402
-import validate_intermediate as vi  # noqa: E402
+import analyzers.arch_coverage_to_threats as bridge  # noqa: E402
+import validators.validate_intermediate as vi  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Validator: new sources, CVSS-forbidden, rule_id discipline
@@ -462,7 +464,7 @@ def test_end_to_end_bridge_via_cli(tmp_path: Path) -> None:
     subprocess.run(
         [
             sys.executable,
-            str(REPO_ROOT / "scripts" / "route_inventory.py"),
+            str(REPO_ROOT / "scripts" / "analyzers/route_inventory.py"),
             "--repo-root",
             str(repo),
             "--output-dir",
@@ -474,7 +476,7 @@ def test_end_to_end_bridge_via_cli(tmp_path: Path) -> None:
     subprocess.run(
         [
             sys.executable,
-            str(REPO_ROOT / "scripts" / "architecture_coverage_checks.py"),
+            str(REPO_ROOT / "scripts" / "analyzers/architecture_coverage_checks.py"),
             "--repo-root",
             str(repo),
             "--output-dir",
@@ -847,6 +849,75 @@ def test_build_design_signals_theme_maps_authz_and_authn():
     }
     signals, _ = bridge.build_design_signals(coverage)
     assert {s["weakness_class"] for s in signals} == {"missing_authz", "broken_auth"}
+
+
+def test_control_names_preserve_source_provenance_and_explicit_mechanism():
+    evidence = {"file": "ui/preview.ts", "line": 7, "signal": "raw HTML bypass"}
+    signals, _ = bridge.build_design_signals(
+        {
+            "threat_hypotheses": [
+                {
+                    "cwe": "CWE-79",
+                    "proof_state": "control-derived",
+                    "weakness_mechanism": "frontend-output-encoding",
+                    "weak_or_missing_controls": ["Contextual escaping"],
+                    "positive_signals": [evidence],
+                }
+            ]
+        }
+    )
+    assert signals[0]["absent_control_signal"] == ["Contextual escaping", evidence]
+    assert signals[0]["mechanism_id"] == "frontend-output-encoding"
+
+
+@pytest.mark.parametrize(
+    ("cwe", "theme", "mechanism", "file", "expected_class"),
+    [
+        ("CWE-79", "InputValidation", "frontend-output-encoding", "ui/results.ts", "output_xss_csp"),
+        ("CWE-80", "InputValidation", "frontend-output-encoding", "client/preview.js", "output_xss_csp"),
+        ("CWE-922", "DataProtection", "browser-clients-without-bff", "web/session.js", "sensitive_disclosure"),
+        ("CWE-89", "InputValidation", "database-query-concatenation", "api/lookup.py", "injection"),
+    ],
+)
+def test_specific_cwe_preserves_mechanism_instances(cwe, theme, mechanism, file, expected_class):
+    from model.merge_threats import build_weakness_register
+
+    coverage = {
+        "rules_evaluated": [{"rule_id": "R1", "weakness_mechanism": mechanism}],
+        "threat_hypotheses": [
+            {
+                "rule_id": "R1",
+                "cwe": cwe,
+                "architectural_theme": theme,
+                "proof_state": "control-derived",
+                "positive_signals": [{"file": file, "line": 7, "signal": "observed unsafe mechanism"}],
+            }
+        ],
+    }
+    signals, dropped = bridge.build_design_signals(coverage)
+    assert dropped == []
+    assert signals[0]["weakness_class"] == expected_class
+    threats = [
+        {
+            "t_id": "T-001",
+            "source": "stride",
+            "cwe": cwe,
+            "component_id": "component-a",
+            "risk": "High",
+            "evidence": {"file": file, "line": 7},
+        },
+        {
+            "t_id": "T-002",
+            "source": "stride",
+            "cwe": "CWE-611",
+            "risk": "High",
+            "evidence": {"file": "parser/document.py", "line": 12},
+        },
+    ]
+    weaknesses = build_weakness_register(threats, signals)
+    assert len(weaknesses) == 1
+    assert weaknesses[0]["mechanism_id"] == mechanism
+    assert [i["id"] for i in weaknesses[0]["instances"]] == ["T-001"]
 
 
 def test_emit_design_signals_cli(tmp_path):

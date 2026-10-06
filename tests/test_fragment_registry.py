@@ -1,4 +1,4 @@
-"""Test for scripts/check_fragment_registry.py — fragment-registry drift gate."""
+"""Test for scripts/validators/check_fragment_registry.py — fragment-registry drift gate."""
 
 from __future__ import annotations
 
@@ -8,13 +8,13 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "check_fragment_registry.py"
+SCRIPT = REPO_ROOT / "scripts" / "validators/check_fragment_registry.py"
 
 
 def _import_module():
-    spec = importlib.util.spec_from_file_location("check_fragment_registry", SCRIPT)
+    spec = importlib.util.spec_from_file_location("validators.check_fragment_registry", SCRIPT)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["check_fragment_registry"] = mod
+    sys.modules["validators.check_fragment_registry"] = mod
     spec.loader.exec_module(mod)
     return mod
 
@@ -28,8 +28,8 @@ def test_registry_clean_against_head():
         cwd=REPO_ROOT,
     )
     assert proc.returncode == 0, (
-        "Fragment-registry drift detected. The maps in compose_threat_model.py, "
-        "validate_fragment.py, qa_checks.py must stay aligned with "
+        "Fragment-registry drift detected. The maps in renderers/compose_threat_model.py, "
+        "validators/validate_fragment.py, validators/qa_checks.py must stay aligned with "
         "data/sections-contract.yaml and schemas/fragments/. "
         f"Linter output:\n{proc.stderr}"
     )

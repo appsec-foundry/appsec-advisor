@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import project_run_cost as prc
+import runtime.project_run_cost as prc
 
 
 def _cache(output_dir: Path, **fields: object) -> None:

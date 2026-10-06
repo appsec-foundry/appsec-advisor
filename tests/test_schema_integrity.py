@@ -3,7 +3,7 @@
 These tests enforce:
 
   * Every schema file is itself valid JSON-Schema (draft 2020-12).
-  * Every schema registered in `validate_fragment.py` has a file on disk, and
+  * Every schema registered in `validators/validate_fragment.py` has a file on disk, and
     every file on disk has a registry entry.
   * Cross-schema ID-pattern consistency (F-NNN, M-NNN, C-NN, TH-NN, CC-NN
     use identical regex shape).
@@ -27,7 +27,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 SCHEMAS_DIR = REPO_ROOT / "schemas" / "fragments"
-VALIDATE_PY = REPO_ROOT / "scripts" / "validate_fragment.py"
+VALIDATE_PY = REPO_ROOT / "scripts" / "validators/validate_fragment.py"
 
 
 def test_figure1_optional_labels_are_bounded_across_artifact_schemas():
@@ -55,6 +55,20 @@ def test_figure1_optional_labels_are_bounded_across_artifact_schemas():
     assert validator.is_valid("Template Injection Reads Private Records")
     for value in ("", "Injection", None, "x" * 61, "two lines\nwith text"):
         assert not validator.is_valid(value)
+
+
+def test_attack_path_schema_admits_one_entry_per_taxonomy_class():
+    import yaml
+
+    taxonomy = yaml.safe_load((REPO_ROOT / "data" / "attack-class-taxonomy.yaml").read_text())
+    class_ids = [c["id"] for c in taxonomy["classes"]]
+    schema = json.loads((SCHEMAS_DIR / "security-posture-attack-paths.schema.json").read_text())
+    paths = schema["properties"]["attack_paths"]
+    assert paths["items"]["properties"]["class"]["enum"] == class_ids
+    assert paths["maxItems"] == len(class_ids)
+    assert len(taxonomy["glyph_sequence"]) >= len(class_ids)
+    count_words = r"\b(?:one|two|three|four|five|six|seven|eight|nine|ten)\s+numbered\b"
+    assert not re.search(count_words, schema["description"]), "class count belongs to the taxonomy"
 
 
 def test_external_entity_access_is_consistent_and_role_only():
@@ -90,10 +104,78 @@ def test_external_entity_access_is_consistent_and_role_only():
             assert not validator.is_valid({**entity, "access": access})
 
 
+def test_capability_vocabulary_matches_every_artifact_schema():
+    import yaml
+
+    vocabulary = yaml.safe_load((REPO_ROOT / "data/security-capabilities.yaml").read_text())
+    capabilities, roles = list(vocabulary["component_capabilities"]), list(vocabulary["service_roles"])
+    assert capabilities and roles and not set(capabilities) & set(roles)
+    for entry in [*vocabulary["component_capabilities"].values(), *vocabulary["service_roles"].values()]:
+        for label in (entry["label"], entry.get("identity_provider_label", entry["label"])):
+            assert label.strip() == label and 0 < len(label) <= 28
+    cwes = []
+    for group in ("component_capabilities", "service_roles"):
+        for value, entry in vocabulary[group].items():
+            assert set(entry.get("implies") or []) <= set(vocabulary[group]) - {value}
+            assert entry.get("tier") in {1, 2, 3, 4}, value
+            for implied in entry.get("implies") or []:
+                assert vocabulary[group][implied]["tier"] >= entry["tier"], (value, implied)
+            cwes += entry.get("cwes") or []
+    assert len(cwes) == len(set(cwes)) and all(re.fullmatch(r"CWE-[1-9]\d*", cwe) for cwe in cwes)
+    assert not any("cwes" in entry for entry in vocabulary["service_roles"].values())
+    schema_root = REPO_ROOT / "schemas"
+    fragment = json.loads((schema_root / "fragments/components.schema.json").read_text())
+    canonical = yaml.safe_load((schema_root / "threat-model.output.schema.yaml").read_text())
+    component_fields = [
+        fragment["properties"]["components"]["items"]["properties"]["capabilities"],
+        canonical["properties"]["components"]["items"]["properties"]["capabilities"],
+    ]
+    assert component_fields[0]["items"] == component_fields[1]["items"]
+    assert component_fields[0]["items"]["properties"]["capability"]["enum"] == capabilities
+    entity_schemas = [
+        yaml.safe_load((schema_root / name).read_text())["properties"]["external_entities"]["items"]
+        for name in (
+            "fragments/data-flows.schema.json",
+            "trust-boundary-assessment-input.schema.json",
+            "threat-model.output.schema.yaml",
+        )
+    ]
+    evidence = [{"file": "src/client.ts", "line": 3}]
+    service = {
+        "id": "ext-model",
+        "name": "Model",
+        "kind": "external-service",
+        "description": "LLM",
+        "evidence": evidence,
+    }
+    for schema in entity_schemas:
+        assert schema["properties"]["service_roles"]["items"]["properties"]["role"]["enum"] == roles
+        validator = jsonschema.Draft202012Validator(schema)
+        assert validator.is_valid({**service, "service_roles": [{"role": roles[0], "evidence": evidence}]})
+        assert validator.is_valid(
+            {**service, "kind": "identity-provider", "service_roles": [{"role": roles[0], "evidence": evidence}]}
+        )
+        for invalid in (
+            {**service, "kind": "legitimate-role", "service_roles": [{"role": roles[0], "evidence": evidence}]},
+            {**service, "service_roles": [{"role": "unknown-role", "evidence": evidence}]},
+            {**service, "service_roles": [{"role": roles[0], "evidence": []}]},
+            {**service, "service_roles": [{"role": capabilities[0], "evidence": evidence}]},
+        ):
+            assert not validator.is_valid(invalid)
+    component_validator = jsonschema.Draft202012Validator(component_fields[1])
+    assert component_validator.is_valid([{"capability": capabilities[0], "evidence": evidence}])
+    for invalid in (
+        [{"capability": roles[0], "evidence": evidence}],
+        [{"capability": capabilities[0]}],
+        [{"capability": capabilities[0], "evidence": [{"file": "/etc/passwd", "line": 1}]}],
+    ):
+        assert not component_validator.is_valid(invalid)
+
+
 def _load_validate_fragment_module():
-    spec = importlib.util.spec_from_file_location("validate_fragment", VALIDATE_PY)
+    spec = importlib.util.spec_from_file_location("validators.validate_fragment", VALIDATE_PY)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["validate_fragment"] = module
+    sys.modules["validators.validate_fragment"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
@@ -144,7 +226,7 @@ def test_every_schema_validates_against_json_schema_draft_2020_12(schema_files):
 def test_every_registered_schema_exists_on_disk(registry):
     missing = [(ft, fn) for ft, fn in registry.items() if not (SCHEMAS_DIR / fn).is_file()]
     assert not missing, (
-        f"validate_fragment.py registers schemas that don't exist: {missing}\n"
+        f"validators/validate_fragment.py registers schemas that don't exist: {missing}\n"
         "Add the schema file or remove the registry entry."
     )
 
@@ -309,3 +391,33 @@ def test_every_schema_declares_title_and_id(schema_files):
         if "$id" not in schema:
             missing.append(f"{path.name}: missing '$id'")
     assert not missing, "\n".join(missing)
+
+
+def test_stride_lens_contracts_share_bounded_plugin_owned_names():
+    import yaml
+
+    expected = {"agentic", "llm", "mcp", "mobile", "rag", "spa", "supply-chain"}
+    manifest = yaml.safe_load((REPO_ROOT / "schemas/stride-dispatch-manifest.schema.yaml").read_text())
+    plans = json.loads((REPO_ROOT / "schemas/stride-component-context-plan.schema.json").read_text())
+    action = json.loads((REPO_ROOT / "schemas/orchestration-action.schema.json").read_text())
+
+    def walk(value):
+        if isinstance(value, dict):
+            if "lens_ids" in value:
+                yield value["lens_ids"]
+            for child in value.values():
+                yield from walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from walk(child)
+
+    for schema in (manifest, plans, action):
+        fields = list(walk(schema))
+        assert fields
+        for field in fields:
+            assert set(field["items"]["enum"]) == expected
+            assert field["maxItems"] == len(expected)
+    prompt = (REPO_ROOT / "agents/appsec-stride-analyzer-v2.md").read_text()
+    for lens in ("rag", "mcp"):
+        assert f"agents/stride-lenses/{lens}.md" in prompt
+        assert (REPO_ROOT / f"agents/stride-lenses/{lens}.md").is_file()

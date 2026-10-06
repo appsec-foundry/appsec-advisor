@@ -1,4 +1,4 @@
-"""Unit tests for scripts/phase_budgets.py — shared phase budget loader."""
+"""Unit tests for scripts/runtime/phase_budgets.py — shared phase budget loader."""
 
 from __future__ import annotations
 
@@ -9,13 +9,13 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "phase_budgets.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "runtime/phase_budgets.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("phase_budgets", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("runtime.phase_budgets", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["phase_budgets"] = module
+    sys.modules["runtime.phase_budgets"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
@@ -296,7 +296,7 @@ def test_budgets_for_depth_returns_fresh_copy():
 
 def test_main_no_args_prints_full_json(capsys):
     pb = _load()
-    rc = pb.main(["phase_budgets.py"])
+    rc = pb.main(["runtime/phase_budgets.py"])
     assert rc == 0
     out = capsys.readouterr().out
     import json as _json
@@ -307,7 +307,7 @@ def test_main_no_args_prints_full_json(capsys):
 
 def test_main_phase_arg_prints_bare_threshold(capsys):
     pb = _load()
-    rc = pb.main(["phase_budgets.py", "9", "--depth", "quick"])
+    rc = pb.main(["runtime/phase_budgets.py", "9", "--depth", "quick"])
     assert rc == 0
     out = capsys.readouterr().out.strip()
     assert out == "270"  # 180 * 1.5
@@ -315,7 +315,7 @@ def test_main_phase_arg_prints_bare_threshold(capsys):
 
 def test_main_phase_arg_json_flag(capsys):
     pb = _load()
-    rc = pb.main(["phase_budgets.py", "9", "--depth", "quick", "--multiplier", "1.0", "--json"])
+    rc = pb.main(["runtime/phase_budgets.py", "9", "--depth", "quick", "--multiplier", "1.0", "--json"])
     assert rc == 0
     import json as _json
 

@@ -81,8 +81,8 @@ def output_dir(tmp_path: Path) -> Path:
 def threat_factory() -> Callable[..., dict[str, Any]]:
     """Build a threat dict suitable for STRIDE / merger / triage fixtures.
 
-    The defaults match the structure that `merge_threats.py`,
-    `validate_intermediate.py`, and the STRIDE analyzer expect. Override any
+    The defaults match the structure that `model/merge_threats.py`,
+    `validators/validate_intermediate.py`, and the STRIDE analyzer expect. Override any
     field via keyword argument:
 
         threat = threat_factory(t_id="T-042", severity="Critical")
@@ -134,20 +134,20 @@ def run_plugin_script() -> Callable[..., subprocess.CompletedProcess[str]]:
     that just wrap `subprocess.run([python, <script>, *args])`.
 
     Usage:
-        result = run_plugin_script("plugin_meta.py", "get", "plugin_version")
+        result = run_plugin_script("runtime/plugin_meta.py", "get", "plugin_version")
         assert result.returncode == 0
         assert "0.9" in result.stdout
 
         # Pass stdin (for hook scripts that read JSON from stdin)
-        result = run_plugin_script("agent_logger.py", stdin={"tool_name": "..."})
+        result = run_plugin_script("runtime/agent_logger.py", stdin={"tool_name": "..."})
 
         # Override cwd / env
-        result = run_plugin_script("stride_progress.py", "/tmp/out", "3",
+        result = run_plugin_script("runtime/stride_progress.py", "/tmp/out", "3",
                                    cwd=my_tmp_path,
                                    env={"CLAUDE_PLUGIN_ROOT": str(plugin_root)})
 
     Arguments:
-        script_name : file name under scripts/ (e.g. "plugin_meta.py").
+        script_name : file name under scripts/ (e.g. "runtime/plugin_meta.py").
                       Absolute paths are accepted as-is.
         *args       : positional CLI arguments.
         stdin       : optional dict → JSON-encoded as stdin; or a str → as-is.
@@ -269,7 +269,7 @@ def run_logger(
     output_dir: Path,
     plugin_root: Path,
 ) -> Callable[..., tuple[int, str]]:
-    """Run agent_logger.py with a hook event; return (returncode, log_content).
+    """Run runtime/agent_logger.py with a hook event; return (returncode, log_content).
 
     Bundles the three most common moving parts — output_dir, plugin_root env,
     and a stdin-fed hook event — into a single call. Replaces the
@@ -290,7 +290,7 @@ def run_logger(
         # runs with cwd = repo-root (the parent of docs/)
         repo_root = output_dir.parent.parent
         result = run_plugin_script(
-            "agent_logger.py",
+            "runtime/agent_logger.py",
             stdin=event,
             cwd=repo_root,
             env={"CLAUDE_PLUGIN_ROOT": str(plugin_root)},

@@ -1,6 +1,6 @@
 # source-auth-checks.yaml — deterministic source-code authorization + injection checks
 #
-# Used by `scripts/source_auth_scanner.py`. Each check targets a specific
+# Used by `scripts/analyzers/source_auth_scanner.py`. Each check targets a specific
 # privilege-escalation / broken-access-control pattern in source code
 # (Node/Express + TypeScript for AUTHZ-001..008; Python and Java for the
 # AUTHZ-1xx/2xx mass-assignment + JWT checks) and emits a finding when the
@@ -20,11 +20,16 @@
 #   pattern                  — primary regex (must match for finding)
 #   counter_window           — lines AFTER match to scan for counter-pattern
 #                              (0 = same line only; default 5)
-#   counter_scope            — line | window | call (default: window)
+#   counter_scope            — line | window | call | block (default: window)
 #                              `line`  : only the matched line
 #                              `window`: match_line .. match_line + counter_window
 #                              `call`  : match_line until balanced close-paren
 #                                        or counter_window lines (whichever first)
+#                              `block` : match_line until the enclosing block
+#                                        ends or a sibling declaration starts,
+#                                        capped at counter_window
+#   skip_rejecting_guard     — true drops a hit on a line that rejects the
+#                              request (`if … return/throw/raise`)
 #   counter_patterns         — list of regexes; ANY match suppresses the finding
 #   required_context_patterns — list of regexes; at least one must match in the
 #                               configured scope before the finding is emitted
@@ -85,11 +90,11 @@ checks:
     finding_type: FT-040
     breach_vector: "Internet User"
     rationale: >
-      Server-side authorization MUST derive the resource owner from the
-      authenticated session (req.user / req.session / req.auth), never
-      from attacker-controlled request data. Trusting req.body.UserId
-      etc. enables horizontal privilege escalation across all
-      authenticated tenants.
+      A signed-in attacker puts another user's ID into the owner field of
+      the request (req.body.UserId and the like); the query trusts it
+      instead of the session identity, so the attacker reads or changes
+      every other user's records — horizontal privilege escalation across
+      all accounts.
     remediation: "Replace req.body.UserId/userId/ownerId with req.user.id (or equivalent session-derived identity) in every WHERE/filter clause."
 
   # ===================================================================
@@ -146,16 +151,18 @@ checks:
 
   # ===================================================================
   # AUTHZ-003 — Mass assignment of privileged fields
-  # Direct references to req.body.{role,isAdmin,permissions,...} accept
-  # role-elevating data without server-side stripping or allowlisting.
+  # A req.body.{role,isAdmin,permissions,...} read counts only when the
+  # same block writes a privileged field or persists a record; a read that
+  # only compares or rejects the field is not mass assignment.
   # ===================================================================
   - id: AUTHZ-003
     name: "Mass assignment — privileged field accepted from request body"
     description: >
-      The handler reads or persists a privileged attribute (role /
-      isAdmin / permissions / scope / privileges / roleId / tenantId)
-      directly from req.body. Without an allowlist filter the client
-      can self-elevate by including the field in the JSON payload.
+      The handler reads a privileged attribute (role / isAdmin /
+      permissions / scope / privileges / roleId / tenantId) directly from
+      req.body and writes or persists it in the same block. Without an
+      allowlist filter the client can self-elevate by including the field
+      in the JSON payload.
     file_patterns:
       - "**/*.ts"
       - "**/*.tsx"
@@ -175,8 +182,14 @@ checks:
       - "**/build/**"
       - "**/coverage/**"
     pattern: 'req\.body\.(role|isAdmin|is_admin|isStaff|is_staff|isSuperuser|is_superuser|admin|administrator|permissions?|privileges?|scopes?|roleId|role_id|userType|user_type)\b'
-    counter_scope: window
+    counter_scope: block
     counter_window: 8
+    skip_rejecting_guard: true
+    required_context_patterns:
+      - '\.\s*(?:role|isAdmin|is_admin|isStaff|is_staff|isSuperuser|is_superuser|admin|administrator|permissions?|privileges?|scopes?|roleId|role_id|userType|user_type)\s*=(?!=)'
+      - '(?:^|[{,\s])[''"]?(?:role|isAdmin|is_admin|isStaff|is_staff|isSuperuser|is_superuser|admin|administrator|permissions?|privileges?|scopes?|roleId|role_id|userType|user_type)[''"]?\s*:(?!\s*(?:string|number|boolean|any|unknown)\b)'
+      - '\.(?:create|update|build|insert|insertMany|insertOne|save|bulkCreate|upsert|findOneAndUpdate|findByIdAndUpdate|updateOne|updateMany)\w*\s*\('
+      - 'Object\.assign\s*\('
     counter_patterns:
       - 'delete\s+req\.body\.(role|isAdmin|permissions|scope|admin)'
       - '_\.(pick|omit)\s*\(\s*req\.body'
@@ -370,9 +383,10 @@ checks:
     finding_type: FT-030
     breach_vector: "Internet Anon"
     rationale: >
-      The middleware is the gate for every authenticated route — a
-      mis-configured expressJwt undermines the entire authorization
-      surface.
+      Without an algorithm allowlist the token middleware that guards every
+      authenticated route accepts tokens an attacker signs with a weaker or
+      unintended algorithm, so a forged token passes as any user on every
+      protected route.
     remediation: "Add `algorithms: ['RS256']` (or matching) to the expressJwt() options object."
 
   # ===================================================================
@@ -420,22 +434,22 @@ checks:
     counter_scope: line
     counter_window: 0
     counter_patterns:
-      - 'isAuthorized|isAuthenticated|requireAuth|denyAll|requireRole|ensureAdmin|authMiddleware|passport\.authenticate|verifyToken|jwtAuth|verifyJWT|csrf|protect\s*\(|requireUser'
+      - 'isAuthorized|isAuthenticated|requireAuth|denyAll|requireRole|ensureAdmin|authMiddleware|passport\.authenticate|verifyToken|jwtAuth|verifyJWT|protect\s*\(|requireUser'
     severity_if_violated: High
     cwe: CWE-862
     finding_type: FT-042
     breach_vector: "Internet Anon"
     rationale: >
-      State-changing operations on sensitive resources MUST require a
-      proven session. A registration line that lacks any auth marker
-      either trusts the URL itself or relies on a downstream check that
-      the static signature cannot prove exists.
+      The route registration carries no authentication marker, so an
+      anonymous attacker may call this state-changing operation on a
+      sensitive resource directly, unless a downstream check the scanner
+      cannot see stops it.
     remediation: "Add an explicit auth middleware (isAuthorized() / passport.authenticate() / requireAuth) to the route registration, or mark the route intentionally public via app.get(...) for read-only access only."
 
   # ===================================================================
   # Multi-language checks (Python, Java) — mass assignment + JWT.
   # BOLA/IDOR and missing-route-auth for non-Node stacks are covered
-  # deterministically by route_inventory.py + the architecture-coverage
+  # deterministically by analyzers/route_inventory.py + the architecture-coverage
   # ARCH-BOLA-001 / ARCH-AUTHN-001 hypotheses (multi-framework). These
   # checks add the patterns the route inventory cannot see: privileged
   # mass-assignment and unverified token handling.
@@ -449,8 +463,9 @@ checks:
     description: >
       A handler reads a privileged attribute (role / is_staff /
       is_superuser / permissions / groups) directly from request.data /
-      request.POST / request.json. Without a serializer allowlist the
-      client self-elevates by adding the field to the payload.
+      request.POST / request.json and writes or persists it in the same
+      block. Without a serializer allowlist the client self-elevates by
+      adding the field to the payload.
     file_patterns:
       - "**/*.py"
     exclude_file_patterns:
@@ -464,8 +479,16 @@ checks:
       - "**/site-packages/**"
       - "**/settings*.py"
     pattern: 'request\.(?:data|POST|json|query_params)(?:\.get\(\s*|\s*\[\s*)[''"](role|is_staff|is_superuser|is_admin|is_active|permissions?|groups?|scopes?|user_type|account_type)[''"]'
-    counter_scope: window
+    counter_scope: block
     counter_window: 8
+    skip_rejecting_guard: true
+    required_context_patterns:
+      - '\.\s*(?:role|is_staff|is_superuser|is_admin|is_active|permissions?|groups?|scopes?|user_type|account_type)\s*=(?!=)'
+      - '[(,]\s*(?:role|is_staff|is_superuser|is_admin|is_active|permissions?|groups?|scopes?|user_type|account_type)\s*=(?!=)'
+      - '[''"](?:role|is_staff|is_superuser|is_admin|is_active|permissions?|groups?|scopes?|user_type|account_type)[''"]\s*:'
+      - '\bsetattr\s*\('
+      - '\.(?:save|create|update|bulk_create|bulk_update|update_or_create|get_or_create)\w*\s*\('
+      - '\bsession\.(?:add|merge)\s*\('
     counter_patterns:
       - 'serializer\.(is_valid|validated_data|save)'
       - 'read_only_fields'
@@ -1524,3 +1547,60 @@ checks:
     breach_vector: "Internet Anon"
     rationale: "Unfiltered params let a client escalate privileges by setting protected attributes."
     remediation: "Use strong parameters: params.require(:x).permit(:allowed, :fields) — never permit! or raw params."
+
+  # Explicit opt-outs only; omitted options may be enforced by a framework or wrapper.
+  - id: AUTHZ-104
+    name: "JWT claim validation is explicitly disabled (Python)"
+    description: "A token validator explicitly disables a recipient, issuer or lifetime check. Missing local options alone do not match."
+    file_patterns: ["**/*.py"]
+    exclude_file_patterns: ["**/tests/**", "**/test/**", "**/*.test.*", "**/*.spec.*", "**/test_*.py", "**/*Test.cs", "**/fixtures/**"]
+    pattern: '\bjwt\.decode\s*\('
+    counter_scope: call
+    counter_window: 20
+    required_context_patterns:
+      - '(?s)\boptions\s*=\s*\{[^}]*[\x22\x27](?:verify_aud|verify_iss|verify_exp|verify_nbf)[\x22\x27]\s*:\s*False'
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-345
+    finding_type: FT-030
+    breach_vector: "Internet Anon"
+    rationale: "An explicitly disabled token-claim check can admit a signed token intended for another recipient or issuer, or outside its validity period, when no independent validator enforces that check on the same token."
+    remediation: "Enable claim validation against the trusted issuer, intended recipient and validity period; verify any equivalent upstream enforcement on the same token."
+
+  # Explicit opt-outs only; omitted options may be enforced by a framework or wrapper.
+  - id: AUTHZ-009
+    name: "JWT lifetime validation is explicitly disabled (JavaScript)"
+    description: "A token validator explicitly disables a recipient, issuer or lifetime check. Missing local options alone do not match."
+    file_patterns: ["**/*.js", "**/*.ts", "**/*.mjs", "**/*.cjs"]
+    exclude_file_patterns: ["**/tests/**", "**/test/**", "**/*.test.*", "**/*.spec.*", "**/test_*.py", "**/*Test.cs", "**/fixtures/**"]
+    pattern: '\b(?:jwt|jsonwebtoken)\.verify\s*\('
+    counter_scope: call
+    counter_window: 20
+    required_context_patterns:
+      - '\b(?:ignoreExpiration|ignoreNotBefore)\s*:\s*true'
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-345
+    finding_type: FT-030
+    breach_vector: "Internet Anon"
+    rationale: "An explicitly disabled token-claim check can admit a signed token intended for another recipient or issuer, or outside its validity period, when no independent validator enforces that check on the same token."
+    remediation: "Enable claim validation against the trusted issuer, intended recipient and validity period; verify any equivalent upstream enforcement on the same token."
+
+  # Explicit opt-outs only; omitted options may be enforced by a framework or wrapper.
+  - id: AUTHZ-CS-003
+    name: "JWT audience, issuer or lifetime validation is explicitly disabled (C#)"
+    description: "A token validator explicitly disables a recipient, issuer or lifetime check. Missing local options alone do not match."
+    file_patterns: ["**/*.cs"]
+    exclude_file_patterns: ["**/tests/**", "**/test/**", "**/*.test.*", "**/*.spec.*", "**/test_*.py", "**/*Test.cs", "**/fixtures/**"]
+    pattern: '\bTokenValidationParameters\s*\{'
+    counter_scope: block
+    counter_window: 20
+    required_context_patterns:
+      - '\b(?:ValidateAudience|ValidateIssuer|ValidateLifetime)\s*=\s*false'
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-345
+    finding_type: FT-030
+    breach_vector: "Internet Anon"
+    rationale: "An explicitly disabled token-claim check can admit a signed token intended for another recipient or issuer, or outside its validity period, when no independent validator enforces that check on the same token."
+    remediation: "Enable claim validation against the trusted issuer, intended recipient and validity period; verify any equivalent upstream enforcement on the same token."

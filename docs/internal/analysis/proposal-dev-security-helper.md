@@ -65,7 +65,7 @@ re-frames everything around *help first*.
   enforces a prefix. Code/tests that need to know which catalog is active key off
   `source:`, and id-membership is resolved by set-intersection with the loaded
   catalog (so any scheme works).
-- `scripts/fetch_requirements.py` — **NEW opt-in flag** `--fallback-baseline
+- `scripts/requirements/fetch_requirements.py` — **NEW opt-in flag** `--fallback-baseline
   <path>`: on the `cache_fallback` path, if no company source/cache loads, write
   the baseline instead of aborting. An **explicit** `--requirements` failure
   still aborts (fail-closed, step 1) — a deliberately-named source must work.
@@ -78,11 +78,11 @@ now true at the foundation, for both layers.
 
 **Correction:** an earlier draft called this an unbuilt "Coach". It is in fact
 **already built, wired, and tested** — it is the *security-steering* hook:
-- `hooks/hooks.json` → registers `UserPromptSubmit` → `scripts/security_steering.py`
-- `scripts/security_steering.py` — matches the prompt against topic triggers,
+- `hooks/hooks.json` → registers `UserPromptSubmit` → `scripts/analyzers/security_steering.py`
+- `scripts/analyzers/security_steering.py` — matches the prompt against topic triggers,
   injects a secure-by-default baseline + topic guidance + the applicable
   requirement texts. Non-blocking, never calls the model itself
-  (`scripts/security_steering.py`).
+  (`scripts/analyzers/security_steering.py`).
 - `hooks/steering_keywords.json` — the topic map: `topics.<name>.{triggers,
   guidance, requirements:[SEC-…]}` (e.g. `auth → ['SEC-API-AUTH']`).
 - `tests/test_security_steering.py` — covered.
@@ -106,7 +106,7 @@ The verified duplication (file:line):
   consumers (steering hook + verifier). This is the "an einer Stelle gekapselt"
   the design should have.
 - **Gap B — best-practices baseline missing from the steering fallback.**
-  `scripts/security_steering.py:78–79` resolves requirements from
+  `scripts/analyzers/security_steering.py:78–79` resolves requirements from
   `.cache/requirements.yaml` then `data/appsec-requirements-fallback.yaml` only —
   **not** the new `data/appsec-bestpractices-baseline.yaml`. So the proactive
   layer does not degrade to best-practices when no company catalog exists. **Fix:**
@@ -124,13 +124,13 @@ welded together. What they legitimately *share* is the **relevance map** and the
 
 The diff-scoped check, now **advisory-first**:
 - `skills/verify-requirements/SKILL.md` + `agents/appsec-reviewer.md`
-  + `scripts/build_verify_diff.py` + `scripts/requirements_gate.py` +
+  + `scripts/repairs/build_verify_diff.py` + `scripts/requirements/requirements_gate.py` +
   `schemas/requirements-verification.schema.json` (all from Layer-2's own
   proposal; see `proposal-requirements-verifier-subagent.md`).
 - **Re-framed for help:** default advisory (always exit 0), zero-config (Layer-0
   fallback means it works with no setup), output = concrete *what-to-fix + how*.
 - **Gate strictly opt-in:** `--gate` turns it into a CI/merge gate
-  (`requirements_gate.py` owns the exit code). Teams that want enforcement get
+  (`requirements/requirements_gate.py` owns the exit code). Teams that want enforcement get
   it; nobody hits a block by default.
 
 ### Layer 3 — `appsec-reviewer-cli` CLI wrapper (clean CI entry)  ⏳ NEW (requested)
@@ -161,7 +161,7 @@ security_review:
      the report renderer that was "skill Step 6 / optional" — now a first-class
      artifact.)
   3. Exit 0 by default (advisory — the snippet just collects the artifact);
-     `--fail-on must` / `--gate` flips to the `requirements_gate.py` exit code
+     `--fail-on must` / `--gate` flips to the `requirements/requirements_gate.py` exit code
      for teams that want the job to fail.
 - **Relationship to `run-headless.sh`:** same headless mechanics (auth detect,
   permission mode, exit propagation) but a clean, narrow command surface scoped
@@ -188,14 +188,14 @@ CLI in CI to drop a `security-review.md` on each MR. Blocking is opt-in only.
 
 **Delivered + tested (green):**
 - `data/appsec-bestpractices-baseline.yaml` (vendor-neutral, BP-*).
-- `fetch_requirements.py --fallback-baseline` (+ `verify-requirements` caller).
+- `requirements/fetch_requirements.py --fallback-baseline` (+ `verify-requirements` caller).
 - `verify-requirements` skill re-framed to helper / advisory-default / fallback.
 - Layer-2 verifier + gate + diff-builder + schema (from the Layer-2 proposal).
 - Tests: baseline validity, fetch fallback, explicit-source-still-fail-closed,
   gate exit-code matrix, schema, diff smoke.
 
 **Already existed (corrected — not a new build):**
-- **Layer 1** proactive steering = `scripts/security_steering.py` +
+- **Layer 1** proactive steering = `scripts/analyzers/security_steering.py` +
   `hooks/steering_keywords.json` + `hooks/hooks.json` (`UserPromptSubmit`) +
   `tests/test_security_steering.py`. Built, wired, tested.
 
@@ -203,7 +203,7 @@ CLI in CI to drop a `security-review.md` on each MR. Blocking is opt-in only.
 - **Gap A** — wire the verifier's Stage-A to consume `hooks/steering_keywords.json`
   (shared relevance map) instead of prose signals. `agents/appsec-reviewer.md:93–108`.
 - **Gap B** — add `data/appsec-bestpractices-baseline.yaml` to
-  `security_steering.py` `requirements_source.paths` + add BP-* topics to
+  `analyzers/security_steering.py` `requirements_source.paths` + add BP-* topics to
   `steering_keywords.json` so the steering hook also degrades to best-practices.
 - **Layer 3** — the `scripts/appsec-reviewer-cli` CLI wrapper + the deterministic
   JSON→Markdown report renderer (the `--output security-review.md` artifact).
@@ -213,7 +213,7 @@ CLI in CI to drop a `security-review.md` on each MR. Blocking is opt-in only.
 
 ## Impact / contracts touched
 
-- `fetch_requirements.py`: new optional flag + new `--caller` choice
+- `requirements/fetch_requirements.py`: new optional flag + new `--caller` choice
   `verify-requirements` (graceful in `resolve_requirements_source.resolve` →
   `enabled=True` for unknown callers). Surgical — no behavior change for existing
   callers.
@@ -231,10 +231,10 @@ The dev-facing helper is branded **`appsec-reviewer-cli`** (per user decision �
 this proposal standardises on `appsec-reviewer-cli` to match the plugin's `appsec-`
 prefix and avoid collision with the existing `appsec-architect-reviewer` agent.
 The internal artifacts keep their accurate mechanism names
-(`security_steering.py` = the L1 hook; `appsec-reviewer` = the L2
+(`analyzers/security_steering.py` = the L1 hook; `appsec-reviewer` = the L2
 grader); `appsec-reviewer-cli` is the umbrella product name + the L3 CLI binary.
 **Confirm:** binary name `appsec-reviewer-cli` vs `security-review-agent`, and
-whether to physically rename the shipped `security_steering.py` (invasive:
+whether to physically rename the shipped `analyzers/security_steering.py` (invasive:
 script + config keys + tests + docs) or keep it as the internal mechanism under
 the `appsec-reviewer-cli` brand.
 

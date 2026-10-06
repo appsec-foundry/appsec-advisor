@@ -13,13 +13,15 @@ description: >-
 You are removing a secure-coding baseline from Claude Code's instruction files.
 
 Installing wired the baseline into a file Claude Code reads. Removing it undoes
-that wiring, which is what `scripts/remove_baseline.py` does. Deleting the file
+that wiring, which is what `scripts/baseline/remove_baseline.py` does. Deleting the file
 is a second, opt-in step — it is the part that can destroy something, so it is
 never done without asking.
 
 **Do not write or delete any file yourself.** No Write, no Edit, no `rm`. The
 script is the only thing that touches `CLAUDE.md` or the baseline file, so the
 removal stays line-exact and backed up.
+
+For modular installations, the same import and carrier removal rules apply. Snapshot directories are retained for existing sessions, including with `--delete-file`; do not delete them automatically. Modified modular adapters are refused. Upstream-managed aiscb blocks and snapshots belong to the upstream installer and are not removed by this skill.
 
 ## `--help` — inline help (early exit)
 
@@ -94,7 +96,7 @@ An unknown value for `--scope` is rejected the same way.
 ## Step 2 — Find out what is actually installed
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline_check.py" --repo "$REPO_ROOT" --json
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline/baseline_check.py" --repo "$REPO_ROOT" --json
 ```
 
 Read `status` and `scopes` before offering anything — removing what is not
@@ -145,7 +147,7 @@ that scope always goes through Step 5.
 ## Step 4 — Show the plan
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/remove_baseline.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline/remove_baseline.py" \
   --scope "$SCOPE" --repo "$REPO_ROOT" --dry-run
 ```
 
@@ -185,7 +187,7 @@ the file means keeping the rules.
 ## Step 6 — Remove
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/remove_baseline.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline/remove_baseline.py" \
   --scope "$SCOPE" --repo "$REPO_ROOT" $DELETE_FLAG
 ```
 

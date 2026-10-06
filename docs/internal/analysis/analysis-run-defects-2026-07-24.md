@@ -10,7 +10,7 @@ root cause, and the fix. Regressions: `tests/test_run_defect_fixes_2026_07_24.py
 
 ## 1. Zone vocabulary — 9 of 11 components fell off-vocabulary
 
-**Evidence.** `build_stride_dispatch_manifest.py` emitted `ZONE_DRIFT` for 9
+**Evidence.** `orchestrator/build_stride_dispatch_manifest.py` emitted `ZONE_DRIFT` for 9
 components: 7 backend units tagged `['server']`, plus `ci-cd-pipeline` tagged
 `['ci']`. Only `frontend-spa` (`browser`) and the two reconciled components
 carried canonical zones.
@@ -38,7 +38,7 @@ real-time, crown-jewel, data-store, ci-cd), so the ceiling lift is a genuine
 the drift. Do not expect this fix to silence it.
 
 **Fix.** Extend the recognised vocabulary the way `EXPOSED_ZONES` was already
-extended for synonyms (`build_stride_dispatch_manifest.py:126-131` documents the
+extended for synonyms (`orchestrator/build_stride_dispatch_manifest.py:126-131` documents the
 same precedent):
 
 * `RUNTIME_ONLY_ZONES` += `server`, `server-side`, `backend`, `app-server`,
@@ -65,11 +65,11 @@ a control to a semantically different §6 section.
 
 1. The canonical §6 titles in `data/sections-contract.yaml:1033-1035` are
    **comma-free**, but the plugin's own deterministic producer
-   (`assess_supply_chain_controls.py:985`) hardcoded the comma form, and the
+   (`analyzers/assess_supply_chain_controls.py:985`) hardcoded the comma form, and the
    Stage-1 prompt (`phase-group-architecture.md:1414`) listed all three
    compound domains with commas. Producer and enforcer disagreed on canonical
    spelling.
-2. `enforce_control_taxonomy.py` builds `known_domain_strings` comma-free, so
+2. `model/enforce_control_taxonomy.py` builds `known_domain_strings` comma-free, so
    the comma form matched nothing; the guard at `:407`
    (`current_norm not in known_domain_strings`) therefore treated a perfectly
    valid domain as *unknown* and let `_infer_domain` re-route on the control
@@ -96,7 +96,7 @@ run that completed successfully; `stop=unknown` in **325 of 325** trace records;
 `MAX_TURNS` logged **0** times despite two abuse verifiers demonstrably hitting
 their ceiling.
 
-**Root cause.** `agent_logger.py` read `data.get("stop_reason", "unknown")`, but
+**Root cause.** `runtime/agent_logger.py` read `data.get("stop_reason", "unknown")`, but
 the Claude Code `Stop`/`SubagentStop` payload carries no `stop_reason` key at
 all. Every consumer downstream was therefore blind:
 
@@ -134,7 +134,7 @@ against five transcripts from this run (three clean → `end_turn`, two cut off 
 ## 4. `wall_secs=?` for every dispatched sub-agent
 
 **Root cause.** `_record_dispatch_time()` keys the timestamp on the **parent**
-session id in `handle_pre_tool_use` (`agent_logger.py:1863`), but
+session id in `handle_pre_tool_use` (`runtime/agent_logger.py:1863`), but
 `_take_dispatch_time()` redeems it with the **child** session id at Stop
 (`:2180`). The two never match for a dispatched sub-agent, so `wall_secs` kept
 its `"?"` initialiser; the only numeric values in the log came from the parent
@@ -151,7 +151,7 @@ STRIDE analyzers keeps one entry per dispatch.
 ## 5. Stage 2 threw away two finished renders on a misleading receipt
 
 **Evidence.** Both specialist renderers succeeded (`security-architecture.md`,
-`ms-verdict.json` and three siblings all on disk). `orchestration_controller.py next`
+`ms-verdict.json` and three siblings all on disk). `orchestrator/orchestration_controller.py next`
 nonetheless returned `Stage-2 render fragments incomplete; retry 1/2`, and a full
 `appsec-threat-renderer` re-dispatch redid ~9 minutes of work already done.
 

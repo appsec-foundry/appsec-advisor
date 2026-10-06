@@ -56,7 +56,7 @@ OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 REPO_ROOT="<REPO_ROOT from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 ASSESSMENT_DEPTH="<ASSESSMENT_DEPTH from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/config_iac_scanner.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/analyzers/config_iac_scanner.py" \
   --repo-root "$REPO_ROOT" \
   --output "$OUTPUT_DIR/.config-scan-findings.json" \
   --assessment-depth "$ASSESSMENT_DEPTH"
@@ -77,7 +77,22 @@ The script reads `$CLAUDE_PLUGIN_ROOT/data/config-iac-checks.yaml` once and buil
 - `agent_config` — committed coding-agent settings (Claude Code, Codex, VS Code
   agent mode, Gemini CLI, Kiro)
 - `agent_automation` — workflows and scripts that start a coding agent
-- `kubernetes` / `terraform` (not used in initial version, room for extension)
+- `kubernetes` — workload manifests incl. OpenShift DeploymentConfig (privileged,
+  host namespaces, root, env secrets) and Ingresses/Routes without TLS
+- `helm_values` — a chart's `values.yaml` next to its `Chart.yaml` and
+  `.gitlab/auto-deploy-values.yaml` (privileged container, ingress without TLS)
+- `terraform` — `.tf` / `.tfvars` (internet-open admin/data ports, public
+  storage, unencrypted data stores, credential literals, plain-HTTP load
+  balancers, public IPs on compute, publicly accessible databases, wildcard IAM)
+
+Every deployment-inventory fact the deployment figure marks `weak` maps to one
+of these checks (`inventory_weak_facts` in the catalog), so the figure never
+shows a weakness the findings lack.
+
+Categories listed in `file_patterns_by_type` without a check (Helm templates, Pulumi,
+CDK, Serverless, Bicep, ARM, Ansible, Nomad) are recognised but not examined;
+their files go to `uncovered_iac` and surface as the run issue
+`config_scan_uncovered_iac`.
 
 ### Step 2 — Inventory target files
 
@@ -97,6 +112,9 @@ Glob beneath `REPO_ROOT` for each file-pattern relevant to loaded checks:
 - `package-lock.json`
 - `.claude/settings*.json` / `.codex/config.toml` / `.gemini/settings.json` /
   `.kiro/settings/mcp.json` / `.vscode/settings.json`
+- `**/{k8s,kubernetes,manifests,deploy,deployment}/**/*.{yaml,yml}`
+- `**/values.yaml` (only next to a `Chart.yaml`) / `.gitlab/auto-deploy-values.yaml`
+- `**/*.tf` / `**/*.tfvars`
 
 When `ASSESSMENT_DEPTH=quick`, limit to the first 5 files per category. Otherwise scan all. `agent_config` is exempt: it holds one settings path per coding agent, so a cap would drop a whole tool rather than sample it.
 
@@ -107,8 +125,11 @@ The script applies every check matching each target file's `iac_type`:
 1. **`expect: present`** — file must contain a match for `pattern`. Violation when no match.
 2. **`expect: absent`** — file must NOT contain `pattern`. Violation when match is found.
 3. **`expect: structured`** — the named `evaluator` in
-   `scripts/agent_config_checks.py` parses the document and decides. Used where
-   a regex cannot tell an enabled sandbox from an absent one.
+   `scripts/runtime/agent_config_checks.py` (coding-agent settings) or
+   `scripts/analyzers/iac_resource_checks.py` (Compose, Kubernetes, Terraform) parses the
+   document and decides. Used where a regex cannot tell an enabled sandbox from
+   an absent one, or a literal secret from a reference. Secret evidence names
+   the key and masks the value.
 4. **`expect: all_third_party_actions`** — for `uses:` statements in GitHub Actions, every third-party action reference (not `actions/*`) must match `pattern` (the SHA-pin form). Violation when any non-pinned third-party action is found.
 5. **`expect: any_of_present`** — any of the patterns in `pattern_any_of` must match. Violation when none match.
 6. **`expect: file_exists`** — file must be present in the glob result. Violation when the glob returned zero files.
@@ -146,15 +167,16 @@ The script writes `$OUTPUT_DIR/.config-scan-findings.json`:
 }
 ```
 
-**Write protocol:** only `scripts/config_iac_scanner.py` may emit this artifact. Deterministic inputs produce the same rule/file selection and findings.
+**Write protocol:** only `scripts/analyzers/config_iac_scanner.py` may emit this artifact. Deterministic inputs produce the same rule/file selection and findings.
 
 **Mandatory fields per finding.** The downstream pipeline depends on every emitted finding carrying the full field set above — **not the leaner `{id, check, severity, file, line, detail}` shape** that some earlier prototype versions of this agent produced. Specifically:
 
-- `check_id` MUST be the canonical `IAC-NNN` / `CFG-NNN` from `data/config-iac-checks.yaml` when the violation maps to an entry there. When the agent synthesises a finding for a runtime-config issue NOT covered by the yaml (e.g. CORS wildcard, missing CSP, missing HSTS, public directory listing, hardcoded secrets in Express runtime code), set `check_id: null` AND populate `check_slug` with a stable kebab-case identifier (`cors-wildcard`, `csp-missing`, `hsts-missing`, `ftp-directory-listing`, `secrets-in-source`, …) so the downstream auto-emitter (`scripts/emit_config_scan_mitigations.py`) can resolve a remediation from its built-in slug map.
+- `check_id` MUST be the canonical `IAC-NNN` / `CFG-NNN` from `data/config-iac-checks.yaml` when the violation maps to an entry there. When the agent synthesises a finding for a runtime-config issue NOT covered by the yaml (e.g. CORS wildcard, missing CSP, missing HSTS, public directory listing, hardcoded secrets in Express runtime code), set `check_id: null` AND populate `check_slug` with a stable kebab-case identifier (`cors-wildcard`, `csp-missing`, `hsts-missing`, `ftp-directory-listing`, `secrets-in-source`, …) so the downstream auto-emitter (`scripts/model/emit_config_scan_mitigations.py`) can resolve a remediation from its built-in slug map.
 - `recommended_mitigation_title` MUST be populated on every finding. Use the canonical `remediation` text from the matched IAC entry when available; otherwise author a short imperative title yourself (`"Restrict CORS to an explicit origin allow-list"`, `"Configure a strict Content-Security-Policy header"`). Never emit `null` or an empty string — the downstream Mitigation Register `**Fix:**` column reads from this field.
 - `cwe` MUST be a list of canonical `CWE-NNN` strings (even when it contains a single CWE). Copy `check.cwe` verbatim; never strip the `CWE-` prefix.
 - `generated_at` MUST use whole-second UTC as `%Y-%m-%dT%H:%M:%SZ`; never emit fractional seconds.
 - `breach_vector` MUST be one of the enum values defined in the "Breach-vector mapping" section below.
+- `stride` MUST be one of Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service, Elevation of Privilege. Copy `check.stride` verbatim for a catalog check; a synthesised finding (`check_id: null`) states the category of the harm it enables. The merge rejects a finding with none.
 
 Findings missing `recommended_mitigation_title` are caught by the auto-emitter's fallback path (generic remediation prose), but the user-visible §8 Fix column reads markedly weaker text in that case. Emit the field at authoring time; do not rely on the fallback.
 
@@ -164,7 +186,8 @@ The orchestrator's Phase 9 STRIDE merge step reads `.config-scan-findings.json` 
 
 ## Breach-vector mapping
 
-The `breach_vector` field on each finding uses the vocabulary in `data/breach-vector-taxonomy.yaml`:
+The `breach_vector` field on each finding comes from the check's optional
+`breach_vector` (default `Build-Time`) and uses the vocabulary in `data/breach-vector-taxonomy.yaml`:
 
 | Value | When used |
 |---|---|
@@ -191,8 +214,8 @@ Immediately after writing `.config-scan-findings.json`, run:
 set -e
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/normalize_config_scan.py" "$OUTPUT_DIR/.config-scan-findings.json"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/normalize_config_scan.py" "$OUTPUT_DIR/.config-scan-findings.json"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_intermediate.py" \
   config_scan_findings "$OUTPUT_DIR/.config-scan-findings.json"
 ```
 

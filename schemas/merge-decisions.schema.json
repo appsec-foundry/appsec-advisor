@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://appsec-advisor/schemas/merge-decisions.schema.json",
   "title": "Threat merger decisions",
-  "description": "Decision artifact written by appsec-threat-merger and consumed by merge_threats.py finalize.",
+  "description": "Decision artifact written by appsec-threat-merger and consumed by model/merge_threats.py finalize.",
   "type": "object",
   "required": ["version", "generated_at", "model", "decisions"],
   "additionalProperties": false,
@@ -27,7 +27,7 @@
       "required": ["group_id", "action", "member_indices", "rationale"],
       "additionalProperties": false,
       "properties": {
-        "group_id": { "type": "string", "pattern": "^(G|GE)-[a-f0-9]{8}$" },
+        "group_id": { "type": "string", "pattern": "^(G|GE|GC)-[a-f0-9]{8}$" },
         "action": { "enum": ["merge", "keep", "consolidate"] },
         "member_indices": { "$ref": "#/$defs/member_indices" },
         "merge_target_index": { "type": "integer", "minimum": 0 },

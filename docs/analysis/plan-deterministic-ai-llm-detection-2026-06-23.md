@@ -6,7 +6,7 @@
 AI-assistant tooling dirs (`.claude/`, `.cursor/`, …). Sections below describe the
 shipped design.
 **Goal:** Move recon "Category 13" (AI/LLM integration) from the non-deterministic
-LLM-grep loop into `scripts/recon_patterns.py`, so `KNOWN_LLM_PATTERNS` (and therefore
+LLM-grep loop into `scripts/analyzers/recon_patterns.py`, so `KNOWN_LLM_PATTERNS` (and therefore
 the `### AI / LLM Exposure` Management-Summary section, gated by `has_llm_surface`) is
 detected reproducibly instead of by LLM judgement.
 
@@ -15,7 +15,7 @@ detected reproducibly instead of by LLM judgement.
 ## 1. Problem
 
 Today Category 13 is in the LLM-driven grep loop (`agents/appsec-recon-scanner.md:207`),
-NOT in the deterministic helper (`recon_patterns.py` does 11,14,15,17,18,21,22,23,24,27,28).
+NOT in the deterministic helper (`analyzers/recon_patterns.py` does 11,14,15,17,18,21,22,23,24,27,28).
 Two failure modes:
 
 1. **LLM variance** — detection depends on the recon LLM actually running the grep and
@@ -40,7 +40,7 @@ This lets us bias toward **sensitivity** (catch light integrations) without much
 
 ---
 
-## 2. Design — `scan_ai_integration(repo_root)` in `recon_patterns.py`
+## 2. Design — `scan_ai_integration(repo_root)` in `analyzers/recon_patterns.py`
 
 Mirror the existing deterministic categories: module-level compiled regexes + a scan
 function + registration in `run_all()` + a CLI subcommand. Per-line matching via the
@@ -129,12 +129,12 @@ Registered in `run_all()` as `"13": scan_ai_integration(repo_root)` and exposed 
 
 | File | Change |
 |---|---|
-| `scripts/recon_patterns.py` | add `_CAT13_*` compiled patterns, `scan_ai_integration()`, register `"13"` in `run_all()`, add CLI dispatch. |
+| `scripts/analyzers/recon_patterns.py` | add `_CAT13_*` compiled patterns, `scan_ai_integration()`, register `"13"` in `run_all()`, add CLI dispatch. |
 | `tests/test_recon_patterns.py` | new `TestCat13AiIntegration` (matrix in §4). Same-commit rule (AGENTS.md §9). |
 | `agents/appsec-recon-scanner.md` | (a) add `13` to the deterministic list at line 132; (b) **remove** the 5-AND Category-13 row from the LLM-grep table (line 207); (c) add a `categories["13"]` consume instruction in the line-148 block → routes to §7.13, tagged by `subcategory`. The recon LLM no longer greps for it — it only writes the §7.13 **impact narrative** from the deterministic findings ("reserve judgement for impact summarisation", same as cats 28/14). |
 | `agents/shared/recon-output-template.md` | §7.13 structure stays; note detection is now deterministic (`.recon-patterns.json categories["13"]`), the LLM fills judgement columns only. `KNOWN_LLM_PATTERNS` table format unchanged. |
-| **Unchanged** | `data/sections-contract.yaml` (`has_llm_surface` gate stays), `schemas/fragments/ai-exposure.schema.json`, `templates/fragments/ai-exposure.md.j2`, `scripts/compose_threat_model.py`. The gate's *meaning* is unchanged; only detection becomes reproducible. |
-| `data/required-permissions.yaml` | **no change** — `recon_patterns.py` is already invoked; no new command/Write/Read target. |
+| **Unchanged** | `data/sections-contract.yaml` (`has_llm_surface` gate stays), `schemas/fragments/ai-exposure.schema.json`, `templates/fragments/ai-exposure.md.j2`, `scripts/renderers/compose_threat_model.py`. The gate's *meaning* is unchanged; only detection becomes reproducible. |
+| `data/required-permissions.yaml` | **no change** — `analyzers/recon_patterns.py` is already invoked; no new command/Write/Read target. |
 
 **Drift-guard check before coding:** grep tests for any assertion that pins the
 Category-13 5-AND regex string or the deterministic-category list `"11, 14, 15, 17, 18,

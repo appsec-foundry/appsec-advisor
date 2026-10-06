@@ -1,4 +1,4 @@
-"""Tests for scripts/update_baseline.py.
+"""Tests for scripts/baseline/update_baseline.py.
 
 Three properties carry the weight here.
 
@@ -30,12 +30,12 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "update_baseline.py"
+SCRIPT = REPO_ROOT / "scripts" / "baseline/update_baseline.py"
 sys.path.insert(0, str(SCRIPT.parent))
 
-import baseline_check as bc  # noqa: E402
-import install_baseline as ib  # noqa: E402
-import update_baseline as ub  # noqa: E402
+import baseline.baseline_check as bc  # noqa: E402
+import baseline.install_baseline as ib  # noqa: E402
+import baseline.update_baseline as ub  # noqa: E402
 
 BASELINE_TEXT = "# Test Baseline\n\n`baseline-id: test-1.0`\n\n- Do the secure thing.\n"
 EDITED_TEXT = "# Test Baseline\n\n`baseline-id: test-1.0`\n\n- Do the secure thing, carefully.\n"
@@ -85,6 +85,62 @@ def installed(repo: Path, home: Path, config: dict) -> Path:
 
 def publish(monkeypatch, text: str) -> None:
     monkeypatch.setattr(ib, "_fetch", lambda url: text.encode())
+
+
+def test_provider_capability_has_a_closed_schema():
+    import jsonschema
+
+    root = Path(__file__).resolve().parents[1]
+    schema = json.loads((root / "schemas/aiscb-update-provider.schema.json").read_text())
+    capability = json.loads((root / "data/aiscb-update-provider.json").read_text())
+    jsonschema.validate(capability, schema)
+    assert capability["installer_protocol"] == ub.UPSTREAM_UPDATE_PROTOCOL
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({**capability, "command": "untrusted"}, schema)
+
+
+@pytest.mark.parametrize("name", ["service alpha", "different-component"])
+def test_upstream_target_resolution_never_selects_repository_executables(tmp_path, name):
+    home, repo = tmp_path / "operator", tmp_path / name
+    repo.mkdir()
+    home.mkdir()
+    carrier = repo / "CLAUDE.md"
+    record = repo / ".aiscb/installation.json"
+    record.parent.mkdir()
+    record.write_text(json.dumps({"entries": {"CLAUDE.md": "recorded"}}))
+    result = {"matches": [{"managed_by": "aiscb", "scope": "project", "file": str(carrier), "id": "aiscb-0.1.17"}]}
+    assert ub.upstream_targets(result, repo, home) == [(repo, False)]
+    result["matches"][0]["scope"] = "policy"
+    assert ub.upstream_targets(result, repo, home) == []
+    result["matches"][0]["scope"] = "project"
+    result["matches"][0]["file"] = str(tmp_path / "other/CLAUDE.md")
+    assert ub.upstream_targets(result, repo, home) == []
+
+
+def test_delegation_refuses_offline_old_protocol_and_failed_verification(monkeypatch, repo):
+    import baseline.baseline_release as br
+
+    config = {"id": "aiscb-0.1.17", "release": {"repository": "example/baseline"}}
+    monkeypatch.setattr(ub.subprocess, "run", lambda *a, **kw: pytest.fail("unverified installer executed"))
+    with pytest.raises(ub.UpdateError, match="online"):
+        ub.update_upstream([(repo, False)], config, dry_run=False, offline=True)
+    monkeypatch.setattr(
+        br, "fetch_latest", lambda *a, **kw: br.Release("", "aiscb-0.1.17", "test", {"install.py": b"# old"})
+    )
+    with pytest.raises(ub.UpdateError, match="does not support"):
+        ub.update_upstream([(repo, False)], config, dry_run=False, offline=False)
+    monkeypatch.setattr(
+        br, "fetch_latest", lambda *a, **kw: br.Release("", "aiscb-0.1.17", "test", {"install.py": b"not python !!!"})
+    )
+    with pytest.raises(ub.UpdateError, match="no unverified installer"):
+        ub.update_upstream([(repo, False)], config, dry_run=False, offline=False)
+
+    def refused(*args, **kwargs):
+        raise br.ReleaseError("signature failed")
+
+    monkeypatch.setattr(br, "fetch_latest", refused)
+    with pytest.raises(ub.UpdateError, match="no unverified installer"):
+        ub.update_upstream([(repo, False)], config, dry_run=False, offline=False)
 
 
 # ---------- nothing installed, or not ours --------------------------------
@@ -453,7 +509,7 @@ def test_cli_updates_an_offline_install(repo: Path, home: Path):
     installed = subprocess.run(
         [
             sys.executable,
-            str(REPO_ROOT / "scripts" / "install_baseline.py"),
+            str(REPO_ROOT / "scripts" / "baseline/install_baseline.py"),
             "--scope",
             "project",
             "--repo",

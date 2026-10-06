@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Observed implementation strategy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "strategies"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "strategies": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "strategy",
+          "vetted_libs_found",
+          "bespoke_hit"
+        ],
+        "properties": {
+          "strategy": {
+            "type": "string",
+            "enum": [
+              "none",
+              "home-grown",
+              "standard-misused",
+              "standard-vetted"
+            ]
+          },
+          "vetted_libs_found": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "bespoke_hit": {
+            "type": "boolean"
+          },
+          "bespoke_evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "file",
+                "line"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "file": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+                },
+                "line": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "id": {
+                  "type": "string",
+                  "pattern": "^T-\\d{3,}$"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

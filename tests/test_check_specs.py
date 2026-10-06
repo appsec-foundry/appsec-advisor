@@ -199,12 +199,12 @@ def test_applicable_ignores_paths_outside_repository(catalog_root):
 def test_main_reports_requirement_and_coverage_counts(capsys):
     assert check_specs.main([]) == 0
     output = capsys.readouterr().out
-    assert "29 requirements" in output
+    assert "41 requirements" in output
     assert "direct" in output and "partial" in output and "advisory" in output
 
 
 def test_main_for_prints_governing_requirement_and_coverage(capsys):
-    assert check_specs.main(["--for", "scripts/merge_threats.py"]) == 0
+    assert check_specs.main(["--for", "scripts/model/merge_threats.py"]) == 0
     output = capsys.readouterr().out
     assert "REQ-MOD-001" in output
     assert "Guard coverage: partial" in output
@@ -235,7 +235,7 @@ def test_tasks_file_alone_is_not_a_change_proposal():
 
 
 def test_ordinary_changes_need_no_proposal():
-    assert check_specs.unapproved_changes(["scripts/merge_threats.py", "README.md"]) == []
+    assert check_specs.unapproved_changes(["scripts/model/merge_threats.py", "README.md"]) == []
 
 
 def register_text() -> str:

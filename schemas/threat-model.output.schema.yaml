@@ -26,6 +26,22 @@ required:
   - mitigations
 
 properties:
+  actors:
+    type: array
+    description: Configured roles and active automatic roles with finding assignments; absent in legacy models.
+    items:
+      type: object
+      additionalProperties: false
+      required: [id, label, access, trust_positions, heatmap_slug, active]
+      properties:
+        id: {type: string, pattern: '^ACT-(D|E|R|X)-[0-9]{1,4}$'}
+        label: {type: string, pattern: '^[a-z][a-z0-9-]{1,62}$'}
+        access: {type: array, minItems: 1, items: {type: string}}
+        trust_positions: {type: array, items: {type: string}}
+        heatmap_slug:
+          enum: [internet-anon, internet-user, internet-priv-user, build-time, repo-read, insider, victim-required, null]
+        active: {type: boolean}
+        origin: {type: string, enum: [plugin, enterprise, repo, discovery]}
 
   meta:
     type: object
@@ -47,6 +63,16 @@ properties:
         enum: [full, incremental]
       open_user_registration:
         type: boolean
+      opt_in_actors_not_enabled:
+        type: array
+        description: Opt-in actor classes this run did not assess; rendered in §11 Out of Scope.
+        items:
+          type: object
+          additionalProperties: false
+          required: [id, scope_note]
+          properties:
+            id: {type: string, pattern: "^ACT-(D|E|R|X)-[0-9]{1,4}$"}
+            scope_note: {type: string, minLength: 1}
       open_registration_resolution:
         type: object
         additionalProperties: false
@@ -142,7 +168,7 @@ properties:
                 deferred_ids: {type: array, uniqueItems: true, items: {type: string, pattern: "^tb-\\d+$"}}
                 # Subset of `deferred_ids`: boundaries deferred *because*
                 # `boundary_endpoints_valid` rejected their resolved endpoints
-                # (prepare_trust_boundary_context.py appends the same id to both).
+                # (contexts/prepare_trust_boundary_context.py appends the same id to both).
                 # Same value space as its superset, hence the same pattern.
                 invalid_ids: {type: array, uniqueItems: true, items: {type: string, pattern: "^tb-\\d+$"}}
                 focus_reasons:
@@ -158,7 +184,7 @@ properties:
         # Team-provided risks from `docs/known-threats.yaml` with `status: accepted`.
         # Phase 1 extracts these and the orchestrator emits them here during
         # Phase 11 yaml composition. The deterministic §10 fragment generator
-        # (`scripts/pregenerate_fragments.py → gen_out_of_scope`) renders them
+        # (`scripts/renderers/pregenerate_fragments.py → gen_out_of_scope`) renders them
         # as an "Accepted Risks (Team-Provided)" sub-section in §10 Out of Scope.
         # Without this list the accepted entries would silently disappear from
         # the report (STRIDE skips them; QA Check 5 excludes them by design).
@@ -184,8 +210,8 @@ properties:
     # Shape is pinned by this schema and validated at the Stage-1 boundary.
     # §"Changelog Entry Composition" and consumed by:
     #   * templates/fragments/changelog.md.j2 (markdown rendering)
-    #   * scripts/render_completion_summary.py (console Change Summary)
-    #   * scripts/baseline_state.py (carry-forward / id counter refresh)
+    #   * scripts/renderers/render_completion_summary.py (console Change Summary)
+    #   * scripts/baseline/baseline_state.py (carry-forward / id counter refresh)
     type: array
     items:
       type: object
@@ -252,8 +278,8 @@ properties:
           items: { type: string }
         # Per-run fingerprint stores enabling the self-contained delta a later
         # run diffs against (see threats `fingerprints` above). `mitigation_*`
-        # is written by build_threat_model_yaml.py; `abuse_case_*` is patched in
-        # by render_abuse_cases.py (abuse cases are produced after the builder).
+        # is written by model/build_threat_model_yaml.py; `abuse_case_*` is patched in
+        # by renderers/render_abuse_cases.py (abuse cases are produced after the builder).
         mitigation_fingerprints:
           type: array
           items: { type: string }
@@ -389,6 +415,38 @@ properties:
                     line:
                       type: integer
                       minimum: 1
+        capabilities:
+          type: array
+          maxItems: 8
+          items:
+            type: object
+            additionalProperties: false
+            required: [capability, evidence]
+            properties:
+              capability:
+                type: string
+                enum: [file-upload, code-evaluation, url-fetch, xml-parsing, template-rendering, llm-calls, llm-tools, rag-retrieval, rag-ingestion, agent-memory, agent-delegation, mcp-client, mcp-server,
+                       token-issuer, jwt-issuer, mfa-verifier, oauth-client, oidc-client, saml-service-provider,
+                       websocket-endpoint, graphql-endpoint, payment-processing, email-sending,
+                       admin-functions, blockchain-client, background-jobs]
+              evidence:
+                type: array
+                minItems: 1
+                maxItems: 4
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [file, line]
+                  properties:
+                    file:
+                      type: string
+                      minLength: 1
+                      maxLength: 512
+                      not:
+                        pattern: ^(?:/|[A-Za-z]:[\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\.\.(?:/|$)|\\
+                    line:
+                      type: integer
+                      minimum: 1
         complexity:
           type: string
           enum: [simple, moderate, complex]
@@ -412,6 +470,9 @@ properties:
         access:
           properties:
             kind: {const: legitimate-role}
+        service_roles:
+          properties:
+            kind: {enum: [identity-provider, external-service]}
       properties:
         id:
           type: string
@@ -430,10 +491,49 @@ properties:
         access:
           type: string
           enum: [internet-anon, internet-user, internet-priv-user]
+        service_roles:
+          type: array
+          maxItems: 4
+          items:
+            type: object
+            additionalProperties: false
+            required: [role, evidence]
+            properties:
+              role:
+                type: string
+                enum: [oauth-authorization-server, oauth-resource-server, oidc-provider,
+                       saml-identity-provider, llm-inference, mcp-service, retrieval-store, blockchain-rpc, payment-provider,
+                       email-delivery, object-storage, message-broker, telemetry-service,
+                       package-registry]
+              evidence:
+                type: array
+                minItems: 1
+                maxItems: 4
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [file, line]
+                  properties:
+                    file:
+                      type: string
+                      minLength: 1
+                      maxLength: 512
+                      not:
+                        pattern: ^(?:/|[A-Za-z]:[\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\.\.(?:/|$)|\\
+                    line:
+                      type: integer
+                      minimum: 1
         description:
           type: string
           minLength: 1
           maxLength: 240
+        declared:
+          type: object
+          additionalProperties: false
+          required: [source]
+          properties:
+            source: {const: .appsec/actors.yaml}
+            authentication: {type: string, minLength: 1, maxLength: 240}
         evidence:
           type: array
           minItems: 1
@@ -479,8 +579,34 @@ properties:
           minLength: 1
           maxLength: 48
           pattern: '^[^\r\n\t]+$'
-          description: Short flow purpose for Figure 1; the complete label and individual flow identity remain authoritative.
+          description: Short name of the transported data for Figure 1; the complete label and individual flow identity remain authoritative.
         protocol: {type: string, minLength: 1}
+        authentication: {
+          "type": "object", "additionalProperties": false,
+          "required": ["scheme","scope","evidence"],
+          "properties": {
+            "scheme": {"type":"string","enum":["unknown","none","password","basic","bearer","cookie","api-key","oauth2","oidc","saml","mtls","private-key","client-secret","mfa","other"]},
+            "scope": {"type":"string","minLength":1,"maxLength":240,"pattern":"^[^\\r\\n\\t]+$"},
+            "transport": {"type":"string","enum":["protected","cleartext","unknown"]},
+            "flow": {"type":"string","enum":["implicit","authorization-code","authorization-code-pkce","client-credentials","device-code"]},
+            "factors": {"type":"array","minItems":2,"maxItems":4,"uniqueItems":true,"items":{"type":"string","enum":["password","totp","webauthn","hardware-key","push","sms","email","biometric"]}},
+            "evidence": {"type":"array","minItems":1,"maxItems":8,"items":{"type":"object","additionalProperties":false,"required":["file","line"],"properties":{"file":{"type":"string","minLength":1,"maxLength":512,"not":{"pattern":"^(?:/|[A-Za-z]:[\\\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)|\\\\"}},"line":{"type":"integer","minimum":1}}}}
+          },
+          "allOf": [{"if":{"properties":{"scheme":{"const":"mfa"}}},"then":{"required":["factors"],"properties":{"factors":{"contains":{"enum":["password","biometric"]}}}},"else":{"not":{"required":["factors"]}}},{"if":{"required":["flow"]},"then":{"properties":{"scheme":{"enum":["oauth2","oidc"]}}}}]
+        }
+        access_group: {
+          "type": "object", "additionalProperties": false,
+          "required": ["id", "mode", "label"],
+          "properties": {
+            "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$", "maxLength": 80},
+            "mode": {"type": "string", "enum": ["alternatives", "sequence"]},
+            "label": {"type": "string", "minLength": 1, "maxLength": 48, "pattern": "^[^\\r\\n\\t]+$"},
+            "step": {"type": "integer", "minimum": 1, "maximum": 500}
+          },
+          "allOf": [{"if": {"properties": {"mode": {"const": "sequence"}}}, "then": {"required": ["step"]}, "else": {"not": {"required": ["step"]}}}]
+        }
+        interaction: {type: boolean}
+        protocol_group: {type: string, minLength: 1, maxLength: 80}
         data_classification: {type: string, minLength: 1}
         direction:
           type: string
@@ -496,7 +622,7 @@ properties:
               line: {type: integer, minimum: 1}
 
   business_context_trace:
-    description: Bounded provenance and coverage for the business context used by this run. The source prose is never copied here.
+    description: Bounded provenance and coverage for the business context used by this run. The source prose is never copied here, except the use case the user confirmed in the dialog (confirmed_use_case).
     type: object
     additionalProperties: false
     required: [status, source_kind, source, sha256, fields_present, component_coverage, applied_finding_count]
@@ -522,8 +648,14 @@ properties:
           type: object
           additionalProperties: false
           required: [component_id, fields]
+          allOf:
+            - if: {required: [impact_is_material]}
+              then:
+                properties:
+                  fields: {contains: {const: impact_if_compromised}}
           properties:
             component_id: {type: string, minLength: 1, maxLength: 100}
+            impact_is_material: {type: boolean}
             fields:
               type: array
               minItems: 1
@@ -533,13 +665,92 @@ properties:
                 type: string
                 enum: [business_purpose, impact_if_compromised, sensitive_assets, security_obligations, security_assumptions]
       applied_finding_count: {type: integer, minimum: 0}
+      confirmed_use_case:
+        description: The use case the user confirmed or supplied in the business-context dialog, in plain words (no markup, links or URLs). Absent when none was confirmed.
+        type: string
+        minLength: 1
+        maxLength: 200
+      declared_asset_names:
+        description: Names from `assets` mentioned by the business context; a mention alone does not settle criticality.
+        type: array
+        uniqueItems: true
+        maxItems: 100
+        items: {type: string, minLength: 1}
+
+      answered_questions:
+        description: Sourced answers to team questions, scoped to a component; no source prose. Absence means unresolved.
+        type: array
+        maxItems: 2400
+        uniqueItems: true
+        items:
+          type: object
+          additionalProperties: false
+          required:
+          - component_id
+          - topic
+          - context_field
+          - source_quote_sha256
+          properties:
+            component_id:
+              type: string
+              minLength: 1
+              maxLength: 100
+            topic:
+              enum:
+              - asset-criticality
+              - account-onboarding
+              - attack-path-connection
+              - unrestricted-attribute-binding
+              - browser-readable-session-credentials
+              - unbound-authorization-requests
+              - database-query-concatenation
+              - document-query-construction
+              - blacklist-only-input-validation
+              - route-by-route-authorization
+              - hand-rolled-token-verification
+              - missing-endpoint-authentication
+              - secrets-committed-to-source
+              - build-pipeline-mutable-refs
+              - browser-clients-without-bff
+              - weak-cryptographic-primitives
+              - process-reach
+              - server-request-reach
+              - model-actions
+            asset_name:
+              type: string
+              minLength: 1
+              maxLength: 200
+            context_field:
+              enum:
+              - business_purpose
+              - impact_if_compromised
+              - sensitive_assets
+              - security_obligations
+              - security_assumptions
+            source_quote_sha256:
+              type: string
+              pattern: ^[a-f0-9]{64}$
+          allOf:
+          - if:
+              properties:
+                topic:
+                  const: asset-criticality
+            then:
+              required:
+              - asset_name
+              properties:
+                context_field: {const: impact_if_compromised}
+            else:
+              not:
+                required:
+                - asset_name
 
   requirements_compliance:
     # The §7b assessment, exported so a consumer of the YAML sees the same
     # requirements dimension the Markdown report shows. Present only when the
     # run had a `.requirements.yaml` catalog and assessed at least one row;
     # absent otherwise, so an empty object never reads as "assessed nothing".
-    # `render_completion_summary.py` takes its console counts from here.
+    # `renderers/render_completion_summary.py` takes its console counts from here.
     # The status buckets sum to `total` — the reconciliation rule the control
     # effectiveness line learned the hard way.
     type: object
@@ -1000,7 +1211,7 @@ properties:
           # parameter name when one applies.
           #
           # RENDERED form for cross-references (M3.13 — emitted by
-          # _shorten_title_for_xref in compose_threat_model.py):
+          # _shorten_title_for_xref in renderers/compose_threat_model.py):
           #     "<Weakness class> in file <path> (param \"<name>\")"   with param
           #     "<Weakness class> in file <path>"                      no param
           #     "<Weakness class> in <path>"                           directory path
@@ -1035,7 +1246,7 @@ properties:
           # bad_title_substrings (2026-05) — substrings that MUST NOT appear
           # anywhere in the title string. The JSON-Schema layer can only
           # enforce the regex `pattern`; the deterministic validator in
-          # scripts/qa_checks.py (`title_substring_blocklist` check) reads
+          # scripts/validators/qa_checks.py (`title_substring_blocklist` check) reads
           # this list and fails the run when any substring matches:
           #     "@0.", "@1.", "@2.", "@3.", "@4."   (library@version form)
           #     "alg:none", "noent:true", "package-lock=false"
@@ -1048,7 +1259,7 @@ properties:
           type: string
           minLength: 10
           maxLength: 80
-          pattern: "^[A-Z][^()@`]+?(?:\\s*\\([^()]+\\))?$"
+          pattern: "^(?:[A-Z]|[0-9]+[A-Za-z])[^()@`]+?(?:\\s*\\([^()]+\\))?$"
           not:
             anyOf:
               - { pattern: "@\\d" }
@@ -1074,6 +1285,12 @@ properties:
           # threats-merged.schema.yaml.
           type: [string, "null"]
           enum: [confirmed-exploitable, insecure-practice, null]
+        evidence_basis:
+          # How the evidence verdict was established. Mirrors
+          # threats-merged.schema.yaml.
+          type: [string, "null"]
+          enum: [llm-verified, pointer-resolved, absence-verified, verified-prior,
+                 refuted, ambiguous, unchecked, carried-unverified-shallower-depth, null]
         scenario:
           type: string
           minLength: 10
@@ -1151,6 +1368,10 @@ properties:
         risk:
           type: string
           enum: [Critical, High, Medium, Low, Informational]
+        risk_before_policy:
+          description: Original analyst risk retained when a deterministic policy ceiling lowers individual risk; never a ranking input.
+          type: string
+          enum: [Critical, High, Medium, Low]
         owasp_llm_ids:
           description: Evidence-backed OWASP LLM Top-10 (2025) classifications, preserved from the STRIDE finding.
           type: array
@@ -1209,6 +1430,23 @@ properties:
             properties:
               file: { type: string }
               line: { type: [integer, "null"] }
+        mechanism_trace:
+          description: Source and sink evidence retained from a confirmed STRIDE input-to-sink finding.
+          type: object
+          additionalProperties: false
+          required: [input, sink, connection, control]
+          properties:
+            input: {type: object, additionalProperties: false, required: [file, line], properties: {file: {type: string, minLength: 1, maxLength: 512}, line: {type: integer, minimum: 1}}}
+            sink: {type: object, additionalProperties: false, required: [file, line], properties: {file: {type: string, minLength: 1, maxLength: 512}, line: {type: integer, minimum: 1}}}
+            connection: {type: string, minLength: 20, maxLength: 500}
+            control:
+              type: object
+              additionalProperties: false
+              required: [status, location, explanation]
+              properties:
+                status: {enum: [absent-at-sink, ineffective, bypassed]}
+                location: {type: object, additionalProperties: false, required: [file, line], properties: {file: {type: string, minLength: 1, maxLength: 512}, line: {type: integer, minimum: 1}}}
+                explanation: {type: string, minLength: 20, maxLength: 500}
         boundary_refs:
           type: array
           maxItems: 2
@@ -1275,7 +1513,7 @@ properties:
           type: [string, "null"]
           description: >
             Optional direct URL (CWE entry, OWASP cheat-sheet, internal blueprint)
-            for the threat. Consumed by `scripts/export_sarif.py` as the SARIF
+            for the threat. Consumed by `scripts/exporters/export_sarif.py` as the SARIF
             `rule.helpUri`. When null, the exporter falls back to the first
             non-null `mitigations[m].reference` reachable via `mitigation_ids`.
         source:
@@ -1429,6 +1667,11 @@ properties:
           # reviewer knows WHY this is a review and not a fix (e.g.
           # "evidence-verifier returned ambiguous").
           type: [string, "null"]
+        priority_before_review:
+          # Set only on a fix scheduled one band lower because its findings
+          # need a manual review first (decision FE-23); keeps the band it had
+          # so a re-run of model/emit_review_mitigations.py applies it once.
+          enum: [P1, P2, P3, P4]
         steps:
           type: array
           items: { type: string }
@@ -1490,7 +1733,7 @@ properties:
           type: string
 
   # The assessment's own conclusion — the `### Verdict` block the rendered
-  # Management Summary leads with. Written by compose_threat_model.py after a
+  # Management Summary leads with. Written by renderers/compose_threat_model.py after a
   # successful render, from the LLM-authored `.fragments/ms-verdict.json`
   # (which runtime_cleanup deletes) resolved to reader-facing ids. Absent on
   # models composed before 2026-07 and on architecture-only documents.
@@ -1500,16 +1743,20 @@ properties:
     required: [severity, opening, bullets]
     properties:
       severity:
-        description: Overall posture. green = production-ready, yellow = acceptable with caveats, red = not production-ready.
+        description: Concern level in the assessed scope; green means no High or Critical concern reported, yellow means High concerns, red means Critical concerns, never production readiness.
         type: string
         enum: [green, yellow, red]
       opening:
         description: One or two plain-language sentences stating the business posture and its consequence.
         type: string
+      business_context_note:
+        description: Deterministic disclosure of declared no-material-harm scope, distinct from technical concern levels.
+        type: string
+        maxLength: 500
       bullets_intro:
         type: string
       bullets:
-        description: Worst-case scenarios behind the verdict, in business language, most damaging first.
+        description: Worst-case scenarios behind the verdict, in business language, without a guaranteed severity order.
         type: array
         items:
           type: object
@@ -1527,13 +1774,13 @@ properties:
                 type: string
                 pattern: "^F-\\d{3,}$"
             weaknesses:
-              description: Systemic weaknesses (W-NNN) the cited findings roll up to.
+              description: Systemic weaknesses (W-NNN) cited directly as design risks or linked from the cited findings.
               type: array
               items:
                 type: string
                 pattern: "^W-\\d{3,}$"
             verified_attack_path:
-              description: True when the cited findings anchor a fully viable abuse chain.
+              description: True when at least one cited finding participates in a fully viable code-verified abuse chain; it does not verify the entire scenario or record an executed attack.
               type: boolean
       closing:
         type: string
@@ -1690,7 +1937,7 @@ properties:
   threat_hypotheses:
     # DEPRECATED (P1, weakness-class evidence model): retired as a user-facing
     # category. The producer stops emitting this list (see P1.3
-    # arch_coverage_to_threats.py); its observable design content now flows into
+    # analyzers/arch_coverage_to_threats.py); its observable design content now flows into
     # `weaknesses[]` as design-weakness headings, its speculative content is
     # dropped. Kept readable for one release for back-compat (incremental
     # prior-finding carry maps old entries → new design signals); removed after.

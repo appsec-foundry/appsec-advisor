@@ -1,4 +1,4 @@
-"""Tests for ``scripts/load_related_repos.py`` — declared cross-repo dependency
+"""Tests for ``scripts/contexts/load_related_repos.py`` — declared cross-repo dependency
 loader. Covers schema validation, path resolution, finding filter, cap, and the
 ``meta.generated`` outdated marker.
 """
@@ -16,10 +16,10 @@ import pytest
 import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-import load_related_repos as lrr  # noqa: E402
+import contexts.load_related_repos as lrr  # noqa: E402
 
 PLUGIN_ROOT = Path(__file__).parent.parent
-SCRIPT = PLUGIN_ROOT / "scripts" / "load_related_repos.py"
+SCRIPT = PLUGIN_ROOT / "scripts" / "contexts/load_related_repos.py"
 
 
 def _write_yaml(path: Path, data: dict[str, Any]) -> None:

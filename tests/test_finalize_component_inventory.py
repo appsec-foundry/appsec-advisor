@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-import build_stride_dispatch_manifest as manifest  # noqa: E402
-import finalize_component_inventory as finalizer  # noqa: E402
+import model.finalize_component_inventory as finalizer  # noqa: E402
+import orchestrator.build_stride_dispatch_manifest as manifest  # noqa: E402
 
 PLUGIN_ROOT = Path(__file__).parent.parent
 
@@ -202,9 +202,226 @@ def test_embedded_document_store_is_not_covered_by_sql_store(tmp_path):
     assert manifest.reconcile_inventory(rows, tmp_path)[1] == []
 
 
+@pytest.mark.parametrize(
+    "row,injected",
+    [
+        ({"framework": None, "paths": ["data/documents.ts"]}, False),
+        ({"framework": None, "paths": ["data/**"]}, False),
+        ({"framework": "MarsDB", "paths": ["db/other.ts"]}, False),
+        ({"framework": None, "paths": ["data/other.ts"]}, True),
+        ({"framework": "sqlite", "paths": ["data/**"]}, True),
+        ({"framework": None, "paths": ["data/documents.ts"], "tier": "application"}, True),
+    ],
+)
+def test_embedded_store_owned_by_a_modelled_data_component_is_not_duplicated(tmp_path, row, injected):
+    (tmp_path / "package.json").write_text(json.dumps({"dependencies": {"marsdb": "1.0"}}))
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data/documents.ts").write_text(
+        "import Engine from 'marsdb'\nconst records = new Engine.Collection('records')\n"
+    )
+    (tmp_path / "data/other.ts").write_text("export const other = true\n")
+    rows = [_component("documents", **{"tier": "data", **row})]
+    result, added = manifest.reconcile_inventory(rows, tmp_path)
+    assert bool(added) is injected
+    assert len(result) == 1 + injected
+    assert manifest.reconcile_inventory(result, tmp_path)[1] == []
+
+
 def test_orm_cannot_be_finalized_as_database_engine(tmp_path):
     (tmp_path / "models").mkdir()
     (tmp_path / "models/account.ts").write_text("export const account = true\n")
     _write_components(tmp_path, [_component("database", tier="data", framework="sequelize", paths=["models/**"])])
     with pytest.raises(ValueError, match="ORM"):
         finalizer.finalize(tmp_path, tmp_path)
+
+
+def _write_files(root: Path, sizes: dict[str, int]) -> None:
+    for relative, size in sizes.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x" * size, encoding="utf-8")
+
+
+def test_language_comes_from_the_largest_implementation_language_under_own_paths(tmp_path: Path):
+    _write_files(
+        tmp_path,
+        {
+            "services/orders/Order.kt": 400,
+            "services/orders/Legacy.java": 300,
+            "services/orders/schema.sql": 5000,
+            "services/orders/node_modules/dep/index.js": 9000,
+            "portal/app.tsx": 100,
+            "portal/api.ts": 60,
+            "portal/widget.jsx": 120,
+            "portal/index.html": 4000,
+            "portal/theme.scss": 4000,
+            "edge/handler.ts": 50,
+            "edge/nested/bundle.js": 9000,
+            "batch/run.go": 80,
+            "pipeline/.github/workflows/ci.yml": 500,
+            "tie/a.rb": 10,
+            "tie/b.py": 10,
+            "records/migrate.py": 500,
+        },
+    )
+    rows = [
+        _component("orders", paths=["services/orders/**"], language="COBOL"),
+        _component("portal", tier="client", paths=["portal/**"]),
+        _component("edge", paths=["edge/*.ts", "edge/*.js"]),
+        _component("batch", paths=["batch"]),
+        _component("pipeline", paths=["pipeline/.github/workflows/**"], language="YAML"),
+        _component("tie", paths=["tie/**"]),
+        _component("records", tier="data", paths=["records/**"], language="Python"),
+    ]
+    finalizer.annotate_languages(rows, tmp_path)
+    assert {row["id"]: row.get("language") for row in rows} == {
+        "orders": "Kotlin",
+        "portal": "TypeScript",
+        "edge": "TypeScript",
+        "batch": "Go",
+        "pipeline": None,
+        "tie": "Python",
+        "records": None,
+    }
+
+
+def test_language_ignores_links_out_of_the_component(tmp_path: Path):
+    repo, outside = tmp_path / "repo", tmp_path / "outside"
+    _write_files(repo, {"worker/job.py": 10})
+    _write_files(outside, {"huge.java": 9000, "lib/code.rs": 9000})
+    (repo / "worker/linked.java").symlink_to(outside / "huge.java")
+    (repo / "worker/lib").symlink_to(outside / "lib", target_is_directory=True)
+    rows = [_component("worker", paths=["worker/**"])]
+    finalizer.annotate_languages(rows, repo)
+    assert rows[0]["language"] == "Python"
+
+
+def test_finalized_language_survives_the_manifest_gate_without_changing_the_fingerprint(tmp_path: Path):
+    repo = tmp_path / "repo"
+    output = tmp_path / "out"
+    output.mkdir()
+    _write_files(repo, {"src/api/server.py": 40})
+    _write_components(output, [_component("api")])
+    first, receipt = finalizer.finalize(repo, output)
+    assert first["components"][0]["language"] == "Python"
+    assert finalizer.finalize(repo, output) == (first, receipt)
+    assert manifest.reconcile_inventory(first["components"], repo) == (first["components"], [])
+    without = [{key: value for key, value in row.items() if key != "language"} for row in first["components"]]
+    assert finalizer.component_inventory_fingerprint(without) == receipt["component_inventory_fingerprint"]
+
+
+def _write_sources(root: Path, files: dict[str, str]) -> None:
+    for relative, text in files.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+
+def _llm_calls(*files: str) -> list[dict]:
+    return [{"capability": "llm-calls", "evidence": [{"file": relative, "line": 1} for relative in files]}]
+
+
+def test_tool_enabled_model_calls_refine_llm_calls(tmp_path: Path):
+    repo, outside = tmp_path / "repo", tmp_path / "outside"
+    _write_sources(
+        repo,
+        {
+            "assist/chat.ts": "export async function answer(registry) {\n  const out = streamText({\n"
+            "    model: provider(name),\n    tools: registry,\n  })\n}\n",
+            "bots/agent.py": "resp = client.chat.completions.create(\n    model=name,\n    tools=TOOLS,\n)\n",
+            "bots/lc.py": "bound = chat_model.bind_tools([search])\n",
+            "plain/ask.ts": "const out = await generateText({ model: provider(name), tools: [] })\n",
+            "commented/ask.js": "const out = await generateText({\n  model,\n  // tools: registry,\n})\n",
+            "config/settings.ts": "const out = await generateText({ model, prompt })\n"
+            "export const settings = {\n  tools: ['lint'],\n}\n",
+        },
+    )
+    _write_sources(outside, {"agent.py": "resp = client.chat.completions.create(model=m, tools=T)\n"})
+    (repo / "linked").mkdir()
+    (repo / "linked/agent.py").symlink_to(outside / "agent.py")
+    upload = {"capability": "file-upload", "evidence": [{"file": "assist/chat.ts", "line": 2}]}
+    tools = [{"capability": "llm-tools", "evidence": [{"file": "plain/ask.ts", "line": 1}]}]
+    rows = [
+        _component("assist", capabilities=[upload, *_llm_calls("assist/chat.ts")]),
+        _component("bots", capabilities=_llm_calls("bots/agent.py", "bots/lc.py")),
+        _component("plain", capabilities=_llm_calls("plain/ask.ts")),
+        _component("commented", capabilities=_llm_calls("commented/ask.js")),
+        _component("config", capabilities=_llm_calls("config/settings.ts")),
+        _component("linked", capabilities=_llm_calls("linked/agent.py", "../outside/agent.py")),
+        _component("done", capabilities=[*tools, *_llm_calls("assist/chat.ts")]),
+    ]
+    finalizer.refine_model_capabilities(rows, repo.resolve())
+    by_id = {row["id"]: row["capabilities"] for row in rows}
+    assert by_id["assist"] == [upload, {"capability": "llm-tools", "evidence": [{"file": "assist/chat.ts", "line": 4}]}]
+    assert by_id["bots"] == [
+        {
+            "capability": "llm-tools",
+            "evidence": [{"file": "bots/agent.py", "line": 3}, {"file": "bots/lc.py", "line": 1}],
+        }
+    ]
+    for unchanged in ("plain", "commented", "config", "linked"):
+        assert [item["capability"] for item in by_id[unchanged]] == ["llm-calls"], unchanged
+    assert by_id["done"] == [*tools, *_llm_calls("assist/chat.ts")]
+
+
+def test_refined_llm_tools_pass_the_finalization_evidence_gate(tmp_path: Path):
+    repo = tmp_path / "repo"
+    output = tmp_path / "out"
+    output.mkdir()
+    _write_sources(repo, {"src/api/assistant.py": "resp = model.invoke(\n    messages,\n    tool_choice='auto',\n)\n"})
+    _write_components(output, [_component("api", capabilities=_llm_calls("src/api/assistant.py"))])
+    finalized, _ = finalizer.finalize(repo, output)
+    assert finalized["components"][0]["capabilities"] == [
+        {"capability": "llm-tools", "evidence": [{"file": "src/api/assistant.py", "line": 3}]}
+    ]
+
+
+def _ci_repo(tmp_path: Path, dockerfiles: list[str]) -> None:
+    (tmp_path / ".github/workflows").mkdir(parents=True)
+    (tmp_path / ".github/workflows/ci.yml").write_text("on: push\n")
+    for rel in dockerfiles:
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text("FROM node:24\n")
+
+
+def _owners(components: list[dict], rel: str) -> list[str]:
+    return [c["id"] for c in components if manifest._path_owns(c.get("paths") or [], rel)]
+
+
+@pytest.mark.parametrize(
+    "dockerfiles,other_paths,expect_glob",
+    [
+        (["Dockerfile", "test/smoke/Dockerfile"], [], True),
+        (["Dockerfile", "a/Dockerfile", "b/c/Dockerfile"], [], True),
+        (["Dockerfile", "services/api/Dockerfile", "test/smoke/Dockerfile"], ["services/api/**"], False),
+    ],
+)
+def test_analyst_authored_cicd_component_adopts_unowned_supply_chain_files(
+    tmp_path, dockerfiles, other_paths, expect_glob
+):
+    _ci_repo(tmp_path, dockerfiles)
+    rows = [_component("ci-cd-pipeline", paths=[".github/workflows/**", "Dockerfile"])]
+    if other_paths:
+        rows.append(_component("api", paths=other_paths))
+    result, injected = manifest.reconcile_inventory(rows, tmp_path)
+    assert not injected
+    for rel in dockerfiles:
+        owner = "api" if rel.startswith("services/api/") else "ci-cd-pipeline"
+        assert _owners(result, rel) == [owner]
+    assert ("**/Dockerfile" in result[0]["paths"]) is expect_glob
+    assert manifest.reconcile_inventory(result, tmp_path)[0] == result
+
+
+def test_cicd_adoption_adds_no_speculative_globs(tmp_path):
+    _ci_repo(tmp_path, [])
+    rows = [_component("ci-cd-pipeline", paths=[".github/workflows/**"])]
+    result, _ = manifest.reconcile_inventory(rows, tmp_path)
+    assert result[0]["paths"] == [".github/workflows/**"]
+
+
+def test_pipeline_component_without_ci_files_is_left_alone(tmp_path):
+    (tmp_path / "Dockerfile").write_text("FROM node:24\n")
+    rows = [_component("data-pipeline", paths=["etl/**"])]
+    result, injected = manifest.reconcile_inventory(rows, tmp_path)
+    assert not injected
+    assert result[0]["paths"] == ["etl/**"]

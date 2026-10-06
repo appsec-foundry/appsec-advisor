@@ -86,6 +86,11 @@ agents:
     purpose: Review bounded candidate groups without reading the complete architecture or source tree.
     scope: whole_run
     stage: Threat consolidation
+  - id: architect_reviewer
+    name: Architect reviewer
+    purpose: Review the ratings and fixes of one component's evidenced findings through bounded correction proposals.
+    scope: one_component
+    stage: Finding triage
   - id: evidence_verifier
     name: Evidence verifier
     purpose: Verify a bounded sample of finding citations against repository evidence.
@@ -110,6 +115,11 @@ agents:
 # Runtime migration state is reported by effective-plan receipts and the
 # implementation plan; it is not a human routing choice.
 contexts:
+  - id: discovery.application_preview
+    name: Early application overview
+    category: repository_discovery
+    description: Bounded preliminary source excerpts reused after the business-context dialog; not a complete inventory.
+    scope: whole_run
   - id: run.configuration
     name: Resolved run configuration
     category: target_and_run
@@ -227,6 +237,16 @@ contexts:
     name: Bounded architecture route projection
     category: architecture_and_data_flows
     description: Risk-shaped and framework-diverse route records selected from the complete deterministic inventory.
+    scope: whole_run
+  - id: architecture.role_units
+    name: Required role-bearing units
+    category: architecture_and_data_flows
+    description: Deterministically detected authentication, CI/CD, realtime, web3, and embedded-store units that the finalized inventory must contain.
+    scope: whole_run
+  - id: architecture.topology
+    name: Deployed workload topology
+    category: architecture_and_data_flows
+    description: Deployable workloads with platform-qualified zones that the component inventory must account for.
     scope: whole_run
   - id: architecture.targeted_source
     name: Targeted architecture source reads
@@ -370,6 +390,11 @@ contexts:
     category: verification_and_risk
     description: Deterministically selected findings with exact-source-bound cited code windows.
     scope: whole_run
+  - id: verification.architect_packets
+    name: Architect review packets
+    category: verification_and_risk
+    description: Controller-built packets of one component's findings with their frozen ratings, fixes, policy ceilings and evidence context.
+    scope: one_component
   - id: verification.triage_flags
     name: Triage decisions
     category: verification_and_risk
@@ -476,6 +501,14 @@ assignments:
     importance: supporting
     applies_to: whole_run
     reason: Deterministic patterns reduce broad discovery and retain the documented fallback.
+  - id: reuse-early-application-overview
+    context: discovery.application_preview
+    agents:
+      - recon_scanner
+    delivery: optional
+    importance: supporting
+    applies_to: whole_run
+    reason: Recon reuses bounded source excerpts already collected for early questions without treating missing excerpts as absent surfaces.
   - id: repair-brief-for-recon
     context: run.producer_repair_brief
     agents:
@@ -565,6 +598,22 @@ assignments:
     importance: essential
     applies_to: whole_run
     reason: A bounded risk-shaped and diverse route projection anchors semantic attack-surface decisions while deterministic consumers retain the complete inventory.
+  - id: role-units-for-architecture
+    context: architecture.role_units
+    agents:
+      - architecture_analyst
+    delivery: required
+    importance: essential
+    applies_to: whole_run
+    reason: Units that finalization would add later must be modelled before data flows are written, or they reach the report without connections.
+  - id: topology-for-architecture
+    context: architecture.topology
+    agents:
+      - architecture_analyst
+    delivery: optional
+    importance: supporting
+    applies_to: whole_run
+    reason: When the deployment configuration defines workloads, each one must be modelled or declared unmodelled, so the analyst sees them.
   - id: no-complete-route-inventory-for-architecture
     context: architecture.routes
     agents:
@@ -758,6 +807,14 @@ assignments:
     importance: essential
     applies_to: whole_run
     reason: Verification receives only the deterministically selected findings and exact-source-bound cited windows.
+  - id: architect-packets-for-review
+    context: verification.architect_packets
+    agents:
+      - architect_reviewer
+    delivery: required
+    importance: essential
+    applies_to: current_component
+    reason: Each review job sees only its component's controller-built packets and answers every packet it holds.
   - id: generated-threats-for-synthesis
     context: threats.generated_projection
     agents:
@@ -809,12 +866,13 @@ assignments:
   - id: no-complete-threat-set-for-focused-post-stride-roles
     context: threats.merged
     agents:
+      - architect_reviewer
       - evidence_verifier
       - post_stride_synthesizer
     delivery: forbidden
     importance: essential
     applies_to: whole_run
-    reason: Evidence verification and synthesis receive their bounded projections, never the complete canonical set.
+    reason: Evidence verification, architect review and synthesis receive their bounded projections, never the complete canonical set.
   - id: abuse-case-candidates
     context: abuse_cases.matches
     agents:

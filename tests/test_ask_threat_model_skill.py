@@ -12,7 +12,7 @@ def test_ask_skill_requires_host_supplied_plugin_root() -> None:
     text = SKILL.read_text(encoding="utf-8")
     assert "find /root /home /opt" not in text
     assert '"$CLAUDE_PLUGIN_ROOT/.claude-plugin/plugin.json"' in text
-    assert '"$CLAUDE_PLUGIN_ROOT/scripts/query_threat_model.py"' in text
+    assert '"$CLAUDE_PLUGIN_ROOT/scripts/model/query_threat_model.py"' in text
 
 
 def test_ask_skill_uses_quoted_argument_array_and_exposes_targeted_filters() -> None:

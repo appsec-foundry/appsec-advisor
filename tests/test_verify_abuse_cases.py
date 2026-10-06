@@ -1,4 +1,4 @@
-"""Unit tests for scripts/verify_abuse_cases.py."""
+"""Unit tests for scripts/validators/verify_abuse_cases.py."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
-import verify_abuse_cases as mod
+import validators.verify_abuse_cases as mod
 
 
 def _write(p: Path, obj) -> None:

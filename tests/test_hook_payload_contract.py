@@ -37,9 +37,9 @@ import pytest
 SCRIPTS = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-import agent_lifecycle as lifecycle  # noqa: E402
-import agent_logger  # noqa: E402
-import budget_watchdog as budget  # noqa: E402
+import runtime.agent_lifecycle as lifecycle  # noqa: E402
+import runtime.agent_logger as agent_logger  # noqa: E402
+import runtime.budget_watchdog as budget  # noqa: E402
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "hook-payloads"
 FIXTURES = sorted(FIXTURE_DIR.glob("claude-code-*.json"))

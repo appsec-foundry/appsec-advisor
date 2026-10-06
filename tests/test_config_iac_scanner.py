@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
-import config_iac_scanner as scanner
+import analyzers.config_iac_scanner as scanner
 import pytest
 import yaml
 
@@ -19,6 +20,7 @@ def _check(check_id: str, iac_type: str, file_pattern: str, expect: str, **extra
         "expect": expect,
         "severity_if_violated": "Medium",
         "cwe": "CWE-1000",
+        "stride": "Tampering",
         "finding_type": "FT-100",
         "rationale": "The setting must satisfy policy.",
         "remediation": "Apply the secure setting",
@@ -212,3 +214,318 @@ def test_main_writes_run_stable_timestamp(tmp_path):
     assert scanner.main(["--repo-root", str(repo), "--output", str(output), "--checks", str(catalog)]) == 0
     result = json.loads(output.read_text(encoding="utf-8"))
     assert result["generated_at"] == "1970-01-01T00:00:00Z"
+
+
+def _iac_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    (repo / "deploy" / "k8s").mkdir(parents=True)
+    (repo / "infra" / "prod").mkdir(parents=True)
+    (repo / "docker-compose.yaml").write_text(
+        "services:\n  db:\n    image: postgres\n    ports: ['5432:5432']\n"
+        "    environment:\n      POSTGRES_PASSWORD: compose-literal-pw\n",
+        encoding="utf-8",
+    )
+    (repo / "deploy" / "k8s" / "app.yml").write_text(
+        "apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: api}\nspec:\n  template:\n    spec:\n"
+        "      containers:\n        - name: api\n          image: api\n"
+        "          env: [{name: API_TOKEN, value: k8s-literal-token}]\n",
+        encoding="utf-8",
+    )
+    (repo / "infra" / "prod" / "main.tf").write_text(
+        'variable "db_password" {\n  default = "tf-literal-pw"\n}\n'
+        'resource "aws_security_group" "s" {\n  ingress {\n    from_port = 22\n    to_port = 22\n'
+        '    protocol = "tcp"\n    cidr_blocks = ["0.0.0.0/0"]\n  }\n}\n',
+        encoding="utf-8",
+    )
+    return repo
+
+
+def test_shipped_catalog_covers_compose_kubernetes_and_terraform_and_masks_secrets(tmp_path):
+    import validators.validate_intermediate as vi
+
+    result = scanner.scan(_iac_repo(tmp_path), scanner.DEFAULT_CHECKS, depth="standard", output=tmp_path / "r.json")
+
+    hits = {(row["check_id"], row["file"]) for row in result["findings"]}
+    assert {
+        ("IAC-023", "docker-compose.yaml"),
+        ("IAC-024", "docker-compose.yaml"),
+        ("IAC-082", "deploy/k8s/app.yml"),
+        ("IAC-083", "deploy/k8s/app.yml"),
+        ("IAC-090", "infra/prod/main.tf"),
+        ("IAC-093", "infra/prod/main.tf"),
+    } <= hits
+    breach = {row["check_id"]: row["breach_vector"] for row in result["findings"]}
+    assert (
+        breach["IAC-090"] == "Internet Anon" and breach["IAC-023"] == "Repo-Read" and breach["IAC-082"] == "Build-Time"
+    )
+    serialized = json.dumps(result)
+    assert not any(value in serialized for value in ("compose-literal-pw", "k8s-literal-token", "tf-literal-pw"))
+    assert "uncovered_iac" not in result
+    assert vi.validate_config_scan_findings(result) == (True, [])
+
+
+def test_recognised_surface_without_checks_is_reported_not_silent(tmp_path):
+    import validators.validate_intermediate as vi
+
+    repo = tmp_path / "repo"
+    chart = repo / "charts" / "api"
+    chart.mkdir(parents=True)
+    (chart / "Chart.yaml").write_text("apiVersion: v2\nname: api\n", encoding="utf-8")
+
+    result = scanner.scan(repo, scanner.DEFAULT_CHECKS, depth="quick", output=tmp_path / "r.json")
+
+    assert result["uncovered_iac"] == [{"iac_type": "helm", "file_count": 1, "files": ["charts/api/Chart.yaml"]}]
+    assert vi.validate_config_scan_findings(result) == (True, [])
+
+
+def test_repository_without_iac_reports_neither_findings_nor_uncovered_surfaces(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    (repo / "config.yaml").write_text("password: not-iac\n", encoding="utf-8")
+
+    result = scanner.scan(repo, scanner.DEFAULT_CHECKS, depth="standard", output=tmp_path / "r.json")
+
+    assert not [row for row in result["findings"] if row["iac_type"] in {"kubernetes", "terraform", "docker_compose"}]
+    assert "uncovered_iac" not in result
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+
+
+@pytest.fixture
+def git_home(tmp_path, monkeypatch):
+    """Isolate git from the developer's global config; returns the global ignore file."""
+    xdg = tmp_path / "xdg"
+    (xdg / "git").mkdir(parents=True)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.delenv("GIT_CONFIG_GLOBAL", raising=False)
+    for key in ("GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"):
+        monkeypatch.setenv(key, "t")
+    for key in ("GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"):
+        monkeypatch.setenv(key, "t@example.invalid")
+    return xdg / "git" / "ignore"
+
+
+def _write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def _dockerfile_files(result: dict) -> list[str]:
+    return sorted(row["file"] for row in result["findings"] if row["check_id"] == "IAC-901")
+
+
+DOCKER_CHECK = _check("IAC-901", "Dockerfile", "**/Dockerfile", "absent", pattern="RUN install")
+
+
+def test_scan_skips_files_git_ignores_and_keeps_untracked_repository_files(tmp_path, git_home):
+    repo = tmp_path / "repo"
+    for rel in ("Dockerfile", "new/Dockerfile", "ignored/Dockerfile", "personal/Dockerfile"):
+        _write(repo / rel, "RUN install\n")
+    _write(repo / ".gitignore", "ignored/\n")
+    git_home.write_text("personal/\n", encoding="utf-8")
+    _git(repo, "init", "-q")
+    _git(repo, "add", "Dockerfile", ".gitignore")
+
+    result = scanner.scan(repo, _catalog(tmp_path, [DOCKER_CHECK]), depth="standard", output=tmp_path / "r.json")
+
+    assert result["inventory_source"] == "git"
+    assert _dockerfile_files(result) == ["Dockerfile", "new/Dockerfile"]
+
+
+def test_agent_config_checks_judge_only_tracked_settings(tmp_path, git_home):
+    repo = tmp_path / "repo"
+    _write(repo / ".claude" / "settings.json", '{"defaultMode": "bypassPermissions"}\n')
+    _write(repo / ".claude" / "settings.local.json", '{"defaultMode": "bypassPermissions"}\n')
+    _git(repo, "init", "-q")
+    _git(repo, "add", ".claude/settings.json")
+    check = _check("IAC-902", "agent_config", ".claude/settings*.json", "absent", pattern="bypassPermissions")
+
+    result = scanner.scan(repo, _catalog(tmp_path, [check]), depth="standard", output=tmp_path / "r.json")
+
+    assert [row["file"] for row in result["findings"]] == [".claude/settings.json"]
+
+
+def test_scan_outside_git_walks_the_tree_and_says_so(tmp_path, capsys):
+    repo = tmp_path / "repo"
+    _write(repo / "svc" / "Dockerfile", "RUN install\n")
+    catalog = _catalog(tmp_path, [DOCKER_CHECK])
+
+    assert scanner.main(["--repo-root", str(repo), "--output", str(tmp_path / "r.json"), "--checks", str(catalog)]) == 0
+
+    result = json.loads((tmp_path / "r.json").read_text(encoding="utf-8"))
+    assert result["inventory_source"] == "filesystem-walk"
+    assert _dockerfile_files(result) == ["svc/Dockerfile"]
+    assert "inventory: filesystem-walk" in capsys.readouterr().out
+
+
+def test_directory_an_enclosing_repository_ignores_is_walked_not_reported_empty(tmp_path, git_home):
+    outer = tmp_path / "outer"
+    _write(outer / ".gitignore", "scan/\n")
+    _write(outer / "scan" / "Dockerfile", "RUN install\n")
+    _git(outer, "init", "-q")
+
+    result = scanner.scan(
+        outer / "scan", _catalog(tmp_path, [DOCKER_CHECK]), depth="standard", output=tmp_path / "r.json"
+    )
+
+    assert result["inventory_source"] == "filesystem-walk"
+    assert _dockerfile_files(result) == ["Dockerfile"]
+
+
+def test_submodule_and_nested_repository_files_follow_their_own_ignore_rules(tmp_path, git_home):
+    repo = tmp_path / "repo"
+    inner = repo / "inner"
+    _write(inner / "Dockerfile", "RUN install\n")
+    _write(inner / "cache" / "Dockerfile", "RUN install\n")
+    _write(inner / ".gitignore", "cache/\n")
+    _git(inner, "init", "-q")
+    _git(inner, "add", "Dockerfile", ".gitignore")
+    _git(inner, "commit", "-q", "-m", "inner")
+    nested = repo / "nested"
+    _write(nested / "Dockerfile", "RUN install\n")
+    _git(nested, "init", "-q")
+    _git(repo, "init", "-q")
+    head = subprocess.run(
+        ["git", "-C", str(inner), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+    ).stdout.strip()
+    _git(repo, "update-index", "--add", "--cacheinfo", f"160000,{head},inner")
+
+    result = scanner.scan(repo, _catalog(tmp_path, [DOCKER_CHECK]), depth="standard", output=tmp_path / "r.json")
+
+    assert _dockerfile_files(result) == ["inner/Dockerfile", "nested/Dockerfile"]
+
+
+def test_catalog_rejects_an_unknown_breach_vector(tmp_path):
+    catalog = _catalog(tmp_path, [_check("IAC-900", "Dockerfile", "Dockerfile", "absent", breach_vector="Nearby")])
+    with pytest.raises(scanner.ConfigScanError, match="breach_vector"):
+        scanner.scan(tmp_path, catalog, depth="standard", output=tmp_path / "r.json")
+
+
+def test_catalog_rejects_a_check_without_a_stride_category(tmp_path):
+    check = _check("IAC-900", "Dockerfile", "Dockerfile", "absent")
+    del check["stride"]
+    with pytest.raises(scanner.ConfigScanError, match="incomplete"):
+        scanner.scan(tmp_path, _catalog(tmp_path, [check]), depth="standard", output=tmp_path / "r.json")
+
+
+@pytest.mark.parametrize("stride", ["Disclosure", "tampering", "", None, "Information-Disclosure"])
+def test_catalog_rejects_an_unknown_stride_category(tmp_path, stride):
+    catalog = _catalog(tmp_path, [_check("IAC-900", "Dockerfile", "Dockerfile", "absent", stride=stride)])
+    with pytest.raises(scanner.ConfigScanError, match="stride"):
+        scanner.scan(tmp_path, catalog, depth="standard", output=tmp_path / "r.json")
+
+
+def test_every_finding_carries_the_stride_its_check_declares(tmp_path):
+    (tmp_path / "Dockerfile").write_text("FROM scratch\nRUN bad\n", encoding="utf-8")
+    catalog = _catalog(
+        tmp_path,
+        [_check("IAC-900", "Dockerfile", "Dockerfile", "absent", pattern="bad", stride="Elevation of Privilege")],
+    )
+    findings = scanner.scan(tmp_path, catalog, depth="standard", output=tmp_path / "r.json")["findings"]
+
+    assert findings and {f["stride"] for f in findings} == {"Elevation of Privilege"}
+
+
+SCHEMA = yaml.safe_load(
+    (Path(scanner.__file__).resolve().parents[2] / "schemas" / "config-scan-findings.schema.yaml").read_text(
+        encoding="utf-8"
+    )
+)
+
+
+@pytest.mark.parametrize(
+    ("extra", "line", "kind"),
+    [
+        ({"anchor": r"^FROM\s"}, 1, None),
+        ({"anchor": r"^FROM\s", "anchor_occurrence": "last"}, 3, None),
+        ({"anchor": r"^MISSING\b"}, 0, "absence"),
+        ({}, 0, "absence"),
+    ],
+    ids=["first-anchor", "last-anchor", "anchor-not-in-file", "no-anchor"],
+)
+def test_a_missing_statement_cites_its_anchor_line_or_the_absence(tmp_path, extra, line, kind):
+    repo = tmp_path / "repo"
+    _write(repo / "Dockerfile", "FROM build:1 AS build\nRUN make\nFROM runtime:1\n")
+    check = _check("IAC-900", "Dockerfile", "Dockerfile", "present", pattern=r"^USER\s", **extra)
+
+    result = scanner.scan(repo, _catalog(tmp_path, [check]), depth="standard", output=tmp_path / "r.json")
+
+    from jsonschema import Draft202012Validator
+
+    Draft202012Validator(SCHEMA).validate(result)
+    (finding,) = result["findings"]
+    assert finding["line"] == line
+    assert finding.get("evidence_kind") == kind
+    if kind == "absence":
+        assert finding["searched_files"] == ["Dockerfile"]
+    assert finding["line"] != 1 or finding["evidence_snippet"].startswith("FROM")
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        ({"capability": "telepathy"}, "capability"),
+        ({"capability": "sbom", "precondition": "always"}, "precondition"),
+        ({"capability": "dependency_updates"}, "ecosystem"),
+    ],
+)
+def test_catalog_rejects_an_invalid_repository_check(tmp_path, extra, message):
+    catalog = _catalog(
+        tmp_path, [_check("IAC-900", "github_workflow", ".github/workflows/*.yml", "repository", **extra)]
+    )
+    with pytest.raises(scanner.ConfigScanError, match=message):
+        scanner.scan(tmp_path, catalog, depth="standard", output=tmp_path / "r.json")
+
+
+def test_catalog_rejects_an_invalid_anchor(tmp_path):
+    catalog = _catalog(tmp_path, [_check("IAC-900", "Dockerfile", "Dockerfile", "present", anchor="(")])
+    with pytest.raises(scanner.ConfigScanError, match="anchor"):
+        scanner.scan(tmp_path, catalog, depth="standard", output=tmp_path / "r.json")
+
+
+@pytest.mark.parametrize(
+    "finding",
+    [
+        {"line": 0},
+        {"line": 3, "evidence_kind": "absence", "searched_files": ["a"], "searched_file_count": 1},
+        {"line": 0, "evidence_kind": "absence"},
+    ],
+    ids=["line-0-without-absence", "absence-with-a-line", "absence-without-searched-files"],
+)
+def test_schema_rejects_a_line_0_location_and_an_absence_with_a_line(finding):
+    from jsonschema import Draft202012Validator
+
+    document = {
+        "version": 1,
+        "generated_at": "2026-01-01T00:00:00Z",
+        "checks_run": 1,
+        "violations": 1,
+        "findings": [
+            {
+                "local_id": "CFG-001",
+                "check_id": "IAC-900",
+                "iac_type": "Dockerfile",
+                "file": "Dockerfile",
+                "title": "Violation IAC-900",
+                "severity": "Medium",
+                **finding,
+            }
+        ],
+    }
+    assert list(Draft202012Validator(SCHEMA).iter_errors(document))
+
+
+def test_absence_still_holds_reruns_the_check_on_the_current_repository(tmp_path):
+    repo = tmp_path / "repo"
+    _write(repo / "Dockerfile", "FROM runtime:1\n")
+    catalog = _catalog(tmp_path, [_check("IAC-900", "Dockerfile", "Dockerfile", "present", pattern=r"^USER\s")])
+
+    assert scanner.absence_still_holds(repo, "IAC-900", ["Dockerfile"], checks_path=catalog) is True
+    _write(repo / "Dockerfile", "FROM runtime:1\nUSER app\n")
+    assert scanner.absence_still_holds(repo, "IAC-900", ["Dockerfile"], checks_path=catalog) is False
+    assert scanner.absence_still_holds(repo, "IAC-999", ["Dockerfile"], checks_path=catalog) is None

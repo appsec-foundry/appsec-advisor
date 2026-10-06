@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import sanitize_perimeter_claims as sanitizer
+import model.sanitize_perimeter_claims as sanitizer
 
 
 def _write(path: Path, text: str) -> None:

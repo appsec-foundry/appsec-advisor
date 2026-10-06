@@ -41,9 +41,9 @@
 >   two-pass entity-aware scanner for dynamic languages is high-effort, high-FP,
 >   redundant, and unbacked by any fixture demonstrating a miss (plan §9: keep
 >   non-Java gated). Revisit only if a concrete non-Java miss surfaces.
-> - Files: `scripts/mass_assignment_scanner.py`,
+> - Files: `scripts/analyzers/mass_assignment_scanner.py`,
 >   `data/mass-assignment-signatures.yaml`,
->   `tests/test_mass_assignment_scanner.py`; edits to `merge_threats.py` +
+>   `tests/test_mass_assignment_scanner.py`; edits to `model/merge_threats.py` +
 >   `skills/create-threat-model/SKILL-impl.md`.
 
 Part of the P1 (STRIDE bespoke-recall) track. Sibling work already landed on
@@ -77,7 +77,7 @@ Concrete anchors (verified):
 
 ## 2. Why the existing engine cannot do this
 
-`source_auth_scanner.py` and the crypto pack (`data/source-auth-checks.yaml`,
+`analyzers/source_auth_scanner.py` and the crypto pack (`data/source-auth-checks.yaml`,
 `data/crypto-checks.yaml`) are a **single-line regex engine**: each check is one
 `pattern` matched per line, with optional `counter_patterns` in a small window.
 
@@ -111,8 +111,8 @@ their own. The work is the detector, not the plumbing.
 
 ## 4. Design — entity-aware two-pass detector
 
-New script `scripts/mass_assignment_scanner.py`, structured like
-`source_auth_scanner.py` (CLI `--repo-root`, `--dry-run`, writes a findings
+New script `scripts/analyzers/mass_assignment_scanner.py`, structured like
+`analyzers/source_auth_scanner.py` (CLI `--repo-root`, `--dry-run`, writes a findings
 sidecar). Backed by a small declarative catalog
 `data/mass-assignment-signatures.yaml` so patterns are data, not code.
 
@@ -206,16 +206,16 @@ suppressors:                  # presence → not a finding
 
 ## 6. Pipeline integration
 
-1. **Run** the scanner in the same phase that runs `source_auth_scanner.py`
+1. **Run** the scanner in the same phase that runs `analyzers/source_auth_scanner.py`
    (recon / source-auth scan, Phase 8/9). Confirm the exact call site in
    `agents/phases/phase-group-*.md` and mirror it.
 2. **Output** `$OUTPUT_DIR/.mass-assignment-findings.json`. Two clean options —
-   pick one after reading `merge_threats.py`'s ingestion of
+   pick one after reading `model/merge_threats.py`'s ingestion of
    `.source-auth-findings.json`:
    - (a) **fold into `.source-auth-findings.json`** (same schema
      `schemas/source-auth-findings.schema.yaml`) so the existing ingestion picks
      it up with zero new wiring — **preferred**; or
-   - (b) a separate sidecar that `merge_threats.py` also reads.
+   - (b) a separate sidecar that `model/merge_threats.py` also reads.
 3. **Mandatory bridge (critical — the plugin distrusts soft prompts).** Add a row
    to `agents/appsec-stride-analyzer.md` § "Mandatory recon-derived findings":
    *"If the mass-assignment scanner flags a handler → you MUST emit a CWE-915
@@ -266,10 +266,10 @@ implementation-weakness) are flagged, and `clean.*` is silent.
 
 ## 10. Reference index (verified this session)
 
-- Single-regex engine: `scripts/source_auth_scanner.py` (`scan_repo`, glob
+- Single-regex engine: `scripts/analyzers/source_auth_scanner.py` (`scan_repo`, glob
   `_glob_to_regex`, `counter_scope` line|window|call). Catalogs:
   `data/source-auth-checks.yaml`, `data/crypto-checks.yaml`.
-- Findings ingestion: `merge_threats.py` reads `.source-auth-findings.json`.
+- Findings ingestion: `model/merge_threats.py` reads `.source-auth-findings.json`.
 - Mandatory-bridge mechanism + rationale: `agents/appsec-stride-analyzer.md`
   § "Mandatory recon-derived findings" (~line 309) and "Why this is mandatory
   and not a heuristic" (~line 372).

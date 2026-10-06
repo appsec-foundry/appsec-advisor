@@ -1,7 +1,7 @@
 """Functional tests for the content-equality incremental pre-check.
 
 Regression coverage for the "dirty-but-unchanged manifest re-scans forever"
-bug: ``baseline_state.py check-changes`` must treat a file that git lists as
+bug: ``baseline/baseline_state.py check-changes`` must treat a file that git lists as
 changed (working tree dirty vs HEAD) but whose bytes are identical to what the
 last threat model analysed as *unchanged* — incremental means "changed since
 the last threat model", not "dirty vs the last commit".
@@ -20,7 +20,7 @@ import subprocess
 from pathlib import Path
 
 SCRIPTS = Path(__file__).parent.parent / "scripts"
-_spec = importlib.util.spec_from_file_location("baseline_state", SCRIPTS / "baseline_state.py")
+_spec = importlib.util.spec_from_file_location("baseline.baseline_state", SCRIPTS / "baseline/baseline_state.py")
 baseline_state = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(baseline_state)
 

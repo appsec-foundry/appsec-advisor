@@ -184,13 +184,13 @@ fi
 
 # ── Stage 1b: HTML export (best-effort; needs pandoc) ────────────────────────
 # PDF is produced in-pipeline via --pdf. A --html flag exists too, but here we
-# drive export_html.py directly to keep this deterministic (no LLM tokens).
+# drive exporters/export_html.py directly to keep this deterministic (no LLM tokens).
 HTML_DONE=0
 if [ "$HTML_CAPABLE" -eq 1 ]; then
     HTML_ATTEMPTED=1
     echo ""
     echo "[1b] exporting HTML ..."
-    if python3 "$PLUGIN_ROOT/scripts/export_html.py" \
+    if python3 "$PLUGIN_ROOT/scripts/exporters/export_html.py" \
             --input "$OUTPUT_DIR/threat-model.md" \
             --output "$OUTPUT_DIR/threat-model.html"; then
         HTML_DONE=1

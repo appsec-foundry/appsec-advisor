@@ -1,22 +1,23 @@
-"""Unit tests for scripts/secret_scan.py — strict-format leaks, loose-pattern
+"""Unit tests for scripts/validators/secret_scan.py — strict-format leaks, loose-pattern
 credential assignments, and the masking-marker exemption."""
 
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "secret_scan.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "validators/secret_scan.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("secret_scan", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("validators.secret_scan", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["secret_scan"] = module
+    sys.modules["validators.secret_scan"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
@@ -471,21 +472,21 @@ def test_scan_file_missing_returns_empty(secret_scan, tmp_path):
 def test_main_clean_exit_0(secret_scan, tmp_path, capsys):
     p = tmp_path / "clean.md"
     p.write_text("All secrets are masked here: `AIza****`.\n")
-    rc = secret_scan.main(["secret_scan.py", str(p)])
+    rc = secret_scan.main(["validators/secret_scan.py", str(p)])
     assert rc == 0
 
 
 def test_main_leak_exit_1(secret_scan, tmp_path, capsys):
     p = tmp_path / "leak.md"
     p.write_text("Leaked: AKIAIOSFODNN7EXAMPLE\n")
-    rc = secret_scan.main(["secret_scan.py", str(p)])
+    rc = secret_scan.main(["validators/secret_scan.py", str(p)])
     assert rc == 1
     out = capsys.readouterr().out
     assert "aws_access_key" in out
 
 
 def test_main_bad_args_exit_2(secret_scan, capsys):
-    rc = secret_scan.main(["secret_scan.py"])
+    rc = secret_scan.main(["validators/secret_scan.py"])
     assert rc == 2
 
 
@@ -530,6 +531,36 @@ def test_mask_text_preserves_code_reference(secret_scan):
         assert applied == []
 
 
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "external -> auth: routes/login.ts credential verification",
+        "token: lib/insecurity.ts:43",
+        "password: src/app/login/login.component.ts",
+        "secret = config/secrets.yaml",
+        "auth: app/controllers/sessions_controller.rb:12-30",
+    ],
+)
+def test_repository_file_path_is_a_code_reference(secret_scan, raw):
+    """A boundary name or evidence line cites the file it rests on; the path is
+    not the credential. Masked, `auth: routes/login.ts` became
+    `auth: **** (15 chars)` in a trust-boundary name (juice-shop2 2026-09-27)."""
+    assert [h for h in secret_scan.scan_text(raw) if h.pattern == "generic_credential_assignment"] == []
+    assert secret_scan.mask_text(raw) == (raw, [])
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "token: aGVsbG8/d29ybGQrYWJjZGVmZ2hp",  # base64 with a slash, no file extension
+        "secret = abc/def9x.k3y",  # extension-like tail that is no file type
+        "password: 'routes/login.ts'",  # quoted literal stays flagged
+    ],
+)
+def test_slash_bearing_secrets_are_not_taken_for_paths(secret_scan, raw):
+    assert any(h.pattern == "generic_credential_assignment" for h in secret_scan.scan_text(raw)), raw
+
+
 def test_mask_text_idempotent(secret_scan):
     once, _ = secret_scan.mask_text("password: 'admin123'")
     twice, applied2 = secret_scan.mask_text(once)
@@ -569,7 +600,7 @@ def test_main_mask_mode_masks_and_reports(secret_scan, tmp_path, capsys):
     clean.write_text("password: **** (8 chars)\n", encoding="utf-8")
     leak.write_text("AKIAIOSFODNN7EXAMPLE\n", encoding="utf-8")
 
-    rc = secret_scan.main(["secret_scan.py", "--mask", str(clean), str(leak)])
+    rc = secret_scan.main(["validators/secret_scan.py", "--mask", str(clean), str(leak)])
 
     assert rc == 0
     out = capsys.readouterr().out
@@ -880,3 +911,72 @@ def test_mask_file_still_masks_markdown_as_text(secret_scan, tmp_path):
     assert secret_scan.mask_file(p) == ["generic_credential_assignment"]
     assert "hunter2longer" not in p.read_text()
     assert secret_scan.scan_file(p) == []
+
+
+# Synthetic key-like material only: a DER-shaped prefix plus filler that is not a
+# real key. Each line qualifies as a body chunk (>=16 chars, contains a digit).
+_FAKE_KEY_LINE = "MIICXQIBAAKBgQC" + "A1b2C3d4E5f6G7h8" * 3
+_PEM_BEGIN = "-----BEGIN RSA PRIVATE KEY-----"
+_PEM_END = "-----END RSA PRIVATE KEY-----"
+
+
+@pytest.mark.parametrize(
+    ("text", "kept"),
+    [
+        (f"{_PEM_BEGIN}\n{_FAKE_KEY_LINE}\n{_FAKE_KEY_LINE}\n{_PEM_END}\nnext line", "\nnext line"),
+        (f"key = '{_PEM_BEGIN}\\n{_FAKE_KEY_LINE}\\n{_FAKE_KEY_LINE}\\n{_PEM_END}'", "key = '"),
+        (f"const privateKey = '{_PEM_BEGIN}\\r\\n{_FAKE_KEY_LINE}\\r\\n{_FAKE_KEY_LINE}'", "const privateKey = '"),
+        (f'"signal": "k = \'{_PEM_BEGIN}\\\\r\\\\n{_FAKE_KEY_LINE}\\\\r\\\\n{_FAKE_KEY_LINE}\'"', '"signal": "k = \''),
+        (f"{_PEM_BEGIN}\n{_FAKE_KEY_LINE}\nThe attacker then signs tokens.", "\nThe attacker then signs tokens."),
+        (f"var k = '{_PEM_BEGIN}' +\n  '{_FAKE_KEY_LINE}' +\n  '{_FAKE_KEY_LINE}';", "var k = '"),
+        (f"Embedded {_PEM_BEGIN} then the attacker signs arbitrary tokens.", " then the attacker signs arbitrary"),
+    ],
+    ids=[
+        "real-newlines",
+        "escaped-n",
+        "escaped-crlf-truncated",
+        "json-serialized-escapes",
+        "truncated-before-prose",
+        "concatenated",
+        "header-only",
+    ],
+)
+def test_pem_block_is_masked_as_one_unit(secret_scan, text, kept):
+    masked, applied = secret_scan.mask_text(text)
+    assert "pem_private_key" in applied
+    assert "A1b2C3d4" not in masked and "MIICXQ" not in masked
+    assert kept in masked
+    assert secret_scan.scan_text(masked) == []
+
+
+def test_key_bytes_behind_a_redaction_marker_are_flagged_and_masked(secret_scan):
+    text = f"privateKey = '[PEM PRIVATE KEY — REDACTED]\\r\\n{_FAKE_KEY_LINE}'"
+    assert [h.pattern for h in secret_scan.scan_text(text)] == ["pem_orphaned_key_body"]
+    masked, _ = secret_scan.mask_text(text)
+    assert masked == "privateKey = '[PEM PRIVATE KEY — REDACTED]'"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "src=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk",
+        "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA\n-----END PUBLIC KEY-----",
+        "-----BEGIN CERTIFICATE-----\nMIIDdzCCAl+gAwIBAgIEAgAAuTANBgkqhkiG9w0BAQUF\n-----END CERTIFICATE-----",
+    ],
+    ids=["data-uri", "public-key", "certificate"],
+)
+def test_base64_outside_a_private_key_is_left_alone(secret_scan, text):
+    assert secret_scan.scan_text(text) == []
+    assert secret_scan.mask_text(text) == (text, [])
+
+
+def test_mask_structure_masks_a_key_body_in_yaml_leaves(secret_scan):
+    doc = {"evidence_flags": [{"signal": f"k = '{_PEM_BEGIN}\\r\\n{_FAKE_KEY_LINE}'"}]}
+    masked, applied = secret_scan.mask_structure(doc)
+    assert masked["evidence_flags"][0]["signal"] == "k = '[PEM PRIVATE KEY — REDACTED]'"
+    assert "pem_private_key" in applied
+
+
+def test_key_bytes_behind_an_ascii_escaped_marker_are_flagged(secret_scan):
+    text = json.dumps({"signal": f"k = '[PEM PRIVATE KEY — REDACTED]\\r\\n{_FAKE_KEY_LINE}'"})
+    assert [h.pattern for h in secret_scan.scan_text(text)] == ["pem_orphaned_key_body"]

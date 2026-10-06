@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://appsec-advisor/schemas/cross-repo-register.schema.json",
   "title": "Cross-repository dependency register",
-  "description": "Unified register of cross-repository dependencies discovered for a single assessment. Produced by scripts/build_cross_repo_register.py and consumed by the STRIDE dispatcher (slice_cross_repo_for_component.py), coverage_checks.check_cross_repo, and Phase 11 §5 / §7 renderers. Each entry has an unambiguous `source` field that records where it came from. Declared entries always carry interface_findings; sibling and recon entries never do.",
+  "description": "Unified register of cross-repository dependencies discovered for a single assessment. Produced by scripts/contexts/build_cross_repo_register.py and consumed by the STRIDE dispatcher (contexts/slice_cross_repo_for_component.py) and Phase 11 §5 / §7 renderers. Each entry has an unambiguous `source` field that records where it came from. Declared entries always carry interface_findings; sibling and recon entries never do.",
   "type": "object",
   "required": ["meta", "entries"],
   "additionalProperties": false,

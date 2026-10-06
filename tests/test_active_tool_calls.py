@@ -10,15 +10,15 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "agent_logger.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "runtime/agent_logger.py"
 
 
 @pytest.fixture
 def agent_logger(tmp_path, monkeypatch):
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
-    spec = importlib.util.spec_from_file_location("agent_logger", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("runtime.agent_logger", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["agent_logger"] = module
+    sys.modules["runtime.agent_logger"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module

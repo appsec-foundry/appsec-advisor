@@ -12,8 +12,8 @@ from jsonschema import Draft202012Validator
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import build_abuse_case_contexts as contexts  # noqa: E402
-import context_routing as routing  # noqa: E402
+import contexts.build_abuse_case_contexts as contexts  # noqa: E402
+import contexts.context_routing as routing  # noqa: E402
 
 
 def _match(candidate_id: str = "AC-T-001") -> dict:

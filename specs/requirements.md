@@ -74,8 +74,9 @@ a missing control.
 
 ### REQ-FLW-002 — Every analyzed component receives complete STRIDE coverage
 
-Every analyzed component is checked against all six STRIDE categories in every
-depth mode. Cost and pacing choices may not silently reduce that coverage.
+Every component a threat-model assessment analyzes is checked against all six
+STRIDE categories in every depth mode. Cost and pacing choices may not silently
+reduce that coverage.
 
 ### REQ-FLW-003 — Invalid required analysis data cannot produce a report
 
@@ -90,6 +91,10 @@ catalog. It never infers a link from an identifier or invents one when no catalo
 is present.
 
 ## Business context
+
+### REQ-BIZ-005 — Early questions inform the same analysis
+
+Interactive full and rebuild runs use a bounded application overview to ask at most two relevant business-context questions before expensive scanning. The dialog first confirms or corrects the intended use case, then asks for the worst plausible business or user harm in that use case. Technical attack mechanisms alone are not business-harm choices. Choices reflect the confirmed application use and available evidence, with the most plausible option recommended first and explicit confirmation required. No material business harm is a supported answer, including a conditional recommendation for training or demo use with synthetic data and no important business operations. Existing context informs the questions, and already answered topics are omitted. Answers reach the analysis in that same run as optional, validated context and inform relevant finding impact and mitigation ordering. Substantive dialog answers are also saved in `docs/security/business-context.md`, preserving existing repository context, so later analyses reuse them. The legacy `docs/business-context.md` remains a read fallback when the new file is absent. If both exist, the new file takes precedence. Saving dialog answers copies effective legacy context into the new file without modifying the legacy file. Persistent business context survives run cleanup. An explicit run-only context source is not persisted with those answers. Users can skip questions; headless runs and `--skip-context` never wait for this dialog or write dialog answers. Limited discovery yields explicit uncertainty rather than an extended reconnaissance loop.
 
 ### REQ-BIZ-001 — Declared context is validated and treated as data
 
@@ -108,6 +113,8 @@ the impact rating and the presentation order of findings that already stand on
 repository evidence. They never determine whether a finding exists, never relax a
 severity cap, and never substitute for evidence. A finding whose impact rating
 rests on declared context names the context that carried it.
+
+An explicit declaration of no material business harm remains distinct from unknown impact. It does not by itself add a business-priority bonus or trigger a request to raise impact. Independently declared sensitive assets and obligations remain relevant, and technical evidence still governs findings and ratings. The verdict distinguishes the declared no-harm scope from its technical concern level.
 
 ### REQ-BIZ-004 — A run says whether declared context reached the analysis
 
@@ -130,7 +137,7 @@ may assign them again.
 
 ### REQ-RPT-003 — The report is concise and actionable for engineers
 
-A finding identifies where the problem is, why an attack works, and what must change in the repository's own vocabulary. References point only to locations that exist. Code symbols, source paths, configuration identifiers, and complete code expressions use one inline-code format consistently across report sections without consuming surrounding prose. When the code leaves team decisions open, the Management Summary and completion summary show the same selection of at most three questions with the same weakness and finding references, followed by any unverified-evidence line; both omit the block when the selection is empty.
+A finding identifies where the problem is, why an attack works, and what must change in the repository's own vocabulary. References point only to locations that exist. Code symbols, source paths, configuration identifiers, and complete code expressions use one inline-code format consistently across report sections without consuming surrounding prose. When the analysis leaves decisions open that only the team can settle, the Management Summary shows up to three questions: how critical the affected assets are when no business context declares it, then design and deployment decisions with their weakness and finding references; it never asks the team to verify individual findings and omits the block when the selection is empty. The completion summary points readers to the report, finding triage, and the ask skill without repeating the questions.
 
 ### REQ-RPT-005 — Mitigations are prioritized and verifiable
 
@@ -139,7 +146,21 @@ and a way to verify the result without inventing source examples.
 
 ### REQ-RPT-006 — Machine-readable exports preserve security traceability
 
-The canonical YAML records abuse-case outcomes, the use and provenance of business context without copying its prose, and the complete configured requirements assessment. Narrower exports retain applicable requirement, abuse-case, and business-context traces as native fields or bounded text and identify semantics they cannot represent.
+The canonical YAML records abuse-case outcomes, the use and provenance of business context without copying its prose beyond a bounded, plain-text statement of the use case the user confirmed, and the complete configured requirements assessment. Narrower exports retain applicable requirement, abuse-case, and business-context traces as native fields or bounded text and identify semantics they cannot represent.
+
+### REQ-RPT-007 — Figure 1a stays readable at page width
+
+Figure 1a shows each column only as wide as its content needs, so its labels stay legible when the figure is scaled to the width of a report page or README. Making the figure more compact never removes a data-flow label from the drawing.
+
+### REQ-RPT-008 — The report shows how a supply-chain attack reaches production
+
+When the repository evidences a CI build or the analysis reports a build-time attack, the Management Summary includes a supply-chain view of the evidenced inputs, build systems and release artifacts and of the running system they feed. A reported finding adds an attack entry only when it establishes the attack mechanism. A highlighted path follows evidenced relationships, and a relationship the evidence does not establish is shown as not evidenced. The runtime figure then shows no build element. The supply-chain view stays readable at the supported report and README widths and in HTML and PDF exports, with distinct and unclipped labels, connections, arrowheads and badges. When it cannot be drawn cleanly and legibly, the report presents the same information as a table and records the fallback.
+
+## Quick security score
+
+### REQ-SCO-001 — A comparable score requires complete scanner evidence
+
+The deterministic repository score validates every required scanner artifact and withholds the aggregate when execution or validation is incomplete. Both incomplete and insufficient-coverage results retain available findings and diagnostics. Structured output identifies producer completion, scoring and catalog versions, and applicable coverage for commit comparisons. Findings excluded from scoring remain visible with their severity.
 
 ## After the run
 
@@ -147,6 +168,57 @@ The canonical YAML records abuse-case outcomes, the use and provenance of busine
 
 Users can query and triage the model finding by finding, with decisions stored
 next to it. Stale decisions are identified rather than silently reused.
+
+## On-demand threat analysis
+
+### REQ-ANA-001 — Threat analysis runs only when someone asks for it
+
+Installing the plugin, configuring an organization profile, or selecting
+question packages or a methodology profile never starts a threat analysis. It
+runs when a developer invokes it or a team configures it in its own CI.
+
+### REQ-ANA-002 — An advisory analysis never reports a failure as success
+
+A complete analysis succeeds regardless of its findings and grants no security
+approval. Invalid input, missing required context or answers, and incomplete
+required work end without success.
+
+### REQ-ANA-003 — Threat analysis leaves the threat model and assessments untouched
+
+An analysis never changes the threat model or its finding identities. Its
+completion, failure, or cancellation leaves any assessment intact, including
+one running at the same time.
+
+### REQ-ANA-004 — Required analysis inputs cannot be weakened
+
+A developer can add question packages and methodology profiles to an analysis
+but cannot remove inputs the organization requires. A change under review
+cannot choose the inputs that assess it.
+
+### REQ-ANA-005 — Questions and methodology guide the analysis without deciding it
+
+Question packages and methodology profiles direct what the analysis
+investigates. They cannot establish a vulnerability or requirement violation
+on their own or grant the analysis additional permissions.
+
+### REQ-ANA-006 — The Threat Modeling Manifesto profile is optional
+
+The plugin provides a methodology profile based on the Threat Modeling
+Manifesto. It applies only when selected, names its source, and does not
+certify compliance.
+
+### REQ-ANA-007 — Answers are saved only on request
+
+Answers to analysis questions last for the session unless the developer saves
+them to a feature file of their choice. Saving never commits and never changes
+business context or the threat model, and a saved answer is rechecked before
+reuse.
+
+### REQ-ANA-008 — A change review states how each finding relates to the change
+
+Each finding of a change review states whether the change introduced,
+worsened, or mitigated it, whether it existed before, or that the relationship
+is unknown.
 
 ## Trust
 

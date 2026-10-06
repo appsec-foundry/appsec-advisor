@@ -1,4 +1,4 @@
-"""Smoke test for scripts/measure_run.py against a frozen example."""
+"""Smoke test for scripts/runtime/measure_run.py against a frozen example."""
 
 from __future__ import annotations
 
@@ -10,14 +10,14 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "measure_run.py"
+SCRIPT = REPO_ROOT / "scripts" / "runtime/measure_run.py"
 
 
 @pytest.fixture(scope="module")
 def mod():
-    spec = importlib.util.spec_from_file_location("measure_run", SCRIPT)
+    spec = importlib.util.spec_from_file_location("runtime.measure_run", SCRIPT)
     m = importlib.util.module_from_spec(spec)
-    sys.modules["measure_run"] = m
+    sys.modules["runtime.measure_run"] = m
     spec.loader.exec_module(m)
     return m
 
@@ -41,7 +41,7 @@ def _seed_fixture(d: Path) -> None:
     (d / ".hook-events.log").write_text(
         "\n".join(
             [
-                # Real emitter format (agent_logger.py): "stop_reason=" with a
+                # Real emitter format (runtime/agent_logger.py): "stop_reason=" with a
                 # timestamped "[sid] INFO" prefix — NOT a bare "reason=". The
                 # parser must match this or the stop-reason metric is silently
                 # empty on every real run.

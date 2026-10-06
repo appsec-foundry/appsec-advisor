@@ -65,7 +65,7 @@ mkdir -p "$OUTPUT_DIR"
 VERDICT="$OUTPUT_DIR/.requirements-verification.json"
 
 # Build the skill invocation. Advisory in the skill (the gate decision is made
-# below by requirements_gate.py so the CLI owns the exit code deterministically).
+# below by requirements/requirements_gate.py so the CLI owns the exit code deterministically).
 SKILL_ARGS="--base $DIFF_REF --priority-floor $PRIORITY_FLOOR"
 [ -n "$REQUIREMENTS" ] && SKILL_ARGS="$SKILL_ARGS --requirements $REQUIREMENTS"
 
@@ -78,13 +78,13 @@ claude -p "/appsec-advisor:verify-requirements $SKILL_ARGS" \
 [ -f "$VERDICT" ] || die "no verdict produced ($VERDICT) — the review did not complete."
 
 # Render the Markdown artifact.
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_review_report.py" --verdict "$VERDICT" --output "$OUTPUT"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/renderers/render_review_report.py" --verdict "$VERDICT" --output "$OUTPUT"
 
 # Advisory by default; --fail-on flips to the deterministic gate exit code.
 if [ -n "$FAIL_ON" ]; then
   GATE_ARGS="--verdict $VERDICT --gate --priority-floor $PRIORITY_FLOOR"
   [ "$FAIL_ON" = "partial" ] && GATE_ARGS="$GATE_ARGS --gate-on partial"
-  python3 "$CLAUDE_PLUGIN_ROOT/scripts/requirements_gate.py" $GATE_ARGS
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/requirements/requirements_gate.py" $GATE_ARGS
   exit $?
 fi
 exit 0

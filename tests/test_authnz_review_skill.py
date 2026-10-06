@@ -18,11 +18,13 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 SKILL = ROOT / "skills" / "authnz-review" / "SKILL.md"
+SAVE_AND_EXPORT = SKILL.parent / "save-and-export.md"
 ORG_PROFILE = ROOT / "tests" / "fixtures" / "org-profiles" / "acme" / "org-profile.yaml"
 
 
 def _skill_text() -> str:
-    return SKILL.read_text(encoding="utf-8")
+    """The skill contract: SKILL.md plus the save/export steps it loads on demand."""
+    return SKILL.read_text(encoding="utf-8") + SAVE_AND_EXPORT.read_text(encoding="utf-8")
 
 
 def _authnz_report() -> dict:
@@ -92,7 +94,7 @@ def test_resolver_supplies_the_three_pentest_defaults():
     out = subprocess.run(
         [
             sys.executable,
-            str(ROOT / "scripts" / "resolve_org_profile.py"),
+            str(ROOT / "scripts" / "runtime/resolve_org_profile.py"),
             "--org-profile",
             str(ORG_PROFILE),
             "--preset",
@@ -111,7 +113,7 @@ def test_resolver_supplies_the_three_pentest_defaults():
 def test_resolver_stays_silent_without_a_profile(tmp_path):
     """No profile must not enable the export: the skill falls back to off."""
     out = subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "resolve_org_profile.py"), "--no-org-profile"],
+        [sys.executable, str(ROOT / "scripts" / "runtime/resolve_org_profile.py"), "--no-org-profile"],
         capture_output=True,
         text=True,
         check=True,
@@ -137,7 +139,7 @@ def test_exporter_cli_writes_tasks_from_an_authnz_report(tmp_path):
     proc = subprocess.run(
         [
             sys.executable,
-            str(ROOT / "scripts" / "render_pentest_tasks.py"),
+            str(ROOT / "scripts" / "renderers/render_pentest_tasks.py"),
             "--authnz",
             str(report),
             "--route-inventory",
@@ -166,7 +168,7 @@ def test_exporter_cli_reports_an_unreadable_report(tmp_path):
     proc = subprocess.run(
         [
             sys.executable,
-            str(ROOT / "scripts" / "render_pentest_tasks.py"),
+            str(ROOT / "scripts" / "renderers/render_pentest_tasks.py"),
             "--authnz",
             str(tmp_path / "missing.json"),
             "--output",
@@ -192,8 +194,8 @@ def test_skill_documents_every_pentest_flag():
 
 def test_skill_calls_the_resolver_and_the_exporter():
     text = _skill_text()
-    assert "resolve_org_profile.py" in text
-    assert "render_pentest_tasks.py" in text
+    assert "runtime/resolve_org_profile.py" in text
+    assert "renderers/render_pentest_tasks.py" in text
     assert "--authnz" in text
     assert "--route-inventory" in text
 
@@ -204,3 +206,45 @@ def test_skill_writes_its_own_task_file():
     text = _skill_text()
     assert "pentest-tasks-authnz.yaml" in text
     assert "docs/security/pentest-tasks.yaml" not in text
+
+
+def test_slug_names_the_task_file():
+    """With `--slug`, the task file carries the slug like the stamped
+    threat-model deliverables; without it, the default name stays."""
+    text = _skill_text()
+    assert "--slug <value>" in text
+    assert "PENTEST_FILE=pentest-tasks-authnz-<SLUG>.yaml" in text
+    assert "PENTEST_FILE=pentest-tasks-authnz.yaml" in text
+    assert '--output "$REPO_ROOT/docs/security/$PENTEST_FILE"' in text
+    assert "[A-Za-z0-9._-]" in text
+
+
+def test_skill_reads_the_inventory_coverage_counts():
+    """The skill prints and gates on counts the inventory computes (FE-14),
+    so it never recounts routes or invents a field the file lacks."""
+    text = _skill_text()
+    schema = json.loads((ROOT / "schemas" / "route-inventory.schema.json").read_text(encoding="utf-8"))
+    coverage = schema["properties"]["coverage"]["properties"]
+    for field in ("route_count", "authenticated_count", "authn_absent_count", "authn_unknown_count"):
+        assert field in coverage, field
+        assert field in text, field
+    assert "authn_absent_count == route_count" not in text
+    assert "--require-inputs" in text
+    assert 'gate --report "$OUTPUT_DIR/.authnz-report.json"' in text
+    assert "authenticated_routes" not in text
+
+
+def test_skill_passes_the_plugin_root_and_keeps_no_trap():
+    text = _skill_text()
+    assert "CLAUDE_PLUGIN_ROOT=<CLAUDE_PLUGIN_ROOT>" in text
+    assert "trap " not in text
+
+
+def test_agent_maps_every_authn_signal_value():
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import analyzers.route_inventory as ri
+
+    agent = (ROOT / "agents" / "appsec-authnz-analyzer.md").read_text(encoding="utf-8")
+    for value in (*ri._AUTHN_PRESENT, "absent", "unknown"):
+        assert f"`{value}`" in agent, value
+    assert "post-Phase-9" not in agent

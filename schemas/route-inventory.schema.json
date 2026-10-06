@@ -53,6 +53,21 @@
         "missing_authz_suspect_count": {
           "type": "integer",
           "minimum": 0
+        },
+        "authenticated_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Routes whose authentication is present (FE-14)."
+        },
+        "authn_absent_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Routes whose authentication the inventory proved absent (FE-14)."
+        },
+        "authn_unknown_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Routes whose authentication is neither proven present nor proven absent."
         }
       }
     }
@@ -163,6 +178,34 @@
           "type": "array",
           "items": { "type": "string" },
           "description": "Optional short explanatory tokens (free-text discouraged)."
+        },
+        "authn_handler_signal": {
+          "type": "string",
+          "enum": ["verified", "decode_only", "none", "unresolved"],
+          "description": "What the resolved handler chain (registration arguments and mounted middlewares) proves: a checked credential with a rejecting branch, a token decoded without signature verification, no credential read in a fully resolved chain, or unresolved. Absent for stacks analyzers/handler_resolver.py does not cover."
+        },
+        "authn_handler_scheme": {
+          "type": "string",
+          "enum": ["cookie", "bearer", "other", "none"],
+          "description": "Credential kind behind authn_handler_signal; `none` for decode_only and none."
+        },
+        "authn_handler_evidence": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["file", "line"],
+            "properties": {
+              "file": { "type": "string" },
+              "line": { "type": "integer", "minimum": 1 }
+            }
+          },
+          "description": "Code that decided authn_handler_signal: the check, the decode, or the inspected handler definitions."
+        },
+        "handler_module": {
+          "type": "string",
+          "description": "Repo-relative file that defines the route's own handler (last registration argument seen through repository wrappers, or the decorated function), resolved through imports; guards, wrappers, mounted middlewares and injected dependencies never count. Links a finding in that file to the routes it serves."
         }
       }
     },
@@ -176,7 +219,7 @@
         "decorator_present",
         "inherited_unknown"
       ],
-      "description": "Signal — NOT a verdict. 'unknown' / 'inherited_unknown' MUST NOT be silently coerced to 'absent' by downstream consumers."
+      "description": "Signal — NOT a verdict. 'present'/'absent' on authn come from the resolved handler chain (authn_handler_signal verified, or none/decode_only). 'unknown' / 'inherited_unknown' MUST NOT be silently coerced to 'absent' by downstream consumers."
     }
   }
 }

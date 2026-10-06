@@ -32,11 +32,11 @@ and is recorded separately because it is not a documentation fix.
 > Only resolved, confirmed crossings may become analyzer candidates or Figure 1
 > exposure context.
 
-The Figure 1 half is correct: `figure1_svg.py:469` requires
+The Figure 1 half is correct: `renderers/figure1_svg.py:469` requires
 `confidence == "confirmed"`.
 
 The analyzer half is wrong. Candidate selection in
-`prepare_trust_boundary_context.py:961-964` admits a boundary on two conditions —
+`contexts/prepare_trust_boundary_context.py:961-964` admits a boundary on two conditions —
 `resolution_status == "resolved"` and `boundary_endpoints_valid`. Confidence
 never gates admission; it enters only as the sixth of seven sort keys
 (`:984`), so it breaks ties and nothing more.
@@ -49,7 +49,7 @@ Fix: split the sentence. Analyzer candidacy requires a resolved row with valid
 endpoints; Figure 1 exposure additionally requires `confirmed`. Worth naming the
 consequence in the same place, because it is the part a reader acts on: a
 reference to an `inferred` row is discarded at merge
-(`prepare_trust_boundary_context.py:1146`), so an inferred candidate can occupy
+(`contexts/prepare_trust_boundary_context.py:1146`), so an inferred candidate can occupy
 an analyzer slot but can never produce a surviving link.
 
 ## D2 — Stale count in the repo-local context intro
@@ -72,7 +72,7 @@ applies to all three.
 
 > Candidate files are bounded by assessment depth (2/4/6 for quick/standard/thorough)
 
-`BOUNDARY_CANDIDATE_LIMITS` (`resolve_config.py:253`) caps **boundaries per
+`BOUNDARY_CANDIDATE_LIMITS` (`runtime/resolve_config.py:253`) caps **boundaries per
 component**, written as rows into exactly one file per component
 (`<component>/trust-boundaries.json`). The file count is not what depth controls.
 
@@ -155,7 +155,7 @@ eligibility filter, not in prose. Worth a fixture before deciding.
 
 ## D9 — Duplicate function definition
 
-`prepare_trust_boundary_context.py` defines `_glob_probe` twice, at `:607` and
+`contexts/prepare_trust_boundary_context.py` defines `_glob_probe` twice, at `:607` and
 `:820`, with identical bodies and differing docstrings. The second shadows the
 first. Ruff `F811` does not fire because the first definition is used in
 `_contained_in` before the redefinition, so `make lint` stays green.

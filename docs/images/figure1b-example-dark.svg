@@ -1,0 +1,180 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1230" height="986" viewBox="0 0 1230 986" font-family="Helvetica, Arial, sans-serif">
+
+<defs><marker id="m-flow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#6b7a8c"/></marker><marker id="m-attack" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#9c3d3d"/></marker></defs>
+<text x="20.0" y="24.0" font-size="16" font-weight="bold" fill="#ccd4df" text-anchor="start">Figure 1b — Supply Chain and Build</text>
+<text x="20.0" y="40.0" font-size="10.5" font-weight="normal" fill="#7c8999" text-anchor="start">Juice Shop · 2 CI systems · 4 upstream source types · 1 delivery channel · 9 findings shown here</text>
+<rect x="218.0" y="64.0" width="250.9" height="578.5" rx="8" fill="#1f281d" stroke="#7aa07a" stroke-width="1.1" stroke-dasharray="6 4"/>
+<text x="228.0" y="81.0" font-size="12" font-weight="bold" fill="#7aa07a" text-anchor="start">Sources and inputs</text>
+<text x="228.0" y="94.0" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="start" font-style="italic">what the build consumes</text>
+<rect x="504.9" y="64.0" width="228.0" height="578.5" rx="8" fill="#1b262a" stroke="#6b9ab4" stroke-width="1.1" stroke-dasharray="6 4"/>
+<text x="514.9" y="81.0" font-size="12" font-weight="bold" fill="#6b9ab4" text-anchor="start">Build</text>
+<text x="514.9" y="94.0" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="start" font-style="italic">runs with repository secrets</text>
+<rect x="768.9" y="64.0" width="207.3" height="578.5" rx="8" fill="#201c28" stroke="#897aa9" stroke-width="1.1" stroke-dasharray="6 4"/>
+<text x="778.9" y="81.0" font-size="12" font-weight="bold" fill="#897aa9" text-anchor="start">Release artifacts</text>
+<text x="778.9" y="94.0" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="start" font-style="italic">what is shipped</text>
+<rect x="1012.2" y="64.0" width="198.0" height="578.5" rx="8" fill="#1e252d" stroke="#ccd4df" stroke-width="1.1" stroke-dasharray="6 4"/>
+<text x="1022.2" y="81.0" font-size="12" font-weight="bold" fill="#ccd4df" text-anchor="start">Execution</text>
+<text x="1022.2" y="94.0" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="start" font-style="italic">where the release runs</text>
+<rect x="232.0" y="110.0" width="222.9" height="311.5" rx="6" fill="#1c1c1c" stroke="#c9ced4" stroke-width="1.4"/>
+<text x="343.4" y="128.0" font-size="11.5" font-weight="bold" fill="#d2d8df" text-anchor="middle">Upstream inputs</text>
+<line x1="240.0" y1="136.0" x2="446.9" y2="136.0" stroke="#2b2f34"/>
+<text x="242.0" y="149.0" font-size="10" font-weight="bold" fill="#d2d8df" text-anchor="start">npm registry</text>
+<text x="343.4" y="162.0" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="middle" font-style="italic">25 install steps · lockfile enforced in 0</text>
+<text x="343.4" y="174.5" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="middle" font-style="italic">180 declared · 174 by range · lockfile absent</text>
+<circle cx="242.0" cy="183.5" r="3.6" fill="#d08a3a"/>
+<text x="252.0" y="187.0" font-size="9" font-weight="normal" fill="#d2d8df" text-anchor="start">Lockfile-free npm install into</text>
+<text x="444.9" y="187.0" font-size="8.5" font-weight="bold" fill="#bf5c5c" text-anchor="end">F-020</text>
+<text x="252.0" y="200.0" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="start">published image</text>
+<circle cx="242.0" cy="209.5" r="3.6" fill="#d08a3a"/>
+<text x="252.0" y="213.0" font-size="9" font-weight="normal" fill="#d2d8df" text-anchor="start">Untrusted npm Install/Postinstall</text>
+<text x="444.9" y="213.0" font-size="8.5" font-weight="bold" fill="#bf5c5c" text-anchor="end">F-039</text>
+<text x="252.0" y="226.0" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="start">Scripts Enabled</text>
+<line x1="240.0" y1="237.0" x2="446.9" y2="237.0" stroke="#2b2f34"/>
+<text x="242.0" y="250.0" font-size="10" font-weight="bold" fill="#d2d8df" text-anchor="start">GitHub Actions</text>
+<text x="343.4" y="263.0" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="middle" font-style="italic">92 references · 7 not SHA-pinned</text>
+<circle cx="242.0" cy="272.0" r="3.6" fill="#c9a43a"/>
+<text x="252.0" y="275.5" font-size="9" font-weight="normal" fill="#d2d8df" text-anchor="start">Third-party action pinned to</text>
+<text x="444.9" y="275.5" font-size="8.5" font-weight="bold" fill="#bf5c5c" text-anchor="end">F-040</text>
+<text x="252.0" y="288.5" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="start">mutable branch</text>
+<line x1="240.0" y1="299.5" x2="446.9" y2="299.5" stroke="#2b2f34"/>
+<text x="242.0" y="312.5" font-size="10" font-weight="bold" fill="#d2d8df" text-anchor="start">Base images</text>
+<text x="343.4" y="325.5" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="middle" font-style="italic">3 references · 3 not digest-pinned</text>
+<circle cx="242.0" cy="334.5" r="3.6" fill="#c9a43a"/>
+<text x="252.0" y="338.0" font-size="9" font-weight="normal" fill="#d2d8df" text-anchor="start">Base images referenced by mutable</text>
+<text x="444.9" y="338.0" font-size="8.5" font-weight="bold" fill="#bf5c5c" text-anchor="end">F-041</text>
+<text x="252.0" y="351.0" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="start">tag without digest</text>
+<line x1="240.0" y1="362.0" x2="446.9" y2="362.0" stroke="#2b2f34"/>
+<text x="242.0" y="375.0" font-size="10" font-weight="bold" fill="#d2d8df" text-anchor="start">Remote installers</text>
+<text x="343.4" y="388.0" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="middle" font-style="italic">1 piped to a shell</text>
+<circle cx="242.0" cy="397.0" r="3.6" fill="#c9a43a"/>
+<text x="252.0" y="400.5" font-size="9" font-weight="normal" fill="#d2d8df" text-anchor="start">Heroku CLI installed (ci.yml:358)</text>
+<text x="444.9" y="400.5" font-size="8.5" font-weight="bold" fill="#bf5c5c" text-anchor="end">F-038</text>
+<rect x="232.0" y="449.5" width="222.9" height="49.5" rx="6" fill="#1c1c1c" stroke="#c9ced4" stroke-width="1.4"/>
+<text x="343.4" y="467.5" font-size="11.5" font-weight="bold" fill="#d2d8df" text-anchor="middle">Source repository</text>
+<text x="343.4" y="480.5" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="middle" font-style="italic">.github/workflows</text>
+<rect x="518.9" y="110.0" width="200.0" height="389.0" rx="6" fill="#1c1c1c" stroke="#6b9ab4" stroke-width="1.4"/>
+<text x="618.9" y="128.0" font-size="11.5" font-weight="bold" fill="#d2d8df" text-anchor="middle">GitHub Actions</text>
+<text x="618.9" y="141.0" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="middle" font-style="italic">16 workflows</text>
+<text x="618.9" y="153.5" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="middle" font-style="italic">6 of 26 actions not SHA-pinned</text>
+<circle cx="528.9" cy="162.5" r="3.6" fill="#c9a43a"/>
+<text x="538.9" y="166.0" font-size="9" font-weight="normal" fill="#d2d8df" text-anchor="start">GITHUB_TOKEN passed without</text>
+<text x="708.9" y="166.0" font-size="8.5" font-weight="bold" fill="#bf5c5c" text-anchor="end">F-062</text>
+<text x="538.9" y="179.0" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="start">permissions block (ci.yml:190)</text>
+<circle cx="528.9" cy="188.5" r="3.6" fill="#c9a43a"/>
+<text x="538.9" y="192.0" font-size="9" font-weight="normal" fill="#d2d8df" text-anchor="start">Missing Workflow Permissions</text>
+<text x="708.9" y="192.0" font-size="8.5" font-weight="bold" fill="#bf5c5c" text-anchor="end">F-064</text>
+<text x="538.9" y="205.0" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="start">Block</text>
+<rect x="518.9" y="527.0" width="200.0" height="99.5" rx="6" fill="#1c1c1c" stroke="#6b9ab4" stroke-width="1.4"/>
+<text x="618.9" y="545.0" font-size="11.5" font-weight="bold" fill="#d2d8df" text-anchor="middle">GitLab CI</text>
+<text x="618.9" y="558.0" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="middle" font-style="italic">.gitlab-ci.yml</text>
+<text x="618.9" y="570.5" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="middle" font-style="italic">inventory only, no supply-chain checks</text>
+<text x="618.9" y="583.0" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="middle" font-style="italic">test, dast disabled</text>
+<text x="618.9" y="595.5" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="middle" font-style="italic">SAST excludes paths</text>
+<text x="618.9" y="608.0" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="middle" font-style="italic">Auto DevOps template</text>
+<rect x="782.9" y="110.0" width="179.3" height="90.5" rx="6" fill="#1c1c1c" stroke="#c9ced4" stroke-width="1.4"/>
+<text x="872.5" y="128.0" font-size="11.5" font-weight="bold" fill="#d2d8df" text-anchor="middle">docker.io/bkimminich/</text>
+<text x="872.5" y="143.0" font-size="11.5" font-weight="bold" fill="#d2d8df" text-anchor="middle">juice-shop</text>
+<text x="872.5" y="156.0" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="middle" font-style="italic">pushed</text>
+<circle cx="792.9" cy="165.0" r="3.6" fill="#c9a43a"/>
+<text x="802.9" y="168.5" font-size="9" font-weight="normal" fill="#d2d8df" text-anchor="start">Missing Container Image</text>
+<text x="952.2" y="168.5" font-size="8.5" font-weight="bold" fill="#bf5c5c" text-anchor="end">F-037</text>
+<text x="802.9" y="181.5" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="start">Signing</text>
+<rect x="782.9" y="527.0" width="179.3" height="62.0" rx="6" fill="#1c1c1c" stroke="#c9ced4" stroke-width="1.4"/>
+<text x="872.5" y="545.0" font-size="11.5" font-weight="bold" fill="#d2d8df" text-anchor="middle">GitLab registry</text>
+<text x="872.5" y="558.0" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="middle" font-style="italic">published by GitLab CI (inventory</text>
+<text x="872.5" y="570.5" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="middle" font-style="italic">only)</text>
+<rect x="1026.2" y="110.0" width="170.0" height="516.5" rx="6" fill="#1c1c1c" stroke="#ccd4df" stroke-width="2.2"/>
+<text x="1111.2" y="128.0" font-size="11.5" font-weight="bold" fill="#d2d8df" text-anchor="middle">Running system</text>
+<text x="1111.2" y="141.0" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="middle" font-style="italic">→ Figure 1a</text>
+<text x="1111.2" y="153.5" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="middle" font-style="italic">Deploy channel: Kubernetes ·</text>
+<text x="1111.2" y="166.0" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="middle" font-style="italic">GitLab Auto Deploy</text>
+<circle cx="1036.2" cy="175.0" r="3.6" fill="#d08a3a"/>
+<text x="1046.2" y="178.5" font-size="9" font-weight="normal" fill="#d2d8df" text-anchor="start">Goal of A2 · Full Server</text>
+<text x="1046.2" y="191.5" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="start">Compromise · High</text>
+<rect x="20.0" y="110.0" width="150.0" height="128.0" rx="6" fill="#1c1c1c" stroke="#bf5c5c" stroke-width="1.4"/>
+<circle cx="95.0" cy="128.0" r="7" fill="none" stroke="#bf5c5c" stroke-width="1.6"/>
+<path d="M84.0 148.0 q11 -14 22 0" fill="none" stroke="#bf5c5c" stroke-width="1.6"/>
+<text x="95.0" y="166.0" font-size="11" font-weight="bold" fill="#bf5c5c" text-anchor="middle">A2 · Supply-Chain /</text>
+<text x="95.0" y="180.0" font-size="11" font-weight="bold" fill="#bf5c5c" text-anchor="middle">Build Attacker ⑧</text>
+<text x="95.0" y="196.0" font-size="8.5" font-weight="normal" fill="#7c8999" text-anchor="middle" font-style="italic">compromises a dependency or</text>
+<text x="95.0" y="207.0" font-size="8.5" font-weight="normal" fill="#7c8999" text-anchor="middle" font-style="italic">build pipeline, or contributes</text>
+<text x="95.0" y="218.0" font-size="8.5" font-weight="normal" fill="#7c8999" text-anchor="middle" font-style="italic">malicious code to a public repo</text>
+<path d="M454.9 148.0 L518.9 148.0" fill="none" stroke="#bf5c5c" stroke-width="2" stroke-dasharray="6 3" marker-end="url(#m-attack)"/>
+<circle cx="470.9" cy="148.0" r="8" fill="#1c1c1c" stroke="#bf5c5c" stroke-width="1.8"/>
+<text x="470.9" y="151.5" font-size="9.5" font-weight="bold" fill="#bf5c5c" text-anchor="middle">1</text>
+<path d="M454.9 249.0 L518.9 249.0" fill="none" stroke="#8995a5" stroke-width="1.5" marker-end="url(#m-flow)"/>
+<text x="486.9" y="243.0" font-size="8.5" font-weight="normal" fill="#7c8999" text-anchor="middle">fetched</text>
+<path d="M454.9 311.5 L518.9 311.5" fill="none" stroke="#8995a5" stroke-width="1.5" marker-end="url(#m-flow)"/>
+<text x="486.9" y="305.5" font-size="8.5" font-weight="normal" fill="#7c8999" text-anchor="middle">fetched</text>
+<path d="M454.9 374.0 L518.9 374.0" fill="none" stroke="#8995a5" stroke-width="1.5" marker-end="url(#m-flow)"/>
+<text x="486.9" y="368.0" font-size="8.5" font-weight="normal" fill="#7c8999" text-anchor="middle">fetched</text>
+<path d="M454.9 483.2 L518.9 483.2" fill="none" stroke="#8995a5" stroke-width="1.5" marker-end="url(#m-flow)"/>
+<text x="486.9" y="477.2" font-size="8.5" font-weight="normal" fill="#7c8999" text-anchor="middle">checkout</text>
+<path d="M454.9 484.5 L486.9 484.5 L486.9 585.8 L518.9 585.8" fill="none" stroke="#8995a5" stroke-width="1.5" marker-end="url(#m-flow)"/>
+<path d="M718.9 164.2 L782.9 164.2" fill="none" stroke="#bf5c5c" stroke-width="2" stroke-dasharray="6 3" marker-end="url(#m-attack)"/>
+<circle cx="734.9" cy="164.2" r="8" fill="#1c1c1c" stroke="#bf5c5c" stroke-width="1.8"/>
+<text x="734.9" y="167.8" font-size="9.5" font-weight="bold" fill="#bf5c5c" text-anchor="middle">2</text>
+<path d="M962.2 164.2 L1026.2 164.2" fill="none" stroke="#a6afba" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#m-flow)"/>
+<path d="M718.9 567.0 L782.9 567.0" fill="none" stroke="#a6afba" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#m-flow)"/>
+<path d="M962.2 567.0 L1026.2 567.0" fill="none" stroke="#a6afba" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#m-flow)"/>
+<path d="M170.0 214.0 L186.0 214.0 L186.0 148.0 L232.0 148.0" fill="none" stroke="#bf5c5c" stroke-width="2" marker-end="url(#m-attack)"/>
+<circle cx="207.0" cy="148.0" r="8" fill="#9c3d3d"/>
+<text x="207.0" y="151.5" font-size="9.5" font-weight="bold" fill="#ffffff" text-anchor="middle">a</text>
+<path d="M170.0 214.0 L186.0 214.0 L186.0 374.0 L232.0 374.0" fill="none" stroke="#bf5c5c" stroke-width="2" marker-end="url(#m-attack)"/>
+<circle cx="207.0" cy="374.0" r="8" fill="#9c3d3d"/>
+<text x="207.0" y="377.5" font-size="9.5" font-weight="bold" fill="#ffffff" text-anchor="middle">b</text>
+<path d="M95.0 110.0 L95.0 53.0 L938.2 53.0 L938.2 110.0" fill="none" stroke="#bf5c5c" stroke-width="2" marker-end="url(#m-attack)"/>
+<circle cx="898.2" cy="53.0" r="8" fill="#9c3d3d"/>
+<text x="898.2" y="56.5" font-size="9.5" font-weight="bold" fill="#ffffff" text-anchor="middle">c</text>
+<g transform="translate(0,672.5)"><rect x="20.0" y="0.0" width="585.0" height="24.0" rx="3" fill="#2f4a68" stroke="#c4ceda" stroke-width="0"/>
+<text x="312.5" y="16.0" font-size="11" font-weight="bold" fill="#ffffff" text-anchor="middle">Entry points of A2 · Supply-Chain / Build Attacker</text>
+<circle cx="36.0" cy="42.0" r="8" fill="#9c3d3d"/>
+<text x="36.0" y="45.5" font-size="9.5" font-weight="bold" fill="#ffffff" text-anchor="middle">a</text>
+<text x="54.0" y="46.0" font-size="10.5" font-weight="bold" fill="#d2d8df" text-anchor="start">Manipulated dependency</text>
+<text x="597.0" y="46.0" font-size="9.5" font-weight="bold" fill="#d9a060" text-anchor="end">High</text>
+<text x="54.0" y="60.0" font-size="9" font-weight="normal" fill="#d2d8df" text-anchor="start">npm registry: 25 install steps · lockfile enforced in 0</text>
+<text x="54.0" y="74.0" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="start">Findings: F-020, F-039</text>
+<circle cx="36.0" cy="94.0" r="8" fill="#9c3d3d"/>
+<text x="36.0" y="97.5" font-size="9.5" font-weight="bold" fill="#ffffff" text-anchor="middle">b</text>
+<text x="54.0" y="98.0" font-size="10.5" font-weight="bold" fill="#d2d8df" text-anchor="start">Manipulated CI input</text>
+<text x="597.0" y="98.0" font-size="9.5" font-weight="bold" fill="#d4b661" text-anchor="end">Medium</text>
+<text x="54.0" y="112.0" font-size="9" font-weight="normal" fill="#d2d8df" text-anchor="start">Remote installers: 1 piped to a shell</text>
+<text x="54.0" y="126.0" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="start">Findings: F-038, F-040, F-041</text>
+<circle cx="36.0" cy="146.0" r="8" fill="#9c3d3d"/>
+<text x="36.0" y="149.5" font-size="9.5" font-weight="bold" fill="#ffffff" text-anchor="middle">c</text>
+<text x="54.0" y="150.0" font-size="10.5" font-weight="bold" fill="#d2d8df" text-anchor="start">Replaced release artifact</text>
+<text x="597.0" y="150.0" font-size="9.5" font-weight="bold" fill="#d4b661" text-anchor="end">Medium</text>
+<text x="54.0" y="164.0" font-size="9" font-weight="normal" fill="#d2d8df" text-anchor="start">docker.io/bkimminich/juice-shop: pushed</text>
+<text x="54.0" y="178.0" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="start">Findings: F-037</text>
+<text x="28.0" y="202.0" font-size="9.5" font-weight="bold" fill="#bf5c5c" text-anchor="start">Path of F-020, step by step:</text>
+<circle cx="36.0" cy="216.0" r="8" fill="#1c1c1c" stroke="#bf5c5c" stroke-width="1.8"/>
+<text x="36.0" y="219.5" font-size="9.5" font-weight="bold" fill="#bf5c5c" text-anchor="middle">1</text>
+<text x="54.0" y="220.0" font-size="9" font-weight="normal" fill="#d2d8df" text-anchor="start">npm registry → GitHub Actions (Dockerfile:4)</text>
+<circle cx="36.0" cy="236.0" r="8" fill="#1c1c1c" stroke="#bf5c5c" stroke-width="1.8"/>
+<text x="36.0" y="239.5" font-size="9.5" font-weight="bold" fill="#bf5c5c" text-anchor="middle">2</text>
+<text x="54.0" y="240.0" font-size="9" font-weight="normal" fill="#d2d8df" text-anchor="start">GitHub Actions → docker.io/bkimminich/juice-shop (.github/workflows/ci.yml:338)</text>
+<text x="28.0" y="260.0" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="start">The connection to the running system is not evidenced in the repository.</text>
+<text x="28.0" y="278.0" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="start">Findings without an evidenced CI owner: F-063</text>
+<rect x="625.0" y="0.0" width="585.0" height="24.0" rx="3" fill="#2f4a68" stroke="#c4ceda" stroke-width="0"/>
+<text x="917.5" y="16.0" font-size="11" font-weight="bold" fill="#ffffff" text-anchor="middle">Notation</text>
+<path d="M633.0 42.0 L677.0 42.0" fill="none" stroke="#8995a5" stroke-width="1.5" marker-end="url(#m-flow)"/>
+<text x="689.0" y="46.0" font-size="9.5" font-weight="normal" fill="#d2d8df" text-anchor="start">evidenced flow (checkout, fetch, push)</text>
+<path d="M633.0 63.0 L677.0 63.0" fill="none" stroke="#a6afba" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#m-flow)"/>
+<text x="689.0" y="67.0" font-size="9.5" font-weight="normal" fill="#d2d8df" text-anchor="start">relationship not evidenced in the repository</text>
+<path d="M633.0 84.0 L677.0 84.0" fill="none" stroke="#bf5c5c" stroke-width="2" marker-end="url(#m-attack)"/>
+<text x="689.0" y="88.0" font-size="9.5" font-weight="normal" fill="#d2d8df" text-anchor="start">attack route of the build-time attacker</text>
+<path d="M633.0 105.0 L677.0 105.0" fill="none" stroke="#bf5c5c" stroke-width="2" stroke-dasharray="6 3" marker-end="url(#m-attack)"/>
+<text x="689.0" y="109.0" font-size="9.5" font-weight="normal" fill="#d2d8df" text-anchor="start">highlighted path of the most severe entry</text>
+<circle cx="655.0" cy="126.0" r="8" fill="#9c3d3d"/>
+<text x="655.0" y="129.5" font-size="9.5" font-weight="bold" fill="#ffffff" text-anchor="middle">a</text>
+<text x="689.0" y="130.0" font-size="9.5" font-weight="normal" fill="#d2d8df" text-anchor="start">entry point (a, b, ...)</text>
+<circle cx="655.0" cy="147.0" r="8" fill="#1c1c1c" stroke="#bf5c5c" stroke-width="1.8"/>
+<text x="655.0" y="150.5" font-size="9.5" font-weight="bold" fill="#bf5c5c" text-anchor="middle">1</text>
+<text x="689.0" y="151.0" font-size="9.5" font-weight="normal" fill="#d2d8df" text-anchor="start">step on the highlighted path</text>
+<circle cx="655.0" cy="168.5" r="3.6" fill="#d08a3a"/>
+<text x="689.0" y="172.0" font-size="9.5" font-weight="normal" fill="#d2d8df" text-anchor="start">High finding</text>
+<circle cx="655.0" cy="189.5" r="3.6" fill="#c9a43a"/>
+<text x="689.0" y="193.0" font-size="9.5" font-weight="normal" fill="#d2d8df" text-anchor="start">Medium finding or decision</text>
+<text x="633.0" y="220.0" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="start">Boxes and flows come from repository files: workflow uses:, Dockerfile FROM, install and push steps. Known CVEs in dependencies are</text>
+<text x="633.0" y="233.0" font-size="9" font-weight="normal" fill="#7c8999" text-anchor="start">runtime findings and appear in Figure 1a.</text></g>
+</svg>

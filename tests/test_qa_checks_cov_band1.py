@@ -1,4 +1,4 @@
-"""Coverage band 1 (lines ~342-2700) for scripts/qa_checks.py.
+"""Coverage band 1 (lines ~342-2700) for scripts/validators/qa_checks.py.
 
 Direct-call unit tests for the link/xref/anchor/strengths/secrets/perimeter/
 invariants/MS-structure/contract/repair-plan/evidence-integrity functions.
@@ -12,16 +12,18 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "qa_checks.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "validators/qa_checks.py"
 
 
 def _load():
-    if "qa_checks" in sys.modules:
-        return sys.modules["qa_checks"]
-    spec = importlib.util.spec_from_file_location("qa_checks", SCRIPT_PATH)
+    if "validators.qa_checks" in sys.modules:
+        return sys.modules["validators.qa_checks"]
+    spec = importlib.util.spec_from_file_location("validators.qa_checks", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["qa_checks"] = module
+    sys.modules["validators.qa_checks"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
@@ -371,6 +373,23 @@ def test_unmasked_secrets_scans_yaml_too(tmp_path: Path):
     assert any("threat-model.yaml" in i for i in report.issues)
 
 
+@pytest.mark.parametrize("name", qa._PUBLISHED_ARTIFACTS)
+def test_unmasked_secrets_scans_every_published_artifact(tmp_path: Path, name: str):
+    md = _md(tmp_path, "clean prose\n")
+    (tmp_path / name).write_text("aws: AKIAIOSFODNN7EXAMPLE\n", encoding="utf-8")
+    report = qa.check_unmasked_secrets(md, output_dir=tmp_path)
+    assert any(name in i for i in report.issues)
+
+
+def test_unmasked_secrets_flags_key_bytes_left_behind_a_marker(tmp_path: Path):
+    md = _md(tmp_path, "clean prose\n")
+    (tmp_path / "threat-model.yaml").write_text(
+        "signal: \"k = '[PEM PRIVATE KEY — REDACTED]\\\\r\\\\nMIICXQIBAAKBgQCA1b2C3d4E5f6G7h8'\"\n", encoding="utf-8"
+    )
+    report = qa.check_unmasked_secrets(md, output_dir=tmp_path)
+    assert any("pem_orphaned_key_body" in i for i in report.issues)
+
+
 # ---------------------------------------------------------------------------
 # check_unfounded_perimeter_claims
 # ---------------------------------------------------------------------------
@@ -555,7 +574,7 @@ def test_ms_structure_requires_selected_team_questions_in_the_canonical_slot(tmp
         "### Security Posture & Top Threats",
         "### Top Weaknesses\nbody\n"
         "### Open Questions for the Team\n"
-        "The code cannot settle these points.\n"
+        "The analysis could not fully resolve these points from the code.\n"
         "- [W-001](#w-001): [F-001](#f-001) — Which policy owns authorization?\n"
         "### Security Posture & Top Threats",
     ).replace("## 1. Overview", '<a id="w-001"></a>\n<a id="f-001"></a>\n## 1. Overview')
@@ -1380,3 +1399,14 @@ def test_evidence_integrity_yaml_fallback(tmp_path: Path):
     )
     report = qa.check_evidence_integrity(tmp_path, tmp_path)
     assert report.ok == 1
+
+
+@pytest.mark.parametrize("compound", ["AC-T-002", "AC-F-002", "RUN-M-002"])
+def test_linkify_anchors_leaves_hyphen_joined_ids_alone(tmp_path: Path, compound):
+    md = _md(tmp_path, f"## 11. Notes\nKeystone in {compound} (Bulk data); see T-002, F-003 and M-001.\n")
+    (tmp_path / "threat-model.yaml").write_text(
+        "threats:\n  - t_id: T-002\n    title: Audit logging missing\n", encoding="utf-8"
+    )
+    _, new_text = qa.linkify_anchors(md)
+    assert f"in {compound} (Bulk data)" in new_text
+    assert "[T-002](#" in new_text and "[F-003](#" in new_text and "[M-001](#" in new_text

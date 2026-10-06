@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-03 · **Scope:** analysis only, no changes applied.
 **Reference run:** `/home/user/juice-shop/docs/security-thin/threat-model.md` (§9 = lines 3169–4540).
-**Single renderer:** `scripts/compose_threat_model.py` (per-mitigation card loop starts at `:14869`).
+**Single renderer:** `scripts/renderers/compose_threat_model.py` (per-mitigation card loop starts at `:14869`).
 
 Three defects were reported. All three reproduce in §9. Root causes and every producer
 site are below. Per AGENTS.md §4, each fix is bidirectional (producer + schema + consumer +
@@ -33,39 +33,39 @@ Input `file.ts:20-25` matches only `file.ts:20`; the trailing boundary lets `-25
 the wrapped span. The fix everywhere is `(?::\d+)?` → `(?::\d+(?:-\d+)?)?`.
 
 ### Producers that PRODUCE the split (backtick-wrappers)
-- **`scripts/compose_threat_model.py:14530` — `_INLINE_CODE_RE` (via `_wrap_inline_code`:14560) —
+- **`scripts/renderers/compose_threat_model.py:14530` — `_INLINE_CODE_RE` (via `_wrap_inline_code`:14560) —
   this is the PRIMARY producer of the §9 mitigation-register breaks.** The §9 "How" steps are
   wrapped by compose's own inline-code pass, not by `apply_prose_fixes`. Its `(?::\d+)?\b` matches
   `request.interceptor.ts:20`, the `\b` sits between `0` and `-`, so `-25` is left outside.
   **Verified 2026-07-03** against the real string: CUR `` (`request.interceptor.ts:20`-25) `` →
   widened `` (`request.interceptor.ts:20-25`) ``.
-- `scripts/apply_prose_fixes.py:126-136` — `_PATH_RE` (same bug in general prose, e.g. §6/§7 path form).
-- `scripts/apply_prose_fixes.py:183` — `_BARE_FILENAME_RE` (same bug, bare-filename form).
-- `scripts/walkthrough_renderer.py:602` — `_STEP_FILELINE_RE` (§3 attack-step prose, same bug).
+- `scripts/repairs/apply_prose_fixes.py:126-136` — `_PATH_RE` (same bug in general prose, e.g. §6/§7 path form).
+- `scripts/repairs/apply_prose_fixes.py:183` — `_BARE_FILENAME_RE` (same bug, bare-filename form).
+- `scripts/renderers/walkthrough_renderer.py:602` — `_STEP_FILELINE_RE` (§3 attack-step prose, same bug).
 
 All four share the identical `(?::\d+)?` defect and the same `(?::\d+(?:-\d+)?)?` fix. The two
 `apply_prose_fixes` producers were **verified** (import + real strings): broken → fixed, single-line
 unchanged (no regression), and `file.ts:5-abc` correctly leaves the non-numeric `-abc` outside.
 
 ### Also-affected (truncate/mis-normalize ranges — secondary breakage)
-- `scripts/compose_threat_model.py:1711` — `_mitigation_locator`: captures only `foo.ts:186`,
+- `scripts/renderers/compose_threat_model.py:1711` — `_mitigation_locator`: captures only `foo.ts:186`,
   silently **dropping** the range before it is backticked.
-- `scripts/compose_threat_model.py:1735` — `_TRAILING_LOC_TOKEN` and `:1613` legacy stripper:
+- `scripts/renderers/compose_threat_model.py:1735` — `_TRAILING_LOC_TOKEN` and `:1613` legacy stripper:
   fail to recognise a range-bearing trailing locator → can append a duplicate `` (`file:line`) ``.
 
 ### Validator is blind to the bug (false pass)
-- `scripts/check_reference_format.py:32` — `_LOC` also ends in `(?::\d+)?`, so a broken
+- `scripts/validators/check_reference_format.py:32` — `_LOC` also ends in `(?::\d+)?`, so a broken
   `(server.ts:186-188)` is not even detected. Fixing producers requires teaching this range too.
 
 ### An existing repair proves the fix, but is scoped to one place
-- `scripts/walkthrough_renderer.py:648` — `_STEP_RANGE_MERGE_RE = re.compile(r"`([^`\n]+:\d+)`-(\d+)\b")`
+- `scripts/renderers/walkthrough_renderer.py:648` — `_STEP_RANGE_MERGE_RE = re.compile(r"`([^`\n]+:\d+)`-(\d+)\b")`
   re-merges `` `file:186`-188 `` → `` `file:186-188` `` — **but only inside `_format_step_code`**.
-  Nothing equivalent runs in `apply_prose_fixes.py`, so the artifact survives everywhere else.
+  Nothing equivalent runs in `repairs/apply_prose_fixes.py`, so the artifact survives everywhere else.
 
 ### Fix direction (not applied)
-1. Widen the three producer regexes (`apply_prose_fixes.py:126,183`, `walkthrough_renderer.py:602`)
+1. Widen the three producer regexes (`repairs/apply_prose_fixes.py:126,183`, `renderers/walkthrough_renderer.py:602`)
    to `(?::\d+(?:-\d+)?)?`, and the extractor at `compose:1711`.
-2. Widen `check_reference_format.py:32` `_LOC` to the same, so ranges are validated not ignored.
+2. Widen `validators/check_reference_format.py:32` `_LOC` to the same, so ranges are validated not ignored.
 3. Handle extension-less known filenames (`Dockerfile`, `Makefile`, `Jenkinsfile`, …) so
    `Dockerfile:22-41` gets wrapped — this is a distinct sub-issue from the range bug.
 4. Tests: add range + Dockerfile cases to the prose-fix / reference-format test suites.
@@ -81,7 +81,7 @@ illustrative fragment, nor which file it belongs in. Inconsistent: some snippets
 `// lib/insecurity.ts` (M-035, M-037), most don't.
 
 ### Producer
-`scripts/compose_threat_model.py:15228-15247` emits the fence **bare** — no preceding or trailing
+`scripts/renderers/compose_threat_model.py:15228-15247` emits the fence **bare** — no preceding or trailing
 prose:
 ```python
 if how_code:
@@ -111,7 +111,7 @@ The only labelled case is the *extra* multi-CWE blocks at `:15252-15261` (`_Addi
   LLM/author happened to include it.
 - Bidirectional: the qualifier needs a source of truth — either a new schema field
   (`code_caption` / `code_scope` on `mitigation-overrides.additions[]`, threaded through
-  `emit_finding_fix_mitigations.py` + `build_threat_model_yaml.py`), or purely deterministic
+  `model/emit_finding_fix_mitigations.py` + `model/build_threat_model_yaml.py`), or purely deterministic
   synthesis in compose from `File` + a constant. `_MITIGATION_CWE_SNIPPETS` entries would each
   need a caption/scope. Add render + schema tests.
 
@@ -129,7 +129,7 @@ Confirmed: **all 27 bare CWEs are the §9 Reference lines**; the only other bare
 §3 mermaid fences (correctly skipped). So the §9 reference render is demonstrably not linkified.
 
 ### Producer
-`scripts/compose_threat_model.py:15284-15286` emits the value **verbatim**:
+`scripts/renderers/compose_threat_model.py:15284-15286` emits the value **verbatim**:
 ```python
 ref = (m.get("reference") or mitigation_reference or "").strip()
 if ref:
@@ -139,19 +139,19 @@ No linkifier, no `_wrap_inline_code`, no title lookup.
 
 ### Data source
 - Primary: LLM sidecar `mitigation-overrides.additions[].reference`, merged in
-  `scripts/build_threat_model_yaml.py:1169` (collision) / `:1219` (new). Whatever raw string the
+  `scripts/model/build_threat_model_yaml.py:1169` (collision) / `:1219` (new). Whatever raw string the
   analyst wrote is printed.
 - Fallback: addressed threat's `remediation.reference`, harvested at `compose:15102-15116`
   (`mitigation_reference`), with a guard that suppresses requirement-IDs.
 
 ### Assets that already exist but are NOT wired to this render path
-- `scripts/compose_threat_model.py:10681` — `_linkify_bare_cwes()` turns `CWE-NNN` → linked, but
+- `scripts/renderers/compose_threat_model.py:10681` — `_linkify_bare_cwes()` turns `CWE-NNN` → linked, but
   **untitled** (`[CWE-798](…)`, never `[CWE-798: Use of Hard-coded Credentials](…)`), and (per the
   27/27 evidence) **does not reach the §9 Reference lines** — its global passes at `:9468`/`:9753`
   run before/outside the §9 fragment assembly.
 - `data/cwe-taxonomy.yaml` — CWEs under the `cwes:` key, each with `title` + canonical
   `https://cwe.mitre.org/…` URL, plus `owasp_top10_2021_titles`/`_urls` and `owasp_llm_top10` maps.
-  **Not loaded by `compose_threat_model.py`.**
+  **Not loaded by `renderers/compose_threat_model.py`.**
   **Coverage caveat (verified 2026-07-03):** the taxonomy covers **18 of the 22** distinct CWEs
   cited in §9 references — **4 are missing: CWE-20, CWE-330, CWE-602, CWE-620.** So
   `normalize_reference()` MUST NOT assume full coverage: derive the URL from the number always
@@ -164,7 +164,7 @@ No linkifier, no `_wrap_inline_code`, no title lookup.
 ### Missing
 - No titled-CWE-link helper anywhere (`CWE_TITLES` / `cwe_link` grep is empty in compose).
 - No routine to turn a bare owasp/genai URL into a titled markdown link.
-- `check_reference_format.py` validates only inline `[F/T/M-NNN](#…)` anchor formatting (3 rules);
+- `validators/check_reference_format.py` validates only inline `[F/T/M-NNN](#…)` anchor formatting (3 rules);
   it does **nothing** about the `**Reference:**` value — no link-required, no CWE/URL consistency.
 
 ### Fix direction (not applied)
@@ -174,7 +174,7 @@ No linkifier, no `_wrap_inline_code`, no title lookup.
   - bare URL → `[<title>](url)`, title derived from the taxonomy's OWASP map / a slug of the path.
   - optionally attach both a CWE link and a cheatsheet link where the class map has one.
 - Load `cwe-taxonomy.yaml` in compose (currently unread there).
-- Extend `check_reference_format.py` to require §9 `**Reference:**` be a titled link (guard against
+- Extend `validators/check_reference_format.py` to require §9 `**Reference:**` be a titled link (guard against
   regressions to bare strings).
 - Bidirectional: compose loader + new helper + validator + tests; no schema change needed if the
   raw `reference` string stays free-form and normalisation is deterministic at render.
@@ -203,7 +203,7 @@ implementation detail. From §3.1 (F-002):
    **Caveat: verifiable only after a live re-scan — not deterministically reproducible on the
    existing juice-shop output.**
 2. **Deterministic padding steps** (used to top up short scenarios, PREPENDED at `:769-772`):
-   - Hardcoded fallback `walkthrough_renderer.py:737-739`:
+   - Hardcoded fallback `renderers/walkthrough_renderer.py:737-739`:
      *"Send the crafted payload to the endpoint backed by `{file}:{line}`."*
    - Per-CWE `data/walkthrough-templates/*.yaml` → `attack_steps_template`, e.g. cwe-89:
      *"Identify the vulnerable input parameter — `{component}` interpolates it directly into a SQL
@@ -226,13 +226,13 @@ User wants concise, feature-scoped, e.g. **`SQL Injection against Login`** — d
 "Attack", and target the concrete *feature/function*, not the broad zone.
 
 ### Producers
-- `scripts/walkthrough_renderer.py:1074-1077` — heading assembly; `_connector = " Attack against "`
+- `scripts/renderers/walkthrough_renderer.py:1074-1077` — heading assembly; `_connector = " Attack against "`
   (`:1075`).
-- `scripts/walkthrough_renderer.py:236` — `_attack_target_label`: **prefers the broad component
+- `scripts/renderers/walkthrough_renderer.py:236` — `_attack_target_label`: **prefers the broad component
   curated name** ("Authentication & Identity") over the more specific file/feature label; only
   falls back to a prettified file basename when no component name exists. This preference is the
   reason the target reads as a zone, not a feature.
-- `scripts/walkthrough_renderer.py:215` — `_weakness_class` (the `{Weakness}` half; fine as-is).
+- `scripts/renderers/walkthrough_renderer.py:215` — `_weakness_class` (the `{Weakness}` half; fine as-is).
 - Contract doc: `agents/phases/phase-group-finalization.md:464` (documents `{Weakness} Attack
   against {Target}` and the target-derivation precedence — **must change with the code**).
 - Tests: `tests/test_walkthrough_renderer.py:557,576,598-617` assert the current `"… Attack against …"`
@@ -247,13 +247,13 @@ tests.
 
 ---
 
-## Summary of producer sites (single source: `scripts/compose_threat_model.py` unless noted)
+## Summary of producer sites (single source: `scripts/renderers/compose_threat_model.py` unless noted)
 
 | Issue | Root cause | Primary fix site |
 |---|---|---|
-| 1 range refs | `(?::\d+)?` never allows `-NN` | **§9 primary: `compose:14530` `_INLINE_CODE_RE`** (via `_wrap_inline_code:14560`); also `apply_prose_fixes.py:126,183`; `walkthrough_renderer.py:602`; `compose:1711`; validator `check_reference_format.py:32` |
+| 1 range refs | `(?::\d+)?` never allows `-NN` | **§9 primary: `compose:14530` `_INLINE_CODE_RE`** (via `_wrap_inline_code:14560`); also `repairs/apply_prose_fixes.py:126,183`; `renderers/walkthrough_renderer.py:602`; `compose:1711`; validator `validators/check_reference_format.py:32` |
 | 1 Dockerfile | no dotted extension → matched by nothing | same three prose wrappers (add extension-less filename set) |
 | 2 code block | fence emitted bare, no caption/scope/file | `compose:15228-15247` (+ `_MITIGATION_CWE_SNIPPETS` @3405) |
 | 3 references | raw string, no linkify/title, taxonomy unwired | `compose:15284-15286`; wire `data/cwe-taxonomy.yaml` (4 CWEs missing); extend validator |
-| 4 attack steps | LLM code-as-subject + generic template padding | prompt `agents/shared/prose-style.md` Rule 1 (+detail cap); `walkthrough_renderer.py:737-739`; `data/walkthrough-templates/*.yaml` |
-| 5 §3 titles | "Attack against" + broad zone target | `walkthrough_renderer.py:1075,236`; doc `phase-group-finalization.md:464`; `tests/test_walkthrough_renderer.py` |
+| 4 attack steps | LLM code-as-subject + generic template padding | prompt `agents/shared/prose-style.md` Rule 1 (+detail cap); `renderers/walkthrough_renderer.py:737-739`; `data/walkthrough-templates/*.yaml` |
+| 5 §3 titles | "Attack against" + broad zone target | `renderers/walkthrough_renderer.py:1075,236`; doc `phase-group-finalization.md:464`; `tests/test_walkthrough_renderer.py` |

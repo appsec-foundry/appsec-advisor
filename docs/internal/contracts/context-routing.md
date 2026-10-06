@@ -45,7 +45,7 @@ enforce it when their bounded projections become active.
 cannot be assigned to a broader unit. Component-type and capability selectors
 are intentionally absent until a resolver can validate and enforce them.
 
-Run `python3 scripts/context_routing.py validate` after editing the catalog.
+Run `python3 scripts/contexts/context_routing.py validate` after editing the catalog.
 The command checks its schema and every context, agent, target, dependency, and
 internal binding against the current runtime registries.
 
@@ -154,5 +154,5 @@ recorded as `legacy_unreceipted` rather than being represented as delivered.
 The local `.context-routing-plan.json` repeats human category, agent, context,
 scope, target, delivery, importance, and reason fields beside the internal
 receipt metadata.
-`scripts/context_routing.py inspect <output-dir>` prints a content-free summary
+`scripts/contexts/context_routing.py inspect <output-dir>` prints a content-free summary
 grouped by category, agent, and status.

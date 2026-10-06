@@ -1,4 +1,4 @@
-"""Tests for scripts/resolve_config.py.
+"""Tests for scripts/runtime/resolve_config.py.
 
 Validates each resolver individually plus the end-to-end CLI contract.
 """
@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -14,15 +15,15 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "resolve_config.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "runtime/resolve_config.py"
 
 
 def _load_module():
-    if "resolve_config" in sys.modules:
-        return sys.modules["resolve_config"]
-    spec = importlib.util.spec_from_file_location("resolve_config", SCRIPT_PATH)
+    if "runtime.resolve_config" in sys.modules:
+        return sys.modules["runtime.resolve_config"]
+    spec = importlib.util.spec_from_file_location("runtime.resolve_config", SCRIPT_PATH)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["resolve_config"] = mod
+    sys.modules["runtime.resolve_config"] = mod
     assert spec.loader is not None
     spec.loader.exec_module(mod)
     return mod
@@ -501,7 +502,7 @@ class TestOrchestratorRecommendation:
 
     def test_cli_flag_renders(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        rc_path = str(REPO_ROOT / "scripts" / "resolve_config.py")
+        rc_path = str(REPO_ROOT / "scripts" / "runtime/resolve_config.py")
         res = subprocess.run(
             [
                 "python3",
@@ -2237,7 +2238,7 @@ class TestDepthTradeoffCallout:
         body = " ".join(block)
         assert "Depth tradeoff" in block[0]
         # Names BOTH upgrade paths and the cost tradeoff.
-        assert "--standard" in body and "--thorough" in body
+        assert "standard" in body and "--thorough" in body
         assert "higher cost" in body
 
     def test_standard_is_a_neutral_reference_to_thorough(self):
@@ -2248,6 +2249,16 @@ class TestDepthTradeoffCallout:
         assert "⚠" not in block[0]
         body = " ".join(block)
         assert "--thorough" in body and "higher cost" in body
+
+    @pytest.mark.parametrize("depth", ["quick", "standard"])
+    def test_callout_names_only_flags_the_parser_accepts(self, depth):
+        # Following the callout must not abort the next run with
+        # `unrecognized arguments`.
+        accepted = {s for a in rc.build_parser()._actions for s in a.option_strings}
+        body = " ".join(rc._render_depth_tradeoff(_base_cfg(assessment_depth=depth)))
+        named = set(re.findall(r"--[a-z][a-z0-9-]*", body))
+        assert "--thorough" in named
+        assert named <= accepted, sorted(named - accepted)
 
     def test_thorough_has_no_callout(self):
         assert rc._render_depth_tradeoff(_base_cfg(assessment_depth="thorough")) == []
@@ -2315,7 +2326,7 @@ class TestRenderRunPlanNotes:
     def test_quick_leads_with_warning_callout(self):
         out = rc.render_run_plan_notes(_base_cfg(assessment_depth="quick"), None, None, None)
         assert out.startswith("⚠ Depth tradeoff")
-        assert "--standard" in out and "--thorough" in out
+        assert "standard" in out and "--thorough" in out
         assert "\nNotes\n" in out
 
     def test_thorough_omits_callout(self):

@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "component_inventory_fingerprint": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "external_entities": [
+    {
+      "id": "ext-customer",
+      "name": "Customer",
+      "kind": "legitimate-role",
+      "description": "Person using the web client",
+      "evidence": [{"file": "src/web-client/app.ts", "line": 1}]
+    }
+  ],
+  "data_flows": [
+    {
+      "id": "df-001",
+      "from": "external",
+      "from_entity": "ext-customer",
+      "to": "web-client",
+      "interaction": true,
+      "label": "Customer uses the web client",
+      "protocol": "HTTPS",
+      "data_classification": "Internal",
+      "direction": "request-response",
+      "evidence": [{"file": "src/web-client/app.ts", "line": 1}],
+      "provenance": "architecture"
+    },
+    {
+      "id": "df-002",
+      "from": "web-client",
+      "to": "api",
+      "label": "REST request",
+      "protocol": "HTTPS",
+      "data_classification": "Confidential",
+      "direction": "request-response",
+      "evidence": [{"file": "src/web-client/app.ts", "line": 2}],
+      "provenance": "architecture"
+    },
+    {
+      "id": "df-003",
+      "from": "api",
+      "to": "store",
+      "label": "Order query",
+      "protocol": "SQL",
+      "data_classification": "Confidential",
+      "direction": "request-response",
+      "evidence": [{"file": "src/api/handler.ts", "line": 1}],
+      "provenance": "architecture"
+    }
+  ]
+}

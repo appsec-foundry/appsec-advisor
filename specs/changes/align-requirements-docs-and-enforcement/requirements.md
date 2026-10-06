@@ -3,7 +3,7 @@
 ## ALIGN-001 Contracts describe implemented boundary behavior
 
 Source: `docs/internal/contracts/orchestration-actions.md` and
-`scripts/orchestration_controller.py`.
+`scripts/orchestrator/orchestration_controller.py`.
 
 - Required handoffs fail closed.
 - Optional enrichments degrade only where their boundary contract says so.
@@ -12,7 +12,7 @@ Source: `docs/internal/contracts/orchestration-actions.md` and
 
 ## ALIGN-002 Model ownership is layered
 
-Source: `docs/model-selection.md` and `scripts/resolve_config.py`.
+Source: `docs/model-selection.md` and `scripts/runtime/resolve_config.py`.
 
 - The session model controls the orchestrator and remains the primary cost
   lever.

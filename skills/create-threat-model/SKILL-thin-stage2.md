@@ -6,54 +6,51 @@ pregeneration and the filesystem-authoritative compose handoff.
 1. Run:
 
    ```bash
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" \
      prepare-stage2 --output-dir "$OUTPUT_DIR"
    ```
 
-   Require `stage=stage2`, `renderer_profile`, and a matching
+   Require `stage=stage2`, `renderer_profile`, `renderer_inputs`, and a matching
    `dispatch_agent` or `dispatch_parallel` action. A returned `stage=stage1d`
    means Stage 1d never ran: load `SKILL-thin-stage1d.md` in full, follow it,
    then repeat this call.
-2. Mark `Stage 2 - Report rendering` in progress, capture
-   `STAGE2_START_ISO`, print the fixed banner, and start the heartbeat:
+2. Mark `Stage 2 - Report rendering` in progress, print the fixed banner, and
+   start the heartbeat, in one message with step 3:
 
    ```text
    ▶ Stage 2 - Report rendering starting  (expect ~<EST_STAGE2> min, model: <RENDERER_MODEL>, renderer budget)
      ⟶ Authoring required LLM fragments and invoking the deterministic compose tail
    ```
 3. Set the Agent model to `dispatch_values.renderer_model_alias` verbatim;
-   `RENDERER_MODEL` is an operator id the Agent tool rejects. Pass all non-null
-   aliases from `SKILL-full-runtime.md`. Request only concise status, artifact
-   paths, and blockers; never reproduce report bodies.
+   `RENDERER_MODEL` is an operator id the Agent tool rejects. Prefix each
+   prompt with all `renderer_inputs` verbatim as `KEY=value`. Request only
+   concise status, artifact paths, and blockers; never reproduce report bodies.
 
    - `ms-only`: call only `appsec-advisor:appsec-ms-renderer`, description
      `Render: Management Summary`. This is default
      Quick. The deterministic security-architecture scaffold remains on disk.
    - `parallel`: issue both calls in one message. Call
      `appsec-advisor:appsec-secarch-renderer`, description
-     `Render: §7 Security Architecture`; call
+     `Render: §6 Security Architecture`; call
      `appsec-advisor:appsec-ms-renderer`, description
      `Render: Management Summary`.
    - `full`: call `appsec-advisor:appsec-threat-renderer`, description
      `Threat Model Renderer (Stage 2)`.
 
    Join them before step 4 and print nothing meanwhile; never poll logs or files:
-   `python3 "$CLAUDE_PLUGIN_ROOT/scripts/wait_agent_calls.py" "$OUTPUT_DIR" --since "$STAGE2_START_ISO"`
+   `python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/wait_agent_calls.py" "$OUTPUT_DIR"`
    (Bash timeout 600000). Exit 75: repeat it unchanged; otherwise continue.
 
    Specialists write only their owned fragments and never compose. The profile
    never skips fragment validation, strict compose, prose fixes, QA autofix, or
    the Stage-3 secret gate.
-4. Send the final heartbeat, stop the watchdog, mark Stage 2 completed, and
-   record stats exactly as written — `--stage` takes the integer `2`, NOT the
-   `stage2` label the controller's JSON uses everywhere else, and `--name` is
-   required:
+4. In one message, send the final heartbeat and record stats in one Bash call, stop the watchdog, and mark Stage 2 completed. Pass integer `--stage 2`, never the JSON label `stage2`; `--name` is required:
 
    ```bash
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/record_stage_stats.py" "$OUTPUT_DIR" \
      --stage 2 --name "<renderer_profile>" --agent "<agent_type>" \
      --model "<renderer_model_alias>" --duration-ms <sum> --tool-uses <sum> --tokens <sum> \
-     --subagent-type "<agent_type>" --since-iso "$STAGE2_START_ISO"
+     --subagent-type "<agent_type>"
    ```
 
    For parallel, sum tokens and tool uses, use the larger duration, and pass one
@@ -61,7 +58,7 @@ pregeneration and the filesystem-authoritative compose handoff.
 5. Run:
 
    ```bash
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" \
      next --output-dir "$OUTPUT_DIR"
    ```
 

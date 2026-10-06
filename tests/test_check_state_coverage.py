@@ -1,4 +1,4 @@
-"""Supplemental coverage tests for scripts/check_state.py.
+"""Supplemental coverage tests for scripts/runtime/check_state.py.
 
 Targets the rendering branches (needs_stage2, crash vs residue, auto-clean
 short-circuit), the phase-aware threshold sidecar, clean() OSError handling,
@@ -21,13 +21,13 @@ REPO_ROOT = Path(__file__).parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
-SCRIPT_PATH = SCRIPTS / "check_state.py"
+SCRIPT_PATH = SCRIPTS / "runtime/check_state.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("check_state", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("runtime.check_state", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["check_state"] = module
+    sys.modules["runtime.check_state"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module

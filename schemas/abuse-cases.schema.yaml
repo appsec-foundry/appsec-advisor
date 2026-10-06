@@ -10,7 +10,7 @@ description: |
   shape: a top-level `abuse_cases:` list of case objects.
 
   The case object is also reused (via $defs/abuse_case) by
-  scripts/match_abuse_cases.py and scripts/verify_abuse_cases.py.
+  scripts/model/match_abuse_cases.py and scripts/validators/verify_abuse_cases.py.
 
 type: object
 additionalProperties: false
@@ -59,6 +59,12 @@ $defs:
       goal:
         type: string
         minLength: 1
+      goal_impact:
+        description: >
+          Severity of reaching the goal. A code-verified, fully viable chain
+          is rated at least this high; without it, verification adds no
+          severity.
+        enum: [Critical, High, Medium, Low]
       scope_qualifier:
         type: object
         additionalProperties: false

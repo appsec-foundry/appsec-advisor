@@ -1,42 +1,38 @@
-{#- ### Verdict — renders opening posture statement, a lead-in line that
-    introduces the worst-case blockquote, the red HTML blockquote itself,
-    and a closing call-to-action.
+{#- ### Verdict — leads with the concern-level label and the authored verdict,
+    then the deterministic tally, the worst-case blockquote, the closing
+    sentence, and finally the basis of the assessment (what was modeled and
+    how). The verdict comes first because it is the one sentence a reader who
+    stops after the first paragraph must get; the basis qualifies it and so
+    follows it.
 
-    M3.14 — the `bullets_intro` field frames the blockquote so the reader
-    knows what they are about to scan. Without it the bullets render as a
-    bare list dropped after the opening — visually disconnected from the
-    verdict prose. Backward-compat: when the fragment doesn't carry
-    `bullets_intro`, a sensible default is emitted.
+    `bullets_intro` frames the blockquote; when the fragment doesn't carry it,
+    a deterministic default is emitted.
 
     Inputs: data.severity, data.opening, data.bullets_intro (optional),
              data.bullets[{title,body,refs}], data.closing.
              severity_emoji is a filter-injected helper.
+             verdict_label (renderer-computed): the concern-level wording for
+             data.severity, shared with the overview.
              verified_suffixes[] (renderer-computed, one per bullet): a
-             plain-language ` — ✓ verified attack path` badge for bullets whose
-             findings anchor a fully-viable abuse chain, else '' (abuse-cases.json).
-             Finding references remain provenance data and are intentionally not
-             rendered in this product-owner-facing block.
-             basis (renderer-computed, unconditional): the method boundary —
-             what kind of statement the report makes, as opposed to
-             scope_coverage, which states how much of the system it covers.
+             plain-language badge for bullets whose findings anchor a
+             fully-viable abuse chain, else ''.
+             Finding and design-risk references render as compact evidence links.
+             intro_line (renderer-computed, optional): what kind of assessment
+             this is and the size of the modeled system.
+             method_limits (renderer-computed, unconditional): one sentence on
+             the method and any screened or unanalysed components.
 -#}
 ### Verdict
 
-{{ severity_emoji(data.severity) }} {{ data.opening }}
+{{ severity_emoji(data.severity) }} **{{ verdict_label }}** — {{ data.opening }}
 {% if risk_distribution %}
 {{ risk_distribution }}
 {% endif %}
-{% if scope_coverage %}
-{{ scope_coverage }}
-{% endif %}
-{% if basis %}
-{{ basis }}
-{% endif %}
 <br/>
 
-**{{ data.bullets_intro or "Worst-case scenarios behind this verdict — what an attacker could do today:" }}**
+**{{ data.bullets_intro or ("Residual risks worth reviewing:" if data.severity == "green" else "Security concerns behind this assessment:") }}**
 
-<blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">
+<blockquote style="border-left: 3px solid #dc2626; padding: 16px 20px; margin: 0;">
 
 {% for bullet in data.bullets -%}
 - **{{ bullet.title }}** — {{ bullet.body }}{{ verified_suffixes[loop.index0] if verified_suffixes else "" }}
@@ -46,3 +42,9 @@
 <br/>
 
 {{ data.closing }}
+{% if intro_line %}
+{{ intro_line }}
+{% endif %}
+{% if method_limits %}
+{{ method_limits }}
+{% endif %}

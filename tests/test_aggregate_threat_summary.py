@@ -1,4 +1,4 @@
-"""Tests for ``scripts/aggregate_threat_summary.py`` multi-repo aggregation.
+"""Tests for ``scripts/model/aggregate_threat_summary.py`` multi-repo aggregation.
 
 Covers:
   - per-repo loading + filter (status, severity)
@@ -21,10 +21,10 @@ from typing import Any
 import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-import aggregate_threat_summary as ats  # noqa: E402
+import model.aggregate_threat_summary as ats  # noqa: E402
 
 PLUGIN_ROOT = Path(__file__).parent.parent
-SCRIPT = PLUGIN_ROOT / "scripts" / "aggregate_threat_summary.py"
+SCRIPT = PLUGIN_ROOT / "scripts" / "model/aggregate_threat_summary.py"
 SCHEMA = PLUGIN_ROOT / "schemas" / "threat-summary.schema.json"
 
 

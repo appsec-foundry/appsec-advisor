@@ -1,0 +1,1070 @@
+components:
+- id: angular-spa
+  name: Angular SPA Frontend
+  tier: client
+  paths:
+  - frontend/src/app/**/*.ts
+  - frontend/src/app/**/*.html
+  - frontend/src/hacking-instructor/**/*.ts
+- id: express-backend
+  name: Express REST API Backend
+  tier: application
+  paths:
+  - server.ts
+  - app.ts
+  - routes/*.ts
+  - lib/**/*.ts
+  - models/*.ts
+  - views/*.hbs
+  - views/*.pug
+- id: auth
+  name: Authentication and Session Surface
+  tier: application
+  paths:
+  - routes/login.ts
+  - routes/saveLoginIp.ts
+  - lib/insecurity.ts
+  - lib/startup/registerWebsocketEvents.ts
+  - routes/2fa.ts
+  - routes/authenticatedUsers.ts
+  - routes/resetPassword.ts
+- id: realtime-channel
+  name: Real-time WebSocket Channel
+  tier: application
+  paths:
+  - lib/challengeUtils.ts
+  - lib/startup/registerWebsocketEvents.ts
+- id: web3-nft
+  name: Web3 and NFT Surface
+  tier: application
+  paths:
+  - routes/checkKeys.ts
+  - routes/nftMint.ts
+  - routes/redirect.ts
+  - routes/web3Wallet.ts
+- id: ci-cd-pipeline
+  name: CI/CD Pipeline
+  tier: application
+  paths:
+  - .github/workflows/**
+  - .gitlab-ci.yml
+  - Dockerfile
+  - docker-compose.test.yml
+  - package.json
+  - frontend/package.json
+- id: sqlite-db
+  name: SQLite Database
+  tier: data
+  paths:
+  - data/datacreator.ts
+  - data/staticData.ts
+- id: marsdb-store
+  name: MarsDB Embedded Document Store
+  tier: data
+  paths:
+  - data/mongodb.ts
+trust_boundaries:
+- id: tb-2
+  from: external
+  to: auth
+  kind: identity
+- id: tb-1
+  from: external
+  to: express-backend
+  kind: network
+- id: tb-3
+  from: external
+  to: realtime-channel
+  kind: network
+- id: tb-4
+  from: express-backend
+  to: sqlite-db
+  kind: process
+- id: tb-5
+  from: express-backend
+  to: marsdb-store
+  kind: process
+- id: tb-6
+  from: express-backend
+  to: external
+  kind: third-party
+threats:
+- id: T-001
+  title: JWT Verification Without Algorithm Allowlist
+  component: auth
+  cwe: CWE-347
+  source: stride
+  evidence:
+  - file: lib/insecurity.ts
+    line: 55
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-006
+    verdict: verified
+- id: T-002
+  title: SQL injection in login query — routes/login.ts:34
+  component: auth
+  cwe: CWE-89
+  source: stride
+  evidence:
+  - file: routes/login.ts
+    line: 34
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified-prior
+  evidence_flags: []
+- id: T-003
+  title: SQL injection request data interpolated into a SQL string — routes/search.ts:23
+  component: express-backend
+  cwe: CWE-89
+  source: source-scan
+  evidence:
+  - file: routes/search.ts
+    line: 23
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-001
+    verdict: verified
+  - tier_reclassified_from_backend-api
+- id: T-004
+  title: Insecure Direct Object Reference
+  component: express-backend
+  cwe: CWE-639
+  source: source-scan
+  evidence:
+  - file: routes/address.ts
+    line: 11
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-002
+    verdict: verified
+  - tier_reclassified_from_backend-api
+- id: T-005
+  title: Mass assignment privileged field accepted from request — routes/verify.ts:53
+  component: express-backend
+  cwe: CWE-915
+  source: source-scan
+  evidence:
+  - file: routes/verify.ts
+    line: 53
+  evidence_tier: confirmed-exploitable
+  evidence_check: ambiguous
+  evidence_flags:
+  - flag_id: EV-003
+    verdict: ambiguous
+  - tier_reclassified_from_backend-api
+- id: T-006
+  title: Eval of stored username in profile page — routes/userProfile.ts:61
+  component: express-backend
+  cwe: CWE-95
+  source: stride
+  evidence:
+  - file: routes/userProfile.ts
+    line: 61
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-004
+    verdict: verified
+- id: T-007
+  title: Role mass assignment on user registration — server.ts:501
+  component: express-backend
+  cwe: CWE-915
+  source: stride
+  evidence:
+  - file: server.ts
+    line: 501
+  evidence_tier: confirmed-exploitable
+  evidence_check: ambiguous
+  evidence_flags:
+  - flag_id: EV-005
+    verdict: ambiguous
+- id: T-008
+  title: Password derived from OAuth email — oauth.component.ts:30
+  component: angular-spa
+  cwe: CWE-1391
+  source: stride
+  evidence:
+  - file: frontend/src/app/oauth/oauth.component.ts
+    line: 30
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-007
+    verdict: verified
+- id: T-009
+  title: Hard-coded JWT RSA private key — lib/insecurity.ts:21
+  component: auth
+  cwe: CWE-321
+  source: stride
+  evidence:
+  - file: lib/insecurity.ts
+    line: 21
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-008
+    verdict: verified
+- id: T-010
+  title: Password reset by security answer only
+  component: auth
+  cwe: CWE-640
+  source: stride
+  evidence:
+  - file: routes/resetPassword.ts
+    line: 41
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified-prior
+  evidence_flags: []
+- id: T-011
+  title: JWT decode used without signature verification — lib/insecurity.ts:56
+  component: auth
+  cwe: CWE-345
+  source: source-scan
+  evidence:
+  - file: lib/insecurity.ts
+    line: 56
+  evidence_tier: confirmed-exploitable
+  evidence_check: ambiguous
+  evidence_flags:
+  - flag_id: EV-009
+    verdict: ambiguous
+  - phantom_component_resolved_from_backend-api
+- id: T-012
+  title: Seeded accounts use repository-committed credentials — data/datacreator.ts:196
+  component: sqlite-db
+  cwe: CWE-798
+  source: stride
+  evidence:
+  - file: data/datacreator.ts
+    line: 196
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-010
+    verdict: verified
+- id: T-013
+  title: Stored XSS — administration.component.ts:73
+  component: angular-spa
+  cwe: CWE-79
+  source: stride
+  evidence:
+  - file: frontend/src/app/administration/administration.component.ts
+    line: 73
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-011
+    verdict: verified
+- id: T-014
+  title: Stored XSS — search-result.component.ts:110
+  component: angular-spa
+  cwe: CWE-79
+  source: stride
+  evidence:
+  - file: frontend/src/app/search-result/search-result.component.ts
+    line: 110
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-012
+    verdict: verified
+- id: T-015
+  title: DOM XSS — search-result.component.ts:143
+  component: angular-spa
+  cwe: CWE-79
+  source: stride
+  evidence:
+  - file: frontend/src/app/search-result/search-result.component.ts
+    line: 143
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-013
+    verdict: verified
+- id: T-016
+  title: Reflected XSS — track-result.component.ts:48
+  component: angular-spa
+  cwe: CWE-79
+  source: stride
+  evidence:
+  - file: frontend/src/app/track-result/track-result.component.ts
+    line: 48
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-014
+    verdict: verified
+- id: T-017
+  title: Path traversal filesystem access from request input — routes/dataErasure.ts:104
+  component: express-backend
+  cwe: CWE-22
+  source: source-scan
+  evidence:
+  - file: routes/dataErasure.ts
+    line: 104
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-015
+    verdict: verified
+  - tier_reclassified_from_backend-api
+- id: T-019
+  title: Input compiled as template source — routes/userProfile.ts:87
+  component: express-backend
+  cwe: CWE-1336
+  source: source-scan
+  evidence:
+  - file: routes/userProfile.ts
+    line: 87
+  evidence_tier: insecure-practice
+  evidence_check: ambiguous
+  evidence_flags:
+  - flag_id: EV-017
+    verdict: ambiguous
+  - tier_reclassified_from_backend-api
+- id: T-020
+  title: Third-party action on mutable branch ref — image_actions.yml:33
+  component: ci-cd-pipeline
+  cwe: CWE-829
+  source: stride
+  evidence:
+  - file: .github/workflows/image_actions.yml
+    line: 33
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-018
+    verdict: verified
+- id: T-021
+  title: Dependencies installed without lockfile — Dockerfile:5
+  component: ci-cd-pipeline
+  cwe: CWE-829
+  source: stride
+  evidence:
+  - file: Dockerfile
+    line: 5
+  evidence_tier: confirmed-exploitable
+  evidence_check: ambiguous
+  evidence_flags:
+  - flag_id: EV-019
+    verdict: ambiguous
+- id: T-022
+  title: Zip Slip arbitrary file write on upload — routes/fileUpload.ts:34
+  component: express-backend
+  cwe: CWE-22
+  source: stride
+  evidence:
+  - file: routes/fileUpload.ts
+    line: 34
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-020
+    verdict: verified
+- id: T-023
+  title: Unsigned coupon codes accepted — lib/insecurity.ts:106
+  component: express-backend
+  cwe: CWE-345
+  source: stride
+  evidence:
+  - file: lib/insecurity.ts
+    line: 106
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-021
+    verdict: verified
+- id: T-024
+  title: NoSQL operator injection in review update — routes/updateProductReviews.ts:18
+  component: express-backend
+  cwe: CWE-943
+  source: stride
+  evidence:
+  - file: routes/updateProductReviews.ts
+    line: 18
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-022
+    verdict: verified
+- id: T-025
+  title: JWT stored in localStorage — login.component.ts:101
+  component: angular-spa
+  cwe: CWE-922
+  source: stride
+  evidence:
+  - file: frontend/src/app/login/login.component.ts
+    line: 101
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-023
+    verdict: verified
+- id: T-026
+  title: Password hash and TOTP secret embedded in JWT — routes/login.ts:24
+  component: auth
+  cwe: CWE-200
+  source: stride
+  evidence:
+  - file: routes/login.ts
+    line: 24
+  evidence_tier: confirmed-exploitable
+  evidence_check: ambiguous
+  evidence_flags:
+  - flag_id: EV-024
+    verdict: ambiguous
+- id: T-027
+  title: Unsalted MD5 password hashing — lib/insecurity.ts:41
+  component: auth
+  cwe: CWE-916
+  source: stride
+  evidence:
+  - file: lib/insecurity.ts
+    line: 41
+  evidence_tier: insecure-practice
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-025
+    verdict: verified
+- id: T-028
+  title: Memories API exposes full user records — routes/memory.ts:24
+  component: express-backend
+  cwe: CWE-359
+  source: stride
+  evidence:
+  - file: routes/memory.ts
+    line: 24
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-026
+    verdict: verified
+- id: T-029
+  title: Directory listing of access logs and keys — server.ts:281
+  component: express-backend
+  cwe: CWE-548
+  source: stride
+  evidence:
+  - file: server.ts
+    line: 281
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-027
+    verdict: verified
+- id: T-030
+  title: XXE with external entities enabled — lib/xml.ts:35
+  component: express-backend
+  cwe: CWE-611
+  source: stride
+  evidence:
+  - file: lib/xml.ts
+    line: 35
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-028
+    verdict: verified
+- id: T-031
+  title: NoSQL $where injection in order tracking — routes/trackOrder.ts:18
+  component: express-backend
+  cwe: CWE-943
+  source: stride
+  evidence:
+  - file: routes/trackOrder.ts
+    line: 18
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-029
+    verdict: verified
+- id: T-032
+  title: Unbounded LLM consumption on chat endpoint — routes/chat.ts:203
+  component: express-backend
+  cwe: CWE-400
+  source: stride
+  evidence:
+  - file: routes/chat.ts
+    line: 203
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-030
+    verdict: verified
+- id: T-033
+  title: Unauthenticated YAML/XML bombs block event loop — routes/fileUpload.ts:109
+  component: express-backend
+  cwe: CWE-400
+  source: stride
+  evidence:
+  - file: routes/fileUpload.ts
+    line: 109
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-031
+    verdict: verified
+- id: T-034
+  title: Server-side JS — routes/showProductReviews.ts:36
+  component: express-backend
+  cwe: CWE-943
+  source: stride
+  evidence:
+  - file: routes/showProductReviews.ts
+    line: 36
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-032
+    verdict: verified
+- id: T-035
+  title: Admin role enforced only in client guard — app.guard.ts:54
+  component: angular-spa
+  cwe: CWE-602
+  source: stride
+  evidence:
+  - file: frontend/src/app/app.guard.ts
+    line: 54
+  evidence_tier: confirmed-exploitable
+  evidence_check: ambiguous
+  evidence_flags:
+  - flag_id: EV-033
+    verdict: ambiguous
+- id: T-036
+  title: Input passed to code execution — routes/userProfile.ts:61
+  component: express-backend
+  cwe: CWE-94
+  source: source-scan
+  evidence:
+  - file: routes/userProfile.ts
+    line: 61
+  evidence_tier: insecure-practice
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-034
+    verdict: verified
+  - tier_reclassified_from_backend-api
+- id: T-037
+  title: Sensitive Routes Registered Without Authentication Middleware
+  component: express-backend
+  cwe: CWE-862
+  source: source-scan
+  evidence:
+  - file: server.ts
+    line: 310
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-035
+    verdict: verified
+  - tier_reclassified_from_backend-api
+- id: T-038
+  title: Model-chosen unbounded coupon discount — routes/chat.ts:184
+  component: express-backend
+  cwe: CWE-863
+  source: stride
+  evidence:
+  - file: routes/chat.ts
+    line: 184
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-036
+    verdict: verified
+- id: T-039
+  title: Deluxe role granted without payment — routes/deluxe.ts:43
+  component: express-backend
+  cwe: CWE-863
+  source: stride
+  evidence:
+  - file: routes/deluxe.ts
+    line: 43
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-037
+    verdict: verified
+- id: T-040
+  title: OAuth callback without state check — oauth.component.ts:28
+  component: angular-spa
+  cwe: CWE-352
+  source: stride
+  evidence:
+  - file: frontend/src/app/oauth/oauth.component.ts
+    line: 28
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-038
+    verdict: verified
+- id: T-041
+  title: Reset rate limit keyed on client header — server.ts:346
+  component: express-backend
+  cwe: CWE-307
+  source: stride
+  evidence:
+  - file: server.ts
+    line: 346
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-039
+    verdict: verified
+- id: T-042
+  title: No rate limiting on login — server.ts:596
+  component: express-backend
+  cwe: CWE-307
+  source: stride
+  evidence:
+  - file: server.ts
+    line: 596
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-040
+    verdict: verified
+- id: T-043
+  title: Chat tool trusts unverified JWT identity — routes/chat.ts:45
+  component: express-backend
+  cwe: CWE-347
+  source: stride
+  evidence:
+  - file: routes/chat.ts
+    line: 45
+  evidence_tier: confirmed-exploitable
+  evidence_check: ambiguous
+  evidence_flags:
+  - flag_id: EV-041
+    verdict: ambiguous
+- id: T-044
+  title: Unauthenticated WebSocket Channel
+  component: realtime-channel
+  cwe: CWE-306
+  source: stride
+  evidence:
+  - file: lib/startup/registerWebsocketEvents.ts
+    line: 40
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified-prior
+  evidence_flags: []
+- id: T-045
+  title: Wallet ownership accepted without signature proof — routes/nftMint.ts:42
+  component: web3-nft
+  cwe: CWE-290
+  source: stride
+  evidence:
+  - file: routes/nftMint.ts
+    line: 42
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-042
+    verdict: verified
+- id: T-046
+  title: Open redirect — routes/redirect.ts:19
+  component: web3-nft
+  cwe: CWE-601
+  source: stride
+  evidence:
+  - file: routes/redirect.ts
+    line: 19
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified-prior
+  evidence_flags: []
+- id: T-047
+  title: Trusted HTML for feedback on About page — about.component.ts:119
+  component: angular-spa
+  cwe: CWE-79
+  source: stride
+  evidence:
+  - file: frontend/src/app/about/about.component.ts
+    line: 119
+  evidence_tier: insecure-practice
+  evidence_check: ambiguous
+  evidence_flags:
+  - flag_id: EV-043
+    verdict: ambiguous
+- id: T-048
+  title: Trusted HTML for feedback comment in admin — administration.component.ts:91
+  component: angular-spa
+  cwe: CWE-79
+  source: stride
+  evidence:
+  - file: frontend/src/app/administration/administration.component.ts
+    line: 91
+  evidence_tier: insecure-practice
+  evidence_check: ambiguous
+  evidence_flags:
+  - flag_id: EV-044
+    verdict: ambiguous
+- id: T-049
+  title: Heroku CLI piped from curl to sh — ci.yml:358
+  component: ci-cd-pipeline
+  cwe: CWE-494
+  source: stride
+  evidence:
+  - file: .github/workflows/ci.yml
+    line: 358
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-045
+    verdict: verified
+- id: T-050
+  title: Base images referenced by mutable tag, no digest — Dockerfile:22
+  component: ci-cd-pipeline
+  cwe: CWE-829
+  source: stride
+  evidence:
+  - file: Dockerfile
+    line: 22
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-046
+    verdict: verified
+- id: T-051
+  title: Login IP taken from client True-Client-IP header — routes/saveLoginIp.ts:18
+  component: auth
+  cwe: CWE-348
+  source: stride
+  evidence:
+  - file: routes/saveLoginIp.ts
+    line: 18
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-047
+    verdict: verified
+- id: T-052
+  title: No audit logging of authentication events
+  component: auth
+  cwe: CWE-778
+  source: stride
+  evidence:
+  - file: routes/login.ts
+    line: 50
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-048
+    verdict: verified
+- id: T-053
+  title: Review author taken from request body — routes/createProductReviews.ts:26
+  component: express-backend
+  cwe: CWE-345
+  source: stride
+  evidence:
+  - file: routes/createProductReviews.ts
+    line: 26
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-049
+    verdict: verified
+- id: T-054
+  title: Hard-coded HMAC key for security answers — lib/insecurity.ts:42
+  component: auth
+  cwe: CWE-321
+  source: stride
+  evidence:
+  - file: lib/insecurity.ts
+    line: 42
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-050
+    verdict: verified
+- id: T-055
+  title: Session token cookie without HttpOnly or Secure — lib/insecurity.ts:192
+  component: auth
+  cwe: CWE-1004
+  source: stride
+  evidence:
+  - file: lib/insecurity.ts
+    line: 192
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-051
+    verdict: verified
+- id: T-056
+  title: Claude Code Command Sandbox Not Enabled — .claude/settings.local.json:2
+  component: ci-cd-pipeline
+  cwe: CWE-250
+  source: config-scan
+  evidence:
+  - file: .claude/settings.local.json
+    line: 2
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-052
+    verdict: verified
+- id: T-057
+  title: Container Runs as Root — Dockerfile:1
+  component: ci-cd-pipeline
+  cwe: CWE-250
+  source: config-scan
+  evidence:
+  - file: test/smoke/Dockerfile
+    line: 1
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-053
+    verdict: verified
+- id: T-058
+  title: Missing Container Image Signing
+  component: ci-cd-pipeline
+  cwe: CWE-347
+  source: config-scan
+  evidence:
+  - file: .github/workflows/ci.yml
+    line: 1
+  evidence_tier: confirmed-exploitable
+  evidence_check: ambiguous
+  evidence_flags:
+  - flag_id: EV-054
+    verdict: ambiguous
+- id: T-059
+  title: Untrusted npm Install/Postinstall Scripts Enabled
+  component: ci-cd-pipeline
+  cwe: CWE-506
+  source: config-scan
+  evidence:
+  - file: Dockerfile
+    line: 4
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-055
+    verdict: verified
+- id: T-060
+  title: Missing Workflow Permissions Block
+  component: ci-cd-pipeline
+  cwe: CWE-732
+  source: config-scan
+  evidence:
+  - file: .github/workflows/ci.yml
+    line: 1
+  evidence_tier: confirmed-exploitable
+  evidence_check: ambiguous
+  evidence_flags:
+  - flag_id: EV-056
+    verdict: ambiguous
+- id: T-061
+  title: Default GITHUB_TOKEN Scope Not Restricted
+  component: ci-cd-pipeline
+  cwe: CWE-732
+  source: config-scan
+  evidence:
+  - file: .github/workflows/lock.yml
+    line: 1
+  evidence_tier: confirmed-exploitable
+  evidence_check: ambiguous
+  evidence_flags:
+  - flag_id: EV-057
+    verdict: ambiguous
+- id: T-062
+  title: Unpinned Third-Party GitHub Action
+  component: ci-cd-pipeline
+  cwe: CWE-829
+  source: config-scan
+  evidence:
+  - file: .github/workflows/ci.yml
+    line: 188
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-058
+    verdict: verified
+- id: T-063
+  title: Unpinned Container Base Image
+  component: ci-cd-pipeline
+  cwe: CWE-1104
+  source: config-scan
+  evidence:
+  - file: Dockerfile
+    line: 1
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-059
+    verdict: verified
+- id: T-064
+  title: Missing npm Lockfile — package-lock.json
+  component: ci-cd-pipeline
+  cwe: CWE-1104
+  source: config-scan
+  evidence:
+  - file: package-lock.json
+    line: 0
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - expected_file_absent
+- id: T-065
+  title: Template layout path traversal in data erasure — routes/dataErasure.ts:107
+  component: express-backend
+  cwe: CWE-22
+  source: stride
+  evidence:
+  - file: routes/dataErasure.ts
+    line: 107
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-060
+    verdict: verified
+- id: T-066
+  title: Confidential discount rule in system prompt — routes/chat.ts:105
+  component: express-backend
+  cwe: CWE-200
+  source: stride
+  evidence:
+  - file: routes/chat.ts
+    line: 105
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-061
+    verdict: verified
+- id: T-067
+  title: Development error handler returns stack traces — server.ts:682
+  component: express-backend
+  cwe: CWE-209
+  source: stride
+  evidence:
+  - file: server.ts
+    line: 682
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-062
+    verdict: verified
+- id: T-068
+  title: CTF flags broadcast to all sockets — lib/challengeUtils.ts:66
+  component: realtime-channel
+  cwe: CWE-201
+  source: stride
+  evidence:
+  - file: lib/challengeUtils.ts
+    line: 66
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-063
+    verdict: verified
+- id: T-069
+  title: Hardcoded BIP39 wallet mnemonic — routes/checkKeys.ts:10
+  component: web3-nft
+  cwe: CWE-798
+  source: stride
+  evidence:
+  - file: routes/checkKeys.ts
+    line: 10
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified-prior
+  evidence_flags: []
+- id: T-070
+  title: Unbounded in-memory token registry — lib/insecurity.ts:74
+  component: auth
+  cwe: CWE-770
+  source: stride
+  evidence:
+  - file: lib/insecurity.ts
+    line: 74
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-064
+    verdict: verified
+- id: T-071
+  title: Unbounded in-memory wallet set growth — routes/web3Wallet.ts:16
+  component: web3-nft
+  cwe: CWE-770
+  source: stride
+  evidence:
+  - file: routes/web3Wallet.ts
+    line: 16
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-065
+    verdict: verified
+- id: T-072
+  title: User registry listing lacks role check — routes/authenticatedUsers.ts:12
+  component: auth
+  cwe: CWE-862
+  source: stride
+  evidence:
+  - file: routes/authenticatedUsers.ts
+    line: 12
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-066
+    verdict: verified
+- id: T-073
+  title: Workflow token scope not restricted — ci.yml:190
+  component: ci-cd-pipeline
+  cwe: CWE-250
+  source: stride
+  evidence:
+  - file: .github/workflows/ci.yml
+    line: 190
+  evidence_tier: confirmed-exploitable
+  evidence_check: ambiguous
+  evidence_flags:
+  - flag_id: EV-067
+    verdict: ambiguous
+- id: T-074
+  title: Insecure Direct Object Reference
+  component: express-backend
+  cwe: CWE-639
+  source: stride
+  evidence:
+  - file: routes/basket.ts
+    line: 19
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags:
+  - flag_id: EV-068
+    verdict: verified
+- id: T-084
+  title: Untyped socket payload throws in handler — registerWebsocketEvents.ts:46
+  component: realtime-channel
+  cwe: CWE-248
+  source: stride
+  evidence:
+  - file: lib/startup/registerWebsocketEvents.ts
+    line: 46
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags: []
+- id: T-086
+  title: XSS renders attacker-controlled markup — about.component.ts:119
+  component: angular-spa
+  cwe: CWE-79
+  source: source-scan
+  evidence:
+  - file: frontend/src/app/about/about.component.ts
+    line: 119
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags: []
+- id: T-087
+  title: Token flow accepts a stolen bearer token without — login.component.ts:148
+  component: angular-spa
+  cwe: CWE-287
+  source: source-scan
+  evidence:
+  - file: frontend/src/app/login/login.component.ts
+    line: 148
+  evidence_tier: confirmed-exploitable
+  evidence_check: verified
+  evidence_flags: []

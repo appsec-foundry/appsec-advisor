@@ -1,4 +1,4 @@
-"""Unit tests for scripts/enforce_control_taxonomy.py — RC-1 + RC-6 (2026-05)."""
+"""Unit tests for scripts/model/enforce_control_taxonomy.py — RC-1 + RC-6 (2026-05)."""
 
 from __future__ import annotations
 
@@ -6,18 +6,19 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "enforce_control_taxonomy.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "model/enforce_control_taxonomy.py"
 
 
 def _load():
-    if "enforce_control_taxonomy" in sys.modules:
-        return sys.modules["enforce_control_taxonomy"]
-    spec = importlib.util.spec_from_file_location("enforce_control_taxonomy", SCRIPT_PATH)
+    if "model.enforce_control_taxonomy" in sys.modules:
+        return sys.modules["model.enforce_control_taxonomy"]
+    spec = importlib.util.spec_from_file_location("model.enforce_control_taxonomy", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["enforce_control_taxonomy"] = module
+    sys.modules["model.enforce_control_taxonomy"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
@@ -555,3 +556,112 @@ class TestCLIErrorPaths:
         monkeypatch.setattr(Path, "open", _boom)
         # Should not raise.
         ect._log(tmp_path, "test message")
+
+
+# ---------------------------------------------------------------------------
+# Catalog fallback — a domain that names no §6 heading
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "control, expected",
+    [
+        (
+            {"control": "Some Pinning Control", "domain": "Supply Chain", "rule_id": "ARCH-SUPPLY-001"},
+            "Operations Runtime and Supply Chain Controls",
+        ),
+        (
+            {"control": "Principal split", "domain": "Data Protection", "rule_id": "ARCH-DBSEP-001"},
+            "Authorization Controls",
+        ),
+        ({"control": "Lockfile Integrity", "domain": "Build hygiene"}, "Operations Runtime and Supply Chain Controls"),
+        (
+            {"control": "CORS Policy", "domain": "Browser and Cross-Origin Controls", "rule_id": "ARCH-SUPPLY-001"},
+            "Browser and Cross-Origin Controls",
+        ),
+        ({"control": "Bespoke thing", "domain": "Misc"}, "Misc"),
+    ],
+)
+def test_a_domain_outside_section_6_takes_its_rule_or_catalog_section(control, expected):
+    # The rule or catalog decides only when the model's domain names no §6 heading.
+    data, _names, _domains = ect.enforce(_make_yaml([dict(control)]))
+    assert data["security_controls"][0]["domain"] == expected
+
+
+def test_every_catalog_domain_maps_to_a_section_6_heading():
+    catalog = yaml.safe_load(
+        (SCRIPT_PATH.parents[2] / "data" / "architectural-controls.yaml").read_text(encoding="utf-8")
+    )
+    assert set(catalog["domain_sections"]) == set(catalog["domains"])
+    assert set(catalog["domain_sections"].values()) <= ect._section_titles()
+
+
+# ---------------------------------------------------------------------------
+# Free-text fallback — the renderer must be able to place every control
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "control, expected",
+    [
+        (
+            {"control": "XML External Entity (XXE) Prevention", "domain": "Input Handling"},
+            "File Parser and Outbound Request Controls",
+        ),
+        (
+            {"control": "XML External Entity Prevention", "domain": "Input Validation and Injection Prevention"},
+            "File Parser and Outbound Request Controls",
+        ),
+        (
+            {"control": "Eval / Code Execution Prevention", "domain": "Input Handling and Validation"},
+            "Input Boundary Validation Controls",
+        ),
+        (
+            {"control": "Hardcoded Service Credentials", "domain": "Secrets and Credential Management"},
+            "Cryptography Secrets and Data Protection",
+        ),
+        (
+            {"control": "Database Network Exposure", "domain": "Deployment Configuration"},
+            "Operations Runtime and Supply Chain Controls",
+        ),
+        ({"control": "Console Access Control", "domain": "Deployment Configuration"}, "Authorization Controls"),
+        ({"control": "Bespoke thing", "domain": "Misc"}, "Misc"),
+    ],
+)
+def test_a_free_text_domain_reaches_a_section_the_renderer_can_place(control, expected):
+    from renderers.pregenerate_fragments import _v2_canonical_section_for_control
+
+    data, _names, _domains = ect.enforce(_make_yaml([dict(control)]))
+    placed = data["security_controls"][0]
+    assert placed["domain"] == expected
+    assert bool(_v2_canonical_section_for_control(placed)) is (expected != "Misc")
+
+
+@pytest.mark.parametrize(
+    "control",
+    [
+        {"control": "Login Anti-CSRF Token", "domain": "Identity and Authentication"},
+        {"control": "Shell Command Sanitization", "domain": "Input Handling and Validation"},
+        {"control": "LLM Tool Parameter Binding and Authorization", "domain": "LLM and AI Controls"},
+    ],
+)
+def test_the_fallback_never_moves_a_control_the_renderer_already_places(control):
+    from renderers.pregenerate_fragments import _v2_canonical_section_for_control
+
+    before = _v2_canonical_section_for_control(control)
+    data, _names, _domains = ect.enforce(_make_yaml([dict(control)]))
+    assert before and _v2_canonical_section_for_control(data["security_controls"][0]) == before
+
+
+def test_free_text_resolution_is_idempotent_and_unblocks_section_6():
+    from renderers.pregenerate_fragments import gen_security_architecture_v2
+
+    controls = [
+        {"control": "XML External Entity (XXE) Prevention", "domain": "Input Handling", "effectiveness": "Missing"},
+        {"control": "TLS Enforcement", "domain": "Transport Security", "effectiveness": "Partial"},
+    ]
+    with pytest.raises(ValueError, match="no section"):
+        gen_security_architecture_v2(_make_yaml([dict(c) for c in controls]))
+    data, _names, _domains = ect.enforce(_make_yaml(controls))
+    assert ect.enforce(data)[1:] == ([], [])
+    assert gen_security_architecture_v2(data)

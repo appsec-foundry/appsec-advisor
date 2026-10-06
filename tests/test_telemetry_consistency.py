@@ -1,4 +1,4 @@
-"""Tests for scripts/telemetry_consistency.py and its controller boundary.
+"""Tests for scripts/runtime/telemetry_consistency.py and its controller boundary.
 
 The check exists because four locally correct producers can still disagree
 about one call. Each case below makes exactly one surface contradict the
@@ -15,10 +15,10 @@ from pathlib import Path
 SCRIPTS = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-import agent_lifecycle as lifecycle  # noqa: E402
-import budget_watchdog as budget  # noqa: E402
-import orchestration_controller as controller  # noqa: E402
-import telemetry_consistency as telemetry  # noqa: E402
+import orchestrator.orchestration_controller as controller  # noqa: E402
+import runtime.agent_lifecycle as lifecycle  # noqa: E402
+import runtime.budget_watchdog as budget  # noqa: E402
+import runtime.telemetry_consistency as telemetry  # noqa: E402
 
 ACTION_ID = "stage1c:b078fb4269a6b5c5"
 CALL_ID = "toolu_recon"
@@ -279,7 +279,7 @@ def test_every_semantic_return_command_is_gated() -> None:
     """Every boundary that runs after a producer returned goes through the
     check — a new one must be added deliberately, not forgotten."""
     assert "context-v2-begin" not in controller._SEMANTIC_RETURN_COMMANDS
-    source = (SCRIPTS / "orchestration_controller.py").read_text(encoding="utf-8")
+    source = (SCRIPTS / "orchestrator/orchestration_controller.py").read_text(encoding="utf-8")
     commands = {
         line.split('sub.add_parser("')[1].split('"')[0]
         for line in source.splitlines()
@@ -333,3 +333,28 @@ def test_a_deliberately_backgrounded_call_is_not_expected_to_carry_usage(tmp_pat
     lifecycle.state_path(tmp_path).write_text(json.dumps(state), encoding="utf-8")
 
     assert "usage_source_absent" not in _codes(tmp_path)
+
+
+def test_a_wave_issued_one_call_per_message_is_named() -> None:
+    """juice-shop 2026-09-24: five STRIDE jobs spawned 13 s apart, one turn each."""
+    per_message = [{"spawned_at": 1_000 + 13 * index} for index in range(5)]
+    one_message = [{"spawned_at": 1_000 + (index > 2)} for index in range(5)]
+
+    assert telemetry.wave_split_seconds(per_message) == 52
+    assert telemetry.wave_split_seconds(one_message) is None
+    assert telemetry.wave_split_seconds(per_message[:1]) is None
+
+
+def test_a_split_wave_reaches_the_boundary_report(tmp_path: Path) -> None:
+    _seed(tmp_path)
+    second = dict(json.loads(lifecycle.state_path(tmp_path).read_text(encoding="utf-8"))["calls"][0])
+    state = json.loads(lifecycle.state_path(tmp_path).read_text(encoding="utf-8"))
+    second.update(agent_call_id="toolu_recon2", job_id="phase2-recon-b", spawned_at=second["spawned_at"] + 20)
+    state["calls"].append(second)
+    lifecycle.state_path(tmp_path).write_text(json.dumps(state), encoding="utf-8")
+    (tmp_path / ".context-routing-plan.json").write_text(
+        json.dumps({"actions": [{"action_id": ACTION_ID, "job_ids": ["phase2-recon", "phase2-recon-b"]}]}),
+        encoding="utf-8",
+    )
+
+    assert "wave_split_across_messages" in _codes(tmp_path)

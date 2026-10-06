@@ -15,7 +15,7 @@ Covers the 9 High findings: **CD-1, DG-1, DG-2, TG-1, TG-2, PI-1/PI-2, PC-1, PC-
    hand-editing final reports), §4 (contract changes are bidirectional:
    producer + schema + consumer + validation + tests together), §7 (update
    `data/required-permissions.yaml` when tools/paths change), §12 (fix the
-   producer, not the symptom), §13 (route logging through `scripts/event_log.py`).
+   producer, not the symptom), §13 (route logging through `scripts/runtime/event_log.py`).
 2. **Each fix is independent.** Apply in the recommended order below, or
    cherry-pick. Every fix lists: *Problem → Edits (exact old→new) → Companion
    contract changes → Verify → Gotchas.*
@@ -48,7 +48,7 @@ fail to write.
 fields `component_id`, `started_at`, `threats` — but `schemas/stride.schema.yaml`
 (`$defs/normal`, the non-error branch) requires `[component_id, component_name,
 analyzed_at, threats]`. The stub omits two **required** fields, so the gate
-(`validate_intermediate.py stride`) rejects it → the "partial-but-valid"
+(`validators/validate_intermediate.py stride`) rejects it → the "partial-but-valid"
 degradation becomes "invalid → re-dispatch the whole component", the exact
 failure the stub exists to prevent. (`started_at`/`partial`/`skipped_categories`
 are *tolerated* — `normal` has no `additionalProperties: false`; the only line
@@ -122,7 +122,7 @@ new_string:
       assert _schema_errors("stride", stub) == []   # adapt name to the module's API
   ```
 - Run: `APPSEC_SCHEMA_V1=1 python3 -m pytest tests/test_validate_intermediate.py tests/test_schemas.py -q`
-- **Gotcha:** if `validate_intermediate.py` exposes a different entry point than
+- **Gotcha:** if `validators/validate_intermediate.py` exposes a different entry point than
   `_schema_errors` (e.g. `validate_stride(path)`), write the stub to a temp file
   and call that instead. Confirm the assertion *fails before Edit 1a/1b and
   passes after* — that proves it guards the real contract.
@@ -288,23 +288,23 @@ Same file (~lines 2441–2448).
 
 old_string:
 ```
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" match \
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/match_abuse_cases.py" match \
        --output-dir "$OUTPUT_DIR" \
        --repo-root "$REPO_ROOT" \
        ${ORG_PROFILE_PATH:+--org-profile "$ORG_PROFILE_PATH"} || true
-   CANDIDATES=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" \
+   CANDIDATES=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/match_abuse_cases.py" \
        list-candidates --output-dir "$OUTPUT_DIR" 2>/dev/null)
 ```
 new_string:
 ```
-   if ! python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" match \
+   if ! python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/match_abuse_cases.py" match \
        --output-dir "$OUTPUT_DIR" \
        --repo-root "$REPO_ROOT" \
        ${ORG_PROFILE_PATH:+--org-profile "$ORG_PROFILE_PATH"}; then
      ABUSE_PIPELINE_FAILED=1
-     printf '\n\033[1;31m✗ Abuse-case match failed (match_abuse_cases.py match exited nonzero)\033[0m\n' >&2
+     printf '\n\033[1;31m✗ Abuse-case match failed (model/match_abuse_cases.py match exited nonzero)\033[0m\n' >&2
    fi
-   CANDIDATES=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" \
+   CANDIDATES=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/match_abuse_cases.py" \
        list-candidates --output-dir "$OUTPUT_DIR" 2>/dev/null)
 ```
 
@@ -314,38 +314,38 @@ Same file (~lines 2451–2453).
 
 old_string:
 ```
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/verify_abuse_cases.py" merge --output-dir "$OUTPUT_DIR" || true
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" finalize --output-dir "$OUTPUT_DIR" || true
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/verify_abuse_cases.py" merge --output-dir "$OUTPUT_DIR" || true
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/match_abuse_cases.py" finalize --output-dir "$OUTPUT_DIR" || true
 ```
 new_string:
 ```
-   if ! python3 "$CLAUDE_PLUGIN_ROOT/scripts/verify_abuse_cases.py" merge --output-dir "$OUTPUT_DIR"; then
+   if ! python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/verify_abuse_cases.py" merge --output-dir "$OUTPUT_DIR"; then
      ABUSE_PIPELINE_FAILED=1
-     printf '\n\033[1;31m✗ Abuse-case merge failed (verify_abuse_cases.py merge exited nonzero)\033[0m\n' >&2
+     printf '\n\033[1;31m✗ Abuse-case merge failed (validators/verify_abuse_cases.py merge exited nonzero)\033[0m\n' >&2
    fi
-   if ! python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" finalize --output-dir "$OUTPUT_DIR"; then
+   if ! python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/match_abuse_cases.py" finalize --output-dir "$OUTPUT_DIR"; then
      ABUSE_PIPELINE_FAILED=1
-     printf '\n\033[1;31m✗ Abuse-case finalize failed (match_abuse_cases.py finalize exited nonzero)\033[0m\n' >&2
+     printf '\n\033[1;31m✗ Abuse-case finalize failed (model/match_abuse_cases.py finalize exited nonzero)\033[0m\n' >&2
    fi
    # DG-2: a pipeline crash must NOT masquerade as "no abuse cases apply". When
    # ABUSE_PIPELINE_FAILED=1 the §9 not-applicable catalog below is rendering
    # over INCOMPLETE data — surface it loudly and record it for the run log.
    if [ "$ABUSE_PIPELINE_FAILED" = "1" ]; then
      printf '  §9 Abuse Cases reflect an INCOMPLETE verification pass (a script failed above).\n' >&2
-     python3 "$CLAUDE_PLUGIN_ROOT/scripts/event_log.py" \
+     python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/event_log.py" \
          --event ABUSE_PIPELINE_FAILED --output-dir "$OUTPUT_DIR" 2>/dev/null || true
    fi
 ```
 
 ### Companion / Verify / Gotchas
-- **`scripts/event_log.py` CLI shape (verify before relying on it).** AGENTS.md
-  §13 requires all logging route through `event_log.py`. Confirm its actual flag
-  interface: `python3 scripts/event_log.py --help` (or read the file). If it does
+- **`scripts/runtime/event_log.py` CLI shape (verify before relying on it).** AGENTS.md
+  §13 requires all logging route through `runtime/event_log.py`. Confirm its actual flag
+  interface: `python3 scripts/runtime/event_log.py --help` (or read the file). If it does
   **not** accept a freeform `--event NAME --output-dir DIR`, adapt the call to the
-  real signature, or drop the `event_log.py` line and keep only the stderr banner
+  real signature, or drop the `runtime/event_log.py` line and keep only the stderr banner
   (the banner is the load-bearing user-visible fix; the log line is best-effort).
 - No unit test covers this skill Bash. Verify with:
-  `grep -n "match_abuse_cases.py.*|| true\|verify_abuse_cases.py.*|| true" skills/create-threat-model/SKILL-impl.md`
+  `grep -n "model/match_abuse_cases.py.*|| true\|validators/verify_abuse_cases.py.*|| true" skills/create-threat-model/SKILL-impl.md`
   → should return **nothing** after the edits.
 - The script-level tests still apply: `python3 -m pytest tests/test_match_abuse_cases.py tests/test_verify_abuse_cases.py -q` (these test the producers, unchanged — should stay green).
 - **Out of scope here (follow-up):** wiring a true `incomplete` marker into the
@@ -355,21 +355,21 @@ new_string:
 
 ---
 
-## FIX 4 — TG-1: `publish_threat_model.py` reads `t_id` (dead feature)
+## FIX 4 — TG-1: `model/publish_threat_model.py` reads `t_id` (dead feature)
 
-**Severity:** High · **Files:** `scripts/publish_threat_model.py`, `tests/test_publish_threat_model.py`
+**Severity:** High · **Files:** `scripts/model/publish_threat_model.py`, `tests/test_publish_threat_model.py`
 
 **Problem.** `extract_commit_metadata` builds the "top: T-NNN title" commit-message
 lines from `t.get("t_id", "")`, but the canonical `threat-model.yaml` key is `id`
 (`t_id` never exists in the final artifact — see `threat-model.output.schema.yaml`
-and `export_sarif.py:_threat_id`). So `if tid and title` is always false: the
+and `exporters/export_sarif.py:_threat_id`). So `if tid and title` is always false: the
 feature is dead in every real run, and the test fixture mirrors the bug (uses
 `t_id`) so it stays green.
 
 ### Edit 4a — read the canonical key with a legacy fallback
 
-`scripts/publish_threat_model.py` (~line 169). Mirrors the existing
-`export_sarif.py:88-93` `_threat_id` precedence (`id` first, `t_id` legacy).
+`scripts/model/publish_threat_model.py` (~line 169). Mirrors the existing
+`exporters/export_sarif.py:88-93` `_threat_id` precedence (`id` first, `t_id` legacy).
 
 old_string:
 ```
@@ -425,7 +425,7 @@ robust regardless of how `build_commit_message` renders `top`:
 **Problem.** `test_schemas.py` globs only `*.schema.yaml`; `test_schema_integrity.py`
 only `schemas/fragments/`. The six top-level `schemas/*.schema.json` are loaded by
 no meta-schema test, and `qa-content-repair-plan.schema.json` is validated by
-nothing at all (apply_content_repair.py does a hand-rolled check yet documents
+nothing at all (repairs/apply_content_repair.py does a hand-rolled check yet documents
 "exit 3 — schema validation failed against qa-content-repair-plan.schema.json").
 
 ### Edit 5a — meta-validate every top-level JSON schema
@@ -679,13 +679,13 @@ new_string:
 
 **Severity:** High · **Files:** `README.md`, `CONTRIBUTING.md`, `docs/harvester.md`, `docs/security-requirements-audit-skill.md`
 
-**Problem.** The script is `scripts/harvest_requirements.py` (underscore), but four
+**Problem.** The script is `scripts/requirements/harvest_requirements.py` (underscore), but four
 docs still tell users to run `scripts/harvest-requirements.py` (hyphen) — every
 documented harvester command fails with file-not-found.
 
 ### Edit 9 — replace hyphen name with underscore name
 
-Do a literal replace of `harvest-requirements.py` → `harvest_requirements.py` in
+Do a literal replace of `harvest-requirements.py` → `requirements/harvest_requirements.py` in
 **these files only**:
 - `README.md` (line 217)
 - `CONTRIBUTING.md` (lines 110 and 127)
@@ -699,7 +699,7 @@ each file (the harness's Edit tool supports `replace_all`).
 decision-log entries *about* the rename — leave them as the record of why.
 
 ### Verify
-- `ls scripts/harvest_requirements.py` → exists.
+- `ls scripts/requirements/harvest_requirements.py` → exists.
 - `grep -rn "harvest-requirements.py" README.md CONTRIBUTING.md docs/`
   → should return **only** `docs/internal/analysis/refactoring-plan.md` lines after the fix.
 

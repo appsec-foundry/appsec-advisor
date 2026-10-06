@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from enrichment_pass import EnrichmentContinuation, model_hash, stamp, valid_receipt
+from model.enrichment_pass import EnrichmentContinuation, model_hash, stamp, valid_receipt
 
 
 @pytest.mark.parametrize("project", ["service-alpha", "document-store"])
@@ -63,7 +63,7 @@ def test_continuation_does_not_restore_a_removed_marker():
 
 @pytest.mark.parametrize("initial", ["valid", "missing", "stale"])
 def test_verdict_writer_preserves_only_a_verified_receipt(tmp_path, monkeypatch, initial):
-    import emit_verdict_to_model as emitter
+    import model.emit_verdict_to_model as emitter
 
     document = {"meta": {}, "threats": []}
     if initial != "missing":
@@ -78,8 +78,8 @@ def test_verdict_writer_preserves_only_a_verified_receipt(tmp_path, monkeypatch,
 
 
 def test_editorial_change_preserves_receipt_without_loosening_structural_guard(tmp_path):
-    from apply_editorial_plan import _apply_structured
-    from check_editorial_diff import verify
+    from repairs.apply_editorial_plan import _apply_structured
+    from validators.check_editorial_diff import verify
 
     document = {"meta": {}, "threats": [{"id": "T-001", "scenario": "Original prose.", "risk": "High"}]}
     stamp(document)
@@ -118,7 +118,7 @@ def test_receipt_has_a_closed_schema():
 
 
 def test_redaction_preserves_receipt(tmp_path):
-    from redact_known_secrets import redact_artifacts
+    from validators.redact_known_secrets import redact_artifacts
 
     document = {"meta": {}, "description": "password: 'Example-long-secret-42!'"}
     stamp(document)
@@ -135,7 +135,7 @@ def test_cli_rejects_missing_or_malformed_model_without_traceback(tmp_path, cont
     path = tmp_path / "threat-model.yaml"
     if content is not None:
         path.write_text(content)
-    script = Path(__file__).resolve().parents[1] / "scripts/enrichment_pass.py"
+    script = Path(__file__).resolve().parents[1] / "scripts/model/enrichment_pass.py"
     result = subprocess.run([sys.executable, str(script), str(tmp_path)], capture_output=True, text=True)
     assert result.returncode != 0
     assert "Traceback" not in result.stderr
@@ -145,7 +145,7 @@ def test_cli_rejects_missing_or_malformed_model_without_traceback(tmp_path, cont
 def test_empty_cli_path_does_not_stamp_an_existing_model_in_cwd(tmp_path):
     path = tmp_path / "threat-model.yaml"
     path.write_text("meta: {}\n")
-    script = Path(__file__).resolve().parents[1] / "scripts/enrichment_pass.py"
+    script = Path(__file__).resolve().parents[1] / "scripts/model/enrichment_pass.py"
     result = subprocess.run([sys.executable, str(script), ""], cwd=tmp_path, capture_output=True, text=True)
     assert result.returncode != 0
     assert path.read_text() == "meta: {}\n"
@@ -157,7 +157,7 @@ def test_cli_refuses_an_escaping_model_symlink(tmp_path):
     source = tmp_path / "foreign.yaml"
     source.write_text("meta: {}\n")
     (run / "threat-model.yaml").symlink_to(source)
-    script = Path(__file__).resolve().parents[1] / "scripts/enrichment_pass.py"
+    script = Path(__file__).resolve().parents[1] / "scripts/model/enrichment_pass.py"
     result = subprocess.run([sys.executable, str(script), str(run)], capture_output=True, text=True)
     assert result.returncode != 0
     assert source.read_text() == "meta: {}\n"

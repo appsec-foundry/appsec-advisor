@@ -1,5 +1,5 @@
 """
-Tests for scripts/security_relevance_filter.py
+Tests for scripts/analyzers/security_relevance_filter.py
 
 Tests the three-tier classification logic:
   Tier 1 — path/extension-based (no diff needed)
@@ -23,8 +23,8 @@ ROOT = Path(__file__).parent.parent
 PLUGIN = ROOT
 
 sys.path.insert(0, str(PLUGIN / "scripts"))
-import security_relevance_filter as srf  # noqa: E402
-from security_relevance_filter import (
+import analyzers.security_relevance_filter as srf  # noqa: E402
+from analyzers.security_relevance_filter import (
     classify_by_diff,
     classify_by_path,
     classify_files,
@@ -507,7 +507,7 @@ class TestClassifyFiles:
 
     def test_all_irrelevant(self):
         """Pure styling changes → verdict irrelevant."""
-        with patch("security_relevance_filter.get_diff_for_file", return_value=""):
+        with patch("analyzers.security_relevance_filter.get_diff_for_file", return_value=""):
             result = classify_files(
                 "/tmp/repo",
                 None,
@@ -522,7 +522,7 @@ class TestClassifyFiles:
 
     def test_mixed_with_relevant(self):
         """Auth file makes the verdict relevant even with irrelevant files."""
-        with patch("security_relevance_filter.get_diff_for_file", return_value=""):
+        with patch("analyzers.security_relevance_filter.get_diff_for_file", return_value=""):
             result = classify_files(
                 "/tmp/repo",
                 None,
@@ -537,19 +537,21 @@ class TestClassifyFiles:
 
     def test_manifest_always_relevant(self):
         """package.json is always relevant regardless of diff content."""
-        with patch("security_relevance_filter.get_diff_for_file", return_value=""):
+        with patch("analyzers.security_relevance_filter.get_diff_for_file", return_value=""):
             result = classify_files("/tmp/repo", None, ["package.json"])
         assert result["verdict"] == "relevant"
 
     def test_tier1_semantic_downgrade_for_manifest_noise(self):
-        with patch("security_relevance_filter.has_semantic_diff", return_value=(False, [])):
+        with patch("analyzers.security_relevance_filter.has_semantic_diff", return_value=(False, [])):
             result = classify_files("/tmp/repo", None, ["package.json"])
 
         assert result["verdict"] == "irrelevant"
         assert result["files"]["package.json"]["reasons"] == ["name:package.json", "no_semantic_diff"]
 
     def test_tier1_semantic_details_are_appended_for_manifest_changes(self):
-        with patch("security_relevance_filter.has_semantic_diff", return_value=(True, ["dependencies:+express"])):
+        with patch(
+            "analyzers.security_relevance_filter.has_semantic_diff", return_value=(True, ["dependencies:+express"])
+        ):
             result = classify_files("/tmp/repo", None, ["package.json"])
 
         assert result["verdict"] == "relevant"
@@ -558,7 +560,9 @@ class TestClassifyFiles:
     def test_env_file_is_relevant_without_semantic_downgrade(self):
         assert srf._is_tier1_downgradeable([]) is False
 
-        with patch("security_relevance_filter.has_semantic_diff", side_effect=AssertionError("should not be called")):
+        with patch(
+            "analyzers.security_relevance_filter.has_semantic_diff", side_effect=AssertionError("should not be called")
+        ):
             result = classify_files("/tmp/repo", None, [".env.production"])
 
         assert result["verdict"] == "relevant"
@@ -567,7 +571,7 @@ class TestClassifyFiles:
     def test_code_file_with_security_diff(self):
         """A .py file with auth patterns in the diff → relevant."""
         mock_diff = "+    token = jwt.encode(payload, SECRET_KEY)"
-        with patch("security_relevance_filter.get_diff_for_file", return_value=mock_diff):
+        with patch("analyzers.security_relevance_filter.get_diff_for_file", return_value=mock_diff):
             result = classify_files("/tmp/repo", "abc123", ["src/utils.py"])
         assert result["verdict"] == "relevant"
         assert result["files"]["src/utils.py"]["relevant"] is True
@@ -575,7 +579,7 @@ class TestClassifyFiles:
     def test_code_file_without_security_diff(self):
         """A .py file with only cosmetic changes → irrelevant."""
         mock_diff = "+    # Refactored for readability\n+    x = compute_total(items)"
-        with patch("security_relevance_filter.get_diff_for_file", return_value=mock_diff):
+        with patch("analyzers.security_relevance_filter.get_diff_for_file", return_value=mock_diff):
             result = classify_files("/tmp/repo", "abc123", ["src/utils.py"])
         assert result["verdict"] == "irrelevant"
         assert result["files"]["src/utils.py"]["relevant"] is False
@@ -584,9 +588,9 @@ class TestClassifyFiles:
         """No git diff (untracked/new file) but the file's CONTENT carries
         security signal → relevant via the content-scan fallback."""
         with (
-            patch("security_relevance_filter.get_diff_for_file", return_value=""),
+            patch("analyzers.security_relevance_filter.get_diff_for_file", return_value=""),
             patch(
-                "security_relevance_filter._read_untracked_content",
+                "analyzers.security_relevance_filter._read_untracked_content",
                 return_value="token = jwt.encode(payload, SECRET_KEY)\n",
             ),
         ):
@@ -601,9 +605,9 @@ class TestClassifyFiles:
         regression guard for the false-positive that forced needless
         re-analyses on trees whose application surface was unchanged."""
         with (
-            patch("security_relevance_filter.get_diff_for_file", return_value=""),
+            patch("analyzers.security_relevance_filter.get_diff_for_file", return_value=""),
             patch(
-                "security_relevance_filter._read_untracked_content",
+                "analyzers.security_relevance_filter._read_untracked_content",
                 return_value="export PATH=$HOME/bin:$PATH\nalias ll='ls -la'\n",
             ),
         ):
@@ -616,8 +620,8 @@ class TestClassifyFiles:
         """No git diff AND no readable content (missing/binary) → irrelevant
         (no signal to act on)."""
         with (
-            patch("security_relevance_filter.get_diff_for_file", return_value=""),
-            patch("security_relevance_filter._read_untracked_content", return_value=None),
+            patch("analyzers.security_relevance_filter.get_diff_for_file", return_value=""),
+            patch("analyzers.security_relevance_filter._read_untracked_content", return_value=None),
         ):
             result = classify_files("/tmp/repo", "abc123", ["src/server.py"])
         assert result["verdict"] == "irrelevant"
@@ -629,7 +633,7 @@ class TestClassifyFiles:
         assert result["verdict"] == "irrelevant"
 
     def test_summary_format(self):
-        with patch("security_relevance_filter.get_diff_for_file", return_value=""):
+        with patch("analyzers.security_relevance_filter.get_diff_for_file", return_value=""):
             result = classify_files(
                 "/tmp/repo",
                 None,
@@ -651,21 +655,21 @@ class TestCLI:
 
     def test_exit_code_relevant(self):
         """Exit code 0 when relevant files found."""
-        with patch("security_relevance_filter.get_changed_files", return_value=["src/auth/login.py"]):
-            with patch("security_relevance_filter.get_diff_for_file", return_value=""):
+        with patch("analyzers.security_relevance_filter.get_changed_files", return_value=["src/auth/login.py"]):
+            with patch("analyzers.security_relevance_filter.get_diff_for_file", return_value=""):
                 code = main(["--repo-root", "/tmp", "--files", "src/auth/login.py"])
         assert code == 0
 
     def test_exit_code_irrelevant(self):
         """Exit code 1 when all files irrelevant."""
-        with patch("security_relevance_filter.get_changed_files", return_value=["README.md"]):
-            with patch("security_relevance_filter.get_diff_for_file", return_value=""):
+        with patch("analyzers.security_relevance_filter.get_changed_files", return_value=["README.md"]):
+            with patch("analyzers.security_relevance_filter.get_diff_for_file", return_value=""):
                 code = main(["--repo-root", "/tmp", "--files", "README.md"])
         assert code == 1
 
     def test_exit_code_no_files(self):
         """Exit code 1 when no files changed."""
-        with patch("security_relevance_filter.get_changed_files", return_value=[]):
+        with patch("analyzers.security_relevance_filter.get_changed_files", return_value=[]):
             code = main(["--repo-root", "/tmp"])
         assert code == 1
 

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://appsec-advisor/schemas/fragments/trust-boundaries.schema.json",
   "title": "Normalized Phase 7 trust-boundary sidecar",
-  "description": "Strict v2 output of scripts/prepare_trust_boundary_context.py. Phase 7 may author legacy or provisional input, but only this normalized shape is consumed semantically.",
+  "description": "Strict v2 output of scripts/contexts/prepare_trust_boundary_context.py. Phase 7 may author legacy or provisional input, but only this normalized shape is consumed semantically.",
   "type": "object",
   "required": ["schema_version", "trust_boundaries"],
   "additionalProperties": false,

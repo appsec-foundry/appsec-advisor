@@ -1,5 +1,5 @@
 """Unit tests for the Full-M1 STRIDE dispatch manifest validator
-(scripts/validate_dispatch_manifest.py) + its schema."""
+(scripts/validators/validate_dispatch_manifest.py) + its schema."""
 
 from __future__ import annotations
 
@@ -9,12 +9,14 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
+
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = PLUGIN_ROOT / "scripts" / "validate_dispatch_manifest.py"
+SCRIPT = PLUGIN_ROOT / "scripts" / "validators/validate_dispatch_manifest.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("validate_dispatch_manifest", SCRIPT)
+    spec = importlib.util.spec_from_file_location("validators.validate_dispatch_manifest", SCRIPT)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -133,14 +135,14 @@ def test_missing_manifest_file_fails(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Builder (scripts/build_stride_dispatch_manifest.py)
+# Builder (scripts/orchestrator/build_stride_dispatch_manifest.py)
 # ---------------------------------------------------------------------------
 
-BUILDER = PLUGIN_ROOT / "scripts" / "build_stride_dispatch_manifest.py"
+BUILDER = PLUGIN_ROOT / "scripts" / "orchestrator/build_stride_dispatch_manifest.py"
 
 
 def _load_builder():
-    spec = importlib.util.spec_from_file_location("build_stride_dispatch_manifest", BUILDER)
+    spec = importlib.util.spec_from_file_location("orchestrator.build_stride_dispatch_manifest", BUILDER)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -702,7 +704,7 @@ def test_depth_params_in_sync_with_resolve_config(tmp_path):
     """The builder's fallback max_turns table must match resolve_config.DEPTH_PARAMS."""
     import importlib.util as _ilu
 
-    spec = _ilu.spec_from_file_location("resolve_config", PLUGIN_ROOT / "scripts" / "resolve_config.py")
+    spec = _ilu.spec_from_file_location("runtime.resolve_config", PLUGIN_ROOT / "scripts" / "runtime/resolve_config.py")
     rc_mod = _ilu.module_from_spec(spec)
     spec.loader.exec_module(rc_mod)
     for depth, vals in bm._FALLBACK_DEPTH_PARAMS.items():
@@ -714,7 +716,7 @@ def test_depth_params_falls_back_when_resolve_config_import_fails(monkeypatch):
     real_import = builtins.__import__
 
     def fake_import(name, *args, **kwargs):
-        if name == "resolve_config":
+        if name == "runtime.resolve_config":
             raise RuntimeError("import failed")
         return real_import(name, *args, **kwargs)
 
@@ -760,7 +762,7 @@ def test_internal_only_is_false_for_exposure_unknown():
 
 def test_cat13_supplement_returns_empty_when_no_recon_patterns(tmp_path):
     """No .recon-patterns.json → supplement is empty string (graceful fallback)."""
-    assert bm._cat13_supplement(tmp_path) == ""
+    assert bm._cat13_supplement(tmp_path, ["src/**"]) == ""
 
 
 def test_cat13_supplement_returns_file_line_entries(tmp_path):
@@ -781,8 +783,8 @@ def test_cat13_supplement_returns_file_line_entries(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = bm._cat13_supplement(tmp_path)
-    assert "llm-sdk: package.json:94" in result
+    result = bm._cat13_supplement(tmp_path, ["routes/**"])
+    assert "package.json" not in result
     assert "llm-invoke: routes/chat.ts:191" in result
 
 
@@ -832,7 +834,7 @@ def test_builder_supplements_sparse_llm_patterns_from_cat13(tmp_path):
     comp = manifest["components"][0]
     klp = comp.get("known_llm_patterns", "")
     assert "chatbot POST /rest/chat" in klp, "analyst value should be retained"
-    assert "llm-sdk: package.json:94" in klp, "Cat-13 supplement should be appended"
+    assert "package.json" not in klp, "foreign dependency evidence must not enter this component"
     assert "routes/chat.ts:191" in klp, "Cat-13 file:line should appear in supplement"
 
 
@@ -843,16 +845,18 @@ def test_builder_supplements_sparse_llm_patterns_from_cat13(tmp_path):
 AGENTS_DIR = PLUGIN_ROOT / "agents"
 
 
-def test_ms_renderer_includes_ms_ai_exposure_in_author_list():
-    """The dedicated Management Summary renderer must own ms-ai-exposure.json.
+def test_no_renderer_authors_the_model_owned_ai_fragment():
+    """ms-ai-exposure.json is generated from the findings' OWASP tags at every
+    run. An LLM-authored copy once won over the generator and dropped tagged
+    findings and mislabelled LLM01 (juice-shop, 2026-10)."""
+    import renderers.pregenerate_fragments as pf
 
-    Guard against future edits that re-strip it from the allowlist — this was the
-    root cause of the AI/LLM Exposure section missing from the Management Summary
-    on the 2026-06-24 juice-shop standard run.
-    """
-    renderer_md = (AGENTS_DIR / "appsec-ms-renderer.md").read_text(encoding="utf-8")
-    assert "ms-ai-exposure.json" in renderer_md
-    assert "You may write only" in renderer_md
+    assert "ms-ai-exposure.json" in pf._MODEL_OWNED_FRAGMENTS
+    ms_md = (AGENTS_DIR / "appsec-ms-renderer.md").read_text(encoding="utf-8")
+    allowed = ms_md.split("You may write only", 1)[1].split("\n", 1)[0]
+    assert "ms-ai-exposure.json" not in allowed
+    threat_md = (AGENTS_DIR / "appsec-threat-renderer.md").read_text(encoding="utf-8")
+    assert "### `ms-ai-exposure.json` authoring contract" not in threat_md
 
 
 def test_renderer_delegates_every_export_to_the_controller_tail():
@@ -861,7 +865,7 @@ def test_renderer_delegates_every_export_to_the_controller_tail():
     completion_md = (PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-completion.md").read_text(
         encoding="utf-8"
     )
-    controller = (PLUGIN_ROOT / "scripts" / "orchestration_controller.py").read_text(encoding="utf-8")
+    controller = (PLUGIN_ROOT / "scripts" / "orchestrator/orchestration_controller.py").read_text(encoding="utf-8")
     assert "controller owns validation, composition" in renderer_md
     assert "Do not compose" in renderer_md
     assert "## 2. Exports and summary" in completion_md
@@ -1642,13 +1646,13 @@ def test_selection_report_flows_into_scope_rendering():
     import importlib.util as _ilu
 
     def _load(name):
-        s = _ilu.spec_from_file_location(name, PLUGIN_ROOT / "scripts" / f"{name}.py")
+        s = _ilu.spec_from_file_location(name, PLUGIN_ROOT / "scripts" / (name.replace(".", "/") + ".py"))
         m = _ilu.module_from_spec(s)
         s.loader.exec_module(m)
         return m
 
-    btm = _load("build_threat_model_yaml")
-    pf = _load("pregenerate_fragments")
+    btm = _load("model.build_threat_model_yaml")
+    pf = _load("renderers.pregenerate_fragments")
 
     comps = [
         _c("express-backend", zones=["internet", "dmz"], sensitive=True, name="Express Backend"),
@@ -1670,7 +1674,7 @@ def test_selection_report_flows_into_scope_rendering():
 
     assert "**4 of 5**" in out
     assert "Internal Worker" in out  # out-of-scope component is named
-    assert "not individually analyzed" in out
+    assert "Not analysed at this depth: Internal Worker" in out
     # the selector's OWN reason strings survive the handoff into the criteria line
     crit_line = next(line for line in out.splitlines() if "Selection criteria" in line)
     assert "crown-jewel" in crit_line
@@ -2172,3 +2176,220 @@ def test_seed_business_context_copies_analyst_context_before_selection():
     seeded = bm._seed_business_context(comps, {"ledger-worker": {"business_context": {"sensitive_assets": ["funds"]}}})
     assert seeded[0]["business_context"] == {"sensitive_assets": ["funds"]}
     assert bm._is_crown_jewel(seeded[0]) is True
+
+
+def test_ai_dispatch_preserves_owned_kinds_without_cross_component_contamination(tmp_path):
+    """SDK and tool evidence in one file must select the lens for each owner only."""
+    for source in ("src/worker.py", "renamed/nested/runner.ts"):
+        findings = [
+            {"subcategory": "llm-sdk", "strength": "strong", "file": source, "line": 1},
+            {"subcategory": "tool-use", "strength": "weak", "file": source, "line": 8},
+            {"subcategory": "llm-sdk", "strength": "strong", "file": "plain/inference.py", "line": 3},
+            {"subcategory": "agent-framework", "strength": "strong", "file": "package.json", "line": 4},
+            {"subcategory": "agent-framework", "strength": "strong", "file": ".claude/agent.py", "line": 2},
+        ]
+        (tmp_path / ".recon-patterns.json").write_text(json.dumps({"categories": {"13": {"findings": findings}}}))
+        components = [
+            {"id": "first", "name": "First", "paths": ["plain/inference.py"], "deployment_zones": ["internal-network"]},
+            {"id": "worker", "name": "Worker", "paths": [source], "deployment_zones": ["internal-network"]},
+            {"id": "shared", "name": "Shared", "paths": [source], "deployment_zones": ["internal-network"]},
+            {
+                "id": "unrelated",
+                "name": "Other",
+                "paths": ["other/**", "package.json", ".claude/**"],
+                "deployment_zones": ["internet"],
+            },
+        ]
+        (tmp_path / ".components.json").write_text(json.dumps({"schema_version": 1, "components": components}))
+        manifest = bm.build(tmp_path, "standard", {"first": {"known_llm_patterns": "plain model call"}}, PLUGIN_ROOT)
+        by_id = {row["component_id"]: row for row in manifest["components"]}
+        assert by_id["worker"]["lens_ids"] == ["agentic", "llm"]
+        assert by_id["shared"]["lens_ids"] == ["agentic", "llm"]
+        assert by_id["first"]["lens_ids"] == ["llm"]
+        assert by_id["unrelated"]["lens_ids"] == []
+        assert "tool-use" in by_id["worker"]["known_llm_patterns"]
+        assert "plain/inference.py" not in by_id["worker"]["known_llm_patterns"]
+
+
+def test_ai_signal_kinds_survive_location_cap_and_long_analyst_context(tmp_path):
+    findings = [{"subcategory": "llm-sdk", "strength": "strong", "file": f"src/a{i}.py", "line": 1} for i in range(15)]
+    findings.append({"subcategory": "tool-use", "strength": "weak", "file": "src/z.py", "line": 5})
+    (tmp_path / ".recon-patterns.json").write_text(json.dumps({"categories": {"13": {"findings": findings}}}))
+    (tmp_path / ".components.json").write_text(
+        json.dumps({"schema_version": 1, "components": [{"id": "llm-worker", "paths": ["src/**"]}]})
+    )
+    manifest = bm.build(
+        tmp_path, "standard", {"llm-worker": {"known_llm_patterns": "Model invocation evidence. " * 10}}, PLUGIN_ROOT
+    )
+    row = manifest["components"][0]
+    assert "agentic" in row["lens_ids"]
+    assert "6 owned signal locations omitted" in row["known_llm_patterns"]
+
+
+def test_ai_path_ownership_rejects_foreign_nested_and_unsafe_paths():
+    for path in ("src/nested/worker.py", "src/../foreign.py", "/src/worker.py", "src\\worker.py"):
+        assert not bm._path_owns(["src/*.py"], path)
+    assert bm._path_owns(["src/**/*.py"], "src/nested/worker.py")
+    assert bm._path_owns(["src/**/*.py"], "src/worker.py")
+
+
+def test_rag_mcp_and_agency_are_independent_evidenced_capabilities():
+    def lenses(*values):
+        c = {
+            "id": "worker",
+            "capabilities": [{"capability": v, "evidence": [{"file": "src/run.py", "line": 1}]} for v in values],
+        }
+        return bm._stride_lens_ids(c, {})
+
+    assert lenses("mcp-server") == ["mcp"]
+    assert lenses("rag-retrieval", "agent-memory") == ["rag"]
+    assert lenses("llm-tools", "mcp-client", "rag-retrieval") == ["agentic", "llm", "mcp", "rag"]
+    assert lenses("agent-delegation") == ["agentic", "llm"]
+    assert bm._stride_lens_ids({"capabilities": [{"capability": "llm-tools", "evidence": []}]}, {}) == []
+
+
+def test_signal_location_name_cannot_activate_an_agentic_lens(tmp_path):
+    source = "src/tool-use/agent-framework.py"
+    findings = [{"subcategory": "llm-sdk", "strength": "strong", "file": source, "line": 1}]
+    (tmp_path / ".recon-patterns.json").write_text(json.dumps({"categories": {"13": {"findings": findings}}}))
+    (tmp_path / ".components.json").write_text(
+        json.dumps({"schema_version": 1, "components": [{"id": "plain", "paths": [source]}]})
+    )
+    manifest = bm.build(tmp_path, "standard", {}, PLUGIN_ROOT)
+    assert manifest["components"][0]["lens_ids"] == ["llm"]
+
+
+# ---------------------------------------------------------------------------
+# Route-inventory exposure enrichment (_enrich_from_route_inventory, DT-7)
+# ---------------------------------------------------------------------------
+
+
+def _route_inv(handler_files: list[str]) -> dict:
+    """Minimal .route-inventory.json payload for testing."""
+    return {
+        "version": "1",
+        "routes": [{"route_id": f"R-{i:03d}", "handler_file": hf} for i, hf in enumerate(handler_files, 1)],
+    }
+
+
+_HANDLER = "src/main/java/com/x/orders/OrderController.java"
+
+
+@pytest.mark.parametrize(
+    "pattern, owned",
+    [
+        ("src/main/java/com/x/orders/*.java", True),
+        ("src/main/java/com/x/orders/**", True),
+        ("src/main/java/com/x/orders", True),
+        ("src/main/java/com/x/orders/", True),
+        (_HANDLER, True),
+        ("src/*/java/com/x/orders/**", True),
+        # A wildcard in the middle must not widen ownership to the literal prefix.
+        ("src/main/java/**/logging/*.java", False),
+        ("src/*/java/com/y/**", False),
+        ("src/main/java/com/x/*.java", False),
+        ("src/main/java/com/x/ordersextra/**", False),
+        # A catch-all scope is a fallback, not evidence of owning the handler.
+        ("**", False),
+        ("**/*", False),
+    ],
+)
+def test_route_ownership_uses_canonical_glob_semantics(tmp_path, pattern, owned):
+    (tmp_path / ".route-inventory.json").write_text(json.dumps(_route_inv([_HANDLER])), encoding="utf-8")
+    comps = [{"id": "c", "paths": [pattern], "deployment_zones": ["internal-network"]}]
+    bm._enrich_from_route_inventory(comps, tmp_path)
+    assert bool(comps[0].get("_route_exposed")) is owned
+
+
+@pytest.mark.parametrize(
+    "payload", ["not json", "[]", '{"routes": null}', '{"routes": ["x", {"handler_file": 3}, {}]}']
+)
+def test_enrich_tolerates_malformed_inventory(tmp_path, payload):
+    (tmp_path / ".route-inventory.json").write_text(payload, encoding="utf-8")
+    comps = [{"id": "c", "paths": ["src/**"], "deployment_zones": ["internal-network"]}]
+    bm._enrich_from_route_inventory(comps, tmp_path)
+    assert not comps[0].get("_route_exposed")
+
+
+def test_enrich_marks_component_with_matching_handler(tmp_path):
+    (tmp_path / ".route-inventory.json").write_text(
+        json.dumps(_route_inv(["src/pkg/OrderController.java"])), encoding="utf-8"
+    )
+    comps = [{"id": "search-svc", "paths": ["src/pkg/*.java"], "deployment_zones": ["internal-network"]}]
+    bm._enrich_from_route_inventory(comps, tmp_path)
+    assert comps[0].get("_route_exposed") is True
+
+
+def test_enrich_leaves_component_without_matching_handler(tmp_path):
+    (tmp_path / ".route-inventory.json").write_text(json.dumps(_route_inv(["src/other/Foo.java"])), encoding="utf-8")
+    comps = [{"id": "worker", "paths": ["src/pkg/*.java"], "deployment_zones": ["internal-network"]}]
+    bm._enrich_from_route_inventory(comps, tmp_path)
+    assert not comps[0].get("_route_exposed")
+
+
+def test_enrich_noop_when_inventory_absent(tmp_path):
+    comps = [{"id": "x", "paths": ["src/**"], "deployment_zones": []}]
+    bm._enrich_from_route_inventory(comps, tmp_path)  # no .route-inventory.json
+    assert not comps[0].get("_route_exposed")
+
+
+def test_enrich_handles_double_star_glob(tmp_path):
+    (tmp_path / ".route-inventory.json").write_text(
+        json.dumps(_route_inv(["src/landscape/deep/sub/LandscapeController.java"])), encoding="utf-8"
+    )
+    comps = [{"id": "landscape", "paths": ["src/landscape/**/*.java"], "deployment_zones": ["internal-network"]}]
+    bm._enrich_from_route_inventory(comps, tmp_path)
+    assert comps[0].get("_route_exposed") is True
+
+
+def test_select_internal_zone_component_selected_when_route_exposed(tmp_path):
+    """A component labelled `internal-network` is selected at standard depth
+    when the route inventory shows it carries HTTP handlers (2026-10-02 regression:
+    monolith packages with `internal-network` zone were silently excluded at
+    standard depth despite owning permitAll routes on /api/**)."""
+    (tmp_path / ".route-inventory.json").write_text(
+        json.dumps(_route_inv(["src/search/OrderSearchController.java"])), encoding="utf-8"
+    )
+    comps = [
+        {"id": "frontend", "paths": ["src/frontend/**"], "deployment_zones": ["client-device"], "tier": "client"},
+        {
+            "id": "search-svc",
+            "paths": ["src/search/*.java"],
+            "deployment_zones": ["internal-network"],
+            "handles_sensitive_data": False,
+        },
+        {"id": "db", "paths": ["src/db/**"], "deployment_zones": ["prod-write-db"], "handles_sensitive_data": True},
+    ]
+    bm._enrich_from_route_inventory(comps, tmp_path)
+    selected, report = bm.select_stride_components(comps, "standard")
+    ids = {c["id"] for c in selected}
+    assert "search-svc" in ids, "route-exposed internal component must be selected"
+    assert report["excluded"] == []
+
+
+def test_route_exposed_reason_text_uses_route_inventory_label(tmp_path):
+    (tmp_path / ".route-inventory.json").write_text(
+        json.dumps(_route_inv(["src/search/OrderSearchController.java"])), encoding="utf-8"
+    )
+    comps = [{"id": "search-svc", "paths": ["src/search/*.java"], "deployment_zones": ["internal-network"]}]
+    bm._enrich_from_route_inventory(comps, tmp_path)
+    reasons = bm._selection_reasons(comps[0], "standard")
+    assert "internet-exposed (route-inventory)" in reasons
+
+
+def test_route_exposed_does_not_screen_under_cheap_stride(tmp_path):
+    """A component selected via route-inventory exposure must NOT be cheapened
+    under --cheap-stride (DT-2 / DT-3: exposure is never screenable)."""
+    (tmp_path / ".route-inventory.json").write_text(
+        json.dumps(_route_inv(["src/search/OrderSearchController.java"])), encoding="utf-8"
+    )
+    comp = {"id": "search-svc", "paths": ["src/search/*.java"], "deployment_zones": ["internal-network"]}
+    bm._enrich_from_route_inventory([comp], tmp_path)
+    assert bm._cheap_stride_target(comp) is False
+
+
+def test_zone_based_exposed_reason_still_includes_zone_label():
+    """When a component is exposed via deployment_zones, the zone label still appears."""
+    comp = {"id": "api", "deployment_zones": ["dmz"]}
+    reasons = bm._selection_reasons(comp, "standard")
+    assert any("dmz" in r for r in reasons)

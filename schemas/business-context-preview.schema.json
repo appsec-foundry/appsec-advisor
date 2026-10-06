@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Bounded application overview for the early business-context dialog",
+  "type": "object",
+  "required": ["schema_version", "sources", "top_level_names", "existing_context", "context_status", "limited", "elapsed_ms"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "sources": {
+      "type": "array", "maxItems": 8,
+      "items": {
+        "type": "object", "required": ["path", "excerpt", "truncated"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1, "maxLength": 512},
+          "excerpt": {"type": "string", "maxLength": 2048},
+          "truncated": {"type": "boolean"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "top_level_names": {"type": "array", "maxItems": 40, "items": {"type": "string", "maxLength": 200}},
+    "existing_context": {"type": "string", "maxLength": 12000},
+    "context_status": {"enum": ["absent", "provided", "truncated", "withheld"]},
+    "limited": {"type": "boolean"},
+    "elapsed_ms": {"type": "integer", "minimum": 0}
+  },
+  "additionalProperties": false
+}

@@ -131,17 +131,92 @@ def _settings_path(scope: str, repo_root: Path) -> Path:
     return repo_root / rel
 
 
-def load_allow(path: Path) -> list[str]:
+def read_scope(path: Path) -> tuple[str, list[str], str]:
+    """Return ``(status, allow, detail)``; status is absent|ok|unreadable|invalid.
+
+    "unreadable" covers a path that exists but is not a regular readable file —
+    a sandbox masks settings files with a device node, so the grant there is
+    unknown rather than empty.
+    """
+    if not path.exists():
+        return "absent", [], ""
     if not path.is_file():
-        return []
+        return "unreadable", [], "not a regular file"
     try:
         doc = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as e:
-        sys.stderr.write(f"warning: ignoring unreadable {path}: {e}\n")
-        return []
-    perms = doc.get("permissions") or {}
-    allow = perms.get("allow") or []
-    return [str(x) for x in allow if isinstance(x, str)]
+    except OSError as e:
+        return "unreadable", [], str(e)
+    except json.JSONDecodeError as e:
+        return "invalid", [], f"invalid JSON: {e}"
+    if not isinstance(doc, dict):
+        return "invalid", [], "top level is not an object"
+    perms = doc.get("permissions")
+    if perms is None:
+        return "ok", [], ""
+    if not isinstance(perms, dict):
+        return "invalid", [], "permissions is not an object"
+    allow = perms.get("allow")
+    if allow is None:
+        return "ok", [], ""
+    if not isinstance(allow, list):
+        return "invalid", [], "permissions.allow is not a list"
+    return "ok", [str(x) for x in allow if isinstance(x, str)], ""
+
+
+def load_allow(path: Path) -> list[str]:
+    status, allow, detail = read_scope(path)
+    if status in ("unreadable", "invalid"):
+        sys.stderr.write(f"warning: ignoring unreadable {path}: {detail}\n")
+    return allow
+
+
+def _default_mode(path: Path) -> str | None:
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    perms = doc.get("permissions") if isinstance(doc, dict) else None
+    mode = perms.get("defaultMode") if isinstance(perms, dict) else None
+    return mode if isinstance(mode, str) else None
+
+
+def scope_report(repo_root: Path) -> dict[str, dict]:
+    """Per scope: settings path, read status, detail, granted allow rules, defaultMode."""
+    report = {}
+    for scope in SCOPE_PATHS:
+        path = _settings_path(scope, repo_root)
+        status, allow, detail = read_scope(path)
+        mode = _default_mode(path) if status == "ok" else None
+        report[scope] = {"path": path, "status": status, "detail": detail, "allow": allow, "default_mode": mode}
+    return report
+
+
+# Modes in which Claude Code never prompts on a tool call, subagents included:
+# auto lets its classifier decide, bypassPermissions skips checks. acceptEdits
+# still prompts for Bash, so it does not qualify.
+PROMPT_FREE_MODES = frozenset({"auto", "bypassPermissions"})
+
+
+def prompt_free_default_mode(report: dict[str, dict]) -> str | None:
+    """The configured defaultMode (local > project > user) when it never prompts.
+
+    Only the configured default is visible to a script; a mode switched in the
+    session is not, so a session switched back to default mode still prompts.
+    """
+    for scope in ("local", "project", "user"):
+        mode = report.get(scope, {}).get("default_mode")
+        if mode:
+            return mode if mode in PROMPT_FREE_MODES else None
+    return None
+
+
+def scope_label(status: str, count: int, detail: str = "") -> str:
+    if status == "ok":
+        return f"{count} entr{'y' if count == 1 else 'ies'}"
+    if status == "absent":
+        return "not found"
+    reason = f": {detail}" if detail else ""
+    return f"cannot read{reason}" if status == "unreadable" else f"ignored{reason}"
 
 
 def effective_allow(repo_root: Path) -> dict[str, list[str]]:
@@ -294,9 +369,9 @@ def render_human(
     if scope_paths:
         lines.append("Settings files checked:")
         for scope, path in scope_paths.items():
-            count = scopes_with_counts.get(scope, 0)
-            status = f"{count} entr{'y' if count == 1 else 'ies'}" if path.is_file() else "not found"
-            lines.append(f"  {scope:<8} {path} ({status})")
+            status, _, detail = read_scope(path)
+            label = scope_label(status, scopes_with_counts.get(scope, 0), detail)
+            lines.append(f"  {scope:<8} {path} ({label})")
         lines.append("")
 
     # --- success path ---

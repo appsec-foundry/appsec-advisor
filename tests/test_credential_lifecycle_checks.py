@@ -1,8 +1,8 @@
 """Regression tests for deterministic local-password lifecycle checks.
 
 The rules deliberately target only high-confidence source patterns.  They are
-run by ``source_auth_scanner.py`` in its default pre-pass and become normal
-source-scan threats through ``merge_threats.py``.
+run by ``analyzers/source_auth_scanner.py`` in its default pre-pass and become normal
+source-scan threats through ``model/merge_threats.py``.
 """
 
 from __future__ import annotations
@@ -15,9 +15,9 @@ REPO_ROOT = Path(__file__).parent.parent
 CATALOG = REPO_ROOT / "data" / "credential-lifecycle-checks.yaml"
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
-import merge_threats as M  # noqa: E402
-import source_auth_scanner as S  # noqa: E402
-import validate_intermediate as VI  # noqa: E402
+import analyzers.source_auth_scanner as S  # noqa: E402
+import model.merge_threats as M  # noqa: E402
+import validators.validate_intermediate as VI  # noqa: E402
 
 
 def _write(tmp_path: Path, name: str, body: str) -> None:

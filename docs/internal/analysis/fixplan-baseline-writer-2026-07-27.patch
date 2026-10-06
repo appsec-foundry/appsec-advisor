@@ -1,14 +1,14 @@
-diff --git a/scripts/persist_run_baseline.py b/scripts/persist_run_baseline.py
+diff --git a/scripts/model/persist_run_baseline.py b/scripts/model/persist_run_baseline.py
 new file mode 100644
 index 00000000..e8ad42c1
 --- /dev/null
-+++ b/scripts/persist_run_baseline.py
++++ b/scripts/model/persist_run_baseline.py
 @@ -0,0 +1,212 @@
 +#!/usr/bin/env python3
-+"""persist_run_baseline.py — run-end writer for `.appsec-cache/baseline.json`.
++"""model/persist_run_baseline.py — run-end writer for `.appsec-cache/baseline.json`.
 +
 +Persists the just-finished run's duration + mode + depth so the next
-+invocation's `estimate_duration.py` can use it as its highest-priority data
++invocation's `runtime/estimate_duration.py` can use it as its highest-priority data
 +source (`source=last_run_cache` instead of `source=parametric`).
 +
 +WHY THIS IS A SCRIPT AND NOT A SKILL-LEVEL BASH BLOCK
@@ -18,11 +18,11 @@ index 00000000..e8ad42c1
 +contract carried in prose, and it broke twice:
 +
 +  * 2026-06 — a later baseline write wiped the fields (fixed defensively in
-+    `baseline_state.py` by carrying them forward).
++    `baseline/baseline_state.py` by carrying them forward).
 +  * 2026-07-27 — the orchestrator resumed after a context compaction, read the
 +    descriptive paragraph ("write the total wall-clock + mode + depth") but not
 +    the bash block three lines below it, and invented `last_wall_seconds` /
-+    `last_mode` / `last_depth`. `estimate_duration.py` reads only
++    `last_mode` / `last_depth`. `runtime/estimate_duration.py` reads only
 +    `last_run_seconds`, so the cache looked populated while the estimator
 +    silently fell back to the parametric formula (66 min instead of the
 +    measured 101 min). Nothing detected it: a misspelled key is indistinguishable
@@ -41,7 +41,7 @@ index 00000000..e8ad42c1
 +3. ``--fallback-epoch`` (the caller's ``ASSESSMENT_START_EPOCH``), usually empty
 +   by the time finalization runs.
 +
-+When ``run_timing.py --net-wall-seconds`` reports a SMALLER value (idle/standby
++When ``runtime/run_timing.py --net-wall-seconds`` reports a SMALLER value (idle/standby
 +excluded), that value wins: a run that sat idle must not teach the estimator
 +that it takes that long.
 +
@@ -62,7 +62,7 @@ index 00000000..e8ad42c1
 +from pathlib import Path
 +
 +# The canonical field names. `estimate_duration._last_run_cache` reads exactly
-+# these; `baseline_state.py` carries exactly these forward. Changing a name here
++# these; `baseline/baseline_state.py` carries exactly these forward. Changing a name here
 +# means changing it in all three places — that is the point of having one owner.
 +KEY_SECONDS = "last_run_seconds"
 +KEY_MODE = "last_run_mode"
@@ -110,11 +110,11 @@ index 00000000..e8ad42c1
 +
 +
 +def _net_wall_seconds(output_dir: Path, plugin_root: Path | None) -> int | None:
-+    """`run_timing.py --net-wall-seconds`, or None when unavailable."""
++    """`runtime/run_timing.py --net-wall-seconds`, or None when unavailable."""
 +    root = plugin_root or Path(__file__).resolve().parent.parent
-+    script = root / "scripts" / "run_timing.py"
++    script = root / "scripts" / "runtime/run_timing.py"
 +    if not script.is_file():
-+        script = Path(__file__).resolve().parent / "run_timing.py"
++        script = Path(__file__).resolve().parent / "runtime/run_timing.py"
 +    try:
 +        out = subprocess.run(
 +            [sys.executable, str(script), "--output-dir", str(output_dir), "--net-wall-seconds"],
@@ -272,12 +272,12 @@ index 373612f6..cb39e22e 100644
 -  # Standby-correct the persisted figure. A run suspended mid-flight (machine
 -  # standby) or with a hung dispatch produces a raw end-to-end RUN_SECONDS
 -  # dominated by dead time (observed: 232 min for ~95 min of real work), which
--  # would poison the next run's estimate. run_timing.py isolates per-stage
+-  # would poison the next run's estimate. runtime/run_timing.py isolates per-stage
 -  # standby/suspend gaps (>10 min wall-minus-compute); prefer its net-of-standby
 -  # wall when it is available AND shorter than the raw span. The displayed
 -  # Completion Summary uses the same helper, so the persisted basis matches the
 -  # "Net run (wall−sleep)" line the user just saw.
--  NET_WALL=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/run_timing.py" \
+-  NET_WALL=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/run_timing.py" \
 -      --output-dir "$OUTPUT_DIR" --net-wall-seconds 2>/dev/null)
 -  if [ -n "$NET_WALL" ] && [ "$NET_WALL" -gt 0 ] 2>/dev/null && [ "$NET_WALL" -lt "$RUN_SECONDS" ]; then
 -    RUN_SECONDS="$NET_WALL"
@@ -311,7 +311,7 @@ index 373612f6..cb39e22e 100644
 -  else
 -    # No baseline yet (first-ever run) — minimal seed file. Other
 -    # fields (manifest hashes, ID counters) get filled in by
--    # baseline_state.py on the next assessment.
+-    # baseline/baseline_state.py on the next assessment.
 -    cat > "$CACHE_FILE" <<EOF
 -{
 -  "last_run_seconds": $RUN_SECONDS,
@@ -322,7 +322,7 @@ index 373612f6..cb39e22e 100644
 -EOF
 -  fi
 -fi
-+python3 "$CLAUDE_PLUGIN_ROOT/scripts/persist_run_baseline.py" \
++python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/persist_run_baseline.py" \
 +    --output-dir "$OUTPUT_DIR" \
 +    --mode "$MODE" \
 +    --depth "${ASSESSMENT_DEPTH:-standard}" \
@@ -333,8 +333,8 @@ index 373612f6..cb39e22e 100644
 -`RUN_START_EPOCH` is derived from the first `ASSESSMENT_START` line in `.agent-run.log` so that pre-dispatch user-confirm wait time is excluded from `last_run_seconds`. The durable `.scan-start-epoch` file is the next fallback (it survives across the skill's separate Bash invocations, unlike the in-memory `ASSESSMENT_START_EPOCH` shell variable, which is usually empty by the time this block runs — the historic cause of `last_run_seconds` never being written), and the shell variable is the last resort (and is still used by the deadline watchdog at §"Wall-time + cost deadline watchdog"). Best-effort: if all three signals are missing the cache write is skipped and the next-run estimator falls back to the parametric formula. The cache write itself uses `python3` rather than `jq`, so the field is persisted on systems without `jq` installed.
 +**The script owns the cache field names — never write `baseline.json` by hand,
 +and do not restate its keys here.** They are pinned in
-+`scripts/persist_run_baseline.py` against both consumers (`estimate_duration.py`
-+reads them, `baseline_state.py` carries them forward) and covered by
++`scripts/model/persist_run_baseline.py` against both consumers (`runtime/estimate_duration.py`
++reads them, `baseline/baseline_state.py` carries them forward) and covered by
 +`tests/test_persist_run_baseline.py`.
 +
 +This step used to be ~40 lines of inline bash that the orchestrator reproduced
@@ -351,7 +351,7 @@ index 373612f6..cb39e22e 100644
 +user-confirm wait time), then the durable `.scan-start-epoch` file, then
 +`--fallback-epoch` (the `ASSESSMENT_START_EPOCH` shell variable is usually empty
 +by the time finalization runs; it is still used by the deadline watchdog at
-+§"Wall-time + cost deadline watchdog"). When `run_timing.py --net-wall-seconds`
++§"Wall-time + cost deadline watchdog"). When `runtime/run_timing.py --net-wall-seconds`
 +reports a smaller value, that one wins, so an idle run does not inflate the next
 +estimate. Best-effort by contract: with no usable start signal the script reports
 +the skip on stderr and exits 0 — the run never fails on this step.
@@ -364,13 +364,13 @@ index 00000000..4c04438e
 --- /dev/null
 +++ b/tests/test_persist_run_baseline.py
 @@ -0,0 +1,202 @@
-+"""Tests for scripts/persist_run_baseline.py — the run-end baseline writer.
++"""Tests for scripts/model/persist_run_baseline.py — the run-end baseline writer.
 +
 +Context: the writer used to be inline bash in SKILL-impl.md that the
 +orchestrator reproduced by hand, including four exact JSON key names. On
 +2026-07-27 it resumed after a context compaction, read the descriptive
 +paragraph but not the bash block below it, and wrote `last_wall_seconds` /
-+`last_mode` / `last_depth`. `estimate_duration.py` reads only
++`last_mode` / `last_depth`. `runtime/estimate_duration.py` reads only
 +`last_run_seconds`, so the estimator silently fell back to the parametric
 +formula. `test_written_cache_is_consumed_by_estimator` is the guard that would
 +have caught it.
@@ -386,7 +386,7 @@ index 00000000..4c04438e
 +import pytest
 +
 +REPO_ROOT = Path(__file__).parent.parent
-+SCRIPT_PATH = REPO_ROOT / "scripts" / "persist_run_baseline.py"
++SCRIPT_PATH = REPO_ROOT / "scripts" / "model/persist_run_baseline.py"
 +
 +sys.path.insert(0, str(REPO_ROOT / "scripts"))
 +
@@ -435,9 +435,9 @@ index 00000000..4c04438e
 +
 +def test_field_names_match_what_the_estimator_reads(tmp_path: Path):
 +    """Pin the four canonical names against the reader's literals."""
-+    src = (REPO_ROOT / "scripts" / "estimate_duration.py").read_text(encoding="utf-8")
++    src = (REPO_ROOT / "scripts" / "runtime/estimate_duration.py").read_text(encoding="utf-8")
 +    for key in (prb.KEY_SECONDS, prb.KEY_MODE, prb.KEY_DEPTH):
-+        assert f'"{key}"' in src, f"{key} is not read by estimate_duration.py"
++        assert f'"{key}"' in src, f"{key} is not read by runtime/estimate_duration.py"
 +    assert prb.KEY_SECONDS == "last_run_seconds"
 +    assert prb.KEY_MODE == "last_run_mode"
 +    assert prb.KEY_DEPTH == "last_run_depth"
@@ -445,9 +445,9 @@ index 00000000..4c04438e
 +
 +
 +def test_field_names_match_baseline_state_carry_forward():
-+    """`baseline_state.py` carries these forward on rewrite; a name that drifts
++    """`baseline/baseline_state.py` carries these forward on rewrite; a name that drifts
 +    apart from that list gets silently wiped by the next baseline write."""
-+    src = (REPO_ROOT / "scripts" / "baseline_state.py").read_text(encoding="utf-8")
++    src = (REPO_ROOT / "scripts" / "baseline/baseline_state.py").read_text(encoding="utf-8")
 +    for key in (prb.KEY_SECONDS, prb.KEY_MODE, prb.KEY_DEPTH, prb.KEY_ISO):
 +        assert f'"{key}"' in src, f"{key} missing from baseline_state carry-forward"
 +

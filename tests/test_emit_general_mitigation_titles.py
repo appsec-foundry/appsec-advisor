@@ -1,4 +1,4 @@
-"""Regression tests for scripts/emit_general_mitigation_titles.py (2026-06-12).
+"""Regression tests for scripts/model/emit_general_mitigation_titles.py (2026-06-12).
 
 Mitigation register/index titles must read as clear, general remediation
 labels — not the detailed remediation instruction Stage-1 authored into
@@ -11,16 +11,17 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "emit_general_mitigation_titles.py"
+SCRIPT = REPO_ROOT / "scripts" / "model/emit_general_mitigation_titles.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("emit_general_mitigation_titles", SCRIPT)
+    spec = importlib.util.spec_from_file_location("model.emit_general_mitigation_titles", SCRIPT)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["emit_general_mitigation_titles"] = mod
+    sys.modules["model.emit_general_mitigation_titles"] = mod
     spec.loader.exec_module(mod)
     return mod
 
@@ -51,6 +52,22 @@ def test_cwe_maps_to_general_title():
     )
     assert egm.apply(d) == 1
     assert d["mitigations"][0]["title"] == "Use parameterized database queries"
+
+
+def test_a_review_card_keeps_the_location_a_person_must_check():
+    title = "Manual review: verify SQL injection at routes/login.ts:34"
+    d = _data(
+        {"id": "M-020", "kind": "review", "title": title, "threat_ids": ["T-009"]},
+        {
+            "id": "M-021",
+            "kind": "fix",
+            "title": "Use Sequelize replacements in routes/login.ts",
+            "threat_ids": ["T-009"],
+        },
+        threats=[{"id": "T-009", "cwe": "CWE-89", "remediation": {"steps": ["x"]}}],
+    )
+    assert egm.apply(d) == 1
+    assert [m["title"] for m in d["mitigations"]] == [title, "Use parameterized database queries"]
 
 
 def test_explicit_cwe_fields_win_over_threat_lookup():
@@ -292,3 +309,82 @@ def test_main_best_effort_noops_for_missing_and_unreadable_yaml(tmp_path, capsys
     (tmp_path / "threat-model.yaml").write_text("threats: [\n", encoding="utf-8")
     assert egm.main([str(tmp_path)]) == 0
     assert "unreadable yaml" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "original, cwe, title",
+    [
+        ("Pin workflow actions to full commit SHAs", "CWE-829", "Pin third-party dependencies to immutable versions"),
+        ("Commit lockfiles and use npm ci in CI", "CWE-829", "Commit lockfiles and install from them"),
+        ("Install with a frozen lockfile in the release job", "CWE-829", "Commit lockfiles and install from them"),
+        ("Sign pushed images with cosign in the release job", "CWE-345", "Sign and verify release artifacts"),
+        (
+            "Replace decode(token) with verify(token, key)",
+            "CWE-345",
+            "Enforce JWT signature and algorithm verification",
+        ),
+    ],
+)
+def test_one_cwe_with_two_fixes_gets_two_titles(original, cwe, title):
+    assert egm.generalize_title(original, cwe) == title
+
+
+def _fix(mid: str, tid: str, title: str, kind: str = "fix") -> dict:
+    return {"id": mid, "kind": kind, "title": title, "threat_ids": [tid], "how": "detail"}
+
+
+def _sqli(tid: str) -> dict:
+    return {"t_id": tid, "cwe": "CWE-89", "title": f"SQL injection {tid}"}
+
+
+@pytest.mark.parametrize(
+    "sources, expected",
+    [
+        # Clean source titles become the distinguishing labels.
+        (
+            ["Parameterize the login query", "Parameterize the product search query"],
+            ["Parameterize the login query", "Parameterize the product search query"],
+        ),
+        # Code, paths or file names in the source fall back to the finding id.
+        (
+            ["Replace `query()` with bound parameters", "Bind values in routes/search.ts"],
+            ["Use parameterized database queries (F-001)", "Use parameterized database queries (F-002)"],
+        ),
+        # Two identical clean sources still end unique.
+        (
+            ["Parameterize the login query", "Parameterize the login query"],
+            ["Parameterize the login query", "Use parameterized database queries (F-002)"],
+        ),
+    ],
+)
+def test_fix_titles_are_unique_after_generalization(sources, expected):
+    data = {
+        "threats": [_sqli("T-001"), _sqli("T-002")],
+        "mitigations": [_fix("M-001", "T-001", sources[0]), _fix("M-002", "T-002", sources[1])],
+    }
+    egm.apply(data)
+    assert [m["title"] for m in data["mitigations"]] == expected
+    snapshot = [m["title"] for m in data["mitigations"]]
+    egm.apply(data)  # idempotent
+    assert [m["title"] for m in data["mitigations"]] == snapshot
+
+
+def test_single_fix_keeps_the_general_title_and_reviews_are_untouched():
+    review = _fix("M-002", "T-002", "Manual review: verify the query at login.ts:3", kind="review")
+    data = {
+        "threats": [_sqli("T-001"), _sqli("T-002")],
+        "mitigations": [_fix("M-001", "T-001", "Parameterize the login query"), review],
+    }
+    egm.apply(data)
+    assert data["mitigations"][0]["title"] == "Use parameterized database queries"
+    assert data["mitigations"][1]["title"] == "Manual review: verify the query at login.ts:3"
+
+
+def test_architect_accepted_title_wins_the_collision():
+    accepted = "Use parameterized database queries"
+    data = {
+        "threats": [_sqli("T-001"), _sqli("T-002")],
+        "mitigations": [_fix("M-001", "T-001", accepted), _fix("M-002", "T-002", "Bind values in routes/search.ts")],
+    }
+    egm.apply(data, reviewed=frozenset({("T-001", accepted)}))
+    assert [m["title"] for m in data["mitigations"]] == [accepted, f"{accepted} (F-002)"]

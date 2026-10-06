@@ -1,0 +1,1308 @@
+#!/usr/bin/env python3
+"""runtime/skill_watchdog.py — long-running watchdog spawned by the create-threat-model skill.
+
+Runs the heartbeat and liveness loop as a single Python process that the
+compact runtime spawns via the ``Bash`` tool with
+``run_in_background: true``. The Python rewrite is unit-testable, has no
+shell-quoting hell, and gives us a clean place to add per-component
+timeout escalation (M3.6 #7) and task-id-driven selective kills (M3.6 #8)
+later.
+
+Responsibilities (1:1 with the previous Bash loop unless flagged ``[NEW]``)
+--------------------------------------------------------------------------
+
+  1. **Heartbeat refresh.** Every ``--heartbeat-interval`` seconds (default
+     60) shell out to ``runtime/acquire_lock.py --heartbeat`` so the lock file's
+     second-line timestamp keeps advancing. Exits cleanly the first time
+     the lock file disappears (the deadline-watchdog or post-stage cleanup
+     removed it).
+
+  2. **STRIDE progress logging.** Mirrors the historical ``STRIDE_PROGRESS``
+     line — ``stride_files=K  total_bytes=B  progress_files=P`` — appended
+     to ``.agent-run.log`` so verbose terminals see the pulse. Suppressed
+     once a STAGNATION warning has fired (avoids log spam after escalation).
+
+  3. **Phase-9 stagnation detection.** Counts consecutive ticks where the
+     STRIDE-output aggregate (file count + total bytes) is unchanged. Once
+     ``--stride-stale-seconds`` of stagnation accumulate after Phase 9 has
+     visibly started, emits ``STRIDE_STALE`` once.
+
+  4. **Phase-9 progress canary.** Phase 9 is "started" when ``.progress/``
+     gains entries OR any ``.stride-*.json`` lands. If the watchdog still
+     sees zero ``.stride-*.json`` files ``--stride-canary-seconds`` after
+     the start signal, emits ``STRIDE_CANARY_TIMEOUT`` once.
+
+  5. **[NEW] Per-component timeout (M3.6 #7).** Tracks the mtime of each
+     ``.progress/<component>.json`` independently. When a single component
+     stays untouched longer than ``--component-timeout-seconds`` after
+     Phase 9 starts, emits ``STRIDE_COMPONENT_TIMEOUT  component=<id>
+     idle=<n>s``. The current implementation is **log-only**; selective
+     ``TaskStop`` requires the orchestrator's task-id map (``#8``) which
+     this script does NOT yet read — adding that is straightforward once
+     the orchestrator persists ``.background-tasks.json``.
+
+  6. **[NEW] Self-liveness tick.** Writes ``.skill-watchdog.tick`` with
+     a monotonically-increasing counter every iteration so a future
+     watchdog-watchdog (M3.6 #10) can detect a wedged Python loop.
+
+Output
+------
+
+All warnings flow into ``$OUTPUT_DIR/.agent-run.log`` so the post-Stage cut-
+off detection picks them up the same way it did with the Bash version. The
+hook-events log and ``.appsec-trace.log`` are untouched — this script is a
+liveness watchdog, not a tracing tool.
+
+Exit codes
+----------
+
+  0 — lock file disappeared, watchdog exited cleanly.
+  2 — usage error.
+  3 — a tick raised; monitoring stopped early.
+
+The watchdog never kills a task. Individual checks swallow their own
+filesystem errors, and anything that still escapes a tick is written to
+``.agent-run.log`` as ``WATCHDOG_ERROR`` before the process exits 3 — the run
+itself continues, unmonitored. The caller starts this in the background and
+does not inspect the status, so that log line is the only evidence;
+``_extract_watchdog_absence`` in ``runtime/aggregate_run_issues.py`` covers the case
+where the process dies before it can write anything at all.
+"""
+
+from __future__ import annotations
+
+# Direct CLI execution must resolve the same packages as imports from scripts/.
+import sys as _sys
+from pathlib import Path as _Path
+
+if not __package__:
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
+
+
+import argparse
+import json
+import os
+import re
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from shared._path_guard import run_path_arg  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+# Guarded exactly like the siblings below. These two used to run bare at import
+# time, before `sys.path` was even extended, so a partial or shadowed sibling
+# raised before argv was parsed. The process then died with an unhandled
+# traceback — an exit status this module documents nowhere, which the skill
+# (`run_in_background`, task id kept only for a later TaskStop) never checks and
+# which no run-issue detector reported. Losing the watchdog costs every
+# stagnation check for the rest of the run, with nothing to say it happened.
+try:
+    from runtime.event_log import format_line  # type: ignore
+except Exception:  # pragma: no cover
+    format_line = None  # type: ignore[assignment]
+try:
+    from runtime.stride_outputs import stride_output_files  # type: ignore
+except Exception:  # pragma: no cover
+    stride_output_files = None  # type: ignore[assignment]
+
+# Reuse the central phase budgets so per-component-timeout defaults stay
+# in sync with the rest of the toolchain.
+try:
+    import runtime.phase_budgets as phase_budgets  # type: ignore
+except Exception:  # pragma: no cover
+    phase_budgets = None  # type: ignore[assignment]
+
+# Reuse the calibrated per-phase relative weights for the coarse run-progress
+# percentage (RUN_PROGRESS). Single source of truth — the same table drives
+# the resume-time estimate in runtime/estimate_duration.py. Guarded like phase_budgets
+# so a missing/partial sibling never breaks the watchdog loop; progress % is
+# simply skipped when the table is unavailable.
+try:
+    from runtime.estimate_duration import _PHASE_DURATION as _PROGRESS_WEIGHTS  # type: ignore
+except Exception:  # pragma: no cover
+    _PROGRESS_WEIGHTS = None  # type: ignore[assignment]
+
+# Running token + cost total for the progress line. Guarded like the siblings
+# above: without it the progress line simply carries no usage fields.
+try:
+    from runtime.cost_running_total import aggregate_running_total  # type: ignore
+except Exception:  # pragma: no cover
+    aggregate_running_total = None  # type: ignore[assignment]
+
+# The weight table ends at the last Stage-1 phase; Stage-2 (render/compose/QA/
+# repair) is unmodeled, so the phase-weight percentage must never assert a full
+# 100 while a run is still in Stage-2. Cap the finalization region here — a true
+# 100 would require Stage-2 to be weighted and to emit its own checkpoints.
+_FINALIZATION_CAP_PCT = 99
+
+# The running total re-parses both logs, so it is refreshed on the cadence the
+# progress view actually shows (5 min) rather than on every 60-second tick. The
+# fields carried between refreshes are the last reading, never interpolated.
+_USAGE_REFRESH_SECONDS = 300
+
+# Per-component STRIDE dispatch plan. Its presence is the "Phase 9 is running"
+# signal: `orchestrator/build_stride_dispatch_manifest.py` writes it immediately before the
+# fan-out, and it names every component of every wave.
+_DISPATCH_MANIFEST = ".stride-dispatch-manifest.json"
+
+
+_LOG_NAME = ".agent-run.log"
+_HOOK_LOG_NAME = ".hook-events.log"
+
+# The watchdog's only stop condition is the lock disappearing, and the lock
+# disappears when cleanup releases it. When a run ends without releasing it —
+# an abort, a crash, a completion path that did not reach cleanup — the two
+# depend on each other and neither happens: the watchdog keeps refreshing the
+# heartbeat, `acquire_lock._classify_lock` keeps reading `fresh`, and no later
+# run can reap the lock. A 2026-08-30 juice-shop2 run held one that way for
+# 7.5 hours after finishing.
+#
+# This ceiling breaks the cycle. `_run_idle_seconds` excludes the watchdog's
+# own log lines and heartbeats, so it measures the RUN, not this process: on a
+# live run it cannot reach an hour, because every tool call and phase boundary
+# resets it. Past the ceiling the watchdog stops refreshing and exits, the
+# heartbeat goes stale on its own, and the existing HEARTBEAT_STALE_SECONDS
+# rule reaps the lock at the next acquisition. The watchdog does not remove the
+# lock itself — it never owned it, and racing an orderly cleanup for a file it
+# does not own is how two runs end up sharing an output directory.
+ABANDON_AFTER_SECONDS = 3600
+_TICK_NAME = ".skill-watchdog.tick"
+_AGENT_NAME = "skill-watchdog"
+
+
+def _ts_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _log(output_dir: Path, level: str, event: str, detail: str) -> None:
+    """Append one structured line to ``$OUTPUT_DIR/.agent-run.log``.
+
+    Format mirrors ``agent_logger._write`` so existing parsers handle it
+    uniformly. Failures are swallowed — the watchdog must never break the
+    run because of a log-write error.
+    """
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        log_path = output_dir / _LOG_NAME
+        line = format_line(event, detail, level=level, component=_AGENT_NAME)
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(line)
+    except Exception:
+        pass
+
+
+def _log_error_loud(output_dir: Path, event: str, detail: str, remedy: str) -> None:
+    """Loudly escalate a watchdog defect — ERROR-level log + stderr banner +
+    sentinel file + structured run-issue entry.
+
+    Used for hard-limit conditions (SUBSTEP2_IDLE etc.) where a WARN line
+    buried in ``.agent-run.log`` is not loud enough. The user must see this
+    in their terminal and the orchestrator's downstream code must be able
+    to detect the defect via sentinel file or ``.run-issues.json``.
+
+    Failures are swallowed (same contract as ``_log``) — the watchdog
+    never breaks the run because of an emit error.
+    """
+    # 1. ERROR-level line in .agent-run.log
+    _log(output_dir, "ERROR", event, detail)
+
+    # 2. Bright stderr banner so the terminal user sees it without grepping
+    try:
+        banner = f"\n⛔  {event} — {detail}\n    Remedy: {remedy}\n\n"
+        sys.stderr.write(banner)
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+    # 3. Sentinel file so downstream code can branch on "stall happened"
+    try:
+        sentinel = output_dir / f".{event.lower().replace('_', '-')}"
+        sentinel.write_text(
+            f"{_ts_now()}\n{detail}\nremedy: {remedy}\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+    # 4. Append a structured defect to .run-issues.json so the orchestrator's
+    #    final assessment summary surfaces the failure to the user.
+    try:
+        runissues_path = output_dir / ".run-issues.json"
+        if runissues_path.exists():
+            try:
+                payload = json.loads(runissues_path.read_text(encoding="utf-8"))
+                if not isinstance(payload, list):
+                    payload = []
+            except (json.JSONDecodeError, OSError):
+                payload = []
+        else:
+            payload = []
+        payload.append(
+            {
+                "source": _AGENT_NAME,
+                "severity": "defect",
+                "type": event.lower(),
+                "detail": detail,
+                "remedy": remedy,
+                "timestamp": _ts_now(),
+            }
+        )
+        runissues_path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
+_SUBSTEP2_START_RE = re.compile(r"STEP_START\s+\[Phase\s*11\]\s+\[2/\d+\]\s+Writing\s+threat-model\.yaml")
+_SUBSTEP2_DONE_RE = re.compile(r"FILE_WRITE\s+\S*threat-model\.yaml\b")
+_ISO_LEAD_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)")
+
+
+def _find_substep2_start(output_dir: Path) -> str | None:
+    """Return the timestamp (ISO 8601 string) of the most recent Substep 2
+    STEP_START in ``.agent-run.log``, or None if Substep 2 hasn't started.
+
+    Scanning is by line — the log appends only, so a forward iteration is
+    cheap. We return the LAST match so re-entry after a recovered run
+    starts a fresh idle window.
+    """
+    log_path = output_dir / _LOG_NAME
+    if not log_path.exists():
+        return None
+    try:
+        content = log_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+    last_ts: str | None = None
+    for line in content.splitlines():
+        if _SUBSTEP2_START_RE.search(line):
+            m = _ISO_LEAD_RE.match(line)
+            if m:
+                last_ts = m.group(1)
+    return last_ts
+
+
+def _substep2_completed_after(output_dir: Path, started_at_iso: str) -> bool:
+    """True once Substep 2's deliverable — ``threat-model.yaml`` — has landed,
+    by EITHER of two independent signals:
+
+      1. A ``FILE_WRITE threat-model.yaml`` log line at/after ``started_at_iso``
+         in ``.agent-run.log`` (ISO 8601 sorts lexicographically — no parse).
+      2. **[robustness]** ``threat-model.yaml`` present on disk with an mtime
+         >= ``started_at_iso``.
+
+    Signal 2 closes a false-positive: the analyst writes the yaml via
+    ``model/build_threat_model_yaml.py``, which does NOT reliably emit the
+    ``FILE_WRITE`` marker signal 1 keys on. Without the disk check the watchdog
+    never set ``substep2_complete``, kept measuring idle long after Substep 2
+    finished, and mis-attributed the Stage-2 renderer's legitimate multi-minute
+    compose turn (one big LLM turn, no interim log lines) as a Substep-2 stall
+    — the 2026-06-04 juice-shop pstride-e2e SUBSTEP2_IDLE false-positive.
+    """
+    # Signal 2 — yaml on disk (robust to a missing FILE_WRITE marker).
+    try:
+        st = (output_dir / "threat-model.yaml").stat()
+        started_epoch = datetime.strptime(started_at_iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
+        # +1s tolerance: log STEP_START is whole-second, the write may stamp
+        # within the same second.
+        if st.st_mtime + 1 >= started_epoch:
+            return True
+    except (OSError, ValueError):
+        pass
+
+    # Signal 1 — FILE_WRITE log marker (original).
+    log_path = output_dir / _LOG_NAME
+    if not log_path.exists():
+        return False
+    try:
+        content = log_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+    for line in content.splitlines():
+        if _SUBSTEP2_DONE_RE.search(line):
+            m = _ISO_LEAD_RE.match(line)
+            if m and m.group(1) >= started_at_iso:
+                return True
+    return False
+
+
+def _log_idle_seconds(output_dir: Path, started_at_iso: str) -> float:
+    """Seconds since the last NON-watchdog event was appended to
+    ``.agent-run.log`` at or after ``started_at_iso``.
+
+    Mtime-based idle would be wrong here because the watchdog itself
+    writes ``WATCHDOG_START`` (once at boot) and may write other
+    progress/escalation lines during a run — each of those updates the
+    file mtime and would mask a genuine orchestrator stall. Instead we
+    scan the log content for the latest timestamped line whose agent
+    field is not ``skill-watchdog`` and compute the delta to now.
+
+    Falls back to ``started_at_iso`` when no non-watchdog event has
+    landed since the substep started (= "no progress at all"). Returns
+    0.0 conservatively on any I/O error so a transient glitch never
+    false-positives.
+    """
+    log_path = output_dir / _LOG_NAME
+    if not log_path.exists():
+        return 0.0
+    try:
+        content = log_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return 0.0
+    last_non_watchdog_ts: str | None = None
+    needle = f"  {_AGENT_NAME}  "
+    for line in content.splitlines():
+        m = _ISO_LEAD_RE.match(line)
+        if not m:
+            continue
+        ts = m.group(1)
+        if ts < started_at_iso:
+            continue
+        if needle in line:
+            # Watchdog's own line — does not count as "agent still alive".
+            continue
+        last_non_watchdog_ts = ts
+    baseline_iso = last_non_watchdog_ts or started_at_iso
+    try:
+        dt = datetime.strptime(baseline_iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return 0.0
+    return max(0.0, time.time() - dt.timestamp())
+
+
+def _hook_log_idle_seconds(output_dir: Path) -> float | None:
+    """Seconds since the last NON-heartbeat line was appended to
+    ``.hook-events.log``.
+
+    The file's mtime is unusable as an activity signal: the skill's own
+    60 s heartbeat (``runtime/acquire_lock.py --heartbeat``) appends a ``HEARTBEAT``
+    line here every minute, so the mtime never goes stale and would mask a
+    genuine multi-minute API stall. That is exactly what let a 21-min Stage-1
+    stall (2026-06-06 juice-shop, §7 security-architecture generated in one
+    slow standard-tier turn) go completely unsurfaced — ``min(60s, real)``
+    always collapsed to ~60s and RUN_IDLE never fired. We instead scan the
+    log content for the latest timestamped line that is NOT a heartbeat and
+    measure the delta to now, mirroring ``_log_idle_seconds``.
+
+    Returns ``None`` when the log is absent or has no non-heartbeat line yet
+    (caller then relies on the ``.agent-run.log`` signal alone), or on any
+    I/O error. Returns 0.0-floored seconds otherwise.
+    """
+    log_path = output_dir / _HOOK_LOG_NAME
+    if not log_path.exists():
+        return None
+    try:
+        content = log_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+    last_ts: str | None = None
+    for line in content.splitlines():
+        m = _ISO_LEAD_RE.match(line)
+        if not m:
+            continue
+        if "HEARTBEAT" in line:
+            # Skill's own 60 s heartbeat — not agent activity.
+            continue
+        last_ts = m.group(1)
+    if last_ts is None:
+        return None
+    try:
+        dt = datetime.strptime(last_ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    return max(0.0, time.time() - dt.timestamp())
+
+
+def _run_idle_seconds(output_dir: Path, run_start_iso: str) -> float:
+    """Seconds since the run last showed ANY observable activity — across ALL
+    phases, not just Phase 9 / Substep 2.
+
+    This is the GENERAL stall signal. The existing detectors (STRIDE_STALE,
+    SUBSTEP2_IDLE) only cover two narrow windows; the recon / context phases
+    (Phase 1-2) ran completely unmonitored. The 2026-05-31 juice-shop run sat
+    idle for 7m and 11m on two recon-phase model requests (standard-tier API
+    latency that blew the 5-min prompt-cache TTL — verified from the session
+    transcript: 98 / 1128 output tokens after 441s / 667s of wall-clock), and
+    nothing surfaced it — the user watched 46 min and aborted, unsure whether
+    the run had wedged.
+
+    Two independent activity signals, whichever is freshest wins (so we never
+    false-positive while either log is advancing):
+
+      1. ``.hook-events.log`` — the latest NON-heartbeat line (every
+         Bash/Read/Write tool call appends here). Heartbeat lines are
+         excluded because the skill writes one every 60 s and a raw mtime
+         would never go stale — see ``_hook_log_idle_seconds``.
+      2. The last NON-watchdog entry in ``.agent-run.log`` (reuses
+         ``_log_idle_seconds`` semantics) — catches phase-boundary progress
+         even if the hook log is absent (hooks are opt-in).
+
+    Returns 0.0 on any I/O error so a transient glitch never false-positives.
+    """
+    idles: list[float] = []
+    hook_idle = _hook_log_idle_seconds(output_dir)
+    if hook_idle is not None:
+        idles.append(hook_idle)
+    idles.append(_log_idle_seconds(output_dir, run_start_iso))
+    return min(idles) if idles else 0.0
+
+
+def _bump_tick(output_dir: Path, n: int) -> None:
+    try:
+        (output_dir / _TICK_NAME).write_text(f"{n}\n{int(time.time())}\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _refresh_heartbeat(plugin_root: Path, lock_path: Path) -> None:
+    """Invoke ``runtime/acquire_lock.py --heartbeat`` as a sub-process.
+
+    Spawning Python again costs ~50 ms but mirrors what the Bash loop did
+    and keeps a clean separation from the watchdog's own state. A direct
+    in-process call to ``acquire_lock._do_heartbeat`` would skip the
+    sub-process overhead but couples the two scripts at the import level.
+    """
+    import subprocess
+
+    try:
+        subprocess.run(
+            [
+                "python3",
+                str(plugin_root / "scripts" / "runtime/acquire_lock.py"),
+                str(lock_path),
+                "--heartbeat",
+                "--phase=skill",
+                "--step=watchdog",
+            ],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+        )
+    except Exception:
+        # Heartbeat failures must never crash the watchdog. The lock-age
+        # signal degrades gracefully (the orchestrator's own per-phase
+        # heartbeats are still firing).
+        pass
+
+
+def _scan_stride(output_dir: Path) -> dict[str, Any]:
+    """Snapshot the STRIDE-output state in one stat-only pass."""
+    # Per-component results only — the `.stride-` sidecars (dispatch manifest,
+    # selection, analyst context) land BEFORE the fan-out, so counting them
+    # would keep `stride_count` permanently > 0 and silently disable the
+    # `sc == 0` Phase-9 canary below.
+    stride_files = stride_output_files(output_dir) if stride_output_files else []
+    stride_count = len(stride_files)
+    stride_bytes = 0
+    for f in stride_files:
+        try:
+            stride_bytes += f.stat().st_size
+        except OSError:
+            pass
+    progress_dir = output_dir / ".progress"
+    progress_files: list[Path] = []
+    if progress_dir.is_dir():
+        progress_files = sorted(progress_dir.glob("*.json"))
+    return {
+        "stride_count": stride_count,
+        "stride_bytes": stride_bytes,
+        "progress_files": progress_files,
+    }
+
+
+def _component_idle_seconds(progress_files: list[Path]) -> dict[str, int]:
+    """Map ``component_id`` → seconds since last mtime for its progress file."""
+    now = time.time()
+    out: dict[str, int] = {}
+    for f in progress_files:
+        try:
+            comp = f.stem
+            out[comp] = max(0, int(now - f.stat().st_mtime))
+        except OSError:
+            continue
+    return out
+
+
+def _is_past_stride_phase(output_dir: Path) -> bool:
+    """Return True when ``.appsec-checkpoint`` shows the orchestrator has
+    moved past Phase 9 (STRIDE enumeration).
+
+    Checkpoint format examples written by other parts of the skill:
+      ``phase=10 status=...``
+      ``phase=11 status=writing_output``
+      ``phase=repair/1 status=completed``
+
+    After Phase 9 ends, ``.stride-*.json`` files are intentionally frozen
+    — a flat progress curve is the expected state. Continuing to count
+    stagnant_seconds in that window produces false-positive STRIDE_STALE
+    warnings (verified in the 2026-05-23 juice-shop run: 7 spurious
+    STRIDE_STALE lines between 07:00 and 07:23 while Phase 11 was rendering
+    normally). Read errors / missing checkpoint default to ``False`` so the
+    pre-Phase-9 and Phase-9-active windows keep the existing semantics.
+    """
+    cp = output_dir / ".appsec-checkpoint"
+    try:
+        text = cp.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    # Match `phase=<token>` — token may contain digits, slashes, letters
+    # (e.g. `repair/1`). Anything that is not a bare `9` is treated as
+    # past-STRIDE. Pre-Phase-9 the watchdog is gated by ``phase9_detected``
+    # via stride file presence, so an early-phase checkpoint value here
+    # (``phase=1`` … ``phase=8``) cannot trip the false-positive.
+    import re as _re
+
+    m = _re.search(r"phase=([^\s]+)", text)
+    if not m:
+        return False
+    token = m.group(1)
+    # The exact STRIDE phase is `phase=9` — anything else (including
+    # repair/N and 10/11) is past it.
+    return token != "9"
+
+
+def _read_epoch(path: Path) -> int | None:
+    """Best-effort read of an integer epoch file (``.scan-start-epoch``).
+
+    Returns None on any error so the caller drops the timing portion of the
+    progress line rather than crashing.
+    """
+    try:
+        return int(path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _fmt_hms(secs: float) -> str:
+    """Compact ``1h02m`` / ``3m05s`` / ``42s`` duration formatting."""
+    s = int(max(0, secs))
+    h, rem = divmod(s, 3600)
+    m, sec = divmod(rem, 60)
+    if h:
+        return f"{h}h{m:02d}m"
+    if m:
+        return f"{m}m{sec:02d}s"
+    return f"{sec}s"
+
+
+def _phase_position(token: str) -> float | None:
+    """Map an ``.appsec-checkpoint`` phase token to a numeric pipeline position.
+
+    Examples: ``1`` → 1.0, ``2.5`` → 2.5, ``10b`` → 10.5, ``11`` → 11.0.
+    Non-numeric tokens (``repair/1``, ``writing_output``) mean the run is at or
+    past finalization → a large sentinel so the percentage saturates near 100.
+    """
+    m = re.match(r"(\d+(?:\.\d+)?)", token)
+    if not m:
+        return 99.0
+    val = float(m.group(1))
+    # `10b` (and any `<n>b` sub-phase) sits just after its base integer phase.
+    if token[m.end() :].startswith("b"):
+        val += 0.5
+    return val
+
+
+def _resolve_depth(output_dir: Path) -> str:
+    """Resolve ASSESSMENT_DEPTH from ``.skill-config.json`` (quick/standard/
+    thorough). Defaults to ``standard`` when the file is absent or malformed —
+    the percentage only needs the right relative phase weights, and standard is
+    the representative middle profile."""
+    try:
+        cfg = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8"))
+        depth = cfg.get("assessment_depth")
+        if isinstance(depth, str) and _PROGRESS_WEIGHTS and depth in _PROGRESS_WEIGHTS:
+            return depth
+    except Exception:
+        pass
+    return "standard"
+
+
+def _stride_fraction(output_dir: Path) -> tuple[int, int] | None:
+    """Return ``(finished, planned)`` components for Phase 9, else None.
+
+    The denominator is the dispatch manifest's component list, which covers
+    every wave rather than the one in flight. The numerator counts per-component
+    *results* through ``stride_output_files()``, never dispatches: a retried
+    component writes one file, so a wave of four can never report five of four.
+
+    Only results written after this run's manifest count. ``--mode full`` wipes
+    ``.stride-*.json`` at preflight, but ``--mode rebuild`` keeps them, and
+    counting those would open Phase 9 at 100 %.
+    """
+    manifest = output_dir / _DISPATCH_MANIFEST
+    try:
+        components = json.loads(manifest.read_text(encoding="utf-8"))["components"]
+        cutoff = manifest.stat().st_mtime
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    planned = len(components) if isinstance(components, list) else 0
+    if planned <= 0 or stride_output_files is None:
+        return None
+    finished = 0
+    for f in stride_output_files(output_dir):
+        try:
+            if f.stat().st_mtime >= cutoff:
+                finished += 1
+        except OSError:
+            pass
+    return min(finished, planned), planned
+
+
+def _progress_snapshot(output_dir: Path, weights: dict[int, float]) -> tuple[int, str] | None:
+    """Return ``(percent, phase_token)`` from ``.appsec-checkpoint``, or None.
+
+    The percentage is the cumulative weight of all *completed* phases over the
+    total — a deliberate lower bound that never overstates. Within Phase 9 it is
+    interpolated on completed components (see below); every other phase is
+    granular and sits flat until its boundary. The caller clamps it monotonically
+    so resume/incremental can't move it back.
+
+    ``status=completed`` is a **per-phase** marker (``orchestrator/batch_checkpoint.py``
+    writes it at every phase end), not a run-terminal one — it means phase
+    ``token`` itself is done, so its weight counts toward the numerator. Only at
+    the last phase in the weight table does it mean the run is over.
+    """
+    try:
+        text = (output_dir / ".appsec-checkpoint").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = re.search(r"phase=([^\s]+)", text)
+    if not m:
+        return None
+    token = m.group(1)
+    pos = _phase_position(token)
+    if pos is None:
+        return None
+    total = sum(weights.values())
+    if total <= 0:
+        return None
+    phase_done = re.search(r"status=completed", text) is not None
+    done = sum(w for p, w in weights.items() if (p <= pos if phase_done else p < pos))
+    # Phase 9 is the single largest phase — 30 % of a quick run, 55 % of a
+    # standard one — and the checkpoint never reads `phase=9`, so the bar used to
+    # stand still for all of it and then jump (33 % → 96 % on the 2026-09-05
+    # insecure-python-app run). While the fan-out is on disk and the checkpoint
+    # has not moved past Phase 9, interpolate on completed components instead.
+    # The manifest, not `_is_past_stride_phase`, decides: that helper reads every
+    # token other than a bare `9` as past-STRIDE, which is every token the
+    # checkpoint actually carries during Phase 9.
+    frac = _stride_fraction(output_dir) if pos <= 9 and 9 in weights else None
+    if frac is not None:
+        finished, planned = frac
+        done = sum(w for p, w in weights.items() if p < 9) + weights[9] * finished / planned
+        token = "9"
+    pct = max(0, min(100, round(100 * done / total)))
+    # Finalization region: phase 11 (max weight) reported completed, or any
+    # non-numeric Stage-2/repair token (pos → 99). The weight table stops at
+    # Stage 1, so the raw sum saturates to 100 while Stage-2 render + QA are
+    # still running — which read as "done" during a ~5-min render + QA on the
+    # 2026-07-23 juice-shop run. Cap below 100 so the bar never claims completion
+    # before the run actually ends; the watchdog exiting is the true done signal.
+    if pos >= max(weights):
+        pct = min(pct, _FINALIZATION_CAP_PCT)
+    return pct, token
+
+
+def _fmt_tokens(count: int) -> str:
+    if count >= 1_000_000:
+        return f"{count / 1_000_000:.1f}M"
+    if count >= 1_000:
+        return f"{count / 1_000:.0f}k"
+    return str(count)
+
+
+def _running_usage(output_dir: Path) -> tuple[dict[str, Any] | None, bool]:
+    """Running output-token and cost total, and whether the host meters at all.
+
+    Returns ``(reading, host_absent)``. ``host_absent`` separates the two ways a
+    reading can be missing: nothing has been reported *yet* (early in a run, no
+    ``SESSION_STOP`` carried usage) from nothing being reported *at all*, which
+    is what a declared budget needs to hear — a budget nobody can measure is not
+    being watched, and only the host's own hard cut still applies.
+
+    Two conditions gate the figure, and both are about the host rather than this
+    run: a session cost of zero means no ``SESSION_STOP`` has carried usage yet,
+    and ``usage_source_absent`` means the host stopped reporting per-call usage
+    for Agent calls at all (2026-09-05). Under either, every number here is a
+    floor short by orders of magnitude — the 2026-09-05 insecure-python-app run
+    computes to $0.19 for a run that cost tens of dollars — so the caller shows
+    nothing instead. Mid-run the total is a floor in any case: sub-agents report
+    at completion, so whatever is in flight is missing. It is displayed as ``≥``.
+
+    Output tokens, not the token total: the total is ~94 % cache reads (measured
+    on the 2026-08-31 juice-shop run), which grows with context re-reads rather
+    than with work done.
+    """
+    if aggregate_running_total is None:
+        return None, False
+    try:
+        result = aggregate_running_total(output_dir)
+    except Exception:  # pragma: no cover — telemetry must never stop the watchdog
+        return None, False
+    if result.get("status") != "ok":
+        return None, False
+    absent = bool(result.get("usage_source_absent"))
+    if absent or not result.get("host_cost_usd"):
+        return None, absent
+    return result, False
+
+
+def _soft_budget(output_dir: Path) -> float | None:
+    """The run's declared soft budget, from the resolved config."""
+    try:
+        value = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8")).get("soft_budget_usd")
+        return float(value) if value else None
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def _hard_budget() -> float | None:
+    """The host's own cut, exported by ``run-headless.sh`` as it launches.
+
+    It reaches no file: the wrapper passes it to ``claude --max-budget-usd`` and
+    the host enforces it by killing the session wherever it is, leaving no
+    report. That makes it the more important of the two to see coming, and the
+    environment is the only place the watchdog can read it from.
+    """
+    try:
+        value = float(os.environ.get("APPSEC_HARD_BUDGET_USD", ""))
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+def _usage_fields(usage: dict[str, Any] | None, soft_budget: float | None = None) -> str:
+    if not usage:
+        return ""
+    cost = float(usage["cost_usd"])
+    fields = f"  out={_fmt_tokens(int(usage['out_tokens']))}  cost≥${cost:.2f}"
+    if soft_budget:
+        fields += f"/${soft_budget:.2f} (≥{round(100 * cost / soft_budget)}%)"
+    return fields
+
+
+def _budget_warnings(cost: float, soft: float | None, hard: float | None, fired: set[str]) -> list[str]:
+    """Threshold crossings not yet reported, as log details.
+
+    Reported once each and never as a gate. The figure is a floor, so a
+    threshold it has not reached may already be behind us — the crossing is
+    information for the operator, not a decision the watchdog is entitled to
+    make. Killing on it would also contradict the soft budget's contract, which
+    is to steer rather than to cap.
+    """
+    out = []
+    for scope, budget, share in (("soft", soft, 0.8), ("soft", soft, 1.0), ("hard", hard, 0.8)):
+        key = f"{scope}:{share}"
+        if not budget or key in fired or cost < budget * share:
+            continue
+        fired.add(key)
+        out.append(f"scope={scope}  used=≥${cost:.2f}  budget=${budget:.2f}  pct=≥{round(100 * cost / budget)}%")
+    return out
+
+
+def watch(
+    output_dir: Path,
+    plugin_root: Path,
+    heartbeat_interval: int,
+    stride_stale_seconds: int,
+    stride_canary_seconds: int,
+    component_timeout_seconds: int,
+    max_iterations: int | None,
+    *,
+    substep2_idle_seconds: int = 0,
+    run_idle_seconds: int = 0,
+    abandon_after_seconds: int = ABANDON_AFTER_SECONDS,
+) -> int:
+    lock_path = output_dir / ".appsec-lock"
+    if not output_dir.is_dir():
+        sys.stderr.write(f"output_dir not found: {output_dir}\n")
+        return 2
+
+    # Floor for the global idle window — activity before the watchdog booted
+    # does not count toward "currently stalled".
+    run_start_iso = _ts_now()
+
+    _log(
+        output_dir,
+        "INFO",
+        "WATCHDOG_START",
+        f"interval={heartbeat_interval}s  "
+        f"stride_stale={stride_stale_seconds}s  "
+        f"canary={stride_canary_seconds}s  "
+        f"component_timeout={component_timeout_seconds}s  "
+        f"substep2_idle={substep2_idle_seconds}s",
+    )
+
+    last_count = 0
+    last_bytes = 0
+    stagnant_seconds = 0
+    phase9_detected = False
+    phase9_start: float | None = None
+    canary_fired = False
+    stale_fired = False
+    component_fired: set[str] = set()
+    # Substep-2 idle tracking — see _log_error_loud + _find_substep2_start.
+    # `substep2_start_iso` is the ISO timestamp of the most recent Substep-2
+    # STEP_START log entry; None until detected, "complete" once the
+    # corresponding FILE_WRITE threat-model.yaml has landed (so we stop
+    # scanning the log on every tick once Substep 2 is done).
+    substep2_start_iso: str | None = None
+    substep2_complete = False
+    substep2_idle_fired = False
+    # Global idle (RUN_IDLE) tracking — re-arms after activity resumes so each
+    # distinct stall logs exactly one WARN line. ``run_idle_peak`` records the
+    # largest idle seen during the current stall so RUN_RESUMED can report the
+    # true stall length (the summary subtracts it from wall-clock).
+    run_idle_fired = False
+    run_idle_peak = 0.0
+    # Periodic RUN_PROGRESS line (coarse % + net runtime). `idle_total`
+    # accumulates the peak of every *completed* stall so net runtime mid-run is
+    # wall-clock minus all standby so far; `last_pct` enforces a monotonic
+    # percentage. Both stay inert unless the run is timeable + checkpointed.
+    idle_total = 0.0
+    last_pct = -1
+    scan_start_epoch = _read_epoch(output_dir / ".scan-start-epoch")
+    progress_weights = _PROGRESS_WEIGHTS.get(_resolve_depth(output_dir)) if _PROGRESS_WEIGHTS else None
+    # Running usage carried on the progress line, refreshed on the cadence the
+    # view shows rather than every tick. `phase_token` / `phase_since` /
+    # `phase_cost_base` track the checkpoint phase so a boundary can report what
+    # the phase it closes took — the checkpoint token change is that boundary:
+    # `PHASE_END` events fired 0-3 times per run in the three runs measured on
+    # 2026-09-06, while `orchestrator/batch_checkpoint.py` writes the token at every phase end.
+    usage: dict[str, Any] | None = None
+    usage_at = 0.0
+    usage_absent = False
+    phase_token: str | None = None
+    phase_since = 0.0
+    phase_cost_base: float | None = None
+    soft_budget = _soft_budget(output_dir)
+    hard_budget = _hard_budget()
+    budget_fired: set[str] = set()
+    budget_blind = False
+    iteration = 0
+
+    while lock_path.exists():
+        iteration += 1
+        if max_iterations is not None and iteration > max_iterations:
+            _log(output_dir, "INFO", "WATCHDOG_END", f"iterations_capped  iter={iteration - 1}")
+            return 0
+
+        # 1 — heartbeat.
+        _refresh_heartbeat(plugin_root, lock_path)
+
+        # 2 — snapshot.
+        snap = _scan_stride(output_dir)
+        sc = snap["stride_count"]
+        sb = snap["stride_bytes"]
+        pg_files = snap["progress_files"]
+        pg = len(pg_files)
+
+        # 3 — phase-9 detection.
+        if not phase9_detected and (pg > 0 or sc > 0):
+            phase9_detected = True
+            phase9_start = time.time()
+            _log(output_dir, "INFO", "PHASE9_DETECTED", f"progress_files={pg}  stride_files={sc}")
+
+        # Determine whether Phase 9 is still the active phase BEFORE the
+        # STRIDE-progress mirror. Once `_is_past_stride_phase` returns True
+        # (checkpoint at phase 10 / 11 / repair / completed), the .stride-*.json
+        # snapshot is frozen — emitting a STRIDE_PROGRESS heartbeat every 60s
+        # for the rest of Stage 2 / Stage 3 / repair-mode is observability
+        # noise that drowns the actual stage events in the run log.
+        past_stride = _is_past_stride_phase(output_dir)
+
+        # 4 — STRIDE progress mirror line. Suppressed once Phase 9 has
+        # advanced (otherwise emits identical lines through Stage 2 / 3 /
+        # repair, ~17+ false-progress entries per run). Also silent once
+        # stagnation has fired (avoids piling further noise after WARN).
+        if (sc > 0 or pg > 0) and not stale_fired and not past_stride:
+            _log(output_dir, "INFO", "STRIDE_PROGRESS", f"stride_files={sc}  total_bytes={sb}  progress_files={pg}")
+
+        # 5 — stagnation tracking (only after Phase 9 has started, and only
+        # while Phase 9 is still the active phase. Once the orchestrator
+        # advances past STRIDE — observable via .appsec-checkpoint reading
+        # `phase=10`, `phase=11`, `phase=repair/*`, or any non-9 marker —
+        # the .stride-*.json files are intentionally frozen and a flat
+        # progress curve is the expected state, not a hang.)
+        if phase9_detected and not past_stride:
+            if sc == last_count and sb == last_bytes:
+                stagnant_seconds += heartbeat_interval
+            else:
+                stagnant_seconds = 0
+            if not stale_fired and stagnant_seconds >= stride_stale_seconds:
+                _log(
+                    output_dir,
+                    "WARN",
+                    "STRIDE_STALE",
+                    f"no progress for {stagnant_seconds}s  stride_files={sc}  threshold={stride_stale_seconds}s",
+                )
+                stale_fired = True
+
+        # 6 — canary timeout (no .stride-*.json N seconds after Phase 9 start).
+        # Same Phase-9-active gate as #5 — a post-STRIDE phase legitimately
+        # has zero stride output once the orchestrator moves on.
+        if (
+            phase9_detected
+            and not past_stride
+            and not canary_fired
+            and sc == 0
+            and phase9_start is not None
+            and (time.time() - phase9_start) >= stride_canary_seconds
+        ):
+            _log(
+                output_dir,
+                "WARN",
+                "STRIDE_CANARY_TIMEOUT",
+                f"no stride output {stride_canary_seconds}s after Phase 9 start — Phase 9 likely wedged",
+            )
+            canary_fired = True
+
+        # 7 — per-component timeout (M3.6 #7).
+        if phase9_detected and component_timeout_seconds > 0:
+            for comp, idle in _component_idle_seconds(pg_files).items():
+                if comp in component_fired:
+                    continue
+                # Skip components that already have a final .stride-<id>.json
+                # (they are done — idle progress file is the post-completion
+                # state, not a hang).
+                final = output_dir / f".stride-{comp}.json"
+                if final.is_file():
+                    continue
+                if idle >= component_timeout_seconds:
+                    _log(
+                        output_dir,
+                        "WARN",
+                        "STRIDE_COMPONENT_TIMEOUT",
+                        f"component={comp}  idle={idle}s  threshold={component_timeout_seconds}s",
+                    )
+                    component_fired.add(comp)
+
+        # 7b — Substep 2 idle detection (review-recommendations §4 Fix 3).
+        #
+        # The controller's Stage-1 finalizer is required to write
+        # a single Bash call to `model/build_threat_model_yaml.py` expected to
+        # complete in under 5 seconds. The 2026-05-25 juice-shop run hung
+        # for 1 h 39 min in Substep 2 after pre-validating intermediates and
+        # clipping titles instead of invoking the deterministic builder. The
+        # entire stall was idle (no non-watchdog log events for 1h 38m 58s).
+        #
+        # Detection: once a Substep-2 STEP_START line appears in
+        # `.agent-run.log`, compute idle as "time since the most recent
+        # non-watchdog log entry at or after that STEP_START". If idle
+        # exceeds threshold AND the corresponding FILE_WRITE
+        # threat-model.yaml has not yet landed, escalate loudly via
+        # `_log_error_loud` (ERROR log + stderr banner + sentinel +
+        # `.run-issues.json` defect entry). Fires once per substep.
+        # `substep2_idle_seconds <= 0` disables the check entirely
+        # (parity with `--component-timeout-seconds 0`).
+        if substep2_idle_seconds > 0 and not substep2_complete and not substep2_idle_fired:
+            if substep2_start_iso is None:
+                substep2_start_iso = _find_substep2_start(output_dir)
+            if substep2_start_iso is not None:
+                if _substep2_completed_after(output_dir, substep2_start_iso):
+                    substep2_complete = True
+                else:
+                    idle = _log_idle_seconds(output_dir, substep2_start_iso)
+                    if idle >= substep2_idle_seconds:
+                        _log_error_loud(
+                            output_dir,
+                            "SUBSTEP2_IDLE",
+                            (
+                                f"Phase 11 Substep 2 idle for {int(idle)}s "
+                                f"(threshold={substep2_idle_seconds}s).  "
+                                f"STEP_START at {substep2_start_iso}.  "
+                                f"No FILE_WRITE threat-model.yaml has occurred and "
+                                f".agent-run.log has not been touched in this window — "
+                                f"the orchestrator appears stuck."
+                            ),
+                            (
+                                "Substep 2 must be a SINGLE Bash call to "
+                                "`model/build_threat_model_yaml.py` "
+                                "(controller Stage-1 finalization contract). If the agent is "
+                                "pre-inspecting `.stride-*.json` / `.threats-merged.json` "
+                                "or clipping titles, that is a pipeline defect. Abort and "
+                                "use `--rerender` when validated Stage-1 artifacts exist, "
+                                "or start a fresh full/rebuild run after inspecting "
+                                "`.agent-run.log` for the last completed boundary."
+                            ),
+                        )
+                        substep2_idle_fired = True
+
+        # 7c — global RUN_IDLE detection (all phases).
+        #
+        # The phase-9 / substep-2 detectors above cover only two narrow
+        # windows. Phases 1-10 — including the recon/context phase where the
+        # 2026-05-31 juice-shop run lost ~23 min to standard-tier API latency
+        # stalls — were unmonitored. This fires a single WARN whenever the run
+        # makes no observable progress (no hook-events.log tool activity and no
+        # non-watchdog .agent-run.log entry) for `run_idle_seconds`, then
+        # re-arms once activity resumes so every distinct stall is surfaced.
+        #
+        # Deliberately WARN, not the loud `_log_error_loud` escalation used by
+        # SUBSTEP2_IDLE: a multi-minute model response is usually slow-but-fine
+        # API latency, not a defect. The message tells the user it is almost
+        # certainly an API wait, not a hang — which is exactly the question
+        # ("is it stuck or still working?") that this signal answers in real
+        # time instead of after a 46-min abort. `run_idle_seconds <= 0`
+        # disables it (parity with the other --*-seconds knobs).
+        # Measured once per tick and shared with the abandon ceiling in 7c-2:
+        # the call scans both logs, and calling it twice would also read the
+        # run's activity at two different instants.
+        idle_measured: float | None = None
+        if run_idle_seconds > 0 or abandon_after_seconds > 0:
+            idle_measured = _run_idle_seconds(output_dir, run_start_iso)
+
+        if run_idle_seconds > 0:
+            idle = idle_measured or 0.0
+            if idle >= run_idle_seconds:
+                run_idle_peak = max(run_idle_peak, idle)
+                if not run_idle_fired:
+                    _log(
+                        output_dir,
+                        "WARN",
+                        "RUN_IDLE",
+                        f"no run activity for {int(idle)}s (threshold={run_idle_seconds}s) — "
+                        f"the run is waiting, almost certainly on a slow model/API response "
+                        f"(standard-tier latency), not a hang. A wait past the 5-min cache "
+                        f"TTL forces the recovered turn to re-prefill cold. Still watching…",
+                    )
+                    run_idle_fired = True
+            else:
+                if run_idle_fired:
+                    # Report the PEAK idle (true stall length), not the small
+                    # post-resume value — the summary sums these to subtract
+                    # API-wait time from wall-clock.
+                    _log(
+                        output_dir,
+                        "INFO",
+                        "RUN_RESUMED",
+                        f"activity resumed after {int(run_idle_peak)}s idle (this stall)",
+                    )
+                    run_idle_fired = False
+                # Roll the just-ended stall's peak into the cumulative standby
+                # total before resetting (adds 0 when no stall was active).
+                idle_total += run_idle_peak
+                run_idle_peak = 0.0
+
+        # 7c-2 — abandon a run that stopped without releasing its lock.
+        # See ABANDON_AFTER_SECONDS: refreshing the heartbeat past this point
+        # keeps a finished run's lock reading `fresh` forever and locks the
+        # output directory against every later run. Measured independently of
+        # `run_idle_seconds`, which only controls the warning above and may be
+        # disabled.
+        if abandon_after_seconds > 0 and idle_measured is not None:
+            abandoned_for = idle_measured
+            if abandoned_for >= abandon_after_seconds:
+                _log(
+                    output_dir,
+                    "WARN",
+                    "WATCHDOG_ABANDONED",
+                    f"no run activity for {int(abandoned_for)}s "
+                    f"(ceiling={abandon_after_seconds}s) — the run ended without releasing "
+                    f"{lock_path.name}. Refreshing the heartbeat past this point would keep "
+                    f"the lock reading fresh and block every later run against this output "
+                    f"directory. Stopping the heartbeat; the lock goes stale and the next "
+                    f"acquisition reaps it.",
+                )
+                _log(output_dir, "INFO", "WATCHDOG_END", f"abandoned  iter={iteration}")
+                return 0
+
+        # 7d — periodic RUN_PROGRESS line: phase-weighted % plus net runtime
+        # (wall minus cumulative standby), and the running usage when the host
+        # meters it. Best-effort and additive — only emitted for a real, timeable
+        # run (``.scan-start-epoch`` present) so unit tests with bare fixtures and
+        # pre-checkpoint early phases stay silent. The percentage is approximate:
+        # it steps per completed component inside Phase 9 and jumps at every
+        # other phase boundary. The cost is a floor and says so with ``≥``.
+        if progress_weights and scan_start_epoch:
+            snap = _progress_snapshot(output_dir, progress_weights)
+            if snap is not None:
+                pct, token = snap
+                if pct < last_pct:  # monotonic clamp (resume/incremental)
+                    pct = last_pct
+                last_pct = pct
+                now = time.time()
+                if now - usage_at >= _USAGE_REFRESH_SECONDS or phase_token not in (None, token):
+                    usage, usage_absent = _running_usage(output_dir)
+                    usage_at = now
+                    # A declared budget that nothing can measure is not being
+                    # watched: only the host's own cut still applies, and it
+                    # kills the session where it stands. Say so once.
+                    if usage_absent and (soft_budget or hard_budget) and not budget_blind:
+                        budget_blind = True
+                        declared = soft_budget or hard_budget
+                        _log(
+                            output_dir,
+                            "WARN",
+                            "RUN_BUDGET_UNWATCHED",
+                            f"budget=${declared:.2f}  the host reports no per-call usage, so spend "
+                            f"cannot be tracked against it; only the hard cut still applies",
+                        )
+                    if usage:
+                        for warning in _budget_warnings(
+                            float(usage["cost_usd"]), soft_budget, hard_budget, budget_fired
+                        ):
+                            _log(output_dir, "WARN", "RUN_BUDGET_WARN", warning)
+                elapsed = now - scan_start_epoch
+                idle_now = idle_total + run_idle_peak
+                net = elapsed - idle_now
+                detail = f"~{pct}%  phase={token}  elapsed={_fmt_hms(elapsed)}  net={_fmt_hms(net)}"
+                if idle_now >= 1:
+                    detail += f" (standby {_fmt_hms(idle_now)})"
+                _log(output_dir, "INFO", "RUN_PROGRESS", detail + _usage_fields(usage, soft_budget))
+
+                # 7e — phase boundary. The token changed, so the phase it names
+                # is over: report what it took. This is also the only per-phase
+                # cost record the run keeps; the end-of-run table is built from
+                # these lines.
+                if phase_token is None:
+                    phase_token, phase_since = token, scan_start_epoch
+                    phase_cost_base = float(usage["cost_usd"]) if usage else None
+                elif token != phase_token:
+                    cost_part = ""
+                    if usage:
+                        total_cost = float(usage["cost_usd"])
+                        # No base means the host had reported nothing when this
+                        # phase opened. The difference would then be the whole
+                        # run so far, charged to one phase; report the total only.
+                        if phase_cost_base is not None:
+                            cost_part = f"  delta=≥${total_cost - phase_cost_base:.2f}"
+                        cost_part += f"  total=≥${total_cost:.2f}"
+                        phase_cost_base = total_cost
+                    _log(
+                        output_dir,
+                        "INFO",
+                        "PHASE_COST",
+                        f"phase={phase_token}  duration={_fmt_hms(now - phase_since)}{cost_part}",
+                    )
+                    phase_token, phase_since = token, now
+
+        # 8 — self-liveness tick.
+        _bump_tick(output_dir, iteration)
+
+        last_count = sc
+        last_bytes = sb
+        time.sleep(heartbeat_interval)
+
+    _log(
+        output_dir,
+        "INFO",
+        "WATCHDOG_END",
+        f"lock_removed  iter={iteration}  fired_stale={stale_fired}  "
+        f"fired_canary={canary_fired}  components_fired={len(component_fired)}",
+    )
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog="skill_watchdog.py", description=__doc__)
+    p.add_argument("output_dir", type=run_path_arg, help="Path to $OUTPUT_DIR (the per-repo docs/security dir).")
+    p.add_argument(
+        "--plugin-root",
+        default=os.environ.get("CLAUDE_PLUGIN_ROOT", ""),
+        help="Plugin root (defaults to $CLAUDE_PLUGIN_ROOT).",
+    )
+    p.add_argument(
+        "--heartbeat-interval", type=int, default=60, help="Seconds between heartbeat refreshes (default 60)."
+    )
+    p.add_argument(
+        "--stride-stale-seconds",
+        type=int,
+        default=900,
+        help="Stagnation window before STRIDE_STALE fires (default 900 = 15 min).",
+    )
+    p.add_argument(
+        "--stride-canary-seconds",
+        type=int,
+        default=180,
+        help="Wait after Phase 9 start before STRIDE_CANARY_TIMEOUT (default 180 = 3 min).",
+    )
+    p.add_argument(
+        "--component-timeout-seconds",
+        type=int,
+        default=480,
+        help="Per-component idle limit before STRIDE_COMPONENT_TIMEOUT "
+        "(default 480 = 8 min). 0 disables per-component checks.",
+    )
+    p.add_argument(
+        "--substep2-idle-seconds",
+        type=int,
+        default=int(os.environ.get("APPSEC_SUBSTEP2_IDLE_SECONDS", "300")),
+        help="Idle window (seconds since last .agent-run.log update) after a "
+        "Phase 11 Substep 2 STEP_START before SUBSTEP2_IDLE fires "
+        "(default 300 = 5 min, override via env APPSEC_SUBSTEP2_IDLE_SECONDS). "
+        "Set 0 to disable. Catches the multi-hour stall where the LLM ignores "
+        "the Substep-2 single-Bash-call rule and pre-validates intermediates.",
+    )
+    p.add_argument(
+        "--run-idle-seconds",
+        type=int,
+        default=int(os.environ.get("APPSEC_RUN_IDLE_SECONDS", "240")),
+        help="Global idle window (seconds with no hook-events.log tool activity "
+        "AND no non-watchdog .agent-run.log entry) before a one-shot RUN_IDLE "
+        "WARN fires, re-arming after activity resumes. Covers ALL phases — "
+        "unlike STRIDE_STALE (Phase 9) and SUBSTEP2_IDLE (Phase 11). Default "
+        "240 = 4 min (just under the 5-min prompt-cache TTL, so it warns "
+        "before a stall turns into a cold re-prefill). Override via env "
+        "APPSEC_RUN_IDLE_SECONDS. Set 0 to disable. Catches the standard-tier "
+        "API-latency stalls that cost ~23 min in the unmonitored recon/context "
+        "phase.",
+    )
+    p.add_argument(
+        "--abandon-after-seconds",
+        type=int,
+        default=int(os.environ.get("APPSEC_WATCHDOG_ABANDON_SECONDS", str(ABANDON_AFTER_SECONDS))),
+        help="Stop refreshing the heartbeat and exit once the run has shown no "
+        "activity for this long (default 3600 = 1 h, override via env "
+        "APPSEC_WATCHDOG_ABANDON_SECONDS). Without it a run that ends without "
+        "releasing its lock leaves this process refreshing the heartbeat "
+        "forever, which keeps the lock reading fresh and blocks every later run "
+        "against the same output directory. Set 0 to disable.",
+    )
+    p.add_argument(
+        "--max-iterations", type=int, default=None, help="Optional cap on iterations (test hook; not for production)."
+    )
+    args = p.parse_args(argv[1:])
+
+    plugin_root = Path(args.plugin_root) if args.plugin_root else (Path(__file__).resolve().parents[2])
+
+    output_dir = Path(args.output_dir).resolve()
+    try:
+        return watch(
+            output_dir=output_dir,
+            plugin_root=plugin_root.resolve(),
+            heartbeat_interval=args.heartbeat_interval,
+            stride_stale_seconds=args.stride_stale_seconds,
+            stride_canary_seconds=args.stride_canary_seconds,
+            component_timeout_seconds=args.component_timeout_seconds,
+            max_iterations=args.max_iterations,
+            substep2_idle_seconds=args.substep2_idle_seconds,
+            run_idle_seconds=args.run_idle_seconds,
+            abandon_after_seconds=args.abandon_after_seconds,
+        )
+    except KeyboardInterrupt:
+        raise
+    except Exception as exc:  # pragma: no cover - defensive
+        # A tick that raises must not leave the run with an undocumented exit
+        # status and no trace of why monitoring stopped. The skill launches this
+        # in the background and never inspects the code, so the log line is the
+        # only evidence that stagnation detection ended early.
+        _log_error_loud(
+            output_dir,
+            "WATCHDOG_ERROR",
+            f"{type(exc).__name__}: {exc}",
+            "monitoring stopped; the run continues unmonitored",
+        )
+        return 3
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

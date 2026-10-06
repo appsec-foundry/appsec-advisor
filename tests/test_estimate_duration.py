@@ -1,4 +1,4 @@
-"""Tests for scripts/estimate_duration.py — the wall-clock estimator.
+"""Tests for scripts/runtime/estimate_duration.py — the wall-clock estimator.
 
 Calibration anchors (RECALIBRATED 2026-06-13): fresh juice-shop runs in the
 local scan archive measured ~76 min wall for `standard --full` and ~81 min
@@ -21,13 +21,13 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "estimate_duration.py"
+SCRIPT = REPO_ROOT / "scripts" / "runtime/estimate_duration.py"
 
 
 def _load_module():
-    spec = importlib.util.spec_from_file_location("estimate_duration", SCRIPT)
+    spec = importlib.util.spec_from_file_location("runtime.estimate_duration", SCRIPT)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["estimate_duration"] = module
+    sys.modules["runtime.estimate_duration"] = module
     spec.loader.exec_module(module)
     return module
 
@@ -556,7 +556,7 @@ class TestComponentDurations:
         repo.mkdir()
         rc = est.main(
             [
-                "estimate_duration.py",
+                "runtime/estimate_duration.py",
                 "--depth",
                 "standard",
                 "--mode",

@@ -1,0 +1,56 @@
+# Example advisory threat analysis for pull requests (GitHub Actions).
+# Install it explicitly in your repository; the plugin never adds CI checks.
+#
+# Trust model:
+# - The workflow runs on pull_request with a read-only token and executes no
+#   pull-request-owned setup, build, test, or install step.
+# - The plugin and packages come from trusted locations pinned by this
+#   workflow, never from the checkout under review.
+# - ANTHROPIC_API_KEY is a repository secret. Do not expose it to workflows
+#   that run code from forks; GitHub withholds secrets from fork pull requests
+#   by default.
+# - Findings are advisory. A failed, incomplete, or invalid analysis fails the
+#   job; there is no blanket success override.
+name: threat-analysis
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out the change with history for the merge base
+        uses: actions/checkout@<pinned-commit-sha>
+        with:
+          fetch-depth: 0
+          path: target
+          persist-credentials: false
+      - name: Check out the plugin at a pinned release
+        uses: actions/checkout@<pinned-commit-sha>
+        with:
+          repository: <owner>/appsec-advisor
+          ref: <pinned-release-commit-sha>
+          path: appsec-advisor
+          persist-credentials: false
+      - name: Install a pinned Claude Code CLI
+        run: npm install --global --ignore-scripts @anthropic-ai/claude-code@<pinned-version>
+      - name: Analyze the change
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 appsec-advisor/scripts/appsec-analyst-cli review --ci \
+            --repo "$GITHUB_WORKSPACE/target" \
+            --base "$BASE_SHA" --head "$HEAD_SHA" \
+            --state-dir "$RUNNER_TEMP/analyst-state" \
+            --output "$RUNNER_TEMP/analyst-report"
+      - name: Upload the report on every outcome
+        if: always()
+        uses: actions/upload-artifact@<pinned-commit-sha>
+        with:
+          name: threat-analysis
+          path: ${{ runner.temp }}/analyst-report
+          if-no-files-found: ignore

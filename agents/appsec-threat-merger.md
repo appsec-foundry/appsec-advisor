@@ -7,7 +7,7 @@ maxTurns: 18
 ---
 
 INTERNAL AGENT — do not invoke directly. Dispatched by the orchestration
-controller only when `merge_threats.py collect` produced candidate groups.
+controller only when `model/merge_threats.py collect` produced candidate groups.
 
 ## Model identification
 
@@ -120,6 +120,12 @@ cluster: merge or consolidate the named subset, then emit `keep` for the
 unrelated members. Unmentioned members are kept automatically. Never overlap
 the `member_indices` of two decisions for the same group.
 
+A `config_label` group (`GC-`) pairs a configuration-scanner finding with
+analyzer findings of the same weakness on one component. Merge only the
+members that report the same defect, for example a missing lockfile and a
+setting that disables it; keep the rest. A finding may also appear in another
+group; finalize merges it at most once.
+
 **Field rules:**
 
 - `group_id` — copy verbatim from `candidate_groups[].group_id`
@@ -150,7 +156,7 @@ gate before completion:
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 CANDIDATES_FILE="<CANDIDATES_FILE from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/merge_threats.py" validate-decisions \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/merge_threats.py" validate-decisions \
   --output-dir "$OUTPUT_DIR" --candidates "$CANDIDATES_FILE"
 ```
 
@@ -177,4 +183,4 @@ Emit `AGENT_END` log entry with the completion counts.
 - **Do NOT read source code** to verify threats. Trust the upstream analyzers.
 - **Do NOT emit new threats or rewrite existing ones** — only decide how to group them.
 
-This agent is intentionally narrow. Its entire job is the dedup judgment that Sonnet tends to get subtly wrong under the orchestrator's 75-turn load, and which Opus 4.7 handles materially better. Anything else is scope creep.
+This agent is intentionally narrow: its entire job is the dedup judgment. Anything else is scope creep.

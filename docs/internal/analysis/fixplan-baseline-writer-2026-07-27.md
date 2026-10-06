@@ -54,7 +54,7 @@ runtime prescribes reading `## Completion Summary` → `## Error Handling`
 
 ### Why nothing caught it
 
-`estimate_duration.py:307-314`:
+`runtime/estimate_duration.py:307-314`:
 
 ```python
 last_seconds = cache.get("last_run_seconds")
@@ -67,7 +67,7 @@ populated; the estimator behaved as if it were empty.
 
 ### It had happened before
 
-`baseline_state.py:353-358` documents a 2026-06 instance of the same contract
+`baseline/baseline_state.py:353-358` documents a 2026-06 instance of the same contract
 failing — *"exactly the gap that left `last_run_seconds=None` in the 2026-06
 juice-shop anchor caches"* — and states outright that
 *"the run-end finalization in SKILL-impl.md owns the writes"*. That fix was
@@ -79,12 +79,12 @@ fact that the writer itself was unverifiable prose.
 Give the contract a single owner in code, so there are no field names left to
 reconstruct.
 
-**New `scripts/persist_run_baseline.py`** — owns the four key names as module
+**New `scripts/model/persist_run_baseline.py`** — owns the four key names as module
 constants, and reproduces the original semantics exactly:
 
 - start-epoch precedence: `.agent-run.log` `ASSESSMENT_START` → `.scan-start-epoch`
   → `--fallback-epoch` (the log form excludes permission-prompt wait time)
-- `run_timing.py --net-wall-seconds` wins when smaller, so an idle run does not
+- `runtime/run_timing.py --net-wall-seconds` wins when smaller, so an idle run does not
   inflate the next estimate
 - atomic write; merges into an existing cache (never clobbers `id_counters`,
   `component_durations`, …); tolerates a corrupt cache
@@ -105,7 +105,7 @@ drift apart. Proven to catch the original defect: with the drifted names
 re-injected, the estimator returns `None` and the test fails.
 
 Two further guards pin the names against both consumers
-(`estimate_duration.py`, `baseline_state.py`), so renaming in one place breaks
+(`runtime/estimate_duration.py`, `baseline/baseline_state.py`), so renaming in one place breaks
 the build rather than a future run's estimate.
 
 Remaining tests cover start-epoch precedence, net-wall smaller/larger,
@@ -129,7 +129,7 @@ Full suite: 10356 passed, 93 skipped, 0 failed.
 
 `<juice-shop-output>/.appsec-cache/baseline.json` was rewritten
 with the four correct keys (`last_run_seconds: 6089`) and the invented ones
-removed; `estimate_duration.py` now reports `source=last_run_cache` / 101 min for
+removed; `runtime/estimate_duration.py` now reports `source=last_run_cache` / 101 min for
 that repo.
 
 ## Not addressed

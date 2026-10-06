@@ -21,12 +21,12 @@ dead ms-architecture-assessment path, qa_checks `all` non-idempotence.
 | CD-1 | STRIDE write-first stub is schema-invalid by construction — defeats its own purpose |
 | DG-1 | Stage-1 cut-off detection wrongly infers success from a stale `[ -f threat-model.md ]`; `MD_PRE_STAGE1` is captured but never consumed |
 | DG-2 | Entire Stage-1c abuse pipeline runs with ignored exit codes (`\|\| true`, `2>/dev/null`) |
-| TG-1 | `publish_threat_model.py` reads `t_id` (does not exist in the artifact); test fixture mirrors the bug → feature dead, test green |
+| TG-1 | `model/publish_threat_model.py` reads `t_id` (does not exist in the artifact); test fixture mirrors the bug → feature dead, test green |
 | TG-2 | Top-level `schemas/*.schema.json` escape both schema-drift guards; `qa-content-repair-plan.schema.json` validated by nothing |
 | PI-1 | recon-scanner reads raw target-repo text without a general untrusted-data guard (downstream supplier for all phases) |
 | PC-1 | Checked-in `.claude/settings.json` deviates from the canonical contract in both directions: `Read/Write/Edit(**)` over-grants + missing `Bash(*)` |
 | PC-2 | fix-run-issues edits plugin files via the Edit tool, but only `Read(${PLUGIN_ROOT}/**)` is granted → permission prompt on every fix |
-| MR-1 | `harvest-requirements.py` renamed to `harvest_requirements.py`; README, CONTRIBUTING, docs/harvester.md, audit-skill docs point to the old name |
+| MR-1 | `harvest-requirements.py` renamed to `requirements/harvest_requirements.py`; README, CONTRIBUTING, docs/harvester.md, audit-skill docs point to the old name |
 
 Cross-reference: DG-2 aggravates P1 (abuse-fold no-op) — matcher/merger crashes are
 indistinguishable from "no abuse cases applicable"; §9 + severity fold degrade
@@ -37,39 +37,39 @@ silently, twice over.
 ## CD — Contract Drift
 
 ### [CD-1] STRIDE write-first stub schema-invalid (High)
-- `agents/appsec-stride-analyzer.md` (write-first guarantee): the stub should contain `component_id`, `started_at`, `threats` + `partial`/`skipped_categories`. `schemas/stride.schema.yaml:86`: `required: [component_id, component_name, analyzed_at, threats]`; `started_at`/`partial`/`skipped_categories` are declared nowhere in the schema (grep: 0 hits). The orchestrator validates every stride file (`agents/phases/phase-group-threats.md:496` → `validate_intermediate.py stride`, no stub tolerance).
+- `agents/appsec-stride-analyzer.md` (write-first guarantee): the stub should contain `component_id`, `started_at`, `threats` + `partial`/`skipped_categories`. `schemas/stride.schema.yaml:86`: `required: [component_id, component_name, analyzed_at, threats]`; `started_at`/`partial`/`skipped_categories` are declared nowhere in the schema (grep: 0 hits). The orchestrator validates every stride file (`agents/phases/phase-group-threats.md:496` → `validators/validate_intermediate.py stride`, no stub tolerance).
 - Consequence: a budget cut leaves a file that the gate rejects — "partial-but-valid" becomes "invalid → full re-dispatch", exactly the failure mode the stub was introduced to prevent.
 - Fix (bidirectional, §4): extend the stub in the prompt with `component_name` + `analyzed_at` (both known in Step 1) AND declare `started_at`/`partial`/`skipped_categories` in the schema.
 
 ### [CD-2] §4e describes vscode:// links that compose no longer emits (Med)
-- `AGENTS.md:89` + `docs/internal/contracts/schema-invariants.md:65` require `[basename:line](vscode://file/…)` in §8; `grep -rn "vscode://" scripts/compose_threat_model.py` → 0 hits; the §8 card renders `**Location:** \`file:line\`` (compose:11934, :1469). The docs are the stale side (the 2026-05 card-layout redesign is the intended state) → update §4e in both docs.
+- `AGENTS.md:89` + `docs/internal/contracts/schema-invariants.md:65` require `[basename:line](vscode://file/…)` in §8; `grep -rn "vscode://" scripts/renderers/compose_threat_model.py` → 0 hits; the §8 card renders `**Location:** \`file:line\`` (compose:11934, :1469). The docs are the stale side (the 2026-05 card-layout redesign is the intended state) → update §4e in both docs.
 
 ### [CD-3] `threat_category_id` mandatory in prompt + hard gate, missing in both schemas (Med)
-- `agents/appsec-stride-analyzer.md:468` (REQUIRED) + `scripts/validate_intermediate.py:244` (hard gate RC.G.1/RC.I) vs. `schemas/stride.schema.yaml` / `schemas/threats-merged.schema.yaml`: 0 hits. The schema ("single source of truth", validate_intermediate.py:6) is silent about a field without which merger TH dedup and §8 grouping collapse. → declare the field (`^TH-\d{2}$`, nullable) in both schemas.
+- `agents/appsec-stride-analyzer.md:468` (REQUIRED) + `scripts/validators/validate_intermediate.py:244` (hard gate RC.G.1/RC.I) vs. `schemas/stride.schema.yaml` / `schemas/threats-merged.schema.yaml`: 0 hits. The schema ("single source of truth", validators/validate_intermediate.py:6) is silent about a field without which merger TH dedup and §8 grouping collapse. → declare the field (`^TH-\d{2}$`, nullable) in both schemas.
 
 ### [CD-4] `threats[].source` enum three-way drift: prompt / merged schema / output schema (Med)
 - `agents/appsec-threat-analyst.md:648` lists `known-threats` among others; `schemas/threats-merged.schema.yaml:77-88` doesn't know it, but has `architecture-coverage`/`threat-hypothesis`/`config-scan`/`configuration-defect` instead; `schemas/threat-model.output.schema.yaml:636` still contains the `dep-scan` removed in 2026-05; the output schema's required (:406-414) omits `source`, even though `phase-group-finalization.md:288` says "mandatory". → align the analyst enum to the merged schema, strike `dep-scan` from the output enum, decide the `source` requirement (adjust schema or prompt).
 
 ### [CD-5] Finalization prompt names tier_root_causes keys that the schema rejects (Med)
-- `agents/phases/phase-group-finalization.md:56`: "`client:`, `application:` (alias `server`), `data:`" vs. `threat-model.output.schema.yaml:247-260`: `additionalProperties: false`, keys `edge`/`server`/`data`; `phase-group-threats.md:38` (the real producer) matches the schema. The alias claim is false (`tier_alias` in build_threat_model_yaml.py:762 maps a component's `tier`, not these keys). → correct finalization.md:56 to `edge`/`server`/`data` (affects REPAIR_MODE edits).
+- `agents/phases/phase-group-finalization.md:56`: "`client:`, `application:` (alias `server`), `data:`" vs. `threat-model.output.schema.yaml:247-260`: `additionalProperties: false`, keys `edge`/`server`/`data`; `phase-group-threats.md:38` (the real producer) matches the schema. The alias claim is false (`tier_alias` in model/build_threat_model_yaml.py:762 maps a component's `tier`, not these keys). → correct finalization.md:56 to `edge`/`server`/`data` (affects REPAIR_MODE edits).
 
 ### [CD-6] Phase 10b vs. 10c vs. Stage 1c; AGENTS.md phase map without 2.7 and 10c (Med)
 - `AGENTS.md:226` (roster: "Phase 10b") vs. `phase-group-threats.md:1790` ("Phase 10c") vs. `SKILL-impl.md:2412` ("Stage 1c"); the phase map (AGENTS.md:256-276) has neither 2.7 (exists: `phase-group-recon.md:344`) nor 10c. → pull the phase map + roster (+ pinning test in test_agent_definitions.py) onto ONE consistent name; the phase files are the operational truth.
 
 ### [CD-7] §4a "only legal producer" claim refuted by compose (Med)
-- `docs/internal/contracts/schema-invariants.md:14-15` / `AGENTS.md:85`: only `qa_checks.py:linkify_anchors` produces titled cross-refs — but `compose_threat_model.py:459/509` (`linkify_with_label`, F-/M-/TH-) and :2252 (`_format_finding_link`) emit them too. Otherwise §12-guided editors fix the wrong producer. → extend the §4a docs with the sanctioned compose producers.
+- `docs/internal/contracts/schema-invariants.md:14-15` / `AGENTS.md:85`: only `validators/qa_checks.py:linkify_anchors` produces titled cross-refs — but `renderers/compose_threat_model.py:459/509` (`linkify_with_label`, F-/M-/TH-) and :2252 (`_format_finding_link`) emit them too. Otherwise §12-guided editors fix the wrong producer. → extend the §4a docs with the sanctioned compose producers.
 
 ### [CD-8] Compose pre-pass map misses two registered fragments (Low)
-- compose:1608 ("validate every known JSON fragment") — `_KNOWN_JSON_FRAGMENT_SCHEMAS` (compose:161) is missing `ms-ai-exposure.json` + `ms-top-mitigations.json` (both registered in validate_fragment.py:79-80); `ms-top-mitigations.json` is consumed entirely without a schema check (compose:6579); `check_fragment_registry.py:154` only checks declared→disk. → add both filenames; make the registry check bidirectional.
+- compose:1608 ("validate every known JSON fragment") — `_KNOWN_JSON_FRAGMENT_SCHEMAS` (compose:161) is missing `ms-ai-exposure.json` + `ms-top-mitigations.json` (both registered in validators/validate_fragment.py:79-80); `ms-top-mitigations.json` is consumed entirely without a schema check (compose:6579); `validators/check_fragment_registry.py:154` only checks declared→disk. → add both filenames; make the registry check bidirectional.
 
 ### [CD-9] §4b consequence claim stale (Low)
 - `docs/internal/contracts/schema-invariants.md:46` claims `threats[].mitigations` renders `—`; compose:7409/7471/7987 has meanwhile added the fallback `t.get("mitigation_ids") or t.get("mitigations")`. → update the consequence sentence in the docs (the fallback is hardening, not a bug).
 
 ### [CD-10] `_SECARCH_SUBSECTIONS` "7.9 AI / LLM" — verified: v1 path only, latent (Low)
-- `pregenerate_fragments.py:2843` vs. `data/sections-contract.yaml:1275` ("7.9 Cryptography…"). The default is v2 (`gen_security_architecture_v2`, pregenerate:6536-6540); the stale list feeds only the legacy v1 path (`--schema-v1`). Plus a contradictory comment pair pregenerate:3861-3871 (suppress vs. stub-emit; the code emits a stub). → annotate as v1-legacy or delete the v1 path at EOL; clean up the comments.
+- `renderers/pregenerate_fragments.py:2843` vs. `data/sections-contract.yaml:1275` ("7.9 Cryptography…"). The default is v2 (`gen_security_architecture_v2`, pregenerate:6536-6540); the stale list feeds only the legacy v1 path (`--schema-v1`). Plus a contradictory comment pair pregenerate:3861-3871 (suppress vs. stub-emit; the code emits a stub). → annotate as v1-legacy or delete the v1 path at EOL; clean up the comments.
 
 ### [CD-11] `$APPSEC_SESSION_ID` in logging-standard.md fictitious (Low)
-- `agents/shared/logging-standard.md:14` names the variable; nothing across the repo sets/reads it (session IDs come from hook payloads, agent_logger.py:571, event_log.py:38-39). → rewrite the docs to the real source.
+- `agents/shared/logging-standard.md:14` names the variable; nothing across the repo sets/reads it (session IDs come from hook payloads, runtime/agent_logger.py:571, runtime/event_log.py:38-39). → rewrite the docs to the real source.
 
 ---
 
@@ -82,10 +82,10 @@ silently, twice over.
 - grep (`never follow|treat.*as data|untrusted…`) → 0 hits in all three; all read attacker-controlled sources (Dockerfile/workflows; `evidence.file ±5`; sink tracing). An injected comment next to a finding can flip verdicts (`confirmed`→`blocked`, `refuted` to suppress a Critical). → add the shared guard line to all three prompts.
 
 ### [PI-3] Report HTML escaping is a denylist with concrete bypasses; export unsanitized through pandoc (Med)
-- `compose_threat_model.py:10024-10027` `_DANGEROUS_HTML_TAG_RE`: only script|iframe|svg|object|embed|form|style|link|meta|code + img/onerror + handlers onerror|onload|onclick|onmouseover. Bypasses: `<a href="javascript:…">`, all remaining handlers (`onfocus`, `ontoggle`, `onmouseenter`, `onanimationstart`, …); `PROTECTED_RE` (:10045-10047) lets `<details>/<pre>/<code>` contents through verbatim. export_pdf: `PANDOC_FORMAT="gfm+…"` without sanitize. Repo comment → verbatim `evidence.notes` (stride-analyzer.md:82) → XSS when opening the exported HTML (e.g. CI-published). → escape-by-default for LLM-/repo-derived prose instead of a denylist, or an allowlist sanitizer before export.
+- `renderers/compose_threat_model.py:10024-10027` `_DANGEROUS_HTML_TAG_RE`: only script|iframe|svg|object|embed|form|style|link|meta|code + img/onerror + handlers onerror|onload|onclick|onmouseover. Bypasses: `<a href="javascript:…">`, all remaining handlers (`onfocus`, `ontoggle`, `onmouseenter`, `onanimationstart`, …); `PROTECTED_RE` (:10045-10047) lets `<details>/<pre>/<code>` contents through verbatim. export_pdf: `PANDOC_FORMAT="gfm+…"` without sanitize. Repo comment → verbatim `evidence.notes` (stride-analyzer.md:82) → XSS when opening the exported HTML (e.g. CI-published). → escape-by-default for LLM-/repo-derived prose instead of a denylist, or an allowlist sanitizer before export.
 
 ### [PI-4] fetch_requirements without the SSRF guard that load_related_repos has (Low)
-- `fetch_requirements.py:80-83`: `urlopen` without `validate_target_url` (grep → 0); `:158-159` accepts `file://` as a local read. The source is operator/org-profile config (hence Low), but `http://169.254.169.254/…` and `file:///etc/passwd` are reachable. → route through `_url_guard.validate_target_url`, gate `file://` explicitly — analogous to load_related_repos.py:198.
+- `requirements/fetch_requirements.py:80-83`: `urlopen` without `validate_target_url` (grep → 0); `:158-159` accepts `file://` as a local read. The source is operator/org-profile config (hence Low), but `http://169.254.169.254/…` and `file:///etc/passwd` are reachable. → route through `_url_guard.validate_target_url`, gate `file://` explicitly — analogous to contexts/load_related_repos.py:198.
 
 ---
 
@@ -107,13 +107,13 @@ silently, twice over.
 - AGENTS.md:114 vs. `schemas/required-permissions.schema.yaml:45` (`enum: [file, shell]`) and test:70 (`{"Bash","Write","Edit","Read"}`); the YAML has 0 dispatch entries against 15+ dispatch sites. Runtime-harmless (Claude Code does not gate Task/Agent via permissions.allow), but a dead instruction. → strike the bullet from §7 or add a doc category to the schema.
 
 ### [PC-6] `Edit(${REPO_ROOT}/.gitignore)` stale (Low)
-- Justification "publish-threat-model patches .gitignore", but that's actually done script-side by `scripts/publish_threat_model.py:92`; no Edit-tool consumer anymore. → remove the entry or correct the reason.
+- Justification "publish-threat-model patches .gitignore", but that's actually done script-side by `scripts/model/publish_threat_model.py:92`; no Edit-tool consumer anymore. → remove the entry or correct the reason.
 
 ### [PC-7] Schema header cites non-existent consumers (Low)
 - `schemas/required-permissions.schema.yaml:9-11` names `scripts/render_settings_example.py` + `.claude/settings.example.json` — neither exists. → delete the two lines.
 
 ### [PC-8] hooks.json commands outside the permission model, header silent about it (Low)
-- `hooks/hooks.json:8` (security_steering.py on every UserPromptSubmit), :18-48 (agent_logger on Pre/Post/Stop). Runtime-correct (hook approval at plugin enable), but the canonical YAML doesn't explain their scope. → one header sentence: "hooks execute outside this allow-list".
+- `hooks/hooks.json:8` (analyzers/security_steering.py on every UserPromptSubmit), :18-48 (agent_logger on Pre/Post/Stop). Runtime-correct (hook approval at plugin enable), but the canonical YAML doesn't explain their scope. → one header sentence: "hooks execute outside this allow-list".
 
 ---
 
@@ -125,33 +125,33 @@ silently, twice over.
 - Fix: capture `YAML_PRE_STAGE1`/`MD_PRE_STAGE1` in all modes and do cut-off detection via `mtime:size` comparison (the mechanism exists: :2217-2220), or delete/archive the deliverables at the start of Stage 1 for full runs.
 
 ### [DG-2] Stage-1c abuse pipeline: all exit codes ignored (High)
-- `SKILL-impl.md:2442-2453`: `match … || true`; `CANDIDATES=$( … 2>/dev/null)`; `verify_abuse_cases.py merge … || true`; `finalize … || true`; empty `$CANDIDATES` ⇒ skip with not-applicable catalog.
+- `SKILL-impl.md:2442-2453`: `match … || true`; `CANDIDATES=$( … 2>/dev/null)`; `validators/verify_abuse_cases.py merge … || true`; `finalize … || true`; empty `$CANDIDATES` ⇒ skip with not-applicable catalog.
 - Consequence: a crash is indistinguishable from "nothing applicable"; §9 silently renders the catalog, verdict sidecars are missing/stale, the 3b2 severity fold self-gates to a no-op (amplifying P1) — severity under-reporting with no error signal.
 - Fix: capture exit codes; nonzero ⇒ `ABUSE_PIPELINE_FAILED` (log + banner + explicit `incomplete` in §9) instead of conflating with an empty result.
 
 ### [DG-3] `.threats-merged.json`/`.triage-flags.json` validators exist, but are only prompt-wired (Med)
-- The skill gate is existence-only (:2062-2064); the only skill-side validate_intermediate invocation is `threat_model_output` (:2156-2157); the `threats_merged`/`triage_flags` modes (validate_intermediate.py:54-56) run only in agent prompts (finalization:302/391, threats:496) — the skill's own rationale "LLM prompt is not a hard technical barrier" (:2098) is not applied here. → extend the gate to both modes (cheap, same exit-2 plumbing).
+- The skill gate is existence-only (:2062-2064); the only skill-side validate_intermediate invocation is `threat_model_output` (:2156-2157); the `threats_merged`/`triage_flags` modes (validators/validate_intermediate.py:54-56) run only in agent prompts (finalization:302/391, threats:496) — the skill's own rationale "LLM prompt is not a hard technical barrier" (:2098) is not applied here. → extend the gate to both modes (cheap, same exit-2 plumbing).
 
 ### [DG-4] STRIDE stub detector classifies corrupt JSON as healthy (Med)
 - `SKILL-impl.md:1992-2001`: `except Exception: print('no')` — an unparseable `.stride-<id>.json` (truncated write, invalid escape) counts as analyzed, no re-dispatch. → fail-closed `print('yes')` or a third verdict `corrupt`.
 
 ### [DG-5] Dead-prior-run detector: 1-spawn invariant broken by default parallel STRIDE (Med)
-- `SKILL-impl.md:255-258` counts `AGENT_SPAWN.*appsec-threat-analyst` with the comment "exactly one per run" — but :1912 dispatches analyst-A + analyst-B (two spawns, one summary); the log is append-only across runs (:248-249), the only scoping is `HK_AGE>300` (:270). After one successful default run, spawns>summaries permanently → `DEAD_PRIOR_BY_HOOKLOG=true` + silent `APPSEC_TRACING=1` (:282-284); the same assumption corrupts the 24h counter (:428). → scope the count to entries after the last `ASSESSMENT_SUMMARY` (analogous to `generated_at` bounding in check_stride_dispatch.py:195-197).
+- `SKILL-impl.md:255-258` counts `AGENT_SPAWN.*appsec-threat-analyst` with the comment "exactly one per run" — but :1912 dispatches analyst-A + analyst-B (two spawns, one summary); the log is append-only across runs (:248-249), the only scoping is `HK_AGE>300` (:270). After one successful default run, spawns>summaries permanently → `DEAD_PRIOR_BY_HOOKLOG=true` + silent `APPSEC_TRACING=1` (:282-284); the same assumption corrupts the 24h counter (:428). → scope the count to entries after the last `ASSESSMENT_SUMMARY` (analogous to `generated_at` bounding in orchestrator/check_stride_dispatch.py:195-197).
 
 ### [DG-6] qa_checks: YAML-dependent checks auto-pass on exceptions (Med)
-- `qa_checks.py:7226-7228` `except Exception: report.ok = 1; return report` (same pattern :7257-7259, :7396-7398, :7405-7407; softer :3384, :507). A missing/corrupt threat-model.yaml at QA time ⇒ §7/CWE checks report clean. Contrast: :2718-2719 at least warns. → attach a warning/issue on exception; exists-but-unparseable ⇒ fail.
+- `validators/qa_checks.py:7226-7228` `except Exception: report.ok = 1; return report` (same pattern :7257-7259, :7396-7398, :7405-7407; softer :3384, :507). A missing/corrupt threat-model.yaml at QA time ⇒ §7/CWE checks report clean. Contrast: :2718-2719 at least warns. → attach a warning/issue on exception; exists-but-unparseable ⇒ fail.
 
 ### [DG-7] LLM-authored `.components.json`/`.actors-discovered.json` consumed without a schema gate (Med)
-- `build_stride_dispatch_manifest.py:267` `_read_json(…, {})` (silent default); validate_intermediate has no `components`/`actors` modes; no top-level components schema (only a render fragment); mandatory keys only in prose (`phase-group-architecture.md:62`); `resolve_actors.py:274-285` swallows load errors with a WARNING print. → add a `components` mode to validate_intermediate + a gate at the manifest builder; validate `.actors-discovered.json` before layering.
+- `orchestrator/build_stride_dispatch_manifest.py:267` `_read_json(…, {})` (silent default); validate_intermediate has no `components`/`actors` modes; no top-level components schema (only a render fragment); mandatory keys only in prose (`phase-group-architecture.md:62`); `model/resolve_actors.py:274-285` swallows load errors with a WARNING print. → add a `components` mode to validate_intermediate + a gate at the manifest builder; validate `.actors-discovered.json` before layering.
 
 ### [DG-8] Route-inventory pre-pass swallows errors including stderr (Med)
-- `SKILL-impl.md:1680-1682`: `route_inventory.py … >/dev/null 2>&1 || true` (likewise architecture_coverage_checks.py); the "second line of defence" is an LLM prompt that, per the section itself, drops out under turn pressure (:1697). The documented §5 symptom ("4 vs. 52 routes", :1673) can keep shipping — now without a diagnosis. → redirect stderr to `.agent-run.log`; a YAML gate flags `attack_surface[]` without an inventory on web-framework repos.
+- `SKILL-impl.md:1680-1682`: `analyzers/route_inventory.py … >/dev/null 2>&1 || true` (likewise analyzers/architecture_coverage_checks.py); the "second line of defence" is an LLM prompt that, per the section itself, drops out under turn pressure (:1697). The documented §5 symptom ("4 vs. 52 routes", :1673) can keep shipping — now without a diagnosis. → redirect stderr to `.agent-run.log`; a YAML gate flags `attack_surface[]` without an inventory on web-framework repos.
 
 ### [DG-9] PS_FAIL fallback leaves an invalid dispatch manifest that the STRIDE gate later trusts (Low)
-- `SKILL-impl.md:1968-1976`: build-ok/validate-fail ⇒ inline fallback without manifest cleanup; `check_stride_dispatch.py:178-197` then expects analyzer spawns per the manifest ⇒ a legitimate degraded run can be aborted with exit 2 at the most expensive point. → `rm -f .stride-dispatch-manifest.json` (or a `fallback: true` marker the gate honors) in the PS_FAIL branch.
+- `SKILL-impl.md:1968-1976`: build-ok/validate-fail ⇒ inline fallback without manifest cleanup; `orchestrator/check_stride_dispatch.py:178-197` then expects analyzer spawns per the manifest ⇒ a legitimate degraded run can be aborted with exit 2 at the most expensive point. → `rm -f .stride-dispatch-manifest.json` (or a `fallback: true` marker the gate honors) in the PS_FAIL branch.
 
 ### [DG-10] QA agent hand-executes mechanical exact-string transformations (Low)
-- `appsec-qa-reviewer.md:381-383` (badge→emoji exact string), :332 (key-takeaway insert), `phase-group-architecture.md:297` (Check-8 rewrite). A classic case for the deterministic autofix pass (apply_prose_fixes.py) — and per §12 the badge fix belongs in the producer (compose owns `effectiveness_badge`, compose:250/602). → move 11a/insert into the autofix pass; the producer emits no legacy spans anymore.
+- `appsec-qa-reviewer.md:381-383` (badge→emoji exact string), :332 (key-takeaway insert), `phase-group-architecture.md:297` (Check-8 rewrite). A classic case for the deterministic autofix pass (repairs/apply_prose_fixes.py) — and per §12 the badge fix belongs in the producer (compose owns `effectiveness_badge`, compose:250/602). → move 11a/insert into the autofix pass; the producer emits no legacy spans anymore.
 
 ### [DG-11] Compose silently empties the requirements mapping on an unreadable `.requirements.yaml` (Low)
 - compose:7052-7055 `except Exception: return {}` (similar :2462, :2512, :12556). A run that passed the fail-closed fetch gate can render with a silently empty mapping. → in `--strict`: distinguish "absent" (legitimate skip) from "present-but-unparseable" (ContractError).
@@ -161,10 +161,10 @@ silently, twice over.
 ## TG — Test-/Drift-Guard Gaps
 
 ### [TG-1] `t_id` fixture masks dead code in publish_threat_model (High)
-- `publish_threat_model.py:169` `t.get("t_id", "")` — the canonical key is `id` (output schema: no `t_id`; test_full_run_e2e.py:263-264 says so explicitly). The test fixture mirrors the bug (`test_publish_threat_model.py:127` `{"t_id": "T-001", …}`) and does not assert the top-threat lines ⇒ "top: T-NNN title" commit lines never render in real runs, the test stays green. → fixture to `id`, assertion on the message body, script reads `id` (legacy fallback like export_sarif.py:89-90). Note: in `.threats-merged.json` `t_id` is CORRECT (threats-merged.schema.yaml:25) — only the final artifact uses `id`.
+- `model/publish_threat_model.py:169` `t.get("t_id", "")` — the canonical key is `id` (output schema: no `t_id`; test_full_run_e2e.py:263-264 says so explicitly). The test fixture mirrors the bug (`test_publish_threat_model.py:127` `{"t_id": "T-001", …}`) and does not assert the top-threat lines ⇒ "top: T-NNN title" commit lines never render in real runs, the test stays green. → fixture to `id`, assertion on the message body, script reads `id` (legacy fallback like exporters/export_sarif.py:89-90). Note: in `.threats-merged.json` `t_id` is CORRECT (threats-merged.schema.yaml:25) — only the final artifact uses `id`.
 
 ### [TG-2] Top-level `schemas/*.schema.json` escape both drift guards (High)
-- `test_schemas.py:20` only globs `*.schema.yaml`; `test_schema_integrity.py:29` only `schemas/fragments/`. Of 6 top-level `.schema.json`, only requirements-verification has a meta check; route-inventory/architecture-coverage/cross-repo-register/threat-summary are only instance-loaded; **qa-content-repair-plan.schema.json is loaded by 0 tests and 0 runtime code** — apply_content_repair.py does a hand check (:223) and still documents exit code "3 — schema validation failed against …" (:42). → a second glob over `schemas/*.schema.json` (Draft-2020-12 meta check + orphan-required walk); test: apply_content_repairs' accepted `op` set == schema enum.
+- `test_schemas.py:20` only globs `*.schema.yaml`; `test_schema_integrity.py:29` only `schemas/fragments/`. Of 6 top-level `.schema.json`, only requirements-verification has a meta check; route-inventory/architecture-coverage/cross-repo-register/threat-summary are only instance-loaded; **qa-content-repair-plan.schema.json is loaded by 0 tests and 0 runtime code** — repairs/apply_content_repair.py does a hand check (:223) and still documents exit code "3 — schema validation failed against …" (:42). → a second glob over `schemas/*.schema.json` (Draft-2020-12 meta check + orphan-required walk); test: apply_content_repairs' accepted `op` set == schema enum.
 
 ### [TG-3] Stale "dormant" exclusion: critical-attack-tree mutation never runs, section active since 2026-05-28 (Med)
 - `test_enforcement_mutations.py:197-202` ("currently dormant") + the mutation is missing from `MUTATIONS` (:190-214) vs. `sections-contract.yaml:362-364` ("activated dormant section") + compose:13717/:13997. → activate the mutation against a ≥2-Critical fixture, delete the comment.
@@ -194,13 +194,13 @@ silently, twice over.
 ## MR — Responsibilities & Maintainability
 
 ### [MR-1] Harvester rename breaks 4 user-facing docs (High)
-- Real: `scripts/harvest_requirements.py` (commit 3033e8e). Stale: README.md:217, CONTRIBUTING.md:110+:127, docs/harvester.md:9/22/75/78, docs/security-requirements-audit-skill.md:61 — all `harvest-requirements.py`. Irony: docs/internal/analysis/refactoring-plan.md:573 rejected the rename "because it breaks callers". → sweep-replace in the 4 docs (or a compat wrapper).
+- Real: `scripts/requirements/harvest_requirements.py` (commit 3033e8e). Stale: README.md:217, CONTRIBUTING.md:110+:127, docs/harvester.md:9/22/75/78, docs/security-requirements-audit-skill.md:61 — all `harvest-requirements.py`. Irony: docs/internal/analysis/refactoring-plan.md:573 rejected the rename "because it breaks callers". → sweep-replace in the 4 docs (or a compat wrapper).
 
-### [MR-2] validate_finding_refs.py + apply_finding_refs_repair.py wired to nothing (Med)
+### [MR-2] validators/validate_finding_refs.py + repairs/apply_finding_refs_repair.py wired to nothing (Med)
 - They only reference each other (grep over agents/skills/scripts/tests/hooks/Makefile: nothing); a complete validate→repair→apply pipeline with no caller silently drifts from the renderer contract. → wire into the QA/repair loop or remove (owner decision).
 
 ### [MR-3] `.budget-state.json` unclassified in the cleanup policy (Med)
-- Written per run (budget_watchdog.py:34), but in no list of runtime_cleanup.py, not in cleanup-whitelist.md, not in audit-artifacts.md. Live leftover observed (skills/create-threat-model/docs/security/ — untracked, gitignored). → ALWAYS_FILES (+ the `.budget-critical` family) or NEVER with a rationale.
+- Written per run (runtime/budget_watchdog.py:34), but in no list of runtime/runtime_cleanup.py, not in cleanup-whitelist.md, not in audit-artifacts.md. Live leftover observed (skills/create-threat-model/docs/security/ — untracked, gitignored). → ALWAYS_FILES (+ the `.budget-critical` family) or NEVER with a rationale.
 
 ### [MR-4] cleanup-whitelist.md lists entries removed from the code; guard one-sided (Med)
 - The docs name `.dep-scan.pid`/`.dep-scan.stdout` (removed code-side in 1de38be); test_runtime_cleanup.py:305-313 only checks code→docs, docs-only extras are never caught — contrary to the docs' claim "pinned … cannot drift". → delete two lines; make the test bidirectional (docs block ⊆ constants).
@@ -227,9 +227,9 @@ silently, twice over.
 
 ## Checked & clean (excerpt — saves re-audits)
 
-- **§4f five-registry rule**: independent AST cross-diff of all 5 maps + contract + schemas + templates = full agreement; `check_fragment_registry.py` green (exception: the CD-8 gap in the compose pre-pass map).
+- **§4f five-registry rule**: independent AST cross-diff of all 5 maps + contract + schemas + templates = full agreement; `validators/check_fragment_registry.py` green (exception: the CD-8 gap in the compose pre-pass map).
 - **Verdict-/fragment contracts**: abuse-case-verifier↔abuse-cases schema, triage-validator↔triage-flags, config-scanner↔config-scan-findings, renderer fragment enums (ms-verdict, ms-anti-patterns, ms-ai-exposure, critical-attack-tree) — all congruent.
-- **§4b/§4c/§4d invariants** hold in the code (validate_intermediate.py:928-947; pregenerate:1195-1201; qa_checks↔sections-contract mirroring).
+- **§4b/§4c/§4d invariants** hold in the code (validators/validate_intermediate.py:928-947; pregenerate:1195-1201; qa_checks↔sections-contract mirroring).
 - **Component-ID→path**: `^[a-z0-9][a-z0-9-]*$` pin in the manifest schema + gate before dispatch — no traversal.
 - **Mermaid**: server-side mmdc→PNG/SVG, no securityLevel:loose, no client-side mermaid.js.
 - **YAML loading**: CSafeLoader/safe_load throughout on untrusted input.

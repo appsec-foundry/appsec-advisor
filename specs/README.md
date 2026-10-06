@@ -80,7 +80,7 @@ a supported direct file edit.
 `specs/requirements.md` file. It does not hold proposals, archived records, or
 technical bindings.
 
-`scripts/requirements_hook.py` surfaces applicable requirements and separately
+`scripts/requirements/requirements_hook.py` surfaces applicable requirements and separately
 holds the decision register. Both hooks are development-only and do not ship in
 the plugin.
 

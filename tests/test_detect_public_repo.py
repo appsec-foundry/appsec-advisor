@@ -1,4 +1,4 @@
-"""Unit tests for scripts/detect_public_repo.py — conservative public-repo
+"""Unit tests for scripts/analyzers/detect_public_repo.py — conservative public-repo
 detection that gates the repo-read → internet-anon actor collapse."""
 
 from __future__ import annotations
@@ -12,11 +12,11 @@ import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = ROOT / "scripts" / "detect_public_repo.py"
+SCRIPT = ROOT / "scripts" / "analyzers/detect_public_repo.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("detect_public_repo", SCRIPT)
+    spec = importlib.util.spec_from_file_location("analyzers.detect_public_repo", SCRIPT)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -173,8 +173,8 @@ def test_main_repairs_non_dict_meta(tmp_path: Path):
 @pytest.mark.parametrize("host,project", [("github.com", "catalog"), ("gitlab.com", "ledger")])
 @pytest.mark.parametrize("public", [True, False])
 def test_rebuilt_public_source_grouping_survives_enrichment(tmp_path, host, project, public):
-    from enrichment_pass import valid_receipt
-    from figure1_dfd import scenarios_from_attack_paths
+    from model.enrichment_pass import valid_receipt
+    from renderers.figure1_dfd import scenarios_from_attack_paths
 
     repo = _repo(
         tmp_path, license_text=_MIT if public else None, pkg={"repository": f"https://{host}/example/{project}"}

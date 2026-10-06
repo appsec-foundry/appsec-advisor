@@ -90,6 +90,8 @@ def _make_source(root):
     (root / "tests" / "x.py").write_text("# excluded\n", encoding="utf-8")
     (root / "scripts" / "__pycache__").mkdir()
     (root / "scripts" / "__pycache__" / "c.pyc").write_text("x", encoding="utf-8")
+    (root / "scripts" / "orchestration").mkdir()
+    (root / "scripts" / "orchestration" / "orchestrator.stage2_state.py").write_text("MARKER = 1\n", encoding="utf-8")
     (root / "scripts" / "docs").mkdir()
     (root / "scripts" / "docs" / "note.md").write_text("excluded\n", encoding="utf-8")
     (root / "scripts" / "node_modules" / "tool").mkdir(parents=True)
@@ -112,9 +114,11 @@ def _make_source(root):
         json.dumps(
             {
                 "hooks": {
-                    "PreToolUse": [{"hooks": [{"command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_logger.py"}]}],
+                    "PreToolUse": [
+                        {"hooks": [{"command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/runtime/agent_logger.py"}]}
+                    ],
                     "UserPromptSubmit": [
-                        {"hooks": [{"command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/security_steering.py"}]}
+                        {"hooks": [{"command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/analyzers/security_steering.py"}]}
                     ],
                 }
             }
@@ -148,6 +152,7 @@ def test_copy_source_applies_excludes(tmp_path):
     assert not (build / "docs" / "analysis").exists()
     assert not (build / "docs" / "internal").exists()
     assert not (build / "tests").exists()
+    assert (build / "scripts" / "orchestration" / "orchestrator.stage2_state.py").is_file()
     assert not (build / "scripts" / "__pycache__").exists()
     assert not (build / "scripts" / "docs").exists()
     assert not (build / "scripts" / "node_modules").exists()
@@ -912,7 +917,7 @@ def test_available_skills_found(tmp_path):
 
 def test_hook_id_branches():
     assert pkg._hook_id("python tool.py") is None
-    assert pkg._hook_id("python /x/scripts/agent_logger.py") == "agent-logger"
+    assert pkg._hook_id("python /x/scripts/runtime/agent_logger.py") == "agent-logger"
     assert pkg._hook_id("py /x/scripts/foo_bar.py") == "foo-bar"
 
 
@@ -952,7 +957,7 @@ def test_available_hook_ids_skips_malformed(tmp_path):
                     "E1": "not-a-list",
                     "E2": [
                         "not-a-dict",
-                        {"hooks": ["x", {"command": 1}, {"command": "python /x/scripts/agent_logger.py"}]},
+                        {"hooks": ["x", {"command": 1}, {"command": "python /x/scripts/runtime/agent_logger.py"}]},
                     ],
                 }
             }
@@ -1058,7 +1063,7 @@ def test_apply_hook_policy_skips_malformed_entries(tmp_path):
                             "hooks": [
                                 "x",
                                 {"command": 5},
-                                {"command": "python /x/scripts/agent_logger.py"},
+                                {"command": "python /x/scripts/runtime/agent_logger.py"},
                             ]
                         },
                         {"hooks": []},
@@ -1082,7 +1087,9 @@ def _make_build_with_org_hook(root):
         json.dumps(
             {
                 "hooks": {
-                    "PreToolUse": [{"hooks": [{"command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_logger.py"}]}]
+                    "PreToolUse": [
+                        {"hooks": [{"command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/runtime/agent_logger.py"}]}
+                    ]
                 }
             }
         ),
@@ -1485,10 +1492,10 @@ def test_main_runs_validation(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(pkg.subprocess, "run", fake_run)
     code = _run_main(tmp_path, extra=["--skip-archive"])
     assert code == 0
-    # validate_config.py and validate_org_profile.py both invoked
+    # validators/validate_config.py and validators/validate_org_profile.py both invoked
     joined = " ".join(" ".join(map(str, c)) for c in calls)
-    assert "validate_config.py" in joined
-    assert "validate_org_profile.py" in joined
+    assert "validators/validate_config.py" in joined
+    assert "validators/validate_org_profile.py" in joined
 
 
 def test_main_bad_name_exits(tmp_path):
@@ -1511,3 +1518,18 @@ def test_main_bad_name_exits(tmp_path):
                 str(tmp_path / "dist"),
             ]
         )
+
+
+def test_custom_baseline_drops_modular_bundle_and_keeps_complete_mode(tmp_path):
+    build = tmp_path / "build"
+    write_profile(build, "organization:\n  id: acme\nbaseline:\n  id: acme-sec-1.0\n  file: baselines/acme.md\n")
+    upstream = {**UPSTREAM_BASELINE["baseline"], "mode": "modular", "bundle_dir": "data/baselines/aiscb"}
+    (build / "config.json").write_text(json.dumps({"baseline": upstream}))
+    directory = build / "data/baselines/aiscb"
+    directory.mkdir(parents=True)
+    (directory / "install.py").write_text("# unused upstream installer\n")
+    pkg.patch_config(build)
+    config = json.loads((build / "config.json").read_text())["baseline"]
+    assert config["mode"] == "complete"
+    assert config["bundle_dir"] is None and config["release"] is None
+    assert not directory.exists()

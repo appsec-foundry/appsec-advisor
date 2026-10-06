@@ -38,8 +38,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PLUGIN_ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-import budget_watchdog  # noqa: E402
-from event_log import parse_line  # noqa: E402
+import runtime.budget_watchdog as budget_watchdog  # noqa: E402
+from runtime.event_log import parse_line  # noqa: E402
 
 SYNTHETIC_REPO = PLUGIN_ROOT / "tests" / "fixtures" / "e2e" / "synthetic-repo"
 HOOK_LOG = ".hook-events.log"

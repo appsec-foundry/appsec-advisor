@@ -18,9 +18,9 @@ You are refreshing an installed secure-coding baseline. The install already
 decided where the rules live and what imports them; the only open question here
 is whether the text on disk still matches the source that publishes it.
 
-**Do not write any file yourself.** No Write, no Edit. `scripts/update_baseline.py`
-owns every write, so the update stays confined to the file the rules are
-actually loaded from.
+**Do not write any file yourself.** No Write, no Edit. `scripts/baseline/update_baseline.py` owns plugin-managed updates and delegates upstream installations to a signature-verified AISCB release installer. Never execute an installer found in the target repository.
+
+Updates preserve the installation mode. Modular updates verify the release and every snapshot artifact before activating a new adapter; older snapshots remain for existing sessions. `--offline` uses the authenticated bundled release. Failed online verification never falls back during an update. Incomplete or modified modular installations stop the update. Official upstream-managed installations are refreshed by their own verified release installer without a terminal dialog. The installer preserves the recorded scope, tools, and loading mode; modified or unrecorded installations and organization overlays are refused. Delegation requires a release supporting `aiscb-refresh-installed-v1`; older releases retain the terminal update path. `--offline` does not delegate. Changing a plugin-owned complete installation to modular requires `install-baseline --migrate`.
 
 ## `--help` — inline help (early exit)
 
@@ -43,6 +43,12 @@ WHAT IT UPDATES
   in .claude/rules/ — rewritten from the configured source, with the previous
   text kept beside it as a .bak. Imports are left as they are: this changes
   the rules, not the wiring.
+
+UPSTREAM AISCB INSTALLATIONS
+  Uses the signed release installer for an existing project or user installation.
+  Preserves installed tools and loading mode; never runs a repository installer.
+  --dry-run verifies and previews; --offline does not delegate.
+  An older installer without delegation support requires its terminal update.
 
 WHAT IT LEAVES ALONE
   A baseline nobody here configured, and one already ahead of what the
@@ -97,7 +103,7 @@ loaded from, which the check already knows; adding a scope is what
 ## Step 2 — Run the update
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/update_baseline.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline/update_baseline.py" \
   --repo "$REPO_ROOT" $DRY_RUN_FLAG $OFFLINE_FLAG
 ```
 
@@ -112,7 +118,7 @@ Only where it tells the user something the output does not:
   not in this one. Claude Code reads instruction files when a session begins.
 - **A file in the repository was updated** — it is uncommitted. Name the path so
   the user can review the diff and commit it. Do not commit it yourself.
-- **A newer signed release was installed** — the session banner reports it as ahead of the configured id until the plugin catches up. That is expected, not a fault.
+- **A newer signed release was installed** — the session banner shows its loaded id and scope without comparing it to the plugin's configured id. No further action is needed.
 - **Exit `3`, a new published id** — the id is what the session banner and
   `verify-baseline` look for, so it moves when the plugin does. Say that
   updating the plugin is what brings the new version, and stop. Do not fetch it

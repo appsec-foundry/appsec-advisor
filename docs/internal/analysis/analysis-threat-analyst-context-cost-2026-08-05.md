@@ -91,7 +91,7 @@ totals are not a valid run boundary for this benchmark.
 ## Measurement method
 
 Claude JSONL may repeat one usage snapshot for several content blocks. Counts
-were deduplicated by `message.id`, matching `scripts/context_window_report.py`.
+were deduplicated by `message.id`, matching `scripts/runtime/context_window_report.py`.
 For one model turn:
 
 ```text
@@ -107,7 +107,7 @@ retained in the conversation is served again on later turns.
 The principal reproducibility command for the three threat sessions is:
 
 ```bash
-python3 scripts/context_window_report.py --json --turn-diagnostics \
+python3 scripts/runtime/context_window_report.py --json --turn-diagnostics \
   /home/mrohr/.claude/projects/-home-mrohr-juice-shop/003c27f7-83e6-4b01-b46a-cadb493c69e1/subagents/agent-a249115917e51d8cb.jsonl \
   /home/mrohr/.claude/projects/-home-mrohr-juice-shop/003c27f7-83e6-4b01-b46a-cadb493c69e1/subagents/agent-a4bcfda6be804dfd3.jsonl \
   /home/mrohr/.claude/projects/-home-mrohr-juice-shop/003c27f7-83e6-4b01-b46a-cadb493c69e1/subagents/agent-a9172099c47d5a875.jsonl
@@ -125,7 +125,7 @@ The fixed 30-session benchmark, including the bounded main-session transcript,
 is reproduced with:
 
 ```bash
-python3 scripts/context_window_report.py --json --turn-diagnostics \
+python3 scripts/runtime/context_window_report.py --json --turn-diagnostics \
   --before 2026-08-02T23:02:00Z \
   /home/mrohr/.claude/projects/-home-mrohr-juice-shop/003c27f7-83e6-4b01-b46a-cadb493c69e1.jsonl \
   /home/mrohr/.claude/projects/-home-mrohr-juice-shop/003c27f7-83e6-4b01-b46a-cadb493c69e1
@@ -152,7 +152,7 @@ Anthropic documents that prompt-cache hits cost 0.1 times base input and
 definitions, tool calls, and tool results count as input. See [Claude pricing](https://platform.claude.com/docs/en/about-claude/pricing)
 and [tool-context management](https://platform.claude.com/docs/en/agents-and-tools/tool-use/manage-tool-context).
 
-`scripts/verify_run_costs.py` previously priced Haiku 4.5 at USD 0.80/4.00 and
+`scripts/runtime/verify_run_costs.py` previously priced Haiku 4.5 at USD 0.80/4.00 and
 USD 1.00/0.08 for 5-minute writes/hits. The versioned 2026-08-05 table uses USD
 1.00/5.00 and USD 1.25/0.10. The corrected rate produces **USD 40.69** for this
 benchmark; the prior table produced USD 40.64.
@@ -741,9 +741,9 @@ and preloaded context in that order.
 The post-STRIDE path is the highest-leverage turn-control migration. Today the
 second threat analyst runs merge, deterministic posture emitters, evidence
 verification, triage pre-flight, specialist dispatch, ranking, and final
-synthesis. The existing `orchestration_controller.py`, `merge_threats.py`,
-`triage_validate_ratings.py`, `triage_compute_ranking.py`, and
-`build_threat_model_yaml.py` should own the fixed progression. Existing focused
+synthesis. The existing `orchestrator/orchestration_controller.py`, `model/merge_threats.py`,
+`validators/triage_validate_ratings.py`, `model/triage_compute_ranking.py`, and
+`model/build_threat_model_yaml.py` should own the fixed progression. Existing focused
 merger and triage agents retain ambiguous semantic decisions. A small
 post-STRIDE synthesis agent should run only for contracted qualitative outputs
 that deterministic producers cannot derive, and a repair agent should run only

@@ -113,7 +113,7 @@ properties:
             expects the dependency to enforce at the declared interface.
             Compared deterministically against the dependency's
             `attack_surface[].auth_required` / inferred auth signal in
-            `load_related_repos.py`; mismatches surface as
+            `contexts/load_related_repos.py`; mismatches surface as
             `expectation_mismatch.auth` in the cross-repo register. The STRIDE
             analyzer treats the mismatch as a Spoofing or Elevation-of-
             Privilege hypothesis and requires target-repository evidence

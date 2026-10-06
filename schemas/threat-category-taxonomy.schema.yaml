@@ -1,0 +1,22 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://appsec-advisor/schemas/threat-category-taxonomy.schema.yaml
+title: Threat-category taxonomy source (data/threat-category-taxonomy.yaml)
+description: >-
+  Shared keys reference the component slice schema so a field the slice cannot
+  carry fails here, in CI, instead of aborting a run. Keys outside the slice
+  (finding_type_decides) are read from this source only and never sliced.
+type: object
+required: [schema_version, categories, cwe_to_th]
+additionalProperties: false
+properties:
+  schema_version:
+    $ref: 'https://appsec-advisor/schemas/threat-taxonomy-slice.schema.yaml#/properties/schema_version'
+  categories:
+    $ref: 'https://appsec-advisor/schemas/threat-taxonomy-slice.schema.yaml#/properties/categories'
+  cwe_to_th:
+    $ref: 'https://appsec-advisor/schemas/threat-taxonomy-slice.schema.yaml#/properties/cwe_to_th'
+  finding_type_decides:
+    type: array
+    uniqueItems: true
+    items:
+      $ref: 'https://appsec-advisor/schemas/threat-taxonomy-slice.schema.yaml#/$defs/cwe_id'

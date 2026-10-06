@@ -3,9 +3,9 @@ $id: https://appsec-advisor/schemas/requirements-catalog.schema.yaml
 title: Security requirements catalog
 description: |
   The canonical interchange format for a security-requirements catalog. ONE
-  shape is produced by the harvester (`scripts/harvest_requirements.py`) and
+  shape is produced by the harvester (`scripts/requirements/harvest_requirements.py`) and
   consumed by BOTH skills through the shared fetch gate
-  (`scripts/fetch_requirements.py` → `$OUTPUT_DIR/.requirements.yaml`):
+  (`scripts/requirements/fetch_requirements.py` → `$OUTPUT_DIR/.requirements.yaml`):
 
     * `audit-security-requirements` — grades each requirement against the repo.
     * `create-threat-model` — Phase 8b maps threats to violated requirement IDs

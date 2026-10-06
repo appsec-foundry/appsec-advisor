@@ -24,7 +24,7 @@
 #                     readability constraint.
 #   stride          — informational; not used by the heat-map renderer.
 #
-# Rendering rule (see scripts/compose_threat_model.py:_build_tier_cluster_lines):
+# Rendering rule (see scripts/renderers/compose_threat_model.py:_build_tier_cluster_lines):
 #   - Count == 1     → "<icon> <label>"
 #   - Count >= 2 and all same variant → "<icon> Multiple <plural_label>"
 #   - Count >= 2 and mixed variants   → "<icon> Multiple <plural_label> (e.g. <first variant>)"
@@ -54,7 +54,7 @@ diagram_annotations:
         CWE-90: LDAPi
         CWE-643: XPathi
         CWE-943: NoSQLi
-      mechanisms: [database-query-concatenation]
+      mechanisms: [database-query-concatenation, document-query-construction]
       priority_group: interpreter
     Insecure Output Handling:
       tie_break_order: 170
@@ -76,10 +76,12 @@ diagram_annotations:
     Insecure Code Evaluation:
       tie_break_order: 30
       cwes: [CWE-94, CWE-95, CWE-917]
+      mechanisms: [application-data-as-code]
       priority_group: interpreter
     Insecure Template Handling:
       tie_break_order: 240
       cwes: [CWE-1336]
+      mechanisms: [application-data-as-template]
       priority_group: interpreter
     Insecure XML Processing:
       tie_break_order: 260
@@ -102,6 +104,7 @@ diagram_annotations:
     Improper Attribute Modification:
       tie_break_order: 320
       cwes: [CWE-915, CWE-1321]
+      mechanisms: [unrestricted-attribute-binding]
     Improper Input Validation:
       tie_break_order: 330
       cwes: [CWE-20, CWE-158, CWE-1284, CWE-1287]
@@ -158,10 +161,10 @@ diagram_annotations:
     Insecure Session Management:
       tie_break_order: 230
       cwes: [CWE-384, CWE-613, CWE-614, CWE-1004]
-      mechanisms: [browser-clients-without-bff]
+      mechanisms: [browser-clients-without-bff, script-readable-sensitive-cookies]
     Insecure Secret Management:
       tie_break_order: 220
-      cwes: [CWE-259, CWE-260, CWE-321, CWE-522, CWE-547, CWE-798]
+      cwes: [CWE-256, CWE-259, CWE-260, CWE-321, CWE-522, CWE-547, CWE-798]
       mechanisms: [secrets-committed-to-source]
     Insecure Cryptography:
       tie_break_order: 70
@@ -170,9 +173,11 @@ diagram_annotations:
     Improper Authenticity Checks:
       tie_break_order: 340
       cwes: [CWE-345, CWE-347]
+      mechanisms: [unsigned-token-acceptance]
     Improper Origin Validation:
       tie_break_order: 360
-      cwes: [CWE-346, CWE-352, CWE-942]
+      cwes: [CWE-346, CWE-352, CWE-942, CWE-1385]
+      mechanisms: [unprotected-cookie-mutations, unbound-authorization-requests]
       cwe_qualifiers:
         CWE-352: CSRF
     Insecure Framing Policy:
@@ -205,6 +210,7 @@ diagram_annotations:
       cwes: [CWE-311]
     Insecure Data Storage:
       tie_break_order: 80
+      mechanisms: [browser-readable-session-credentials]
       cwes: [CWE-312, CWE-922]
     Improper File Exposure:
       tie_break_order: 310
@@ -226,7 +232,7 @@ diagram_annotations:
       cwes: [CWE-400, CWE-409, CWE-674, CWE-770, CWE-776, CWE-834, CWE-1333]
     Insecure Dependency Management:
       tie_break_order: 90
-      cwes: [CWE-829, CWE-937, CWE-1104, CWE-1357, CWE-1395]
+      cwes: [CWE-494, CWE-829, CWE-830, CWE-937, CWE-1104, CWE-1357, CWE-1395]
       mechanisms: [build-pipeline-mutable-refs, vulnerability-management-gap]
     Improper Configuration Control:
       tie_break_order: 60
@@ -521,13 +527,137 @@ class_guidance:
 # concrete findings may be attached as evidence to that mechanism.
 #
 # `team_question` is the decision the structural fix depends on and that the
-# code alone cannot settle — which cross-user access is intended, who rotates
-# which secret, which endpoints are meant to be public. The completion summary
-# asks it under "Open questions for the team", citing the register entry and
-# its worst instances. A mechanism whose fix is purely mechanical (parameterise
+# code alone cannot settle — which cross-user access is intended, which
+# deployment still accepts a secret, which endpoints are meant to be public. It
+# is one question ending in "?", without a "Topic:" prefix and without a
+# proposed fix. The Management Summary substitutes the affected component
+# name for {component} and links the findings whose decision remains open.
+# A mechanism whose fix is purely mechanical (parameterise
 # the query, encode the output, pick a KDF) carries no question: there is
 # nothing for the team to decide, only work to schedule.
+#
+# `answer_decides` names what the answer settles: `design-intent` (which access
+# or field is meant to be allowed), `deployment-fact` (what production outside
+# this repository enforces or still accepts), or `business-weighting` (how much
+# the reachable data matters). An explicit no-material-harm declaration already
+# answers a business-weighting question for its components, so it is not asked
+# there; the other two stay open whatever the declared impact.
 mechanism_guidance:
+  unrestricted-attribute-binding:
+    weakness_name: "Privileged attributes lack an enforced write allowlist"
+    cwes: [CWE-915]
+    description: >-
+      Model binding accepts caller-selected attributes across a privileged write
+      boundary. The affected binding path does not separate fields callers may
+      change from fields reserved for server-side policy.
+    structural_fix: >-
+      define operation-specific write schemas and assign privileged attributes
+      exclusively through server-side policy
+    answer_decides: design-intent
+    team_question: >-
+      Which fields accepted by {component} may users change themselves, and which require staff approval?
+    decision_impact: >-
+      Every field confirmed as caller-owned narrows the finding to the
+      remaining reserved fields; if none are caller-owned, the whole binding
+      path needs an allowlist.
+    finding_signal:
+      # An admitted CWE-915 finding proves the sensitive-field violation;
+      # the cited source must additionally expose a binding or model operation.
+      any_pattern:
+        - '(?i)\b(create|update|assign|bind|permit|model|attributes|exclude|request|params)\b'
+  application-data-as-code:
+    weakness_name: "Application data crosses into executable code"
+    cwes: [CWE-94, CWE-95]
+    description: >-
+      An interpreter evaluates application values as code. The affected path
+      mixes data processing with executable program construction instead of
+      constraining callers to predefined operations.
+    structural_fix: >-
+      replace evaluation of application values with a data parser or a fixed
+      set of operations whose arguments remain data
+    finding_signal:
+      any_pattern:
+        - '\b(eval|exec|Function|evaluate)\s*\(\s*[A-Za-z_$][\w.$\[\]]*'
+        # Database engines that evaluate JavaScript predicates or functions.
+        - '[{,(]\s*[''"]?\$(?:where|function|accumulator)[''"]?\s*:'
+        - '\.\$where\s*\('
+        - '\bmapReduce\s*\('
+  browser-readable-session-credentials:
+    weakness_name: "Browser scripts retain reusable session credentials"
+    cwes: [CWE-922]
+    description: >-
+      Browser code retains reusable authentication credentials in script-readable
+      storage. Script execution in the same origin can obtain the credentials
+      and reuse the authenticated session.
+    structural_fix: >-
+      move reusable credentials behind a server-managed session boundary and
+      keep browser-visible state free of reusable authentication secrets
+    answer_decides: deployment-fact
+    team_question: >-
+      How quickly can operators revoke a stolen session for {component} across its production clients?
+    decision_impact: >-
+      Revocation time bounds how long a stolen credential remains usable and
+      determines the operational response alongside the code fix.
+    finding_signal:
+      any_pattern:
+        - '(?is)\b(?:localStorage|sessionStorage)\s*\.\s*(?:getItem|setItem)\s*\([^\n]*(?:token|session|credential|jwt|auth)'
+        - '(?is)\bAuthorization\b.{0,160}\b(?:localStorage|sessionStorage)\b'
+  unprotected-cookie-mutations:
+    weakness_name: "Cookie-authenticated changes lack request authenticity checks"
+    cwes: [CWE-352]
+    description: >-
+      A state-changing operation accepts ambient browser credentials without an
+      enforced check that the authenticated user initiated the request. The
+      affected mutation path lacks a request-authenticity boundary.
+    structural_fix: >-
+      enforce framework CSRF protection or validated origin and anti-CSRF tokens
+      on every mutation that accepts ambient browser credentials
+    finding_signal:
+      # CWE-352 comes from the inspected authentication/mutation/control path;
+      # merely seeing a cookie API without that finding never emits a signal.
+      any_pattern:
+        - '(?i)\b(?:cookies?|session|csrf|request|req)\b'
+  unbound-authorization-requests:
+    weakness_name: "OAuth sign-in requests are not bound to the user's browser session"
+    cwes: [CWE-352]
+    description: >-
+      The client starts OAuth or OpenID Connect sign-in without a per-request
+      state value that its callback verifies. A forged authorization response
+      can then complete sign-in in the victim's browser with the attacker's
+      grant.
+    structural_fix: >-
+      start every sign-in through a maintained OAuth/OIDC client that
+      generates and verifies state (and PKCE) for each authorization request
+    answer_decides: deployment-fact
+    team_question: >-
+      Which callback protections does the production identity provider enforce for {component} independently of this client?
+    decision_impact: >-
+      Provider-side enforcement contains the gap to defence in depth; without
+      it a forged callback completes sign-in and the finding stands as rated.
+    finding_signal:
+      # The cited line builds an authorization request (client_id and
+      # response_type) that carries no state parameter.
+      any_pattern:
+        - '(?i)^(?=[^\n]*\bresponse_type\b)(?=[^\n]*\bclient_id\b)(?![^\n]*\bstate\b)'
+  script-readable-sensitive-cookies:
+    weakness_name: "Sensitive cookies remain accessible to browser scripts"
+    cwes: [CWE-1004]
+    description: >-
+      Sensitive cookies are issued without HttpOnly protection. Browser scripts
+      in the same origin can read values that should remain confined to the
+      browser's HTTP cookie handling.
+    structural_fix: >-
+      issue sensitive cookies server-side with HttpOnly protection and keep
+      script-readable application preferences separate from session credentials
+  application-data-as-template:
+    weakness_name: "Application data crosses into template source"
+    cwes: [CWE-1336]
+    description: >-
+      Template construction treats application values as template source.
+      Rendering can therefore interpret data as template instructions.
+    structural_fix: >-
+      compile fixed templates and pass application values only through their
+      data-binding interface
   database-query-concatenation:
     weakness_name: "Database access relies on concatenated queries"
     cwes: [CWE-89]
@@ -538,6 +668,40 @@ mechanism_guidance:
     structural_fix: >-
       provide one parameterised repository or query-builder path and prohibit
       application-value interpolation in database queries
+    answer_decides: business-weighting
+    team_question: >-
+      Which sensitive business records can the production database account used by {component} access?
+    decision_impact: >-
+      Personal or regulated data in reach raises both the breach impact and
+      any notification duty; a narrowly scoped account limits the blast
+      radius.
+  document-query-construction:
+    weakness_name: "Document-database queries take their structure from application values"
+    cwes: [CWE-943]
+    description: >-
+      Document-store queries take operators or JavaScript predicates from
+      application values instead of fixed query structures with typed values.
+      Callers can change what a query selects, for example through injected
+      operators or evaluated expressions.
+    structural_fix: >-
+      build document queries from fixed operator structures, coerce request
+      values to the expected scalar types, and disable server-side JavaScript
+      evaluation in the database
+    answer_decides: business-weighting
+    team_question: >-
+      Which other business datasets can the production database connection used by {component} access?
+    decision_impact: >-
+      Every additional reachable collection widens the finding past the
+      intended endpoint; a per-collection credential contains it.
+    finding_signal:
+      # An admitted CWE-943 finding proves the injection; the cited site must
+      # show a document query taking evaluated code, an operator value or a
+      # request object.
+      any_pattern:
+        - '[{,(]\s*[''"]?\$(?:where|function|accumulator)[''"]?\s*:'
+        - '\.\$where\s*\('
+        - '[{,]\s*[''"]?\$(?:regex|ne|gt|gte|lt|lte|in|nin|expr)[''"]?\s*:\s*[^''"`\s/\d\[{]'
+        - '\.(?:find|findOne|findOneAndUpdate|findOneAndDelete|updateOne|updateMany|deleteOne|deleteMany|countDocuments|aggregate|distinct)\s*\([^\n)]*\b(?:req|request)\s*\.\s*(?:body|query|params)\b'
   blacklist-only-input-validation:
     # Reached both when the analyst describes blacklist/denylist validation AND
     # when the ARCH-INPUT-001 "missing centralized input validation" signal fires,
@@ -558,6 +722,12 @@ mechanism_guidance:
     structural_fix: >-
       enforce server-side schemas and domain-specific allowlists before input
       reaches parsing, persistence, or command construction
+    answer_decides: deployment-fact
+    team_question: >-
+      Which parameter restrictions does infrastructure outside this repository enforce before requests reach {component}?
+    decision_impact: >-
+      A confirmed upstream validator downgrades this to defence in depth;
+      without one the listed parameters reach the parser unchecked.
   frontend-output-encoding:
     weakness_name: "Frontend rendering lacks enforced output encoding"
     cwes: [CWE-79, CWE-80, CWE-87]
@@ -578,10 +748,13 @@ mechanism_guidance:
     structural_fix: >-
       enforce authorization through a shared server-side policy layer and make
       ownership and tenant scope mandatory inputs to data access
+    answer_decides: design-intent
     team_question: >-
-      Which cross-user or cross-tenant accesses are intended (support, admin
-      bulk operations), and which single policy layer should enforce ownership
-      and role for every route?
+      Which operations on other users' or tenants' data in {component} are intended for support staff or administrators?
+    decision_impact: >-
+      Each access confirmed as intended narrows the finding to the remaining
+      routes; if none are intended, every listed route is a live
+      authorization gap.
   hand-rolled-token-verification:
     weakness_name: "Authentication relies on hand-rolled token verification"
     cwes: [CWE-287, CWE-345, CWE-347]
@@ -592,9 +765,12 @@ mechanism_guidance:
     structural_fix: >-
       centralise token validation on a vetted library with pinned algorithms,
       issuer and audience checks, and managed signing keys
+    answer_decides: deployment-fact
     team_question: >-
-      Which services accept these tokens, and could a forged role or identity
-      cross between them?
+      Which other production services accept identities or roles from tokens issued by {component}?
+    decision_impact: >-
+      Each additional accepting service multiplies the blast radius of one
+      forged token; a single-consumer token keeps the impact local.
   # missing-endpoint-authentication (2026-07-14): the ARCH-AUTHN-001 design signal
   # (control: "Route Authentication") previously produced a weakness whose title
   # fell back to the bare control name — "Route Authentication" — because the rule
@@ -613,9 +789,13 @@ mechanism_guidance:
     structural_fix: >-
       enforce authentication centrally at the routing and channel boundary so every
       exposed endpoint requires a verified session unless explicitly marked public
+    answer_decides: design-intent
     team_question: >-
-      Which of these endpoints and channels are intentionally public, and where
-      should authentication be enforced for the rest?
+      Which operations in {component} are intended to be available without login?
+    decision_impact: >-
+      An endpoint confirmed as intentionally public becomes an accepted
+      exposure; every other one stays a missing-authentication finding at its
+      current rating.
   # secrets-committed-to-source (2026-07-14): the systemic secret-handling weakness
   # emitted by the ARCH-SECRET-001 design signal. Routes to the secret_management
   # cluster; its cwes list controls which confirmed findings attach as evidence
@@ -631,9 +811,12 @@ mechanism_guidance:
     structural_fix: >-
       move every secret to a managed secret store or injected environment
       configuration, rotate the exposed values, and add secret-scanning to CI
+    answer_decides: deployment-fact
     team_question: >-
-      These secrets stay in git history: which deployments used them, who
-      rotates them, and where do they live afterwards?
+      Which production deployments still accept credentials exposed in the history of {component}?
+    decision_impact: >-
+      Any deployment that still accepts them makes rotation urgent; if none
+      do, the remaining work is history scrubbing and detection.
   # build-pipeline-mutable-refs (2026-07-14): the systemic supply-chain weakness
   # emitted by the ARCH-SUPPLY-001 design signal. Routes to the outdated_deps
   # cluster (CWE-829/1357) → Supply Chain theme.
@@ -648,9 +831,12 @@ mechanism_guidance:
     structural_fix: >-
       pin every third-party action and build dependency to an immutable commit SHA
       (or a vetted internal mirror) and enforce SHA-pinning in CI
+    answer_decides: deployment-fact
     team_question: >-
-      Who can change build inputs or publish artifacts, and which independent
-      approval applies before a pipeline change takes effect?
+      Who can publish the build inputs used by {component} without independent approval?
+    decision_impact: >-
+      A wide or unreviewed set of writers makes pipeline compromise the
+      cheapest path into production; a reviewed set contains it.
   browser-clients-without-bff:
     weakness_name: "Browser clients access privileged APIs without a BFF"
     cwes: [CWE-922]
@@ -662,9 +848,12 @@ mechanism_guidance:
     structural_fix: >-
       introduce a backend-for-frontend that holds OAuth tokens server-side and
       gives the browser a hardened HttpOnly session cookie
+    answer_decides: deployment-fact
     team_question: >-
-      Is a backend-for-frontend planned, or which control keeps a token stolen
-      from the browser from being replayed?
+      Which production restrictions outside this repository limit reuse of a stolen browser token for {component}?
+    decision_impact: >-
+      Without binding or a short lifetime a single XSS yields durable API
+      access; sender-constrained or short-lived tokens limit the window.
   application-owned-cryptography:
     weakness_name: "Cryptographic security is implemented in application code"
     description: >-
@@ -685,6 +874,12 @@ mechanism_guidance:
     structural_fix: >-
       standardise on a password KDF, a CSPRNG for secrets, and modern
       authenticated cryptographic primitives with centrally reviewed parameters
+    answer_decides: deployment-fact
+    team_question: >-
+      Which stored business records in {component} require migration when this cryptographic primitive is replaced?
+    decision_impact: >-
+      A small or empty record set allows direct replacement; a large legacy
+      set makes verify-then-rehash on next use the realistic path.
   vulnerability-management-gap:
     weakness_name: "Vulnerability management does not prevent known-vulnerable dependencies"
     cwes: [CWE-937]

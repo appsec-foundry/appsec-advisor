@@ -9,7 +9,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
-import source_auth_scanner as S  # noqa: E402
+import analyzers.source_auth_scanner as S  # noqa: E402
 
 CRYPTO = REPO_ROOT / "data" / "crypto-checks.yaml"
 SOURCE_AUTH = REPO_ROOT / "data" / "source-auth-checks.yaml"
@@ -132,7 +132,7 @@ def test_python_secrets_token_suppressed(tmp_path: Path) -> None:
 def test_java_python_crypto_fold_into_one_weakness(tmp_path: Path) -> None:
     # A Java and a Python weak-crypto sink both fold into ONE weak_crypto
     # weakness via _PRACTICE_TIER_CWES — no per-language peer explosion.
-    import merge_threats as mt  # noqa: E402
+    import model.merge_threats as mt  # noqa: E402
 
     threats = [
         {
@@ -515,7 +515,7 @@ def test_xxe_noent_flagged(tmp_path: Path) -> None:
 def test_crypto_cwes_map_to_weak_crypto_class() -> None:
     # The crypto CWEs must land in the weak_crypto weakness cluster so a
     # crypto finding folds under a weak_crypto weakness (P3 verify).
-    import weakness_classifier as wc
+    import analyzers.weakness_classifier as wc
 
     for cwe in ("CWE-328", "CWE-330", "CWE-916", "CWE-327"):
         assert wc.classify_cwe(cwe) == "weak_crypto", cwe
@@ -526,7 +526,7 @@ def test_crypto_cwes_map_to_weak_crypto_class() -> None:
 def test_crypto_findings_fold_under_weak_crypto_weakness() -> None:
     """P3 verify — crypto findings (insecure-practice) fold under one
     weak_crypto weakness rather than standing as confirmed vulns."""
-    import merge_threats as mt
+    import model.merge_threats as mt
 
     threats = [
         {

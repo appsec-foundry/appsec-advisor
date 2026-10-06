@@ -1,4 +1,4 @@
-"""Additive coverage tests for scripts/compose_threat_model.py.
+"""Additive coverage tests for scripts/renderers/compose_threat_model.py.
 
 Focus: stable pure-function / string-rendering helpers. Avoids the
 brand-new --slug/stamp code paths (concurrently modified). All tests are
@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT_PATH = REPO_ROOT / "scripts" / "compose_threat_model.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "renderers/compose_threat_model.py"
 
 
 def _load_module(name: str, path: Path):
@@ -25,7 +25,7 @@ def _load_module(name: str, path: Path):
     return mod
 
 
-compose = _load_module("compose_threat_model", SCRIPT_PATH)
+compose = _load_module("renderers.compose_threat_model", SCRIPT_PATH)
 
 
 # ---------------------------------------------------------------------------
@@ -230,31 +230,6 @@ class TestFirstEvidenceFile:
     def test_non_int_line(self):
         t = {"evidence": [{"file": "c.ts", "line": "x"}]}
         assert compose._first_evidence_file(t) == ("c.ts", None)
-
-
-class TestShortenTitleForXref:
-    def test_empty(self):
-        assert compose._shorten_title_for_xref("") == ""
-
-    def test_file_path_in_file_form(self):
-        out = compose._shorten_title_for_xref("SQL Injection (routes/login.ts:5)")
-        assert out == "SQL Injection in file routes/login.ts"
-
-    def test_compact_parens(self):
-        out = compose._shorten_title_for_xref("SQL Injection (routes/login.ts)", compact=True)
-        assert out == "SQL Injection (routes/login.ts)"
-
-    def test_directory_path_in_form(self):
-        out = compose._shorten_title_for_xref("Insecure Token (frontend/src/app)")
-        assert out == "Insecure Token in frontend/src/app"
-
-    def test_evidence_fallback(self):
-        t = {"evidence": [{"file": "server.ts"}]}
-        out = compose._shorten_title_for_xref("CSRF", t)
-        assert out == "CSRF in file server.ts"
-
-    def test_bare_weakness(self):
-        assert compose._shorten_title_for_xref("Cross-Site Request Forgery") == ("Cross-Site Request Forgery")
 
 
 class TestStripEmbeddedEvidenceFile:
@@ -906,27 +881,6 @@ class TestFixActionLead:
             assert compose._fix_action_lead(f"CWE-{num}") == compose._FIX_ACTION_LEADS[num]
 
 
-class TestCodifyLabelLocator:
-    def test_no_paren(self):
-        assert compose._codify_label_locator("SQL Injection") == "SQL Injection"
-
-    def test_backticks_file_locator(self):
-        out = compose._codify_label_locator("SQLi (routes/login.ts:18)")
-        assert "(`routes/login.ts:18`)" in out
-
-    def test_idempotent(self):
-        s = "SQLi (`routes/login.ts`)"
-        assert compose._codify_label_locator(s) == s
-
-    def test_prose_paren_untouched(self):
-        out = compose._codify_label_locator("Spoofing (S)")
-        assert out == "Spoofing (S)"
-
-    def test_dockerfile_noext(self):
-        out = compose._codify_label_locator("Pin base image (Dockerfile)")
-        assert "(`Dockerfile`)" in out
-
-
 class TestStripLabelCode:
     def test_strips_backticks(self):
         assert compose._strip_label_code("a `b` c") == "a b c"
@@ -1016,16 +970,16 @@ class TestRenderContextLookups:
 
     def test_severity_for_ref(self, tmp_path):
         ctx = _make_ctx(tmp_path, {"threats": [{"id": "T-001", "risk": "high"}]})
-        assert ctx.severity_for_ref("F-001") == "high"
+        assert ctx.severity_for_ref("F-001") == "High"
         assert ctx.severity_for_ref("F-999") == ""
         assert ctx.severity_for_ref("") == ""
 
-    def test_severity_effective_wins(self, tmp_path):
+    def test_severity_follows_the_register_not_the_elevation(self, tmp_path):
         ctx = _make_ctx(
             tmp_path,
             {"threats": [{"id": "T-001", "risk": "low", "effective_severity": "critical"}]},
         )
-        assert ctx.severity_for_ref("T-001") == "critical"
+        assert ctx.severity_for_ref("T-001") == "Low"
 
     def test_priority_for_ref_explicit_key(self, tmp_path):
         ctx = _make_ctx(tmp_path, {"mitigations": [{"id": "M-001", "priority": "p1"}]})
@@ -2128,13 +2082,13 @@ class TestRenderIdentifiedActors:
         assert "### Identified Actors" in out
         assert "Anonymous Internet Attacker" in out
         assert "Authenticated Internet Attacker" in out
-        assert "Shop User" in out
+        assert "End User" in out
         # repo-read folded into internet-anon → 2 findings on the anon row.
         anon_row = next(ln for ln in out.splitlines() if "Anonymous Internet Attacker" in ln)
         assert "| 2 |" in anon_row
         assert "auth" in anon_row and "api" in anon_row
-        # Shop User carries the victim role.
-        victim_row = next(ln for ln in out.splitlines() if "Shop User" in ln and ln.startswith("|"))
+        # The End User carries the victim role.
+        victim_row = next(ln for ln in out.splitlines() if "End User" in ln and ln.startswith("|"))
         assert "victim" in victim_row
         # No ACT-* library codes or process sub-subsections leak in.
         assert "ACT-" not in out
@@ -2647,12 +2601,12 @@ class TestInstancesCard:
         )
         card = self._card(tmp_path, t)
         assert "Instances (2):" in card
-        assert "lib/insecurity.ts:191" in card
-        assert "routes/chatbot.ts:248" in card
+        assert "`lib/insecurity.ts`: 191" in card
+        assert "`routes/chatbot.ts`: 248" in card
         assert "#### F-001 · Insecure JWT Verification" in card
         assert "**Location:** Multiple locations (2)" in card
 
-    def test_mixed_severity_shows_per_instance_dots(self, tmp_path):
+    def test_mixed_severity_shows_no_per_instance_dots(self, tmp_path):
         t = self._systemic_threat(
             [
                 {"file": "lib/insecurity.ts", "line": 191, "severity": "Critical"},
@@ -2660,8 +2614,8 @@ class TestInstancesCard:
             ]
         )
         card = self._card(tmp_path, t)
-        assert "🔴 `lib/insecurity.ts:191`" in card
-        assert "🟠 `routes/chatbot.ts:248`" in card
+        line = next(ln for ln in card.splitlines() if "Instances (2):" in ln)
+        assert "🔴" not in line and "🟠" not in line
 
     def test_uniform_severity_no_dots(self, tmp_path):
         t = self._systemic_threat(
@@ -2671,8 +2625,7 @@ class TestInstancesCard:
             ]
         )
         card = self._card(tmp_path, t)
-        assert "Instances (2):" in card
-        assert "🟠 `server.ts:310`" not in card  # uniform severity → plain locations
+        assert "**Instances (2):** `server.ts`: 310, 311" in card  # grouped by file
 
     def test_high_cardinality_instances_capped_with_more_suffix(self, tmp_path):
         # A systemic finding with many instances (e.g. a component with a dozen
@@ -2686,8 +2639,8 @@ class TestInstancesCard:
         card = self._card(tmp_path, t)
         assert "Instances (12):" in card  # true total surfaced
         assert "… (+4 more)" in card  # 12 - 8 cap = 4 collapsed
-        assert "routes/r08.ts:8" in card  # 8th shown
-        assert "routes/r09.ts:9" not in card  # 9th collapsed into "+more"
+        assert "`routes/r08.ts`: 8" in card  # 8th shown
+        assert "routes/r09.ts" not in card  # 9th collapsed into "+more"
 
 
 class TestWeaknessBasisBreakdown:
@@ -2700,8 +2653,13 @@ class TestWeaknessBasisBreakdown:
     def test_confirmed_excludes_folded_practice(self):
         yd = {
             "threats": [
-                {"id": "T-001", "risk": "Critical", "evidence_tier": "confirmed-exploitable"},
-                {"id": "T-002", "risk": "High", "evidence_tier": "confirmed-exploitable"},
+                {
+                    "id": "T-001",
+                    "risk": "Critical",
+                    "evidence_tier": "confirmed-exploitable",
+                    "evidence_check": "verified",
+                },
+                {"id": "T-002", "risk": "High", "evidence_tier": "confirmed-exploitable", "evidence_check": "verified"},
                 {"id": "T-003", "risk": "Medium", "evidence_tier": "insecure-practice"},
             ],
             "weaknesses": [
@@ -2711,13 +2669,29 @@ class TestWeaknessBasisBreakdown:
         }
         assert compose._weakness_basis_breakdown(yd) == (4, 2, 1, 1)
 
-    def test_missing_tier_counts_as_confirmed(self):
-        # Legacy threats without evidence_tier are register findings (confirmed).
+    def test_missing_tier_counts_as_confirmed_on_established_evidence(self):
+        # Legacy threats without evidence_tier are register findings; they count as
+        # confirmed once their evidence is established (FE-21).
         yd = {
-            "threats": [{"id": "T-001", "risk": "High"}],
+            "threats": [{"id": "T-001", "risk": "High", "evidence_check": "verified"}],
             "weaknesses": [{"id": "W-001", "kind": "design", "weakness_class": "injection"}],
         }
         assert compose._weakness_basis_breakdown(yd) == (2, 1, 0, 1)
+
+    def test_unchecked_evidence_is_not_counted_confirmed(self):
+        yd = {
+            "threats": [
+                {
+                    "id": "T-001",
+                    "risk": "High",
+                    "evidence_tier": "confirmed-exploitable",
+                    "evidence_check": "unchecked",
+                },
+                {"id": "T-002", "risk": "High", "evidence_tier": "confirmed-exploitable"},
+            ],
+            "weaknesses": [{"id": "W-001", "kind": "design", "weakness_class": "injection"}],
+        }
+        assert compose._weakness_basis_breakdown(yd)[1] == 0
 
 
 class TestSystemicWeaknessesRender:

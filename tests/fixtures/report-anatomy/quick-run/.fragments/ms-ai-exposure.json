@@ -1,0 +1,23 @@
+{
+  "summary": "The application's AI assistant endpoint passes unvalidated user input directly to an LLM without authentication, rate limiting, or output control, creating both prompt injection and resource exhaustion surfaces.",
+  "ai_risks": [
+    {
+      "owasp_llm_id": "LLM01",
+      "name": "Prompt Injection",
+      "severity": "red",
+      "description": "User input is concatenated directly into the LangChain system prompt with an instruction to follow user directives exactly, removing all model sandboxing and allowing any caller to override operator intent through injected instructions.",
+      "findings": [
+        { "ref": "T-008", "label": "AI assistant with direct prompt injection surface" }
+      ]
+    },
+    {
+      "owasp_llm_id": "LLM10",
+      "name": "Unbounded Consumption",
+      "severity": "red",
+      "description": "The AI assistant route accepts unauthenticated, unbounded prompts with no per-user rate limit or token cap, enabling any caller to exhaust the OpenAI API quota and generate uncontrolled cost for the operator.",
+      "findings": [
+        { "ref": "T-008", "label": "Unbounded LLM consumption without auth or rate limit" }
+      ]
+    }
+  ]
+}

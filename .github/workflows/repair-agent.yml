@@ -87,7 +87,7 @@ jobs:
       #     exit-code heuristic has to recognise them as "not our bug".
       #   * Recorded defects. Specifically errors and recovery events
       #     (auto_retry_fired, compose_retries_section) from
-      #     aggregate_run_issues.py — the things the pipeline hit and papered
+      #     runtime/aggregate_run_issues.py — the things the pipeline hit and papered
       #     over at runtime, which is exactly what leaves a green report with a
       #     latent producer bug behind it. Warnings and perf anomalies alone do
       #     not qualify: a slow phase is not a defect to fix at the producer,
@@ -275,7 +275,7 @@ jobs:
           The run artifacts are under `e2e-artifacts/`, one directory per target.
           Start with the run's own structured diagnosis before reading raw logs:
           each directory contains `.run-issues.json` (written by
-          `aggregate_run_issues.py` / `recommend_fixes.py`), whose entries carry a
+          `runtime/aggregate_run_issues.py` / `runtime/recommend_fixes.py`), whose entries carry a
           `severity`, a `category` and a `fix_recommendation`. Work the
           `severity: error` entries and the recovery events
           (`auto_retry_fired`, `compose_retries_section`) — those are what

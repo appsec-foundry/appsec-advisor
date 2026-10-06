@@ -1,4 +1,4 @@
-"""Tests for scripts/model_lineup.py and its use in the headless banner.
+"""Tests for scripts/runtime/model_lineup.py and its use in the headless banner.
 
 run-headless.sh printed `Model: <session>`, which reads as "the whole assessment
 runs on this". It does not: the session model drives orchestration while STRIDE,
@@ -16,7 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import model_lineup  # noqa: E402
+import runtime.model_lineup as model_lineup  # noqa: E402
 
 HEADLESS = ROOT / "scripts" / "run-headless.sh"
 
@@ -73,7 +73,7 @@ def test_lineup_never_raises_on_bad_input() -> None:
 
 def test_cli_prints_a_single_line() -> None:
     out = subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "model_lineup.py"), "--session", "claude-sonnet-4-6"],
+        [sys.executable, str(ROOT / "scripts" / "runtime/model_lineup.py"), "--session", "claude-sonnet-4-6"],
         capture_output=True,
         text=True,
         timeout=60,
@@ -87,7 +87,7 @@ def test_cli_prints_a_single_line() -> None:
 
 def test_headless_banner_shows_the_lineup_not_just_the_session_model() -> None:
     body = HEADLESS.read_text(encoding="utf-8")
-    assert "model_lineup.py" in body, "headless banner does not resolve the model lineup"
+    assert "runtime/model_lineup.py" in body, "headless banner does not resolve the model lineup"
     assert 'echo "  Model      : $MODEL"' not in body, (
         "the bare session-model banner line is back; it reads as 'everything runs on this model', which is wrong"
     )

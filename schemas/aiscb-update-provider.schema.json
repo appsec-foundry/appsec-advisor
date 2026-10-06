@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AISCB update provider capability",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "skill", "installer_protocol"],
+  "properties": {
+    "schema": {"const": 1},
+    "skill": {"const": "/appsec-advisor:update-baseline"},
+    "installer_protocol": {"const": "aiscb-refresh-installed-v1"}
+  }
+}

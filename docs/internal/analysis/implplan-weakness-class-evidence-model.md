@@ -52,7 +52,7 @@ count explosion.
 - **Verify:** `python -m jsonschema` self-check on each schema; existing schema
   tests updated and green.
 
-### P1.2 Merger reconciler (`scripts/merge_threats.py`) — the pivot (§4d-bis)
+### P1.2 Merger reconciler (`scripts/model/merge_threats.py`) — the pivot (§4d-bis)
 
 - Change grouping key from `(CWE, STRIDE, cwe-family)` (`:748`) to
   **`(weakness_class, scope)`**; weakness becomes the parent, raw threats/scanner
@@ -66,7 +66,7 @@ count explosion.
   the class↔CWE map (every group already keys a weakness class); extend groups
   so each of the 9 `weakness-classes.yaml` clusters has one.
 - Map `weakness-classes.yaml` CWEs → `weakness_class` for grouping
-  (`_classify_threat_cluster` `compose_threat_model.py:5087` already does this;
+  (`_classify_threat_cluster` `renderers/compose_threat_model.py:5087` already does this;
   lift the mapping into a shared helper both merger and composer import).
 - **Scope-granularity decision (resolves proposal §4d-bis open item):**
   - `kind: design` weaknesses are **app-wide** (a missing *central* control is
@@ -81,18 +81,18 @@ count explosion.
   signal → assert exactly **1** weakness `injection/SQLi`, `kind: design`, 2
   `instances[]`, 0 top-level hypotheses, `severity_basis` on the weakness.
 
-### P1.3 Bridge routing (`scripts/arch_coverage_to_threats.py`)
+### P1.3 Bridge routing (`scripts/analyzers/arch_coverage_to_threats.py`)
 
 - Stop routing unpromoted design signals to `threat_hypotheses[]` (`:432-453`).
   Instead emit a normalized **design-signal record** (class, component,
-  statement, `absent_control_signal[]`, strategy) that `merge_threats.py`
+  statement, `absent_control_signal[]`, strategy) that `model/merge_threats.py`
   consumes in P1.2.
 - Keep the `proof_state`/`confidence` gate (`:188,197`) only as the
   emit-or-drop guard for I2 (no observable absent-control signal → drop).
 - **Verify:** grep — `threat_hypotheses` no longer written by the producer;
   design signals reach the merger.
 
-### P1.4 Count + composer (`scripts/compose_threat_model.py`)
+### P1.4 Count + composer (`scripts/renderers/compose_threat_model.py`)
 
 - Render a **weakness as a heading** with its `instances[]` and
   `practice_evidence[]` beneath — never three peers (extend the §8 card/register
@@ -101,7 +101,7 @@ count explosion.
   total **+ breakdown** "N findings — X confirmed-exploitable · Y implementation
   · Z design", computed post-consolidation. Confirmed-exploitable = the only
   CVSS/headline-eligible subset for CVSS purposes, but all three count.
-- Ranking (`triage_compute_ranking.py`): allow `severity_basis: design-risk`
+- Ranking (`model/triage_compute_ranking.py`): allow `severity_basis: design-risk`
   weaknesses into `findings_ranked[]` and permit a design-risk Critical to sort
   #1 (locked decision §9.3); tag visually distinct from confirmed Criticals.
 - **Verify:** re-render juice-shop fixture → §8 shows "Insecure SQL handling"
@@ -110,7 +110,7 @@ count explosion.
 
 ### P1.5 QA + tests
 
-- QA (`scripts/qa_checks.py`): add I1 grep guard (no "hypothesis" user-facing),
+- QA (`scripts/validators/qa_checks.py`): add I1 grep guard (no "hypothesis" user-facing),
   I2 guard (no weakness without observable_backing), I4 guard (count == distinct
   weaknesses + confirmed instances).
 - Golden regen for the fixture + juice-shop example.
@@ -122,13 +122,13 @@ count explosion.
 ## P2 — Implementation-strategy axis (vetted / misused / home-grown / none)
 
 ### P2.1 Recon inventory
-- Extend `scripts/recon_patterns.py`: a library/protocol inventory per domain
+- Extend `scripts/analyzers/recon_patterns.py`: a library/protocol inventory per domain
   (authn: passport/next-auth/openid-client/jsonwebtoken; input-val:
   zod/joi/express-validator; crypto: argon2/bcrypt/libsodium; ORM presence).
   Cat-9 OAuth (`scan_oauth_oidc:489`) already separates surface vs 15 misuse
   subcategories — the template for the misuse layer.
 ### P2.2 Misuse detectors (Cat-N functions, not new scripts)
-- New `scan_*` functions in `recon_patterns.py` for co-occurrence misuse the
+- New `scan_*` functions in `analyzers/recon_patterns.py` for co-occurrence misuse the
   rule catalogs can't express: crypto (bcrypt present but low rounds), input-val
   (schema imported but sink bypasses it), authn (verify present but decode path
   bypasses it). LLM sink misuse stays STRIDE-only.
@@ -148,7 +148,7 @@ count explosion.
 
 ### P3.1 Crypto rule pack (biggest gap — zero rules today)
 - New `data/crypto-checks.yaml` run through the **existing catalog-driven
-  `source_auth_scanner.py` engine** (no new Python): md5/sha1 as password hash
+  `analyzers/source_auth_scanner.py` engine** (no new Python): md5/sha1 as password hash
   (CWE-328/916), `Math.random()` for tokens (CWE-330), `alg:'none'` (cross-ref
   authn), ECB mode, low bcrypt rounds. Include `counter_patterns` (non-security
   hashing) to avoid FPs.
@@ -169,7 +169,7 @@ count explosion.
 ## P4 — Layer-2 systemic posture verdict
 
 ### P4.1 Fusion script (new, deterministic)
-- New `scripts/build_posture_verdict.py`: per `architectural_theme` (principle,
+- New `scripts/model/build_posture_verdict.py`: per `architectural_theme` (principle,
   enum `architecture-coverage.schema.json:940`), fuse **control-effectiveness**
   (`architectural-controls.yaml` adequate/partial/weak/missing) ×
   **recurrence** (instance count + component spread) × **worst evidence_tier** ×
@@ -187,7 +187,7 @@ count explosion.
   (`threat-model.output.schema.yaml:853`, 3 supply-chain buckets) to any
   principle theme.
 - **Wire the missing renderer** — no composer consumes `meta_findings` today
-  (latent bug); add `_render_*` in `compose_threat_model.py` +
+  (latent bug); add `_render_*` in `renderers/compose_threat_model.py` +
   `sections-contract.yaml` entry.
 ### P4.3 Surfaces
 - **Security Principles** verdict table (scored) + **Top Systemic Risks** ranked
@@ -206,7 +206,7 @@ count explosion.
   removed. Incremental-rescan reconciliation (prior-finding carry) must map old
   hypothesis entries → new design signals.
 - **Golden/e2e:** regen fixtures each phase; gate release on `e2e-full-standard`.
-- **Event log:** route any new script logging through `scripts/event_log.py`.
+- **Event log:** route any new script logging through `scripts/runtime/event_log.py`.
 - **Definition of done per phase:** suite green, pipeline runs end-to-end on the
   fixture, invariants I1–I5 hold, golden updated.
 

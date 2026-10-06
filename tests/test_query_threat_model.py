@@ -1,4 +1,4 @@
-"""Tests for scripts/query_threat_model.py.
+"""Tests for scripts/model/query_threat_model.py.
 
 Drives the module via its public API plus CLI smoke tests. Fixtures write
 minimal ``threat-model.yaml`` files to a tmp OUTPUT_DIR so each test exercises
@@ -15,15 +15,15 @@ import textwrap
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "query_threat_model.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "model/query_threat_model.py"
 
 
 def _load_module():
-    if "query_threat_model" in sys.modules:
-        return sys.modules["query_threat_model"]
-    spec = importlib.util.spec_from_file_location("query_threat_model", SCRIPT_PATH)
+    if "model.query_threat_model" in sys.modules:
+        return sys.modules["model.query_threat_model"]
+    spec = importlib.util.spec_from_file_location("model.query_threat_model", SCRIPT_PATH)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["query_threat_model"] = mod
+    sys.modules["model.query_threat_model"] = mod
     assert spec.loader is not None
     spec.loader.exec_module(mod)
     return mod

@@ -11,10 +11,64 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
+
+@pytest.mark.parametrize("cwe", ["CWE-778", "CWE-548"])
+def test_policy_cap_wins_over_critical_input(cwe):
+    tcr = _tcr()
+    caps = yaml.safe_load((PLUGIN_ROOT / "data/severity-caps.yaml").read_text())
+    criteria = yaml.safe_load((PLUGIN_ROOT / "data/critical-criteria.yaml").read_text())
+    finding = {"cwe": cwe, "risk": "Critical", "impact": "High"}
+    assert tcr._compute_effective(finding, None, 0, caps, criteria, 2)[0] == "High"
+
+
+@pytest.mark.parametrize("cwe, expected", [("CWE-321", "High"), ("CWE-601", "Medium")])
+def test_individual_critical_rules_use_real_data(cwe, expected):
+    tcr = _tcr()
+    criteria = yaml.safe_load((PLUGIN_ROOT / "data/critical-criteria.yaml").read_text())
+    rank, _ = tcr._apply_critical_criteria({"cwe": cwe}, 3, "", criteria, 2)
+    assert tcr._sev_label(rank) == expected
+
+
+@pytest.mark.parametrize("cwe", ["CWE-79", "CWE-22"])
+def test_more_likely_findings_rank_first(cwe):
+    tcr = _tcr()
+    scores = [
+        tcr._finding_score({"cwe": cwe, "impact": "High", "likelihood": likelihood}, "High", 2, None, {}, {})
+        for likelihood in ("High", "Medium", "Low")
+    ]
+    assert scores[0] > scores[1] > scores[2]
+
+
+@pytest.mark.parametrize("score", [9.8, 7.5])
+def test_ranking_reads_canonical_cvss_v4(score):
+    assert _tcr()._finding_cvss({"cvss_v4": {"base_score": score}}) == score
+
+
+@pytest.mark.parametrize("names", [("portal", "billing"), ("console", "catalog")])
+def test_unrelated_pattern_matches_do_not_elevate(tmp_path, names):
+    tcr = _tcr()
+    findings = [
+        {
+            "t_id": f"T-{index:03d}",
+            "component_id": name,
+            "cwe": "CWE-79",
+            "title": "Unsafe page output",
+            "risk": "High",
+            "impact": "High",
+            "likelihood": "Medium",
+        }
+        for index, name in enumerate(names, 1)
+    ]
+    _write_yaml(tmp_path / "threat-model.yaml", _minimal_yaml(findings))
+    ranking = tcr.compute_ranking(tmp_path)
+    assert all(f["effective_severity"] == "High" for f in ranking["views"]["top_findings"]["findings_ranked"])
+
+
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = PLUGIN_ROOT / "scripts" / "triage_compute_ranking.py"
+SCRIPT = PLUGIN_ROOT / "scripts" / "model/triage_compute_ranking.py"
 
 
 def _write_yaml(path: Path, data: dict) -> None:
@@ -70,11 +124,11 @@ def test_empty_threats_emits_empty_block(tmp_path: Path) -> None:
 
 def test_create_fallback_is_schema_valid(tmp_path: Path) -> None:
     """When compute_ranking is the create-owner (the pre-flight writer
-    triage_validate_ratings.py never ran, so no .triage-flags.json exists), the
+    validators/triage_validate_ratings.py never ran, so no .triage-flags.json exists), the
     file it writes must still satisfy schemas/triage-flags.schema.yaml — i.e.
     carry root `generated_at` and a populated `summary`. Regression for the
     2026-06-28 e2e failure where the fallback emitted an empty `summary` / no
-    `generated_at`, so validate_intermediate.py rejected it."""
+    `generated_at`, so validators/validate_intermediate.py rejected it."""
     threats = [
         {
             "t_id": "F-001",
@@ -102,7 +156,7 @@ def test_create_fallback_is_schema_valid(tmp_path: Path) -> None:
     val = subprocess.run(
         [
             sys.executable,
-            str(PLUGIN_ROOT / "scripts" / "validate_intermediate.py"),
+            str(PLUGIN_ROOT / "scripts" / "validators/validate_intermediate.py"),
             "triage_flags",
             str(tmp_path / ".triage-flags.json"),
         ],
@@ -360,7 +414,7 @@ def test_stale_reconciliation_removal_reindexes_later_preflight_flags(tmp_path: 
                         "severity": "info",
                         "threat_ids": ["T-001"],
                         "message": "stale elevation",
-                        "source": "triage_compute_ranking.py",
+                        "source": "model/triage_compute_ranking.py",
                     },
                     {
                         "flag_id": "TF-003",
@@ -393,7 +447,7 @@ def test_stale_reconciliation_removal_reindexes_later_preflight_flags(tmp_path: 
     validation = subprocess.run(
         [
             sys.executable,
-            str(PLUGIN_ROOT / "scripts" / "validate_intermediate.py"),
+            str(PLUGIN_ROOT / "scripts" / "validators/validate_intermediate.py"),
             "triage_flags",
             str(tmp_path / ".triage-flags.json"),
         ],
@@ -484,7 +538,7 @@ def test_refuted_keystone_not_elevated() -> None:
     cited weakness exists.
     """
     sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
-    import triage_compute_ranking as tcr  # type: ignore[import-not-found]
+    import model.triage_compute_ranking as tcr  # type: ignore[import-not-found]
 
     caps = {"contributor_cap": {"default": "High"}}
     criteria = {
@@ -510,7 +564,7 @@ def test_ambiguous_keystone_not_elevated() -> None:
     like refuted for chain elevation: no promotion, raw risk preserved.
     """
     sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
-    import triage_compute_ranking as tcr  # type: ignore[import-not-found]
+    import model.triage_compute_ranking as tcr  # type: ignore[import-not-found]
 
     caps = {"contributor_cap": {"default": "High"}}
     criteria = {"never_individual_critical": [], "always_critical_cwes": [], "conditional_critical": {}}
@@ -535,7 +589,7 @@ def test_always_critical_cwe_promotes_under_context() -> None:
     de-escalated an already-Critical finding, so this stayed High forever.
     """
     sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
-    import triage_compute_ranking as tcr  # type: ignore[import-not-found]
+    import model.triage_compute_ranking as tcr  # type: ignore[import-not-found]
 
     caps = {"contributor_cap": {"default": "High"}}
     criteria = {
@@ -566,7 +620,7 @@ def test_mass_assignment_override_pins_distance_1_against_real_config() -> None:
     heuristic that otherwise re-raised it to 2 and defeated the Critical promotion.
     """
     sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
-    import triage_compute_ranking as tcr  # type: ignore[import-not-found]
+    import model.triage_compute_ranking as tcr  # type: ignore[import-not-found]
 
     bd_patterns = tcr._load_yaml(PLUGIN_ROOT / "data" / "breach-distance-patterns.yaml", {})
     crit = tcr._load_yaml(PLUGIN_ROOT / "data" / "critical-criteria.yaml", {})
@@ -599,7 +653,7 @@ def test_mass_assignment_override_pins_distance_1_against_real_config() -> None:
 def test_refuted_contributor_not_elevated() -> None:
     """Contributor refutation suppression — mirror of the keystone case."""
     sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
-    import triage_compute_ranking as tcr  # type: ignore[import-not-found]
+    import model.triage_compute_ranking as tcr  # type: ignore[import-not-found]
 
     caps = {"contributor_cap": {"default": "High"}}
     criteria = {
@@ -632,12 +686,12 @@ def test_force_flag_overrides_env_gate(tmp_path: Path) -> None:
 
 def _tcr():
     sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
-    import triage_compute_ranking as tcr  # type: ignore[import-not-found]
+    import model.triage_compute_ranking as tcr  # type: ignore[import-not-found]
 
     return tcr
 
 
-def _ac_docs(chain_verdict: str, *, required: bool = True):
+def _ac_docs(chain_verdict: str, *, required: bool = True, outcome_finding_id: str | None = None):
     """Build a matches+verdicts pair for one abuse case AC-T-001 whose single
     matched step binds finding F-1."""
     matches = {
@@ -652,21 +706,113 @@ def _ac_docs(chain_verdict: str, *, required: bool = True):
         ]
     }
     verdicts = {"verdicts": [{"abuse_case_id": "AC-T-001", "chain_verdict": chain_verdict}]}
+    if outcome_finding_id:
+        matches["matches"][0]["step_matches"].append(
+            {"step": 2, "required": True, "matched_finding_id": outcome_finding_id}
+        )
     return verdicts, matches
 
 
 def test_verified_fully_viable_chain_elevates_required_finding() -> None:
-    """A finding bound to a REQUIRED step of a code-verified fully_viable chain
-    is a keystone → its effective severity is pulled up one notch (High→Critical)."""
+    """A required precondition can inherit a verified Critical outcome's risk."""
     tcr = _tcr()
-    findings = [{"id": "F-1", "risk": "High", "title": "Stored XSS"}]
-    verdicts, matches = _ac_docs("fully_viable")
+    findings = [
+        {"id": "F-1", "risk": "High", "title": "Change operation parameters"},
+        {"id": "F-2", "risk": "Critical", "title": "Execute a server operation"},
+    ]
+    verdicts, matches = _ac_docs("fully_viable", outcome_finding_id="F-2")
     chains = tcr._detect_verified_abuse_chains(findings, verdicts, matches)
     assert len(chains) == 1
     ch = chains[0]
     assert ch["id"] == "AC-T-001"
-    assert ch["keystones"] == ["F-1"]
-    assert ch["severity"] == "Critical"  # one notch above High, capped
+    assert ch["keystones"] == ["F-1", "F-2"]
+    assert ch["severity"] == "Critical"
+
+
+@pytest.mark.parametrize("risks", [("Medium",), ("High",), ("High", "High"), ("Critical", "High")])
+def test_verified_chain_never_increases_its_highest_member_risk(risks):
+    tcr = _tcr()
+    findings = [{"id": f"F-{n}", "risk": risk} for n, risk in enumerate(risks, 1)]
+    verdicts, matches = _ac_docs("fully_viable", outcome_finding_id="F-2" if len(risks) == 2 else None)
+    chains = tcr._detect_verified_abuse_chains(findings, verdicts, matches)
+    assert chains[0]["severity"] == max(risks, key=tcr._sev_rank)
+
+
+@pytest.mark.parametrize(
+    ("member_risk", "goal_impact", "verdict", "expected"),
+    [
+        ("High", "Critical", "fully_viable", "Critical"),
+        ("Medium", "Critical", "fully_viable", "Critical"),
+        ("High", "Medium", "fully_viable", "High"),
+        ("High", None, "fully_viable", "High"),
+        ("High", "Critical", "partially_blocked", None),
+    ],
+)
+def test_fully_viable_chain_reaches_declared_goal_impact(member_risk, goal_impact, verdict, expected):
+    tcr = _tcr()
+    findings = [{"id": "F-1", "risk": member_risk}]
+    verdicts, matches = _ac_docs(verdict)
+    if goal_impact:
+        matches["matches"][0]["case"] = {"id": "AC-T-001", "goal_impact": goal_impact}
+    chains = tcr._detect_verified_abuse_chains(findings, verdicts, matches)
+    assert [chain["severity"] for chain in chains] == ([expected] if expected else [])
+
+
+@pytest.mark.parametrize(
+    ("evidence_check", "step_verdict", "verdict_finding", "member"),
+    [
+        ("ambiguous", "confirmed", "F-1", True),
+        ("ambiguous", "confirmed", "F-9", False),
+        ("ambiguous", None, None, False),
+        ("refuted", "confirmed", "F-1", False),
+        ("verified", "refuted", "F-1", False),
+        ("verified", None, None, True),
+    ],
+)
+def test_verifier_confirmed_step_outranks_ambiguous_sampling(evidence_check, step_verdict, verdict_finding, member):
+    tcr = _tcr()
+    findings = [{"id": "F-1", "risk": "High", "evidence_check": evidence_check}, {"id": "F-9", "risk": "Low"}]
+    verdicts, matches = _ac_docs("fully_viable")
+    if step_verdict:
+        verdicts["verdicts"][0]["step_verdicts"] = [
+            {"step": 1, "verdict": step_verdict, "matched_finding_id": verdict_finding}
+        ]
+    chains = tcr._detect_verified_abuse_chains(findings, verdicts, matches)
+    assert bool(chains and "F-1" in chains[0]["keystones"]) is member
+    if member:
+        assert ("F-1" in chains[0]["verifier_confirmed"]) is (step_verdict == "confirmed")
+
+
+@pytest.mark.parametrize(
+    ("evidence_check", "chain_verified", "expected"),
+    [
+        ("ambiguous", True, "Critical"),
+        ("ambiguous", False, "High"),
+        ("refuted", True, "High"),
+        (None, False, "Critical"),
+    ],
+)
+def test_confirmed_keystone_on_capped_cwe_reaches_chain_severity(evidence_check, chain_verified, expected):
+    tcr = _tcr()
+    finding = {"id": "F-1", "risk": "High", "cwe": "CWE-321", "evidence_check": evidence_check}
+    caps, criteria = _policy()
+    eff, _ = tcr._compute_effective(
+        finding, "keystone", tcr._sev_rank("Critical"), caps, criteria, 1, chain_verified=chain_verified
+    )
+    assert eff == expected
+
+
+def test_capped_cwe_outside_a_chain_stays_high():
+    tcr = _tcr()
+    caps, criteria = _policy()
+    finding = {"id": "F-1", "risk": "High", "cwe": "CWE-798", "evidence_check": "verified"}
+    assert tcr._compute_effective(finding, None, 0, caps, criteria, 1)[0] == "High"
+
+
+def _policy():
+    from shared._severity_policy import load_policy
+
+    return load_policy()
 
 
 def test_matched_id_key_mismatch_resolves_to_triage_id() -> None:
@@ -723,9 +869,10 @@ def test_verified_chain_annotates_finding_end_to_end(tmp_path: Path) -> None:
     tcr = _tcr()
     threats = [
         {"id": "F-1", "title": "Stored XSS", "risk": "High", "impact": "High", "primary_cwe": "CWE-79"},
+        {"id": "F-2", "title": "Server-side code execution", "risk": "Critical", "primary_cwe": "CWE-94"},
     ]
     _write_yaml(tmp_path / "threat-model.yaml", _minimal_yaml(threats))
-    verdicts, matches = _ac_docs("fully_viable")
+    verdicts, matches = _ac_docs("fully_viable", outcome_finding_id="F-2")
     (tmp_path / ".abuse-case-verdicts.json").write_text(json.dumps(verdicts), encoding="utf-8")
     (tmp_path / ".abuse-case-matches.json").write_text(json.dumps(matches), encoding="utf-8")
 
@@ -755,7 +902,10 @@ def test_rerun_after_abuse_elevates_upward_and_is_idempotent(tmp_path: Path) -> 
         )
         assert res.returncode == 0, res.stderr
 
-    threats = [{"id": "F-1", "title": "Stored XSS", "risk": "High", "primary_cwe": "CWE-79"}]
+    threats = [
+        {"id": "F-1", "title": "Stored XSS", "risk": "High", "primary_cwe": "CWE-79"},
+        {"id": "F-2", "title": "Server-side code execution", "risk": "Critical", "primary_cwe": "CWE-94"},
+    ]
     _write_yaml(tmp_path / "threat-model.yaml", _minimal_yaml(threats))
 
     # Pass 1 — no abuse sidecars: stays High (no chain elevation).
@@ -765,7 +915,7 @@ def test_rerun_after_abuse_elevates_upward_and_is_idempotent(tmp_path: Path) -> 
     assert f1["effective_severity"] == "High"
 
     # Sidecars now appear (Stage 1d completed) — pass 2 must elevate to Critical.
-    verdicts, matches = _ac_docs("fully_viable")
+    verdicts, matches = _ac_docs("fully_viable", outcome_finding_id="F-2")
     (tmp_path / ".abuse-case-verdicts.json").write_text(json.dumps(verdicts), encoding="utf-8")
     (tmp_path / ".abuse-case-matches.json").write_text(json.dumps(matches), encoding="utf-8")
     _persist(tmp_path)
@@ -812,14 +962,17 @@ def test_if_deterministic_owner_noop_on_llm_ranking(tmp_path: Path) -> None:
 def test_if_deterministic_owner_folds_chains_without_env(tmp_path: Path) -> None:
     """End-to-end Stage 1d fold: deterministic marker present → the re-run works
     WITHOUT the env flag and elevates the verified chain keystone."""
-    threats = [{"id": "F-1", "title": "Stored XSS", "risk": "High", "primary_cwe": "CWE-79"}]
+    threats = [
+        {"id": "F-1", "title": "Stored XSS", "risk": "High", "primary_cwe": "CWE-79"},
+        {"id": "F-2", "title": "Server-side code execution", "risk": "Critical", "primary_cwe": "CWE-94"},
+    ]
     _write_yaml(tmp_path / "threat-model.yaml", _minimal_yaml(threats))
     # Phase 10b deterministic run writes the owner marker (ranking.computed_by).
     res0 = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": "1"})
     assert res0.returncode == 0, res0.stderr
     # Stage 1d: abuse sidecars appear, fold re-runs with --if-deterministic-owner
     # and the env flag explicitly UNSET (default-run conditions).
-    verdicts, matches = _ac_docs("fully_viable")
+    verdicts, matches = _ac_docs("fully_viable", outcome_finding_id="F-2")
     (tmp_path / ".abuse-case-verdicts.json").write_text(json.dumps(verdicts), encoding="utf-8")
     (tmp_path / ".abuse-case-matches.json").write_text(json.dumps(matches), encoding="utf-8")
     res = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": ""}, ["--if-deterministic-owner"])
@@ -1152,6 +1305,50 @@ def test_business_context_breaks_only_equal_finding_and_mitigation_scores(tmp_pa
     assert "Protect cardholder data" not in serialized
 
 
+@pytest.mark.parametrize(
+    "component,description",
+    [
+        ("practice-lab", "Only synthetic records; no material harm."),
+        ("example-catalog", "Keine wesentlichen fachlichen Folgen; öffentliche Beispieldaten."),
+    ],
+)
+def test_declared_no_harm_does_not_promote_findings_or_mitigations(tmp_path, component, description):
+    tcr = _tcr()
+    threats = [
+        {
+            "t_id": tid,
+            "component_id": cid,
+            "title": "Input validation",
+            "risk": "High",
+            "impact": "High",
+            "likelihood": "Medium",
+            "primary_cwe": "CWE-20",
+        }
+        for tid, cid in [("T-001", "other-service"), ("T-002", component)]
+    ]
+    data = _minimal_yaml(threats)
+    data["components"] = [{"id": "other-service"}, {"id": component}]
+    data["mitigations"] = [{"m_id": f"M-00{i}", "addresses": [f"T-00{i}"], "effort": "Medium"} for i in (1, 2)]
+    _write_yaml(tmp_path / "threat-model.yaml", data)
+    sidecar = tmp_path / ".stride-analyst-context.json"
+    business = {"impact_if_compromised": description, "impact_is_material": False}
+    sidecar.write_text(json.dumps({component: {"business_context": business}}))
+    ranking = tcr.compute_ranking(tmp_path)
+    findings = ranking["views"]["top_findings"]["findings_ranked"]
+    assert [row["id"] for row in findings] == ["T-001", "T-002"]
+    assert all("business_context_basis" not in row for row in findings)
+    assert [row["id"] for row in ranking["views"]["prioritized_mitigations"]["mitigations_ranked"]] == [
+        "M-001",
+        "M-002",
+    ]
+    business["impact_is_material"] = True
+    business["impact_if_compromised"] = "Important delivery decisions are falsified."
+    sidecar.write_text(json.dumps({component: {"business_context": business}}))
+    positive = tcr.compute_ranking(tmp_path)["views"]["top_findings"]["findings_ranked"]
+    assert [row["id"] for row in positive] == ["T-002", "T-001"]
+    assert {row["id"]: row["score"] for row in findings} == {row["id"]: row["score"] for row in positive}
+
+
 def test_malformed_business_context_sidecar_preserves_empty_basis(tmp_path: Path):
     tcr = _tcr()
     sidecar = tmp_path / ".stride-analyst-context.json"
@@ -1403,7 +1600,7 @@ def test_write_outputs_creates_flags_when_absent(tmp_path: Path):
 def test_design_risk_weakness_enters_findings_ranked(tmp_path: Path) -> None:
     """P1.4 / §9.3 — a design-risk weakness (zero confirmed instances) is folded
     into findings_ranked as a W-NNN entry so it can top the ranking."""
-    import triage_compute_ranking as tcr  # type: ignore[import-not-found]
+    import model.triage_compute_ranking as tcr  # type: ignore[import-not-found]
 
     data = _minimal_yaml(
         [
@@ -1447,7 +1644,7 @@ def test_design_risk_weakness_enters_findings_ranked(tmp_path: Path) -> None:
 def test_confirmed_weakness_not_double_ranked(tmp_path: Path) -> None:
     """A `confirmed`-basis weakness is represented by its instances already —
     it must NOT be added as a separate W-NNN ranked entry."""
-    import triage_compute_ranking as tcr  # type: ignore[import-not-found]
+    import model.triage_compute_ranking as tcr  # type: ignore[import-not-found]
 
     data = _minimal_yaml(
         [
@@ -1733,3 +1930,40 @@ def test_refuted_row_records_its_verdict_without_neighbour_ids(tmp_path: Path) -
     row = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())["trust_boundaries"][0]
     assert row["assumption_verdict"] == "refuted"
     assert "adjacent_finding_ids" not in row
+
+
+@pytest.mark.parametrize(
+    ("effective", "reasons", "expected"),
+    [
+        ("Critical", ["always_crit_promoted:CWE-89"], "elevated to Critical by the always-critical rule for CWE-89"),
+        ("High", ["deterministic:other"], "elevated to High during prioritisation"),
+        ("Medium", [], None),
+    ],
+)
+def test_write_outputs_explains_an_elevated_rating_in_the_same_write(tmp_path: Path, effective, reasons, expected):
+    """RA-20: the rationale is the only surface that shows an elevated rating, so the
+    ranking that sets effective_severity also refreshes it — a later rebuild never
+    leaves an elevation unexplained."""
+    tcr = _tcr()
+    threats = [{"id": "T-001", "t_id": "T-001", "title": "x", "risk": "Medium", "cwe": "CWE-89"}]
+    _write_yaml(tmp_path / "threat-model.yaml", _minimal_yaml(threats))
+    ranking = tcr.compute_ranking(tmp_path)
+    for update in ranking["_finding_updates"]:
+        update.update(raw_severity="Medium", effective_severity=effective, reasons=reasons)
+    tcr.write_outputs(tmp_path, ranking)
+    written = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())["threats"][0]
+    assert written.get("severity_rationale") == expected
+
+
+@pytest.mark.parametrize("ids", [("T-071", "T-092"), ("F-208", "F-315")])
+def test_rank_mitigations_reads_canonical_threat_ids_before_effort(ids):
+    high, critical = ids
+    ranked = _tcr()._rank_mitigations(
+        [
+            {"id": "M-001", "threat_ids": [high], "effort": "Low"},
+            {"id": "M-002", "threat_ids": [critical], "effort": "High"},
+        ],
+        {high: "High", critical: "Critical"},
+    )
+    assert [row["id"] for row in ranked] == ["M-002", "M-001"]
+    assert ranked[0]["addresses_findings"] == [critical]

@@ -6,7 +6,7 @@
 # concrete, reachable code — not from design posture, policy gaps, or
 # coverage blind spots.
 #
-# Rules (enforced by scripts/validate_intermediate.py and the
+# Rules (enforced by scripts/validators/validate_intermediate.py and the
 # triage-validator):
 #   - threat.source == "known-vuln"               →  cvss_v4 REQUIRED
 #     (externally ingested advisory; the upstream supplies the vector.

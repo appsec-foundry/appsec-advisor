@@ -1,0 +1,366 @@
+#!/usr/bin/env python3
+"""Single source for the finding-severity tally and the finding display id.
+
+Three surfaces present the same model to the same reader and must agree
+(decision RA-7):
+
+* ``renderers/compose_threat_model.py`` renders the Management-Summary
+  ``**Risk distribution:**`` line and the §8 Findings Register.
+* ``renderers/summarize_threat_model.py`` prints the ``show-threat-model`` overview.
+* ``renderers/render_completion_summary.py`` prints the console ``Results`` block that
+  closes a run — the mirror of the Management Summary, in the one place a
+  headless run shows anything at all.
+
+They did not agree. The overview ranked findings by ``effective_severity`` —
+the post-triage rating that carries abuse-chain elevation — while the report
+buckets its finding inventory on ``risk``. On a 2026-07 juice-shop run the
+overview reported 27 Critical against 15 in §8 and 14 in the Management
+Summary, and promoted a Medium CI/CD finding into "Top Critical". The rules
+therefore live here, in one place, and every caller uses them.
+
+The completion summary was added late and counted ``threats[]`` itself, which
+is a fourth basis however plausible it looks: it keeps insecure-practice
+sites that fold into the weakness register and drops design-risk weaknesses,
+which have no instance in ``threats[]``. A 2026-08 juice-shop run closed with
+"36 total | 17 High" while its own report led with "Total: 34 · High: 15".
+A new reader-facing tally calls :func:`risk_distribution_counts`; it does not
+re-derive the rule from ``threats[]``. Figure 1 (``renderers/figure1_dfd.py``) is bound
+the same way: its header total is :func:`risk_distribution_counts`, and its
+per-component severity counts and STRIDE strip use :func:`register_threats`
+with :func:`register_severity`.
+
+Every per-finding severity the report shows — finding dots, the §8 cards and
+their grouping, the findings index, Figure 1 and 2 scenario ratings, per-cause
+colours and capability ranking, walkthrough dots and coverage counts — is
+:func:`register_severity` (decision RA-20). A finding whose
+``effective_severity`` differs shows that rating only as its explicit
+``severity_rationale`` (``model/emit_severity_rationale.py``). Surfaces that
+prioritise work rather than state a finding's rating stay on
+``effective_severity`` by design: §9 abuse cases, mitigation priority and the
+top-mitigation Critical floor (and the QA check that mirrors it), the verdict
+bullets' Critical floor (:func:`verdict_floor_ids`), Top Findings and
+walkthrough selection, and the YAML export, which carries both fields.
+
+Triage surfaces (``validators/review_threat_model.py``, ``model/query_threat_model.py``) tally
+the finding list they operate on, which is the §8 register basis and a
+deliberately different question — they are not bound by this module.
+
+Three tallies exist in the model and they are deliberately different:
+
+``risk``
+    Per-finding severity as rated. The §8 Findings Register buckets on this.
+
+``effective_severity``
+    ``risk`` plus abuse-chain, ingress and always-critical elevation. Drives
+    §9 and the prioritisation surfaces above. It is NOT a per-finding display
+    basis — using it double-counts the chain view into the per-finding view.
+
+Management-Summary basis
+    ``risk``, minus ``insecure-practice`` sites folded into the weakness
+    register, plus each ``design-risk`` weakness once at its heading severity
+    (it has no confirmed instance in ``threats[]`` and would otherwise be
+    invisible). This is what :func:`risk_distribution_counts` computes and
+    what the report leads with.
+"""
+
+from __future__ import annotations
+
+# Direct CLI execution must resolve the same packages as imports from scripts/.
+import sys as _sys
+from pathlib import Path as _Path
+
+if not __package__:
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
+
+import shared._finding_state as _finding_state  # noqa: E402
+
+# Display order for the canonical severity labels.
+SEVERITY_ORDER: dict[str, int] = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Informational": 4}
+
+# Keys of the Management-Summary risk distribution, in display order.
+DISTRIBUTION_KEYS: tuple[str, ...] = ("critical", "high", "medium", "low", "info")
+
+# Design-level sources carry no evidence tier and are represented by their
+# `design` weakness heading, so they must not inflate the confirmed tally.
+# Keep in sync with _shared_sources.DESIGN_LEVEL_SOURCES.
+_DESIGN_LEVEL_SOURCES = frozenset(
+    {
+        "requirements-compliance",
+        "known-threats",
+        "architecture-coverage",
+        "threat-hypothesis",
+        "architectural-anti-pattern",
+        "coverage-gap",
+    }
+)
+
+
+def display_id(raw: str) -> str:
+    """The id the reader actually sees in ``threat-model.md``.
+
+    The composer rewrites the visible label of a yaml ``T-NNN`` to ``F-NNN``
+    (``compose_threat_model._normalize_finding_label``); ``T-NNN`` survives
+    only as a hidden HTML anchor. The one visible ``T-`` family in the report
+    is ``AC-T-NNN`` — abuse cases, a different namespace — so a raw ``T-NNN``
+    citation sends the reader either nowhere or to the wrong record. Other id
+    classes (``M-``, ``C-``, ``W-``, ``AF-``, ``TH-``) pass through unchanged.
+    """
+    s = (raw or "").strip()
+    if len(s) > 2 and s[0] in "Tt" and s[1] == "-" and s[2:].isdigit():
+        return "F-" + s[2:]
+    return s
+
+
+def register_severity(threat: dict | None) -> str:
+    """Canonical severity for one finding, on the §8 Findings Register basis.
+
+    ``risk`` first, ``severity`` as the legacy fallback — deliberately NOT
+    ``effective_severity``. Returns the title-cased canonical label, or the
+    raw string when it is not one the model recognises.
+    """
+    if not threat:
+        return ""
+    raw = (threat.get("risk") or threat.get("severity") or "").strip()
+    if not raw:
+        return ""
+    label = raw[:1].upper() + raw[1:].lower()
+    return label if label in SEVERITY_ORDER else raw
+
+
+def is_refuted(threat: dict | None) -> bool:
+    """True when evidence verification refuted the finding.
+
+    The §8 register drops these; they are not part of the delivered
+    inventory. Delegates to the shared finding-state authority.
+    """
+    return _finding_state.is_refuted(threat)
+
+
+def is_folded_practice(threat: dict | None) -> bool:
+    """True when the finding is an ``insecure-practice`` site.
+
+    Only meaningful together with :func:`practice_fold_active`: when the
+    weakness register is populated these sites live under a weakness's
+    ``practice_evidence`` and are not standalone findings.
+    """
+    if not threat:
+        return False
+    return (threat.get("evidence_tier") or "") == "insecure-practice"
+
+
+def practice_fold_active(yaml_data: dict) -> bool:
+    """True when the weakness register is populated, so practice sites fold."""
+    return weakness_basis_breakdown(yaml_data) is not None
+
+
+def weakness_basis_breakdown(yaml_data: dict) -> tuple[int, int, int, int] | None:
+    """``(combined, confirmed, implementation, design)`` or ``None``.
+
+    ``None`` when the model carries no weakness register — the fold rules do
+    not apply then. ``confirmed`` counts findings the shared finding-state
+    authority calls confirmed (established evidence only; practice sites and
+    unchecked, ambiguous or refuted evidence are not confirmed), excluding
+    design-level sources. ``implementation`` / ``design`` count W-records.
+    The combined total is retained for callers that need an assessment count;
+    it must never be labelled a finding count.
+    """
+    weaknesses = yaml_data.get("weaknesses") or []
+    if not weaknesses:
+        return None
+    confirmed = sum(
+        1
+        for t in (yaml_data.get("threats") or [])
+        if _finding_state.is_confirmed(t) and (t.get("source") or "").strip() not in _DESIGN_LEVEL_SOURCES
+    )
+    implementation = sum(1 for w in weaknesses if w.get("kind") == "implementation")
+    design = sum(1 for w in weaknesses if w.get("kind") == "design")
+    return (confirmed + implementation + design, confirmed, implementation, design)
+
+
+def _tallied_threats(yaml_data: dict) -> list[tuple[dict, str]]:
+    """The ``threats[]`` rows the Risk-distribution tally counts, with their tally key."""
+    fold_practice = practice_fold_active(yaml_data)
+    rows = []
+    for t in yaml_data.get("threats") or []:
+        if fold_practice and is_folded_practice(t):
+            continue
+        sev = (t.get("risk") or t.get("severity") or "").strip().lower()
+        if sev in DISTRIBUTION_KEYS:
+            rows.append((t, sev))
+        elif sev in ("informational", "information"):
+            rows.append((t, "info"))
+    return rows
+
+
+def finding_confirmation(yaml_data: dict) -> tuple[int, int]:
+    """``(confirmed, findings)`` over exactly the findings the Risk distribution counts.
+
+    The Management-Summary evidence line reads "X of N findings confirmed", so
+    both numbers must range over one set: design-risk weaknesses are not
+    findings and stay out of N, and confirmation is the shared finding-state
+    authority (decision FE-21), never the stored ``evidence_tier``.
+    """
+    rows = [t for t, _ in _tallied_threats(yaml_data)]
+    confirmed = sum(
+        1
+        for t in rows
+        if _finding_state.is_confirmed(t) and (t.get("source") or "").strip() not in _DESIGN_LEVEL_SOURCES
+    )
+    return confirmed, len(rows)
+
+
+def risk_distribution_counts(yaml_data: dict) -> dict[str, int]:
+    """Severity tally for the Management-Summary Risk-distribution line.
+
+    Folded insecure-practice sites are excluded (they live under a weakness's
+    ``practice_evidence``, not as standalone findings). A ``design-risk``
+    weakness is added once at its heading severity: it has NO confirmed
+    instance in ``threats[]``, so a design-risk Critical (which may rank #1
+    per §9.3) would otherwise be invisible here. ``confirmed`` weaknesses are
+    already represented by their instances in ``threats[]`` and are NOT
+    re-added (no double-count).
+    """
+    fold_practice = practice_fold_active(yaml_data)
+    counts = {k: 0 for k in DISTRIBUTION_KEYS}
+    for _threat, key in _tallied_threats(yaml_data):
+        counts[key] += 1
+    if fold_practice:
+        for w in yaml_data.get("weaknesses") or []:
+            if (w.get("severity_basis") or "") != "design-risk":
+                continue
+            sev = (w.get("severity") or "").strip().lower()
+            if sev in counts:
+                counts[sev] += 1
+    return counts
+
+
+def register_threats(yaml_data: dict) -> list[dict]:
+    """The findings the §8 Findings Register lists, in yaml order.
+
+    Every non-refuted threat, including folded insecure-practice sites: the
+    Management Summary leaves those out of its headline tally, but §8 still
+    renders a card for each, so anything listed from here is something the
+    reader can look up. Deliberately NOT the risk-distribution membership —
+    filtering practice sites out of the list would silently drop real
+    findings (a 2026-07 juice-shop run would have lost the Critical
+    weak-password-hashing finding from "Top Critical").
+    """
+    return [t for t in (yaml_data.get("threats") or []) if isinstance(t, dict) and not is_refuted(t)]
+
+
+# Rank of the register severity floor (`--register-severity-floor`, resolved
+# into `meta.register_severity_floor`). Above `low` the floor drops Low and
+# Informational findings from `threats[]` in
+# `build_threat_model_yaml.build_threats`, so every tally derived from it is
+# blind to those tiers.
+_FLOOR_RANK: dict[str, int] = {"informational": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+
+
+def register_floor(yaml_data: dict) -> str:
+    """The severity floor ``threats[]`` was filtered at.
+
+    A model written before the floor was persisted falls back to ``medium``,
+    the resolver's default and the floor those runs used.
+    """
+    meta = yaml_data.get("meta") if isinstance(yaml_data, dict) else None
+    raw = str((meta or {}).get("register_severity_floor") or "medium").strip().lower()
+    return raw if raw in _FLOOR_RANK else "medium"
+
+
+def low_suppressed(yaml_data: dict) -> bool:
+    """True when the floor excludes Low, so no Low finding could reach the tally."""
+    return _FLOOR_RANK[register_floor(yaml_data)] > _FLOOR_RANK["low"]
+
+
+def tiers_below_floor(yaml_data: dict) -> list[str]:
+    """Severity tiers the register floor dropped from ``threats[]``, most severe first."""
+    floor = _FLOOR_RANK[register_floor(yaml_data)]
+    return [tier for tier, rank in sorted(_FLOOR_RANK.items(), key=lambda kv: -kv[1]) if rank < floor]
+
+
+def low_cell(yaml_data: dict, counts: dict) -> str:
+    """The Low tally as a reader sees it.
+
+    ``0`` states that the analysis found no Low finding. Under a floor above
+    ``low`` nothing could have been counted there, so the cell reads ``n/a``:
+    not measured, not measured-as-zero.
+    """
+    return "n/a" if low_suppressed(yaml_data) else str(counts.get("low", 0))
+
+
+# verdict.schema.json allows at most 8 bullets, so the floor never demands more
+# Critical findings than that many bullets can each carry alone.
+VERDICT_FLOOR_LIMIT = 8
+
+# The verdict's concern-level wording, shared by the report and the overview.
+VERDICT_LABEL = {
+    "red": "critical security concerns",
+    "yellow": "high security concerns",
+    "green": "no high or critical concerns reported",
+}
+
+
+def priority_severity(threat: dict | None) -> str:
+    """Canonical severity for prioritisation surfaces: ``effective_severity`` first."""
+    if not threat:
+        return ""
+    raw = str(threat.get("effective_severity") or "").strip()
+    label = raw[:1].upper() + raw[1:].lower()
+    return label if label in SEVERITY_ORDER else register_severity(threat)
+
+
+def verdict_ranked_ids(triage: dict | None) -> list[str]:
+    """Read the shared Top Findings order; an absent view uses model order."""
+    try:
+        rows = triage["ranking"]["views"]["top_findings"]["findings_ranked"]
+    except (TypeError, KeyError):
+        return []
+    if not isinstance(rows, list):
+        return []
+    return [r["id"] for r in rows if isinstance(r, dict) and isinstance(r.get("id"), str)]
+
+
+def verdict_basis(yaml_data: dict) -> dict[str, str]:
+    """Citable concerns and their priority, without asserting exploitability.
+
+    Findings retain their register ratings; verified priority elevation affects
+    the overall concern, as it does scenario selection. Design-risk weaknesses
+    have no confirmed finding and therefore carry their own W reference.
+    Refuted findings cannot support a verdict. Practice findings remain citable
+    while present in the register, without becoming confirmed exploitation.
+    """
+    basis = {display_id(str(t["id"])): priority_severity(t) for t in register_threats(yaml_data) if t.get("id")}
+    for w in yaml_data.get("weaknesses") or []:
+        if w.get("id") and w.get("severity_basis") == "design-risk":
+            basis[str(w["id"])] = register_severity(w)
+    return basis
+
+
+def verdict_severity(yaml_data: dict) -> str:
+    """Rate concerns in the assessed scope, never production readiness.
+
+    Critical concerns (including elevated findings and design risks) are red;
+    High concerns are yellow. Green means neither was reported, not that the
+    system is safe or that unexamined surfaces have been assessed.
+    """
+    severities = set(verdict_basis(yaml_data).values())
+    return "red" if "Critical" in severities else "yellow" if "High" in severities else "green"
+
+
+def verdict_floor_ids(yaml_data: dict, ranked_ids: list[str] | None = None) -> list[str]:
+    """Display ids of the Critical findings the Management-Summary verdict must cite (RA-23).
+
+    The verdict prioritises like Top Findings and the top-mitigation Critical
+    floor, so it counts :func:`priority_severity` Criticals of the register.
+    Order is the triage ranking, then yaml order; only the first
+    :data:`VERDICT_FLOOR_LIMIT` are required.
+    """
+    critical = [
+        display_id(str(t["id"]))
+        for t in register_threats(yaml_data or {})
+        if t.get("id") and priority_severity(t) == "Critical"
+    ]
+    rank = {tid: i for i, tid in enumerate(display_id(str(r)) for r in (ranked_ids or []))}
+    position = {tid: i for i, tid in enumerate(critical)}
+    critical.sort(key=lambda tid: (rank.get(tid, len(rank)), position[tid]))
+    return critical[:VERDICT_FLOOR_LIMIT]

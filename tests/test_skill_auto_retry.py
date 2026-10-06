@@ -22,10 +22,10 @@ SCRIPTS_DIR = PLUGIN_ROOT / "scripts"
 @pytest.mark.parametrize(
     "script_name",
     [
-        "merge_threats.py",
-        "triage_validate_ratings.py",
-        "pregenerate_fragments.py",
-        "check_inline_shortcut.py",
+        "model/merge_threats.py",
+        "validators/triage_validate_ratings.py",
+        "renderers/pregenerate_fragments.py",
+        "validators/check_inline_shortcut.py",
     ],
 )
 def test_recovery_script_exists(script_name):
@@ -36,10 +36,10 @@ def test_recovery_script_exists(script_name):
 @pytest.mark.parametrize(
     "script_name",
     [
-        "merge_threats.py",
-        "triage_validate_ratings.py",
-        "pregenerate_fragments.py",
-        "check_inline_shortcut.py",
+        "model/merge_threats.py",
+        "validators/triage_validate_ratings.py",
+        "renderers/pregenerate_fragments.py",
+        "validators/check_inline_shortcut.py",
     ],
 )
 def test_recovery_script_runnable(script_name):
@@ -59,7 +59,7 @@ def test_recovery_script_runnable(script_name):
 
 
 # ---------------------------------------------------------------------------
-# check_inline_shortcut.py --write-repair-plan — schema for retry consumer
+# validators/check_inline_shortcut.py --write-repair-plan — schema for retry consumer
 # ---------------------------------------------------------------------------
 
 
@@ -74,7 +74,7 @@ def _make_failing_state(tmp_path: Path) -> Path:
 def test_repair_plan_is_valid_json(tmp_path):
     out = _make_failing_state(tmp_path)
     subprocess.run(
-        [sys.executable, str(SCRIPTS_DIR / "check_inline_shortcut.py"), str(out), "--write-repair-plan"],
+        [sys.executable, str(SCRIPTS_DIR / "validators/check_inline_shortcut.py"), str(out), "--write-repair-plan"],
         capture_output=True,
         text=True,
         timeout=30,
@@ -89,7 +89,7 @@ def test_repair_plan_is_valid_json(tmp_path):
 def test_repair_plan_carries_indicators_and_missing_list(tmp_path):
     out = _make_failing_state(tmp_path)
     subprocess.run(
-        [sys.executable, str(SCRIPTS_DIR / "check_inline_shortcut.py"), str(out), "--write-repair-plan"],
+        [sys.executable, str(SCRIPTS_DIR / "validators/check_inline_shortcut.py"), str(out), "--write-repair-plan"],
         capture_output=True,
         text=True,
         timeout=30,
@@ -102,16 +102,16 @@ def test_repair_plan_carries_indicators_and_missing_list(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# runtime_cleanup.py — knows about the new bookkeeping files
+# runtime/runtime_cleanup.py — knows about the new bookkeeping files
 # ---------------------------------------------------------------------------
 
 
 def _load_runtime_cleanup():
-    if "runtime_cleanup" in sys.modules:
-        return sys.modules["runtime_cleanup"]
-    spec = importlib.util.spec_from_file_location("runtime_cleanup", SCRIPTS_DIR / "runtime_cleanup.py")
+    if "runtime.runtime_cleanup" in sys.modules:
+        return sys.modules["runtime.runtime_cleanup"]
+    spec = importlib.util.spec_from_file_location("runtime.runtime_cleanup", SCRIPTS_DIR / "runtime/runtime_cleanup.py")
     module = importlib.util.module_from_spec(spec)
-    sys.modules["runtime_cleanup"] = module
+    sys.modules["runtime.runtime_cleanup"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
@@ -146,7 +146,7 @@ def test_runtime_cleanup_actually_removes_them(tmp_path):
     (out / ".inline-shortcut-retry-count").write_text("2\n")
     (out / ".inline-shortcut-repair-plan.json").write_text("{}\n")
     result = subprocess.run(
-        [sys.executable, str(SCRIPTS_DIR / "runtime_cleanup.py"), str(out), "--stage", "post-qa"],
+        [sys.executable, str(SCRIPTS_DIR / "runtime/runtime_cleanup.py"), str(out), "--stage", "post-qa"],
         capture_output=True,
         text=True,
         timeout=15,
@@ -165,7 +165,7 @@ def test_runtime_cleanup_preserves_them_on_qa_failure(tmp_path):
     (out / ".inline-shortcut-retry-count").write_text("2\n")
     (out / ".inline-shortcut-repair-plan.json").write_text("{}\n")
     subprocess.run(
-        [sys.executable, str(SCRIPTS_DIR / "runtime_cleanup.py"), str(out), "--stage", "post-qa"],
+        [sys.executable, str(SCRIPTS_DIR / "runtime/runtime_cleanup.py"), str(out), "--stage", "post-qa"],
         capture_output=True,
         text=True,
         timeout=15,

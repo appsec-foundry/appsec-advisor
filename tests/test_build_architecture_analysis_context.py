@@ -6,12 +6,13 @@ import sys
 from pathlib import Path
 
 import jsonschema
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import build_architecture_analysis_context as context  # noqa: E402
-import context_routing as routing  # noqa: E402
+import contexts.build_architecture_analysis_context as context  # noqa: E402
+import contexts.context_routing as routing  # noqa: E402
 
 
 def _schema(name: str) -> dict:
@@ -167,6 +168,49 @@ def test_route_projection_is_bounded_risk_first_and_diverse() -> None:
     )
 
 
+def _inventory_only_route_fields() -> set[str]:
+    inventory = _schema("route-inventory.schema.json")["$defs"]["route"]["properties"]
+    projection = _schema("architecture-route-context.schema.json")["$defs"]["route"]["properties"]
+    return set(inventory) - set(projection)
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        pytest.param({}, id="contracted-fields-only"),
+        pytest.param(
+            {name: "routes/handler.ts" for name in _inventory_only_route_fields()}, id="inventory-only-fields"
+        ),
+        pytest.param({"field_added_later": {"nested": [1]}}, id="unknown-future-field"),
+    ],
+)
+def test_route_projection_keeps_exactly_its_contracted_fields(extra: dict) -> None:
+    """An inventory field the projection schema does not declare must not abort the run.
+
+    `handler_module` joined the inventory and every run with a resolved handler
+    failed architecture-route-context validation, because routes were copied verbatim.
+    """
+    contracted = set(_schema("architecture-route-context.schema.json")["$defs"]["route"]["properties"])
+    source = {**_route(1, risky=True), **extra}
+    payload = json.dumps({"version": 1, "routes": [source], "coverage": {}}).encode()
+
+    projected = context.project_routes(payload)
+
+    jsonschema.validate(projected, _schema("architecture-route-context.schema.json"))
+    assert projected["routes"] == [{key: value for key, value in source.items() if key in contracted}]
+
+
+def test_the_analyst_receives_the_module_that_implements_a_route() -> None:
+    """Routes registered in one server file map to components only through their handler module."""
+    route = {**_route(1), "handler_file": "server.ts", "handler_module": "routes/basket.ts"}
+    payload = json.dumps({"version": 1, "routes": [route], "coverage": {}}).encode()
+
+    projected = context.project_routes(payload)
+
+    jsonschema.validate(projected, _schema("architecture-route-context.schema.json"))
+    assert projected["routes"][0]["handler_module"] == "routes/basket.ts"
+
+
 def test_build_writes_both_projection_artifacts(tmp_path: Path) -> None:
     (tmp_path / ".recon-summary.md").write_text("# Recon\nsummary\n", encoding="utf-8")
     (tmp_path / ".route-inventory.json").write_text(
@@ -219,3 +263,199 @@ def test_the_llm_rank_is_what_retains_it_not_merely_having_a_tag() -> None:
 
     ranked = sorted(routes, key=context._route_order_key)
     assert ranked.index(llm) < context.MAX_ROUTES // 2, "an LLM route must rank into the guaranteed half"
+
+
+def _role_repo(root: Path, units: set[str]) -> Path:
+    dependencies = {}
+    if "realtime" in units:
+        dependencies["socket.io"] = "4"
+        (root / "lib").mkdir(exist_ok=True)
+        (root / "lib/events.ts").write_text("import { Server } from 'socket.io'\n", encoding="utf-8")
+    if "web3" in units:
+        dependencies["ethers"] = "6"
+        (root / "routes").mkdir(exist_ok=True)
+        (root / "routes/wallet.ts").write_text("// web3 wallet endpoint\n", encoding="utf-8")
+    if "embedded-store" in units:
+        dependencies["marsdb"] = "1"
+        (root / "data").mkdir(exist_ok=True)
+        (root / "data/documents.ts").write_text(
+            "import Engine from 'marsdb'\nconst records = new Engine.Collection('records')\n", encoding="utf-8"
+        )
+    if "ci-cd" in units:
+        (root / ".github/workflows").mkdir(parents=True, exist_ok=True)
+        (root / ".github/workflows/build.yml").write_text("on: push\n", encoding="utf-8")
+    if "authentication" in units:
+        (root / "routes").mkdir(exist_ok=True)
+        (root / "routes/login.ts").write_text("export function login() {}\n", encoding="utf-8")
+    (root / "package.json").write_text(json.dumps({"dependencies": dependencies}), encoding="utf-8")
+    return root
+
+
+ROLE_UNIT_SHAPES = [
+    set(),
+    {"ci-cd"},
+    {"realtime", "embedded-store"},
+    {"authentication", "ci-cd", "realtime", "web3", "embedded-store"},
+]
+
+
+@pytest.mark.parametrize("units", ROLE_UNIT_SHAPES, ids=lambda units: "+".join(sorted(units)) or "none")
+def test_role_units_name_exactly_what_finalization_would_add(tmp_path: Path, units: set[str]) -> None:
+    import orchestrator.build_stride_dispatch_manifest as manifest
+
+    repo = _role_repo(tmp_path, units)
+    projected = context.project_role_units(repo)
+    jsonschema.validate(projected, _schema("architecture-role-units.schema.json"))
+    assert {unit["role"] for unit in projected["units"]} == units
+    _, injected = manifest.reconcile_inventory([], repo)
+    assert [unit["id"] for unit in projected["units"]] == [card["id"] for card in injected]
+    modelled = [
+        {
+            "id": unit["id"],
+            "name": unit["name"],
+            "tier": unit["tier"],
+            "framework": unit["framework"],
+            "paths": unit["paths"],
+        }
+        for unit in projected["units"]
+    ]
+    assert manifest.reconcile_inventory(modelled, repo)[1] == []
+    rendered = (json.dumps(projected, indent=2) + "\n").encode()
+    profile = json.loads((ROOT / "data" / "context-routing-bindings.json").read_text(encoding="utf-8"))[
+        "limit_profiles"
+    ]["role_units"]
+    routing._enforce_limits(  # noqa: SLF001
+        "architecture.role_units",
+        routing._counts(rendered, record_count=len(projected["units"])),  # noqa: SLF001
+        profile,
+    )
+
+
+def test_role_unit_projection_bounds_units_and_paths_with_disclosure(tmp_path: Path, monkeypatch) -> None:
+    import orchestrator.build_stride_dispatch_manifest as manifest
+
+    card = {"name": "Unit", "role": "realtime", "tier": "application", "framework": None}
+    cards = [dict(card, id=f"unit-{i}", paths=[f"src/unit{i}/file{j}.ts" for j in range(30)]) for i in range(15)]
+    monkeypatch.setattr(manifest, "role_unit_candidates", lambda _repo: cards)
+    projected = context.project_role_units(tmp_path)
+    jsonschema.validate(projected, _schema("architecture-role-units.schema.json"))
+    assert len(projected["units"]) == context.MAX_ROLE_UNITS
+    assert projected["limits"]["omitted_units"] == 15 - context.MAX_ROLE_UNITS
+    assert all(len(unit["paths"]) == context.MAX_ROLE_UNIT_PATHS for unit in projected["units"])
+    assert all(unit["omitted_paths"] == 30 - context.MAX_ROLE_UNIT_PATHS for unit in projected["units"])
+
+
+def test_cli_writes_role_units_only_for_a_repository(tmp_path: Path) -> None:
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / ".recon-summary.md").write_text("# Recon\nsummary\n", encoding="utf-8")
+    (output / ".route-inventory.json").write_text(
+        json.dumps(
+            {"version": 1, "routes": [], "coverage": {"frameworks_detected": [], "unsupported_route_files": []}}
+        ),
+        encoding="utf-8",
+    )
+    target = output / ".dispatch-context/architecture/role-units.json"
+    assert context.main(["--output-dir", str(output)]) == 0
+    assert not target.exists()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _role_repo(repo, {"ci-cd"})
+    assert context.main(["--output-dir", str(output), "--repo-root", str(repo)]) == 0
+    assert json.loads(target.read_text()) == context.project_role_units(repo)
+
+
+# Each projection bounds untrusted or LLM-authored input for a fail-closed
+# controller receipt, so any input must yield schema-valid output or a
+# ContextProjectionError — never a projection the receipt rejects.
+def _hint_rows(count: int) -> str:
+    return "\n".join(f"| svc-{i} | Service | java | role | /api |" for i in range(count))
+
+
+RECON_SHAPES = {
+    "component hints at the generic cap": f"# R\n## 9. Preliminary Components\nIntro\n| h |\n|---|\n{_hint_rows(5)}\n",
+    "component hints above the generic cap": f"# R\n## 9. Preliminary Components\nIntro\n| h |\n|---|\n{_hint_rows(9)}\n",
+    "component hints above their own cap": f"# R\n## 9. Preliminary Components\n{_hint_rows(300)}\n",
+    "component heading at level three": f"# R\n### Preliminary Components\n{_hint_rows(30)}\n",
+    "overlong component heading": f"# R\n## {'x' * 400} Preliminary Components\n{_hint_rows(30)}\n",
+    "overlong heading": f"# {'H' * 5000}\n- a\n",
+    "overlong lines": "# R\n## S\n" + "\n".join("y" * 5000 for _ in range(20)) + "\n",
+    "heading only": "# R\n",
+    "sections at the cap": "".join(f"## S{i}\n" + "- line\n" * 12 for i in range(64)),
+}
+
+
+@pytest.mark.parametrize("shape", sorted(RECON_SHAPES))
+def test_recon_projection_is_schema_valid_for_any_shape(shape: str) -> None:
+    projected = context.project_recon_summary(RECON_SHAPES[shape].encode())
+    jsonschema.validate(projected, _schema("recon-summary-context.schema.json"))
+
+
+def test_recon_schema_keeps_the_generic_line_cap_outside_component_hints() -> None:
+    projected = context.project_recon_summary(f"# R\n## Routes\n{_hint_rows(3)}\n".encode())
+    projected["sections"][1]["lines"] = ["line"] * (context.MAX_SECTION_LINES + 1)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(projected, _schema("recon-summary-context.schema.json"))
+
+
+def test_too_many_recon_headings_fail_closed_with_a_projection_error() -> None:
+    payload = "".join(f"## S{i}\n- a\n" for i in range(context.MAX_RECON_SECTIONS + 1)).encode()
+    with pytest.raises(context.ContextProjectionError):
+        context.project_recon_summary(payload)
+
+
+ROUTE_SHAPES = {
+    "overlong path": dict(_route(1), path="/" + "p" * 5000),
+    "overlong framework": dict(_route(2), framework="f" * 500),
+    "unknown confidence": dict(_route(3), confidence="certain"),
+    "missing required field": {key: value for key, value in _route(4).items() if key != "handler_file"},
+}
+
+
+@pytest.mark.parametrize("shape", sorted(ROUTE_SHAPES))
+def test_route_projection_omits_a_route_its_schema_rejects(shape: str) -> None:
+    inventory = {
+        "version": 1,
+        "routes": [_route(10), ROUTE_SHAPES[shape]],
+        "coverage": {
+            "frameworks_detected": ["express", "express", "f" * 500, 7],
+            "unsupported_route_files": ["a.ts", "a.ts", "u" * 5000],
+        },
+    }
+    projected = context.project_routes(json.dumps(inventory).encode())
+    jsonschema.validate(projected, _schema("architecture-route-context.schema.json"))
+    assert [route["route_id"] for route in projected["routes"]] == ["R-010"]
+    assert projected["limits"]["omitted_routes"] == 1
+    assert projected["coverage"] == {"frameworks_detected": ["express"], "unsupported_route_files": ["a.ts"]}
+    assert projected["limits"]["omitted_unsupported_route_files"] == 2
+
+
+ROLE_UNIT_SHAPES = {
+    "overlong id": {"id": "a" * 200},
+    "id outside its pattern": {"id": "Unit_X"},
+    "overlong name": {"name": "n" * 200},
+    "overlong framework": {"framework": "f" * 200},
+    "only unprojectable paths": {"paths": ["/abs/path.ts", "../escape.ts", "p" * 600]},
+}
+
+
+@pytest.mark.parametrize("shape", sorted(ROLE_UNIT_SHAPES))
+def test_role_unit_projection_omits_a_unit_its_schema_rejects(shape: str, tmp_path: Path, monkeypatch) -> None:
+    import orchestrator.build_stride_dispatch_manifest as manifest
+
+    good = {"id": "unit-ok", "name": "Unit", "role": "realtime", "tier": "application", "framework": None}
+    good["paths"] = ["src/ok.ts", "src/ok.ts", "/abs.ts"]
+    bad = dict(good, id="unit-bad", paths=["src/bad.ts"])
+    bad.update(ROLE_UNIT_SHAPES[shape])
+    monkeypatch.setattr(manifest, "role_unit_candidates", lambda _repo: [bad, good])
+    projected = context.project_role_units(tmp_path)
+    jsonschema.validate(projected, _schema("architecture-role-units.schema.json"))
+    assert [unit["id"] for unit in projected["units"]] == ["unit-ok"]
+    assert projected["units"][0]["paths"] == ["src/ok.ts"]
+    assert projected["units"][0]["omitted_paths"] == 2
+    assert projected["limits"]["omitted_units"] == 1
+
+
+def test_a_projection_its_schema_rejects_is_a_projection_error() -> None:
+    with pytest.raises(context.ContextProjectionError, match="recon-summary-context"):
+        context._checked(context.RECON_SCHEMA, {"schema_version": 1})  # noqa: SLF001

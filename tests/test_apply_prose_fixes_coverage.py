@@ -1,4 +1,4 @@
-"""Coverage extension for scripts/apply_prose_fixes.py.
+"""Coverage extension for scripts/repairs/apply_prose_fixes.py.
 
 Targets wrap-line guard branches, controls-covered/anchor/title/relevant-findings
 post-processors, blockquote handling, apply_code_formatting fences and main().
@@ -14,15 +14,15 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "apply_prose_fixes.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "repairs/apply_prose_fixes.py"
 
 
 def _load():
-    if "apply_prose_fixes" in sys.modules:
-        return sys.modules["apply_prose_fixes"]
-    spec = importlib.util.spec_from_file_location("apply_prose_fixes", SCRIPT_PATH)
+    if "repairs.apply_prose_fixes" in sys.modules:
+        return sys.modules["repairs.apply_prose_fixes"]
+    spec = importlib.util.spec_from_file_location("repairs.apply_prose_fixes", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["apply_prose_fixes"] = module
+    sys.modules["repairs.apply_prose_fixes"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
@@ -260,8 +260,8 @@ def test_module_runpy_main_guard(tmp_path: Path):
     md = tmp_path / "tm.md"
     md.write_text("plain text\n", encoding="utf-8")
     argv = sys.argv
-    sys.argv = ["apply_prose_fixes.py", str(md)]
-    sys.modules.pop("apply_prose_fixes", None)
+    sys.argv = ["repairs/apply_prose_fixes.py", str(md)]
+    sys.modules.pop("repairs.apply_prose_fixes", None)
     try:
         with pytest.raises(SystemExit) as ei:
             runpy.run_path(str(SCRIPT_PATH), run_name="__main__")

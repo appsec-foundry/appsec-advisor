@@ -5,7 +5,7 @@ DEFERRED after measurement — see "Decisions after measurement" at the end, whi
 records the numbers and the trigger that would reverse each call. Mechanism 5 untouched.
 **Date:** 2026-08-01
 **Basis:** juice-shop thorough run (79 threats, 5 boundaries) read against
-`triage_compute_ranking.py`, `merge_threats.py`, `prepare_trust_boundary_context.py`,
+`model/triage_compute_ranking.py`, `model/merge_threats.py`, `contexts/prepare_trust_boundary_context.py`,
 `appsec-stride-analyzer.md`. Builds on the §1 "Assumption & verdict" work (derived
 per-boundary verdicts `Refuted` / `Unconfirmed` / `No finding contradicts it` in
 `compose._boundary_assumption_verdict`), which is the rendering seam every mechanism
@@ -22,7 +22,7 @@ reasons, all observed on the juice-shop run:
    (tb-2) showed zero links while eight CI/CD findings disproved its own assumption
    ("job-level secret scoping not confirmed").
 2. **The only scoring hook aims below High.** `elevated:external_boundary`
-   (`triage_compute_ranking.py`, +1 step, capped at High, requires the finding's own
+   (`model/triage_compute_ranking.py`, +1 step, capped at High, requires the finding's own
    validated `boundary_refs` at confirmed ingress) never fired: 11 of the 12 linked
    findings were already High/Critical; the single Medium (T-075) sits on an *egress*
    crossing. The hook is dead precisely in repos where ingress-adjacent findings are
@@ -106,7 +106,7 @@ Held back for three reasons (this section is the decision record):
   `elevated:boundary_refuted(tb-N)` must not fire for the same finding — one tb-N
   elevates exactly once. Build this guard (and the reason string) into 2's
   implementation so 3 becomes a small delta.
-- **Doctrine exception.** `triage_compute_ranking.py` states: *"Component adjacency
+- **Doctrine exception.** `model/triage_compute_ranking.py` states: *"Component adjacency
   alone is never enough: callers pass only IDs from fully validated boundary_refs."*
   Mechanism 3 is the first exception: adjacency + evidence-backed refutation by
   *other* findings suffices. Defensible, but it must be a named decision, not a side
@@ -223,7 +223,7 @@ exactly the fuzzy predicate ("attack presupposes the control") flagged when the
 mechanism was written, and the first real dataset produces a false positive in it.
 
 Building a doctrine exception ("component adjacency alone is never enough",
-`triage_compute_ranking.py`) on three candidates with ≥1 false positive is not
+`model/triage_compute_ranking.py`) on three candidates with ≥1 false positive is not
 justified. The minimal form is effectively already shipped: the reason string
 documents the causal crossing, and where distance should flip severity the
 `always_critical_cwes` gates already do it per CWE with explicit context.

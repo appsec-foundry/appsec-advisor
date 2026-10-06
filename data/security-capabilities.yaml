@@ -1,0 +1,171 @@
+# Security-relevant capabilities of components and service roles of external
+# entities. The architecture producer assigns them with file/line evidence;
+# Figure 1 shows the label. A label is a function, not a finding; only its
+# border shows the severity of a linked reported finding.
+#
+# The ids are the enum values of `components[].capabilities[].capability` and
+# `external_entities[].service_roles[].role` in the component, data-flow,
+# boundary-assessment and threat-model schemas; ids are unique across both maps.
+# `note` adds a legend explanation when the label alone could be misread.
+# `implies` names the generic values a more specific one already covers; the
+# figure shows only the specific label when both are evidenced.
+# `cwes` links the element's reported findings to a value (a more specific
+# value also takes the CWEs of the values it implies). `tier` is the security
+# criticality of the function type (1 = highest): the figure orders labels by
+# tier, then by their most severe linked finding, then vocabulary order; it
+# always shows every tier-1 label (at most five; keep tier 1 that small), fills up to three labels with the next
+# ones, and lists the rest under "Further capabilities". A label with a linked
+# finding carries that finding's severity colour on its border. A finding
+# from a deterministic source rule also adds the label with its code location
+# when the producer omitted it; a CWE belongs to at most one value.
+schema_version: 1
+
+component_capabilities:
+  file-upload:
+    label: File upload
+    tier: 1
+    cwes: [CWE-434]
+  code-evaluation:
+    label: Dynamic code evaluation
+    note: runs runtime data as program code
+    tier: 1
+    cwes: [CWE-94, CWE-95]
+  url-fetch:
+    label: URL fetch
+    note: requests a URL that runtime input selects or influences
+    tier: 1
+    cwes: [CWE-918]
+  xml-parsing:
+    label: XML parsing
+    tier: 2
+    cwes: [CWE-611, CWE-776]
+  template-rendering:
+    label: Server-side templates
+    tier: 2
+    cwes: [CWE-1336]
+  llm-calls:
+    label: LLM calls
+    tier: 3
+    cwes: [CWE-1427]
+  llm-tools:
+    label: LLM + tools
+    note: model calls with executable application tools
+    implies: [llm-calls]
+    tier: 1
+  rag-retrieval:
+    label: RAG retrieval
+    note: retrieves documents for model context; no autonomy implied
+    tier: 2
+  rag-ingestion:
+    label: RAG ingestion
+    note: writes source documents or derived chunks to a retrieval corpus
+    tier: 2
+  agent-memory:
+    label: Persistent AI memory
+    note: reads or writes model context across runs
+    tier: 2
+  agent-delegation:
+    label: Agent delegation
+    note: delegates model-directed work to another agent
+    tier: 2
+  mcp-client:
+    label: MCP client
+    note: invokes MCP operations; transport and authority belong to flows
+    tier: 2
+  mcp-server:
+    label: MCP server
+    note: exposes MCP operations; no model autonomy implied
+    tier: 2
+  token-issuer:
+    label: Token issuer
+    tier: 2
+  jwt-issuer:
+    label: JWT issuer
+    implies: [token-issuer]
+    tier: 2
+  mfa-verifier:
+    label: MFA verifier
+    tier: 2
+  oauth-client:
+    label: OAuth client
+    tier: 2
+  oidc-client:
+    label: OIDC client
+    implies: [oauth-client]
+    tier: 2
+  saml-service-provider:
+    label: SAML service provider
+    tier: 2
+  websocket-endpoint:
+    label: WebSocket endpoint
+    tier: 3
+    cwes: [CWE-1385]
+  graphql-endpoint:
+    label: GraphQL endpoint
+    tier: 3
+  payment-processing:
+    label: Payment processing
+    tier: 3
+  email-sending:
+    label: Email sending
+    tier: 4
+  admin-functions:
+    label: Admin functions
+    tier: 1
+  blockchain-client:
+    label: Blockchain client
+    tier: 4
+  background-jobs:
+    label: Background jobs
+    tier: 4
+
+# `identity_provider_label` replaces `label` on an entity users sign in at
+# (kind identity-provider); a machine-to-machine server keeps the protocol term.
+service_roles:
+  oauth-authorization-server:
+    label: OAuth authorization server
+    identity_provider_label: IdP · OAuth 2.0
+    tier: 1
+  oauth-resource-server:
+    label: OAuth resource server
+    identity_provider_label: Profile API
+    tier: 2
+  oidc-provider:
+    label: OIDC provider
+    identity_provider_label: IdP · OpenID Connect
+    implies: [oauth-authorization-server]
+    tier: 1
+  saml-identity-provider:
+    label: SAML identity provider
+    identity_provider_label: IdP · SAML
+    tier: 1
+  llm-inference:
+    label: LLM inference
+    tier: 1
+  mcp-service:
+    label: MCP service
+    tier: 2
+  retrieval-store:
+    label: Retrieval store
+    tier: 2
+  blockchain-rpc:
+    label: Blockchain RPC
+    tier: 3
+  payment-provider:
+    label: Payment provider
+    tier: 2
+  email-delivery:
+    label: Email delivery
+    tier: 3
+  object-storage:
+    label: Object storage
+    tier: 2
+  message-broker:
+    label: Message broker
+    tier: 2
+  telemetry-service:
+    label: Telemetry service
+    tier: 3
+  package-registry:
+    label: Package registry
+    tier: 1

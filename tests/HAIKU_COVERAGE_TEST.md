@@ -51,7 +51,7 @@ time /appsec-advisor:create-threat-model \
     2>&1 | tee /tmp/coverage-test-baseline/run.log
 
 # Extract cost
-python3 scripts/verify_run_costs.py /tmp/coverage-test-baseline
+python3 scripts/runtime/verify_run_costs.py /tmp/coverage-test-baseline
 ```
 
 Expectation: `threat-model.yaml` present, findings ≥ 5, no hard error.
@@ -71,7 +71,7 @@ time /appsec-advisor:create-threat-model \
     --yaml \
     2>&1 | tee /tmp/coverage-test-treatment/run.log
 
-python3 scripts/verify_run_costs.py /tmp/coverage-test-treatment
+python3 scripts/runtime/verify_run_costs.py /tmp/coverage-test-treatment
 ```
 
 ### Step 3: Comparison
@@ -111,7 +111,7 @@ yq '.threats[] | select(.severity == "Critical") | .title' /tmp/coverage-test-tr
 | **Severity-distribution drift** | ≤ ±15 % per severity class |
 | **Wallclock reduction** | ≥ 20 % (expected: 25-30 %) |
 | **Cost reduction** | ≥ 25 % (expected: ~33 %) |
-| **Schema validity** | both YAMLs pass `validate_intermediate.py` |
+| **Schema validity** | both YAMLs pass `validators/validate_intermediate.py` |
 
 ## Result documentation
 

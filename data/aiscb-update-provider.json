@@ -1,0 +1,5 @@
+{
+  "schema": 1,
+  "skill": "/appsec-advisor:update-baseline",
+  "installer_protocol": "aiscb-refresh-installed-v1"
+}

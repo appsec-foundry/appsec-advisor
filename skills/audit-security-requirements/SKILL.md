@@ -13,12 +13,8 @@ user-visible output is, in order: the `AppSec Requirements Audit` title +
 requirements (Step 3), and the saved-file lines (Step 4). Between those, scan
 the repository **silently**.
 
-Do **not** narrate reasoning or step transitions. Forbidden filler includes
-lines like "Now load threat model context…", "Banner first, then I'll grade",
-"Let me scan systematically", "Now gathering codebase evidence". Tool calls run
-without a running commentary. Between the banner and the results the **only**
-permitted output is the batch progress line specified in Step 2 — one per
-batch, nothing else. Internal caveats (e.g. an empty `violated_requirements`
+Between the banner and the results the only permitted output is the batch
+progress line specified in Step 2 — one per batch. Internal caveats (e.g. an empty `violated_requirements`
 map) are not surfaced as prose — they simply produce empty cross-links.
 
 **No prose summary of the verdict.** The result is exactly two things: the fixed
@@ -48,80 +44,13 @@ In `--quiet` with `--gate`, also print the one-line `requirements-gate:` verdict
 and honour its exit code. If `--quiet` is given without any save flag, there is
 nothing to write — print just the status line.
 
-## `--help` — inline help (early exit)
+## `--help` — help (early exit)
 
-If the user's arguments contain `--help` or `-h`, **do not scan the repository**. Print the block below verbatim to the conversation and exit with status 0.
+If the user's arguments contain `--help` or `-h`, **do not scan the repository**. Run the following Bash command, output its stdout verbatim, then exit with status 0. Do not read any other file besides `HELP.txt`.
 
+```bash
+cat "<base-dir>/HELP.txt"
 ```
-/appsec-advisor:audit-security-requirements — Audit a repo against your security requirements.
-
-USAGE
-  /appsec-advisor:audit-security-requirements [CATEGORY_FILTER] [FLAGS]
-
-  CATEGORY_FILTER is an optional substring matched against requirement IDs and
-  category IDs (e.g. "SEC-AUTH" or "AUTH"). When given, ONLY matching
-  requirements are graded — the filter narrows scope for a focused review of
-  one area. (It no longer force-includes every MUST; an unfiltered run grades
-  the whole catalog.)
-
-WHERE REQUIREMENTS COME FROM (highest priority first)
-  1. --requirements <src>      explicit source for this run (no cache fallback)
-  2. --demo                    packaged example catalog (clearly stamped DEMO)
-  3. docs/security/requirements.yaml   a local repo catalog, if present
-                               (beats the org profile; surfaced in the banner)
-  4. the active org profile's configured source
-  5. the legacy configured source
-  6. the remembered source     the URL the catalog was last fetched from,
-                               served from the plugin cache
-  On first use with none of the above, the audit explains what to pass and
-  offers to run against --demo.
-
-SOURCE FLAGS
-  --requirements <src>     http(s):// URL or local file path (abs/rel/~).
-  --update                 force a fresh re-fetch from the remembered/configured
-                           source and refresh the cache.
-  --cache-only             use the plugin cache only; never touch the network.
-  --demo                   audit against the packaged example catalog (DEMO).
-  --status                 show which requirements WOULD be used (source, date,
-                           count, freshness) and exit — no audit, no fetch.
-  --clear-requirements     forget the remembered source + cached catalog, exit.
-  --org-profile <path>     use this org profile for source resolution.
-  --preset <name>          use a specific preset from the active org profile.
-  --no-org-profile         ignore packaged/env-pointed org profiles.
-
-OUTPUT FLAGS
-  --md                     save the rendered report as
-                           docs/security/appsec-requirements-report.md
-  --pdf                    save a PDF (docs/security/appsec-requirements-report.pdf);
-                           also writes the Markdown it is converted from
-  --json                   copy the structured verdict to
-                           docs/security/appsec-requirements-report.json
-  --save                   --md, --pdf and --json
-  --quiet                  suppress the banner + findings; print only a one-line
-                           status and the saved file path(s). Use with a save flag.
-
-GATE FLAGS (CI / merge gate — advisory by default)
-  --gate                   exit non-zero when a gating requirement fails.
-  --gate-on <fail|partial> what gates: fail (default) or fail+partial.
-  --priority-floor <MUST|SHOULD|MAY>
-                           lowest priority that may gate (default MUST).
-  The --gate / --gate-on / --priority-floor defaults can be preset in the active
-  org profile (preset requirements.gate); an explicit flag here overrides it.
-
-DEFAULT BEHAVIOUR
-  A plain run prints a banner (catalog, source, fetch date, count, freshness),
-  grades the catalog, and prints the open requirements — no files written.
-  --md/--pdf additionally write the human report. --json or --gate additionally
-  build a deterministic structured verdict
-  (docs/security/.requirements-audit.json, schema-validated, counts recomputed)
-  and run the gate. A fresh cache (< 30 days) is reused without a network
-  round-trip; a stale cache triggers a refresh that falls back to the cache.
-
-See `/appsec-advisor:status` for plugin & configuration status, and
-`docs/security-requirements-audit-skill.md` for the full source-resolution rules.
-```
-
-After printing, exit. Do not read any files or perform any other action.
 
 ## Step 1 — Parse arguments and load requirements
 
@@ -129,7 +58,7 @@ After printing, exit. Do not read any files or perform any other action.
 
 The user may pass arguments after the skill name. Parse them now:
 
-- **Category filter** — any word that does not start with `--` (e.g. `AUTH`, `SQL`) — grade ONLY requirements whose ID or category contains this string. It narrows scope; it does not force-include other priorities. An unfiltered run grades the whole catalog.
+- **Category filter** — any word that does not start with `--` (e.g. `AUTH`, `SQL`) — grade ONLY requirements whose ID or category contains this string. It narrows scope. An unfiltered run grades the whole catalog.
 - `--md` — save results as `docs/security/appsec-requirements-report.md` after rendering
 - `--pdf` — save `docs/security/appsec-requirements-report.pdf` (converted from the Markdown report, which is written too)
 - `--json` — save results as `docs/security/appsec-requirements-report.json` after rendering
@@ -141,7 +70,7 @@ The user may pass arguments after the skill name. Parse them now:
 - `--demo` — audit against the packaged example catalog. The report is stamped **DEMO**.
 - `--status` — **mode flag**: print the resolution banner (source, date, count, freshness) and exit. Do not scan the repository.
 - `--clear-requirements` — **mode flag**: forget the remembered source and delete the cached catalog, then exit. Do not scan the repository.
-- `--gate` — enforce a CI gate: exit non-zero when a gating requirement fails (default advisory, always exit 0). Decided deterministically by `scripts/requirements_gate.py`, not by the model.
+- `--gate` — enforce a CI gate: exit non-zero when a gating requirement fails (default advisory, always exit 0). Decided deterministically by `scripts/requirements/requirements_gate.py`, not by the model.
 - `--gate-on <fail|partial>` — what gates: `fail` (default) or `fail`+`partial`.
 - `--priority-floor <MUST|SHOULD|MAY>` — lowest priority eligible to gate (default `MUST`).
 - `--org-profile <path>` — use this org profile for source resolution instead of the packaged default.
@@ -211,12 +140,9 @@ Find the plugin root:
 
 ```bash
 if [ -z "$CLAUDE_PLUGIN_ROOT" ]; then
-  SKILL_MD_PATH=$(find /root /home /opt -maxdepth 6 \
-    -path "*/appsec-advisor/skills/audit-security-requirements/SKILL.md" \
-    2>/dev/null | head -1)
-  if [ -n "$SKILL_MD_PATH" ]; then
-    CLAUDE_PLUGIN_ROOT=$(dirname "$(dirname "$(dirname "$SKILL_MD_PATH")")")
-  fi
+  # <base-dir> from the invocation line. Never search the filesystem: several
+  # checkouts may exist and the first hit is arbitrary.
+  CLAUDE_PLUGIN_ROOT=$(cd "<base-dir>/../.." && pwd)
 fi
 export CLAUDE_PLUGIN_ROOT
 if [ -z "$CLAUDE_PLUGIN_ROOT" ] || [ ! -d "$CLAUDE_PLUGIN_ROOT" ]; then
@@ -240,7 +166,7 @@ ORG_ARGS=()
 [ -n "$PRESET_OVERRIDE" ] && ORG_ARGS+=(--preset "$PRESET_OVERRIDE")
 [ "$NO_ORG_PROFILE" = "true" ] && ORG_ARGS+=(--no-org-profile)
 
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_org_profile.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/resolve_org_profile.py" \
   --output-dir "$AUDIT_OUTPUT_DIR" \
   --emit-file \
   "${ORG_ARGS[@]}" >/dev/null
@@ -286,7 +212,7 @@ exit; the skill does not audit on this invocation:
 
 ```bash
 if [ "$CLEAR_REQUIREMENTS" = "true" ]; then
-  python3 "$CLAUDE_PLUGIN_ROOT/scripts/fetch_requirements.py" \
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/requirements/fetch_requirements.py" \
     --caller audit-security-requirements --output-dir "$AUDIT_OUTPUT_DIR" \
     --plugin-root "$CLAUDE_PLUGIN_ROOT" --clear-requirements
   exit 0
@@ -307,7 +233,7 @@ REQ_SOURCE_ARGS=(--caller audit-security-requirements --output-dir "$AUDIT_OUTPU
 [ -n "$REQUIREMENTS_URL_OVERRIDE" ] && REQ_SOURCE_ARGS+=(--requirements "$REQUIREMENTS_URL_OVERRIDE")
 [ "$DEMO" = "true" ] && REQ_SOURCE_ARGS+=(--demo)
 
-REQ_SOURCE_JSON=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_requirements_source.py" "${REQ_SOURCE_ARGS[@]}")
+REQ_SOURCE_JSON=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/requirements/resolve_requirements_source.py" "${REQ_SOURCE_ARGS[@]}")
 REQ_SOURCE_KIND=$(printf '%s' "$REQ_SOURCE_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('source') or '')")
 ORG_AUDIT_DISABLED=$(printf '%s' "$REQ_SOURCE_JSON" | python3 -c "import json,sys;print(str(json.load(sys.stdin).get('org_audit_disabled',False)).lower())")
 
@@ -348,7 +274,7 @@ fi
 [ "$CACHE_ONLY" = "true" ] && FETCH_ARGS+=(--cache-only)
 [ "$STATUS_MODE" = "true" ] && FETCH_ARGS+=(--status)
 
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/fetch_requirements.py" "${FETCH_ARGS[@]}"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/requirements/fetch_requirements.py" "${FETCH_ARGS[@]}"
 REQ_FETCH_EXIT=$?
 
 REQ_RESOLUTION="$AUDIT_OUTPUT_DIR/.requirements-resolution.json"
@@ -359,7 +285,7 @@ REQUIREMENTS_YAML="$AUDIT_OUTPUT_DIR/.requirements.yaml"
 exit 2 only when requirements were requested but nothing loaded — no configured
 source, and an empty cache. This is the genuine first-run case. Do not proceed
 to scan. Print the guidance below, then **offer to run against the packaged demo
-catalog** (decision A). When running interactively you may ask the user with
+catalog**. When running interactively you may ask the user with
 `AskUserQuestion` whether to re-run with `--demo`; otherwise just print the hint
 and exit 2:
 
@@ -389,7 +315,7 @@ fi
 #### Render the startup banner (always, before scanning)
 
 The banner tells the user **which catalog is in effect, how current it is, and
-which requirements are about to be graded**. `render_requirements_banner.py`
+which requirements are about to be graded**. `renderers/render_requirements_banner.py`
 composes it from the run state; run it now and print its stdout **verbatim** as
 the first user-visible output of the skill — nothing precedes it, no preamble,
 no "loading…" narration, and nothing is re-derived or reworded here.
@@ -398,7 +324,7 @@ no "loading…" narration, and nothing is re-derived or reworded here.
 BANNER_ARGS=(--output-dir "$AUDIT_OUTPUT_DIR")
 [ -n "$CATEGORY_FILTER" ] && BANNER_ARGS+=(--filter "$CATEGORY_FILTER")
 [ -n "$PRESET_GATE_LINE" ] && BANNER_ARGS+=(--gate-line "$PRESET_GATE_LINE")
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_requirements_banner.py" "${BANNER_ARGS[@]}"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/renderers/render_requirements_banner.py" "${BANNER_ARGS[@]}"
 ```
 
 Set `PRESET_GATE_LINE` beforehand to `<enforce|advisory> · gate-on=<fail|partial>
@@ -446,24 +372,6 @@ blueprint_map[ref.id] → { bp_id, bp_title, section_title, section_url }
 ```
 
 This map is used in Step 3b to show relevant blueprint guidance alongside violations.
-
-### 1d — Scan for inline requirement references (optional, non-essential)
-
-Some teams annotate code with their requirement IDs; one common convention is
-the bracket form `[<ID>]` (e.g. `[SEC-CSP-1]`). Many teams use a **different
-convention or none at all** — that is expected. This scan is a convenience that
-surfaces such references when they exist; the audit does **not** depend on it,
-and finding zero references is normal and fine. Requirement IDs come from the
-loaded catalog (Step 1c) and may use any naming scheme.
-
-```bash
-# Optional — only meaningful if this repo uses the [<ID>] tag convention.
-grep -rn "\[<ID>\]" --include="*.{ts,js,py,go,java,kt,rb,cs,php,md,yaml,yml}"
-```
-
-Run for every known requirement ID (or a combined regex) if you scan at all.
-Grading in Step 2 searches for actual implementation evidence per requirement
-and is independent of any inline tag.
 
 ---
 
@@ -535,58 +443,10 @@ Collect for each requirement:
 modes that actually consume the structured verdict (`--json` exposes it, `--gate`
 gates on it). For everything else — a plain run, or `--md` / `--pdf` (whose
 human report is authored directly from your grading in Step 4a) — **skip this
-step entirely**: do NOT build a verdict file and do NOT write helper scripts.
-Serialising 60+ per-requirement entries is the slow, noisy part; pay it only
-when something downstream reads the JSON.
+step and Step 5 entirely**: do NOT build a verdict file and do NOT write helper scripts.
 
-When the verdict IS needed, it is the canonical output the saved reports and the
-gate derive from. Build it directly with the `Write` tool — you already produced
-these fields while grading; keep it quiet (no narration). A short one-off
-serialisation script is acceptable here since an artifact was explicitly
-requested, but the plain run must never reach this step.
-
-**Assemble** one object per `schemas/requirements-audit.schema.json`:
-
-```json
-{
-  "version": 1,
-  "generated_at": "<ISO 8601 UTC>",
-  "repository": "<git remote URL or directory name>",
-  "requirements_source": "<remote|cached|local|demo>",
-  "catalog": { "description": "<…>", "generated": "<…>", "url": "<…>", "count": <n> },
-  "filter": "<category_filter or null>",
-  "demo": <true|false>,
-  "priority_floor": "<priority_floor>",
-  "summary": { "total": 0, "pass": 0, "partial": 0, "fail": 0, "unverifiable": 0, "not_applicable": 0 },
-  "results": [
-    {
-      "id": "SEC-SQL", "category": "...", "priority": "MUST",
-      "status": "FAIL", "in_scope": true,
-      "requirement_text": "<verbatim catalog text>", "title": "Parameterized SQL Queries",
-      "evidence": [ { "file": "routes/search.ts", "line": 23 } ],
-      "finding": "...", "risk": "...", "fix": "...", "effort": "M",
-      "url": "<requirements[].url or null>",
-      "blueprint": { "id": "...", "section": "...", "url": "..." },
-      "threats": [ { "f_id": "F-014", "risk": "High", "title": "..." } ]
-    }
-  ]
-}
-```
-
-- One `results[]` entry **per graded requirement** — every status, not only the open ones. `in_scope` is `true` except for `NOT_APPLICABLE` (then `false`).
-- Leave `summary` as zeros; the script recomputes it. Pull `blueprint` from `blueprint_map[<id>]` and `threats` from `req_to_threats[<id>]` when present.
-
-**Write** it to `$AUDIT_OUTPUT_DIR/.requirements-audit.json`, then validate +
-recompute the summary deterministically:
-
-```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/requirements_report.py" \
-  --audit "$AUDIT_OUTPUT_DIR/.requirements-audit.json" --write
-REPORT_EXIT=$?
-```
-
-- Exit `0`: the printed `total=… pass=… partial=… fail=… unverifiable=… not_applicable=…` line is **authoritative** — use exactly these numbers for the Result block in Step 3a (do not re-count).
-- Exit `2`: the verdict is schema-invalid (a grading-output bug). Fix the offending `results[]` entry and re-write, then re-run — do not render counts you cannot validate.
+When it runs, read `<base-dir>/verdict-and-gate.md` in full now and follow its
+Step 2.5. Keep it in context: its Step 5 runs after Step 4.
 
 ---
 
@@ -652,14 +512,12 @@ text and glyphs without escapes.
 The catalog source/provenance was already shown in the Step 1b banner, so the
 results header does **not** repeat the title or the `Source` line — it opens the
 verdict. **Counts:** if Step 2.5 ran (an artifact/gate was requested), use the
-`requirements_report.py` stats line verbatim. Otherwise (plain run) tally them
+`requirements/requirements_report.py` stats line verbatim. Otherwise (plain run) tally them
 directly from your grading.
 
-Render this as a **fixed block — never as a prose sentence or paragraph.** This
-is the single biggest formatting rule: do NOT write "Of 64: 28 FAIL, 8 PARTIAL,
-…" as a sentence, do NOT explain the NOT_APPLICABLE/PASS items in prose here, do
-NOT list "notable passes". One header line, then one aligned count row per
-status, each led by its colour circle:
+Render this as a fixed block (see "No prose summary of the verdict" above): one
+header line, then one aligned count row per status, each led by its colour
+circle:
 
 ```
 Results · <Project Name> · <total> requirements<, filter: <filter> if set>
@@ -782,170 +640,20 @@ instead of the save-command reminder.
 
 ## Step 4 — Save output (conditional)
 
-### 4a — If `save_md` is true
+When `save_md`, `save_pdf` or `save_json` is set, read `<base-dir>/save-reports.md`
+in full and follow it. It holds the Markdown report template (4a), the JSON copy
+(4b) and the PDF conversion (4c).
 
-Write the full report to `docs/security/appsec-requirements-report.md` (create `docs/security/` if needed).
-
-The Markdown report is more detailed than the console, but still includes
-only open requirements (`FAIL` and `PARTIAL`). Do not include `PASS` or
-`UNVERIFIABLE` requirement entries. Prefix with a metadata table:
-
-````markdown
-# AppSec Requirements — <Project Name>
-
-| Field | Value |
-|-------|-------|
-| Generated | <ISO 8601 timestamp> |
-| Repository | <git remote URL or directory name> |
-| Source | <remote \| cached> |
-| Open Requirements | <n> |
-| 🔴 Failed | <n> |
-| 🟡 Partial | <n> |
-| 🟢 Passed | <n> |
-| ⚪ Unverifiable | <n> |
-
-## Open Requirements
-
-> 🔴 fail · 🟡 partial — open gaps detailed below. 🟢 passed and ⚪ unverifiable are counted in the summary only.
-
-| Status | Priority | ID | Requirement | Effort |
-|--------|----------|----|-------------|--------|
-| 🔴 FAIL | MUST | SEC-SQL | Parameterized SQL Queries | M |
-| 🟡 PARTIAL | SHOULD | SEC-CSP-1 | Content Security Policy | S |
-
-### 🔴 FAIL · MUST · SEC-SQL — Parameterized SQL Queries
-
-> **Requirement:** Use parameterized SQL/HQL queries or ORM methods for database queries to prevent SQL injection.
-
-Raw request input reaches `sequelize.query()` at `routes/search.ts:23`, so the query predicate can be changed by user-controlled input.
-
-**Evidence:** `routes/search.ts:23`
-
-**Risk:** An attacker can submit a crafted search term that changes the SQL predicate.
-
-**Fix:** Replace string interpolation with bound parameters in `routes/search.ts`.
-
-```ts
-// Before
-sequelize.query(`select * from product where name like '%${term}%'`)
-
-// After
-sequelize.query("select * from product where name like :term", {
-  replacements: { term: `%${term}%` },
-})
-```
-
-**Effort:** M
-
-**Links:**
-- Requirement: <full requirement url>
-- Blueprint: <full blueprint section url, if available>
-- Threat model: [F-014](docs/security/threat-model.md#f-014)
-
----
-
-*Effort: S = under 1 hour · M = about half a day · L = multi-day or architectural change.*
-
-````
-
-Markdown rules:
-
-- If the resolution banner reported `demo: true`, insert a blockquote warning
-  directly under the `#` title: `> ⚠ **DEMO catalog** — audited against the
-  packaged example requirements, not your organization's. Configure a real
-  source with --requirements / an org profile.` Also set the metadata
-  `| Source |` cell to `packaged example (DEMO)`.
-- Prefix every status — in the summary metadata table, the overview table, and
-  each `###` heading — with its criticality circle, reusing the threat model's
-  house palette: 🔴 FAIL · 🟡 PARTIAL · 🟢 PASS · ⚪ UNVERIFIABLE. Keep the
-  one-line palette legend (the `>` blockquote) directly under the
-  `## Open Requirements` heading.
-- Lead the `## Open Requirements` section with an overview table
-  (`Status | Priority | ID | Requirement | Effort`) listing every open
-  requirement in the sort order below. The detailed `###` blocks follow
-  beneath it, so a reviewer can scan the whole gap list before reading details.
-- Directly under each `###` heading, quote the requirement's **verbatim `text`**
-  from the catalog as `> **Requirement:** <text>` (full text, not the derived
-  title, not a paraphrase) — this is the demand being audited. Omit only when
-  the catalog entry has no `text`.
-- Close the report with the one-line effort legend shown above
-  (`*Effort: S = … · M = … · L = …*`), preceded by a `---` rule.
-- Sort open requirements with the same order as console output.
-- Use one `###` heading per open requirement: `### <STATUS> · <PRIORITY> · <ID> — <Title>`.
-- Include full URLs for requirement and blueprint links.
-- If `req_to_threats[req_id]` is non-empty (from Step 1.5), add one Threat model bullet per linked `F-NNN`, linking to `docs/security/threat-model.md#f-nnn`. Canonical link shape: `[F-NNN · Risk](docs/security/threat-model.md#f-nnn)`.
-- Include a short before/after code block only when there is meaningful code evidence. Omit code blocks for missing process controls or absent configuration.
-- Do not add a Passed section.
-- Do not add an Unverifiable section.
-
-Print: `✓ Markdown report written to docs/security/appsec-requirements-report.md`
-
-### 4b — If `save_json` is true
-
-The canonical structured verdict was **already written** in Step 2.5
-(`.requirements-audit.json`, schema `requirements-audit.schema.json`, summary
-recomputed). `--json` simply exposes it as a visible deliverable — do not author
-a second, differently-shaped JSON:
-
-```bash
-cp "$AUDIT_OUTPUT_DIR/.requirements-audit.json" \
-   "$AUDIT_OUTPUT_DIR/appsec-requirements-report.json"
-```
-
-Print: `✓ JSON report written to docs/security/appsec-requirements-report.json`
-
-### 4c — If `save_pdf` is true
-
-The PDF is converted from the Markdown report, so this runs **after** Step 4a
-(which always runs when `save_pdf` is set, because `--pdf` implies `save_md`).
-Convert it with the shared, deterministic exporter — the requirements report has
-no Mermaid diagrams, so pass `--no-mermaid` (skips mmdc/Chrome; needs only
-pandoc + weasyprint):
-
-```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/export_pdf.py" \
-  --input "$AUDIT_OUTPUT_DIR/appsec-requirements-report.md" \
-  --output "$AUDIT_OUTPUT_DIR/appsec-requirements-report.pdf" \
-  --no-mermaid
-PDF_EXIT=$?
-```
-
-Handle the result by exit code (the exporter is self-describing on stderr):
-- `0` — print `✓ PDF report written to docs/security/appsec-requirements-report.pdf`.
-- `1` — a hard dependency (pandoc or weasyprint) is missing. This is **non-fatal**: the Markdown report was still written. Print:
-  `⚠ PDF skipped — install pandoc + weasyprint (the Markdown report was saved).`
-- `2` / `3` — input/conversion error. Print `⚠ PDF conversion failed (see message above); the Markdown report was saved.`
-
-Never abort the audit because the PDF step failed — the console findings and the
-Markdown report are the primary deliverables.
-
-### 4d — If no output flag is set
-
-The save-command reminder is already covered by the Step 3 footer. Do not
-print a second `Save:` line.
+When no output flag is set, the save-command reminder is already covered by the
+Step 3 footer. Do not print a second `Save:` line.
 
 ---
 
 ## Step 5 — Gate (deterministic; advisory by default)
 
 **Only when the verdict was written in Step 2.5** (an artifact/gate was
-requested). A plain console run has no verdict file — skip this step entirely.
-
-The **script**, not the model, decides whether the audit blocks. Run it on the
-verdict — advisory (prints the summary, exit 0) unless `--gate` enforces it:
-
-```bash
-GATE_ARGS=(--verdict "$AUDIT_OUTPUT_DIR/.requirements-audit.json"
-           --priority-floor "$PRIORITY_FLOOR" --gate-on "$GATE_ON")
-[ "$GATE_MODE" = "true" ] && GATE_ARGS+=(--gate)
-
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/requirements_gate.py" "${GATE_ARGS[@]}"
-GATE_EXIT=$?
-```
-
-- The script prints `requirements-gate: PASS` or `… BLOCK/WARN — <n> gating requirement(s)` with the offending IDs. Surface that line as-is.
-- When `GATE_MODE` is true, **propagate the exit code**: `exit "$GATE_EXIT"` (1 ⇒ a MUST-or-above in-scope requirement failed at/above the floor). In advisory mode the script always returns 0.
-- A gating requirement is recomputed authoritatively as `in_scope AND status==FAIL (or PARTIAL with --gate-on partial) AND priority >= floor` — the model's `results[]` feed it; it never trusts model-side verdict flags.
+requested). Follow Step 5 of `verdict-and-gate.md`, already loaded in Step 2.5.
+A plain console run has no verdict file — skip this step entirely.
 
 ---
 

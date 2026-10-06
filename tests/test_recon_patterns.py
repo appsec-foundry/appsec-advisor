@@ -1,5 +1,5 @@
 """
-Tests for scripts/recon_patterns.py — Sprint 3 Item #1.
+Tests for scripts/analyzers/recon_patterns.py — Sprint 3 Item #1.
 
 Covers the Python-migrated recon categories:
   Cat 9   OAuth / OIDC
@@ -35,10 +35,10 @@ import jsonschema
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-import recon_patterns as rp  # noqa: E402
+import analyzers.recon_patterns as rp  # noqa: E402
 
 PLUGIN_ROOT = Path(__file__).parent.parent
-SCRIPT = PLUGIN_ROOT / "scripts" / "recon_patterns.py"
+SCRIPT = PLUGIN_ROOT / "scripts" / "analyzers/recon_patterns.py"
 SCHEMA = PLUGIN_ROOT / "schemas" / "recon-patterns.schema.json"
 
 

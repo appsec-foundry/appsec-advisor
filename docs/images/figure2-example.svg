@@ -1,0 +1,235 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1330" height="729" viewBox="0 0 1330 729" font-family="Helvetica, Arial, sans-serif" data-figure2-version="2" data-glyphs="1 2 3 4 5 6 7 8" role="img" aria-labelledby="f2-title"><title id="f2-title">Actors, attack routes, underlying weaknesses and impact</title><metadata id="figure2-data">{&quot;routes&quot;: [{&quot;actor&quot;: &quot;Internet Attacker&quot;, &quot;actor_note&quot;: &quot;2 roles; access details in Identified Actors&quot;, &quot;actor_slug&quot;: &quot;internet-anon&quot;, &quot;business_harm&quot;: &quot;Disclosure of customer information\nUnauthorized administration and changes to protected business data&quot;, &quot;component&quot;: &quot;C-02 · Express API Server&quot;, &quot;consequence&quot;: &quot;Unauthenticated read of the whole SQLite database, including user credentials (declared sensitive asset) and card data.&quot;, &quot;finding_id&quot;: &quot;F-003&quot;, &quot;finding_ids&quot;: [&quot;F-003&quot;, &quot;F-005&quot;, &quot;F-016&quot;, &quot;F-017&quot;, &quot;F-022&quot;, &quot;F-036&quot;], &quot;number&quot;: 1, &quot;prerequisite&quot;: &quot;No account required&quot;, &quot;risk&quot;: &quot;Critical&quot;, &quot;route&quot;: &quot;I request /rest/products/search?q=&#x27;)) to confirm a SQL syntax error.&quot;, &quot;title&quot;: &quot;Inject Input into Server Interpreters&quot;, &quot;unproven&quot;: false, &quot;victim&quot;: false, &quot;weakness&quot;: &quot;Database access relies on concatenated queries (W-002)&quot;, &quot;weakness_ids&quot;: [&quot;W-002&quot;]}, {&quot;actor&quot;: &quot;Internet Attacker&quot;, &quot;actor_note&quot;: &quot;2 roles; access details in Identified Actors&quot;, &quot;actor_slug&quot;: &quot;internet-anon&quot;, &quot;business_harm&quot;: &quot;Unauthorized administration and changes to protected business data\nDisclosure of customer information&quot;, &quot;component&quot;: &quot;C-01 · Angular SPA Frontend&quot;, &quot;consequence&quot;: &quot;Full takeover of any OAuth-created account, including its orders, addresses, payment cards and wallet, without access to the Google identity.&quot;, &quot;finding_id&quot;: &quot;F-013&quot;, &quot;finding_ids&quot;: [&quot;F-007&quot;, &quot;F-009&quot;, &quot;F-011&quot;, &quot;F-012&quot;, &quot;F-013&quot;, &quot;F-023&quot;, &quot;F-050&quot;, &quot;F-053&quot;, &quot;F-076&quot;, &quot;F-078&quot;], &quot;number&quot;: 2, &quot;prerequisite&quot;: &quot;No account required&quot;, &quot;risk&quot;: &quot;Critical&quot;, &quot;route&quot;: &quot;I collect a target email that was used for Google login, for example from feedback, reviews or the admin user list.&quot;, &quot;title&quot;: &quot;Bypass or Forge Authentication&quot;, &quot;unproven&quot;: false, &quot;victim&quot;: false, &quot;weakness&quot;: &quot;No weakness linked in the register&quot;, &quot;weakness_ids&quot;: []}, {&quot;actor&quot;: &quot;Internet Attacker&quot;, &quot;actor_note&quot;: &quot;2 roles; access details in Identified Actors&quot;, &quot;actor_slug&quot;: &quot;internet-anon&quot;, &quot;business_harm&quot;: &quot;Unauthorized administration and changes to protected business data\nDisclosure of customer information&quot;, &quot;component&quot;: &quot;C-02 · Express API Server&quot;, &quot;consequence&quot;: &quot;Technical consequence not established.&quot;, &quot;finding_id&quot;: &quot;F-077&quot;, &quot;finding_ids&quot;: [&quot;F-004&quot;, &quot;F-027&quot;, &quot;F-028&quot;, &quot;F-029&quot;, &quot;F-031&quot;, &quot;F-047&quot;, &quot;F-048&quot;, &quot;F-060&quot;, &quot;F-077&quot;], &quot;number&quot;: 3, &quot;prerequisite&quot;: &quot;Regular account required&quot;, &quot;risk&quot;: &quot;High&quot;, &quot;route&quot;: &quot;Attacker enumerates and retrieves records for arbitrary object IDs; no ownership comparison is performed.&quot;, &quot;title&quot;: &quot;Bypass Authorization to Gain Access&quot;, &quot;unproven&quot;: false, &quot;victim&quot;: false, &quot;weakness&quot;: &quot;No weakness linked in the register&quot;, &quot;weakness_ids&quot;: []}, {&quot;actor&quot;: &quot;Internet Attacker&quot;, &quot;actor_note&quot;: &quot;2 roles; access details in Identified Actors&quot;, &quot;actor_slug&quot;: &quot;internet-anon&quot;, &quot;business_harm&quot;: &quot;Disclosure of customer information&quot;, &quot;component&quot;: &quot;C-02 · Express API Server&quot;, &quot;consequence&quot;: &quot;Unauthenticated overwrite of served files, configuration, or application code under the working directory, enabling defacement or code replacement.&quot;, &quot;finding_id&quot;: &quot;F-015&quot;, &quot;finding_ids&quot;: [&quot;F-014&quot;, &quot;F-015&quot;, &quot;F-021&quot;, &quot;F-024&quot;, &quot;F-025&quot;, &quot;F-034&quot;, &quot;F-045&quot;, &quot;F-046&quot;, &quot;F-052&quot;], &quot;number&quot;: 4, &quot;prerequisite&quot;: &quot;No account required&quot;, &quot;risk&quot;: &quot;High&quot;, &quot;route&quot;: &quot;An anonymous attacker uploads a ZIP to POST /file-upload whose entry is named ../../ftp/legal.md (or any path under the app root); extractZipBuffer() writes entry.path relative to uploads/complaints/, and the guard only checks that the resolved path contains the app directory, so files anywhere in the application tree are overwritten.&quot;, &quot;title&quot;: &quot;Access Exposed Data and Secrets&quot;, &quot;unproven&quot;: false, &quot;victim&quot;: false, &quot;weakness&quot;: &quot;Input handling lacks enforced boundary validation (W-005)&quot;, &quot;weakness_ids&quot;: [&quot;W-005&quot;]}, {&quot;actor&quot;: &quot;Internet Attacker&quot;, &quot;actor_note&quot;: &quot;2 roles; access details in Identified Actors&quot;, &quot;actor_slug&quot;: &quot;internet-anon&quot;, &quot;business_harm&quot;: &quot;Service disruption or compromise of application data\nDisclosure of customer information&quot;, &quot;component&quot;: &quot;C-02 · Express API Server&quot;, &quot;consequence&quot;: &quot;Remote code execution as the server process: full read/write of the database, keys and all customer data.&quot;, &quot;finding_id&quot;: &quot;F-006&quot;, &quot;finding_ids&quot;: [&quot;F-006&quot;], &quot;number&quot;: 5, &quot;prerequisite&quot;: &quot;Regular account required&quot;, &quot;risk&quot;: &quot;Critical&quot;, &quot;route&quot;: &quot;I log in as any customer and POST /profile with username #{global.process.mainModule.require(&#x27;child_process&#x27;).execSync(&#x27;id&#x27;)}.&quot;, &quot;title&quot;: &quot;Server-side eval of persisted user input&quot;, &quot;unproven&quot;: false, &quot;victim&quot;: false, &quot;weakness&quot;: &quot;Application data crosses into executable code (W-001)&quot;, &quot;weakness_ids&quot;: [&quot;W-001&quot;]}, {&quot;actor&quot;: &quot;Internet Attacker&quot;, &quot;actor_note&quot;: &quot;2 roles; access details in Identified Actors&quot;, &quot;actor_slug&quot;: &quot;internet-anon&quot;, &quot;business_harm&quot;: &quot;Customer account misuse and disclosure of private account data&quot;, &quot;component&quot;: &quot;C-01 · Angular SPA Frontend&quot;, &quot;consequence&quot;: &quot;Script execution in the victim&#x27;s session: token theft, account takeover and arbitrary actions as the victim.&quot;, &quot;finding_id&quot;: &quot;F-001&quot;, &quot;finding_ids&quot;: [&quot;F-001&quot;, &quot;F-026&quot;, &quot;F-051&quot;], &quot;number&quot;: 6, &quot;prerequisite&quot;: &quot;No account required; Victim interaction required&quot;, &quot;risk&quot;: &quot;Critical&quot;, &quot;route&quot;: &quot;I craft a /#/search?q= link whose value is an HTML payload with a javascript: iframe.&quot;, &quot;title&quot;: &quot;Inject Scripts into Victim Browsers&quot;, &quot;unproven&quot;: false, &quot;victim&quot;: true, &quot;weakness&quot;: &quot;Frontend rendering lacks enforced output encoding (W-004)&quot;, &quot;weakness_ids&quot;: [&quot;W-004&quot;]}, {&quot;actor&quot;: &quot;Internet Attacker&quot;, &quot;actor_note&quot;: &quot;2 roles; access details in Identified Actors&quot;, &quot;actor_slug&quot;: &quot;internet-anon&quot;, &quot;business_harm&quot;: &quot;Customer account misuse and disclosure of private account data&quot;, &quot;component&quot;: &quot;C-01 · Angular SPA Frontend&quot;, &quot;consequence&quot;: &quot;Login CSRF: the victim acts inside an attacker-owned account, so entered addresses, cards and order data become visible to the attacker.&quot;, &quot;finding_id&quot;: &quot;F-033&quot;, &quot;finding_ids&quot;: [&quot;F-033&quot;], &quot;number&quot;: 7, &quot;prerequisite&quot;: &quot;No account required; Victim interaction required&quot;, &quot;risk&quot;: &quot;Medium&quot;, &quot;route&quot;: &quot;I complete Google OAuth for my own account and copy the access_token from the redirect fragment.&quot;, &quot;title&quot;: &quot;Abuse Cross-Site Requests&quot;, &quot;unproven&quot;: false, &quot;victim&quot;: true, &quot;weakness&quot;: &quot;No weakness linked in the register&quot;, &quot;weakness_ids&quot;: []}, {&quot;actor&quot;: &quot;Supply-Chain / Build Attacker&quot;, &quot;actor_note&quot;: &quot;1 role; access details in Identified Actors&quot;, &quot;actor_slug&quot;: &quot;build-time&quot;, &quot;business_harm&quot;: &quot;Service disruption or compromise of application data&quot;, &quot;component&quot;: &quot;C-08 · CI/CD Pipeline&quot;, &quot;consequence&quot;: &quot;Technical consequence not established.&quot;, &quot;finding_id&quot;: &quot;F-039&quot;, &quot;finding_ids&quot;: [&quot;F-020&quot;, &quot;F-037&quot;, &quot;F-038&quot;, &quot;F-039&quot;, &quot;F-040&quot;, &quot;F-041&quot;, &quot;F-062&quot;, &quot;F-063&quot;, &quot;F-064&quot;], &quot;number&quot;: 8, &quot;prerequisite&quot;: &quot;Build or dependency access required&quot;, &quot;risk&quot;: &quot;High&quot;, &quot;route&quot;: &quot;Dependency Install Scripts Run at Build Time: Without --ignore-scripts, any compromised dependency publisher can execute postinstall code at build time.&quot;, &quot;title&quot;: &quot;Compromise the Build or Its Inputs&quot;, &quot;unproven&quot;: false, &quot;victim&quot;: false, &quot;weakness&quot;: &quot;No weakness linked in the register&quot;, &quot;weakness_ids&quot;: []}], &quot;schema_version&quot;: 2}</metadata><rect width="1330" height="729" fill="#ffffff"/><defs><marker id="f2-attack" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#b3453f"/></marker><marker id="f2-consequence" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/></marker></defs><text x="24" y="22" font-size="13" fill="#334d6e" font-weight="bold" >Threat Actors</text>
+<text x="248" y="22" font-size="13" fill="#334d6e" font-weight="bold" >Attack Route</text>
+<text x="622" y="22" font-size="13" fill="#334d6e" font-weight="bold" >Underlying Weakness</text>
+<text x="966" y="22" font-size="13" fill="#334d6e" font-weight="bold" >Impact (group)</text>
+<g data-route-number="1" data-finding-id="F-003" data-weakness-ids="W-002">
+<title>Internet Attacker
+2 roles; access details in Identified Actors
+Inject Input into Server Interpreters
+I request /rest/products/search?q=&#x27;)) to confirm a SQL syntax error.
+C-02 · Express API Server
+No account required
+Database access relies on concatenated queries (W-002)
+Unauthenticated read of the whole SQLite database, including user credentials (declared sensitive asset) and card data.
+Disclosure of customer information
+Unauthorized administration and changes to protected business data</title>
+<rect x="248" y="42" width="320" height="73" rx="7" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4" data-column="1"/>
+<text x="264" y="65.0" font-size="13" fill="#1f2937" font-weight="bold" >Inject Input into Server</text>
+<text x="264" y="82.0" font-size="13" fill="#1f2937" font-weight="bold" >Interpreters</text>
+<text x="264" y="99.0" font-size="13" fill="#6b7280" font-weight="normal" >F-003 · no account</text>
+<rect x="622" y="42" width="290" height="73" rx="7" fill="#f3f6fa" stroke="#4f6d9c" stroke-width="1.4" data-column="2"/>
+<text x="638" y="65.0" font-size="13" fill="#334d6e" font-weight="bold" >Database access relies on</text>
+<text x="638" y="82.0" font-size="13" fill="#334d6e" font-weight="bold" >concatenated queries</text>
+<text x="638" y="99.0" font-size="13" fill="#6b7280" font-weight="normal" >(W-002)</text>
+<rect x="966" y="42" width="340" height="73" rx="7" fill="#f3f6fa" stroke="#4f6d9c" stroke-width="1.4" data-column="3"/>
+<text x="982" y="65.0" font-size="13" fill="#334d6e" font-weight="bold" >Disclosure of customer information</text>
+<text x="982" y="82.0" font-size="13" fill="#334d6e" font-weight="bold" >Unauthorized administration and</text>
+<text x="982" y="99.0" font-size="13" fill="#334d6e" font-weight="bold" >changes to protected business data</text>
+<path d="M194 78.5 H246" fill="none" stroke="#b3453f" stroke-width="1.8" marker-end="url(#f2-attack)"/>
+<path d="M568 78.5 H620" fill="none" stroke="#b3453f" stroke-width="1.8" marker-end="url(#f2-attack)"/>
+<path d="M912 78.5 H964" fill="none" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#f2-consequence)" stroke-dasharray="5 4"/>
+<circle cx="221.0" cy="78.5" r="10" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="221.0" y="82.5" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" data-badge-number="1">1</text>
+</g>
+<g data-route-number="2" data-finding-id="F-013" data-weakness-ids="">
+<title>Internet Attacker
+2 roles; access details in Identified Actors
+Bypass or Forge Authentication
+I collect a target email that was used for Google login, for example from feedback, reviews or the admin user list.
+C-01 · Angular SPA Frontend
+No account required
+No weakness linked in the register
+Full takeover of any OAuth-created account, including its orders, addresses, payment cards and wallet, without access to the Google identity.
+Unauthorized administration and changes to protected business data
+Disclosure of customer information</title>
+<rect x="248" y="127" width="320" height="73" rx="7" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4" data-column="1"/>
+<text x="264" y="158.5" font-size="13" fill="#1f2937" font-weight="bold" >Bypass or Forge Authentication</text>
+<text x="264" y="175.5" font-size="13" fill="#6b7280" font-weight="normal" >F-013 · no account</text>
+<rect x="622" y="127" width="290" height="73" rx="7" fill="#f3f6fa" stroke="#4f6d9c" stroke-width="1.4" data-column="2"/>
+<text x="638" y="158.5" font-size="13" fill="#6b7280" font-weight="normal" >No weakness linked in the</text>
+<text x="638" y="175.5" font-size="13" fill="#6b7280" font-weight="normal" >register</text>
+<rect x="966" y="127" width="340" height="73" rx="7" fill="#f3f6fa" stroke="#4f6d9c" stroke-width="1.4" data-column="3"/>
+<text x="982" y="150.0" font-size="13" fill="#334d6e" font-weight="bold" >Unauthorized administration and</text>
+<text x="982" y="167.0" font-size="13" fill="#334d6e" font-weight="bold" >changes to protected business data</text>
+<text x="982" y="184.0" font-size="13" fill="#334d6e" font-weight="bold" >Disclosure of customer information</text>
+<path d="M194 163.5 H246" fill="none" stroke="#b3453f" stroke-width="1.8" marker-end="url(#f2-attack)"/>
+<path d="M568 163.5 H620" fill="none" stroke="#b3453f" stroke-width="1.8" marker-end="url(#f2-attack)"/>
+<path d="M912 163.5 H964" fill="none" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#f2-consequence)" stroke-dasharray="5 4"/>
+<circle cx="221.0" cy="163.5" r="10" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="221.0" y="167.5" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" data-badge-number="2">2</text>
+</g>
+<g data-route-number="3" data-finding-id="F-077" data-weakness-ids="">
+<title>Internet Attacker
+2 roles; access details in Identified Actors
+Bypass Authorization to Gain Access
+Attacker enumerates and retrieves records for arbitrary object IDs; no ownership comparison is performed.
+C-02 · Express API Server
+Regular account required
+No weakness linked in the register
+Technical consequence not established.
+Unauthorized administration and changes to protected business data
+Disclosure of customer information</title>
+<rect x="248" y="212" width="320" height="73" rx="7" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4" data-column="1"/>
+<text x="264" y="243.5" font-size="13" fill="#1f2937" font-weight="bold" >Bypass Authorization to Gain Access</text>
+<text x="264" y="260.5" font-size="13" fill="#6b7280" font-weight="normal" >F-077 · regular account</text>
+<rect x="622" y="212" width="290" height="73" rx="7" fill="#f3f6fa" stroke="#4f6d9c" stroke-width="1.4" data-column="2"/>
+<text x="638" y="243.5" font-size="13" fill="#6b7280" font-weight="normal" >No weakness linked in the</text>
+<text x="638" y="260.5" font-size="13" fill="#6b7280" font-weight="normal" >register</text>
+<rect x="966" y="212" width="340" height="73" rx="7" fill="#f3f6fa" stroke="#4f6d9c" stroke-width="1.4" data-column="3"/>
+<text x="982" y="235.0" font-size="13" fill="#334d6e" font-weight="bold" >Unauthorized administration and</text>
+<text x="982" y="252.0" font-size="13" fill="#334d6e" font-weight="bold" >changes to protected business data</text>
+<text x="982" y="269.0" font-size="13" fill="#334d6e" font-weight="bold" >Disclosure of customer information</text>
+<path d="M194 248.5 H246" fill="none" stroke="#b3453f" stroke-width="1.8" marker-end="url(#f2-attack)"/>
+<path d="M568 248.5 H620" fill="none" stroke="#b3453f" stroke-width="1.8" marker-end="url(#f2-attack)"/>
+<path d="M912 248.5 H964" fill="none" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#f2-consequence)" stroke-dasharray="5 4"/>
+<circle cx="221.0" cy="248.5" r="10" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="221.0" y="252.5" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" data-badge-number="3">3</text>
+</g>
+<g data-route-number="4" data-finding-id="F-015" data-weakness-ids="W-005">
+<title>Internet Attacker
+2 roles; access details in Identified Actors
+Access Exposed Data and Secrets
+An anonymous attacker uploads a ZIP to POST /file-upload whose entry is named ../../ftp/legal.md (or any path under the app root); extractZipBuffer() writes entry.path relative to uploads/complaints/, and the guard only checks that the resolved path contains the app directory, so files anywhere in the application tree are overwritten.
+C-02 · Express API Server
+No account required
+Input handling lacks enforced boundary validation (W-005)
+Unauthenticated overwrite of served files, configuration, or application code under the working directory, enabling defacement or code replacement.
+Disclosure of customer information</title>
+<rect x="248" y="297" width="320" height="73" rx="7" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4" data-column="1"/>
+<text x="264" y="328.5" font-size="13" fill="#1f2937" font-weight="bold" >Access Exposed Data and Secrets</text>
+<text x="264" y="345.5" font-size="13" fill="#6b7280" font-weight="normal" >F-015 · no account</text>
+<rect x="622" y="297" width="290" height="73" rx="7" fill="#f3f6fa" stroke="#4f6d9c" stroke-width="1.4" data-column="2"/>
+<text x="638" y="320.0" font-size="13" fill="#334d6e" font-weight="bold" >Input handling lacks enforced</text>
+<text x="638" y="337.0" font-size="13" fill="#334d6e" font-weight="bold" >boundary validation</text>
+<text x="638" y="354.0" font-size="13" fill="#6b7280" font-weight="normal" >(W-005)</text>
+<rect x="966" y="297" width="340" height="73" rx="7" fill="#f3f6fa" stroke="#4f6d9c" stroke-width="1.4" data-column="3"/>
+<text x="982" y="337.0" font-size="13" fill="#334d6e" font-weight="bold" >Disclosure of customer information</text>
+<path d="M194 333.5 H246" fill="none" stroke="#b3453f" stroke-width="1.8" marker-end="url(#f2-attack)"/>
+<path d="M568 333.5 H620" fill="none" stroke="#b3453f" stroke-width="1.8" marker-end="url(#f2-attack)"/>
+<path d="M912 333.5 H964" fill="none" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#f2-consequence)" stroke-dasharray="5 4"/>
+<circle cx="221.0" cy="333.5" r="10" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="221.0" y="337.5" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" data-badge-number="4">4</text>
+</g>
+<g data-route-number="5" data-finding-id="F-006" data-weakness-ids="W-001">
+<title>Internet Attacker
+2 roles; access details in Identified Actors
+Server-side eval of persisted user input
+I log in as any customer and POST /profile with username #{global.process.mainModule.require(&#x27;child_process&#x27;).execSync(&#x27;id&#x27;)}.
+C-02 · Express API Server
+Regular account required
+Application data crosses into executable code (W-001)
+Remote code execution as the server process: full read/write of the database, keys and all customer data.
+Service disruption or compromise of application data
+Disclosure of customer information</title>
+<rect x="248" y="382" width="320" height="73" rx="7" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4" data-column="1"/>
+<text x="264" y="405.0" font-size="13" fill="#1f2937" font-weight="bold" >Server-side eval of persisted user</text>
+<text x="264" y="422.0" font-size="13" fill="#1f2937" font-weight="bold" >input</text>
+<text x="264" y="439.0" font-size="13" fill="#6b7280" font-weight="normal" >F-006 · regular account</text>
+<rect x="622" y="382" width="290" height="73" rx="7" fill="#f3f6fa" stroke="#4f6d9c" stroke-width="1.4" data-column="2"/>
+<text x="638" y="405.0" font-size="13" fill="#334d6e" font-weight="bold" >Application data crosses into</text>
+<text x="638" y="422.0" font-size="13" fill="#334d6e" font-weight="bold" >executable code</text>
+<text x="638" y="439.0" font-size="13" fill="#6b7280" font-weight="normal" >(W-001)</text>
+<rect x="966" y="382" width="340" height="73" rx="7" fill="#f3f6fa" stroke="#4f6d9c" stroke-width="1.4" data-column="3"/>
+<text x="982" y="405.0" font-size="13" fill="#334d6e" font-weight="bold" >Service disruption or compromise of</text>
+<text x="982" y="422.0" font-size="13" fill="#334d6e" font-weight="bold" >application data</text>
+<text x="982" y="439.0" font-size="13" fill="#334d6e" font-weight="bold" >Disclosure of customer information</text>
+<path d="M194 418.5 H246" fill="none" stroke="#b3453f" stroke-width="1.8" marker-end="url(#f2-attack)"/>
+<path d="M568 418.5 H620" fill="none" stroke="#b3453f" stroke-width="1.8" marker-end="url(#f2-attack)"/>
+<path d="M912 418.5 H964" fill="none" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#f2-consequence)" stroke-dasharray="5 4"/>
+<circle cx="221.0" cy="418.5" r="10" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="221.0" y="422.5" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" data-badge-number="5">5</text>
+</g>
+<g data-route-number="6" data-finding-id="F-001" data-weakness-ids="W-004">
+<title>Internet Attacker
+2 roles; access details in Identified Actors
+Inject Scripts into Victim Browsers
+I craft a /#/search?q= link whose value is an HTML payload with a javascript: iframe.
+C-01 · Angular SPA Frontend
+No account required; Victim interaction required
+Frontend rendering lacks enforced output encoding (W-004)
+Script execution in the victim&#x27;s session: token theft, account takeover and arbitrary actions as the victim.
+Customer account misuse and disclosure of private account data</title>
+<rect x="248" y="467" width="320" height="73" rx="7" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4" data-column="1"/>
+<text x="264" y="490.0" font-size="13" fill="#1f2937" font-weight="bold" >Inject Scripts into Victim Browsers</text>
+<text x="264" y="507.0" font-size="13" fill="#6b7280" font-weight="normal" >F-001 · no account · victim</text>
+<text x="264" y="524.0" font-size="13" fill="#6b7280" font-weight="normal" >interaction</text>
+<rect x="622" y="467" width="290" height="73" rx="7" fill="#f3f6fa" stroke="#4f6d9c" stroke-width="1.4" data-column="2"/>
+<text x="638" y="490.0" font-size="13" fill="#334d6e" font-weight="bold" >Frontend rendering lacks</text>
+<text x="638" y="507.0" font-size="13" fill="#334d6e" font-weight="bold" >enforced output encoding</text>
+<text x="638" y="524.0" font-size="13" fill="#6b7280" font-weight="normal" >(W-004)</text>
+<rect x="966" y="467" width="340" height="73" rx="7" fill="#f3f6fa" stroke="#4f6d9c" stroke-width="1.4" data-column="3"/>
+<text x="982" y="498.5" font-size="13" fill="#334d6e" font-weight="bold" >Customer account misuse and</text>
+<text x="982" y="515.5" font-size="13" fill="#334d6e" font-weight="bold" >disclosure of private account data</text>
+<path d="M194 503.5 H246" fill="none" stroke="#b3453f" stroke-width="1.8" marker-end="url(#f2-attack)" stroke-dasharray="5 4"/>
+<path d="M568 503.5 H620" fill="none" stroke="#b3453f" stroke-width="1.8" marker-end="url(#f2-attack)"/>
+<path d="M912 503.5 H964" fill="none" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#f2-consequence)" stroke-dasharray="5 4"/>
+<circle cx="221.0" cy="503.5" r="10" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="221.0" y="507.5" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" data-badge-number="6">6</text>
+</g>
+<g data-route-number="7" data-finding-id="F-033" data-weakness-ids="">
+<title>Internet Attacker
+2 roles; access details in Identified Actors
+Abuse Cross-Site Requests
+I complete Google OAuth for my own account and copy the access_token from the redirect fragment.
+C-01 · Angular SPA Frontend
+No account required; Victim interaction required
+No weakness linked in the register
+Login CSRF: the victim acts inside an attacker-owned account, so entered addresses, cards and order data become visible to the attacker.
+Customer account misuse and disclosure of private account data</title>
+<rect x="248" y="552" width="320" height="73" rx="7" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4" data-column="1"/>
+<text x="264" y="575.0" font-size="13" fill="#1f2937" font-weight="bold" >Abuse Cross-Site Requests</text>
+<text x="264" y="592.0" font-size="13" fill="#6b7280" font-weight="normal" >F-033 · no account · victim</text>
+<text x="264" y="609.0" font-size="13" fill="#6b7280" font-weight="normal" >interaction</text>
+<rect x="622" y="552" width="290" height="73" rx="7" fill="#f3f6fa" stroke="#4f6d9c" stroke-width="1.4" data-column="2"/>
+<text x="638" y="583.5" font-size="13" fill="#6b7280" font-weight="normal" >No weakness linked in the</text>
+<text x="638" y="600.5" font-size="13" fill="#6b7280" font-weight="normal" >register</text>
+<rect x="966" y="552" width="340" height="73" rx="7" fill="#f3f6fa" stroke="#4f6d9c" stroke-width="1.4" data-column="3"/>
+<text x="982" y="583.5" font-size="13" fill="#334d6e" font-weight="bold" >Customer account misuse and</text>
+<text x="982" y="600.5" font-size="13" fill="#334d6e" font-weight="bold" >disclosure of private account data</text>
+<path d="M194 588.5 H246" fill="none" stroke="#b3453f" stroke-width="1.8" marker-end="url(#f2-attack)" stroke-dasharray="5 4"/>
+<path d="M568 588.5 H620" fill="none" stroke="#b3453f" stroke-width="1.8" marker-end="url(#f2-attack)"/>
+<path d="M912 588.5 H964" fill="none" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#f2-consequence)" stroke-dasharray="5 4"/>
+<circle cx="221.0" cy="588.5" r="10" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="221.0" y="592.5" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" data-badge-number="7">7</text>
+</g>
+<g data-route-number="8" data-finding-id="F-039" data-weakness-ids="">
+<title>Supply-Chain / Build Attacker
+1 role; access details in Identified Actors
+Compromise the Build or Its Inputs
+Dependency Install Scripts Run at Build Time: Without --ignore-scripts, any compromised dependency publisher can execute postinstall code at build time.
+C-08 · CI/CD Pipeline
+Build or dependency access required
+No weakness linked in the register
+Technical consequence not established.
+Service disruption or compromise of application data</title>
+<rect x="248" y="637" width="320" height="56" rx="7" fill="#ffffff" stroke="#94a3b8" stroke-width="1.4" data-column="1"/>
+<text x="264" y="660.0" font-size="13" fill="#1f2937" font-weight="bold" >Compromise the Build or Its Inputs</text>
+<text x="264" y="677.0" font-size="13" fill="#6b7280" font-weight="normal" >F-039 · build access</text>
+<rect x="622" y="637" width="290" height="56" rx="7" fill="#f3f6fa" stroke="#4f6d9c" stroke-width="1.4" data-column="2"/>
+<text x="638" y="660.0" font-size="13" fill="#6b7280" font-weight="normal" >No weakness linked in the</text>
+<text x="638" y="677.0" font-size="13" fill="#6b7280" font-weight="normal" >register</text>
+<rect x="966" y="637" width="340" height="56" rx="7" fill="#f3f6fa" stroke="#4f6d9c" stroke-width="1.4" data-column="3"/>
+<text x="982" y="660.0" font-size="13" fill="#334d6e" font-weight="bold" >Service disruption or compromise of</text>
+<text x="982" y="677.0" font-size="13" fill="#334d6e" font-weight="bold" >application data</text>
+<path d="M194 665.0 H246" fill="none" stroke="#b3453f" stroke-width="1.8" marker-end="url(#f2-attack)"/>
+<path d="M568 665.0 H620" fill="none" stroke="#b3453f" stroke-width="1.8" marker-end="url(#f2-attack)"/>
+<path d="M912 665.0 H964" fill="none" stroke="#94a3b8" stroke-width="1.8" marker-end="url(#f2-consequence)" stroke-dasharray="5 4"/>
+<circle cx="221.0" cy="665.0" r="10" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="221.0" y="669.0" font-size="11" fill="#ffffff" font-weight="bold" text-anchor="middle" data-badge-number="8">8</text>
+</g>
+<g data-actor-card="internet-anon" data-actor-victim="false" data-actor-routes="1 2 3 4 5">
+<rect x="24" y="42" width="170" height="413" rx="7" fill="#fbf6f6" stroke="#a04d4a" stroke-width="1.4" data-column="0"/>
+<text x="40" y="243.5" font-size="13" fill="#b3453f" font-weight="bold" >Internet</text>
+<text x="40" y="260.5" font-size="13" fill="#b3453f" font-weight="bold" >Attacker</text>
+</g>
+<g data-actor-card="internet-anon" data-actor-victim="true" data-actor-routes="6 7">
+<rect x="24" y="467" width="170" height="158" rx="7" fill="#fbf6f6" stroke="#a04d4a" stroke-width="1.4" data-column="0"/>
+<text x="40" y="532.5" font-size="13" fill="#b3453f" font-weight="bold" >Internet</text>
+<text x="40" y="549.5" font-size="13" fill="#b3453f" font-weight="bold" >Attacker</text>
+<text x="40" y="566.5" font-size="13" fill="#6b7280" font-weight="normal" >via a victim</text>
+</g>
+<g data-actor-card="build-time" data-actor-victim="false" data-actor-routes="8">
+<rect x="24" y="637" width="170" height="56" rx="7" fill="#fbf6f6" stroke="#a04d4a" stroke-width="1.4" data-column="0"/>
+<text x="40" y="660.0" font-size="13" fill="#b3453f" font-weight="bold" >Supply-Chain /</text>
+<text x="40" y="677.0" font-size="13" fill="#b3453f" font-weight="bold" >Build Attacker</text>
+</g></svg>

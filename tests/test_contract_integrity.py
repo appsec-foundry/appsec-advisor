@@ -221,7 +221,7 @@ def test_all_condition_expressions_are_safe(contract):
     assert not violations, "\n".join(violations)
 
 
-COMPOSE_SRC = (REPO_ROOT / "scripts" / "compose_threat_model.py").read_text(encoding="utf-8")
+COMPOSE_SRC = (REPO_ROOT / "scripts" / "renderers/compose_threat_model.py").read_text(encoding="utf-8")
 _COND_KEYWORDS = {"not", "and", "or", "in", "len", "True", "False", "None"}
 
 
@@ -260,7 +260,7 @@ def _condition_variables(expr: str) -> set[str]:
 # special-case path that never calls eval_condition against eval_context, so the
 # variable is intentionally not an eval_context key. `changelog` is one of the
 # `("infobox", "changelog", "quick_mode_notice", "toc", "skipped_sections_placeholder")`
-# document.order sections compose special-cases (compose_threat_model.py ~L1978);
+# document.order sections compose special-cases (renderers/compose_threat_model.py ~L1978);
 # `len(changelog) > 0` documents intent but the changelog renderer self-gates.
 # Keep this set MINIMAL and justified — every entry is a condition NOT enforced
 # by the safe evaluator, so adding one knowingly forfeits that guard.

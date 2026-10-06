@@ -65,6 +65,48 @@ def test_yaml_entries_are_unique():
     assert len(raw_entries) == len(set(raw_entries)), "duplicate entries in required-permissions.yaml"
 
 
+def test_upstream_update_uses_existing_shell_permission_without_local_code_authority():
+    entries = cp.load_required(cp.DATA_FILE)
+    shell = next(e for e in entries if e["entry"] == "Bash(*)")
+    assert "signature-verified AISCB installer" in shell["reason"]
+    assert "--refresh-installed" in shell["reason"]
+    assert "never repository-owned executables" in shell["reason"]
+
+
+def test_issue_reporting_reuses_permissions_without_granting_publication_consent():
+    entries = cp.load_required(cp.DATA_FILE)
+    shell = next(e for e in entries if e["entry"] == "Bash(*)")
+    assert "runtime/report_plugin_issue.py" in shell["reason"]
+    assert "orchestrator/wait_agent_calls.py join" in shell["reason"]
+    assert "not publication consent" in shell["reason"]
+    write = next(e for e in entries if e["entry"] == "Write(${OUTPUT_DIR}/.*)")
+    assert ".plugin-issue-draft.json" in write["reason"]
+
+
+def test_overview_and_detail_use_existing_output_directory_permission():
+    entries = cp.load_required(cp.DATA_FILE)
+    write = next(e for e in entries if e["entry"] == "Write(${OUTPUT_DIR}/**)")
+    assert "figure1-detail" in write["reason"]
+    assert not any("figure1-detail" in e["entry"] for e in entries)
+
+
+def test_figure2_uses_existing_plugin_read_and_output_write_permissions():
+    entries = cp.load_required(cp.DATA_FILE)
+    read = next(e for e in entries if e["entry"] == "Read(${PLUGIN_ROOT}/**)")
+    write = next(e for e in entries if e["entry"] == "Write(${OUTPUT_DIR}/**)")
+    assert "Figure 2 presentation schema" in read["reason"]
+    assert "figure2 SVG" in write["reason"]
+    assert not any("figure2" in e["entry"] for e in entries)
+
+
+def test_job_budget_query_uses_existing_shell_permission():
+    rules = [entry["entry"] for entry in cp.load_required(cp.DATA_FILE)]
+    command = "Bash(python3 runtime/budget_watchdog.py active-job-critical --output-dir out --action-id wave-a --job-id job-a)"
+    assert any(cp._rule_covers(rule, command) for rule in rules)
+    assert not any("budget_watchdog" in rule for rule in rules)
+    assert "runtime/budget_watchdog.py active-job-critical" in cp.DATA_FILE.read_text(encoding="utf-8")
+
+
 def test_yaml_entries_use_known_tools():
     entries = cp.load_required(cp.DATA_FILE)
     allowed_tools = {"Bash", "Write", "Edit", "Read"}
@@ -74,19 +116,29 @@ def test_yaml_entries_use_known_tools():
 
 
 def test_controller_command_and_paths_are_covered_by_existing_rules():
-    """The thin runtime adds no broader permission: Bash(*) runs the fixed
-    controller command and the existing plugin/output globs cover its reads
-    and writes."""
+    """The controller uses fixed commands and one exact repository write target."""
     entries = cp.load_required(cp.DATA_FILE)
     rules = [entry["entry"] for entry in entries]
-    assert any(cp._rule_covers(rule, "Bash(python3 orchestration_controller.py)") for rule in rules)
+    assert any(cp._rule_covers(rule, "Bash(python3 orchestrator/orchestration_controller.py)") for rule in rules)
     assert "Read(${PLUGIN_ROOT}/**)" in rules
     assert "Write(${OUTPUT_DIR}/**)" in rules
+    for command in (
+        "prepare --interactive-context",
+        "review-business-impact",
+        "complete-preflight --context-answer answered",
+    ):
+        assert any(
+            cp._rule_covers(rule, f"Bash(python3 orchestrator/orchestration_controller.py {command})") for rule in rules
+        )
+    assert "Write(${OUTPUT_DIR}/.*)" in rules
+    assert "Read(${OUTPUT_DIR}/.*)" in rules
+    assert "Write(${REPO_ROOT}/docs/security/business-context.md)" in rules
+    assert "Write(${REPO_ROOT}/**)" not in rules
 
 
 def test_diagnosis_recommendation_refresh_uses_existing_permissions():
     rules = [entry["entry"] for entry in cp.load_required(cp.DATA_FILE)]
-    assert any(cp._rule_covers(rule, "Bash(python3 recommend_fixes.py --diagnosis)") for rule in rules)
+    assert any(cp._rule_covers(rule, "Bash(python3 runtime/recommend_fixes.py --diagnosis)") for rule in rules)
     assert "Read(${OUTPUT_DIR}/.*)" in rules
     assert "Write(${OUTPUT_DIR}/.*)" in rules
     assert "Read(${PLUGIN_ROOT}/**)" in rules
@@ -97,6 +149,11 @@ def test_maintainer_test_groups_use_existing_shell_permission():
     for command in (
         "python3 scripts/run_tests.py quick",
         "make test-group GROUP=report",
+        "python3 scripts/run_tests.py --changed-against origin/dev",
+        "python3 scripts/run_tests.py --check-groups",
+        "make test-plan BASE=origin/dev",
+        "make test-changed BASE=origin/dev",
+        "git diff --name-only --no-renames -z HEAD --",
         "make test-full",
         "make validate",
     ):
@@ -105,14 +162,14 @@ def test_maintainer_test_groups_use_existing_shell_permission():
 
 def test_enrichment_receipt_uses_existing_shell_and_output_permissions():
     rules = [entry["entry"] for entry in cp.load_required(cp.DATA_FILE)]
-    assert any(cp._rule_covers(rule, "Bash(python3 enrichment_pass.py output)") for rule in rules)
+    assert any(cp._rule_covers(rule, "Bash(python3 model/enrichment_pass.py output)") for rule in rules)
     assert "Write(${OUTPUT_DIR}/**)" in rules
 
 
 def test_evidence_bundle_command_and_artifact_are_covered_by_existing_rules():
     entries = cp.load_required(cp.DATA_FILE)
     rules = [entry["entry"] for entry in entries]
-    assert any(cp._rule_covers(rule, "Bash(python3 build_stride_evidence_bundles.py)") for rule in rules)
+    assert any(cp._rule_covers(rule, "Bash(python3 contexts/build_stride_evidence_bundles.py)") for rule in rules)
     assert any(
         cp._rule_covers(
             rule,
@@ -121,7 +178,7 @@ def test_evidence_bundle_command_and_artifact_are_covered_by_existing_rules():
         for rule in rules
     )
     reasons = " ".join(entry["reason"] for entry in entries)
-    assert "build_stride_evidence_bundles.py" in reasons
+    assert "contexts/build_stride_evidence_bundles.py" in reasons
 
 
 # ---------- template expansion ----------------------------------------
@@ -353,7 +410,7 @@ def test_editorial_packet_and_gate_targets_are_covered():
         "Read(/repo/out/.dispatch-context/editorial/blocks-0001.json)",
         "Write(/repo/out/.dispatch-context/editorial/plan-0001.json)",
         "Write(/repo/out/.dispatch-context/editorial/gate-baseline.json)",
-        "Bash(python3 /plugin/scripts/editorial_gate.py check)",
+        "Bash(python3 /plugin/scripts/validators/editorial_gate.py check)",
     ]:
         assert any(cp._rule_covers(rule, operation) for rule in rules)
 
@@ -362,5 +419,134 @@ def test_architecture_evidence_uses_existing_repository_read_and_validator_permi
     entries = cp.load_required(cp.DATA_FILE)
     rules = [entry["entry"] for entry in entries]
     assert any(cp._rule_covers(rule, "Read(${REPO_ROOT}/src/roles.ts)") for rule in rules)
-    assert any(cp._rule_covers(rule, "Bash(python3 validate_fragment.py assets)") for rule in rules)
+    assert any(cp._rule_covers(rule, "Bash(python3 validators/validate_fragment.py assets)") for rule in rules)
     assert "asset locations" in " ".join(entry["reason"] for entry in entries)
+
+
+def test_weakness_refresh_and_observations_use_existing_permissions():
+    entries = cp.load_required(cp.DATA_FILE)
+    rules = [entry["entry"] for entry in entries]
+    assert any(
+        cp._rule_covers(rule, "Bash(python3 model/merge_threats.py refresh-weaknesses --output-dir output)")
+        for rule in rules
+    )
+    reasons = " ".join(entry["reason"] for entry in entries)
+    for name in (".impl-strategy.json", ".impl-design-signals.json", ".finding-design-signals.json"):
+        assert name in reasons
+        assert any(cp._rule_covers(rule, "Write(${OUTPUT_DIR}/" + name + ")") for rule in rules)
+
+
+def test_modular_baseline_loader_uses_existing_shell_permission():
+    entries = cp.load_required(cp.DATA_FILE)
+    shell = next(item for item in entries if item["entry"] == "Bash(*)")
+    assert "policy_loader.py" in shell["reason"]
+    assert "--migrate" in shell["reason"]
+    assert "no new execution grant" in shell["reason"]
+    assert not any("Write(" in item["entry"] and ".appsec-baseline" in item["entry"] for item in entries)
+
+
+# ---------- per-scope read status ---------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("content", "status", "allow"),
+    [
+        (None, "absent", []),
+        ('{"permissions": {"allow": ["Bash(*)", 3]}}', "ok", ["Bash(*)"]),
+        ("{}", "ok", []),
+        ('{"permissions": null}', "ok", []),
+        ("{not json", "invalid", []),
+        ("[]", "invalid", []),
+        ('{"permissions": []}', "invalid", []),
+        ('{"permissions": {"allow": "Bash(*)"}}', "invalid", []),
+    ],
+)
+def test_read_scope_status(tmp_path, content, status, allow):
+    path = tmp_path / "settings.json"
+    if content is not None:
+        path.write_text(content, encoding="utf-8")
+    assert cp.read_scope(path)[:2] == (status, allow)
+
+
+@pytest.mark.parametrize("make_node", ["directory", "device"])
+def test_read_scope_non_regular_file_is_unreadable_not_absent(tmp_path, make_node):
+    """A sandbox masks settings with a device node; its grant is unknown, not empty."""
+    if make_node == "directory":
+        path = tmp_path / "settings.json"
+        path.mkdir()
+    else:
+        path = Path("/dev/null")
+    status, allow, detail = cp.read_scope(path)
+    assert (status, allow) == ("unreadable", [])
+    assert detail
+
+
+def test_scope_report_grants_match_effective_allow(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.json").write_text('{"permissions": {"allow": ["Read(*)"]}}', encoding="utf-8")
+    report = cp.scope_report(tmp_path)
+    assert {scope: entry["allow"] for scope, entry in report.items()} == cp.effective_allow(tmp_path)
+    assert report["project"]["status"] == "ok"
+    assert report["local"]["status"] == report["user"]["status"] == "absent"
+
+
+def test_render_human_reports_unreadable_scope(tmp_path):
+    out = cp.render_human([], [], {"local": 0}, None, scope_paths={"local": Path("/dev/null")})
+    assert "cannot read" in out
+    assert "not found" not in out
+
+
+# ---------- prompt-free defaultMode -------------------------------------
+
+
+def _mode_report(**modes):
+    return {scope: {"default_mode": modes.get(scope)} for scope in ("local", "project", "user")}
+
+
+@pytest.mark.parametrize(
+    ("modes", "expected"),
+    [
+        ({"user": "auto"}, "auto"),
+        ({"project": "bypassPermissions"}, "bypassPermissions"),
+        ({"user": "acceptEdits"}, None),
+        ({"user": "plan"}, None),
+        ({"user": "default"}, None),
+        ({}, None),
+        ({"local": "default", "user": "auto"}, None),
+        ({"project": "acceptEdits", "user": "auto"}, None),
+        ({"local": "auto", "user": "default"}, "auto"),
+    ],
+)
+def test_prompt_free_default_mode_follows_settings_precedence(modes, expected):
+    assert cp.prompt_free_default_mode(_mode_report(**modes)) == expected
+
+
+@pytest.mark.parametrize(
+    ("content", "mode"),
+    [
+        ('{"permissions": {"defaultMode": "auto"}}', "auto"),
+        ('{"permissions": {"allow": []}}', None),
+        ('{"permissions": {"defaultMode": 1}}', None),
+        ("{not json", None),
+    ],
+)
+def test_scope_report_reads_default_mode(tmp_path, monkeypatch, content, mode):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.local.json").write_text(content, encoding="utf-8")
+    report = cp.scope_report(tmp_path)
+    assert report["local"]["default_mode"] == mode
+    assert report["user"]["default_mode"] is None
+
+
+def test_authnz_reconciliation_and_gate_use_existing_permissions():
+    rules = [entry["entry"] for entry in cp.load_required(cp.DATA_FILE)]
+    for command in (
+        "finalize --report out/.authnz-report.json --require-inputs",
+        "gate --report out/.authnz-report.json",
+    ):
+        assert any(cp._rule_covers(rule, f"Bash(python3 model/authnz_report.py {command})") for rule in rules)
+    assert "Read(${OUTPUT_DIR}/.*)" in rules
+    assert "Write(${OUTPUT_DIR}/.*)" in rules
+    assert "model/authnz_report.py finalize --require-inputs and gate" in cp.DATA_FILE.read_text()

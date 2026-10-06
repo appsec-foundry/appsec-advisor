@@ -59,7 +59,7 @@
     "additions": {
       "type": "array",
       "default": [],
-      "description": "Cross-cutting / process mitigations not derivable from threats[]. Each M-ID MUST come from scripts/reserve_ids.py mitigation --count N.",
+      "description": "Cross-cutting / process mitigations not derivable from threats[]. Each M-ID MUST come from scripts/model/reserve_ids.py mitigation --count N.",
       "items": {
         "type": "object",
         "required": ["id", "title", "threat_ids", "kind"],
@@ -68,7 +68,7 @@
           "id": {
             "type": "string",
             "pattern": "^M-\\d{3,}$",
-            "description": "Reserved via scripts/reserve_ids.py. Aggregator validates ID ≤ current counter AND not colliding with baseline."
+            "description": "Reserved via scripts/model/reserve_ids.py. Aggregator validates ID ≤ current counter AND not colliding with baseline."
           },
           "title": {"type": "string", "minLength": 1, "maxLength": 100},
           "threat_ids": {

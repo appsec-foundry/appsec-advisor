@@ -13,11 +13,11 @@ import importlib.util
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-SCRIPT = ROOT / "scripts" / "backfill_scanner_remediation.py"
+SCRIPT = ROOT / "scripts" / "model/backfill_scanner_remediation.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("backfill_scanner_remediation", SCRIPT)
+    spec = importlib.util.spec_from_file_location("model.backfill_scanner_remediation", SCRIPT)
     mod = importlib.util.module_from_spec(spec)
     assert spec.loader
     spec.loader.exec_module(mod)

@@ -1,4 +1,4 @@
-"""Tests for scripts/normalize_security_architecture.py.
+"""Tests for scripts/model/normalize_security_architecture.py.
 
 Each structural-defect test asserts the *gate's own* check fails before the
 normalizer runs and passes after — so detection (qa_checks) and remediation
@@ -14,8 +14,8 @@ import pytest
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-import normalize_security_architecture as nrm  # noqa: E402
-import qa_checks as qc  # noqa: E402
+import model.normalize_security_architecture as nrm  # noqa: E402
+import validators.qa_checks as qc  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -374,12 +374,12 @@ def test_fold_still_demotes_non_mechanism_when_a_peer_survives():
 # --------------------------------------------------------------------------- #
 # Folding must keep the parent `**Controls covered:**` list in sync.
 #
-# juice-shop 2026-07-30: pregenerate_fragments.py emits the covered-list
+# juice-shop 2026-07-30: renderers/pregenerate_fragments.py emits the covered-list
 # MECHANICALLY from the H4 headings it just wrote ("correct by construction",
 # marked "LLM must not re-author it"), then this normalizer folded
 # `#### Authentication Rate Limiting` — a heading that is neither whitelisted
 # nor forbidden-pattern-matched — and left the link behind. The dangling link
-# is BLOCKING in check_control_subsection_coverage, apply_repair_plan.py
+# is BLOCKING in check_control_subsection_coverage, repairs/apply_repair_plan.py
 # classifies it as non-mechanical, and the resulting appsec-fragment-fixer
 # dispatch cannot fix it without re-authoring the LOCKED line.
 # --------------------------------------------------------------------------- #

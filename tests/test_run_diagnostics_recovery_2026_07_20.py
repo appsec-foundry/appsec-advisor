@@ -23,8 +23,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import aggregate_run_issues as agg  # noqa: E402
-import stride_dispatch_waves as waves  # noqa: E402
+import orchestrator.stride_dispatch_waves as waves  # noqa: E402
+import runtime.aggregate_run_issues as agg  # noqa: E402
 
 AGENTS = REPO_ROOT / "agents"
 
@@ -132,7 +132,7 @@ def test_completed_run_produces_no_outcome_issue(tmp_path: Path) -> None:
 def test_controller_abort_populates_run_issues(tmp_path: Path) -> None:
     """An aborted run must leave a diagnostic bundle behind.
 
-    aggregate_run_issues.py's only call site is the Completion step, which an
+    runtime/aggregate_run_issues.py's only call site is the Completion step, which an
     aborted run never reaches — so the runs that most need diagnostics produced
     none, and report-error/diagnose-bundle read a stale file or nothing.
     """
@@ -149,7 +149,7 @@ def test_controller_abort_populates_run_issues(tmp_path: Path) -> None:
     completed = subprocess.run(
         [
             sys.executable,
-            str(REPO_ROOT / "scripts" / "orchestration_controller.py"),
+            str(REPO_ROOT / "scripts" / "orchestrator/orchestration_controller.py"),
             "next",
             "--output-dir",
             str(out),
@@ -221,8 +221,8 @@ def test_stage1_gates_evidence_content_not_just_existence() -> None:
     The pre-seed is schema-clean with every count at zero, so an existence check
     passes while triage silently loses the entire refutation signal.
     """
-    text = (REPO_ROOT / "scripts" / "orchestration_controller.py").read_text(encoding="utf-8")
-    assert "guard_evidence_verification.py" in text, (
+    text = (REPO_ROOT / "scripts" / "orchestrator/orchestration_controller.py").read_text(encoding="utf-8")
+    assert "validators/guard_evidence_verification.py" in text, (
         "the content detector exists but is not invoked where its consumer runs"
     )
 

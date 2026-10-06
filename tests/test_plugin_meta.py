@@ -1,4 +1,4 @@
-"""Tests for scripts/plugin_meta.py — version metadata helper.
+"""Tests for scripts/runtime/plugin_meta.py — version metadata helper.
 
 Pins current behavior of load_meta, classify_compat, classify_plugin_version,
 the semver parser, and the CLI subcommands (get / print / check-compat /
@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import json
 
-import plugin_meta as pm
 import pytest
+import runtime.plugin_meta as pm
 
 # --- _find_plugin_json / load_meta -----------------------------------------
 
@@ -272,6 +272,6 @@ def test_no_subcommand_exits(capsys):
 
 def test_main_reads_sys_argv(monkeypatch, capsys):
     _stub_meta(monkeypatch, {"plugin_version": "9.9.9", "analysis_version": 0, "compatible_analysis_versions": []})
-    monkeypatch.setattr("sys.argv", ["plugin_meta.py", "get", "plugin_version"])
+    monkeypatch.setattr("sys.argv", ["runtime/plugin_meta.py", "get", "plugin_version"])
     assert pm.main() == 0
     assert capsys.readouterr().out.strip() == "9.9.9"

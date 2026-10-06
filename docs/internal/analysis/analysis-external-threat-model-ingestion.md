@@ -38,7 +38,7 @@ The pipeline **already has a precedent** for "team-provided prior threats":
 
 - `appsec-context-resolver.md → Step 4i — Known threats`: reads `docs/known-threats.yaml` (its own schema: `threats[]{id,title,stride,severity,status}`) **verbatim** into `.threat-modeling-context.md`. The STRIDE analyzer + QA read it as a cross-reference.
 - `config.json → external_context.rest_url`: external context via REST.
-- Deterministic pre-pass machinery exists: `phase-group-recon.md → Step 0` invokes `recon_patterns.py` and writes `.recon-patterns.json`. **That is exactly where** a format detection belongs.
+- Deterministic pre-pass machinery exists: `phase-group-recon.md → Step 0` invokes `analyzers/recon_patterns.py` and writes `.recon-patterns.json`. **That is exactly where** a format detection belongs.
 
 → The clean extension is a **Step 4j "Existing third-party threat model"** in the context-resolver + a deterministic detection in recon Step 0. Architecturally consistent, no new special case.
 
@@ -78,7 +78,7 @@ Supporting all 7+ formats is a lot of surface area. Proceed **in phases** (see r
 **Default behavior:** always detect. Interactive → ask via `AskUserQuestion` (show the hit: format, #components/#flows/#boundaries/#threats, provenance). Headless/`--yes` → `--import-mode context` (non-authoritative), log the hit + decision in the report changelog.
 
 ### Detection (deterministic, in recon Step 0)
-A new script analogous to `recon_patterns.py`, running in `phase-group-recon.md → Step 0`, writes `.external-threat-models.json`:
+A new script analogous to `analyzers/recon_patterns.py`, running in `phase-group-recon.md → Step 0`, writes `.external-threat-models.json`:
 ```json
 [{ "path": "...", "format": "threat-dragon|otm|markdown|...",
    "confidence": "high|medium", "provenance": "self|external",
@@ -172,7 +172,7 @@ Plus **relationship mapping** (external → our own T-IDs: 1:1 / 1:n / none) and
 
 **What the section MUST NOT do:** change our own risk ratings, influence counts, push external threats into the merge. **A parallel ledger.**
 
-**Integration cost (honest, code-verified):** `docs/internal/runbooks/adding-a-section.md` requires **5 files in sequence** (`sections-contract.yaml` → schema → 5 registry maps → `compose_threat_model.py` → validators). `fragment_type: data` (tabular), `condition: "render_external_reconciliation"` (only when an external model was imported). Not trivial, but a documented standard path.
+**Integration cost (honest, code-verified):** `docs/internal/runbooks/adding-a-section.md` requires **5 files in sequence** (`sections-contract.yaml` → schema → 5 registry maps → `renderers/compose_threat_model.py` → validators). `fragment_type: data` (tabular), `condition: "render_external_reconciliation"` (only when an external model was imported). Not trivial, but a documented standard path.
 
 ## 2.5 The sharpest design hazard: circular confirmation
 

@@ -14,7 +14,7 @@ Summary — and prominently enough? Would adding a concrete worst-case abuse-cas
 
 Abuse cases are already surfaced in the MS by **two deterministic** lines (not LLM prose):
 
-1. **"Verified attack chains"** — `scripts/compose_threat_model.py:_build_ms_abuse_chain_line`
+1. **"Verified attack chains"** — `scripts/renderers/compose_threat_model.py:_build_ms_abuse_chain_line`
    (def ~6523; placed in *Security Posture & Top Threats*, right under the top-threats
    table — see assembly at ~7025-7028).
    - Reads `.fragments/abuse-cases.json`.
@@ -23,7 +23,7 @@ Abuse cases are already surfaced in the MS by **two deterministic** lines (not L
      `**Verified attack chains.** 2 fully viable (AC-T-001, AC-T-002); 1 partially blocked (AC-T-003). … see §9.`
    - Returns '' (line omitted) when no viable/partial chain exists.
 
-2. **"Attack-chain analysis"** — `scripts/compose_threat_model.py:_abuse_chain_ms_note`
+2. **"Attack-chain analysis"** — `scripts/renderers/compose_threat_model.py:_abuse_chain_ms_note`
    (def ~8931; appended **inside the Verdict block**, sid == "verdict", at ~9037-9043 —
    so it renders near the TOP of the MS).
    - Iterates `yaml_data.threats[]`, reads `verified_chain_ids`.
@@ -72,7 +72,7 @@ Instead, make abuse cases the **verification layer of the red box**:
 
 ## Contract touchpoints (if built — MS is contract-governed, AGENTS.md §1)
 
-- `scripts/compose_threat_model.py` — new post-pass over the rendered verdict blockquote:
+- `scripts/renderers/compose_threat_model.py` — new post-pass over the rendered verdict blockquote:
   parse F-NNN tokens in each bullet, look up `verified_chain_ids` (map finding → chain),
   append the badge. Reconcile with `_abuse_chain_ms_note` (likely remove/merge it).
 - `agents/shared/ms-template.md` — document the badge convention in the Verdict block spec.
@@ -88,7 +88,7 @@ Instead, make abuse cases the **verification layer of the red box**:
   (else the badge silently never appears). Check `verified_chain_ids` population coverage.
 - Confirm the fields available per chain in `.fragments/abuse-cases.json` (id, chain_verdict,
   and whether a human-readable title/impact exists) — needed if a concrete line is ever wanted
-  as a fallback. Producer: `scripts/render_abuse_cases.py`.
+  as a fallback. Producer: `scripts/renderers/render_abuse_cases.py`.
 - Decide: badge-in-bullet (preferred) vs a single distinct "Verified end-to-end" line clearly
   labeled as the code-proven subset (lower parsing risk, slightly more duplication).
 - Quick depth / `--no-abuse-cases`: abuse verification is skipped → no badges; the red box

@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/analyst-feature.schema.json",
+  "title": "Threat analyst feature context",
+  "description": "Versioned feature declarations and sourced answers a developer explicitly saved for reuse, for example in CI. Every entry is an untrusted declaration: it never authorizes actions, waives requirements, accepts risk, or proves that a control exists.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "feature_id",
+    "revision",
+    "intent",
+    "declarations",
+    "answers",
+    "pending_verification"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "feature_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "intent": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1200
+    },
+    "declarations": {
+      "type": "array",
+      "maxItems": 40,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 600
+      }
+    },
+    "answers": {
+      "type": "array",
+      "maxItems": 60,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "asks",
+          "answer",
+          "question_fingerprint",
+          "answer_fingerprint",
+          "answered_at"
+        ],
+        "properties": {
+          "question_ref": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,39}/[a-z0-9][a-z0-9-]{0,63}:[a-z0-9][a-z0-9-]{0,63}$"
+          },
+          "asks": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1200
+          },
+          "answer": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "question_fingerprint": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "answer_fingerprint": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "answered_at": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+          }
+        }
+      }
+    },
+    "pending_verification": {
+      "type": "array",
+      "maxItems": 40,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 600
+      }
+    }
+  }
+}

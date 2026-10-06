@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "components": [
+    {
+      "id": "web-client",
+      "name": "Web Client",
+      "description": "Browser application the customer uses",
+      "paths": ["src/web-client/**"],
+      "tier": "client",
+      "deployment_zones": ["client-device"],
+      "handles_sensitive_data": false
+    },
+    {
+      "id": "api",
+      "name": "API",
+      "description": "Server-side request handlers",
+      "paths": ["src/api/**"],
+      "tier": "application",
+      "deployment_zones": ["internet", "dmz"],
+      "handles_sensitive_data": false
+    },
+    {
+      "id": "store",
+      "name": "Store",
+      "description": "Relational datastore",
+      "paths": ["src/store/**"],
+      "tier": "data",
+      "deployment_zones": ["prod-write-db"],
+      "handles_sensitive_data": true
+    }
+  ]
+}

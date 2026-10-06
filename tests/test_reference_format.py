@@ -3,7 +3,7 @@
 Locks in the canonical F-/T-/M- reference format (one full form, one short
 form) so the producer can never silently drift back to the mixed variants it
 historically shipped (juice-shop 2026-06-29 RC). See
-project-threatmodel-ref-link-format memory + scripts/check_reference_format.py.
+project-threatmodel-ref-link-format memory + scripts/validators/check_reference_format.py.
 """
 
 from __future__ import annotations
@@ -22,16 +22,16 @@ if str(SCRIPTS) not in sys.path:
 
 
 def _load(name: str):
-    spec = importlib.util.spec_from_file_location(name, SCRIPTS / f"{name}.py")
+    spec = importlib.util.spec_from_file_location(name, SCRIPTS / (name.replace(".", "/") + ".py"))
     mod = importlib.util.module_from_spec(spec)
     sys.modules[name] = mod
     spec.loader.exec_module(mod)
     return mod
 
 
-compose = _load("compose_threat_model")
-linter = _load("check_reference_format")
-rac = _load("render_abuse_cases")
+compose = _load("renderers.compose_threat_model")
+linter = _load("validators.check_reference_format")
+rac = _load("renderers.render_abuse_cases")
 
 
 # ---------------------------------------------------------------------------
@@ -62,13 +62,6 @@ def test_strip_trailing_locator_leaves_prose():
     assert f("No locator here") == "No locator here"
 
 
-def test_evidence_locator_dict_and_list():
-    assert compose._evidence_locator({"evidence": {"file": "a/b.ts", "line": 9}}) == "a/b.ts:9"
-    assert compose._evidence_locator({"evidence": [{"file": "x.ts", "line": 1}]}) == "x.ts:1"
-    assert compose._evidence_locator({"evidence": {"file": "n.ts"}}) == "n.ts"
-    assert compose._evidence_locator({}) == ""
-
-
 # ---------------------------------------------------------------------------
 # linkify_with_label — the two canonical forms
 # ---------------------------------------------------------------------------
@@ -93,11 +86,11 @@ _THREAT = {
 }
 
 
-def test_linkify_full_form_basename_and_backticked():
+def test_linkify_full_form_is_locator_free():
     ctx = _ctx(threats=[_THREAT])
     out = ctx.linkify_with_label("F-046")
-    # ID linked once, label locator-free, basename:line backticked in parens.
-    assert out == "🟠 [F-046](#f-046) — XXE file disclosure via XML upload (`fileUpload.ts:76`)"
+    # RA-4: the location belongs to the finding, never to a reference.
+    assert out == "🟠 [F-046](#f-046) — XXE file disclosure via XML upload"
 
 
 def test_linkify_short_form_is_id_only():
@@ -105,18 +98,10 @@ def test_linkify_short_form_is_id_only():
     assert ctx.linkify_with_label("F-046", compact=True) == "🟠 [F-046](#f-046)"
 
 
-def test_linkify_index_uses_full_path():
+def test_linkify_label_override_drops_its_locator():
     ctx = _ctx(threats=[_THREAT])
-    out = ctx.linkify_with_label("F-046", full_path=True)
-    assert out == "🟠 [F-046](#f-046) — XXE file disclosure via XML upload (`routes/fileUpload.ts:76`)"
-
-
-def test_linkify_label_override_locator_not_doubled():
-    ctx = _ctx(threats=[_THREAT])
-    # A curated override that already embeds a locator must not double it.
     out = ctx.linkify_with_label("F-046", label_override="Custom title (routes/fileUpload.ts:76)")
-    assert out == "🟠 [F-046](#f-046) — Custom title (`fileUpload.ts:76`)"
-    assert out.count("fileUpload.ts") == 1
+    assert out == "🟠 [F-046](#f-046) — Custom title"
 
 
 def test_linkify_no_location_degrades_cleanly():
@@ -145,7 +130,19 @@ def test_linter_flags_emdash_locator():
 
 
 def test_linter_passes_canonical_full_form():
-    good = "🔴 [F-010](#f-010) — Insecure Direct Object Reference (`memory.ts:15`)"
+    good = "🔴 [F-010](#f-010) — Insecure Direct Object Reference"
+    assert linter.lint_text(good) == []
+
+
+def test_linter_flags_a_locator_ending_the_reference():
+    for tail in ("", ".", " | next cell", "<br/>🟡 [F-011](#f-011)"):
+        bad = f"🔴 [F-010](#f-010) — Insecure Direct Object Reference (`memory.ts:15`){tail}"
+        (message,) = linter.lint_text(bad)
+        assert "ends with locator" in message, tail
+
+
+def test_linter_allows_a_backticked_locator_later_in_a_sentence():
+    good = "Until 🔴 [F-010](#f-010) — IDOR (`memory.ts:15`) is fixed, any user reads foreign orders."
     assert linter.lint_text(good) == []
 
 
@@ -161,8 +158,6 @@ def test_linter_ignores_prose_file_mentions_and_urls():
 
 def test_linter_ignores_a_title_that_starts_with_a_filename():
     # Form C is a locator that ends the reference; a title may open with a filename.
-    good = "🟡 [F-004](#f-004) — settings.json exposes the debug flag (`config/settings.json:3`)"
-    assert linter.lint_text(good) == []
     assert linter.lint_text("🟡 [F-004](#f-004) — settings.json exposes the debug flag") == []
 
 
@@ -183,21 +178,33 @@ def test_linter_flags_emdash_locator_before_trailing_punctuation():
 # ---------------------------------------------------------------------------
 
 
-def test_normalize_backticks_and_basenames_unbackticked_locator():
-    md = "🔴 [F-010](#f-010) — Insecure Direct Object Reference (routes/memory.ts:15)"
-    out = compose._normalize_reference_locators(md)
-    assert out == "🔴 [F-010](#f-010) — Insecure Direct Object Reference (`memory.ts:15`)"
+def test_normalize_drops_a_locator_ending_the_reference():
+    title = "🔴 [F-010](#f-010) — Insecure Direct Object Reference"
+    for loc in ("(routes/memory.ts:15)", "(`routes/memory.ts:15`)", "(server.ts)"):
+        for tail in ("", " | cell", "<br/>x", ", [F-011](#f-011)"):
+            assert compose._normalize_reference_locators(f"{title} {loc}{tail}") == f"{title}{tail}", (loc, tail)
 
 
-def test_normalize_preserves_already_backticked_full_path():
-    # The Findings index deliberately keeps the full path, backticked — untouched.
-    md = "🔴 [F-010](#f-010) — Insecure Direct Object Reference (`routes/memory.ts:15`)"
-    assert compose._normalize_reference_locators(md) == md
+def test_normalize_backticks_a_locator_later_in_a_sentence():
+    md = "Until 🔴 [F-010](#f-010) — IDOR (routes/memory.ts:15) is fixed, users read foreign orders."
+    assert compose._normalize_reference_locators(md) == (
+        "Until 🔴 [F-010](#f-010) — IDOR (`memory.ts:15`) is fixed, users read foreign orders."
+    )
 
 
-def test_normalize_handles_no_line_locator():
-    md = "[F-028](#f-028) — Cross-Site Request Forgery (server.ts)"
-    assert compose._normalize_reference_locators(md) == "[F-028](#f-028) — Cross-Site Request Forgery (`server.ts`)"
+def test_normalize_handles_sentence_punctuation_and_brand_names():
+    f = compose._normalize_reference_locators
+    assert f("Fixed [F-003](#f-003) (routes/x.ts:3).") == "Fixed [F-003](#f-003)."
+    assert f("[F-001](#f-001) sits in (routes/login.ts:34), which is public.") == (
+        "[F-001](#f-001) sits in (`login.ts:34`), which is public."
+    )
+    assert f("[F-003](#f-003) — (routes/login.ts:34)") == "[F-003](#f-003)"
+    assert f("[F-002](#f-002) — Upgrade (Socket.IO)") == "[F-002](#f-002) — Upgrade (Socket.IO)"
+    for md in (
+        "Fixed [F-003](#f-003) (routes/x.ts:3).",
+        "[F-001](#f-001) sits in (routes/login.ts:34), which is public.",
+    ):
+        assert linter.lint_text(f(md)) == []
 
 
 def test_normalize_does_not_cross_cell_or_tag_boundaries():
@@ -205,9 +212,7 @@ def test_normalize_does_not_cross_cell_or_tag_boundaries():
     # sibling reference must NOT be attached to the ref.
     assert compose._normalize_reference_locators("[F-1](#f-1) | (a.ts:1)") == "[F-1](#f-1) | (a.ts:1)"
     assert compose._normalize_reference_locators("[F-1](#f-1) <span> (a.ts:1)") == "[F-1](#f-1) <span> (a.ts:1)"
-    assert compose._normalize_reference_locators("[F-1](#f-1) [F-2](#f-2) (a.ts:1)") == (
-        "[F-1](#f-1) [F-2](#f-2) (`a.ts:1`)"
-    )
+    assert compose._normalize_reference_locators("[F-1](#f-1) [F-2](#f-2) (a.ts:1)") == "[F-1](#f-1) [F-2](#f-2)"
 
 
 def test_normalize_ignores_non_reference_parenthetical():
@@ -223,14 +228,12 @@ def test_normalize_is_idempotent():
 
 
 # ---------------------------------------------------------------------------
-# §9 Abuse Cases (render_abuse_cases.py) — same canonical form
+# §9 Abuse Cases (renderers/render_abuse_cases.py) — same canonical form
 # ---------------------------------------------------------------------------
 
 
 def test_abuse_locator_helpers():
     assert rac._basename_loc("routes/memory.ts:15") == "memory.ts:15"
-    assert rac._strip_locator("IDOR (routes/memory.ts:15)") == "IDOR"
-    assert rac._strip_locator("IDOR (IDOR)") == "IDOR (IDOR)"  # acronym preserved
     assert rac._finding_locator({"evidence": {"file": "routes/memory.ts", "line": 15}}) == "routes/memory.ts:15"
 
 
@@ -254,9 +257,9 @@ def test_abuse_finding_cell_is_canonical_and_lint_clean():
     }
     model = rac.render_case(case, verdict, findings_idx, [], None)
     md = rac._case_markdown(model)
-    # Canonical: ID — locator-free title (`basename:line`), and lint-clean.
-    assert "[F-010](#f-010) — Insecure Direct Object Reference (`memory.ts:15`)" in md
-    assert "(routes/memory.ts:15)" not in md  # no un-backticked full path
+    # Canonical: ID — locator-free title, and lint-clean (RA-4).
+    assert "[F-010](#f-010) — Insecure Direct Object Reference |" in md
+    assert "memory.ts:15" not in md
     assert linter.lint_text(md) == []
 
 

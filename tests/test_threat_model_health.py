@@ -1,4 +1,4 @@
-"""Unit tests for scripts/threat_model_health.py.
+"""Unit tests for scripts/model/threat_model_health.py.
 
 Covers the freshness decision tree, artifact tiering, orchestration,
 exit-code mapping, text rendering, and the CLI entrypoint.
@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import threat_model_health as tmh
+import model.threat_model_health as tmh
 
 # ---------------------------------------------------------------------------
 # _run_baseline
@@ -434,7 +434,7 @@ def test_render_files_and_dirty_and_artifacts():
     assert "Dirty components: comp-a, comp-b" in out
     assert "8 tier-1 / 8 tier-2" in out
     assert "clean-run-state to reap" in out
-    assert "runtime_cleanup.py --stage all" in out
+    assert "runtime/runtime_cleanup.py --stage all" in out
     # truncation ellipsis present (>6 items)
     assert "…" in out
 
@@ -456,7 +456,7 @@ def test_render_no_model_icon():
 
 def test_cli_missing_repo_root(run_plugin_script, tmp_path):
     res = run_plugin_script(
-        "threat_model_health.py",
+        "model/threat_model_health.py",
         "--repo-root",
         str(tmp_path / "does-not-exist"),
         "--output-dir",
@@ -472,7 +472,7 @@ def test_cli_json_no_model(run_plugin_script, tmp_path):
     out = tmp_path / "out"
     out.mkdir()
     res = run_plugin_script(
-        "threat_model_health.py",
+        "model/threat_model_health.py",
         "--repo-root",
         str(tmp_path),
         "--output-dir",
@@ -490,7 +490,7 @@ def test_cli_text_no_model(run_plugin_script, tmp_path):
     out = tmp_path / "out"
     out.mkdir()
     res = run_plugin_script(
-        "threat_model_health.py",
+        "model/threat_model_health.py",
         "--repo-root",
         str(tmp_path),
         "--output-dir",

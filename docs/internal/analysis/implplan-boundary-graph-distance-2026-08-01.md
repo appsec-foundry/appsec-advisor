@@ -18,13 +18,13 @@ against the working tree on 2026-08-01; do NOT re-derive them, follow them.
 | The single fill site for `bd_by_id`/`bd_reason` (step 6a) | `triage_compute_ranking.py:661-674` |
 | `write_outputs` overwrites `t["breach_distance"]` and `t["breach_distance_reason"]` in the yaml from `_finding_updates`, unconditionally | `triage_compute_ranking.py:1033-1041` |
 | `breach_distance` feeds `_apply_critical_criteria` (`always_critical_cwes` → `required.breach_distance_max`), `_finding_score` (`+15*(4-bd)`), and the category reason tag `internet-reachable` (bd==1) | `triage_compute_ranking.py:382-430,529-534,976-977` |
-| `validate_finding_boundary_refs` REQUIRES a 20–240 char `rationale` and finding-owned `evidence_locations`, caps at 2 refs, and strips everything else. **Derived links placed in `boundary_refs` would be deleted here.** | `prepare_trust_boundary_context.py:1273-1352` |
+| `validate_finding_boundary_refs` REQUIRES a 20–240 char `rationale` and finding-owned `evidence_locations`, caps at 2 refs, and strips everything else. **Derived links placed in `boundary_refs` would be deleted here.** | `contexts/prepare_trust_boundary_context.py:1273-1352` |
 | The elevation gate reads only validated refs + `confidence=="confirmed"` + `from=="external"` + origin ∈ `{to} ∪ covers_components` | `triage_compute_ranking.py:591-631` |
 | Elevation suppresses when `evidence_check ∈ {"refuted","ambiguous"}` | `triage_compute_ranking.py:459-486` |
 | Schema: `trust_boundaries` items are `additionalProperties: false` → new row fields need a schema edit; `threats` items are `additionalProperties: true` → no schema edit for reasons | `schemas/threat-model.output.schema.yaml:372-424,543-547` |
-| `compose_threat_model.py` already imports from `prepare_trust_boundary_context` (line 102) and derives the §1 verdict live in `_boundary_assumption_verdict` (three display strings + "Not examined") | `compose_threat_model.py` |
+| `renderers/compose_threat_model.py` already imports from `prepare_trust_boundary_context` (line 102) and derives the §1 verdict live in `_boundary_assumption_verdict` (three display strings + "Not examined") | `renderers/compose_threat_model.py` |
 | Pipeline order: merge → build yaml → `compute_ranking`/`write_outputs` (mutates yaml) → compose. Compose can also run on a yaml that never saw triage (unit tests do this). | verified by reading callers |
-| `query_threat_model.py` projects boundary keys at ~line 266 and renders the boundary detail at ~line 845-856 | `query_threat_model.py` |
+| `model/query_threat_model.py` projects boundary keys at ~line 266 and renders the boundary detail at ~line 845-856 | `model/query_threat_model.py` |
 | triage has a standalone CLI `main()` | `triage_compute_ranking.py:1244` |
 | Counter tests assert `reconciliation_summary` keys | `tests/test_triage_compute_ranking.py:253-274`, `tests/test_new_schemas.py:60` |
 
@@ -44,8 +44,8 @@ against the working tree on 2026-08-01; do NOT re-derive them, follow them.
    `unauth_hint:`, `override:`, …). The new prefix is exactly `boundary_path:`.
    ASCII only in reason strings — no `→` (reasons flow into TF-flag messages and
    tests match with `startswith`).
-5. Do NOT reformat code you did not write. `scripts/prepare_trust_boundary_context.py`,
-   `scripts/qa_checks.py` and `tests/test_prepare_trust_boundary_context.py` are NOT
+5. Do NOT reformat code you did not write. `scripts/contexts/prepare_trust_boundary_context.py`,
+   `scripts/validators/qa_checks.py` and `tests/test_prepare_trust_boundary_context.py` are NOT
    `ruff format`-clean; run `ruff format` only on files you fully own, and keep your
    own lines ≤120 chars so `ruff check` passes.
 6. Compose keeps deriving the §1 verdict LIVE (it must work on a yaml that triage
@@ -56,7 +56,7 @@ against the working tree on 2026-08-01; do NOT re-derive them, follow them.
 
 ## 2. Step 1 — shared state helper (single source of truth for "does the assumption survive")
 
-**File:** `scripts/prepare_trust_boundary_context.py` (compose and triage both import it already).
+**File:** `scripts/contexts/prepare_trust_boundary_context.py` (compose and triage both import it already).
 
 ```python
 def boundary_assumption_state(row: dict, threats: list[dict]) -> tuple[str, list[str]]:
@@ -87,7 +87,7 @@ no `id` is skipped. The `evidence_check` gate mirrors the elevation suppression
 
 ## 3. Step 2 — compose parity refactor
 
-**File:** `scripts/compose_threat_model.py`, function `_boundary_assumption_verdict`.
+**File:** `scripts/renderers/compose_threat_model.py`, function `_boundary_assumption_verdict`.
 
 Replace its internal derivation with a call to
 `prepare_trust_boundary_context.boundary_assumption_state(row, ctx.yaml_data.get("threats") or [])`
@@ -115,7 +115,7 @@ states.
 
 ## 4. Step 3 — the graph (mechanism 2)
 
-**File:** `scripts/triage_compute_ranking.py`. New module-level function:
+**File:** `scripts/model/triage_compute_ranking.py`. New module-level function:
 
 ```python
 def _boundary_graph_distance(yaml_data: dict) -> tuple[dict[str, int], dict[str, str], dict[str, str]]:
@@ -190,7 +190,7 @@ regex-able token is the dedupe key.
           items: {type: string, pattern: "^T-\\d+$"}
 ```
 
-4. `query_threat_model.py`: extend the boundary projection (~line 266) with the two
+4. `model/query_threat_model.py`: extend the boundary projection (~line 266) with the two
    fields (`.get(...)` — absent on pre-triage yamls) and the detail renderer
    (~line 852) with, after the Assumption line:
    `  Verdict: {assumption_verdict}` (only when present) and
@@ -261,7 +261,7 @@ Then: full `python3 -m pytest -q` (baseline today: 11200 passed, 93 skipped) and
 - [ ] `_boundary_updates` persisted; schema extended; query surfaces both fields
 - [ ] All §6 tests green; full suite green; ruff clean on your lines
 - [ ] §7 numbers reproduced on the real yaml (20 / 0 / states as listed)
-- [ ] No file outside: `prepare_trust_boundary_context.py`,
-      `triage_compute_ranking.py`, `compose_threat_model.py`,
-      `query_threat_model.py`, `schemas/threat-model.output.schema.yaml`,
+- [ ] No file outside: `contexts/prepare_trust_boundary_context.py`,
+      `model/triage_compute_ranking.py`, `renderers/compose_threat_model.py`,
+      `model/query_threat_model.py`, `schemas/threat-model.output.schema.yaml`,
       the four test files named above

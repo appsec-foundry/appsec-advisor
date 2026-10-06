@@ -1,5 +1,5 @@
 """
-Tests for scripts/render_qa_receipt.py — the Stage-3 record.
+Tests for scripts/renderers/render_qa_receipt.py — the Stage-3 record.
 
 Covers:
   * the deterministic fast path says so, rather than staying silent;
@@ -22,7 +22,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import render_qa_receipt as receipt  # noqa: E402
+import renderers.render_qa_receipt as receipt  # noqa: E402
 
 
 @pytest.fixture()

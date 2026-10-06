@@ -1,4 +1,4 @@
-"""Tests for scripts/match_abuse_cases.py — the deterministic matcher.
+"""Tests for scripts/model/match_abuse_cases.py — the deterministic matcher.
 
 Covers sink/control matching, scope-qualifier gating, and the structural
 verdict (candidate / partial_candidate / not_applicable).
@@ -11,16 +11,19 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+import yaml
+
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "match_abuse_cases.py"
+SCRIPT = REPO_ROOT / "scripts" / "model/match_abuse_cases.py"
 
 
 def _load():
-    if "match_abuse_cases" in sys.modules:
-        return sys.modules["match_abuse_cases"]
-    spec = importlib.util.spec_from_file_location("match_abuse_cases", SCRIPT)
+    if "model.match_abuse_cases" in sys.modules:
+        return sys.modules["model.match_abuse_cases"]
+    spec = importlib.util.spec_from_file_location("model.match_abuse_cases", SCRIPT)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["match_abuse_cases"] = mod
+    sys.modules["model.match_abuse_cases"] = mod
     assert spec.loader is not None
     spec.loader.exec_module(mod)
     return mod
@@ -245,6 +248,29 @@ def test_chain_steps_do_not_collapse_to_one_finding():
     r = mac.match_case(case, [idor, massassign], None)
     ids = r["matched_finding_ids"]
     assert ids == ["T-008", "T-009"], ids
+
+
+@pytest.mark.parametrize(
+    ("key_file", "signer_file", "expected"),
+    [
+        ("lib/insecurity.ts", "lib/insecurity.ts", "T-KEY"),
+        ("src/auth/keys.py", "src/auth/keys.py", "T-KEY"),
+        ("lib/insecurity.ts", "lib/other.ts", "T-CRED"),
+    ],
+    ids=["shared-file", "neutral-names", "no-shared-file"],
+)
+def test_equal_score_step_binds_the_finding_its_chain_runs_through(key_file, signer_file, expected):
+    """A declared step CWE names a class; a sibling step's file shows the path."""
+    credential = {"t_id": "T-CRED", "title": "Wallet seed in source", "cwe": "CWE-798", "evidence": {"file": "w.ts"}}
+    key = {"t_id": "T-KEY", "title": "Signing key in source", "cwe": "CWE-321", "evidence": {"file": key_file}}
+    signer = _finding("T-SIGN", "token forgery with the embedded key", file=signer_file)
+    step1 = _step(1, "CWE-(798|321)")
+    step1["finding"] = {"cwe": "CWE-798"}
+    case = _case([step1, _step(2, "token forgery", requires="state")])
+
+    result = mac.match_case(case, [credential, key, signer], None)
+
+    assert result["matched_finding_ids"] == [expected, "T-SIGN"]
 
 
 # ---------------------------------------------------------------------------
@@ -526,6 +552,53 @@ def test_malformed_late_registration_meta_preserves_recon_signal_state(tmp_path:
 # ---------------------------------------------------------------------------
 # CLI: match → list-candidates round trip against the shipped library
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("ids,filename", [((1, 900, 20), "src/records.py"), ((980, 120, 400), "handlers/work.go")])
+def test_cli_candidates_prioritize_evidenced_risk_without_dropping_partial_cases(tmp_path, capsys, ids, filename):
+    cases = [
+        _case([_step(1, "record_lookup")], id=f"ORG-AC-{ids[0]:03d}"),
+        _case([_step(1, "run_operation")], id=f"ORG-AC-{ids[1]:03d}"),
+        _case([_step(1, "inspect_state"), _step(2, "missing_operation")], id=f"ORG-AC-{ids[2]:03d}"),
+    ]
+    # A declared template severity cannot override an actual linked finding.
+    cases[0]["chain"][0]["finding"] = {
+        "cwe": "CWE-89",
+        "stride": "Tampering",
+        "severity": "Critical",
+        "mitigation_title": "Constrain input",
+    }
+    profile_dir = tmp_path / "profile"
+    (profile_dir / "abuse-cases").mkdir(parents=True)
+    (profile_dir / "abuse-cases" / "cases.yaml").write_text(yaml.safe_dump({"abuse_cases": cases}))
+    profile_path = profile_dir / "org-profile.yaml"
+    profile_path.write_text(yaml.safe_dump({"abuse_cases": {"inherit_defaults": False}}))
+    findings = [
+        {**_finding("T-011", "record_lookup", file=filename), "risk": "High", "cwe": "CWE-89"},
+        {**_finding("T-092", "run_operation", file=filename), "risk": "Critical"},
+        {**_finding("T-080", "inspect_state", file=filename), "risk": "Medium"},
+    ]
+    (tmp_path / ".threats-merged.json").write_text(json.dumps({"threats": findings}))
+    assert mac.main(["match", "--output-dir", str(tmp_path), "--org-profile", str(profile_path)]) == 0
+    assert mac.main(["list-candidates", "--output-dir", str(tmp_path)]) == 0
+    assert capsys.readouterr().out.split() == [f"ORG-AC-{ids[i]:03d}" for i in (1, 0, 2)]
+    matches = json.loads((tmp_path / ".abuse-case-matches.json").read_text())["matches"]
+    assert matches[-1]["structural_verdict"] == "partial_candidate"
+
+
+def test_source_probe_priority_uses_only_matched_classification():
+    case = _case([_step(1, "operation"), _step(2, "other")])
+    case["chain"][0]["finding"] = {"severity": "High", "cwe": "CWE-79"}
+    case["chain"][1]["finding"] = {"severity": "Critical", "cwe": "CWE-94"}
+    match = {
+        "abuse_case_id": case["id"],
+        "case": case,
+        "structural_verdict": "partial_candidate",
+        "step_matches": [{"step": 1, "matched": True, "match_basis": "source_probe"}, {"step": 2, "matched": False}],
+    }
+    assert mac._candidate_priority(match, {})[0] == -2  # High; the Critical step never matched.
+    match["step_matches"][0]["matched"] = False
+    assert mac._candidate_priority(match, {})[0] > 0
 
 
 def test_cli_match_and_list_candidates(tmp_path: Path, capsys):

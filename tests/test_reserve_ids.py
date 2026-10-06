@@ -1,4 +1,4 @@
-"""Unit tests for scripts/reserve_ids.py — atomic ID counter assignment."""
+"""Unit tests for scripts/model/reserve_ids.py — atomic ID counter assignment."""
 
 from __future__ import annotations
 
@@ -10,13 +10,13 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "reserve_ids.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "model/reserve_ids.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("reserve_ids", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("model.reserve_ids", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["reserve_ids"] = module
+    sys.modules["model.reserve_ids"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
@@ -266,7 +266,7 @@ def test_unlock_ebadf_swallowed(monkeypatch, tmp_path: Path):
 
 
 def _run_main(monkeypatch, argv):
-    monkeypatch.setattr(sys, "argv", ["reserve_ids.py", *argv])
+    monkeypatch.setattr(sys, "argv", ["model/reserve_ids.py", *argv])
     return reserve_ids.main()
 
 

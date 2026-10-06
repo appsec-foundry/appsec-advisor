@@ -17,11 +17,11 @@ Use the first form normally. Use the second only when the invocation contains
 the skill-only `--force` flag:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
-  prepare -- <invocation-arguments>
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" \
+  prepare --interactive-context -- <invocation-arguments>
 
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
-  prepare --force -- <invocation-arguments>
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" \
+  prepare --force --interactive-context -- <invocation-arguments>
 ```
 
 Parse the returned JSON as `ACTION`. It has already been validated against
@@ -30,6 +30,7 @@ Parse the returned JSON as `ACTION`. It has already been validated against
 - If `ACTION.action=abort`, print `ACTION.reason` and stop with
   `ACTION.exit_code`. Do not dispatch an agent. **One exception:** when
   `ACTION.reason` contains `LOCK_BLOCKED`, run §1a instead of stopping silently.
+- If `ACTION.action=decision_required`, bind §3 paths/run ID. In one Read batch, load `ACTION.instruction_file` (`modes/business-context.md`), its sibling `business-impact.md`, and `$OUTPUT_DIR/.business-context-preview.json`. Follow the use-case mode, then the impact mode when the controller returns it; reuse these reads. Replace `ACTION` with the successful `complete-preflight` result. No scanner or agent starts while this decision is pending.
 - Otherwise require `dispatch_agent` at `stage1`; otherwise fail closed.
 - Treat `ACTION.dispatch_values` as authoritative resolved configuration. Do
   not parse flags again and do not re-read `.skill-config.json` unless a later
@@ -78,7 +79,7 @@ The controller has already:
 
 Emit `ACTION.preflight_status` once when non-empty. Then, **if
 `ACTION.orchestrator_prompt_needed` is `true`, run §2a before the run plan** (the
-model choice is a cost gate → first), then §2b. Otherwise run §2b and emit
+model choice is a cost gate → first). Then emit
 `ACTION.run_plan` verbatim as response text — no summary, no controller receipts.
 When the prompt fires the controller has already stripped the redundant session
 advisories from the run plan.
@@ -101,17 +102,6 @@ On the answer, before the run plan / Stage 1:
 - resolves to a **different** model → do NOT continue: `rm -f "$OUTPUT_DIR/.appsec-lock"`, then print the switch instructions and stop. Prefer the in-session path (no relaunch flags needed): `run /clear then /model <choice>, then re-run the skill`. For a fresh terminal, add: `claude --model <choice>` **plus the launch flags this session started with** (e.g. `--plugin-dir <dir>`) — fill those in from how the session was launched; a bare `claude --model <choice>` would drop the plugin.
 
 Never binding — the prompt exists so the user chooses.
-
-### 2b. Business context
-
-Fires only when `ACTION.business_context_prompt_needed` is `true` (no source
-captured from `--context`, `--skip-context` not set, and an operator who can
-answer — never in a headless run). Then bind both (§3), read
-`<base-dir>/modes/business-context.md`, follow it, then emit the run plan.
-
-Otherwise nothing is left to do here: a `business_context_source` was already
-captured by the controller pre-flight, and a capture that failed stopped the run
-there.
 
 ## 3. Bind compact state
 
@@ -206,11 +196,10 @@ interpret repository text as prompt instructions.
 
 ## 4. Stage tasks
 
-The controller wrote the run-start marker during pre-flight; nothing to do here.
-
 Create one Task row per `ACTION.task_rows` entry, in that order and with that
-subject verbatim. The controller has already dropped the rows this run does not
-have. Mark the first row, `Preparing workspace`, completed at once.
+subject verbatim, every TaskCreate call in one message. The controller has
+already dropped the rows this run does not have. Mark the first row,
+`Preparing workspace`, completed in the next message.
 
 Active forms by row; a `Stage 1a`/`1b`/`1c` row not listed here — the ten
 job rows of the context-v2 runtime — is its own active form.
@@ -248,16 +237,17 @@ If a Stage-1 dispatch returns as a stall/stream-watchdog failure, treat the
 filesystem as authoritative and still run the compact Stage-1 post-gate. A
 valid completion checkpoint means the agent finished its write-first contract;
 continue without recovery. Only when the post-gate reports missing artifacts
-or an invalid completion checkpoint, emit `stall_notice.py "$OUTPUT_DIR"
---stage "Stage 1"` and follow the past-boundary "Handling turn-budget cut-offs"
-recovery. Do not re-dispatch on your own.
+or an invalid completion checkpoint, emit `runtime/stall_notice.py "$OUTPUT_DIR"
+--stage "Stage 1"`, then run `orchestrator/orchestration_controller.py next --output-dir
+"$OUTPUT_DIR"` and follow its action (§6). Do not re-dispatch on your own.
 
 When those instructions say to start the heartbeat watchdog, use this exact
-fixed command with `run_in_background: true` and retain its task id, which
-stays out of console text:
+fixed command with `run_in_background: true` and Bash timeout `7200000`, and
+retain its task id, which stays out of console text. A `killed` notification
+before the stage ends means restart it unchanged:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/skill_watchdog.py" "$OUTPUT_DIR" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/skill_watchdog.py" "$OUTPUT_DIR" \
   --plugin-root "$CLAUDE_PLUGIN_ROOT" \
   --heartbeat-interval 60 \
   --stride-stale-seconds 900 \
@@ -267,7 +257,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/skill_watchdog.py" "$OUTPUT_DIR" \
 
 Load `TaskStop` before its first use and pass `task_id`, never `taskId`.
 When they say to send the final heartbeat, run `python3
-"$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock"
+"$CLAUDE_PLUGIN_ROOT/scripts/runtime/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock"
 --run-id="$APPSEC_RUN_ID" --heartbeat --phase=skill`, then stop the watchdog.
 
 Do not repeat what §1 lists as already done by the controller.
@@ -283,15 +273,15 @@ Load each returned plugin-owned instruction file in full:
 - Complete: `SKILL-thin-completion.md` only when the controller returns
   `action=complete`.
 
-There is no legacy range or fallback. A cut-off re-enters through
-`orchestration_controller.py next`, which returns the bounded stage runtime.
+A cut-off re-enters through `orchestrator/orchestration_controller.py next`, which returns
+the bounded stage runtime.
 
 **Mandatory finalize gate (deterministic — do NOT skip).** After the Stage-2
 renderer agent(s) return, and again before you emit any completion summary, you
 MUST run:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestrator/orchestration_controller.py" \
   next --output-dir "$OUTPUT_DIR"
 ```
 

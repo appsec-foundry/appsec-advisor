@@ -1,4 +1,4 @@
-r"""Regression tests for scripts/walkthrough_renderer.py.
+r"""Regression tests for scripts/renderers/walkthrough_renderer.py.
 
 These guard the per-finding §3 Attack Walkthroughs render pipeline against
 regressions that previously shipped to production:
@@ -15,11 +15,14 @@ regressions that previously shipped to production:
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "walkthrough_renderer.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "renderers/walkthrough_renderer.py"
 
 
 def _load_module(name: str, path: Path):
@@ -31,7 +34,7 @@ def _load_module(name: str, path: Path):
     return module
 
 
-renderer = _load_module("walkthrough_renderer", SCRIPT_PATH)
+renderer = _load_module("renderers.walkthrough_renderer", SCRIPT_PATH)
 
 
 def _make_threat(scenario: str, file_: str = "lib/insecurity.ts", line: int = 54) -> dict:
@@ -70,7 +73,7 @@ class TestAttackStepsPlaceholderSubstitution:
 
     def test_cwe_template_attack_steps_substitute_placeholders(self):
         # User-supplied template (e.g. cwe-89.yaml) also goes through the same
-        # mapping. The fix in walkthrough_renderer.py applies
+        # mapping. The fix in renderers/walkthrough_renderer.py applies
         # _format_template_string to BOTH template_steps and generic_padding
         # before appending.
         threat = _make_threat("Only one sentence.", file_="routes/login.ts", line=34)
@@ -205,6 +208,30 @@ class TestSequenceDiagramAltElseBlock:
         assert "else After M-005 — Use parameterized queries" in md
 
 
+class TestKeyTakeawayTitle:
+    def test_a_long_mitigation_title_is_not_cut_into_the_takeaway(self):
+        title = "Replace client-supplied owner identifiers with session identity in WHERE clauses"
+        yaml_data = {
+            "threats": [
+                {
+                    "id": "T-001",
+                    "title": "Insecure Direct Object Reference",
+                    "component": "express-backend",
+                    "cwe": "CWE-639",
+                    "risk": "critical",
+                    "evidence": [{"file": "routes/address.ts", "line": 11}],
+                }
+            ],
+            "mitigations": [{"id": "M-005", "title": title, "threat_ids": ["T-001"]}],
+            "assets": [],
+            "attack_surface": [],
+        }
+        md = renderer.render_attack_walkthroughs_md(yaml_data)
+        takeaway = next(line for line in md.splitlines() if line.startswith("**Key takeaway:** Until"))
+        # The composer's linkifier appends the full title; none is written here.
+        assert takeaway.startswith("**Key takeaway:** Until [M-005](#m-005) lands,")
+
+
 class TestWalkthroughCap:
     """§3 is capped at DEFAULT_MAX_WALKTHROUGHS so a Critical-heavy report does
     not explode into dozens of near-identical walkthroughs (2026-07-02)."""
@@ -237,6 +264,14 @@ class TestWalkthroughCap:
         # Intro must disclose the cap and point overflow to §8.
         assert "8 highest-priority of 12 Critical findings" in md
         assert "§8 Findings Register" in md
+
+    @pytest.mark.parametrize("gap", [0, 2])
+    def test_findings_without_attacker_get_no_walkthrough(self, gap):
+        data = self._crits(3)
+        data["threats"][gap]["vektor"] = "n-a"
+        picked = {t["id"] for t in renderer.select_walkthrough_picks(data)}
+        assert data["threats"][gap]["id"] not in picked
+        assert len(picked) == 2
 
     def test_no_cap_note_when_under_limit(self):
         md = renderer.render_attack_walkthroughs_md(self._crits(5))
@@ -595,10 +630,24 @@ class TestAttackerProfile:
         out = renderer.render_attacker_profile({"vektor": "internet-user"}, {"open_user_registration": True}, {})
         assert renderer.OPEN_REG_SUFFIX.strip() in out
 
+    @pytest.mark.parametrize("meta", [{"open_user_registration": True}, {"open_user_registration": True, "x": 1}])
+    def test_open_registration_names_no_route_the_model_does_not_record(self, meta):
+        out = renderer.render_attacker_profile({"vektor": "internet-user"}, meta, {})
+        assert "Self-registration is open" in out
+        assert not re.search(r"\b(?:GET|POST|PUT|PATCH|DELETE)\s+/", out)
+
     def test_template_override(self):
         tmpl = {"attacker_profile_overrides": {"internet-anon": "OVERRIDDEN"}}
         out = renderer.render_attacker_profile({"vektor": "internet-anon"}, {}, tmpl)
         assert out == "OVERRIDDEN"
+
+    @pytest.mark.parametrize(("vektor", "phrase"), [("build-time", "build"), ("internet-priv-user", "privileged")])
+    def test_attributed_vektors_get_their_own_profile(self, vektor, phrase):
+        out = renderer.render_attacker_profile({"vektor": vektor}, {"open_user_registration": True}, {})
+        assert out != renderer.ATTACKER_PROFILES["internet-user"]
+        assert phrase in out
+        prereqs = renderer.render_prerequisites({"vektor": vektor}, {}, "src/handler.py")
+        assert prereqs != renderer.render_prerequisites({"vektor": "internet-user"}, {}, "src/handler.py")
 
 
 class TestPrerequisites:
@@ -884,7 +933,7 @@ class TestAttackTargetLabel:
         # github_slug (single hyphen) diverge from the rendered github_render_slug
         # (double hyphen) — an unresolvable anchor that hard-failed the broken-link
         # gate. The label must be sanitized so both sluggers agree.
-        from scripts._slug import github_render_slug, github_slug
+        from shared._slug import github_render_slug, github_slug
 
         for comp_name in ("Authentication & Session Surface", "Web3 / Wallet / NFT Surface"):
             threat = {"component": "c1", "evidence": [{"file": "models/index.ts", "line": 1}]}
@@ -935,7 +984,7 @@ class TestAttackTargetLabel:
         weakness clipped. This also keeps the heading anchor stable (the trailing
         "-…" made github_slug and github_render_slug diverge and orphaned the
         §3 ToC link)."""
-        from scripts._slug import github_render_slug, github_slug
+        from shared._slug import github_render_slug, github_slug
 
         ydata = {
             "threats": [
@@ -1036,3 +1085,38 @@ def test_zero_threats_renders_honest_stub():
     md = renderer.render_attack_walkthroughs_md({"threats": []})
     assert "sequenceDiagram" not in md
     assert "No Critical findings" in md
+
+
+def test_primary_mitigation_is_the_highest_priority_not_the_first_linked():
+    yaml_data = {
+        "mitigations": [
+            {
+                "id": "M-095",
+                "kind": "review",
+                "priority": "P3",
+                "title": "Manual review: verify x",
+                "threat_ids": ["T-031"],
+            },
+            {"id": "M-125", "kind": "fix", "priority": "P2", "title": "Validate the URL", "threat_ids": ["T-031"]},
+            {"id": "M-200", "kind": "fix", "title": "Unprioritised", "threat_ids": ["T-031"]},
+        ]
+    }
+    index = renderer._mitigations_by_threat(yaml_data)
+    assert [m["id"] for m in index["T-031"]] == ["M-125", "M-095", "M-200"]
+    bullets, primary = renderer.render_defense_in_depth({"id": "T-031"}, index)
+    assert primary == "M-125"
+    assert bullets[0].startswith("Primary mitigation:") and "M-125" in bullets[0]
+
+
+def test_generic_diagram_names_the_finding_instead_of_boilerplate():
+    templates = renderer.load_templates(REPO_ROOT / "data" / "walkthrough-templates")
+    threat = {
+        "id": "T-009",
+        "title": "Mass assignment on user update; role field — routes/user.ts:12",
+        "component": "api",
+        "cwe": "CWE-99999",
+        "evidence": [{"file": "routes/user.ts", "line": 12}],
+    }
+    diagram = renderer.render_sequence_diagram(threat, renderer._template_for("CWE-99999", templates, threat), "M-001")
+    assert "Vulnerable branch executes" not in diagram
+    assert "App->>App: Mass assignment on user update role field" in diagram

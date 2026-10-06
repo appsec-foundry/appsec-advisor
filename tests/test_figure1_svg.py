@@ -1,5 +1,5 @@
 """Full-coverage unit tests for the hand-built Figure-1 SVG generator
-(``scripts/figure1_svg.py``), the PRIMARY renderer for the Top-Threats
+(``scripts/renderers/figure1_svg.py``), the PRIMARY renderer for the Top-Threats
 architecture overview (replaces the legacy Mermaid builder).
 
 The generator is pure (yaml + attack-paths + taxonomy → SVG string), so these
@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-import figure1_svg as F  # noqa: E402
+import renderers.figure1_svg as F  # noqa: E402
 
 _GLYPHS = list("①②③④⑤⑥⑦⑧⑨⑩")
 
@@ -458,9 +458,12 @@ def test_data_arrow_only_when_data_component_exposed_and_hit():
 
 
 # ---- victim -----------------------------------------------------------------
-def test_xss_marks_shop_user_as_victim():
+def test_xss_marks_end_user_as_victim():
     svg = _build(app=1, xss=True)
-    assert "Shop User" in svg
+    # Domain-neutral: this figure is drawn for every scanned repository, so the
+    # victim card must not name a business the repo may not be in.
+    assert "End User" in svg
+    assert "Shop User" not in svg
     assert "victim" in svg
 
 

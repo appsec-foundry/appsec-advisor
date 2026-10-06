@@ -17,7 +17,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import check_stride_dispatch  # noqa: E402
+import orchestrator.check_stride_dispatch as check_stride_dispatch  # noqa: E402
 
 
 def _start_line(ts: str, cid: str) -> str:
@@ -202,7 +202,7 @@ def test_skill_forbids_sequential_wave_dispatch() -> None:
     assert "Pass no `run_in_background`" in flat, (
         "OR-5: instructing a flag the Agent schema rejects loses the whole wave"
     )
-    assert "wait_stride_progress.py" in text, "OR-5: a concurrent wave requires a deterministic waiter"
+    assert "orchestrator/wait_stride_progress.py" in text, "OR-5: a concurrent wave requires a deterministic waiter"
     assert "Never wait for one STRIDE job before launching the next" in flat, (
         "OR-5: a wave must not serialize when tool calls span assistant turns"
     )

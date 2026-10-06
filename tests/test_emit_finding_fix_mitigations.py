@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import emit_finding_fix_mitigations as effm
+import model.emit_finding_fix_mitigations as effm
 import yaml
 
 
@@ -16,7 +16,7 @@ def _read_yaml(output_dir: Path) -> dict:
 
 
 def _run(output_dir: Path, monkeypatch) -> int:
-    monkeypatch.setattr(sys, "argv", ["emit_finding_fix_mitigations.py", str(output_dir)])
+    monkeypatch.setattr(sys, "argv", ["model/emit_finding_fix_mitigations.py", str(output_dir)])
     return effm.main()
 
 
@@ -261,8 +261,35 @@ def test_invalid_inputs_are_best_effort_noops(tmp_path: Path, monkeypatch, capsy
 
 
 def test_usage_error_is_best_effort_success(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(sys, "argv", ["emit_finding_fix_mitigations.py"])
+    monkeypatch.setattr(sys, "argv", ["model/emit_finding_fix_mitigations.py"])
 
     assert effm.main() == 0
 
     assert "usage:" in capsys.readouterr().err
+
+
+def test_a_fix_waiting_for_a_manual_review_is_scheduled_one_band_lower(tmp_path: Path, monkeypatch) -> None:
+    """A finding-fix card whose every finding needs a manual review first drops
+    one band; a card that also fixes a confirmed finding keeps its priority."""
+    import analyzers.architect_review_runtime as runtime
+
+    open_ = {"assessment": "unresolved", "remediation": "unchanged", "reason": "window too narrow"}
+    _write_yaml(
+        tmp_path,
+        {
+            "mitigations": [],
+            "threats": [
+                _threat("T-001", risk="Critical", evidence_check="ambiguous", mitigation_title="Fix A"),
+                _threat("T-002", risk="Critical", evidence_check="ambiguous", mitigation_title="Fix B"),
+                _threat("T-003", risk="Critical", evidence_basis="llm-verified", mitigation_title="Fix B"),
+            ],
+        },
+    )
+    monkeypatch.setattr(runtime, "open_decisions", lambda _out: {"T-001": open_, "T-002": open_})
+    assert _run(tmp_path, monkeypatch) == 0
+    priorities = {tuple(m["threat_ids"]): m["priority"] for m in _read_yaml(tmp_path)["mitigations"]}
+    assert priorities == {("T-001",): "P2", ("T-002", "T-003"): "P1"}
+
+
+def test_after_review_priority_never_drops_below_p4() -> None:
+    assert [effm.after_review_priority(p) for p in ("P1", "P2", "P3", "P4", "")] == ["P2", "P3", "P4", "P4", "P4"]

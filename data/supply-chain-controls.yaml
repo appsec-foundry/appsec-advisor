@@ -1,0 +1,89 @@
+# Supply-chain sub-controls of scripts/model/emit_sca_practice.py.
+#
+# Each entry names one sub-control of the §6.11 row "Build pipeline and
+# dependency controls" and its links:
+#
+# `linked_checks` lists the config checks (data/config-iac-checks.yaml) whose
+# findings report this sub-control's gap. The producer writes them on the row;
+# model/build_threat_model_yaml.py resolves them to the final threats, so a
+# sub-control lists exactly the findings that survived the run, and a
+# patch-management meta-finding is dropped when such a finding already reports
+# the gap.
+#
+# `rule_ids` and `catalog_names` name controls that cover the same theme: a
+# rule of data/architecture-coverage-rules.yaml or a control of
+# data/architectural-controls.yaml. When the model already holds one of them,
+# the producer does not emit the sub-control a second time; it adds its
+# `linked_checks` to that control instead.
+#
+# `process: true` marks a tool that often runs outside the repository (a
+# GitHub App such as Dependabot alerts, Snyk or Mend, CodeQL default setup, an
+# organization policy, an agent that opens issues). The repository cannot
+# prove its absence: without an executable CI step or one of the `markers`
+# the sub-control is "not evidenced", never Missing, and produces no
+# meta-finding. `markers` are repository paths (glob, repository-relative) of
+# such a tool's configuration; a listed file is evidence of use. Dependabot
+# and Renovate are read by the producer itself, because a Renovate config can
+# disable itself (`enabled: false`) and the `renovate` key of package.json is
+# a config too.
+#
+# tests/test_emit_sca_practice.py keeps every id and name aligned with the
+# catalogs it refers to.
+
+schema_version: 1
+
+controls:
+  "Automated SCA scanning":
+    process: true
+    markers:
+      - ".snyk"
+      - ".whitesource"
+      - "whitesource.config"
+      - ".mend"
+      - ".mend/*"
+      - "socket.yml"
+      - "osv-scanner.toml"
+      - "trivy.yaml"
+      - ".github/dependency-review-config.yml"
+    linked_checks: []
+    rule_ids: []
+    catalog_names: ["Dependency Vulnerability Scanning"]
+  "Automated dependency updates":
+    process: true
+    markers: [".github/dependabot.yml", ".github/dependabot.yaml"]
+    linked_checks: [IAC-030, IAC-031, IAC-032, IAC-033, IAC-034, IAC-035]
+    rule_ids: []
+    catalog_names: []
+  "Lockfile hygiene":
+    linked_checks: [IAC-050]
+    rule_ids: []
+    catalog_names: ["Lockfile Integrity"]
+  "CI install integrity":
+    linked_checks: []
+    rule_ids: []
+    catalog_names: []
+  "Action pinning":
+    linked_checks: [IAC-011]
+    rule_ids: [ARCH-SUPPLY-001]
+    catalog_names: []
+  "Base image pinning":
+    linked_checks: [IAC-001]
+    rule_ids: []
+    catalog_names: ["Base Image Pinning"]
+  "Install scripts":
+    linked_checks: [IAC-005, IAC-051]
+    rule_ids: []
+    catalog_names: []
+  "Static analysis (SAST)":
+    process: true
+    markers:
+      - "sonar-project.properties"
+      - ".semgrep.yml"
+      - ".semgrep.yaml"
+      - ".semgrep/*"
+      - ".github/codeql/codeql-config.yml"
+      - ".github/codeql/codeql-config.yaml"
+      - ".bandit"
+    linked_checks: []
+    rule_ids: []
+    catalog_names: []

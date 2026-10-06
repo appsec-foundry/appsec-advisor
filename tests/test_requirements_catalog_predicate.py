@@ -3,7 +3,7 @@
 File presence is not configuration. A run with the requirements check switched
 off still writes ``fetch_requirements._SKIPPED_STUB``, so a consumer gated on
 ``is_file()`` reads "nobody asked for requirements" as "catalog configured".
-``emit_requirement_trace_to_model.py`` did exactly that and failed the run
+``model/emit_requirement_trace_to_model.py`` did exactly that and failed the run
 *after* ``threat-model.md`` was already composed — the 2026-08-29 juice-shop
 run, which had ``check_requirements=false``. These tests pin the predicate and
 the emitter's exit on every catalog shape a run can produce.
@@ -21,8 +21,8 @@ ROOT = Path(__file__).parent.parent
 SCRIPTS = ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-import _requirements_gate  # noqa: E402
-import fetch_requirements  # noqa: E402
+import requirements.fetch_requirements as fetch_requirements  # noqa: E402
+import shared._requirements_gate as _requirements_gate  # noqa: E402
 
 CATALOG = ".requirements.yaml"
 
@@ -94,7 +94,7 @@ def test_a_non_mapping_catalog_declares_nothing(tmp_path):
 
 def _run_emitter(output_dir: Path) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, str(SCRIPTS / "emit_requirement_trace_to_model.py"), str(output_dir)],
+        [sys.executable, str(SCRIPTS / "model/emit_requirement_trace_to_model.py"), str(output_dir)],
         capture_output=True,
         text=True,
     )

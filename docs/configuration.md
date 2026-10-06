@@ -1,8 +1,8 @@
-# Advanced Configuration
+# Advanced configuration
 
 Most users do not need to edit plugin configuration. The default configuration supports an interactive threat-model run after the permissions setup in the main README.
 
-The root [`config.json`](../config.json) controls four independent runtime concerns: external business context, prices used for local cost calculation, event-log behavior, and the pointer to a packaged organization profile. Requirements catalogs have their own configuration and are documented in the [Requirements Audit reference](security-requirements-audit-skill.md).
+The root [`config.json`](../config.json) controls four independent runtime concerns: external business context, prices used for local cost calculation, event-log behavior, and the pointer to a packaged organization profile. The `banner` block (session-start message, see [Organization Profiles](org-profiles.md#session-banner)) and the `baseline` block (bundled secure-coding baseline, managed by the `install-baseline` and `update-baseline` skills) also live in this file and normally need no manual edits. Requirements catalogs have their own configuration and are documented in the [Requirements Audit reference](security-requirements-audit-skill.md).
 
 ## Configuration files and scope
 
@@ -50,7 +50,7 @@ The `pricing` block supplies USD prices per one million tokens for local run-cos
 }
 ```
 
-These values do not select a model and do not change provider billing. Model routing and assessment-depth guidance live in [Model Selection, Cost & Context Window](model-selection.md). Each configured price must be a non-negative number.
+These values do not select a model and do not change provider billing. Model routing and assessment-depth guidance live in [Model selection, cost, and context window](model-selection.md). Each configured price must be a non-negative number.
 
 When `config.local.json` exists, the event logger and cost verifier read pricing from that file instead of `config.json`. Missing individual price fields fall back to their built-in values.
 
@@ -128,7 +128,7 @@ The local file is not a partial merge over `config.json`. If one local file shou
 After changing the committed plugin configuration, validate it from the plugin root:
 
 ```bash
-python3 scripts/validate_config.py .
+python3 scripts/validators/validate_config.py .
 ```
 
 The validator checks `config.json` and, when the skill is present, `skills/audit-security-requirements/config.json`. It rejects unknown root keys and invalid field types. It does not currently validate `config.local.json`.

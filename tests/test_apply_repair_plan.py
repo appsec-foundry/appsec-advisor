@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import apply_repair_plan as arp
 import pytest
+import repairs.apply_repair_plan as arp
 
 
 def _write(path: Path, text: str) -> None:

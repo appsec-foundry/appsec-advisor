@@ -13,11 +13,12 @@ If the user's arguments contain `--help` or `-h`, print this block verbatim and 
 /appsec-advisor:security-score — Deterministic quick score, no LLM involved.
 
 USAGE
-  /appsec-advisor:security-score [--repo <path>] [--json]
+  /appsec-advisor:security-score [--repo <path|https-git-url>] [--json|--yaml]
 
 FLAGS
-  --repo <path>   Repository to score (default: current working dir)
+  --repo <path|https-git-url>  Local directory or HTTPS GitHub/GitLab repository (default: current working dir)
   --json          Emit the result as machine-readable JSON
+  --yaml          Emit the same result as machine-readable YAML
 
 WHAT THE NUMBER IS
   A limited quick check, not a full security analysis.
@@ -38,25 +39,28 @@ WHAT THE NUMBER IS
 WHAT IT IS NOT
   No asset tier, no exposure, no abuse chain. Severities are catalog
   defaults without the caps and elevations the report applies. Comparable
-  across commits of one repository, not between repositories.
+  across commits of one repository only with matching scoring versions,
+  catalog fingerprints and applicable coverage; not between repositories.
+  Structured output includes these in comparability and reports each
+  required scanner in scanner_status. Unscored findings remain visible.
 
 EXIT CODES
   0  score computed
   2  undetermined — too few checks applied to this repository
-  1  error
+  1  incomplete scan (no headline score), invalid URL, or other error
 ```
 
 ## Run
 
-Run the script from the plugin root, passing the user's `--repo` and `--json` through unchanged:
+Run the script from the plugin root, passing the user's `--repo`, `--json`, or `--yaml` through unchanged. The output flags are mutually exclusive. An HTTPS Git URL explicitly requests a shallow network clone; the script scans the temporary checkout and removes it afterwards. Local paths cause no clone:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/security_score.py" [--repo <path>] [--json]
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/analyzers/security_score.py" [--repo <path|https-git-url>] [--json|--yaml]
 ```
 
-Use exactly `Calculating the repository's security score` as the tool call's description. It is the only thing the user sees for the 15 to 30 seconds the scan takes, so it names the work, not the mechanism: not "Running the security score script", not "Executing security_score.py".
+Use exactly `Calculating the repository's security score` as the tool call's description. It is the only thing the user sees for the 15 to 30 seconds the scan takes, so it names the work, not the mechanism: not "Running the security score script", not "Executing analyzers/security_score.py".
 
-Do not announce the run in prose beside it. "Running the security score script now", "Let me calculate the score" and their kin are forbidden even though they are true — the description line already says it. Just run it.
+A failed, missing or invalid required scanner result produces `incomplete` with a null score. Findings and warnings remain visible for both `incomplete` and `undetermined`. JSON and YAML conform to `schemas/security-score.schema.yaml`.
 
 The script writes its scanner sidecars to a temporary directory and removes them, so the target repository is untouched.
 
@@ -64,15 +68,7 @@ The script writes its scanner sidecars to a temporary directory and removes them
 
 Reprint the script's stdout **verbatim**, in a fenced code block, every line of it, and stop. The user does not see the tool output; what you print is the whole report they get. It is already finished: headline, one indicator per line with its detail line under it, the tally, and any note the run produced.
 
-Summarising it is the failure this rule exists for. All of the following are forbidden, even though each is true:
-
-```
-Security Score: 2 / 100 — dominated by Access Control (68 findings), Dependencies
-(22 findings), and Authentication (21 findings), all near zero.
-
-For findings with severity, exposure, and mitigations, run
-/appsec-advisor:create-threat-model.
-```
+Summarising it is the failure this rule exists for.
 
 Nothing may be added after the block either: no summary of the number, no repetition of a note it already carries, no verdict such as "secure" or "at risk", no severities or mitigations of your own. None of that is in the data, and prose beside the block undoes the layout it was given.
 

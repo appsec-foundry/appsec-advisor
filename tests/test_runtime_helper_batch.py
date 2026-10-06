@@ -4,11 +4,11 @@ import json
 import subprocess
 from pathlib import Path
 
-import batch_checkpoint
-import phase_elapsed
+import orchestrator.batch_checkpoint as batch_checkpoint
 import pytest
-import qa_release_gate
-import record_component_durations as rcd
+import runtime.phase_elapsed as phase_elapsed
+import runtime.record_component_durations as rcd
+import validators.qa_release_gate as qa_release_gate
 
 
 def _write(path: Path, text: str) -> None:
@@ -17,14 +17,14 @@ def _write(path: Path, text: str) -> None:
 
 
 def _run_batch_checkpoint(monkeypatch, *args: object) -> int:
-    monkeypatch.setattr(batch_checkpoint.sys, "argv", ["batch_checkpoint.py", *[str(a) for a in args]])
+    monkeypatch.setattr(batch_checkpoint.sys, "argv", ["orchestrator/batch_checkpoint.py", *[str(a) for a in args]])
     with pytest.raises(SystemExit) as exc:
         batch_checkpoint.main()
     return int(exc.value.code or 0)
 
 
 def test_phase_elapsed_usage_valid_epoch_and_fallback(monkeypatch, tmp_path: Path, capsys) -> None:
-    assert phase_elapsed.main(["phase_elapsed.py"]) == 2
+    assert phase_elapsed.main(["runtime/phase_elapsed.py"]) == 2
     assert "usage:" in capsys.readouterr().err
 
     out = tmp_path / "out"
@@ -32,11 +32,11 @@ def test_phase_elapsed_usage_valid_epoch_and_fallback(monkeypatch, tmp_path: Pat
     _write(out / ".phase-epoch", "873\n")
     monkeypatch.setattr(phase_elapsed.time, "time", lambda: 1000)
 
-    assert phase_elapsed.main(["phase_elapsed.py", str(out)]) == 0
+    assert phase_elapsed.main(["runtime/phase_elapsed.py", str(out)]) == 0
     assert capsys.readouterr().out == "127 2m07s\n"
 
     _write(out / ".phase-epoch", "not an int\n")
-    assert phase_elapsed.main(["phase_elapsed.py", str(out)]) == 0
+    assert phase_elapsed.main(["runtime/phase_elapsed.py", str(out)]) == 0
     assert capsys.readouterr().out == "0 0m00s\n"
 
 
@@ -132,13 +132,13 @@ def test_qa_release_gate_scan_missing_unreadable_ok_and_blocked(tmp_path: Path) 
 
 
 def test_qa_release_gate_main_usage_and_blocker_output(tmp_path: Path, capsys) -> None:
-    assert qa_release_gate.main(["qa_release_gate.py"]) == 1
+    assert qa_release_gate.main(["validators/qa_release_gate.py"]) == 1
     assert "Usage:" in capsys.readouterr().err
 
     status = tmp_path / ".qa-status.json"
     _write(status, json.dumps({"manual_review_items": [{"issue": "Broken anchor in report"}]}))
 
-    assert qa_release_gate.main(["qa_release_gate.py", str(status)]) == 2
+    assert qa_release_gate.main(["validators/qa_release_gate.py", str(status)]) == 2
 
     captured = capsys.readouterr()
     payload = json.loads(captured.out)

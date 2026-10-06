@@ -2,7 +2,7 @@
 #
 # Curated track-record list of dependencies whose architectural choice
 # warrants review regardless of which specific CVE is currently outstanding.
-# Consumed by scripts/emit_known_bad_libs.py and routed to §6.11 as
+# Consumed by scripts/model/emit_known_bad_libs.py and routed to §6.11 as
 # MF-NNN architectural meta-findings (NOT CVE-shaped threats — this file
 # is intentionally NOT a vulnerability feed).
 #
@@ -21,7 +21,7 @@
 #   - Remove entries when libraries get rehabilitated (rare but happens,
 #     e.g. colors.js post-2022 fix). Quarterly review cadence.
 #
-# Severity is capped by asset_tier in emit_known_bad_libs.py via
+# Severity is capped by asset_tier in model/emit_known_bad_libs.py via
 # data/sca-practice-severity.yaml. The `severity` field here is the
 # pre-cap base — for high-impact categories like
 # unfixed_critical_cve / historical_supply_chain_compromise it should be

@@ -5,7 +5,9 @@
 #   scripts/run-tests.sh                # run everything
 #   scripts/run-tests.sh e2e            # only the frozen-run E2E pipeline suite
 #   scripts/run-tests.sh quick          # fast drift guards (no pipeline replay)
-#   scripts/run-tests.sh group report   # shared group (quick/report/scanner/prompts/runtime/incremental/e2e)
+#   scripts/run-tests.sh group report   # explicit group; see scripts/run_tests.py --help
+#   scripts/run-tests.sh changed <ref>  # reviewed selection including local changes
+#   scripts/run-tests.sh pattern <expr> # explicit pytest name filter
 #   scripts/run-tests.sh coverage       # full suite with coverage report
 #   scripts/run-tests.sh <pattern>      # forward as -k <pattern> to pytest
 #   scripts/run-tests.sh help           # show this help
@@ -28,6 +30,16 @@ shift || true
 if [[ "$mode" == help || "$mode" == -h || "$mode" == --help ]]; then
     sed -n '2,/^set /{ /^#/s/^# \{0,1\}//p; }' "$0"
     exit 0
+fi
+
+# Reject incomplete selection commands before probing or installing dependencies.
+if [[ "$mode" == group && ( $# -eq 0 || "$1" == -* ) ]]; then
+    echo "ERROR: group requires a group name; see scripts/run_tests.py --help" >&2
+    exit 2
+fi
+if [[ ( "$mode" == changed || "$mode" == pattern ) && $# -eq 0 ]]; then
+    echo "ERROR: $mode requires an argument" >&2
+    exit 2
 fi
 
 # Resolve a Python interpreter that has every runtime dep the suite needs.
@@ -60,6 +72,16 @@ case "$mode" in
         ;;
     group)
         exec "$PY" scripts/run_tests.py "$@"
+        ;;
+    changed)
+        base="$1"
+        shift
+        exec "$PY" scripts/run_tests.py --changed-against "$base" all "$@"
+        ;;
+    pattern)
+        pattern="$1"
+        shift
+        exec "$PY" scripts/run_tests.py all -k "$pattern" "$@"
         ;;
     quick|e2e)
         exec "$PY" scripts/run_tests.py "$mode" "$@"

@@ -1,7 +1,7 @@
 # sca-practice-severity.yaml
 #
 # Tier-driven severity matrix for "missing SCA practice" MF-NNN findings
-# emitted by scripts/emit_sca_practice.py.
+# emitted by scripts/model/emit_sca_practice.py.
 #
 # Three independent control rows (scanning / dep_updates / lockfile_hygiene)
 # are evaluated per repo (§6.11 Operations Runtime and Supply Chain

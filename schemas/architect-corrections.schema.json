@@ -1,0 +1,884 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/architect-corrections.schema.json",
+  "title": "Inactive architect correction core: bounded assessment and remediation transactions",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "packet_id",
+    "input_sha256",
+    "decisions"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "\\S"
+    },
+    "packet_id": {
+      "type": "string",
+      "pattern": "^packet-[0-9]{4,}$"
+    },
+    "input_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "decisions": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "$ref": "#/$defs/decision"
+      }
+    },
+    "context_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "policy_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  },
+  "$defs": {
+    "rating": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "risk",
+        "likelihood",
+        "impact"
+      ],
+      "properties": {
+        "risk": {
+          "enum": [
+            "Critical",
+            "High",
+            "Medium",
+            "Low"
+          ]
+        },
+        "likelihood": {
+          "enum": [
+            "Critical",
+            "High",
+            "Medium",
+            "Low"
+          ]
+        },
+        "impact": {
+          "enum": [
+            "Critical",
+            "High",
+            "Medium",
+            "Low"
+          ]
+        }
+      }
+    },
+    "fix": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "title",
+        "steps",
+        "verification",
+        "effort"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "pattern": "\\S"
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 12,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "pattern": "\\S"
+          }
+        },
+        "verification": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "pattern": "\\S"
+        },
+        "effort": {
+          "enum": [
+            "Low",
+            "Medium",
+            "High"
+          ]
+        }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t_id",
+        "assessment",
+        "remediation"
+      ],
+      "properties": {
+        "t_id": {
+          "type": "string",
+          "pattern": "^T-\\d{3,}$"
+        },
+        "assessment": {
+          "enum": [
+            "unchanged",
+            "corrected",
+            "unresolved"
+          ]
+        },
+        "remediation": {
+          "enum": [
+            "unchanged",
+            "corrected",
+            "unresolved"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "pattern": "\\S"
+        },
+        "rating": {
+          "$ref": "#/$defs/rating"
+        },
+        "fix": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "operation",
+            "value"
+          ],
+          "properties": {
+            "operation": {
+              "enum": [
+                "add",
+                "replace",
+                "revise"
+              ]
+            },
+            "value": {
+              "$ref": "#/$defs/fix"
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "assessment": {
+                "const": "corrected"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "rating",
+              "reason"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "rating"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "remediation": {
+                "const": "corrected"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "fix",
+              "reason"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "fix"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "anyOf": [
+              {
+                "properties": {
+                  "assessment": {
+                    "const": "unresolved"
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "remediation": {
+                    "const": "unresolved"
+                  }
+                }
+              }
+            ]
+          },
+          "then": {
+            "required": [
+              "reason"
+            ]
+          }
+        }
+      ]
+    },
+    "report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "run_id",
+        "packet_id",
+        "input_sha256",
+        "output_sha256",
+        "outcomes",
+        "accepted"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "\\S"
+        },
+        "packet_id": {
+          "type": "string",
+          "pattern": "^packet-[0-9]{4,}$"
+        },
+        "input_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "output_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "outcomes": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "t_id",
+              "status",
+              "reason",
+              "assessment",
+              "remediation"
+            ],
+            "properties": {
+              "t_id": {
+                "type": "string",
+                "pattern": "^T-\\d{3,}$"
+              },
+              "status": {
+                "enum": [
+                  "accepted",
+                  "rejected",
+                  "unreviewed"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100,
+                "pattern": "\\S"
+              },
+              "assessment": {
+                "enum": [
+                  "unchanged",
+                  "corrected",
+                  "unresolved",
+                  "unreviewed"
+                ]
+              },
+              "remediation": {
+                "enum": [
+                  "unchanged",
+                  "corrected",
+                  "unresolved",
+                  "unreviewed"
+                ]
+              }
+            }
+          }
+        },
+        "accepted": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "t_id",
+              "rationale",
+              "rating",
+              "remediation"
+            ],
+            "properties": {
+              "t_id": {
+                "type": "string",
+                "pattern": "^T-\\d{3,}$"
+              },
+              "rationale": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500,
+                "pattern": "\\S"
+              },
+              "rating": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "before",
+                      "requested",
+                      "after"
+                    ],
+                    "properties": {
+                      "before": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "risk",
+                          "likelihood",
+                          "impact"
+                        ],
+                        "properties": {
+                          "risk": {
+                            "enum": [
+                              "Critical",
+                              "High",
+                              "Medium",
+                              "Low"
+                            ]
+                          },
+                          "likelihood": {
+                            "enum": [
+                              "Critical",
+                              "High",
+                              "Medium",
+                              "Low"
+                            ]
+                          },
+                          "impact": {
+                            "enum": [
+                              "Critical",
+                              "High",
+                              "Medium",
+                              "Low"
+                            ]
+                          }
+                        }
+                      },
+                      "requested": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "risk",
+                          "likelihood",
+                          "impact"
+                        ],
+                        "properties": {
+                          "risk": {
+                            "enum": [
+                              "Critical",
+                              "High",
+                              "Medium",
+                              "Low"
+                            ]
+                          },
+                          "likelihood": {
+                            "enum": [
+                              "Critical",
+                              "High",
+                              "Medium",
+                              "Low"
+                            ]
+                          },
+                          "impact": {
+                            "enum": [
+                              "Critical",
+                              "High",
+                              "Medium",
+                              "Low"
+                            ]
+                          }
+                        }
+                      },
+                      "after": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "risk",
+                          "likelihood",
+                          "impact"
+                        ],
+                        "properties": {
+                          "risk": {
+                            "enum": [
+                              "Critical",
+                              "High",
+                              "Medium",
+                              "Low"
+                            ]
+                          },
+                          "likelihood": {
+                            "enum": [
+                              "Critical",
+                              "High",
+                              "Medium",
+                              "Low"
+                            ]
+                          },
+                          "impact": {
+                            "enum": [
+                              "Critical",
+                              "High",
+                              "Medium",
+                              "Low"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "remediation": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "operation",
+                      "before_sha256",
+                      "after"
+                    ],
+                    "properties": {
+                      "operation": {
+                        "enum": [
+                          "add",
+                          "replace",
+                          "revise"
+                        ]
+                      },
+                      "before_sha256": {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{64}$"
+                      },
+                      "after": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "title",
+                          "steps",
+                          "verification",
+                          "effort"
+                        ],
+                        "properties": {
+                          "title": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 100,
+                            "pattern": "\\S"
+                          },
+                          "steps": {
+                            "type": "array",
+                            "minItems": 2,
+                            "maxItems": 12,
+                            "uniqueItems": true,
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 2000,
+                              "pattern": "\\S"
+                            }
+                          },
+                          "verification": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 2000,
+                            "pattern": "\\S"
+                          },
+                          "effort": {
+                            "enum": [
+                              "Low",
+                              "Medium",
+                              "High"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "batch_report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "run_id",
+        "input_sha256",
+        "output_sha256",
+        "outcomes",
+        "accepted",
+        "context_sha256",
+        "policy_sha256",
+        "packet_reports"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "\\S"
+        },
+        "input_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "output_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "outcomes": {
+          "type": "array",
+          "maxItems": 320000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "t_id",
+              "status",
+              "reason",
+              "assessment",
+              "remediation"
+            ],
+            "properties": {
+              "t_id": {
+                "type": "string",
+                "pattern": "^T-\\d{3,}$"
+              },
+              "status": {
+                "enum": [
+                  "accepted",
+                  "rejected",
+                  "unreviewed"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100,
+                "pattern": "\\S"
+              },
+              "assessment": {
+                "enum": [
+                  "unchanged",
+                  "corrected",
+                  "unresolved",
+                  "unreviewed"
+                ]
+              },
+              "remediation": {
+                "enum": [
+                  "unchanged",
+                  "corrected",
+                  "unresolved",
+                  "unreviewed"
+                ]
+              }
+            }
+          }
+        },
+        "accepted": {
+          "type": "array",
+          "maxItems": 320000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "t_id",
+              "rationale",
+              "rating",
+              "remediation"
+            ],
+            "properties": {
+              "t_id": {
+                "type": "string",
+                "pattern": "^T-\\d{3,}$"
+              },
+              "rationale": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500,
+                "pattern": "\\S"
+              },
+              "rating": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "before",
+                      "requested",
+                      "after"
+                    ],
+                    "properties": {
+                      "before": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "risk",
+                          "likelihood",
+                          "impact"
+                        ],
+                        "properties": {
+                          "risk": {
+                            "enum": [
+                              "Critical",
+                              "High",
+                              "Medium",
+                              "Low"
+                            ]
+                          },
+                          "likelihood": {
+                            "enum": [
+                              "Critical",
+                              "High",
+                              "Medium",
+                              "Low"
+                            ]
+                          },
+                          "impact": {
+                            "enum": [
+                              "Critical",
+                              "High",
+                              "Medium",
+                              "Low"
+                            ]
+                          }
+                        }
+                      },
+                      "requested": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "risk",
+                          "likelihood",
+                          "impact"
+                        ],
+                        "properties": {
+                          "risk": {
+                            "enum": [
+                              "Critical",
+                              "High",
+                              "Medium",
+                              "Low"
+                            ]
+                          },
+                          "likelihood": {
+                            "enum": [
+                              "Critical",
+                              "High",
+                              "Medium",
+                              "Low"
+                            ]
+                          },
+                          "impact": {
+                            "enum": [
+                              "Critical",
+                              "High",
+                              "Medium",
+                              "Low"
+                            ]
+                          }
+                        }
+                      },
+                      "after": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "risk",
+                          "likelihood",
+                          "impact"
+                        ],
+                        "properties": {
+                          "risk": {
+                            "enum": [
+                              "Critical",
+                              "High",
+                              "Medium",
+                              "Low"
+                            ]
+                          },
+                          "likelihood": {
+                            "enum": [
+                              "Critical",
+                              "High",
+                              "Medium",
+                              "Low"
+                            ]
+                          },
+                          "impact": {
+                            "enum": [
+                              "Critical",
+                              "High",
+                              "Medium",
+                              "Low"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "remediation": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "operation",
+                      "before_sha256",
+                      "after"
+                    ],
+                    "properties": {
+                      "operation": {
+                        "enum": [
+                          "add",
+                          "replace",
+                          "revise"
+                        ]
+                      },
+                      "before_sha256": {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{64}$"
+                      },
+                      "after": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "title",
+                          "steps",
+                          "verification",
+                          "effort"
+                        ],
+                        "properties": {
+                          "title": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 100,
+                            "pattern": "\\S"
+                          },
+                          "steps": {
+                            "type": "array",
+                            "minItems": 2,
+                            "maxItems": 12,
+                            "uniqueItems": true,
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 2000,
+                              "pattern": "\\S"
+                            }
+                          },
+                          "verification": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 2000,
+                            "pattern": "\\S"
+                          },
+                          "effort": {
+                            "enum": [
+                              "Low",
+                              "Medium",
+                              "High"
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "context_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "policy_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "packet_reports": {
+          "type": "array",
+          "maxItems": 10000,
+          "items": {
+            "$ref": "#/$defs/report"
+          }
+        }
+      }
+    }
+  }
+}

@@ -8,7 +8,7 @@ import pytest
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-import validate_threat_modeling_context as contract  # noqa: E402
+import validators.validate_threat_modeling_context as contract  # noqa: E402
 
 
 def _valid_context() -> str:

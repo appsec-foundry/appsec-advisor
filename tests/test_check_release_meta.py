@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import pytest
-
-from scripts.check_release_meta import (
+from check_release_meta import (
     changelog_has_version,
     changelog_release_heading,
     changelog_unreleased_has_content,

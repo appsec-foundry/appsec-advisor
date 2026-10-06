@@ -4,7 +4,7 @@
 
 The operator approves specification changes constantly, and almost none of those approvals are the ones the rules ask for.
 
-Two gates hold `docs/internal/decisions.md`: `requirements_hook.py` asks before any recognizable write, and `check_specs.py --changed-against` requires a proposal whenever the path appears in a pull request's diff. Both hold the file. The rule they enforce holds an entry: the register's own header asks the operator before an entry is loosened, a guard widened, or a pinned value raised.
+Two gates hold `docs/internal/decisions.md`: `requirements/requirements_hook.py` asks before any recognizable write, and `check_specs.py --changed-against` requires a proposal whenever the path appears in a pull request's diff. Both hold the file. The rule they enforce holds an entry: the register's own header asks the operator before an entry is loosened, a guard widened, or a pinned value raised.
 
 Measured over the 197 commits since the binding split `0361a758`, the register changed in 8 commits. They added 11 rows, removed none, and modified exactly one, `OR-10`. The prose around the rows did not change. Eleven of those twelve entry changes were additions, which the register's rule does not ask anyone to approve, and each of them still cost an interactive prompt and a CI proposal.
 
@@ -30,6 +30,6 @@ The approval load matches the rule: adding a decision is reviewed work, and chan
 
 `check_specs.py --changed-against <ref>` reads the register at the base revision and compares entries. A diff that only adds rows passes. A row whose text changed, a row that is gone, or a change to the prose around the rows needs a proposal. Without a readable base revision the register is held exactly as the catalog is.
 
-`requirements_hook.py` allows an `Edit` or `MultiEdit` whose every replacement survives byte-identical in what it writes. `Write`, `replace_all`, and shell writes keep asking, because none of them can be read as additive from the payload alone.
+`requirements/requirements_hook.py` allows an `Edit` or `MultiEdit` whose every replacement survives byte-identical in what it writes. `Write`, `replace_all`, and shell writes keep asking, because none of them can be read as additive from the payload alone.
 
 The register gains the entry rule it was missing, and the seven Orchestration rows that carry an incident narrative are trimmed to the pointer their own header asks for. Each narrative was verified to survive at the code it points at before it was removed from the row; the one exception, `OR-22`, moved into the docstring of the test module that pins it.

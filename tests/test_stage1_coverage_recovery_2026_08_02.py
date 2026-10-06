@@ -30,9 +30,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import build_stride_dispatch_manifest as manifest  # noqa: E402
-import classify_component  # noqa: E402
-import stride_dispatch_waves as waves  # noqa: E402
+import analyzers.classify_component as classify_component  # noqa: E402
+import orchestrator.build_stride_dispatch_manifest as manifest  # noqa: E402
+import orchestrator.stride_dispatch_waves as waves  # noqa: E402
 
 # The component that broke, reduced to its two governing numbers.
 SPRING_WEB_APP_FILES = 47
@@ -188,7 +188,7 @@ def test_budget_escalation_is_best_effort() -> None:
 
 def test_session_agent_lookup_returns_the_most_recent_registration(tmp_path, monkeypatch) -> None:
     """First-match made every STRIDE dispatch report as threat-analyst."""
-    import agent_logger
+    import runtime.agent_logger as agent_logger
 
     map_file = tmp_path / ".session-agent-map"
     map_file.write_text(
@@ -211,7 +211,7 @@ def test_budget_scope_disables_multi_agent_shared_counter(tmp_path, monkeypatch)
     Otherwise a parallel STRIDE wave trips .budget-critical from its own
     aggregate traffic and forces every in-flight analyzer to wrap up early.
     """
-    import agent_logger
+    import runtime.agent_logger as agent_logger
 
     map_file = tmp_path / ".session-agent-map"
     map_file.write_text("abcd1234=threat-analyst\nabcd1234=stride-analyzer\n", encoding="utf-8")

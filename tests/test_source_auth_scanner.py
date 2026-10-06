@@ -1,5 +1,5 @@
 """Tests for the deterministic access-control, injection, and direct LLM-flow
-checks in scripts/source_auth_scanner.py and their pipeline wiring.
+checks in scripts/analyzers/source_auth_scanner.py and their pipeline wiring.
 
 The scanner produces `.source-auth-findings.json`, ingested by
 `merge_threats.py:_load_source_auth_findings`. The producer is run by the
@@ -20,14 +20,14 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "source_auth_scanner.py"
+SCRIPT = REPO_ROOT / "scripts" / "analyzers/source_auth_scanner.py"
 CHECKS = REPO_ROOT / "data" / "source-auth-checks.yaml"
-CONTROLLER = REPO_ROOT / "scripts" / "orchestration_controller.py"
+CONTROLLER = REPO_ROOT / "scripts" / "orchestrator/orchestration_controller.py"
 SCHEMA = REPO_ROOT / "schemas" / "source-auth-findings.schema.yaml"
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import source_auth_scanner as S  # noqa: E402
+import analyzers.source_auth_scanner as S  # noqa: E402
 
 
 def _check(
@@ -146,7 +146,7 @@ def test_persisted_expression_requires_verification_and_keeps_condition(tmp_path
     assert all("config.allowExpressions" in f.scenario for f in findings)
     from dataclasses import asdict
 
-    import merge_threats
+    import model.merge_threats as merge_threats
 
     assert merge_threats._source_auth_finding_to_threat(asdict(findings[0]))["evidence_tier"] == "insecure-practice"
 
@@ -240,6 +240,100 @@ def test_authz003_does_not_skip_challenge_or_verify_named_source(tmp_path: Path)
         "}\n"
     )
     assert "AUTHZ-003" in _ids(_scan(tmp_path))
+
+
+_PRIVILEGED_FIELD_SHAPES = [
+    # (file, source, check, fires)
+    (
+        "a.ts",
+        "export const d = () => (req, res, next) => {\n"
+        "  solveIf(c, () => { return req.body && req.body.role === roles.admin })\n  next()\n}\n",
+        "AUTHZ-003",
+        False,
+    ),
+    (
+        "a.ts",
+        "export const g = (req, res) => {\n  if (req.body.role) { return res.status(400).end() }\n"
+        "  return User.create({ email: req.body.email, role: 'user' })\n}\n",
+        "AUTHZ-003",
+        False,
+    ),
+    (
+        "a.ts",
+        "export const l = (req, res) => {\n  logger.info(req.body.role)\n}\n"
+        "export const n = async (req, res) => {\n  await User.create({ email: req.body.email })\n}\n",
+        "AUTHZ-003",
+        False,
+    ),
+    (
+        "a.ts",
+        "export const t = (req, res) => {\n  const role: string = req.body.role\n  log(role)\n}\n",
+        "AUTHZ-003",
+        False,
+    ),
+    ("a.ts", "export const m = (req, res) => {\n  logger.info(\n    req.body.role\n  )\n}\n", "AUTHZ-003", False),
+    (
+        "a.ts",
+        "export const w = async (req, res) => {\n  user.role = req.body.role\n  await user.save()\n}\n",
+        "AUTHZ-003",
+        True,
+    ),
+    (
+        "a.ts",
+        "export const e = async (req, res) => {\n  if (req.body.isAdmin) {\n    user.isAdmin = true\n  }\n}\n",
+        "AUTHZ-003",
+        True,
+    ),
+    (
+        "a.ts",
+        "export const c = async (req, res) => {\n  await User.create(\n    req.body.email,\n"
+        "    req.body.role\n  )\n}\n",
+        "AUTHZ-003",
+        True,
+    ),
+    (
+        "v.py",
+        "def g(request):\n    if request.data.get('is_staff'):\n        return Response(status=403)\n    return ok()\n",
+        "AUTHZ-101",
+        False,
+    ),
+    ("v.py", "def l(request):\n    role = request.data.get('role')\n    logger.info(role)\n", "AUTHZ-101", False),
+    ("v.py", "def k(request):\n    User.objects.create(email=x, role=request.data.get('role'))\n", "AUTHZ-101", True),
+    (
+        "v.py",
+        "def p(request):\n    db.create_user(\n        request.POST.get('email'),\n"
+        "        request.POST.get('role', 'USER'),\n    )\n",
+        "AUTHZ-101",
+        True,
+    ),
+    ("v.py", "def d(request):\n    update_user({'role': request.data.get('role')})\n", "AUTHZ-101", True),
+    (
+        "v.py",
+        "def s(request):\n    if request.data.get('is_staff'):\n        user.is_staff = True\n",
+        "AUTHZ-101",
+        True,
+    ),
+]
+
+
+@pytest.mark.parametrize(("name", "source", "check", "fires"), _PRIVILEGED_FIELD_SHAPES)
+def test_privileged_field_mass_assignment_needs_a_write_in_the_same_block(
+    tmp_path: Path, name: str, source: str, check: str, fires: bool
+) -> None:
+    """Reading a privileged request field is mass assignment only when the same
+    block writes a privileged field or persists a record; comparing, logging or
+    rejecting the field is not, and a write in another function never counts."""
+    (tmp_path / name).write_text(source, encoding="utf-8")
+    assert (check in _ids(_scan(tmp_path))) is fires
+
+
+def test_block_scope_and_rejecting_guard_are_catalog_options(tmp_path: Path) -> None:
+    path = _write_checks(tmp_path / "checks.yaml", pattern="secret", counter_scope="block", skip_rejecting_guard=True)
+    (check,) = S.load_checks(path)
+    assert (check.counter_scope, check.skip_rejecting_guard) == ("block", True)
+    assert S.load_checks(_write_checks(tmp_path / "plain.yaml", pattern="secret"))[0].skip_rejecting_guard is False
+    with pytest.raises(ValueError, match="line\\|window\\|call\\|block"):
+        S.load_checks(_write_checks(tmp_path / "bad.yaml", pattern="secret", counter_scope="file"))
 
 
 def test_authz008_sensitive_route_without_auth(tmp_path: Path) -> None:
@@ -1053,7 +1147,12 @@ def test_emitted_sidecar_validates_against_schema(tmp_path: Path) -> None:
     sidecar = out / ".source-auth-findings.json"
     assert sidecar.is_file()
     rc2 = subprocess.run(
-        [sys.executable, str(REPO_ROOT / "scripts" / "validate_intermediate.py"), "source_auth_findings", str(sidecar)],
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts" / "validators/validate_intermediate.py"),
+            "source_auth_findings",
+            str(sidecar),
+        ],
         capture_output=True,
         text=True,
     ).returncode
@@ -1107,6 +1206,50 @@ def test_main_dry_run_prints_findings_and_summary(tmp_path: Path, capsys) -> Non
     assert "1 finding(s) across 1 check(s)" in captured.err
 
 
+def test_main_check_prefix_runs_only_selected_catalog_checks(tmp_path: Path, capsys) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app.js").write_text("BAD\n", encoding="utf-8")
+    checks = tmp_path / "checks.yaml"
+    checks.write_text(
+        _checks_yaml(id="AUTHZ-TEST", pattern="BAD")
+        + _checks_yaml(id="INJ-TEST", pattern="BAD").removeprefix("checks:\n"),
+        encoding="utf-8",
+    )
+
+    assert (
+        S.main(
+            [
+                "--repo-root",
+                str(repo),
+                "--checks",
+                str(checks),
+                "--check-prefix",
+                "AUTHZ-",
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+    rows = json.loads(capsys.readouterr().out)
+    assert [row["check_id"] for row in rows] == ["AUTHZ-TEST"]
+    assert (
+        S.main(
+            [
+                "--repo-root",
+                str(repo),
+                "--checks",
+                str(checks),
+                "--check-prefix",
+                "CRYPTO-",
+                "--dry-run",
+            ]
+        )
+        == 2
+    )
+    assert "no checks match prefix" in capsys.readouterr().err
+
+
 def test_main_writes_sidecar_and_non_quiet_tally(tmp_path: Path, capsys) -> None:
     repo = tmp_path / "repo"
     out = tmp_path / "out"
@@ -1124,7 +1267,7 @@ def test_main_writes_sidecar_and_non_quiet_tally(tmp_path: Path, capsys) -> None
 
 def test_merge_threats_ingests_findings(tmp_path: Path) -> None:
     """The producer↔consumer contract: a sidecar on disk becomes merged threats."""
-    import merge_threats as M
+    import model.merge_threats as M
 
     repo = tmp_path / "repo"
     out = tmp_path / "out"
@@ -1144,7 +1287,7 @@ def test_merge_threats_ingests_findings(tmp_path: Path) -> None:
 
 
 def test_no_sidecar_is_non_fatal(tmp_path: Path) -> None:
-    import merge_threats as M
+    import model.merge_threats as M
 
     assert M._load_source_auth_findings(tmp_path) == []
 
@@ -1158,12 +1301,12 @@ def test_controller_invokes_scanner_in_prepass() -> None:
     text = CONTROLLER.read_text(encoding="utf-8")
     start = text.index("def _prepasses(")
     block = text[start : text.index("\ndef ", start + 1)]
-    assert "source_auth_scanner.py" in block, (
-        "the controller must invoke source_auth_scanner.py in the deterministic "
+    assert "analyzers/source_auth_scanner.py" in block, (
+        "the controller must invoke analyzers/source_auth_scanner.py in the deterministic "
         "pre-pass — otherwise .source-auth-findings.json is never produced and "
         "the AUTHZ-001..008 checks are dead (merge_threats only reads the file)."
     )
-    assert "route_inventory.py" in block
+    assert "analyzers/route_inventory.py" in block
 
 
 def test_all_eight_checks_load() -> None:
@@ -1292,7 +1435,7 @@ def test_discover_plugin_root_prefers_env_and_returns_none_when_unresolved(tmp_p
     assert S._discover_plugin_root() == tmp_path
 
     monkeypatch.delenv("CLAUDE_PLUGIN_ROOT")
-    script = tmp_path / "elsewhere" / "scripts" / "source_auth_scanner.py"
+    script = tmp_path / "elsewhere" / "scripts" / "analyzers/source_auth_scanner.py"
     script.parent.mkdir(parents=True)
     script.write_text("", encoding="utf-8")
     monkeypatch.setattr(S, "__file__", str(script))
@@ -1365,7 +1508,7 @@ def test_python_test_files_excluded(tmp_path: Path) -> None:
 
 
 def test_expression_checks_exclude_quoted_request_names_and_numeric_input(tmp_path):
-    from source_auth_scanner import _scan_expression_inputs
+    from analyzers.source_auth_scanner import _scan_expression_inputs
 
     path = tmp_path / "handler.ts"
     path.write_text("eval('req.body.expression')\nstore.find({ $where: 'this.id === ' + Number(req.params.id) })\n")
@@ -1373,7 +1516,7 @@ def test_expression_checks_exclude_quoted_request_names_and_numeric_input(tmp_pa
 
 
 def test_executable_predicate_excludes_whole_numeric_or_constrained_values(tmp_path):
-    from source_auth_scanner import _scan_expression_inputs
+    from analyzers.source_auth_scanner import _scan_expression_inputs
 
     path = tmp_path / "handler.ts"
     for conversion in ["parseInt(raw, 10)", "raw.replace(/[^\\w-]+/g, '')"]:
@@ -1386,9 +1529,9 @@ def test_executable_predicate_excludes_whole_numeric_or_constrained_values(tmp_p
 def test_template_source_practice_reaches_the_injection_overview(tmp_path):
     from dataclasses import asdict
 
-    from merge_threats import _source_auth_finding_to_threat
-    from source_auth_scanner import _scan_expression_inputs
-    from weakness_classifier import classify_threat, load_weakness_classes
+    from analyzers.source_auth_scanner import _scan_expression_inputs
+    from analyzers.weakness_classifier import classify_threat, load_weakness_classes
+    from model.merge_threats import _source_auth_finding_to_threat
 
     path = tmp_path / "profile.ts"
     path.write_text("const record = await Account.findByPk(id)\npug.compile(record.template)\n")
@@ -1397,3 +1540,81 @@ def test_template_source_practice_reaches_the_injection_overview(tmp_path):
     threat = _source_auth_finding_to_threat(asdict(findings[0]))
     assert threat["evidence_tier"] == "insecure-practice"
     assert classify_threat(threat, load_weakness_classes(), warn=False) == "injection"
+
+
+def test_every_check_rationale_reads_as_an_attack_scenario():
+    """A check's rationale becomes its findings' `scenario`, which the report and
+    the verdict narrate. A normative requirement ("the server MUST …") there gave
+    a Critical authorization finding no attack to tell, and the verdict dropped
+    it; the requirement belongs in `remediation`."""
+    import yaml
+
+    checks = yaml.safe_load(CHECKS.read_text(encoding="utf-8"))["checks"]
+    normative = [c["id"] for c in checks if re.search(r"\b(?:MUST|SHALL|SHOULD)\b", c.get("rationale") or "")]
+    assert normative == []
+
+
+@pytest.mark.parametrize("token", ["token", "sessionToken"])
+@pytest.mark.parametrize("variant", ["neighbour", "different-token", "after-use", "conditional", "callback", "safe"])
+def test_decode_verification_must_precede_use_of_the_same_token(tmp_path, token, variant):
+    decode = f"const claims = jwt.decode({token});\n"
+    verify = f'jwt.verify({token}, key, {{algorithms:["RS256"]}});\n'
+    if variant == "neighbour":
+        source = f"function unsafe({token}) {{ return jwt.decode({token}).sub; }}\nfunction other(otherToken) {{ jwt.verify(otherToken, key); }}\n"
+    elif variant == "different-token":
+        source = f"function read({token}) {{\n{decode}{verify.replace(token, 'otherToken')}return claims.sub;\n}}"
+    elif variant == "after-use":
+        source = f"function read({token}) {{\n{decode}return claims.sub;\n{verify}}}"
+    elif variant == "conditional":
+        source = f"function read({token}) {{\n{decode}if (enabled) {{ {verify} }}\nreturn claims.sub;\n}}"
+    elif variant == "callback":
+        source = f"function read({token}) {{\n{decode}jwt.verify({token}, key, callback);\nreturn claims.sub;\n}}"
+    else:
+        source = f"function read({token}) {{\n{decode}{verify}return claims.sub;\n}}"
+    (tmp_path / "auth.js").write_text(source)
+    assert ("AUTHZ-006" in _ids(_scan(tmp_path))) == (variant != "safe")
+
+
+@pytest.mark.parametrize("option", ["verify_aud", "verify_iss", "verify_exp", "verify_nbf"])
+@pytest.mark.parametrize("enabled", [False, True])
+def test_explicit_python_claim_validation_opt_out(tmp_path, option, enabled):
+    (tmp_path / "auth.py").write_text(
+        f'import jwt\nclaims = jwt.decode(token, key, algorithms=["RS256"], options={{"{option}": {enabled}}})\n'
+    )
+    assert ("AUTHZ-104" in _ids(_scan(tmp_path))) == (not enabled)
+
+
+@pytest.mark.parametrize("option", ["ValidateAudience", "ValidateIssuer", "ValidateLifetime"])
+@pytest.mark.parametrize("enabled", ["false", "true"])
+def test_explicit_dotnet_claim_validation_opt_out(tmp_path, option, enabled):
+    (tmp_path / "Auth.cs").write_text(f"var options = new TokenValidationParameters {{ {option} = {enabled} }};\n")
+    assert ("AUTHZ-CS-003" in _ids(_scan(tmp_path))) == (enabled == "false")
+
+
+@pytest.mark.parametrize("option", ["ignoreExpiration", "ignoreNotBefore"])
+@pytest.mark.parametrize("enabled", ["false", "true"])
+def test_explicit_node_claim_validation_opt_out(tmp_path, option, enabled):
+    (tmp_path / "auth.js").write_text(f'jwt.verify(token, key, {{algorithms:["RS256"], {option}: {enabled}}});\n')
+    assert ("AUTHZ-009" in _ids(_scan(tmp_path))) == (enabled == "true")
+
+
+def test_omitted_claim_options_are_not_proof_of_missing_validation(tmp_path):
+    (tmp_path / "auth.py").write_text('claims = jwt.decode(token, key, algorithms=["RS256"])\n')
+    assert "AUTHZ-104" not in _ids(_scan(tmp_path))
+
+
+@pytest.mark.parametrize(
+    "filename,source,check",
+    [
+        (
+            "auth.py",
+            'jwt.decode(token, key, algorithms=["RS256"], options={"verify_aud": True}, audience="verify_aud: False")',
+            "AUTHZ-104",
+        ),
+        ("auth.js", 'jwt.verify(token, key, {algorithms:["RS256"], audience:"ignoreExpiration: true"})', "AUTHZ-009"),
+        ("Auth.cs", 'new TokenValidationParameters { ValidAudience = "ValidateAudience = false" };', "AUTHZ-CS-003"),
+    ],
+)
+def test_claim_validation_words_in_values_are_not_opt_outs(tmp_path, filename, source, check):
+    (tmp_path / filename).write_text(source)
+    assert check not in _ids(_scan(tmp_path))

@@ -1,7 +1,7 @@
 # sections-contract.yaml — declarative structure of threat-model.md
 #
 # This file is the SINGLE SOURCE OF TRUTH for the shape of the rendered
-# Markdown report. The renderer (`scripts/compose_threat_model.py`) reads it
+# Markdown report. The renderer (`scripts/renderers/compose_threat_model.py`) reads it
 # and emits `threat-model.md` deterministically from:
 #
 #   * `threat-model.yaml`            → threats, mitigations, components,
@@ -116,7 +116,7 @@ document:
     - { id: composition_notes, condition: "compose_warned" }  # M2.14 — only when prior compose warned
     # M3.3 — `run_issues` is no longer rendered into threat-model.md. The
     # observability data still lives in $OUTPUT_DIR/.run-issues.json
-    # (written by aggregate_run_issues.py) and the terminal completion
+    # (written by runtime/aggregate_run_issues.py) and the terminal completion
     # summary still surfaces a `-- Run Issues --` block. Inlining the
     # appendix into the persisted document was noisy in PR diffs and
     # mixed run-meta with the threat content. To re-enable the appendix
@@ -351,21 +351,22 @@ sections:
       - security_posture_at_a_glance
       - mitigations
       - operational_strengths
+    # Rendered order and blocks: specs/changes/report-anatomy/report-anatomy.md
+    # → Management Summary.
     optional_subsections:
       - { id: top_weaknesses,              condition: "has_weakness_register" }
       - { id: open_questions_for_team,      condition: "has_open_questions" }
+      # architectural_anti_patterns and systemic_posture no longer render as
+      # Management Summary blocks (retired 2026-07-14). They stay listed so
+      # their sections remain reachable: the anti-patterns fragment feeds the
+      # §7 Weakness Register entries, and _render_security_principles still
+      # serves standalone callers.
       - { id: architectural_anti_patterns, condition: "has_anti_patterns" }
-      # ai_exposure_ms is a deep-only callout preserved on downgrade — see the
-      # authoritative `preserve_on_downgrade:` block at the end of this file
-      # (substrate: fragment, ms-ai-exposure.json).
-      - { id: ai_exposure_ms,              condition: "has_llm_surface" }
-      # systemic_posture — P4 "### Security Principles" verdict table, hoisted
-      # from §8 (2026-07-13) so a systemically-violated principle is visible at
-      # executive level. Computed (no LLM fragment); rendered via the
-      # special-case path in _render_management_summary.
       - { id: systemic_posture,           condition: "has_weakness_register" }
+      # ai_exposure_ms is generated from the model at every depth
+      # (pregenerate_fragments.gen_ai_exposure), so it is never carried over.
+      - { id: ai_exposure_ms,              condition: "has_llm_surface" }
       - { id: requirements_compliance_ms, condition: "check_requirements" }
-      - { id: triage_notes,               condition: "triage_has_warnings" }
     forbidden_subsection_patterns:                  # regexes; match = QA-strip
       - "^\\d+\\.\\d+\\s+"                          # numbered prefixes "1.1 …"
       - "^\\d+\\.\\s+"                              # numbered prefixes "1. …"
@@ -390,7 +391,7 @@ sections:
 
   # Deterministic questions selected from threat-model.yaml by the same module
   # that supplies the completion summary. It follows Top Weaknesses and is
-  # absent when neither a team decision nor unverified evidence remains.
+  # absent when no team decision remains.
   open_questions_for_team:
     heading: "### Open Questions for the Team"
     heading_numbered: false
@@ -423,7 +424,7 @@ sections:
     # Skipped when there are 0 or 1 Critical findings — a single-node
     # decomposition tree adds noise without insight. The condition
     # grammar only supports bare names, so the >=2 check is computed
-    # in compose_threat_model.py and exposed as `has_multi_critical`.
+    # in renderers/compose_threat_model.py and exposed as `has_multi_critical`.
     conditional: "has_multi_critical"
 
   # -- MS sub-sections ------------------------------------------------------
@@ -462,10 +463,11 @@ sections:
   # risks the report articulates via the OWASP LLM Top-10 lens (prompt injection,
   # excessive agency, model supply chain, …), so the fact the system embeds an
   # LLM/agent — and its headline risks — is visible at executive level instead of
-  # scattered across §6 control prose. LLM-authored OPTIONAL fragment: the
-  # threat-renderer writes ms-ai-exposure.json only when the system has an LLM/AI
-  # surface (KNOWN_LLM_PATTERNS != none); absent → the section renders nothing
-  # (gated by `has_llm_surface`), so a repo with no AI usage pays zero cost.
+  # scattered across §6 control prose. Deterministic OPTIONAL fragment:
+  # pregenerate_fragments.gen_ai_exposure writes ms-ai-exposure.json from the
+  # findings' OWASP LLM/Agentic tags only when the model has an LLM/AI surface;
+  # absent → the section renders nothing (gated by `has_llm_surface`), so a repo
+  # with no AI usage pays zero cost. No agent authors it.
   # Rendered via the special-case path in `_render_management_summary` (not the
   # generic loop), so it never demands a fragment that non-LLM runs lack.
   ai_exposure_ms:
@@ -480,7 +482,7 @@ sections:
   # Security Principles — the P4 systemic posture verdict (Layer-2). Per
   # security principle, a deterministic VIOLATED / WEAK / ADEQUATE row fused
   # from the weakness register + confirmed findings + implementation strategy
-  # (scripts/build_posture_verdict.py). Hoisted 2026-07-13 from §8 into the
+  # (scripts/model/build_posture_verdict.py). Hoisted 2026-07-13 from §8 into the
   # Management Summary so a systemically-violated principle (e.g. Access
   # Control, Input Validation) is loud at executive level even absent a concrete
   # instance; §8 carries a back-reference. COMPUTED — no LLM fragment; rendered
@@ -509,7 +511,7 @@ sections:
   # Critical/High findings (a green-status threat model does not need a
   # hero diagram).
   security_posture_at_a_glance:
-    # 2026-05 — merged section. Renders: the risk-flow heatmap (Figure 2,
+    # 2026-05 — merged section. Renders: the attack-route overview (Figure 2,
     # forward-only) + an optional architecture diagram (Figure 1, from
     # `.fragments/top-threats-architecture.md`) + the **Top Threats** table
     # (one threat-grouped row per attack class, replacing the former
@@ -536,15 +538,16 @@ sections:
     # Low-severity findings are tracked in §8 but omitted from the
     # heatmap (intro paragraph mentions this explicitly).
     tier_severity_floor: medium
-    # Layout invariants — enforced by `qa_checks.py
+    # Layout invariants — enforced by `validators/qa_checks.py
     # check_security_posture_structure`. Each invariant ID is referenced
     # in the QA repair-plan when violated, so adding/removing/renaming
     # an entry here changes the QA gate semantics.
     # Categories (must match the checks implemented in
-    # `qa_checks.py check_security_posture_structure`):
+    # `validators/qa_checks.py check_security_posture_structure`):
     #   A     = Figure 1 architecture stack (Data bottom / sink-band rules)
     #   D-SVG = Figure 2 PRIMARY form: a portable hand-built SVG image
-    #           (`figure2_svg.py`) — file exists + glyph parity via `data-glyphs`
+    #           (`renderers/figure2_svg.py`) — file exists + glyph parity via `data-glyphs`;
+    #           version 2 also validates scenario data, visible references and geometry
     #   T     = Top Threats table below Figure 2 (glyph parity, links)
     #   D/E/C/F/G = Figure 2 FALLBACK form only (inline ELK Mermaid heatmap,
     #           used when the SVG builder yields nothing). 2026-07: Figure 2
@@ -568,7 +571,7 @@ sections:
       # D-SVG — Figure 2 PRIMARY form (portable SVG image). When the section
       # references `![Figure 2 …](<stem>.figure2.svg)`, only D-SVG + T apply;
       # the Mermaid D/E/C/F/G rules below guard the fallback path only.
-      - { id: D-SVG, rule: "when Figure 2 is an SVG image, the referenced `<stem>.figure2.svg` file exists next to the md, and its `data-glyphs` attribute matches the Top Threats table row glyphs (emitted as `T2/G3`)" }
+      - { id: D-SVG, rule: "when Figure 2 is an SVG image, the referenced `<stem>.figure2.svg` file exists next to the md, and its `data-glyphs` attribute matches the Top Threats table row glyphs (emitted as `T2/G3`); version 2 also satisfies `schemas/figure2-diagram.schema.json` and retains visible route numbers, finding and weakness references, and text inside its cards" }
       # D/E/C/F/G/T — Figure 2 FALLBACK heatmap (inline ELK Mermaid) + table.
       - { id: D1, rule: "mermaid block declares ELK renderer via `%%{init: {\"flowchart\": {\"defaultRenderer\": \"elk\"}} }%%` directive" }
       - { id: D2, rule: "mermaid block opens with `flowchart LR`" }
@@ -577,7 +580,7 @@ sections:
       - { id: D5, rule: "every subgraph carries `direction TB`" }
       - { id: D6, rule: "no nested sub-subgraphs (flat one-level subgraphs only)" }
       - { id: E1, rule: "exactly 3 invisible alignment edges: HDR_A --- HDR_T, HDR_T --- HDR_I, plus per-component alignment as needed" }
-      - { id: E2, rule: "1–7 attack arrows present, all `==>` solid red, with numbered glyph labels ①–⑦ in declaration order without gaps" }
+      - { id: E2, rule: "1–N attack arrows present (N = `glyph_sequence` length in attack-class-taxonomy.yaml), all `==>` solid red, with numbered glyph labels in declaration order without gaps" }
       - { id: E3, rule: "1–6 consequence arrows present, all `-.->` dashed grey, terminating at IMPACT nodes" }
       - { id: E4, rule: "linkStyle declarations exist for: alignment edges (transparent), attack arrows (#b71c1c), consequence arrows (#6b7280 dashed)" }
       - { id: C1, rule: "every node label has ≤ 6 `<br/>` tags (≤ 7 visual lines)" }
@@ -586,11 +589,11 @@ sections:
       - { id: F1, rule: "ACTORS column has 1–6 cards: 1 column header (HDR_A) + 1–5 actor cards" }
       - { id: F2, rule: "TIERS column has 1–4 cards: 1 column header (HDR_T) + 1–3 tier cards (Client / Application / Data)" }
       - { id: F3, rule: "IMPACT column has 1–5 cards: 1 column header (HDR_I) + 1–4 business-impact cards" }
-      - { id: G1, rule: "each glyph ①–⑦ appears at most once on attack-arrow labels" }
+      - { id: G1, rule: "each attack glyph appears at most once on attack-arrow labels" }
       - { id: G2, rule: "glyph order on attack arrows is ① ② … without gaps" }
       # T — Top Threats table below the diagram (replaced the legacy bullet list).
       - { id: T1, rule: "the Top Threats table header `| # | Threat Description | Findings (→ Component) | Risk & Impact | Fix |` is present below the diagram" }
-      - { id: T2, rule: "diagram ↔ table glyph parity: every heatmap attack-arrow glyph ①–⑦ appears exactly once as a Top Threats table-row `#` glyph, and vice-versa (emitted as `T2/G3`)" }
+      - { id: T2, rule: "diagram ↔ table glyph parity: every heatmap attack-arrow glyph appears exactly once as a Top Threats table-row `#` glyph, and vice-versa (emitted as `T2/G3`)" }
       - { id: T3, rule: "the Top Threats table links findings into §8 via `[F-NNN](#f-nnn)`" }
 
   # 2026-05 — `top_findings` and `architecture_assessment` were MERGED into
@@ -602,7 +605,7 @@ sections:
 
   # Top Threats — the merged threat-grouped table (replaced Top Findings +
   # Architecture Assessment). 2026-05: FOLDED into `security_posture_at_a_glance`
-  # so the heatmap (Figure 2) and the table render under one
+  # so the attack-route overview (Figure 2) and the table render under one
   # "### Security Posture & Top Threats" heading. The renderer
   # (`_compute_top_threats_rows` + `templates/fragments/top-threats.md.j2`,
   # invoked from `_render_security_posture_at_a_glance`) joins the attack-paths
@@ -614,17 +617,6 @@ sections:
     heading: "### Top Mitigations"
     heading_numbered: false
     fragment_type: computed                         # derived from threat-model.yaml mitigations[]
-    sub_tables:
-      - id: prioritized_mitigations
-        heading: "#### Prioritized Mitigations"
-        filter: "addresses_any_severity in [Critical, High]"
-        sort: [effort_rank:asc, addressed_count:desc]
-        intro: "The mitigations below address the Critical and High findings in the Top Threats table and must be completed before any production deployment. Entries are ordered by effort (lowest first), then by number of threats addressed (highest first)."
-      - id: followup_mitigations
-        heading: "#### Follow-up Mitigations"
-        filter: "addresses_any_severity in [Medium, Low] OR (addresses_any_severity == High AND id NOT IN prioritized_mitigations)"
-        sort: [effort_rank:asc, addressed_count:desc]
-        intro: "The mitigations below address the remaining High/Medium findings not covered above and should be scheduled within the current or next sprint. Same ordering rule applies (effort ascending, findings-addressed descending)."
     table:
       # Post-2026-05-29 — Top Mitigations is a single ranked table with a
       # dedicated `Component` column (printed once per component group, blank
@@ -633,7 +625,7 @@ sections:
       # and rendered as displaced; the column form keeps proper alignment and
       # matches the sibling Top Findings table.
       columns:
-        - { key: priority,   header: "Priority",   render: priority_badge,    required: true, enum: [P1, P2] }
+        - { key: rank,       header: "#",          render: plain_text,        required: true }
         - { key: component,  header: "Component",   render: plain_text,        required: false }
         - { key: mitigation, header: "Mitigation", render: mitigation_id,     required: true }
         - { key: addresses,  header: "Addresses",  render: finding_list,      required: true }
@@ -646,7 +638,7 @@ sections:
         # more Critical-fixing mitigations than the cap), and the Stage-2
         # renderer curates the most important additional P1/P2 entries up to
         # this bound via `.fragments/ms-top-mitigations.json`. Overflow falls
-        # through to §9 Mitigation Register (the full P1/P2/P3 catalogue).
+        # through to §10 Mitigation Register (the full P1–P4 catalogue).
         min: 3
         max: 10
 
@@ -690,19 +682,14 @@ sections:
     fragment: "system-overview.md"
     # No schema — pure prose. Renderer validates that first line matches heading.
 
-  # §1.5 Identified Actors — table of resolved ACT-* actors with layer,
-  # status, finding counts, and per-component relevance (actors.md §14).
-  # `computed` because the renderer derives the table from threat-model.yaml
-  # + .actors-resolved.json — no LLM fragment is consulted.
-  # Conditional via `has_resolved_actors`: skipped on legacy runs without
-  # `.actors-resolved.json` (pre-Phase 2.7 caches) so the section gracefully
-  # disappears instead of failing the contract.
+  # Canonical actor inventory with individual access, authority, finding links,
+  # and represented scenario groups; legacy models retain their vector table.
+  # This computed section needs no runtime sidecar or authored fragment.
   identified_actors:
     heading: "### Identified Actors"
     heading_numbered: false   # unnumbered ### subsection of §1 System Overview (like "### Scope")
     fragment_type: computed
-    # No fragment file. No required_subsections — sub-headings are renderer-emitted
-    # and depend on whether proposed / disabled / dormant actors exist this run.
+    # No fragment file or required subsections.
 
   trust_boundary_catalog:
     heading: "### Trust Boundaries"
@@ -718,38 +705,44 @@ sections:
     heading_numbered: true
     fragment_type: markdown
     fragment: "architecture-diagrams.md"
-    # Reference layout has exactly these four subsections, in this order.
+    # Reference layout has exactly these three subsections, in this order.
     # "Security Architecture Assessment" was removed — its content is now in §6.
+    # "Technology Architecture" was removed — §2.2 names every runtime,
+    # framework and version the scan found.
     # "Data Flow Matrix" and "Trust Boundaries" are NOT canonical §2 sub-sections.
     required_subsections:
       - { level: 3, title: "2.1 System Context" }
       - { level: 3, title: "2.2 Container Architecture" }
       - { level: 3, title: "2.3 Components" }
-      - { level: 3, title: "2.4 Technology Architecture" }
     # These §2.x sub-section titles are forbidden — their content lives in §6.
     forbidden_subsection_patterns:
+      - "^2\\.4 Technology Architecture"
       - "^2\\.5 Security Architecture Assessment"
       - "^2\\.\\d+ Data Flow Matrix"
       - "^2\\.\\d+ Trust Boundaries"
     required_patterns:
-      - '```mermaid'                                # at least one Mermaid block
+      # At least one diagram: a Mermaid block, or a §2 detail figure (deployment
+      # in §2.2 when several deployment units run) that replaces that
+      # subsection's Mermaid diagram. §2.2 with one deployment unit and §2.3
+      # show a generator-owned `<!-- detail-table -->` table instead; §2.1
+      # always keeps its diagram.
+      - '```mermaid|!\[Figure \d+ - [^\]]+\]\((?:[^)\s]+\.figure\d+\.svg|figure\d+\.svg|data:image/svg\+xml;base64,[A-Za-z0-9+/=]+)\)'
 
     # ---------------------------------------------------------------------
     # Diagram compactness — Single-Source-of-Truth (post-2026-05).
     # ---------------------------------------------------------------------
-    # The §2.3 Components and §2.4 Technology Architecture diagrams in
-    # earlier runs grew wide and unreadable: 5 subgraphs side-by-side, 10+
-    # nodes, 80–120-char labels carrying tech name + version + defect-list.
-    # That extra detail belongs in the §2.4.1–§2.4.4 layer tables and in
-    # §6/§8 — not in the diagram label. The rules below pin a compact
+    # The §2 Mermaid diagrams in earlier runs grew wide and unreadable: 5
+    # subgraphs side-by-side, 10+ nodes, 80–120-char labels carrying tech
+    # name + version + defect-list. That extra detail belongs in the §2
+    # tables and in §6/§8 — not in the diagram label. The rules below pin a compact
     # 4-tier layout (orientation: top-down) and are consumed by:
     #
-    #   * scripts/pregenerate_fragments.py — generates scaffolds that
+    #   * scripts/renderers/pregenerate_fragments.py — generates scaffolds that
     #     obey the limits by construction.
-    #   * scripts/compose_threat_model.py — when `skip_phase11_enrichment`
+    #   * scripts/renderers/compose_threat_model.py — when `skip_phase11_enrichment`
     #     is true, the Phase-11 LLM is forbidden from re-authoring the
     #     listed sub-sections (Pre-Gen output is canonical).
-    #   * scripts/qa_checks.py — `check_diagram_compactness` parses every
+    #   * scripts/validators/qa_checks.py — `check_diagram_compactness` parses every
     #     Mermaid block in §2, counts subgraphs / nodes / label-lines,
     #     verifies the required classDef block is present, and runs the
     #     threat-traceability cross-check. Violations raise a repair-plan
@@ -774,7 +767,7 @@ sections:
         # A bare `-->` without a label is forbidden — it hides whether
         # traffic is HTTP, HTTPS, an ORM call, a file I/O path, etc.
         require_edge_labels: true
-        # §2.2 is generator-owned like §2.3/§2.4. A renderer previously
+        # §2.2 is generator-owned like §2.3. A renderer previously
         # appended per-container threat rows and exceeded this eight-node cap
         # on the 2026-07-13 Juice Shop standard run. Protocol labels and
         # middleware detail must be derived by the generator, never added by
@@ -798,7 +791,7 @@ sections:
         # a browser SPA executes on the user's device, on the attacker's side
         # of every server-side control, so it is NOT a trust zone of its own.
         # Figure 1 draws the client device INSIDE the untrusted Internet zone
-        # (`figure1_dfd.py`; the `figure1_svg.py::_zone_rank` fallback collapses
+        # (`renderers/figure1_dfd.py`; the `renderers/figure1_svg.py::_zone_rank` fallback collapses
         # actors + client the same way), so §2.3 must not contradict that. Four zone-looking columns that marked
         # nothing invited the reader to place the boundary between EXT and
         # CLIENT, where trust does not change — the parallel titles say the
@@ -857,66 +850,13 @@ sections:
         # Bidirectional traceability — every T-NNN cited in a node label
         # or edge label MUST resolve to a §8 Threat Register entry; every
         # Critical/High threat from §8 MUST appear EITHER in this diagram
-        # (node or edge label) OR in a §2.4.x Layer table row. This
+        # (node or edge label) OR in the §2.3 component table. This
         # closes the "diagram simplification dropped a Critical finding"
         # gap.
         require_threat_traceability: true
         # The Phase-11 enrichment LLM has historically rewritten this
         # block into 5-subgraph / 10-node forms. Lock the Pre-Gen output
         # as canonical for §2.3.
-        skip_phase11_enrichment: true
-
-      "2.4 Technology Architecture":
-        layout_keyword: "flowchart TD"
-        max_subgraphs: 4
-        # Raised from 6 → 10 post-2026-05-05: the heuristic tech-stack
-        # detection (sequelize / sqlite / marsdb / socket.io / docker /
-        # github / etc.) routinely surfaces 7-9 distinct technologies in
-        # mature web stacks. A 6-node ceiling forced the diagram to
-        # collapse onto generic placeholders ("Application Server",
-        # "Data Layer") and lose the per-tech identity that auditors
-        # actually need.
-        max_nodes_total: 10
-        max_label_lines: 2
-        max_label_chars_per_line: 60
-        # DELIBERATELY NOT re-titled "Untrusted Zone - …" like §2.3's CLIENT,
-        # and deliberately carrying no boundary-crossing edges (2026-07-31).
-        # §2.4 is a technology-stack view: the boxes are frameworks and
-        # runtimes (Angular / Express / Sequelize), there is no external-actor
-        # column, no attack edge and no zone framing, so nothing here invites
-        # the reader to read the columns as trust zones — the misleading-zone
-        # problem §2.3 had does not exist here. A trust boundary marks an
-        # enforcement point on a request path; asserting one between two
-        # technology boxes would claim an enforcement point this diagram does
-        # not depict. §2.3 stays the canonical trust surface (same rule as
-        # `require_threat_traceability` below).
-        required_subgraphs:
-          - { id: "CLIENT", title: "Client Tier" }
-          - { id: "APP",    title: "Application Tier" }
-          - { id: "DATA",   title: "Data Tier" }
-        # The 4th subgraph is OPTIONAL when the assessment includes
-        # cross-cutting infra (Docker, public source repo). Pre-Gen emits
-        # it when those facts exist in `threat-model.yaml`.
-        optional_subgraphs:
-          - { id: "INFRA", title: "Cross-Cutting" }
-        required_classdefs:
-          risk: "fill:#fef2f2,stroke:#991b1b,color:#111,stroke-width:2.5px"
-          ok:   "fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px"
-        # §2.4 has no attack-vector edges (it's a tech-stack overview, not
-        # a data-flow diagram). Only legit data flow + supply-chain edges.
-        edge_convention:
-          legit:        { arrow: "-->",  linkstyle: "stroke:#424242,stroke-width:1.5px" }
-          supply_chain: { arrow: "-.->", linkstyle: "stroke:#9e9e9e,stroke-width:1px,stroke-dasharray:3 3" }
-        # Detail tables §2.4.1–§2.4.4 were removed 2026-05 per user request:
-        # they duplicated the §2.3 component table and the §8 Threat Register
-        # without adding new signal. §2.4 now keeps only the technology-stack
-        # mermaid + 1-paragraph intro.
-        require_layer_tables: false
-        # Threat traceability is enforced at §2.3 (the canonical surface).
-        # Re-requiring it at §2.4 historically forced the renderer to repeat
-        # the same T-NNN list, which the LLM repair path materialised as the
-        # "Threat IDs in scope:" blockquote — that block is removed.
-        require_threat_traceability: false
         skip_phase11_enrichment: true
 
   attack_walkthroughs:
@@ -937,13 +877,13 @@ sections:
     # coverage is enforced by `per_critical_subsection` + check_walkthrough_coverage.
     required_subsections: []
     # required_patterns applies only when §3 actually carries per-Critical
-    # walkthroughs. walkthrough_renderer.py emits one `sequenceDiagram` block
+    # walkthroughs. renderers/walkthrough_renderer.py emits one `sequenceDiagram` block
     # per effective Critical finding (none for effective Highs), so the
     # diagram is present iff walkthroughs are NOT skipped AND ≥1 Critical exists.
     # A `--quick` run (skip notice, no diagrams) OR a clean report with zero
     # Criticals (intro-only stub) must NOT trip the missing-pattern check. The
     # contract grammar has no `and`/numeric ops, so this is gated on the
-    # precomputed `has_authored_walkthroughs` flag (compose_threat_model.py
+    # precomputed `has_authored_walkthroughs` flag (renderers/compose_threat_model.py
     # eval_context). per_critical coverage is enforced separately by
     # qa_checks.check_walkthrough_coverage, which independently no-ops on zero
     # Criticals.
@@ -965,7 +905,7 @@ sections:
     # Walkthrough quality — guard against trivial-stub renderings (added
     # 2026-05 after a Stage-2 re-render produced 3 stub chains of the form
     # `attacker --> threat --> "Privileged access"`, defeating the point of
-    # §3). Consumed by qa_checks.py:
+    # §3). Consumed by validators/qa_checks.py:
     #
     #   * check_walkthrough_coverage — one §3.x sub-section per Critical
     #     threat in `threat-model.yaml`. When N Criticals exist, exactly
@@ -994,7 +934,7 @@ sections:
       require_alt_else_block: false
       # Per-§3.x section structure — every walkthrough MUST carry these
       # labelled-form blocks in this order. Consumed by
-      # `qa_checks.py:check_walkthrough_structure`.
+      # `validators/qa_checks.py:check_walkthrough_structure`.
       #
       # 2026-05 iteration 3: reduced from 8 → 3. Attacker Profile (folded
       # into the intro sentence), Prerequisites (mostly boilerplate),
@@ -1038,8 +978,8 @@ sections:
   # §6 Use Cases removed (2026-05). The numbering gap (§5 → §6) is
   # intentional. Re-introduction would require: (1) re-adding this section
   # block, (2) restoring `use_cases` to all `order:` lists above,
-  # (3) reinstating `gen_use_cases` in scripts/pregenerate_fragments.py,
-  # (4) restoring `use_cases` in scripts/compose_threat_model.py
+  # (3) reinstating `gen_use_cases` in scripts/renderers/pregenerate_fragments.py,
+  # (4) restoring `use_cases` in scripts/renderers/compose_threat_model.py
   # FRAGMENT_PATHS / dispatcher / has_use_cases condition.
 
   skipped_sections_placeholder:
@@ -1059,23 +999,25 @@ sections:
     # M6 (2026-05) — The v1 15-section layout (7.1 Overview, 7.2 Key
     # Architectural Risks, 7.3 Identity & Access Management, …) was retired
     # when schema_v2 became the single source of truth for §6. Both
-    # `compose_threat_model.py:_section_required_subs` and
-    # `qa_checks.py:_resolve_section_overlay` already prefer
+    # `renderers/compose_threat_model.py:_section_required_subs` and
+    # `validators/qa_checks.py:_resolve_section_overlay` already prefer
     # `schema_v2.required_subsections` over a section-level
     # `required_subsections` when both exist (see the explicit overlay at
-    # compose_threat_model.py:1427-1431 and qa_checks.py:287-289). Removing
+    # renderers/compose_threat_model.py:1427-1431 and validators/qa_checks.py:287-289). Removing
     # the top-level v1 list ensures there is exactly one authoritative
     # subsection set — drift between the two was the 2026-05 failure mode
     # that allowed legacy fragments to claim contract pass while the
     # rendered §6 used v2 anchors.
 
     # §6 clarity guards — enforced by dedicated runtime checks in
-    # scripts/qa_checks.py rather than as YAML patterns, because the
+    # scripts/validators/qa_checks.py rather than as YAML patterns, because the
     # generic contract pattern matcher does not currently scan the
     # rendered §6 body. The relevant checks (added 2026-05) are:
     #
     #   * `section7_narrative_placeholders` (M2) — fails when any
-    #     `<!-- NARRATIVE_PLACEHOLDER ... -->` token survives in §6.
+    #     `<!-- NARRATIVE_PLACEHOLDER ... -->` token survives in §6. The
+    #     Stage-3 `gate` enforces it only when enrich_arch_fragments is on;
+    #     without enrichment the scaffold is the delivered §6.
     #   * `section7_h4_positive_intro` (M7) — fails when an H4 control
     #     block lacks a ≥25-word positive intro paragraph before
     #     `**Security assessment**`, opens with `No `/`Missing`/…, or
@@ -1121,22 +1063,23 @@ sections:
       # explicit category (when set on the threat). The renderer uses
       # this to know where to PRIMARILY list a finding; cross-references
       # in other sections are still allowed but the primary listing is
-      # deterministic. qa_checks.py:check_v2_finding_mapping enforces it.
+      # deterministic. Each CWE names exactly one section; renderers/pregenerate_fragments.py
+      # reads this map, and a finding on a build-plane component goes to 6.11 first (RA-28).
       finding_routing:
         "6.2 Identity and Authentication Controls":
-          cwes: [CWE-287, CWE-307, CWE-294, CWE-345, CWE-347, CWE-620, CWE-640, CWE-916]
+          cwes: [CWE-287, CWE-307, CWE-294, CWE-345, CWE-347, CWE-620, CWE-640, CWE-916, CWE-306, CWE-290]
           clusters: [broken_auth]
         "6.3 Session and Token Controls":
           cwes: [CWE-922, CWE-384, CWE-613, CWE-1004]
           clusters: []
         "6.4 Authorization Controls":
-          cwes: [CWE-285, CWE-639, CWE-269, CWE-862, CWE-863, CWE-732, CWE-352, CWE-602, CWE-915]
+          cwes: [CWE-285, CWE-639, CWE-269, CWE-862, CWE-863, CWE-732, CWE-602, CWE-915, CWE-284]
           clusters: [missing_authz]
         "6.5 Query Construction and Data Access Controls":
           cwes: [CWE-89, CWE-943]
           clusters: []
         "6.6 Input Boundary Validation Controls":
-          cwes: [CWE-20, CWE-1284, CWE-1287, CWE-400]
+          cwes: [CWE-20, CWE-1284, CWE-1287, CWE-400, CWE-74, CWE-770]
           clusters: []
         "6.7 Output Encoding and Rendering Controls":
           cwes: [CWE-79, CWE-80, CWE-87, CWE-116]
@@ -1148,14 +1091,14 @@ sections:
           cwes: [CWE-321, CWE-798, CWE-327, CWE-326, CWE-329, CWE-330, CWE-312, CWE-538, CWE-759]
           clusters: [weak_crypto]
         "6.10 File Parser and Outbound Request Controls":
-          cwes: [CWE-611, CWE-22, CWE-23, CWE-409, CWE-776, CWE-94, CWE-95, CWE-918, CWE-601, CWE-441, CWE-548, CWE-552, CWE-749, CWE-200]
+          cwes: [CWE-611, CWE-22, CWE-23, CWE-409, CWE-776, CWE-94, CWE-95, CWE-918, CWE-601, CWE-441, CWE-548, CWE-552, CWE-749, CWE-200, CWE-78, CWE-502, CWE-1336, CWE-359]
           clusters: [server_side_exposure]
         "6.11 Operations Runtime and Supply Chain Controls":
-          cwes: [CWE-117, CWE-223, CWE-209, CWE-532, CWE-778, CWE-1104, CWE-1395, CWE-937, CWE-829, CWE-250, CWE-732, CWE-15, CWE-260]
+          cwes: [CWE-117, CWE-223, CWE-209, CWE-532, CWE-778, CWE-1104, CWE-1395, CWE-937, CWE-829, CWE-250, CWE-15, CWE-260, CWE-494, CWE-506]
           clusters: [outdated_deps]
           library_token_match: true
         "6.12 Real-time and Not Applicable Controls":
-          cwes: []
+          cwes: [CWE-1385]
           clusters: []
           recon_triggers: ["socket.io", "websocket"]
 
@@ -1269,7 +1212,7 @@ sections:
               - "oidc"
               - "openid"
               # "Social Login" is the user-facing name for an OAuth/OIDC social
-              # provider mechanism. emit_auth_coverage.py writes the control as
+              # provider mechanism. model/emit_auth_coverage.py writes the control as
               # "Social Login (OAuth / OIDC)"; the renderer legitimately
               # simplifies the §6.2 heading to "Social Login", dropping the
               # parenthetical that carries the oauth/oidc token. Whitelist the
@@ -1442,7 +1385,7 @@ sections:
             enforcement: "warning"
         # R7 — §6.13 is prose-only. Markdown tables are a contract violation
         # because they invite speculative perimeter-absence claims and break
-        # the reference-style "two-paragraph cross-cutting summary" shape.
+        # the two-list cross-cutting summary shape (What holds / Repair first).
         "6.13 Defense-in-Depth Summary":
           - rule: "forbidden_constructs"
             forbidden_constructs:
@@ -1508,27 +1451,20 @@ sections:
 
       **STRIDE Coverage:** {{ stride_line }}
     sub_sections: []
-    # 2026-05 CARD layout (replaces the flat table). Findings are grouped by
-    # severity under `### <emoji> <Severity> (n)` headers (mirroring the §9
-    # Mitigation-Register block style); each finding is one card built by
-    # `_build_threat_card` in `compose_threat_model.py` with a fixed field
-    # skeleton, every card identical:
-    #   #### F-NNN · <Title>
-    #   **Severity:** … · **Component:** [C-NN] … · **Location:** `file:line`
-    #   **Issue:** …                     (consequence folded in; no Impact field)
-    #   **Root cause:** …                (attack-class taxonomy description)
-    #   **Evidence:** <✓|◌|↻> … (+ fenced code snippet when one exists)
-    #   **Fix:** <plain remediation> → [M-NNN]
-    #   **Classification:** Category · STRIDE: <category> · [CWE-NNN](cwe.mitre.org) · [OWASP A0X:2025](owasp.org)
-    # History: pre-2026-05 was a 9-col then 4-col flat table (Story Card in the
-    # Finding cell); the table was retired for cards on 2026-05-30.
-    card_fields: [severity, component, location, issue, root_cause, evidence, fix, classification]
+    # Findings are grouped by severity under `### <emoji> <Severity> (n)`
+    # headers, mirroring the §10 Mitigation Register block style. Each finding
+    # is one card built by `_build_threat_card` in
+    # `renderers/compose_threat_model.py`. The card fields, their order, and
+    # which ones are conditional are fixed by
+    # specs/changes/report-anatomy/report-anatomy.md → §8 Findings Register and
+    # held by tests/test_report_anatomy.py.
+    card_fields: [severity, violates, weakness, trust_boundary_gap, instances, issue, root_cause, evidence, code_excerpt, fix, classification]
 
   # -------------------------------------------------------------------------
-  # E2. Abuse Cases — 100% computed; body authored by render_abuse_cases.py
+  # E2. Abuse Cases — 100% computed; body authored by renderers/render_abuse_cases.py
   # -------------------------------------------------------------------------
   # The §9 body is produced deterministically by
-  # `scripts/render_abuse_cases.py` (from `.abuse-case-verdicts.json` +
+  # `scripts/renderers/render_abuse_cases.py` (from `.abuse-case-verdicts.json` +
   # `threat-model.yaml`) and dropped at `.fragments/abuse-cases.md`. The
   # `_render_abuse_cases` handler inlines that fragment when present and
   # otherwise emits a single italic placeholder line, so the §8 → §10
@@ -1575,7 +1511,7 @@ sections:
     data_source: "threat-model.yaml#meta.run_statistics"
 
   appendix_vektor_taxonomy:
-    heading: "## Appendix A — Vektor Taxonomy"
+    heading: "## Appendix A — Attack Vector Taxonomy"
     heading_numbered: false
     anchor: "appendix-a-vektor-taxonomy"
     fragment_type: computed
@@ -1604,7 +1540,7 @@ sections:
   # completion summary still surfaces a `-- Run Issues --` block, but
   # the persisted document stays focused on threat content. To re-enable:
   # add the section def below, register `_render_run_issues` in the
-  # section-handler dict in scripts/compose_threat_model.py (the
+  # section-handler dict in scripts/renderers/compose_threat_model.py (the
   # function body is preserved), and reinstate the document.order entry
   # `{ id: run_issues, condition: "run_warned" }`.
 
@@ -1633,8 +1569,8 @@ invariants:
 # ── Depth-downgrade preservation (2026-06-26) ─────────────────────────────────
 # THE single source of truth for which deep-only sections survive a shallower
 # re-run (e.g. standard → quick). Read by scripts/preserve_lib.py; consumed by
-# snapshot_preserved_sections.py (capture), restore_preserved_sections.py
-# (restore + provenance) and compose_threat_model.py (§6 verbatim carry). Adding
+# repairs/snapshot_preserved_sections.py (capture), repairs/restore_preserved_sections.py
+# (restore + provenance) and renderers/compose_threat_model.py (§6 verbatim carry). Adding
 # a section to preserve is an edit here — no code change.
 #
 #   substrate: fragment   → the section renders from a .fragments/<file>; the
@@ -1652,9 +1588,6 @@ preserve_on_downgrade:
   - id: security_architecture
     substrate: md-slice
     md_section_number: 7
-  - id: ai_exposure_ms
-    substrate: fragment
-    fragment: ms-ai-exposure.json
   - id: abuse_cases
     substrate: fragment
     fragment: abuse-cases.md

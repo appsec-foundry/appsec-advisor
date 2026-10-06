@@ -1,9 +1,7 @@
-# Runbook — paid acceptance runs
+<a id="runbook--paid-acceptance-runs"></a>
+# Paid acceptance runs
 
-Every acceptance run costs a full scan. Four pre-R10 runs were rejected after
-the fact because the command line was retyped and lost a flag: resolution
-produced a different depth, mode, or preservation setting than the plan
-requires, and the mistake surfaced only once the scan had been paid for.
+Verify the resolved depth, mode, and artifact-preservation settings before starting a paid acceptance run. A run with different settings does not satisfy the acceptance plan.
 
 The cohort is defined once in `docs/internal/acceptance-cohort.yaml`. Generate
 the invocation from it; do not retype one.
@@ -26,17 +24,13 @@ environment that launches the run, so the skill's Bash sees it.
 
 ## Verify before the run costs anything
 
-As soon as `.skill-config.json` exists in the run's output directory — before
-the first model dispatch — check what resolution actually produced:
+As soon as `.skill-config.json` exists in the output directory, verify its settings before the first model dispatch:
 
 ```bash
 python3 scripts/acceptance_invocation.py verify --member r10 --output-dir <run-dir>
 ```
 
-Exit 0 prints the cohort hash and the run is a member. Exit 1 lists every field
-that resolved to something else; abandon the run and fix the invocation. This
-is the whole point of the tool: a wrong run is cheap to discard here and
-expensive to discover later.
+Exit code 0 prints the cohort hash and confirms membership. Exit code 1 lists mismatched fields; stop and correct the invocation before spending model budget.
 
 ## Members
 
@@ -75,8 +69,8 @@ harness run against it before the paid run, not after.
 
 ## If a run ends badly
 
-`scripts/terminate_run.py` runs from the headless wrapper on every non-clean
+`scripts/runtime/terminate_run.py` runs from the headless wrapper on every non-clean
 exit and brings the lock, checkpoint, lifecycle, live markers, and run issues
-into one terminal state. Check with `scripts/appsec_status.py --live` against
+into one terminal state. Check with `scripts/runtime/appsec_status.py --live` against
 the run directory; it should report the abort immediately rather than an
 unknown phase.

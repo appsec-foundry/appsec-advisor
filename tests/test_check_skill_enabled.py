@@ -1,4 +1,4 @@
-"""Tests for scripts/check_skill_enabled.py."""
+"""Tests for scripts/runtime/check_skill_enabled.py."""
 
 from __future__ import annotations
 
@@ -10,15 +10,15 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "check_skill_enabled.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "runtime/check_skill_enabled.py"
 
 
 def _load_module():
-    if "check_skill_enabled" in sys.modules:
-        return sys.modules["check_skill_enabled"]
-    spec = importlib.util.spec_from_file_location("check_skill_enabled", SCRIPT_PATH)
+    if "runtime.check_skill_enabled" in sys.modules:
+        return sys.modules["runtime.check_skill_enabled"]
+    spec = importlib.util.spec_from_file_location("runtime.check_skill_enabled", SCRIPT_PATH)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["check_skill_enabled"] = mod
+    sys.modules["runtime.check_skill_enabled"] = mod
     assert spec.loader is not None
     spec.loader.exec_module(mod)
     return mod

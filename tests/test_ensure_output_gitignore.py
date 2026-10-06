@@ -19,8 +19,8 @@ import pytest
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-from ensure_output_gitignore import ensure  # noqa: E402
-from publish_threat_model import patch_gitignore  # noqa: E402
+from model.publish_threat_model import patch_gitignore  # noqa: E402
+from runtime.ensure_output_gitignore import ensure  # noqa: E402
 
 DELIVERABLES = ("threat-model.md", "threat-model.yaml")
 INTERMEDIATES = (

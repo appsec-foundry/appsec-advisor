@@ -146,9 +146,19 @@ properties:
         enum: [all, any]
         default: all
         description: "Whether ALL or ANY of required_signals must be set. Default: all."
+      opt_in:
+        type: boolean
+        description: >
+          The actor stays inactive until an `enable:` entry in the repo or org
+          layer names it; an enabled opt-in actor skips the signal check.
     description: |
       When absent, actor is always active (default for custom repo/org actors).
       Reported as 'always-active im Repo-Scope' in run output.
+
+  scope_note:
+    type: string
+    maxLength: 160
+    description: "§11 Out of Scope wording for an opt-in actor that was not enabled."
 
   severity_modulation:
     type: object
@@ -169,9 +179,10 @@ properties:
       - internet-priv-user
       - build-time
       - repo-read
+      - insider
       - victim-required
     description: |
-      Maps this actor to one of the 6 heatmap display slugs.
+      Maps this actor to one of the heatmap display groups.
       Required for custom actors (ACT-E-*, ACT-R-*, ACT-X-*).
       Default actors (ACT-D-*) are covered by data/actor-id-to-heatmap-slug.yaml.
 
@@ -270,6 +281,9 @@ properties:
         type: string
       disable_reason:
         type: [string, "null"]
+      enabled_by:
+        type: string
+        enum: [enterprise, repo]
       promoted_from_discovery:
         type: boolean
       promoted_at:

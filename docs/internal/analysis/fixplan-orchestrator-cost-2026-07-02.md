@@ -17,22 +17,22 @@ Plugin repo: `/home/user/appsec-advisor` (branch `dev`). Target repo of the run:
 all gates green, zero manual patching**. Counterfactuals confirmed old=broken/new=fixed.
 
 Changed source files (uncommitted, `git diff` on branch `dev`):
-- `scripts/qa_checks.py` — Bug 2: `required_subsection` matcher `fullmatch`→`match`
+- `scripts/validators/qa_checks.py` — Bug 2: `required_subsection` matcher `fullmatch`→`match`
   (the `^`-anchored contract patterns are prefixes; the `(54)`/`(52)` route-count
   suffix on §5.1/§5.2 headings broke `fullmatch` → false-positive "missing subsection"
   → forced a needless fragment-fixer repair pass).
-- `scripts/compose_threat_model.py` — Bug 1a: `_linkify_section_refs` slug_map now uses
+- `scripts/renderers/compose_threat_model.py` — Bug 1a: `_linkify_section_refs` slug_map now uses
   `github_render_slug` (was `github_slug`) so bare `§N.M` prose refs into slash/&/dash
   headings resolve. Bug 1c: moved `_linkify_section_refs` to run AFTER
   `_section7_number_and_bulletize` (it was building its number→slug map from the
   pre-renumber §7 headings; an un-numbered "Threat Hypotheses" opener shifts 7.2.1…N by
   one → mislabeled/dangling anchors). Plus a `_PRELINKED_REF_RE` normalizer that repairs
   already-linked `[§N.M](#wrong)` refs from LLM-authored fragments.
-- `scripts/apply_prose_fixes.py` — Bug 1d: `_rewrite_controls_covered_anchors` builds
+- `scripts/repairs/apply_prose_fixes.py` — Bug 1d: `_rewrite_controls_covered_anchors` builds
   Controls-covered bullet anchors with `github_render_slug` (was `github_slug`) — same
   slash-heading divergence, different file (this was the source of the 6 stubborn
   `#723-oauth-google-social-login`-style dead links).
-- `scripts/pregenerate_fragments.py` — Bug 1b: `_render_threat_hypotheses_table` emits an
+- `scripts/renderers/pregenerate_fragments.py` — Bug 1b: `_render_threat_hypotheses_table` emits an
   `<a id="threat-hypotheses-requiring-validation">` before the heading (Controls-covered
   bullet dangled because this pseudo-control had no explicit anchor). Bug 4:
   `_LLM_TOP10_RULES` LLM10 keywords add `unrate-limited`/`rate-limit`/`rate limiting`/
@@ -60,7 +60,7 @@ stamped copies) was rebuilt clean with the fixes; AI map now = LLM06 + LLM10 + L
 **Symptom:** the run cost ~$77. Not a bug from Part A; not the model tier.
 
 **Measured facts (this run, session 20b15b3f, from `docs/security/.hook-events.log` +
-`scripts/context_window_report.py` on the Claude JSONL):**
+`scripts/runtime/context_window_report.py` on the Claude JSONL):**
 - Orchestrator session cost decomposition (Sonnet rates): **cache_read 178.6M tokens =
   $53.58 = 73%** of $73.27; cache_write 14%; output 12%; input 0.3%.
 - **Peak resident context ~802k tokens, 0 compactions.**
@@ -77,13 +77,13 @@ cost model assumes a "thin cheap orchestrator" — the legacy runtime violates t
 **Key lever (verified available):** the THIN runtime. Router test:
 - default (what ran): `runtime=legacy` → loads `SKILL-impl.md` (~88k tok).
 - `APPSEC_THIN_ORCHESTRATOR=1`: `runtime=thin-full` → loads `SKILL-full-runtime.md`
-  (~2.2k tok) + deterministic `orchestration_controller.py`. It's rollout-gated
+  (~2.2k tok) + deterministic `orchestrator/orchestration_controller.py`. It's rollout-gated
   ("compact runtime is rollout-gated") = a maintainer GA decision, NOT a flag to flip
   silently. Only applies to full/rebuild; incremental/special modes stay legacy.
 
 ### Investigation plan (do on FRESH Sonnet session — NO new full scan needed except Phase 4)
 - **Phase 1 — Identify (cheap, deterministic, no scan):** finish attributing the 178M
-  cache_read to sources. Tools: `scripts/context_window_report.py --json` on the JSONL
+  cache_read to sources. Tools: `scripts/runtime/context_window_report.py --json` on the JSONL
   under `/home/user/.claude/projects/-home-mrohr-juice-shop/`; bucket tool_result sizes;
   attribute the big cache_read jumps (+42M @09:31, +68M @10:26) to specific actions;
   resolve the arithmetic (245 tool_results / ~220k unique content vs 178M cache_read →
@@ -99,7 +99,7 @@ cost model assumes a "thin cheap orchestrator" — the legacy runtime violates t
      hold all 88k resident) — I can implement.
   3. Compact sub-agent completion contract (terse structured returns, bulky prose to
      disk) — I can implement; biggest lever if notifications dominate.
-  4. Mid-run guardrail in `scripts/skill_watchdog.py` (warn when cache_read crosses a
+  4. Mid-run guardrail in `scripts/runtime/skill_watchdog.py` (warn when cache_read crosses a
      threshold; the start-only bloat detector misses in-run growth) — I can implement.
 - **Phase 4 — Verify:** ONE real full scan under the fix, on Sonnet + fresh session,
   compare to baseline (peak 802k / cache_read 178M / $77). Target: orchestrator
@@ -128,7 +128,7 @@ yet added (deferred by user — commit first).
 
 ### Part B Phase 1 — two corrections to the numbers above
 
-1. **`context_window_report.py` double-counted cache_read (now fixed, `dev`
+1. **`runtime/context_window_report.py` double-counted cache_read (now fixed, `dev`
    uncommitted).** Claude Code logs one JSONL record per content block
    (thinking/text/tool_use) for a single API turn, and every block carries the
    *same* `message.usage` snapshot. The script summed `cache_read_input_tokens`
@@ -159,9 +159,9 @@ same cache-rate formula):
 
 The $77→~$42–48 revision is NOT the legacy-runtime fix paying off — it's simply
 correcting bad arithmetic (double-counted cache_read) and a bad pricing
-assumption (the "Opus ≈ 5×" comparison used `verify_run_costs.py`'s stale
+assumption (the "Opus ≈ 5×" comparison used `runtime/verify_run_costs.py`'s stale
 `opus-4-6` pricing table; real Opus 4.8 cache_read is $0.50/M vs that table's
-$1.50/M — 3× too high). `verify_run_costs.py`'s `PRICING_MODELS` dict has no
+$1.50/M — 3× too high). `runtime/verify_run_costs.py`'s `PRICING_MODELS` dict has no
 `sonnet-5`/`opus-4-8` entries — flagged as a Phase-3 candidate, not fixed here.
 
 **Arithmetic resolved** (the "245 tool_results / ~220k unique content vs 178M
@@ -180,7 +180,7 @@ were wrong.
 ### Part B Phase 2 — blocked, not executable as written
 
 `--rerender` **always routes to `runtime=legacy`**, regardless of
-`APPSEC_THIN_ORCHESTRATOR` — `orchestration_controller.py`'s router requires
+`APPSEC_THIN_ORCHESTRATOR` — `orchestrator/orchestration_controller.py`'s router requires
 `mode in {"full","rebuild"}` AND `not rerender`
 (`_runtime_for()` around line 234–245; reason string:
 `"special mode retains the parity runtime"`). The cheap path (`--rerender`,
@@ -196,7 +196,7 @@ data only.**
 
 ### Part B Phase 3 — done this session
 
-- Fixed `context_window_report.py` dedup bug (see above); regression test added;
+- Fixed `runtime/context_window_report.py` dedup bug (see above); regression test added;
   full related test files green (`context_window_report` + `run_costs`, 74
   passed). Uncommitted on `dev`.
 - **Thin-runtime GA recommendation (for the maintainer — this is their call, not
@@ -212,7 +212,7 @@ data only.**
   thin runtime AND scoping the compact-completion-contract work, in that
   priority order — but closing the parity matrix for GA is a maintainer decision
   outside this session's scope.
-- Items 2 (lazy-load `SKILL-impl.md` per-stage) and 4 (mid-run `skill_watchdog.py`
+- Items 2 (lazy-load `SKILL-impl.md` per-stage) and 4 (mid-run `runtime/skill_watchdog.py`
   guardrail) from the original Phase-3 list were NOT implemented this session —
   open follow-ups if the maintainer wants them ahead of thin-runtime GA.
 
@@ -245,7 +245,7 @@ multiplies the cost of verbosity here), `appsec-threat-merger`,
 `appsec-threat-renderer` (already had an informal "terse status only" rule —
 tied it to the shared contract instead of rewriting it), `appsec-triage-validator`.
 Full suite: **8964 passed, 93 skipped** (one more passing test than baseline —
-the `context_window_report.py` regression test from the earlier fix).
+the `runtime/context_window_report.py` regression test from the earlier fix).
 
 **Explicitly out of scope:** `agents/appsec-threat-analyst.md` (1466 lines) was
 NOT edited. It's structurally the orchestrator role itself (writes
@@ -262,5 +262,5 @@ run — still pending an explicit go-ahead given it costs real money.
 
 **Open decisions for next session:** commit this? run the verify scan (Phase 4,
 real cost)? add regression tests for Part A's 6 bugs (still deferred)? pursue
-Phase-3 items 2/4, the `verify_run_costs.py` stale-pricing-table fix, or the
+Phase-3 items 2/4, the `runtime/verify_run_costs.py` stale-pricing-table fix, or the
 `appsec-threat-analyst.md` completion-contract follow-up?

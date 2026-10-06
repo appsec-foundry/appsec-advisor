@@ -1,0 +1,144 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 575" width="100%" height="100%">
+  <defs>
+    <style>
+      .global-text {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        fill: #e2e8f0;
+      }
+      .title-main { font-weight: 700; font-size: 16px; fill: #ffffff; }
+      .title-pane-blue { font-weight: 700; font-size: 18px; fill: #93c5fd; }
+      .title-pane-green { font-weight: 700; font-size: 18px; fill: #86efac; }
+      
+      .node-title { font-weight: 700; font-size: 14px; fill: #f1f5f9; }
+      .node-sub { font-size: 12px; fill: #9ca3af; }
+      .node-code-icon { font-family: "Courier New", Courier, monospace; font-weight: 700; font-size: 32px; }
+      
+      .label-edge { font-size: 12px; font-weight: 600; fill: #60a5fa; }
+      
+      .stroke-blue { stroke: #3b82f6; stroke-width: 2; }
+      .stroke-green { stroke: #22c55e; stroke-width: 2; }
+      .stroke-purple { stroke: #a78bfa; stroke-width: 2; }
+      .stroke-orange { stroke: #f97316; stroke-width: 2; }
+      .stroke-dark { stroke: #94a3b8; stroke-width: 2; }
+    </style>
+
+    <marker id="arr-dark" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,1 L7,4 L0,7 Z" fill="#94a3b8" />
+    </marker>
+    <marker id="arr-blue" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,1 L7,4 L0,7 Z" fill="#3b82f6" />
+    </marker>
+    <marker id="arr-purple" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,1 L7,4 L0,7 Z" fill="#a78bfa" />
+    </marker>
+  </defs>
+
+  <rect x="240" y="40" width="1230" height="530" fill="none" stroke="#3b82f6" stroke-width="2" stroke-dasharray="8 6" rx="12" />
+  <rect x="805" y="25" width="100" height="30" fill="#2563eb" rx="6" />
+  <text x="855" y="45" class="global-text title-main" text-anchor="middle">Acme</text>
+
+  <rect x="260" y="70" width="550" height="485" fill="#161b22" stroke="#30363d" stroke-width="1" rx="8" />
+  <text x="535" y="100" class="global-text title-pane-blue" text-anchor="middle">Packaging &amp; Distribution</text>
+
+  <rect x="830" y="70" width="620" height="485" fill="#0f1d14" stroke="#1f3a28" stroke-width="1" rx="8" />
+  <text x="1140" y="100" class="global-text title-pane-green" text-anchor="middle">Usage &amp; Threat Modeling</text>
+
+
+  <line x1="180" y1="362" x2="272" y2="362" class="stroke-dark" marker-end="url(#arr-dark)" />
+  <text x="226" y="344" class="global-text label-edge" text-anchor="middle">pin &amp; package</text>
+
+  <line x1="380" y1="250" x2="380" y2="282" class="stroke-blue" stroke-dasharray="5 4" marker-end="url(#arr-blue)" />
+  <text x="395" y="265" class="global-text label-edge" fill="#2563eb" text-anchor="start">bundle</text>
+
+  <line x1="480" y1="362" x2="582" y2="362" class="stroke-dark" marker-end="url(#arr-dark)" />
+  <text x="531" y="344" class="global-text label-edge" text-anchor="middle">publish</text>
+
+  <line x1="780" y1="362" x2="852" y2="362" class="stroke-dark" marker-end="url(#arr-dark)" />
+  <text x="816" y="344" class="global-text label-edge" text-anchor="middle">install</text>
+
+  <path d="M 945 290 L 945 170 L 1122 170" fill="none" class="stroke-dark" marker-end="url(#arr-dark)" />
+  <text x="1033" y="156" class="global-text label-edge" text-anchor="middle">works on</text>
+
+  <line x1="1030" y1="362" x2="1142" y2="362" class="stroke-dark" marker-end="url(#arr-dark)" />
+  <text x="1086" y="344" class="global-text label-edge" text-anchor="middle">uses</text>
+
+  <line x1="1240" y1="275" x2="1240" y2="238" class="stroke-purple" stroke-dasharray="5 4" marker-end="url(#arr-purple)" />
+
+  <line x1="1240" y1="400" x2="1240" y2="427" class="stroke-dark" marker-end="url(#arr-dark)" />
+  <text x="1255" y="415" class="global-text label-edge" text-anchor="start">creates</text>
+  <text x="1255" y="429" class="global-text label-edge" text-anchor="start">threat model</text>
+
+  <path d="M 1350 490 L 1380 490 L 1380 170 L 1358 170" fill="none" class="stroke-purple" stroke-dasharray="5 4" marker-end="url(#arr-purple)" />
+  <text x="1392" y="330" class="global-text label-edge" text-anchor="start">commits &amp;</text>
+  <text x="1392" y="346" class="global-text label-edge" text-anchor="start">stores</text>
+
+
+  <rect x="40" y="290" width="140" height="145" fill="#1c2128" stroke="#f97316" stroke-width="2" rx="8" />
+  <g fill="#f97316" transform="translate(90, 305) scale(1.4)">
+     <path d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.603-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.462-1.11-1.462-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836c.85.004 1.705.114 2.504.336 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.161 22 16.418 22 12c0-5.523-4.477-10-10-10z" transform="translate(-12,0)"/>
+  </g>
+  <text x="110" y="380" class="global-text node-title" text-anchor="middle">appsec-advisor</text>
+  <text x="110" y="400" class="global-text node-sub" fill="#ea580c" text-anchor="middle">github.com</text>
+
+  <rect x="290" y="120" width="180" height="130" fill="#1c2128" stroke="#3b82f6" stroke-width="2" rx="8" />
+  <g stroke="#3b82f6" fill="none" stroke-width="2" transform="translate(10, 0)">
+    <ellipse cx="370" cy="140" rx="14" ry="4"/>
+    <path d="M 356 140 v 6 a 14 4 0 0 0 28 0 v -6"/>
+    <path d="M 356 146 v 6 a 14 4 0 0 0 28 0 v -6"/>
+  </g>
+  <text x="380" y="175" class="global-text node-title" text-anchor="middle">org-profile</text>
+  <text x="380" y="195" class="global-text node-sub" text-anchor="middle">requirements</text>
+  <text x="380" y="212" class="global-text node-sub" text-anchor="middle">presets</text>
+  <text x="380" y="229" class="global-text node-sub" text-anchor="middle">cost limits</text>
+
+  <rect x="280" y="290" width="200" height="145" fill="#1c2128" stroke="#3b82f6" stroke-width="2" rx="8" />
+  <text x="380" y="325" class="global-text node-code-icon" fill="#2563eb" text-anchor="middle">&lt;/&gt;</text>
+  <text x="380" y="352" class="global-text node-title" text-anchor="middle">acme-appsec</text>
+  <text x="380" y="370" class="global-text node-title" text-anchor="middle">internal SCM</text>
+  <text x="380" y="395" class="global-text node-sub" text-anchor="middle">Internal distribution repo</text>
+  <text x="380" y="412" class="global-text node-sub" text-anchor="middle">(policies, configs, tools)</text>
+
+  <rect x="590" y="290" width="190" height="145" fill="#1c2128" stroke="#3b82f6" stroke-width="2" rx="8" />
+  <g stroke="#3b82f6" fill="none" stroke-width="2">
+    <rect x="670" y="305" width="30" height="18" rx="2"/>
+    <path d="M 660 327 l 50 0" stroke-linecap="round"/>
+  </g>
+  <text x="685" y="355" class="global-text node-title" text-anchor="middle">portal / devcontainer</text>
+  <text x="685" y="373" class="global-text node-title" text-anchor="middle">/ bootstrap</text>
+  <text x="685" y="398" class="global-text node-sub" text-anchor="middle">Developer environment</text>
+  <text x="685" y="414" class="global-text node-sub" text-anchor="middle">&amp; onboarding</text>
+
+  <rect x="860" y="290" width="170" height="145" fill="#1c2128" stroke="#22c55e" stroke-width="2" rx="8" />
+  <g fill="#22c55e" transform="translate(15, -5)">
+    <circle cx="930" cy="325" r="7"/>
+    <path d="M 917 343 c 0 -7 4 -10 13 -10 s 13 3 13 10 z"/>
+    <circle cx="914" cy="330" r="5"/>
+    <path d="M 904 343 c 0 -5 3 -8 10 -8 c 1.5 0 3 .5 4 1 c -1.5 2 -2 4 -2 6 z"/>
+    <circle cx="946" cy="330" r="5"/>
+    <path d="M 956 343 c 0 -5 -3 -8 -10 -8 c -1.5 0 -3 .5 -4 1 c 1.5 2 2 4 2 6 z"/>
+  </g>
+  <text x="945" y="370" class="global-text node-title" text-anchor="middle">Developer +</text>
+  <text x="945" y="388" class="global-text node-title" text-anchor="middle">AppSec Team</text>
+
+  <rect x="1130" y="120" width="220" height="125" fill="#1c2128" stroke="#3b82f6" stroke-width="2" rx="8" />
+  <text x="1240" y="155" class="global-text node-code-icon" fill="#2563eb" text-anchor="middle">&lt;/&gt;</text>
+  <text x="1240" y="182" class="global-text node-title" text-anchor="middle">Internal Application Repo</text>
+  <text x="1240" y="200" class="global-text node-sub" font-weight="700" text-anchor="middle">(e.g., acme-payments)</text>
+  <text x="1240" y="220" class="global-text node-sub" text-anchor="middle">Source code &amp; docs</text>
+
+  <rect x="1150" y="280" width="180" height="120" fill="#1c2128" stroke="#a78bfa" stroke-width="2" rx="8" />
+  <rect x="1220" y="295" width="40" height="26" rx="4" fill="#334155"/>
+  <text x="1227" y="313" fill="#ffffff" font-family="monospace" font-weight="bold" font-size="15">&gt;_</text>
+  <text x="1240" y="350" class="global-text node-title" text-anchor="middle">Claude Code</text>
+  <text x="1240" y="370" class="global-text node-sub" font-weight="700" text-anchor="middle">(Anthropic)</text>
+
+  <rect x="1130" y="435" width="220" height="110" fill="#1c2128" stroke="#a78bfa" stroke-width="2" rx="8" />
+  <g fill="#a78bfa" transform="translate(10, 2)">
+    <rect x="1218" y="448" width="24" height="28" rx="2"/>
+    <path d="M 1224 454 l 6 -2 l 6 2 v 5 c 0 4 -4 7 -6 9 c -2 -2 -6 -5 -6 -9 z" fill="#ffffff"/>
+    <path d="M 1222 471 h 16" stroke="#ffffff" stroke-width="2"/>
+  </g>
+  <text x="1240" y="498" class="global-text node-title" text-anchor="middle">Threat Model Artifact</text>
+  <text x="1240" y="518" class="global-text node-sub" font-weight="700" text-anchor="middle">(e.g., .md, .json, .puml)</text>
+
+</svg>

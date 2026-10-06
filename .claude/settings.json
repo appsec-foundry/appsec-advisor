@@ -27,7 +27,7 @@
             "type": "command",
             "command": "python3",
             "args": [
-              "${CLAUDE_PROJECT_DIR}/scripts/requirements_hook.py"
+              "${CLAUDE_PROJECT_DIR}/scripts/requirements/requirements_hook.py"
             ]
           }
         ]
@@ -41,7 +41,7 @@
     "deny": [
       "Edit(.claude/settings.json)",
       "Edit(scripts/spec_guard.py)",
-      "Edit(scripts/requirements_hook.py)"
+      "Edit(scripts/requirements/requirements_hook.py)"
     ]
   },
   "sandbox": {

@@ -1,7 +1,7 @@
-"""Tests for scripts/requirements_report.py and the requirements-audit verdict.
+"""Tests for scripts/requirements/requirements_report.py and the requirements-audit verdict.
 
 Covers deterministic summary recomputation, schema validation, and that the
-shared scripts/requirements_gate.py reads the full-repo audit verdict.
+shared scripts/requirements/requirements_gate.py reads the full-repo audit verdict.
 """
 
 from __future__ import annotations
@@ -12,11 +12,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-import requirements_report as rr
+import requirements.requirements_report as rr
 
 REPO_ROOT = Path(__file__).parent.parent
-REPORT = REPO_ROOT / "scripts" / "requirements_report.py"
-GATE = REPO_ROOT / "scripts" / "requirements_gate.py"
+REPORT = REPO_ROOT / "scripts" / "requirements/requirements_report.py"
+GATE = REPO_ROOT / "scripts" / "requirements/requirements_gate.py"
 
 
 def _verdict() -> dict:

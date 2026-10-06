@@ -1,4 +1,4 @@
-"""Tests for scripts/review_threat_model.py — the deterministic half of the
+"""Tests for scripts/validators/review_threat_model.py — the deterministic half of the
 ``/appsec-advisor:review-threat-model`` consumer skill.
 
 Covers:
@@ -22,7 +22,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import review_threat_model as rtm  # noqa: E402
+import validators.review_threat_model as rtm  # noqa: E402
 
 
 def _write_model(output_dir: Path, threats: list[dict], meta: dict | None = None) -> None:
@@ -792,7 +792,7 @@ def test_promote_accepted_writes_valid_known_threats(tmp_path):
     doc = _read_yaml(kt)
     assert {t["id"] for t in doc["threats"]} == {"auth-006", "web-003"}
     assert all(t["status"] == "accepted" for t in doc["threats"])
-    import validate_intermediate as vi  # the pipeline's own validator
+    import validators.validate_intermediate as vi  # the pipeline's own validator
 
     assert vi.validate_known_threats(doc)[0]
 

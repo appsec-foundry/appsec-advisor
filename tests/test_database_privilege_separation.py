@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT = REPO_ROOT / "scripts" / "database_privilege_separation.py"
-CONTROLLER = REPO_ROOT / "scripts" / "orchestration_controller.py"
+SCRIPT = REPO_ROOT / "scripts" / "analyzers/database_privilege_separation.py"
+CONTROLLER = REPO_ROOT / "scripts" / "orchestrator/orchestration_controller.py"
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
-import database_privilege_separation as dbsep  # noqa: E402
-import validate_intermediate as vi  # noqa: E402
+import analyzers.database_privilege_separation as dbsep  # noqa: E402
+import validators.validate_intermediate as vi  # noqa: E402
 
 
 def _run(repo: Path, output: Path, depth: str = "thorough") -> dict:
@@ -31,6 +32,7 @@ def _run(repo: Path, output: Path, depth: str = "thorough") -> dict:
         check=True,
         capture_output=True,
         text=True,
+        timeout=60,
     )
     return json.loads((output / ".db-privilege-separation.json").read_text(encoding="utf-8"))
 
@@ -132,5 +134,42 @@ def test_runtime_wiring_keeps_database_separation_thorough_only() -> None:
     start = text.index("def _prepasses(")
     block = text[start : text.index("\ndef ", start + 1)]
     assert 'if depth == "thorough"' in block
-    assert "database_privilege_separation.py" in block
+    assert "analyzers/database_privilege_separation.py" in block
     assert '"--assessment-depth",\n                    "thorough"' in block
+
+
+def _clients(repo: Path) -> None:
+    (repo / "clients.ts").write_text(
+        "const adminDb = createPool({ user: 'app_owner' });\nconst publicDb = createPool({ user: 'app_owner' });\n",
+        encoding="utf-8",
+    )
+
+
+GRANT = "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO app_owner;\n"
+
+
+def test_grant_symlinked_from_outside_the_repository_is_not_read(tmp_path: Path) -> None:
+    repo, outside = tmp_path / "repo", tmp_path / "outside"
+    repo.mkdir()
+    outside.mkdir()
+    _clients(repo)
+    (outside / "roles.sql").write_text(GRANT, encoding="utf-8")
+    (repo / "roles.sql").symlink_to(outside / "roles.sql")
+    assert _run(repo, tmp_path / "out")["confirmed_findings"] == []
+
+
+def test_grant_symlinked_inside_the_repository_is_still_read(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    (repo / "db").mkdir(parents=True)
+    _clients(repo)
+    (repo / "db" / "roles.sql").write_text(GRANT, encoding="utf-8")
+    (repo / "roles.sql").symlink_to(repo / "db" / "roles.sql")
+    assert len(_run(repo, tmp_path / "out")["confirmed_findings"]) == 1
+
+
+def test_a_fifo_with_a_scanned_extension_does_not_block_the_scan(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _clients(repo)
+    os.mkfifo(repo / "pending.sql")
+    assert _run(repo, tmp_path / "out")["confirmed_findings"] == []

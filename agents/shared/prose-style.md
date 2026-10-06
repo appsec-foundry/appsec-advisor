@@ -8,7 +8,7 @@ intros). Read it once at the start of any prose-authoring step.
 The reader is a software engineer, architect, or security reviewer.
 Technical, time-pressed, allergic to filler. Write the way you would
 write to a colleague reviewing a PR — not the way an LLM writes a
-report. The five rules below are derived from concrete defects observed
+report. The rules below are derived from concrete defects observed
 in real generated reports; the examples are taken from those reports.
 
 ---
@@ -25,9 +25,8 @@ short-circuits…") — that reads as a passive code-review note, not
 something a reader can act out step by step. The attacker's action is
 the subject; the code mechanism is the reason the action works, not the
 main clause. This governs `scenario` fields and §3 Attack Walkthrough
-steps directly (juice-shop 2026-07-03 user report: Attack Steps must be
-"aus der Sicht des Angreifers" — from the attacker's point of view,
-clear and traceable).
+steps directly: a reader must be able to follow each step from the
+attacker's point of view.
 
 **Avoid (vague — no file/line/payload):**
 > An attacker could exploit the application to gain administrative access
@@ -51,8 +50,8 @@ reproduce it. The second is reproducible but reads as a static code
 observation. The third is reproducible AND narratable: a reader can act
 it out one step at a time, in order, as the attacker.
 
-**Cap on `scenario` / Attack Steps (juice-shop 2026-07-03 user report — steps
-had "far too much unnecessary detail"):** write **3–4 steps, one sentence each**.
+**`scenario` / Attack Steps carry only attacker actions:** write 2–5 steps (the
+`attack_steps` schema bound), one sentence each.
 Each sentence is a single attacker action as the main clause; the code
 mechanism, if named, is a short subordinate "because…"/"since…" clause, not the
 sentence. **At most one `file:line` per step.** Do not narrate the code's
@@ -130,15 +129,13 @@ Em-dashes only for tight apposition (a parenthetical aside) — never as
 a glue replacing the period or the comma.
 
 **Avoid:**
-> NOT PRODUCTION-READY — exposes 14 Critical and 5 High findings across
-> 3 components, including unauthenticated SQL injection granting admin
+> The assessed scope contains unauthenticated SQL injection granting admin
 > access, a publicly committed RSA private key enabling offline JWT
 > forgery, server-side code execution via eval(), and missing
 > authorization on product modification endpoints.
 
 **Prefer:**
-> NOT PRODUCTION-READY — 14 Critical, 5 High across three components.
-> The dominant attack paths:
+> Four attack paths dominate:
 >
 > - Unauthenticated SQL injection on the login endpoint grants admin
 >   access.
@@ -295,11 +292,11 @@ token count. If trimming a sentence removes a fact, keep the sentence.
 
 ## Control narrative quality bar (§6 Security Architecture)
 
-Section 7 narratives must satisfy the rules below. For current
+§6 narratives must satisfy the rules below. For current
 `security_schema=v2`, §6 is a 13-section control-category model with
 section-level `Verdict / Controls covered / Implemented controls /
 Assessment` labels and H4 subcontrols carrying `Security assessment` plus
-`Relevant findings`. The Architect-Reviewer and QA gates check this shape via
+`Relevant findings`. The QA gate checks this shape via
 `contract`, `control_subsection_coverage`, and `architectural_prose`.
 
 The shared root cause behind these rules: pre-2026-05 §6 narratives drifted
@@ -316,7 +313,7 @@ level signal entirely.
 > links → `**Implemented controls:**` → `**Assessment:**` → H4 subcontrol
 > blocks with `**Security assessment**` and `**Relevant findings**`.
 > Structural requirements are enforced by
-> `qa_checks.py check_control_subsection_coverage`.
+> `validators/qa_checks.py check_control_subsection_coverage`.
 
 | # | Rule | Heuristic check |
 |---|---|---|
@@ -324,14 +321,14 @@ level signal entirely.
 | §6-2 | **Concrete implementation evidence.** Implementation claims cite a verifiable artifact: file path, route, library, IaC resource, platform API, or generated evidence excerpt. | At least one artifact token from recon/YAML/evidence appears in the block. |
 | §6-3 | **Findings live under the affected control.** Finding bullets appear in the relevant H4 block, not as a detached domain-level dump. | `**Relevant findings**` is a standalone label followed by bullets; finding-to-section routing follows `schema_v2.finding_routing`. |
 | §6-4 | **Dense issue lists become bullets.** Two or more discrete weaknesses in one assessment block use bullets instead of one long paragraph. | Paragraphs with 3+ finding/mitigation refs are flagged for bullet formatting. |
-| §6-5 | **No AI-typical filler.** Avoid `leverages`, `robust`, `comprehensive`, `ensures`, `facilitates`, `in essence`, `seamless`, `cutting-edge`, `state-of-the-art`, and renderer-specific banned vocabulary such as `mechanism layer` or `codified rule`. | Enforced by `qa_checks.py check_architectural_prose`. |
+| §6-5 | **No AI-typical filler.** Avoid `leverages`, `robust`, `comprehensive`, `ensures`, `facilitates`, `in essence`, `seamless`, `cutting-edge`, `state-of-the-art`, and renderer-specific banned vocabulary such as `mechanism layer` or `codified rule`. | Enforced by `validators/qa_checks.py check_architectural_prose`. |
 
 **How to apply across architectures.** None of the §6 rules assume a
 specific application class. They work as written for:
 
-- **User-facing web** (Express + React/Angular/Vue, Django, Rails, Spring): file paths and library tokens are abundant; QB-3 trivially satisfied.
-- **Serverless** (AWS Lambda, GCP Cloud Functions, Azure Functions): artifacts are IaC resources (`serverless.yml`, Terraform, SAM template), function ARNs, IAM role names. QB-3 admits these as verifiable artifacts.
-- **Service mesh** (Istio, Linkerd, Consul Connect): artifacts are mesh resources (`PeerAuthentication`, `RequestAuthentication`, `AuthorizationPolicy`, SPIFFE IDs). QB-3 admits these too.
+- **User-facing web** (Express + React/Angular/Vue, Django, Rails, Spring): file paths and library tokens are abundant; §6-2 trivially satisfied.
+- **Serverless** (AWS Lambda, GCP Cloud Functions, Azure Functions): artifacts are IaC resources (`serverless.yml`, Terraform, SAM template), function ARNs, IAM role names. §6-2 admits these as verifiable artifacts.
+- **Service mesh** (Istio, Linkerd, Consul Connect): artifacts are mesh resources (`PeerAuthentication`, `RequestAuthentication`, `AuthorizationPolicy`, SPIFFE IDs). §6-2 admits these too.
 - **Mobile** (iOS, Android): artifacts are platform APIs (`URLSession`, `Keychain`, `BiometricPrompt`), entitlement keys, and Info.plist / AndroidManifest entries.
 - **Embedded / firmware:** artifacts are linker-section names, hardware register references, and bootloader stages.
 
@@ -339,7 +336,7 @@ The rules are about narrative *shape* (control context, implementation evidence,
 
 ---
 
-## Rule 6 — Pluralise correctly; the `(s)` suffix is forbidden
+## Rule 8 — Pluralise correctly; the `(s)` suffix is forbidden
 
 When emitting a count of an inflected noun, branch on the count: "1 component" vs "5 components". Never use the slash form "1 component(s)" / "5 component(s)" — that is technical-docs filler dialect, not professional prose. Same rule for "item / items", "finding / findings", "control / controls".
 
@@ -349,7 +346,7 @@ When emitting a count of an inflected noun, branch on the count: "1 component" v
 **Prefer:**
 > This threat model covers 5 components; 3 findings trace to outdated dependencies.
 
-The pluralize helper in `scripts/compose_threat_model.py:pluralize()` exists for generator code; LLM-authored prose should branch inline.
+The pluralize helper in `scripts/renderers/compose_threat_model.py:pluralize()` exists for generator code; LLM-authored prose should branch inline.
 
 ---
 
@@ -373,6 +370,4 @@ Drift from this anchor is guarded by `tests/test_agent_definitions.py`.
 pairs** — concrete passages from real reports showing the AI-flavored
 shape and the human-style rewrite, the banned-vocabulary list, the
 voice statement, and a pre-write self-check. The two files are loaded
-together: this file is the rules, that file is the examples. Sonnet
-imitates examples more reliably than it follows rules — keep both
-current.
+together: this file is the rules, that file is the examples.

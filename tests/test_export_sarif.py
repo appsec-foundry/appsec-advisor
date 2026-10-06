@@ -1,5 +1,5 @@
 """
-Tests for `scripts/export_sarif.py` — deterministic SARIF v2.1.0 generation
+Tests for `scripts/exporters/export_sarif.py` — deterministic SARIF v2.1.0 generation
 from a `threat-model.yaml` export.
 
 Reuses the structural validator from `tests/test_sarif_validation.py` and the
@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "tests"))
 
-import export_sarif  # noqa: E402
+import exporters.export_sarif as export_sarif  # noqa: E402
 from test_sarif_validation import _RISK_TO_LEVEL, validate_sarif  # noqa: E402
 
 FIXTURES = ROOT / "tests" / "fixtures"
@@ -427,7 +427,7 @@ class TestCli:
         result = subprocess.run(
             [
                 sys.executable,
-                str(ROOT / "scripts" / "export_sarif.py"),
+                str(ROOT / "scripts" / "exporters/export_sarif.py"),
                 "--threat-model",
                 str(yaml_path),
                 "--output",
@@ -448,7 +448,7 @@ class TestCli:
         result = subprocess.run(
             [
                 sys.executable,
-                str(ROOT / "scripts" / "export_sarif.py"),
+                str(ROOT / "scripts" / "exporters/export_sarif.py"),
                 "--threat-model",
                 str(tmp_path / "nope.yaml"),
                 "--output",
@@ -554,3 +554,22 @@ class TestArchitectureCoverageSources:
         assert kept == {"T-001", "T-100", "T-101"}
         result_ids = {r["ruleId"] for r in sarif["runs"][0]["results"]}
         assert result_ids == {"T-001", "T-100", "T-101"}
+
+
+def test_absence_evidence_locates_the_searched_files_not_the_display_glob():
+    threat = _make_threat(
+        source="config-scan",
+        evidence=[
+            {
+                "file": ".github/workflows/*.yml",
+                "line": 0,
+                "kind": "absence",
+                "searched_files": [".github/workflows/a.yml", ".github/workflows/b.yml"],
+                "searched_file_count": 2,
+            }
+        ],
+    )
+    result = export_sarif._build_result(threat, {}, {})
+    uris = [row["physicalLocation"]["artifactLocation"]["uri"] for row in result["locations"]]
+    assert uris == [".github/workflows/a.yml", ".github/workflows/b.yml"]
+    assert all(row["physicalLocation"]["region"] == {"startLine": 1} for row in result["locations"])

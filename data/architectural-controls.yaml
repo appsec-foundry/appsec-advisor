@@ -2,7 +2,7 @@
 #
 # Used by: appsec-stride-analyzer-v2 (match detected controls to canonical names),
 # appsec-threat-merger (dedup identically-named controls across components),
-# scripts/pregenerate_fragments.py / agents/appsec-threat-renderer.md (render Operational
+# scripts/renderers/pregenerate_fragments.py / agents/appsec-threat-renderer.md (render Operational
 # Strengths + Section 6 with consistent terminology).
 #
 # Each entry:
@@ -36,6 +36,23 @@ domains:
   RealTime:     "Real-time / WebSocket"
   AI:           "AI / LLM"
   SessionMgmt:  "Session Management"
+
+# The §6 heading (without its number, see data/sections-contract.yaml schema_v2)
+# a control of each domain belongs to when the model names no §6 heading itself.
+# model/enforce_control_taxonomy.py resolves rule-backed and catalog controls
+# through it; a control that resolves nowhere would be dropped from §6.
+domain_sections:
+  IAM:          "Identity and Authentication Controls"
+  AuthZ:        "Authorization Controls"
+  DataProt:     "Cryptography Secrets and Data Protection"
+  InputVal:     "Input Boundary Validation Controls"
+  FrontendSec:  "Browser and Cross-Origin Controls"
+  Audit:        "Operations Runtime and Supply Chain Controls"
+  Infra:        "Operations Runtime and Supply Chain Controls"
+  SupplyChain:  "Operations Runtime and Supply Chain Controls"
+  RealTime:     "Real-time and Not Applicable Controls"
+  AI:           "Real-time and Not Applicable Controls"
+  SessionMgmt:  "Session and Token Controls"
 
 controls:
   # ---------- IAM ----------
@@ -226,7 +243,7 @@ controls:
       SAML 2.0 federated identity. The Service Provider receives a signed
       XML assertion from the IdP at the AssertionConsumerService endpoint
       and verifies the XML-DSig signature on the assertion. The pre-generator
-      (scripts/pregenerate_fragments.py) already renders a canonical
+      (scripts/renderers/pregenerate_fragments.py) already renders a canonical
       SP/IdP/ACS sequence diagram when `saml` appears in the control name or
       implementation string. Threat-class is distinct from OAuth/OIDC —
       XML Signature Wrapping (XSW1-8), comment-truncation, and RelayState

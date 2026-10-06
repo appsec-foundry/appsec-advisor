@@ -38,8 +38,8 @@ The two skills are asymmetric on purpose: `ask-threat-model` can also produce
 this block, so a misroute in that direction costs nothing — a misroute *here*
 is a dead end unless you hand off.
 
-The freshness verdict comes from `threat_model_health.py --json`, which wraps
-`baseline_state.py check-changes` + `dirty-set` — the **same** change detection
+The freshness verdict comes from `model/threat_model_health.py --json`, which wraps
+`baseline/baseline_state.py check-changes` + `dirty-set` — the **same** change detection
 the pipeline uses to decide whether an incremental scan is needed. This skill
 does not re-implement that logic; it folds the verdict into the overview.
 
@@ -126,9 +126,9 @@ Repeated occurrences of the same flag are allowed; the last value wins.
 
 ```bash
 if [ -z "$CLAUDE_PLUGIN_ROOT" ]; then
-  CLAUDE_PLUGIN_ROOT=$(find /root /home /opt -maxdepth 6 \
-    -path "*/appsec-advisor/skills/show-threat-model/SKILL.md" \
-    2>/dev/null | head -1 | xargs -r dirname | xargs -r dirname | xargs -r dirname)
+  # <base-dir> from the invocation line. Never search the filesystem: several
+  # checkouts may exist and the first hit is arbitrary.
+  CLAUDE_PLUGIN_ROOT=$(cd "<base-dir>/../.." && pwd)
 fi
 export CLAUDE_PLUGIN_ROOT
 if [ -z "$CLAUDE_PLUGIN_ROOT" ] || [ ! -d "$CLAUDE_PLUGIN_ROOT" ]; then
@@ -149,9 +149,9 @@ EXTRA=""
 [ "$ALL_MODE" = "true" ]  && EXTRA="$EXTRA --all"
 [ "$JSON_MODE" = "true" ] && EXTRA="$EXTRA --json"
 
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/threat_model_health.py" \
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/threat_model_health.py" \
     --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" --json 2>/dev/null \
-| python3 "$CLAUDE_PLUGIN_ROOT/scripts/summarize_threat_model.py" \
+| python3 "$CLAUDE_PLUGIN_ROOT/scripts/renderers/summarize_threat_model.py" \
     --output-dir "$OUTPUT_DIR" --repo-root "$REPO_ROOT" --health-json - $EXTRA
 EXIT=$?
 ```

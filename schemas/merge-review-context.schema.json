@@ -24,8 +24,8 @@
         "type": "object",
         "required": ["group_id", "group_key", "member_count", "members"],
         "properties": {
-          "group_id": { "type": "string", "pattern": "^GE?-[a-f0-9]{8}$" },
-          "group_key": { "enum": ["cwe_stride", "endpoint_family"] },
+          "group_id": { "type": "string", "pattern": "^G[EC]?-[a-f0-9]{8}$" },
+          "group_key": { "enum": ["cwe_stride", "endpoint_family", "config_label"] },
           "member_count": { "type": "integer", "minimum": 2, "maximum": 256 },
           "members": {
             "type": "array",
@@ -36,7 +36,10 @@
           "cwe": { "type": ["string", "null"], "maxLength": 64 },
           "stride": { "type": ["string", "null"], "maxLength": 64 },
           "endpoint": { "type": "string", "maxLength": 500 },
-          "cwe_family": { "type": "string", "maxLength": 100 }
+          "cwe_family": { "type": "string", "maxLength": 100 },
+          "component": { "type": "string", "maxLength": 200 },
+          "weakness_label": { "type": "string", "maxLength": 200 },
+          "threat_category_id": { "type": "string", "pattern": "^TH-\\d{2}$" }
         },
         "additionalProperties": false
       }

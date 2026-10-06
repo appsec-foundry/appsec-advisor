@@ -14,7 +14,7 @@ see `docs/internal/analysis/analysis-repository-legacy-and-pipeline-ballast-2026
 
 ### What is good
 
-- **Deterministic render pipeline:** the LLM only writes fragments, the final `threat-model.md` is rendered from `sections-contract.yaml` + `compose_threat_model.py`. A hard gate (`check_inline_shortcut.py`) enforces this.
+- **Deterministic render pipeline:** the LLM only writes fragments, the final `threat-model.md` is rendered from `sections-contract.yaml` + `renderers/compose_threat_model.py`. A hard gate (`validators/check_inline_shortcut.py`) enforces this.
 - **Lazy loading of phase groups:** the orchestrator (`agents/appsec-threat-analyst.md:390, 412, 432`) loads phase-group files only at phase boundaries, plus a fast-path no-op exit for incremental runs.
 - **Substring-based drift guards:** `tests/test_dispatch_prompt_cache_order.py` and `test_agent_definitions.py` (23 tests) check frontmatter, marker order, mandatory sections.
 - **Test discipline:** 92 test files, 2698 test cases (`pytest --collect-only -q -p no:cacheprovider`), many "promise-keeping" tests against schemas and agent contracts.
@@ -24,17 +24,17 @@ see `docs/internal/analysis/analysis-repository-legacy-and-pipeline-ballast-2026
 
 | Pain point | Verified number |
 |---|---|
-| `compose_threat_model.py` | 6989 LOC, 41+ functions, 7 manifest readers |
-| `qa_checks.py` | 5212 LOC, 6+ check categories, shared regex/label-index state |
+| `renderers/compose_threat_model.py` | 6989 LOC, 41+ functions, 7 manifest readers |
+| `validators/qa_checks.py` | 5212 LOC, 6+ check categories, shared regex/label-index state |
 | `phase-group-finalization.md` | 2009 LOC ≈ 44k tokens |
 | `phase-group-architecture.md` | 1557 LOC ≈ 34k tokens |
 | `phase-group-threats.md` | 1631 LOC ≈ 33k tokens |
 | `appsec-qa-reviewer.md` | 1715 LOC ≈ 43k tokens |
 | `appsec-stride-analyzer.md` | 581 LOC ≈ 16k tokens |
-| Fragment ↔ producer ↔ schema | Implicit relation across several registries (`compose_threat_model.py`, `validate_fragment.py`, `qa_checks.py`, `sections-contract.yaml`), no dedicated drift test |
+| Fragment ↔ producer ↔ schema | Implicit relation across several registries (`renderers/compose_threat_model.py`, `validators/validate_fragment.py`, `validators/qa_checks.py`, `sections-contract.yaml`), no dedicated drift test |
 | Drift guards | Substring-based, catch no semantic drift |
 | STRIDE coverage | LLM-probabilistic, no deterministic ground truth |
-| `eval()` with restricted builtins | 2× (`compose_threat_model.py:382`, `qa_checks.py:1114`) — regex prefilter, input plugin-shipped today. Replaced in **M10** by a deterministic pattern resolver; `eval()` leaves the codebase entirely. |
+| `eval()` with restricted builtins | 2× (`renderers/compose_threat_model.py:382`, `validators/qa_checks.py:1114`) — regex prefilter, input plugin-shipped today. Replaced in **M10** by a deterministic pattern resolver; `eval()` leaves the codebase entirely. |
 
 ---
 
@@ -62,9 +62,9 @@ Each phase is valuable on its own. Stopping after Phase A, after the B1 pilot, o
 **Effort:** 0.5–1 day
 **Risk:** low
 
-**Status (2026-05-29):** `scripts/measure_run.py` + `tests/test_measure_run.py` exist and are green — the consolidator folds `.stage-stats.jsonl`, `verify_run_costs.py --json` (cumulative-safe) and `.hook-events.log` signals into a single `.run-metrics.json`. Verified bugfix: `_read_hook_events` only matched `reason=`, but the real emitter (`agent_logger.py:1684`) writes `stop_reason=` → the stop-reason metric was **always empty** on real logs. Parser extended to `(?:stop_)?reason=`, test fixture switched to the real log format. Capture runbook: `docs/baselines/README.md`. **Open (manual, costs one run each):** actually record the 2-repo baseline and check it in under `docs/baselines/`.
+**Status (2026-05-29):** `scripts/runtime/measure_run.py` + `tests/test_measure_run.py` exist and are green — the consolidator folds `.stage-stats.jsonl`, `runtime/verify_run_costs.py --json` (cumulative-safe) and `.hook-events.log` signals into a single `.run-metrics.json`. Verified bugfix: `_read_hook_events` only matched `reason=`, but the real emitter (`runtime/agent_logger.py:1684`) writes `stop_reason=` → the stop-reason metric was **always empty** on real logs. Parser extended to `(?:stop_)?reason=`, test fixture switched to the real log format. Capture runbook: `docs/baselines/README.md`. **Open (manual, costs one run each):** actually record the 2-repo baseline and check it in under `docs/baselines/`.
 
-**What:** merge existing telemetry into a reproducible run measurement. This is **not a greenfield parser**: the repo already has `scripts/record_stage_stats.py`, `scripts/verify_run_costs.py`, `scripts/cost_running_total.py`, `.stage-stats.jsonl`, `.hook-events.log`, `SESSION_STOP` and `ASSESSMENT_TOKENS`.
+**What:** merge existing telemetry into a reproducible run measurement. This is **not a greenfield parser**: the repo already has `scripts/runtime/record_stage_stats.py`, `scripts/runtime/verify_run_costs.py`, `scripts/runtime/cost_running_total.py`, `.stage-stats.jsonl`, `.hook-events.log`, `SESSION_STOP` and `ASSESSMENT_TOKENS`.
 
 The baseline should capture:
 - Tokens per phase (input/output, with cache-hit/miss breakdown)
@@ -73,10 +73,10 @@ The baseline should capture:
 - Stop reasons (`max_turns`, `unknown`, `end_turn`) and retry/repair hints
 - Context-window utilization at peak (e.g. Phase 11)
 
-**Why:** without a baseline we claim effects we cannot prove. All following performance statements need before/after numbers. Especially important: `SESSION_STOP` lines are cumulative; naive summation yields wrong costs. `verify_run_costs.py` already knows these pitfalls.
+**Why:** without a baseline we claim effects we cannot prove. All following performance statements need before/after numbers. Especially important: `SESSION_STOP` lines are cumulative; naive summation yields wrong costs. `runtime/verify_run_costs.py` already knows these pitfalls.
 
 **Deliverable:**
-- `scripts/measure_run.py` or an extension of an existing helper — reads `.stage-stats.jsonl`, `.hook-events.log`, `.agent-run.log` and `verify_run_costs.py --json`, writes `.run-metrics.json`
+- `scripts/runtime/measure_run.py` or an extension of an existing helper — reads `.stage-stats.jsonl`, `.hook-events.log`, `.agent-run.log` and `runtime/verify_run_costs.py --json`, writes `.run-metrics.json`
 - `tests/test_measure_run.py` — smoke test against a frozen log sample
 - A **baseline measurement** on 2 repos (Juice Shop + one internal use case), checked in under `docs/baselines/`
 
@@ -91,7 +91,7 @@ The baseline should capture:
 **Effort:** 1–1.5 days
 **Risk:** low
 
-**What:** new script `scripts/check_fragment_registry.py` + CI integration.
+**What:** new script `scripts/validators/check_fragment_registry.py` + CI integration.
 
 **Approach:**
 
@@ -99,11 +99,11 @@ The baseline should capture:
 2. Cross-check:
    - For `data`/`hybrid`: does `schemas/fragments/<id>.schema.json` exist?
    - Do the hardcoded maps agree?
-     - `compose_threat_model.py:_SECTION_FRAGMENT_MAP`
-     - `compose_threat_model.py:_KNOWN_JSON_FRAGMENT_SCHEMAS`
-     - `validate_fragment.py:FRAGMENT_SCHEMAS`
-     - `validate_fragment.py:_FRAGMENT_FILENAMES`
-     - `qa_checks.py:CONTRACT_SECTION_FRAGMENTS`
+     - `renderers/compose_threat_model.py:_SECTION_FRAGMENT_MAP`
+     - `renderers/compose_threat_model.py:_KNOWN_JSON_FRAGMENT_SCHEMAS`
+     - `validators/validate_fragment.py:FRAGMENT_SCHEMAS`
+     - `validators/validate_fragment.py:_FRAGMENT_FILENAMES`
+     - `validators/qa_checks.py:CONTRACT_SECTION_FRAGMENTS`
    - Does every JSON fragment file have a registry mapping?
    - Conversely: every schema in `schemas/fragments/` is registered and explicable either in the contract or in an optional JSON-fragment map.
 3. Add an explicit drift test. The composer comment refers to `tests/test_qa_fragment_map.py`, but this file does not currently exist; either create this test or correct the comment.
@@ -121,7 +121,7 @@ The baseline should capture:
 - Producer detection via AST can produce false positives. → allow-list mechanism with a clear comment per entry.
 - A CI gate that goes red on legitimate patterns is frustrating. → warning-first strategy.
 
-**Success criteria:** linter runs clean on the current codebase. Artificially inserted drift (schema deleted, fragment path wrong, map entry changed only in `compose_threat_model.py`) is detected.
+**Success criteria:** linter runs clean on the current codebase. Artificially inserted drift (schema deleted, fragment path wrong, map entry changed only in `renderers/compose_threat_model.py`) is detected.
 
 ---
 
@@ -130,7 +130,7 @@ The baseline should capture:
 **Effort:** 0.5–1 day
 **Risk:** low
 
-**What:** `scripts/compose_threat_model.py` lines 1146–1683 (7 `_read_*` functions + helpers) → new module `scripts/_manifest_readers.py`.
+**What:** `scripts/renderers/compose_threat_model.py` lines 1146–1683 (7 `_read_*` functions + helpers) → new module `scripts/shared/_manifest_readers.py`.
 
 **Affected functions:**
 - `_read_package_json` (npm)
@@ -157,7 +157,7 @@ The baseline should capture:
 5. **Discipline:** the move PR does **nothing but** move — no refactor, no rename, no logic change. Otherwise it destroys `git blame`.
 
 **Value:**
-- **Maintainability:** blueprint for the later section-renderer extraction. `compose_threat_model.py` from 6989 → ~6451 LOC.
+- **Maintainability:** blueprint for the later section-renderer extraction. `renderers/compose_threat_model.py` from 6989 → ~6451 LOC.
 - **Quality:** improved test ergonomics (pure functions without a `RenderContext` fixture mock).
 - **Performance:** no direct effect.
 
@@ -167,7 +167,7 @@ The baseline should capture:
 - Hidden module state. Mitigation: pre-grep (see step 1).
 - Too tight a public-API cut. `_render_infobox()` uses several helpers directly; `read_project_manifest(ctx)` alone is not enough without a small adjustment of the API boundary.
 
-**Success criteria:** `compose_threat_model.py` LOC drops by ≥500. All existing tests green. Public API unchanged.
+**Success criteria:** `renderers/compose_threat_model.py` LOC drops by ≥500. All existing tests green. Public API unchanged.
 
 ---
 
@@ -376,7 +376,7 @@ filterwarnings = ["error::DeprecationWarning:scripts"]
 **Effort:** 1–2 h spread across 5 mini-PRs
 **Risk:** low per PR
 
-**What:** new module `scripts/_yaml_io.py` (separate from `_atomic_io.py` — read/write separation):
+**What:** new module `scripts/shared/_yaml_io.py` (separate from `shared/_atomic_io.py` — read/write separation):
 
 ```python
 _RAISE = object()
@@ -398,11 +398,11 @@ def load_yaml(path: Path, *, default=_RAISE):
 
 | File | Current semantics | New call |
 |---|---|---|
-| `migrate_v3_to_v4.py` | raise on error | `load_yaml(p)` |
-| `triage_compute_ranking.py` | caller-default | `load_yaml(path, default=default)` |
-| `architect_structural_checks.py` | None on error | `load_yaml(path, default=None)` |
-| `slice_taxonomy.py` | `{}` when empty, str path | `load_yaml(Path(path), default={})` |
-| `render_completion_summary.py` | `{}` + dict-type-check + import-fallback | `load_yaml(path, default={})` + isinstance outside |
+| `model/migrate_v3_to_v4.py` | raise on error | `load_yaml(p)` |
+| `model/triage_compute_ranking.py` | caller-default | `load_yaml(path, default=default)` |
+| `analyzers/architect_structural_checks.py` | None on error | `load_yaml(path, default=None)` |
+| `contexts/slice_taxonomy.py` | `{}` when empty, str path | `load_yaml(Path(path), default={})` |
+| `renderers/render_completion_summary.py` | `{}` + dict-type-check + import-fallback | `load_yaml(path, default={})` + isinstance outside |
 
 **Risks:** `render_completion_summary._load_yaml` has a defensive `try: import yaml` with a `{}` fallback. Before migrating, clarify whether `yaml` is really a mandatory dependency everywhere (hint: in `scripts/requirements.txt`). If historically optional: keep the local wrapper there, still use the helper for the other 4.
 
@@ -415,7 +415,7 @@ def load_yaml(path: Path, *, default=_RAISE):
 **Effort:** 1 h
 **Risk:** none
 
-**What:** extend the existing module docstrings in `compose_threat_model.py` and `qa_checks.py` with a line-number index, e.g.:
+**What:** extend the existing module docstrings in `renderers/compose_threat_model.py` and `validators/qa_checks.py` with a line-number index, e.g.:
 
 ```
 Module map:
@@ -442,11 +442,11 @@ Module map:
 **What:** append a new section §4f to `docs/internal/contracts/schema-invariants.md` that lists all 4 registry maps with file + line. In `AGENTS.md` Rule 4, reference §4f in a sub-bullet.
 
 **Verified paths:**
-- `_SECTION_FRAGMENT_MAP` — `scripts/compose_threat_model.py:89`
-- `_KNOWN_JSON_FRAGMENT_SCHEMAS` — `scripts/compose_threat_model.py:106`
-- `FRAGMENT_SCHEMAS` — `scripts/validate_fragment.py:39`
-- `_FRAGMENT_FILENAMES` — `scripts/validate_fragment.py:58`
-- `CONTRACT_SECTION_FRAGMENTS` — `scripts/qa_checks.py:1131`
+- `_SECTION_FRAGMENT_MAP` — `scripts/renderers/compose_threat_model.py:89`
+- `_KNOWN_JSON_FRAGMENT_SCHEMAS` — `scripts/renderers/compose_threat_model.py:106`
+- `FRAGMENT_SCHEMAS` — `scripts/validators/validate_fragment.py:39`
+- `_FRAGMENT_FILENAMES` — `scripts/validators/validate_fragment.py:58`
+- `CONTRACT_SECTION_FRAGMENTS` — `scripts/validators/qa_checks.py:1131`
 
 **Dependency:** if A1 (registry linter) is implemented, §4f should reference it. If A1 is dropped: keep §4f as a purely descriptive map without mentioning the linter.
 
@@ -457,7 +457,7 @@ Module map:
 **Effort:** 1–2 h
 **Risk:** none
 
-**What:** replace both `eval()` calls (`compose_threat_model.py:382`, `qa_checks.py:1114`) with a 15-LOC pattern resolver that accepts only three explicit patterns. No more `eval()` in the codebase.
+**What:** replace both `eval()` calls (`renderers/compose_threat_model.py:382`, `validators/qa_checks.py:1114`) with a 15-LOC pattern resolver that accepts only three explicit patterns. No more `eval()` in the codebase.
 
 Currently only a regex prefilter (`_COND_SAFE_TOKENS`) protects it — that lets through e.g. `().__class__.__bases__[0].__subclasses__()`, because all characters belong to the whitelist. No real exploit today (conditions come from `data/sections-contract.yaml`, plugin-shipped), but:
 
@@ -470,7 +470,7 @@ Exclusively bare-name bool lookups from `document.order[].condition`:
 - `check_requirements`, `compose_warned`, `render_security_architecture`, `triage_has_warnings`
 - `run_warned` (still commented out in the YAML, plan-relevant for M2.15)
 
-The call site `compose_threat_model.py:1800` via `sub_sections[].conditional` is unreachable today because `threat_register.sub_sections: []` is empty (`sections-contract.yaml:1033`). The code comment there speculates about a future `low_category_count > 0` — the migration path is a derived bool in the `eval_context` (`low_category_present = low_category_count > 0`), not numeric arithmetic in the YAML.
+The call site `renderers/compose_threat_model.py:1800` via `sub_sections[].conditional` is unreachable today because `threat_register.sub_sections: []` is empty (`sections-contract.yaml:1033`). The code comment there speculates about a future `low_category_count > 0` — the migration path is a derived bool in the `eval_context` (`low_category_present = low_category_count > 0`), not numeric arithmetic in the YAML.
 
 **Three explicitly supported patterns** (cover the patterns *documented* in the YAML, not just those actively eval'd today):
 
@@ -482,9 +482,9 @@ Numeric comparisons (`<`, `>`, `==`), `and`/`or` combos and function calls are d
 
 **Deliverable:**
 
-- New module `scripts/_safe_cond.py` with `resolve_condition(expr: str, env: dict) -> bool` (~15 LOC, no `eval`, no `compile`, no `ast`). Unknown patterns raise `ContractError`.
-- `compose_threat_model.py:364-384` calls `_safe_cond.resolve_condition` and keeps the `ContractError` wrapper for the existing error semantics. The `eval_condition()` function stays as a thin adapter so the 4 call sites remain unchanged.
-- `qa_checks.py:1106-1116` calls the same helper. The previous duplicate code goes away.
+- New module `scripts/shared/_safe_cond.py` with `resolve_condition(expr: str, env: dict) -> bool` (~15 LOC, no `eval`, no `compile`, no `ast`). Unknown patterns raise `ContractError`.
+- `renderers/compose_threat_model.py:364-384` calls `_safe_cond.resolve_condition` and keeps the `ContractError` wrapper for the existing error semantics. The `eval_condition()` function stays as a thin adapter so the 4 call sites remain unchanged.
+- `validators/qa_checks.py:1106-1116` calls the same helper. The previous duplicate code goes away.
 - `tests/test_safe_cond.py` with:
   - **Positive cases**: all bare-name conditions that actually occur in `sections-contract.yaml` yield correct bool values against a realistic `env`. Plus the patterns documented in the YAML `not X` and `X in [a, b]` (even though they do not currently run through `eval_condition` — future-proofing).
   - **Adversarial cases**: `().__class__.__bases__[0].__subclasses__()`, `__import__('os').system('id')`, `x.upper()`, `[x for x in range(10)]`, `lambda: 1`, `1+1` — all must raise `ContractError`.
@@ -493,17 +493,17 @@ Numeric comparisons (`<`, `>`, `==`), `and`/`or` combos and function calls are d
 **Risks:** behavior drift on conditions that today's `eval()` sandbox accidentally interprets differently. Mitigation: positive cases against the conditions currently occurring in the repo, drift becomes visible.
 
 **Verified basis:**
-- 4 call sites in `compose_threat_model.py`: lines 1728, 1800, 6056, 6061 (1800 unreachable today due to empty `sub_sections`).
-- 1 call site in `qa_checks.py`: line 1035 (via `_safe_eval_cond`).
-- `eval_context` variable inventory: `compose_threat_model.py:5969-6006`.
-- Current regex whitelist: `compose_threat_model.py:361`, `qa_checks.py:1110`.
+- 4 call sites in `renderers/compose_threat_model.py`: lines 1728, 1800, 6056, 6061 (1800 unreachable today due to empty `sub_sections`).
+- 1 call site in `validators/qa_checks.py`: line 1035 (via `_safe_eval_cond`).
+- `eval_context` variable inventory: `renderers/compose_threat_model.py:5969-6006`.
+- Current regex whitelist: `renderers/compose_threat_model.py:361`, `validators/qa_checks.py:1110`.
 - Full conditions list (HEAD): `grep -hE "condition: " data/sections-contract.yaml` → 8 unique strings, of which **only** `check_requirements`, `compose_warned`, `render_security_architecture`, `triage_has_warnings` reach `eval_condition`.
 
 **Recommended follow-up cleanup (optional side PR, not part of M10):** remove four YAML fields that look like conditions but are not reached by `eval_condition`:
-- `intro_conditional.condition: "verdict_severity in [yellow, red]"` (`sections-contract.yaml:463`) — the same logic is redundantly hardcoded in `compose_threat_model.py:3424`; the YAML field is not read.
+- `intro_conditional.condition: "verdict_severity in [yellow, red]"` (`sections-contract.yaml:463`) — the same logic is redundantly hardcoded in `renderers/compose_threat_model.py:3424`; the YAML field is not read.
 - `required_patterns_condition: "not skip_attack_walkthroughs"` (`sections-contract.yaml:657`) — orphan field, no Python consumer findable (`grep -r` in the repo, HEAD).
 - `per_critical_subsection_condition: "not skip_attack_walkthroughs"` (`sections-contract.yaml:659`) — same situation as the previous one.
-- `conditional: "len(changelog) > 0"` on the `changelog` section (`sections-contract.yaml:240`) — the section is pre-skipped in `compose_threat_model.py:1726` via `if sid in ("infobox", "changelog", "toc"): continue`; the renderer has its own `if not changelog: return ""` path.
+- `conditional: "len(changelog) > 0"` on the `changelog` section (`sections-contract.yaml:240`) — the section is pre-skipped in `renderers/compose_threat_model.py:1726` via `if sid in ("infobox", "changelog", "toc"): continue`; the renderer has its own `if not changelog: return ""` path.
 
 These fields give the impression that the plugin can evaluate operator comparisons and `in [list]` patterns, even though in today's code reality they are dead. The cleanup makes the contract file self-documenting and fits the strict M10 grammar.
 
@@ -519,9 +519,9 @@ These fields give the impression that the plugin can evaluate operator compariso
 **What:** new file with a step-by-step walkthrough for a new section in `threat-model.md`:
 1. Declaration in `data/sections-contract.yaml`.
 2. If `fragment_type ∈ {data, hybrid}`: schema in `schemas/fragments/<id>.schema.json` + all 4 registries (link to §4f from M7).
-3. Renderer function in `compose_threat_model.py`.
+3. Renderer function in `renderers/compose_threat_model.py`.
 4. Test in `tests/test_compose_threat_model.py`.
-5. Anchor linkifier in `qa_checks.py:linkify_anchors`, if a new ID class — see `schema-invariants.md` §4a.
+5. Anchor linkifier in `validators/qa_checks.py:linkify_anchors`, if a new ID class — see `schema-invariants.md` §4a.
 
 **Risks:** docs age with the code. Mitigation: keep it short, above all name the paths; details stay in the sources.
 
@@ -564,8 +564,8 @@ These fields give the impression that the plugin can evaluate operator compariso
 
 | Item | Rationale |
 |---|---|
-| `from __future__ import annotations` across the board | Formerly M5. The 5 affected scripts (`agent_logger.py`, `harvest-requirements.py`, `security_steering.py`, `slice_taxonomy.py`, `mock-server.py`) use no `get_type_hints` / Pydantic / `@dataclass` — annotation lazification is semantically empty. Consistency theater without verifiable benefit. If a future script touch actually introduces introspection, add it locally there. |
-| Split `qa_checks.py` | High coupling (shared regex/label-index state), high refactoring risk. Tackle only after Phase B, once you are in the groove. |
+| `from __future__ import annotations` across the board | Formerly M5. The 5 affected scripts (`runtime/agent_logger.py`, `harvest-requirements.py`, `analyzers/security_steering.py`, `contexts/slice_taxonomy.py`, `mock-server.py`) use no `get_type_hints` / Pydantic / `@dataclass` — annotation lazification is semantically empty. Consistency theater without verifiable benefit. If a future script touch actually introduces introspection, add it locally there. |
+| Split `validators/qa_checks.py` | High coupling (shared regex/label-index state), high refactoring risk. Tackle only after Phase B, once you are in the groove. |
 | Semgrep (any variant) | Removed from the plan entirely. A pinned ruleset loses the Semgrep value (current rules); advisory-only mode is unstable under pressure; ownership for ruleset maintenance is unclear; "auditability" has cheaper solutions (structured evidence fields in the LLM output). |
 | Prompts → YAML/code | Radical, untested. Evaluate only after B1 with a prototype. |
 | Semantic LLM-as-judge drift tests | Cost-intensive. Only sensible after B1. |
@@ -580,7 +580,7 @@ These fields give the impression that the plugin can evaluate operator compariso
 
 | Metric | Baseline (A0 measures) | After plan | Source of the gain |
 |---|---|---|---|
-| LOC in the largest file | 6989 (`compose_threat_model.py`) | ~6451 | A2 |
+| LOC in the largest file | 6989 (`renderers/compose_threat_model.py`) | ~6451 | A2 |
 | LOC in the largest prompt file | 2009 (`phase-group-finalization.md`) | ≤800 per sub-file | B1 |
 | Tokens in Phase 11 | ~44k | ~25–30k active context | B1 |
 | Context-window headroom | decreasing | +30–40k tokens | B1 |
@@ -629,11 +629,11 @@ The scale numbers are ballpark figures and should not be over-interpreted.
 - Phase-group structure: `agents/phases/phase-group-finalization.md` (51 subheadings: 10× `##` + 46× `###` + 5× `####`; 2009 LOC)
 - Budget-exhaustion incident: `tests/test_agent_definitions.py:24-28` (comment on the 75→120-turn increase)
 - Fragment-registry gap: `data/sections-contract.yaml` (11 fragments declared) vs. `schemas/fragments/` (7 schemas) — the difference is legitimate due to `fragment_type: markdown`/`computed`, but **no** automatic cross-check is present.
-- Fragment-registry reality: `compose_threat_model.py`, `validate_fragment.py`, `qa_checks.py` and `sections-contract.yaml` contain several overlapping maps. `compose_threat_model.py:84` refers in a comment to `tests/test_qa_fragment_map.py`, which does not currently exist.
+- Fragment-registry reality: `renderers/compose_threat_model.py`, `validators/validate_fragment.py`, `validators/qa_checks.py` and `sections-contract.yaml` contain several overlapping maps. `renderers/compose_threat_model.py:84` refers in a comment to `tests/test_qa_fragment_map.py`, which does not currently exist.
 - Stage-2 renderer: `agents/appsec-threat-renderer.md` is already lean and does not load the whole finalization prompt; B1 is therefore primarily maintainability, not guaranteed performance.
-- Measurement paths: `record_stage_stats.py`, `verify_run_costs.py`, `cost_running_total.py`, `.stage-stats.jsonl`, `.hook-events.log`, `SESSION_STOP`, `ASSESSMENT_TOKENS`.
-- `eval()` sites: `scripts/compose_threat_model.py:382`, `scripts/qa_checks.py:1114`
-- Monolith sizes: measured via `wc -l` — `compose_threat_model.py` 6989, `qa_checks.py` 5212, `validate_fragment.py` 317
+- Measurement paths: `runtime/record_stage_stats.py`, `runtime/verify_run_costs.py`, `runtime/cost_running_total.py`, `.stage-stats.jsonl`, `.hook-events.log`, `SESSION_STOP`, `ASSESSMENT_TOKENS`.
+- `eval()` sites: `scripts/renderers/compose_threat_model.py:382`, `scripts/validators/qa_checks.py:1114`
+- Monolith sizes: measured via `wc -l` — `renderers/compose_threat_model.py` 6989, `validators/qa_checks.py` 5212, `validators/validate_fragment.py` 317
 - Token estimates: bytes/4 as an approximation
 
 **Phase D (tooling/docs/consolidation):**

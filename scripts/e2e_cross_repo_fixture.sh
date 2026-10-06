@@ -162,7 +162,7 @@ fi
 mkdir -p "$OUTPUT"
 
 PRELOAD_JSON="$OUTPUT/.related-repos-preflight.json"
-if ! python3 "$PLUGIN_ROOT/scripts/load_related_repos.py" \
+if ! python3 "$PLUGIN_ROOT/scripts/contexts/load_related_repos.py" \
         --repo-root "$REPO" \
         --output "$PRELOAD_JSON" >/dev/null; then
     die_preflight "docs/related-repos.yaml failed schema validation; see: $PRELOAD_JSON"

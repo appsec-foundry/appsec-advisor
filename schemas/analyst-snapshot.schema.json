@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/analyst-snapshot.schema.json",
+  "title": "Threat analyst source snapshot",
+  "description": "Controller-captured source view for one on-demand threat analysis job: exact object identities, admitted files with content hashes, and every exclusion with its reason.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "job_id",
+    "scope_kind",
+    "objects",
+    "admitted",
+    "excluded",
+    "captured_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "job_id": {
+      "type": "string",
+      "pattern": "^aj-[0-9a-f]{32}$"
+    },
+    "scope_kind": {
+      "enum": [
+        "design",
+        "commits",
+        "staged",
+        "worktree"
+      ]
+    },
+    "objects": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "head": {
+          "$ref": "#/$defs/object_id"
+        },
+        "base": {
+          "$ref": "#/$defs/object_id"
+        },
+        "merge_base": {
+          "$ref": "#/$defs/object_id"
+        },
+        "design_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "admitted": {
+      "type": "array",
+      "maxItems": 2000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "side",
+          "change",
+          "sha256",
+          "bytes"
+        ],
+        "properties": {
+          "path": {
+            "$ref": "#/$defs/relative_path"
+          },
+          "previous_path": {
+            "$ref": "#/$defs/relative_path"
+          },
+          "side": {
+            "enum": [
+              "baseline",
+              "proposed"
+            ]
+          },
+          "change": {
+            "enum": [
+              "added",
+              "modified",
+              "deleted",
+              "renamed",
+              "context"
+            ]
+          },
+          "sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1048576
+          }
+        }
+      }
+    },
+    "excluded": {
+      "type": "array",
+      "maxItems": 2000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "reason",
+          "count"
+        ],
+        "properties": {
+          "path": {
+            "$ref": "#/$defs/relative_path"
+          },
+          "reason": {
+            "enum": [
+              "ignored",
+              "binary",
+              "too_large",
+              "sensitive",
+              "symlink",
+              "submodule",
+              "nested_repository",
+              "special_file",
+              "limit_reached",
+              "outside_scope"
+            ]
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    },
+    "captured_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "object_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+    },
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?!/)(?!.*(^|/)\\.\\.?(/|$))[^\\x00]+$"
+    }
+  }
+}

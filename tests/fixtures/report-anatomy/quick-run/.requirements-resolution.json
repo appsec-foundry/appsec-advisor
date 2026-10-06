@@ -1,0 +1,21 @@
+{
+  "source_kind": "cli",
+  "url": "/plugin/examples/appsec-requirements-example.yaml",
+  "label": null,
+  "human_source_url": null,
+  "demo": false,
+  "surfaced": false,
+  "disposition": "fetched",
+  "fetched_at": "2026-09-17T14:46:48.391903Z",
+  "generated": "2026-08-26T00:00:00Z",
+  "description": "Curated demonstration baseline informed by OWASP ASVS 5.0.0, OWASP Top 10:2025, and OWASP Cheat Sheets. It is not an official OWASP standard and must be tailored to the application's technology, data, threat model, and risk policy before operational use. Its links model an internal catalog host and do not resolve.",
+  "count": 73,
+  "freshness": {
+    "age_days": 22,
+    "fresh": true,
+    "stale": false,
+    "threshold_days": 30,
+    "known": true
+  },
+  "cache_path": "/plugin/.cache/requirements.yaml"
+}

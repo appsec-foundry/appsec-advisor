@@ -11,9 +11,9 @@
 
 Deliberately-vulnerable test apps (OWASP Juice Shop et al.) ship their own answer keys — a `data/static/challenges.yml` catalog, a companion "Pwning" book, README walkthroughs, and GitHub issues full of challenge spoilers. Ingesting any of that as *evidence* would make findings (and any benchmark against them) worthless.
 
-**Invariant every task below must preserve:** no context source (issue, README, known-threats, related-repo) may itself be the evidence for a `threats[]` finding. Context may only *hint the search*; a finding stands only when the STRIDE analyzer independently anchors a real `evidence.file:line` that passes `evidence_integrity` (`qa_checks.py:3059`) + `validate_evidence_lines.py`.
+**Invariant every task below must preserve:** no context source (issue, README, known-threats, related-repo) may itself be the evidence for a `threats[]` finding. Context may only *hint the search*; a finding stands only when the STRIDE analyzer independently anchors a real `evidence.file:line` that passes `evidence_integrity` (`validators/qa_checks.py:3059`) + `validators/validate_evidence_lines.py`.
 
-**Honest scope of the existing spine (verified — do not overstate):** it is *advisory, not a hard delete.* `check_evidence_integrity` "NEVER auto-repairs" and only surfaces `evidence_integrity.issues` to the LLM QA reviewer (`qa_checks.py:3076-3080`); `_is_inferred` (`validate_evidence_lines.py:150`) blocks *auto-verification* and CVSS/SARIF eligibility but does not remove the threat from `threats[]`. The T-065 patch closes only the naive "anchor points at `challenges.yml`" case. Critically, **no evidence gate can catch the deep cheat**: an LLM that reads a spoiler, then locates the *real* vulnerable code line and anchors legitimate `evidence.file:line`, passes every gate — the evidence is genuine; "found independently" vs "found because told where to look" is indistinguishable once the anchor is real. The ONLY real guarantee is not ingesting the spoiler = the clean-room switch (Phase 1). The tasks here must inherit the spine and add that switch, not rely on the gate alone. Four concrete consequences are baked into the phases:
+**Honest scope of the existing spine (verified — do not overstate):** it is *advisory, not a hard delete.* `check_evidence_integrity` "NEVER auto-repairs" and only surfaces `evidence_integrity.issues` to the LLM QA reviewer (`validators/qa_checks.py:3076-3080`); `_is_inferred` (`validators/validate_evidence_lines.py:150`) blocks *auto-verification* and CVSS/SARIF eligibility but does not remove the threat from `threats[]`. The T-065 patch closes only the naive "anchor points at `challenges.yml`" case. Critically, **no evidence gate can catch the deep cheat**: an LLM that reads a spoiler, then locates the *real* vulnerable code line and anchors legitimate `evidence.file:line`, passes every gate — the evidence is genuine; "found independently" vs "found because told where to look" is indistinguishable once the anchor is real. The ONLY real guarantee is not ingesting the spoiler = the clean-room switch (Phase 1). The tasks here must inherit the spine and add that switch, not rely on the gate alone. Four concrete consequences are baked into the phases:
 - **Issue Option 1 (this plan)** is soft context only — it creates no finding, so it cannot cheat a code-level finding into existence; issues are provenance-tagged as search hints.
 - **Issue Option 2 (out of this plan)** — its "evidence-less branch" MUST be redesigned as: search the component, anchor a real code line, and **drop the item if no code sink is found** (never raise from issue prose). See the issue proposal §4.
 - **Benchmark clean-room mode (Phase 1 — ships first)** — a hard switch that disables ALL spoiler-prone context channels for evaluation runs. Issue-feature default-off is not sufficient because recon reads `README.md` + `docs/**/*.md` on every run (`recon-scanner.md:73-79`), gated only by a soft untrusted-content instruction. Sequenced first because it is the only real integrity guarantee and is independently valuable for every eval run.
@@ -25,9 +25,9 @@ Deliberately-vulnerable test apps (OWASP Juice Shop et al.) ship their own answe
 
 The proposals said "create/extract a shared secret-scan module." **It already exists** — do NOT build a new one:
 
-- `scripts/secret_scan.py` = documented *"single source of truth"* for pattern-based secret detection. Public API `scan_text(text) -> list[SecretHit]`, `scan_file`, `mask_file`, `_value_is_masked`. Masking-aware + false-positive suppression (code refs, prose, SCREAMING-KEBAB suffixes). Already imported by `qa_checks.py:93`, `publish_threat_model.py:20`, `postscan_secret_check.py:37`, `redact_known_secrets.py:35`, `compose_threat_model.py:12104`.
-- `scripts/load_org_context.py:70 _SECRET_PATTERNS` is a **weaker duplicate** (5 patterns, no FP suppression) → a latent drift bug. Replacing it with `secret_scan.scan_text` is a real fix, folded into Phase 2 (task 2.4).
-- `scripts/_url_guard.py` already provides `validate_target_url(url, strict=)` + `same_host` + `_SameHostRedirectHandler` (via `load_related_repos`). Reuse — do not reimplement.
+- `scripts/validators/secret_scan.py` = documented *"single source of truth"* for pattern-based secret detection. Public API `scan_text(text) -> list[SecretHit]`, `scan_file`, `mask_file`, `_value_is_masked`. Masking-aware + false-positive suppression (code refs, prose, SCREAMING-KEBAB suffixes). Already imported by `validators/qa_checks.py:93`, `model/publish_threat_model.py:20`, `validators/postscan_secret_check.py:37`, `validators/redact_known_secrets.py:35`, `renderers/compose_threat_model.py:12104`.
+- `scripts/contexts/load_org_context.py:70 _SECRET_PATTERNS` is a **weaker duplicate** (5 patterns, no FP suppression) → a latent drift bug. Replacing it with `secret_scan.scan_text` is a real fix, folded into Phase 2 (task 2.4).
+- `scripts/shared/_url_guard.py` already provides `validate_target_url(url, strict=)` + `same_host` + `_SameHostRedirectHandler` (via `load_related_repos`). Reuse — do not reimplement.
 
 So the only genuinely *new* shared piece is a tiny **untrusted-fence helper** (convention convergence, Phase 0).
 
@@ -83,8 +83,8 @@ Test-first order:
 | 2.0 Phase-0 seam (fence helper + confirm `secret_scan`/`_url_guard` reuse). | seam unit test |
 | 2.1 `tests/test_load_repo_context.py` — fixtures per category (SECURITY.md, ARCHITECTURE, ADR dir, OpenAPI, docker-compose/Dockerfile/k8s/tf, schema, `.env.example`, CHANGELOG) + **one secret-redaction case** (a `.env` with an AKIA key → masked) + **one cleanroom case** (spoiler channels suppressed). | red → green |
 | 2.2 `scripts/load_repo_context.py` (NEW) — walk categories with the line-limits in `context-resolver.md:218-317`; run `secret_scan.scan_text` (mask hits) on every body; wrap via 2.0; honor `CLEANROOM`; emit `$OUTPUT_DIR/.repo-context.json` + manifest. | 2.1 passes |
-| 2.3 `schemas/repo-context.schema.json` (NEW) + wire into `validate_intermediate.py`. | schema-violation test fails loudly |
-| 2.4 `load_org_context.py` — delete `_SECRET_PATTERNS`, call `secret_scan.scan_text`; converge onto the 2.0 fence. | existing org-context tests green; a planted secret is now caught |
+| 2.3 `schemas/repo-context.schema.json` (NEW) + wire into `validators/validate_intermediate.py`. | schema-violation test fails loudly |
+| 2.4 `contexts/load_org_context.py` — delete `_SECRET_PATTERNS`, call `secret_scan.scan_text`; converge onto the 2.0 fence. | existing org-context tests green; a planted secret is now caught |
 | 2.5 Route External-REST (Step 2) fetch through `_url_guard.validate_target_url`. | test: SSRF/localhost URL rejected |
 | 2.6 `agents/appsec-context-resolver.md` — replace Steps 3–4 prose with a `load_repo_context.py` call + a **render-only** Step 5; keep the header table; `.gitignore` block (`:588`) += `.repo-context.json`. | live smoke: `.threat-modeling-context.md` content-equivalent to pre-change on a fixture |
 | 2.7 `AGENTS.md` editing-guidance row + `schemas/README.md` table. | — |
@@ -125,7 +125,7 @@ Test-first order:
 | Task | Verify (test first) |
 |------|---------------------|
 | 3.1 `tests/test_load_issues.py` — fixture gh-api / gitlab JSON → normalized records; author-association filter; label filter; cap; secret-in-body redaction; `gh` absent → graceful empty; **`CLEANROOM` → feature forced off**. | red → green |
-| 3.2 `scripts/load_issues.py` (NEW) — provider adapter (`github` via `gh api repos/:o/:r/issues` — NOT `gh issue list --json`, verified; `gitlab` via REST + `GITLAB_TOKEN` + `_url_guard`). Reuse `secret_scan` + 2.0 wrap. `shutil.which` guard like `emit_dep_update_activity.py:172`. Emit `$OUTPUT_DIR/.issues.json`. | 3.1 passes |
+| 3.2 `scripts/load_issues.py` (NEW) — provider adapter (`github` via `gh api repos/:o/:r/issues` — NOT `gh issue list --json`, verified; `gitlab` via REST + `GITLAB_TOKEN` + `_url_guard`). Reuse `secret_scan` + 2.0 wrap. `shutil.which` guard like `model/emit_dep_update_activity.py:172`. Emit `$OUTPUT_DIR/.issues.json`. | 3.1 passes |
 | 3.3 `schemas/issues.schema.json` (NEW) + `validate_intermediate` wiring. | schema test |
 | 3.4 `config.json` — `issue_context: {enabled:false, provider, labels, states:[open], max_issues:20, author_associations:[OWNER,MEMBER,COLLABORATOR]}` (default OFF). | default run unchanged |
 | 3.5 `context-resolver.md` — new Step reads `.issues.json`, renders `## Known Issues (Tracker)` wrapped section + header-table row; `CLEANROOM` suppresses it; `.gitignore` += `.issues.json`. Provenance-tag issues as **search hints, not evidence**. | live run (feature on): fenced section, secrets masked; cleanroom run: absent |
@@ -171,9 +171,9 @@ Run targeted tests per phase (CONTRIBUTING.md → "Targeted tests"); `make test`
 
 ## Verified evidence index
 
-- Canonical secret-scan: `scripts/secret_scan.py:2-16` (single source of truth) + importers `qa_checks.py:93`, `publish_threat_model.py:20`, `postscan_secret_check.py:37`, `redact_known_secrets.py:35`, `compose_threat_model.py:12104`
-- Duplicate to remove: `load_org_context.py:70`
-- URL guard: `_url_guard.py:87,145` (`validate_target_url`, `same_host`)
+- Canonical secret-scan: `scripts/validators/secret_scan.py:2-16` (single source of truth) + importers `validators/qa_checks.py:93`, `model/publish_threat_model.py:20`, `validators/postscan_secret_check.py:37`, `validators/redact_known_secrets.py:35`, `renderers/compose_threat_model.py:12104`
+- Duplicate to remove: `contexts/load_org_context.py:70`
+- URL guard: `shared/_url_guard.py:87,145` (`validate_target_url`, `same_host`)
 - Resolver Steps 3–4 categories + limits: `context-resolver.md:199-317`; fence `:613,634`; External-REST `:82-88`; .gitignore `:588`
-- gh soft-dep blueprint: `emit_dep_update_activity.py:172`; `gh api` needed (authorAssociation not in `gh issue list --json`, verified gh 2.4.0)
+- gh soft-dep blueprint: `model/emit_dep_update_activity.py:172`; `gh api` needed (authorAssociation not in `gh issue list --json`, verified gh 2.4.0)
 - Permissions cover it: `required-permissions.yaml:81,133`

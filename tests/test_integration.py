@@ -85,7 +85,7 @@ class TestHookSystem:
     def test_steering_script_handles_empty_json(self):
         """Steering script must not crash on empty JSON."""
         result = subprocess.run(
-            [sys.executable, str(SCRIPTS_DIR / "security_steering.py")],
+            [sys.executable, str(SCRIPTS_DIR / "analyzers/security_steering.py")],
             input="{}",
             capture_output=True,
             text=True,
@@ -95,7 +95,7 @@ class TestHookSystem:
     def test_logger_script_handles_empty_json(self):
         """Logger script must not crash on empty JSON."""
         result = subprocess.run(
-            [sys.executable, str(SCRIPTS_DIR / "agent_logger.py")],
+            [sys.executable, str(SCRIPTS_DIR / "runtime/agent_logger.py")],
             input="{}",
             capture_output=True,
             text=True,
@@ -105,7 +105,7 @@ class TestHookSystem:
     def test_logger_script_handles_malformed_input(self):
         """Logger script must not crash on non-JSON input."""
         result = subprocess.run(
-            [sys.executable, str(SCRIPTS_DIR / "agent_logger.py")],
+            [sys.executable, str(SCRIPTS_DIR / "runtime/agent_logger.py")],
             input="not json at all",
             capture_output=True,
             text=True,
@@ -158,7 +158,7 @@ class TestConfigValidation:
     def test_validate_config_script_passes(self):
         """Run the config validator script and ensure it passes."""
         result = subprocess.run(
-            [sys.executable, str(SCRIPTS_DIR / "validate_config.py"), str(PLUGIN_DIR)],
+            [sys.executable, str(SCRIPTS_DIR / "validators/validate_config.py"), str(PLUGIN_DIR)],
             capture_output=True,
             text=True,
         )
@@ -178,7 +178,7 @@ class TestConfigValidation:
 # `phrases` list can hold multiple required substrings.
 _CREATE_THREAT_MODEL_INVARIANTS = [
     # (test-id,              phrases that must all be present,            case-insensitive?)
-    ("references-controller", ["orchestration_controller.py"], False),
+    ("references-controller", ["orchestrator/orchestration_controller.py"], False),
     ("references-qa-reviewer", ["appsec-qa-reviewer"], False),
 ]
 

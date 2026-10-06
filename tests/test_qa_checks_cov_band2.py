@@ -1,4 +1,4 @@
-"""Coverage band 2 for scripts/qa_checks.py (~lines 2971-5400).
+"""Coverage band 2 for scripts/validators/qa_checks.py (~lines 2971-5400).
 
 Targets §6 clarity checks, the §5/§4 fixed-layout HTML table emitter,
 cmd_autofix / cmd_all, heading hygiene, TOC closure, mermaid syntax,
@@ -14,15 +14,15 @@ import importlib.util
 import sys
 from pathlib import Path
 
-SCRIPT_PATH = Path(__file__).parent.parent / "scripts" / "qa_checks.py"
+SCRIPT_PATH = Path(__file__).parent.parent / "scripts" / "validators/qa_checks.py"
 
 
 def _load():
-    if "qa_checks" in sys.modules:
-        return sys.modules["qa_checks"]
-    spec = importlib.util.spec_from_file_location("qa_checks", SCRIPT_PATH)
+    if "validators.qa_checks" in sys.modules:
+        return sys.modules["validators.qa_checks"]
+    spec = importlib.util.spec_from_file_location("validators.qa_checks", SCRIPT_PATH)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["qa_checks"] = module
+    sys.modules["validators.qa_checks"] = module
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
@@ -668,6 +668,23 @@ def test_toc_closure_broken_anchor(tmp_path):
     p = _md(tmp_path, "# H\n\n[x](#nope)\n")
     r = qa.check_toc_closure(p)
     assert any("unresolved" in i for i in r.issues)
+
+
+def test_toc_closure_and_nested_links_ignore_links_inside_html_comments(tmp_path):
+    p = _md(
+        tmp_path,
+        "# H\n\n<!-- guidance: each with its link [M-NNN](#m-nnn),\n"
+        "or [a [b](#x)](#h) -->\n\n[real](#h)\n\n[broken](#nope)\n",
+    )
+    closure = qa.check_toc_closure(p)
+    assert closure.issues == ["unresolved TOC/link anchor: #nope"]
+    assert closure.ok == 1
+    assert qa.check_toc_nested_links(p).issues == []
+
+
+def test_toc_closure_ignores_anchors_declared_inside_comments(tmp_path):
+    p = _md(tmp_path, '# H\n\n<!-- <a id="ghost"></a> -->\n\n[x](#ghost)\n')
+    assert qa.check_toc_closure(p).issues == ["unresolved TOC/link anchor: #ghost"]
 
 
 def test_toc_closure_many_broken_truncated(tmp_path):
@@ -1451,3 +1468,29 @@ def test_mermaid_html_in_message_detected_then_autofixed(tmp_path):
     r = qa.check_mermaid_syntax(p)
     assert r.fixes
     assert "<token>" not in p.read_text()
+
+
+# ---------------------------------------------------------------------------
+# §6 narrative placeholders in the Stage-3 gate
+# ---------------------------------------------------------------------------
+
+
+def _narrative_actions(tmp_path, enrich):
+    import json
+
+    body = "### 6.1 Overview\n\n<!-- NARRATIVE_PLACEHOLDER: §6.1 assessment -->\n"
+    p = _md(tmp_path, _wrap_sec7(body))
+    (tmp_path / ".skill-config.json").write_text(json.dumps({"enrich_arch_fragments": enrich}), encoding="utf-8")
+    plan, _ = qa.build_repair_plan(p, tmp_path)
+    return [a for a in plan["actions"] if "NARRATIVE_PLACEHOLDER" in a["raw_issue"]]
+
+
+def test_gate_repairs_unfilled_section6_narrative_when_the_run_enriches(tmp_path):
+    actions = _narrative_actions(tmp_path, True)
+    assert [(a["type"], a["severity"], a["fragments_to_rewrite"]) for a in actions] == [
+        ("section7_narrative_placeholders", "blocking", [".fragments/security-architecture.md"])
+    ]
+
+
+def test_gate_keeps_the_section6_scaffold_when_the_run_does_not_enrich(tmp_path):
+    assert _narrative_actions(tmp_path, False) == []

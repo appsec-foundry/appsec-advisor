@@ -1,4 +1,4 @@
-"""Coverage extension for scripts/arch_coverage_to_threats.py.
+"""Coverage extension for scripts/analyzers/arch_coverage_to_threats.py.
 
 Targets helper edge branches, skip paths, persist edge cases and CLI subcommands.
 Pins current behavior (test-files-only campaign). No producer edits.
@@ -13,10 +13,10 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "arch_coverage_to_threats.py"
+SCRIPT_PATH = REPO_ROOT / "scripts" / "analyzers/arch_coverage_to_threats.py"
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-import arch_coverage_to_threats as bridge  # noqa: E402
+import analyzers.arch_coverage_to_threats as bridge  # noqa: E402
 
 # --- helper edge branches --------------------------------------------------
 
@@ -318,14 +318,14 @@ def test_module_runpy_main_guard(tmp_path: Path):
     out_dir = tmp_path / "rp_out"
     argv = sys.argv
     sys.argv = [
-        "arch_coverage_to_threats.py",
+        "analyzers/arch_coverage_to_threats.py",
         "emit",
         "--input",
         str(cov),
         "--output-dir",
         str(out_dir),
     ]
-    sys.modules.pop("arch_coverage_to_threats", None)
+    sys.modules.pop("analyzers.arch_coverage_to_threats", None)
     try:
         with pytest.raises(SystemExit) as ei:
             runpy.run_path(str(SCRIPT_PATH), run_name="__main__")

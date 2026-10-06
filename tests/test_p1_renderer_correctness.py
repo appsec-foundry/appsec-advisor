@@ -51,13 +51,13 @@ def _load_module(name: str, path: Path):
     return module
 
 
-# Make scripts/_atomic_io.py importable when compose_threat_model is loaded.
+# Make scripts/shared/_atomic_io.py importable when compose_threat_model is loaded.
 _SCRIPTS = REPO_ROOT / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-compose = _load_module("compose_threat_model", _SCRIPTS / "compose_threat_model.py")
-rcs = _load_module("render_completion_summary", _SCRIPTS / "render_completion_summary.py")
+compose = _load_module("renderers.compose_threat_model", _SCRIPTS / "renderers/compose_threat_model.py")
+rcs = _load_module("renderers.render_completion_summary", _SCRIPTS / "renderers/render_completion_summary.py")
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +250,7 @@ class TestNoBoldInDiagramNodes:
         plain (no `<b>` stitching); the join idiom is now a generator over
         `comps_in_tier`, so we assert the plain ` · `.join + the absence of
         the bold-stitched form rather than the old `comp_ids` literal."""
-        src = (REPO_ROOT / "scripts" / "compose_threat_model.py").read_text()
+        src = (REPO_ROOT / "scripts" / "renderers/compose_threat_model.py").read_text()
         # The plain ` · `-join idiom must appear; the bold-stitched form must not.
         assert '" · ".join(' in src
         assert '"</b> · <b>".join' not in src
@@ -258,7 +258,7 @@ class TestNoBoldInDiagramNodes:
     def test_impact_card_label_is_plain(self):
         """compose._build_impact_cards emits `f"{emoji} {label}"` (was
         `f"{emoji} <b>{label}</b>"`)."""
-        src = (REPO_ROOT / "scripts" / "compose_threat_model.py").read_text()
+        src = (REPO_ROOT / "scripts" / "renderers/compose_threat_model.py").read_text()
         # The plain emission must be present.
         assert "f\"{emoji} {imp.get('label')}\"" in src
         # The bold variant must not appear.
@@ -267,20 +267,14 @@ class TestNoBoldInDiagramNodes:
     def test_pregenerator_actor_label_is_plain(self):
         """pregenerate_fragments._select_external_actors emits plain actor
         labels (was `<b>{name}</b>`)."""
-        src = (REPO_ROOT / "scripts" / "pregenerate_fragments.py").read_text()
+        src = (REPO_ROOT / "scripts" / "renderers/pregenerate_fragments.py").read_text()
         # Plain form must be present in the actor builder.
         assert 'f"{icon} {name}"' in src
 
     def test_pregenerator_tier_label_is_plain(self):
         """The components-tier head label is also plain."""
-        src = (REPO_ROOT / "scripts" / "pregenerate_fragments.py").read_text()
+        src = (REPO_ROOT / "scripts" / "renderers/pregenerate_fragments.py").read_text()
         assert 'f"{icon} {head_text}"' in src
-
-    def test_pregenerator_tech_stack_label_is_plain(self):
-        """The technology-architecture node head is also plain."""
-        src = (REPO_ROOT / "scripts" / "pregenerate_fragments.py").read_text()
-        # Match the new plain emission inside _label().
-        assert 'f"{icon} {_truncate_label_line(headline, max_chars)}"' in src
 
 
 # ---------------------------------------------------------------------------
@@ -685,7 +679,7 @@ class TestComposeSmokeAllFourInvariants:
     def test_compose_emits_all_four_p1_invariants(self, tmp_path: Path):
         out = self._build_minimal_fixture(tmp_path)
         # Pre-generate structural fragments + author the LLM-only ones.
-        pregen = _load_module("pregenerate_fragments", _SCRIPTS / "pregenerate_fragments.py")
+        pregen = _load_module("renderers.pregenerate_fragments", _SCRIPTS / "renderers/pregenerate_fragments.py")
         # main(["dir"]) writes the structural fragments; the LLM ones we
         # author inline.
         pregen.main([str(out)])
@@ -740,7 +734,7 @@ class TestComposeSmokeAllFourInvariants:
 
         # === A3 — the CWE→category classification is reflected in each §8 row.
         # The TH-NN identifier was dropped from rendered rows on 2026-05-28
-        # (noisy filler — see compose_threat_model.py "Item 7"; the renderer
+        # (noisy filler — see renderers/compose_threat_model.py "Item 7"; the renderer
         # keeps the classification NAME). The CWE→TH mapping logic itself is
         # unit-tested separately (test_cwe_*_maps_to_th*); here we assert the
         # rendered `**Classification:**` NAME per the fixture's CWEs.

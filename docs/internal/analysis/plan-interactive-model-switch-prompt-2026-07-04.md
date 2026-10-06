@@ -36,8 +36,8 @@ So it is really a **continue-vs-abort gate**, framed as a model-switch question.
   `🔧 Building …` line via LLM self-report, fires on any non-4.6 (Opus + Sonnet-5), gives the
   exact `claude --model claude-sonnet-4-6` restart command + `/clear` + settings.json. This is
   the current passive surface (exempt from the "only 2 lines" hard rule, SKILL.md:~87).
-- **Pre-flight box ⚠ callout** — `resolve_config.py:_render_session_cost_callout` (deterministic,
-  session model injected; thin path via `orchestration_controller.py`, legacy via `--run-plan-notes`).
+- **Pre-flight box ⚠ callout** — `runtime/resolve_config.py:_render_session_cost_callout` (deterministic,
+  session model injected; thin path via `orchestrator/orchestration_controller.py`, legacy via `--run-plan-notes`).
 - The prompt would **replace or augment** the passive advisory as the primary interactive gate;
   keep the box callout as the record.
 
@@ -51,7 +51,7 @@ So it is really a **continue-vs-abort gate**, framed as a model-switch question.
 2. **Placement:**
    - (a) In `SKILL.md` right after the early advisory (earliest; LLM-driven; before the router).
    - (b) After the Pre-flight box, before Stage 1 dispatch (both runtimes).
-   - (c) **Deterministic decision in `orchestration_controller.py`** (compute a `prompt_model_switch`
+   - (c) **Deterministic decision in `orchestrator/orchestration_controller.py`** (compute a `prompt_model_switch`
      flag from detected session model + headless env), exposed in the ACTION; the runtime files
      (`SKILL-full-runtime.md` thin, `SKILL-impl.md` legacy) instruct "if flag set, call
      AskUserQuestion before Stage 1." Most robust (decision is deterministic; LLM only executes
@@ -72,7 +72,7 @@ it would hang or auto-resolve and **break unattended runs**. The prompt MUST be 
 
 - `skills/create-threat-model/SKILL.md` (+ `SKILL-full-runtime.md` and/or `SKILL-impl.md` depending
   on placement) — the AskUserQuestion instruction + the abort-with-restart-command branch.
-- `scripts/orchestration_controller.py` — if design (c): compute + expose `prompt_model_switch`.
+- `scripts/orchestrator/orchestration_controller.py` — if design (c): compute + expose `prompt_model_switch`.
 - `scripts/run-headless.sh` — export the headless marker.
 - `data/required-permissions.yaml` — check whether AskUserQuestion needs a permission entry
   (it is a built-in interactive tool; likely no path/Bash entry, but verify the drift guard).
@@ -86,7 +86,7 @@ it would hang or auto-resolve and **break unattended runs**. The prompt MUST be 
   gotcha).
 - Which placement (a/b/c) — (c) is most robust but touches both runtimes + the action schema.
 - Does aborting cleanly before Stage 1 leave any partial state to clean up? (Should be none — it's
-  pre-dispatch; verify against `orchestration_controller.py` prepare ordering.)
+  pre-dispatch; verify against `orchestrator/orchestration_controller.py` prepare ordering.)
 - UX: is a modal gate actually wanted by default, or is the passive advisory + "Ctrl-C now" bullet
   (already present) sufficient? Lean opt-in (A) first.
 

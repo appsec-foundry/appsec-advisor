@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-import actor_discovery_cache as adc
+import contexts.actor_discovery_cache as adc
 
 
 def _plugin(tmp_path: Path, version: str = "1.2.0") -> Path:

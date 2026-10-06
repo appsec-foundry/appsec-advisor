@@ -3,7 +3,7 @@
 Covers:
   * schemas/requirements-verification.schema.json is valid Draft 2020-12 and a
     representative verdict validates against it.
-  * scripts/build_verify_diff.py produces a well-formed .verify-diff.json on a
+  * scripts/repairs/build_verify_diff.py produces a well-formed .verify-diff.json on a
     real (temporary) git repo.
 """
 
@@ -22,7 +22,7 @@ ROOT = Path(__file__).parent.parent
 SCHEMA_PATH = ROOT / "schemas" / "requirements-verification.schema.json"
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import build_verify_diff  # noqa: E402
+import repairs.build_verify_diff as build_verify_diff  # noqa: E402
 
 # --- schema ------------------------------------------------------------------
 
@@ -219,7 +219,7 @@ def test_no_internal_company_references_in_tracked_files():
 
 
 def test_fetch_falls_back_to_baseline_when_no_company_source(tmp_path):
-    import fetch_requirements
+    import requirements.fetch_requirements as fetch_requirements
 
     rc = fetch_requirements.main(
         [
@@ -244,7 +244,7 @@ def test_fetch_falls_back_to_baseline_when_no_company_source(tmp_path):
 def test_fetch_explicit_source_failure_does_not_fall_back(tmp_path):
     # An explicitly-named --requirements source that fails must still abort
     # (exit 2) — the baseline fallback must NOT rescue a deliberately-named source.
-    import fetch_requirements
+    import requirements.fetch_requirements as fetch_requirements
 
     rc = fetch_requirements.main(
         [

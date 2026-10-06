@@ -1,4 +1,4 @@
-"""Regression tests for reclassify_components.py.
+"""Regression tests for model/reclassify_components.py.
 
 Focus: the resolver must never leave a threat tagged with a NON-REGISTERED
 component id (a placeholder/phantom), because that dangles the §8/§6/§3
@@ -16,8 +16,10 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
-import reclassify_components as rc  # noqa: E402
+import model.reclassify_components as rc  # noqa: E402
 
 _COMPONENTS = [
     {"id": "angular-spa", "paths": ["frontend/src/**"]},
@@ -153,6 +155,83 @@ def test_unresolved_phantoms_reports_when_unresolvable():
     out, _changes = rc.reclassify(data)
     leftovers = rc.unresolved_phantoms(out)
     assert ("T-099", "ghost") in leftovers
+
+
+def _absorbing_finding(placeholder, instance):
+    """A registered finding that absorbed a scanner hit still carrying the scanner's provisional owner."""
+    return {
+        "id": "T-010",
+        "component": "express-backend",
+        "evidence": {"file": "routes/login.ts"},
+        "merged_from": ["express-backend", placeholder],
+        "instances": [
+            {"component_id": "express-backend", "file": "routes/login.ts", "line": 4},
+            {"component_id": placeholder, "source_ref": "SRC-001", **instance},
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    ("placeholder", "location", "owner"),
+    [
+        ("backend-api", {"file": "lib/insecurity.ts", "line": 9}, "express-backend"),
+        ("server-guess", {"file": "routes/memory.ts", "line": 2}, "file-upload-service"),
+    ],
+)
+def test_placeholder_instance_owner_resolves_like_a_placeholder_finding(placeholder, location, owner):
+    out, _by, changes = _run([_absorbing_finding(placeholder, location)])
+    threat = out["threats"][0]
+    known = {c["id"] for c in _COMPONENTS}
+    assert threat["instances"][1]["component_id"] == owner
+    assert threat["instances"][1]["original_component_id"] == placeholder
+    assert set(threat["merged_from"]) <= known and owner in threat["merged_from"]
+    assert rc.unresolved_phantoms(out) == []
+    assert any(c.get("instance_only") for c in changes)
+    assert rc.reclassify(out)[1] == []
+
+
+@pytest.mark.parametrize("location", [{"file": "scripts/seed.sh", "line": 1}, {}])
+def test_placeholder_instance_that_no_component_claims_stays_with_its_finding(location):
+    finding = _absorbing_finding("backend-api", location)
+    finding["component"] = "data-layer"
+    finding["evidence"] = {"file": "data/static/users.yml"}
+    finding["merged_from"] = ["data-layer", "backend-api"]
+    finding["instances"] = finding["instances"][1:]
+    out, _by, _changes = _run([finding])
+    threat = out["threats"][0]
+    assert threat["instances"][0]["component_id"] == "data-layer"
+    assert threat["merged_from"] == ["data-layer"]
+    assert rc.unresolved_phantoms(out) == []
+
+
+def test_registered_instance_owners_are_left_alone():
+    finding = {
+        "id": "T-012",
+        "component": "express-backend",
+        "evidence": {"file": "routes/login.ts"},
+        "merged_from": ["express-backend", "file-upload-service"],
+        "instances": [{"component_id": "file-upload-service", "file": "routes/memory.ts", "line": 2}],
+    }
+    before = json.loads(json.dumps(finding))
+    out, _by, changes = _run([finding])
+    assert out["threats"][0] == before
+    assert changes == []
+
+
+def test_unresolved_phantoms_covers_instance_and_merged_owners():
+    data = {
+        "components": [dict(c) for c in _COMPONENTS],
+        "threats": [
+            {
+                "id": "T-013",
+                "component": "express-backend",
+                "merged_from": ["express-backend", "ghost-a"],
+                "instances": [{"component_id": "ghost-b"}, {"component_id": "express-backend"}],
+            }
+        ],
+    }
+    assert rc.unresolved_phantoms(data) == [("T-013", "ghost-a"), ("T-013", "ghost-b")]
+    assert rc.unresolved_phantoms(data, instances=False) == []
 
 
 # ---------------------------------------------------------------------------
@@ -292,6 +371,68 @@ def test_reclassification_reconciles_boundary_origin_and_drops_nonadjacent_ref()
     assert threat["component"] == "file-upload-service"
     assert [ref["boundary_id"] for ref in threat["boundary_refs"]] == ["tb-1"]
     assert threat["boundary_refs"][0]["origin_component_id"] == "file-upload-service"
+    assert changes[0]["boundary_refs"] == threat["boundary_refs"]
+
+
+_MOVE_EVIDENCE = {"file": "routes/reviews.ts", "line": 36}
+_MOVE_INSTANCE = {"file": "routes/orders.ts", "line": 18}
+_MOVE_BOUNDARIES = {
+    "tb-db": {"id": "tb-db", "from": "api", "to": "store"},
+    "tb-ext": {"id": "tb-ext", "from": "external", "to": "api"},
+    "tb-web": {"id": "tb-web", "from": "external", "to": "web"},
+}
+
+
+def _ref(boundary_id: str, origin: str, location: dict = _MOVE_EVIDENCE) -> dict:
+    return {
+        "boundary_id": boundary_id,
+        "origin_component_id": origin,
+        "rationale": f"The injected predicate breaks the {boundary_id} crossing assumption.",
+        "evidence_locations": [dict(location)],
+    }
+
+
+@pytest.mark.parametrize(
+    ("refs", "kept"),
+    [
+        pytest.param([_ref("tb-db", "store"), _ref("tb-db", "api")], ["tb-db"], id="one-boundary-two-origins"),
+        pytest.param([_ref("tb-db", "store"), _ref("tb-ext", "api")], ["tb-db", "tb-ext"], id="distinct-boundaries"),
+        pytest.param([_ref("tb-ext", "store", _MOVE_INSTANCE)], ["tb-ext"], id="instance-owned-evidence"),
+        pytest.param([_ref("tb-web", "store"), _ref("tb-db", "store")], ["tb-db"], id="non-adjacent-dropped"),
+    ],
+)
+def test_moving_a_finding_keeps_its_boundary_refs_valid(refs, kept):
+    import validators.validate_intermediate as vi
+    from shared._boundary_adjacency import is_adjacent
+
+    data = {
+        "components": [
+            {"id": "store", "tier": "data", "paths": ["data/**"]},
+            {"id": "api", "tier": "application", "paths": ["routes/**"]},
+            {"id": "web", "tier": "application", "paths": ["frontend/**"]},
+        ],
+        "trust_boundaries": [
+            {**row, "confidence": "confirmed", "resolution_status": "resolved"} for row in _MOVE_BOUNDARIES.values()
+        ],
+        "threats": [
+            {
+                "id": "T-002",
+                "component_id": "store",
+                "cwe": "CWE-943",
+                "evidence": dict(_MOVE_EVIDENCE),
+                "instances": [{**_MOVE_EVIDENCE, "component_id": "store"}, {**_MOVE_INSTANCE, "component_id": "store"}],
+                "boundary_refs": refs,
+            }
+        ],
+    }
+    out, changes = rc.reclassify(data)
+    threat = out["threats"][0]
+    assert threat["component_id"] == "api"
+    assert vi._check_boundary_refs(out) == []
+    assert [ref["boundary_id"] for ref in threat["boundary_refs"]] == kept
+    assert all(
+        is_adjacent(ref["origin_component_id"], _MOVE_BOUNDARIES[ref["boundary_id"]]) for ref in threat["boundary_refs"]
+    )
     assert changes[0]["boundary_refs"] == threat["boundary_refs"]
 
 
@@ -497,6 +638,45 @@ def test_main_merged_only_strict_rejects_unresolved_phantom(tmp_path, capsys):
     assert "T-099:ghost" in capsys.readouterr().err
 
 
+def test_main_merged_only_repairs_placeholder_instance_owners(tmp_path, capsys):
+    (tmp_path / ".components.json").write_text(
+        json.dumps({"components": [{"id": "api-backend", "paths": ["server.ts", "routes/**"]}]}),
+        encoding="utf-8",
+    )
+    finding = {
+        "id": "F-005",
+        "t_id": "T-005",
+        "component_id": "api-backend",
+        "evidence": [{"file": "routes/login.ts", "line": 34}],
+        "merged_from": ["api-backend", "backend-api"],
+        "instances": [{"component_id": "backend-api", "file": "routes/login.ts", "line": 34}],
+    }
+    (tmp_path / ".threats-merged.json").write_text(json.dumps({"threats": [finding]}), encoding="utf-8")
+    assert rc.main(["--merged-only", "--check", "--strict", str(tmp_path)]) == 0
+    assert "T-005:backend-api" in capsys.readouterr().err
+    assert rc.main(["--merged-only", "--strict", str(tmp_path)]) == 0
+    repaired = json.loads((tmp_path / ".threats-merged.json").read_text(encoding="utf-8"))["threats"][0]
+    assert repaired["instances"][0]["component_id"] == "api-backend"
+    assert repaired["merged_from"] == ["api-backend"]
+
+
+def test_main_strict_rejects_instance_owner_it_cannot_resolve(tmp_path, capsys):
+    data = {
+        "components": [dict(c) for c in _COMPONENTS],
+        "threats": [
+            {
+                "id": "T-099",
+                "component": "ghost",
+                "evidence": {},
+                "instances": [{"component_id": "ghost-instance"}],
+            }
+        ],
+    }
+    _write_yaml(tmp_path / "threat-model.yaml", data)
+    assert rc.main(["--strict", str(tmp_path)]) == 3
+    assert "T-099:ghost-instance" in capsys.readouterr().err
+
+
 def test_main_reassigns_many_truncates_details(tmp_path, capsys):
     # >8 changes triggers the "(+N more)" branch.
     comps = [dict(c) for c in _COMPONENTS]
@@ -537,7 +717,7 @@ def test_main_cli_subprocess(run_plugin_script, tmp_path):
         "threats": [{"id": "T-001", "component": "express-backend", "evidence": {"file": "routes/x.ts"}}],
     }
     (tmp_path / "threat-model.yaml").write_text(_yaml.safe_dump(data), encoding="utf-8")
-    result = run_plugin_script("reclassify_components.py", str(tmp_path), check=False)
+    result = run_plugin_script("model/reclassify_components.py", str(tmp_path), check=False)
     assert result.returncode == 0
     assert "reclassify_components:" in result.stdout
 

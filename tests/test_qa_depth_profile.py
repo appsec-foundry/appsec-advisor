@@ -28,7 +28,7 @@ class TestDeterministicQaOwnership:
     def test_mitigation_shape_is_not_rechecked_by_agent(self):
         text = _read(QA_REVIEWER)
         assert "mitigation schema and P1–P4 grouping" in text
-        assert "Do not run `qa_checks.py all`" in text
+        assert "Do not run `validators/qa_checks.py all`" in text
 
     def test_extended_depth_does_not_dispatch_clean_agent(self):
         skill = _read(PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage3.md")
@@ -73,12 +73,12 @@ class TestDeterministicFirstQa:
         text = _read(PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage3.md")
         assert "deterministic-pre-agent" in text
         assert "no Agent dispatch" in " ".join(text.split())
-        assert 'qa_checks.py" gate' in text
+        assert 'validators/qa_checks.py" gate' in text
 
     def test_repair_loop_respects_deterministic_qa_gate(self):
         text = _read(PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage3.md")
         assert "Canonical QA gate" in text
-        assert "apply_repair_plan.py" in text
+        assert "repairs/apply_repair_plan.py" in text
         assert "rerun the canonical qa gate without dispatch" in " ".join(text.lower().split())
 
     def test_total_stage_count_includes_stage_1_and_2(self):
