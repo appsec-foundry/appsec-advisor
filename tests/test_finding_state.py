@@ -164,6 +164,7 @@ _ALLOWED = {
     "contexts/build_post_stride_contexts.py": 1,  # sampling skips verified-prior
     "model/emit_review_mitigations.py": 1,  # docstring of the ambiguous review rule
     "model/promote_verified_abuse_cases.py": 1,  # producer writes the state
+    "orchestrator/stride_dispatch_waves.py": 1,  # demotes an unanchored self-stamped verified-prior
     "validators/guard_evidence_verification.py": 1,  # verifier-state guard
 }
 

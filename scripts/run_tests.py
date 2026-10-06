@@ -1784,6 +1784,7 @@ SOURCE_TESTS = {
         figure_theme
         publish_threat_model
         qa_checks
+        threat_fixture
     """),
     "scripts/renderers/compose_services.py": _tests("""
         iac_resource_checks
