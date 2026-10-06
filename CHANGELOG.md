@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- Add entries here as work lands on dev; promote them into a dated heading at release. -->
 
+## 0.6.0-beta.4 (2026-10-06)
+
 ### Added
 
 - `/appsec-advisor:analyze-threats` and `scripts/appsec-analyst-cli` analyze a planned feature or a selected code change on request; the [Threat Analyst](docs/threat-analyst.md) is experimental.
@@ -38,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `/appsec-advisor:report-error` investigates suspected plugin errors and prepares anonymised GitHub issue drafts for explicit publication approval; `--bundle-only` keeps the local diagnostic workflow.
 - Run Issues flag duplicate findings, missing verification evidence, incomplete review coverage and sharp drops in Critical or High findings between comparable runs.
 - New aiscb installations load verified modules on demand, and `update-baseline` uses compatible signed installers while preserving installation scope and mode.
+- The bundled secure-coding baseline is updated to `aiscb-0.1.19`.
 - `/appsec-advisor:help` opens with a quick start and keeps the full reference behind `--all`.
 
 ### Fixed

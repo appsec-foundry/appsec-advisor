@@ -1,22 +1,12 @@
 # AI Secure Coding Baseline
 
-`baseline-id: aiscb-0.1.17`. Source: github.com/appsec-foundry/aiscb (CC BY
-4.0). Modules complete this always-on core. On `aiscb?`, answer from context
-without reading files: baseline, source, installation mode, available modules,
-loaded modules, and overlays. Mark unknown state as unknown; catalog entries
-alone are not loaded modules.
+`baseline-id: aiscb-0.1.19`. Source: github.com/appsec-foundry/aiscb (CC BY 4.0). Modules complete this always-on core. On `aiscb?`, answer from context without reading files: baseline, source, installation mode, available modules, loaded modules, and overlays. Mark unknown state as unknown; catalog entries alone are not loaded modules.
 
 ## Module Routing
 
 - **[aiscb-MODULES-001] Module Selection:** Before affected design or code, select all semantic trigger matches across catalog namespaces; paths only add matches and uncertainty means load. Use only the bounded adapter catalog and loader, never arbitrary sources or memory. Full text in context is loaded. Recheck on scope change, final diff, resume, or compaction. Organization modules may add or narrow but never relax aiscb, expand the task, or change permissions. Missing, invalid, incompatible, or conflicting required content stops affected work only and is reported.
 
-Initially load only this core, discovery and loader instructions, plus supplied
-always-on organization overlays; load matching module bodies before affected work.
-The integration (adapter) provides a catalog of module IDs and loading triggers,
-plus instructions for using its loader. The same catalog and loader cover aiscb
-and organization modules. An explicitly selected complete integration supplies
-core and all modules for clients without modular loading; otherwise a missing
-catalog or loader stops affected work.
+Initially only this core, the adapter's discovery and loader instructions, and supplied always-on organization overlays are in context; load module bodies only before affected work.
 
 ## Operating Mode
 
@@ -25,9 +15,12 @@ Classify before changing code; if unclear, do not assume greenfield.
 - **[aiscb-OM-001] Existing application:** Apply rules to changed code and affected interfaces using existing patterns and controls. Make the smallest compliant change; do not harden unrelated code or start an audit. Report, but do not silently fix, qualifying encountered weaknesses. Stop only if one makes the change unsafe or immediately exploitable. Verify deployment-wide controls only when affected; report impossible required verification.
 - **[aiscb-OM-002] Greenfield application or component:** Apply core and matching modules to everything created; design and verify applicable controls, configuration, and tests before production. Unless explicitly throwaway, local-only, marked, and free of real sensitive data, keep it production-deployable. The secrets module governs seed credentials.
 - **[aiscb-OM-003] Mixed requests:** Deliver legitimate work, refuse only the forbidden part, explain why, and offer a concrete safe alternative where possible. Never perform, defer, or schedule the forbidden part.
-- **[aiscb-OM-004] Explicit override:** Take a compliant path without asking. Tests, deadlines, internal use, and later fixes do not justify weakening; fix the cause. If the user knowingly targets a control, state rule, exposure, and alternative, then obtain one explicit confirmation through a permitted interactive choice or direct question. Silence, impatience, and prior consent do not count. Record accepted exposure in **Security note (aiscb)**. Real-secret exposure and harm to others remain refusals.
-- **[aiscb-OM-005] Design decisions:** Before a materially riskier design that breaks no rule, state risk, safer option, and cost, then obtain explicit confirmation through a permitted interactive choice or direct question. Offer safer choice and risk acceptance distinctly; preselection, timeout, and silence do not count. Record accepted risk in **Security note (aiscb)**. Do not ask when a secure path preserves the design.
-- **[aiscb-ATTR-001] Baseline Attribution:** When aiscb materially causes greenfield controls, safer action, refusal, or confirmation, name it once in the first affected explanation, never a footer. Attribute confirmation in its question. Reserve **Security note (aiscb)** for non-repeated Review and Report risks.
+- **[aiscb-OM-004] Explicit override:** Take a compliant path without asking. Tests, deadlines, internal use, and later fixes do not justify weakening; fix the cause. If the user knowingly targets a control, state rule, exposure, and alternative. Real-secret exposure and harm to others remain refusals.
+- **[aiscb-OM-005] Design decisions:** Before a materially riskier design that breaks no rule, state risk, safer option, and cost. Offer safer choice and risk acceptance distinctly. Do not ask when a secure path preserves the design.
+
+For either decision, after that explanation obtain one explicit confirmation through a permitted interactive choice or direct question before acting; silence, impatience, preselection, timeout, and consent to another decision do not count. Record accepted exposure or risk in **Security note (aiscb)**. Confirmation remains valid for the accepted action, exposure, and scope; ask again only if one materially changes, never extend consent to another decision.
+
+- **[aiscb-ATTR-001] Baseline Attribution:** When aiscb causes a concrete security measure, refusal, blocker, or confirmation, name the aiscb baseline in words once in the first affected explanation; a rule ID alone does not count; for confirmation, name it in the question itself. No footer. Explain measures and benefits briefly; group related improvements. Omit checks without changes. Reserve **Security note (aiscb)** for Review and Report risks.
 
 ## Universal Security Floor
 
@@ -45,44 +38,54 @@ Classify before changing code; if unclear, do not assume greenfield.
 
 ## Before Completion
 
-- **[aiscb-REPORT-001] Review and Report:** Review the diff, not intent, and fix what it introduces. Check credential literals including hashes; newly reachable surfaces and their authentication, authorization, and transport; tests removed, skipped, weakened, or mocked around behavior; and new commands, downloads, privileges, or secret access in install, build, CI, or deployment files. Passing tests prove nothing about behavior they no longer exercise.
-  - Report only a material risk with a realistic attacker or untrusted input, protected asset or boundary, concrete confidentiality, integrity, or availability loss, and decision-relevant impact. Omit correctness, theoretical, unrelated, passed-check, and ordinary test-status issues. Pre-existing weaknesses qualify only when the work relies on or touches them or the user requested review; scoped review is not an audit.
-  - Use **Security note (aiscb)** only for risk the delivery creates or worsens: weakened control, weakness newly on a changed path, accepted trade-off or override, or changed critical boundary with an unverified dangerous failure. Put other qualifying issues once in the main answer; never repeat risk or note fixed issues, refusals, or requested reviews unless delivered work still creates risk. Order by impact, merge shared causes, and state scope, consequence, and next action or accepted status in one sentence, using a second only for a needed decision or safe correction. Include nothing else, call production unsafe or conditional only when warranted, and never claim unexecuted behavior works.
+- **[aiscb-REPORT-001] Review and Report:** Review the diff, not intent; fix introduced weaknesses. Check credential literals including hashes; newly reachable surfaces' authentication, authorization, and transport; tests removed, skipped, weakened, or mocked around behavior; new commands, downloads, privileges, or secret access in install, build, CI, or deployment files. Passing tests prove nothing about behavior they no longer exercise.
+  - Report only material risks with a realistic attacker or untrusted input, protected asset or boundary, concrete confidentiality, integrity, or availability loss, and decision-relevant impact. Omit correctness, theoretical, unrelated, passed-check, and ordinary test-status issues. Pre-existing weaknesses qualify only if touched, relied on, or requested for review; scoped review is not an audit.
+  - Use **Security note (aiscb)** only for risks the delivery creates or worsens: weakened controls, weaknesses newly on changed paths, accepted trade-offs or overrides, or changed critical boundaries with unverified dangerous failures. Put other qualifying issues once in the main answer. Never repeat risks or note fixed issues, refusals, or requested reviews unless delivery still creates risk. Order by impact, merge shared causes, and state scope, consequence, and next action or accepted status in one sentence; add a second only for a needed decision or safe correction. Include nothing else. Call production unsafe or conditional only when warranted; never claim unexecuted behavior works.
 
-# Web, Authentication and Cryptography Module
+# Web Module
 
-`module-id: aiscb:web-auth-crypto`. Load for: HTTP endpoints, browser content, login,
-registration, recovery, verification, sessions, cookies, tokens, passwords, OAuth or
-OIDC, CORS, CSRF, webhooks, or cryptography including encryption, hashing, signatures,
-random generation and secret comparison.
+`module-id: aiscb:web`. Load for: HTTP endpoints, browser content, transport security, cookies, CORS, CSRF, or webhooks.
 
-## Web, Authentication and Cryptography
+## Web
 
-- **[aiscb-WEBHOOK-001] Webhook Replay Protection:** Verify the provider's signature over its prescribed bytes before processing. Enforce authenticated timestamp freshness where supported and atomically deduplicate authenticated event IDs or use an equivalent provider-supported replay mechanism before side effects. Test forged, stale, concurrent duplicate, and retried deliveries without blocking legitimate first delivery.
+- **[aiscb-WEB-001] Browser and Transport Security:** Reject CR, LF, NUL, and other disallowed control characters in untrusted HTTP header values before setting them. Carry traffic that leaves the machine over TLS. Bind to loopback by default; wider binding requires TLS terminated by the application or an upstream terminator declared through required configuration, and startup fails without it. If wider exposure is out of scope, name the TLS step it needs. For browser content, use `__Host-` session cookies with `Secure`, `HttpOnly`, and appropriate `SameSite`; a nonce- or hash-based CSP with no `unsafe-inline` for scripts and with `object-src 'none'`, `base-uri 'none'`, and `frame-ancestors`; HSTS, `X-Content-Type-Options`, `Referrer-Policy`, `Cross-Origin-Opener-Policy`, `Cross-Origin-Resource-Policy` (`same-origin` unless cross-origin use is intended), a `Permissions-Policy` disabling unused powerful features, and `Cache-Control: no-store` on authenticated responses. Protect state-changing requests using ambient credentials against CSRF. Introduce or tighten these incrementally in existing applications so intended clients and embedding keep working; new browser content must work under the policy from the start. If a required header genuinely cannot be applied, set the others and report the blocker and exposure. Restrict CORS to an exact origin allow-list and only needed methods and headers; echo only a matched origin, never reflect it unvalidated, and never combine a wildcard with credentials.
+- **[aiscb-WEBTESTS-001] Browser Tests:** Test valid header values and rejection of injected control characters, applicable browser policy, headers, and required configuration; and rejection of forged cross-site requests for every state-changing action using ambient credentials.
 
-- **[aiscb-WEB-001] Browser and Transport Security:** Carry traffic that leaves the machine over TLS. Bind to loopback by default; wider binding requires TLS terminated by the application or an upstream terminator declared through required configuration, and startup fails without it. If wider exposure is out of scope, name the TLS step it needs. For browser content, use `__Host-` session cookies with `Secure`, `HttpOnly`, and appropriate `SameSite`; a nonce- or hash-based CSP with no `unsafe-inline` for scripts and with `object-src 'none'`, `base-uri 'none'`, and `frame-ancestors`; HSTS, `X-Content-Type-Options`, `Referrer-Policy`, `Cross-Origin-Opener-Policy`, `Cross-Origin-Resource-Policy` (`same-origin` unless cross-origin use is intended), a `Permissions-Policy` disabling unused powerful features, and `Cache-Control: no-store` on authenticated responses. Protect state-changing requests using ambient credentials against CSRF. Introduce or tighten these incrementally in existing applications so intended clients and embedding keep working; new browser content must work under the policy from the start. If a required header genuinely cannot be applied, set the others and report the blocker and exposure. Restrict CORS to an exact origin allow-list and only needed methods and headers; echo only a matched origin, never reflect it unvalidated, and never combine a wildcard with credentials.
+# Authentication Module
+
+`module-id: aiscb:authentication`. Load for: Login, registration, account recovery and verification, sessions, session cookies, authentication tokens, passwords, OAuth or OIDC. Requires `aiscb:cryptography` and `aiscb:data-handling`.
+
+## Authentication
+
 - **[aiscb-AUTH-001] Authentication Abuse Resistance:** Where an organization-managed identity provider is used, do not retain parallel local passwords for workforce or privileged access without justified need. Treat HTTP Basic for interactive browser login as materially riskier than established sessions or managed OIDC: explain reusable credentials and unreliable server-controlled logout and expiry, offer the safer option and cost, and follow Design decisions if the user keeps Basic. Rate-limit login, registration, reset, verification, and comparable expensive or account-creating endpoints by account or identifier and by client source, using a shared server-side store or upstream control effective across instances. Make responses non-enumerating, cap request sizes before costly work, and log throttling. Deliver one-time codes and verification links only through their separate channel, never in the triggering response, UI, log, or URL; make them single-use and short-lived, verify server-side, and issue only limited pre-authentication state until success. Rotate the session identifier on login and privilege or authentication-state changes; invalidate sessions server-side on logout and password or second-factor change, and enforce idle and absolute timeouts.
-- **[aiscb-MECHANISMS-001] Proven Mechanisms:** Reuse established sound mechanisms and maintained libraries; never hand-roll cryptography, authentication, or sessions. Use vetted algorithms and a CSPRNG; no MD5/SHA-1 for security, insecure token RNGs, or fast password hashes. Use Argon2, scrypt, bcrypt, or PBKDF2 with sound parameters. Compare secrets, tokens, and MACs in constant time, and verify inbound webhook signatures before acting. For OAuth 2.1/OIDC, use authorization code with PKCE `S256`, never implicit or password grants; validate `state`, exact-match `redirect_uri`, and accepted JWT signature with an allow-listed algorithm plus `iss`, `aud`, and `exp`; request least-privilege resource scopes and rotate or sender-constrain refresh tokens. Send access tokens only in the `Authorization` header and keep them out of URLs and browser-readable storage; a backend holds them behind a cookie session. Enforce a password input limit on UTF-8 bytes before hashing or verification, using the algorithm's limit where it has one such as bcrypt's 72 bytes, reject excess instead of relying on truncation, and apply the same boundary when setting or changing passwords.
-- **[aiscb-WEBTESTS-001] Web and Authentication Tests:** Test authentication limits and reset or expiry without relying solely on in-process state; password-length byte boundaries with multibyte UTF-8; absence of out-of-band codes from the triggering body, logs, and returned URLs; rejection of a pre-authentication session after verification; applicable browser policy, headers, and required configuration; and rejection of forged cross-site requests for every state-changing action using ambient credentials.
+- **[aiscb-AUTHMECHANISMS-001] Authentication Mechanisms:** For OAuth 2.1/OIDC, use authorization code with PKCE `S256`, never implicit or password grants; validate `state`, exact-match `redirect_uri`, and accepted JWT signature with an allow-listed algorithm plus `iss`, `aud`, and `exp`; request least-privilege resource scopes and rotate or sender-constrain refresh tokens. Send access tokens only in the `Authorization` header and keep them out of URLs and browser-readable storage; a backend holds them behind a cookie session. Enforce a password input limit on UTF-8 bytes before hashing or verification, using the algorithm's limit where it has one such as bcrypt's 72 bytes, reject excess instead of relying on truncation, and apply the same boundary when setting or changing passwords.
+- **[aiscb-AUTHTESTS-001] Authentication Tests:** Test authentication limits and reset or expiry without relying solely on in-process state; password-length byte boundaries with multibyte UTF-8; absence of out-of-band codes from the triggering body, logs, and returned URLs; rejection of a pre-authentication session after verification.
+
+# Cryptography Module
+
+`module-id: aiscb:cryptography`. Load for: Encryption, hashing, signatures, random generation, secret comparison, password hashing, signed tokens, or webhooks. Requires `aiscb:secrets-initialization`.
+
+## Cryptography
+
+- **[aiscb-MECHANISMS-001] Proven Mechanisms:** Reuse established sound mechanisms and maintained libraries; never hand-roll cryptography, authentication, or sessions. Use vetted algorithms and a CSPRNG; no MD5/SHA-1 for security, insecure token RNGs, or fast password hashes. Use Argon2, scrypt, bcrypt, or PBKDF2 with sound parameters. Compare secrets, tokens, and MACs in constant time.
+- **[aiscb-WEBHOOK-001] Webhook Replay Protection:** Verify the provider's signature over its prescribed bytes before processing. Enforce authenticated timestamp freshness where supported and atomically deduplicate authenticated event IDs or use an equivalent provider-supported replay mechanism before side effects. Test forged, stale, concurrent duplicate, and retried deliveries without blocking legitimate first delivery.
 
 # Data Handling Module
 
-`module-id: aiscb:data-handling`. Load for request parsing, database access,
-files, archives, templates, process execution, deserialization, search,
-pagination, uploads, error responses, logging, or external destinations.
+`module-id: aiscb:data-handling`. Load for request parsing, database access, files, archives, templates, process execution, deserialization, search, pagination, uploads, response serialization, error responses, logging, or external destinations. Reading or editing source or documentation alone does not trigger this module; changes to their parsing or processing do. Handling untrusted files, executing processes, and contacting external destinations remain in scope.
 
 ## Data Handling
 
-- **[aiscb-ERRORS-001] Errors & Logging:** Return no stack traces, internal paths, or raw exceptions. Log security-relevant events with enough context to investigate, but no sensitive data.
+- **[aiscb-ERRORS-001] Errors & Logging:** Return no stack traces, internal paths, or raw exceptions. Log security-relevant events with enough context to investigate, but no sensitive data. Encode untrusted log fields for the output format so line breaks and delimiters cannot create records or alter log structure.
+- **[aiscb-DESERIALIZE-001] Data-Only Deserialization:** Parse untrusted data with executable tags and arbitrary object construction disabled; replace unsafe scaffold loaders. Test valid data and rejection of executable tags without side effects.
+- **[aiscb-RESPONSES-001] Response Fields:** Select response fields explicitly; never copy credentials from internal records. Test intended fields are returned and internal credentials are absent.
 - **[aiscb-LIMITS-001] Resource Limits:** Bound input-driven work with timeouts and size or pagination caps; avoid unbounded loops and user-supplied regular expressions.
 - **[aiscb-FILES-001] Untrusted Files:** Allow only required file types and validate content rather than trusting names or MIME headers. Use server-generated storage names outside executable/public paths and authorize downloads; serve untrusted active content as attachments or from an isolated origin. Confine parsing and extraction, reject escaping paths and links, and cap expanded bytes, entry counts, nesting, and processing time. Test traversal, misleading types, unauthorized downloads, and decompression exhaustion.
-- **[aiscb-EGRESS-001] Outbound Requests:** For input-influenced destinations, allow only required schemes, hosts, ports, and network ranges. Validate resolved addresses at connection time, including IPv6; block metadata and unintended internal/loopback access. Disable redirects or revalidate every hop and never forward credentials to a different origin. Use a maintained URL parser and connection-bound checks or an enforcing egress proxy, not a DNS check separated from use. Test redirects, alternate address encodings, and DNS changes against the enforced boundary.
+- **[aiscb-EGRESS-001] Outbound Requests:** For input-influenced destinations, allow only required schemes, hosts, ports, and network ranges. Validate dynamic URL path segments against their intended format before encoding; prevent traversal or normalization from changing the allowed resource. Validate resolved addresses at connection time, including IPv6; block metadata and unintended internal/loopback access. Disable redirects or revalidate every hop and never forward credentials to a different origin. Use a maintained URL parser and connection-bound checks or an enforcing egress proxy, not a DNS check separated from use. Test path traversal, redirects, alternate address encodings, and DNS changes against the enforced boundary.
 
 # Secrets and Initialization Module
 
-`module-id: aiscb:secrets-initialization`. Load for credentials, passwords, tokens,
-keys, signing, secret rotation, first-start setup, seed data, demo accounts, or
-prototype initialization.
+`module-id: aiscb:secrets-initialization`. Load for credentials, passwords, tokens, keys, signing, secret rotation, first-start setup, seed data, demo accounts, or prototype initialization.
 
 ## Secrets and Initialization
 
@@ -91,9 +94,7 @@ prototype initialization.
 
 # Software Supply Chain Module
 
-`module-id: aiscb:supply-chain`. Load when adding, updating, executing, locking,
-or deploying packages, CI actions, container images, scripts, build tools,
-installers, or external downloads.
+`module-id: aiscb:supply-chain`. Load when adding, updating, executing, locking, or deploying packages, CI actions, container images, scripts, build tools, installers, or external downloads.
 
 ## Software Supply Chain
 
@@ -101,10 +102,7 @@ installers, or external downloads.
 
 # Deployment and Environments Module
 
-`module-id: aiscb:deployment-environments`. Load for: Network exposure, TLS termination,
-proxies, containers, CI/CD permissions, production configuration, startup requirements,
-or activation, exposure and production separation of debug features, development
-servers, mocks and fixtures; not isolated test-data edits alone.
+`module-id: aiscb:deployment-environments`. Load for: Network exposure, TLS termination, proxies, containers, CI/CD permissions, production configuration, startup requirements, or activation, exposure and production separation of debug features, development servers, mocks and fixtures; not isolated test-data edits alone.
 
 ## Deployment and Environments
 
@@ -114,10 +112,7 @@ servers, mocks and fixtures; not isolated test-data edits alone.
 
 # LLM Applications Module
 
-`module-id: aiscb:llm-applications`. Load when designing or changing LLM features
-in the system being built: prompts, retrieval, memory, model output, agents,
-tool calls, generated code, or model-selected resources; not merely the coding
-assistant's own prompts, tool use, or code generation.
+`module-id: aiscb:llm-applications`. Load when designing or changing LLM features in the system being built: prompts, retrieval, memory, model output, agents, tool calls, generated code, or model-selected resources; not merely the coding assistant's own prompts, tool use, or code generation.
 
 ## LLM Applications
 
@@ -125,11 +120,7 @@ assistant's own prompts, tool use, or code generation.
 
 # LLM Agents Module
 
-`module-id: aiscb:llm-agents`. Load for: Designing or changing model-directed tool
-execution, autonomous workflows, action permissions or approvals, delegation, or
-multi-agent orchestration in the system being built; not merely the coding assistant's
-own tools.
-Requires `aiscb:llm-applications`.
+`module-id: aiscb:llm-agents`. Load for: Designing or changing model-directed tool execution, autonomous workflows, action permissions or approvals, delegation, or multi-agent orchestration in the system being built; not merely the coding assistant's own tools. Requires `aiscb:llm-applications`.
 
 ## LLM Agents
 
@@ -140,11 +131,7 @@ Requires `aiscb:llm-applications`.
 
 # LLM Retrieval and Memory Module
 
-`module-id: aiscb:llm-retrieval-memory`. Load for: Designing or changing retrieval or
-persistent memory in an LLM application: selecting documents for model answers, RAG,
-vector stores, context caches, or creating, replacing and deleting model/agent memories;
-not ordinary database queries or the coding assistant's own context.
-Requires `aiscb:llm-applications`.
+`module-id: aiscb:llm-retrieval-memory`. Load for: Designing or changing retrieval or persistent memory in an LLM application: selecting documents for model answers, RAG, vector stores, context caches, or creating, replacing and deleting model/agent memories; not ordinary database queries or the coding assistant's own context. Requires `aiscb:llm-applications`.
 
 ## LLM Retrieval and Memory
 
@@ -154,11 +141,7 @@ Requires `aiscb:llm-applications`.
 
 # MCP Clients and Servers Module
 
-`module-id: aiscb:mcp-clients-servers`. Load when building or changing MCP clients,
-servers, proxies, transports, discovery, or server installation/configuration;
-not merely because the coding assistant uses an existing MCP tool.
-Requires `aiscb:data-handling`. Load web-auth-crypto for HTTP/OAuth, supply-chain
-for server packages, and llm-agents only for model-directed actions.
+`module-id: aiscb:mcp-clients-servers`. Load when building or changing MCP clients, servers, proxies, transports, discovery, or server installation/configuration; not merely because the coding assistant uses an existing MCP tool. Requires `aiscb:data-handling`. Load web for HTTP and authentication for OAuth, supply-chain for server packages, and llm-agents only for model-directed actions.
 
 ## MCP Clients and Servers
 

@@ -18,7 +18,7 @@ moves all three together.
 
 | File | Baseline id | Source |
 |---|---|---|
-| `secure-coding-baseline.md` | `aiscb-0.1.17` | <https://github.com/appsec-foundry/aiscb> |
+| `secure-coding-baseline.md` | `aiscb-0.1.19` | <https://github.com/appsec-foundry/aiscb> |
 
 ## Modular releases and compatibility
 
