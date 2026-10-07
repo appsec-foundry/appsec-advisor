@@ -101,3 +101,15 @@ def test_questions_and_omissions_are_recorded(setup):
     assert len(context["questions"]) == 2
     assert context["question_selection"]["required_complete"] is False
     assert len(context["question_selection"]["omitted"]) == len(resolved["questions"]) - 2
+
+
+@pytest.mark.parametrize(
+    "signals",
+    [[], ["business_operation", "business_operation"], ["authorize_extra_reads"], "business_operation"],
+    ids=["empty", "duplicate", "unknown-authority", "wrong-type"],
+)
+def test_invalid_applicability_signals_reject_context(setup, signals):
+    _, request, resolved, selection = setup
+    selection["selected"][0] = dict(selection["selected"][0], applies_when=signals)
+    with pytest.raises(bc.ContextContractError):
+        bc.build(request, resolved, selection)

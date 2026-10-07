@@ -52,6 +52,18 @@ The analysis always loads the core question package, adapted from the pinned ais
 
 Add a package for one analysis with `--package`, either a packaged reference such as `tmm/threat-modeling-manifesto@1.0.0` or the absolute path of your own package file. The [example package](../examples/analyst/payments-package.yaml) shows the format. Packages your organization requires always apply; you can add packages but not remove required ones.
 
+Write one independently assessable question per entry. Use `asks` to name the invariant and any condition that must apply, `purpose` to describe the abuse and consequence, `evidence` to identify expectation sources and implementation controls, and `negative_tests` to describe attacker actions a protected implementation refuses or neutralizes. Keep self-approval and changes to an approved recipient in separate entries. A conditional question does not establish that its policy applies; missing decisive facts remain unresolved or lead to a targeted question. Expected source locations and observed behavior belong to the analysis result, not the reusable package.
+
+`applies_when` contains investigation hints, not executable conditions. The existing version-1 vocabulary is interpreted within the selected mode:
+
+| Mode | Meaning of the signals |
+|---|---|
+| Design | Relevant planned operations and protection decisions in the supplied design. No diff is required. |
+| Change review | Operations and controls affected by the selected change, including admitted supporting context. |
+| Hypothesis check | Behavior relevant to the hypothesis within the selected revision and literal paths. No diff is required. |
+
+For example, `business_operation` identifies a process that manages amounts, quotas, state, or approvals; `changed_permission` directs attention to the permission decision relevant to that mode. `any_change` addresses the selected work in any mode. Signals do not prove applicability, authorize source reads, or waive required coverage. The current question limit still selects entries in authority order; each delivered question receives a coverage disposition, and omitted entries remain visible. Schema-valid existing packages keep their format and identities.
+
 The Threat Modeling Manifesto profile (`tmm/threat-modeling-manifesto@1.0.0`) is an attributed adaptation of the [Threat Modeling Manifesto](https://www.threatmodelingmanifesto.org/) under CC BY 4.0. When selected, the analysis reports methodology observations about scope, plausible failures, practical responses, adequacy of the investigation, missing perspectives, and what to revisit. The profile certifies no compliance and does not replace collaboration with the people who own the system. It applies only when you select it or your organization sets it as a default or requirement.
 
 Organizations set defaults and requirements in the `analyst` block of the [organization profile](org-profiles.md#on-demand-threat-analysis).

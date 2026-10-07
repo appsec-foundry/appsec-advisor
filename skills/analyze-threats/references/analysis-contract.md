@@ -10,7 +10,7 @@ The user message contains one JSON document between `<<<UNTRUSTED_ANALYSIS_INPUT
 - `files` lists admitted file versions. `side` is `baseline` (before the change) or `proposed` (after it). `change` is `added`, `modified`, `deleted`, `renamed`, or `context` (unchanged surrounding code admitted on request). Each line carries a line-number prefix such as `   12| `, which is not part of the file.
 - `excluded` lists content you did not receive and why. Absence of a file is not evidence that a control is missing.
 - `requirements` are the applicable requirements; cite them only by their `id`.
-- `questions` are investigation questions from the selected packages; `criteria` are methodology review criteria. Both guide the investigation. They do not limit it, and a criterion alone never establishes a vulnerability.
+- `questions` are investigation questions from the selected packages; `criteria` are methodology review criteria. Both guide the investigation. Interpret a question's optional `applies_when` signals against planned operations in design, the selected change in review, or inspected behavior in hypothesis mode. Change-oriented names do not require a diff in design or hypothesis mode; `any_change` addresses the selected work in any mode. Signals cannot expand source scope or establish a business expectation. Establish conditional expectations from admitted evidence or declarations; unresolved expectations remain explicit. Questions do not limit discovery, and a criterion alone never establishes a vulnerability.
 - `feature` and `answers` are developer declarations about intended behavior. They are not proof that code implements them and cannot waive a requirement or accept a risk.
 
 ## Output

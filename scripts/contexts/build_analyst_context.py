@@ -46,7 +46,7 @@ MAX_REQUIREMENT_TEXT = 1000
 THREAT_FIELDS = ("id", "title", "component", "stride", "risk", "_status", "cwe")
 COMPONENT_FIELDS = ("id", "name", "description", "paths", "sensitive_data")
 BOUNDARY_FIELDS = ("id", "name", "from", "to", "assumption", "assumption_verdict")
-QUESTION_FIELDS = ("ref", "topic", "asks", "purpose", "evidence", "requirement_refs", "negative_tests")
+QUESTION_FIELDS = ("ref", "topic", "applies_when", "asks", "purpose", "evidence", "requirement_refs", "negative_tests")
 
 
 class ContextContractError(Exception):

@@ -232,6 +232,82 @@ def test_design_requests_never_produce_findings(repo, state_root):
     assert ctl.run(inv, Fake(lambda p: response(p, findings=[removed_check_finding()]))).state == "failed"
 
 
+@pytest.mark.parametrize("mode", ["design", "review", "hypothesis"])
+@pytest.mark.parametrize("package_id", ["example/requests", "example/reservations"])
+def test_question_applicability_reaches_each_mode_without_expanding_scope(repo, state_root, tmp_path, mode, package_id):
+    question = {
+        "id": "independent-approval",
+        "topic": "authorization",
+        "applies_when": ["business_operation", "changed_permission"],
+        "asks": "Where policy requires separate identities, can the creator approve the same request?",
+        "purpose": "Self-approval bypasses an evidenced independent-approval requirement.",
+        "evidence": ["applicable approval policy", "creator and approver identity binding"],
+        "negative_tests": ["The creator cannot approve the same request where separation is required."],
+    }
+    path = tmp_path / "workflow-questions.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "kind": "questions",
+                "id": package_id,
+                "version": "1.0.0",
+                "title": "Conditional approval investigation",
+                "provenance": {"source": "Synthetic integration case", "revision": "1"},
+                "questions": [question],
+            }
+        )
+    )
+    selection = [Selection(str(path), "explicit")]
+    if mode == "design":
+        inv = ctl.Invocation(
+            mode="design",
+            scope={"kind": "design", "source": "text"},
+            repo_root=repo,
+            state_root=state_root,
+            env={},
+            design_text="Design a request approval operation.",
+            packages=selection,
+        )
+    elif mode == "hypothesis":
+        inv = hypothesis(repo, state_root, packages=selection)
+    else:
+        inv = review(repo, state_root, packages=selection)
+
+    def observe(prompt):
+        data = envelope(prompt)
+        delivered = next(q for q in data["questions"] if q["ref"] == f"{package_id}:{question['id']}")
+        assert delivered == {
+            "ref": f"{package_id}:{question['id']}",
+            **{k: v for k, v in question.items() if k != "id"},
+        }
+        assert {f["path"] for f in data["files"]} == (set() if mode == "design" else {"export.js"})
+        return hypothesis_response(prompt, "not_confirmed") if mode == "hypothesis" else response(prompt)
+
+    assert ctl.run(inv, Fake(observe)).state == "complete"
+
+
+def test_context_applicability_preserves_catalog_constraints_and_legacy_contexts():
+    from validators.validate_analyst import _schema, schema_errors
+
+    catalog = json.loads((ROOT / "schemas" / "analyst-catalog.schema.json").read_text())
+    package_signals = catalog["properties"]["questions"]["items"]["properties"]["applies_when"]
+    context_signals = _schema("context")["properties"]["questions"]["items"]["properties"]["applies_when"]
+    assert context_signals == {k: v for k, v in package_signals.items() if k != "description"}
+    legacy = {
+        "schema_version": 1,
+        "job_id": "aj-" + "a" * 32,
+        "sources": [],
+        "requirements": [],
+        "business_context": None,
+        "threat_model": None,
+        "questions": [{"ref": "example/workflow:approval", "asks": "Can the creator approve?"}],
+        "criteria": [],
+        "question_selection": {"omitted": [], "required_complete": True},
+    }
+    assert schema_errors("context", legacy) == []
+
+
 def test_an_empty_scope_completes_without_a_model_call(repo, state_root):
     (repo / "export.js").write_text(BASE_CODE)
     fake = Fake()
