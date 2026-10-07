@@ -27,7 +27,8 @@
     "mode": {
       "enum": [
         "design",
-        "review"
+        "review",
+        "hypothesis"
       ]
     },
     "scope": {
@@ -211,6 +212,12 @@
     },
     "requested_at": {
       "$ref": "#/$defs/timestamp"
+    },
+    "hypothesis": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 20000,
+      "pattern": "\\S"
     }
   },
   "$defs": {
@@ -309,6 +316,35 @@
                 "staged",
                 "worktree"
               ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "revision",
+            "paths"
+          ],
+          "properties": {
+            "kind": {
+              "const": "hypothesis"
+            },
+            "revision": {
+              "$ref": "#/$defs/revision"
+            },
+            "paths": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 20,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024,
+                "pattern": "^(?!/)(?!.*(^|/)\\.\\.?(/|$))[^\\x00-\\x1f\\\\]+$"
+              }
             }
           }
         }

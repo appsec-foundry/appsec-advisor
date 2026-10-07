@@ -27,7 +27,8 @@
         "design",
         "commits",
         "staged",
-        "worktree"
+        "worktree",
+        "hypothesis"
       ]
     },
     "objects": {

@@ -310,3 +310,41 @@ def test_snapshot_must_match_its_request_and_limits():
 def test_missing_jsonschema_fails_closed(monkeypatch):
     monkeypatch.setitem(sys.modules, "jsonschema", None)
     assert va.validate_request(_request()) == ["jsonschema not installed; analyst contracts fail closed"]
+
+
+def test_hypothesis_request_requires_matching_mode_scope_and_text():
+    r = _request(
+        mode="hypothesis",
+        scope={"kind": "hypothesis", "revision": "HEAD", "paths": ["src/api"]},
+        hypothesis="Can a caller read another account?",
+    )
+    assert va.validate_request(r) == []
+    for key in ("hypothesis", "mode"):
+        invalid = copy.deepcopy(r)
+        invalid.pop(key)
+        assert va.validate_request(invalid)
+    r["mode"] = "review"
+    assert va.validate_request(r)
+
+
+@pytest.mark.parametrize("path", [".", "..", "src/../other", "/etc", "src//api", "src/", "src\\api", "src\napi"])
+def test_hypothesis_scope_rejects_noncanonical_paths(path):
+    r = _request(
+        mode="hypothesis", scope={"kind": "hypothesis", "revision": "HEAD", "paths": [path]}, hypothesis="Check access."
+    )
+    assert va.validate_request(r)
+
+
+def test_hypothesis_snapshot_cannot_claim_outside_or_baseline_evidence():
+    r = _request(
+        mode="hypothesis",
+        scope={"kind": "hypothesis", "revision": "HEAD", "paths": ["src"]},
+        hypothesis="Check access.",
+    )
+    s = _snapshot(
+        scope_kind="hypothesis", objects={"head": OID}, admitted=[_entry("src/api.py", change="context")], excluded=[]
+    )
+    assert va.validate_snapshot(s, r) == []
+    for e in (_entry("src-other/api.py", change="context"), _entry("src/api.py", side="baseline", change="context")):
+        s["admitted"] = [e]
+        assert va.validate_snapshot(s, r)

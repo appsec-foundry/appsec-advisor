@@ -80,6 +80,11 @@ def response(prompt: str, **overrides) -> dict:
         "limitations": [],
     }
     reply.update(overrides)
+    if "question_coverage" not in overrides:
+        asked = {q.get("question_ref") for q in reply["questions"]}
+        for entry in reply["question_coverage"]:
+            if entry["question_ref"] in asked:
+                entry.update(status="needs_answer", note="The scope needs clarification.")
     return reply
 
 
@@ -266,7 +271,7 @@ def test_evidence_requests_are_served_from_the_frozen_view(repo, state_root):
     fake = Fake(
         lambda p: response(
             p,
-            evidence_requests=[{"path": "auth.js", "reason": "middleware"}, {"path": "missing.js", "reason": "absent"}],
+            evidence_requests=[{"path": "auth.js", "reason": "middleware"}],
         ),
         lambda p: response(p),
     )
@@ -275,7 +280,7 @@ def test_evidence_requests_are_served_from_the_frozen_view(repo, state_root):
     second = {f["path"]: f["change"] for f in envelope(fake.prompts[1])["files"] if f["side"] == "proposed"}
     assert second["auth.js"] == "context" and "missing.js" not in second
     result = st.read_artifact(job_root(state_root, repo, outcome.job_id), "result.json")
-    assert any("outside the captured view" in item for item in result["limitations"])
+    assert result["coverage"]["evidence_requests"][0]["status"] == "admitted"
 
 
 def test_an_escaping_evidence_request_invalidates_the_reply(repo, state_root):
@@ -627,3 +632,240 @@ def test_an_output_directory_that_becomes_assessment_state_keeps_the_result_priv
     outcome = ctl.run(review(repo, state_root, output_dir=out), Fake(poison))
     assert outcome.state == "failed"
     assert not (out / "analyst-result.json").exists()
+
+
+@pytest.mark.parametrize("limited", ["evidence_rounds", "host_calls"])
+@pytest.mark.parametrize("path", ["policy.js", "access/rules.py"])
+def test_unfulfilled_evidence_cannot_complete(repo, state_root, monkeypatch, limited, path):
+    original = ctl.load_limits
+
+    def bounded():
+        limits = original()
+        limits[limited] = 0 if limited == "evidence_rounds" else 1
+        return limits
+
+    monkeypatch.setattr(ctl, "load_limits", bounded)
+    fake = Fake(lambda p: response(p, evidence_requests=[{"path": path, "reason": "Required policy evidence"}]))
+    outcome = ctl.run(review(repo, state_root), fake)
+    result = st.read_artifact(job_root(state_root, repo, outcome.job_id), "result.json")
+    assert (outcome.state, outcome.exit_code) == ("incomplete", 2)
+    assert result["terminal_reason"] == "limit_exhausted"
+    assert result["coverage"]["required_complete"] is False
+    assert result["coverage"]["evidence_requests"][0]["status"] == "limit_exhausted"
+    assert path in outcome.report and "Required policy evidence" in outcome.report
+
+
+@pytest.mark.parametrize(
+    "path,content", [("missing.js", None), ("large.js", "a" * 66000), ("binary.bin", "\x00binary")]
+)
+def test_rejected_evidence_is_reported_as_incomplete(repo, state_root, path, content):
+    if content is not None:
+        (repo / path).write_text(content)
+        git(repo, "add", path)
+        git(repo, "commit", "-q", "-m", "context")
+    fake = Fake(lambda p: response(p, evidence_requests=[{"path": path, "reason": "Required context"}]))
+    outcome = ctl.run(review(repo, state_root), fake)
+    result = st.read_artifact(job_root(state_root, repo, outcome.job_id), "result.json")
+    assert outcome.state == "incomplete" and len(fake.prompts) == 1
+    assert result["coverage"]["evidence_requests"][0]["status"] == "rejected"
+    assert path in outcome.report
+
+
+@pytest.mark.parametrize("question_index", [0, 2])
+def test_needs_answer_without_a_question_is_rejected(repo, state_root, question_index):
+    def inconsistent(p):
+        reply = response(p)
+        reply["question_coverage"][question_index]["status"] = "needs_answer"
+        return reply
+
+    outcome = ctl.run(review(repo, state_root), Fake(inconsistent))
+    assert outcome.state == "failed" and outcome.exit_code == 2
+
+
+def test_optional_question_does_not_block_complete_analysis(repo, state_root):
+    question = {
+        "question_ref": "appsec/core:authz-scope",
+        "asks": "Which role name is intended?",
+        "why": "Naming the proposed remediation.",
+        "affects": "export.js",
+        "required": False,
+    }
+    outcome = ctl.run(review(repo, state_root), Fake(lambda p: response(p, questions=[question])))
+    assert outcome.state == "complete" and len(outcome.questions) == 1
+    assert "optional" in outcome.report
+
+
+@pytest.mark.parametrize(
+    "path,guard,operation",
+    [
+        ("handler.py", "require_owner()", "return records.read()"),
+        ("jobs/send.py", "check_project_access()", "return reports.export()"),
+    ],
+)
+def test_removed_control_can_introduce_a_finding(repo, state_root, path, guard, operation):
+    target = repo / path
+    target.parent.mkdir(exist_ok=True)
+    target.write_text(f"def handle():\n    {guard}\n    {operation}\n")
+    git(repo, "add", path)
+    git(repo, "commit", "-q", "-m", "protected operation")
+    target.write_text(f"def handle():\n    {operation}\n")
+    proposed = {"side": "proposed", "path": path, "line_start": 2, "line_end": 2, "excerpt": operation}
+    baseline = {"side": "baseline", "path": path, "line_start": 2, "line_end": 2, "excerpt": guard}
+    finding = removed_check_finding(
+        change_relationship="introduced", evidence=[proposed], comparison=[baseline, proposed]
+    )
+    outcome = ctl.run(review(repo, state_root), Fake(lambda p: response(p, findings=[finding])))
+    assert outcome.state == "complete" and "introduced by the change" in outcome.report
+    # The same operation, cited in both versions without the removed guard, is not change evidence.
+    unchanged = dict(baseline, line_start=3, line_end=3, excerpt=operation)
+    finding["comparison"] = [unchanged, proposed]
+    outcome = ctl.run(review(repo, state_root), Fake(lambda p: response(p, findings=[finding])))
+    assert outcome.state == "failed"
+
+
+def hypothesis(repo, state_root, paths=None, **kwargs):
+    return ctl.Invocation(
+        mode="hypothesis",
+        scope={"kind": "hypothesis", "revision": "HEAD", "paths": paths or ["export.js"]},
+        hypothesis="Can a caller read another customer record?",
+        repo_root=repo,
+        state_root=state_root,
+        env={},
+        **kwargs,
+    )
+
+
+def hypothesis_response(prompt, status="supported", **overrides):
+    source = next(f for f in envelope(prompt)["files"] if f["path"] == "export.js")
+    excerpt = source["numbered_lines"].splitlines()[0].split("| ", 1)[1]
+    assessment = {
+        "status": status,
+        "explanation": "The inspected route establishes the bounded conclusion.",
+        "evidence": [{"side": "proposed", "path": "export.js", "line_start": 1, "line_end": 1, "excerpt": excerpt}],
+        "next_action": "Verify the authorization behavior with the system owner.",
+    }
+    return response(prompt, hypothesis_assessment=assessment, **overrides)
+
+
+@pytest.mark.parametrize(
+    "status,expected", [("supported", "complete"), ("not_confirmed", "complete"), ("unresolved", "incomplete")]
+)
+def test_hypothesis_check_reports_evidenced_conclusion(repo, state_root, status, expected):
+    fake = Fake(lambda p: hypothesis_response(p, status))
+    outcome = ctl.run(hypothesis(repo, state_root), fake)
+    result = st.read_artifact(job_root(state_root, repo, outcome.job_id), "result.json")
+    assert outcome.state == expected
+    assert result["hypothesis_assessment"]["status"] == status
+    inputs = envelope(fake.prompts[0])
+    assert len(inputs["files"]) == 1 and inputs["files"][0]["change"] == "context"
+    assert "requireSupport" in inputs["files"][0]["numbered_lines"]  # committed version, not the dirty worktree
+    assert inputs["hypothesis"] == result["hypothesis"]
+    assert result["objects"]["head"] in outcome.report and "export.js" in outcome.report
+    assert "does not mean disproved or safe" in outcome.report
+    assert not (job_root(state_root, repo, outcome.job_id) / "source").exists()
+
+
+@pytest.mark.parametrize(
+    "malformed", ["missing", "no_evidence", "invented_quote", "blank_quote", "outside_scope", "change_claim"]
+)
+def test_hypothesis_claims_need_valid_scoped_evidence(repo, state_root, malformed):
+    def reply(p):
+        r = hypothesis_response(p)
+        if malformed == "missing":
+            r.pop("hypothesis_assessment")
+        elif malformed == "no_evidence":
+            r["hypothesis_assessment"]["evidence"] = []
+        elif malformed == "invented_quote":
+            r["hypothesis_assessment"]["evidence"][0]["excerpt"] = "invented_call()"
+        elif malformed == "blank_quote":
+            r["hypothesis_assessment"]["evidence"][0]["excerpt"] = "   "
+        elif malformed == "outside_scope":
+            r["hypothesis_assessment"]["evidence"][0]["path"] = "auth.js"
+        else:
+            r["findings"] = [removed_check_finding()]
+        return r
+
+    outcome = ctl.run(hypothesis(repo, state_root), Fake(reply))
+    assert outcome.state == "failed"
+    assert "Supported by code" not in outcome.report
+
+
+def test_hypothesis_cannot_expand_authorized_paths(repo, state_root):
+    fake = Fake(
+        lambda p: hypothesis_response(
+            p, "unresolved", evidence_requests=[{"path": "auth.js", "reason": "Check middleware"}]
+        )
+    )
+    outcome = ctl.run(hypothesis(repo, state_root), fake)
+    assert outcome.state == "incomplete" and len(fake.prompts) == 1
+    assert "outside the captured view" in outcome.report
+    assert all(f["path"] != "auth.js" for f in envelope(fake.prompts[0])["files"])
+
+
+@pytest.mark.parametrize("paths", [["absent"], ["."], ["../outside"], ["/tmp"], ["src//api"], ["export.js/"]])
+def test_hypothesis_invalid_or_missing_scope_never_calls_the_model(repo, state_root, paths):
+    fake = Fake()
+    outcome = ctl.run(hypothesis(repo, state_root, paths), fake)
+    assert outcome.state in ("rejected", "incomplete") and outcome.exit_code == 2
+    assert fake.prompts == []
+
+
+def test_hypothesis_required_question_resumes_the_same_snapshot(repo, state_root):
+    q = {
+        "question_ref": "appsec/core:authz-scope",
+        "asks": "Which accounts may support access?",
+        "why": "Determines the authorized scope.",
+        "affects": "export.js",
+        "required": True,
+    }
+    fake = Fake(
+        lambda p: hypothesis_response(p, "unresolved", questions=[q]), lambda p: hypothesis_response(p, "not_confirmed")
+    )
+    first = ctl.run(hypothesis(repo, state_root), fake)
+    assert first.state == "awaiting_answers"
+    (repo / "export.js").write_text("changed after capture\n")
+    done = ctl.answer(
+        first.job_id, repo, None, fake, state_root, inline_answers={first.questions[0]["id"]: "Only assigned accounts."}
+    )
+    assert done.state == "complete"
+    assert envelope(fake.prompts[0])["files"] == envelope(fake.prompts[1])["files"]
+
+
+def test_last_evidence_round_reports_remaining_work(repo, state_root):
+    for path in ("policy_a.py", "policy_b.py", "policy_c.py"):
+        (repo / path).write_text("def check():\n    return True\n")
+        git(repo, "add", path)
+    git(repo, "commit", "-q", "-m", "three evidence sources")
+
+    def first(p):
+        return response(p, evidence_requests=[{"path": "policy_a.py", "reason": "Resolve the first policy"}])
+
+    def second(p):
+        return response(p, evidence_requests=[{"path": "policy_b.py", "reason": "Resolve its delegate"}])
+
+    def third(p):
+        return response(p, evidence_requests=[{"path": "policy_c.py", "reason": "Resolve the final decision"}])
+
+    fake = Fake(first, second, third)
+    outcome = ctl.run(review(repo, state_root), fake)
+    result = st.read_artifact(job_root(state_root, repo, outcome.job_id), "result.json")
+    assert outcome.state == "incomplete" and len(fake.prompts) == 3
+    assert [e["status"] for e in result["coverage"]["evidence_requests"]] == ["admitted", "admitted", "limit_exhausted"]
+    assert "policy_c.py" in outcome.report
+
+
+def test_partially_admitted_evidence_stays_incomplete(repo, state_root):
+    fake = Fake(
+        lambda p: response(
+            p,
+            evidence_requests=[
+                {"path": "auth.js", "reason": "Check the middleware"},
+                {"path": "missing.js", "reason": "Check its required policy"},
+            ],
+        )
+    )
+    outcome = ctl.run(review(repo, state_root), fake)
+    result = st.read_artifact(job_root(state_root, repo, outcome.job_id), "result.json")
+    assert outcome.state == "incomplete" and len(fake.prompts) == 1
+    assert [e["status"] for e in result["coverage"]["evidence_requests"]] == ["admitted", "rejected"]
+    assert "missing.js" in outcome.report

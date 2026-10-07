@@ -79,13 +79,35 @@ def render(result: dict) -> str:
         inline(result["summary"]) or "No summary.",
         "",
     ]
+    if result["mode"] == "hypothesis":
+        out += ["## Hypothesis", "", inline(result["hypothesis"]), ""]
+        out += [f"Revision: {code(result['objects'].get('head', 'unavailable'))}", ""]
+        out += ["Selected paths: " + ", ".join(code(p) for p in result["scope"]["paths"]), ""]
+        assessment = result.get("hypothesis_assessment")
+        if assessment:
+            labels = {
+                "supported": "Supported by code",
+                "not_confirmed": "Not confirmed in the inspected scope",
+                "unresolved": "Unresolved",
+            }
+            out += [f"**{labels[assessment['status']]}**", "", inline(assessment["explanation"]), ""]
+            out += [_location(loc) for loc in assessment["evidence"]]
+            out += ["", "Next action: " + inline(assessment["next_action"]), ""]
+        else:
+            out += ["Unresolved: no validated conclusion is available.", ""]
+        out += ["Not confirmed does not mean disproved or safe. Conclusions apply only to the inspected scope.", ""]
     if result["findings"]:
         out += ["## Findings", ""]
         for f in result["findings"]:
             out += [
                 f"### {f['id']} {inline(f['title'])}",
                 "",
-                f"Severity: **{f['severity']}**. {RELATIONSHIP[f['change_relationship']]}.",
+                f"Severity: **{f['severity']}**. "
+                + (
+                    "Observed in the inspected revision."
+                    if result["mode"] == "hypothesis"
+                    else RELATIONSHIP[f["change_relationship"]] + "."
+                ),
                 "",
             ]
             out += [inline(f["explanation"]), "", "Evidence:", ""]
@@ -131,6 +153,12 @@ def render(result: dict) -> str:
     out += [f"- Source {s['kind']} ({inline(s['label'])}): {s['status']}" for s in cov["sources"]]
     out += [f"- Question not considered: {code(q['ref'])} ({inline(q['reason'])})" for q in cov["omitted_questions"]]
     out += [f"- Required coverage complete: {'yes' if cov['required_complete'] else 'no'}", ""]
+    for e in cov.get("evidence_requests", []):
+        out += [
+            f"- Evidence {code(e['path'])}: {e['status']}. {inline(e['detail'])} Requested because: {inline(e['reason'])}"
+        ]
+    if cov.get("evidence_requests"):
+        out.append("")
     out += ["## Packages", ""]
     out += [
         f"- {code(p['id'])} {p['version']} ({p['authority']}), source: {inline(p['provenance']['source'])}, revision {inline(p['provenance']['revision'])}"

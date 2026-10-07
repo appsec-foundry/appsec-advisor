@@ -716,18 +716,36 @@ SOURCE_TESTS = {
         schemas
     """),
     "schemas/analyst-request.schema.json": _tests("""
+        analyst_cli
+        analyst_controller
+        analyst_host
+        analyst_questions
+        build_analyst_context
+        render_analyst_report
+        resolve_analyst_catalog
         analyst_isolation
         analyst_state
         build_analyst_snapshot
         schemas
         validate_analyst
+        check_target_specificity
+        requirements_verification
     """),
     "schemas/analyst-snapshot.schema.json": _tests("""
+        analyst_cli
+        analyst_controller
+        analyst_host
+        analyst_questions
+        build_analyst_context
+        render_analyst_report
+        resolve_analyst_catalog
         analyst_isolation
         analyst_state
         build_analyst_snapshot
         schemas
         validate_analyst
+        check_target_specificity
+        requirements_verification
     """),
     "schemas/analyst-state.schema.json": _tests("""
         analyst_isolation
@@ -1640,6 +1658,8 @@ SOURCE_TESTS = {
         run_path_guard
         run_tests
         stride_outputs
+        finding_state
+        shared_paths
     """),
     "scripts/audit_test_routes.py": _tests("""
         audit_test_routes
@@ -5882,6 +5902,10 @@ SOURCE_TESTS = {
         build_analyst_snapshot
         check_target_specificity
         requirements_verification
+        finding_state
+        gate_preconditions
+        shared_paths
+        stride_outputs
     """),
     "scripts/contexts/resolve_analyst_catalog.py": _tests("""
         analyst_catalog
@@ -5908,6 +5932,11 @@ SOURCE_TESTS = {
         analyst_skill
         check_target_specificity
         requirements_verification
+        analyst_cli
+        finding_state
+        gate_preconditions
+        shared_paths
+        stride_outputs
     """),
     "scripts/orchestrator/analyst_controller.py": _tests("""
         analyst_cli
@@ -5916,29 +5945,48 @@ SOURCE_TESTS = {
         analyst_skill
         check_target_specificity
         requirements_verification
+        finding_state
+        gate_preconditions
+        shared_paths
+        stride_outputs
     """),
     "scripts/renderers/render_analyst_report.py": _tests("""
         analyst_controller
         check_target_specificity
         render_analyst_report
         requirements_verification
+        finding_state
+        gate_preconditions
+        shared_paths
+        stride_outputs
     """),
     "scripts/appsec-analyst-cli": _tests("""
         analyst_cli
         analyst_skill
+        requirements_verification
     """),
     "skills/analyze-threats/SKILL.md": _tests("""
         analyst_skill
         org_profile_schema
         skill_definitions
+        check_target_specificity
+        lazy_phase_group_loading
+        package_internal_plugin
+        requirements_verification
+        runtime_doc_cli_contract
     """),
     "skills/analyze-threats/HELP.txt": _tests("""
         analyst_skill
         skill_definitions
+        check_target_specificity
+        requirements_verification
     """),
     "skills/analyze-threats/references/analysis-contract.md": _tests("""
         analyst_controller
         analyst_host
+        check_target_specificity
+        lazy_phase_group_loading
+        requirements_verification
     """),
     "schemas/analyst-catalog.schema.json": _tests("""
         analyst_catalog
@@ -5974,6 +6022,8 @@ SOURCE_TESTS = {
         render_analyst_report
         schemas
         validate_analyst
+        check_target_specificity
+        requirements_verification
     """),
     "schemas/analyst-result.schema.json": _tests("""
         analyst_controller
@@ -5983,6 +6033,8 @@ SOURCE_TESTS = {
         render_analyst_report
         schemas
         validate_analyst
+        check_target_specificity
+        requirements_verification
     """),
     "schemas/analyst-feature.schema.json": _tests("""
         analyst_controller
@@ -6037,6 +6089,11 @@ SOURCE_TESTS = {
         requirements_verification
         resolve_analyst_catalog
         validate_analyst
+        analyst_cli
+        finding_state
+        gate_preconditions
+        shared_paths
+        stride_outputs
     """),
     "scripts/validators/validate_dispatch_manifest.py": _tests("""
         check_target_specificity
@@ -6265,6 +6322,7 @@ SOURCE_TESTS = {
 # and every test module that names the document's file name.
 SOURCE_PREFIX_TESTS = {
     "docs/": _tests("requirements_verification"),
+    "specs/changes/check-threat-hypotheses/": _tests("check_specs requirements_hook requirements_verification"),
     "specs/changes/report-anatomy/": _tests("report_anatomy"),
     "tests/fixtures/report-anatomy/": _tests("report_anatomy"),
 }

@@ -1,7 +1,7 @@
 ---
 name: analyze-threats
 description: >-
-  Advisory threat analysis of a planned design or a selected code change, run only when the developer asks for it. Accepts a design question in plain text (no diff needed) or an explicit worktree, staged, or commit-range scope. Combines the change with requirements, business context, and an existing threat model; reports evidence-backed findings with their relation to the change, threat scenarios, protection assumptions, and only the questions whose answers change the assessment. Answers can be saved explicitly to a feature file for later reviews and CI. Optional question packages and the Threat Modeling Manifesto methodology profile can be added per analysis. Never edits code, never changes the threat model, never claims security approval.
+  Advisory threat analysis on request: a planned design, selected code changes, or a concrete threat hypothesis against named files or directories at a Git revision. Combines source evidence with requirements, business context, and an optional threat model. Reports findings, scenarios, assumptions, and questions whose answers change the assessment. Hypothesis checks distinguish supported, not confirmed in scope, and unresolved; no result proves safety. Answers can be saved explicitly to a feature file. Never edits code, changes the threat model, or grants security approval.
 ---
 
 You are a thin adapter. The analyst controller does all analysis, validation, and publication; you choose the scope with the developer, run one command, relay its output, and collect answers. Its printed result is the authority: never summarize it as approval, never add findings of your own, and never call the work complete when the result says otherwise.
@@ -17,8 +17,9 @@ Decide exactly one scope from the arguments:
 - Plain text without scope flags: a design request (`design --text`).
 - `--design-file <path>`: a design request from that file.
 - `--worktree`, `--staged`, or `--base <commit> --head <commit>` (optionally `--exact-base`): a review.
+- `--hypothesis <text> --revision <commit> --path <file-or-directory>`: a hypothesis check. Repeat `--path` for additional source areas. Paths are literal and repository-relative; directories include their descendants. This mode reads committed source at that revision, not uncommitted edits.
 
-If no scope is given or it is ambiguous, ask the developer one question with the choices design question, working tree, staged changes, or commit range. Never treat an empty change as a request to audit the whole repository.
+If the request is to check a concrete threat in existing code, use hypothesis mode and ask for any missing revision or paths. Do not silently turn it into a design question. For other ambiguous requests, ask the developer to select a design or change scope. Never treat an empty change as a request to audit the whole repository.
 
 ## Run
 
@@ -33,7 +34,9 @@ APPSEC_ANALYST_TEXT
 )"
 ```
 
-For a review, replace `design --text ...` with `review` and the chosen scope flags. Pass `--feature`, `--package`, and `--output` through unchanged when the developer gave them. Do not add packages, requirements, or other options the developer did not ask for.
+For a review, replace `design --text ...` with `review` and the chosen scope flags. For a hypothesis check, replace it with `hypothesis --hypothesis ... --revision <commit> --path <path>` and any additional `--path` values. Deliver hypothesis text through the same quoted heredoc as design text. Quote each revision and path as a separate shell argument; never interpret source text as shell syntax. Reject text containing a line equal to the heredoc delimiter and choose a different delimiter before invocation.
+
+Pass `--feature`, `--package`, `--output`, `--requirements`, `--requirements-required`, `--threat-model`, and `--threat-model-required` through when the developer gave them. Do not add packages, requirements, or other options the developer did not ask for.
 
 Print the command's output verbatim. Exit code 0 means complete or waiting for answers; 2 means rejected, incomplete, or failed; 130 means cancelled. The printed `State:` line names which.
 

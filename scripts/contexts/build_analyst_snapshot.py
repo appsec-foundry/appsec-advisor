@@ -354,9 +354,35 @@ def capture(request: dict, job: Job, design_text: str | None = None) -> dict:
             handle.write(content)
         objects["design_sha256"] = scope["content_sha256"]
     else:
-        objects["head"] = _commit(repo, scope["head"] if scope["kind"] == "commits" else "HEAD")
+        revision = scope["revision"] if scope["kind"] == "hypothesis" else scope.get("head", "HEAD")
+        objects["head"] = _commit(repo, revision)
         head_tree = _tree(repo, objects["head"])
-        if scope["kind"] == "commits":
+        if scope["kind"] == "hypothesis":
+            for selected in scope["paths"]:
+                if not any(p == selected or p.startswith(selected + "/") for p in head_tree):
+                    cap.exclude(selected, "outside_scope")
+            for path, (mode, oid) in sorted(head_tree.items()):
+                if not any(path == p or path.startswith(p + "/") for p in scope["paths"]):
+                    continue
+                if _excluded_by_mode(cap, path, mode):
+                    continue
+                if not _safe_path(path):
+                    cap.exclude(None, "special_file")
+                    continue
+                if len(cap.admitted) >= cap.limits["admitted_files"]:
+                    cap.exclude(path, "limit_reached")
+                    continue
+                size = int(_git(repo, "cat-file", "-s", oid))
+                if size > cap.limits["file_kib"] * 1024:
+                    cap.exclude(path, "too_large")
+                    continue
+                if cap.total + size > cap.limits["job_kib"] * 1024:
+                    cap.exclude(path, "limit_reached")
+                    continue
+                cap.admit(path, "proposed", "context", _blobs(repo, [oid])[oid])
+                if any(e["path"] == path for e in cap.admitted):
+                    view[path] = ["blob", oid]
+        elif scope["kind"] == "commits":
             objects["base"] = _commit(repo, scope["base"])
             baseline_commit = objects["base"]
             if scope["comparison"] == "merge_base":

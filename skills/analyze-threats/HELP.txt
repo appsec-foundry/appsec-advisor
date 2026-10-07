@@ -5,6 +5,7 @@ USAGE
   /appsec-advisor:analyze-threats --design-file <path>
   /appsec-advisor:analyze-threats --worktree | --staged
   /appsec-advisor:analyze-threats --base <commit> --head <commit> [--exact-base]
+  /appsec-advisor:analyze-threats --hypothesis <text> --revision <commit> --path <path> [--path <path> ...]
 
 OPTIONS
   --feature <file>        Reviewed feature-context file with saved declarations and answers.
@@ -12,6 +13,10 @@ OPTIONS
                           e.g. tmm/threat-modeling-manifesto@1.0.0 or /abs/path/package.yaml.
                           Packages your organization requires always apply.
   --output <dir>          Also write analyst-result.json and analyst-result.md there.
+  --requirements <file>   Use this local requirements catalog.
+  --requirements-required  Stop incomplete if the catalog is unavailable.
+  --threat-model <file>   Use this structured threat-model.yaml as context.
+  --threat-model-required  Stop incomplete if the model is unavailable.
   --help                  Show this help.
 
   To stop a job or remove a saved answer, ask; the skill runs
@@ -24,6 +29,12 @@ WHAT IT DOES
   assumptions, and questions. It asks only when a missing answer changes the
   assessment. You can save answers explicitly to a feature file for later
   reviews and CI; nothing is committed.
+
+  A hypothesis check reads only the named files or directories at the selected
+  Git revision, without requiring a diff. Uncommitted edits are not included.
+  Its conclusion is supported by code, not confirmed in the inspected scope,
+  or unresolved. Not confirmed never means disproved or safe. Missing required
+  evidence leaves the analysis incomplete; the model cannot expand the scope.
 
 WHAT IT IS NOT
   Not a security approval, not a full threat model, and not a requirements

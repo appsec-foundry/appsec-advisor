@@ -373,6 +373,11 @@ def test_rule_covers_bracket_form():
     assert not cp._rule_covers("Bash([:*)", "Bash(test -f /tmp/file)")
 
 
+def test_hypothesis_check_uses_existing_shell_permission():
+    rules = [item["entry"] for item in cp.load_required()]
+    assert any(cp._rule_covers(rule, "Bash(python3 scripts/appsec-analyst-cli hypothesis)") for rule in rules)
+
+
 def test_shipped_settings_is_covered_by_yaml():
     """
     Every Bash/* entry in the repo's own `.claude/settings.json` should be

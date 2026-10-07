@@ -115,6 +115,8 @@ def build_prompt(request: dict, snapshot: dict, context: dict, source_dir: Path,
         "criteria": context["criteria"],
         "sources": context["sources"],
     }
+    if request["mode"] == "hypothesis":
+        envelope.update(hypothesis=request["hypothesis"], scope=request["scope"], objects=snapshot["objects"])
     # The JSON escape keeps the decoded data unchanged while the marker can
     # never occur literally, so file content cannot end the data section.
     data = json.dumps(envelope, ensure_ascii=False, indent=1).replace(MARKER, MARKER_ESCAPED)

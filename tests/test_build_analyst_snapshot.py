@@ -363,3 +363,50 @@ def test_design_input_is_bounded_and_scanned(repo, state_root):
     scope = {"kind": "design", "source": "text", "content_sha256": hashlib.sha256(big.encode()).hexdigest()}
     with pytest.raises(snap.SnapshotError, match="size limit"):
         snap.capture(request(job, repo, scope), job, big)
+
+
+@pytest.mark.parametrize("folder", ["service", "modules/api"])
+def test_hypothesis_snapshot_reads_only_selected_commit_paths(repo, state_root, folder):
+    selected = repo / folder
+    selected.mkdir(parents=True)
+    (selected / "route.py").write_text("return records.read()\n")
+    revision = commit(repo, "selected code")
+    (selected / "route.py").write_text("uncommitted change\n")
+    (selected / "untracked.py").write_text("not committed\n")
+    job = st.create_job(repo, state_root)
+    try:
+        req = request(job, repo, {"kind": "hypothesis", "revision": revision, "paths": [folder]})
+        req.update(mode="hypothesis", hypothesis="Can records escape their owner?")
+        result = snap.capture(req, job)
+        assert result["objects"] == {"head": revision}
+        assert set(admitted(result)) == {("proposed", f"{folder}/route.py")}
+        assert captured(job, "proposed", f"{folder}/route.py") == b"return records.read()\n"
+        with pytest.raises(snap.SnapshotError, match="outside the captured view"):
+            snap.admit_context(req, job, result, "app.js")
+    finally:
+        st.release(job)
+
+
+def test_hypothesis_snapshot_excludes_unsafe_and_oversized_sources(repo, state_root):
+    area = repo / "area"
+    area.mkdir()
+    (area / "ok.py").write_text("return record\n")
+    (area / "link").symlink_to("../app.js")
+    (area / "large.py").write_text("x" * 2048)
+    (area / "binary").write_bytes(b"\x00binary")
+    (area / ".env").write_text("PRIVATE_CONFIGURATION=synthetic\n")
+    revision = commit(repo, "admission cases")
+    job = st.create_job(repo, state_root)
+    try:
+        req = request(job, repo, {"kind": "hypothesis", "revision": revision, "paths": ["area"]}, file_kib=1)
+        req.update(mode="hypothesis", hypothesis="Check access to records.")
+        result = snap.capture(req, job)
+        assert set(admitted(result)) == {("proposed", "area/ok.py")}
+        assert excluded(result) == {
+            "area/link": "symlink",
+            "area/large.py": "too_large",
+            "area/binary": "binary",
+            "area/.env": "sensitive",
+        }
+    finally:
+        st.release(job)

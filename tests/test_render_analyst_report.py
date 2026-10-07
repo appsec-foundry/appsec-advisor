@@ -106,3 +106,69 @@ def test_invalid_results_are_never_rendered():
         rr.render(result(state="complete", coverage=dict(result()["coverage"], required_complete=False)))
     with pytest.raises(rr.RenderError):
         rr.render(result(mode="design"))
+
+
+def test_hypothesis_report_preserves_scope_evidence_and_uncertainty():
+    data = result(
+        mode="hypothesis",
+        hypothesis="Can [a caller](https://invalid.example) read another account?",
+        scope={"kind": "hypothesis", "revision": "HEAD", "paths": ["src/api.py"]},
+        objects={"head": "d" * 40},
+        findings=[],
+    )
+    data["hypothesis_assessment"] = {
+        "status": "not_confirmed",
+        "explanation": "The inspected handler checks ownership.",
+        "evidence": [
+            {"side": "proposed", "path": "src/api.py", "line_start": 2, "line_end": 2, "excerpt": "check_owner(record)"}
+        ],
+        "next_action": "Review the deployment policy.",
+    }
+    text = rr.render(data)
+    assert "Not confirmed in the inspected scope" in text
+    assert "does not mean disproved or safe" in text
+    assert "d" * 40 in text and "src/api.py:2" in text and "check_owner(record)" in text
+    assert "](https://" not in text
+
+
+def test_complete_report_rejects_unfulfilled_evidence_and_orphan_questions():
+    data = result()
+    data["coverage"]["evidence_requests"] = [
+        {"path": "auth.py", "reason": "Missing check", "status": "limit_exhausted", "detail": "No rounds left."}
+    ]
+    with pytest.raises(rr.RenderError):
+        rr.render(data)
+    data = result()
+    data["coverage"]["question_coverage"] = [
+        {"question_ref": "appsec/core:authz-scope", "status": "needs_answer", "note": "Needs a decision."}
+    ]
+    with pytest.raises(rr.RenderError):
+        rr.render(data)
+
+
+@pytest.mark.parametrize("alter", ["outside", "empty_evidence", "contradictory_findings", "missing_scope"])
+def test_saved_hypothesis_result_rejects_inconsistent_conclusions(alter):
+    data = result(
+        mode="hypothesis",
+        hypothesis="Check record access",
+        findings=[],
+        scope={"kind": "hypothesis", "revision": "HEAD", "paths": ["src"]},
+    )
+    data["hypothesis_assessment"] = {
+        "status": "not_confirmed",
+        "explanation": "The handler checks ownership.",
+        "evidence": [
+            {"side": "proposed", "path": "src/api.py", "line_start": 1, "line_end": 1, "excerpt": "check_owner(record)"}
+        ],
+        "next_action": "Check deployment.",
+    }
+    if alter == "outside":
+        data["hypothesis_assessment"]["evidence"][0]["path"] = "private/api.py"
+    elif alter == "empty_evidence":
+        data["hypothesis_assessment"]["evidence"] = []
+    elif alter == "contradictory_findings":
+        data["findings"] = result()["findings"]
+    else:
+        data["scope"] = {}
+    with pytest.raises(rr.RenderError):
+        rr.render(data)

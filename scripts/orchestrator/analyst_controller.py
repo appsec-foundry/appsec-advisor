@@ -55,7 +55,7 @@ from runtime.analyst_host import (
 )
 from runtime.resolve_org_profile import resolve as resolve_org_profile
 from validators.secret_scan import scan_text
-from validators.validate_analyst import validate_response, validate_result
+from validators.validate_analyst import validate_request, validate_response, validate_result
 
 EXIT_OK = 0
 EXIT_NOT_COMPLETE = 2
@@ -93,6 +93,7 @@ class Invocation:
     repo_root: Path
     output_dir: Path | None = None
     design_text: str | None = None
+    hypothesis: str | None = None
     feature_path: Path | None = None
     packages: list[Selection] = field(default_factory=list)
     ci: bool = False
@@ -154,12 +155,18 @@ def _admit(inv: Invocation, limits: dict) -> tuple[dict, dict, dict, dict | None
         errors = st.check_output_dir(inv.output_dir, repo, inv.state_root)
         if errors:
             raise AdmissionError("; ".join(errors))
-    if inv.mode not in ("design", "review") or (inv.mode == "design") != (inv.scope.get("kind") == "design"):
+    if inv.mode not in ("design", "review", "hypothesis") or (inv.mode == "design") != (
+        inv.scope.get("kind") == "design"
+    ):
         raise AdmissionError("mode and scope do not match")
+    if (inv.mode == "hypothesis") != (inv.scope.get("kind") == "hypothesis"):
+        raise AdmissionError("hypothesis mode and scope do not match")
     if inv.ci and inv.scope["kind"] in ("staged", "worktree"):
         raise AdmissionError("CI reviews require an explicit commit comparison")
     if inv.design_text is not None and scan_text(inv.design_text):
         raise AdmissionError("the design text contains a secret; describe the design without the value")
+    if inv.hypothesis is not None and scan_text(inv.hypothesis):
+        raise AdmissionError("the hypothesis contains a secret; describe it without the value")
     org_packages, org_requirements = _org_inputs(repo, inv.env)
     try:
         resolved = resolve([*org_packages, *inv.packages], limits, repo_root=repo, ci=inv.ci)
@@ -187,6 +194,11 @@ def _admit(inv: Invocation, limits: dict) -> tuple[dict, dict, dict, dict | None
     }
     if feature is not None:
         request["feature"] = {"path": str(inv.feature_path.resolve()), "sha256": feature["sha256"]}
+    if inv.hypothesis is not None:
+        request["hypothesis"] = inv.hypothesis
+    if inv.mode == "hypothesis" or inv.hypothesis is not None:
+        if validate_request(dict(request, job_id="aj-" + "0" * 32, requested_at=st.utc_now())):
+            raise AdmissionError("invalid hypothesis, revision, or source paths")
     selection = select_questions(resolved, limits["selected_questions"])
     return request, resolved, selection, feature, org_requirements
 
@@ -222,7 +234,7 @@ class _Run:
         default_factory=lambda: {"host_calls": 0, "evidence_rounds": 0, "question_rounds": 0, "transport_retries": 0}
     )
     fingerprint: str = ""
-    limitations: list[str] = field(default_factory=list)
+    evidence_requests: list[dict] = field(default_factory=list)
     usd: float = 0.0
     deadline: float = 0.0
 
@@ -259,7 +271,11 @@ class _Run:
                 "sources": context.get("sources", []),
                 "omitted_questions": context.get("question_selection", {}).get("omitted", []),
                 "question_coverage": response.get("question_coverage", []),
-                "required_complete": bool(context and context["question_selection"]["required_complete"]),
+                "evidence_requests": self.evidence_requests,
+                "required_complete": bool(context and context["question_selection"]["required_complete"])
+                and not any(e["status"] != "admitted" for e in self.evidence_requests)
+                and not any(q["required"] for q in questions or [])
+                and not (self.request["mode"] == "hypothesis" and state != "complete"),
             },
             "summary": response.get("summary", ""),
             "findings": _number(response.get("findings", []), "f"),
@@ -268,10 +284,16 @@ class _Run:
             "requirement_observations": response.get("requirement_observations", []),
             "methodology_observations": response.get("methodology_observations", []),
             "questions": questions or [],
-            "limitations": [*response.get("limitations", []), *self.limitations, *notes],
+            "limitations": [*response.get("limitations", []), *notes],
             "costs": {"host_calls": self.counters["host_calls"], **({"usd": round(self.usd, 4)} if self.usd else {})},
             "generated_at": st.utc_now(),
         }
+        if self.request["mode"] == "hypothesis":
+            result["hypothesis"] = self.request["hypothesis"]
+            if "hypothesis_assessment" in response:
+                result["hypothesis_assessment"] = dict(response["hypothesis_assessment"])
+                if state != "complete":
+                    result["hypothesis_assessment"]["status"] = "unresolved"
         output = Path(self.request["output_dir"])
         repo = Path(self.request["repository"]["root"])
         publish = output != repo
@@ -297,6 +319,8 @@ class _Run:
                 state="failed",
                 terminal_reason="validation_failure",
             )
+            result.pop("hypothesis_assessment", None)
+            result["coverage"] = dict(result["coverage"], question_coverage=[], required_complete=False)
             report = render(result)
         pending = [q["id"] for q in result["questions"] if q["required"]] if result["state"] == "incomplete" else []
         st.transition(
@@ -437,6 +461,14 @@ def _prepare(
     current.fingerprint = _sha([request, current.snapshot, current.context])
     current.ensure_started()
     snapshot = current.snapshot
+    if inv.mode == "hypothesis" and (snapshot["excluded"] or not snapshot["admitted"]):
+        return current.finish(
+            "incomplete",
+            "required_input_missing",
+            [
+                "The selected hypothesis scope was not fully admitted; inspect the exclusions and narrow or correct the paths."
+            ],
+        )
     changed = snapshot["admitted"] or any(e["reason"] != "ignored" for e in snapshot["excluded"])
     if inv.mode == "review" and not changed and feature is None:
         return current.finish(
@@ -485,22 +517,46 @@ def _analyze(current: _Run, answers: list[dict], transport_factory: TransportFac
             return current.finish("failed", "invalid_model_output", [note])
         wanted = reply.payload["evidence_requests"]
         rounds_left = current.counters["evidence_rounds"] < limits["evidence_rounds"]
-        if wanted and rounds_left and current.counters["host_calls"] < limits["host_calls"]:
-            granted = 0
+        if wanted:
+            can_read = rounds_left and current.counters["host_calls"] < limits["host_calls"]
+            unresolved = False
             for item in wanted:
-                try:
-                    current.snapshot = admit_context(request, job, current.snapshot, item["path"])
-                    granted += 1
-                except SnapshotError as exc:
-                    current.limitations.append(f"Requested evidence was not admitted: {exc}.")
-            if granted:
-                current.counters["evidence_rounds"] += 1
-                st.write_artifact(job, "snapshot.json", current.snapshot)
-                continue
+                receipt = dict(item, status="limit_exhausted", detail="No evidence round or model call remains.")
+                if can_read:
+                    try:
+                        current.snapshot = admit_context(request, job, current.snapshot, item["path"])
+                        admitted = any(
+                            e["path"] == item["path"] and e["side"] == "proposed" for e in current.snapshot["admitted"]
+                        )
+                        receipt.update(
+                            status="admitted" if admitted else "rejected",
+                            detail="Read from the frozen source view."
+                            if admitted
+                            else "Source admission excluded the requested file.",
+                        )
+                    except SnapshotError as exc:
+                        receipt.update(status="rejected", detail=str(exc))
+                current.evidence_requests.append(receipt)
+                unresolved |= receipt["status"] != "admitted"
+            st.write_artifact(job, "snapshot.json", current.snapshot)
+            if unresolved:
+                return current.finish(
+                    "incomplete",
+                    "required_input_missing" if can_read else "limit_exhausted",
+                    ["Requested evidence remains unavailable; the analysis is incomplete."],
+                    response=reply.payload,
+                    questions=aq.assign(reply.payload["questions"], current.receipts["fingerprint"]),
+                )
+            current.counters["evidence_rounds"] += 1
+            continue
         response = reply.payload
     st.write_artifact(job, "response.json", response)
     questions = aq.assign(response["questions"], current.receipts["fingerprint"])
-    st.write_artifact(job, "questions.json", {"questions": questions, "usd": current.usd})
+    st.write_artifact(
+        job,
+        "questions.json",
+        {"questions": questions, "usd": current.usd, "evidence_requests": current.evidence_requests},
+    )
     required = [q for q in questions if q["required"]]
     if required and interactive and current.counters["question_rounds"] < limits["question_rounds"]:
         report = _question_report(job.job_id, questions)
@@ -514,6 +570,8 @@ def _analyze(current: _Run, answers: list[dict], transport_factory: TransportFac
     if not current.context["question_selection"]["required_complete"]:
         note = ["Required questions exceeded the question limit."]
         return current.finish("incomplete", "limit_exhausted", note, response=response, questions=questions)
+    if request["mode"] == "hypothesis" and response["hypothesis_assessment"]["status"] == "unresolved":
+        return current.finish("incomplete", "required_input_missing", response=response, questions=questions)
     return current.finish("complete", "analysis_complete", response=response, questions=questions)
 
 
@@ -559,6 +617,9 @@ def answer(
     current = _Run(job, st.read_artifact(root, "request.json"), st.read_artifact(root, "packages.json"), state_root)
     current.snapshot = st.read_artifact(root, "snapshot.json")
     current.context = st.read_artifact(root, "context.json")
+    saved_questions = st.read_artifact(root, "questions.json")
+    current.evidence_requests = saved_questions.get("evidence_requests", [])
+    current.usd = saved_questions.get("usd", 0.0)
     current.counters = dict(state["counters"])
     current.fingerprint = state["input_fingerprint"]
     current.start_clock()

@@ -8,6 +8,7 @@ and never prompts.
 
     appsec-analyst-cli design --repo DIR (--design-file FILE | --text TEXT) [options]
     appsec-analyst-cli review --repo DIR (--base REV --head REV [--exact-base] | --staged | --worktree) [options]
+    appsec-analyst-cli hypothesis --repo DIR --hypothesis TEXT --revision REV --path PATH [--path PATH ...]
     appsec-analyst-cli answer --repo DIR --job ID (--answers FILE | --answer QID=TEXT ...) [--save-feature FILE ...]
     appsec-analyst-cli cancel --repo DIR --job ID
     appsec-analyst-cli forget --repo DIR --feature FILE --feature-sha SHA --question-fingerprint FP
@@ -111,6 +112,13 @@ def build_parser() -> argparse.ArgumentParser:
     review.add_argument("--exact-base", action="store_true", help="compare base directly instead of the merge base")
     review.add_argument("--staged", action="store_true")
     review.add_argument("--worktree", action="store_true")
+    hypothesis = sub.add_parser("hypothesis", help="check a threat hypothesis in selected committed source")
+    _analysis(hypothesis)
+    hypothesis.add_argument("--hypothesis", required=True, help="concrete threat hypothesis to investigate")
+    hypothesis.add_argument("--revision", required=True, help="Git revision to inspect, such as HEAD")
+    hypothesis.add_argument(
+        "--path", action="append", required=True, help="literal repository-relative file or directory; repeatable"
+    )
     answer = sub.add_parser("answer", help="answer the open questions of a job")
     _common(answer)
     answer.add_argument("--job", required=True)
@@ -140,6 +148,10 @@ def _terminate(signum, frame):
 
 
 def _scope(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict:
+    if args.command == "hypothesis":
+        if not args.hypothesis.strip() or len(args.hypothesis) > MAX_TEXT_CHARS:
+            parser.error("--hypothesis must be non-empty and at most 20000 characters")
+        return {"kind": "hypothesis", "revision": args.revision, "paths": args.path}
     if args.command == "design":
         if args.text is not None:
             if not args.interactive:
@@ -212,11 +224,12 @@ def main(argv: list[str] | None = None) -> int:
         packages = [Selection(spec, "explicit") for spec in args.package]
         packages += [Selection(spec, "ci_pinned") for spec in args.trusted_package]
         invocation = ctl.Invocation(
-            mode="design" if args.command == "design" else "review",
+            mode=args.command,
             scope=_scope(args, parser),
             repo_root=args.repo,
             output_dir=args.output,
             design_text=getattr(args, "text", None),
+            hypothesis=getattr(args, "hypothesis", None),
             feature_path=args.feature,
             packages=packages,
             ci=args.ci,

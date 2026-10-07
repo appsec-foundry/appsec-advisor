@@ -824,6 +824,9 @@ requirements:
       - tests/test_analyst_controller.py::test_complete_review_publishes_a_validated_result
       - tests/test_analyst_controller.py::test_unsupported_claims_fail_validation_and_publish_nothing_from_the_reply
       - tests/test_analyst_controller.py::test_transport_failures_are_retried_within_the_limit_then_fail
+      - tests/test_analyst_controller.py::test_unfulfilled_evidence_cannot_complete
+      - tests/test_analyst_controller.py::test_rejected_evidence_is_reported_as_incomplete
+      - tests/test_analyst_controller.py::test_needs_answer_without_a_question_is_rejected
       - tests/test_analyst_controller.py::test_required_questions_leave_a_noninteractive_run_incomplete
       - tests/test_analyst_controller.py::test_a_missing_required_catalog_stops_before_any_model_call
       - tests/test_analyst_cli.py::test_invalid_invocations_exit_2_before_any_job
@@ -907,7 +910,33 @@ requirements:
     guards:
       - tests/test_analyst_controller.py::test_unsupported_claims_fail_validation_and_publish_nothing_from_the_reply
       - tests/test_analyst_controller.py::test_unknown_relationship_needs_no_comparison
+      - tests/test_analyst_controller.py::test_removed_control_can_introduce_a_finding
       - tests/test_render_analyst_report.py::test_report_states_advisory_scope_and_coverage
+
+  REQ-ANA-009:
+    applies_to:
+      - scripts/appsec-analyst-cli
+      - scripts/orchestrator/analyst_controller.py
+      - scripts/contexts/build_analyst_snapshot.py
+      - scripts/runtime/analyst_host.py
+      - scripts/validators/validate_analyst.py
+      - scripts/renderers/render_analyst_report.py
+      - schemas/analyst-request.schema.json
+      - schemas/analyst-snapshot.schema.json
+      - schemas/analyst-response.schema.json
+      - schemas/analyst-result.schema.json
+      - skills/analyze-threats/**
+    decisions: []
+    documents:
+      - docs/threat-analyst.md
+    coverage: direct
+    guards:
+      - tests/test_analyst_controller.py::test_hypothesis_check_reports_evidenced_conclusion
+      - tests/test_analyst_controller.py::test_hypothesis_claims_need_valid_scoped_evidence
+      - tests/test_analyst_controller.py::test_hypothesis_cannot_expand_authorized_paths
+      - tests/test_build_analyst_snapshot.py::test_hypothesis_snapshot_reads_only_selected_commit_paths
+      - tests/test_analyst_cli.py::test_hypothesis_cli_builds_a_bounded_controller_invocation
+      - tests/test_render_analyst_report.py::test_hypothesis_report_preserves_scope_evidence_and_uncertainty
 
   REQ-TRU-001:
     applies_to:

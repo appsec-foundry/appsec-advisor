@@ -9,8 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- Add entries here as work lands on dev; promote them into a dated heading at release. -->
 
+### Added
+
+- The Threat Analyst checks concrete threat hypotheses against selected files or directories at a Git revision, with evidence and explicit unresolved outcomes.
+
 ### Fixed
 
+- Threat analysis reports unfulfilled evidence requests, rejects missing follow-up questions, and accepts source-backed findings introduced by removed controls.
 - `update-baseline` preserves AISCB user scope when the project path is the home directory and offers a direct signed updater fallback after delegation fails.
 
 ## 0.6.0-beta.4 (2026-10-06)

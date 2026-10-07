@@ -220,6 +220,10 @@ Each finding of a change review states whether the change introduced,
 worsened, or mitigated it, whether it existed before, or that the relationship
 is unknown.
 
+### REQ-ANA-009 — A hypothesis check examines an explicitly selected source scope
+
+A developer can ask the analyst to check a concrete threat hypothesis against named files or directories at a Git revision without supplying a code change. The result identifies the inspected revision and scope, distinguishes code-supported, not-confirmed-in-scope, and unresolved hypotheses, and cites evidence for a supported or not-confirmed conclusion. Missing required evidence leaves the analysis incomplete. The model cannot expand the authorized source scope, and a not-confirmed hypothesis never constitutes proof of safety.
+
 ## Trust
 
 ### REQ-TRU-001 — A scanned repository cannot steer the run

@@ -53,7 +53,8 @@
     "mode": {
       "enum": [
         "design",
-        "review"
+        "review",
+        "hypothesis"
       ]
     },
     "scope": {
@@ -106,10 +107,68 @@
         },
         "question_coverage": {
           "type": "array",
-          "maxItems": 200
+          "maxItems": 200,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "question_ref",
+              "status",
+              "note"
+            ],
+            "properties": {
+              "question_ref": {
+                "$ref": "#/$defs/entry_ref"
+              },
+              "status": {
+                "enum": [
+                  "answered_from_evidence",
+                  "needs_answer",
+                  "not_applicable"
+                ]
+              },
+              "note": {
+                "$ref": "#/$defs/text"
+              }
+            }
+          }
         },
         "required_complete": {
           "type": "boolean"
+        },
+        "evidence_requests": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "reason",
+              "status",
+              "detail"
+            ],
+            "properties": {
+              "path": {
+                "$ref": "#/$defs/relative_path"
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              },
+              "status": {
+                "enum": [
+                  "admitted",
+                  "rejected",
+                  "limit_exhausted"
+                ]
+              },
+              "detail": {
+                "$ref": "#/$defs/text"
+              }
+            }
+          }
         }
       }
     },
@@ -202,6 +261,9 @@
           "fingerprint": {
             "type": "string",
             "pattern": "^[0-9a-f]{64}$"
+          },
+          "question_ref": {
+            "$ref": "#/$defs/entry_ref"
           }
         }
       }
@@ -231,6 +293,149 @@
     "generated_at": {
       "type": "string",
       "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "hypothesis": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 20000,
+      "pattern": "\\S"
+    },
+    "hypothesis_assessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "explanation",
+        "evidence",
+        "next_action"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "supported",
+            "not_confirmed",
+            "unresolved"
+          ]
+        },
+        "explanation": {
+          "$ref": "#/$defs/text"
+        },
+        "evidence": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "$ref": "#/$defs/location"
+          }
+        },
+        "next_action": {
+          "$ref": "#/$defs/text"
+        }
+      }
     }
-  }
+  },
+  "$defs": {
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1200
+    },
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "side",
+        "path",
+        "line_start",
+        "line_end",
+        "excerpt"
+      ],
+      "properties": {
+        "side": {
+          "enum": [
+            "baseline",
+            "proposed"
+          ]
+        },
+        "path": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "line_start": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "line_end": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "excerpt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400
+        }
+      }
+    },
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?!/)(?!.*(^|/)\\.\\.?(/|$))[^\\x00]+$"
+    },
+    "entry_ref": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,39}/[a-z0-9][a-z0-9-]{0,63}:[a-z0-9][a-z0-9-]{0,63}$"
+    },
+    "revision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[^\\s\\x00-]"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "mode": {
+            "const": "hypothesis"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "hypothesis"
+        ],
+        "properties": {
+          "scope": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "revision",
+              "paths"
+            ],
+            "properties": {
+              "kind": {
+                "const": "hypothesis"
+              },
+              "revision": {
+                "$ref": "#/$defs/revision"
+              },
+              "paths": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 20,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024,
+                  "pattern": "^(?!/)(?!.*(^|/)\\.\\.?(/|$))[^\\x00-\\x1f\\\\]+$"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

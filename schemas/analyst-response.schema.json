@@ -284,6 +284,38 @@
       "items": {
         "$ref": "#/$defs/text"
       }
+    },
+    "hypothesis_assessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "explanation",
+        "evidence",
+        "next_action"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "supported",
+            "not_confirmed",
+            "unresolved"
+          ]
+        },
+        "explanation": {
+          "$ref": "#/$defs/text"
+        },
+        "evidence": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "$ref": "#/$defs/location"
+          }
+        },
+        "next_action": {
+          "$ref": "#/$defs/text"
+        }
+      }
     }
   },
   "$defs": {

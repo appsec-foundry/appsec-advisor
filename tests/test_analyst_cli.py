@@ -68,3 +68,54 @@ def test_help_works_from_any_directory(tmp_path):
         [sys.executable, str(CLI), "--help"], cwd=tmp_path, capture_output=True, text=True, timeout=30
     )
     assert result.returncode == 0 and "usage:" in result.stdout.lower()
+
+
+@pytest.mark.parametrize(
+    "args,message",
+    [
+        (["--hypothesis", "Check access", "--revision", "HEAD"], "--path"),
+        (["--hypothesis", "Check access", "--path", "src"], "--revision"),
+        (["--hypothesis", " ", "--revision", "HEAD", "--path", "src"], "non-empty"),
+        (["--hypothesis", "Check access", "--revision", "HEAD", "--path", "../outside"], "invalid hypothesis"),
+    ],
+)
+def test_hypothesis_cli_rejects_missing_or_invalid_scope(repo, tmp_path, args, message):
+    state = tmp_path / "xdg"
+    result = run("hypothesis", "--repo", str(repo), *args, cwd=tmp_path, state=state)
+    assert result.returncode == 2 and message in result.stderr + result.stdout
+    assert not state.exists()
+
+
+def test_hypothesis_cli_builds_a_bounded_controller_invocation(repo, monkeypatch, capsys):
+    import runpy
+
+    module = runpy.run_path(str(CLI))
+    observed = []
+
+    def invoke(invocation, transport, interactive):
+        observed.append(invocation)
+        return module["ctl"].Outcome(0, "complete", None, "Scoped result\n")
+
+    monkeypatch.setattr(module["ctl"], "run", invoke)
+    assert (
+        module["main"](
+            [
+                "hypothesis",
+                "--repo",
+                str(repo),
+                "--hypothesis",
+                "Check ownership",
+                "--revision",
+                "HEAD",
+                "--path",
+                "src/api",
+                "--path",
+                "src/auth",
+            ]
+        )
+        == 0
+    )
+    assert observed[0].mode == "hypothesis"
+    assert observed[0].hypothesis == "Check ownership"
+    assert observed[0].scope == {"kind": "hypothesis", "revision": "HEAD", "paths": ["src/api", "src/auth"]}
+    assert "Scoped result" in capsys.readouterr().out

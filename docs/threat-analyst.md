@@ -1,6 +1,6 @@
 # Threat Analyst
 
-The Threat Analyst analyzes a planned feature or a selected code change when you ask for it. It checks the applicable security requirements and possible attack paths, and it asks the team only for facts that the code and context do not answer. The Threat Analyst is experimental.
+The Threat Analyst analyzes a planned feature, a selected code change, or a concrete threat hypothesis in existing code when you ask for it. It checks the applicable security requirements and possible attack paths, and it asks the team only for facts that the code and context do not answer. The Threat Analyst is experimental.
 
 ```text
 /appsec-advisor:analyze-threats Let support staff export customer data as CSV.
@@ -25,6 +25,20 @@ Ask a design question without any code, or pass a longer description with `--des
 Review a change by naming exactly one scope: `--worktree` (including untracked, not ignored files), `--staged`, or `--base <commit> --head <commit>`. For a feature branch, use its fetched target branch as `--base` and the feature tip as `--head`. A commit range compares the merge base of both commits with the head; `--exact-base` compares the two commits directly. An empty change completes without a model call.
 
 The analysis reads your requirements catalog, `docs/security/business-context.md`, and, when `scripts/appsec-analyst-cli` receives `--threat-model`, a structured `threat-model.yaml`. A missing optional source is reported and the analysis continues. A source marked as required that is missing or invalid ends the analysis as incomplete; a required catalog is never replaced by the packaged fallback. When your organization profile names a requirements catalog, the analysis needs a trusted local copy passed with `--requirements`; it does not download catalogs.
+
+## Check a concrete threat in existing code
+
+Supply one hypothesis, a Git revision, and the files or directories to inspect:
+
+```text
+/appsec-advisor:analyze-threats --hypothesis "Can a user export another tenant's records?" --revision HEAD --path src/export --path src/auth
+```
+
+The CLI equivalent is `scripts/appsec-analyst-cli hypothesis --repo <repo> --hypothesis <text> --revision <commit> --path <path>`. Repeat `--path` for additional areas. Paths are literal repository-relative file or directory names, without wildcards. The analysis reads committed source at the selected revision; it excludes uncommitted edits. Include the relevant middleware, callers, and configuration in the selected paths. The model cannot expand those paths. A missing path or excluded source leaves the check incomplete; narrow or correct the scope and start a new check.
+
+The report records the resolved commit, selected paths, and hypothesis. Its conclusion is `supported` (source evidence supports the threat), `not_confirmed` (not established in the inspected scope), or `unresolved` (required evidence or facts are missing). Supported and not-confirmed conclusions cite inspected code. A not-confirmed result never means disproved or safe. Findings describe the selected revision and make no claim about which change introduced them. The analyst does not execute exploits or application code.
+
+Required evidence requests that cannot be fulfilled, including when a limit is exhausted, leave any analysis incomplete. The report lists the requested paths and their disposition. A question marked as needing an answer must appear among the actual questions.
 
 ## Questions and feature files
 
