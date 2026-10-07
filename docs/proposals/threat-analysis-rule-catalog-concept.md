@@ -89,7 +89,15 @@ Support two delivery paths for questions and cases under their respective contra
 
 The current `analyst.required_packages` and `analyst.default_packages` fields already configure on-demand analysis. They do not automatically configure the full threat-model assessment. Add an explicit assessment selection adapter or versioned profile field before consuming those packages there; do not broaden an existing setting's meaning silently.
 
-Packaging must copy selected local files, validate their schema and references, retain version and digest metadata, and verify that the installed package can resolve them without the source build tree. Reuse the existing organization packaging path and add the necessary surface inventory and smoke coverage. Files in the analyzed repository never activate themselves. Trusted CI configuration fixes the packages used to assess a change.
+Packaging must copy selected local files, validate their schema and references, retain version and digest metadata, and verify that the installed package can resolve them without the source build tree. Reuse the existing organization packaging path and add the necessary surface inventory and smoke coverage. Question packages in the analyzed repository require explicit selection; their presence never activates them. Trusted CI configuration fixes the question packages used to assess a change.
+
+### Repository-owned threats and cases
+
+Preserve the full assessment's existing automatic ingestion of [known threats](../threat-modeler.md#known-threats--docsknown-threatsyaml) from `docs/known-threats.yaml` and [repository abuse cases](../org-profiles.md#abuse-cases) from `.appsec/abuse-cases/*.yaml`. Known threats carry prior findings and risk dispositions under their existing status contract. Abuse cases describe attack scenarios under the existing case schema. Loading these files happens within an invoked assessment and never starts analysis by itself. Case verification retains the existing depth and invocation controls.
+
+Extend the repository case path to admit descriptive business hypotheses through the compatible contract settled in P0. A team should be able to commit an actor, goal, attack steps, prerequisites, evidence needs, and legitimate exclusions without inventing scanner matches or executable probes. P0 defines the versioned shape before examples or runtime support are published. Existing probe-based cases and known-threat statuses retain their meanings; a new hypothesis is not automatically a confirmed finding or an accepted risk.
+
+Repository declarations remain untrusted investigation inputs. Automatic discovery grants no policy authority, additional source access, tools, or ability to replace required organization investigations. Validate contained files before dependent analysis and preserve repository revision, path, content digest, case identity, and result disposition. Invalid input and unfinished investigation remain visible. Repository authors cannot turn a case into an explicit user request through its contents; invocation-owned requests retain their separate visible-answer guarantee. The Analyst's hypothesis mode and package selection remain explicit and do not inherit assessment-wide repository discovery.
 
 ## Pipeline integration and token cost
 
