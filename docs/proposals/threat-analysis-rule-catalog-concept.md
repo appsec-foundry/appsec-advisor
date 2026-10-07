@@ -80,7 +80,9 @@ Group related questions around a process and reuse available scanner, architectu
 
 Additional model investigation consumes tokens and time. Enforce controller-owned bounds on selected questions, source context, evidence requests, and retries. Record omitted work and reasons. Required work that cannot fit or lacks required evidence cannot be reported as complete. Cache reuse requires unchanged relevant source, package, policy, and context fingerprints.
 
-The built-in questions become relevant defaults within an explicitly invoked assessment only after the runtime pilot is accepted. Configuring or packaging questions never launches analysis. Optional custom packages are selected explicitly. Absence of business facts does not prevent independent technical checks from running, but any resulting business-analysis gap remains visible.
+The Threat Analyst and full assessment are explicit consumers of the same business questions. Extend and version the Analyst's existing `appsec/core` package, refining overlapping questions and preserving compatible identities. The assessment uses an explicit adapter to select from that same source. Release the new defaults only after both consumers' pilots pass; creating a separate package file alone does not activate it. Configuring or packaging questions never launches analysis. Optional custom packages are selected explicitly.
+
+The Analyst investigates within its design, change-review, or hypothesis scope. Design analysis needs no diff or existing model; a hypothesis check cannot expand its selected source paths. Its adapter must prioritize relevant questions within bounded context rather than rely only on the current authority-ordered prefix. Required questions cannot be silently dropped or waived as irrelevant, and unmet required coverage remains incomplete. Missing business facts remain visible; independent technical checks may continue under the existing completion contract.
 
 ## Trust and result boundaries
 
@@ -97,6 +99,8 @@ Results retain package version and question provenance through consolidation and
 Build one end-to-end process investigation before broad rollout. Use three business scenarios: self-approval where separation of duties is a confirmed requirement, cumulative or concurrent refunds beyond the paid amount, and recipient changes after approval. Include violating, protected, unresolved, inapplicable, and renamed variants plus a threat outside the package.
 
 Compare the existing analysis with the same analysis plus admitted business guidance. Keep Python detector revisions, source, surrounding context, and model settings fixed. Measure supported additional findings, false positives, missing-context handling, missed threats, repeatability, tokens, latency, and cost. Do not attribute a separate scanner correction to the package.
+
+Require separate delivery and outcome evidence for full assessments and Analyst design, review, and hypothesis modes. Verify actual model input and result provenance for built-in, user-added, and required organization packages, including relevant questions near the selection limit. Loading a schema-valid package or passing only the assessment pilot does not establish Analyst support.
 
 Accept runtime rollout only after documented quality and cost criteria are met. Documentation readability or passing transport-mocked tests does not prove useful model analysis. An unsuccessful pilot leaves the existing analyzers intact. Observed `AUTHZ-002` defects remain separate producer-fix work, not a justification for replacing technical detection with model calls.
 

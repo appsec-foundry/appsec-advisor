@@ -6,7 +6,7 @@ Status: proposed implementation plan, revised 2026-10-07. The operator authorize
 
 Extend model-assisted analysis with descriptive business questions and abuse-case guidance. Existing Python analyzers continue to execute their technical checks. They are not replaced by LLM calls, generated from prose, or migrated wholesale into a new catalog. Python retains source extraction, package admission, execution limits, validation, and result processing.
 
-Deliver a shared package format for built-in, explicitly selected user, and packaged organization questions, a bounded assessment integration, and evidence that the addition improves business threat analysis at an acceptable incremental cost. Existing on-demand Analyst capabilities provide reusable building blocks; this plan extends their use to the assessment workflow through explicit adapters.
+Deliver shared business questions to two explicit consumers: the on-demand Threat Analyst and the full threat-model assessment. Both use the same package format and authoritative question text through separate scope adapters. Verify delivery and usefulness in each workflow; successful assessment integration does not establish that the Analyst received or investigated the new questions.
 
 The first dedicated package focuses on business authorization, process states and ordering, and repetition or concurrency. Authorization includes tenant and parent-child relationships and relevant separation-of-duties requirements. Cumulative amounts, quotas, and cross-service trust are further package topics; refund limits serve as an initial concurrency test case. Existing STRIDE coverage and investigation of other threats remain intact.
 
@@ -95,6 +95,8 @@ analyst:
 
 The digest is a placeholder, not a working configuration. A proposed layout is `org-profile/org-profile.yaml` with `org-profile/analysis-rules/payments.yaml`. Retain current profile-relative containment and digest pinning. Define the assessment selection surface explicitly in P0; do not publish an invented `analysis.question_packages` setting as currently supported. An explicit user selection adds packages for an invoked run and cannot remove required organization inputs.
 
+An organization may maintain that profile and its question files in its organization repository and supply the profile to the existing plugin packaging workflow. The built plugin must include the selected files and must not depend on that repository remaining accessible. For the Analyst, users already add a local file through `--package` with an absolute path; CI uses trusted selections through `--trusted-package`, with local files pinned by digest outside the checkout under review. The full assessment needs its own explicit additive package parameter, finalized in P0 and tested in P2/P5. Document that new parameter only when implemented; a parameter passes package data, never Python code or execution permissions.
+
 Package builds must carry selected files, validate their contents and references, record identities, versions and digests in the package surface inventory, and preserve path resolution after relocation. Smoke-test the built plugin from a different directory with the original source profile unavailable. Test both a required organization package and an added user package. Verify existing generic copying before adding special cases, and never claim current packaging is missing functionality solely because it lacks an Analyst-named function.
 
 No target file activates itself. Trusted configuration determines package selection and required status outside package contents. CI pins local package contents outside the checkout under review under the existing resolver contract. Installing packages or configuring defaults does not start an analysis.
@@ -113,6 +115,8 @@ Use existing context isolation and output encoding. Do not put raw proprietary b
 
 ## Process context and analysis flow
 
+The following process pipeline applies to the full assessment. The Analyst uses its own scoped adapter described below and does not acquire an architecture-stage dependency.
+
 1. Resolve selected packages, authority, versions, digests, and existing business context before affected dispatch. Record missing context without replacing it with model defaults.
 2. Let architecture analysis identify relevant actors, assets, operations, state transitions, and business processes from admitted evidence. Deterministic validation binds proposed process references to existing components and source evidence.
 3. Select relevant questions and form concrete abuse hypotheses. Semantic selection may propose entry IDs, but deterministic admission checks every reference, source scope, and receiving role. Do not make keyword or existing-finding matches the only route to a business hypothesis.
@@ -125,6 +129,26 @@ A process can span components. Define its bounded connected scope and projection
 Proposed handoff semantics include process references, source-bound actors and transitions, expectation references with status and provenance, selected package/question references, admitted source receipts, and omissions. The response carries candidate findings, assessed controls, unresolved hypotheses, missing business facts, and question dispositions. Choose existing schema extensions or a new schema-backed projection in P0 based on the affected consumers; every exchanged artifact needs a validator and owner.
 
 Missing facts that determine whether a policy applies prompt targeted questions in interactive mode. CI returns explicit unresolved items. Independent technical analysis may continue, but required missing business evidence prevents a complete business assessment and follows the existing publication contract. Silence and model-generated guesses are not answers.
+
+## Threat Analyst activation and scope adapter
+
+Extend the existing `appsec/core` question package in `data/analyst-questions.yaml` with the general business questions, refining overlapping entries rather than adding duplicates. Preserve existing entry identities for compatible refinements and update the package version. The Analyst already loads this package on every invocation; a new unregistered package file is not an activation mechanism. The assessment adapter consumes those same entries through its explicit selection contract. User and organization additions retain their existing selection and authority rules.
+
+Release the expanded core content only after the Analyst pilot passes. During evaluation, use isolated baseline and treatment package revisions rather than introducing a production bypass for required core questions. A separate built-in package would require a reviewed replacement decision covering registry entries, default selection in both workflows, versions, and migration; it is not an interchangeable P1 implementation choice.
+
+Trace `scripts/orchestrator/analyst_controller.py` from admission through `scripts/contexts/resolve_analyst_catalog.py`, `scripts/contexts/build_analyst_context.py`, and `scripts/runtime/analyst_host.py` to result validation and rendering. Preserve the Analyst's own job, snapshot, and output contracts. Do not send its findings through assessment writers or mutate `threat-model.yaml`.
+
+The current `select_questions` takes an authority-ordered prefix before source capture. Merely appending new questions can leave relevant additions outside the delivered prefix. Add a bounded scope-aware selection step after request/snapshot context is available and before final context admission. Keep package loading separate from applicability selection. Selection may prioritize optional questions using admitted intent and process evidence, but must preserve core and organization-required authority and record every omission. Undelivered required questions continue to make coverage incomplete under the existing contract; a relevance claim cannot silently waive that requirement. Do not solve selection by blindly increasing the question limit.
+
+Treat `applies_when` as guidance interpreted for the selected mode, not a keyword gate that excludes design or hypothesis analysis merely because no diff exists. Test a relevant question placed after many unrelated entries, including a package set exceeding the configured limit. Demonstrate relevant optional selection, visible omissions, and incomplete required coverage when necessary. Package or selection changes must invalidate dependent answer fingerprints and contexts under existing lifecycle rules.
+
+| Analyst mode | Input and scope | Required acceptance evidence |
+|---|---|---|
+| Design question | Supplied intent, design and admitted business context; no diff or existing threat model required. | Applicable business questions reach the model; assumptions and missing policy remain explicit; a design scenario is not presented as a code-confirmed vulnerability. |
+| Change review | Selected comparison and admitted snapshot, with supporting evidence inside the existing read scope. | New questions reach model input and result provenance; findings retain supported change relationships; unrelated files or processes are not admitted by package text. |
+| Hypothesis check | Explicit hypothesis, Git revision, and selected literal paths. | Matching business questions reach the model without a diff; supported, not-confirmed, and unresolved conclusions retain source evidence and scope; an unavailable out-of-scope control leaves the result unresolved rather than expanding access. |
+
+For every mode, verify the actual host payload and resulting report, not only catalog loading. Cover built-in content, a user-added package, an organization-required package, a protected case, and missing evidence. Test CLI/skill input parity where supported and trusted CI package selection without interactive answers. Record Analyst quality and incremental cost separately from assessment results.
 
 ## Results, cost, and lifecycle
 
@@ -140,22 +164,24 @@ Bind cached contexts and results to source revision, expectation/answer provenan
 
 ## Delivery sequence and acceptance gates
 
-Each stage has concrete acceptance evidence. Runtime integration is scoped to this assessment feature and does not widen the separate Analyst workflow's permissions or state ownership.
+Each stage covers both consumers explicitly while preserving their separate permissions, scope, state, and output ownership.
 
 | Package | Work and affected surfaces | Acceptance evidence | Depends on |
 |---|---|---|---|
 | P0: Contracts and integration map | Trace business-context, architecture, abuse-case and STRIDE stages; settle package ownership, assessment selection, process handoff, evidence statuses, limits, and compatibility. Propose normative deltas where needed. | Reviewed producer/consumer map and schema plan; no silent reuse of change-only applicability or single-candidate context; approved product promises before runtime edits. | None. |
-| P1: Business questions and cases | Extend or add a shared built-in question package for authorization, state transitions, and repetition/concurrency. Create user-authoring examples and independent expected outcomes. | Business-aware reviewer confirms expectations and source needs; violating, protected, unresolved, inapplicable, and renamed cases cover each pilot process. | P0. |
+| P1: Business questions and cases | Extend and version `appsec/core` with shared authorization, state-transition, and repetition/concurrency questions; preserve stable identities and refine overlaps. Create user examples and expected outcomes for both consumers. | Business-aware reviewer confirms expectations and evidence needs; every new entry is reachable through Analyst core loading and the assessment adapter; pilot variants include design, review, and hypothesis cases. | P0. |
 | P2: Admission and packaging | Reuse/harden the catalog loader; add explicit assessment profile/CLI selection; validate and package files with surface metadata and installed smoke coverage. | Required and additive user packages load through one format; invalid or adversarial inputs fail closed; installed package resolves after relocation without original files; existing Analyst behavior remains compatible. | P0 and P1. |
-| P3: One end-to-end process | Connect payment approval context and questions to one bounded existing analysis role and evidence pipeline. Add receipts, dispositions, and candidate provenance across affected schemas. | Self-approval, protected separation, unknown policy, and inapplicable cases produce distinct outcomes; no rule-per-call fan-out, invented policy, or expanded source scope. | P2. |
+| P3: One end-to-end process in both workflows | Connect payment questions to the assessment role and the Analyst's three mode adapters. Add bounded Analyst selection after scope admission, receipts, dispositions, and provenance in each workflow's outputs. | Actual model inputs and reports show new questions in design, review, hypothesis, and assessment runs; late relevant questions and over-limit packages preserve required coverage semantics; self-approval, protected, and unresolved cases remain distinct without expanded scope. | P2. |
 | P4: Comparative pilot | Add refund repetition/concurrency and post-approval recipient-change cases. Compare the same existing analysis with and without guidance. | Predefined quality and incremental-cost gates pass across repeated held-out cases, including an outside-catalog threat; no claim of benefit from scanner fixes or mocked transport tests. | P3. |
-| P5: Default integration and delivery | Enable relevant built-in questions within invoked assessments after acceptance; complete provenance exports, cleanup/resume, user docs, manual/headless parity, permissions, and packaging smoke tests. | Delivered finding and unresolved case retain package/process provenance; old models and technical checks remain compatible; required missing input never appears as a complete analysis. | P4 acceptance. |
+| P5: Default integration and delivery | Release expanded Analyst core questions and assessment selection after their respective acceptance; complete both workflows' provenance, lifecycle, user docs, entry-point parity, and installed package smoke tests. | Built-in and custom questions reach each supported consumer; reports retain provenance; Analyst jobs never mutate assessment artifacts; old models and Python checks remain compatible; required missing input never appears complete. | P4 acceptance in both workflows. |
 
 The first implementation slice is P0/P1, followed by one payment process through P2/P3. A scanner documentation project or correction to `AUTHZ-002` is not on this dependency chain. No new executable rule engine or LLM replacement of technical analyzers is part of P5.
 
 ## Evaluation design
 
 Compare the same baseline technical and model-assisted analysis with and without admitted business guidance. Keep Python detector revisions, source snapshots, surrounding context, model settings, and comparable budgets fixed. Record package, prompt, model and plugin versions, run order, input fingerprints, and costs. Separate detector corrections from this experiment.
+
+Run and report separate comparisons for full assessments and Analyst design, review, and hypothesis modes. Share case semantics and package text, but adapt expected claims to each mode's available evidence. Passing one consumer's evaluation cannot substitute for another's delivery or usefulness evidence.
 
 Use three main scenarios: self-approval under a confirmed separation requirement; cumulative or concurrent refunds beyond an evidenced payment limit; and changing an approved recipient without reauthorization where approval is bound to that recipient. Supply protected, violating, unresolved, inapplicable, and renamed variants for each. Include a process in another business domain and a threat outside the catalog to detect overfitting and narrowed discovery.
 
@@ -174,6 +200,7 @@ Before editing implementation paths, run `python3 scripts/check_specs.py --for <
 | Boundary | Relevant verification |
 |---|---|
 | Shared questions and schema | `tests/test_analyst_catalog.py`, `tests/test_resolve_analyst_catalog.py`, exact example/schema validation, compatibility of existing packages. |
+| Analyst execution and selection | `tests/test_analyst_controller.py` and affected context, host, result, CLI/skill, and report tests; inspect actual delivered questions in all three modes, late relevant entries, budget omissions, required coverage, changed answer fingerprints, and absence of assessment writes. |
 | Business facts and hypotheses | Business-context tests; `tests/test_resolve_abuse_cases.py`, `tests/test_match_abuse_cases.py`, `tests/test_build_abuse_case_contexts.py`, and affected verification/promotion tests; new process adapter tests if introduced. |
 | Profile and installed distribution | `tests/test_org_profile_schema.py`, `tests/test_resolve_org_profile.py`, affected config tests, `tests/test_package_internal_plugin.py`, `tests/test_smoke_test_package.py`, and relevant packaging end-to-end cases. |
 | Untrusted inputs | Unsafe YAML tags, duplicate keys, alias/depth/size limits, traversal and symlinks, forged package identity or provenance, conflicting definitions, missing required files, altered digests, and attempted removal of required questions. |
