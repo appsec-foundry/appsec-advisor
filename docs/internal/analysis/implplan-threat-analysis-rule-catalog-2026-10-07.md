@@ -322,6 +322,8 @@ Propose three paired runs per held-out case with treatment order alternated. Fin
 
 Measure additional supported findings, false positives, missed supported threats, invented expectations, unjustified confirmation of unknown cases, share of actionable outcomes, selection omissions, outside-catalog discovery, tokens, latency, and cost against the ceiling. Distinguish preselection, binding, and verification failures. Transport doubles test integration; live evaluation is required for usefulness claims.
 
+P4 also settles the verifier model at `thorough`. Run the same held-out cases on the latest Sonnet, today's default, and on Opus, both as the default model and as the escalation target for inconclusive candidates. Compare the inconclusive share, false confirmations, step misattributions, and cost per candidate. Opus becomes the `thorough` default or escalation target only when it improves one of these measures on cases whose authorization logic spans several files, within the cost ceiling. The earlier Opus comparison for STRIDE, triage, and merging found 36 % higher cost without a measured quality gain, so a gain on this verifier cannot be assumed.
+
 Promotion requires no permission or evidence-gate bypass, no new false confirmations in protected or unresolved cases, no invented mandatory business rule, retention of the outside-catalog case, and a demonstrated benefit within the cost ceiling. If evidence is insufficient, revise or defer default integration and keep existing analyzers intact.
 
 ## Verification routes

@@ -128,7 +128,8 @@ SONNET = "sonnet"
 # the aggregation/judgment stages measurably improve on Sonnet 5 (see
 # docs/model-selection.md "Benchmarks"). Kept as an exact id, not the `sonnet`
 # alias, so a headless run pins the version rather than following the session.
-SONNET5 = "claude-sonnet-5"
+# The pin follows the latest Sonnet release; Sonnet 5.5 has no A/B of its own.
+SONNET5 = "claude-sonnet-5-5"
 
 EXTENDED_MODEL_MATRIX: dict[tuple[str, str], dict[str, str]] = {
     # sonnet-economy: extended-agent routing.
@@ -735,15 +736,15 @@ def recommend_orchestrator_model(src_count: int) -> dict:
     The orchestrator = the CC session model; the plugin cannot switch it. This
     only RECOMMENDS — the skill surfaces it and the user chooses (a divergent
     choice needs a session restart because a running loop cannot change its own
-    model). Recommends Sonnet 5 only for *very* large repos (window safety);
+    model). Recommends Sonnet 5.5 only for *very* large repos (window safety);
     otherwise Sonnet 4.6 (much cheaper, only very limited orchestrator benefit).
     """
     if src_count >= ORCHESTRATOR_SONNET5_FILE_THRESHOLD:
-        model = "claude-sonnet-5"
+        model = SONNET5
         reason = (
             f"very large repo ({src_count} source files >= "
             f"{ORCHESTRATOR_SONNET5_FILE_THRESHOLD}) — the orchestrator accumulates a "
-            f"large resident context; Sonnet 5's larger window reduces the risk of "
+            f"large resident context; Sonnet 5.5's larger window reduces the risk of "
             f"mid-run compaction (higher cost). Note: this is a coarse file-count "
             f"heuristic — a margin above our single calibration repo, not a measured "
             f"compaction threshold"
@@ -755,7 +756,7 @@ def recommend_orchestrator_model(src_count: int) -> dict:
             f"{ORCHESTRATOR_SONNET5_FILE_THRESHOLD}) — Sonnet 4.6 as the session model "
             f"has significantly lower cost than a Sonnet-5 or Opus session, which "
             f"bring only very limited benefit on the orchestrator role at this repo "
-            f"size, and its window is sufficient here (Sonnet 5 is recommended once a "
+            f"size, and its window is sufficient here (Sonnet 5.5 is recommended once a "
             f"repo crosses {ORCHESTRATOR_SONNET5_FILE_THRESHOLD} files)"
         )
     return {
@@ -894,7 +895,7 @@ def resolve_extended_models(reasoning_mode: str, depth: str) -> dict:
     if reasoning_mode != "sonnet":
         # renderer + abuse-case verifier are the quality-showcase stages (MS / CISO
         # framing; verdict decisiveness — 4.6 punts to `inconclusive`): latest Sonnet
-        # (Sonnet 5) at standard AND thorough, cheapest 4.6 only at the quick tier.
+        # (Sonnet 5.5) at standard AND thorough, cheapest 4.6 only at the quick tier.
         showcase = SONNET5 if depth in ("standard", "thorough") else "claude-sonnet-4-6"
         for _k in ("renderer", "abuse_verifier"):
             if models.get(_k) == SONNET:
@@ -2908,7 +2909,7 @@ def _render_orchestrator_box_lines(cfg: dict, session_model: str) -> list[str]:
     if not rec:
         return []
     files = cfg.get("orchestrator_recommendation_repo_files")
-    size = "very large repo" if rec == "claude-sonnet-5" else "normal-sized repo"
+    size = "very large repo" if rec == SONNET5 else "normal-sized repo"
     tail = f", {files} files)" if files is not None else ")"
     out = [f"Orchestrator (session) — recommend {rec}  ({size}{tail}"]
     if session_model and not _same_model(session_model, rec):
@@ -3476,6 +3477,7 @@ def _format_reasoning_summary(cfg: dict) -> str:
         raw = (model or "unknown").replace("claude-", "")
         return (
             raw.replace("sonnet-4-6", "Sonnet 4.6")
+            .replace("sonnet-5-5", "Sonnet 5.5")
             .replace("sonnet-5", "Sonnet 5")
             .replace("opus-4-8", "Opus 4.8")
             .replace("opus-4-7", "Opus")

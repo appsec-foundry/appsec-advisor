@@ -54,7 +54,7 @@ Python renders reports from validated structured data. If a run artifact contain
 
 Requires [Claude Code](https://docs.claude.com/en/docs/claude-code), Python 3.10+, and `git` on `PATH`. Optional Mermaid dependencies provide stricter diagram validation; see the [Threat Modeler reference](docs/threat-modeler.md).
 
-For most repositories, run the Claude Code session on Sonnet 4.6. The orchestration session remains active for the full assessment and therefore has the largest effect on cost. Agent models are routed separately: a standard scan uses Sonnet 5 for judgment and report authoring, while STRIDE discovery remains on Sonnet 4.6. Very large repositories may require a Sonnet 5 session for the larger context window. See [Model Selection](docs/model-selection.md).
+For most repositories, run the Claude Code session on Sonnet 4.6. The orchestration session remains active for the full assessment and therefore has the largest effect on cost. Agent models are routed separately: a standard scan uses Sonnet 5.5 for judgment and report authoring, while STRIDE discovery remains on Sonnet 4.6. Very large repositories may require a Sonnet 5.5 session for the larger context window. See [Model Selection](docs/model-selection.md).
 
 ### 1. Install the plugin
 

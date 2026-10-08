@@ -103,24 +103,25 @@ DEPTH & MODEL
                                Sonnet 4.6 (~30% fewer tokens; Sonnet 5 also had
                                worse STRIDE recall). At STANDARD a quality buy-back
                                resolves triage/merger/renderer/abuse-verifier to
-                               claude-sonnet-5 (measured gain); quick stays all-4.6.
+                               claude-sonnet-5-5 (gain measured on Sonnet 5);
+                               quick stays all-4.6.
                                These id pins bite on the headless path; an
                                interactive run's subagents follow the session model.
                                This tunes only the SUBAGENTS; the orchestrator is
                                your session model (set via /model or, headless,
                                scripts/run-headless.sh --model). At scan start a
-                               repo-size recommendation (4.6 normal / Sonnet-5 for
+                               repo-size recommendation (4.6 normal / Sonnet 5.5 for
                                very large repos) is shown and, interactively,
                                offered as a choice.
   --stride-model <m>           Override just the STRIDE stage. <m> = tier alias
                                (sonnet | opus) or explicit version id
-                               (e.g. claude-sonnet-5, claude-sonnet-4-6).
+                               (e.g. claude-sonnet-5-5, claude-sonnet-4-6).
   --triage-model <m>           Override just the triage (severity) stage.
                                Alias or version id. Inline equivalent of
                                APPSEC_TRIAGE_MODEL (no settings.json/restart).
                                E.g. --reasoning-model sonnet-economy
-                               --triage-model claude-sonnet-5 = cheap STRIDE +
-                               Sonnet-5 severities. Wins over the tier; --no-opus
+                               --triage-model claude-sonnet-5-5 = cheap STRIDE +
+                               Sonnet 5.5 severities. Wins over the tier; --no-opus
                                still clamps Opus->Sonnet.
   --merger-model <m>           Override just the merge stage. Alias or version id.
   --architect-review           Run an advisory architect review (Stage 4)

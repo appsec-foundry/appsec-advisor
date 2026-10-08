@@ -20,7 +20,7 @@ The plugin selects subagent models. You select the model for the main session, w
 | Tier | STRIDE / triage / merger | Default use |
 |---|---|---|
 | `sonnet-economy` | `claude-sonnet-4-6`, with the per-role exceptions below | quick and standard |
-| `sonnet` | `sonnet` alias, currently Sonnet 5 | Opt-in through `--reasoning-model sonnet` |
+| `sonnet` | `sonnet` alias, which follows the session model | Opt-in through `--reasoning-model sonnet` |
 | `opus-cheap` | Sonnet for STRIDE and triage; Opus for merging | Opt-in |
 | `opus` | Opus for all three roles | thorough; opt-in at other depths |
 
@@ -29,8 +29,8 @@ The default role assignments are:
 | Role | Agents | quick | standard | thorough |
 |---|---|---|---|---|
 | Discovery | STRIDE | Sonnet 4.6 | Sonnet 4.6 | Opus |
-| Judgment | triage, merger | Sonnet 4.6 | Sonnet 5 | Opus |
-| Report authoring and verification | renderer, abuse-verifier | Sonnet 4.6 | Sonnet 5 | Sonnet 5 |
+| Judgment | triage, merger | Sonnet 4.6 | Sonnet 5.5 | Opus |
+| Report authoring and verification | renderer, abuse-verifier | Sonnet 4.6 | Sonnet 5.5 | Sonnet 5.5 |
 | QA | qa_content, qa_routine | Sonnet 4.6; Haiku for qa_routine | Sonnet 4.6; Haiku for qa_routine | Sonnet 4.6 |
 | Coordination | orchestrator | Session model | Session model | Session model |
 
@@ -40,7 +40,7 @@ The explicit `sonnet` tier selects the latest Sonnet instead of this version spl
 
 ### Why the default is cost-pinned to Sonnet 4.6
 
-The recorded benchmarks found lower cost with Sonnet 4.6 for the same assessment. Sonnet 5 improved merging, triage, and report authoring, but missed findings during STRIDE discovery. The defaults retain 4.6 for STRIDE and use Sonnet 5 for the standard-depth judgment and authoring stages. See [Benchmarks](#benchmarks) for the measured scope.
+The recorded benchmarks found lower cost with Sonnet 4.6 for the same assessment. Sonnet 5 improved merging, triage, and report authoring, but missed findings during STRIDE discovery. The defaults retain 4.6 for STRIDE and use the latest Sonnet, currently Sonnet 5.5, for the standard-depth judgment and authoring stages. The benchmarks measured Sonnet 5; Sonnet 5.5 has not been benchmarked separately. See [Benchmarks](#benchmarks) for the measured scope.
 
 ### Override precedence (highest wins)
 
@@ -52,7 +52,7 @@ The recorded benchmarks found lower cost with Sonnet 4.6 for the same assessment
 
 - Use `--reasoning-model sonnet` to select the latest Sonnet tier.
 - Use `--reasoning-model opus` for Opus reasoning.
-- Set `APPSEC_STRIDE_MODEL=claude-sonnet-5` to request an exact model for one stage. Environment variables accept exact IDs; the per-stage CLI flags accept only `sonnet` or `opus`. An `env` block in `settings.json` applies the variables to subsequent runs. The interactive dispatch limitation still applies.
+- Set `APPSEC_STRIDE_MODEL=claude-sonnet-5-5` to request an exact model for one stage. Environment variables accept exact IDs; the per-stage CLI flags accept only `sonnet` or `opus`. An `env` block in `settings.json` applies the variables to subsequent runs. The interactive dispatch limitation still applies.
 
 <a id="orchestrator--the-session-model"></a>
 ## Orchestrator model
@@ -68,7 +68,7 @@ The preflight recommendation uses the repository's source-file count:
 | Repository size | Recommended session model | Reason |
 |---|---|---|
 | Fewer than 2500 source files | `claude-sonnet-4-6` | Lower measured cost; the context window usually covers the run. |
-| At least 2500 source files | `claude-sonnet-5` | The larger context window reduces the risk of mid-run compaction and incomplete finalization. |
+| At least 2500 source files | `claude-sonnet-5-5` | The larger context window reduces the risk of mid-run compaction and incomplete finalization. |
 
 When the detected interactive session differs from the recommendation, the skill asks whether to keep it or switch. Keeping the current model is allowed. The threshold is defined by `ORCHESTRATOR_SONNET5_FILE_THRESHOLD` in `runtime/resolve_config.py`.
 
@@ -97,11 +97,11 @@ The comparison used the same input and output token prices for both models. It a
 
 | Agent | Observed result with Sonnet 5 compared with 4.6 | Default reflected by the result |
 |---|---|---|
-| `appsec-threat-merger` | 0 versus 8 duplicate file:line collisions | Sonnet 5 at standard depth |
-| `appsec-triage-validator` | 10 versus 15 Critical findings; the analysis judged 5's calibration better | Sonnet 5 at standard depth |
-| `appsec-threat-renderer` / `appsec-ms-renderer` | Management prose focused on outcomes | Sonnet 5 at standard depth |
-| `appsec-secarch-renderer` | Section 7 controls tied to evidence | Sonnet 5 at standard depth |
-| `appsec-abuse-case-verifier` | 4.6 reintroduced `inconclusive` verdicts | Sonnet 5 outside quick depth |
+| `appsec-threat-merger` | 0 versus 8 duplicate file:line collisions | Latest Sonnet at standard depth |
+| `appsec-triage-validator` | 10 versus 15 Critical findings; the analysis judged 5's calibration better | Latest Sonnet at standard depth |
+| `appsec-threat-renderer` / `appsec-ms-renderer` | Management prose focused on outcomes | Latest Sonnet at standard depth |
+| `appsec-secarch-renderer` | Section 7 controls tied to evidence | Latest Sonnet at standard depth |
+| `appsec-abuse-case-verifier` | 4.6 reintroduced `inconclusive` verdicts | Latest Sonnet outside quick depth |
 | `appsec-stride-analyzer-v2` | Missed path traversal, an SSRF sink, and prompt injection; collapsed the LLM chatbot component | Sonnet 4.6 at quick and standard depth |
 | `qa_content`, orchestrator | No observed quality difference | Sonnet 4.6 / session model |
 | recon / config / context | Extraction tasks | Haiku |
@@ -112,7 +112,7 @@ Opus reasoning for STRIDE, triage, and merging cost $40.78 versus $30.01 for `so
 
 ### Practical recipe
 
-For a repository below the size threshold, use a Sonnet 4.6 session and the default role assignments. For headless runs requiring explicit overrides, set `APPSEC_MERGER_MODEL`, `APPSEC_TRIAGE_MODEL`, and `APPSEC_RENDERER_MODEL` to `claude-sonnet-5`, while retaining Sonnet 4.6 for STRIDE. For larger repositories, consider the session context window before reducing cost.
+For a repository below the size threshold, use a Sonnet 4.6 session and the default role assignments. For headless runs requiring explicit overrides, set `APPSEC_MERGER_MODEL`, `APPSEC_TRIAGE_MODEL`, and `APPSEC_RENDERER_MODEL` to `claude-sonnet-5-5`, while retaining Sonnet 4.6 for STRIDE. For larger repositories, consider the session context window before reducing cost.
 
 ## Quick recipes
 
@@ -120,6 +120,6 @@ For a repository below the size threshold, use a Sonnet 4.6 session and the defa
 |---|---|
 | Use the standard model mix | Keep the default `sonnet-economy` tier. |
 | Request another reasoning tier for one run | `--reasoning-model sonnet` or `--reasoning-model opus` |
-| Request an exact model for one stage | `APPSEC_STRIDE_MODEL=claude-sonnet-5`, subject to dispatch support |
+| Request an exact model for one stage | `APPSEC_STRIDE_MODEL=claude-sonnet-5-5`, subject to dispatch support |
 | Set the interactive orchestrator | `/model` before the run, or `/config` for the default |
 | Set the headless orchestrator | `run-headless.sh --model <model-id>`; choose a sufficient context window for the repository |

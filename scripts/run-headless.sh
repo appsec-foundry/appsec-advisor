@@ -465,7 +465,7 @@ fi
 # ~30% fewer tokens; the reasoning core is already 4.6-cost-pinned) — the single
 # biggest saving on an unattended run. Opt out with --model <id>. In API billing
 # mode a model MUST be explicit anyway (billed per-token), so this also satisfies
-# that requirement. Quality buy-back per stage: --triage-model claude-sonnet-5,
+# that requirement. Quality buy-back per stage: --triage-model claude-sonnet-5-5,
 # APPSEC_RENDERER_MODEL / APPSEC_ABUSE_VERIFIER_MODEL (see docs/threat-modeler.md).
 if [ -z "$MODEL" ]; then
     MODEL="claude-sonnet-4-6"

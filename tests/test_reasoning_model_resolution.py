@@ -192,8 +192,8 @@ class TestDefaultCoupling:
         # recall). The `standard` quality buy-back (2026-07-05) upgrades the
         # aggregation/judgment stages triage + merger to Sonnet 5.
         assert out["stride_model"] == "claude-sonnet-4-6"
-        assert out["triage_model"] == "claude-sonnet-5"
-        assert out["merger_model"] == "claude-sonnet-5"
+        assert out["triage_model"] == "claude-sonnet-5-5"
+        assert out["merger_model"] == "claude-sonnet-5-5"
 
     def test_standard_opus_still_opt_in(self):
         rc = _load_resolver()
@@ -254,7 +254,7 @@ class TestPerStageModelFlags:
         # per-stage flag (the flag wins over the buy-back).
         assert out["stride_model"] == "claude-sonnet-4-6"
         assert out["triage_model"] == "opus"
-        assert out["merger_model"] == "claude-sonnet-5"
+        assert out["merger_model"] == "claude-sonnet-5-5"
 
     def test_all_three_flags_independent(self):
         rc = _load_resolver()
@@ -281,7 +281,7 @@ class TestPerStageModelFlags:
         ns = rc.build_parser().parse_args(["--reasoning-model", "sonnet-economy"])
         out = rc.resolve_reasoning_model(ns, "standard")
         # standard buy-back: triage upgraded to Sonnet 5 (STRIDE stays 4.6).
-        assert out["triage_model"] == "claude-sonnet-5"
+        assert out["triage_model"] == "claude-sonnet-5-5"
 
     def test_triage_flag_label_reflects_override(self):
         rc = _load_resolver()

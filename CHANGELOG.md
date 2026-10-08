@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Repository abuse cases belong in `docs/security/abuse-cases/` beside the business context; `.appsec/abuse-cases/` is still read.
+- Standard and thorough runs pin triage, merging, report authoring, and abuse-case verification to Sonnet 5.5 instead of Sonnet 5, and run costs price the 5.5 models.
 
 ### Fixed
 

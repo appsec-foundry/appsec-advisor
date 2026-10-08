@@ -318,8 +318,8 @@ class TestResolveReasoningModel:
         # STRIDE stays cost-pinned to Sonnet 4.6 (Sonnet 5 regressed recall).
         # The standard buy-back (2026-07-05) upgrades triage + merger to Sonnet 5.
         assert out["stride_model"] == "claude-sonnet-4-6"
-        assert out["triage_model"] == "claude-sonnet-5"
-        assert out["merger_model"] == "claude-sonnet-5"
+        assert out["triage_model"] == "claude-sonnet-5-5"
+        assert out["merger_model"] == "claude-sonnet-5-5"
 
     def test_default_thorough_still_opus(self):
         ns = rc.build_parser().parse_args([])
@@ -384,7 +384,7 @@ class TestResolveReasoningModel:
         assert cfg["triage_model"] == "claude-sonnet-5"  # buy-back (flag agrees)
         assert cfg["stride_model"] == "claude-sonnet-4-6"  # STRIDE stays cheap
         # merger now takes the standard buy-back (Sonnet 5) by default too.
-        assert cfg["merger_model"] == "claude-sonnet-5"
+        assert cfg["merger_model"] == "claude-sonnet-5-5"
 
 
 # (Removed 2026-06: TestResolveDefaultTierForCappedRepos — the B2d large-repo
@@ -414,15 +414,15 @@ class TestResolveExtendedModelsRendererAbuse:
     def test_standard_buyback_pins_sonnet5(self):
         # standard buy-back (2026-07-05): renderer + abuse-verifier → Sonnet 5.
         out = rc.resolve_extended_models("sonnet-economy", "standard")
-        assert out["renderer_model"] == "claude-sonnet-5"
-        assert out["abuse_verifier_model"] == "claude-sonnet-5"
+        assert out["renderer_model"] == "claude-sonnet-5-5"
+        assert out["abuse_verifier_model"] == "claude-sonnet-5-5"
 
     def test_thorough_showcase_pins_sonnet5(self):
         # thorough is a quality tier → renderer + abuse-verifier on latest Sonnet 5
         # (NOT 4.6). thorough resolves the extended models via the opus tier.
         out = rc.resolve_extended_models("opus", "thorough")
-        assert out["renderer_model"] == "claude-sonnet-5"
-        assert out["abuse_verifier_model"] == "claude-sonnet-5"
+        assert out["renderer_model"] == "claude-sonnet-5-5"
+        assert out["abuse_verifier_model"] == "claude-sonnet-5-5"
         # ...while the mechanical qa stages stay on cheap 4.6.
         assert out["qa_content_model"] == "claude-sonnet-4-6"
         assert out["qa_routine_model"] == "claude-sonnet-4-6"
@@ -466,7 +466,7 @@ class TestOrchestratorRecommendation:
 
     def test_threshold_boundary_recommends_5(self):
         out = rc.recommend_orchestrator_model(rc.ORCHESTRATOR_SONNET5_FILE_THRESHOLD)
-        assert out["orchestrator_recommended_model"] == "claude-sonnet-5"
+        assert out["orchestrator_recommended_model"] == "claude-sonnet-5-5"
 
     def test_just_below_threshold_recommends_46(self):
         out = rc.recommend_orchestrator_model(rc.ORCHESTRATOR_SONNET5_FILE_THRESHOLD - 1)
@@ -1363,8 +1363,8 @@ class TestIntegrationScenarios:
         assert cfg["reasoning_model"] == "sonnet-economy"
         # STRIDE cost-pinned to 4.6; standard buy-back upgrades triage + merger.
         assert cfg["stride_model"] == "claude-sonnet-4-6"
-        assert cfg["triage_model"] == "claude-sonnet-5"
-        assert cfg["merger_model"] == "claude-sonnet-5"
+        assert cfg["triage_model"] == "claude-sonnet-5-5"
+        assert cfg["merger_model"] == "claude-sonnet-5-5"
         assert cfg["architect_review"] is False
         assert cfg["check_requirements"] is False
 
@@ -1444,7 +1444,7 @@ class TestOpusBan:
         assert cfg["opus_disabled"] is True
         assert cfg["reasoning_model"] == "sonnet-economy"
         # already Sonnet (merger on the 5 buy-back) → nothing for --no-opus to clamp.
-        assert cfg["merger_model"] == "claude-sonnet-5"
+        assert cfg["merger_model"] == "claude-sonnet-5-5"
 
     def test_no_opus_clamps_architect_model(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
