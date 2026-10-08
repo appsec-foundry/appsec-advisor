@@ -1,6 +1,6 @@
 # Headless multi repository threat modeling implementation plan
 
-Status: Reviewed and corrected on 2026-10-07; implementation authorized by the operator and started on `dev`. Updated on 2026-10-08: internal controller stages now cover architecture, scoped trust-boundary review, controls, STRIDE, evidence review, merging and an owned resumable session. The public headless assessment feature remains incomplete and unavailable. See the [implementation handoff](handoff-headless-multi-repository-2026-10-08.md) for changed files, validation evidence and remaining integration. The approved product delta is recorded in [the specification proposal](../../../specs/changes/headless-multi-repository/proposal.md); normative requirements remain unchanged until the product behavior is delivered.
+Status: Reviewed and corrected on 2026-10-07; implementation authorized by the operator and started on `dev`. Updated on 2026-10-08: internal controller functions now cover architecture, scoped trust-boundary review, controls, STRIDE, evidence review, merging and an owned resumable session; only unit tests call them, and no controller subcommand or pipeline step reaches them. The public headless assessment feature remains incomplete and unavailable. See the [implementation handoff](handoff-headless-multi-repository-2026-10-08.md) for changed files, validation evidence and remaining integration. The approved product delta is recorded in [the specification proposal](../../../specs/changes/headless-multi-repository/proposal.md); normative requirements remain unchanged until the product behavior is delivered.
 
 ## Outcome and scope
 
@@ -23,7 +23,7 @@ One `--repo` retains its existing behavior, including supported subdirectory sel
 
 ## Existing behavior and constraints
 
-The current parser in [`scripts/run-headless.sh`](../../../scripts/run-headless.sh) assigns each `--repo` value to one `REPO_PATH`. A repeated argument replaces the previous selection. Fixing only this parser would still leave discovery, output placement, completion handling, and source validation tied to one root.
+Before 2258f00a the parser in [`scripts/run-headless.sh`](../../../scripts/run-headless.sh) assigned each `--repo` value to one `REPO_PATH`, so a repeated argument replaced the previous selection. It now rejects a repeated `--repo`, as does `resolve_config.py`. Fixing only this parser would still leave discovery, output placement, completion handling, and source validation tied to one root.
 
 [`schemas/related-repos.schema.yaml`](../../../schemas/related-repos.schema.yaml) describes dependency threat-model imports. [`scripts/contexts/build_threat_modeling_context.py`](../../../scripts/contexts/build_threat_modeling_context.py) builds their context through the related-repository loader and register. These imports do not provide fresh full assessments of every dependency.
 
@@ -193,7 +193,7 @@ The design is sufficiently specified to prepare the product change proposal and 
 
 ## Implementation progress
 
-The current implementation contains internal modules and tests, not an assessment entry point. `scripts/run-headless.sh` still has its existing single-repository behavior. Controlled unit inputs now exercise an in-memory canonical v2 assembler, standalone Figure 1 and qualified exporters. No completed multi-repository assessment or user report has been produced.
+The current implementation contains internal modules and tests, not an assessment entry point. `scripts/run-headless.sh` keeps single-repository behavior and rejects a repeated `--repo`. Controlled unit inputs now exercise an in-memory canonical v2 assembler, the Figure 1 overview data in `figure1_dfd.py` and qualified exporters; the Figure 1 SVG, detail, and composition paths are unchanged. No completed multi-repository assessment or user report has been produced.
 
 | Area | Implemented | Remaining before delivery |
 | --- | --- | --- |

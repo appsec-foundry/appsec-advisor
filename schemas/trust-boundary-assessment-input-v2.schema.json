@@ -98,7 +98,12 @@
           "evidence"
         ],
         "dependentSchemas": {
-          "$ref": "https://appsec-advisor/schemas/trust-boundary-assessment-input.schema.json#/properties/external_entities/items/dependentSchemas"
+          "access": {
+            "$ref": "https://appsec-advisor/schemas/trust-boundary-assessment-input.schema.json#/properties/external_entities/items/dependentSchemas/access"
+          },
+          "service_roles": {
+            "$ref": "https://appsec-advisor/schemas/trust-boundary-assessment-input.schema.json#/properties/external_entities/items/dependentSchemas/service_roles"
+          }
         },
         "properties": {
           "id": {

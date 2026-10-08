@@ -20,14 +20,20 @@ A comprehensive catalog of Python detector meanings, automated translation of ca
 
 ## Implementation status
 
-Branch `feature/descriptive-abuse-cases` implements P0 to P3 for the full assessment. The Analyst adapter (P5) and default release (P6) are not started.
+`dev` carries the core of P0 to P3 for the full assessment (b1727c1a, 09d8bfde, e85ddc36). Each of these packages still has open acceptance items, listed under **Open**. The comparative pilot (P4), the Analyst adapter (P5), and the default release (P6) are not started.
 
 - **P0 producer fixes.** Repository case files are contained, size- and count-bounded, and rejected one by one with a run issue and a report line. Unknown `schema_version` values are rejected by name.
 - **P1 catalog.** `data/abuse-cases/business-cases.yaml` holds ten descriptive cases. It is not loaded by default.
 - **P2 admission.** Version-2 files admit `kind: descriptive` cases through `schemas/abuse-cases.schema.yaml`. Descriptive cases cannot carry probes, severity, goal impact, source, or release gates, and their signals must come from the recon vocabulary.
-- **P3 deterministic pilot.** The matcher preselects descriptive cases, applies the depth caps from `data/abuse-case-limits.yaml`, and records omissions as `not_performed`. The verifier receives a descriptive projection. `finalize` admits a deciding step verdict only when its excerpt occurs at the cited source line. The report and canonical YAML carry business coverage, `not_performed`, and unrated cases.
+- **P3 deterministic pilot.** The matcher preselects descriptive cases, applies the depth caps from `data/abuse-case-limits.yaml`, and records omissions as `not_performed`. The verifier receives a descriptive projection. `finalize` admits a deciding step verdict only when its excerpt occurs within three lines of the cited source line in a runtime file. The report and canonical YAML carry business coverage, `not_performed`, and unrated cases.
 - **P3 live measurement (2026-10-08).** The worktree verifier definition ran headless on Sonnet against five neutral fixtures for delegated-administrator self-escalation: violating, the same defect under renamed files and identifiers, protected, decided by an external policy service, and misleading through a false comment and an unused delegation helper. All five chain verdicts matched the expectation (`fully_viable`, `fully_viable`, `mitigated`, `inconclusive`, `fully_viable`), and every deciding step passed the excerpt admission. Each call took 6 to 8 turns, 15 to 21 s, and $0.08 to $0.10, mean $0.087. Three candidates at standard depth add about $0.26, below 1 % of the $34.93 standard-run baseline in `docs/internal/cost-model.md`.
-- **Open.** The fixtures are small, so per-call cost on a real repository will be higher, and the baseline is a different repository than the fixtures. The comparative pilot with held-out cases and baseline runs (P4) is not done. The ceiling and caps stay provisional until P4.
+- **P3 first assessment run (2026-10-08).** A standard juice-shop run with two repository business cases aborted Stage 1d: the candidate projection exceeded the dispatch item limit, and §9 read as checked. e85ddc36 fixes the limit, names unverified candidates in §9, the YAML, and the run issues, and routes the run back to Stage 1d once. A repeat run is pending.
+- **Open.**
+  - P0: the cost ceiling and caps are not operator-confirmed; `added_token_share` is not read by any gate; no product requirement or requirement binding covers the new behavior.
+  - P1: overlap with AC-T-002, AC-T-003, and AC-T-004 is not reconciled; `appsec/core` questions are not refined; no reviewer has confirmed the cases; only AC-T-101 has evaluation variants.
+  - P2: duplicate YAML keys are accepted; packaging and the installed smoke test do not cover the new data files; cases carry no provenance (path, digest) and resume does not invalidate on case changes.
+  - P3: preselection uses recon signals and path patterns only, not the detector rules and route inventory in the initial-case table; admission checks file and excerpt, not the component or route inventory; `open_questions` are not routed to team questions (decision AC-7); thorough depth does not escalate inconclusive candidates; verified requested cases carry no requested marker.
+  - The fixtures are small and the cost baseline comes from a different repository. The ceiling and caps stay provisional until P4.
 
 Deviations from the plan text below, decided during implementation:
 
@@ -35,7 +41,7 @@ Deviations from the plan text below, decided during implementation:
 - **Preselection reuses `scope_qualifier`.** Descriptive cases require `required_signals` or `path_patterns` instead of a new `applies_when` field.
 - **No promotion in the pilot.** A confirmed descriptive step does not become a finding, because the case carries no classification. A descriptive case without a linked finding is reported as not rated instead of receiving the fallback risk.
 - **Repository cases live beside the other team-maintained inputs.** Discovery reads `docs/security/abuse-cases/` first and the legacy `.appsec/abuse-cases/` after it, with one shared file limit; a legacy file reusing an ID from the new location is rejected.
-- **Explicit requests use the existing flags.** Cases named by `--only-abuse-case` or loaded through `--abuse-case-file` bypass preselection and count against their own limit of 16.
+- **Explicit requests use the existing flags.** Cases named by `--only-abuse-case` or loaded through `--abuse-case-file` bypass preselection and count against their own limit of 16. Requests beyond that limit are recorded as `not_performed` instead of stopping the run. `--only-abuse-case` keeps its restricting semantics, so library cases not named are not run. A file named with `--abuse-case-file` that discovery already loads keeps its repository origin and is not treated as requested.
 
 ## Existing implementation and contracts
 
