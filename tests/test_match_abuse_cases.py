@@ -177,6 +177,41 @@ def test_context_dependent_cwe_needs_mechanism_evidence():
     assert mac.match_step(step, [idor])["matched_finding_id"] == "T-002"
 
 
+@pytest.mark.parametrize(
+    "file",
+    [".github/workflows/ci.yml", "docs/runbooks/deploy.md", "tests/fixtures/accounts.ts"],
+)
+def test_step_never_binds_a_finding_outside_the_runtime_surface(file):
+    """A privilege CWE on a CI, documentation, or test finding is not the
+    application step it names; the same CWE in runtime code still binds."""
+    step = _step(1, "CWE-(915|266|269)")
+    step["finding"] = {"cwe": "CWE-915"}
+    elsewhere = dict(_finding("T-045", "Workflow grants write permissions", file=file, line=1), cwe="CWE-915")
+    runtime = dict(_finding("T-070", "Account model persists any request field", file="api/accounts.py"), cwe="CWE-915")
+
+    assert not mac.match_step(step, [elsewhere])["matched"]
+    assert mac.match_step(step, [elsewhere, runtime])["matched_finding_id"] == "T-070"
+
+
+def test_a_lone_family_only_match_is_not_bound():
+    """A finding that shares only the declared step CWE's family is not the
+    step, even without a competitor; the step's own CWE or a mechanism phrase
+    still binds, and so does a family match in a file the chain runs through."""
+    step = _step(2, "CWE-(863|862|266|269)")
+    step["probe"]["sink_patterns"].append("req\\.user\\.role")
+    step["finding"] = {"cwe": "CWE-863"}
+    coupon = dict(_finding("T-046", "Tool call lacks a discount ceiling", file="routes/assistant.py"), cwe="CWE-862")
+    own_cwe = dict(_finding("T-020", "Admin route trusts the token", file="app/admin.go"), cwe="CWE-863")
+    mechanism = dict(
+        _finding("T-021", "Handler reads req.user.role from the token", file="app/admin.go"), cwe="CWE-862"
+    )
+
+    assert not mac.match_step(step, [coupon])["matched"]
+    assert mac.match_step(step, [coupon, own_cwe])["matched_finding_id"] == "T-020"
+    assert mac.match_step(step, [coupon, mechanism])["matched_finding_id"] == "T-021"
+    assert mac.match_step(step, [coupon], prefer_files=frozenset({"routes/assistant.py"}))["matched"]
+
+
 def test_context_dependent_jwt_cwe_needs_jwt_mechanism_evidence():
     """CWE-347 artifact provenance must not be treated as JWT verification."""
     unsigned_artifact = {

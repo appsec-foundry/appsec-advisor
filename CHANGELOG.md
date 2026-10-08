@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `update-baseline` preserves AISCB user scope when the project path is the home directory and offers a direct signed updater fallback after delegation fails.
 - An invalid, oversized, or symlinked repository abuse-case file is now rejected on its own and reported, instead of silently dropping every abuse case from the run.
 - Section 9 and the run issues now name abuse cases that were matched but never verified, and the run returns to verification once, instead of reporting them as checked.
+- Abuse-case chains no longer credit CI, documentation, or test findings, or findings that share only a CWE family, so such findings are no longer raised to a chain's severity.
 
 ## 0.6.0-beta.4 (2026-10-06)
 

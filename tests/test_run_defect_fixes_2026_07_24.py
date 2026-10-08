@@ -256,9 +256,12 @@ def test_mechanism_evidence_still_binds_a_single_family_member():
     assert result["matched_finding_id"] == "T-040"
 
 
-def test_single_family_match_is_not_treated_as_ambiguous():
+def test_single_family_match_does_not_bind_either():
+    """Without a competitor the coupon finding is no better evidence for a
+    role-claim step: once the CI finding stopped tying with it, juice-shop
+    AC-T-003 step 2 bound it alone (2026-10-08)."""
     findings = [_finding("T-016", "CWE-862", "Discount Cap Bypass")]
-    assert mac.match_step(_role_step(), findings)["matched_finding_id"] == "T-016"
+    assert mac.match_step(_role_step(), findings)["matched_finding_id"] is None
 
 
 # ---------------------------------------------------------------------------

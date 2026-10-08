@@ -382,6 +382,14 @@ def match_step(
     top_score = 0
     weak_tie_ids: set[str] = set()
     for idx, finding in enumerate(findings):
+        # The source probe's evidence policy applies to bound findings too. A
+        # CI-workflow finding classified CWE-269 bound to a registration step
+        # by its CWE family (juice-shop 2026-10-08), and the chain then raised
+        # that workflow finding to Critical as its keystone.
+        ev = finding.get("evidence")
+        ev_file = ev.get("file") if isinstance(ev, dict) else None
+        if isinstance(ev_file, str) and not _is_runtime_surface_evidence(ev_file):
+            continue
         text = _finding_text(finding)
         cwe_field = (finding.get("cwe") or "").strip()
         score = 0
@@ -435,6 +443,13 @@ def match_step(
         # CWE-862, and the verifier then burned its whole turn budget
         # discovering the binding was nonsense.
         weak = not has_non_cwe_match and not exact_cwe
+        coherent = bool(ev_file) and ev_file in prefer_files
+        # A lone weak match is no better evidence than a tied one when the step
+        # declares its own CWE: with the CI finding filtered, AC-T-003 step 2
+        # bound the coupon finding again (juice-shop 2026-10-08). It stays
+        # eligible only where the chain runs through its file.
+        if weak and step_cwe and not coherent:
+            continue
         if score > top_score:
             top_score = score
             weak_tie_ids = {fid} if weak else set()
@@ -442,8 +457,6 @@ def match_step(
             weak_tie_ids.add(fid)
         # Maximise: score, chain coherence, the step's own CWE, real mechanism
         # evidence, then prefer a not-yet-consumed finding, then earliest.
-        ev_file = (finding.get("evidence") or {}).get("file") if isinstance(finding.get("evidence"), dict) else None
-        coherent = bool(ev_file) and ev_file in prefer_files
         key = (score, coherent, exact_cwe, has_non_cwe_match, fid not in exclude_ids, -idx)
         if best_key is None or key > best_key:
             best_key = key
