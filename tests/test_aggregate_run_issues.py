@@ -1251,6 +1251,22 @@ class TestDescriptiveAbuseCaseIssues:
         self._write(tmp_path, [{"verdict": "inconclusive", "state": "decided", "rejected_evidence": {"file": "x"}}])
         assert len(agg._extract_abuse_case_outcomes(tmp_path)) == 1
 
+    def test_candidates_without_a_verdict_are_a_run_issue(self, tmp_path):
+        rows = [
+            {"abuse_case_id": "AC-T-001", "structural_verdict": "candidate"},
+            {"abuse_case_id": "REPO-AC-020", "structural_verdict": "candidate"},
+            {"abuse_case_id": "AC-T-002", "structural_verdict": "not_applicable"},
+        ]
+        (tmp_path / ".abuse-case-matches.json").write_text(_json.dumps({"matches": rows}), encoding="utf-8")
+        issues = agg._extract_unverified_abuse_candidates(tmp_path)
+        assert [i["category"] for i in issues] == ["abuse_case_not_verified"]
+        assert "AC-T-001, REPO-AC-020" in issues[0]["title"]
+        (tmp_path / ".abuse-case-verdicts.json").write_text(
+            _json.dumps({"verdicts": [{"abuse_case_id": i, "step_verdicts": []} for i in ("AC-T-001", "REPO-AC-020")]}),
+            encoding="utf-8",
+        )
+        assert agg._extract_unverified_abuse_candidates(tmp_path) == []
+
     def test_rejected_repository_case_file_is_surfaced_with_a_recommendation(self, tmp_path):
         self._write(tmp_path, [], rejected=[{"path": ".appsec/abuse-cases/bad.yaml", "reason": "schema_version 7"}])
         issues = agg._extract_rejected_abuse_case_files(tmp_path)

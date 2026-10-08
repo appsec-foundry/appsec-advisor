@@ -545,13 +545,23 @@ def _finding_file(finding: dict) -> str | None:
     return file.replace("\\", "/") if isinstance(file, str) and file else None
 
 
+# Files a descriptive case can bind a step to: code that executes or renders
+# server-side. Styles, markup, data, and backups only steer the verifier away.
+_DESCRIPTIVE_SOURCE_SUFFIXES = frozenset(
+    ".ts .tsx .js .jsx .mjs .cjs .py .rb .go .java .kt .kts .scala .groovy .cs .vb .fs .rs .php "
+    ".c .cc .cpp .h .hpp .m .mm .swift .dart .ex .exs .erl .lua .pl .pm .vue .svelte "
+    ".jsp .aspx .cshtml .erb".split()
+)
+
+
 def _descriptive_preselection(
     case: dict, findings: list[dict], repo_root: Path | None, max_files: int
 ) -> tuple[list[str], list[str]]:
     """Return (preselected source files, related findings).
 
     Files come from the case's ``path_patterns`` in the bounded runtime
-    inventory; documentation, tests, and catalog data are never admitted.
+    inventory and must be executable source; documentation, tests, styles,
+    and catalog data are never admitted.
     Related findings are existing, unrefuted findings located in those files:
     detector results the verifier cites as evidence instead of re-deciding.
     """
@@ -563,7 +573,11 @@ def _descriptive_preselection(
         for path in _repo_source_files(repo_root):
             rel = path.relative_to(repo_root)
             rel_str = rel.as_posix()
-            if _is_runtime_surface_evidence(rel_str) and _glob_matches(rel, patterns):
+            if (
+                path.suffix.lower() in _DESCRIPTIVE_SOURCE_SUFFIXES
+                and _is_runtime_surface_evidence(rel_str)
+                and _glob_matches(rel, patterns)
+            ):
                 files.append(rel_str)
                 if len(files) >= max_files:
                     break

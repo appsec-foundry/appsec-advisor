@@ -1679,6 +1679,17 @@ def test_next_action_leaves_stage1d_alone_when_it_is_not_owed(tmp_path, sidecar,
     assert not (output / controller.PRODUCER_RETRY_LEDGER).exists()
 
 
+def test_next_action_routes_to_stage1d_when_matched_candidates_have_no_verdict(tmp_path):
+    """The matcher writes its sidecar before any verifier runs; a Stage 1d that
+    aborted after matching has not run for this report."""
+    output = _stage1_complete_run(tmp_path)
+    (output / ".abuse-case-matches.json").write_text(
+        json.dumps({"matches": [{"abuse_case_id": "AC-T-001", "structural_verdict": "candidate"}]}),
+        encoding="utf-8",
+    )
+    assert controller.next_action(output)["stage"] == "stage1d"
+
+
 def test_next_action_ignores_abuse_sidecars_left_by_an_earlier_run(tmp_path):
     """No preflight reaps the sidecars, so presence alone proves nothing."""
     output = _stage1_complete_run(tmp_path)

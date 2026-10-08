@@ -17542,11 +17542,13 @@ def _heal_abuse_cases_fragment(ctx: RenderContext) -> str:
     try:
         models = rac.build_models(ctx.output_dir, org_profile, repo_root)
         catalog_rows = rac.build_catalog_evaluation(ctx.output_dir)
+        not_performed, rejected = rac.build_business_omissions(ctx.output_dir)
+        unverified = rac.build_unverified_candidates(ctx.output_dir)
     except Exception:
         return ""
-    if not models and not catalog_rows:
+    if not models and not catalog_rows and not not_performed and not rejected and not unverified:
         return ""
-    md = rac.render_fragment(models, catalog_rows)
+    md = rac.render_fragment(models, catalog_rows, not_performed, rejected, unverified)
     try:
         ctx.fragments_dir.mkdir(parents=True, exist_ok=True)
         (ctx.fragments_dir / "abuse-cases.md").write_text(md, encoding="utf-8")

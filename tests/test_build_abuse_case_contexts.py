@@ -226,6 +226,34 @@ def test_descriptive_candidate_projects_prose_sources_and_finding_windows(tmp_pa
     assert "probe" not in json.dumps(candidate)
 
 
+def _abuse_candidate_limits() -> dict:
+    bindings = json.loads((ROOT / "data" / "context-routing-bindings.json").read_text())
+    return bindings["limit_profiles"]["abuse_candidate"]
+
+
+def test_descriptive_candidate_fits_the_dispatch_limits(tmp_path: Path):
+    """The controller counts candidate fields against ``max_items``; a
+    descriptive candidate over it aborted every abuse case of a run."""
+    repo = tmp_path / "repo"
+    (repo / "src" / "roles").mkdir(parents=True)
+    (repo / "src" / "roles" / "assign.ts").write_text("a\nb\nuser.roles.push(req.body.role)\nc\n")
+    (tmp_path / ".abuse-case-matches.json").write_text(json.dumps({"matches": [_descriptive_match(repo)]}))
+    path = contexts.write_candidate(tmp_path, "REPO-AC-020", repo_root=repo)
+    projected = json.loads(path.read_text())
+    routing._enforce_limits(  # noqa: SLF001
+        "abuse_cases.matches",
+        routing._counts(path.read_bytes(), record_count=len(projected["candidate"])),  # noqa: SLF001
+        _abuse_candidate_limits(),
+    )
+
+
+def test_every_candidate_shape_fits_the_item_limit():
+    """Adding a candidate field must not outgrow the dispatch item limit."""
+    schema = json.loads((ROOT / "schemas" / "abuse-case-verifier-context.schema.json").read_text())
+    widest = max(len(schema["$defs"][name]["properties"]) for name in ("probe_candidate", "descriptive_candidate"))
+    assert widest <= _abuse_candidate_limits()["max_items"]
+
+
 def test_descriptive_candidate_cannot_smuggle_probe_fields_past_the_schema(tmp_path: Path):
     repo = tmp_path / "repo"
     (repo / "src" / "roles").mkdir(parents=True)

@@ -6611,6 +6611,16 @@ STAGE1D_ROUTE_NEXT_KEY = "stage1d_route_next"
 STAGE1D_ROUTE_STAGE2_KEY = "stage1d_route_stage2"
 
 
+def _abuse_matches_have_candidates(output_dir: Path) -> bool:
+    """Whether the match sidecar lists a candidate; unreadable counts as yes."""
+    try:
+        doc = json.loads((output_dir / ".abuse-case-matches.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return True
+    matches = doc.get("matches") if isinstance(doc, dict) else None
+    return any(isinstance(m, dict) and m.get("structural_verdict") == "candidate" for m in matches or [])
+
+
 def _stage1d_route(output_dir: Path, cfg: dict[str, Any], retry_key: str) -> dict[str, Any] | None:
     """Return the Stage-1d action when abuse verification still owes this report.
 
@@ -6623,8 +6633,10 @@ def _stage1d_route(output_dir: Path, cfg: dict[str, Any], retry_key: str) -> dic
 
     The window is the Stage-1 checkpoint that still needs rendering: before it
     the stage has no inputs, after the compose §9 is already report bytes.
-    A matcher sidecar written after that checkpoint proves the stage ran — the
-    matcher writes its match set before any verifier is dispatched, and a
+    A verdict sidecar written after that checkpoint proves the stage ran. A
+    fresh match sidecar proves it only when it lists no candidate: the matcher
+    writes its match set before any verifier is dispatched, so a stage that
+    stopped after matching leaves candidates and no verdict, while a
     repository with no candidate never produces a verdict. Freshness, not
     presence, decides: no preflight reaps these two files, so a repository
     scanned before carries a prior run's sidecars into this one. Each
@@ -6641,10 +6653,11 @@ def _stage1d_route(output_dir: Path, cfg: dict[str, Any], retry_key: str) -> dic
         return None
     for name in (".abuse-case-verdicts.json", ".abuse-case-matches.json"):
         try:
-            if (output_dir / name).stat().st_mtime_ns >= checkpoint_ns:
-                return None
+            fresh = (output_dir / name).stat().st_mtime_ns >= checkpoint_ns
         except OSError:
             continue
+        if fresh and (name == ".abuse-case-verdicts.json" or not _abuse_matches_have_candidates(output_dir)):
+            return None
     if _claim_producer_retry(output_dir, retry_key) is None:
         _append_event(
             output_dir,

@@ -335,6 +335,33 @@ def _recommend_abuse_case_file_rejected(issue: dict, output_dir: Path) -> dict:
     }
 
 
+def _recommend_abuse_case_not_verified(issue: dict, output_dir: Path) -> dict:
+    """Matched abuse-case candidates never reached a verifier.
+
+    Stage 1d stopped after matching, so §9 lists these candidates as not
+    verified. The cause is in the Stage-1d receipts and the event log.
+    """
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "high",
+        "risk_level": "medium",
+        "summary": "Abuse-case verification stopped after matching; the listed candidates have no verdict.",
+        "rationale": (
+            "The matcher writes its candidate set before any verifier runs. A candidate without a verdict "
+            "means the Stage-1d dispatch aborted or was skipped, so its outcome is unknown, not negative."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": ".agent-run.log",
+                "details": "Find the prepare-abuse abort or STAGE1D_ROUTE_SPENT event, fix its cause, then re-run.",
+            },
+        ],
+        "verification": [],
+    }
+
+
 def _recommend_abuse_case_inconclusive(issue: dict, output_dir: Path) -> dict:
     """A verifier could not settle one step of an abuse-case chain.
 
@@ -1248,6 +1275,7 @@ RECOMMENDERS: dict[str, Callable[[dict, Path], dict]] = {
     "cost_accounting_failed": _recommend_cost_accounting_failed,
     "abuse_case_inconclusive": _recommend_abuse_case_inconclusive,
     "abuse_case_file_rejected": _recommend_abuse_case_file_rejected,
+    "abuse_case_not_verified": _recommend_abuse_case_not_verified,
     "tool_error": _recommend_tool_error,
     "orchestration_gate_warn": _recommend_orchestration_gate_warn,
     "config_scan_invalid": _recommend_config_scan_invalid,

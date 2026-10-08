@@ -2060,6 +2060,45 @@ def _extract_rejected_abuse_case_files(output_dir: Path) -> list[dict]:
     return issues
 
 
+def _extract_unverified_abuse_candidates(output_dir: Path) -> list[dict]:
+    """Flag matched abuse-case candidates that never received a verdict.
+
+    The matcher writes ``.abuse-case-matches.json`` before any verifier runs,
+    so a Stage 1d that stopped after matching (an aborted dispatch, a skipped
+    stage) leaves candidates without a verdict. §9 lists them as not
+    verified; this makes the gap a run-level signal too.
+    """
+    matches = _abuse_matches(output_dir).get("matches") or []
+    try:
+        merged = json.loads((output_dir / ".abuse-case-verdicts.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        merged = {}
+    verdicts = merged.get("verdicts") if isinstance(merged, dict) else None
+    decided = {v.get("abuse_case_id") for v in verdicts or [] if isinstance(v, dict)}
+    missing = sorted(
+        str(m["abuse_case_id"])
+        for m in matches
+        if isinstance(m, dict)
+        and m.get("structural_verdict") == "candidate"
+        and m.get("abuse_case_id")
+        and m["abuse_case_id"] not in decided
+    )
+    if not missing:
+        return []
+    return [
+        {
+            "category": "abuse_case_not_verified",
+            "severity": "error",
+            "title": f"{len(missing)} matched abuse-case candidate(s) were never verified: {_clip(', '.join(missing), 120)}",
+            "evidence": {
+                "log_file": ".abuse-case-matches.json",
+                "log_line": 1,
+                "raw_event": _clip(", ".join(missing), 300),
+            },
+        }
+    ]
+
+
 def _extract_abuse_case_outcomes(output_dir: Path) -> list[dict]:
     """Flag abuse-case chains the verifier fan-out could not confirm.
 
@@ -2747,6 +2786,7 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     issues.extend(_extract_run_invariants(output_dir))
     issues.extend(_extract_render_integrity(output_dir))
     issues.extend(_extract_abuse_case_outcomes(output_dir))
+    issues.extend(_extract_unverified_abuse_candidates(output_dir))
     issues.extend(_extract_rejected_abuse_case_files(output_dir))
     issues.extend(_extract_stage_coverage_collapse(output_dir))
     issues.extend(_extract_severity_regression(output_dir))

@@ -1155,6 +1155,14 @@ def test_descriptive_case_is_preselected_from_runtime_paths(tmp_path: Path):
     assert not any(s["matched"] for s in m["step_matches"])
 
 
+def test_descriptive_preselection_admits_only_executable_source(tmp_path: Path):
+    repo = _repo(tmp_path)
+    for name in ("roles.component.scss", "roles.component.html", "roles.md.bak", "roles.component.ts"):
+        (repo / "src" / "roles" / name).write_text("x\n")
+    m = mac.match_case(_descriptive(), [], None, repo_root=repo)
+    assert m["preselected_sources"] == ["src/roles/assign.ts", "src/roles/roles.component.ts"]
+
+
 def test_descriptive_case_with_only_documentation_hits_is_not_applicable(tmp_path: Path):
     repo = _repo(tmp_path)
     m = mac.match_case(_descriptive(patterns=("docs/**",)), [], None, repo_root=repo)

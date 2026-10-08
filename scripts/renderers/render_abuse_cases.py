@@ -380,6 +380,7 @@ def build_canonical_analysis(
     models: list[dict],
     catalog_rows: list[dict],
     not_performed: list[dict] | None = None,
+    unverified: list[dict] | None = None,
 ) -> dict:
     """Project render models into the stable, non-rendering YAML contract."""
     sidecars_exist = any(
@@ -390,7 +391,10 @@ def build_canonical_analysis(
         config = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         pass
-    if sidecars_exist:
+    if unverified and not (output_dir / ".abuse-case-verdicts.json").is_file():
+        status = "not_run"
+        reason = f"abuse-case verification did not finish; {len(unverified)} matched candidate(s) were not verified"
+    elif sidecars_exist:
         status, reason = "completed", None
     elif config.get("skip_abuse_case_verification"):
         status = "skipped"
@@ -446,6 +450,7 @@ def build_canonical_analysis(
         if row.get("id")
     ]
     analysis = {"status": status, "reason": reason, "cases": cases, "catalog_evaluated": evaluated}
+    not_performed = [*(not_performed or []), *(unverified or [])]
     if not_performed:
         analysis["not_performed"] = [
             {
@@ -699,8 +704,11 @@ def render_fragment(
     catalog_rows: list[dict] | None = None,
     not_performed: list[dict] | None = None,
     rejected: list[dict] | None = None,
+    unverified: list[dict] | None = None,
 ) -> str:
     parts: list[str] = [HEADING, ""]
+    if unverified:
+        parts += [_unverified_block(unverified), ""]
     coverage = _business_coverage(catalog_rows or [], not_performed or [], rejected or [])
     catalog_rows = [r for r in catalog_rows or [] if r.get("source") != "descriptive"]
     if models:
@@ -717,7 +725,7 @@ def render_fragment(
             parts.append("")
             parts.append(_case_markdown(m))
             parts.append("")
-    else:
+    elif not unverified:
         parts += [
             "_No abuse-case chain was verified end-to-end on this codebase. "
             "The generic catalog evaluation below records which standard "
@@ -870,6 +878,53 @@ def build_catalog_evaluation(output_dir: Path) -> list[dict]:
     return sorted(rows, key=lambda r: r["id"] or "")
 
 
+def build_unverified_candidates(output_dir: Path) -> list[dict]:
+    """Return matched candidates that have no verifier verdict.
+
+    The matcher writes its match set before any verifier runs, so a stage
+    that stopped after matching leaves candidates no chain model represents.
+    Listing them keeps §9 from reading as "checked, nothing found".
+    """
+    try:
+        mdoc = json.loads((output_dir / ".abuse-case-matches.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    try:
+        vdoc = json.loads((output_dir / ".abuse-case-verdicts.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        vdoc = {}
+    verdicts = vdoc.get("verdicts") if isinstance(vdoc, dict) else None
+    decided = {v.get("abuse_case_id") for v in verdicts or [] if isinstance(v, dict)}
+    matches = mdoc.get("matches") if isinstance(mdoc, dict) else None
+    rows = [
+        {
+            "id": m["abuse_case_id"],
+            "title": m.get("title") or m["abuse_case_id"],
+            "requested": m.get("requested") is True,
+            "reason": "verification did not run",
+        }
+        for m in matches or []
+        if isinstance(m, dict)
+        and m.get("structural_verdict") == "candidate"
+        and m.get("abuse_case_id")
+        and m["abuse_case_id"] not in decided
+    ]
+    return sorted(rows, key=lambda r: r["id"])
+
+
+def _unverified_block(rows: list[dict]) -> str:
+    out = [
+        "### Not verified",
+        "",
+        f"_Abuse-case verification did not finish for this run: {len(rows)} matched "
+        "candidate(s) were never checked against the code. Their outcome is unknown, "
+        "not negative; re-run the assessment to verify them._",
+        "",
+    ]
+    out += [f"- {r['id']} — {r['title']}" for r in rows]
+    return "\n".join(out)
+
+
 def build_business_omissions(output_dir: Path) -> tuple[list[dict], list[dict]]:
     """Return (not-performed business cases, rejected repository case files)."""
     try:
@@ -969,14 +1024,15 @@ def main(argv: list[str] | None = None) -> int:
     models = build_models(output_dir, args.org_profile, args.repo_root)
     catalog_rows = build_catalog_evaluation(output_dir)
     not_performed, rejected = build_business_omissions(output_dir)
-    analysis = build_canonical_analysis(output_dir, models, catalog_rows, not_performed)
+    unverified = build_unverified_candidates(output_dir)
+    analysis = build_canonical_analysis(output_dir, models, catalog_rows, not_performed, unverified)
 
     frag_dir = output_dir / args.fragments_subdir
     frag_dir.mkdir(parents=True, exist_ok=True)
     md_path = frag_dir / "abuse-cases.md"
     json_path = frag_dir / "abuse-cases.json"
 
-    if not models and not catalog_rows and not not_performed and not rejected:
+    if not models and not catalog_rows and not not_performed and not rejected and not unverified:
         # Only remove stale fragments when the evaluation sidecars are also
         # absent — that is the true "Phase 10c never ran" case. When
         # .abuse-case-verdicts.json or .abuse-case-matches.json exist, Stage
@@ -1009,7 +1065,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.write("RENDER_ABUSE_CASES: no abuse-case evaluation on disk — placeholder will render\n")
         return 0
 
-    md_path.write_text(render_fragment(models, catalog_rows, not_performed, rejected), encoding="utf-8")
+    md_path.write_text(render_fragment(models, catalog_rows, not_performed, rejected, unverified), encoding="utf-8")
     json_path.write_text(
         json.dumps(
             {"schema_version": 1, "abuse_cases": models, "catalog_evaluated": catalog_rows},

@@ -460,6 +460,23 @@ class TestRenderAbuseCases:
         assert (tmp_path / ".fragments" / "abuse-cases.md").is_file()
         assert (tmp_path / ".fragments" / "abuse-cases.json").is_file()
 
+    def test_absent_fragment_names_candidates_that_were_never_verified(self, tmp_path):
+        # A Stage 1d that stopped after matching leaves candidates and no
+        # verdict; §9 must not read as "checked, nothing found".
+        matches = {
+            "schema_version": 1,
+            "matches": [
+                {"abuse_case_id": "AC-T-001", "title": "Script to token theft", "structural_verdict": "candidate"},
+                {"abuse_case_id": "REPO-AC-007", "title": "Coupon reuse", "structural_verdict": "candidate"},
+            ],
+        }
+        (tmp_path / ".abuse-case-matches.json").write_text(json.dumps(matches), encoding="utf-8")
+        ctx = self._ctx(tmp_path)
+        out = compose._render_abuse_cases(ctx, None, {"heading": "## 9. Abuse Cases"})
+        assert "### Not verified" in out
+        assert "REPO-AC-007 — Coupon reuse" in out
+        assert "No abuse-case chain was verified" not in out
+
     def test_heading_mismatch_raises(self, tmp_path):
         ctx = self._ctx(tmp_path, frag_text="## Wrong Heading\n\nbody\n")
         with pytest.raises(compose.FragmentError):

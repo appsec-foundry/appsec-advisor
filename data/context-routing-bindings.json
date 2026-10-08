@@ -13,7 +13,7 @@
     "evidence_sample": {"max_bytes": 524288, "max_tokens": 131072, "max_items": 256, "max_lines": 20000},
     "architect_job": {"max_bytes": 524288, "max_tokens": 131072, "max_items": 24, "max_lines": 20000},
     "post_stride_projection": {"max_bytes": 524288, "max_tokens": 131072, "max_items": 512, "max_lines": 20000},
-    "abuse_candidate": {"max_bytes": 65536, "max_tokens": 16384, "max_items": 16, "max_lines": 10000},
+    "abuse_candidate": {"max_bytes": 65536, "max_tokens": 16384, "max_items": 18, "max_lines": 10000},
     "legacy_direct": {"max_bytes": 4194304, "max_tokens": 1048576, "max_items": 100000, "max_lines": 200000},
     "component_bundle": {"max_bytes": 65536, "max_tokens": 16384, "max_items": 400, "max_lines": 100000},
     "component_business": {"max_bytes": 16384, "max_tokens": 4096, "max_items": 5, "max_lines": 256},

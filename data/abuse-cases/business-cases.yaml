@@ -14,7 +14,8 @@
 #
 # Path patterns are right-anchored, one component per segment: "*role*"
 # matches any file whose name contains "role" at any depth, "*role*/*" any
-# file directly inside such a directory. They are preselection hints only.
+# file directly inside such a directory. "[!d]" keeps "share" from matching
+# generic "shared" helpers. They are preselection hints only.
 schema_version: 2
 abuse_cases:
   - id: AC-T-101
@@ -157,7 +158,7 @@ abuse_cases:
       - Resources intended to be public.
     scope_qualifier:
       required_signals: [has_auth_surface]
-      path_patterns: ["*export*", "*export*/*", "*Export*", "*Export*/*", "*download*", "*download*/*", "*Download*", "*Download*/*", "*share*", "*share*/*", "*Share*", "*Share*/*", "*report*", "*report*/*", "*Report*", "*Report*/*"]
+      path_patterns: ["*export*", "*export*/*", "*Export*", "*Export*/*", "*download*", "*download*/*", "*Download*", "*Download*/*", "*share[!d]*", "*share/*", "*share[!d]*/*", "*Share[!d]*", "*Share/*", "*Share[!d]*/*", "*report*", "*report*/*", "*Report*", "*Report*/*"]
 
   - id: AC-T-108
     kind: descriptive

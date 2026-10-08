@@ -67,6 +67,15 @@ def test_case_is_preselected_by_capability_not_by_application_name(tmp_path: Pat
     (plain / "src").mkdir(parents=True)
     (plain / "src" / "index.ts").write_text("code\n")
     assert matcher.match_case(case, [], {"has_role_concept"}, repo_root=plain)["structural_verdict"] == "not_applicable"
+    # "share" selects sharing code, not a generic "shared" helper directory.
+    export_case = next(c for c in _cases() if c["id"] == "AC-T-107")
+    for rel, expected in (("app/shared/theme.ts", "not_applicable"), ("app/share/link.ts", "candidate")):
+        repo = tmp_path / ("share-" + expected)
+        (repo / rel).parent.mkdir(parents=True)
+        (repo / rel).write_text("code\n")
+        assert (
+            matcher.match_case(export_case, [], {"has_auth_surface"}, repo_root=repo)["structural_verdict"] == expected
+        )
     # Without the recon signal the case does not apply even when a path matches.
     assert (
         matcher.match_case(case, [], set(), repo_root=tmp_path / "src-roleAssignment.ts")["structural_verdict"]

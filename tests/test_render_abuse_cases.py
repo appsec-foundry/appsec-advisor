@@ -849,6 +849,31 @@ def test_business_coverage_is_summarized_and_requests_answered_individually(tmp_
     assert any(r["id"] == "REPO-AC-021" for r in analysis["catalog_evaluated"])
 
 
+def test_matched_candidates_without_a_verdict_are_reported_as_not_verified(tmp_path: Path):
+    out = tmp_path / "out"
+    out.mkdir()
+    rows = [
+        {"abuse_case_id": "AC-T-001", "title": "Script to token theft", "structural_verdict": "candidate"},
+        {"abuse_case_id": "AC-T-006", "title": "Server-side injection", "structural_verdict": "candidate"},
+        {"abuse_case_id": "AC-T-002", "title": "Bulk export", "structural_verdict": "not_applicable", "reason": "x"},
+    ]
+    (out / ".abuse-case-matches.json").write_text(json.dumps({"matches": rows}), encoding="utf-8")
+    unverified = rac.build_unverified_candidates(out)
+    assert [r["id"] for r in unverified] == ["AC-T-001", "AC-T-006"]
+    md = rac.render_fragment([], rac.build_catalog_evaluation(out), [], [], unverified)
+    assert "2 matched candidate(s) were never checked" in md
+    assert "No abuse-case chain was verified" not in md
+    analysis = rac.build_canonical_analysis(out, [], [], [], unverified)
+    assert analysis["status"] == "not_run"
+    assert {r["id"] for r in analysis["not_performed"]} == {"AC-T-001", "AC-T-006"}
+    # A candidate that received a verdict is a result, not a gap.
+    (out / ".abuse-case-verdicts.json").write_text(
+        json.dumps({"verdicts": [{"abuse_case_id": "AC-T-001", "step_verdicts": []}]}), encoding="utf-8"
+    )
+    assert [r["id"] for r in rac.build_unverified_candidates(out)] == ["AC-T-006"]
+    assert rac.build_canonical_analysis(out, [], [], [], rac.build_unverified_candidates(out))["status"] == "completed"
+
+
 def test_unrated_risk_is_reserved_for_unlinked_descriptive_cases():
     sys.path.insert(0, str(REPO_ROOT / "scripts"))
     from validators.validate_intermediate import _check_export_trace_invariants as semantic  # noqa: PLC0415
