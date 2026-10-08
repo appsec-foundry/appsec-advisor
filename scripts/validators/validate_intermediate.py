@@ -1428,6 +1428,8 @@ def _check_export_trace_invariants(data: dict) -> list[str]:
                 errors.append(f"abuse_case_analysis {case_id}: unverified_steps do not match step flags")
             if case.get("verification_complete") != (not unverified_steps):
                 errors.append(f"abuse_case_analysis {case_id}: verification_complete does not match step flags")
+            if case.get("combined_risk") is None and (case.get("source") != "descriptive" or matched_findings):
+                errors.append(f"abuse_case_analysis {case_id}: only an unlinked descriptive case may be unrated")
     return errors
 
 

@@ -151,11 +151,121 @@ def test_repo_local_honours_disable(tmp_path: Path):
     assert "REPO-AC-009" not in [c["id"] for c in cases]
 
 
-def test_repo_local_duplicate_of_library_is_reported(tmp_path: Path):
+def test_repo_local_duplicate_of_library_is_rejected_without_replacing_it(tmp_path: Path):
     dup = _VALID_CASE.replace("ORG-AC-001", "AC-T-001")
     repo_root = _write_repo_local(tmp_path, dup)
-    _, errors = rac.resolve_abuse_cases(None, None, repo_root=repo_root)
-    assert any("duplicate" in e.lower() and "AC-T-001" in e for e in errors), errors
+    cases, errors, rejected = rac.resolve_abuse_case_sources(None, None, repo_root=repo_root)
+    assert errors == []
+    assert [c["id"] for c in cases] == _LIBRARY_IDS
+    library_case = next(c for c in cases if c["id"] == "AC-T-001")
+    assert library_case["title"] != "Custom org scenario"
+    assert rejected == [
+        {"path": ".appsec/abuse-cases/custom.yaml", "reason": "custom.yaml: duplicate abuse-case id 'AC-T-001'"}
+    ]
+
+
+def test_invalid_repo_file_is_rejected_alone_and_keeps_every_other_case(tmp_path: Path):
+    """One broken repository file must not remove the library or the
+    repository's valid cases from the run (it used to fail the matcher)."""
+    _write_repo_local(tmp_path, _VALID_CASE.replace("ORG-AC-001", "REPO-AC-001"), "a-valid.yaml")
+    broken = _VALID_CASE.replace("ORG-AC-001", "REPO-AC-002").replace("initial_access: unauthenticated", "x: 1")
+    _write_repo_local(tmp_path, broken, "b-broken.yaml")
+    cases, errors, rejected = rac.resolve_abuse_case_sources(None, None, repo_root=tmp_path)
+    assert errors == []
+    assert [c["id"] for c in cases] == _LIBRARY_IDS + ["REPO-AC-001"]
+    assert [r["path"] for r in rejected] == [".appsec/abuse-cases/b-broken.yaml"]
+    assert "REPO-AC-002" in rejected[0]["reason"]
+
+
+def test_repo_files_with_the_same_id_keep_only_the_first(tmp_path: Path):
+    _write_repo_local(tmp_path, _VALID_CASE.replace("ORG-AC-001", "REPO-AC-001"), "a.yaml")
+    _write_repo_local(tmp_path, _VALID_CASE.replace("ORG-AC-001", "REPO-AC-001"), "b.yml")
+    cases, _, rejected = rac.resolve_abuse_case_sources(None, None, repo_root=tmp_path)
+    assert [c["id"] for c in cases].count("REPO-AC-001") == 1
+    assert [r["path"] for r in rejected] == [".appsec/abuse-cases/b.yml"]
+
+
+def test_repo_local_discovers_yml_like_explicit_files(tmp_path: Path):
+    _write_repo_local(tmp_path, _VALID_CASE.replace("ORG-AC-001", "REPO-AC-003"), "case.yml")
+    cases, errors, rejected = rac.resolve_abuse_case_sources(None, None, repo_root=tmp_path)
+    assert (errors, rejected) == ([], [])
+    assert cases[-1]["id"] == "REPO-AC-003"
+
+
+def test_repo_local_symlink_is_rejected_even_inside_the_repository(tmp_path: Path):
+    repo = tmp_path / "repo"
+    outside = tmp_path / "outside.yaml"
+    outside.write_text(_VALID_CASE.replace("ORG-AC-001", "REPO-AC-004"), encoding="utf-8")
+    d = repo / ".appsec" / "abuse-cases"
+    d.mkdir(parents=True)
+    (d / "escape.yaml").symlink_to(outside)
+    inside = repo / "inside.yaml"
+    inside.write_text(_VALID_CASE.replace("ORG-AC-001", "REPO-AC-005"), encoding="utf-8")
+    (d / "inside.yaml").symlink_to(inside)
+    cases, errors, rejected = rac.resolve_abuse_case_sources(None, None, repo_root=repo)
+    assert errors == []
+    assert not {"REPO-AC-004", "REPO-AC-005"} & {c["id"] for c in cases}
+    assert {r["reason"] for r in rejected} == {"symbolic links are not admitted"}
+
+
+def test_repo_local_directory_escaping_the_repository_is_rejected(tmp_path: Path):
+    repo = tmp_path / "repo"
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "c.yaml").write_text(_VALID_CASE.replace("ORG-AC-001", "REPO-AC-006"), encoding="utf-8")
+    (repo / ".appsec").mkdir(parents=True)
+    (repo / ".appsec" / "abuse-cases").symlink_to(elsewhere, target_is_directory=True)
+    cases, errors, rejected = rac.resolve_abuse_case_sources(None, None, repo_root=repo)
+    assert errors == []
+    assert "REPO-AC-006" not in {c["id"] for c in cases}
+    assert rejected == [{"path": ".appsec/abuse-cases", "reason": "directory resolves outside the repository"}]
+
+
+def test_oversized_and_surplus_repo_files_are_rejected(tmp_path: Path):
+    limits = {**rac.load_limits(), "case_file_kib": 1, "repo_case_files": 2}
+    big = _VALID_CASE.replace("ORG-AC-001", "REPO-AC-007") + "# " + "x" * 2048 + "\n"
+    _write_repo_local(tmp_path, big, "a-big.yaml")
+    _write_repo_local(tmp_path, _VALID_CASE.replace("ORG-AC-001", "REPO-AC-008"), "b.yaml")
+    _write_repo_local(tmp_path, _VALID_CASE.replace("ORG-AC-001", "REPO-AC-009"), "c.yaml")
+    cases, errors, rejected = rac.resolve_abuse_case_sources(None, None, repo_root=tmp_path, limits=limits)
+    assert errors == []
+    assert [c["id"] for c in cases][-1] == "REPO-AC-008"
+    reasons = {r["path"].rsplit("/", 1)[-1]: r["reason"] for r in rejected}
+    assert "size limit" in reasons["a-big.yaml"]
+    assert "limit of 2" in reasons["c.yaml"]
+
+
+def test_oversized_explicit_file_fails_closed(tmp_path: Path):
+    limits = {**rac.load_limits(), "case_file_kib": 1}
+    case_file = tmp_path / "big.yaml"
+    case_file.write_text(_VALID_CASE + "# " + "x" * 2048 + "\n", encoding="utf-8")
+    cases, errors, _ = rac.resolve_abuse_case_sources(
+        {"abuse_cases": {"inherit_defaults": False}},
+        None,
+        repo_root=tmp_path,
+        extra_case_files=[Path("big.yaml")],
+        limits=limits,
+    )
+    assert cases == []
+    assert any("size limit" in e for e in errors), errors
+
+
+def test_unknown_schema_version_names_the_supported_versions(tmp_path: Path):
+    _write_repo_local(tmp_path, _VALID_CASE.replace("schema_version: 1", "schema_version: 7"))
+    _, _, rejected = rac.resolve_abuse_case_sources(None, None, repo_root=tmp_path)
+    assert rejected[0]["reason"] == "custom.yaml: schema_version 7 is not supported; supported versions: 1, 2"
+
+
+def test_schema_error_names_the_case_id(tmp_path: Path):
+    bad = _VALID_CASE.replace("initial_access: unauthenticated", "initial_access: telepathy")
+    _write_repo_local(tmp_path, bad.replace("ORG-AC-001", "REPO-AC-011"))
+    _, _, rejected = rac.resolve_abuse_case_sources(None, None, repo_root=tmp_path)
+    assert "abuse_cases/0 (REPO-AC-011)/attacker/initial_access" in rejected[0]["reason"]
+
+
+def test_limits_file_matches_its_schema():
+    limits = rac.load_limits()
+    assert limits["descriptive_candidates_standard"] <= limits["descriptive_candidates_thorough"]
 
 
 def test_explicit_case_file_under_repo_is_loaded(tmp_path: Path):
@@ -344,8 +454,81 @@ def test_main_errors_return_one(tmp_path: Path, capsys):
     assert "ERROR:" in capsys.readouterr().err
 
 
+def test_main_validation_fails_on_a_rejected_repo_file(tmp_path: Path, capsys):
+    _write_repo_local(tmp_path, "abuse_cases: [1]\n", "bad.yaml")
+    assert rac.main(["--repo-root", str(tmp_path), "--list-ids"]) == 1
+    assert "REJECTED: .appsec/abuse-cases/bad.yaml:" in capsys.readouterr().err
+
+
 def test_main_plugin_root_override(tmp_path: Path, capsys):
     # Point plugin_root at an empty dir → no default library loaded.
     rc = rac.main(["--plugin-root", str(tmp_path), "--list-ids"])
     assert rc == 0
     assert capsys.readouterr().out.strip() == ""
+
+
+# ---------------------------------------------------------------------------
+# Descriptive (business) cases
+# ---------------------------------------------------------------------------
+
+_DESCRIPTIVE = """\
+schema_version: 2
+abuse_cases:
+  - id: REPO-AC-020
+    kind: descriptive
+    title: Restricted administrator grants themselves a role outside their delegation
+    actor: Delegated administrator of one department
+    initial_access: authenticated_high_priv
+    goal: Obtain a role the delegation does not include.
+    boundary: Roles and subjects the delegation permits.
+    steps:
+      - Call the role-assignment operation with their own user as the subject.
+      - Choose a role outside the delegated set.
+    expected_controls:
+      - The assignment operation checks the target role against the caller's delegation.
+    exclusions:
+      - Fully authorized administrators who may assign every role.
+    scope_qualifier:
+      path_patterns: ["**/*role*"]
+"""
+
+
+def test_descriptive_case_is_admitted_from_the_repository(tmp_path: Path):
+    _write_repo_local(tmp_path, _DESCRIPTIVE)
+    cases, errors, rejected = rac.resolve_abuse_case_sources(None, None, repo_root=tmp_path)
+    assert (errors, rejected) == ([], [])
+    assert cases[-1]["kind"] == "descriptive"
+
+
+def test_descriptive_case_requires_schema_version_2(tmp_path: Path):
+    _write_repo_local(tmp_path, _DESCRIPTIVE.replace("schema_version: 2", "schema_version: 1"))
+    _, _, rejected = rac.resolve_abuse_case_sources(None, None, repo_root=tmp_path)
+    assert rejected[0]["reason"] == "custom.yaml: REPO-AC-020: descriptive cases require schema_version: 2"
+
+
+def test_descriptive_case_cannot_carry_authority_fields(tmp_path: Path):
+    """Severity, gates, and mandatory status stay with trusted policy; a
+    repository-authored business case cannot set them."""
+    for extra in (
+        "    severity: Critical\n",
+        "    goal_impact: Critical\n",
+        "    source: mandatory\n",
+        "    release_gate: {fail_on: [fully_viable]}\n",
+        "    chain: []\n",
+    ):
+        _write_repo_local(tmp_path, _DESCRIPTIVE + extra)
+        _, _, rejected = rac.resolve_abuse_case_sources(None, None, repo_root=tmp_path)
+        assert rejected and "Additional properties are not allowed" in rejected[0]["reason"], extra
+
+
+def test_descriptive_case_needs_a_preselection_qualifier(tmp_path: Path):
+    body = _DESCRIPTIVE.replace('    scope_qualifier:\n      path_patterns: ["**/*role*"]\n', "")
+    _write_repo_local(tmp_path, body)
+    _, _, rejected = rac.resolve_abuse_case_sources(None, None, repo_root=tmp_path)
+    assert "scope_qualifier" in rejected[0]["reason"]
+
+
+def test_descriptive_prose_is_bounded(tmp_path: Path):
+    _write_repo_local(tmp_path, _DESCRIPTIVE.replace("Obtain a role", "x" * 700))
+    _, _, rejected = rac.resolve_abuse_case_sources(None, None, repo_root=tmp_path)
+    assert "REPO-AC-020" in rejected[0]["reason"] and "goal" in rejected[0]["reason"]

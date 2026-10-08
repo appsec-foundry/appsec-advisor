@@ -306,6 +306,35 @@ def _recommend_high_token_usage(issue: dict, output_dir: Path) -> dict:
     }
 
 
+def _recommend_abuse_case_file_rejected(issue: dict, output_dir: Path) -> dict:
+    """A repository abuse-case file failed validation and was left out.
+
+    Every other case still ran, so the run is usable; the scenario the file
+    describes was not checked until its author fixes the file.
+    """
+    path = (issue.get("evidence") or {}).get("path") or "the repository case file"
+    return {
+        "category": "user_action",
+        "auto_applicable": False,
+        "confidence": "high",
+        "risk_level": "low",
+        "summary": f"{path} was rejected; its scenarios were not checked in this run.",
+        "rationale": (
+            "The resolver rejects a repository case file that is invalid, oversized, a symbolic link, "
+            "or reuses an existing case id, and keeps every other case. The reason names the file, "
+            "case id, and field to fix."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": path,
+                "details": "Fix the named field, then validate with scripts/model/resolve_abuse_cases.py --repo-root <repo>.",
+            },
+        ],
+        "verification": [],
+    }
+
+
 def _recommend_abuse_case_inconclusive(issue: dict, output_dir: Path) -> dict:
     """A verifier could not settle one step of an abuse-case chain.
 
@@ -1218,6 +1247,7 @@ RECOMMENDERS: dict[str, Callable[[dict, Path], dict]] = {
     "high_token_usage": _recommend_high_token_usage,
     "cost_accounting_failed": _recommend_cost_accounting_failed,
     "abuse_case_inconclusive": _recommend_abuse_case_inconclusive,
+    "abuse_case_file_rejected": _recommend_abuse_case_file_rejected,
     "tool_error": _recommend_tool_error,
     "orchestration_gate_warn": _recommend_orchestration_gate_warn,
     "config_scan_invalid": _recommend_config_scan_invalid,

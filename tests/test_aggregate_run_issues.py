@@ -1231,6 +1231,37 @@ class TestExtractRecoveryEvents:
         assert agg._extract_recovery_events(tmp_path) == []
 
 
+class TestDescriptiveAbuseCaseIssues:
+    def _write(self, tmp_path, steps, rejected=None):
+        matches = {"matches": [{"abuse_case_id": "REPO-AC-020", "kind": "descriptive"}]}
+        if rejected is not None:
+            matches["rejected_case_files"] = rejected
+        (tmp_path / ".abuse-case-matches.json").write_text(_json.dumps(matches), encoding="utf-8")
+        (tmp_path / ".abuse-case-verdicts.json").write_text(
+            _json.dumps({"verdicts": [{"abuse_case_id": "REPO-AC-020", "step_verdicts": steps}]}), encoding="utf-8"
+        )
+
+    def test_reasoned_inconclusive_business_case_is_a_result_not_a_run_issue(self, tmp_path):
+        self._write(tmp_path, [{"verdict": "inconclusive", "state": "decided", "reason": "delegation policy unknown"}])
+        assert agg._extract_abuse_case_outcomes(tmp_path) == []
+
+    def test_unfinished_or_rejected_business_evidence_is_a_run_issue(self, tmp_path):
+        self._write(tmp_path, [{"verdict": "inconclusive", "state": "pending"}])
+        assert len(agg._extract_abuse_case_outcomes(tmp_path)) == 1
+        self._write(tmp_path, [{"verdict": "inconclusive", "state": "decided", "rejected_evidence": {"file": "x"}}])
+        assert len(agg._extract_abuse_case_outcomes(tmp_path)) == 1
+
+    def test_rejected_repository_case_file_is_surfaced_with_a_recommendation(self, tmp_path):
+        self._write(tmp_path, [], rejected=[{"path": ".appsec/abuse-cases/bad.yaml", "reason": "schema_version 7"}])
+        issues = agg._extract_rejected_abuse_case_files(tmp_path)
+        assert [i["category"] for i in issues] == ["abuse_case_file_rejected"]
+        assert issues[0]["evidence"]["path"] == ".appsec/abuse-cases/bad.yaml"
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+        from runtime.recommend_fixes import RECOMMENDERS  # noqa: PLC0415
+
+        assert RECOMMENDERS["abuse_case_file_rejected"](issues[0], tmp_path)["category"] == "user_action"
+
+
 class TestExtractAbuseCaseOutcomes:
     def test_missing_file_returns_empty(self, tmp_path):
         assert agg._extract_abuse_case_outcomes(tmp_path) == []

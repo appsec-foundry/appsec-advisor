@@ -8,7 +8,9 @@ Merges three sources into one validated list of abuse-case definitions:
   2. org-specific case files matched by ``abuse_cases.add`` (a glob relative to
      the org-profile directory), validated against
      ``schemas/abuse-cases.schema.yaml``;
-  3. minus any ids listed in ``abuse_cases.disable``.
+  3. repo-local files under ``<repo>/.appsec/abuse-cases/`` and explicit
+     per-scan files, both bounded by ``data/abuse-case-limits.yaml``;
+  4. minus any ids listed in ``abuse_cases.disable``.
 
 Consumed by ``scripts/model/match_abuse_cases.py`` (deterministic matcher) and by
 ``scripts/validators/validate_org_profile.py`` (semantic validation of the org glob).
@@ -28,6 +30,8 @@ if not __package__:
 
 import argparse
 import json
+import os
+import stat
 import sys
 from pathlib import Path
 from typing import Any
@@ -37,6 +41,12 @@ import yaml
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_LIBRARY = PLUGIN_ROOT / "data" / "abuse-cases" / "default-library.yaml"
 ABUSE_CASE_SCHEMA = PLUGIN_ROOT / "schemas" / "abuse-cases.schema.yaml"
+LIMITS_FILE = PLUGIN_ROOT / "data" / "abuse-case-limits.yaml"
+LIMITS_SCHEMA = PLUGIN_ROOT / "schemas" / "abuse-case-limits.schema.json"
+SUPPORTED_SCHEMA_VERSIONS = (1, 2)
+CASE_FILE_SUFFIXES = (".yaml", ".yml")
+# A rejection reason quotes validator messages, which can echo file content.
+_MAX_REASON_CHARS = 300
 
 
 def _load_yaml(path: Path) -> Any:
@@ -48,17 +58,59 @@ def _load_schema() -> dict:
     return _load_yaml(ABUSE_CASE_SCHEMA)
 
 
+def load_limits(path: Path = LIMITS_FILE) -> dict[str, int]:
+    """Return the enforced abuse-case limits as ``{name: value}``."""
+    import jsonschema
+
+    data = _load_yaml(path)
+    jsonschema.Draft202012Validator(json.loads(LIMITS_SCHEMA.read_text(encoding="utf-8"))).validate(data)
+    return {name: entry["value"] for name, entry in data["limits"].items()}
+
+
+def _read_bounded(path: Path, max_bytes: int) -> bytes:
+    """Read a regular, non-symlink file of at most ``max_bytes``."""
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as handle:
+        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+            raise ValueError("not a regular file")
+        body = handle.read(max_bytes + 1)
+    if len(body) > max_bytes:
+        raise ValueError(f"exceeds the case file size limit of {max_bytes // 1024} KiB")
+    return body
+
+
 def _schema_errors(doc: Any, schema: dict, label: str) -> list[str]:
     try:
         import jsonschema
     except ImportError:
         return [f"{label}: jsonschema not installed; cannot validate abuse cases"]
     validator = jsonschema.Draft202012Validator(schema)
+    cases = doc.get("abuse_cases") if isinstance(doc, dict) else None
     out = []
     for err in sorted(validator.iter_errors(doc), key=lambda e: list(e.path)):
-        loc = "/".join(str(p) for p in err.path) or "<root>"
+        parts = [str(p) for p in err.path]
+        # Name the case an author recognizes, not only its list position.
+        if len(parts) >= 2 and parts[0] == "abuse_cases" and isinstance(cases, list):
+            index = int(parts[1])
+            case_id = cases[index].get("id") if index < len(cases) and isinstance(cases[index], dict) else None
+            if isinstance(case_id, str):
+                parts[1] = f"{parts[1]} ({case_id})"
+        loc = "/".join(parts) or "<root>"
         out.append(f"{label}: {loc}: {err.message}")
     return out
+
+
+def _version_errors(doc: dict, label: str) -> list[str]:
+    """Reject unknown file versions and descriptive cases in version-1 files."""
+    version = doc.get("schema_version", 1)
+    if version not in SUPPORTED_SCHEMA_VERSIONS:
+        supported = ", ".join(str(v) for v in SUPPORTED_SCHEMA_VERSIONS)
+        return [f"{label}: schema_version {version!r} is not supported; supported versions: {supported}"]
+    if version == 1:
+        for case in doc.get("abuse_cases") or []:
+            if isinstance(case, dict) and case.get("kind") == "descriptive":
+                return [f"{label}: {case.get('id')}: descriptive cases require schema_version: 2"]
+    return []
 
 
 def _check_grants_requires(case: dict, label: str) -> list[str]:
@@ -78,17 +130,25 @@ def _check_grants_requires(case: dict, label: str) -> list[str]:
     return errors
 
 
-def _load_case_file(path: Path, schema: dict) -> tuple[list[dict], list[str]]:
-    """Load one library/org file (`{abuse_cases: [...]}`), validate, return
-    (cases, errors)."""
+def _load_case_file(path: Path, schema: dict, max_bytes: int | None = None) -> tuple[list[dict], list[str]]:
+    """Load one case file (`{abuse_cases: [...]}`), validate, return
+    (cases, errors). ``max_bytes`` bounds untrusted repository input; such a
+    file must be a regular file, not a symlink."""
     label = path.name
     try:
-        doc = _load_yaml(path)
-    except (OSError, yaml.YAMLError) as exc:
+        if max_bytes is None:
+            doc = _load_yaml(path)
+        else:
+            doc = yaml.safe_load(_read_bounded(path, max_bytes))
+    except ValueError as exc:
+        return [], [f"{label}: {exc}"]
+    except OSError:
+        return [], [f"{label}: unreadable or a symbolic link"]
+    except yaml.YAMLError as exc:
         return [], [f"{label}: cannot parse: {exc}"]
     if not isinstance(doc, dict):
         return [], [f"{label}: top-level must be a mapping with 'abuse_cases'"]
-    errors = _schema_errors(doc, schema, label)
+    errors = _version_errors(doc, label) or _schema_errors(doc, schema, label)
     cases = doc.get("abuse_cases") or []
     if not errors:
         for case in cases:
@@ -96,33 +156,94 @@ def _load_case_file(path: Path, schema: dict) -> tuple[list[dict], list[str]]:
     return (cases if not errors else []), errors
 
 
+def case_chain(case: dict) -> list[dict]:
+    """Return a case's chain steps; descriptive steps become prose-only steps.
+
+    Downstream consumers (verifier context, report, canonical YAML) iterate
+    one step shape. A descriptive step carries no probe, grant, or finding
+    classification, and every step is required.
+    """
+    if case.get("kind") != "descriptive":
+        return list(case.get("chain") or [])
+    return [
+        {"step": index, "label": text, "description": text, "required": True}
+        for index, text in enumerate(case.get("steps") or [], start=1)
+    ]
+
+
 REPO_LOCAL_SUBDIR = Path(".appsec") / "abuse-cases"
 
 
-def resolve_abuse_cases(
+def _reason(errors: list[str]) -> str:
+    text = "; ".join(errors)
+    return text if len(text) <= _MAX_REASON_CHARS else text[: _MAX_REASON_CHARS - 1] + "…"
+
+
+def _repo_local_files(root: Path, max_files: int) -> tuple[list[Path], list[dict]]:
+    """Return (admissible files, rejections) for ``<root>/.appsec/abuse-cases``.
+
+    The directory and every file must stay inside the repository. Symbolic
+    links are not followed; files beyond the count limit are rejected by name.
+    """
+    repo_dir = root / REPO_LOCAL_SUBDIR
+    rel_dir = REPO_LOCAL_SUBDIR.as_posix()
+    if not repo_dir.exists() and not repo_dir.is_symlink():
+        return [], []
+    try:
+        repo_dir.resolve(strict=True).relative_to(root)
+    except (OSError, ValueError):
+        return [], [{"path": rel_dir, "reason": "directory resolves outside the repository"}]
+    if repo_dir.is_symlink() or not repo_dir.is_dir():
+        return [], [{"path": rel_dir, "reason": "not a directory inside the repository"}]
+    files: list[Path] = []
+    rejected: list[dict] = []
+    for path in sorted(p for p in repo_dir.iterdir() if p.suffix in CASE_FILE_SUFFIXES):
+        rel = f"{rel_dir}/{path.name}"
+        if path.is_symlink():
+            rejected.append({"path": rel, "reason": "symbolic links are not admitted"})
+        elif len(files) >= max_files:
+            rejected.append({"path": rel, "reason": f"exceeds the limit of {max_files} repository case files"})
+        else:
+            files.append(path)
+    return files, rejected
+
+
+def resolve_abuse_case_sources(
     org_profile: dict | None,
     profile_dir: Path | None,
     plugin_root: Path = PLUGIN_ROOT,
     repo_root: Path | None = None,
     extra_case_files: list[Path] | None = None,
-) -> tuple[list[dict], list[str]]:
-    """Return (active_cases, errors).
+    limits: dict[str, int] | None = None,
+    origins: dict[str, str] | None = None,
+) -> tuple[list[dict], list[str], list[dict]]:
+    """Return (active_cases, errors, rejected_repo_files).
+
+    When ``origins`` is a dict, it receives ``{case id: origin}`` with origin
+    ``library``, ``org``, ``repo``, or ``explicit``. Only ``explicit`` cases
+    came from this invocation's own arguments.
 
     Sources, in load order:
       1. plugin standard library (unless ``inherit_defaults: false``);
       2. org-profile cases matched by ``abuse_cases.add`` (glob relative to
          ``profile_dir``);
-      3. **repo-local** cases under ``<repo_root>/.appsec/abuse-cases/*.yaml``
-         — a zero-config layer that needs no org profile, mirroring the
+      3. **repo-local** cases under ``<repo_root>/.appsec/abuse-cases/`` —
+         a zero-config layer that needs no org profile, mirroring the
          known-threats convention so a single repository can ship its own
          scenarios checked into version control;
+      4. explicit per-scan files below ``repo_root``;
       minus any ids in ``abuse_cases.disable``.
 
-    ``org_profile`` is the parsed profile dict (or None when no profile is
-    active). ``profile_dir`` is the directory the profile lives in. ``repo_root``
-    is the target repository root (or None to skip the repo-local layer).
+    Library, org, and explicit-file problems are ``errors``: the operator
+    chose those inputs, so the caller fails closed. A repo-local file that is
+    invalid, oversized, a symlink, or reuses a loaded id is rejected on its
+    own and listed in ``rejected_repo_files`` as ``{path, reason}``; every
+    other case stays active, so one broken repository file cannot remove the
+    library from a run.
     """
     schema = _load_schema()
+    limits = limits or load_limits()
+    max_bytes = limits["case_file_kib"] * 1024
     cfg = (org_profile or {}).get("abuse_cases") or {}
     inherit = cfg.get("inherit_defaults", True)
     disabled = set(cfg.get("disable") or [])
@@ -130,32 +251,47 @@ def resolve_abuse_cases(
 
     cases: list[dict] = []
     errors: list[str] = []
+    rejected: list[dict] = []
     loaded_paths: set[Path] = set()
+    origin_of: dict[str, str] = {}
+
+    def _admit(file_cases: list[dict], origin: str) -> None:
+        cases.extend(file_cases)
+        for case in file_cases:
+            origin_of.setdefault(case.get("id"), origin)
 
     library = plugin_root / "data" / "abuse-cases" / "default-library.yaml"
     if inherit and library.exists():
         lib_cases, lib_errors = _load_case_file(library, schema)
-        cases += lib_cases
+        _admit(lib_cases, "library")
         errors += lib_errors
 
     if profile_dir is not None and add_glob:
         for path in sorted(profile_dir.glob(add_glob)):
             file_cases, file_errors = _load_case_file(path, schema)
-            cases += file_cases
+            _admit(file_cases, "org")
             errors += file_errors
 
-    # Repo-local layer — zero-config, no org profile required. Any *.yaml under
-    # <repo_root>/.appsec/abuse-cases/ is loaded and validated. The org
-    # profile's `disable` list (below) still applies to repo-local ids, and a
-    # duplicate id across layers is reported as an authoring error.
+    # Every id loaded so far, disabled or not: a repository file reusing one
+    # would otherwise shadow or be shadowed by a trusted definition.
+    known_ids = {case.get("id") for case in cases}
+
     if repo_root is not None:
-        repo_dir = Path(repo_root) / REPO_LOCAL_SUBDIR
-        if repo_dir.is_dir():
-            for path in sorted(repo_dir.glob("*.yaml")):
-                file_cases, file_errors = _load_case_file(path, schema)
-                cases += file_cases
-                errors += file_errors
-                loaded_paths.add(path.resolve())
+        root = Path(repo_root).resolve()
+        files, rejected = _repo_local_files(root, limits["repo_case_files"])
+        for path in files:
+            rel = f"{REPO_LOCAL_SUBDIR.as_posix()}/{path.name}"
+            file_cases, file_errors = _load_case_file(path, schema, max_bytes)
+            ids = [case.get("id") for case in file_cases]
+            clash = sorted({cid for cid in ids if cid in known_ids or ids.count(cid) > 1})
+            if not file_errors and clash:
+                file_errors = [f"{path.name}: duplicate abuse-case id {cid!r}" for cid in clash]
+            if file_errors:
+                rejected.append({"path": rel, "reason": _reason(file_errors)})
+                continue
+            _admit(file_cases, "repo")
+            known_ids.update(ids)
+            loaded_paths.add(path.resolve())
 
     # Explicit per-scan files are constrained to the target repository. They
     # are untrusted data, not arbitrary host-file reads. Unlike the automatic
@@ -173,7 +309,7 @@ def resolve_abuse_cases(
                 except ValueError:
                     errors.append(f"explicit abuse-case file {path!s} resolves outside the repository")
                     continue
-                if candidate.suffix not in {".yaml", ".yml"} or not candidate.is_file():
+                if candidate.suffix not in CASE_FILE_SUFFIXES or not candidate.is_file():
                     errors.append(f"explicit abuse-case file {path!s} is not a readable YAML file")
                     continue
                 # Naming a file the repo-local layer already picked up is a
@@ -181,8 +317,8 @@ def resolve_abuse_cases(
                 if candidate in loaded_paths:
                     continue
                 loaded_paths.add(candidate)
-                file_cases, file_errors = _load_case_file(candidate, schema)
-                cases += file_cases
+                file_cases, file_errors = _load_case_file(candidate, schema, max_bytes)
+                _admit(file_cases, "explicit")
                 errors += file_errors
 
     # Apply disable + detect duplicate ids (org override wins is NOT supported —
@@ -199,6 +335,26 @@ def resolve_abuse_cases(
         seen[cid] = case.get("title", "")
         active.append(case)
 
+    if origins is not None:
+        origins.update({cid: origin_of[cid] for cid in seen})
+    return active, errors, rejected
+
+
+def resolve_abuse_cases(
+    org_profile: dict | None,
+    profile_dir: Path | None,
+    plugin_root: Path = PLUGIN_ROOT,
+    repo_root: Path | None = None,
+    extra_case_files: list[Path] | None = None,
+) -> tuple[list[dict], list[str]]:
+    """Return (active_cases, errors) — see ``resolve_abuse_case_sources``.
+
+    Rejected repo-local files are left out of the active set; callers that
+    must report them use ``resolve_abuse_case_sources``.
+    """
+    active, errors, _rejected = resolve_abuse_case_sources(
+        org_profile, profile_dir, plugin_root, repo_root, extra_case_files
+    )
     return active, errors
 
 
@@ -219,8 +375,12 @@ def main(argv: list[str] | None = None) -> int:
         profile = _load_yaml(p)
         profile_dir = p.parent
 
-    cases, errors = resolve_abuse_cases(profile, profile_dir, plugin_root, repo_root)
-    if errors:
+    cases, errors, rejected = resolve_abuse_case_sources(profile, profile_dir, plugin_root, repo_root)
+    # As a validation command every problem fails, including a repository
+    # file that a scan would only reject on its own.
+    for item in rejected:
+        sys.stderr.write(f"REJECTED: {item['path']}: {item['reason']}\n")
+    if errors or rejected:
         for e in errors:
             sys.stderr.write(f"ERROR: {e}\n")
         return 1

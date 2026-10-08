@@ -647,7 +647,7 @@ The plugin loads cases in this order:
 
 1. **Plugin standard library**: `data/abuse-cases/default-library.yaml` (the `AC-T-NNN` mandatory set), unless an org profile sets `abuse_cases.inherit_defaults: false`.
 2. **Org profile**: `abuse_cases.add` is a glob (relative to the org-profile directory) of extra case files; `abuse_cases.disable` removes ids. Use the `ORG-AC-NNN` ID prefix.
-3. **Repository**: any `*.yaml` under `<repo>/.appsec/abuse-cases/` in the target repository is loaded automatically. Use the `REPO-AC-NNN` ID prefix. IDs must be unique.
+3. **Repository**: any `*.yaml` or `*.yml` file directly under `<repo>/.appsec/abuse-cases/` in the target repository is loaded automatically. Use the `REPO-AC-NNN` ID prefix. IDs must be unique. A file that is invalid, larger than 128 KiB, a symbolic link, or reuses a loaded ID is rejected on its own: every other case still runs, and the report and run issues name the file and the reason.
 4. **One scan**: `--abuse-case-file <repo-relative-path>` adds a YAML file below the target repository. Repeat `--only-abuse-case <ID>` to run selected cases only. Either flag runs abuse-case verification at any depth, and an unreadable file or an unknown id is reported rather than silently skipped.
 
 Copy and adapt `examples/abuse-cases.yaml`; its comments describe each field and accepted value.
@@ -695,6 +695,37 @@ release_gate:
   fail_on: [fully_viable]
   applies_to_presets: [release-review]
 ```
+
+### Business abuse cases (pilot)
+
+A business abuse case describes misuse in plain language: who acts, what they want, which authority or process boundary they cross, and which control should stop them. It needs no regex and no scanner finding. Use it for rules a pattern cannot express, such as a delegated administrator granting themselves a role, self-approval, or reuse of an approval after a content change. The verifier binds each step to your code and cites the source line for its verdict; a citation that does not match the file is rejected and the step stays unresolved.
+
+```yaml
+schema_version: 2
+abuse_cases:
+  - id: REPO-AC-010
+    kind: descriptive
+    title: Requester approves their own expense report
+    actor: An employee who also holds the approver role
+    initial_access: authenticated_low_priv
+    goal: Get an expense paid without an independent approval.
+    boundary: The approver must differ from the requester.
+    steps:
+      - Submit an expense report.
+      - Approve the same report with the same account.
+    expected_controls:
+      - The approval operation rejects an approver who created the report.
+    exclusions:
+      - Reports below the amount that policy lets employees self-approve.
+    open_questions:
+      - Which amount, if any, may be self-approved?
+    scope_qualifier:
+      path_patterns: ["*approv*", "*expense*"]
+```
+
+`scope_qualifier` is required: `required_signals` (recon signal names such as `has_role_concept`) and `path_patterns` decide deterministically whether the case can apply. A case without a match runs only when you name it with `--only-abuse-case` or `--abuse-case-file`. Business cases carry no `severity`, `goal_impact`, `source`, `release_gate`, or `probe`; a case linked to no finding is reported as not rated. `data/abuse-cases/business-cases.yaml` holds ten generic cases to copy; it is not loaded by default.
+
+Business cases cost model time, so they are bounded per run by `data/abuse-case-limits.yaml`. Quick depth checks only requested cases. Standard depth checks up to three and thorough depth up to eight, strongest preselection evidence first. The report counts cases that did not apply or were not performed and answers each requested case individually. Validate your files before a run by executing `python3 scripts/model/resolve_abuse_cases.py --repo-root <repo> --list-ids` in the plugin directory, where `<repo>` is the target repository path; every problem names the file, case ID, and field.
 
 ## Hooks
 

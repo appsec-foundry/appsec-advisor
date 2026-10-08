@@ -6722,6 +6722,14 @@ def prepare_abuse(output_dir: Path, restrict_to: list[str] | None = None) -> dic
     receipts = [f"abuse candidates: {len(candidates)}"]
     if match.returncode != 0:
         receipts.append(f"matcher returned {match.returncode}; partial candidates retained")
+    try:
+        rejected = json.loads((output_dir / ".abuse-case-matches.json").read_text(encoding="utf-8")).get(
+            "rejected_case_files"
+        )
+    except (OSError, ValueError, AttributeError):
+        rejected = None
+    if isinstance(rejected, list) and rejected:
+        receipts.append(f"rejected repository case files: {len(rejected)} (run issues name each file)")
     if already := _finalized_abuse_verdicts(output_dir, candidates):
         receipts.append("already verified, not re-dispatched: " + ", ".join(already))
         candidates = [item for item in candidates if item not in already]

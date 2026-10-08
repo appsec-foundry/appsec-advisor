@@ -1365,6 +1365,19 @@ def test_prepare_abuse_still_degrades_a_matcher_failure_without_a_selection(tmp_
     assert any("matcher returned 1" in receipt for receipt in action["receipts"])
 
 
+def test_prepare_abuse_receipts_rejected_repository_case_files(tmp_path, monkeypatch):
+    # A rejected repository file no longer fails the matcher; the stage runs
+    # with every other case and the receipt says a file was left out.
+    output = _abuse_output(tmp_path)
+    (output / ".abuse-case-matches.json").write_text(
+        json.dumps({"matches": [], "rejected_case_files": [{"path": ".appsec/abuse-cases/x.yaml", "reason": "r"}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(controller, "_run_script", lambda name, args, **kwargs: _completed())
+    action = controller.prepare_abuse(output)
+    assert any("rejected repository case files: 1" in receipt for receipt in action["receipts"])
+
+
 def test_finalize_abuse_aborts_when_yaml_rebuild_fails_schema_validation(tmp_path, monkeypatch):
     # model/build_threat_model_yaml.py writes the yaml BEFORE validating it, so exit 5
     # leaves an invalid model on disk — it must not degrade to a receipt.

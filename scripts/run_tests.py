@@ -478,6 +478,7 @@ GROUPS = {
         build_stride_evidence_bundles
         build_threat_modeling_context
         build_trust_boundary_assessment_input
+        business_abuse_cases
         canonicalize_component_id
         classify_component
         context_prompt_budgets
@@ -1001,6 +1002,7 @@ SOURCE_TESTS = {
         actor_attribution
         actor_presentation
         build_threat_model_yaml
+        business_abuse_cases
         check_target_specificity
         compose_threat_model_cov2
         gate_preconditions
@@ -1117,7 +1119,9 @@ SOURCE_TESTS = {
     """),
     "scripts/model/match_abuse_cases.py": _tests("""
         abuse_case_verdicts
+        build_abuse_case_contexts
         build_threat_model_yaml
+        business_abuse_cases
         check_target_specificity
         compose_threat_model_cov2
         gate_preconditions
@@ -1499,7 +1503,10 @@ SOURCE_TESTS = {
         dispatch_prompt_cache_order
         requirements_verification
     """),
-    "docs/org-profiles.md": _tests("requirements_verification"),
+    "docs/org-profiles.md": _tests("""
+        business_abuse_cases
+        requirements_verification
+    """),
     "docs/threat-modeler.md": _tests("requirements_verification"),
     "specs/requirements.md": _tests("""
         check_specs
@@ -5634,6 +5641,8 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/model/resolve_abuse_cases.py": _tests("""
+        build_abuse_case_contexts
+        business_abuse_cases
         check_target_specificity
         compose_threat_model_cov2
         gate_preconditions
@@ -6237,6 +6246,46 @@ SOURCE_TESTS = {
         analyst_controller
         resolve_analyst_catalog
         schemas
+    """),
+    "agents/appsec-abuse-case-verifier.md": _tests("""
+        active_tool_calls
+        agent_definitions
+        aggregate_run_issues
+        budget_watchdog
+        completion_contract
+        orchestration_controller
+        stage1_context_edge_inventory
+        thin_runtime_regressions_2026_07_20
+    """),
+    "schemas/abuse-case-verifier-context.schema.json": _tests("""
+        build_abuse_case_contexts
+        business_abuse_cases
+        orchestration_controller
+        schemas
+    """),
+    "schemas/abuse-cases.schema.yaml": _tests("""
+        abuse_cases_schema
+        build_abuse_case_contexts
+        business_abuse_cases
+        match_abuse_cases
+        org_profile_schema
+        render_abuse_cases
+        resolve_abuse_cases
+        schemas
+    """),
+    "schemas/abuse-case-limits.schema.json": _tests("""
+        build_abuse_case_contexts
+        match_abuse_cases
+        resolve_abuse_cases
+        schemas
+    """),
+    "data/abuse-case-limits.yaml": _tests("""
+        build_abuse_case_contexts
+        match_abuse_cases
+        resolve_abuse_cases
+    """),
+    "data/abuse-cases/business-cases.yaml": _tests("""
+        business_abuse_cases
     """),
     "schemas/analyst-limits.schema.json": _tests("""
         analyst_catalog

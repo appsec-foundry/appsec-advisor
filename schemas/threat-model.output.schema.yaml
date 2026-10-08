@@ -827,7 +827,10 @@ properties:
             actor: {type: string, minLength: 1, maxLength: 256}
             goal: {type: string, maxLength: 1000}
             prerequisite: {type: string, maxLength: 1000}
-            combined_risk: {type: string, enum: [Critical, High, Medium, Low, Informational]}
+            combined_risk:
+              description: Highest policy risk of the linked findings. Null only for a descriptive business case without a linked finding, which verification does not rate.
+              type: [string, "null"]
+              enum: [Critical, High, Medium, Low, Informational, null]
             chain_verdict: {type: string, enum: [fully_viable, partially_blocked, mitigated, inconclusive]}
             verification_complete: {type: boolean}
             unverified_steps:
@@ -880,6 +883,18 @@ properties:
             id: {type: string, pattern: "^(AC-T|AC|ORG-AC|REPO-AC)-[0-9]{3,}$"}
             title: {type: string, minLength: 1, maxLength: 200}
             source: {type: [string, "null"], maxLength: 64}
+            reason: {type: string, minLength: 1, maxLength: 1000}
+      not_performed:
+        description: Descriptive business cases selected for verification but omitted by depth or per-run limits, with the reason. Explicitly requested cases are marked.
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required: [id, title, requested, reason]
+          properties:
+            id: {type: string, pattern: "^(AC-T|AC|ORG-AC|REPO-AC)-[0-9]{3,}$"}
+            title: {type: string, minLength: 1, maxLength: 200}
+            requested: {type: boolean}
             reason: {type: string, minLength: 1, maxLength: 1000}
 
   tier_root_causes:

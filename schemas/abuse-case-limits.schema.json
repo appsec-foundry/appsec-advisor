@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/abuse-case-limits.schema.json",
+  "title": "Abuse-case limits",
+  "description": "Finite limits the abuse-case stage enforces outside the model, with explicit units and the evidence status of each value.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "limits"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "status": {
+      "enum": [
+        "provisional",
+        "measured"
+      ]
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repo_case_files",
+        "case_file_kib",
+        "descriptive_candidates_standard",
+        "descriptive_candidates_thorough",
+        "descriptive_candidates_explicit",
+        "descriptive_source_files",
+        "descriptive_source_kib",
+        "added_token_share"
+      ],
+      "patternProperties": {
+        "^[a-z_]+$": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "value",
+            "unit"
+          ],
+          "properties": {
+            "value": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "unit": {
+              "enum": [
+                "files",
+                "KiB",
+                "candidates",
+                "percent"
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

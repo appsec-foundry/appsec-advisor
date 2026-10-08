@@ -246,6 +246,8 @@ def project_candidate(payload: bytes, candidate_id: str, repo_root: Path | None 
     case = row.get("case")
     if not isinstance(case, dict) or case.get("id") != candidate_id:
         raise AbuseContextError(f"candidate {candidate_id} has no matching case definition")
+    if case.get("kind") == "descriptive":
+        return _project_descriptive(payload, len(matches), row, case, candidate_id, repo_root)
     chain = _project_chain(case.get("chain"))
     attacker = case.get("attacker")
     if not isinstance(attacker, dict):
@@ -287,6 +289,110 @@ def project_candidate(payload: bytes, candidate_id: str, repo_root: Path | None 
         },
     }
     return value
+
+
+MAX_DESCRIPTIVE_ITEMS = 8
+MAX_DESCRIPTIVE_SOURCES = 32
+
+
+def _prose_list(value: Any, field: str) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > MAX_DESCRIPTIVE_ITEMS:
+        raise AbuseContextError(f"{field} exceeds {MAX_DESCRIPTIVE_ITEMS} entries")
+    return [_string(item, field, maximum=600) for item in value]  # type: ignore[list-item]
+
+
+def _descriptive_source_budget() -> int:
+    from model.resolve_abuse_cases import load_limits  # noqa: PLC0415
+
+    return min(MAX_SOURCE_WINDOW_CHARS, load_limits()["descriptive_source_kib"] * 1024)
+
+
+def _project_descriptive(
+    payload: bytes,
+    match_count: int,
+    row: dict[str, Any],
+    case: dict[str, Any],
+    candidate_id: str,
+    repo_root: Path | None,
+) -> dict[str, Any]:
+    """Project a plain-language business case for the verifier to bind.
+
+    The verifier receives the case prose, the deterministically preselected
+    runtime files, and exact source windows at related detector findings.
+    It reads further code itself within its turn budget; nothing here claims
+    the case applies.
+    """
+    steps = case.get("steps")
+    if not isinstance(steps, list) or not steps or len(steps) > MAX_DESCRIPTIVE_ITEMS:
+        raise AbuseContextError(f"descriptive case steps must contain 1-{MAX_DESCRIPTIVE_ITEMS} entries")
+    sources = row.get("preselected_sources") or []
+    if not isinstance(sources, list) or len(sources) > MAX_DESCRIPTIVE_SOURCES:
+        raise AbuseContextError("descriptive preselected_sources is not a bounded list")
+    related_in = row.get("related_findings") or []
+    if not isinstance(related_in, list) or len(related_in) > MAX_DESCRIPTIVE_SOURCES:
+        raise AbuseContextError("descriptive related_findings is not a bounded list")
+    budget = _descriptive_source_budget()
+    source_chars = 0
+    related = []
+    for item in related_in:
+        if not isinstance(item, dict):
+            raise AbuseContextError("descriptive related finding must be an object")
+        window = _source_window(repo_root, {"file": item.get("file"), "line": item.get("line")}, budget - source_chars)
+        if window is not None:
+            source_chars += len(window["content"])
+        related.append(
+            {
+                "id": _string(item.get("id"), "related_findings.id", maximum=100),
+                "title": _string(item.get("title") or item.get("id"), "related_findings.title", maximum=500),
+                "cwe": _string(item.get("cwe"), "related_findings.cwe", maximum=40, nullable=True),
+                "file": _string(item.get("file"), "related_findings.file", maximum=1000),
+                "line": item.get("line") if isinstance(item.get("line"), int) and item.get("line") >= 1 else None,
+                "source_window": window,
+            }
+        )
+    return {
+        "schema_version": 1,
+        "source": {
+            "artifact_path": ".abuse-case-matches.json",
+            "sha256": _sha256(payload),
+            "candidate_id": candidate_id,
+            "match_count": match_count,
+        },
+        "limits": {
+            "max_chain_steps": MAX_CHAIN_STEPS,
+            "max_patterns_per_field": MAX_PATTERNS,
+            "max_source_window_lines": MAX_SOURCE_WINDOW_LINES,
+            "max_source_chars": MAX_SOURCE_WINDOW_CHARS,
+            "source_chars": source_chars,
+            "max_bytes": MAX_CONTEXT_BYTES,
+            "serialized_bytes": 0,
+        },
+        "candidate": {
+            "abuse_case_id": candidate_id,
+            "kind": "descriptive",
+            "title": _string(row.get("title"), "candidate.title", maximum=500),
+            "structural_verdict": "candidate",
+            "reason": _string(row.get("reason"), "candidate.reason", maximum=2000, nullable=True),
+            "requested": row.get("requested") is True,
+            "actor": _string(case.get("actor"), "candidate.actor", maximum=600),
+            "initial_access": case.get("initial_access"),
+            "prerequisites": _string(case.get("prerequisites"), "candidate.prerequisites", maximum=600, nullable=True),
+            "goal": _string(case.get("goal"), "candidate.goal", maximum=600),
+            "boundary": _string(case.get("boundary"), "candidate.boundary", maximum=600),
+            "steps": [
+                {"step": index, "label": _string(text, f"steps[{index}]", maximum=600)}
+                for index, text in enumerate(steps, start=1)
+            ],
+            "expected_controls": _prose_list(case.get("expected_controls"), "candidate.expected_controls"),
+            "evidence": _prose_list(case.get("evidence"), "candidate.evidence"),
+            "exclusions": _prose_list(case.get("exclusions"), "candidate.exclusions"),
+            "open_questions": _prose_list(case.get("open_questions"), "candidate.open_questions"),
+            "preselected_sources": [_string(item, "preselected_sources", maximum=1000) for item in sources],
+            "related_findings": related,
+        },
+    }
 
 
 def _payload(value: dict[str, Any]) -> bytes:

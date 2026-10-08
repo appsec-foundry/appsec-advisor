@@ -728,3 +728,141 @@ def test_case_actor_carries_the_figure_name_of_its_access_group(access, meta, na
 def test_section_nine_risk_uses_the_triage_chain_rule(verdict, case, expected):
     matched = [{"risk": "High"}, {"risk": "Medium"}]
     assert rac._combined_risk(matched, verdict, case) == expected
+
+
+# ─── descriptive (business) cases ───────────────────────────────────────────
+
+_DESCRIPTIVE_CASE = {
+    "id": "REPO-AC-020",
+    "kind": "descriptive",
+    "title": "Delegated administrator grants themselves a role",
+    "actor": "Delegated administrator",
+    "initial_access": "authenticated_high_priv",
+    "goal": "Obtain a role outside the delegation.",
+    "boundary": "Roles the delegation permits.",
+    "steps": ["Assign a role to themselves.", "Choose a role outside the delegation."],
+    "expected_controls": ["The assignment checks the delegation."],
+    "scope_qualifier": {"path_patterns": ["src/roles/*"]},
+}
+
+
+def _descriptive_setup(tmp_path: Path, chain_verdict: str = "fully_viable") -> Path:
+    repo = tmp_path / "repo"
+    case_dir = repo / ".appsec" / "abuse-cases"
+    case_dir.mkdir(parents=True)
+    (case_dir / "business.yaml").write_text(
+        yaml.safe_dump({"schema_version": 2, "abuse_cases": [_DESCRIPTIVE_CASE]}), encoding="utf-8"
+    )
+    out = tmp_path / "out"
+    out.mkdir()
+    steps = [
+        {
+            "step": n,
+            "verdict": "confirmed",
+            "state": "decided",
+            "matched_finding_id": None,
+            "reason": "no delegation check",
+            "evidence": {"file": "src/roles/assign.ts", "line": 3},
+            "controls_found": [],
+        }
+        for n in (1, 2)
+    ]
+    _setup(
+        out,
+        {
+            "schema_version": 1,
+            "verdicts": [{"abuse_case_id": "REPO-AC-020", "chain_verdict": chain_verdict, "step_verdicts": steps}],
+        },
+    )
+    matches = {
+        "schema_version": 1,
+        "matches": [
+            {
+                "abuse_case_id": "REPO-AC-020",
+                "kind": "descriptive",
+                "title": _DESCRIPTIVE_CASE["title"],
+                "structural_verdict": "candidate",
+                "step_matches": [{"step": 1, "required": True}, {"step": 2, "required": True}],
+            },
+            {
+                "abuse_case_id": "REPO-AC-021",
+                "kind": "descriptive",
+                "title": "Self-approval",
+                "source": "descriptive",
+                "structural_verdict": "not_applicable",
+                "reason": "no runtime source path matched: **/approv*",
+            },
+            {
+                "abuse_case_id": "REPO-AC-022",
+                "kind": "descriptive",
+                "title": "Approval reuse",
+                "requested": True,
+                "structural_verdict": "not_performed",
+                "reason": "exceeds the limit of 16 explicitly requested business cases per run",
+            },
+            {
+                "abuse_case_id": "REPO-AC-023",
+                "kind": "descriptive",
+                "title": "Export bypass",
+                "requested": False,
+                "structural_verdict": "not_performed",
+                "reason": "exceeds the limit of 3 business cases at standard depth",
+            },
+        ],
+        "rejected_case_files": [
+            {"path": ".appsec/abuse-cases/bad.yaml", "reason": "bad.yaml: schema_version 7 is not supported"}
+        ],
+    }
+    (out / ".abuse-case-matches.json").write_text(json.dumps(matches))
+    return repo
+
+
+def test_unlinked_descriptive_case_is_not_rated(tmp_path: Path):
+    """A confirmed business chain without a linked finding gets no fallback severity."""
+    repo = _descriptive_setup(tmp_path)
+    out = tmp_path / "out"
+    assert rac.main(["--output-dir", str(out), "--repo-root", str(repo)]) == 0
+    analysis = yaml.safe_load((out / "threat-model.yaml").read_text(encoding="utf-8"))["abuse_case_analysis"]
+    case = next(c for c in analysis["cases"] if c["id"] == "REPO-AC-020")
+    assert case["combined_risk"] is None
+    assert case["source"] == "descriptive"
+    assert case["actor"] == "Delegated administrator"
+    assert [s["outcome"] for s in case["steps"]] == _DESCRIPTIVE_CASE["steps"]
+    md = (out / ".fragments" / "abuse-cases.md").read_text(encoding="utf-8")
+    assert "not rated (no linked finding)" in md
+    assert "**Source:** business case" in md
+
+
+def test_business_coverage_is_summarized_and_requests_answered_individually(tmp_path: Path):
+    repo = _descriptive_setup(tmp_path)
+    out = tmp_path / "out"
+    assert rac.main(["--output-dir", str(out), "--repo-root", str(repo)]) == 0
+    md = (out / ".fragments" / "abuse-cases.md").read_text(encoding="utf-8")
+    assert "### Business-case coverage" in md
+    assert "1 business case(s) did not apply" in md
+    assert "Self-approval" not in md  # templates are counted, not listed
+    assert "Requested case REPO-AC-022 — Approval reuse: not performed" in md
+    assert "1 business case(s) were not performed: exceeds the limit of 3" in md
+    assert "`.appsec/abuse-cases/bad.yaml` was rejected" in md
+    analysis = yaml.safe_load((out / "threat-model.yaml").read_text(encoding="utf-8"))["abuse_case_analysis"]
+    assert {r["id"]: r["requested"] for r in analysis["not_performed"]} == {"REPO-AC-022": True, "REPO-AC-023": False}
+    assert any(r["id"] == "REPO-AC-021" for r in analysis["catalog_evaluated"])
+
+
+def test_unrated_risk_is_reserved_for_unlinked_descriptive_cases():
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    from validators.validate_intermediate import _check_export_trace_invariants as semantic  # noqa: PLC0415
+
+    base = {
+        "id": "AC-T-001",
+        "source": "mandatory",
+        "combined_risk": None,
+        "steps": [],
+        "matched_finding_ids": [],
+        "unverified_steps": [],
+        "verification_complete": True,
+    }
+    errors = semantic({"abuse_case_analysis": {"status": "completed", "cases": [base]}})
+    assert any("only an unlinked descriptive case may be unrated" in e for e in errors)
+    errors = semantic({"abuse_case_analysis": {"status": "completed", "cases": [dict(base, source="descriptive")]}})
+    assert not any("unrated" in e for e in errors)

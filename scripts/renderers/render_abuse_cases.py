@@ -153,8 +153,14 @@ def _severity(finding: dict) -> str:
     return sev if sev in _SEV_ORDER else ""
 
 
-def _combined_risk(matched: list[dict], chain_verdict: str, case: dict | None = None) -> str:
-    """Highest linked finding risk; a fully viable chain also reaches its declared goal impact."""
+def _combined_risk(matched: list[dict], chain_verdict: str, case: dict | None = None) -> str | None:
+    """Highest linked finding risk; a fully viable chain also reaches its declared goal impact.
+
+    A descriptive business case declares no goal impact and no severity. Without
+    a linked finding it stays unrated (None) instead of taking a fallback risk.
+    """
+    if isinstance(case, dict) and case.get("kind") == "descriptive" and not matched:
+        return None
     if chain_verdict == "fully_viable":
         return verified_chain_risk(matched, case)
     return abuse_case_risk(matched)
@@ -218,6 +224,8 @@ _ACCESS_GROUP = {
 
 def _actor_label(case: dict, meta: dict | None = None) -> str:
     """The attacker under the name Figure 1 gives its access group, then the case's own access prose."""
+    if case.get("kind") == "descriptive":
+        return str(case.get("actor") or "attacker")[:256]
     attacker = case.get("attacker") or {}
     access = attacker.get("initial_access", "")
     group = _ACCESS_GROUP.get(access)
@@ -288,7 +296,7 @@ def render_case(
     rows = []
     matched_findings: list[dict] = []
     step_of_fid: dict[str, int] = {}
-    for step in case.get("chain") or []:
+    for step in _rac().case_chain(case):
         n = step.get("step")
         sv = sv_by_step.get(n, {})
         mm = match_steps.get(n, {})
@@ -353,10 +361,10 @@ def render_case(
     return {
         "id": cid,
         "title": case.get("title", ""),
-        "source": case.get("source", "discovered"),
+        "source": "descriptive" if case.get("kind") == "descriptive" else case.get("source", "discovered"),
         "actor_label": _actor_label(case, meta),
         "goal": case.get("goal", ""),
-        "prerequisite": (case.get("attacker") or {}).get("prerequisite", ""),
+        "prerequisite": (case.get("attacker") or {}).get("prerequisite", "") or case.get("prerequisites", ""),
         "combined_risk": combined,
         "chain_verdict": chain_verdict,
         "unverified_steps": unverified_steps,
@@ -371,6 +379,7 @@ def build_canonical_analysis(
     output_dir: Path,
     models: list[dict],
     catalog_rows: list[dict],
+    not_performed: list[dict] | None = None,
 ) -> dict:
     """Project render models into the stable, non-rendering YAML contract."""
     sidecars_exist = any(
@@ -411,7 +420,9 @@ def build_canonical_analysis(
                 "actor": str(model.get("actor_label") or "attacker"),
                 "goal": str(model.get("goal") or ""),
                 "prerequisite": str(model.get("prerequisite") or ""),
-                "combined_risk": model.get("combined_risk") or "Informational",
+                "combined_risk": model.get("combined_risk")
+                if model.get("source") == "descriptive"
+                else model.get("combined_risk") or "Informational",
                 "chain_verdict": model.get("chain_verdict") or "inconclusive",
                 "verification_complete": not any(step["unverified"] for step in steps),
                 "unverified_steps": sorted({step["step"] for step in steps if step["unverified"]}),
@@ -434,7 +445,18 @@ def build_canonical_analysis(
         for row in catalog_rows
         if row.get("id")
     ]
-    return {"status": status, "reason": reason, "cases": cases, "catalog_evaluated": evaluated}
+    analysis = {"status": status, "reason": reason, "cases": cases, "catalog_evaluated": evaluated}
+    if not_performed:
+        analysis["not_performed"] = [
+            {
+                "id": row["id"],
+                "title": str(row.get("title") or row["id"])[:200],
+                "requested": bool(row.get("requested")),
+                "reason": str(row.get("reason") or "not performed"),
+            }
+            for row in not_performed
+        ]
+    return analysis
 
 
 def persist_canonical_analysis(output_dir: Path, analysis: dict) -> bool:
@@ -474,7 +496,7 @@ def persist_canonical_analysis(output_dir: Path, analysis: dict) -> bool:
 def _case_markdown(m: dict) -> str:
     icon, label = _CHAIN_VERDICT.get(m["chain_verdict"], ("?", "Inconclusive"))
     risk_emoji = _RISK_EMOJI.get(m["combined_risk"], "")
-    src = "mandatory" if m["source"] == "mandatory" else "analysis-discovered"
+    src = _SOURCE_LABEL.get(m["source"], "analysis-discovered")
     cid = m["id"]
     out: list[str] = []
     # Anchor on its OWN line before the heading (matches the Findings / Weakness
@@ -485,7 +507,7 @@ def _case_markdown(m: dict) -> str:
     out.append("")
     out.append(
         f"> **Source:** {src} · **Actor:** {m['actor_label']} · "
-        f"**Combined Risk:** {risk_emoji} {m['combined_risk']} · "
+        f"**Combined Risk:** {_risk_text(m['combined_risk'], risk_emoji)} · "
         f"**Verdict:** {icon} {label}"
     )
     out.append("")
@@ -582,7 +604,7 @@ def _summary_table(models: list[dict]) -> str:
         actor_short = m["actor_label"].split(" — ")[0]
         out.append(
             f"| [{m['id']}](#{m['id'].lower()}) | {m['title']} | {actor_short} | "
-            f"{emoji} {m['combined_risk']} | {icon} {label} |"
+            f"{_risk_text(m['combined_risk'], emoji)} | {icon} {label} |"
         )
     return "\n".join(out)
 
@@ -618,6 +640,41 @@ _LEGEND = (
 )
 
 
+_SOURCE_LABEL = {"mandatory": "mandatory", "descriptive": "business case"}
+
+
+def _risk_text(risk: str | None, emoji: str) -> str:
+    """An unlinked business case is not rated; say so instead of inventing a level."""
+    return f"{emoji} {risk}".strip() if risk else "not rated (no linked finding)"
+
+
+def _business_coverage(catalog_rows: list[dict], not_performed: list[dict], rejected: list[dict]) -> str:
+    """Summarize business-case coverage without one row per template.
+
+    Explicit requests are answered individually; optional omissions and
+    non-applicable templates are counted. Rejected repository case files are
+    listed, because their authors need to fix them.
+    """
+    out: list[str] = []
+    inapplicable = [r for r in catalog_rows if r.get("source") == "descriptive"]
+    requested = [r for r in not_performed if r.get("requested")]
+    optional = [r for r in not_performed if not r.get("requested")]
+    if inapplicable:
+        out.append(
+            f"- {len(inapplicable)} business case(s) did not apply: preselection found no matching runtime code or signal."
+        )
+    if optional:
+        reasons = sorted({r["reason"] for r in optional})
+        out.append(f"- {len(optional)} business case(s) were not performed: {'; '.join(reasons)}.")
+    for r in requested:
+        out.append(f"- Requested case {r['id']} — {r['title']}: not performed ({r['reason']}).")
+    for r in rejected:
+        out.append(f"- Repository case file `{r['path']}` was rejected: {r['reason']}")
+    if not out:
+        return ""
+    return "\n".join(["### Business-case coverage", "", *out])
+
+
 def _catalog_table(rows: list[dict]) -> str:
     """Compact 'generic catalog evaluated, not applicable' table so the reader
     sees WHICH common abuse-case scenarios were checked and why each was ruled
@@ -637,8 +694,15 @@ def _catalog_table(rows: list[dict]) -> str:
     return "\n".join(out)
 
 
-def render_fragment(models: list[dict], catalog_rows: list[dict] | None = None) -> str:
+def render_fragment(
+    models: list[dict],
+    catalog_rows: list[dict] | None = None,
+    not_performed: list[dict] | None = None,
+    rejected: list[dict] | None = None,
+) -> str:
     parts: list[str] = [HEADING, ""]
+    coverage = _business_coverage(catalog_rows or [], not_performed or [], rejected or [])
+    catalog_rows = [r for r in catalog_rows or [] if r.get("source") != "descriptive"]
     if models:
         parts += [_INTRO, ""]
         for verdict, label in _VERIFICATION_GROUPS.items():
@@ -665,6 +729,12 @@ def render_fragment(models: list[dict], catalog_rows: list[dict] | None = None) 
             parts.append("---")
             parts.append("")
         parts.append(_catalog_table(catalog_rows))
+        parts.append("")
+    if coverage:
+        if models or catalog_rows:
+            parts.append("---")
+            parts.append("")
+        parts.append(coverage)
         parts.append("")
     return "\n".join(parts).rstrip() + "\n"
 
@@ -800,6 +870,26 @@ def build_catalog_evaluation(output_dir: Path) -> list[dict]:
     return sorted(rows, key=lambda r: r["id"] or "")
 
 
+def build_business_omissions(output_dir: Path) -> tuple[list[dict], list[dict]]:
+    """Return (not-performed business cases, rejected repository case files)."""
+    try:
+        mdoc = json.loads((output_dir / ".abuse-case-matches.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return [], []
+    omitted = [
+        {
+            "id": m.get("abuse_case_id"),
+            "title": m.get("title") or m.get("abuse_case_id"),
+            "requested": m.get("requested") is True,
+            "reason": m.get("reason") or "not performed",
+        }
+        for m in mdoc.get("matches", [])
+        if m.get("structural_verdict") == "not_performed" and m.get("abuse_case_id")
+    ]
+    rejected = [r for r in mdoc.get("rejected_case_files") or [] if isinstance(r, dict) and r.get("path")]
+    return sorted(omitted, key=lambda r: r["id"]), rejected
+
+
 def _abuse_fp(m: dict) -> str:
     """Stable cross-run identity for an abuse case: its lowercased title.
     Mirrors the threat/mitigation fingerprint contract in
@@ -874,14 +964,15 @@ def main(argv: list[str] | None = None) -> int:
     output_dir = Path(args.output_dir)
     models = build_models(output_dir, args.org_profile, args.repo_root)
     catalog_rows = build_catalog_evaluation(output_dir)
-    analysis = build_canonical_analysis(output_dir, models, catalog_rows)
+    not_performed, rejected = build_business_omissions(output_dir)
+    analysis = build_canonical_analysis(output_dir, models, catalog_rows, not_performed)
 
     frag_dir = output_dir / args.fragments_subdir
     frag_dir.mkdir(parents=True, exist_ok=True)
     md_path = frag_dir / "abuse-cases.md"
     json_path = frag_dir / "abuse-cases.json"
 
-    if not models and not catalog_rows:
+    if not models and not catalog_rows and not not_performed and not rejected:
         # Only remove stale fragments when the evaluation sidecars are also
         # absent — that is the true "Phase 10c never ran" case. When
         # .abuse-case-verdicts.json or .abuse-case-matches.json exist, Stage
@@ -914,7 +1005,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.write("RENDER_ABUSE_CASES: no abuse-case evaluation on disk — placeholder will render\n")
         return 0
 
-    md_path.write_text(render_fragment(models, catalog_rows), encoding="utf-8")
+    md_path.write_text(render_fragment(models, catalog_rows, not_performed, rejected), encoding="utf-8")
     json_path.write_text(
         json.dumps(
             {"schema_version": 1, "abuse_cases": models, "catalog_evaluated": catalog_rows},

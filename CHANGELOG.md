@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The Threat Analyst checks concrete threat hypotheses against selected files or directories at a Git revision, with evidence and explicit unresolved outcomes.
 - Figure 1 marks network trust boundaries between components of one column, and Figure 1b shows the build trust boundaries its CI, input and artifact elements evidence.
+- Repositories can describe business abuse cases in plain language (pilot), which the assessment checks against the code within per-depth limits and reports with cited evidence.
 
 ### Fixed
 
@@ -21,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hardcoded secrets that a finding cites, including keys passed directly as call arguments, are masked in every report output, and the secret gate fails when one remains.
 - Reports cite only published findings, and broken finding links, missing §6 scaffolds and overlong register headings are repaired or stopped right after rendering instead of aborting the run at completion.
 - `update-baseline` preserves AISCB user scope when the project path is the home directory and offers a direct signed updater fallback after delegation fails.
+- An invalid, oversized, or symlinked repository abuse-case file is now rejected on its own and reported, instead of silently dropping every abuse case from the run.
 
 ## 0.6.0-beta.4 (2026-10-06)
 

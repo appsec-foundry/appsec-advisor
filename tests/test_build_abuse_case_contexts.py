@@ -176,3 +176,63 @@ def test_default_library_candidates_project_without_schema_or_chain_loss(tmp_pat
             routing._counts(path.read_bytes(), record_count=len(projected["candidate"])),  # noqa: SLF001
             profile,
         )
+
+
+def _descriptive_match(repo: Path) -> dict:
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import model.match_abuse_cases as matcher  # noqa: PLC0415
+
+    case = {
+        "id": "REPO-AC-020",
+        "kind": "descriptive",
+        "title": "Delegated administrator grants themselves a role",
+        "actor": "Delegated administrator",
+        "initial_access": "authenticated_high_priv",
+        "goal": "Obtain a role outside the delegation.",
+        "boundary": "Roles the delegation permits.",
+        "steps": ["Assign a role to themselves.", "Choose a role outside the delegation."],
+        "expected_controls": ["The assignment checks the delegation."],
+        "exclusions": ["Administrators who may assign every role."],
+        "scope_qualifier": {"path_patterns": ["src/roles/*"]},
+    }
+    finding = {
+        "t_id": "F-007",
+        "title": "Role field accepted from body",
+        "cwe": "CWE-915",
+        "evidence": {"file": "src/roles/assign.ts", "line": 3},
+    }
+    return matcher.match_case(case, [finding], None, repo_root=repo)
+
+
+def test_descriptive_candidate_projects_prose_sources_and_finding_windows(tmp_path: Path):
+    repo = tmp_path / "repo"
+    (repo / "src" / "roles").mkdir(parents=True)
+    (repo / "src" / "roles" / "assign.ts").write_text("a\nb\nuser.roles.push(req.body.role)\nc\n")
+    payload = json.dumps({"matches": [_descriptive_match(repo)]}).encode()
+    value = contexts.project_candidate(payload, "REPO-AC-020", repo_root=repo)
+    schema = json.loads((ROOT / "schemas" / "abuse-case-verifier-context.schema.json").read_text())
+    value["limits"]["serialized_bytes"] = 1
+    Draft202012Validator(schema).validate(value)
+    candidate = value["candidate"]
+    assert candidate["kind"] == "descriptive"
+    assert [s["label"] for s in candidate["steps"]] == [
+        "Assign a role to themselves.",
+        "Choose a role outside the delegation.",
+    ]
+    assert candidate["preselected_sources"] == ["src/roles/assign.ts"]
+    window = candidate["related_findings"][0]["source_window"]
+    assert "user.roles.push" in window["content"]
+    assert value["limits"]["source_chars"] == len(window["content"])
+    assert "probe" not in json.dumps(candidate)
+
+
+def test_descriptive_candidate_cannot_smuggle_probe_fields_past_the_schema(tmp_path: Path):
+    repo = tmp_path / "repo"
+    (repo / "src" / "roles").mkdir(parents=True)
+    (repo / "src" / "roles" / "assign.ts").write_text("x\n")
+    payload = json.dumps({"matches": [_descriptive_match(repo)]}).encode()
+    value = contexts.project_candidate(payload, "REPO-AC-020", repo_root=repo)
+    value["limits"]["serialized_bytes"] = 1
+    value["candidate"]["chain"] = []
+    schema = json.loads((ROOT / "schemas" / "abuse-case-verifier-context.schema.json").read_text())
+    assert list(Draft202012Validator(schema).iter_errors(value))

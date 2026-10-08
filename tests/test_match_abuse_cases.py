@@ -934,10 +934,14 @@ def test_cmd_match_with_org_profile(tmp_path: Path, capsys):
 def test_cmd_match_resolver_errors_returns_1(tmp_path: Path, monkeypatch, capsys):
     (tmp_path / ".threats-merged.json").write_text(json.dumps({"threats": []}))
 
+    real = mac._rac()
+
     def fake_rac():
         class M:
-            def resolve_abuse_cases(self, *a, **k):
-                return [], ["boom-error"]
+            load_limits = staticmethod(real.load_limits)
+
+            def resolve_abuse_case_sources(self, *a, **k):
+                return [], ["boom-error"], []
 
         return M()
 
@@ -1100,3 +1104,211 @@ def test_a_prompt_level_guardrail_is_not_a_control_for_prompt_injection():
     for real_control in ("Input is sanitized before assembly", "Instruction hierarchy separates the channels"):
         finding = _finding("T-002", "prompt injection sink", controls=real_control)
         assert mac.match_step(step, [finding])["controls_found"], real_control
+
+
+# ---------------------------------------------------------------------------
+# Descriptive (business) cases: preselection, limits, evidence admission
+# ---------------------------------------------------------------------------
+
+
+def _descriptive(cid="REPO-AC-020", patterns=("**/roles/**",), signals=None):
+    qualifier = {"path_patterns": list(patterns)} if patterns else {}
+    if signals:
+        qualifier["required_signals"] = list(signals)
+    return {
+        "id": cid,
+        "kind": "descriptive",
+        "title": "Delegated administrator grants themselves a role",
+        "actor": "Delegated administrator",
+        "initial_access": "authenticated_high_priv",
+        "goal": "Obtain a role outside the delegation.",
+        "boundary": "Roles the delegation permits.",
+        "steps": ["Assign a role to themselves.", "Choose a role outside the delegation."],
+        "expected_controls": ["The assignment checks the delegation."],
+        "scope_qualifier": qualifier,
+    }
+
+
+def _repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    (repo / "src" / "roles").mkdir(parents=True)
+    (repo / "src" / "roles" / "assign.ts").write_text(
+        "export async function assign(req, res) {\n"
+        "  const user = await Users.find(req.body.userId);\n"
+        "  user.roles.push(req.body.role);\n"
+        "  await user.save();\n"
+        "}\n"
+    )
+    (repo / "docs" / "roles").mkdir(parents=True)
+    (repo / "docs" / "roles" / "guide.md").write_text("roles guide\n")
+    return repo
+
+
+def test_descriptive_case_is_preselected_from_runtime_paths(tmp_path: Path):
+    repo = _repo(tmp_path)
+    finding = _finding("F-001", "role update", file="src/roles/assign.ts", line=3)
+    m = mac.match_case(_descriptive(), [finding], None, repo_root=repo)
+    assert m["structural_verdict"] == "candidate"
+    assert m["preselected_sources"] == ["src/roles/assign.ts"]
+    assert m["related_finding_ids"] == ["F-001"]
+    assert [s["label"] for s in m["step_matches"]] == _descriptive()["steps"]
+    assert not any(s["matched"] for s in m["step_matches"])
+
+
+def test_descriptive_case_with_only_documentation_hits_is_not_applicable(tmp_path: Path):
+    repo = _repo(tmp_path)
+    m = mac.match_case(_descriptive(patterns=("docs/**",)), [], None, repo_root=repo)
+    assert m["structural_verdict"] == "not_applicable"
+    assert "no runtime source path matched" in m["reason"]
+
+
+def test_descriptive_case_respects_required_signals(tmp_path: Path):
+    repo = _repo(tmp_path)
+    case = _descriptive(signals=["has_role_concept"])
+    assert mac.match_case(case, [], {"has_auth_surface"}, repo_root=repo)["structural_verdict"] == "not_applicable"
+    assert mac.match_case(case, [], {"has_role_concept"}, repo_root=repo)["structural_verdict"] == "candidate"
+
+
+def _candidates(n: int) -> list[dict]:
+    return [
+        {
+            "abuse_case_id": f"REPO-AC-{100 + i}",
+            "kind": "descriptive",
+            "structural_verdict": "candidate",
+            "related_finding_ids": [],
+            "preselected_sources": ["a"] * i,
+        }
+        for i in range(n)
+    ]
+
+
+def test_descriptive_limits_follow_depth_and_record_omissions():
+    limits = {
+        "descriptive_candidates_standard": 2,
+        "descriptive_candidates_thorough": 4,
+        "descriptive_candidates_explicit": 1,
+    }
+    for depth, expected in (("quick", 0), ("standard", 2), ("thorough", 4)):
+        matches = _candidates(5)
+        mac.apply_descriptive_limits(matches, set(), depth, limits)
+        kept = [m for m in matches if m["structural_verdict"] == "candidate"]
+        assert len(kept) == expected, depth
+        # Strongest preselection evidence wins.
+        assert {m["abuse_case_id"] for m in kept} == {f"REPO-AC-{100 + i}" for i in range(4, 4 - expected, -1)}
+        omitted = [m for m in matches if m["structural_verdict"] == "not_performed"]
+        assert len(omitted) == 5 - expected and all(m["reason"] for m in omitted)
+
+
+def test_explicit_request_runs_at_quick_depth_even_without_preselection():
+    limits = {
+        "descriptive_candidates_standard": 0,
+        "descriptive_candidates_thorough": 0,
+        "descriptive_candidates_explicit": 1,
+    }
+    matches = _candidates(1)
+    matches[0]["structural_verdict"] = "not_applicable"
+    matches[0]["reason"] = "required signal(s) absent: has_role_concept"
+    second = dict(_candidates(1)[0], abuse_case_id="REPO-AC-200")
+    matches.append(second)
+    mac.apply_descriptive_limits(matches, {"REPO-AC-100", "REPO-AC-200"}, "quick", limits)
+    verdicts = {m["abuse_case_id"]: m["structural_verdict"] for m in matches}
+    assert sorted(verdicts.values()) == ["candidate", "not_performed"]
+    assert all(m["requested"] for m in matches)
+    assert "explicitly requested" in next(m["reason"] for m in matches if m["abuse_case_id"] == "REPO-AC-100")
+
+
+def test_probe_cases_are_untouched_by_descriptive_limits():
+    probe = {"abuse_case_id": "AC-T-001", "structural_verdict": "candidate"}
+    mac.apply_descriptive_limits(
+        [probe],
+        set(),
+        "quick",
+        {
+            "descriptive_candidates_standard": 0,
+            "descriptive_candidates_thorough": 0,
+            "descriptive_candidates_explicit": 0,
+        },
+    )
+    assert probe == {"abuse_case_id": "AC-T-001", "structural_verdict": "candidate"}
+
+
+def _dstep(n, verdict, file="src/roles/assign.ts", line=3, excerpt="user.roles.push(req.body.role);"):
+    return {
+        "step": n,
+        "verdict": verdict,
+        "state": "decided",
+        "reason": "r",
+        "evidence": {"file": file, "line": line, "excerpt": excerpt},
+    }
+
+
+def test_descriptive_evidence_admission(tmp_path: Path):
+    repo = _repo(tmp_path)
+    verdict = {
+        "abuse_case_id": "REPO-AC-020",
+        "step_verdicts": [
+            _dstep(1, "confirmed"),
+            _dstep(2, "blocked", excerpt="checkDelegation(req.user, role)"),
+            _dstep(3, "confirmed"),
+        ],
+    }
+    mac.admit_descriptive_evidence(verdict, 2, repo)
+    steps = verdict["step_verdicts"]
+    assert [s["step"] for s in steps] == [1, 2]
+    assert steps[0]["verdict"] == "confirmed"
+    assert steps[1]["verdict"] == "inconclusive"
+    assert steps[1]["evidence"] is None and steps[1]["rejected_evidence"]["excerpt"].startswith("checkDelegation")
+    assert steps[1]["reason"].startswith("evidence not admitted (excerpt does not occur near src/roles/assign.ts:3)")
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        {"file": "docs/roles/guide.md", "line": 1, "excerpt": "roles guide"},
+        {"file": "../outside.ts", "line": 1, "excerpt": "x"},
+        {"file": "/etc/passwd", "line": 1, "excerpt": "root"},
+        {"file": "src/roles/assign.ts", "line": 0, "excerpt": "user"},
+        {"file": "src/roles/missing.ts", "line": 1, "excerpt": "x"},
+        None,
+    ],
+)
+def test_descriptive_evidence_outside_runtime_source_is_not_admitted(tmp_path: Path, evidence):
+    repo = _repo(tmp_path)
+    verdict = {"step_verdicts": [{"step": 1, "verdict": "refuted", "reason": "r", "evidence": evidence}]}
+    mac.admit_descriptive_evidence(verdict, 1, repo)
+    assert verdict["step_verdicts"][0]["verdict"] == "inconclusive"
+
+
+def test_cli_match_reports_rejected_repo_files_and_keeps_the_library(tmp_path: Path, capsys):
+    repo = _repo(tmp_path)
+    case_dir = repo / ".appsec" / "abuse-cases"
+    case_dir.mkdir(parents=True)
+    (case_dir / "broken.yaml").write_text("abuse_cases: [1]\n")
+    (case_dir / "business.yaml").write_text(yaml.safe_dump({"schema_version": 2, "abuse_cases": [_descriptive()]}))
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / ".threats-merged.json").write_text(json.dumps({"threats": []}))
+    assert mac.main(["match", "--output-dir", str(out), "--repo-root", str(repo)]) == 0
+    doc = json.loads((out / ".abuse-case-matches.json").read_text())
+    assert [r["path"] for r in doc["rejected_case_files"]] == [".appsec/abuse-cases/broken.yaml"]
+    by_id = {m["abuse_case_id"]: m for m in doc["matches"]}
+    assert "AC-T-001" in by_id
+    assert by_id["REPO-AC-020"]["structural_verdict"] == "candidate"
+    assert "REJECTED: .appsec/abuse-cases/broken.yaml" in capsys.readouterr().err
+
+
+def test_cli_finalize_admits_descriptive_evidence_from_configured_repo(tmp_path: Path):
+    repo = _repo(tmp_path)
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / ".skill-config.json").write_text(json.dumps({"repo_root": str(repo)}))
+    match = mac.match_case(_descriptive(), [], None, repo_root=repo)
+    (out / ".abuse-case-matches.json").write_text(json.dumps({"matches": [match]}))
+    steps = [_dstep(1, "confirmed"), _dstep(2, "confirmed", excerpt="not in the file")]
+    (out / ".abuse-case-verdicts.json").write_text(
+        json.dumps({"verdicts": [{"abuse_case_id": "REPO-AC-020", "step_verdicts": steps}]})
+    )
+    assert mac.main(["finalize", "--output-dir", str(out)]) == 0
+    verdict = json.loads((out / ".abuse-case-verdicts.json").read_text())["verdicts"][0]
+    assert verdict["step_verdicts"][1]["verdict"] == "inconclusive"
+    assert verdict["chain_verdict"] == "inconclusive"

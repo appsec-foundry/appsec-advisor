@@ -17,11 +17,21 @@ additionalProperties: false
 required: [abuse_cases]
 properties:
   schema_version:
-    type: integer
+    description: >
+      1 for probe cases only. 2 additionally admits descriptive cases
+      (`kind: descriptive`).
+    enum: [1, 2]
     default: 1
   abuse_cases:
     type: array
-    items: { $ref: "#/$defs/abuse_case" }
+    items:
+      if:
+        type: object
+        required: [kind]
+        properties:
+          kind: { const: descriptive }
+      then: { $ref: "#/$defs/descriptive_case" }
+      else: { $ref: "#/$defs/abuse_case" }
 
 $defs:
   abuse_case:
@@ -37,6 +47,8 @@ $defs:
         # pipeline step (no discovered-case generator exists); kept in the
         # pattern for forward-compat only.
         pattern: "^(AC-T|AC|ORG-AC|REPO-AC)-[0-9]{3,}$"
+      kind:
+        const: probe
       title:
         type: string
         minLength: 1
@@ -65,21 +77,7 @@ $defs:
           is rated at least this high; without it, verification adds no
           severity.
         enum: [Critical, High, Medium, Low]
-      scope_qualifier:
-        type: object
-        additionalProperties: false
-        properties:
-          required_signals:
-            type: array
-            items: { type: string }
-          path_patterns:
-            type: array
-            description: >
-              Repository-relative glob patterns. At least one pattern must
-              match a regular file for the case to be in scope. Patterns are
-              evaluated as data, never as shell paths; absolute paths and
-              parent traversal do not match.
-            items: { type: string }
+      scope_qualifier: { $ref: "#/$defs/scope_qualifier" }
       chain:
         type: array
         minItems: 1
@@ -97,6 +95,107 @@ $defs:
           applies_to_presets:
             type: array
             items: { type: string }
+
+  scope_qualifier:
+    type: object
+    additionalProperties: false
+    properties:
+      required_signals:
+        type: array
+        items: { type: string }
+      path_patterns:
+        type: array
+        description: >
+          Repository-relative glob patterns. At least one pattern must
+          match a regular file for the case to be in scope. Patterns are
+          evaluated as data, never as shell paths; absolute paths and
+          parent traversal do not match.
+        items: { type: string }
+
+  prose:
+    type: string
+    minLength: 1
+    maxLength: 600
+
+  prose_list:
+    type: array
+    items: { $ref: "#/$defs/prose" }
+
+  descriptive_case:
+    description: >
+      A business abuse case written in plain language. It has no probe,
+      classification, severity, or release gate: deterministic preselection
+      decides whether it can apply, the abuse-case verifier binds it to this
+      repository's code and judges each step, and severity follows the
+      evidence of any resulting finding. Repository and organization authors
+      maintain these without pipeline knowledge.
+    type: object
+    additionalProperties: false
+    required: [id, kind, title, actor, initial_access, goal, boundary, steps, expected_controls, scope_qualifier]
+    properties:
+      id:
+        type: string
+        pattern: "^(AC-T|ORG-AC|REPO-AC)-[0-9]{3,}$"
+      kind:
+        const: descriptive
+      title:
+        type: string
+        minLength: 1
+        maxLength: 160
+      actor: { $ref: "#/$defs/prose" }
+      initial_access:
+        enum: [unauthenticated, authenticated_low_priv, authenticated_high_priv, physical]
+      prerequisites: { $ref: "#/$defs/prose" }
+      goal: { $ref: "#/$defs/prose" }
+      boundary:
+        description: The authority or process boundary the attacker crosses.
+        $ref: "#/$defs/prose"
+      steps:
+        type: array
+        minItems: 1
+        maxItems: 8
+        items: { $ref: "#/$defs/prose" }
+      expected_controls:
+        type: array
+        minItems: 1
+        maxItems: 8
+        items: { $ref: "#/$defs/prose" }
+      evidence:
+        description: What a verifier must see in code to decide the case.
+        $ref: "#/$defs/prose_list"
+        maxItems: 8
+      exclusions:
+        description: Legitimate behavior that is not an abuse.
+        $ref: "#/$defs/prose_list"
+        maxItems: 8
+      open_questions:
+        description: Business facts the code cannot answer.
+        $ref: "#/$defs/prose_list"
+        maxItems: 8
+      scope_qualifier:
+        description: >
+          Deterministic preselection. Without a matching signal or path the
+          case reaches the model only when a run explicitly requests it.
+          Signals use the recon vocabulary (schemas/recon-signals.schema.json).
+        allOf:
+          - { $ref: "#/$defs/scope_qualifier" }
+          - anyOf:
+              - { required: [required_signals] }
+              - { required: [path_patterns] }
+          - properties:
+              required_signals:
+                items:
+                  enum:
+                    - has_auth_surface
+                    - has_ci_pipeline
+                    - has_client_storage
+                    - has_external_apis
+                    - has_llm_surface
+                    - has_multi_tenancy_signal
+                    - has_open_self_registration
+                    - has_public_routes
+                    - has_role_concept
+                    - has_secrets_in_repo
 
   chain_step:
     type: object

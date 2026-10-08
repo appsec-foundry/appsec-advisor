@@ -2016,6 +2016,50 @@ def _extract_cost_accounting(output_dir: Path) -> list[dict]:
     ]
 
 
+def _abuse_matches(output_dir: Path) -> dict:
+    try:
+        data = json.loads((output_dir / ".abuse-case-matches.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _descriptive_abuse_case_ids(output_dir: Path) -> set[str]:
+    return {
+        m.get("abuse_case_id")
+        for m in _abuse_matches(output_dir).get("matches") or []
+        if isinstance(m, dict) and m.get("kind") == "descriptive"
+    }
+
+
+def _extract_rejected_abuse_case_files(output_dir: Path) -> list[dict]:
+    """Flag repository abuse-case files the resolver rejected on their own.
+
+    Reads ``rejected_case_files`` from ``.abuse-case-matches.json``. Each
+    rejected file was left out of the run while every other case still ran;
+    its author must fix it for the scenario to be checked.
+    """
+    issues: list[dict] = []
+    for row in _abuse_matches(output_dir).get("rejected_case_files") or []:
+        if not isinstance(row, dict) or not row.get("path"):
+            continue
+        path, reason = str(row["path"]), str(row.get("reason") or "")
+        issues.append(
+            {
+                "category": "abuse_case_file_rejected",
+                "severity": "warning",
+                "title": f"Repository abuse-case file {_clip(path, 80)} was rejected: {_clip(reason, 120)}",
+                "evidence": {
+                    "log_file": ".abuse-case-matches.json",
+                    "log_line": 1,
+                    "raw_event": f"{path}: {_clip(reason, 300)}",
+                    "path": path,
+                },
+            }
+        )
+    return issues
+
+
 def _extract_abuse_case_outcomes(output_dir: Path) -> list[dict]:
     """Flag abuse-case chains the verifier fan-out could not confirm.
 
@@ -2035,11 +2079,19 @@ def _extract_abuse_case_outcomes(output_dir: Path) -> list[dict]:
         data = json.loads(merged.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return issues
+    descriptive = _descriptive_abuse_case_ids(output_dir)
     for v in (data.get("verdicts") or []) if isinstance(data, dict) else []:
         if not isinstance(v, dict):
             continue
         steps = v.get("step_verdicts") or []
         verdicts = {(s.get("verdict") or "").strip().lower() for s in steps if isinstance(s, dict)}
+        # An inconclusive business case usually waits on a business fact the
+        # code cannot show: a reported result, not a run problem. Only an
+        # unfinished verifier or a rejected citation is a run issue there.
+        if v.get("abuse_case_id") in descriptive and not any(
+            isinstance(s, dict) and (s.get("state") == "pending" or s.get("rejected_evidence")) for s in steps
+        ):
+            continue
         if "inconclusive" in verdicts and "blocked" not in verdicts:
             ac_id = v.get("abuse_case_id") or "AC-?"
             title = v.get("title") or ac_id
@@ -2695,6 +2747,7 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     issues.extend(_extract_run_invariants(output_dir))
     issues.extend(_extract_render_integrity(output_dir))
     issues.extend(_extract_abuse_case_outcomes(output_dir))
+    issues.extend(_extract_rejected_abuse_case_files(output_dir))
     issues.extend(_extract_stage_coverage_collapse(output_dir))
     issues.extend(_extract_severity_regression(output_dir))
     issues.extend(_extract_watchdog_absence(output_dir, agent_log))

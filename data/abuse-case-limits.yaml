@@ -1,0 +1,22 @@
+# Limits the abuse-case stage enforces outside the model.
+# Status provisional: starting values from the implementation plan
+# (docs/internal/analysis/implplan-threat-analysis-rule-catalog-2026-10-07.md).
+# Replace each with measured evidence before marking measured.
+schema_version: 1
+status: provisional
+limits:
+  # Repository-discovered case files (.appsec/abuse-cases/) and explicit files.
+  repo_case_files: {value: 32, unit: files}
+  case_file_kib: {value: 128, unit: KiB}
+  # Descriptive (business) candidates the model binds and verifies per run.
+  # quick depth verifies none unless a case was explicitly requested.
+  descriptive_candidates_standard: {value: 3, unit: candidates}
+  descriptive_candidates_thorough: {value: 8, unit: candidates}
+  descriptive_candidates_explicit: {value: 16, unit: candidates}
+  # Source files and bytes preselected for one descriptive candidate.
+  descriptive_source_files: {value: 12, unit: files}
+  # Shared source-window budget inside one verifier context (64 KiB cap).
+  descriptive_source_kib: {value: 32, unit: KiB}
+  # Evaluation gate: added tokens of business investigation at standard
+  # depth relative to the median standard run on the pilot fixtures.
+  added_token_share: {value: 20, unit: percent}
