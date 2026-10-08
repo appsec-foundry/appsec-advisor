@@ -3080,6 +3080,7 @@ SOURCE_TESTS = {
         compose_threat_model
         figure1_dfd
         figure1_detail
+        figure1b_svg
         pregenerate_fragments
         threat_fixture
     """),
