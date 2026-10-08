@@ -73,6 +73,15 @@
               "build"
             ]
           },
+          "surface": {
+            "type": "string",
+            "enum": [
+              "network",
+              "in-process",
+              "build-pipeline"
+            ],
+            "description": "How the crossing happens, separate from the trust change that `kind` names. Optional; omitted means the surface `kind` implies. `in-process` with a transition kind (identity, privilege, tenant, data-origin, third-party) records a trust change inside one process. Must agree with `kind`: network -> network, process -> in-process, build -> build-pipeline."
+          },
           "enforcement_point": {
             "type": "string",
             "minLength": 3,
@@ -166,7 +175,94 @@
               }
             }
           }
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "surface"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "network"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "surface": {
+                  "const": "network"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "surface"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "process"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "surface": {
+                  "const": "in-process"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "surface"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "build"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "surface": {
+                  "const": "build-pipeline"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "surface"
+              ],
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "identity",
+                    "privilege",
+                    "tenant",
+                    "data-origin",
+                    "third-party"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "surface": {
+                  "enum": [
+                    "network",
+                    "in-process"
+                  ]
+                }
+              }
+            }
+          }
+        ]
       }
     },
     "dispositions": {

@@ -49,12 +49,12 @@
         "kind": {
           "type": "string",
           "enum": ["network", "process", "identity", "privilege", "tenant", "data-origin", "third-party", "build"],
-          "description": "Authored/wire taxonomy. Retained as the sole input vocabulary and for display; `surface` and `transition` are derived from it and are what the pipeline branches on."
+          "description": "Authored/wire taxonomy. Retained for display and as the input `transition` and the default `surface` derive from; `surface` and `transition` are what the pipeline branches on."
         },
         "surface": {
           "type": "string",
           "enum": ["network", "in-process", "build-pipeline"],
-          "description": "HOW the crossing happens. Derived from `kind`; never authored."
+          "description": "HOW the crossing happens. The analyst's `surface` when it agrees with `kind`, otherwise the surface `kind` implies."
         },
         "transition": {
           "type": "array",

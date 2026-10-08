@@ -56,6 +56,9 @@
           "kind": {
             "$ref": "https://appsec-advisor/schemas/fragments/trust-boundary-candidates.schema.json#/properties/candidates/items/properties/kind"
           },
+          "surface": {
+            "$ref": "https://appsec-advisor/schemas/fragments/trust-boundary-candidates.schema.json#/properties/candidates/items/properties/surface"
+          },
           "enforcement_point": {
             "$ref": "https://appsec-advisor/schemas/fragments/trust-boundary-candidates.schema.json#/properties/candidates/items/properties/enforcement_point"
           },
@@ -104,7 +107,94 @@
           "assumption_legs": {
             "$ref": "https://appsec-advisor/schemas/fragments/trust-boundary-candidates.schema.json#/properties/candidates/items/properties/assumption_legs"
           }
-        }
+        },
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "surface"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "network"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "surface": {
+                  "const": "network"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "surface"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "process"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "surface": {
+                  "const": "in-process"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "surface"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "build"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "surface": {
+                  "const": "build-pipeline"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "surface"
+              ],
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "identity",
+                    "privilege",
+                    "tenant",
+                    "data-origin",
+                    "third-party"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "surface": {
+                  "enum": [
+                    "network",
+                    "in-process"
+                  ]
+                }
+              }
+            }
+          }
+        ]
       }
     },
     "dispositions": {

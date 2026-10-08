@@ -131,10 +131,17 @@ Use `kind: process` only when the cited evidence shows an in-process invocation,
 such as a direct call or an embedded store driver, and no identity, privilege,
 tenant, or data-origin change at that call. A shared repository, directory,
 package, or container does not establish one process or the absence of a
-transition; keep the evidenced kind and record uncertainty in `confidence`. Do
-not reach for `same-trust` for a real in-process interface — that disposition is
-for a signal with no interface behind it at all, and using it leaves the
-injection and data-access findings with nothing to attach to.
+transition; keep the evidenced kind and record uncertainty in `confidence`.
+Components whose `workload_zones` share no network run in different workloads,
+so a call between them is never `process`. When an identity, privilege, tenant,
+data-origin, or third-party change happens inside one process, keep that `kind`
+and set `surface: in-process`; omit `surface` otherwise. An embedded store
+reached through its driver is a `process` interface, not a separate data
+boundary. A missing or weak control at a crossing is a finding, never a reason
+to drop or downgrade the crossing. Do not reach for `same-trust` for a real
+in-process interface — that disposition is for a signal with no interface
+behind it at all, and using it leaves the injection and data-access findings
+with nothing to attach to.
 
 Use `confirmed` only after inspecting relevant source/config evidence.
 Otherwise use `inferred` or `unknown`. The assumption states what must remain

@@ -2624,3 +2624,158 @@ def test_partial_leg_declaration_adds_a_condition_but_never_removes_a_leg() -> N
     assert [leg["leg"] for leg in legs] == list(prep.INGRESS_LEGS)
     assert legs[2]["condition"] == "Objects are checked against the subject."
     assert "condition" not in legs[0]
+
+
+# --------------------------------------------------------------------------- #
+# Crossing surface vs trust transition, and deployment evidence
+# --------------------------------------------------------------------------- #
+_CANDIDATE_ITEM = Draft202012Validator(
+    json.loads(prep.CANDIDATES_SCHEMA.read_text(encoding="utf-8"))["properties"]["candidates"]["items"]
+)
+
+
+@pytest.mark.parametrize(
+    ("kind", "surface", "valid"),
+    [
+        ("privilege", "in-process", True),
+        ("tenant", "network", True),
+        ("third-party", "in-process", True),
+        ("process", "in-process", True),
+        ("process", "network", False),
+        ("network", "in-process", False),
+        ("build", "network", False),
+        ("identity", "build-pipeline", False),
+    ],
+)
+def test_candidate_surface_must_agree_with_kind(kind, surface, valid):
+    row = {**_cand("candidate-a", frm="api", to="db", kind=kind), "surface": surface}
+    row["covered_signal_ids"] = ["signal-a"]
+    assert _CANDIDATE_ITEM.is_valid(row) is valid
+    assert prep._surface_agrees(kind, surface) is valid
+
+
+@pytest.mark.parametrize(("kind", "transition"), [("privilege", ["privilege"]), ("tenant", ["tenant"])])
+def test_in_process_transition_survives_axes_and_is_not_an_interface(kind, transition):
+    from shared._boundary_interface import is_internal_interface
+
+    rows = [{"kind": kind, "surface": "in-process"}]
+    prep._apply_axes(rows)
+    assert (rows[0]["surface"], rows[0]["transition"]) == ("in-process", transition)
+    assert not is_internal_interface(rows[0])
+    # Re-running the derivation, as every later pass does, keeps the axis.
+    prep._apply_axes(rows)
+    assert rows[0]["surface"] == "in-process"
+
+
+def test_surface_contradicted_by_a_changed_kind_is_rederived():
+    rows = [{"kind": "network", "surface": "in-process"}]
+    prep._apply_axes(rows)
+    assert (rows[0]["surface"], rows[0]["transition"]) == ("network", [])
+
+
+def test_in_process_privilege_survives_canonical_normalization(tmp_path: Path):
+    rows, _warnings = _normalized(
+        tmp_path,
+        [
+            _resolved(
+                id="tb-1",
+                name="Admin check",
+                to="web-api",
+                kind="privilege",
+                surface="in-process",
+                **{"from": "web-api"},
+            )
+        ],
+        [{"id": "web-api", "name": "Web API", "paths": ["src/**"]}],
+    )
+    assert (rows[0]["kind"], rows[0]["surface"], rows[0]["transition"]) == ("privilege", "in-process", ["privilege"])
+
+
+def test_contradicting_surface_is_discarded_with_a_warning(tmp_path: Path):
+    rows, warnings = _normalized(
+        tmp_path,
+        [_resolved(id="tb-1", to="web-api", kind="network", surface="in-process")],
+        [{"id": "web-api", "name": "Web API", "paths": ["src/**"]}],
+    )
+    assert rows[0]["surface"] == "network"
+    assert any("contradicts kind" in w for w in warnings)
+
+
+@pytest.mark.parametrize(
+    ("caller", "callee"),
+    [
+        ({"id": "web", "paths": ["src/**"]}, {"id": "worker", "paths": ["src/worker/**"]}),
+        ({"id": "gateway", "paths": ["packages/**"]}, {"id": "billing", "paths": ["packages/billing/**"]}),
+    ],
+)
+def test_process_claim_across_separate_workloads_becomes_a_network_crossing(tmp_path, caller, callee):
+    components = {
+        caller["id"]: {**caller, "workload_zones": ["compose:frontend"]},
+        callee["id"]: {**callee, "workload_zones": ["compose:backend"]},
+    }
+    merged, _alias, notes = prep._consolidate_candidates(
+        [_cand("c1", frm=caller["id"], to=callee["id"], kind="process", conf="confirmed")],
+        components=components,
+        repo_root=tmp_path,
+    )
+    assert (merged[0]["kind"], merged[0]["confidence"]) == ("network", "inferred")
+    assert any("disjoint deployment networks" in n for n in notes)
+
+
+@pytest.mark.parametrize(
+    ("caller_zones", "callee_zones"),
+    [(["compose:app"], ["compose:app", "compose:db"]), ([], ["compose:db"]), ([], [])],
+)
+def test_process_claim_stands_without_separating_deployment_evidence(tmp_path, caller_zones, callee_zones):
+    """Shared or missing workload zones prove nothing; the analyst's kind stands."""
+    components = {
+        "api": {"id": "api", "paths": ["src/**"], "workload_zones": caller_zones},
+        "db": {"id": "db", "paths": ["src/db/**"], "workload_zones": callee_zones},
+    }
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [_cand("c1", frm="api", to="db", kind="process")], components=components, repo_root=tmp_path
+    )
+    assert merged[0]["kind"] == "process"
+
+
+def test_ingress_into_a_separately_deployed_nested_service_stays_apart(tmp_path: Path):
+    components = {
+        "api": {"id": "api", "paths": ["src/**"], "workload_zones": ["kubernetes:public"]},
+        "admin": {"id": "admin", "paths": ["src/admin/**"], "workload_zones": ["kubernetes:ops"]},
+    }
+    assert prep._deployable_root("admin", components) == "admin"
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [_cand("c1", frm="external", to="admin"), _cand("c2", frm="external", to="api")],
+        components=components,
+        repo_root=tmp_path,
+    )
+    assert sorted(c["to"] for c in merged) == ["admin", "api"]
+
+
+def test_ingress_fold_respects_separate_workloads(tmp_path: Path):
+    components = [
+        {"id": "web-api", "name": "Web API", "paths": ["src/**"], "workload_zones": ["compose:edge"]},
+        {"id": "ws-gateway", "name": "WS Gateway", "paths": ["src/ws.py"], "workload_zones": ["compose:realtime"]},
+    ]
+    rows, _warnings = _normalized(
+        tmp_path,
+        [
+            _resolved(id="tb-1", name="Internet to API", to="web-api"),
+            _resolved(id="tb-2", name="Internet to WS", to="ws-gateway"),
+        ],
+        components,
+    )
+    assert sorted(row["to"] for row in rows) == ["web-api", "ws-gateway"]
+
+
+def test_one_enforcement_point_does_not_merge_different_transitions(tmp_path: Path):
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [
+            _cand("c1", frm="external", to="api", point="expressJwt middleware"),
+            _cand("c2", frm="external", to="api", kind="privilege", point="expressJwt middleware"),
+            _cand("c3", frm="external", to="api", point="expressJwt middleware"),
+        ],
+        components=_COMPONENTS,
+        repo_root=tmp_path,
+    )
+    assert sorted((c["candidate_key"], c["kind"]) for c in merged) == [("c1", "network"), ("c2", "privilege")]

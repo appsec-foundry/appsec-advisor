@@ -56,10 +56,13 @@ KINDS = {"network", "process", "identity", "privilege", "tenant", "data-origin",
 # the far side (third-party/build). The values are therefore neither disjoint nor
 # parallel — an OAuth callback is `identity` AND a network crossing, so the
 # analyst has to guess an undocumented precedence. Internally we branch on two
-# orthogonal axes instead. `kind` stays the sole authored/wire value (analyst,
-# `.appsec/trust-boundaries.yaml`, legacy models, renderer, exports); the axes are
-# DERIVED from it in one deterministic place, so there is never a second
-# authority to keep in sync and no repo declaration has to be migrated.
+# orthogonal axes instead. `transition` is always DERIVED from `kind`, in one
+# deterministic place. `surface` defaults to the one `kind` implies; an analyst
+# may name it only where `kind` leaves it open — a privilege, identity, tenant,
+# data-origin or third-party change inside one process is `in-process`, which no
+# `kind` value can say. A surface that contradicts `kind` is rejected by the
+# candidate schema and re-derived here, so `kind` never silently wins over a
+# compatible axis and no repo declaration has to be migrated.
 SURFACES = {"network", "in-process", "build-pipeline"}
 TRANSITIONS = {"identity", "privilege", "tenant", "data-origin", "operator"}
 _KIND_AXES: dict[str, tuple[str, tuple[str, ...]]] = {
@@ -590,21 +593,35 @@ def _boundary_endpoint_shape_valid(boundary: dict) -> bool:
     )
 
 
-def _axes_for_kind(kind: Any) -> tuple[str, list[str]]:
-    """Split a legacy ``kind`` into (surface, transition[]).
+def _surface_agrees(kind: Any, surface: Any) -> bool:
+    """True when an authored ``surface`` is one ``kind`` allows (mirrors the candidate schema)."""
+    if surface not in SURFACES or kind not in _KIND_AXES:
+        return False
+    default, transitions = _KIND_AXES[kind]
+    return surface == default or (bool(transitions) and kind != "build" and surface == "in-process")
+
+
+def _axes_for_kind(kind: Any, surface: Any = None) -> tuple[str, list[str]]:
+    """Split ``kind`` (plus an optional authored ``surface``) into (surface, transition[]).
 
     Total over ``KINDS`` and defaulting exactly like the ``kind`` normalization
-    itself (unknown -> network), so the derivation can never fail a row.
+    itself (unknown -> network), so the derivation can never fail a row. An
+    authored surface survives only when it agrees with ``kind``.
     """
-    surface, transitions = _KIND_AXES.get(kind if isinstance(kind, str) else "", ("network", ()))
-    return surface, list(transitions)
+    default, transitions = _KIND_AXES.get(kind if isinstance(kind, str) else "", ("network", ()))
+    return (surface if _surface_agrees(kind, surface) else default), list(transitions)
 
 
 def _apply_axes(rows: Iterable[dict]) -> None:
-    """(Re-)derive the orthogonal axes after every path that can set ``kind``."""
+    """(Re-)derive the orthogonal axes after every path that can set ``kind``.
+
+    A stored surface that still agrees with ``kind`` is kept: re-deriving it from
+    ``kind`` alone would turn an in-process privilege change back into a network
+    crossing.
+    """
     for row in rows:
         if isinstance(row, dict):
-            row["surface"], row["transition"] = _axes_for_kind(row.get("kind"))
+            row["surface"], row["transition"] = _axes_for_kind(row.get("kind"), row.get("surface"))
 
 
 def _clean_enforcement_point(value: Any) -> str | None:
@@ -759,9 +776,12 @@ def _normalize_row(
             )
     if LEGACY_FIELDS.intersection(raw):
         _warn(f"{label}: discarded legacy fields {sorted(LEGACY_FIELDS.intersection(raw))}", warnings)
+    if raw.get("surface") is not None and not _surface_agrees(kind, raw.get("surface")):
+        _warn(f"{label}: discarded surface {raw.get('surface')!r} — it contradicts kind {kind!r}", warnings)
     row: dict[str, Any] = {
         "name": name,
         "kind": kind,
+        **({"surface": raw["surface"]} if _surface_agrees(kind, raw.get("surface")) else {}),
         "assumption": assumption,
         "evidence": evidence,
         "confidence": confidence,
@@ -1124,6 +1144,19 @@ def _contained_in(inner: dict, outer: dict) -> bool:
     return all(any(_rc_glob_to_regex(g).search(_glob_probe(p)) for g in outer_globs) for p in inner_paths)
 
 
+def _separate_workloads(left: dict, right: dict) -> bool:
+    """Deployment evidence that two components cannot share one process.
+
+    `workload_zones` is derived from the deployment inventory, never authored.
+    Two components whose workloads sit on disjoint platform networks run in
+    different workloads. Shared or missing zones prove nothing either way, so
+    this only ever vetoes a same-process or same-perimeter conclusion.
+    """
+    left_zones = {z for z in left.get("workload_zones") or [] if isinstance(z, str)}
+    right_zones = {z for z in right.get("workload_zones") or [] if isinstance(z, str)}
+    return bool(left_zones and right_zones and not left_zones & right_zones)
+
+
 def _point_key(row: dict) -> str | None:
     point = row.get("enforcement_point")
     return point.strip().casefold() if isinstance(point, str) and point.strip() else None
@@ -1158,7 +1191,13 @@ def _consolidate(rows: list[dict], components: dict[str, dict], warnings: list[s
     out: list[dict] = []
     seen: dict[tuple, dict] = {}
     for row in rows:
-        key = (row.get("from"), row.get("to"), row.get("kind"), (row.get("name") or "").strip().casefold())
+        key = (
+            row.get("from"),
+            row.get("to"),
+            row.get("kind"),
+            row.get("surface"),
+            (row.get("name") or "").strip().casefold(),
+        )
         if key in seen:
             seen[key]["evidence"] = _merge_evidence(seen[key].get("evidence") or [], row.get("evidence") or [])
             warnings.append(f"consolidated duplicate boundary {row.get('name')!r}")
@@ -1186,7 +1225,15 @@ def _consolidate(rows: list[dict], components: dict[str, dict], warnings: list[s
     folded: list[dict] = []
     for index, row in enumerate(ingress):
         for other_index, other in enumerate(ingress):
-            if other is row or other in folded or row.get("kind") != other.get("kind"):
+            if (
+                other is row
+                or other in folded
+                or (row.get("kind"), row.get("surface")) != (other.get("kind"), other.get("surface"))
+            ):
+                continue
+            # Path containment only says one tree holds the other's source; two
+            # workloads on disjoint deployment networks are two perimeters.
+            if _separate_workloads(components[row["to"]], components[other["to"]]):
                 continue
             # Shared code is one perimeter, not one control: a row that names no
             # enforcement point must not inherit the survivor's, nor lend its
@@ -1995,12 +2042,14 @@ def _deployable_root(component_id: Any, components: dict[str, dict]) -> Any:
 
     Path containment walked transitively: `auth-service`
     (`routes/login.ts`, `lib/insecurity.ts`) sits inside `backend-api`
-    (`routes/**`, `lib/**`), so both name one process and one perimeter.
+    (`routes/**`, `lib/**`), so both name one perimeter. A container whose
+    workloads sit on disjoint deployment networks (`_separate_workloads`) is not
+    walked into: its source tree holds the nested component, its deployment does not.
 
-    Deliberately NOT derived from `deployment_zones` (see `_paths_contained`) and
-    not from Dockerfile/compose: neither exists as structured per-component data,
-    and a compose file describes a deployment variant rather than the tree under
-    assessment. A component that is contained by nobody is its own deployable.
+    Deliberately NOT derived from `deployment_zones` (see `_paths_contained`), and
+    deployment workloads only veto a step, never add one: a compose file
+    describes a deployment variant rather than the tree under assessment. A
+    component that is contained by nobody is its own deployable.
     """
     if component_id not in components:
         return component_id
@@ -2013,6 +2062,7 @@ def _deployable_root(component_id: Any, components: dict[str, dict]) -> Any:
             cid
             for cid, row in components.items()
             if cid != current
+            and not _separate_workloads(components[current], row)
             and _paths_contained(own, [p for p in (row.get("paths") or []) if isinstance(p, str) and p])
             # Mutual containment is not nesting; leaving it to the id tie-break
             # below would make the root depend on iteration order.
@@ -2216,6 +2266,25 @@ def _consolidate_candidates(
             # shows the same word for both.
             candidate["confidence_basis"] = "route-evidence"
             notes.append(f"{key}: confidence inferred -> confirmed — cited evidence line registers an inbound route")
+        # Deployment evidence outranks a same-process claim: two workloads on
+        # disjoint platform networks cannot share an in-process call. The
+        # crossing is kept as a network crossing at reduced confidence.
+        source, target = candidate.get("from"), candidate.get("to")
+        if (
+            candidate.get("kind") == "process"
+            and source in components
+            and target in components
+            and _separate_workloads(components[source], components[target])
+        ):
+            candidate["kind"] = "network"
+            candidate.pop("surface", None)
+            if candidate.get("confidence") == "confirmed":
+                candidate["confidence"] = "inferred"
+                candidate.pop("confidence_basis", None)
+            notes.append(
+                f"{key}: reclassified 'process' -> 'network' — {source} and {target} run in workloads "
+                "on disjoint deployment networks"
+            )
 
     working = [candidate for candidate in working if candidate["candidate_key"] not in dropped]
 
@@ -2245,10 +2314,15 @@ def _consolidate_candidates(
     for candidate in working:
         point = candidate.get("enforcement_point")
         crossing_class = _crossing_class(candidate)
+        surface, transitions = _axes_for_kind(candidate.get("kind"), candidate.get("surface"))
+        axes = (surface, tuple(transitions))
         if isinstance(point, str) and point.strip():
             protected = candidate.get("from") if crossing_class == "egress" else candidate.get("to")
             owners = tuple(sorted((components.get(protected) or {}).get("repository_ids") or []))
-            key = ("point", point.casefold(), crossing_class, owners)
+            # One control can guard crossings that change different things; the
+            # survivor keeps only its own axes, so merging across them would
+            # erase a trust transition.
+            key = ("point", point.casefold(), crossing_class, owners, axes)
         else:
             key = (
                 "crossing",
@@ -2256,6 +2330,7 @@ def _consolidate_candidates(
                 _grouping_endpoint(candidate, crossing_class, components),
                 crossing_class,
                 candidate.get("kind"),
+                axes,
             )
         groups.setdefault(key, []).append(candidate)
 
@@ -2586,7 +2661,7 @@ def promote_candidates(
         # Carried, not dropped: without these the finished model cannot show why
         # two crossings became one row, and the next run cannot reproduce the
         # decision from `threat-model.yaml`.
-        for optional in ("enforcement_point", "confidence_basis", "covers_components", "assumption_legs"):
+        for optional in ("surface", "enforcement_point", "confidence_basis", "covers_components", "assumption_legs"):
             if candidate.get(optional):
                 row[optional] = deepcopy(candidate[optional])
         row["evidence"] = _canonical_evidence(
