@@ -20,13 +20,14 @@ A comprehensive catalog of Python detector meanings, automated translation of ca
 
 ## Implementation status
 
-Branch `feature/descriptive-abuse-cases` implements P0 to P3 for the full assessment except the live measurement. The Analyst adapter (P5) and default release (P6) are not started.
+Branch `feature/descriptive-abuse-cases` implements P0 to P3 for the full assessment. The Analyst adapter (P5) and default release (P6) are not started.
 
 - **P0 producer fixes.** Repository case files are contained, size- and count-bounded, and rejected one by one with a run issue and a report line. Unknown `schema_version` values are rejected by name.
 - **P1 catalog.** `data/abuse-cases/business-cases.yaml` holds ten descriptive cases. It is not loaded by default.
 - **P2 admission.** Version-2 files admit `kind: descriptive` cases through `schemas/abuse-cases.schema.yaml`. Descriptive cases cannot carry probes, severity, goal impact, source, or release gates, and their signals must come from the recon vocabulary.
 - **P3 deterministic pilot.** The matcher preselects descriptive cases, applies the depth caps from `data/abuse-case-limits.yaml`, and records omissions as `not_performed`. The verifier receives a descriptive projection. `finalize` admits a deciding step verdict only when its excerpt occurs at the cited source line. The report and canonical YAML carry business coverage, `not_performed`, and unrated cases.
-- **Open.** No live run has measured tokens, latency, or quality yet. The 20 % ceiling and the caps remain provisional until that measurement.
+- **P3 live measurement (2026-10-08).** The worktree verifier definition ran headless on Sonnet against five neutral fixtures for delegated-administrator self-escalation: violating, the same defect under renamed files and identifiers, protected, decided by an external policy service, and misleading through a false comment and an unused delegation helper. All five chain verdicts matched the expectation (`fully_viable`, `fully_viable`, `mitigated`, `inconclusive`, `fully_viable`), and every deciding step passed the excerpt admission. Each call took 6 to 8 turns, 15 to 21 s, and $0.08 to $0.10, mean $0.087. Three candidates at standard depth add about $0.26, below 1 % of the $34.93 standard-run baseline in `docs/internal/cost-model.md`.
+- **Open.** The fixtures are small, so per-call cost on a real repository will be higher, and the baseline is a different repository than the fixtures. The comparative pilot with held-out cases and baseline runs (P4) is not done. The ceiling and caps stay provisional until P4.
 
 Deviations from the plan text below, decided during implementation:
 
