@@ -234,6 +234,20 @@ Select the lowest assessment depth that provides sufficient coverage for the int
 
 Thorough increases both component coverage and per-component analysis depth.
 
+### What each depth does
+
+| | quick | standard | thorough |
+|---|---|---|---|
+| Analysis per component | Lighter pass for internal components | Lighter pass for internal components | Full analysis everywhere |
+| Abuse cases checked against the code | Only cases you request | Built-in cases and up to 3 business cases | Built-in cases and up to 8 business cases |
+| Extra review of findings | No | Final quality check | Final quality check and architect review |
+| Model for finding threats | Sonnet 4.6 | Sonnet 4.6 | Opus |
+| Model for rating and merging findings | Sonnet 4.6 | Sonnet 5.5 | Opus |
+| Model for writing the report and checking abuse cases | Sonnet 4.6 | Sonnet 5.5 | Sonnet 5.5 |
+| Model for scanning and routine fixes | Haiku | Haiku | Haiku and Sonnet 4.6 |
+
+Your Claude Code session model runs the overall assessment at every depth. In an interactive session, agents may run on the session's Sonnet instead of a specific Sonnet version; the overview at the start of each run shows the models it actually uses.
+
 ### Measured cost by depth
 
 The following OWASP Juice Shop runs used a Sonnet 4.6 Claude Code session. Quick and standard were measured on 0.5.2-dev, thorough on 0.6.0-beta.4. Results vary with repository, cache state, and model routing.
@@ -261,17 +275,17 @@ Authentication, frontend, LLM, internet-exposed, file-upload, real-time, data-st
 
 There are two model choices, and they affect different parts of a run:
 
-- The **Claude Code session model** runs the orchestrator. Use Sonnet 4.6 for most repositories; the long-running session accounts for most of the cost. Repositories with at least 2,500 source files may require Sonnet 5 for its larger context window.
-- `--reasoning-model` chooses the analysis tier. The default `sonnet-economy` tier leaves STRIDE on Sonnet 4.6 and uses Sonnet 5 for semantic judgment and report authoring in a standard scan.
+- The **Claude Code session model** runs the orchestrator. Use Sonnet 4.6 for most repositories; the long-running session accounts for most of the cost. Repositories with at least 2,500 source files may require Sonnet 5.5 for its larger context window.
+- `--reasoning-model` chooses the analysis tier. The default `sonnet-economy` tier leaves STRIDE on Sonnet 4.6 and uses Sonnet 5.5 for semantic judgment and report authoring in a standard scan.
 
 | Tier | STRIDE · triage · merge | Use |
 |---|---|---|
-| `sonnet-economy` | Sonnet 4.6 · Sonnet 5* · Sonnet 5* | Default for quick and standard. In quick mode all three use Sonnet 4.6. |
+| `sonnet-economy` | Sonnet 4.6 · Sonnet 5.5* · Sonnet 5.5* | Default for quick and standard. In quick mode all three use Sonnet 4.6. |
 | `sonnet` | Sonnet · Sonnet · Sonnet | Latest Sonnet for the reasoning core. |
 | `opus-cheap` | Sonnet · Sonnet · Opus | Opus only for merging. |
 | `opus` | Opus · Opus · Opus | Default for thorough. |
 
-*In standard mode, the routing targets Sonnet 5 for triage, merging, rendering, and abuse-case verification. STRIDE stays on 4.6 for recall and cost. Exact version pins depend on the execution path; interactive subagents may inherit the session model. The pre-flight table shows the resolved routing for each run.*
+*In standard mode, the routing targets Sonnet 5.5 for triage, merging, rendering, and abuse-case verification. STRIDE stays on 4.6 for recall and cost. Exact version pins depend on the execution path; interactive subagents may inherit the session model. The pre-flight table shows the resolved routing for each run.*
 
 Set the interactive session before starting:
 
