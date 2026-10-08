@@ -261,6 +261,9 @@ fi
 while [ $# -gt 0 ]; do
     case "$1" in
         --repo)
+            # One repository per run until the combined assessment is wired;
+            # keeping only the last value would silently drop a selection.
+            [ -z "$REPO_PATH" ] || die "--repo may be given only once; multi-repository assessment is not available yet"
             REPO_PATH="$2"; shift 2 ;;
         --output)
             OUTPUT_PATH="$2"; shift 2 ;;

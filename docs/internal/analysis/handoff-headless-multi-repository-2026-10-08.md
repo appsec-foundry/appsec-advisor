@@ -4,7 +4,7 @@ This document accompanies the multi-repository development checkpoint on `dev` a
 
 ## Current status
 
-The combined headless assessment is not implemented completely and is not available through the public runner. `scripts/run-headless.sh` still assigns repeated `--repo` values to one variable and keeps the last value. No completed combined assessment or user report has been produced. Controlled unit inputs now exercise canonical YAML assembly, standalone Figure 1 and both machine-readable exporters. The remaining work includes implementation, not just verification.
+The combined headless assessment is not implemented completely and is not available through the public runner. `scripts/run-headless.sh` and `scripts/runtime/resolve_config.py` reject a repeated `--repo` until the combined route exists. No completed combined assessment or user report has been produced. Controlled unit inputs now exercise canonical YAML assembly, standalone Figure 1 and both machine-readable exporters. The remaining work includes implementation, not just verification.
 
 The intended result is one fresh assessment of all explicitly selected local checkouts, with reviewed connections, repository-qualified findings, one combined Figure 1 and consistent exports. There is no primary repository in the new internal scope. Repository membership does not establish a trust boundary.
 
@@ -74,6 +74,21 @@ Targeted tests use controlled structured model replies, real scoped exchanges an
 
 An earlier live discovery-only probe with Claude Code 2.1.292 and Haiku returned two components and one connection candidate from two artificial checkouts in four calls at USD 0.067055. An earlier host probe advertised/emitted only `StructuredOutput`. Neither probe produced a complete threat model, Figure 1 or export, and neither establishes retention behavior. Do not promote this evidence into full acceptance.
 
+## Review corrections
+
+A review of this checkpoint found defects in the existing stages. The following corrections carry regression tests that fail on the checkpoint and pass after the change.
+
+| Area | Corrected behavior |
+| --- | --- |
+| Admission | `git status` runs with every repository-configured filter driver disabled and submodules ignored, so admission and `verify_unchanged()` never execute a selected repository's filter commands. A driver name that cannot be overridden stops admission. |
+| Source slices | Lines end only at LF, as in Git and grep. A masked multi-line secret keeps its redacted text on its first line and empty lines after it, so later evidence lines keep their source line numbers. |
+| Broker grants | A shared broker remains one node. A job about a producer or consumer receives only the broker paths of its own incident connections; `project_assessment_signal` now requires the canonical flow list for that projection. The broker's own job still sees every topic it carries. |
+| Messaging crossings | The cross-repository review signal compares a connection's outer sender and receiver repositories, not each hop's endpoints. Both broker hops of a cross-repository connection therefore require boundary review. |
+| Merged findings | Deduplication runs separately per review verdict. A refuted or unproven duplicate can no longer absorb a verified finding at the same location. |
+| STRIDE contract | `cwe` is a required CWE string in `multi-repo-stride.schema.json`, matching the merged contract, so a missing CWE fails at job acceptance instead of aborting the merge. |
+
+Review findings that remain open: whole-scope admission still fails on a tracked symlink, a submodule or an untracked nested repository; overlap and output containment checks are lexical and miss case-insensitive or alias mounts; untracked credential files with unlisted names can be captured and are protected only by masking; SARIF absence evidence assigns the anchor's hash to every searched file; `.assessment-state.json` accounting is not bound to receipts. The implementation plan items for a per-root repository trust preflight, per-source secret scanning, decision entries, context-routing budgets and `related-repos.yaml` semantics are also not yet covered by the list below.
+
 ## Remaining implementation
 
 Continue in the existing controller and retain all production schema, QA and completion gates. Do not replace them with placeholder prose or write `meta.enrichment_pass` directly.
@@ -93,7 +108,7 @@ Route follow-up includes the new tests' existing producers and resources, origin
 
 ## Investigation notes
 
-If repeated `--repo` still scans only the last path, start in `scripts/run-headless.sh`; the multi-root route has not been added. Do not diagnose this as a model failure.
+If repeated `--repo` is rejected, that is the interim guard in `scripts/run-headless.sh` and `resolve_config.py`; the multi-root route has not been added. Do not diagnose this as a model failure.
 
 If resume fails, inspect the bounded local `.assessment-state.json` identity and accounting fields and the matching job receipt. Changed sources/settings/runtime, an expired original deadline, unknown cost or altered delivered bytes deliberately stop reuse. Do not clear reservations, extend deadlines or rewrite receipt hashes to force continuation.
 
@@ -109,4 +124,4 @@ The internal canonical assembler is `build_assessment_model(scope, skill_cfg=...
 
 Standalone Figure 1 accepts a complete native-v2 model through `check_diagram` or `build_figure1_dfd_svg`. Whole-model validation happens before the qualified presentation projection. Full composer/runtime/build projections still need an explicit validated-view handoff; passing a filtered v2 model through whole-inventory validation will correctly reject omitted owners. Keep canonical source references separate from display locators.
 
-The public CLI remains the final integration step after deterministic scans, source context, synthesis, real enrichment, composition and completion gates are connected. Repeated --repo still keeps the last selection; the README development-status paragraph remains accurate. Do not document the proposed combined invocation as an available command yet.
+The public CLI remains the final integration step after deterministic scans, source context, synthesis, real enrichment, composition and completion gates are connected. Repeated `--repo` is rejected; replace that rejection only together with the complete route. Do not document the proposed combined invocation as an available command yet.

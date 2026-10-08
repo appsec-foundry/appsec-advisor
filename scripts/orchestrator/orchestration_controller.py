@@ -7990,7 +7990,7 @@ def _assessment_boundary_candidates(scope, jobs, architecture, source_context, d
     )
     candidates, dispositions, ranges = [], [], []
     for signal in assessment["signals"]:
-        projection = project_assessment_signal(assessment, signal["id"])
+        projection = project_assessment_signal(assessment, signal["id"], architecture["data_flows"]["data_flows"])
         allowed = analysis.source_selection(projection["components"])
         progress("Reviewing trust crossing: " + signal["id"])
         exchange = jobs.exchange(

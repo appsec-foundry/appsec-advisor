@@ -62,6 +62,7 @@ def stride(component, evidence, identity):
         evidence=evidence,
         evidence_tier="insecure-practice",
         threat_category_id="TH-01",
+        cwe="CWE-20",
         remediation=dict(
             effort="Low",
             steps=["Validate the input against the accepted data type."],

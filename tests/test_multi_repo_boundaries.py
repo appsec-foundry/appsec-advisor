@@ -11,6 +11,7 @@ from jsonschema import ValidationError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from contexts.build_trust_boundary_assessment_input import (
+    _crossing_connections,
     _signal_specs,
     build_assessment,
     project_assessment_signal,
@@ -135,7 +136,8 @@ def test_repository_membership_does_not_establish_a_crossing(tmp_path):
     cards = {c["id"]: c for c in components["components"]}
     flow = dict(**{"from": "component-1", "to": "component-2"}, label="Records", protocol="HTTPS")
     assert not _signal_specs(flow, cards)
-    specs = _signal_specs({**flow, "connection_id": "connection-" + "a" * 16}, cards)
+    connected = {**flow, "connection_id": "connection-" + "a" * 16}
+    specs = _signal_specs(connected, cards, _crossing_connections([connected], cards))
     assert len(specs) == 1 and specs[0][0] == "third-party-or-cross-repository"
     assert "same process" in specs[0][2][0]
 
@@ -225,7 +227,7 @@ def test_assessment_crossing_input_preserves_owners_and_requires_reviewed_connec
     assert assessment["signals"][0]["class"] == "third-party-or-cross-repository"
     assert assessment["components"][0]["paths"][0]["repository_id"] == scope.repositories[0].repository_id
     assert "connection_id" not in assessment["data_flows"][0]
-    projected = project_assessment_signal(assessment, assessment["signals"][0]["id"])
+    projected = project_assessment_signal(assessment, assessment["signals"][0]["id"], flows["data_flows"])
     assert projected == assessment
     assert not scope.output.exists()
     flows["data_flows"][0].pop("connection_id")
@@ -238,11 +240,11 @@ def test_signal_projection_cannot_expand_sources_to_unrelated_components(tmp_pat
     extra = copy.deepcopy(assessment["components"][0])
     extra["id"] = "unrelated-component"
     assessment["components"].append(extra)
-    projected = project_assessment_signal(assessment, assessment["signals"][0]["id"])
+    projected = project_assessment_signal(assessment, assessment["signals"][0]["id"], flows["data_flows"])
     assert {c["id"] for c in projected["components"]} == {"component-1", "component-2"}
     assert len(assessment["components"]) == 3
     with pytest.raises(ValueError, match="controller-selected"):
-        project_assessment_signal(assessment, "signal-model-selected")
+        project_assessment_signal(assessment, "signal-model-selected", flows["data_flows"])
 
 
 def test_assessment_input_rejects_foreign_source_context_and_missing_measurements(tmp_path):

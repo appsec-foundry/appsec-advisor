@@ -136,3 +136,72 @@ def test_explicit_skips_remain_distinct_from_missing_context(tmp_path):
     document, _ = build_assessment_model(scope, **kwargs)
     assert document["business_context_trace"]["status"] == "skipped"
     assert document["abuse_case_analysis"]["status"] == "skipped"
+
+
+def _duplicated(tmp_path, other_verdict, names=("edge", "service")):
+    scope, components, receipt, flows, _ = crossing_input(tmp_path, names=names)
+    identity = dict(
+        schema_version=2,
+        source_scope_sha256=components["source_scope_sha256"],
+        component_inventory_fingerprint=receipt["component_inventory_fingerprint"],
+    )
+    documents, reviews = [], []
+    for component, evidence in zip(components["components"], flows["data_flows"][0]["evidence"], strict=True):
+        document = stride(component, evidence, identity)
+        # Same location and mechanism, reported again with a higher rating.
+        duplicate = dict(copy.deepcopy(document["threats"][0]), local_id="issue-2")
+        duplicate.update(likelihood="High", impact="Critical", risk="Critical")
+        document["threats"].append(duplicate)
+        next(row for row in document["coverage"] if row["category"] == "Tampering")["finding_ids"].append("issue-2")
+        documents.append(document)
+        verdicts = {"issue-1": "verified", "issue-2": other_verdict}
+        reviews.append(
+            dict(
+                **identity,
+                decisions=[
+                    dict(local_id=key, verdict=value, reason="Source review decision.", evidence=[evidence])
+                    for key, value in verdicts.items()
+                ],
+            )
+        )
+    return merge_assessment(scope, components, documents, reviews, boundaries=[])
+
+
+@pytest.mark.parametrize("other_verdict", ["refuted", "ambiguous"])
+@pytest.mark.parametrize("names", [("edge", "service"), ("gateway", "processor")])
+def test_differently_reviewed_duplicate_cannot_absorb_a_verified_finding(tmp_path, other_verdict, names):
+    merged = _duplicated(tmp_path, other_verdict, names)
+    verified = [t for t in merged["threats"] if t["evidence_check"] == "verified"]
+    assert len(verified) == 2
+    assert {t["evidence"]["repository_id"] for t in verified} == {
+        t["evidence"]["repository_id"] for t in merged["threats"]
+    }
+
+
+def test_equally_reviewed_duplicates_still_merge(tmp_path):
+    merged = _duplicated(tmp_path, "verified")
+    assert len(merged["threats"]) == 2
+    assert all(t["evidence_check"] == "verified" for t in merged["threats"])
+
+
+def test_stride_finding_without_cwe_is_rejected_at_its_contract(tmp_path):
+    from contexts.multi_repo_analysis import contract
+    from jsonschema import Draft202012Validator
+
+    scope, components, receipt, flows, _ = crossing_input(tmp_path)
+    identity = dict(
+        schema_version=2,
+        source_scope_sha256=components["source_scope_sha256"],
+        component_inventory_fingerprint=receipt["component_inventory_fingerprint"],
+    )
+    component, evidence = components["components"][0], flows["data_flows"][0]["evidence"][0]
+    document = stride(component, evidence, identity)
+    validator = Draft202012Validator(contract("multi-repo-stride.schema.json"))
+    assert validator.is_valid(document)
+    for value in (None, "missing"):
+        broken = copy.deepcopy(document)
+        if value is None:
+            broken["threats"][0]["cwe"] = None
+        else:
+            del broken["threats"][0]["cwe"]
+        assert not validator.is_valid(broken)

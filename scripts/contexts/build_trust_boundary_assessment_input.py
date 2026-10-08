@@ -173,7 +173,37 @@ def _signal_id(signal_class: str, source: str, target: str) -> str:
     return f"signal-{signal_class}-{source}-to-{target}"
 
 
-def _signal_specs(flow: dict[str, Any], components: dict[str, dict[str, Any]]) -> list[tuple[str, str, list[str]]]:
+def _crossing_connections(flows: list[dict[str, Any]], components: dict[str, dict[str, Any]]) -> set[str]:
+    """Reviewed connections whose sending and receiving sources share no repository.
+
+    A broker holds evidence from both sides, so the comparison uses the
+    connection's outer endpoints rather than each hop's endpoints.
+    """
+    if not any(flow.get("connection_id") for flow in flows):
+        return set()
+    from contexts.multi_repo_analysis import connection_relays
+
+    relays = connection_relays(flows)
+    sides: dict[str, tuple[set[str], set[str]]] = {}
+    for flow in flows:
+        key = flow.get("connection_id")
+        if not key:
+            continue
+        senders, receivers = sides.setdefault(key, (set(), set()))
+        if flow["from"] not in relays[key]:
+            senders.update((components.get(flow["from"]) or {}).get("repository_ids") or [])
+        if flow["to"] not in relays[key]:
+            receivers.update((components.get(flow["to"]) or {}).get("repository_ids") or [])
+    return {
+        key for key, (senders, receivers) in sides.items() if senders and receivers and senders.isdisjoint(receivers)
+    }
+
+
+def _signal_specs(
+    flow: dict[str, Any],
+    components: dict[str, dict[str, Any]],
+    crossing_connections: frozenset[str] | set[str] = frozenset(),
+) -> list[tuple[str, str, list[str]]]:
     source, target = flow["from"], flow["to"]
     left, right = components.get(source), components.get(target)
     text = f"{flow.get('label', '')} {flow.get('protocol', '')}"
@@ -232,14 +262,7 @@ def _signal_specs(flow: dict[str, Any], components: dict[str, dict[str, Any]]) -
                 ["development tooling", "build-only dependency unless kind is build"],
             )
         )
-    if (
-        left
-        and right
-        and flow.get("connection_id")
-        and left.get("repository_ids")
-        and right.get("repository_ids")
-        and set(left["repository_ids"]).isdisjoint(right["repository_ids"])
-    ):
+    if flow.get("connection_id") in crossing_connections:
         # Review the evidenced communication, not repository membership. The
         # analyst may establish same-trust or leave the crossing unresolved.
         result.append(
@@ -283,9 +306,10 @@ def _signals(
     source_context: dict[str, Any],
 ) -> list[dict[str, Any]]:
     by_id = {row["id"]: row for row in components}
+    crossings = _crossing_connections(flows, by_id)
     merged: dict[str, dict[str, Any]] = {}
     for flow in flows:
-        for signal_class, trigger, exclusions in _signal_specs(flow, by_id):
+        for signal_class, trigger, exclusions in _signal_specs(flow, by_id, crossings):
             sid = _signal_id(signal_class, flow["from"], flow["to"])
             row = merged.setdefault(
                 sid,
@@ -692,16 +716,27 @@ def _assessment_input_fingerprint(body):
     body["assessment_input_fingerprint"] = "sha256:" + hashlib.sha256(encoded.encode()).hexdigest()
 
 
-def project_assessment_signal(assessment, signal_id):
-    """Admit only the crossing endpoints and their cited context to one job."""
-    from contexts.multi_repo_analysis import contract, source_selection
+def project_assessment_signal(assessment, signal_id, topology):
+    """Admit only the crossing endpoints and their cited context to one job.
+
+    ``topology`` is the canonical flow list with its connection identities;
+    the bounded assessment input omits them.
+    """
+    from contexts.multi_repo_analysis import contract, scope_relays, source_selection
 
     signal = next((row for row in assessment["signals"] if row["id"] == signal_id), None)
     if signal is None:
         raise ValueError("Boundary job requires a controller-selected crossing signal")
+    if {row["id"] for row in topology} != {row["id"] for row in assessment["data_flows"]}:
+        raise ValueError("Boundary job topology does not match its assessment input")
     result = copy.deepcopy(assessment)
     ids = {signal["from"], signal["to"]} - {"external"}
-    result["components"] = [row for row in result["components"] if row["id"] in ids]
+    connections = {
+        row["connection_id"] for row in topology if row["id"] in signal["flow_ids"] and row.get("connection_id")
+    }
+    result["components"] = scope_relays(
+        [row for row in result["components"] if row["id"] in ids], topology, connections
+    )
     result["data_flows"] = [row for row in result["data_flows"] if row["id"] in signal["flow_ids"]]
     result["signals"] = [copy.deepcopy(signal)]
     external_ids = {row[key] for row in result["data_flows"] for key in ("from_entity", "to_entity") if key in row}

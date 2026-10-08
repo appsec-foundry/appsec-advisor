@@ -1648,6 +1648,15 @@ def read_requirements_config(plugin_root: Path) -> bool:
 # ---------------------------------------------------------------------------
 
 
+class _SingleRepository(argparse.Action):
+    """Reject a repeated --repo instead of keeping only the last selection."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        if getattr(namespace, self.dest, None) is not None:
+            parser.error(f"{option_string} may be given only once; multi-repository assessment is not available yet")
+        setattr(namespace, self.dest, values)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="resolve_config.py",
@@ -1707,7 +1716,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-tracing", dest="tracing", action="store_false", help="Disable tracing — skips .appsec-trace.log creation."
     )
     # Paths
-    p.add_argument("--repo", default=None)
+    p.add_argument("--repo", default=None, action=_SingleRepository)
     p.add_argument("--output", default=None)
     # Business context for this run: an http(s) URL or a path to a Markdown /
     # plain-text file. Interactive runs ask instead (compact full runtime); a value

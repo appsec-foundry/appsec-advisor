@@ -9,6 +9,7 @@ multi-repository assessment entry point.
 
 from __future__ import annotations
 
+import difflib
 import fnmatch
 import hashlib
 import json
@@ -51,8 +52,11 @@ def _json_digest(value: object) -> str:
     return _digest(json.dumps(value, sort_keys=True, separators=(",", ":")).encode())
 
 
-def _git(root: Path, *args: str) -> bytes:
-    """Read Git metadata without hooks, external filters, or unbounded output."""
+def _git(root: Path, *args: str, overrides: tuple[str, ...] = ()) -> bytes:
+    """Read Git metadata without hooks, fsmonitor, or unbounded output.
+
+    Commands that compare worktree content also need ``_filter_overrides``.
+    """
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_OPTIONAL_LOCKS="0", GIT_TERMINAL_PROMPT="0")
     command = [
@@ -66,6 +70,7 @@ def _git(root: Path, *args: str) -> bytes:
         "diff.external=",
         "-c",
         "core.quotePath=false",
+        *(item for value in overrides for item in ("-c", value)),
         "-C",
         str(root),
         *args,
@@ -107,6 +112,65 @@ def _git(root: Path, *args: str) -> bytes:
         proc.wait()
         if proc.stdout:
             proc.stdout.close()
+
+
+def _filter_overrides(root: Path) -> tuple[str, ...]:
+    """Disable every repository-configured content filter driver.
+
+    ``.gitattributes`` selects drivers whose commands come from the selected
+    repository's own config; Git runs them while comparing worktree content.
+    An empty command disables a driver, and it must not be required then.
+    """
+    names = _git(root, "config", "--list", "--name-only", "-z").split(b"\0")
+    drivers = set()
+    for raw in names:
+        name = raw.decode("utf-8", "replace")
+        if name.startswith("filter.") and name.count(".") >= 2:
+            driver = name[len("filter.") : name.rindex(".")]
+            # A command-line override cannot name such a driver reliably.
+            if "=" in driver or any(ord(c) < 32 for c in driver):
+                raise ScopeError("Repository filter configuration cannot be neutralized")
+            drivers.add(driver)
+    return tuple(
+        f"filter.{driver}.{key}={value}"
+        for driver in sorted(drivers)
+        for key, value in (("clean", ""), ("smudge", ""), ("process", ""), ("required", "false"))
+    )
+
+
+def _lines(text: str) -> list[str]:
+    """Split like Git and grep: only LF ends a line; CR of CRLF is dropped."""
+    rows = text.split("\n")
+    if rows[-1] == "":
+        rows.pop()
+    return [row[:-1] if row.endswith("\r") else row for row in rows]
+
+
+def _masked_lines(text: str) -> list[str]:
+    """Redact the whole text, but keep each line at its source line number.
+
+    A masked multi-line secret collapses into fewer lines. Its redacted text
+    stays on the first line of that block and the rest become empty, so later
+    evidence lines still match the raw file. Every returned line is masked
+    output or empty.
+    """
+    raw = _lines(text)
+    masked = _lines(mask_text(text)[0])
+    if len(masked) == len(raw):
+        return masked
+    result: list[str] = []
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, raw, masked, autojunk=False).get_opcodes():
+        if tag == "equal":
+            result.extend(masked[j1:j2])
+            continue
+        block, width = masked[j1:j2], i2 - i1
+        if len(block) > width:
+            block = block[: max(width - 1, 0)] + [" ".join(block[max(width - 1, 0) :])]
+        if width:
+            result.extend(block + [""] * (width - len(block)))
+        elif block and result:
+            result[-1] = " ".join([result[-1], *block])
+    return result
 
 
 def _relative(value: str) -> tuple[str, ...]:
@@ -195,7 +259,17 @@ class RepositoryView:
 
 def _capture(root: Path, repository_id: str, remaining: int) -> RepositoryView:
     head = _git(root, "rev-parse", "--verify", "HEAD^{commit}").decode("ascii").strip()
-    dirty = bool(_git(root, "status", "--porcelain=v1", "-z", "--untracked-files=normal"))
+    dirty = bool(
+        _git(
+            root,
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=normal",
+            "--ignore-submodules=all",
+            overrides=_filter_overrides(root),
+        )
+    )
     raw_paths = _git(root, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
     try:
         paths = sorted(set(p.decode("utf-8") for p in raw_paths.split(b"\0") if p))
@@ -263,8 +337,7 @@ class AssessmentScope:
         if repo is None or path not in repo.files:
             raise ScopeError("Source reference is outside admitted scope")
         data = repo.files[path]
-        text, _ = mask_text(data.decode("utf-8"))
-        lines = text.splitlines()
+        lines = _masked_lines(data.decode("utf-8"))
         if start > len(lines):
             raise ScopeError("Source line range does not exist")
         selected = lines[start - 1 : end]

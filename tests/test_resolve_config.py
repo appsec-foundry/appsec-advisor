@@ -1320,6 +1320,16 @@ class TestCLI:
         cfg = json.loads(r.stdout)
         assert cfg["repo_root"] == str(tmp_path)
 
+    def test_repeated_repo_flag_is_rejected_not_last_wins(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "a").mkdir()
+        (tmp_path / "b").mkdir()
+        r = self._run("--repo", str(tmp_path / "a"), "--repo", str(tmp_path / "b"))
+        assert r.returncode == 2
+        assert "--repo may be given only once" in r.stderr
+        r = self._run("--repo", str(tmp_path / "a"))
+        assert r.returncode == 0 and json.loads(r.stdout)["repo_root"] == str(tmp_path / "a")
+
     def test_repo_flag_honours_explicit_subdir_not_git_root(self, tmp_path, monkeypatch):
         # An explicit --repo pointing at a subdir nested inside a larger git repo
         # (no .git of its own) must resolve to the subdir itself, NOT walk up to

@@ -714,3 +714,32 @@ def test_an_explicit_hard_budget_wins_over_the_derived_one(tmp_path: Path, monke
     argv = argv_file.read_text(encoding="utf-8").splitlines() if argv_file.exists() else []
     assert "--max-budget-usd" in argv, result.stdout + result.stderr
     assert argv[argv.index("--max-budget-usd") + 1] == "50"
+
+
+def test_repeated_repository_selection_is_rejected_before_output_or_claude(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first, second, output = tmp_path / "first", tmp_path / "second", tmp_path / "not-created"
+    first.mkdir()
+    second.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    marker = tmp_path / "claude-invoked"
+    claude = bin_dir / "claude"
+    claude.write_text('#!/bin/sh\nprintf invoked > "$CLAUDE_MARKER"\nexit 42\n', encoding="utf-8")
+    claude.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    monkeypatch.setenv("CLAUDE_MARKER", str(marker))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+    result = subprocess.run(
+        [str(SCRIPT), "--repo", str(first), "--repo", str(second), "--output", str(output)],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "--repo may be given only once" in result.stderr
+    assert not output.exists()
+    assert not marker.exists()

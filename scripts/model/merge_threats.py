@@ -3284,7 +3284,17 @@ def merge_assessment(
         pairs.append((document["component_id"], normalized))
     flat = _flatten_threats(pairs, assessment_boundaries=boundary_view)
     normalize_risks(flat)
-    threats = _dedupe_title_locator(_dedupe_evidence(_dedupe_exact(flat)))
+    # Reviews already decided each finding. Deduplication keeps the riskiest
+    # member, so it must not let a refuted or unproven duplicate absorb a
+    # finding with a different verdict.
+    by_verdict: dict[str, list[dict]] = {}
+    for threat in flat:
+        by_verdict.setdefault(threat["evidence_check"], []).append(threat)
+    threats = [
+        threat
+        for verdict in sorted(by_verdict)
+        for threat in _dedupe_title_locator(_dedupe_evidence(_dedupe_exact(by_verdict[verdict])))
+    ]
     threats = _assign_t_ids(threats)
     threats = _remap_scenario_local_refs(threats)
     normalize_risks(threats)

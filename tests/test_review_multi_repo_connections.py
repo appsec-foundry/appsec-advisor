@@ -53,7 +53,9 @@ def fixture(tmp_path, protocol="HTTP", names=("edge", "service"), separate=False
         roots.append(str(root))
     scope = admit(roots, str(tmp_path / "out"))
     documents = []
-    for index, repo in enumerate(scope.repositories):
+    for repo in scope.repositories:
+        # Roles and topics follow the written sources, not admission order.
+        index = names.index(repo.root.name)
         text = repo.files["app.py"].decode().strip()
         documents.append(
             {
@@ -246,3 +248,77 @@ def test_reviewer_retrieval_is_scoped_and_reuses_aggregate_budget(tmp_path):
         scope, documents, components, receipt, host_factory=lambda cap: host, budget=budget, should_stop=lambda: False
     )
     assert result == expected and host.calls == 2 and budget.spent_usd == pytest.approx(0.02)
+
+
+def _empty_source_context():
+    keys = (
+        "has_public_routes",
+        "has_auth_surface",
+        "has_role_concept",
+        "has_ci_pipeline",
+        "has_external_apis",
+        "has_client_storage",
+        "has_multi_tenancy_signal",
+    )
+    return dict(
+        route_inventory=dict(status="missing", routes=[]),
+        attack_surface_additions=[],
+        cross_repository=dict(status="missing", entries=[]),
+        recon_signals=dict(values={key: False for key in keys}, evidence=[]),
+        boundary_declarations=dict(status="missing", fingerprint=None, keys=[]),
+        incremental=False,
+    )
+
+
+def _topics(tmp_path, names):
+    scope, documents, components, receipt, decision = fixture(tmp_path, protocol="Kafka", names=names)
+    components, receipt, flows = review.promote(scope, documents, components, receipt, decision)
+    broker = next(c["id"] for c in components["components"] if c.get("origin") == "reconciliation")
+    owner = {c["id"]: c["repository_ids"][0] for c in components["components"] if c["id"] != broker}
+    topics = {}
+    for flow in flows["data_flows"]:
+        topics.setdefault(flow["connection_id"], set()).update(
+            owner[e] for e in (flow["from"], flow["to"]) if e != broker
+        )
+    return scope, components, receipt, flows, broker, owner, list(topics.values())
+
+
+@pytest.mark.parametrize("names", [("alpha", "bravo", "charlie", "delta"), ("orders", "billing", "audit", "metrics")])
+def test_shared_broker_grants_only_the_sources_of_the_incident_topic(tmp_path, names):
+    from contexts.multi_repo_analysis import component_neighborhood, source_selection
+
+    scope, components, _, flows, broker, owner, topics = _topics(tmp_path, names)
+    assert len(topics) == 2 and all(len(t) == 2 for t in topics)
+    for component, repository in owner.items():
+        readable = {repo for repo, _ in source_selection(component_neighborhood(components, flows, component))}
+        assert readable == next(t for t in topics if repository in t)
+    # The broker's own job still sees every topic it carries.
+    own = {repo for repo, _ in source_selection(component_neighborhood(components, flows, broker))}
+    assert own == {r.repository_id for r in scope.repositories}
+
+
+@pytest.mark.parametrize("names", [("alpha", "bravo", "charlie", "delta"), ("orders", "billing", "audit", "metrics")])
+def test_cross_repository_messaging_hops_require_boundary_review(tmp_path, names):
+    from contexts.build_trust_boundary_assessment_input import build_assessment, project_assessment_signal
+
+    scope, components, receipt, flows, broker, _, topics = _topics(tmp_path, names)
+    assessment = build_assessment(scope, components, receipt, flows, _empty_source_context(), "standard")
+    crossing = [s for s in assessment["signals"] if s["class"] == "third-party-or-cross-repository"]
+    assert {(s["from"], s["to"]) for s in crossing} == {(f["from"], f["to"]) for f in flows["data_flows"]}
+    for signal in crossing:
+        projected = project_assessment_signal(assessment, signal["id"], flows["data_flows"])
+        card = next(c for c in projected["components"] if c["id"] == broker)
+        assert {p["repository_id"] for p in card["paths"]} in topics
+    with pytest.raises(ValueError, match="topology"):
+        project_assessment_signal(assessment, crossing[0]["id"], flows["data_flows"][:1])
+
+
+def test_same_repository_messaging_does_not_raise_a_cross_repository_signal(tmp_path):
+    from contexts.build_trust_boundary_assessment_input import _crossing_connections
+
+    _, components, _, flows, _, owner, _ = _topics(tmp_path, ("alpha", "bravo"))
+    by_id = {c["id"]: copy.deepcopy(c) for c in components["components"]}
+    assert len(_crossing_connections(flows["data_flows"], by_id)) == 1
+    producer, consumer = sorted(owner)
+    by_id[consumer]["repository_ids"] = list(by_id[producer]["repository_ids"])
+    assert _crossing_connections(flows["data_flows"], by_id) == set()

@@ -100,18 +100,59 @@ def source_selection(components: list[dict]) -> frozenset:
     return frozenset((row["repository_id"], row["path"]) for c in components for row in c["paths"])
 
 
+def connection_relays(flows: list[dict]) -> dict[str, set[str]]:
+    """Map each reviewed connection to its relay nodes, such as a message broker.
+
+    A relay receives one hop of a connection and sends the next one.
+    """
+    senders: dict[str, set[str]] = {}
+    receivers: dict[str, set[str]] = {}
+    for row in flows:
+        if row.get("connection_id"):
+            senders.setdefault(row["connection_id"], set()).add(row["from"])
+            receivers.setdefault(row["connection_id"], set()).add(row["to"])
+    return {key: senders[key] & receivers.get(key, set()) for key in senders}
+
+
+def scope_relays(components: list[dict], flows: list[dict], connection_ids, keep=frozenset()) -> list[dict]:
+    """Limit each relay's sources to the evidence of the given connections.
+
+    A broker's paths are the producer and consumer evidence of every topic it
+    carries. Granting all of them would let one topic's job read another
+    topic's repositories. Components in ``keep`` remain unchanged.
+    """
+    relays = set().union(*connection_relays(flows).values()) - set(keep)
+    evidence = {
+        (row["repository_id"], row["file"])
+        for flow in flows
+        if flow.get("connection_id") in connection_ids
+        for row in flow.get("evidence", [])
+    }
+    result = []
+    for component in components:
+        if component["id"] in relays:
+            component = copy.deepcopy(component)
+            component["paths"] = [p for p in component["paths"] if (p["repository_id"], p["path"]) in evidence]
+            if component["paths"]:
+                component["repository_ids"] = sorted({p["repository_id"] for p in component["paths"]})
+        result.append(component)
+    return result
+
+
 def component_neighborhood(components: dict, flows: dict, component_id: str) -> list[dict]:
     """Include only finalized incident peers, including evidenced broker hops."""
     by_id = {row["id"]: row for row in components["components"]}
     if component_id not in by_id:
         raise ExchangeError("Analysis component is outside the finalized inventory")
-    ids = {component_id}
+    ids, connections = {component_id}, set()
     for row in flows["data_flows"]:
         if component_id in (row["from"], row["to"]):
             ids.update(endpoint for endpoint in (row["from"], row["to"]) if endpoint in by_id)
+            if row.get("connection_id"):
+                connections.add(row["connection_id"])
     # A broker is an incident peer, not an authorization to read every tenant
     # or consumer connected to that broker. Further hops need a scoped job.
-    return [by_id[key] for key in sorted(ids)]
+    return scope_relays([by_id[key] for key in sorted(ids)], flows["data_flows"], connections, {component_id})
 
 
 def validate_retrieved_sources(scope, artifact, ranges, allowed_sources):

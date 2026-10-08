@@ -166,7 +166,7 @@ The current headless runner accepts one repository per invocation. From the plug
 
 Each run produces its own threat model and Figure 1. Configure `docs/related-repos.yaml` in the repository being assessed to include existing dependency models as [cross-repository context](docs/threat-modeler.md#cross-repo-context). These imports inform the local analysis; they do not rescan dependency source code or produce one combined Figure 1. See [non-interactive mode](docs/headless-mode.md) for authentication, budgets, and other runner options.
 
-A combined source assessment using multiple `--repo` arguments is still under development. The current runner keeps only the last `--repo` value when the flag is repeated.
+A combined source assessment using multiple `--repo` arguments is still under development. Until it is available, the runner rejects a repeated `--repo` flag instead of assessing only one of the selected repositories.
 
 ## Threat Analyst
 

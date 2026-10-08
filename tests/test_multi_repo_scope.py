@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -201,3 +202,68 @@ def test_new_untracked_file_invalidates_the_scope(tmp_path):
     (Path(roots[1]) / "new.py").write_text("print(2)\n")
     with pytest.raises(scope.ScopeError, match="state changed"):
         admitted.verify_unchanged()
+
+
+def _configure(root: str, *pairs: tuple[str, str]) -> None:
+    for key, value in pairs:
+        subprocess.run(["git", "-C", root, "config", key, value], check=True)
+
+
+@pytest.mark.parametrize(
+    ("driver", "key"),
+    [("probe", "clean"), ("vendor.tool", "process")],
+)
+def test_admission_never_runs_repository_configured_filters(tmp_path, driver, key):
+    roots = pair(tmp_path)
+    marker = tmp_path / "filter-ran"
+    command = f"sh -c 'touch {marker}; cat'"
+    subprocess.run(["git", "-C", roots[1], "add", "app.py"], check=True)
+    _configure(roots[1], (f"filter.{driver}.{key}", command), (f"filter.{driver}.required", "true"))
+    (Path(roots[1]) / ".gitattributes").write_text(f"*.py filter={driver}\n")
+    # Same size, new timestamp: Git must compare content through the filter.
+    source = Path(roots[1]) / "app.py"
+    stamp = source.stat().st_mtime_ns + 5_000_000_000
+    os.utime(source, ns=(stamp, stamp))
+    admitted = scope.admit(roots, str(tmp_path / "out"))
+    admitted.verify_unchanged()
+    assert not marker.exists()
+
+
+def test_filter_neutralization_keeps_dirty_state(tmp_path):
+    roots = pair(tmp_path)
+    _configure(roots[0], ("filter.probe.clean", "cat"))
+    assert all(r["dirty"] for r in scope.admit(roots, str(tmp_path / "out")).inventory()["repositories"])
+
+
+def test_unrepresentable_filter_driver_fails_closed(tmp_path):
+    roots = pair(tmp_path)
+    _configure(roots[0], ("filter.a=b.clean", "cat"))
+    with pytest.raises(scope.ScopeError, match="filter"):
+        scope.admit(roots, str(tmp_path / "out"))
+
+
+def test_slice_line_numbers_follow_the_raw_file_after_multiline_masking(tmp_path):
+    roots = pair(tmp_path)
+    # Artificial, non-functional key material inside a temporary fixture.
+    body = "\n".join(["MIIB" + "A" * 60] * 2)
+    header, footer = "-----BEGIN " + "PRIVATE KEY-----", "-----END " + "PRIVATE KEY-----"
+    text = f"first = 1\n{header}\n{body}\n{footer}\nafter = 6\nlast = 7\n"
+    (Path(roots[0]) / "app.py").write_text(text)
+    admitted = scope.admit(roots, str(tmp_path / "out"))
+    first = admitted.repositories[0]
+    reply = admitted.read(first.repository_id, "app.py", 1, 7)
+    assert reply["end_line"] == 7
+    assert reply["lines"][0] == "first = 1"
+    assert reply["lines"][5:] == ["after = 6", "last = 7"]
+    assert "MIIB" not in json.dumps(reply)
+    assert admitted.read(first.repository_id, "app.py", 6, 6)["lines"] == ["after = 6"]
+
+
+def test_slice_lines_end_only_at_line_feeds(tmp_path):
+    roots = pair(tmp_path)
+    (Path(roots[0]) / "app.py").write_text("a = 1\r\nb = '\f\v'\nc = 3\n", newline="")
+    admitted = scope.admit(roots, str(tmp_path / "out"))
+    first = admitted.repositories[0]
+    reply = admitted.read(first.repository_id, "app.py", 1, 10)
+    assert reply["end_line"] == 3
+    assert reply["lines"][0] == "a = 1" and reply["lines"][2] == "c = 3"

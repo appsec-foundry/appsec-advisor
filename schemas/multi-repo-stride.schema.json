@@ -116,6 +116,7 @@
           "evidence",
           "evidence_tier",
           "threat_category_id",
+          "cwe",
           "remediation"
         ],
         "properties": {
@@ -309,10 +310,7 @@
             "maximum": 1.5
           },
           "cwe": {
-            "type": [
-              "string",
-              "null"
-            ],
+            "type": "string",
             "pattern": "^CWE-\\d+$"
           },
           "evidence": {
