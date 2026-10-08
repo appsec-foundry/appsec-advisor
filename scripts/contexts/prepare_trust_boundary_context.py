@@ -1990,14 +1990,10 @@ def _paths_contained(inner: list[str], outer: list[str]) -> bool:
     )
 
 
-def _same_deployable(a_paths: list[str], b_paths: list[str]) -> bool:
-    return _paths_contained(a_paths, b_paths) or _paths_contained(b_paths, a_paths)
-
-
 def _deployable_root(component_id: Any, components: dict[str, dict]) -> Any:
     """The outermost component whose paths contain ``component_id``'s.
 
-    Same primitive as `_same_deployable`, walked transitively: `auth-service`
+    Path containment walked transitively: `auth-service`
     (`routes/login.ts`, `lib/insecurity.ts`) sits inside `backend-api`
     (`routes/**`, `lib/**`), so both name one process and one perimeter.
 
@@ -2113,7 +2109,7 @@ def _consolidate_candidates(
 ) -> tuple[list[dict], dict[str, str], list[str]]:
     """Normalize and merge candidates before they become canonical boundaries.
 
-    Four deterministic passes, all conservative:
+    Three deterministic passes, all conservative:
 
     1. **Direction** — a candidate modelled ``X → external`` whose own evidence
        lands on a route registration is an ingress crossing; flip it.
@@ -2125,12 +2121,7 @@ def _consolidate_candidates(
        protects nothing and is removed — reported through ``dropped``, never
        silently. Both rules require a positive ``tier: client``; a missing or
        unknown tier is left alone.
-    3. **Same deployable** — endpoints that ship in one process are an internal
-       enforcement interface, so force ``kind: process``. They are NOT discarded:
-       the injection / mass-assignment / encryption-at-rest findings anchor here,
-       and dropping the row to `same-trust` would leave them nowhere to attach.
-       `same-trust` stays reserved for signals with no interface behind them.
-    4. **Merge** — candidates sharing one `enforcement_point` within the same
+    3. **Merge** — candidates sharing one `enforcement_point` within the same
        crossing class are one boundary; those naming none fall back to the
        crossing itself, with ingress compared per deployable rather than per
        component label. A merge spanning components records them in
@@ -2175,8 +2166,7 @@ def _consolidate_candidates(
         # from a forged one, and nothing the SPA "enforces" survives a modified
         # client. Run after the direction correction so a mis-modelled
         # `client → external` that is really inbound is judged in its corrected
-        # form, and before the same-deployable rule, which must not claim that a
-        # browser shares a process with the server that ships it.
+        # form.
         source, target = candidate.get("from"), candidate.get("to")
         if target in components and _is_client_tier(target, components):
             point = candidate.get("enforcement_point")
@@ -2226,20 +2216,6 @@ def _consolidate_candidates(
             # shows the same word for both.
             candidate["confidence_basis"] = "route-evidence"
             notes.append(f"{key}: confidence inferred -> confirmed — cited evidence line registers an inbound route")
-        source, target = candidate.get("from"), candidate.get("to")
-        if source in components and target in components:
-            if (
-                _same_deployable(
-                    components[source].get("paths") or [],
-                    components[target].get("paths") or [],
-                )
-                and candidate.get("kind") != "process"
-            ):
-                notes.append(
-                    f"{key}: reclassified {candidate.get('kind')!r} -> 'process' — "
-                    f"{source} and {target} ship in one deployable"
-                )
-                candidate["kind"] = "process"
 
     working = [candidate for candidate in working if candidate["candidate_key"] not in dropped]
 

@@ -1717,18 +1717,51 @@ def test_ingress_and_egress_never_merge(tmp_path: Path):
     assert sorted(c["candidate_key"] for c in merged) == ["c1", "c2"]
 
 
-def test_same_deployable_is_reclassified_to_process_not_discarded(tmp_path: Path):
-    """`db` paths sit inside `api` globs -> one process. The row survives as an
-    internal enforcement interface; discarding it would strand the injection and
-    data-access findings that anchor there."""
-    merged, _alias, notes = prep._consolidate_candidates(
-        [_cand("c1", frm="api", to="db", kind="network")],
+@pytest.mark.parametrize(
+    ("components", "source", "target", "kind", "transition"),
+    [
+        (
+            {"web": {"id": "web", "paths": ["src/**"]}, "worker": {"id": "worker", "paths": ["src/worker/**"]}},
+            "web",
+            "worker",
+            "network",
+            [],
+        ),
+        (
+            {
+                "gateway": {"id": "gateway", "paths": ["packages/**"]},
+                "processor": {"id": "processor", "paths": ["packages/processor/**"]},
+            },
+            "gateway",
+            "processor",
+            "privilege",
+            ["privilege"],
+        ),
+    ],
+)
+def test_nested_source_paths_do_not_erase_an_authored_crossing(tmp_path, components, source, target, kind, transition):
+    """Repository layout is not process identity: a separate service under its
+    caller's directory keeps its network crossing, and a privilege transition
+    survives into the derived axes instead of collapsing to `in-process`."""
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [_cand("c1", frm=source, to=target, kind=kind)],
+        components=components,
+        repo_root=tmp_path,
+    )
+    assert len(merged) == 1 and merged[0]["kind"] == kind
+    prep._apply_axes(merged)
+    assert (merged[0]["surface"], merged[0]["transition"]) == ("network", transition)
+
+
+def test_authored_in_process_interface_survives_consolidation(tmp_path: Path):
+    """The row stays an internal enforcement interface; discarding it would strand
+    the injection and data-access findings that anchor there."""
+    merged, _alias, _notes = prep._consolidate_candidates(
+        [_cand("c1", frm="api", to="db", kind="process")],
         components=_COMPONENTS,
         repo_root=tmp_path,
     )
-    assert len(merged) == 1
-    assert merged[0]["kind"] == "process"
-    assert any("ship in one deployable" in n for n in notes)
+    assert len(merged) == 1 and merged[0]["kind"] == "process"
 
 
 def test_separate_deployables_keep_their_kind(tmp_path: Path):

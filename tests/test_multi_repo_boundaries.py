@@ -142,6 +142,19 @@ def test_repository_membership_does_not_establish_a_crossing(tmp_path):
     assert "same process" in specs[0][2][0]
 
 
+def test_shared_source_paths_do_not_erase_a_qualified_privilege_transition(tmp_path):
+    scope, components, evidence = fixture(tmp_path)
+    caller = components["components"][0]
+    components["components"].append({**copy.deepcopy(caller), "id": "component-3", "name": "Processor"})
+    row = candidate("candidate-1", "component-3", evidence[0])
+    row.update({"from": "component-1", "kind": "privilege"})
+    row.pop("enforcement_point")
+    scope.output.mkdir()
+    document, _warnings = normalize_assessment_boundaries(scope, components, [row], output_dir=scope.output)
+    [boundary] = document["trust_boundaries"]
+    assert (boundary["kind"], boundary["surface"], boundary["transition"]) == ("privilege", "network", ["privilege"])
+
+
 def test_legacy_same_control_consolidation_remains_available(tmp_path):
     scope, components, evidence = fixture(tmp_path)
     # Legacy cards carry no multi-root ownership. Keep their existing grouping

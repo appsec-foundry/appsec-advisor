@@ -127,10 +127,13 @@ really does run at the crossing (a session cookie or token issued at that step,
 or a component tagged `client` that is in fact server-rendered or a BFF): name
 that control in `enforcement_point` and the row is kept.
 
-Endpoints that ship inside one deployable are an internal enforcement interface,
-not a privilege transition: emit the candidate with `kind: process`. Do not
-reach for `same-trust` there — that disposition is for a signal with no
-interface behind it at all, and using it for a real interface leaves the
+Use `kind: process` only when the cited evidence shows an in-process invocation,
+such as a direct call or an embedded store driver, and no identity, privilege,
+tenant, or data-origin change at that call. A shared repository, directory,
+package, or container does not establish one process or the absence of a
+transition; keep the evidenced kind and record uncertainty in `confidence`. Do
+not reach for `same-trust` for a real in-process interface — that disposition is
+for a signal with no interface behind it at all, and using it leaves the
 injection and data-access findings with nothing to attach to.
 
 Use `confirmed` only after inspecting relevant source/config evidence.
