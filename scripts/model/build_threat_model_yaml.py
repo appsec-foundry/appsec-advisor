@@ -3417,15 +3417,17 @@ def main() -> int:
     # retaining the security finding. This is the final deterministic backstop
     # after merge/carry-forward and before schema validation.
     try:
-        from contexts.prepare_trust_boundary_context import revalidate_boundary_refs
+        from contexts.prepare_trust_boundary_context import associate_boundary_refs, revalidate_boundary_refs
 
-        for warning in revalidate_boundary_refs(
-            threats,
-            boundaries=trust_boundaries,
-            known_component_ids={
-                row["id"] for row in components if isinstance(row, dict) and isinstance(row.get("id"), str)
-            },
-        ):
+        known = {row["id"] for row in components if isinstance(row, dict) and isinstance(row.get("id"), str)}
+        # Owners and carried findings are final here, so this is the last place
+        # an evidenced interface link can still be found.
+        for gap in associate_boundary_refs(threats, boundaries=trust_boundaries, known_component_ids=known):
+            sys.stderr.write(
+                f"  TRUST_BOUNDARY_REF_GAP: {gap['finding_id']}: {gap['reason']} "
+                f"({', '.join(gap['candidate_boundary_ids'])})\n"
+            )
+        for warning in revalidate_boundary_refs(threats, boundaries=trust_boundaries, known_component_ids=known):
             sys.stderr.write(f"  TRUST_BOUNDARY_REF_WARN: {warning}\n")
     except Exception as exc:
         for threat in threats:

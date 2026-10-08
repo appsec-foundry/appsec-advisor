@@ -345,6 +345,9 @@
     "actor_attribution_corrections": {
       "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/actor_attribution_corrections"
     },
+    "boundary_traceability_gaps": {
+      "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/boundary_traceability_gaps"
+    },
     "weaknesses": {
       "type": [
         "array",

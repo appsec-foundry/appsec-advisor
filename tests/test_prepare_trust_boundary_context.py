@@ -2779,3 +2779,119 @@ def test_one_enforcement_point_does_not_merge_different_transitions(tmp_path: Pa
         repo_root=tmp_path,
     )
     assert sorted((c["candidate_key"], c["kind"]) for c in merged) == [("c1", "network"), ("c2", "privilege")]
+
+
+# --------------------------------------------------------------------------- #
+# Evidence-backed finding association
+# --------------------------------------------------------------------------- #
+def _store_boundary(boundary_id: str, store: str, *, file: str, line: int, owner: str = "api") -> dict:
+    return _tb(
+        id=boundary_id,
+        name=f"{owner} -> {store}",
+        **{"from": owner},
+        to=store,
+        kind="process",
+        surface="in-process",
+        transition=[],
+        evidence=[{"file": file, "line": line}],
+    )
+
+
+def _sqli(file: str, line: int, *, component: str = "api", check: str = "verified", **extra) -> dict:
+    return {
+        "id": "T-001",
+        "component": component,
+        "cwe": "CWE-89",
+        "evidence_check": check,
+        "evidence": [{"file": file, "line": line}],
+        **extra,
+    }
+
+
+@pytest.mark.parametrize(
+    ("owner", "store", "file", "line"),
+    [("api", "sqlite", "routes/search.ts", 23), ("orders-service", "ledger-db", "src/orders/repository.py", 81)],
+)
+def test_verified_finding_at_the_cited_interface_is_linked_and_refutes(owner, store, file, line):
+    boundary = _store_boundary("tb-6", store, file=file, line=line, owner=owner)
+    finding = _sqli(file, line, component=owner)
+    gaps = prep.associate_boundary_refs([finding], boundaries=[boundary], known_component_ids={owner, store})
+    assert gaps == []
+    [ref] = finding["boundary_refs"]
+    # The row declares no legs, so the link carries no leg label.
+    assert (ref["boundary_id"], ref["origin_component_id"], ref.get("leg")) == ("tb-6", owner, None)
+    assert ref["evidence_locations"] == [{"file": file, "line": line}]
+    assert prep.boundary_assumption_state(boundary, [finding]) == ("refuted", ["T-001"])
+
+
+def test_a_declared_condition_names_the_leg_the_link_breaks():
+    boundary = _store_boundary("tb-6", "sqlite", file="routes/search.ts", line=23)
+    boundary["assumption_legs"] = [{"leg": "data-interpretation", "condition": "Queries bind every value."}]
+    finding = _sqli("routes/search.ts", 23)
+    prep.associate_boundary_refs([finding], boundaries=[boundary], known_component_ids={"api", "sqlite"})
+    assert finding["boundary_refs"][0]["leg"] == "data-interpretation"
+    [state] = prep.boundary_leg_states(boundary, [finding])
+    assert (state["leg"], state["state"]) == ("data-interpretation", "refuted")
+
+
+@pytest.mark.parametrize(
+    "finding",
+    [
+        _sqli("routes/other.ts", 9),  # same weakness at another sink
+        _sqli("routes/search.ts", 23, check="unchecked"),  # evidence not established
+        _sqli("routes/search.ts", 23, check="ambiguous"),
+        _sqli("routes/search.ts", 23, component="worker"),  # not adjacent
+        {**_sqli("routes/search.ts", 23), "cwe": "CWE-330"},  # bears on no condition
+    ],
+)
+def test_no_reference_without_an_evidenced_interface_and_verified_violation(finding):
+    boundary = _store_boundary("tb-6", "sqlite", file="routes/search.ts", line=23)
+    prep.associate_boundary_refs([finding], boundaries=[boundary], known_component_ids={"api", "sqlite", "worker"})
+    assert "boundary_refs" not in finding
+    state, _ids = prep.boundary_assumption_state(boundary, [finding])
+    assert state != "refuted"
+
+
+def test_two_stores_behind_one_component_without_a_cited_line_get_no_link():
+    boundaries = [
+        _store_boundary("tb-5", "sqlite", file="models/index.ts", line=4),
+        _store_boundary("tb-6", "mongo", file="models/mongo.ts", line=7),
+    ]
+    finding = _sqli("routes/search.ts", 23)
+    gaps = prep.associate_boundary_refs(
+        [finding], boundaries=boundaries, known_component_ids={"api", "sqlite", "mongo"}
+    )
+    assert gaps == [] and "boundary_refs" not in finding
+
+
+def test_a_line_cited_by_two_boundaries_is_a_traceability_gap_not_a_link():
+    boundaries = [
+        _store_boundary("tb-5", "sqlite", file="routes/search.ts", line=23),
+        _store_boundary("tb-6", "mongo", file="routes/search.ts", line=23),
+    ]
+    finding = _sqli("routes/search.ts", 23)
+    gaps = prep.associate_boundary_refs(
+        [finding], boundaries=boundaries, known_component_ids={"api", "sqlite", "mongo"}
+    )
+    assert "boundary_refs" not in finding
+    assert gaps == [
+        {
+            "finding_id": "T-001",
+            "origin_component_id": "api",
+            "candidate_boundary_ids": ["tb-5", "tb-6"],
+            "reason": "evidence is cited by more than one adjacent boundary",
+        }
+    ]
+
+
+def test_an_analyst_reference_is_never_replaced():
+    boundary = _store_boundary("tb-6", "sqlite", file="routes/search.ts", line=23)
+    authored = {
+        "boundary_id": "tb-1",
+        "origin_component_id": "api",
+        "rationale": "Analyst-authored link that must stay as written.",
+        "evidence_locations": [{"file": "routes/search.ts", "line": 23}],
+    }
+    finding = _sqli("routes/search.ts", 23, boundary_refs=[authored])
+    prep.associate_boundary_refs([finding], boundaries=[boundary], known_component_ids={"api", "sqlite"})
+    assert finding["boundary_refs"] == [authored]

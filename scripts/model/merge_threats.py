@@ -3298,6 +3298,11 @@ def merge_assessment(
     threats = _assign_t_ids(threats)
     threats = _remap_scenario_local_refs(threats)
     normalize_risks(threats)
+    from contexts.prepare_trust_boundary_context import associate_boundary_refs
+
+    # Both sides still carry root-qualified file keys here, so equal names in
+    # different repositories can never match each other.
+    traceability_gaps = associate_boundary_refs(threats, boundaries=boundary_view, known_component_ids=expected)
     weaknesses = build_weakness_register(threats)
     seen = set()
     for row in source_rows({"threats": threats, "weaknesses": weaknesses}):
@@ -3323,6 +3328,7 @@ def merge_assessment(
         "severity_policy_version": 1,
         "threats": threats,
         **({"weaknesses": weaknesses} if weaknesses else {}),
+        **({"boundary_traceability_gaps": traceability_gaps} if traceability_gaps else {}),
     }
     if not Draft202012Validator(contract("threats-merged-v2.schema.json")).is_valid(payload):
         raise ValueError("Assessment merge violates its versioned output contract")
@@ -3362,7 +3368,7 @@ def cmd_finalize(args: argparse.Namespace) -> int:
 
     # Merging rebuilds survivors' instances and unions members' references, so
     # the shared finding rule has the last word on what this artifact carries.
-    from contexts.prepare_trust_boundary_context import revalidate_boundary_refs
+    from contexts.prepare_trust_boundary_context import associate_boundary_refs, revalidate_boundary_refs
 
     boundary_doc = _read_json_file(out_dir / ".trust-boundaries.json", default={})
     component_doc = _read_json_file(out_dir / ".components.json", default={})
@@ -3371,9 +3377,13 @@ def cmd_finalize(args: argparse.Namespace) -> int:
         for row in (component_doc.get("components") or [] if isinstance(component_doc, dict) else [])
         if isinstance(row, dict) and isinstance(row.get("id"), str)
     }
+    boundary_rows = boundary_doc.get("trust_boundaries") or [] if isinstance(boundary_doc, dict) else []
+    traceability_gaps = associate_boundary_refs(
+        threats, boundaries=boundary_rows, known_component_ids=registered or None
+    )
     for warning in revalidate_boundary_refs(
         threats,
-        boundaries=boundary_doc.get("trust_boundaries") or [] if isinstance(boundary_doc, dict) else [],
+        boundaries=boundary_rows,
         known_component_ids=registered or None,
     ):
         print(f"TRUST_BOUNDARY_REF_WARN: {warning}", file=sys.stderr)
@@ -3389,6 +3399,8 @@ def cmd_finalize(args: argparse.Namespace) -> int:
         payload["weaknesses"] = weaknesses
     if attribution_corrections:
         payload["actor_attribution_corrections"] = attribution_corrections
+    if traceability_gaps:
+        payload["boundary_traceability_gaps"] = traceability_gaps
 
     out_path = out_dir / ".threats-merged.json"
     # Atomic write — `.threats-merged.json` is a canonical intermediate

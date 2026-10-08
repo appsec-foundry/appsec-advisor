@@ -39,7 +39,7 @@ from model.reclassify_components import (
 from model.reserve_ids import ensure_counter_at_least, reserve
 from model.sanitize_perimeter_claims import sanitize_perimeter_prose
 from shared._atomic_io import atomic_write_json
-from shared._finding_state import is_discredited
+from shared._finding_state import evidence_established, is_discredited
 from validators.validate_fragment import fragment_invariant_errors
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
@@ -1862,6 +1862,17 @@ def prepare_contexts(
     return audit
 
 
+def _finding_locations(finding: dict) -> set[tuple[str, int | None]]:
+    """The `(file, line)` locations a finding's own evidence and instances cite."""
+    locations: set[tuple[str, int | None]] = set()
+    primary = finding.get("evidence")
+    primary_rows = primary if isinstance(primary, list) else [primary]
+    for item in [*primary_rows, *(finding.get("instances") or [])]:
+        if isinstance(item, dict) and item.get("file"):
+            locations.add((str(item["file"]), item.get("line")))
+    return locations
+
+
 def validate_finding_boundary_refs(
     finding: dict,
     *,
@@ -1881,12 +1892,7 @@ def validate_finding_boundary_refs(
     boundary_by_id = {
         row.get("id"): row for row in boundaries if isinstance(row, dict) and isinstance(row.get("id"), str)
     }
-    evidence: set[tuple[str, int | None]] = set()
-    primary = finding.get("evidence")
-    primary_rows = primary if isinstance(primary, list) else [primary]
-    for item in [*primary_rows, *(finding.get("instances") or [])]:
-        if isinstance(item, dict) and item.get("file"):
-            evidence.add((str(item["file"]), item.get("line")))
+    evidence = _finding_locations(finding)
     cleaned: list[dict] = []
     diagnostics: list[str] = []
     seen: set[tuple[str, str]] = set()
@@ -1994,6 +2000,108 @@ def revalidate_boundary_refs(
         label = threat.get("t_id") or threat.get("id") or "<anon>"
         diagnostics.extend(f"{label}: {note}" for note in notes)
     return diagnostics
+
+
+def associate_boundary_refs(
+    threats: Iterable[dict],
+    *,
+    boundaries: Iterable[dict],
+    known_component_ids: set[str] | None,
+) -> list[dict]:
+    """Link an unlinked finding to the one boundary whose cited interface it is.
+
+    Narrow by design. A link is added only when all of these hold:
+
+    * the finding's evidence is established (an unverified finding never refutes);
+    * one of its own `file:line` locations is a location a confirmed, resolved
+      boundary cites — the boundary's evidence names that line as its interface,
+      which is what a CWE or component adjacency alone can never show;
+    * its component is adjacent to that boundary; and
+    * its CWE bears on exactly one condition (leg) of that boundary.
+
+    When more than one boundary or leg qualifies, nothing is linked and the
+    finding is returned as a traceability gap, so absence of a link never reads
+    as a working control. The result passes through the shared reference
+    validator, so this path cannot publish what an analyst could not.
+    """
+    boundaries = [row for row in boundaries if isinstance(row, dict)]
+    sites: dict[tuple[str, int], list[dict]] = {}
+    for boundary in boundaries:
+        if (
+            not isinstance(boundary.get("id"), str)
+            or boundary.get("resolution_status") != "resolved"
+            or boundary.get("confidence") != "confirmed"
+        ):
+            continue
+        for entry in boundary.get("evidence") or []:
+            if isinstance(entry, dict) and isinstance(entry.get("file"), str) and isinstance(entry.get("line"), int):
+                sites.setdefault((entry["file"], entry["line"]), []).append(boundary)
+    gaps: list[dict] = []
+    for threat in threats:
+        if not isinstance(threat, dict) or threat.get("boundary_refs") or not evidence_established(threat):
+            continue
+        origin = str(threat.get("component") or threat.get("component_id") or "")
+        matches: dict[str, tuple[dict, list[dict]]] = {}
+        for file, line in sorted(loc for loc in _finding_locations(threat) if isinstance(loc[1], int)):
+            for boundary in sites.get((file, line), []):
+                if origin not in {boundary.get("from"), boundary.get("to"), *(boundary.get("covers_components") or [])}:
+                    continue
+                matches.setdefault(boundary["id"], (boundary, []))[1].append({"file": file, "line": line})
+        if not matches:
+            continue
+        label = str(threat.get("t_id") or threat.get("id") or "<anon>")
+        # The crossing type's vocabulary, not only the declared legs: an internal
+        # row declares none by default, yet "SQL injection breaks data
+        # interpretation" is fixed by the crossing type. The validator keeps the
+        # leg label only where the row declares it.
+        resolved = [
+            (boundary, locations, sorted(legs))
+            for boundary, locations in matches.values()
+            if len(legs := _legs_for_finding(threat, boundary_leg_vocabulary(boundary))) == 1
+        ]
+        if len(matches) > 1 or len(resolved) != 1:
+            gaps.append(
+                {
+                    "finding_id": label,
+                    "origin_component_id": origin,
+                    "candidate_boundary_ids": sorted(matches, key=_numeric_id),
+                    "reason": (
+                        "evidence is cited by more than one adjacent boundary"
+                        if len(matches) > 1
+                        else "the finding's CWE does not bear on exactly one condition of the boundary"
+                    ),
+                }
+            )
+            continue
+        boundary, locations, [leg] = resolved[0]
+        cwe = _CWE_RE.search(str(threat.get("cwe") or ""))
+        rationale = (
+            "The finding's evidence line is the interface this boundary cites; "
+            f"{cwe.group(0).upper() if cwe else 'the finding'} breaks its {leg} condition."
+        )
+        candidate = {
+            **threat,
+            "boundary_refs": [
+                {
+                    "boundary_id": boundary["id"],
+                    "origin_component_id": origin,
+                    "rationale": rationale[:240],
+                    "leg": leg,
+                    "evidence_locations": locations[:3],
+                }
+            ],
+        }
+        refs, _notes = validate_finding_boundary_refs(
+            candidate,
+            boundaries=boundaries,
+            origin_component_id=origin,
+            candidate_ids=None,
+            require_candidate=False,
+            known_component_ids=known_component_ids,
+        )
+        if refs:
+            threat["boundary_refs"] = refs
+    return gaps
 
 
 # --------------------------------------------------------------------------- #

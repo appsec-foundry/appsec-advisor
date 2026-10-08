@@ -138,14 +138,15 @@ When actors exist, assign plausible `actor_ids[]` and choose `primary_actor`
 from reachability, adjusted likelihood, then lexical ID. Actor metadata cannot
 override evidence or severity caps.
 
-A boundary reference is optional and never a finding by itself. For at most two
-confirmed adjacent candidates, use exactly `{"boundary_id":"tb-N",
+A boundary ref is never a finding. Reference a confirmed adjacent candidate (max
+two) where the finding shows its mechanism at its crossing, e.g. a sink on the
+interface it cites; not for a shared CWE.
+Use exactly `{"boundary_id":"tb-N",
 "origin_component_id":"<COMPONENT_ID>","rationale":"<20-240 chars>",
 "leg":"<assumption_legs value>","evidence_locations":[{"file":"<evidence.file>",
-"line":<evidence.line>}]}`. Never emit `id`; copy its value to `boundary_id`.
-The origin is this finding's component and every location exactly repeats its
-evidence. Omit ambiguous `leg` values and omit the whole ref if any required
-value is unavailable.
+"line":<evidence.line>}]}`. Never emit `id`; copy it to `boundary_id`. Origin
+is this component; each location exactly repeats its evidence. Omit a vague
+`leg`; omit a ref missing a value.
 
 ## Six-category workflow
 

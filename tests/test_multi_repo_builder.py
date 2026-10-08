@@ -205,3 +205,54 @@ def test_stride_finding_without_cwe_is_rejected_at_its_contract(tmp_path):
         else:
             del broken["threats"][0]["cwe"]
         assert not validator.is_valid(broken)
+
+
+def _linked(tmp_path, owner_index):
+    """A verified SQL injection at the line an internal boundary cites.
+
+    Both roots hold an `app.py` with the same line, so a match on the bare file
+    name would also link the other root's finding.
+    """
+    scope, components, receipt, flows, _ = crossing_input(tmp_path)
+    identity = dict(
+        schema_version=2,
+        source_scope_sha256=components["source_scope_sha256"],
+        component_inventory_fingerprint=receipt["component_inventory_fingerprint"],
+    )
+    evidences = flows["data_flows"][0]["evidence"]
+    documents, reviews = [], []
+    for component, evidence in zip(components["components"], evidences, strict=True):
+        document = stride(component, evidence, identity)
+        document["threats"][0]["cwe"] = "CWE-89"
+        documents.append(document)
+        reviews.append(
+            dict(
+                **identity,
+                decisions=[dict(local_id="issue-1", verdict="verified", reason="Raw query.", evidence=[evidence])],
+            )
+        )
+    ids = [row["id"] for row in components["components"]]
+    boundary = dict(
+        id="tb-1",
+        name="Service to store",
+        to=ids[1 - owner_index],
+        kind="process",
+        assumption="Queries bind every value.",
+        evidence=[copy.deepcopy(evidences[owner_index])],
+        confidence="confirmed",
+        resolution_status="resolved",
+        sources=["detected"],
+        **{"from": ids[owner_index]},
+    )
+    return merge_assessment(scope, components, documents, reviews, boundaries=[boundary]), ids
+
+
+@pytest.mark.parametrize("owner_index", [0, 1])
+def test_qualified_merge_links_only_the_root_whose_line_the_boundary_cites(tmp_path, owner_index):
+    merged, ids = _linked(tmp_path, owner_index)
+    linked = {
+        threat["component_id"]: [ref["boundary_id"] for ref in threat.get("boundary_refs") or []]
+        for threat in merged["threats"]
+    }
+    assert linked[ids[owner_index]] == ["tb-1"]
+    assert linked[ids[1 - owner_index]] == []

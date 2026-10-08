@@ -1195,6 +1195,45 @@ class TestFinalizeRevalidatesBoundaryRefs:
         assert vi._check_boundary_refs(merged) == []
         assert [ref["boundary_id"] for ref in merged["threats"][0].get("boundary_refs", [])] == kept
 
+    @pytest.mark.parametrize(
+        ("citing", "linked", "gap"),
+        [
+            pytest.param(["tb-2"], ["tb-2"], None, id="one-interface"),
+            pytest.param(["tb-2", "tb-3"], [], ["tb-2", "tb-3"], id="two-interfaces"),
+            pytest.param([], [], None, id="no-cited-line"),
+        ],
+    )
+    def test_finalize_links_the_one_cited_interface_and_reports_ambiguity(self, mt, tmp_path, citing, linked, gap):
+        import validators.validate_intermediate as vi
+        import yaml
+
+        components = [{"id": "api"}, {"id": "store"}, {"id": "cache"}]
+        (tmp_path / ".components.json").write_text(json.dumps({"components": components}))
+        boundaries = [
+            {
+                "id": boundary_id,
+                "from": "api",
+                "to": target,
+                "kind": "process",
+                "confidence": "confirmed",
+                "resolution_status": "resolved",
+                "evidence": [{"file": "api.py", "line": 9 if boundary_id in citing else 3}],
+            }
+            for boundary_id, target in (("tb-2", "store"), ("tb-3", "cache"))
+        ]
+        (tmp_path / ".trust-boundaries.json").write_text(json.dumps({"trust_boundaries": boundaries}))
+        _write_stride(tmp_path, "api", [_threat(evidence={"file": "api.py", "line": 9}, evidence_check="verified")])
+        assert mt.main(["collect", "--output-dir", str(tmp_path)]) == 0
+        assert mt.main(["finalize", "--output-dir", str(tmp_path)]) == 0
+
+        merged = json.loads((tmp_path / ".threats-merged.json").read_text())
+        assert vi._check_boundary_refs(merged) == []
+        assert [ref["boundary_id"] for ref in merged["threats"][0].get("boundary_refs", [])] == linked
+        gaps = merged.get("boundary_traceability_gaps")
+        assert (gaps[0]["candidate_boundary_ids"] if gaps else None) == gap
+        schema = yaml.safe_load((Path(__file__).parent.parent / "schemas" / "threats-merged.schema.yaml").read_text())
+        assert Draft202012Validator(schema["properties"]["boundary_traceability_gaps"]).is_valid(gaps or [])
+
 
 class TestEndToEnd:
     def test_collect_produces_candidates_file(self, mt, tmp_path):
