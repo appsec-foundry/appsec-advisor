@@ -29,6 +29,8 @@ Files that runtime cleanup MUST preserve. Deleting them breaks post-run audit, S
 | `.agent-run.log` | Structured agent run log |
 | `.hook-events.log` | Hook timing/diagnostic events |
 | `.appsec-cache/` | Carry-forward cache directory |
+| `.assessment-state.json`, `.assessment-work/` | Private headless multi-repository lifecycle and accepted job receipts; resume rechecks selected source state, settings, plugin bytes and cumulative budgets before reuse |
+| `.appsec-lock.guard` | Persistent serialization inode shared by headless and ordinary lock writers; removing it while a holder is active breaks output ownership |
 | `.appsec-cache/baseline.json` | **Critical** — incremental anchor; deleting forces cold full scan and breaks T-ID stability |
 
 Canonical enforcement: `scripts/runtime/runtime_cleanup.py` (the cleanup script must never list these), drift-guarded by `tests/test_runtime_cleanup.py`.

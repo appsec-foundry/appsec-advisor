@@ -46,6 +46,10 @@
 # scripts/appsec-analyst-cli hypothesis uses the existing Bash(*) rule to read
 # caller-selected Git blobs and write private analyst job artifacts; the model
 # receives no tools and cannot expand the selected source paths.
+# Internal multi-repository assessment jobs use the same maintainer Bash rule.
+# The existing controller owns private .assessment-state.json and .assessment-work/
+# under the explicit output directory; models receive no filesystem tools.
+# Lock writers share the persistent .appsec-lock.guard inode under OUTPUT_DIR.
 # scripts/calibrate_architect_review.py uses the same maintainer rule. It is
 # offline, calls no model, and writes only architect-calibration.json in its
 # chosen output directory. It does not enable review or mutate a threat-model run.
@@ -94,7 +98,7 @@ required:
     category: file
 
   - entry: "Read(${OUTPUT_DIR}/.*)"
-    reason: "agents re-read direct dotfile sidecars under OUTPUT_DIR (.run-issues.json and .run-bugs.json for diagnosis-bound recommendations, .recon-summary.md, finalized components/data flows, immutable boundary input, candidates, canonical boundaries, coverage/diagnostics, .stride-*.json, etc.); Claude Code's /** glob does NOT match direct dotfile children"
+    reason: "agents re-read direct dotfile sidecars under OUTPUT_DIR (.run-issues.json and .run-bugs.json for diagnosis-bound recommendations, .recon-summary.md, finalized components/data flows, immutable boundary input, candidates, canonical boundaries, coverage/diagnostics, .stride-*.json, etc.); controller-held multi-repository jobs read their .assessment-state.json; Claude Code's /** glob does NOT match direct dotfile children"
     category: file
 
   - entry: "Write(${OUTPUT_DIR}/**)"

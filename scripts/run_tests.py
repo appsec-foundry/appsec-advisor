@@ -192,6 +192,22 @@ GROUPS = {
         analyst_cli
         analyst_controller
         analyst_host
+        assessment_host
+        assessment_jobs
+        assessment_sources
+        assessment_state
+        multi_repo_analysis
+        multi_repo_builder
+        multi_repo_figures
+        multi_repo_exports
+        multi_repo_boundaries
+        multi_repo_controller
+        multi_repo_config
+        multi_repo_discovery
+        multi_repo_scope
+        reconcile_multi_repo_architecture
+        review_multi_repo_connections
+        validate_assessment_architecture
         analyst_isolation
         analyst_questions
         analyst_skill
@@ -574,6 +590,130 @@ _AGENT_FILE_TESTS = (
 _SKILL_FILE_TESTS = "check_target_specificity context_routing requirements_verification"
 
 SOURCE_TESTS = {
+    "schemas/trust-boundary-coverage-v2.schema.json": _tests(
+        "multi_repo_analysis multi_repo_boundaries multi_repo_controller schemas check_target_specificity multi_repo_builder multi_repo_exports"
+    ),
+    "scripts/runtime/assessment_state.py": _tests(
+        "assessment_state multi_repo_controller check_target_specificity finding_state gate_preconditions shared_paths stride_outputs"
+    ),
+    "schemas/multi-repo-state.schema.json": _tests(
+        "assessment_state multi_repo_controller schemas check_target_specificity"
+    ),
+    "scripts/runtime/assessment_jobs.py": _tests(
+        "assessment_jobs multi_repo_controller check_target_specificity finding_state gate_preconditions shared_paths stride_outputs"
+    ),
+    "schemas/assessment-job-receipt.schema.json": _tests(
+        "assessment_jobs multi_repo_controller schemas check_target_specificity"
+    ),
+    "scripts/shared/assessment_sources.py": _tests(
+        "assessment_sources multi_repo_analysis multi_repo_boundaries multi_repo_controller check_target_specificity finding_state gate_preconditions shared_paths stride_outputs multi_repo_builder multi_repo_figures multi_repo_exports"
+    ),
+    "schemas/threat-model.output-v2.schema.yaml": _tests(
+        "assessment_sources multi_repo_analysis multi_repo_boundaries multi_repo_controller schemas schema_integrity check_target_specificity multi_repo_builder multi_repo_figures multi_repo_exports"
+    ),
+    "scripts/contexts/multi_repo_analysis.py": _tests(
+        "multi_repo_analysis multi_repo_boundaries multi_repo_controller check_target_specificity finding_state gate_preconditions shared_paths stride_outputs multi_repo_builder multi_repo_exports"
+    ),
+    "schemas/multi-repo-architecture.schema.json": _tests(
+        "multi_repo_analysis multi_repo_boundaries multi_repo_controller schemas check_target_specificity multi_repo_builder multi_repo_exports"
+    ),
+    "schemas/multi-repo-stride.schema.json": _tests(
+        "multi_repo_analysis multi_repo_boundaries multi_repo_controller schemas check_target_specificity multi_repo_builder multi_repo_exports"
+    ),
+    "schemas/multi-repo-controls.schema.json": _tests(
+        "multi_repo_analysis multi_repo_boundaries multi_repo_controller schemas check_target_specificity multi_repo_builder multi_repo_exports"
+    ),
+    "schemas/multi-repo-evidence-review.schema.json": _tests(
+        "multi_repo_analysis multi_repo_boundaries multi_repo_controller schemas check_target_specificity multi_repo_builder multi_repo_exports"
+    ),
+    "schemas/threats-merged-v2.schema.json": _tests(
+        "multi_repo_analysis multi_repo_boundaries multi_repo_controller schemas check_target_specificity multi_repo_builder multi_repo_exports"
+    ),
+    "schemas/fragments/trust-boundary-candidates-v2.schema.json": _tests(
+        "multi_repo_analysis multi_repo_boundaries multi_repo_controller schemas schema_integrity check_fragment_registry fragment_registry check_target_specificity multi_repo_builder multi_repo_exports"
+    ),
+    "schemas/fragments/trust-boundaries-v3.schema.json": _tests(
+        "multi_repo_analysis multi_repo_boundaries multi_repo_controller schemas schema_integrity check_fragment_registry fragment_registry check_target_specificity multi_repo_builder multi_repo_exports"
+    ),
+    "schemas/trust-boundary-assessment-input-v2.schema.json": _tests(
+        "multi_repo_analysis multi_repo_boundaries multi_repo_controller schemas schema_integrity check_target_specificity multi_repo_builder multi_repo_exports"
+    ),
+    "scripts/contexts/review_multi_repo_connections.py": _tests("""
+        review_multi_repo_connections check_target_specificity finding_state gate_preconditions shared_paths stride_outputs
+    """),
+    "scripts/validators/validate_assessment_architecture.py": _tests(
+        """
+        validate_assessment_architecture review_multi_repo_connections
+        check_target_specificity finding_state gate_preconditions shared_paths stride_outputs
+        multi_repo_builder
+        multi_repo_exports
+    """
+    ),
+    "schemas/multi-repo-connection-review.schema.json": _tests("""
+        review_multi_repo_connections schemas check_target_specificity
+    """),
+    "schemas/component-inventory-finalization-v2.schema.json": _tests(
+        """
+        validate_assessment_architecture review_multi_repo_connections schemas check_target_specificity
+        multi_repo_builder
+        multi_repo_exports
+    """
+    ),
+    "schemas/fragments/components-v2.schema.json": _tests(
+        """
+        validate_assessment_architecture review_multi_repo_connections schemas schema_integrity
+        check_fragment_registry fragment_registry check_target_specificity
+        multi_repo_builder multi_repo_figures
+        multi_repo_exports
+    """
+    ),
+    "schemas/fragments/data-flows-v2.schema.json": _tests(
+        """
+        validate_assessment_architecture review_multi_repo_connections schemas schema_integrity
+        check_fragment_registry fragment_registry check_target_specificity
+        multi_repo_builder
+        multi_repo_exports
+    """
+    ),
+    "scripts/runtime/multi_repo_discovery.py": _tests("""
+        review_multi_repo_connections
+        multi_repo_discovery check_target_specificity finding_state gate_preconditions shared_paths stride_outputs
+    """),
+    "scripts/runtime/assessment_host.py": _tests("""
+        review_multi_repo_connections
+        assessment_host multi_repo_discovery check_target_specificity finding_state gate_preconditions shared_paths stride_outputs
+    """),
+    "scripts/runtime/multi_repo_scope.py": _tests(
+        """
+        validate_assessment_architecture review_multi_repo_connections
+        multi_repo_scope assessment_host multi_repo_discovery reconcile_multi_repo_architecture
+        check_target_specificity finding_state gate_preconditions shared_paths stride_outputs
+        multi_repo_builder multi_repo_figures
+        multi_repo_exports
+    """
+    ),
+    "schemas/multi-repo-scope.schema.json": _tests(
+        """
+        validate_assessment_architecture review_multi_repo_connections
+        multi_repo_scope multi_repo_discovery reconcile_multi_repo_architecture schemas check_target_specificity
+        multi_repo_builder multi_repo_figures
+        multi_repo_exports
+    """
+    ),
+    "scripts/contexts/reconcile_multi_repo_architecture.py": _tests("""
+        validate_assessment_architecture review_multi_repo_connections
+        reconcile_multi_repo_architecture multi_repo_discovery
+        check_target_specificity finding_state gate_preconditions shared_paths stride_outputs
+    """),
+    "schemas/multi-repo-discovery.schema.json": _tests("""
+        validate_assessment_architecture review_multi_repo_connections
+        reconcile_multi_repo_architecture multi_repo_discovery schemas check_target_specificity
+    """),
+    "schemas/multi-repo-connections.schema.json": _tests("""
+        validate_assessment_architecture review_multi_repo_connections
+        reconcile_multi_repo_architecture multi_repo_discovery schemas check_target_specificity
+    """),
+    "specs/changes/headless-multi-repository/proposal.md": _tests("requirements_verification"),
     "agents/appsec-authnz-analyzer.md": _tests(
         f"{_AGENT_FILE_TESTS} agent_logger authnz_report authnz_review_skill fragment_invariant_parity"
     ),
@@ -857,7 +997,8 @@ SOURCE_TESTS = {
         schemas
         requirements_verification
     """),
-    "scripts/shared/_severity_policy.py": _tests("""
+    "scripts/shared/_severity_policy.py": _tests(
+        """
         actor_attribution
         actor_presentation
         build_threat_model_yaml
@@ -885,8 +1026,12 @@ SOURCE_TESTS = {
         architect_review_runtime
         build_architect_context
         calibrate_architect_review
-    """),
+        multi_repo_builder
+        multi_repo_exports
+    """
+    ),
     "scripts/model/build_plane.py": _tests("""
+        multi_repo_figures
         build_plane
         build_supply_chain_view
         figure1_dfd
@@ -1093,7 +1238,8 @@ SOURCE_TESTS = {
         schema_integrity
         schemas
     """),
-    "schemas/stride.schema.yaml": _tests("""
+    "schemas/stride.schema.yaml": _tests(
+        """
         agent_definitions
         check_target_specificity
         intermediate_json
@@ -1112,8 +1258,12 @@ SOURCE_TESTS = {
         architect_review_runtime
         calibrate_architect_review
         refusal_aware_stride
-    """),
-    "schemas/threat-model.output.schema.yaml": _tests("""
+        multi_repo_builder
+        multi_repo_exports
+    """
+    ),
+    "schemas/threat-model.output.schema.yaml": _tests(
+        """
         actor_presentation
         build_threat_model_yaml
         check_target_specificity
@@ -1143,8 +1293,12 @@ SOURCE_TESTS = {
         architect_review
         architect_review_runtime
         build_architect_context
-    """),
-    "schemas/threats-merged.schema.yaml": _tests("""
+        multi_repo_builder multi_repo_figures
+        multi_repo_exports
+    """
+    ),
+    "schemas/threats-merged.schema.yaml": _tests(
+        """
         actor_attribution
         arch_coverage_bridge
         build_post_stride_contexts
@@ -1164,7 +1318,10 @@ SOURCE_TESTS = {
         architect_review_runtime
         build_architect_context
         calibrate_architect_review
-    """),
+        multi_repo_builder
+        multi_repo_exports
+    """
+    ),
     "scripts/contexts/build_post_stride_contexts.py": _tests("""
         build_post_stride_contexts
         check_target_specificity
@@ -1175,6 +1332,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/model/schema_canonicalize.py": _tests("""
+        validate_assessment_architecture
         stride_attempt_writer
         topology_workloads
         check_stride_dispatch
@@ -1220,7 +1378,8 @@ SOURCE_TESTS = {
         threat_fixture
         write_stride_progress
     """),
-    "scripts/validators/validate_intermediate.py": _tests("""
+    "scripts/validators/validate_intermediate.py": _tests(
+        """
         config_iac_scanner
         actor_attribution
         actor_presentation
@@ -1278,7 +1437,10 @@ SOURCE_TESTS = {
         build_architect_context
         calibrate_architect_review
         refusal_aware_stride
-    """),
+        multi_repo_builder
+        multi_repo_exports
+    """
+    ),
     "AGENTS.md": _tests("""
         context_prompt_budgets
         decision_register
@@ -1432,6 +1594,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/model/reconcile_role_access.py": _tests("""
+        validate_assessment_architecture review_multi_repo_connections
         figure1_security
         validate_fragment
         check_target_specificity
@@ -1516,6 +1679,7 @@ SOURCE_TESTS = {
         architect_review
         architect_review_runtime
         build_architect_context
+        multi_repo_exports
     """),
     "scripts/exporters/export_html.py": _tests("""
         check_target_specificity
@@ -1551,8 +1715,10 @@ SOURCE_TESTS = {
         run_path_guard
         runtime_doc_cli_contract
         stride_outputs
+        multi_repo_exports
     """),
-    "scripts/renderers/figure1_dfd.py": _tests("""
+    "scripts/renderers/figure1_dfd.py": _tests(
+        """
         actor_presentation
         build_plane
         figure1b_compose
@@ -1587,7 +1753,9 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
         threat_fixture
-    """),
+        multi_repo_figures
+    """
+    ),
     "scripts/renderers/figure2_svg.py": _tests("""
         actor_presentation
         analysis_version_upgrade
@@ -1609,7 +1777,9 @@ SOURCE_TESTS = {
         stride_outputs
         threat_fixture
     """),
-    "scripts/model/finalize_component_inventory.py": _tests("""
+    "scripts/model/finalize_component_inventory.py": _tests(
+        """
+        validate_assessment_architecture review_multi_repo_connections
         build_trust_boundary_assessment_input
         check_target_specificity
         discover_identity_providers
@@ -1620,7 +1790,10 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
         topology_workloads
-    """),
+        multi_repo_builder
+        multi_repo_exports
+    """
+    ),
     "scripts/renderers/inline_code_formatter.py": _tests("""
         analysis_version_upgrade
         apply_prose_fixes
@@ -1904,6 +2077,7 @@ SOURCE_TESTS = {
         incremental_two_run_e2e
     """),
     "scripts/analyzers/source_auth_scanner.py": _tests("""
+        validate_assessment_architecture
         authz_confirm
         build_architecture_analysis_context
         build_trust_boundary_assessment_input
@@ -2171,7 +2345,8 @@ SOURCE_TESTS = {
         team_questions
         threat_fixture
     """),
-    "scripts/model/build_threat_model_yaml.py": _tests("""
+    "scripts/model/build_threat_model_yaml.py": _tests(
+        """
         actor_presentation
         build_threat_model_yaml
         check_target_specificity
@@ -2196,8 +2371,12 @@ SOURCE_TESTS = {
         architect_review
         architect_review_runtime
         build_architect_context
-    """),
+        multi_repo_builder
+        multi_repo_exports
+    """
+    ),
     "scripts/orchestrator/orchestration_controller.py": _tests("""
+        multi_repo_controller
         script_layout
         business_impact_scope
         architect_review_runtime
@@ -2321,6 +2500,7 @@ SOURCE_TESTS = {
         topology_workloads
     """),
     "schemas/architecture-topology-context.schema.json": _tests("""
+        validate_assessment_architecture review_multi_repo_connections
         build_architecture_analysis_context
         check_target_specificity
         orchestration_controller
@@ -2329,7 +2509,9 @@ SOURCE_TESTS = {
         stride_outputs
         topology_workloads
     """),
-    "schemas/fragments/components.schema.json": _tests("""
+    "schemas/fragments/components.schema.json": _tests(
+        """
+        validate_assessment_architecture review_multi_repo_connections
         agent_definitions
         build_threat_model_yaml
         build_trust_boundary_assessment_input
@@ -2343,7 +2525,10 @@ SOURCE_TESTS = {
         threat_fixture
         topology_workloads
         validate_fragment
-    """),
+        multi_repo_builder multi_repo_figures
+        multi_repo_exports
+    """
+    ),
     "agents/shared/ms-template.md": _tests("""
         agent_definitions
         agent_doc_shell_snippets
@@ -2658,6 +2843,7 @@ SOURCE_TESTS = {
         triage_validate_ratings
     """),
     "scripts/validators/validate_fragment.py": _tests("""
+        validate_assessment_architecture review_multi_repo_connections
         script_layout
         architect_review_runtime
         actor_presentation
@@ -2784,6 +2970,8 @@ SOURCE_TESTS = {
         weakness_signals
     """),
     "scripts/shared/_atomic_io.py": _tests("""
+        assessment_state multi_repo_controller
+        validate_assessment_architecture review_multi_repo_connections
         topology_workloads
         architect_review_runtime
         actor_attribution
@@ -2946,6 +3134,7 @@ SOURCE_TESTS = {
         team_questions
         threat_fixture
         figure1b_compose
+        multi_repo_exports
     """),
     "scripts/shared/_critical_findings_sync.py": _tests("""
         agent_config_checks
@@ -3100,7 +3289,8 @@ SOURCE_TESTS = {
         render_abuse_cases
         threat_fixture
     """),
-    "scripts/shared/_finding_state.py": _tests("""
+    "scripts/shared/_finding_state.py": _tests(
+        """
         architect_review
         build_architect_context
         build_posture_verdict
@@ -3119,8 +3309,12 @@ SOURCE_TESTS = {
         validate_evidence_lines
         weakness_signals
         figure1b_compose
-    """),
+        multi_repo_builder
+        multi_repo_exports
+    """
+    ),
     "scripts/shared/_paths.py": _tests("""
+        validate_assessment_architecture review_multi_repo_connections
         aggregate_run_issues
         arch_coverage_bridge
         architecture_coverage_checks
@@ -3289,6 +3483,7 @@ SOURCE_TESTS = {
         build_architect_context
         calibrate_architect_review
         refusal_aware_stride
+        multi_repo_exports
     """),
     "scripts/shared/_slug.py": _tests("""
         analysis_version_upgrade
@@ -3370,6 +3565,7 @@ SOURCE_TESTS = {
         threat_fixture
         threat_model_fields
         threat_model_fields_evidence
+        multi_repo_exports
     """),
     "scripts/shared/_url_guard.py": _tests("""
         appsec_status
@@ -3406,6 +3602,8 @@ SOURCE_TESTS = {
     """),
     "scripts/runtime/acquire_lock.py": _tests("""
         acquire_lock_heartbeat
+        assessment_state
+        multi_repo_controller
         active_tool_calls
         agent_lifecycle
         agent_logger
@@ -3745,6 +3943,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/contexts/build_architecture_analysis_context.py": _tests("""
+        validate_assessment_architecture review_multi_repo_connections
         build_trust_boundary_assessment_input
         finalize_component_inventory
         fragment_invariant_parity
@@ -3797,6 +3996,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/orchestrator/build_stride_dispatch_manifest.py": _tests("""
+        validate_assessment_architecture review_multi_repo_connections
         topology_workloads
         build_architecture_analysis_context
         build_trust_boundary_assessment_input
@@ -3836,7 +4036,8 @@ SOURCE_TESTS = {
         stride_outputs
         validate_intermediate
     """),
-    "scripts/contexts/build_trust_boundary_assessment_input.py": _tests("""
+    "scripts/contexts/build_trust_boundary_assessment_input.py": _tests(
+        """
         build_trust_boundary_assessment_input
         check_target_specificity
         discover_identity_providers
@@ -3845,8 +4046,12 @@ SOURCE_TESTS = {
         requirements_verification
         run_path_guard
         stride_outputs
-    """),
-    "schemas/trust-boundary-assessment-input.schema.json": _tests("""
+        multi_repo_builder
+        multi_repo_exports
+    """
+    ),
+    "schemas/trust-boundary-assessment-input.schema.json": _tests(
+        """
         figure1_security
         fragment_invariant_parity
         orchestration_controller
@@ -3858,7 +4063,10 @@ SOURCE_TESTS = {
         requirements_verification
         schemas
         stride_outputs
-    """),
+        multi_repo_builder
+        multi_repo_exports
+    """
+    ),
     "scripts/repairs/build_verify_diff.py": _tests("""
         build_verify_diff
         check_target_specificity
@@ -4175,6 +4383,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/analyzers/discover_identity_providers.py": _tests("""
+        validate_assessment_architecture review_multi_repo_connections
         check_target_specificity
         discover_identity_providers
         embedded_store_access
@@ -4568,6 +4777,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/renderers/figure1_security.py": _tests("""
+        validate_assessment_architecture review_multi_repo_connections
         architect_review_runtime
         actor_presentation
         analysis_version_upgrade
@@ -4750,7 +4960,9 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
-    "scripts/model/merge_threats.py": _tests("""
+    "scripts/model/merge_threats.py": _tests(
+        """
+        multi_repo_controller
         run_invariants
         actor_attribution
         agent_config_checks
@@ -4788,7 +5000,10 @@ SOURCE_TESTS = {
         stage1_coverage_recovery_2026_08_02
         wait_stride_progress
         write_stride_progress
-    """),
+        multi_repo_builder
+        multi_repo_exports
+    """
+    ),
     "scripts/runtime/model_lineup.py": _tests("""
         check_target_specificity
         gate_preconditions
@@ -5121,6 +5336,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/model/reclassify_components.py": _tests("""
+        validate_assessment_architecture review_multi_repo_connections
         run_invariants
         topology_workloads
         architect_review_runtime
@@ -5154,6 +5370,7 @@ SOURCE_TESTS = {
         validate_intermediate
     """),
     "scripts/analyzers/recon_patterns.py": _tests("""
+        validate_assessment_architecture review_multi_repo_connections
         check_target_specificity
         discover_identity_providers
         embedded_store_access
@@ -5287,6 +5504,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/analyzers/repo_profile.py": _tests("""
+        validate_assessment_architecture review_multi_repo_connections
         topology_workloads
         build_trust_boundary_assessment_input
         check_target_specificity
@@ -5430,6 +5648,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/runtime/resolve_config.py": _tests("""
+        multi_repo_config multi_repo_controller
         architect_review_runtime
         agent_config_checks
         agent_logger_cov
@@ -5563,6 +5782,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/analyzers/scan_excludes.py": _tests("""
+        validate_assessment_architecture review_multi_repo_connections
         arch_coverage_bridge
         architecture_coverage_checks
         baseline_content_unchanged
@@ -5598,7 +5818,13 @@ SOURCE_TESTS = {
     "scripts/validators/run_invariants.py": _tests("""
         run_invariants
     """),
-    "scripts/validators/secret_scan.py": _tests("""
+    "scripts/validators/secret_scan.py": _tests(
+        """
+        validate_assessment_architecture review_multi_repo_connections
+        multi_repo_discovery
+        multi_repo_scope
+        assessment_host
+        reconcile_multi_repo_architecture
         actor_presentation
         analysis_version_upgrade
         architect_review_runtime
@@ -5639,7 +5865,10 @@ SOURCE_TESTS = {
         secret_scan
         stride_outputs
         threat_fixture
-    """),
+        multi_repo_builder
+        multi_repo_exports
+    """
+    ),
     "scripts/validators/section_integrity.py": _tests("""
         check_target_specificity
         gate_preconditions
@@ -5927,6 +6156,8 @@ SOURCE_TESTS = {
         requirements_verification
     """),
     "scripts/runtime/analyst_host.py": _tests("""
+        multi_repo_discovery
+        assessment_host
         analyst_controller
         analyst_host
         analyst_skill

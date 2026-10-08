@@ -3040,6 +3040,169 @@ def build_changelog(
 # ─── Main ─────────────────────────────────────────────────────────────────
 
 
+def build_assessment_model(
+    scope,
+    *,
+    skill_cfg: dict,
+    architecture: dict,
+    controls: list[dict],
+    boundaries: dict,
+    merged: dict,
+    plugin_root: Path,
+    project: str,
+) -> tuple[dict, list[str]]:
+    """Build the qualified pre-enrichment model without publishing completion.
+
+    The controller supplies accepted stage artifacts. This assembler rechecks
+    their scope and references and reuses the ordinary finding, mitigation and
+    severity builders. It neither selects a primary checkout nor grants source
+    access from serialized inventory. The normal enrichment and delivery gates
+    still follow this step.
+    """
+    import copy
+
+    from contexts.multi_repo_analysis import contract, source_selection
+    from jsonschema import Draft202012Validator
+    from runtime.multi_repo_scope import AssessmentScope
+    from shared.assessment_sources import source_rows
+    from validators.validate_assessment_architecture import validate_flows, validate_source
+    from validators.validate_intermediate import validate_threat_model_output
+
+    if not isinstance(scope, AssessmentScope):
+        raise ValueError("Combined model construction requires an admitted assessment scope")
+    if not isinstance(project, str) or not project.strip() or len(project) > 256 or any(ord(c) < 32 for c in project):
+        raise ValueError("Combined project name must be bounded single-line text")
+    if skill_cfg.get("assessment_scope") != "multiple-repositories" or skill_cfg.get("mode") != "full":
+        raise ValueError("Combined model construction requires resolved full-assessment configuration")
+    inventory = scope.inventory()
+    if skill_cfg.get("source_scope_sha256") != inventory["scope_sha256"]:
+        raise ValueError("Combined configuration belongs to another source scope")
+    # These context features need their qualified producers before they can be
+    # represented faithfully. Refuse them rather than publish an unused source
+    # as not_configured or invent an assessment/trace.
+    configured_business = skill_cfg.get("business_context_source") or any(
+        path in repo.files
+        for repo in scope.repositories
+        for path in ("docs/security/business-context.md", "docs/business-context.md")
+    )
+    if configured_business and not skill_cfg.get("skip_business_context"):
+        raise ValueError("Combined business-context projection is not implemented")
+    if skill_cfg.get("check_requirements"):
+        raise ValueError("Combined requirements assessment is not implemented")
+    scope.verify_unchanged()
+    components, receipt = architecture["components"], architecture["finalization"]
+    validate_flows(scope, components, receipt, architecture["data_flows"])
+    fingerprint = receipt["component_inventory_fingerprint"]
+    Draft202012Validator(contract("threats-merged-v2.schema.json")).validate(merged)
+    if (
+        merged["source_scope_sha256"] != inventory["scope_sha256"]
+        or merged["component_inventory_fingerprint"] != fingerprint
+    ):
+        raise ValueError("Merged findings do not match the finalized assessment")
+    Draft202012Validator(contract("fragments/trust-boundaries-v3.schema.json")).validate(boundaries)
+    if boundaries["source_scope_sha256"] != inventory["scope_sha256"]:
+        raise ValueError("Normalized boundaries belong to another source scope")
+    component_ids = {row["id"] for row in components["components"]}
+    by_id = {row["id"]: row for row in components["components"]}
+    control_schema = contract("multi-repo-controls.schema.json")["properties"]["security_controls"]["items"]
+    for control in controls:
+        Draft202012Validator(control_schema).validate(control)
+        if not set(control["component_ids"]) <= component_ids:
+            raise ValueError("Security control refers to an unknown component")
+        owned = source_selection([by_id[key] for key in control["component_ids"]])
+        if any((e["repository_id"], e["file"]) not in owned for e in control["evidence"]):
+            raise ValueError("Security control evidence is outside its component ownership")
+    for row in merged["threats"]:
+        if row["component_id"] not in component_ids:
+            raise ValueError("Merged finding refers to an unknown component")
+        anchor = row.get("evidence")
+        if anchor and (anchor["repository_id"], anchor["file"]) not in source_selection([by_id[row["component_id"]]]):
+            raise ValueError("Merged finding anchor is outside its component ownership")
+    finding_ids = [row["t_id"] for row in merged["threats"]]
+    if len(finding_ids) != len(set(finding_ids)):
+        raise ValueError("Merged finding identities are not unique")
+    for asset in architecture["assets"]:
+        if any(ref["component_id"] not in component_ids for ref in asset.get("component_refs", [])):
+            raise ValueError("Asset refers to an unknown component")
+    # Walk before recursive copying/schema use to bound alias expansion and
+    # retain exact provenance for nested evidence, including removed findings.
+    for value in (architecture["assets"], controls, boundaries, merged):
+        for evidence in source_rows(value):
+            validate_source(scope, evidence, path_key="file")
+
+    threats, warnings = build_threats(copy.deepcopy(merged), skill_cfg.get("register_severity_floor") or "medium")
+    if any(t.get("violated_requirements") for t in threats):
+        raise ValueError("Combined finding carries a requirement link without an assessed catalog")
+    mitigations = build_mitigations(threats)
+    mitigations, mitigation_warnings = prune_dangling_mitigation_threat_ids(threats, mitigations)
+    warnings.extend(mitigation_warnings)
+    threats, mitigations = dedupe_mitigation_controls(threats, mitigations)
+    plugin_version, analysis_version = _plugin_version(plugin_root)
+    meta = {
+        "schema_version": 2,
+        "project": project.strip(),
+        "generated": merged["generated_at"],
+        "mode": "full",
+        "model": skill_cfg["stride_model"],
+        "analyst": "qualified multi-repository assessment",
+        "plugin_version": plugin_version,
+        "analysis_version": analysis_version,
+        "assessment_depth": skill_cfg.get("assessment_depth", "standard"),
+        "reasoning_model": skill_cfg.get("reasoning_model", "sonnet-economy"),
+        "register_severity_floor": skill_cfg.get("register_severity_floor") or "medium",
+        "check_requirements": False,
+        "source_scope_sha256": inventory["scope_sha256"],
+        "component_inventory_fingerprint": fingerprint,
+    }
+    for key in ("stride_model", "triage_model", "merger_model"):
+        if skill_cfg.get(key):
+            meta[key] = skill_cfg[key]
+    rows = copy.deepcopy(components["components"])
+    for component in rows:
+        component["threat_ids"] = sorted(t["id"] for t in threats if t["component"] == component["id"])
+    doc = {
+        "meta": meta,
+        "source_inventory": inventory,
+        "components": rows,
+        "data_flows": copy.deepcopy(architecture["data_flows"]["data_flows"]),
+        "external_entities": copy.deepcopy(architecture["data_flows"].get("external_entities", [])),
+        "assets": copy.deepcopy(architecture["assets"]),
+        # Route/actor aggregation is a separate producer. Do not turn unknown
+        # route authentication into a guessed Internet actor here.
+        "attack_surface": [],
+        "trust_boundaries": copy.deepcopy(boundaries["trust_boundaries"]),
+        "security_controls": link_checked_controls(copy.deepcopy(controls), threats),
+        "threats": threats,
+        "mitigations": mitigations,
+        "critical_findings": build_critical_findings(threats),
+        "abuse_case_analysis": build_initial_abuse_case_analysis(skill_cfg),
+        "business_context_trace": {
+            "status": "skipped" if skill_cfg.get("skip_business_context") else "not_configured",
+            "source_kind": None,
+            "source": None,
+            "sha256": None,
+            "fields_present": [],
+            "component_coverage": [],
+            "applied_finding_count": 0,
+        },
+    }
+    if merged.get("weaknesses"):
+        doc["weaknesses"], pruning_warnings = prune_dangling_weakness_instances(
+            threats, copy.deepcopy(merged["weaknesses"]), refuted_ids=refuted_threat_ids(merged)
+        )
+        warnings.extend(pruning_warnings)
+    doc, _ = renumber_trust_boundaries(doc)
+    doc, masked_patterns = secret_scan.mask_structure(doc)
+    if masked_patterns:
+        warnings.append("Secret masking applied to combined model prose")
+    valid, messages = validate_threat_model_output(doc)
+    if not valid:
+        raise ValueError("Combined model violates canonical output invariants: " + "; ".join(messages))
+    warnings.extend(messages)
+    scope.verify_unchanged()
+    return doc, warnings
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     ap.add_argument("output_dir", type=run_path_arg, help="$OUTPUT_DIR (e.g. docs/security)")

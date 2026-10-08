@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/multi-repo-connections.schema.json",
+  "title": "Cross repository connection candidates awaiting architecture review",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "scope_sha256", "components", "interfaces", "candidates", "unresolved"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "scope_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "components": {
+      "type": "array", "minItems": 2, "maxItems": 1600,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "local_id", "repository_id", "name", "description", "tier", "paths"],
+        "properties": {
+          "id": {"$ref": "#/$defs/component"}, "local_id": {"$ref": "#/$defs/local"},
+          "repository_id": {"$ref": "#/$defs/repository"},
+          "name": {"type": "string", "minLength": 1, "maxLength": 80},
+          "description": {"type": "string", "minLength": 1, "maxLength": 1000},
+          "tier": {"enum": ["client", "application", "data"]},
+          "paths": {"type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true,
+                    "items": {"type": "string", "minLength": 1, "maxLength": 512}}
+        }
+      }
+    },
+    "interfaces": {
+      "type": "array", "maxItems": 4096,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "repository_id", "component_id", "role", "protocol", "address", "deployment", "operation", "evidence"],
+        "properties": {
+          "id": {"$ref": "#/$defs/interface"}, "component_id": {"$ref": "#/$defs/component"},
+          "repository_id": {"$ref": "#/$defs/repository"},
+          "role": {"enum": ["request", "serve", "publish", "consume"]},
+          "protocol": {"$ref": "#/$defs/protocol"},
+          "address": {"type": ["string", "null"], "minLength": 1, "maxLength": 240},
+          "deployment": {"type": ["string", "null"], "minLength": 1, "maxLength": 120},
+          "operation": {"type": "string", "minLength": 1, "maxLength": 120},
+          "evidence": {
+            "type": "array", "minItems": 1, "maxItems": 8,
+            "items": {
+              "type": "object", "additionalProperties": false, "required": ["file", "line", "quote"],
+              "properties": {
+                "file": {"type": "string", "minLength": 1, "maxLength": 512},
+                "line": {"type": "integer", "minimum": 1},
+                "quote": {"type": "string", "minLength": 1, "maxLength": 1000, "pattern": "^[^\\r\\n]+$"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "candidates": {
+      "type": "array", "maxItems": 4096,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "sender_interface", "receiver_interface", "from", "to", "protocol", "operation", "address", "deployment", "status", "via"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^connection-[a-f0-9]{16}$"},
+          "sender_interface": {"$ref": "#/$defs/interface"}, "receiver_interface": {"$ref": "#/$defs/interface"},
+          "from": {"$ref": "#/$defs/component"}, "to": {"$ref": "#/$defs/component"},
+          "protocol": {"$ref": "#/$defs/protocol"},
+          "operation": {"type": "string", "minLength": 1, "maxLength": 120},
+          "address": {"type": "string", "minLength": 1, "maxLength": 240},
+          "deployment": {"type": "string", "minLength": 1, "maxLength": 120},
+          "status": {"const": "requires-architecture-review"},
+          "via": {"enum": ["message-broker", null]}
+        }
+      }
+    },
+    "unresolved": {
+      "type": "array", "maxItems": 4096,
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["interface_id", "reason"],
+        "properties": {
+          "interface_id": {"$ref": "#/$defs/interface"},
+          "reason": {"enum": ["identity-not-established", "ambiguous-peer", "no-matching-peer"]}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "local": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,63}$"},
+    "component": {"type": "string", "pattern": "^component-[a-f0-9]{16}$"},
+    "interface": {"type": "string", "pattern": "^interface-[a-f0-9]{16}$"},
+    "repository": {"type": "string", "pattern": "^repo-[a-f0-9]{16}$"},
+    "protocol": {"enum": ["HTTP", "HTTPS", "gRPC", "AMQP", "Kafka"]}
+  }
+}

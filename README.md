@@ -154,6 +154,20 @@ For repositories with a build pipeline, Figure 1b links build inputs and release
 
 Assessments consume model tokens and usually take tens of minutes; thorough runs may exceed an hour. The [Threat Modeler reference](docs/threat-modeler.md#assessment-depth--cost-control) covers depth, focused scans, repository context, measured costs, and limits.
 
+### Assess multiple repositories
+
+The current headless runner accepts one repository per invocation. From the plugin checkout, run a separate assessment for each local checkout and select a distinct output directory. Replace the example paths with your repository and report locations:
+
+```bash
+./scripts/run-headless.sh --repo /repos/repo1 --output /reports/repo1 --full
+./scripts/run-headless.sh --repo /repos/repo2 --output /reports/repo2 --full
+./scripts/run-headless.sh --repo /repos/repo3 --output /reports/repo3 --full
+```
+
+Each run produces its own threat model and Figure 1. Configure `docs/related-repos.yaml` in the repository being assessed to include existing dependency models as [cross-repository context](docs/threat-modeler.md#cross-repo-context). These imports inform the local analysis; they do not rescan dependency source code or produce one combined Figure 1. See [non-interactive mode](docs/headless-mode.md) for authentication, budgets, and other runner options.
+
+A combined source assessment using multiple `--repo` arguments is still under development. The current runner keeps only the last `--repo` value when the flag is repeated.
+
 ## Threat Analyst
 
 Run `/appsec-advisor:analyze-threats` before or while you build a feature. It reports:

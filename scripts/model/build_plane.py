@@ -83,6 +83,11 @@ BUILD_NEUTRAL_PATTERNS = (
 
 
 def _normalized(path: Any) -> str:
+    if isinstance(path, dict):
+        # Captured v2 paths are literal, canonical relative filenames. Their
+        # whitespace and owner-like directory names are not presentation syntax.
+        value = path.get("path")
+        return value if isinstance(value, str) else ""
     text = str(path or "").strip()
     while text.startswith("./"):
         text = text[2:]
@@ -109,10 +114,29 @@ def is_build_component(component: dict[str, Any]) -> bool:
         return False
     if any(_zone_names_build(zone) for zone in component.get("deployment_zones") or []):
         return True
-    paths = [_normalized(path) for path in component.get("paths") or [] if _normalized(path)]
-    if not any(is_ci_definition(path) for path in paths):
+    paths = []
+    for value in component.get("paths") or []:
+        path = None
+        # Presentation locators namespace exact files without making a
+        # repository directory part of the CI mechanism. Only this component's
+        # declared owner prefixes can be removed, and this is display placement,
+        # never a filesystem/source grant.
+        for owner in (component.get("repository_ids") or []) if not isinstance(value, dict) else []:
+            if (
+                isinstance(owner, str)
+                and re.fullmatch(r"repo-[a-f0-9]{16}", owner)
+                and isinstance(value, str)
+                and value.startswith(owner + "/")
+            ):
+                path = value[len(owner) + 1 :]
+                break
+        if path is None:
+            path = _normalized(value)
+        if path:
+            paths.append(path)
+    if not any(_matches(path, CI_DEFINITION_PATTERNS) for path in paths):
         return False
-    return all(is_ci_definition(path) or _matches(path, BUILD_NEUTRAL_PATTERNS) for path in paths)
+    return all(_matches(path, CI_DEFINITION_PATTERNS) or _matches(path, BUILD_NEUTRAL_PATTERNS) for path in paths)
 
 
 def build_component_ids(components: list[dict[str, Any]]) -> set[str]:

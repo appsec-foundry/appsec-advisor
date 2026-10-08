@@ -1,0 +1,486 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/threats-merged-v2.schema.json",
+  "title": "Merged threat list with global T-NNN IDs",
+  "description": "Output written by the orchestrator in Phase 9 to\n`$OUTPUT_DIR/.threats-merged.json`. Canonical source for diagram\nannotation, YAML and SARIF export, and the changelog writer. Phase 10b\n(triage validator) may annotate each threat with a `triage_flags` array.\n",
+  "type": "object",
+  "required": [
+    "version",
+    "generated_at",
+    "threats",
+    "source_scope_sha256",
+    "component_inventory_fingerprint"
+  ],
+  "$defs": {
+    "mechanism_location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "file",
+        "line",
+        "repository_id",
+        "sha256"
+      ],
+      "properties": {
+        "file": {
+          "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/$defs/mechanism_location/properties/file"
+        },
+        "line": {
+          "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/$defs/mechanism_location/properties/line"
+        },
+        "repository_id": {
+          "type": "string",
+          "pattern": "^repo-[a-f0-9]{16}$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    }
+  },
+  "properties": {
+    "severity_policy_version": {
+      "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/severity_policy_version"
+    },
+    "version": {
+      "const": 2
+    },
+    "generated_at": {
+      "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/generated_at"
+    },
+    "resolved_prior_findings": {
+      "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/resolved_prior_findings"
+    },
+    "threats": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "t_id",
+          "component_id",
+          "component_name",
+          "stride",
+          "risk",
+          "likelihood",
+          "impact",
+          "title",
+          "cwe",
+          "evidence",
+          "source",
+          "architectural_violation"
+        ],
+        "properties": {
+          "t_id": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/t_id"
+          },
+          "component_id": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/component_id"
+          },
+          "component_name": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/component_name"
+          },
+          "stride": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/stride"
+          },
+          "risk": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/risk"
+          },
+          "risk_before_policy": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/risk_before_policy"
+          },
+          "owasp_llm_ids": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/owasp_llm_ids"
+          },
+          "owasp_asi_ids": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/owasp_asi_ids"
+          },
+          "likelihood": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/likelihood"
+          },
+          "impact": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/impact"
+          },
+          "title": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/title"
+          },
+          "cwe": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/cwe"
+          },
+          "control_scope": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/control_scope"
+          },
+          "evidence": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "required": [
+              "file",
+              "line",
+              "repository_id",
+              "sha256"
+            ],
+            "properties": {
+              "file": {
+                "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/evidence/properties/file"
+              },
+              "line": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "repository_id": {
+                "type": "string",
+                "pattern": "^repo-[a-f0-9]{16}$"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            }
+          },
+          "mechanism_trace": {
+            "description": "Source and sink evidence for a confirmed input-to-sink STRIDE finding; the sink repeats the primary evidence location.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "input",
+              "sink",
+              "connection",
+              "control"
+            ],
+            "properties": {
+              "input": {
+                "$ref": "#/$defs/mechanism_location"
+              },
+              "sink": {
+                "$ref": "#/$defs/mechanism_location"
+              },
+              "connection": {
+                "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/mechanism_trace/properties/connection"
+              },
+              "control": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "status",
+                  "location",
+                  "explanation"
+                ],
+                "properties": {
+                  "status": {
+                    "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/mechanism_trace/properties/control/properties/status"
+                  },
+                  "location": {
+                    "$ref": "#/$defs/mechanism_location"
+                  },
+                  "explanation": {
+                    "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/mechanism_trace/properties/control/properties/explanation"
+                  }
+                }
+              }
+            }
+          },
+          "boundary_refs": {
+            "type": "array",
+            "maxItems": 2,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "boundary_id",
+                "origin_component_id",
+                "rationale",
+                "evidence_locations"
+              ],
+              "properties": {
+                "boundary_id": {
+                  "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/boundary_refs/items/properties/boundary_id"
+                },
+                "origin_component_id": {
+                  "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/boundary_refs/items/properties/origin_component_id"
+                },
+                "rationale": {
+                  "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/boundary_refs/items/properties/rationale"
+                },
+                "leg": {
+                  "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/boundary_refs/items/properties/leg"
+                },
+                "evidence_locations": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 3,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "file",
+                      "line",
+                      "repository_id",
+                      "sha256"
+                    ],
+                    "properties": {
+                      "file": {
+                        "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/boundary_refs/items/properties/evidence_locations/items/properties/file"
+                      },
+                      "line": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "repository_id": {
+                        "type": "string",
+                        "pattern": "^repo-[a-f0-9]{16}$"
+                      },
+                      "sha256": {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{64}$"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "instances": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "file",
+                "line",
+                "repository_id",
+                "sha256"
+              ],
+              "properties": {
+                "file": {
+                  "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/instances/items/properties/file"
+                },
+                "line": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "severity": {
+                  "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/instances/items/properties/severity"
+                },
+                "snippet": {
+                  "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/instances/items/properties/snippet"
+                },
+                "scenario": {
+                  "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/instances/items/properties/scenario"
+                },
+                "source_ref": {
+                  "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/instances/items/properties/source_ref"
+                },
+                "repository_id": {
+                  "type": "string",
+                  "pattern": "^repo-[a-f0-9]{16}$"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              }
+            }
+          },
+          "affected_files": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/affected_files"
+          },
+          "instance_count": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/instance_count"
+          },
+          "merged_from": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/merged_from"
+          },
+          "source": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/source"
+          },
+          "architectural_violation": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/architectural_violation"
+          },
+          "requirement_id": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/requirement_id"
+          },
+          "rule_id": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/rule_id"
+          },
+          "hypothesis_id": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/hypothesis_id"
+          },
+          "architectural_theme": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/architectural_theme"
+          },
+          "generic_threat_title": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/generic_threat_title"
+          },
+          "triage_flags": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/triage_flags"
+          },
+          "evidence_check": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/evidence_check"
+          },
+          "evidence_basis": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/evidence_basis"
+          },
+          "evidence_tier": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/evidence_tier"
+          },
+          "dispatch_component": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/dispatch_component"
+          },
+          "claimed_tier": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/claimed_tier"
+          },
+          "evidence_flags": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/evidence_flags"
+          },
+          "controls_absent_evidence": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/controls_absent_evidence"
+          },
+          "cvss_v4": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/threats/items/properties/cvss_v4"
+          }
+        }
+      }
+    },
+    "actor_attribution_corrections": {
+      "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/actor_attribution_corrections"
+    },
+    "weaknesses": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "id",
+          "weakness_class",
+          "kind",
+          "title",
+          "statement",
+          "severity",
+          "severity_basis",
+          "observable_backing"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/weaknesses/items/properties/id"
+          },
+          "weakness_class": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/weaknesses/items/properties/weakness_class"
+          },
+          "mechanism_id": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/weaknesses/items/properties/mechanism_id"
+          },
+          "kind": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/weaknesses/items/properties/kind"
+          },
+          "title": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/weaknesses/items/properties/title"
+          },
+          "statement": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/weaknesses/items/properties/statement"
+          },
+          "severity": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/weaknesses/items/properties/severity"
+          },
+          "severity_basis": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/weaknesses/items/properties/severity_basis"
+          },
+          "implementation_strategy": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/weaknesses/items/properties/implementation_strategy"
+          },
+          "observable_backing": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "absent_control_signal": {
+                "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/weaknesses/items/properties/observable_backing/properties/absent_control_signal"
+              },
+              "practice_evidence": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "file": {
+                      "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/weaknesses/items/properties/observable_backing/properties/practice_evidence/items/properties/file"
+                    },
+                    "line": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "repository_id": {
+                      "type": "string",
+                      "pattern": "^repo-[a-f0-9]{16}$"
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    }
+                  },
+                  "required": [
+                    "file",
+                    "line",
+                    "repository_id",
+                    "sha256"
+                  ]
+                }
+              }
+            }
+          },
+          "affected_components": {
+            "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/weaknesses/items/properties/affected_components"
+          },
+          "instances": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "file",
+                "line",
+                "repository_id",
+                "sha256"
+              ],
+              "properties": {
+                "id": {
+                  "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/weaknesses/items/properties/instances/items/properties/id"
+                },
+                "file": {
+                  "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/weaknesses/items/properties/instances/items/properties/file"
+                },
+                "line": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "basis": {
+                  "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/weaknesses/items/properties/instances/items/properties/basis"
+                },
+                "poc_hint": {
+                  "$ref": "https://appsec-advisor/schemas/threats-merged.schema.yaml#/properties/weaknesses/items/properties/instances/items/properties/poc_hint"
+                },
+                "repository_id": {
+                  "type": "string",
+                  "pattern": "^repo-[a-f0-9]{16}$"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "source_scope_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "component_inventory_fingerprint": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    }
+  }
+}

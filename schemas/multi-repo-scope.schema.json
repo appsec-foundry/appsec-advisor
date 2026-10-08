@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/multi-repo-scope.schema.json",
+  "title": "Portable admitted multi repository source inventory",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "scope_sha256", "repositories"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "scope_sha256": {"$ref": "#/$defs/sha256"},
+    "repositories": {
+      "type": "array", "minItems": 2, "maxItems": 16,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["repository_id", "label", "head", "dirty", "state_sha256", "files", "exclusions"],
+        "properties": {
+          "repository_id": {"type": "string", "pattern": "^repo-[a-f0-9]{16}$"},
+          "label": {"type": "string", "minLength": 1, "maxLength": 255},
+          "head": {"type": "string", "pattern": "^(?:[a-f0-9]{40}|[a-f0-9]{64})$"},
+          "dirty": {"type": "boolean"},
+          "state_sha256": {"$ref": "#/$defs/sha256"},
+          "files": {
+            "type": "array", "maxItems": 20000,
+            "items": {
+              "type": "object", "additionalProperties": false,
+              "required": ["path", "sha256", "bytes"],
+              "properties": {
+                "path": {"$ref": "#/$defs/path"},
+                "sha256": {"$ref": "#/$defs/sha256"},
+                "bytes": {"type": "integer", "minimum": 0, "maximum": 1048576}
+              }
+            }
+          },
+          "exclusions": {
+            "type": "array", "maxItems": 20000,
+            "items": {
+              "type": "object", "additionalProperties": false,
+              "required": ["path", "reason"],
+              "properties": {
+                "path": {"$ref": "#/$defs/path"},
+                "reason": {"enum": ["sensitive-name", "deleted", "binary"]}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "path": {"type": "string", "minLength": 1, "maxLength": 512, "not": {"pattern": "^(?:/)|(?:^|/)\\.\\.(?:/|$)|[\\\\:\\u0000-\\u001f\\u007f]"}}
+  }
+}

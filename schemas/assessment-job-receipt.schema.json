@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/assessment-job-receipt.schema.json",
+  "title": "Accepted scoped assessment job receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "job_id", "role", "scope_sha256", "request_sha256", "artifact_sha256", "source_ranges", "calls", "usd"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "job_id": {"type": "string", "pattern": "^job-[0-9a-f]{24}$"},
+    "role": {"type": "string", "pattern": "^[a-z][a-z_]{1,63}$"},
+    "scope_sha256": {"$ref": "#/$defs/hash"},
+    "request_sha256": {"$ref": "#/$defs/hash"},
+    "artifact_sha256": {"$ref": "#/$defs/hash"},
+    "calls": {"type": "integer", "minimum": 1, "maximum": 6},
+    "usd": {"type": "number", "minimum": 0},
+    "source_ranges": {
+      "type": "array", "maxItems": 12,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["repository_id", "path", "sha256", "start_line", "end_line"],
+        "properties": {
+          "repository_id": {"type": "string", "pattern": "^repo-[0-9a-f]{16}$"},
+          "path": {"type": "string", "minLength": 1, "maxLength": 512},
+          "sha256": {"$ref": "#/$defs/hash"},
+          "start_line": {"type": "integer", "minimum": 1},
+          "end_line": {"type": "integer", "minimum": 1}
+        }
+      }
+    }
+  },
+  "$defs": {"hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+}

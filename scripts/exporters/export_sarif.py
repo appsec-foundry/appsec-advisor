@@ -33,6 +33,7 @@ import re
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import yaml
 
@@ -226,7 +227,9 @@ def _result_trust_boundaries(threat: dict, boundary_facts: dict[str, dict]) -> l
     return entries
 
 
-def _build_result(threat: dict, mitigations_by_id: dict[str, dict], boundary_facts: dict[str, dict]) -> dict:
+def _build_result(
+    threat: dict, mitigations_by_id: dict[str, dict], boundary_facts: dict[str, dict], *, qualified: bool = False
+) -> dict:
     tid = _threat_id(threat)
     risk = threat.get("risk") or threat.get("severity")
     scenario = threat.get("scenario") or threat.get("title") or tid
@@ -238,7 +241,11 @@ def _build_result(threat: dict, mitigations_by_id: dict[str, dict], boundary_fac
     }
 
     locations: list[dict] = []
-    for ev in _evidence_entries(threat):
+    evidence = _evidence_entries(threat)
+    if qualified:
+        evidence += [row for row in threat.get("instances", []) if isinstance(row, dict) and row.get("file")]
+    seen = set()
+    for ev in evidence:
         line = ev.get("line")
         # An absence names a check's display path (often a glob); the files it
         # searched are the real artifacts. Code-scanning consumers require a
@@ -247,7 +254,18 @@ def _build_result(threat: dict, mitigations_by_id: dict[str, dict], boundary_fac
         if ev.get("kind") == "absence" and ev.get("searched_files"):
             uris = list(ev["searched_files"])[:SARIF_ABSENCE_LOCATIONS]
         for uri in uris:
-            physical: dict[str, Any] = {"artifactLocation": {"uri": uri, "uriBaseId": "%SRCROOT%"}}
+            key = (ev.get("repository_id") if qualified else None, uri, line)
+            if qualified and key in seen:
+                continue
+            seen.add(key)
+            physical: dict[str, Any] = {
+                "artifactLocation": {
+                    "uri": quote(uri, safe="/") if qualified else uri,
+                    "uriBaseId": ev["repository_id"] if qualified else "%SRCROOT%",
+                }
+            }
+            if qualified:
+                physical["properties"] = {"repositoryId": ev["repository_id"], "sourceSha256": ev["sha256"]}
             if isinstance(line, int) and line > 0:
                 physical["region"] = {"startLine": line}
             else:
@@ -316,6 +334,12 @@ def build_sarif(
     data: dict,
     tool_version: str = DEFAULT_TOOL_VERSION,
 ) -> dict:
+    qualified = isinstance(data.get("meta"), dict) and data["meta"].get("schema_version") == 2
+    if qualified:
+        from validators.validate_intermediate import validate_threat_model_output
+
+        if not validate_threat_model_output(data)[0]:
+            raise ValueError("Cannot export an invalid multi-repository model")
     threats = [t for t in (data.get("threats") or []) if isinstance(t, dict)]
     mitigations = [m for m in (data.get("mitigations") or []) if isinstance(m, dict)]
     mitigations_by_id: dict[str, dict] = {}
@@ -339,7 +363,7 @@ def build_sarif(
         if tid not in seen_rule_ids:
             rules.append(_build_rule(threat, mitigations_by_id))
             seen_rule_ids.add(tid)
-        results.append(_build_result(threat, mitigations_by_id, boundary_facts))
+        results.append(_build_result(threat, mitigations_by_id, boundary_facts, qualified=qualified))
 
     run: dict[str, Any] = {
         "tool": {
@@ -357,6 +381,21 @@ def build_sarif(
     # boundary view needs the crossings no finding reached as well.
     if boundary_facts:
         run["properties"] = {"trustBoundaries": list(boundary_facts.values())}
+    if qualified:
+        inventory = data["source_inventory"]
+        # These are portable source namespaces, not machine-local checkout
+        # paths. A consuming tool supplies its own authorized checkout mapping.
+        run["originalUriBaseIds"] = {
+            row["repository_id"]: {"uri": f"appsec-repository://{row['repository_id']}/"}
+            for row in inventory["repositories"]
+        }
+        run.setdefault("properties", {})["sourceScope"] = {
+            "sha256": inventory["scope_sha256"],
+            "repositories": [
+                {key: row[key] for key in ("repository_id", "label", "head", "dirty", "state_sha256")}
+                for row in inventory["repositories"]
+            ],
+        }
 
     return {
         "$schema": SARIF_SCHEMA_URL,
@@ -400,7 +439,11 @@ def main() -> None:
         else:
             tool_version = DEFAULT_TOOL_VERSION
 
-    sarif = build_sarif(data, tool_version=tool_version)
+    try:
+        sarif = build_sarif(data, tool_version=tool_version)
+    except ValueError:
+        print("ERROR: invalid multi-repository model; SARIF was not written", file=sys.stderr)
+        sys.exit(2)
 
     out_path = Path(args.output)
     try:

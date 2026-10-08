@@ -89,6 +89,10 @@ FRAGMENT_SCHEMAS: dict[str, str] = {
     # gate keeps ignoring them.
     "components": "components.schema.json",
     "data-flows": "data-flows.schema.json",
+    "components-v2": "components-v2.schema.json",
+    "data-flows-v2": "data-flows-v2.schema.json",
+    "trust-boundaries-v3": "trust-boundaries-v3.schema.json",
+    "trust-boundary-candidates-v2": "trust-boundary-candidates-v2.schema.json",
     "assets": "assets.schema.json",
     "trust-boundaries": "trust-boundaries.schema.json",
     "trust-boundary-candidates": "trust-boundary-candidates.schema.json",
@@ -873,6 +877,9 @@ def validate(
     *,
     repo_root: Path | None = None,
     context_path: Path | None = None,
+    assessment_scope=None,
+    assessment_ranges=None,
+    finalization_receipt: dict | None = None,
 ) -> int:
     """Report every violation a stage can see in one run.
 
@@ -882,6 +889,62 @@ def validate(
     data; the repository and invariant rules do not depend on each other and
     report together.
     """
+    if fragment_type in {"components-v2", "data-flows-v2", "trust-boundaries-v3", "trust-boundary-candidates-v2"}:
+        from runtime.multi_repo_scope import AssessmentScope
+
+        from validators.validate_assessment_architecture import validate_components, validate_flows
+
+        # A serialized inventory cannot confer filesystem authority. Only the
+        # controller's admitted in-memory scope enables this handoff.
+        if not isinstance(assessment_scope, AssessmentScope) or repo_root is not None:
+            _report_violations(path, fragment_type, ["Version 2 requires an admitted assessment scope"])
+            return 1
+        data = _load_fragment(path)
+        try:
+            assessment_scope.verify_unchanged()
+            if fragment_type == "components-v2":
+                validate_components(assessment_scope, data)
+            elif fragment_type == "data-flows-v2":
+                if context_path is None or finalization_receipt is None:
+                    raise ValueError("Version 2 data flows require finalized components and their receipt")
+                validate_flows(assessment_scope, _load_fragment(context_path), finalization_receipt, data)
+            else:
+                from contexts.multi_repo_analysis import contract, source_selection, validate_boundary_candidates
+                from shared.assessment_sources import source_rows
+
+                from validators.validate_assessment_architecture import validate_source
+
+                if context_path is None:
+                    raise ValueError("Qualified boundaries require their admitted component context")
+                context = _load_fragment(context_path)
+                if fragment_type == "trust-boundary-candidates-v2":
+                    if assessment_ranges is None:
+                        raise ValueError("Boundary candidates require their accepted retrieval ranges")
+                    validate_boundary_candidates(
+                        assessment_scope, context, data, assessment_ranges, source_selection(context["components"])
+                    )
+                else:
+                    validate_components(assessment_scope, context)
+                    if data.get("source_scope_sha256") != context["source_scope_sha256"]:
+                        raise ValueError("Qualified boundaries belong to another source scope")
+                    if not jsonschema.Draft202012Validator(
+                        contract("fragments/trust-boundaries-v3.schema.json")
+                    ).is_valid(data):
+                        raise ValueError("Qualified boundaries violate their versioned contract")
+                    known = {row["id"] for row in context["components"]} | {"external"}
+                    for boundary in data["trust_boundaries"]:
+                        if boundary["resolution_status"] == "resolved" and (
+                            boundary.get("from") not in known or boundary.get("to") not in known
+                        ):
+                            raise ValueError("Qualified boundary has unresolved endpoints")
+                    for row in source_rows(data):
+                        validate_source(assessment_scope, row, path_key="file")
+            assessment_scope.verify_unchanged()
+        except ValueError as exc:
+            _report_violations(path, fragment_type, [str(exc)])
+            return 1
+        print(f"VALIDATE_OK: {path.name} matches {fragment_type}")
+        return 0
     schema = _load_schema(fragment_type)
     data = _load_fragment(path)
     _canonicalize_fragment(path, data, schema)

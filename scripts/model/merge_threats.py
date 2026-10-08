@@ -492,6 +492,8 @@ def _load_stride_outputs(output_dir: Path) -> list[tuple[str, dict]]:
                 f"merge_threats: auto-repaired {n_fixed} invalid JSON escape(s) "
                 f"(e.g. \\! → !) in {path.name} and continued.\n"
             )
+        if isinstance(data, dict) and data.get("schema_version") == 2:
+            raise ValueError("Qualified STRIDE results require the admitted multi-repository controller")
         pairs.append((comp_id, data))
     return pairs
 
@@ -527,10 +529,14 @@ def _json_error_context(raw: str, pos: int, radius: int = 60) -> str:
     return f"{snippet[:marker_offset]}»{snippet[marker_offset : marker_offset + 1]}«{snippet[marker_offset + 1 :]}"
 
 
-def _flatten_threats(pairs: list[tuple[str, dict]], output_dir: Path | None = None) -> list[dict]:
+def _flatten_threats(
+    pairs: list[tuple[str, dict]], output_dir: Path | None = None, *, assessment_boundaries: list[dict] | None = None
+) -> list[dict]:
     """Collect all threat records with component provenance attached."""
     out: list[dict] = []
     boundary_rows: list[dict] = []
+    if assessment_boundaries is not None:
+        boundary_rows = assessment_boundaries
     if output_dir is not None:
         boundary_doc = _read_json_file(output_dir / ".trust-boundaries.json", default={})
         boundary_rows = boundary_doc.get("trust_boundaries", []) if isinstance(boundary_doc, dict) else []
@@ -587,6 +593,12 @@ def _flatten_threats(pairs: list[tuple[str, dict]], output_dir: Path | None = No
                         for row in context.get("adjacent_trust_boundaries", [])
                         if isinstance(row, dict) and row.get("id")
                     }
+                    if assessment_boundaries is not None:
+                        candidate_ids = {
+                            b["id"]
+                            for b in assessment_boundaries
+                            if comp_id in (b.get("from"), b.get("to")) or comp_id in (b.get("covers_components") or [])
+                        }
                     carried = t.get("evidence_check") in {
                         "verified-prior",
                         "carried-unverified-shallower-depth",
@@ -3194,6 +3206,118 @@ def _reconcile_actor_attribution(out_dir: Path, threats: list[dict]) -> list[dic
     from analyzers.actor_attribution import reconcile_output_dir
 
     return reconcile_output_dir(out_dir, threats)
+
+
+def merge_assessment(
+    scope,
+    components: dict,
+    stride_documents: list[dict],
+    reviews: list[dict],
+    *,
+    boundaries: list[dict],
+    started_at=None,
+) -> dict:
+    """Use existing intake, evidence deduplication and ranking for v2 sources.
+
+    Scoped jobs have already validated retrieval and independent review. This
+    handoff checks inventory coverage and provenance again. Equal source names
+    in different roots remain distinct; a model-authored shared-control name
+    never authorizes cross-repository consolidation.
+    """
+    import copy
+
+    from contexts.multi_repo_analysis import contract, validate_identity
+    from shared.assessment_sources import source_key, source_rows
+    from validators.validate_assessment_architecture import validate_components, validate_source
+
+    from model.finalize_component_inventory import component_inventory_fingerprint
+
+    scope.verify_unchanged()
+    if started_at is not None and (
+        type(started_at) is not int or not 1 <= started_at <= int(_dt.datetime.now(_dt.timezone.utc).timestamp())
+    ):
+        raise ValueError("Assessment merge requires a valid controller-owned start time")
+    validate_components(scope, components)
+    fingerprint = component_inventory_fingerprint(components["components"])
+    expected = {row["id"] for row in components["components"]}
+    supplied = [row["component_id"] for row in stride_documents]
+    if len(supplied) != len(set(supplied)) or set(supplied) != expected or len(reviews) != len(stride_documents):
+        raise ValueError("Assessment merge must cover every finalized component exactly once")
+    pairs, locations = [], {}
+    boundary_view = copy.deepcopy(boundaries)
+    for row in source_rows(boundary_view):
+        validate_source(scope, row, path_key="file")
+        key = source_key(row)
+        locations[key] = {k: row[k] for k in ("repository_id", "sha256")}
+        row["file"] = key
+    for document, review in zip(stride_documents, reviews, strict=True):
+        if not Draft202012Validator(contract("multi-repo-stride.schema.json")).is_valid(document):
+            raise ValueError("Assessment merge received an invalid STRIDE artifact")
+        validate_identity(scope, document, fingerprint)
+        validate_identity(scope, review, fingerprint)
+        if not Draft202012Validator(contract("multi-repo-evidence-review.schema.json")).is_valid(review):
+            raise ValueError("Assessment merge received an invalid evidence review")
+        decisions = {row["local_id"]: row for row in review["decisions"]}
+        if len(decisions) != len(review["decisions"]) or set(decisions) != {t["local_id"] for t in document["threats"]}:
+            raise ValueError("Assessment merge received incomplete evidence decisions")
+        normalized = copy.deepcopy(document)
+        seen = set()
+        for row in source_rows(normalized):
+            if id(row) in seen:
+                continue
+            seen.add(id(row))
+            validate_source(scope, row, path_key="file")
+            key = source_key(row)
+            locations[key] = {k: row[k] for k in ("repository_id", "sha256")}
+            row["file"] = key
+        for threat in normalized["threats"]:
+            decision = decisions[threat["local_id"]]
+            threat["evidence_check"] = decision["verdict"]
+            threat["evidence_basis"] = "llm-verified" if decision["verdict"] == "verified" else decision["verdict"]
+            if decision["verdict"] == "ambiguous":
+                threat["evidence_tier"] = "insecure-practice"
+                threat.pop("cvss_v4", None)
+            # Comparison scope cannot come from an unrelated root's literal
+            # control name. Actual shared mechanisms need a separate review.
+            if threat.get("control_scope"):
+                threat["control_scope"] = document["component_id"] + ":" + threat["control_scope"]
+        pairs.append((document["component_id"], normalized))
+    flat = _flatten_threats(pairs, assessment_boundaries=boundary_view)
+    normalize_risks(flat)
+    threats = _dedupe_title_locator(_dedupe_evidence(_dedupe_exact(flat)))
+    threats = _assign_t_ids(threats)
+    threats = _remap_scenario_local_refs(threats)
+    normalize_risks(threats)
+    weaknesses = build_weakness_register(threats)
+    seen = set()
+    for row in source_rows({"threats": threats, "weaknesses": weaknesses}):
+        if id(row) in seen:
+            continue
+        seen.add(id(row))
+        qualified = locations.get(row["file"])
+        if qualified is None:
+            raise ValueError("Assessment merge lost the provenance of a source location")
+        key = row["file"]
+        row.update(qualified)
+        row["file"] = key.split("/", 1)[1]
+        validate_source(scope, row, path_key="file")
+    payload = {
+        "version": 2,
+        "generated_at": (
+            _dt.datetime.fromtimestamp(started_at, _dt.timezone.utc)
+            if started_at is not None
+            else _dt.datetime.now(_dt.timezone.utc)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "source_scope_sha256": components["source_scope_sha256"],
+        "component_inventory_fingerprint": fingerprint,
+        "severity_policy_version": 1,
+        "threats": threats,
+        **({"weaknesses": weaknesses} if weaknesses else {}),
+    }
+    if not Draft202012Validator(contract("threats-merged-v2.schema.json")).is_valid(payload):
+        raise ValueError("Assessment merge violates its versioned output contract")
+    scope.verify_unchanged()
+    return payload
 
 
 def cmd_finalize(args: argparse.Namespace) -> int:

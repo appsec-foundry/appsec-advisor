@@ -1444,7 +1444,18 @@ def validate_threat_model_output(data: Any) -> tuple[bool, list[str]]:
     """
     if not isinstance(data, dict):
         return False, ["root must be a mapping"]
-    errors = _schema_errors("threat_model_output", data)
+    if isinstance(data.get("meta"), dict) and data["meta"].get("schema_version") == 2:
+        from shared.assessment_sources import presentation_model
+
+        try:
+            # The v2 schema retains the legacy field constraints. Run the
+            # unchanged relational gates on a namespaced read-only view.
+            data = presentation_model(data)
+        except ValueError as exc:
+            return False, [str(exc)]
+        errors = []
+    else:
+        errors = _schema_errors("threat_model_output", data)
     from shared._severity_policy import policy_errors
 
     errors.extend(policy_errors(data.get("threats") or []))

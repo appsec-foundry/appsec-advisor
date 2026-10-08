@@ -12,6 +12,7 @@ if not __package__:
 
 
 import argparse
+import copy
 import hashlib
 import json
 import re
@@ -229,6 +230,23 @@ def _signal_specs(flow: dict[str, Any], components: dict[str, dict[str, Any]]) -
                 "third-party-or-cross-repository",
                 "runtime flow crosses between a registered component and an external dependency",
                 ["development tooling", "build-only dependency unless kind is build"],
+            )
+        )
+    if (
+        left
+        and right
+        and flow.get("connection_id")
+        and left.get("repository_ids")
+        and right.get("repository_ids")
+        and set(left["repository_ids"]).isdisjoint(right["repository_ids"])
+    ):
+        # Review the evidenced communication, not repository membership. The
+        # analyst may establish same-trust or leave the crossing unresolved.
+        result.append(
+            (
+                "third-party-or-cross-repository",
+                "reviewed runtime communication connects separately owned source implementations",
+                ["same process or trust domain established by deployment evidence", "connection does not change trust"],
             )
         )
     if _IDENTITY_WORDS.search(text):
@@ -607,6 +625,100 @@ def build(repo_root: Path, output_dir: Path, depth: str) -> dict[str, Any]:
     _validate(body, INPUT_SCHEMA)
     atomic_write_json(output_dir / ".trust-boundary-assessment-input.json", body, sort_keys=False)
     return body
+
+
+def build_assessment(scope, components, receipt, flow_doc, source_context, depth) -> dict[str, Any]:
+    """Build the controller-held crossing inventory from admitted v2 topology.
+
+    The controller supplies measured, qualified source context. This function
+    cannot invent a primary root or interpret missing measurements as false.
+    Model jobs receive a single-signal projection of the returned inventory.
+    """
+    from shared.assessment_sources import source_rows
+    from validators.validate_assessment_architecture import validate_flows, validate_source
+
+    from contexts.multi_repo_analysis import contract
+
+    validate_flows(scope, components, receipt, flow_doc)
+    schema = contract("trust-boundary-assessment-input-v2.schema.json")
+    context = copy.deepcopy(source_context)
+    jsonschema.Draft202012Validator(schema["properties"]["source_context"]).validate(context)
+    for evidence in source_rows(context):
+        validate_source(scope, evidence, path_key="file")
+    cards = []
+    for component in components["components"]:
+        card = {
+            "id": component["id"],
+            "name": component["name"][:80],
+            "tier": component["tier"],
+            "deployment_zones": copy.deepcopy(component.get("deployment_zones", [])),
+            "handles_sensitive_data": component.get("handles_sensitive_data", False),
+            "repository_ids": list(component["repository_ids"]),
+            "paths": copy.deepcopy(component["paths"]),
+        }
+        if component.get("workload_zones"):
+            card["workload_zones"] = copy.deepcopy(component["workload_zones"])
+        cards.append(card)
+    # Connection receipts establish review signals, not trust. Keep them in
+    # the canonical topology; the bounded boundary contract carries only its
+    # declared flow fields after the signals have been derived.
+    flow_fields = set(schema["properties"]["data_flows"]["items"]["properties"])
+    flows = [
+        {key: copy.deepcopy(value) for key, value in flow.items() if key in flow_fields}
+        for flow in flow_doc["data_flows"]
+    ]
+    body = {
+        "schema_version": 2,
+        "source_scope_sha256": scope.inventory()["scope_sha256"],
+        "component_inventory_fingerprint": receipt["component_inventory_fingerprint"],
+        "assessment_input_fingerprint": "sha256:" + "0" * 64,
+        "assessment_depth": depth,
+        "components": cards,
+        "data_flows": flows,
+        "external_entities": copy.deepcopy(flow_doc.get("external_entities", [])),
+        "signals": _signals(flow_doc["data_flows"], cards, context),
+        "prior_boundary_identity_hints": [],
+        "source_context": context,
+    }
+    _assessment_input_fingerprint(body)
+    jsonschema.Draft202012Validator(schema).validate(body)
+    scope.verify_unchanged()
+    return body
+
+
+def _assessment_input_fingerprint(body):
+    fingerprint_body = {key: value for key, value in body.items() if key != "assessment_input_fingerprint"}
+    encoded = json.dumps(fingerprint_body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    body["assessment_input_fingerprint"] = "sha256:" + hashlib.sha256(encoded.encode()).hexdigest()
+
+
+def project_assessment_signal(assessment, signal_id):
+    """Admit only the crossing endpoints and their cited context to one job."""
+    from contexts.multi_repo_analysis import contract, source_selection
+
+    signal = next((row for row in assessment["signals"] if row["id"] == signal_id), None)
+    if signal is None:
+        raise ValueError("Boundary job requires a controller-selected crossing signal")
+    result = copy.deepcopy(assessment)
+    ids = {signal["from"], signal["to"]} - {"external"}
+    result["components"] = [row for row in result["components"] if row["id"] in ids]
+    result["data_flows"] = [row for row in result["data_flows"] if row["id"] in signal["flow_ids"]]
+    result["signals"] = [copy.deepcopy(signal)]
+    external_ids = {row[key] for row in result["data_flows"] for key in ("from_entity", "to_entity") if key in row}
+    result["external_entities"] = [row for row in result["external_entities"] if row["id"] in external_ids]
+    allowed = source_selection(result["components"])
+    context = result["source_context"]
+    context["route_inventory"]["routes"] = [
+        row
+        for row in context["route_inventory"]["routes"]
+        if any((ev["repository_id"], ev["file"]) in allowed for ev in row["evidence"])
+    ]
+    context["recon_signals"]["evidence"] = [
+        row for row in context["recon_signals"]["evidence"] if (row["repository_id"], row["file"]) in allowed
+    ]
+    _assessment_input_fingerprint(result)
+    jsonschema.Draft202012Validator(contract("trust-boundary-assessment-input-v2.schema.json")).validate(result)
+    return result
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -159,6 +159,22 @@ def _endpoint(value: Any) -> str | None:
 
 
 def _canonical_evidence(repo_root: Path, values: Any, warnings: list[str], label: str) -> list[dict]:
+    from runtime.multi_repo_scope import AssessmentScope
+
+    if isinstance(repo_root, AssessmentScope):
+        from validators.validate_assessment_architecture import validate_source
+
+        if not isinstance(values, list) or len(values) > 5:
+            raise ValueError("Qualified boundary evidence exceeds its contract")
+        result = []
+        for raw in values:
+            if not isinstance(raw, dict):
+                raise ValueError("Qualified boundary evidence is malformed")
+            validate_source(repo_root, raw, path_key="file")
+            row = {key: raw[key] for key in ("file", "line", "repository_id", "sha256")}
+            if row not in result:
+                result.append(row)
+        return result
     result: list[dict] = []
     seen: set[tuple[str, int | None]] = set()
     root = repo_root.resolve()
@@ -840,10 +856,12 @@ def _merge_evidence(left: list[dict], right: list[dict]) -> list[dict]:
     out: list[dict] = []
     seen: set[tuple] = set()
     for item in [*left, *right]:
-        key = (item.get("file"), item.get("line"))
+        key = (item.get("repository_id"), item.get("file"), item.get("line"))
         if key not in seen:
             seen.add(key)
             out.append(item)
+    if len(out) > 5 and any(row.get("repository_id") for row in out):
+        raise ValueError("Merged qualified boundary evidence exceeds its contract")
     return out[:5]
 
 
@@ -1256,6 +1274,120 @@ def normalize(
     atomic_write_json(destination or sidecar, result, sort_keys=False)
     _write_declaration_fingerprint(output_dir, fingerprint)
     return result, warnings
+
+
+def _normalize_assessment_boundaries(
+    scope, components: dict, candidates: list[dict], *, output_dir: Path, declarations: list[dict] | None = None
+) -> tuple[dict, list[str], dict]:
+    """Reuse canonical boundary normalization with qualified frozen sources.
+
+    The controller validates candidate coverage before calling this function.
+    Declarations are separately captured, qualified data; they cannot confirm
+    a boundary or supply a filesystem root.
+    """
+    from shared.assessment_sources import source_key
+    from validators.validate_assessment_architecture import validate_components
+
+    from contexts.multi_repo_analysis import contract
+
+    if Path(output_dir) != scope.output:
+        raise ValueError("Boundary normalization requires the admitted output directory")
+    scope.verify_unchanged()
+    validate_components(scope, components)
+    cards = {
+        row["id"]: {**row, "paths": [source_key(path) for path in row["paths"]]} for row in components["components"]
+    }
+    dropped: dict[str, str] = {}
+    consolidated, aliases, notes = _consolidate_candidates(
+        candidates, components=cards, repo_root=scope, dropped=dropped
+    )
+    warnings = list(notes)
+    detected = [
+        row
+        for raw in consolidated
+        if (
+            row := _normalize_row(
+                raw, repo_root=scope, components=cards, legacy_input=False, warnings=warnings, source="detected"
+            )
+        )
+    ]
+    declared = [
+        row
+        for raw in declarations or []
+        if (
+            row := _normalize_row(
+                raw, repo_root=scope, components=cards, legacy_input=False, warnings=warnings, source="repo-declared"
+            )
+        )
+    ]
+    merged = _merge_declarations(detected, declared, [], warnings)
+    _apply_axes(merged)
+    merged = _consolidate(merged, cards, warnings)
+    _assign_ids(merged, [], output_dir, warnings)
+    merged.sort(key=lambda row: _numeric_id(row["id"]))
+    document = {
+        "schema_version": 3,
+        "source_scope_sha256": components["source_scope_sha256"],
+        "trust_boundaries": merged,
+    }
+    jsonschema.Draft202012Validator(contract("fragments/trust-boundaries-v3.schema.json")).validate(document)
+    # Diagnostics remain explicit without giving provisional candidates public
+    # IDs or treating a discarded client-side crossing as a trust boundary.
+    warnings.extend(f"{key}: {reason}" for key, reason in sorted(dropped.items()))
+    scope.verify_unchanged()
+    return document, warnings, {"candidates": consolidated, "aliases": aliases, "dropped": dropped}
+
+
+def normalize_assessment_boundaries(
+    scope, components: dict, candidates: list[dict], *, output_dir: Path, declarations: list[dict] | None = None
+) -> tuple[dict, list[str]]:
+    document, warnings, _audit = _normalize_assessment_boundaries(
+        scope, components, candidates, output_dir=output_dir, declarations=declarations
+    )
+    return document, warnings
+
+
+def promote_assessment_boundaries(scope, components, assessment, candidate_doc, *, output_dir, declarations=None):
+    """Promote scoped candidates and retain the existing signal coverage audit."""
+    from model.finalize_component_inventory import component_inventory_fingerprint
+
+    from contexts.multi_repo_analysis import _comparison, contract
+
+    input_schema = contract("trust-boundary-assessment-input-v2.schema.json")
+    candidate_schema = contract("fragments/trust-boundary-candidates-v2.schema.json")
+    jsonschema.Draft202012Validator(input_schema).validate(assessment)
+    jsonschema.Draft202012Validator(candidate_schema).validate(candidate_doc)
+    for field in ("source_scope_sha256", "component_inventory_fingerprint", "assessment_input_fingerprint"):
+        if candidate_doc[field] != assessment[field]:
+            raise ValueError("Boundary candidates do not match their qualified crossing input")
+    if assessment["source_scope_sha256"] != scope.inventory()["scope_sha256"]:
+        raise ValueError("Boundary crossing input belongs to another assessment")
+    if assessment["component_inventory_fingerprint"] != component_inventory_fingerprint(components["components"]):
+        raise ValueError("Boundary crossing input refers to a stale component inventory")
+    fingerprint_body = {k: v for k, v in assessment.items() if k != "assessment_input_fingerprint"}
+    actual = (
+        "sha256:"
+        + hashlib.sha256(
+            json.dumps(fingerprint_body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        ).hexdigest()
+    )
+    if actual != assessment["assessment_input_fingerprint"]:
+        raise ValueError("Boundary crossing input changed after admission")
+    errors = fragment_invariant_errors(
+        "trust-boundary-candidates", _comparison(candidate_doc), context=_comparison(assessment)
+    )
+    if errors:
+        raise ValueError("Boundary candidates violate crossing coverage")
+    canonical, warnings, audit = _normalize_assessment_boundaries(
+        scope, components, candidate_doc["candidates"], output_dir=output_dir, declarations=declarations
+    )
+    coverage = _coverage_document(
+        assessment, candidate_doc, canonical, audit["candidates"], audit["aliases"], audit["dropped"]
+    )
+    coverage.update(schema_version=2, source_scope_sha256=assessment["source_scope_sha256"])
+    jsonschema.Draft202012Validator(contract("trust-boundary-coverage-v2.schema.json")).validate(coverage)
+    scope.verify_unchanged()
+    return canonical, coverage, warnings
 
 
 def _component_map(output_dir: Path) -> dict[str, dict]:
@@ -1898,6 +2030,14 @@ def _deployable_root(component_id: Any, components: dict[str, dict]) -> Any:
 
 def _evidence_line(repo_root: Path, entry: dict) -> str:
     """The single source line an evidence entry points at ("" when unreadable)."""
+    from runtime.multi_repo_scope import AssessmentScope, ScopeError
+
+    if isinstance(repo_root, AssessmentScope):
+        try:
+            piece = repo_root.read(entry["repository_id"], entry["file"], entry["line"], entry["line"])
+            return piece["lines"][0] + "\n" if piece["sha256"] == entry["sha256"] else ""
+        except (KeyError, ScopeError):
+            return ""
     file_name = entry.get("file")
     line_no = entry.get("line")
     if not isinstance(file_name, str) or not isinstance(line_no, int) or line_no < 1:
@@ -2130,7 +2270,9 @@ def _consolidate_candidates(
         point = candidate.get("enforcement_point")
         crossing_class = _crossing_class(candidate)
         if isinstance(point, str) and point.strip():
-            key = ("point", point.casefold(), crossing_class)
+            protected = candidate.get("from") if crossing_class == "egress" else candidate.get("to")
+            owners = tuple(sorted((components.get(protected) or {}).get("repository_ids") or []))
+            key = ("point", point.casefold(), crossing_class, owners)
         else:
             key = (
                 "crossing",
@@ -2153,10 +2295,16 @@ def _consolidate_candidates(
                 combined = list(survivor.get(field) or []) + list(other.get(field) or [])
                 survivor[field] = sorted(dict.fromkeys(combined))
             seen_evidence = {
-                (e.get("file"), e.get("line")) for e in survivor.get("evidence") or [] if isinstance(e, dict)
+                (e.get("repository_id"), e.get("file"), e.get("line"))
+                for e in survivor.get("evidence") or []
+                if isinstance(e, dict)
             }
             for entry in other.get("evidence") or []:
-                marker = (entry.get("file"), entry.get("line")) if isinstance(entry, dict) else None
+                marker = (
+                    (entry.get("repository_id"), entry.get("file"), entry.get("line"))
+                    if isinstance(entry, dict)
+                    else None
+                )
                 if marker and marker not in seen_evidence:
                     seen_evidence.add(marker)
                     survivor.setdefault("evidence", []).append(deepcopy(entry))
@@ -2268,98 +2416,12 @@ def _looks_inbound(repo_root: Path, candidate: dict) -> bool:
     return False
 
 
-def promote_candidates(
-    *,
-    repo_root: Path,
-    output_dir: Path,
-    candidates_path: Path,
-    assessment_input_path: Path,
-    prior_model: Path | None,
-) -> tuple[dict, dict]:
-    """Validate candidate coverage and promote candidates into the catalog.
-
-    The LLM-authored file is never consumed by downstream stages. Public IDs,
-    endpoint resolution, declaration merging, sources, and status remain owned
-    by ``normalize``.
-    """
-    candidate_doc = _read_json(candidates_path, None)
-    assessment = _read_json(assessment_input_path, None)
-    if not isinstance(candidate_doc, dict) or not isinstance(assessment, dict):
-        raise ValueError("candidate or assessment-input artifact is missing/malformed")
-    for document, schema_path in (
-        (candidate_doc, CANDIDATES_SCHEMA),
-        (assessment, ASSESSMENT_INPUT_SCHEMA),
-    ):
-        schema = json.loads(schema_path.read_text(encoding="utf-8"))
-        jsonschema.Draft202012Validator(schema).validate(document)
-
-    for field in ("component_inventory_fingerprint", "assessment_input_fingerprint"):
-        if candidate_doc[field] != assessment[field]:
-            raise ValueError(f"candidate {field} does not match immutable assessment input")
-
-    component_ids = {row["id"] for row in assessment["components"]}
+def _coverage_document(assessment, candidate_doc, canonical, candidates, candidate_alias, dropped_candidates):
+    """Reconcile dispositions with the existing canonical promotion outcome."""
+    candidate_by_key = {row["candidate_key"]: row for row in candidates}
     signal_by_id = {row["id"]: row for row in assessment["signals"]}
-    if len(signal_by_id) != len(assessment["signals"]):
-        raise ValueError("assessment input contains duplicate signal IDs")
-    candidates = candidate_doc["candidates"]
-    candidate_by_key = {row["candidate_key"]: row for row in candidates}
-    dispositions = candidate_doc["dispositions"]
-    disposition_by_signal = {row["signal_id"]: row for row in dispositions}
     mandatory = {sid for sid, row in signal_by_id.items() if row.get("mandatory")}
-
-    # The relational rules live in validate_fragment, so the authoring agent's
-    # mandated self-check enforces exactly what this gate enforces — see the
-    # docstring there for why they may not live here. Raising the first error
-    # preserves the wording callers and tests match on.
-    invariant_errors = fragment_invariant_errors("trust-boundary-candidates", candidate_doc, context=assessment)
-    if invariant_errors:
-        raise ValueError(invariant_errors[0])
-
-    dropped_candidates: dict[str, str] = {}
-    candidates, candidate_alias, consolidation_notes = _consolidate_candidates(
-        candidates,
-        components={row["id"]: row for row in assessment["components"]},
-        repo_root=repo_root,
-        dropped=dropped_candidates,
-    )
-    candidate_by_key = {row["candidate_key"]: row for row in candidates}
-    for note in consolidation_notes:
-        print(f"trust-boundary-consolidation: {note}", file=sys.stderr)
-
-    provisional_rows = []
-    for candidate in candidates:
-        row = {
-            key: deepcopy(candidate[key])
-            for key in ("name", "from", "to", "kind", "assumption", "evidence", "confidence")
-        }
-        # Carried, not dropped: without these the finished model cannot show why
-        # two crossings became one row, and the next run cannot reproduce the
-        # decision from `threat-model.yaml`.
-        for optional in ("enforcement_point", "confidence_basis", "covers_components", "assumption_legs"):
-            if candidate.get(optional):
-                row[optional] = deepcopy(candidate[optional])
-        row["evidence"] = _canonical_evidence(
-            repo_root,
-            row["evidence"],
-            [],
-            candidate["candidate_key"],
-        )
-        if row["confidence"] == "confirmed" and not row["evidence"]:
-            raise ValueError(
-                f"{candidate['candidate_key']} claims confirmed confidence without valid repository evidence"
-            )
-        provisional_rows.append(row)
-    provisional = {"schema_version": 2, "trust_boundaries": provisional_rows}
-    sidecar = output_dir / ".trust-boundaries.json"
-    canonical, _warnings = normalize(
-        repo_root=repo_root,
-        sidecar=sidecar,
-        prior_model=prior_model,
-        output_dir=output_dir,
-        raw_sidecar=provisional,
-        destination=sidecar,
-    )
-
+    disposition_by_signal = {row["signal_id"]: row for row in candidate_doc["dispositions"]}
     canonical_rows = canonical["trust_boundaries"]
     candidate_to_ids: dict[str, list[str]] = {}
     for key, candidate in candidate_by_key.items():
@@ -2478,6 +2540,102 @@ def promote_candidates(
         "signals": coverage_rows,
         "issues": issues,
     }
+    return coverage
+
+
+def promote_candidates(
+    *,
+    repo_root: Path,
+    output_dir: Path,
+    candidates_path: Path,
+    assessment_input_path: Path,
+    prior_model: Path | None,
+) -> tuple[dict, dict]:
+    """Validate candidate coverage and promote candidates into the catalog.
+
+    The LLM-authored file is never consumed by downstream stages. Public IDs,
+    endpoint resolution, declaration merging, sources, and status remain owned
+    by ``normalize``.
+    """
+    candidate_doc = _read_json(candidates_path, None)
+    assessment = _read_json(assessment_input_path, None)
+    if not isinstance(candidate_doc, dict) or not isinstance(assessment, dict):
+        raise ValueError("candidate or assessment-input artifact is missing/malformed")
+    for document, schema_path in (
+        (candidate_doc, CANDIDATES_SCHEMA),
+        (assessment, ASSESSMENT_INPUT_SCHEMA),
+    ):
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        jsonschema.Draft202012Validator(schema).validate(document)
+
+    for field in ("component_inventory_fingerprint", "assessment_input_fingerprint"):
+        if candidate_doc[field] != assessment[field]:
+            raise ValueError(f"candidate {field} does not match immutable assessment input")
+
+    component_ids = {row["id"] for row in assessment["components"]}
+    signal_by_id = {row["id"]: row for row in assessment["signals"]}
+    if len(signal_by_id) != len(assessment["signals"]):
+        raise ValueError("assessment input contains duplicate signal IDs")
+    candidates = candidate_doc["candidates"]
+    candidate_by_key = {row["candidate_key"]: row for row in candidates}
+    dispositions = candidate_doc["dispositions"]
+    disposition_by_signal = {row["signal_id"]: row for row in dispositions}
+    mandatory = {sid for sid, row in signal_by_id.items() if row.get("mandatory")}
+
+    # The relational rules live in validate_fragment, so the authoring agent's
+    # mandated self-check enforces exactly what this gate enforces — see the
+    # docstring there for why they may not live here. Raising the first error
+    # preserves the wording callers and tests match on.
+    invariant_errors = fragment_invariant_errors("trust-boundary-candidates", candidate_doc, context=assessment)
+    if invariant_errors:
+        raise ValueError(invariant_errors[0])
+
+    dropped_candidates: dict[str, str] = {}
+    candidates, candidate_alias, consolidation_notes = _consolidate_candidates(
+        candidates,
+        components={row["id"]: row for row in assessment["components"]},
+        repo_root=repo_root,
+        dropped=dropped_candidates,
+    )
+    candidate_by_key = {row["candidate_key"]: row for row in candidates}
+    for note in consolidation_notes:
+        print(f"trust-boundary-consolidation: {note}", file=sys.stderr)
+
+    provisional_rows = []
+    for candidate in candidates:
+        row = {
+            key: deepcopy(candidate[key])
+            for key in ("name", "from", "to", "kind", "assumption", "evidence", "confidence")
+        }
+        # Carried, not dropped: without these the finished model cannot show why
+        # two crossings became one row, and the next run cannot reproduce the
+        # decision from `threat-model.yaml`.
+        for optional in ("enforcement_point", "confidence_basis", "covers_components", "assumption_legs"):
+            if candidate.get(optional):
+                row[optional] = deepcopy(candidate[optional])
+        row["evidence"] = _canonical_evidence(
+            repo_root,
+            row["evidence"],
+            [],
+            candidate["candidate_key"],
+        )
+        if row["confidence"] == "confirmed" and not row["evidence"]:
+            raise ValueError(
+                f"{candidate['candidate_key']} claims confirmed confidence without valid repository evidence"
+            )
+        provisional_rows.append(row)
+    provisional = {"schema_version": 2, "trust_boundaries": provisional_rows}
+    sidecar = output_dir / ".trust-boundaries.json"
+    canonical, _warnings = normalize(
+        repo_root=repo_root,
+        sidecar=sidecar,
+        prior_model=prior_model,
+        output_dir=output_dir,
+        raw_sidecar=provisional,
+        destination=sidecar,
+    )
+
+    coverage = _coverage_document(assessment, candidate_doc, canonical, candidates, candidate_alias, dropped_candidates)
     schema = json.loads(COVERAGE_SCHEMA.read_text(encoding="utf-8"))
     jsonschema.Draft202012Validator(schema).validate(coverage)
     atomic_write_json(output_dir / ".trust-boundary-coverage.json", coverage, sort_keys=False)

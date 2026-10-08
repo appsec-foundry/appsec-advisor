@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/component-inventory-finalization-v2.schema.json",
+  "title": "Repository-qualified component finalization receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "component_inventory_fingerprint",
+    "component_ids",
+    "injected_component_ids",
+    "collapsed_duplicate_count",
+    "source_scope_sha256"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "component_inventory_fingerprint": {
+      "$ref": "https://appsec-advisor/schemas/component-inventory-finalization.schema.json#/properties/component_inventory_fingerprint"
+    },
+    "component_ids": {
+      "$ref": "https://appsec-advisor/schemas/component-inventory-finalization.schema.json#/properties/component_ids"
+    },
+    "injected_component_ids": {
+      "$ref": "https://appsec-advisor/schemas/component-inventory-finalization.schema.json#/properties/injected_component_ids"
+    },
+    "collapsed_duplicate_count": {
+      "$ref": "https://appsec-advisor/schemas/component-inventory-finalization.schema.json#/properties/collapsed_duplicate_count"
+    },
+    "source_scope_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  }
+}

@@ -676,7 +676,7 @@ def _count_source_files(repo_root: Path) -> int:
         return 0
 
 
-def resolve_repo_size_cap(cfg: dict, repo_root: Path) -> dict:
+def resolve_repo_size_cap(cfg: dict, repo_root: Path, *, source_count: int | None = None) -> dict:
     """B2c — flag large standard-depth repos (informational only).
 
     Triggers only when:
@@ -697,7 +697,7 @@ def resolve_repo_size_cap(cfg: dict, repo_root: Path) -> dict:
     """
     if cfg.get("assessment_depth") != "standard":
         return {}
-    src_count = _count_source_files(repo_root)
+    src_count = _count_source_files(repo_root) if source_count is None else source_count
     if src_count <= LARGE_REPO_SOURCE_FILE_THRESHOLD:
         return {}
     # Large repo: flag it (informational). We do NOT drop components —
@@ -2042,7 +2042,11 @@ def build_parser() -> argparse.ArgumentParser:
 # ---------------------------------------------------------------------------
 
 
-def resolve(argv: list[str], plugin_root: Path, *, create_output_dir: bool = True) -> dict:
+def resolve(
+    argv: list[str], plugin_root: Path, *, create_output_dir: bool = True, source_count: int | None = None
+) -> dict:
+    if source_count is not None and (type(source_count) is not int or not 0 <= source_count <= 320_000):
+        raise SystemExit("Error: invalid captured source count")
     parser = build_parser()
     ns = parser.parse_args(argv)
 
@@ -2177,13 +2181,17 @@ def resolve(argv: list[str], plugin_root: Path, *, create_output_dir: bool = Tru
     # B2c — repo-size auto-cap. Must run after resolve_paths so we have
     # the final repo_root value, and after resolve_assessment_depth so we
     # know the tier.
-    cfg.update(resolve_repo_size_cap(cfg, Path(cfg["repo_root"])))
+    cfg.update(resolve_repo_size_cap(cfg, Path(cfg["repo_root"]), source_count=source_count))
 
     # Orchestrator (session-model) recommendation — advisory, runs at ALL depths.
     # Surfaced in the pre-flight box and, interactively, an optional prompt
     # (compact full runtime). The user always makes the final choice; a divergent choice
     # requires a session restart (a running loop cannot switch its own model).
-    cfg.update(recommend_orchestrator_model(_count_source_files(Path(cfg["repo_root"]))))
+    cfg.update(
+        recommend_orchestrator_model(
+            _count_source_files(Path(cfg["repo_root"])) if source_count is None else source_count
+        )
+    )
 
     # (Removed 2026-06: the B2d large-repo reasoning-tier auto-downgrade.
     # Large repos are exactly where Opus reasoning pays off — better
@@ -2278,6 +2286,56 @@ def _preflight_status_line(cfg: dict) -> str:
     if has_model:
         return "📋 Existing threat model found — preparing a full re-assessment …"
     return "🔍 No prior threat model — preparing a full assessment …"
+
+
+def resolve_assessment(scope, argv: list[str], plugin_root: Path, *, model: str | None = None) -> dict:
+    """Resolve shared full-run settings without selecting a primary repository.
+
+    Admission belongs to the controller. Configuration uses each root's frozen
+    snapshot and a captured source count, so ordinary resolver Git helpers and
+    repository hooks cannot run on selected checkouts. Source grants are never
+    reconstructed from the returned configuration.
+    """
+    from analyzers.repo_profile import classify
+
+    from runtime.multi_repo_scope import AssessmentScope
+
+    if not isinstance(scope, AssessmentScope):
+        raise SystemExit("Error: combined configuration requires an admitted assessment scope")
+    parser = build_parser()
+    ns = parser.parse_args(argv)
+    if ns.repo or ns.output or ns.resume or ns.dry_run or ns.rerender or ns.rebuild or ns.incremental:
+        raise SystemExit("Error: combined scope and lifecycle flags belong to controller admission")
+    # Shared configuration is deliberately compared across every frozen root;
+    # choosing equivalent settings is not a first-root policy override.
+    source_count = sum(classify(path)[1] == "code" for repo in scope.repositories for path in repo.files)
+    transient = {"repo_root", "invocation_args"}
+    candidates = []
+    for repo in scope.repositories:
+        with scope.scanner_snapshot(repo.repository_id) as root:
+            cfg = resolve(
+                ["--repo", str(root), "--output", str(scope.output), "--full", *argv],
+                plugin_root,
+                create_output_dir=False,
+                source_count=source_count,
+            )
+        candidates.append({key: value for key, value in cfg.items() if key not in transient})
+    if any(cfg != candidates[0] for cfg in candidates[1:]):
+        raise SystemExit("Error: selected repositories have incompatible assessment-wide configuration")
+    cfg = candidates[0]
+    if model:
+        explicit = {"stride_model": ns.stride_model, "triage_model": ns.triage_model, "merger_model": ns.merger_model}
+        for key in tuple(cfg):
+            if key.endswith("_model") and key != "reasoning_model" and not explicit.get(key):
+                cfg[key] = model
+        cfg.update(apply_opus_ban(cfg, bool(cfg.get("opus_disabled") or cfg.get("disable_opus"))))
+    cfg.update(
+        assessment_scope="multiple-repositories",
+        source_scope_sha256=scope.inventory()["scope_sha256"],
+        repository_ids=sorted(repo.repository_id for repo in scope.repositories),
+        invocation_args=" ".join(argv),
+    )
+    return cfg
 
 
 def _compute_total_stages(cfg: dict) -> int:

@@ -42,6 +42,7 @@ if not __package__:
 
 
 import argparse
+import copy
 import json
 import sys
 from pathlib import Path
@@ -631,8 +632,33 @@ def build_threat_dragon(
     tool_version: str = DEFAULT_TOOL_VERSION,
     diagram_title: str | None = None,
 ) -> tuple[dict, list[str]]:
-    """Return (threat-dragon document, warnings). Never raises on thin input."""
+    """Return the export and warnings; qualified models fail on invalid inputs."""
     warnings: list[str] = []
+    qualified = isinstance(data.get("meta"), dict) and data["meta"].get("schema_version") == 2
+    if qualified:
+        from shared.assessment_sources import location_label, source_rows
+        from validators.validate_intermediate import validate_threat_model_output
+
+        if not validate_threat_model_output(data)[0]:
+            raise ValueError("Cannot export an invalid multi-repository model")
+        original = data
+        data = copy.deepcopy(data)
+        seen = set()
+        for row in source_rows(data):
+            if id(row) not in seen:
+                row["file"] = location_label(row, original)
+                seen.add(id(row))
+        labels = {row["repository_id"]: row["label"] for row in data["source_inventory"]["repositories"]}
+        for component in data["components"]:
+            component["description"] = (
+                "Source repositories: "
+                + ", ".join(labels[rid] for rid in component["repository_ids"])
+                + ". "
+                + (component.get("description") or "")
+            )
+        warnings.append(
+            "Repository-qualified locations are text; source hashes and checkout mappings remain in canonical YAML"
+        )
     meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
 
     project = _text(meta.get("project")) or _text(data.get("project")) or "Threat model"
@@ -980,7 +1006,11 @@ def main() -> None:
         meta = data.get("meta") or {}
         tool_version = (meta.get("plugin_version") if isinstance(meta, dict) else None) or DEFAULT_TOOL_VERSION
 
-    doc, warnings = build_threat_dragon(data, tool_version=tool_version, diagram_title=args.diagram_title)
+    try:
+        doc, warnings = build_threat_dragon(data, tool_version=tool_version, diagram_title=args.diagram_title)
+    except ValueError:
+        print("ERROR: invalid multi-repository model; Threat Dragon was not written", file=sys.stderr)
+        sys.exit(2)
 
     out_path = Path(args.output)
     try:

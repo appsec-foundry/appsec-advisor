@@ -1,0 +1,1120 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://appsec-advisor/schemas/threat-model.output-v2.schema.yaml
+title: Repository-qualified threat-model.yaml output
+description: Version 2 retains the version-1 output contracts and adds an admitted source inventory and repository-qualified
+  paths and evidence.
+type: object
+additionalProperties: true
+required:
+- meta
+- components
+- assets
+- attack_surface
+- trust_boundaries
+- security_controls
+- threats
+- mitigations
+- source_inventory
+properties:
+  actors:
+    $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/actors
+  meta:
+    type: object
+    additionalProperties: true
+    required:
+    - schema_version
+    - project
+    - generated
+    - mode
+    - model
+    properties:
+      schema_version:
+        const: 2
+      project:
+        $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/project
+      generated:
+        $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/generated
+      analysis_duration_seconds:
+        $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/analysis_duration_seconds
+      mode:
+        $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/mode
+      open_user_registration:
+        $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/open_user_registration
+      opt_in_actors_not_enabled:
+        $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/opt_in_actors_not_enabled
+      open_registration_resolution:
+        type: object
+        additionalProperties: false
+        required:
+        - open
+        - disputed
+        - reason
+        - evidence
+        properties:
+          open:
+            $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/open_registration_resolution/properties/open
+          disputed:
+            $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/open_registration_resolution/properties/disputed
+          reason:
+            $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/open_registration_resolution/properties/reason
+          evidence:
+            type: array
+            maxItems: 8
+            uniqueItems: true
+            items:
+              type: object
+              additionalProperties: false
+              required:
+              - file
+              - line
+              - repository_id
+              - sha256
+              properties:
+                file:
+                  $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/open_registration_resolution/properties/evidence/items/properties/file
+                line:
+                  $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/open_registration_resolution/properties/evidence/items/properties/line
+                repository_id:
+                  type: string
+                  pattern: ^repo-[a-f0-9]{16}$
+                sha256:
+                  type: string
+                  pattern: ^[a-f0-9]{64}$
+        allOf:
+        - if:
+            $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/open_registration_resolution/allOf/0/if
+          then:
+            $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/open_registration_resolution/allOf/0/then
+        - if:
+            $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/open_registration_resolution/allOf/1/if
+          then:
+            $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/open_registration_resolution/allOf/1/then
+      enrichment_pass:
+        $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/enrichment_pass
+      open_registration_source:
+        $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/open_registration_source
+      analyst:
+        $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/analyst
+      model:
+        $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/model
+      compliance_scope:
+        $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/compliance_scope
+      asset_classification:
+        $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/asset_classification
+      repo_url:
+        $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/repo_url
+      team_owner:
+        $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/team_owner
+      git:
+        $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/git
+      id_counters:
+        $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/id_counters
+      boundary_selection:
+        $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/boundary_selection
+      accepted_risks:
+        $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta/properties/accepted_risks
+  changelog:
+    $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/changelog
+  components:
+    type: array
+    items:
+      type: object
+      additionalProperties: true
+      required:
+      - id
+      - name
+      - paths
+      - repository_ids
+      properties:
+        id:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/components/items/properties/id
+        name:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/components/items/properties/name
+        description:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/components/items/properties/description
+        paths:
+          type: array
+          minItems: 1
+          maxItems: 20000
+          uniqueItems: true
+          items:
+            $ref: https://appsec-advisor/schemas/fragments/components-v2.schema.json#/$defs/source_path
+        sensitive_data:
+          type: array
+          maxItems: 12
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - category
+            - basis
+            - handling
+            - evidence
+            allOf:
+            - if:
+                $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/components/items/properties/sensitive_data/items/allOf/0/if
+              then:
+                $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/components/items/properties/sensitive_data/items/allOf/0/then
+            properties:
+              category:
+                $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/components/items/properties/sensitive_data/items/properties/category
+              basis:
+                $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/components/items/properties/sensitive_data/items/properties/basis
+              handling:
+                $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/components/items/properties/sensitive_data/items/properties/handling
+              evidence:
+                type: array
+                minItems: 1
+                maxItems: 8
+                items:
+                  type: object
+                  additionalProperties: false
+                  required:
+                  - file
+                  - line
+                  - repository_id
+                  - sha256
+                  properties:
+                    file:
+                      $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/components/items/properties/sensitive_data/items/properties/evidence/items/properties/file
+                    line:
+                      $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/components/items/properties/sensitive_data/items/properties/evidence/items/properties/line
+                    repository_id:
+                      type: string
+                      pattern: ^repo-[a-f0-9]{16}$
+                    sha256:
+                      type: string
+                      pattern: ^[a-f0-9]{64}$
+        capabilities:
+          type: array
+          maxItems: 8
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - capability
+            - evidence
+            properties:
+              capability:
+                $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/components/items/properties/capabilities/items/properties/capability
+              evidence:
+                type: array
+                minItems: 1
+                maxItems: 4
+                items:
+                  type: object
+                  additionalProperties: false
+                  required:
+                  - file
+                  - line
+                  - repository_id
+                  - sha256
+                  properties:
+                    file:
+                      $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/components/items/properties/capabilities/items/properties/evidence/items/properties/file
+                    line:
+                      $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/components/items/properties/capabilities/items/properties/evidence/items/properties/line
+                    repository_id:
+                      type: string
+                      pattern: ^repo-[a-f0-9]{16}$
+                    sha256:
+                      type: string
+                      pattern: ^[a-f0-9]{64}$
+        complexity:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/components/items/properties/complexity
+        tier:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/components/items/properties/tier
+        repository_ids:
+          type: array
+          minItems: 1
+          maxItems: 16
+          uniqueItems: true
+          items:
+            type: string
+            pattern: ^repo-[a-f0-9]{16}$
+  external_entities:
+    type: array
+    maxItems: 64
+    items:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - kind
+      - description
+      - evidence
+      dependentSchemas:
+        access:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/external_entities/items/dependentSchemas/access
+        service_roles:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/external_entities/items/dependentSchemas/service_roles
+      properties:
+        id:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/external_entities/items/properties/id
+        name:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/external_entities/items/properties/name
+        kind:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/external_entities/items/properties/kind
+        access:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/external_entities/items/properties/access
+        service_roles:
+          type: array
+          maxItems: 4
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - role
+            - evidence
+            properties:
+              role:
+                $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/external_entities/items/properties/service_roles/items/properties/role
+              evidence:
+                type: array
+                minItems: 1
+                maxItems: 4
+                items:
+                  type: object
+                  additionalProperties: false
+                  required:
+                  - file
+                  - line
+                  - repository_id
+                  - sha256
+                  properties:
+                    file:
+                      $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/external_entities/items/properties/service_roles/items/properties/evidence/items/properties/file
+                    line:
+                      $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/external_entities/items/properties/service_roles/items/properties/evidence/items/properties/line
+                    repository_id:
+                      type: string
+                      pattern: ^repo-[a-f0-9]{16}$
+                    sha256:
+                      type: string
+                      pattern: ^[a-f0-9]{64}$
+        description:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/external_entities/items/properties/description
+        declared:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/external_entities/items/properties/declared
+        evidence:
+          type: array
+          minItems: 1
+          maxItems: 8
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - file
+            - line
+            - repository_id
+            - sha256
+            properties:
+              file:
+                $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/external_entities/items/properties/evidence/items/properties/file
+              line:
+                $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/external_entities/items/properties/evidence/items/properties/line
+              repository_id:
+                type: string
+                pattern: ^repo-[a-f0-9]{16}$
+              sha256:
+                type: string
+                pattern: ^[a-f0-9]{64}$
+  data_flows:
+    type: array
+    items:
+      type: object
+      additionalProperties: true
+      required:
+      - id
+      - from
+      - to
+      - label
+      - protocol
+      - data_classification
+      properties:
+        id:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/data_flows/items/properties/id
+        from:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/data_flows/items/properties/from
+        to:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/data_flows/items/properties/to
+        from_entity:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/data_flows/items/properties/from_entity
+        to_entity:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/data_flows/items/properties/to_entity
+        label:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/data_flows/items/properties/label
+        diagram_label:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/data_flows/items/properties/diagram_label
+        protocol:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/data_flows/items/properties/protocol
+        authentication:
+          type: object
+          additionalProperties: false
+          required:
+          - scheme
+          - scope
+          - evidence
+          properties:
+            scheme:
+              $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/data_flows/items/properties/authentication/properties/scheme
+            scope:
+              $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/data_flows/items/properties/authentication/properties/scope
+            transport:
+              $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/data_flows/items/properties/authentication/properties/transport
+            flow:
+              $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/data_flows/items/properties/authentication/properties/flow
+            factors:
+              $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/data_flows/items/properties/authentication/properties/factors
+            evidence:
+              type: array
+              minItems: 1
+              maxItems: 8
+              items:
+                type: object
+                additionalProperties: false
+                required:
+                - file
+                - line
+                - repository_id
+                - sha256
+                properties:
+                  file:
+                    $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/data_flows/items/properties/authentication/properties/evidence/items/properties/file
+                  line:
+                    $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/data_flows/items/properties/authentication/properties/evidence/items/properties/line
+                  repository_id:
+                    type: string
+                    pattern: ^repo-[a-f0-9]{16}$
+                  sha256:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+          allOf:
+          - if:
+              $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/data_flows/items/properties/authentication/allOf/0/if
+            then:
+              $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/data_flows/items/properties/authentication/allOf/0/then
+            else:
+              not:
+                required:
+                - factors
+          - if:
+              required:
+              - flow
+            then:
+              $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/data_flows/items/properties/authentication/allOf/1/then
+        access_group:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/data_flows/items/properties/access_group
+        interaction:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/data_flows/items/properties/interaction
+        protocol_group:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/data_flows/items/properties/protocol_group
+        data_classification:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/data_flows/items/properties/data_classification
+        direction:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/data_flows/items/properties/direction
+        evidence:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - file
+            - repository_id
+            - sha256
+            properties:
+              file:
+                $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/data_flows/items/properties/evidence/items/properties/file
+              line:
+                $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/data_flows/items/properties/evidence/items/properties/line
+              repository_id:
+                type: string
+                pattern: ^repo-[a-f0-9]{16}$
+              sha256:
+                type: string
+                pattern: ^[a-f0-9]{64}$
+  business_context_trace:
+    $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/business_context_trace
+  requirements_compliance:
+    $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/requirements_compliance
+  requirements_provenance:
+    $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/requirements_provenance
+  abuse_case_analysis:
+    description: Canonical deterministic result of abuse-case matching and step verification. Rendering fields and icons are
+      excluded.
+    type: object
+    additionalProperties: false
+    required:
+    - status
+    - reason
+    - cases
+    - catalog_evaluated
+    properties:
+      status:
+        $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/status
+      reason:
+        $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/reason
+      cases:
+        type: array
+        items:
+          type: object
+          additionalProperties: false
+          required:
+          - id
+          - title
+          - source
+          - actor
+          - goal
+          - prerequisite
+          - combined_risk
+          - chain_verdict
+          - verification_complete
+          - unverified_steps
+          - matched_finding_ids
+          - blocking_mitigation_ids
+          - steps
+          properties:
+            id:
+              $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/cases/items/properties/id
+            title:
+              $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/cases/items/properties/title
+            source:
+              $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/cases/items/properties/source
+            actor:
+              $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/cases/items/properties/actor
+            goal:
+              $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/cases/items/properties/goal
+            prerequisite:
+              $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/cases/items/properties/prerequisite
+            combined_risk:
+              $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/cases/items/properties/combined_risk
+            chain_verdict:
+              $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/cases/items/properties/chain_verdict
+            verification_complete:
+              $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/cases/items/properties/verification_complete
+            unverified_steps:
+              $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/cases/items/properties/unverified_steps
+            matched_finding_ids:
+              $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/cases/items/properties/matched_finding_ids
+            blocking_mitigation_ids:
+              $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/cases/items/properties/blocking_mitigation_ids
+            steps:
+              type: array
+              minItems: 1
+              items:
+                type: object
+                additionalProperties: false
+                required:
+                - step
+                - outcome
+                - verdict
+                - finding_id
+                - evidence
+                - controls_found
+                - unverified
+                properties:
+                  step:
+                    $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/cases/items/properties/steps/items/properties/step
+                  outcome:
+                    $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/cases/items/properties/steps/items/properties/outcome
+                  verdict:
+                    $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/cases/items/properties/steps/items/properties/verdict
+                  finding_id:
+                    $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/cases/items/properties/steps/items/properties/finding_id
+                  evidence:
+                    oneOf:
+                    - $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/cases/items/properties/steps/items/properties/evidence/oneOf/0
+                    - type: object
+                      additionalProperties: false
+                      required:
+                      - file
+                      - line
+                      - repository_id
+                      - sha256
+                      properties:
+                        file:
+                          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/cases/items/properties/steps/items/properties/evidence/oneOf/1/properties/file
+                        line:
+                          type: integer
+                          minimum: 1
+                        repository_id:
+                          type: string
+                          pattern: ^repo-[a-f0-9]{16}$
+                        sha256:
+                          type: string
+                          pattern: ^[a-f0-9]{64}$
+                  controls_found:
+                    $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/cases/items/properties/steps/items/properties/controls_found
+                  unverified:
+                    $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/cases/items/properties/steps/items/properties/unverified
+      catalog_evaluated:
+        $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/catalog_evaluated
+  tier_root_causes:
+    $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/tier_root_causes
+  assets:
+    type: array
+    items:
+      type: object
+      additionalProperties: true
+      required:
+      - name
+      - classification
+      properties:
+        name:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/assets/items/properties/name
+        component_refs:
+          type: array
+          maxItems: 32
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - component_id
+            - relation
+            - evidence
+            properties:
+              component_id:
+                $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/assets/items/properties/component_refs/items/properties/component_id
+              relation:
+                $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/assets/items/properties/component_refs/items/properties/relation
+              evidence:
+                type: array
+                minItems: 1
+                maxItems: 8
+                items:
+                  type: object
+                  additionalProperties: false
+                  required:
+                  - file
+                  - line
+                  - repository_id
+                  - sha256
+                  properties:
+                    file:
+                      $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/assets/items/properties/component_refs/items/properties/evidence/items/properties/file
+                    line:
+                      $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/assets/items/properties/component_refs/items/properties/evidence/items/properties/line
+                    repository_id:
+                      type: string
+                      pattern: ^repo-[a-f0-9]{16}$
+                    sha256:
+                      type: string
+                      pattern: ^[a-f0-9]{64}$
+        classification:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/assets/items/properties/classification
+        description:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/assets/items/properties/description
+  attack_surface:
+    $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/attack_surface
+  trust_boundaries:
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - kind
+      - assumption
+      - evidence
+      - confidence
+      - resolution_status
+      - sources
+      properties:
+        id:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/trust_boundaries/items/properties/id
+        name:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/trust_boundaries/items/properties/name
+        from:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/trust_boundaries/items/properties/from
+        to:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/trust_boundaries/items/properties/to
+        kind:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/trust_boundaries/items/properties/kind
+        assumption:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/trust_boundaries/items/properties/assumption
+        assumption_legs:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/trust_boundaries/items/properties/assumption_legs
+        evidence:
+          type: array
+          maxItems: 5
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - file
+            - repository_id
+            - sha256
+            properties:
+              file:
+                $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/trust_boundaries/items/properties/evidence/items/properties/file
+              line:
+                $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/trust_boundaries/items/properties/evidence/items/properties/line
+              repository_id:
+                type: string
+                pattern: ^repo-[a-f0-9]{16}$
+              sha256:
+                type: string
+                pattern: ^[a-f0-9]{64}$
+        confidence:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/trust_boundaries/items/properties/confidence
+        resolution_status:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/trust_boundaries/items/properties/resolution_status
+        sources:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/trust_boundaries/items/properties/sources
+        declaration_key:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/trust_boundaries/items/properties/declaration_key
+        surface:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/trust_boundaries/items/properties/surface
+        transition:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/trust_boundaries/items/properties/transition
+        enforcement_point:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/trust_boundaries/items/properties/enforcement_point
+        confidence_basis:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/trust_boundaries/items/properties/confidence_basis
+        covers_components:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/trust_boundaries/items/properties/covers_components
+        assumption_verdict:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/trust_boundaries/items/properties/assumption_verdict
+        adjacent_finding_ids:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/trust_boundaries/items/properties/adjacent_finding_ids
+      allOf:
+      - if:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/trust_boundaries/items/allOf/0/if
+        then:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/trust_boundaries/items/allOf/0/then
+      - if:
+          required:
+          - declaration_key
+        then:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/trust_boundaries/items/allOf/1/then
+  security_controls:
+    $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/security_controls
+  security_architecture:
+    $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/security_architecture
+  threats:
+    type: array
+    items:
+      type: object
+      additionalProperties: true
+      required:
+      - id
+      - component
+      - stride
+      - title
+      - scenario
+      - likelihood
+      - impact
+      - risk
+      properties:
+        id:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/id
+        component:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/component
+        stride:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/stride
+        title:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/title
+        affected_parameter:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/affected_parameter
+        evidence_tier:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/evidence_tier
+        evidence_basis:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/evidence_basis
+        scenario:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/scenario
+        attack_steps:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/attack_steps
+        evidence_summary:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/evidence_summary
+        evidence_prose:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/evidence_prose
+        impact_description:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/impact_description
+        impact_summary:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/impact_summary
+        business_context_basis:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/business_context_basis
+        likelihood:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/likelihood
+        impact:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/impact
+        risk:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/risk
+        risk_before_policy:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/risk_before_policy
+        owasp_llm_ids:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/owasp_llm_ids
+        owasp_asi_ids:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/owasp_asi_ids
+        actor_ids:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/actor_ids
+        primary_actor:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/primary_actor
+        base_likelihood:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/base_likelihood
+        actor_adjusted_likelihood:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/actor_adjusted_likelihood
+        _status:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/_status
+        cwe:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/cwe
+        evidence:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+            required:
+            - file
+            - repository_id
+            - sha256
+            properties:
+              file:
+                $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/evidence/items/properties/file
+              line:
+                type: integer
+                minimum: 1
+              repository_id:
+                type: string
+                pattern: ^repo-[a-f0-9]{16}$
+              sha256:
+                type: string
+                pattern: ^[a-f0-9]{64}$
+        mechanism_trace:
+          description: Source and sink evidence retained from a confirmed STRIDE input-to-sink finding.
+          type: object
+          additionalProperties: false
+          required:
+          - input
+          - sink
+          - connection
+          - control
+          properties:
+            input:
+              type: object
+              additionalProperties: false
+              required:
+              - file
+              - line
+              - repository_id
+              - sha256
+              properties:
+                file:
+                  $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/mechanism_trace/properties/input/properties/file
+                line:
+                  $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/mechanism_trace/properties/input/properties/line
+                repository_id:
+                  type: string
+                  pattern: ^repo-[a-f0-9]{16}$
+                sha256:
+                  type: string
+                  pattern: ^[a-f0-9]{64}$
+            sink:
+              type: object
+              additionalProperties: false
+              required:
+              - file
+              - line
+              - repository_id
+              - sha256
+              properties:
+                file:
+                  $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/mechanism_trace/properties/sink/properties/file
+                line:
+                  $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/mechanism_trace/properties/sink/properties/line
+                repository_id:
+                  type: string
+                  pattern: ^repo-[a-f0-9]{16}$
+                sha256:
+                  type: string
+                  pattern: ^[a-f0-9]{64}$
+            connection:
+              $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/mechanism_trace/properties/connection
+            control:
+              type: object
+              additionalProperties: false
+              required:
+              - status
+              - location
+              - explanation
+              properties:
+                status:
+                  $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/mechanism_trace/properties/control/properties/status
+                location:
+                  type: object
+                  additionalProperties: false
+                  required:
+                  - file
+                  - line
+                  - repository_id
+                  - sha256
+                  properties:
+                    file:
+                      $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/mechanism_trace/properties/control/properties/location/properties/file
+                    line:
+                      $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/mechanism_trace/properties/control/properties/location/properties/line
+                    repository_id:
+                      type: string
+                      pattern: ^repo-[a-f0-9]{16}$
+                    sha256:
+                      type: string
+                      pattern: ^[a-f0-9]{64}$
+                explanation:
+                  $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/mechanism_trace/properties/control/properties/explanation
+        boundary_refs:
+          type: array
+          maxItems: 2
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - boundary_id
+            - origin_component_id
+            - rationale
+            - evidence_locations
+            properties:
+              boundary_id:
+                $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/boundary_refs/items/properties/boundary_id
+              origin_component_id:
+                $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/boundary_refs/items/properties/origin_component_id
+              rationale:
+                $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/boundary_refs/items/properties/rationale
+              leg:
+                $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/boundary_refs/items/properties/leg
+              evidence_locations:
+                type: array
+                minItems: 1
+                maxItems: 3
+                items:
+                  type: object
+                  additionalProperties: false
+                  required:
+                  - file
+                  - repository_id
+                  - sha256
+                  properties:
+                    file:
+                      $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/boundary_refs/items/properties/evidence_locations/items/properties/file
+                    line:
+                      type: integer
+                      minimum: 1
+                    repository_id:
+                      type: string
+                      pattern: ^repo-[a-f0-9]{16}$
+                    sha256:
+                      type: string
+                      pattern: ^[a-f0-9]{64}$
+        controls_in_place:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/controls_in_place
+        mitigation_ids:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/mitigation_ids
+        violated_requirements:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/violated_requirements
+        triage_flags:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/triage_flags
+        evidence_check:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/evidence_check
+        evidence_flags:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/evidence_flags
+        controls_absent_evidence:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/controls_absent_evidence
+        prior_finding_ref:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/prior_finding_ref
+        remediation_reference:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/remediation_reference
+        source:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/source
+        rule_id:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/rule_id
+        hypothesis_id:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/hypothesis_id
+        architectural_theme:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/architectural_theme
+        generic_threat_title:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/generic_threat_title
+        cvss_v4:
+          oneOf:
+          - $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/cvss_v4/oneOf/0
+          - $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threats/items/properties/cvss_v4/oneOf/1
+  mitigations:
+    $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/mitigations
+  critical_findings:
+    $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/critical_findings
+  verdict:
+    $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/verdict
+  run_statistics:
+    $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/run_statistics
+  cross_repo_dependencies:
+    $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/cross_repo_dependencies
+  meta_findings:
+    $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/meta_findings
+  weaknesses:
+    type:
+    - array
+    - 'null'
+    items:
+      type: object
+      additionalProperties: true
+      required:
+      - id
+      - weakness_class
+      - kind
+      - title
+      - statement
+      - severity
+      - severity_basis
+      - observable_backing
+      properties:
+        id:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/weaknesses/items/properties/id
+        weakness_class:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/weaknesses/items/properties/weakness_class
+        mechanism_id:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/weaknesses/items/properties/mechanism_id
+        kind:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/weaknesses/items/properties/kind
+        title:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/weaknesses/items/properties/title
+        statement:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/weaknesses/items/properties/statement
+        severity:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/weaknesses/items/properties/severity
+        severity_basis:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/weaknesses/items/properties/severity_basis
+        implementation_strategy:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/weaknesses/items/properties/implementation_strategy
+        observable_backing:
+          type: object
+          additionalProperties: true
+          properties:
+            absent_control_signal:
+              $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/weaknesses/items/properties/observable_backing/properties/absent_control_signal
+            practice_evidence:
+              type: array
+              items:
+                type: object
+                properties:
+                  file:
+                    $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/weaknesses/items/properties/observable_backing/properties/practice_evidence/items/properties/file
+                  line:
+                    type: integer
+                    minimum: 1
+                  repository_id:
+                    type: string
+                    pattern: ^repo-[a-f0-9]{16}$
+                  sha256:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                required:
+                - repository_id
+                - sha256
+                - file
+        affected_components:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/weaknesses/items/properties/affected_components
+        instances:
+          type: array
+          items:
+            type: object
+            required:
+            - id
+            - repository_id
+            - sha256
+            - file
+            properties:
+              id:
+                $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/weaknesses/items/properties/instances/items/properties/id
+              file:
+                $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/weaknesses/items/properties/instances/items/properties/file
+              line:
+                type: integer
+                minimum: 1
+              basis:
+                $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/weaknesses/items/properties/instances/items/properties/basis
+              poc_hint:
+                $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/weaknesses/items/properties/instances/items/properties/poc_hint
+              repository_id:
+                type: string
+                pattern: ^repo-[a-f0-9]{16}$
+              sha256:
+                type: string
+                pattern: ^[a-f0-9]{64}$
+  threat_hypotheses:
+    type:
+    - array
+    - 'null'
+    items:
+      type: object
+      additionalProperties: true
+      required:
+      - id
+      - source_hypothesis_id
+      - rule_id
+      - title
+      - threat_category_id
+      - cwe
+      - proof_state
+      - confidence
+      properties:
+        id:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threat_hypotheses/items/properties/id
+        source_hypothesis_id:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threat_hypotheses/items/properties/source_hypothesis_id
+        rule_id:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threat_hypotheses/items/properties/rule_id
+        title:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threat_hypotheses/items/properties/title
+        architectural_theme:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threat_hypotheses/items/properties/architectural_theme
+        generic_threat_title:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threat_hypotheses/items/properties/generic_threat_title
+        threat_category_id:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threat_hypotheses/items/properties/threat_category_id
+        stride:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threat_hypotheses/items/properties/stride
+        cwe:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threat_hypotheses/items/properties/cwe
+        component_id:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threat_hypotheses/items/properties/component_id
+        domain:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threat_hypotheses/items/properties/domain
+        surface:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threat_hypotheses/items/properties/surface
+        proof_state:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threat_hypotheses/items/properties/proof_state
+        confidence:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threat_hypotheses/items/properties/confidence
+        linked_control_ids:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threat_hypotheses/items/properties/linked_control_ids
+        linked_threat_ids:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threat_hypotheses/items/properties/linked_threat_ids
+        promoted_threat_id:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threat_hypotheses/items/properties/promoted_threat_id
+        evidence:
+          type: array
+          items:
+            type: object
+            required:
+            - file
+            - line
+            - signal
+            - repository_id
+            - sha256
+            properties:
+              file:
+                $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threat_hypotheses/items/properties/evidence/items/properties/file
+              line:
+                type: integer
+                minimum: 1
+              signal:
+                $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threat_hypotheses/items/properties/evidence/items/properties/signal
+              repository_id:
+                type: string
+                pattern: ^repo-[a-f0-9]{16}$
+              sha256:
+                type: string
+                pattern: ^[a-f0-9]{64}$
+        validation_objective:
+          $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/threat_hypotheses/items/properties/validation_objective
+  source_inventory:
+    $ref: https://appsec-advisor/schemas/multi-repo-scope.schema.json

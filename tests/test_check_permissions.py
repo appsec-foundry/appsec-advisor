@@ -20,6 +20,14 @@ from pathlib import Path
 
 import pytest
 
+
+def test_multi_repository_state_targets_are_documented_under_existing_output_scope():
+    text = (Path(__file__).resolve().parents[1] / "data/required-permissions.yaml").read_text()
+    assert ".assessment-state.json" in text
+    assert ".assessment-work/" in text
+    assert ".appsec-lock.guard" in text
+
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 

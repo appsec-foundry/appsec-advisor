@@ -1233,6 +1233,8 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
     derived_capabilities = _finding_capabilities(reported, component_capabilities, component_ids)
     capability_severity = _capability_severity(reported, component_capabilities, component_ids)
     nodes = {}
+    repositories = (d.get("source_inventory") or {}).get("repositories", [])
+    repository_codes = {row["repository_id"]: f"R{i}" for i, row in enumerate(repositories, 1)}
     for comp in comps:
         cid = comp["id"]
         zk = _zone_key(comp)
@@ -1251,6 +1253,14 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
             "exposed": cid in exposed or "internet" in [str(z).lower() for z in comp.get("deployment_zones") or []],
             "complex": comp.get("complexity") == "complex",
             "technology": _technology(comp),
+            "repository_lines": _legend_wrap(
+                "Repos: " + ", ".join(repository_codes[rid] for rid in comp.get("repository_ids", [])),
+                NODE_W - 52,
+                FS,
+            )
+            if repositories and comp.get("repository_ids")
+            else [],
+            "repository_ids": comp.get("repository_ids", []) if repositories else [],
             "capabilities": _capability_display(
                 _capability_rows(
                     [*(comp.get("capabilities") or []), *derived_capabilities.get(cid, [])],
@@ -1334,6 +1344,7 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
             108
             + 13 * (node["title_lines"] - 2)
             + (TECH_H if node["technology"] else 0)
+            + 12 * len(node["repository_lines"])
             + _pill_height(node["capabilities"], NODE_W - 44)
             + 12 * len(_weak_lines(node["weak"], NODE_W - 32))
             + (12 if node["weak_more_high"] else 0)
@@ -2966,6 +2977,17 @@ def _render(
             c.text(x + w / 2 - 6, title_y + i * 13, line, size=11, weight="bold", track=title_key)
         c.add("</g>")
         ty = title_y + len(lines) * 13 + 2
+        if n.get("repository_lines"):
+            repo_key = f"node repositories {n['id']}"
+            c.label_owners[repo_key] = n["id"]
+            c.add(
+                f'<g data-repository-owner="{_esc(n["id"])}" '
+                f'data-repository-ids="{_esc(" ".join(n["repository_ids"]))}">'
+            )
+            for line in n["repository_lines"]:
+                c.text(x + w / 2 - 6, ty + 2, line, size=FS, fill=MUTED, track=repo_key)
+                ty += 12
+            c.add("</g>")
         if n.get("technology"):
             tech = n["technology"]
             tech_key = f"node technology {n['id']}"
@@ -3140,6 +3162,20 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
         c.text(lx + lw / 2, 17, title, size=10.5, fill="#ffffff", weight="bold")
         c.legend_content = []
         return LEGEND_HEAD + LEGEND_CONTENT_GAP + 9
+
+    repositories = (d.get("source_inventory") or {}).get("repositories", [])
+    if repositories:
+        y = head("repositories", "Source repositories")
+        for i, repository in enumerate(repositories, 1):
+            c.add(f'<g data-repository-id="{_esc(repository["repository_id"])}">')
+            for line in _legend_wrap(f"R{i} · {repository['label']}", lw - 20, 9):
+                c.text(lx + 10, y, line, size=9, anchor="start")
+                y += 12
+            c.add("</g>")
+            y += 5
+        for line in _legend_wrap("Repository ownership does not establish a trust boundary.", lw - 20, 8.5):
+            c.text(lx + 10, y, line, size=8.5, anchor="start", fill=MUTED)
+            y += 12
 
     y = head("notation", "Notation")
     c.rect(lx + 10, y - 8, 22, 14, fill="#ffffff", stroke=INK, sw=1.4)
@@ -4082,13 +4118,19 @@ def _self_check(state):
 
 def build_figure1_dfd_svg(yaml_data, attack_paths_data, attack_taxonomy, meta=None, actor_labels=None, *, detail=True):
     """Figure 1 for a threat model. Returns "" when there is nothing to draw."""
+    from shared.assessment_sources import presentation_model
+
     if not (yaml_data.get("components") or []):
+        # A legacy empty diagram remains supported. A v2 inventory cannot lose
+        # every selected component and silently publish an empty figure.
+        presentation_model(yaml_data)
         return ""
     if detail:
         from renderers.figure1_detail import needs_views
 
         if needs_views(yaml_data):
             return check_diagram(yaml_data, attack_paths_data, attack_taxonomy, actor_labels, detail=True)[0]
+    yaml_data = presentation_model(yaml_data)
     scenarios, actors = scenarios_from_attack_paths(
         yaml_data, attack_paths_data or {}, attack_taxonomy or {}, actor_labels
     )
@@ -4235,6 +4277,9 @@ def check_diagram(
     yaml_data, attack_paths_data, attack_taxonomy, actor_labels=None, scenarios=None, actors=None, *, detail=True
 ):
     """Render and verify; returns (svg, problems). Used by the tests and the CLI."""
+    from shared.assessment_sources import presentation_model
+
+    yaml_data = presentation_model(yaml_data)
     if scenarios is None:
         scenarios, actors = scenarios_from_attack_paths(
             yaml_data, attack_paths_data or {}, attack_taxonomy or {}, actor_labels

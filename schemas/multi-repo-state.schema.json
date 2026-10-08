@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/multi-repo-state.schema.json",
+  "title": "Owned multi-repository assessment lifecycle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "identity", "started_at", "expires_at", "status", "accounting", "deliverables"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string", "pattern": "^assessment-[0-9a-f]{32}$"},
+    "identity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["scope_sha256", "configuration_sha256", "runtime_sha256", "limits"],
+      "properties": {
+        "scope_sha256": {"$ref": "#/$defs/hash"},
+        "configuration_sha256": {"$ref": "#/$defs/hash"},
+        "runtime_sha256": {"$ref": "#/$defs/hash"},
+        "limits": {
+          "type": "object", "additionalProperties": false,
+          "required": ["max_usd", "call_usd", "max_calls", "timeout_s"],
+          "properties": {
+            "max_usd": {"type": "number", "exclusiveMinimum": 0},
+            "call_usd": {"type": "number", "exclusiveMinimum": 0},
+            "max_calls": {"type": "integer", "minimum": 1, "maximum": 47256},
+            "timeout_s": {"type": "integer", "minimum": 1, "maximum": 43200}
+          }
+        }
+      }
+    },
+    "started_at": {"type": "integer", "minimum": 1},
+    "expires_at": {"type": "integer", "minimum": 1},
+    "status": {"enum": ["running", "interrupted", "failed", "complete"]},
+    "accounting": {
+      "type": "object", "additionalProperties": false,
+      "required": ["calls", "spent_usd", "unavailable"],
+      "properties": {
+        "calls": {"type": "integer", "minimum": 0, "maximum": 47256},
+        "spent_usd": {"type": "number", "minimum": 0},
+        "unavailable": {"type": "boolean"}
+      }
+    },
+    "deliverables": {
+      "type": "object", "maxProperties": 64,
+      "propertyNames": {"pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+      "additionalProperties": {"$ref": "#/$defs/hash"}
+    }
+  },
+  "$defs": {"hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+}

@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/multi-repo-discovery.schema.json",
+  "title": "Repository-local architecture observations for combined assessment",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "repository_id", "components", "interfaces"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "repository_id": {"type": "string", "pattern": "^repo-[a-f0-9]{16}$"},
+    "components": {
+      "type": "array", "minItems": 1, "maxItems": 100,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "name", "description", "tier", "paths"],
+        "properties": {
+          "id": {"$ref": "#/$defs/id"},
+          "name": {"type": "string", "minLength": 1, "maxLength": 80},
+          "description": {"type": "string", "minLength": 1, "maxLength": 1000},
+          "tier": {"enum": ["client", "application", "data"]},
+          "paths": {"type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true,
+                    "items": {"type": "string", "minLength": 1, "maxLength": 512}}
+        }
+      }
+    },
+    "interfaces": {
+      "type": "array", "maxItems": 256,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "component_id", "role", "protocol", "address", "deployment", "operation", "evidence"],
+        "properties": {
+          "id": {"$ref": "#/$defs/id"},
+          "component_id": {"$ref": "#/$defs/id"},
+          "role": {"enum": ["request", "serve", "publish", "consume"]},
+          "protocol": {"enum": ["HTTP", "HTTPS", "gRPC", "AMQP", "Kafka"]},
+          "address": {"type": ["string", "null"], "minLength": 1, "maxLength": 240},
+          "deployment": {"type": ["string", "null"], "minLength": 1, "maxLength": 120},
+          "operation": {"type": "string", "minLength": 1, "maxLength": 120},
+          "evidence": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"$ref": "#/$defs/evidence"}}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,63}$"},
+    "evidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["file", "line", "quote"],
+      "properties": {
+        "file": {"type": "string", "minLength": 1, "maxLength": 512},
+        "line": {"type": "integer", "minimum": 1},
+        "quote": {"type": "string", "minLength": 1, "maxLength": 1000, "pattern": "^[^\\r\\n]+$"}
+      }
+    }
+  }
+}

@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/fragments/trust-boundary-candidates-v2.schema.json",
+  "title": "Untrusted trust-boundary analyst candidates",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "component_inventory_fingerprint",
+    "assessment_input_fingerprint",
+    "candidates",
+    "dispositions",
+    "source_scope_sha256"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "component_inventory_fingerprint": {
+      "$ref": "https://appsec-advisor/schemas/fragments/trust-boundary-candidates.schema.json#/properties/component_inventory_fingerprint"
+    },
+    "assessment_input_fingerprint": {
+      "$ref": "https://appsec-advisor/schemas/fragments/trust-boundary-candidates.schema.json#/properties/assessment_input_fingerprint"
+    },
+    "candidates": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "candidate_key",
+          "name",
+          "from",
+          "to",
+          "kind",
+          "assumption",
+          "evidence",
+          "confidence",
+          "covered_signal_ids",
+          "covered_flow_ids"
+        ],
+        "properties": {
+          "candidate_key": {
+            "$ref": "https://appsec-advisor/schemas/fragments/trust-boundary-candidates.schema.json#/properties/candidates/items/properties/candidate_key"
+          },
+          "name": {
+            "$ref": "https://appsec-advisor/schemas/fragments/trust-boundary-candidates.schema.json#/properties/candidates/items/properties/name"
+          },
+          "from": {
+            "$ref": "https://appsec-advisor/schemas/fragments/trust-boundary-candidates.schema.json#/properties/candidates/items/properties/from"
+          },
+          "to": {
+            "$ref": "https://appsec-advisor/schemas/fragments/trust-boundary-candidates.schema.json#/properties/candidates/items/properties/to"
+          },
+          "kind": {
+            "$ref": "https://appsec-advisor/schemas/fragments/trust-boundary-candidates.schema.json#/properties/candidates/items/properties/kind"
+          },
+          "enforcement_point": {
+            "$ref": "https://appsec-advisor/schemas/fragments/trust-boundary-candidates.schema.json#/properties/candidates/items/properties/enforcement_point"
+          },
+          "assumption": {
+            "$ref": "https://appsec-advisor/schemas/fragments/trust-boundary-candidates.schema.json#/properties/candidates/items/properties/assumption"
+          },
+          "evidence": {
+            "type": "array",
+            "maxItems": 5,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "file",
+                "line",
+                "repository_id",
+                "sha256"
+              ],
+              "properties": {
+                "file": {
+                  "$ref": "https://appsec-advisor/schemas/fragments/trust-boundary-candidates.schema.json#/properties/candidates/items/properties/evidence/items/properties/file"
+                },
+                "line": {
+                  "$ref": "https://appsec-advisor/schemas/fragments/trust-boundary-candidates.schema.json#/properties/candidates/items/properties/evidence/items/properties/line"
+                },
+                "repository_id": {
+                  "type": "string",
+                  "pattern": "^repo-[a-f0-9]{16}$"
+                },
+                "sha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              }
+            }
+          },
+          "confidence": {
+            "$ref": "https://appsec-advisor/schemas/fragments/trust-boundary-candidates.schema.json#/properties/candidates/items/properties/confidence"
+          },
+          "covered_signal_ids": {
+            "$ref": "https://appsec-advisor/schemas/fragments/trust-boundary-candidates.schema.json#/properties/candidates/items/properties/covered_signal_ids"
+          },
+          "covered_flow_ids": {
+            "$ref": "https://appsec-advisor/schemas/fragments/trust-boundary-candidates.schema.json#/properties/candidates/items/properties/covered_flow_ids"
+          },
+          "assumption_legs": {
+            "$ref": "https://appsec-advisor/schemas/fragments/trust-boundary-candidates.schema.json#/properties/candidates/items/properties/assumption_legs"
+          }
+        }
+      }
+    },
+    "dispositions": {
+      "$ref": "https://appsec-advisor/schemas/fragments/trust-boundary-candidates.schema.json#/properties/dispositions"
+    },
+    "source_scope_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  }
+}

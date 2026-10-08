@@ -86,11 +86,14 @@ if not __package__:
     _sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
 
 
+import fcntl
 import os
 import re
 import shutil
+import stat
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from runtime.event_log import format_line
@@ -623,7 +626,55 @@ def _blocked_message(lock_path: Path, info: dict) -> str:
     return "\n".join(lines)
 
 
+class LockBusy(ValueError):
+    """Another process is changing or holding this assessment's lock."""
+
+
+@contextmanager
+def serialization_guard(output_dir: Path):
+    """Serialize lock mutations, including a synchronous headless holder.
+
+    The guard inode persists while the ordinary liveness file may be removed.
+    All command-line writers use it; a multi-repository controller holds it
+    until its scoped work finishes. It carries no source or model authority.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        descriptor = os.open(output_dir / ".appsec-lock.guard", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    except OSError:
+        raise LockBusy("Assessment lock guard cannot be safely opened") from None
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            raise LockBusy("Assessment lock guard must be a regular file without hard links")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise LockBusy("Assessment output is locked by another process") from None
+        yield
+    finally:
+        os.close(descriptor)
+
+
 def main(argv: list[str]) -> int:
+    # The legacy argument parser remains authoritative. Only a valid single
+    # lock-path invocation enters this serialization boundary.
+    arguments = [
+        arg
+        for arg in argv[1:]
+        if arg not in {"--reset-dirs", "--heartbeat"} and not arg.startswith(("--phase=", "--step=", "--run-id="))
+    ]
+    if len(arguments) != 1:
+        return _main_unlocked(argv)
+    try:
+        with serialization_guard(Path(arguments[0]).parent):
+            return _main_unlocked(argv)
+    except LockBusy:
+        print("LOCK_BLOCKED: assessment output is locked by another process")
+        return 1
+
+
+def _main_unlocked(argv: list[str]) -> int:
     # Parse args: positional lock path + optional flags. ``--phase=<P>`` and
     # ``--step=<S>`` are key=value flags consumed by the heartbeat path.
     bare_flags = {"--reset-dirs", "--heartbeat"}

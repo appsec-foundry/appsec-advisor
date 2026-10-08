@@ -22,6 +22,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -303,6 +304,105 @@ def validate_receipt(output_dir: Path, repo_root: Path | None = None) -> dict[st
     if receipt["component_inventory_fingerprint"] != actual_fp:
         raise ValueError("component inventory fingerprint changed after finalization")
     return receipt
+
+
+def finalize_assessment(scope, discoveries: list[dict]) -> tuple[dict, dict]:
+    """Run existing component finalization against each frozen source tree.
+
+    Local reconciliation, language/capability refinement and path/ORM guards
+    remain authoritative. Namespace their results only after those guards.
+    The returned v2 inventory uses the existing component handoff identity;
+    legacy consumers reject it until explicitly migrated. Nothing is written
+    to a selected source checkout or the assessment's publication directory.
+    """
+    from contexts.reconcile_multi_repo_architecture import _id, reconcile
+    from orchestrator.build_stride_dispatch_manifest import _path_owns
+    from validators.validate_assessment_architecture import (
+        COMPONENT_SCHEMA as V2_COMPONENT_SCHEMA,
+    )
+    from validators.validate_assessment_architecture import (
+        MAX_SOURCE_REFERENCES,
+        ROOT,
+        validate_components,
+        validate_schema,
+    )
+    from validators.validate_assessment_architecture import (
+        RECEIPT_SCHEMA as V2_RECEIPT_SCHEMA,
+    )
+
+    scope.verify_unchanged()
+    reconcile(scope, discoveries)  # Requires one valid discovery per selected root.
+    by_repo = {d["repository_id"]: d for d in discoveries}
+    permitted = _load_json(ROOT / "schemas" / V2_COMPONENT_SCHEMA)["properties"]["components"]["items"]["properties"]
+    components, injected_ids = [], []
+    collapsed = 0
+    reference_count = 0
+    for repo in sorted(scope.repositories, key=lambda r: r.repository_id):
+        with (
+            scope.scanner_snapshot(repo.repository_id) as root,
+            tempfile.TemporaryDirectory(prefix="appsec-finalize-") as directory,
+        ):
+            output = Path(directory)
+            atomic_write_json(
+                output / ".components.json",
+                {"schema_version": 1, "components": by_repo[repo.repository_id]["components"]},
+            )
+            local, receipt = finalize(root, output)
+        collapsed += receipt["collapsed_duplicate_count"]
+        injected_ids.extend(_id("component", repo.repository_id, cid) for cid in receipt["injected_component_ids"])
+        hashes = {p: hashlib.sha256(data).hexdigest() for p, data in repo.files.items()}
+        for original in local["components"]:
+            qualified_paths = []
+            literal_paths = {p for p in original["paths"] if p in repo.files}
+            injected_patterns = [p for p in original["paths"] if p not in repo.files]
+            for path in sorted(repo.files):
+                if path not in literal_paths and not _path_owns(injected_patterns, path):
+                    continue
+                reference_count += 1
+                if reference_count > MAX_SOURCE_REFERENCES:
+                    raise ValueError("Reconciled components exceed the source-reference limit")
+                qualified_paths.append({"repository_id": repo.repository_id, "path": path, "sha256": hashes[path]})
+            row = {key: value for key, value in original.items() if key in permitted}
+            row.update(
+                id=_id("component", repo.repository_id, original["id"]),
+                local_id=original["id"],
+                repository_ids=[repo.repository_id],
+                paths=qualified_paths,
+            )
+
+            def qualify_evidence(value):
+                if isinstance(value, dict):
+                    if "file" in value:
+                        relative = value["file"]
+                        if relative not in repo.files:
+                            raise ValueError("Reconciled evidence is outside captured source")
+                        value.update(repository_id=repo.repository_id, sha256=hashes[relative])
+                    for child in value.values():
+                        qualify_evidence(child)
+                elif isinstance(value, list):
+                    for child in value:
+                        qualify_evidence(child)
+
+            qualify_evidence(row)
+            components.append(row)
+    components.sort(key=lambda c: c["id"])
+    payload = {
+        "schema_version": 2,
+        "source_scope_sha256": scope.inventory()["scope_sha256"],
+        "components": components,
+    }
+    validate_components(scope, payload)
+    receipt = {
+        "schema_version": 2,
+        "source_scope_sha256": payload["source_scope_sha256"],
+        "component_inventory_fingerprint": component_inventory_fingerprint(components),
+        "component_ids": [c["id"] for c in components],
+        "injected_component_ids": sorted(injected_ids),
+        "collapsed_duplicate_count": collapsed,
+    }
+    validate_schema(receipt, V2_RECEIPT_SCHEMA)
+    scope.verify_unchanged()
+    return payload, receipt
 
 
 def main(argv: list[str] | None = None) -> int:
