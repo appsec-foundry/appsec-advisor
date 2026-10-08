@@ -358,7 +358,9 @@ def test_component_exposure_without_finding_ref_does_not_elevate(tmp_path: Path)
     assert not any(flag["type"] == "severity_reconciliation" for flag in flags["flags"])
 
 
-def test_inferred_external_boundary_ref_is_rejected_before_ranking(tmp_path: Path) -> None:
+def test_inferred_external_boundary_ref_is_kept_but_never_elevates(tmp_path: Path) -> None:
+    """TB-14: the reference stays so the inferred boundary remains refutable,
+    and elevation still requires a confirmed boundary."""
     _write_yaml(
         tmp_path / "threat-model.yaml",
         _external_boundary_yaml(confidence="inferred"),
@@ -369,8 +371,9 @@ def test_inferred_external_boundary_ref_is_rejected_before_ranking(tmp_path: Pat
     assert res.returncode == 0, res.stderr
     finding = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())["threats"][0]
     assert finding["effective_severity"] == "Medium"
+    assert finding["boundary_refs"]
     flags = json.loads((tmp_path / ".triage-flags.json").read_text())
-    assert flags["ranking"]["reconciliation_summary"]["boundary_refs_rejected_before_ranking"] == 1
+    assert flags["ranking"]["reconciliation_summary"]["boundary_refs_rejected_before_ranking"] == 0
 
 
 def test_external_boundary_elevation_is_recomputed_and_stale_flag_removed(tmp_path: Path) -> None:
