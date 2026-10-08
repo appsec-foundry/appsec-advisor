@@ -1088,9 +1088,45 @@ def check_unmasked_secrets(md_path: Path, output_dir: Path | None = None) -> Rep
                 f"{target.name}: {hit.render()} — mask the value "
                 "(tokens: first 4 chars + ****; passwords: **** plus length only)"
             )
+    report.issues.extend(_known_secret_value_issues(targets, output_dir))
     if not report.issues:
         report.ok = 1
     return report
+
+
+def _known_secret_value_issues(targets: list[Path], output_dir: Path | None) -> list[str]:
+    """Exact-value leaks of secrets the run itself knows about.
+
+    The pattern scan cannot see a raw value standing in prose. The redaction
+    pass masks every value from ``known_secret_values``; checking the same set
+    here means a value it missed fails the gate instead of shipping.
+    """
+    if output_dir is None:
+        return []
+    try:
+        cfg = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8")) or {}
+    except (OSError, ValueError):
+        return []
+    repo_root = cfg.get("repo_root") if isinstance(cfg, dict) else None
+    if not isinstance(repo_root, str) or not repo_root:
+        return []
+    from validators.redact_known_secrets import known_secret_values, unmasked_occurrences
+
+    known = known_secret_values(Path(repo_root), output_dir)
+    issues: list[str] = []
+    for target in targets:
+        try:
+            text = target.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for value, mask in known.items():
+            count = unmasked_occurrences(text, value)
+            if count:
+                issues.append(
+                    f"{target.name}: known secret value {mask} appears {count}x unmasked — "
+                    "run validators/redact_known_secrets.py before this gate"
+                )
+    return issues
 
 
 # The composer's `Violates:` line, quoting the configured catalog: label plus a

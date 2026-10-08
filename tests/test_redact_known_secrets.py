@@ -226,3 +226,97 @@ def test_credential_context_does_not_reach_across_a_line_break() -> None:
     same_line = "token=local-insecure-password"
     out, count = R._replace_in_credential_context(same_line, "local-insecure-password", "MASK")
     assert count == 1, "a real single-line assignment must still be redacted"
+
+
+# A key passed straight into a call has no assignment or token shape, so the
+# source walk cannot find it; the finding that cites its line can.
+CALL_ARG_SECRET = "Qx7vR2mT9kLp4WzN"
+
+
+def _finding_repo(tmp_path: Path, source: str, name: str = "lib/crypto.js") -> Path:
+    repo = tmp_path / "repo"
+    path = repo / name
+    path.parent.mkdir(parents=True)
+    path.write_text(source, encoding="utf-8")
+    return repo
+
+
+def _yaml_model(out: Path, cwe: str, file: str, line: int) -> None:
+    out.mkdir(parents=True, exist_ok=True)
+    model = {
+        "threats": [{"id": "T-001", "title": "Hardcoded key", "cwe": cwe, "evidence": [{"file": file, "line": line}]}]
+    }
+    (out / "threat-model.yaml").write_text(yaml.safe_dump(model), encoding="utf-8")
+
+
+def test_call_argument_secret_cited_by_a_finding_is_redacted(tmp_path: Path) -> None:
+    repo = _finding_repo(
+        tmp_path, f"const crypto = require('crypto')\nconst h = crypto.createHmac('sha256', '{CALL_ARG_SECRET}')\n"
+    )
+    out = tmp_path / "out"
+    _yaml_model(out, "CWE-798", "lib/crypto.js", 2)
+    (out / "threat-model.md").write_text(
+        f"The HMAC key is the literal {CALL_ARG_SECRET}, used with sha256.\n", encoding="utf-8"
+    )
+    assert CALL_ARG_SECRET not in R.collect_source_secrets(repo), "precondition: the source walk misses this form"
+
+    assert R.main(["--repo-root", str(repo), "--output-dir", str(out)]) == 0
+
+    md = (out / "threat-model.md").read_text(encoding="utf-8")
+    assert CALL_ARG_SECRET not in md
+    assert "sha256" in md, "the algorithm name on the same line must stay"
+    assert CALL_ARG_SECRET not in (out / "threat-model.yaml").read_text(encoding="utf-8")
+
+
+def test_python_key_cited_by_a_merged_instance_is_collected(tmp_path: Path) -> None:
+    value = "Zk3pW8qLm2Vx9RtB4n"
+    repo = _finding_repo(tmp_path, f"import hmac\ndigest = hmac.new(b'{value}', msg, 'sha256')\n", "app/sign.py")
+    out = tmp_path / "out"
+    out.mkdir()
+    merged = {"threats": [{"t_id": "T-004", "cwe": "CWE-321", "instances": [{"file": "app/sign.py", "line": 2}]}]}
+    (out / ".threats-merged.json").write_text(json.dumps(merged), encoding="utf-8")
+
+    assert value in R.collect_finding_secrets(repo, out)
+
+
+def test_cited_line_neighbours_and_other_weakness_classes_are_not_collected(tmp_path: Path) -> None:
+    line = (
+        f"call('Content-Security-Policy', 'utf-8', './lib/config-store', "
+        f"'https://example.test/a1b2c3', 'sha256', '{CALL_ARG_SECRET}')\n"
+    )
+    repo = _finding_repo(tmp_path, line)
+    out = tmp_path / "out"
+
+    _yaml_model(out, "CWE-798", "lib/crypto.js", 1)
+    assert set(R.collect_finding_secrets(repo, out)) == {CALL_ARG_SECRET}
+
+    _yaml_model(out, "CWE-89", "lib/crypto.js", 1)
+    assert R.collect_finding_secrets(repo, out) == {}, "only secret-management findings name a secret"
+
+
+def test_evidence_outside_the_repository_is_not_read(tmp_path: Path) -> None:
+    (tmp_path / "outside.js").write_text(f"k('{CALL_ARG_SECRET}')\n", encoding="utf-8")
+    repo = _finding_repo(tmp_path, "const x = 1\n")
+    out = tmp_path / "out"
+    _yaml_model(out, "CWE-798", "../outside.js", 1)
+
+    assert R.collect_finding_secrets(repo, out) == {}
+
+
+def test_unmasked_secrets_gate_checks_the_same_known_values(tmp_path: Path) -> None:
+    import validators.qa_checks as Q
+
+    repo = _finding_repo(tmp_path, f"const h = crypto.createHmac('sha256', '{CALL_ARG_SECRET}')\n")
+    out = tmp_path / "out"
+    _yaml_model(out, "CWE-798", "lib/crypto.js", 1)
+    (out / ".skill-config.json").write_text(json.dumps({"repo_root": str(repo)}), encoding="utf-8")
+    md = out / "threat-model.md"
+    md.write_text(f"The key is {CALL_ARG_SECRET}.\n", encoding="utf-8")
+
+    before = Q.check_unmasked_secrets(md, out)
+    assert before.ok == 0 and before.issues
+    assert all(CALL_ARG_SECRET not in issue for issue in before.issues), "the gate must not echo the value"
+
+    assert R.main(["--repo-root", str(repo), "--output-dir", str(out)]) == 0
+    after = Q.check_unmasked_secrets(md, out)
+    assert after.ok == 1, after.issues

@@ -30,6 +30,14 @@ the pass rewrites every artifact and cannot be reviewed per occurrence:
 Conservative by design: only values >= 8 chars that are not already masked are
 redacted, and the source walk honours ``data/scan-excludes.yaml``.
 
+The source walk only sees values in a form the pattern scanner matches. A key
+passed straight into a call (``hmac('sha256', '<literal>')``) has no assignment
+or token shape, yet the analysis itself cites it as a hardcoded secret, and the
+report quoted it unmasked while redaction and the gate both passed (2026-10-08).
+``known_secret_values`` therefore also takes the secret-shaped literals at the
+evidence lines of every secret-management finding. The ``unmasked_secrets`` gate
+checks the same set, so it cannot pass a value this pass does not know.
+
 Usage:
     validators/redact_known_secrets.py --repo-root <repo> --output-dir <out> [--write-scan-json]
 """
@@ -46,6 +54,7 @@ if not __package__:
 
 import argparse
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -53,6 +62,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import analyzers.scan_excludes as scan_excludes  # noqa: E402
+from analyzers.weakness_classifier import classify_threat, load_weakness_classes  # noqa: E402
 
 from validators.secret_scan import (  # noqa: E402
     _PROSE_VOWEL_RE,
@@ -174,6 +184,140 @@ def collect_source_secrets(repo_root: Path) -> dict[str, str]:
     return secrets
 
 
+# The weakness cluster whose findings name a committed secret; its CWE list is
+# data/weakness-classes.yaml, not a copy here.
+_SECRET_CLUSTER = "secret_management"
+_FINDING_SOURCES = ("threat-model.yaml", ".threats-merged.json")
+_STRING_LITERAL_RE = re.compile(r"""(?<![\w])[bBrRuU]{0,2}(["'`])((?:\\.|(?!\1)[^\\\n])+)\1""")
+_LITERAL_MIN_LEN = 12
+_LITERAL_MIN_ENTROPY = 3.0
+# Letters joined by separators read as an identifier, header or module name.
+_IDENTIFIER_SHAPED_RE = re.compile(r"^[A-Za-z]+(?:[-_.][A-Za-z]+)*$")
+
+
+def _shannon_entropy(value: str) -> float:
+    counts = {c: value.count(c) for c in set(value)}
+    return -sum(n / len(value) * math.log2(n / len(value)) for n in counts.values())
+
+
+def _is_secret_shaped_literal(value: str) -> bool:
+    """Whether a string literal on a cited line can be a committed secret.
+
+    The line already carries a hardcoded-secret finding, so this only has to
+    separate the value from its neighbours on that line: algorithm names,
+    encodings, header names, module paths and URLs.
+    """
+    if len(value) < _LITERAL_MIN_LEN or any(c.isspace() for c in value):
+        return False
+    if _value_is_masked(value) or _is_word_shaped(value) or _IDENTIFIER_SHAPED_RE.match(value):
+        return False
+    if "://" in value or value.startswith(("./", "../", "/")):
+        return False
+    return _shannon_entropy(value) >= _LITERAL_MIN_ENTROPY
+
+
+def _finding_records(output_dir: Path) -> list[dict]:
+    records: list[dict] = []
+    for name in _FINDING_SOURCES:
+        path = output_dir / name
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+            if name.endswith(".json"):
+                data = json.loads(text)
+            else:
+                import yaml
+
+                data = yaml.safe_load(text)
+        except (OSError, ValueError):
+            continue
+        threats = data.get("threats") if isinstance(data, dict) else None
+        records.extend(t for t in threats or [] if isinstance(t, dict))
+    return records
+
+
+def _evidence_locations(threat: dict) -> set[tuple[str, int]]:
+    out: set[tuple[str, int]] = set()
+    evidence = threat.get("evidence")
+    entries = [evidence] if isinstance(evidence, dict) else list(evidence or [])
+    entries += list(threat.get("instances") or [])
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        file, line = entry.get("file"), entry.get("line")
+        if isinstance(file, str) and file.strip() and isinstance(line, int) and line > 0:
+            out.add((file.strip(), line))
+    return out
+
+
+def _source_line(repo_root: Path, rel: str, line_no: int, excludes: dict, cap: int) -> str | None:
+    """The cited line, read only from a regular file inside the repository."""
+    root = repo_root.resolve()
+    try:
+        path = (root / rel).resolve()
+        path.relative_to(root)
+    except (OSError, ValueError):
+        return None
+    rel_posix = path.relative_to(root).as_posix()
+    if scan_excludes.is_excluded(rel_posix, excludes) or scan_excludes.is_assessment_artifact(rel_posix, root):
+        return None
+    try:
+        if not path.is_file() or path.stat().st_size > cap:
+            return None
+        with path.open(encoding="utf-8", errors="replace") as fh:
+            for idx, line in enumerate(fh, start=1):
+                if idx == line_no:
+                    return line
+    except OSError:
+        return None
+    return None
+
+
+def collect_finding_secrets(repo_root: Path, output_dir: Path) -> dict[str, str]:
+    """``{raw_value: masked_value}`` for the secret-shaped string literals at the
+    evidence lines of every finding in the secret-management weakness cluster."""
+    vocab = load_weakness_classes()
+    excludes = scan_excludes.load_excludes()
+    cap = scan_excludes.max_file_bytes(excludes)
+    secrets: dict[str, str] = {}
+    seen: set[tuple[str, int]] = set()
+    for threat in _finding_records(output_dir):
+        if classify_threat(threat, vocab, warn=False) != _SECRET_CLUSTER:
+            continue
+        for location in _evidence_locations(threat) - seen:
+            seen.add(location)
+            line = _source_line(repo_root, location[0], location[1], excludes, cap)
+            if line is None:
+                continue
+            for match in _STRING_LITERAL_RE.finditer(line):
+                value = match.group(2)
+                if _is_secret_shaped_literal(value):
+                    secrets.setdefault(value, _masked(value))
+    return secrets
+
+
+def known_secret_values(repo_root: Path, output_dir: Path) -> dict[str, str]:
+    """Every secret value the run knows about: source values in a scanner-matched
+    form plus literals the analysis cited as hardcoded secrets. The redaction
+    pass and the ``unmasked_secrets`` gate both use this one set."""
+    if not repo_root.is_dir():
+        return {}
+    secrets = collect_source_secrets(repo_root)
+    for value, mask in collect_finding_secrets(repo_root, output_dir).items():
+        secrets.setdefault(value, mask)
+    return secrets
+
+
+def unmasked_occurrences(text: str, value: str) -> int:
+    """How many occurrences of ``value`` the redaction pass would mask in ``text``."""
+    if value not in text:
+        return 0
+    if _is_word_shaped(value):
+        return _replace_in_credential_context(text, value, "")[1]
+    return text.count(value)
+
+
 def redact_artifacts(output_dir: Path, secrets: dict[str, str]) -> dict:
     """Replace each known secret value in every artifact. Returns a report."""
     redacted: dict[str, int] = {}
@@ -261,7 +405,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.write(f"redact_known_secrets: no output dir {output_dir} — skipping\n")
         return 0
 
-    secrets = collect_source_secrets(repo_root) if repo_root.is_dir() else {}
+    secrets = known_secret_values(repo_root, output_dir)
     report = redact_artifacts(output_dir, secrets)
     (output_dir / ".secret-redaction.json").write_text(
         json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
