@@ -265,17 +265,18 @@ def _boundary_gaps(d, nodes, tbs):
 
 
 def _local_boundaries(nodes, tbs, gaps):
-    """Trust boundaries no column line shows, keyed by the drawn node they guard.
+    """Network trust boundaries no column line shows, keyed by the drawn node they guard.
 
-    A boundary between components of one column, or inside one component, has
-    no gap to mark; the overview places a local marker on its target (the entry
-    it guards), else on its source. Internal interfaces are not trust boundaries
-    and never get one. A boundary whose nodes are not drawn stays catalogue-only.
+    A network crossing between components of one column has no gap to mark; the
+    overview places a local marker on its target (the entry it guards), else on
+    its source. The overview stays a network view: in-process trust changes and
+    internal interfaces get no marker and remain in the detail view and the
+    catalogue. A boundary whose nodes are not drawn stays catalogue-only.
     """
     lined = {tid for ids in gaps.values() for tid in ids}
     local = collections.defaultdict(list)
     for t in tbs:
-        if _internal_interface(t) or t["id"] in lined:
+        if _internal_interface(t) or t["id"] in lined or _boundary_surface(t) != "network":
             continue
         guarded = next(
             (end for end in (t.get("to"), t.get("from")) if end not in (None, "external") and end in nodes),
@@ -284,6 +285,13 @@ def _local_boundaries(nodes, tbs, gaps):
         if guarded is not None and nodes[guarded].get("kind") != "ext":
             local[guarded].append(t["id"])
     return {nid: sorted(ids, key=_tb_num) for nid, ids in sorted(local.items())}
+
+
+def _boundary_surface(row):
+    """Stored crossing surface, or the one a legacy row's ``kind`` implies."""
+    if row.get("surface") in {"network", "in-process", "build-pipeline"}:
+        return row["surface"]
+    return {"process": "in-process", "build": "build-pipeline"}.get(row.get("kind"), "network")
 
 
 def _local_marker_label(rows):
@@ -2771,7 +2779,7 @@ def _render(
     n_comp = sum(n["kind"] != "ext" for n in nodes.values()) + sum(
         n["kind"] != "ext" for group in dropped.values() for n in group
     )
-    boundary_label = _boundary_count_label(tbs)
+    boundary_label = _boundary_count_label(tbs, interfaces=not d.get("_overview"))
     threat_total = sum(risk_distribution_counts(d).values())
     # Figure 1a keeps the model-wide tally the Management Summary shows (RA-29) and says so.
     threat_label = f"{threat_total} threats in the model" if d.get("_runtime_view") else f"{threat_total} threats"

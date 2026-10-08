@@ -12,11 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - The Threat Analyst checks concrete threat hypotheses against selected files or directories at a Git revision, with evidence and explicit unresolved outcomes.
+- Figure 1 marks network trust boundaries between components of one column, and Figure 1b shows the build trust boundaries its CI, input and artifact elements evidence.
 
 ### Fixed
 
 - Threat analysis reports unfulfilled evidence requests, rejects missing follow-up questions, and accepts source-backed findings introduced by removed controls.
-- Trust boundaries between components with nested source paths keep their network or privilege crossing instead of being reclassified as in-process.
+- Trust boundaries keep network, privilege and in-process trust changes regardless of source layout, and a verified finding at a boundary's cited interface now refutes that boundary.
 - `update-baseline` preserves AISCB user scope when the project path is the home directory and offers a direct signed updater fallback after delegation fails.
 
 ## 0.6.0-beta.4 (2026-10-06)
