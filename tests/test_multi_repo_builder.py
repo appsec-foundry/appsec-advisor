@@ -208,10 +208,11 @@ def test_stride_finding_without_cwe_is_rejected_at_its_contract(tmp_path):
 
 
 def _linked(tmp_path, owner_index):
-    """A verified SQL injection at the line an internal boundary cites.
+    """A verified authorization finding at the line an internal boundary cites.
 
     Both roots hold an `app.py` with the same line, so a match on the bare file
-    name would also link the other root's finding.
+    name would also link the other root's finding. The CWE carries no sink class,
+    so the link depends only on the cited root and line.
     """
     scope, components, receipt, flows, _ = crossing_input(tmp_path)
     identity = dict(
@@ -223,7 +224,7 @@ def _linked(tmp_path, owner_index):
     documents, reviews = [], []
     for component, evidence in zip(components["components"], evidences, strict=True):
         document = stride(component, evidence, identity)
-        document["threats"][0]["cwe"] = "CWE-89"
+        document["threats"][0]["cwe"] = "CWE-862"
         documents.append(document)
         reviews.append(
             dict(

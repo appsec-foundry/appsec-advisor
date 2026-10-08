@@ -2305,6 +2305,26 @@ def _retarget_name(name: Any, old_endpoint: str, new_endpoint: str) -> Any:
     return name
 
 
+def _deployable_scope(component_id: Any, components: dict[str, dict]) -> Any:
+    """The deployable root, shared by components whose paths are identical.
+
+    `_deployable_root` treats mutual containment as no nesting, so two
+    components over the same paths are each their own root. They are still one
+    deployable; the smallest id names it so the key is order-independent.
+    """
+    root = _deployable_root(component_id, components)
+    own = [p for p in ((components.get(root) or {}).get("paths") or []) if isinstance(p, str) and p]
+    if not own:
+        return root
+    same = [
+        cid
+        for cid, row in components.items()
+        if _paths_contained(own, paths := [p for p in (row.get("paths") or []) if isinstance(p, str) and p])
+        and _paths_contained(paths, own)
+    ]
+    return min([root, *same])
+
+
 def _grouping_endpoint(candidate: dict, crossing_class: str, components: dict[str, dict]) -> Any:
     """The inner endpoint a crossing is grouped by (deployable for ingress)."""
     target = candidate.get("to")
@@ -2494,7 +2514,7 @@ def _consolidate_candidates(
             # middleware guarding two separately deployed targets is two
             # crossings, and the survivor would keep only one target's
             # assumption (TB-12 bounds every widening by path containment).
-            scope = _grouping_endpoint(candidate, crossing_class, components) if crossing_class == "ingress" else None
+            scope = _deployable_scope(candidate.get("to"), components) if crossing_class == "ingress" else None
             key = ("point", point.casefold(), crossing_class, owners, axes, scope)
         else:
             key = (

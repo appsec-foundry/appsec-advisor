@@ -1589,6 +1589,22 @@ def test_one_enforcement_point_keeps_separate_deployables_apart(tmp_path: Path, 
     assert sorted((c["candidate_key"], c["to"]) for c in merged) == [("c1", first), ("c2", second)]
 
 
+def test_one_enforcement_point_merges_components_over_identical_paths(tmp_path: Path):
+    """Two components over the same files are one deployable, so one control in
+    front of both is one crossing, whichever order the candidates arrive in."""
+    components = {"orders": {"id": "orders", "paths": ["svc/**"]}, "billing": {"id": "billing", "paths": ["svc/**"]}}
+    for first, second in (("orders", "billing"), ("billing", "orders")):
+        merged, _alias, _notes = prep._consolidate_candidates(
+            [
+                _cand("c1", frm="external", to=first, point="Request validation middleware"),
+                _cand("c2", frm="external", to=second, point="Request validation middleware"),
+            ],
+            components=components,
+            repo_root=tmp_path,
+        )
+        assert len(merged) == 1
+
+
 def test_declared_point_is_not_absorbed_by_an_undeclared_neighbour(tmp_path: Path):
     merged, _alias, _notes = prep._consolidate_candidates(
         [

@@ -559,14 +559,15 @@ def test_stride_boundary_ref_rejects_unowned_evidence_and_duplicate_pair():
     assert any("duplicates" in error for error in errors)
 
 
-def test_final_boundary_ref_requires_confirmed_adjacent_boundary():
+def test_final_boundary_ref_requires_resolved_adjacent_boundary():
+    """TB-14: any confidence is accepted, an unresolved boundary is not."""
     data = {
         "trust_boundaries": [
             {
                 "id": "tb-1",
                 "from": "external",
                 "to": "api",
-                "resolution_status": "resolved",
+                "resolution_status": "unresolved",
                 "confidence": "inferred",
             }
         ],
@@ -584,8 +585,10 @@ def test_final_boundary_ref_requires_confirmed_adjacent_boundary():
         ],
     }
     errors = vi._check_final_boundary_links(data)
-    assert any("resolved, confirmed" in error for error in errors)
+    assert any("must target a resolved trust boundary" in error for error in errors)
     assert any("not adjacent" in error for error in errors)
+    data["trust_boundaries"][0]["resolution_status"] = "resolved"
+    assert not any("resolved trust boundary" in error for error in vi._check_final_boundary_links(data))
 
 
 def _folded_boundary_model(origin_component_id: str) -> dict:
