@@ -264,6 +264,37 @@ def _boundary_gaps(d, nodes, tbs):
     return {gap: sorted(ids, key=_tb_num) for gap, ids in sorted(gaps.items())}
 
 
+def _local_boundaries(nodes, tbs, gaps):
+    """Trust boundaries no column line shows, keyed by the drawn node they guard.
+
+    A boundary between components of one column, or inside one component, has
+    no gap to mark; the overview places a local marker on its target (the entry
+    it guards), else on its source. Internal interfaces are not trust boundaries
+    and never get one. A boundary whose nodes are not drawn stays catalogue-only.
+    """
+    lined = {tid for ids in gaps.values() for tid in ids}
+    local = collections.defaultdict(list)
+    for t in tbs:
+        if _internal_interface(t) or t["id"] in lined:
+            continue
+        guarded = next(
+            (end for end in (t.get("to"), t.get("from")) if end not in (None, "external") and end in nodes),
+            None,
+        )
+        if guarded is not None and nodes[guarded].get("kind") != "ext":
+            local[guarded].append(t["id"])
+    return {nid: sorted(ids, key=_tb_num) for nid, ids in sorted(local.items())}
+
+
+def _local_marker_label(rows):
+    """Visible marker text: existence and confidence, never a control verdict."""
+    inferred = sum(row.get("confidence") != "confirmed" for row in rows)
+    label = "TRUST CHANGE" if len(rows) == 1 else f"{len(rows)} TRUST CHANGES"
+    if inferred:
+        label += " · INFERRED" if inferred == len(rows) else f" · {inferred} INFERRED"
+    return label
+
+
 @cache
 def _capability_vocabulary():
     """Display labels for evidenced component capabilities and service roles."""
@@ -2740,7 +2771,7 @@ def _render(
     n_comp = sum(n["kind"] != "ext" for n in nodes.values()) + sum(
         n["kind"] != "ext" for group in dropped.values() for n in group
     )
-    boundary_label = _boundary_count_label(tbs, interfaces=not d.get("_overview"))
+    boundary_label = _boundary_count_label(tbs)
     threat_total = sum(risk_distribution_counts(d).values())
     # Figure 1a keeps the model-wide tally the Management Summary shows (RA-29) and says so.
     threat_label = f"{threat_total} threats in the model" if d.get("_runtime_view") else f"{threat_total} threats"
@@ -3082,6 +3113,22 @@ def _render(
 
     for ch in chips:
         chip(ch["x"], ch["y"], ch["tb"])
+    # Overview: a trust change no column line shows is marked on the node it guards.
+    for nid, ids in (d.get("_local_boundaries") or {}).items():
+        n, rows = nodes[nid], [by_id[tid] for tid in ids]
+        label = _local_marker_label(rows)
+        w = _tw(label, 7.5) + 14
+        mx, my = n["x"] + n["w"] - w - 8, n["y"] - 7
+        crossings = "; ".join(
+            f"{t['id']} " + " → ".join(cnums.get(t.get(key), "External") for key in ("from", "to")) for t in rows
+        )
+        c.add(f'<g data-boundary-local="{_esc(nid)}" data-boundary-ids="{_esc(" ".join(ids))}">')
+        c.add(f"<title>{_esc('Trust change inside this column: ' + crossings)}</title>")
+        confirmed = all(t.get("confidence") == "confirmed" for t in rows)
+        c.rect(mx, my, w, 14, fill="#ffffff", stroke=RED, sw=1.3, rx=7, dash=None if confirmed else "3 2")
+        c.text(mx + w / 2, my + 10, label, size=7.5, fill=RED, weight="bold")
+        c.add("</g>")
+        c.badges.append((mx, my, mx + w, my + 14, f"trust change on {nid}"))
     for n in nodes.values():  # boundary tags on the corner of the node they guard
         for i, tbid in enumerate(n.get("tags", [])):
             w = _chip_width(tbid, tb_threats.get(tbid, 0))
@@ -3207,6 +3254,10 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
     if d.get("_boundary_gaps"):
         c.path(f"M {lx + 10} {y - 1} H {lx + 32}", RED, sw=2, dash="6 4")
         c.text(lx + 40, y + 3, "trust boundary crossed between these columns", size=9, anchor="start")
+        y += 20
+    if d.get("_local_boundaries"):
+        c.rect(lx + 6, y - 8, 30, 12, fill="#ffffff", stroke=RED, sw=1.2, rx=6)
+        c.text(lx + 40, y + 3, "trust change within a column (dashed: inferred)", size=9, anchor="start")
         y += 20
     c.path(f"M {lx + 10} {y - 1} H {lx + 32}", LINE, sw=1.2, dash="6 4")
     c.text(lx + 40, y + 3, "dashed outline = zone, not itself a boundary", size=9, anchor="start")
@@ -3775,6 +3826,20 @@ def _audit(d, nodes, edges, chips, boundaries, canvas=None):
         for tid in {tid for ids in lines.values() for tid in ids}:
             if tid not in tbs or _internal_interface(tbs[tid]):
                 problems.append(f"{tid}: trust-boundary line without a resolved trust boundary")
+        if d.get("_overview"):
+            local = {
+                g.get("data-boundary-local"): g.get("data-boundary-ids", "").split()
+                for g in root.iter("{http://www.w3.org/2000/svg}g")
+                if g.get("data-boundary-local") is not None
+            }
+            expected = _local_boundaries(nodes, list(tbs.values()), lines)
+            if local != expected:
+                problems.append(f"local trust-change markers {local} do not match unlined boundaries {expected}")
+            for nid, ids in local.items():
+                for tid in ids:
+                    tb = tbs.get(tid)
+                    if tb is None or _internal_interface(tb) or nid not in (tb.get("from"), tb.get("to")):
+                        problems.append(f"{tid}: trust-change marker on {nid} without a matching boundary")
     placed = (
         {c["tb"] for c in chips}
         | explained_boundaries
@@ -3867,6 +3932,8 @@ def _build(
             edge["tb"] = []
         d["_overview_tbs"] = [t["id"] for t in tbs]
     d["_boundary_gaps"] = _boundary_gaps(d, nodes, tbs)
+    if not detail:
+        d["_local_boundaries"] = _local_boundaries(nodes, tbs, d["_boundary_gaps"])
     flow_rows = {f["id"]: f for f in d.get("data_flows") or [] if isinstance(f, dict) and f.get("id")}
     for edge in edges:
         if edge.get("attack"):

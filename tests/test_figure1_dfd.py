@@ -44,8 +44,8 @@ def test_boundary_inventory_distinguishes_interfaces_and_uncertainty(names, deta
     assert _boundary_lines(root) == {0: ["tb-1", "tb-2", "tb-9"]}
     panel = root.find("{*}g[@data-legend-section='boundaries']")
     if not detail:
-        assert "3 trust boundaries (1 inferred) · " in svg
-        assert "internal interface" not in svg
+        # Counted apart, never as a trust boundary; the catalogue explains it.
+        assert "3 trust boundaries (1 inferred) · 1 internal interface · " in svg
         assert panel is None
         assert root.find(".//{*}g[@data-boundary-marker]") is None
         assert model == before
@@ -170,7 +170,7 @@ def test_internal_interface_does_not_imply_internet_exposure(axes):
     scenarios, actors = F.scenarios_from_attack_paths(model, paths, taxonomy)
     svg, state = F._build(model, scenarios, actors, detail=False)
     assert not state["nodes"]["app1"]["exposed"]
-    assert "0 trust boundaries · " in svg and "internal interface" not in svg
+    assert "0 trust boundaries · 1 internal interface · " in svg
     detail, state = F._build(model, scenarios, actors, detail=True)
     assert not state["nodes"]["app1"]["exposed"]
     assert "0 trust boundaries · 1 internal interface" in detail
@@ -3145,7 +3145,7 @@ def test_overview_defers_boundary_inventory_to_the_catalogue():
     root = ET.fromstring(overview)
     text = _visible_text(root)
     assert not re.search(r"\btb-\d+\b", text)
-    assert "not placed" not in text and "internal interface" not in text
+    assert "not placed" not in text and "1 internal interface · " in text
     assert root.find(".//{*}g[@data-boundary-marker]") is None
     assert root.find("{*}g[@data-legend-section='boundaries']") is None
     detail, problems = F.check_diagram(model, paths, taxonomy, detail=True)
@@ -3883,3 +3883,79 @@ def test_readme_example_is_legible_at_page_width_and_names_the_scanned_project()
     plugin = json.loads((REPO / ".claude-plugin/plugin.json").read_text(encoding="utf-8"))["name"]
     header = next(t.text for t in root.iter(f"{_SVG}text") if t.text and " components · " in t.text)
     assert re.sub(r"[^a-z0-9]", "", plugin.lower()) not in re.sub(r"[^a-z0-9]", "", header.lower())
+
+
+def _local_markers(root):
+    return {
+        g.get("data-boundary-local"): g.get("data-boundary-ids").split()
+        for g in root.iter(f"{_SVG}g")
+        if g.get("data-boundary-local") is not None
+    }
+
+
+@pytest.mark.parametrize(
+    ("pair", "axes", "guarded"),
+    [
+        (("app0", "app2"), {"kind": "identity"}, "app2"),
+        (("app2", "app1"), {"kind": "tenant"}, "app1"),
+        (("app0", "app0"), {"kind": "privilege", "surface": "in-process", "transition": ["privilege"]}, "app0"),
+    ],
+)
+def test_overview_marks_a_same_column_trust_change_on_the_guarded_node(pair, axes, guarded):
+    model, paths, taxonomy = _model(intra=True)
+    model["trust_boundaries"] = [_resolved(*pair, 1, **axes)]
+    before = copy.deepcopy(model)
+    svg, problems = F.check_diagram(model, paths, taxonomy, detail=False)
+    assert problems == []
+    root = ET.fromstring(svg)
+    assert _boundary_lines(root) == {}
+    assert _local_markers(root) == {guarded: ["tb-1"]}
+    text = _visible_text(root)
+    assert "TRUST CHANGE" in text and "trust change within a column" in text
+    # The overview still names no boundary IDs and no control verdict.
+    assert not re.search(r"\btb-\d+\b", text) and "refuted" not in text
+    assert model == before
+
+
+def test_inferred_trust_change_says_so_in_text():
+    model, paths, taxonomy = _model(intra=True)
+    model["trust_boundaries"] = [
+        _resolved("app0", "app2", 1, kind="identity"),
+        _resolved("app1", "app2", 2, kind="privilege", confidence="inferred"),
+    ]
+    svg, problems = F.check_diagram(model, paths, taxonomy, detail=False)
+    assert problems == []
+    root = ET.fromstring(svg)
+    assert _local_markers(root) == {"app2": ["tb-1", "tb-2"]}
+    assert "2 TRUST CHANGES · 1 INFERRED" in _visible_text(root)
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        _resolved("app0", "app2", 1, **_INTERNAL),  # internal interface, not a boundary
+        _resolved("external", "app1", 1),  # shown by its column line
+    ],
+)
+def test_no_local_marker_where_a_line_or_no_trust_change_applies(row):
+    model, paths, taxonomy = _model(intra=True, exposed=("app1",))
+    model["trust_boundaries"] = [row]
+    svg, problems = F.check_diagram(model, paths, taxonomy, detail=False)
+    assert problems == []
+    assert _local_markers(ET.fromstring(svg)) == {}
+
+
+def test_local_marker_audit_rejects_missing_or_unbacked_markers():
+    model, paths, taxonomy = _model(intra=True)
+    model["trust_boundaries"] = [_resolved("app0", "app2", 1, kind="identity")]
+    scenarios, actors = F.scenarios_from_attack_paths(model, paths, taxonomy)
+    _, state = F._build(model, scenarios, actors, detail=False)
+    canvas = state["canvas"]
+    args = (state["d"], state["nodes"], state["edges"], state["chips"], state["boundaries"], canvas)
+    assert F._audit(*args) == []
+    original = list(canvas.o)
+    canvas.o = [line.replace('data-boundary-local="app2"', 'data-removed="app2"') for line in original]
+    assert any("do not match" in p for p in F._audit(*args))
+    canvas.o = [line.replace('data-boundary-local="app2"', 'data-boundary-local="app1"') for line in original]
+    problems = F._audit(*args)
+    assert any("tb-1: trust-change marker on app1" in p for p in problems)
