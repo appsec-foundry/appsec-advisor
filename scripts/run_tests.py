@@ -1160,6 +1160,62 @@ SOURCE_TESTS = {
         requirements_verification
         stride_outputs
     """),
+    "agents/appsec-trust-boundary-analyst.md": _tests("""
+        agent_definitions
+        agent_doc_shell_snippets
+        agent_logger
+        check_target_specificity
+        context_prompt_budgets
+        dispatch_manifest
+        prompt_token_bounds
+        requirements_verification
+    """),
+    "data/cwe-boundary-legs.yaml": _tests("""
+        build_threat_model_yaml
+        check_target_specificity
+        merge_threats
+        prepare_trust_boundary_context
+    """),
+    "schemas/fragments/trust-boundaries.schema.json": _tests("""
+        build_threat_model_yaml
+        check_fragment_registry
+        check_target_specificity
+        fragment_registry
+        multi_repo_analysis
+        multi_repo_boundaries
+        prepare_trust_boundary_context
+        schema_integrity
+        schemas
+        validate_fragment
+    """),
+    "scripts/run-headless.sh": _tests("""
+        acceptance_invocation
+        agent_logger
+        budget_watchdog
+        check_target_specificity
+        ci_dispatch_workflows
+        e2e_cross_repo_fixture_script
+        e2e_fixture_script
+        e2e_spring_fixture_script
+        full_run_e2e_driver
+        headless_usage
+        hook_payload_contract
+        model_lineup
+        package_internal_plugin
+        render_completion_summary
+        render_progress
+        run_headless_completion
+        run_ownership
+    """),
+    "skills/create-threat-model/HELP.txt": _tests("""
+        analyst_skill
+        check_target_specificity
+        help_file
+        reasoning_model_resolution
+        requirements_resolution
+        runtime_cleanup
+        skill_definitions
+    """),
     "agents/appsec-secarch-renderer.md": _tests("""
         agent_definitions
         agent_doc_shell_snippets
