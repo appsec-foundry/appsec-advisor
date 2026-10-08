@@ -179,9 +179,6 @@
         "allOf": [
           {
             "if": {
-              "required": [
-                "surface"
-              ],
               "properties": {
                 "kind": {
                   "const": "network"
@@ -198,9 +195,6 @@
           },
           {
             "if": {
-              "required": [
-                "surface"
-              ],
               "properties": {
                 "kind": {
                   "const": "process"
@@ -217,9 +211,6 @@
           },
           {
             "if": {
-              "required": [
-                "surface"
-              ],
               "properties": {
                 "kind": {
                   "const": "build"
@@ -236,9 +227,6 @@
           },
           {
             "if": {
-              "required": [
-                "surface"
-              ],
               "properties": {
                 "kind": {
                   "enum": [
