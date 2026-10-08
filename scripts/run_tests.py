@@ -1895,6 +1895,7 @@ SOURCE_TESTS = {
     """),
     "scripts/analyzers/supply_chain_facts.py": _tests("""
         build_supply_chain_view
+        build_trust_boundary_assessment_input
         check_target_specificity
         config_iac_scanner
         config_scanner_wireup

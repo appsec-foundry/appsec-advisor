@@ -114,6 +114,9 @@ INPUT_ENTRY = {
     "remote_script": "ci-input",
 }
 MAX_SOURCES = 5
+# Internal: every (file, line) of an element's fact rows, beyond the capped display sources.
+# Boundary mapping reads it; build_view removes it before the view leaves this module.
+EVIDENCE_KEYS = "_evidence_keys"
 
 
 @cache
@@ -136,6 +139,10 @@ def _source(row: dict) -> dict:
     if isinstance(row.get("line"), int) and row["line"] > 0:
         out["line"] = row["line"]
     return out
+
+
+def _evidence_keys(rows) -> set[tuple[str, int]]:
+    return {(str(row["file"]), row["line"]) for row in rows if row.get("file") and isinstance(row.get("line"), int)}
 
 
 def _sources(rows) -> list[dict]:
@@ -224,6 +231,7 @@ def _elements(facts: dict, inventory: dict) -> tuple[dict[str, dict], list[str]]
             "label": ECOSYSTEM_LABELS.get(ecosystem, ecosystem),
             "detail": detail,
             "sources": _sources(rows),
+            EVIDENCE_KEYS: _evidence_keys(rows),
         }
     if dependencies.get("manifests") and ecosystems:
         elements["input:package:" + ecosystems[0]]["manifest_detail"] = (
@@ -251,6 +259,7 @@ def _elements(facts: dict, inventory: dict) -> tuple[dict[str, dict], list[str]]
             "label": label,
             "detail": detail,
             "sources": _sources(rows),
+            EVIDENCE_KEYS: _evidence_keys(rows),
         }
     inventory_rows = {str(row.get("system")): row for row in inventory.get("ci") or []}
     for system in systems:
@@ -282,6 +291,7 @@ def _elements(facts: dict, inventory: dict) -> tuple[dict[str, dict], list[str]]
         element_id = _artifact_id(output)
         if element_id in elements:
             elements[element_id]["sources"] = _sources(elements[element_id]["sources"] + [output])
+            elements[element_id][EVIDENCE_KEYS] |= _evidence_keys([output])
             continue
         if output["kind"] == "container_image":
             destination = output.get("destination") or {}
@@ -299,6 +309,7 @@ def _elements(facts: dict, inventory: dict) -> tuple[dict[str, dict], list[str]]
             "label": label,
             "detail": detail,
             "sources": _sources([output]),
+            EVIDENCE_KEYS: _evidence_keys([output]),
         }
     for system, row in inventory_rows.items():
         if system == GITHUB and facts.get("workflows"):
@@ -370,14 +381,29 @@ def _cites(source: dict, file: str) -> bool:
     return bool(path) and (file == path or file.startswith(path + "/"))
 
 
+def _evidences(element: dict, entry: dict) -> bool:
+    """The boundary evidence location belongs to this element.
+
+    A CI system owns its workflow definition, so any location inside it counts.
+    Every other element owns only its fact rows: one step of a workflow
+    evidences that step's input or artifact, never every element the same file
+    mentions.
+    """
+    file = entry["file"].removeprefix("./")
+    if element["kind"] == "ci":
+        return any(_cites(source, file) for source in element.get("sources") or [])
+    line = entry.get("line")
+    return isinstance(line, int) and (file, line) in element.get(EVIDENCE_KEYS, set())
+
+
 def _map_boundaries(model: dict, elements: dict[str, dict]) -> None:
-    """Attach each build boundary to the elements whose own sources hold its evidence.
+    """Attach each build boundary to the elements whose own evidence holds its evidence.
 
     The mapping is evidence, not column membership: a boundary whose evidence
-    sits in one CI system's definition marks that system only, never every
-    build element. The aggregate repository row and the running system carry
-    no sources of their own and are never mapped; a boundary nothing cites
-    stays in the report catalogue.
+    sits in one CI system's definition marks that system, and an input or
+    artifact only when the boundary cites the exact line of one of its fact
+    rows. The aggregate repository row and the running system are never
+    mapped; a boundary nothing cites stays in the report catalogue.
     """
     for boundary in _build_boundaries(model):
         for element in elements.values():
@@ -387,9 +413,7 @@ def _map_boundaries(model: dict, elements: dict[str, dict]) -> None:
                 (
                     entry
                     for entry in boundary.get("evidence") or []
-                    if isinstance(entry, dict)
-                    and isinstance(entry.get("file"), str)
-                    and any(_cites(source, entry["file"]) for source in element.get("sources") or [])
+                    if isinstance(entry, dict) and isinstance(entry.get("file"), str) and _evidences(element, entry)
                 ),
                 None,
             )
@@ -623,6 +647,8 @@ def build_view(
         return None
     elements, systems = _elements(facts, inventory)
     _map_boundaries(model, elements)
+    for element in elements.values():
+        element.pop(EVIDENCE_KEYS, None)
     edges = _edges(elements, facts)
     build_ids = build_component_ids(model.get("components") or [])
     slugs = _actor_slugs(model)

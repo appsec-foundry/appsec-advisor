@@ -63,6 +63,8 @@ apart: the promotion step merges candidates that share a crossing unless they
 declare different enforcement points, so a copy-pasted value silently collapses
 boundaries that belong apart. Name it from the evidence you actually read.
 
+Build signals with distinct scopes (dependency registry, actions, base images, remote scripts, artifact push) are separate crossings: give each its own candidate with the control specific to that scope, e.g. `lockfile-enforced npm ci` or `SHA-pinned action references`, never one shared pipeline value.
+
 Write a NAME, not a sentence. Those examples are three to five words, and that
 is the budget: aim for under 60 characters. It is rendered in a narrow table
 column, where a clause wraps into an unreadable ragged block. Leave out where

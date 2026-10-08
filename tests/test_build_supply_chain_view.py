@@ -369,3 +369,65 @@ def test_a_boundary_without_build_scope_or_cited_evidence_is_not_mapped(row):
     model = _model([])
     model["trust_boundaries"] = [row]
     assert _mapped(_view(model, {}, inventory)) == {}
+
+
+INSTALLER_AND_PUSH = """\
+name: images
+on: push
+jobs:
+  bake:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -fsSL https://get.example.dev/tool.sh | sh
+      - run: poetry install
+      - run: docker build -t quay.io/example-team/catalog:1 .
+      - run: docker push quay.io/example-team/catalog:1
+"""
+
+
+@pytest.mark.parametrize(
+    ("workflow", "line", "element"),
+    [
+        (RELEASE_WITH_INSTALL, 7, "input:github_action"),  # actions/checkout, a step that publishes nothing
+        (RELEASE_WITH_INSTALL, 8, "input:package:pip"),
+        (INSTALLER_AND_PUSH, 7, "input:remote_script"),
+        (INSTALLER_AND_PUSH, 9, "artifact:image:quay-io-example-team-catalog"),
+    ],
+    ids=["action", "pip-install", "remote-script", "pushed-image"],
+)
+def test_a_step_boundary_marks_only_the_element_of_that_step_and_its_ci_system(tmp_path, workflow, line, element):
+    repo = _repo(tmp_path, {".github/workflows/build.yml": workflow, "requirements.txt": "flask>=2\n"})
+    model = _model([])
+    model["trust_boundaries"] = [_boundary("tb-1", ".github/workflows/build.yml", line)]
+    view = _view(model, _facts(repo))
+    assert _mapped(view) == {"ci:github-actions": ["tb-1"], element: ["tb-1"]}
+
+
+def test_a_boundary_on_a_fact_row_beyond_the_displayed_sources_still_marks_its_element(tmp_path):
+    steps = "".join(f"      - uses: example-org/step-{n}@v1\n" for n in range(8))
+    workflow = f"name: many\non: push\njobs:\n  lint:\n    runs-on: ubuntu-latest\n    steps:\n{steps}"
+    repo = _repo(tmp_path, {".github/workflows/many.yml": workflow})
+    model = _model([])
+    model["trust_boundaries"] = [_boundary("tb-1", ".github/workflows/many.yml", 14)]  # the eighth action
+    view = _view(model, _facts(repo))
+    actions = next(e for e in view["elements"] if e["id"] == "input:github_action")
+    assert {"file": ".github/workflows/many.yml", "line": 14} not in actions["sources"]
+    assert _mapped(view) == {"ci:github-actions": ["tb-1"], "input:github_action": ["tb-1"]}
+
+
+@pytest.mark.parametrize(
+    ("file", "line"),
+    [
+        (".github/workflows/build.yml", 5),  # runs-on: no fact row sits on this line
+        (".github/workflows/other.yml", 8),  # pytest, on the line the install holds in build.yml
+    ],
+    ids=["non-fact-line", "other-workflow"],
+)
+def test_a_boundary_without_a_fact_row_on_its_line_marks_only_the_ci_system(tmp_path, file, line):
+    repo = _repo(
+        tmp_path,
+        {".github/workflows/build.yml": INSTALLER_AND_PUSH, ".github/workflows/other.yml": TEST_ONLY},
+    )
+    model = _model([])
+    model["trust_boundaries"] = [_boundary("tb-1", file, line)]
+    assert _mapped(_view(model, _facts(repo))) == {"ci:github-actions": ["tb-1"]}

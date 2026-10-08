@@ -17,12 +17,15 @@ import hashlib
 import json
 import re
 import sys
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
 import jsonschema
 import validators.validate_intermediate as intermediate_contract
 import yaml
+from analyzers import supply_chain_facts
+from analyzers.scan_excludes import repo_inventory
 from model.finalize_component_inventory import validate_receipt
 from shared._atomic_io import atomic_write_json
 from validators.validate_fragment import (
@@ -173,6 +176,130 @@ def _signal_id(signal_class: str, source: str, target: str) -> str:
     return f"signal-{signal_class}-{source}-to-{target}"
 
 
+def _in_paths(path: str, patterns: list[str]) -> bool:
+    """``path`` is one of the component's files: a glob match or a file under a listed directory."""
+    for raw in patterns:
+        pattern = raw.removeprefix("./").rstrip("/")
+        if pattern and (fnmatchcase(path, pattern) or path.startswith(pattern + "/")):
+            return True
+    return False
+
+
+def _scope_slug(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", str(text).lower()).strip("-")[:60].strip("-") or "unnamed"
+
+
+# (input kind, scope, trigger, false-positive exclusions) of third-party code a build runs.
+_BUILD_INPUT_SCOPES = (
+    (
+        "github_action",
+        "actions",
+        "a workflow runs third-party GitHub Actions on the build runner",
+        ["action owned by the same organization", "inactive example workflow"],
+    ),
+    (
+        "base_image",
+        "base-images",
+        "a container build starts from a base image pulled from a registry",
+        ["image used only for local development", "inactive example Dockerfile"],
+    ),
+    (
+        "remote_script",
+        "remote-scripts",
+        "a build step pipes a downloaded script into a shell on the runner",
+        ["script fetched from the repository itself", "inactive example workflow"],
+    ),
+)
+
+
+def _supply_chain_signals(
+    components: list[dict[str, Any]], facts: dict[str, Any], repo_root: Path
+) -> list[dict[str, Any]]:
+    """Scoped build-and-deployment signals of each build-zone component from the supply-chain facts.
+
+    A build component holds several crossings with different enforcement
+    points: packages from a dependency registry, third-party actions, base
+    images and piped installers enter the build, and pushed images or
+    published packages leave it for an artifact registry. Each gets its own
+    signal, scoped by kind, ecosystem or destination, with the exact lines that
+    evidence it. Only facts in the component's own files count. No deploy
+    signal is derived: a push never proves what production runs (RA-30).
+    """
+    signals: list[dict[str, Any]] = []
+    for component in components:
+        if not (_material_zones(component) & _BUILD_ZONES):
+            continue
+        cid, paths = component["id"], component.get("paths") or []
+
+        def own(rows: Any, paths: list[str] = paths) -> list[dict[str, Any]]:
+            return [
+                row
+                for row in rows or []
+                if isinstance(row, dict) and isinstance(row.get("file"), str) and _in_paths(row["file"], paths)
+            ]
+
+        groups: list[tuple[str, str, str, str, list[str], list[dict[str, Any]]]] = []
+        installs = own(facts.get("installs"))
+        for ecosystem in dict.fromkeys(str(row.get("ecosystem")) for row in installs):
+            groups.append(
+                (
+                    f"{ecosystem}-dependencies",
+                    "external",
+                    cid,
+                    f"the build installs {_scope_slug(ecosystem)} packages from a dependency registry",
+                    ["install step only in a test job that publishes nothing", "vendored or offline package source"],
+                    [row for row in installs if str(row.get("ecosystem")) == ecosystem],
+                )
+            )
+        inputs = own(facts.get("inputs"))
+        for kind, scope, trigger, exclusions in _BUILD_INPUT_SCOPES:
+            rows = [row for row in inputs if row.get("kind") == kind]
+            if rows:
+                groups.append((scope, "external", cid, trigger, exclusions, rows))
+        pushes: dict[str, list[dict[str, Any]]] = {}
+        for row in own(facts.get("outputs")):
+            if row.get("kind") == "package":
+                scope = f"publish-{row.get('ecosystem') or 'package'}"
+            elif row.get("kind") == "container_image" and row.get("pushed"):
+                destination = row.get("destination") or {}
+                target = f"{destination.get('registry', '')}/{destination.get('repository', '')}"
+                scope = "push-" + (target if destination else "image")
+            else:
+                continue
+            pushes.setdefault(scope, []).append(row)
+        for scope, rows in pushes.items():
+            groups.append(
+                (
+                    scope,
+                    cid,
+                    "external",
+                    "the build pushes an image or publishes a package to an artifact registry",
+                    ["push disabled for pull requests and forks", "inactive example workflow"],
+                    rows,
+                )
+            )
+        for scope, source, target, trigger, exclusions, rows in groups:
+            evidence = _safe_evidence(rows, repo_root)
+            if not evidence:
+                continue
+            sid = f"{_signal_id('build-and-deployment', source, target)}-{_scope_slug(scope)}"
+            signals.append(
+                {
+                    "id": sid,
+                    "class": "build-and-deployment",
+                    "from": source,
+                    "to": target,
+                    "mandatory": True,
+                    "trigger": trigger,
+                    "false_positive_exclusions": exclusions,
+                    "evidence": evidence,
+                    "provenance": ["supply-chain-facts"],
+                    "flow_ids": [],
+                }
+            )
+    return signals
+
+
 def _crossing_connections(flows: list[dict[str, Any]], components: dict[str, dict[str, Any]]) -> set[str]:
     """Reviewed connections whose sending and receiving sources share no repository.
 
@@ -304,6 +431,7 @@ def _signals(
     flows: list[dict[str, Any]],
     components: list[dict[str, Any]],
     source_context: dict[str, Any],
+    build_signals: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     by_id = {row["id"]: row for row in components}
     crossings = _crossing_connections(flows, by_id)
@@ -354,8 +482,15 @@ def _signals(
                 "flow_ids": [],
             },
         )
+    # Scoped signals from supply-chain facts replace the placement-only signal
+    # of their component; placement alone remains the signal of a build
+    # component whose files hold no such fact.
+    scoped = set()
+    for row in build_signals or []:
+        merged.setdefault(row["id"], row)
+        scoped.update({row["from"], row["to"]})
     for component in components:
-        if not (_material_zones(component) & _BUILD_ZONES):
+        if not (_material_zones(component) & _BUILD_ZONES) or component["id"] in scoped:
             continue
         sid = _signal_id("build-and-deployment", "external", component["id"])
         merged.setdefault(
@@ -638,7 +773,14 @@ def build(repo_root: Path, output_dir: Path, depth: str) -> dict[str, Any]:
         "components": components,
         "data_flows": flows,
         "external_entities": flow_doc.get("external_entities") or [],
-        "signals": _signals(flows, components, source_context),
+        "signals": _signals(
+            flows,
+            components,
+            source_context,
+            _supply_chain_signals(
+                components, supply_chain_facts.collect(repo_root, repo_inventory(repo_root)), repo_root
+            ),
+        ),
         "prior_boundary_identity_hints": _prior_identity_hints(output_dir),
         "source_context": source_context,
     }
