@@ -1210,7 +1210,11 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("--output-dir", required=True)
     m.add_argument("--findings", help="path to .threats-merged.json (default: <output-dir>/.threats-merged.json)")
     m.add_argument("--org-profile", default=None)
-    m.add_argument("--repo-root", default=None, help="target repo root; loads <repo>/.appsec/abuse-cases/*.yaml")
+    m.add_argument(
+        "--repo-root",
+        default=None,
+        help="target repo root; loads <repo>/docs/security/abuse-cases/ and <repo>/.appsec/abuse-cases/",
+    )
     m.add_argument("--signals", default=None, help="recon signals json (optional)")
     m.set_defaults(func=cmd_match)
 

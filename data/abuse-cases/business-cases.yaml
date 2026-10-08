@@ -9,7 +9,7 @@
 # (docs/internal/analysis/implplan-threat-analysis-rule-catalog-2026-10-07.md)
 # releases built-in business cases only after the comparative pilot passes.
 # Until then a team activates a case by copying it into
-# <repo>/.appsec/abuse-cases/ with a REPO-AC id, or names a copy with
+# <repo>/docs/security/abuse-cases/ with a REPO-AC id, or names a copy with
 # --abuse-case-file.
 #
 # Path patterns are right-anchored, one component per segment: "*role*"

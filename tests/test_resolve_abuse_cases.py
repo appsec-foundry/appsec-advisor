@@ -235,6 +235,54 @@ def test_oversized_and_surplus_repo_files_are_rejected(tmp_path: Path):
     assert "limit of 2" in reasons["c.yaml"]
 
 
+def _write_docs_security(repo_root: Path, body: str, name: str = "custom.yaml") -> Path:
+    d = repo_root / "docs" / "security" / "abuse-cases"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / name).write_text(body, encoding="utf-8")
+    return repo_root
+
+
+def test_docs_security_location_loads_before_the_legacy_location(tmp_path: Path):
+    _write_repo_local(tmp_path, _VALID_CASE.replace("ORG-AC-001", "REPO-AC-002"), "legacy.yaml")
+    _write_docs_security(tmp_path, _VALID_CASE.replace("ORG-AC-001", "REPO-AC-001"), "team.yml")
+    cases, errors, rejected = rac.resolve_abuse_case_sources(None, None, repo_root=tmp_path)
+    assert (errors, rejected) == ([], [])
+    assert [c["id"] for c in cases] == _LIBRARY_IDS + ["REPO-AC-001", "REPO-AC-002"]
+
+
+def test_legacy_file_reusing_an_id_from_docs_security_is_rejected(tmp_path: Path):
+    _write_docs_security(tmp_path, _VALID_CASE.replace("ORG-AC-001", "REPO-AC-001"))
+    stale = _VALID_CASE.replace("ORG-AC-001", "REPO-AC-001").replace("Custom org scenario", "Stale copy")
+    _write_repo_local(tmp_path, stale)
+    cases, errors, rejected = rac.resolve_abuse_case_sources(None, None, repo_root=tmp_path)
+    assert errors == []
+    assert next(c for c in cases if c["id"] == "REPO-AC-001")["title"] == "Custom org scenario"
+    assert [r["path"] for r in rejected] == [".appsec/abuse-cases/custom.yaml"]
+
+
+def test_file_limit_counts_both_locations_together(tmp_path: Path):
+    limits = {**rac.load_limits(), "repo_case_files": 1}
+    _write_docs_security(tmp_path, _VALID_CASE.replace("ORG-AC-001", "REPO-AC-001"))
+    _write_repo_local(tmp_path, _VALID_CASE.replace("ORG-AC-001", "REPO-AC-002"))
+    cases, _, rejected = rac.resolve_abuse_case_sources(None, None, repo_root=tmp_path, limits=limits)
+    assert "REPO-AC-002" not in {c["id"] for c in cases}
+    assert rejected == [
+        {"path": ".appsec/abuse-cases/custom.yaml", "reason": "exceeds the limit of 1 repository case files"}
+    ]
+
+
+def test_docs_security_escaping_the_repository_is_rejected(tmp_path: Path):
+    repo = tmp_path / "repo"
+    elsewhere = tmp_path / "elsewhere"
+    _write_docs_security(elsewhere, _VALID_CASE.replace("ORG-AC-001", "REPO-AC-006"))
+    (repo / "docs").mkdir(parents=True)
+    (repo / "docs" / "security").symlink_to(elsewhere / "docs" / "security", target_is_directory=True)
+    cases, errors, rejected = rac.resolve_abuse_case_sources(None, None, repo_root=repo)
+    assert errors == []
+    assert "REPO-AC-006" not in {c["id"] for c in cases}
+    assert rejected == [{"path": "docs/security/abuse-cases", "reason": "directory resolves outside the repository"}]
+
+
 def test_oversized_explicit_file_fails_closed(tmp_path: Path):
     limits = {**rac.load_limits(), "case_file_kib": 1}
     case_file = tmp_path / "big.yaml"

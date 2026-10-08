@@ -647,12 +647,12 @@ The plugin loads cases in this order:
 
 1. **Plugin standard library**: `data/abuse-cases/default-library.yaml` (the `AC-T-NNN` mandatory set), unless an org profile sets `abuse_cases.inherit_defaults: false`.
 2. **Org profile**: `abuse_cases.add` is a glob (relative to the org-profile directory) of extra case files; `abuse_cases.disable` removes ids. Use the `ORG-AC-NNN` ID prefix.
-3. **Repository**: any `*.yaml` or `*.yml` file directly under `<repo>/.appsec/abuse-cases/` in the target repository is loaded automatically. Use the `REPO-AC-NNN` ID prefix. IDs must be unique. A file that is invalid, larger than 128 KiB, a symbolic link, or reuses a loaded ID is rejected on its own: every other case still runs, and the report and run issues name the file and the reason.
+3. **Repository**: any `*.yaml` or `*.yml` file directly under `<repo>/docs/security/abuse-cases/` in the target repository is loaded automatically, beside `business-context.md` and `requirements.yaml`. The legacy location `<repo>/.appsec/abuse-cases/` is still read after it; a legacy file that reuses an ID from the new location is rejected. Use the `REPO-AC-NNN` ID prefix. IDs must be unique. A file that is invalid, larger than 128 KiB, a symbolic link, or reuses a loaded ID is rejected on its own: every other case still runs, and the report and run issues name the file and the reason.
 4. **One scan**: `--abuse-case-file <repo-relative-path>` adds a YAML file below the target repository. Repeat `--only-abuse-case <ID>` to run selected cases only. Either flag runs abuse-case verification at any depth, and an unreadable file or an unknown id is reported rather than silently skipped.
 
 Copy and adapt `examples/abuse-cases.yaml`; its comments describe each field and accepted value.
 
-Example repo-local case (`<repo>/.appsec/abuse-cases/payments.yaml`):
+Example repo-local case (`<repo>/docs/security/abuse-cases/payments.yaml`):
 
 ```yaml
 schema_version: 1

@@ -11,7 +11,7 @@ Complete threat model reports live in the companion repository [appsec-advisor-e
 Copy these files into the repository you assess and adapt them.
 
 - [`known-threats.yaml`](known-threats.yaml) records prior pentest findings, accepted risks, and known issues for OWASP Juice Shop. Place your version at `docs/known-threats.yaml`, as described in [Known threats](../docs/threat-modeler.md#known-threats--docsknown-threatsyaml).
-- [`abuse-cases.yaml`](abuse-cases.yaml) is a commented abuse case that documents every field and the values it accepts. Place your version under `.appsec/abuse-cases/`, as described in [Abuse cases](../docs/org-profiles.md#abuse-cases).
+- [`abuse-cases.yaml`](abuse-cases.yaml) is a commented abuse case that documents every field and the values it accepts. Place your version under `docs/security/abuse-cases/`, as described in [Abuse cases](../docs/org-profiles.md#abuse-cases).
 
 ## Requirements catalog
 

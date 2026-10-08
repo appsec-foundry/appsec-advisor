@@ -5,7 +5,8 @@
 schema_version: 1
 status: provisional
 limits:
-  # Repository-discovered case files (.appsec/abuse-cases/) and explicit files.
+  # Repository-discovered case files (docs/security/abuse-cases/ and the legacy
+  # .appsec/abuse-cases/, counted together) and explicit files.
   repo_case_files: {value: 32, unit: files}
   case_file_kib: {value: 128, unit: KiB}
   # Descriptive (business) candidates the model binds and verifies per run.

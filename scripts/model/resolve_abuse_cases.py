@@ -8,7 +8,8 @@ Merges three sources into one validated list of abuse-case definitions:
   2. org-specific case files matched by ``abuse_cases.add`` (a glob relative to
      the org-profile directory), validated against
      ``schemas/abuse-cases.schema.yaml``;
-  3. repo-local files under ``<repo>/.appsec/abuse-cases/`` and explicit
+  3. repo-local files under ``<repo>/docs/security/abuse-cases/`` or the
+     legacy ``<repo>/.appsec/abuse-cases/``, and explicit
      per-scan files, both bounded by ``data/abuse-case-limits.yaml``;
   4. minus any ids listed in ``abuse_cases.disable``.
 
@@ -171,7 +172,9 @@ def case_chain(case: dict) -> list[dict]:
     ]
 
 
-REPO_LOCAL_SUBDIR = Path(".appsec") / "abuse-cases"
+# Repository case directories in precedence order: the documented location
+# beside the other team-maintained security inputs, then the legacy one.
+REPO_LOCAL_SUBDIRS = (Path("docs") / "security" / "abuse-cases", Path(".appsec") / "abuse-cases")
 
 
 def _reason(errors: list[str]) -> str:
@@ -179,14 +182,15 @@ def _reason(errors: list[str]) -> str:
     return text if len(text) <= _MAX_REASON_CHARS else text[: _MAX_REASON_CHARS - 1] + "…"
 
 
-def _repo_local_files(root: Path, max_files: int) -> tuple[list[Path], list[dict]]:
-    """Return (admissible files, rejections) for ``<root>/.appsec/abuse-cases``.
+def _repo_local_files(root: Path, subdir: Path, max_files: int, admitted: int = 0) -> tuple[list[Path], list[dict]]:
+    """Return (admissible files, rejections) for ``<root>/<subdir>``.
 
     The directory and every file must stay inside the repository. Symbolic
-    links are not followed; files beyond the count limit are rejected by name.
+    links are not followed; files beyond the count limit, which ``admitted``
+    files from earlier locations already use, are rejected by name.
     """
-    repo_dir = root / REPO_LOCAL_SUBDIR
-    rel_dir = REPO_LOCAL_SUBDIR.as_posix()
+    repo_dir = root / subdir
+    rel_dir = subdir.as_posix()
     if not repo_dir.exists() and not repo_dir.is_symlink():
         return [], []
     try:
@@ -201,7 +205,7 @@ def _repo_local_files(root: Path, max_files: int) -> tuple[list[Path], list[dict
         rel = f"{rel_dir}/{path.name}"
         if path.is_symlink():
             rejected.append({"path": rel, "reason": "symbolic links are not admitted"})
-        elif len(files) >= max_files:
+        elif admitted + len(files) >= max_files:
             rejected.append({"path": rel, "reason": f"exceeds the limit of {max_files} repository case files"})
         else:
             files.append(path)
@@ -227,7 +231,8 @@ def resolve_abuse_case_sources(
       1. plugin standard library (unless ``inherit_defaults: false``);
       2. org-profile cases matched by ``abuse_cases.add`` (glob relative to
          ``profile_dir``);
-      3. **repo-local** cases under ``<repo_root>/.appsec/abuse-cases/`` —
+      3. **repo-local** cases under ``<repo_root>/docs/security/abuse-cases/``,
+         then the legacy ``<repo_root>/.appsec/abuse-cases/`` —
          a zero-config layer that needs no org profile, mirroring the
          known-threats convention so a single repository can ship its own
          scenarios checked into version control;
@@ -278,9 +283,12 @@ def resolve_abuse_case_sources(
 
     if repo_root is not None:
         root = Path(repo_root).resolve()
-        files, rejected = _repo_local_files(root, limits["repo_case_files"])
-        for path in files:
-            rel = f"{REPO_LOCAL_SUBDIR.as_posix()}/{path.name}"
+        files: list[tuple[Path, str]] = []
+        for subdir in REPO_LOCAL_SUBDIRS:
+            found, dir_rejected = _repo_local_files(root, subdir, limits["repo_case_files"], len(files))
+            files += [(path, f"{subdir.as_posix()}/{path.name}") for path in found]
+            rejected += dir_rejected
+        for path, rel in files:
             file_cases, file_errors = _load_case_file(path, schema, max_bytes)
             ids = [case.get("id") for case in file_cases]
             clash = sorted({cid for cid in ids if cid in known_ids or ids.count(cid) > 1})
@@ -362,7 +370,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Resolve the active abuse-case set.")
     parser.add_argument("--org-profile", default=None, help="path to org-profile.yaml")
     parser.add_argument("--plugin-root", default=None)
-    parser.add_argument("--repo-root", default=None, help="target repo root; loads <repo>/.appsec/abuse-cases/*.yaml")
+    parser.add_argument(
+        "--repo-root",
+        default=None,
+        help="target repo root; loads <repo>/docs/security/abuse-cases/ and <repo>/.appsec/abuse-cases/",
+    )
     parser.add_argument("--list-ids", action="store_true", help="print active ids only")
     args = parser.parse_args(argv)
 

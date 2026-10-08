@@ -957,7 +957,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Render the §9 Abuse Cases fragment.")
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--org-profile", default=None)
-    parser.add_argument("--repo-root", default=None, help="target repo root; loads <repo>/.appsec/abuse-cases/*.yaml")
+    parser.add_argument(
+        "--repo-root",
+        default=None,
+        help="target repo root; loads <repo>/docs/security/abuse-cases/ and <repo>/.appsec/abuse-cases/",
+    )
     parser.add_argument("--fragments-subdir", default=".fragments")
     args = parser.parse_args(argv)
 

@@ -34,6 +34,7 @@ Deviations from the plan text below, decided during implementation:
 - **Binding happens inside the verifier call.** Each admitted candidate gets one verifier call that binds and judges its steps. A separate batched binding call in the architecture stage would add a dispatch and change the architecture contract without evidence that it saves cost. `finalize` performs the deterministic admission of the binding.
 - **Preselection reuses `scope_qualifier`.** Descriptive cases require `required_signals` or `path_patterns` instead of a new `applies_when` field.
 - **No promotion in the pilot.** A confirmed descriptive step does not become a finding, because the case carries no classification. A descriptive case without a linked finding is reported as not rated instead of receiving the fallback risk.
+- **Repository cases live beside the other team-maintained inputs.** Discovery reads `docs/security/abuse-cases/` first and the legacy `.appsec/abuse-cases/` after it, with one shared file limit; a legacy file reusing an ID from the new location is rejected.
 - **Explicit requests use the existing flags.** Cases named by `--only-abuse-case` or loaded through `--abuse-case-file` bypass preselection and count against their own limit of 16.
 
 ## Existing implementation and contracts

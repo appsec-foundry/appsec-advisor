@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Figure 1 marks network trust boundaries between components of one column, and Figure 1b shows the build trust boundaries its CI, input and artifact elements evidence.
 - Repositories can describe business abuse cases in plain language (pilot), which the assessment checks against the code within per-depth limits and reports with cited evidence.
 
+### Changed
+
+- Repository abuse cases belong in `docs/security/abuse-cases/` beside the business context; `.appsec/abuse-cases/` is still read.
+
 ### Fixed
 
 - Threat analysis reports unfulfilled evidence requests, rejects missing follow-up questions, and accepts source-backed findings introduced by removed controls.

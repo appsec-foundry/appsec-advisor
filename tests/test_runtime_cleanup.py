@@ -47,6 +47,20 @@ def test_cleanup_preserves_persistent_business_context(tmp_path):
     assert context.read_text() == "Confirmed project purpose.\n"
 
 
+def test_cleanup_preserves_repository_abuse_cases(tmp_path):
+    import orchestrator.orchestration_controller as orchestration_controller
+
+    output = tmp_path / "docs/security"
+    cases = output / "abuse-cases" / "business.yaml"
+    cases.parent.mkdir(parents=True)
+    cases.write_text("schema_version: 2\n")
+    for cleanup in (orchestration_controller._cleanup_full, orchestration_controller._cleanup_rebuild):
+        cleanup(output)
+    (output / "threat-model.md").write_text("Report\n")
+    assert not rc.run_cleanup(output, "post-qa", False, True)["skipped"]
+    assert cases.read_text() == "schema_version: 2\n"
+
+
 def test_completed_cleanup_preserves_both_architecture_diagrams(tmp_path):
     for name in ["threat-model.md", "threat-model.figure1.svg", "threat-model.figure1-detail.svg"]:
         (tmp_path / name).write_text("generated report artifact")
