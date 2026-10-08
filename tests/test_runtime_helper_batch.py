@@ -147,6 +147,59 @@ def test_qa_release_gate_main_usage_and_blocker_output(tmp_path: Path, capsys) -
     assert "[broken anchor]" in captured.err
 
 
+def _release_case(tmp_path: Path, plan_actions: list[dict], items: list[dict]) -> Path:
+    status = tmp_path / ".qa-status.json"
+    _write(status, json.dumps({"status": "pass", "manual_review_items": items}))
+    _write(tmp_path / ".qa-repair-plan.json", json.dumps({"status": "manual_review", "actions": plan_actions}))
+    return status
+
+
+def test_release_gate_refuses_a_blocking_plan_action_whatever_the_reviewer_wrote(tmp_path: Path) -> None:
+    """A blocking action left in the plan has no repairable owner. The reviewer's
+    wording ("has no target heading") matches no text pattern, and the gate
+    released it before; completion then rejected the same report."""
+    status = _release_case(
+        tmp_path,
+        [{"type": "toc_closure", "raw_issue": "unresolved TOC/link anchor: #f-019", "fragments_to_rewrite": []}],
+        [{"issue": "Anchor #f-019 has no target heading."}],
+    )
+    rc, payload = qa_release_gate.scan(status)
+    assert rc == 2
+    assert [(b["source"], b["type"]) for b in payload["blockers"]] == [("repair_plan", "toc_closure")]
+
+
+def test_release_gate_refuses_a_reviewer_item_typed_as_blocking(tmp_path: Path) -> None:
+    status = _release_case(tmp_path, [], [{"action_type": "heading_hygiene", "issue": "Heading is 101 chars."}])
+    rc, payload = qa_release_gate.scan(status)
+    assert rc == 2
+    assert payload["blockers"][0]["type"] == "heading_hygiene"
+
+
+def test_release_gate_releases_cosmetic_and_manual_review_actions(tmp_path: Path) -> None:
+    status = _release_case(
+        tmp_path,
+        [
+            {"type": "diagram_compactness", "raw_issue": "diagram too wide"},
+            {"type": "posture_renderer_bug", "raw_issue": "renderer wording"},
+        ],
+        [{"action_type": "posture_renderer_bug", "issue": "renderer wording"}],
+    )
+    assert qa_release_gate.scan(status)[0] == 0
+
+
+def test_release_gate_applies_the_completion_structure_check(tmp_path: Path, monkeypatch) -> None:
+    """Stage 3 must not release a report that the completion gate rejects."""
+    status = _release_case(tmp_path, [], [])
+    _write(tmp_path / "threat-model.md", "# Threat Model\n\nSee [F-042](#f-042).\n")
+    rc, payload = qa_release_gate.scan(status)
+    assert rc == 2
+    structure = [b for b in payload["blockers"] if b["source"] == "final_structure"]
+    assert structure and "unresolved TOC/link anchor: #f-042" in structure[0]["issues"]
+
+    monkeypatch.setattr(qa_release_gate, "final_structure_reports", lambda _md: ({}, 0))
+    assert qa_release_gate.scan(status)[0] == 0
+
+
 def test_record_component_duration_timestamp_helpers(tmp_path: Path) -> None:
     log = tmp_path / ".agent-run.log"
     _write(

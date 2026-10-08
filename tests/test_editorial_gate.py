@@ -7,12 +7,14 @@ from pathlib import Path
 import contexts.build_editorial_context as builder
 import pytest
 import validators.editorial_gate as gate
+import validators.qa_release_gate as release_gate
 import yaml
 
 
 def _action(raw="Existing observation", severity="manual_review"):
+    # A type the QA gate grades as manual review: Stage 3 releases only those.
     return {
-        "type": "reference_format",
+        "type": "posture_renderer_bug",
         "section_id": "threat_register",
         "raw_issue": raw,
         "severity": severity,
@@ -56,7 +58,9 @@ def test_malformed_observations_fail_closed(plan):
 
 
 @pytest.fixture
-def run(tmp_path):
+def run(tmp_path, monkeypatch):
+    # The placeholder report stands for one that passed the completion structure check.
+    monkeypatch.setattr(release_gate, "final_structure_reports", lambda _md: ({}, 0))
     output = tmp_path / "out"
     output.mkdir()
     (output / "threat-model.yaml").write_text(

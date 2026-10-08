@@ -141,6 +141,7 @@ from shared._manifest_readers import (
 from shared._manifest_readers import (
     read_readme_tags as _read_readme_tags,
 )
+from shared._register_titles import clamp_heading_title as _clamp_heading_title
 
 import renderers._business_relevance as _business_relevance
 import renderers._severity_rollup as _severity_rollup
@@ -17779,7 +17780,7 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
             mid = m.get("m_id") or m.get("id") or "-"
             title = (m.get("title") or m.get("mitigation_title") or "(untitled)").strip()
             lines.append(f'<a id="{mid.lower()}"></a>')
-            lines.append(f"#### {mid} — {_escape_heading_placeholders(title)}")
+            lines.append(f"#### {mid} — {_escape_heading_placeholders(_clamp_heading_title(mid, title))}")
             lines.append("")
 
             # Addresses as a bulleted list of linkified refs (reference layout).

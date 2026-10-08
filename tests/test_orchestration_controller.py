@@ -1506,6 +1506,44 @@ def test_prepare_stage2_selects_compact_parallel_runtime(tmp_path, monkeypatch):
     controller._validate_action(action)
 
 
+def _stage2_output(tmp_path: Path) -> Path:
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / ".skill-config.json").write_text(json.dumps(_cfg(tmp_path)), encoding="utf-8")
+    return output
+
+
+def _fail_pregenerate_for(fragment: str):
+    def run_script(name, args, **kwargs):
+        if name == "renderers/pregenerate_fragments.py" and fragment in args[-1].split(","):
+            raise controller.ControllerError(f"pregenerate_fragments.py failed with exit 1: {fragment} broke", 1)
+        return _completed()
+
+    return run_script
+
+
+def test_prepare_stage2_stops_before_dispatch_without_the_section6_scaffold(tmp_path, monkeypatch):
+    output = _stage2_output(tmp_path)
+    monkeypatch.setattr(controller, "_run_script", _fail_pregenerate_for("security-architecture.md"))
+
+    with pytest.raises(controller.ControllerError, match="§6 scaffold"):
+        controller.prepare_stage2(output)
+
+    assert not (output / controller._STAGE2_DISPATCH_MARKER).exists()
+    assert "STAGE2_SCAFFOLD_MISSING" in (output / ".agent-run.log").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("fragment", ["ms-critical-attack-tree.json", "assets.md"])
+def test_prepare_stage2_keeps_other_structural_fragments_best_effort(tmp_path, monkeypatch, fragment):
+    output = _stage2_output(tmp_path)
+    monkeypatch.setattr(controller, "_run_script", _fail_pregenerate_for(fragment))
+
+    action = controller.prepare_stage2(output)
+
+    assert action["stage"] == "stage2"
+    assert "renderers/pregenerate_fragments.py: best-effort failure" in action["receipts"]
+
+
 def test_prepare_stage2_builds_the_ms_input_digest(tmp_path, monkeypatch):
     output = tmp_path / "out"
     output.mkdir()
@@ -1820,6 +1858,62 @@ def test_next_action_falls_back_to_stage2_when_compose_fails(tmp_path, monkeypat
     action = controller.next_action(output)
     assert not (output / "threat-model.md").is_file()
     assert action["stage"] == "stage2"
+
+
+def _structure_failing_run(tmp_path, monkeypatch, plan: dict):
+    """Fragments compose fine, but the report fails the final structure gate."""
+    output = tmp_path / "out"
+    frag = output / ".fragments"
+    frag.mkdir(parents=True)
+    (output / ".skill-config.json").write_text(json.dumps(_cfg(tmp_path)), encoding="utf-8")
+    (output / "threat-model.yaml").write_text("meta: {}\n", encoding="utf-8")
+    (frag / "ms-verdict.json").write_text("{}", encoding="utf-8")
+    (frag / "security-architecture.md").write_text("## 6\n", encoding="utf-8")
+    commands = []
+
+    def fake_run(cmd, **kwargs):
+        commands.append(" ".join(map(str, cmd)))
+        joined = commands[-1]
+        if "renderers/compose_threat_model.py" in joined:
+            (output / "threat-model.md").write_text("# report\n", encoding="utf-8")
+        if "qa_checks.py repair_plan" in joined:
+            (output / ".qa-repair-plan.json").write_text(json.dumps(plan), encoding="utf-8")
+        failing = "qa_checks.py final_structure" in joined or "qa_checks.py repair_plan" in joined
+        return subprocess.CompletedProcess(cmd, 1 if failing else 0, '{"toc_closure": {}}', "")
+
+    monkeypatch.setattr(controller.subprocess, "run", fake_run)
+    return output, commands
+
+
+def test_structure_failure_after_compose_routes_the_fixer_at_the_owning_fragment(tmp_path, monkeypatch):
+    output, commands = _structure_failing_run(
+        tmp_path,
+        monkeypatch,
+        {
+            "actionable": True,
+            "actions": [{"type": "toc_closure", "fragments_to_rewrite": [".fragments/security-architecture.md"]}],
+        },
+    )
+    action = controller.next_action(output)
+    assert action["stage"] == "stage2"
+    assert "REPAIR_PLAN_PATH=.qa-repair-plan.json" in action["receipts"][0]
+    autofix = next(i for i, c in enumerate(commands) if "qa_checks.py autofix" in c)
+    structure = next(i for i, c in enumerate(commands) if "qa_checks.py final_structure" in c)
+    assert autofix < structure
+    # The report is not finalized, so the next transition recomposes it.
+    assert not (output / ".appsec-checkpoint").is_file()
+
+
+def test_structure_failure_without_a_writable_owner_stops_stage2(tmp_path, monkeypatch):
+    """A deterministic producer emitted the defect: neither the fixer nor a
+    re-render can repair it, so retrying would only burn the budget."""
+    output, _ = _structure_failing_run(
+        tmp_path,
+        monkeypatch,
+        {"actionable": False, "actions": [{"type": "toc_closure", "fragments_to_rewrite": []}]},
+    )
+    with pytest.raises(controller.ControllerError, match="producer defect"):
+        controller.next_action(output)
 
 
 def test_next_action_stamps_slug_deliverables_on_complete(tmp_path):

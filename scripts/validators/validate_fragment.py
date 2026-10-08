@@ -42,7 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import renderers._severity_rollup as _severity_rollup
 import shared._ms_component_refs as _ms_component_refs
 import yaml
-from shared._atomic_io import atomic_write_json
+from shared._atomic_io import atomic_write_json, atomic_write_text
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 SCHEMAS_DIR = PLUGIN_ROOT / "schemas" / "fragments"
@@ -1006,6 +1006,161 @@ MS_RENDERER_FRAGMENT_TYPES = (
 )
 
 
+#: Stage-2 fragments a renderer model authors (`agents/appsec-secarch-renderer.md`,
+#: `agents/appsec-ms-renderer.md`, `agents/appsec-threat-renderer.md`). Their finding
+#: citations are model output; deterministic fragments derive theirs from the model.
+LLM_AUTHORED_FRAGMENTS: tuple[str, ...] = (
+    "security-architecture.md",
+    "requirements-compliance.md",
+    *(_FRAGMENT_FILENAMES[t] for t in MS_RENDERER_FRAGMENT_TYPES),
+)
+
+# `[label](#f-012)` / `(#t-012)` links and bare `F-012` / `T-012` ids. The
+# lookbehind keeps other namespaces (`AC-T-001`, `SAF-019`) out.
+_FINDING_LINK_RE = re.compile(r"\(#([ft])-(\d{3,})\)", re.I)
+_BARE_FINDING_RE = re.compile(r"(?<![A-Za-z0-9-])([FT])-(\d{3,})\b")
+_LIST_ITEM_RE = re.compile(r"^\s*[-*+]\s+")
+_LEADING_LINK_ITEM_RE = re.compile(r"^\s*[-*+]\s+\[[^\]]*\]\(#[ft]-(\d{3,})\)", re.I)
+_RELEVANT_FINDINGS_RE = re.compile(r"^\s*\*\*Relevant findings:?\*\*:?\s*$")
+
+
+def published_finding_numbers(output_dir: Path) -> set[int] | None:
+    """Numbers of the findings the report publishes (`_severity_rollup.register_threats`).
+
+    ``F-NNN`` is the visible form of ``T-NNN`` (`_severity_rollup.display_id`), so
+    one number names both. ``None`` when the model cannot be read: the gate then
+    has no authority to judge citations.
+    """
+    try:
+        model = yaml.safe_load((output_dir / "threat-model.yaml").read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return None
+    if not isinstance(model, dict) or not isinstance(model.get("threats"), list):
+        return None
+    numbers: set[int] = set()
+    for threat in _severity_rollup.register_threats(model):
+        shown = _severity_rollup.display_id(str(threat.get("id") or ""))
+        if shown.startswith("F-") and shown[2:].isdigit():
+            numbers.add(int(shown[2:]))
+    return numbers
+
+
+def _cited_numbers(text: str) -> list[int]:
+    found = [int(m.group(2)) for m in _FINDING_LINK_RE.finditer(text)]
+    found += [int(m.group(2)) for m in _BARE_FINDING_RE.finditer(text)]
+    return found
+
+
+def _unpublished(text: str, published: set[int]) -> list[str]:
+    return sorted({f"F-{n:03d}" for n in _cited_numbers(text) if n not in published})
+
+
+def _drop_unpublished_list_items(text: str, published: set[int]) -> tuple[str, list[str]]:
+    """Remove list items that begin with a link to an unpublished finding and cite no published one.
+
+    That shape is a `**Relevant findings**` entry: the link is its subject and the
+    rest is its rationale, so the whole item belongs to a finding the report does
+    not contain. Any other citation stays for the fixer, which can rewrite prose.
+    """
+    kept: list[str] = []
+    removed: list[str] = []
+    for line in text.splitlines(keepends=True):
+        lead = _LEADING_LINK_ITEM_RE.match(line)
+        cited = _cited_numbers(line)
+        if lead and int(lead.group(1)) not in published and all(n not in published for n in cited):
+            removed.append(line.strip())
+            continue
+        kept.append(line)
+    return "".join(kept), removed
+
+
+def _fill_emptied_relevant_findings(text: str) -> str:
+    """Give each `**Relevant findings**` label without a list item the scaffold's `- None.` entry.
+
+    The §6 scaffold (`pregenerate_fragments._no_attributed_finding_line`) always
+    writes at least one item, so a label left bare by the removal above means the
+    control has no published finding.
+    """
+    lines = text.splitlines(keepends=True)
+    out: list[str] = []
+    skip_blank = False
+    for i, line in enumerate(lines):
+        if skip_blank and not line.strip():
+            skip_blank = False
+            continue
+        skip_blank = False
+        out.append(line)
+        if not _RELEVANT_FINDINGS_RE.match(line):
+            continue
+        nxt = next((ln for ln in lines[i + 1 :] if ln.strip()), "")
+        if not _LIST_ITEM_RE.match(nxt):
+            out.append("\n- None.\n")
+            skip_blank = True
+    return "".join(out)
+
+
+def _json_strings(data: Any) -> list[str]:
+    if isinstance(data, str):
+        return [data]
+    if isinstance(data, dict):
+        return [s for v in data.values() for s in _json_strings(v)]
+    if isinstance(data, list):
+        return [s for v in data for s in _json_strings(v)]
+    return []
+
+
+def unpublished_finding_ref_errors(output_dir: Path, fragments_dir: Path) -> tuple[list[dict], list[dict]]:
+    """Check every model-authored fragment against the published finding set.
+
+    Returns ``(failed, removed)``. Markdown list items whose subject is an
+    unpublished finding are removed in place (idempotent); every remaining
+    citation of an unpublished finding becomes a failed entry for the fixer.
+    A refuted or below-floor candidate is not a published finding, so a claim
+    citing it would assert what the analysis rejected or did not publish.
+    """
+    published = published_finding_numbers(output_dir)
+    if published is None:
+        return [], []
+    failed: list[dict] = []
+    removed: list[dict] = []
+    for name in LLM_AUTHORED_FRAGMENTS:
+        path = fragments_dir / name
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if name.endswith(".md"):
+            pruned, dropped = _drop_unpublished_list_items(text, published)
+            if dropped:
+                text = _fill_emptied_relevant_findings(pruned)
+                atomic_write_text(path, text)
+                removed.append({"file": name, "items": dropped})
+            ids = _unpublished(text, published)
+        else:
+            try:
+                ids = sorted({i for s in _json_strings(json.loads(text)) for i in _unpublished(s, published)})
+            except ValueError:
+                continue  # unreadable JSON is the schema pass's finding
+        if not ids:
+            continue
+        failed.append(
+            {
+                "file": name,
+                "type": "unpublished_finding_refs",
+                "error": f"cites unpublished finding(s): {', '.join(ids)}",
+                "remediation": (
+                    f"Edit `.fragments/{name}`: delete every claim, clause or citation that rests on "
+                    f"{', '.join(ids)} — these candidates were refuted or fell below the register floor, so "
+                    "the report does not publish them. Never re-point a citation to another finding, and keep "
+                    "the remaining text grammatical."
+                ),
+            }
+        )
+    return failed, removed
+
+
 def _describe_schema_error(error: jsonschema.ValidationError) -> str:
     """The field path and its violation; a length violation states both sizes."""
     where = "/".join(str(part) for part in error.absolute_path) or "<root>"
@@ -1118,8 +1273,9 @@ def run_pre_render_gate(
     """Validate fragment presence + schema under output_dir/.fragments/ before
     the renderer runs.  Writes a .pre-render-report.json summary to output_dir.
 
-    Returns 0 when all required fragments are present and schema-valid;
-    1 when any fragment is missing or fails schema validation.
+    Returns 0 when all required fragments are present and schema-valid and no
+    model-authored fragment cites a finding absent from ``threat-model.yaml``;
+    1 otherwise.
 
     Required fragment set (unconditional — they exist on every legitimate
     renderers/compose_threat_model.py run):
@@ -1240,6 +1396,11 @@ def run_pre_render_gate(
                 }
             )
 
+    ref_failures, ref_removals = unpublished_finding_ref_errors(output_dir, fragments_dir)
+    report["failed"].extend(ref_failures)
+    if ref_removals:
+        report["removed_unpublished_refs"] = ref_removals
+
     _write_report(output_dir, report)
 
     failed = len(report["failed"])
@@ -1263,7 +1424,7 @@ def run_pre_render_gate(
                 print(f"  MISSING {name}", file=sys.stderr)
         if failed:
             print(
-                f"PRE_RENDER_GATE: {failed} fragment(s) failed schema — "
+                f"PRE_RENDER_GATE: {failed} fragment check(s) failed — "
                 f"passed={passed} missing={missing} skipped={skipped}",
                 file=sys.stderr,
             )
@@ -1299,8 +1460,9 @@ def _write_repair_plan(output_dir: Path, report: dict) -> None:
     `rebuild-wipe` clears it. It also shares compose's `attempt` counter, so the
     three-attempt cap counts both producers instead of each resetting the other.
 
-    Only `failed[]` — schema violations of LLM-authored JSON fragments —
-    becomes a repair action. A `missing_required` entry is deliberately NOT
+    Only `failed[]` — schema violations of LLM-authored JSON fragments and
+    citations of unpublished findings in model-authored fragments — becomes a
+    repair action. A `missing_required` entry is deliberately NOT
     handed to a repair agent: that set is dominated by deterministic fragments
     `renderers/pregenerate_fragments.py` owns, and letting an LLM hand-author them would
     bypass their generator. That case emits an `actionable: false` plan, which
@@ -1319,7 +1481,7 @@ def _write_repair_plan(output_dir: Path, report: dict) -> None:
     actions = [
         {
             "raw_issue": f"{entry['file']} ({entry['type']}): {entry['error']}",
-            "type": "fragment_schema_violation",
+            "type": entry["type"] if entry.get("type") == "unpublished_finding_refs" else "fragment_schema_violation",
             "section_id": "fragments",
             "fragments_to_rewrite": [f".fragments/{entry['file']}"],
             "remediation": entry.get("remediation")
@@ -1333,7 +1495,7 @@ def _write_repair_plan(output_dir: Path, report: dict) -> None:
             "severity": "blocking",
         }
         for entry in failed
-        if entry.get("type") in FRAGMENT_SCHEMAS
+        if entry.get("type") in FRAGMENT_SCHEMAS or entry.get("type") == "unpublished_finding_refs"
     ]
     exhausted = attempt > _PRE_RENDER_REPAIR_MAX_ATTEMPTS
     if exhausted:

@@ -60,6 +60,7 @@ from analyzers.architect_review_runtime import open_decisions  # noqa: E402
 from shared._critical_findings_sync import resync_critical_findings  # noqa: E402
 from shared._finding_locator import is_code_locator, strip_trailing_locator  # noqa: E402
 from shared._finding_state import review_before_fix  # noqa: E402
+from shared._register_titles import HEADING_SOFT_MAX, clamp_mitigation_title  # noqa: E402
 from shared._shared_sources import ARCH_ALL_SOURCES  # noqa: E402
 
 from model.emit_finding_fix_mitigations import after_review_priority, severity_priority  # noqa: E402
@@ -116,9 +117,9 @@ def _evidence_file(threat: dict) -> tuple[str, int | None]:
     return f, ln
 
 
-# A review title becomes a register heading (`M-NNN — <title>`), which QA
-# blocks above 100 characters; the full path stays in `review_target`.
-_REVIEW_TITLE_MAX = 80
+# The locator is appended only while the title stays within the soft heading
+# limit; the full path stays in `review_target`.
+_REVIEW_TITLE_MAX = HEADING_SOFT_MAX
 
 
 def _review_title(verb: str, threat: dict) -> str:
@@ -128,7 +129,7 @@ def _review_title(verb: str, threat: dict) -> str:
     where = f"{base}:{ln}" if (base and ln) else base
     title = f"Manual review: {verb} {weakness}"
     with_where = f"{title} at {where}" if where else title
-    return with_where if len(with_where) <= _REVIEW_TITLE_MAX else title
+    return with_where if len(with_where) <= _REVIEW_TITLE_MAX else clamp_mitigation_title(title)
 
 
 def _short_weakness(title: str) -> str:
@@ -375,7 +376,7 @@ def _synthesize_architectural_investigate(data: dict, state: dict, threats_by_id
         new_cards.append(
             {
                 "id": mid,
-                "title": f"Architecture review: validate {descriptor} in {component}",
+                "title": clamp_mitigation_title(f"Architecture review: validate {descriptor} in {component}"),
                 "kind": "investigate",
                 "priority": "P2",
                 "threat_ids": tids,

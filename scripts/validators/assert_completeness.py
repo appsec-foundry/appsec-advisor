@@ -161,7 +161,15 @@ def chk_render_enrichment_current(y: dict, md: str) -> tuple[bool, str]:
     return valid_receipt(y), "missing, malformed, or stale meta.enrichment_pass for the final YAML"
 
 
+def chk_controls_reach_section6(y: dict, md: str) -> tuple[bool, str]:
+    from renderers.pregenerate_fragments import describe_unplaced_controls, unplaced_security_controls
+
+    unplaced = unplaced_security_controls(y.get("security_controls") or [])
+    return (not unplaced, describe_unplaced_controls(unplaced) if unplaced else "")
+
+
 _CHECKS = {
+    "controls_reach_section6": chk_controls_reach_section6,
     "render_enrichment_current": chk_render_enrichment_current,
     "every_threat_has_id": chk_every_threat_has_id,
     "mitigations_nonempty_when_remediations": chk_mitigations_nonempty_when_remediations,

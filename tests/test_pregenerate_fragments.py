@@ -4540,6 +4540,30 @@ def test_a_control_without_a_section_6_heading_stops_the_fragment():
         pf.gen_security_architecture_v2(data)
 
 
+@pytest.mark.parametrize(
+    "domain, heading",
+    [
+        ("Data Protection", "6.9 Cryptography Secrets and Data Protection"),
+        ("Data Access", "6.5 Query Construction and Data Access Controls"),
+        ("Input", "6.6 Input Boundary Validation Controls"),
+        ("Rendering", "6.7 Output Encoding and Rendering Controls"),
+    ],
+)
+def test_a_domain_naming_part_of_one_section_6_title_takes_that_section(domain, heading):
+    # A control whose name carries no hint word used to stop §6 generation.
+    control = {"control": "Opaque Guard", "domain": domain, "effectiveness": "Weak"}
+    assert pf._v2_canonical_section_for_control(control) == heading
+    assert not pf.unplaced_security_controls([control])
+    md = pf.gen_security_architecture_v2({"components": [], "threats": [], "security_controls": [control]})
+    assert "Opaque Guard" in _section(md, heading.split(" ", 1)[0])
+
+
+@pytest.mark.parametrize("domain", ["Data", "Misc", "Network Hardening"])
+def test_a_domain_shared_by_several_titles_or_by_none_stays_unplaced(domain):
+    control = {"control": "Opaque Guard", "domain": domain}
+    assert pf.unplaced_security_controls([control]) == [control]
+
+
 @pytest.mark.parametrize("cwe", ["CWE-345", "CWE-79"])
 def test_a_finding_on_a_build_component_is_listed_in_6_11_whatever_its_cwe(cwe):
     data = {

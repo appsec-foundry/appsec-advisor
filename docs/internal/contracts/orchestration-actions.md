@@ -108,6 +108,7 @@ Dispatch and mutation ownership is global: native Level-0 Agent dispatch belongs
   specialists, and the full renderer remains the bounded recovery profile.
   Every profile converges on the same controller-owned fragment validation,
   strict compose, prose-fix, and QA-autofix tail before Stage 3.
+  Every profile fills the deterministic §6 scaffold, so `prepare-stage2` aborts before any renderer dispatch when that scaffold cannot be generated; the other structural fragments it prepares stay best-effort because the compose tail regenerates them.
 - `SKILL-full-runtime.md`, `SKILL-thin-stage1-v2.md`, `SKILL-thin-stage1d.md`, `SKILL-thin-stage2.md`, and `SKILL-rerender-runtime.md` own user-visible output, apply controller-owned Task lifecycle, and Level-0 producer calls for their modes. `SKILL-thin-stage3.md`, `SKILL-thin-stage4.md`, and `SKILL-thin-completion.md` own the bounded review, repair, release-gate, export, and cleanup calls selected by the controller.
 - `orchestrator/stride_dispatch_waves.py` owns deterministic bounded-wave scheduling,
   persisted two-attempt counters, resume selection, and the selected-component

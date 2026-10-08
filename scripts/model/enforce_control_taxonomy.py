@@ -296,6 +296,8 @@ _DOMAIN_TEXT_INDEX: tuple[tuple[tuple[str, ...], str], ...] = (
     (("dependency",), "Operations Runtime and Supply Chain Controls"),
     (("supply", "chain"), "Operations Runtime and Supply Chain Controls"),
     (("runtime",), "Operations Runtime and Supply Chain Controls"),
+    (("network",), "Operations Runtime and Supply Chain Controls"),
+    (("infrastructure",), "Operations Runtime and Supply Chain Controls"),
     (("llm",), "Real-time and Not Applicable Controls"),
     (("ai",), "Real-time and Not Applicable Controls"),
     (("agentic",), "Real-time and Not Applicable Controls"),
@@ -597,8 +599,8 @@ def _resolve_from_catalog(controls: list) -> list[dict]:
     catalog control carries a deterministic domain key; without this pass a
     domain such as "Supply Chain" matches no heading and the control is dropped
     from §6. A control that matches neither goes to ``_resolve_from_domain_text``;
-    only what that pass cannot place either reaches the QA gate
-    ``check_controls_reach_section6``.
+    only what that pass cannot place either stops the build gate
+    ``controls_reach_section6`` (validators/assert_completeness.py).
     """
     titles = _section_titles()
     by_rule, by_name, sections = _catalog_domain_keys()

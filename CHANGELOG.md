@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Threat analysis reports unfulfilled evidence requests, rejects missing follow-up questions, and accepts source-backed findings introduced by removed controls.
 - Trust boundaries keep network, privilege and in-process trust changes regardless of source layout, and a verified finding at a boundary's cited interface now refutes that boundary.
 - Hardcoded secrets that a finding cites, including keys passed directly as call arguments, are masked in every report output, and the secret gate fails when one remains.
+- Reports cite only published findings, and broken finding links, missing §6 scaffolds and overlong register headings are repaired or stopped right after rendering instead of aborting the run at completion.
 - `update-baseline` preserves AISCB user scope when the project path is the home directory and offers a direct signed updater fallback after delegation fails.
 
 ## 0.6.0-beta.4 (2026-10-06)

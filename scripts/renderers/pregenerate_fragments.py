@@ -3314,6 +3314,24 @@ _V2_CONTROL_HINTS: dict[str, tuple[str, ...]] = {
 _V2_HEADING_ORDER: tuple[str, ...] = tuple(h for h, _ in (_V2_CONTROL_HINTS.items()))
 
 
+_V2_TITLE_FILLER_WORDS = frozenset({"and", "control", "controls", "of", "the", "for"})
+
+
+def _v2_title_words(text: str) -> frozenset[str]:
+    return frozenset(re.findall(r"[a-z0-9]+", text.lower())) - _V2_TITLE_FILLER_WORDS
+
+
+def _v2_heading_for_title_words(domain: str) -> str:
+    """The one §6 heading whose title contains every content word of ``domain``, else ""."""
+    words = _v2_title_words(domain)
+    if not words:
+        return ""
+    matches = [
+        heading for heading in _V2_HEADING_ORDER if words <= _v2_title_words(re.sub(r"^\d+(?:\.\d+)*\s+", "", heading))
+    ]
+    return matches[0] if len(matches) == 1 else ""
+
+
 def _v2_canonical_section_for_control(c: dict) -> str:
     """Return the SINGLE canonical §6 heading a control belongs to.
 
@@ -3354,6 +3372,12 @@ def _v2_canonical_section_for_control(c: dict) -> str:
             title = re.sub(r"^\d+(?:\.\d+)*\s+", "", heading).strip().lower()
             if title and title == domain:
                 return heading
+        # A free-form domain that names part of exactly one heading title
+        # ("Data Protection", "Input") belongs to that heading. The hyphenated
+        # hints below never match such space-form domains.
+        by_title = _v2_heading_for_title_words(domain)
+        if by_title:
+            return by_title
         # Fall back to hint substring matching for partial / non-canonical
         # domains (older yamls, shorthand). Unchanged space-form behaviour.
         for heading in _V2_HEADING_ORDER:
@@ -3368,6 +3392,16 @@ def _v2_canonical_section_for_control(c: dict) -> str:
         if any(h in haystack for h in hints):
             return heading
     return ""
+
+
+def unplaced_security_controls(raw: list) -> list[dict]:
+    """Controls that resolve to no §6 heading; they would vanish from the chapter while the overview counts them."""
+    return [c for c in _normalize_security_controls(raw) if not _v2_canonical_section_for_control(c)]
+
+
+def describe_unplaced_controls(unplaced: list[dict]) -> str:
+    names = ", ".join(f"{c.get('control') or c.get('name')!r} (domain {c.get('domain')!r})" for c in unplaced)
+    return f"§6 has no section for control(s) {names}; give them a rule_id, a catalog name or a §6 domain"
 
 
 def _v2_controls_for_heading(controls: list[dict], heading: str) -> list[dict]:
@@ -4276,13 +4310,9 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
     """
     quick_depth = (depth or "").strip().lower() == "quick"
     controls = _normalize_security_controls(yaml_data.get("security_controls"))
-    # A control without a §6 heading would vanish from the chapter while the overview still counts it.
-    unplaced = [c for c in controls if not _v2_canonical_section_for_control(c)]
+    unplaced = unplaced_security_controls(controls)
     if unplaced:
-        names = ", ".join(f"{c.get('control') or c.get('name')!r} (domain {c.get('domain')!r})" for c in unplaced)
-        raise ValueError(
-            f"§6 has no section for control(s) {names}; give them a rule_id, a catalog name or a §6 domain"
-        )
+        raise ValueError(describe_unplaced_controls(unplaced))
     threats = _v2_route_threats(yaml_data)
     special_surfaces = _v2_special_surfaces(yaml_data)
 

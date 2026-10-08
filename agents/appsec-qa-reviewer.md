@@ -82,7 +82,9 @@ For each manual-review action:
 - when a writable fragment is known, emit one precise
   `.qa-content-repair-plan.json` action;
 - when the producer is deterministic code or the source is ambiguous, preserve
-  the evidence and return `manual_review_items`; do not guess.
+  the evidence and return `manual_review_items`; do not guess. Each item
+  carries `action_type` (the plan action's `type`) and `issue`; the release
+  gate decides from `action_type`, so a blocking type is never released.
 
 After plan triage, write status and exit. Do not fall through into the forced
 semantic checklist.

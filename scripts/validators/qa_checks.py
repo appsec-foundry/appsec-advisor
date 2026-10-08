@@ -109,6 +109,8 @@ import renderers.team_questions as _team_questions
 import shared._safe_cond as _safe_cond
 from analyzers.perimeter_patterns import PERIMETER_ABSENCE_PATTERNS as _PERIMETER_ABSENCE_PATTERNS
 from shared._atomic_io import atomic_write_text
+from shared._fragment_ownership import locate_defect_fragments
+from shared._register_titles import HEADING_HARD_MAX, HEADING_SOFT_MAX
 
 from validators.check_reference_format import lint_text as _reference_format_lint
 from validators.secret_scan import PUBLISHED_ARTIFACTS as _PUBLISHED_ARTIFACTS
@@ -2078,6 +2080,11 @@ BLOCKING_ACTION_TYPES = frozenset(
 )
 
 
+# Blocking checks whose issues name literal report text, so the producing
+# fragment can be located instead of guessed.
+_OWNER_RESOLVED_CHECKS = frozenset({"toc_closure", "xrefs", "reference_format", "heading_hygiene"})
+
+
 def _action_severity(action_type: str) -> str:
     """Classify a repair-plan action as blocking, cosmetic, or manual review.
 
@@ -2173,6 +2180,70 @@ def _fragment_owning_mermaid_block(md_path: Path, raw_issue: str) -> Optional[st
     if top_score < 0.6 or (top_score - runner_up) < 0.2:
         return None
     return top_path
+
+
+_UNRESOLVED_ANCHOR_RE = re.compile(r"unresolved TOC/link anchor: #(\S+)")
+_REGISTER_ANCHOR_RE = re.compile(r"^([ftm])-(\d+)$")
+_ORPHAN_REF_RE = re.compile(r"orphaned-(?:threat|mitigation)-ref: ([FTM])-(\d+)\b")
+_QUOTED_SNIPPET_RE = re.compile(r"'([^']{3,})'")
+_SECTION_NUMBER_PREFIX_RE = re.compile(r"^\d+(?:\.\d+)*\.?\s+")
+
+
+def _register_id_patterns(kind: str, number: str) -> list[re.Pattern[str]]:
+    """A register ID as authored: bare token (linkified by compose) or an anchor link.
+
+    A finding renders as F-NNN but fragments may still carry T-NNN.
+    """
+    letters = "FT" if kind.lower() in "ft" else "M"
+    return [
+        re.compile(rf"(?<![A-Za-z0-9-])[{letters}]-{number}(?!\d)"),
+        re.compile(rf"\(#[{letters.lower()}]-{number}\)"),
+    ]
+
+
+def _defect_text_patterns(check: str, raw: str) -> list[re.Pattern[str]]:
+    """Literal patterns for the text a blocking issue reports, or none when it names no text."""
+    if check == "toc_closure":
+        m = _UNRESOLVED_ANCHOR_RE.search(raw)
+        if not m:
+            return []
+        slug = m.group(1)
+        register = _REGISTER_ANCHOR_RE.match(slug)
+        patterns = [re.compile(re.escape(f"(#{slug})"))]
+        return patterns + (_register_id_patterns(*register.groups()) if register else [])
+    if check == "xrefs":
+        m = _ORPHAN_REF_RE.search(raw)
+        return _register_id_patterns(*m.groups()) if m else []
+    if check == "reference_format":
+        m = _QUOTED_SNIPPET_RE.search(raw)
+        return [re.compile(re.escape(m.group(1)))] if m else []
+    if check == "heading_hygiene" and ": `" in raw:
+        heading = _SECTION_NUMBER_PREFIX_RE.sub("", raw.rsplit(": `", 1)[1].rstrip("`")).strip()
+        return [re.compile(re.escape(heading))] if len(heading) >= 8 else []
+    return []
+
+
+def _resolve_defect_owners(check: str, issues: list[str], output_dir: Path) -> tuple[list[str], list[str]]:
+    """Return ``(fragments_to_rewrite, unresolved_issues)`` for one blocking check.
+
+    An issue is repairable only when its literal text occurs in a contract
+    fragment that survives recompose and in no regenerated one. Otherwise the
+    producer is deterministic code: naming a fragment would start the
+    non-convergent loop of 7ac5cfa, so the issue stays unresolved and the
+    release gate refuses it.
+    """
+    candidates = [p for paths in CONTRACT_SECTION_FRAGMENTS.values() for p in (paths or [])]
+    owners: set[str] = set()
+    unresolved: list[str] = []
+    for raw in issues:
+        persistent, regenerated = locate_defect_fragments(
+            output_dir / ".fragments", candidates, _defect_text_patterns(check, raw)
+        )
+        if persistent and not regenerated:
+            owners.update(persistent)
+        else:
+            unresolved.append(raw)
+    return sorted(owners), unresolved
 
 
 def _render_integrity_actions(output_dir: Path) -> tuple[list[str], list[dict]]:
@@ -2370,15 +2441,18 @@ def build_repair_plan(
         ),
     ):
         if issue_list:
-            actions.append(
-                {
-                    "raw_issue": "; ".join(issue_list),
-                    "type": check_name,
-                    "section_id": "cross_references",
-                    "fragments_to_rewrite": [],
-                    "remediation": remediation,
-                }
-            )
+            action = {
+                "raw_issue": "; ".join(issue_list),
+                "type": check_name,
+                "section_id": "cross_references",
+                "fragments_to_rewrite": [],
+                "remediation": remediation,
+            }
+            if check_name in _OWNER_RESOLVED_CHECKS:
+                action["fragments_to_rewrite"], action["unresolved_issues"] = _resolve_defect_owners(
+                    check_name, issue_list, output_dir
+                )
+            actions.append(action)
     if toc_contract_issues:
         actions.append(
             {
@@ -2462,19 +2536,19 @@ def build_repair_plan(
     # (that run delivered 12 of them while section_integrity and final_structure
     # both passed).
     #
-    # Deliberately NO `fragments_to_rewrite`: the check reports the dangling
-    # anchor, not the fragment that emitted it, and guessing would start the
-    # kind of non-convergent repair loop 7ac5cfa had to unwind. Blocking without
-    # a writable target classifies as `manual_review` (exit 3) — the defect
-    # blocks the clean fast path and goes to QA triage, but never spins the
-    # fragment-fixer.
+    # The fragment is named only when the dangling link literally occurs in a
+    # fragment that survives recompose (`_resolve_defect_owners`); guessing
+    # would start the non-convergent loop 7ac5cfa had to unwind. Issues without
+    # such an owner stay in `unresolved_issues`, which the release gate refuses.
     if toc_closure_issues:
+        toc_owners, toc_unresolved = _resolve_defect_owners("toc_closure", toc_closure_issues, output_dir)
         actions.append(
             {
                 "raw_issue": "; ".join(toc_closure_issues),
                 "type": "toc_closure",
                 "section_id": "toc",
-                "fragments_to_rewrite": [],
+                "fragments_to_rewrite": toc_owners,
+                "unresolved_issues": toc_unresolved,
                 "remediation": (
                     "One or more `[label](#anchor)` links resolve to nothing in "
                     "the rendered document. Locate the heading each anchor was "
@@ -5048,22 +5122,36 @@ def _toc_contract_blocking_issues(report: dict) -> list[str]:
     return [i for i in report.get("issues", []) if not _TOC_ADVISORY_ISSUE_RE.match(i)]
 
 
-def cmd_final_structure(
+def final_structure_reports(
     md_path: Path,
     contract_path: Path = DEFAULT_CONTRACT_PATH,
-) -> int:
-    """Read-only final gate for the persisted Markdown after every mutator."""
+) -> tuple[dict, int]:
+    """Return the final-structure reports and their blocking issue count.
+
+    The one definition of a structurally unreleasable report: the completion
+    gate, the Stage-2 compose tail and the Stage-3 release gate all call it, so
+    Stage 3 cannot release what completion then rejects.
+    """
     reports = {
         "contract": check_contract(md_path, contract_path).as_dict(),
         "toc_contract": check_toc_contract(md_path, contract_path).as_dict(),
         "toc_closure": check_toc_closure(md_path).as_dict(),
     }
-    print(json.dumps(reports, indent=2))
     blocking = (
         reports["contract"]["issue_count"]
         + len(_toc_contract_blocking_issues(reports["toc_contract"]))
         + reports["toc_closure"]["issue_count"]
     )
+    return reports, blocking
+
+
+def cmd_final_structure(
+    md_path: Path,
+    contract_path: Path = DEFAULT_CONTRACT_PATH,
+) -> int:
+    """Read-only final gate for the persisted Markdown after every mutator."""
+    reports, blocking = final_structure_reports(md_path, contract_path)
+    print(json.dumps(reports, indent=2))
     return 0 if blocking == 0 else 1
 
 
@@ -5159,16 +5247,16 @@ def check_heading_hygiene(md_path: Path) -> Report:
         #   > 100      : issue (flagged for repair)
         # Length includes the leading "N.M " prefix but excludes the `### `.
         heading_len = len(heading_text)
-        if heading_len > 100:
+        if heading_len > HEADING_HARD_MAX:
             report.issues.append(
-                f"heading length {heading_len} chars exceeds 100-char "
+                f"heading length {heading_len} chars exceeds {HEADING_HARD_MAX}-char "
                 f"hard limit — shorten the title (move the long form to "
                 f"the body): `{heading_text[:120]}`"
             )
             continue
-        if heading_len > 80:
+        if heading_len > HEADING_SOFT_MAX:
             report.warnings.append(
-                f"heading length {heading_len} chars exceeds 80-char "
+                f"heading length {heading_len} chars exceeds {HEADING_SOFT_MAX}-char "
                 f"soft limit — consider shortening the title: "
                 f"`{heading_text[:120]}`"
             )

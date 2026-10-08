@@ -10,14 +10,15 @@ from pathlib import Path
 _STAGE2_DISPATCH_MARKER = ".stage2-dispatched"
 
 
-def _fragment_repair_is_actionable(output_dir: Path) -> bool:
-    """True when the fragment gate left a plan a fragment-fixer can execute.
+def _fragment_repair_is_actionable(output_dir: Path, plan_name: str = ".pre-render-repair-plan.json") -> bool:
+    """True when a gate left a plan a fragment-fixer can execute.
 
-    A plan with ``actionable: false`` carries only missing required fragments —
-    those belong to ``renderers/pregenerate_fragments.py``, not to an LLM repair pass.
+    A plan with ``actionable: false`` names no fragment whose edit survives
+    recompose — its defects belong to deterministic producers, not to an LLM
+    repair pass.
     """
     try:
-        plan = json.loads((output_dir / ".pre-render-repair-plan.json").read_text(encoding="utf-8"))
+        plan = json.loads((output_dir / plan_name).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
     return isinstance(plan, dict) and bool(plan.get("actionable")) and bool(plan.get("actions"))

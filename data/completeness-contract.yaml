@@ -42,6 +42,12 @@ invariants:
     when: "threat.effective_severity/risk in {Critical, High} and source != config-scan"
     fix_hint: "model/emit_finding_fix_mitigations.py / build_mitigations fallback should link every Critical/High finding"
 
+  - id: controls_reach_section6
+    phase: build
+    severity: fail
+    when: "any security_controls[] entry"
+    fix_hint: "every control needs a §6 placement: a domain that names a §6 title, a rule_id, a catalog name, or a word in model/enforce_control_taxonomy.py _DOMAIN_TEXT_INDEX"
+
   # ── render phase (threat-model.md) ───────────────────────────────────────
   - id: render_enrichment_current
     phase: render

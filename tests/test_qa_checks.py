@@ -2355,6 +2355,96 @@ class TestRepairPlanStatusClassification:
         plan, _ = qa.build_repair_plan(md, tmp_path, qa.DEFAULT_CONTRACT_PATH)
         assert [a for a in plan["actions"] if a["type"] == "toc_closure"] == []
 
+    @staticmethod
+    def _dangling_finding_report(tmp_path: Path, finding: str) -> Path:
+        md = tmp_path / "threat-model.md"
+        anchor = finding.lower()
+        md.write_text(
+            "# Threat Model\n\n## 6. Security Architecture\n\n"
+            f"### 6.2 Session Controls\n\n- [{finding}](#{anchor}) — weak token generation.\n",
+            encoding="utf-8",
+        )
+        (tmp_path / ".fragments").mkdir(exist_ok=True)
+        return md
+
+    @staticmethod
+    def _toc_action(plan: dict) -> dict:
+        return next(a for a in plan["actions"] if a["type"] == "toc_closure")
+
+    def test_dangling_finding_link_names_the_authored_fragment(self, tmp_path):
+        """A link to an unpublished finding, authored into a fragment that
+        survives recompose, is repairable: the plan names that fragment."""
+        md = self._dangling_finding_report(tmp_path, "F-042")
+        (tmp_path / ".fragments" / "security-architecture.md").write_text(
+            "- [F-042](#f-042) — weak token generation.\n", encoding="utf-8"
+        )
+        plan, _ = qa.build_repair_plan(md, tmp_path, qa.DEFAULT_CONTRACT_PATH)
+        toc = self._toc_action(plan)
+        assert toc["fragments_to_rewrite"] == [".fragments/security-architecture.md"]
+        assert toc["unresolved_issues"] == []
+        assert plan["actionable"] is True
+
+    def test_bare_finding_id_in_a_json_fragment_is_located(self, tmp_path):
+        """Variant: compose linkifies a bare ID, so the fragment carries no link.
+        A longer ID that merely ends in the same digits is not a match."""
+        md = self._dangling_finding_report(tmp_path, "F-077")
+        frags = tmp_path / ".fragments"
+        (frags / "ms-anti-patterns.json").write_text('{"patterns": [{"refs": ["F-077"]}]}', encoding="utf-8")
+        (frags / "security-architecture.md").write_text("Scanner rule SAF-077 only.\n", encoding="utf-8")
+        plan, _ = qa.build_repair_plan(md, tmp_path, qa.DEFAULT_CONTRACT_PATH)
+        assert self._toc_action(plan)["fragments_to_rewrite"] == [".fragments/ms-anti-patterns.json"]
+
+    @pytest.mark.parametrize(
+        "fragments",
+        [
+            {},
+            {"attack-walkthroughs.md": "[F-042](#f-042)\n"},
+            {"attack-walkthroughs.md": "[F-042](#f-042)\n", "security-architecture.md": "[F-042](#f-042)\n"},
+        ],
+        ids=["no-fragment", "regenerated-only", "authored-and-regenerated"],
+    )
+    def test_defect_from_a_deterministic_producer_stays_unresolved(self, tmp_path, fragments):
+        """A fragment rebuilt on every compose, or no fragment at all, means a
+        deterministic producer emitted the link; naming a fragment would loop."""
+        md = self._dangling_finding_report(tmp_path, "F-042")
+        for name, text in fragments.items():
+            (tmp_path / ".fragments" / name).write_text(text, encoding="utf-8")
+        plan, _ = qa.build_repair_plan(md, tmp_path, qa.DEFAULT_CONTRACT_PATH)
+        toc = self._toc_action(plan)
+        assert toc["fragments_to_rewrite"] == []
+        assert toc["unresolved_issues"] == ["unresolved TOC/link anchor: #f-042"]
+
+    @pytest.mark.parametrize(
+        ("check", "issue", "fragment_text"),
+        [
+            (
+                "heading_hygiene",
+                "heading length 104 chars exceeds 100-char hard limit — shorten the title (move the long "
+                "form to the body): `6.4.1 " + "Very long control heading " * 3 + "`",
+                "#### 6.3.1 " + "Very long control heading " * 3 + "\n",
+            ),
+            (
+                "xrefs",
+                "orphaned-threat-ref: T-031 referenced but no Findings Register row",
+                "See [T-031](#t-031).\n",
+            ),
+            (
+                "reference_format",
+                "ID inside link text: '[F-001 SQL injection](#f-001)'",
+                "- [F-001 SQL injection](#f-001)\n",
+            ),
+        ],
+    )
+    def test_other_blocking_reference_checks_resolve_their_fragment(self, tmp_path, check, issue, fragment_text):
+        (tmp_path / ".fragments").mkdir()
+        (tmp_path / ".fragments" / "security-architecture.md").write_text(fragment_text, encoding="utf-8")
+        assert qa._resolve_defect_owners(check, [issue], tmp_path) == (
+            [".fragments/security-architecture.md"],
+            [],
+        )
+        (tmp_path / ".fragments" / "security-architecture.md").write_text("Unrelated prose.\n", encoding="utf-8")
+        assert qa._resolve_defect_owners(check, [issue], tmp_path) == ([], [issue])
+
     def test_clean_md_end_to_end_returns_pass(self, tmp_path):
         """Smoke test: an MD with no contract violations returns status=pass
         through the full `build_repair_plan` pipeline."""

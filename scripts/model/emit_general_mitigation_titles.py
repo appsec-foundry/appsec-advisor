@@ -73,6 +73,7 @@ import sys
 from pathlib import Path
 
 import yaml
+from shared._register_titles import clamp_mitigation_title
 
 from model.enrichment_pass import EnrichmentContinuation
 
@@ -247,26 +248,10 @@ def _addressed_threats_have_detail(m: dict, threats_by_id: dict) -> bool:
     return False
 
 
-# The rendered mitigation heading is "M-NNN — <title>"; the "M-NNN — " prefix is
-# 8 chars, and qa_checks.check_heading_hygiene hard-fails a heading > 100 chars.
-# Cap the title so the heading stays clear of that limit. The curated titles are
-# short labels; this only bites the _generalize_fallback path when an unmapped
-# CWE leaves a long verbatim Stage-1 instruction as the title.
-_MITIGATION_TITLE_MAXLEN = 90
-
-
-def _clamp_mitigation_title(title: str, limit: int = _MITIGATION_TITLE_MAXLEN) -> str:
-    """Truncate at a word boundary when a title exceeds the heading budget, so
-    the leftover still reads as a label. The full instruction stays in the §10
-    mitigation body — only the heading is shortened."""
-    title = (title or "").strip()
-    if len(title) <= limit:
-        return title
-    cut = title[:limit].rstrip()
-    sp = cut.rfind(" ")
-    if sp > 0:
-        cut = cut[:sp].rstrip()
-    return cut.rstrip(" .,;:—-")
+# The curated titles are short labels; the shared clamp only bites the
+# _generalize_fallback path when an unmapped CWE leaves a long verbatim Stage-1
+# instruction as the title. The full instruction stays in the mitigation body.
+_clamp_mitigation_title = clamp_mitigation_title
 
 
 def generalize_title(original: str, cwe: str) -> str:

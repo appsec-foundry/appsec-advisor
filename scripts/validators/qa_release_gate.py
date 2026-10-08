@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
-"""Release-blocker scan over `.qa-status.json` `manual_review_items`.
+"""Stage-3 release decision over the QA state next to `.qa-status.json`.
 
-The skill's Re-Render Loop short-circuits to the manual-review banner when
-`.qa-repair-plan.json.status == "manual_review"`. That short-circuit is
-correct for cosmetic items (checker false-positives) but unsafe for
-defects that make the rendered model unfit for release — e.g. a
-`mitigation_title`/`addresses` schema drift that produces `(untitled)`
-Mitigation Register headings and empty Mitigation columns across every
-Management Summary table.
+The QA gate classifies every repair-plan action as blocking, cosmetic or
+manual review (`qa_checks._action_severity`, backed by
+`BLOCKING_ACTION_TYPES`). A blocking action that is still in the plan when the
+release gate runs has no writable fragment left to repair it: its producer is
+deterministic code. Releasing it as "manual review" let a report pass Stage 3
+and then fail the completion gate on the same defect, so this gate refuses:
 
-This helper inspects `.qa-status.json` and exits:
+1. any blocking action in `.qa-repair-plan.json`;
+2. any blocking final-structure issue in `threat-model.md`, using the same
+   function as the completion gate (`qa_checks.final_structure_reports`);
+3. any reviewer `manual_review_items` entry whose `action_type` is blocking;
+4. any reviewer entry whose `issue`/`description` text matches a curated
+   pattern — a backstop for entries that carry no structured type.
 
-    0 — no release-blocker matched (cosmetic items only; safe to ship)
-    2 — at least one release-blocker matched (skill MUST abort the run)
-    1 — input file missing or unreadable (caller decides)
+Exit codes:
 
-Patterns are matched case-insensitively against each entry's combined
-``issue`` + ``description`` text. The list is deliberately curated — every
-new pattern blocks otherwise-shipping runs, so additions are a conscious
-trade-off.
+    0 — no release blocker; safe to ship
+    2 — at least one release blocker (skill MUST abort the run)
+    1 — `.qa-status.json` missing or unreadable (caller decides)
 
 Usage:
     python3 validators/qa_release_gate.py <path-to-.qa-status.json>
@@ -41,8 +42,11 @@ import json
 import sys
 from pathlib import Path
 
-# Patterns: case-insensitive substring match. Keep this list small — every
-# entry is a release-blocker class. Adding one stops production runs.
+from validators.qa_checks import _action_severity, final_structure_reports
+
+# Patterns: case-insensitive substring match over reviewer prose. Keep this
+# list small — every entry is a release-blocker class. Adding one stops
+# production runs.
 RELEASE_BLOCKER_PATTERNS = (
     "untitled",  # `(untitled)` Mitigation Register headings
     "(untitled)",
@@ -55,6 +59,80 @@ RELEASE_BLOCKER_PATTERNS = (
     "missing title",
 )
 
+_ISSUE_EXCERPT = 300
+
+
+def _plan_blockers(output_dir: Path) -> list[dict]:
+    path = output_dir / ".qa-repair-plan.json"
+    if not path.is_file():
+        return []
+    try:
+        plan = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return [{"source": "repair_plan", "type": "unreadable", "issue": f"{path.name}: {exc}"}]
+    actions = plan.get("actions") if isinstance(plan, dict) else None
+    blockers = []
+    for action in actions if isinstance(actions, list) else []:
+        if not isinstance(action, dict):
+            continue
+        action_type = str(action.get("type") or "unclassified")
+        if _action_severity(action_type) != "blocking":
+            continue
+        blockers.append(
+            {
+                "source": "repair_plan",
+                "type": action_type,
+                "issue": str(action.get("raw_issue") or "")[:_ISSUE_EXCERPT],
+                "fragments_to_rewrite": list(action.get("fragments_to_rewrite") or []),
+                "unresolved_issues": list(action.get("unresolved_issues") or []),
+            }
+        )
+    return blockers
+
+
+def _structure_blockers(output_dir: Path) -> list[dict]:
+    # Stage 3 and the editorial pass only call this gate once the report
+    # exists; a missing report is their own blocking precondition.
+    md_path = output_dir / "threat-model.md"
+    if not md_path.is_file():
+        return []
+    reports, blocking = final_structure_reports(md_path)
+    if not blocking:
+        return []
+    issues = [issue for report in reports.values() for issue in report.get("issues", [])]
+    return [
+        {
+            "source": "final_structure",
+            "type": "final_structure",
+            "issue": f"{blocking} blocking structural issue(s) the completion gate rejects",
+            "issues": issues[:25],
+        }
+    ]
+
+
+def _reviewer_blockers(items: list) -> list[dict]:
+    blockers = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        action_type = item.get("action_type") or item.get("type")
+        if isinstance(action_type, str) and action_type and _action_severity(action_type) == "blocking":
+            blockers.append({"source": "manual_review_item", "type": action_type, "issue": str(item.get("issue", ""))})
+            continue
+        haystack = " ".join(str(item.get(k, "")) for k in ("issue", "description")).lower()
+        for pat in RELEASE_BLOCKER_PATTERNS:
+            if pat.lower() in haystack:
+                blockers.append(
+                    {
+                        "source": "manual_review_item",
+                        "issue": item.get("issue", ""),
+                        "description": item.get("description", ""),
+                        "matched_pattern": pat,
+                    }
+                )
+                break  # one match per item is enough to flag it
+    return blockers
+
 
 def scan(path: Path) -> tuple[int, dict]:
     """Return (exit_code, json_payload)."""
@@ -66,21 +144,8 @@ def scan(path: Path) -> tuple[int, dict]:
         return 1, {"status": "unreadable", "path": str(path), "error": str(e)}
 
     items = data.get("manual_review_items") or []
-    blockers: list[dict] = []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        haystack = " ".join(str(item.get(k, "")) for k in ("issue", "description")).lower()
-        for pat in RELEASE_BLOCKER_PATTERNS:
-            if pat.lower() in haystack:
-                blockers.append(
-                    {
-                        "issue": item.get("issue", ""),
-                        "description": item.get("description", ""),
-                        "matched_pattern": pat,
-                    }
-                )
-                break  # one match per item is enough to flag it
+    output_dir = path.parent
+    blockers = _plan_blockers(output_dir) + _structure_blockers(output_dir) + _reviewer_blockers(items)
 
     payload = {
         "status": "blocked" if blockers else "ok",
@@ -100,13 +165,13 @@ def main(argv: list[str]) -> int:
     print(json.dumps(payload, indent=2))
     if payload.get("blockers"):
         print(
-            f"\nRELEASE-BLOCKER: {payload['blockers_count']} of "
-            f"{payload['items_total']} manual-review item(s) match the "
-            f"release-blocker allowlist. Skill MUST abort.",
+            f"\nRELEASE-BLOCKER: {payload['blockers_count']} blocker(s) — the report is not "
+            f"releasable. Skill MUST abort.",
             file=sys.stderr,
         )
         for b in payload["blockers"]:
-            print(f"  - [{b['matched_pattern']}] {b['issue']}", file=sys.stderr)
+            label = b.get("matched_pattern") or b.get("type") or b.get("source")
+            print(f"  - [{label}] {b['issue']}", file=sys.stderr)
     return rc
 
 

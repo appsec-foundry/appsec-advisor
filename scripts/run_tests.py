@@ -321,7 +321,6 @@ GROUPS = {
         apply_content_repair
         apply_content_repair_coverage
         apply_editorial_plan
-        apply_finding_refs_repair
         apply_prose_fixes
         apply_prose_fixes_coverage
         apply_repair_plan
@@ -351,7 +350,6 @@ GROUPS = {
         repair_self_verification
         review_threat_model
         validate_evidence_lines
-        validate_finding_refs
         validate_mitigation_quality
         validate_ms_compactness
     """),
@@ -390,6 +388,7 @@ GROUPS = {
         promote_verified_abuse_cases
         reconcile_privileged_roles
         reconcile_role_access
+        register_titles
         sanitize_perimeter_claims
         security_relevance_filter
         security_score
@@ -3291,6 +3290,21 @@ SOURCE_TESTS = {
         render_abuse_cases
         threat_fixture
     """),
+    "scripts/shared/_register_titles.py": _tests("""
+        compose_threat_model
+        emit_config_scan_mitigations
+        emit_finding_fix_mitigations
+        emit_general_mitigation_titles
+        emit_review_mitigations
+        qa_checks
+        register_titles
+        threat_fixture
+    """),
+    "scripts/shared/_fragment_ownership.py": _tests("""
+        orchestration_controller
+        qa_checks
+        runtime_helper_batch
+    """),
     "scripts/shared/_finding_state.py": _tests(
         """
         architect_review
@@ -3759,15 +3773,6 @@ SOURCE_TESTS = {
         requirements_verification
         run_path_guard
         stride_outputs
-    """),
-    "scripts/repairs/apply_finding_refs_repair.py": _tests("""
-        apply_finding_refs_repair
-        check_target_specificity
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        stride_outputs
-        validate_finding_refs
     """),
     "scripts/repairs/apply_repair_plan.py": _tests("""
         apply_repair_plan
@@ -6349,14 +6354,6 @@ SOURCE_TESTS = {
         stride_outputs
         validate_evidence_lines
         architect_review_runtime
-    """),
-    "scripts/validators/validate_finding_refs.py": _tests("""
-        check_target_specificity
-        gate_preconditions
-        requirements_verification
-        run_path_guard
-        stride_outputs
-        validate_finding_refs
     """),
     "scripts/validators/validate_mitigation_quality.py": _tests("""
         agent_config_checks

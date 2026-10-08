@@ -92,6 +92,7 @@ import validators.validate_intermediate as intermediate_contract  # noqa: E402
 import validators.validate_recon_summary as recon_summary_contract  # noqa: E402
 import validators.validate_threat_modeling_context as context_document_contract  # noqa: E402
 from runtime.event_log import format_line  # noqa: E402
+from shared._fragment_ownership import FORCE_REGENERATED_FRAGMENTS  # noqa: E402
 
 import orchestrator.dispatch_window as dispatch_window  # noqa: E402
 import orchestrator.stride_dispatch_waves as stride_dispatch_waves  # noqa: E402
@@ -7004,6 +7005,21 @@ def finalize_abuse(output_dir: Path) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _require_section6_scaffold(output_dir: Path) -> None:
+    """Stop Stage 2 unless the §6 scaffold exists.
+
+    Every renderer profile only fills the scaffold's placeholders; without it a
+    renderer writes §6 free-hand from unpublished candidates (OR-3).
+    """
+    failure = _script_failure(
+        "renderers/pregenerate_fragments.py", [str(output_dir), "--only", "security-architecture.md"]
+    )
+    if failure is None:
+        return
+    _append_event(output_dir, "STAGE2_SCAFFOLD_MISSING", failure, level="ERROR")
+    raise ControllerError(f"Stage 2 cannot start without the §6 scaffold: {failure}")
+
+
 def prepare_stage2(output_dir: Path) -> dict[str, Any]:
     """Prepare structural fragments and select the compact Stage-2 dispatch."""
     output_dir, cfg = _load_run_config(output_dir)
@@ -7018,17 +7034,17 @@ def prepare_stage2(output_dir: Path) -> dict[str, Any]:
             str(output_dir),
             "--force",
             "--only",
-            "system-overview.md,architecture-diagrams.md,assets.md,attack-surface.md,out-of-scope.md,attack-walkthroughs.md",
+            ",".join(FORCE_REGENERATED_FRAGMENTS),
         ],
         receipts,
     )
-    for only in ("security-architecture.md", "ms-critical-attack-tree.json"):
-        _best_effort_script(
-            output_dir,
-            "renderers/pregenerate_fragments.py",
-            [str(output_dir), "--only", only],
-            receipts,
-        )
+    _require_section6_scaffold(output_dir)
+    _best_effort_script(
+        output_dir,
+        "renderers/pregenerate_fragments.py",
+        [str(output_dir), "--only", "ms-critical-attack-tree.json"],
+        receipts,
+    )
     # The Management-Summary renderer reads this bounded index instead of
     # paging through threat-model.yaml; without it the renderer falls back.
     _best_effort_script(output_dir, "renderers/ms_input_digest.py", [str(output_dir)], receipts)
@@ -7185,6 +7201,7 @@ def _upgrade_bootstrap_yaml(output_dir: Path, cfg: dict[str, Any]) -> bool:
 _STAGE2_ATTEMPTS_PER_CAUSE = 2
 # Still bounded overall, so alternating causes cannot loop forever.
 _STAGE2_ATTEMPTS_TOTAL = 6
+_FINAL_STRUCTURE_STEP = "validators/qa_checks.py final_structure"
 
 
 def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
@@ -7304,7 +7321,7 @@ def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
         str(output_dir),
         "--force",
         "--only",
-        "system-overview.md,architecture-diagrams.md,assets.md,attack-surface.md,out-of-scope.md,attack-walkthroughs.md",
+        ",".join(FORCE_REGENERATED_FRAGMENTS),
     )
     # Conditional MS fragments (idempotent, self-gating — a renderer-authored
     # copy already on disk is preserved). ms-ai-exposure.json is model-owned:
@@ -7336,6 +7353,13 @@ def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
         return False
     _run(str(SCRIPT_DIR / "repairs/apply_prose_fixes.py"), str(md))
     _run(str(SCRIPT_DIR / "validators/qa_checks.py"), "autofix", str(md), repo_root or str(output_dir))
+    # The completion gate rejects a report that fails this check. Run it while
+    # Stage 2 can still repair the owning fragment, and leave the repair plan
+    # that names it, instead of discovering the defect after QA.
+    if not _run(str(SCRIPT_DIR / "validators/qa_checks.py"), "final_structure", str(md)):
+        detail = _run.last_error  # type: ignore[attr-defined]
+        _run(str(SCRIPT_DIR / "validators/qa_checks.py"), "repair_plan", str(md), str(output_dir))
+        return _block(_FINAL_STRUCTURE_STEP, detail)
     try:
         (output_dir / ".appsec-checkpoint").write_text(
             f"phase=11 status=completed timestamp={datetime.now(timezone.utc).isoformat()}\n",
@@ -7538,6 +7562,21 @@ def _stage2_retry_action(output_dir: Path, common: dict[str, Any]) -> dict[str, 
             "Stage-2 fragment schema gate failed; dispatch "
             "appsec-advisor:appsec-fragment-fixer with REPAIR_MODE=true and "
             "REPAIR_PLAN_PATH=.pre-render-repair-plan.json, then re-run this transition; "
+            f"{budget} (see .compose-blocked.json)"
+        )
+    elif step == _FINAL_STRUCTURE_STEP:
+        if not _fragment_repair_is_actionable(output_dir, ".qa-repair-plan.json"):
+            # No surviving fragment carries the defect: a deterministic producer
+            # emitted it, so neither the fixer nor a re-render can repair it.
+            raise ControllerError(
+                "Stage 2 composed a report that fails the final structure gate and no "
+                "writable fragment owns the defect (producer defect); inspect "
+                f"{output_dir / '.qa-repair-plan.json'} and {output_dir / '.compose-blocked.json'}"
+            )
+        receipt = (
+            "Stage-2 report structure gate failed; dispatch "
+            "appsec-advisor:appsec-fragment-fixer with REPAIR_MODE=true and "
+            "REPAIR_PLAN_PATH=.qa-repair-plan.json, then re-run this transition; "
             f"{budget} (see .compose-blocked.json)"
         )
     elif step:
