@@ -3076,6 +3076,7 @@ SOURCE_TESTS = {
     """),
     "scripts/shared/_boundary_interface.py": _tests("""
         boundary_interface
+        build_supply_chain_view
         compose_threat_model
         figure1_dfd
         figure1_detail

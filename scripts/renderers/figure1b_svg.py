@@ -254,9 +254,17 @@ def _box_lines(element: dict, findings: list[dict]) -> list[tuple[str, Any]]:
     for fact in (element.get("facts") or [])[: CAPS["facts_per_row"]]:
         if fact != element.get("detail"):
             lines.append(("detail", fact))  # an inventory fact, not a finding
+    for boundary in element.get("boundaries") or []:
+        lines.append(("boundary", _boundary_text(boundary)))
     for row in _finding_lines(findings):
         lines.append(("fact", row))
     return lines
+
+
+def _boundary_text(boundary: dict) -> str:
+    """Existence and confidence of a mapped boundary; its verdict stays in the catalogue."""
+    confidence = boundary.get("confidence")
+    return f"Trust boundary {boundary['id']}" + ("" if confidence == "confirmed" else f" · {confidence}")
 
 
 # ---- layout ------------------------------------------------------------------------------
@@ -272,6 +280,9 @@ def _measure(lines, width) -> list[tuple[str, Any, float]]:
         elif role == "detail":
             for part in wrap(payload, FONT["detail"], width - 20):
                 out.append(("detail", part, 12.5))
+        elif role == "boundary":
+            for part in wrap(payload, FONT["fact"], width - 20, True):
+                out.append(("boundary", part, 13.0))
         elif role == "fact":
             sev, text, ref = payload
             ref_w = text_width(ref, FONT["label"], True) + 8 if ref else 0
@@ -373,6 +384,8 @@ def render(view: dict, actor: dict | None, scenario_numbers: list[str], project:
     systems = [e["label"] for e in plan["cis"] if e.get("coverage") != "none"]
     sources = [e for e in view["elements"] if e["column"] == "sources" and e["kind"] != "repository"]
     channels = plan["elements"]["execution"].get("channels") or []
+    # Scoped to this view: one catalogue boundary counts once however many elements it marks.
+    mapped = len({b["id"] for e in view["elements"] for b in e.get("boundaries") or []})
     cv.text(20, 24, "Figure 1b — Supply Chain and Build", FONT["title"], weight="bold", fill=NAVY)
     subtitle = " · ".join(
         p
@@ -381,6 +394,7 @@ def render(view: dict, actor: dict | None, scenario_numbers: list[str], project:
             _count(len(systems), "CI system"),
             _count(len(sources), "upstream source type"),
             _count(len(channels), "delivery channel"),
+            f"{mapped} trust {'boundary' if mapped == 1 else 'boundaries'} mapped here" if mapped else "",
             f"{_count(shown, 'finding')} shown here",
         )
         if p
@@ -526,6 +540,8 @@ def _draw_lines(cv, key, x, y, w, measured):
             cv.text(x + w / 2, y + 12, payload, FONT["box"], weight="bold", anchor="middle", owner=key)
         elif role == "detail":
             cv.text(x + w / 2, y + 10, payload, FONT["detail"], fill=MUTED, anchor="middle", italic=True, owner=key)
+        elif role == "boundary":
+            cv.text(x + w / 2, y + 10, payload, FONT["fact"], weight="bold", fill=RED, anchor="middle", owner=key)
         elif role == "fact":
             sev, text, ref = payload
             cv.mark(x + 10, y + 10, sev)
@@ -1022,6 +1038,7 @@ def render_table(view: dict, actor: dict | None, scenario_numbers: list[str]) ->
                 element.get("manifest_detail"),
                 "inventory only" if element.get("coverage") == "inventory-only" else "",
                 ", ".join(element.get("channels") or []),
+                *(_boundary_text(boundary) for boundary in element.get("boundaries") or []),
             )
             if p
         )

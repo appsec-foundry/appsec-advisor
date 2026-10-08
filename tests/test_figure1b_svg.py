@@ -176,6 +176,26 @@ def test_the_table_form_carries_elements_relationships_entries_and_the_path():
     assert "1. PyPI → GitHub Actions (`.github/workflows/build.yml:10`)" in table
 
 
+def test_a_mapped_boundary_is_drawn_on_its_element_and_listed_in_the_table():
+    model = _model()
+    model["trust_boundaries"] = [
+        {
+            "id": "tb-4",
+            "from": "external",
+            "to": "pipeline",
+            "kind": "build",
+            "confidence": "inferred",
+            "resolution_status": "resolved",
+            "evidence": [{"file": ".github/workflows/build.yml", "line": 5}],
+        }
+    ]
+    view = build_view(model, _facts(), {})
+    svg = _render(view)
+    assert "Trust boundary tb-4 · inferred" in svg
+    assert "1 trust boundary mapped here" in svg
+    assert "Trust boundary tb-4 · inferred" in figure.render_table(view, ACTOR, ["⑤"])
+
+
 def test_short_title_keeps_titles_without_a_location():
     assert figure.short_title("Missing npm Lockfile — package-lock.json") == "Missing npm Lockfile"
     assert figure.short_title("Build — release split") == "Build — release split"

@@ -41,6 +41,7 @@ from typing import Any
 
 import yaml
 from renderers._severity_rollup import SEVERITY_ORDER, display_id, register_severity
+from shared._boundary_interface import is_internal_interface
 
 from model.build_plane import build_component_ids, is_ci_definition
 
@@ -172,6 +173,10 @@ def fingerprint(model: dict, facts: dict | None, inventory: dict | None) -> str:
         {
             "threats": threats,
             "components": sorted(build_component_ids(model.get("components") or [])),
+            "boundaries": sorted(
+                (str(b.get("id")), str(b.get("confidence")), json.dumps(b.get("evidence"), sort_keys=True))
+                for b in _build_boundaries(model)
+            ),
             "facts": facts,
             "inventory": (inventory or {}).get("ci"),
             "dependencies": (inventory or {}).get("dependencies"),
@@ -334,6 +339,75 @@ def _elements(facts: dict, inventory: dict) -> tuple[dict[str, dict], list[str]]
         "sources": [],
     }
     return elements, systems
+
+
+_BOUNDARY_ID_RE = re.compile(r"^tb-\d+$")
+
+
+def _build_boundaries(model: dict) -> list[dict]:
+    """Resolved catalogue boundaries that are about the build: a build-pipeline
+    crossing, or one with a build-plane endpoint. Internal interfaces are not
+    trust boundaries and never map."""
+    build_ids = build_component_ids(model.get("components") or [])
+    return [
+        row
+        for row in model.get("trust_boundaries") or []
+        if isinstance(row, dict)
+        and _BOUNDARY_ID_RE.fullmatch(str(row.get("id") or ""))
+        and row.get("resolution_status") == "resolved"
+        and not is_internal_interface(row)
+        and (
+            row.get("surface") == "build-pipeline"
+            or row.get("kind") == "build"
+            or bool({row.get("from"), row.get("to")} & build_ids)
+        )
+    ]
+
+
+def _cites(source: dict, file: str) -> bool:
+    """An element source names this file, or the directory that holds it."""
+    path = str(source.get("file") or "").rstrip("/")
+    return bool(path) and (file == path or file.startswith(path + "/"))
+
+
+def _map_boundaries(model: dict, elements: dict[str, dict]) -> None:
+    """Attach each build boundary to the elements whose own sources hold its evidence.
+
+    The mapping is evidence, not column membership: a boundary whose evidence
+    sits in one CI system's definition marks that system only, never every
+    build element. The aggregate repository row and the running system carry
+    no sources of their own and are never mapped; a boundary nothing cites
+    stays in the report catalogue.
+    """
+    for boundary in _build_boundaries(model):
+        for element in elements.values():
+            if element["kind"] in {"repository", "execution"}:
+                continue
+            cited = next(
+                (
+                    entry
+                    for entry in boundary.get("evidence") or []
+                    if isinstance(entry, dict)
+                    and isinstance(entry.get("file"), str)
+                    and any(_cites(source, entry["file"]) for source in element.get("sources") or [])
+                ),
+                None,
+            )
+            rows = element.setdefault("boundaries", [])
+            if cited is None or len(rows) >= MAX_SOURCES:
+                continue
+            rows.append(
+                {
+                    "id": boundary["id"],
+                    "confidence": boundary.get("confidence")
+                    if boundary.get("confidence") in {"confirmed", "inferred"}
+                    else "unknown",
+                    "evidence": _source(cited),
+                }
+            )
+    for element in elements.values():
+        if not element.get("boundaries"):
+            element.pop("boundaries", None)
 
 
 def _short_ci_path(path: str) -> str:
@@ -548,6 +622,7 @@ def build_view(
     if not has_build_evidence(facts, inventory, build_time_scenario_findings):
         return None
     elements, systems = _elements(facts, inventory)
+    _map_boundaries(model, elements)
     edges = _edges(elements, facts)
     build_ids = build_component_ids(model.get("components") or [])
     slugs = _actor_slugs(model)

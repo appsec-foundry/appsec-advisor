@@ -30,7 +30,23 @@
           "pushed": {"type": "boolean"},
           "owner": {"$ref": "#/$defs/id"},
           "channels": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 200}},
-          "sources": {"type": "array", "maxItems": 5, "items": {"$ref": "#/$defs/source"}}
+          "sources": {"type": "array", "maxItems": 5, "items": {"$ref": "#/$defs/source"}},
+          "boundaries": {
+            "description": "Catalogue trust boundaries whose evidence lies in this element's own sources. Existence confidence only; the control verdict stays in the report catalogue.",
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 5,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "confidence", "evidence"],
+              "properties": {
+                "id": {"type": "string", "pattern": "^tb-\\d+$"},
+                "confidence": {"enum": ["confirmed", "inferred", "unknown"]},
+                "evidence": {"$ref": "#/$defs/source"}
+              }
+            }
+          }
         }
       }
     },

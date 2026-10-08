@@ -308,3 +308,64 @@ def test_every_config_check_is_classified_exactly_once():
     assert sorted(classified) == sorted(ids)
     assert len(classified) == len(set(classified))
     assert {rule.get("entry") for rule in mapping["checks"].values()} <= set(mapping["entries"]) | {None}
+
+
+def _boundary(tid, file, line=4, **extra):
+    row = {
+        "id": tid,
+        "from": "external",
+        "to": "release",
+        "kind": "build",
+        "confidence": "confirmed",
+        "resolution_status": "resolved",
+        "evidence": [{"file": file, "line": line}],
+    }
+    return {**row, **extra}
+
+
+def _mapped(view):
+    return {e["id"]: [b["id"] for b in e.get("boundaries") or []] for e in view["elements"] if e.get("boundaries")}
+
+
+@pytest.mark.parametrize(
+    ("systems", "cited"),
+    [
+        ((("Jenkins", "Jenkinsfile"), ("Travis CI", ".travis.yml")), "Jenkinsfile"),
+        ((("Buildkite", ".buildkite/pipeline.yml"), ("CircleCI", ".circleci/config.yml")), ".circleci/config.yml"),
+    ],
+)
+def test_a_boundary_marks_only_the_ci_system_whose_definition_evidences_it(systems, cited):
+    inventory = {"ci": [{"system": name, "source": source} for name, source in systems]}
+    model = _model([])
+    model["trust_boundaries"] = [_boundary("tb-3", cited)]
+    view = _view(model, {}, inventory)
+    owner = next(e["id"] for e in view["elements"] if e["kind"] == "ci" and e["sources"][0]["file"] == cited)
+    assert _mapped(view) == {owner: ["tb-3"]}
+
+
+def test_a_workflow_boundary_maps_to_its_ci_system_not_to_the_repository_row(tmp_path):
+    repo = _repo(tmp_path, {".github/workflows/publish.yml": RELEASE_WITH_INSTALL, "requirements.txt": "flask>=2\n"})
+    model = _model([])
+    model["trust_boundaries"] = [_boundary("tb-2", ".github/workflows/publish.yml", 8, confidence="inferred")]
+    view = _view(model, _facts(repo))
+    assert "repository" not in _mapped(view) and "execution" not in _mapped(view)
+    ci = next(e for e in view["elements"] if e["id"] == "ci:github-actions")
+    assert ci["boundaries"] == [
+        {"id": "tb-2", "confidence": "inferred", "evidence": {"file": ".github/workflows/publish.yml", "line": 8}}
+    ]
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        _boundary("tb-5", "src/app.py"),  # nothing in the view cites its evidence
+        _boundary("tb-5", "Jenkinsfile", kind="network", to="api"),  # a runtime crossing
+        _boundary("tb-5", "Jenkinsfile", surface="in-process", transition=[], kind="process", to="api"),
+        _boundary("tb-5", "Jenkinsfile", resolution_status="unresolved"),
+    ],
+)
+def test_a_boundary_without_build_scope_or_cited_evidence_is_not_mapped(row):
+    inventory = {"ci": [{"system": "Jenkins", "source": "Jenkinsfile"}]}
+    model = _model([])
+    model["trust_boundaries"] = [row]
+    assert _mapped(_view(model, {}, inventory)) == {}
