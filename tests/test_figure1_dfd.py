@@ -109,7 +109,8 @@ def test_in_process_trust_changes_remain_boundaries(transition, detail):
     assert problems == []
     root = ET.fromstring(svg)
     assert "internal interface</text>" not in svg
-    assert "tb-8" in _boundary_lines(root)[1]
+    # The overview is a network view; the detail view keeps the in-process line.
+    assert ("tb-8" in _boundary_lines(root).get(1, [])) is detail
     assert "3 trust boundaries" in svg
     assert (root.find(".//{*}g[@data-boundary-marker='tb-8']") is not None) is detail
     assert (transition[0] in svg) is detail

@@ -229,7 +229,9 @@ def _boundary_gaps(d, nodes, tbs):
     Internal interfaces never mark a gap. An ``external`` endpoint takes the
     column of the drawn participant on a flow with the same canonical endpoints;
     ingress without such a flow comes from the untrusted column, while egress
-    without one cannot be placed and stays in the catalogue only.
+    without one cannot be placed and stays in the catalogue only. The overview
+    is a network view: an in-process trust change draws no line there and stays
+    in the detail view and the catalogue.
     """
     columns = {
         row["id"]: COLUMN[_zone_key(row)]
@@ -249,6 +251,8 @@ def _boundary_gaps(d, nodes, tbs):
     for t in tbs:
         source, target = t.get("from"), t.get("to")
         if _internal_interface(t) or source == target == "external":
+            continue
+        if d.get("_overview") and _boundary_surface(t) != "network":
             continue
         if source == "external":
             starts = drawn_columns(source, target, 0) or {0}
