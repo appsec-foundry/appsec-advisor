@@ -3422,7 +3422,9 @@ def main() -> int:
         known = {row["id"] for row in components if isinstance(row, dict) and isinstance(row.get("id"), str)}
         # Owners and carried findings are final here, so this is the last place
         # an evidenced interface link can still be found.
-        for gap in associate_boundary_refs(threats, boundaries=trust_boundaries, known_component_ids=known):
+        for gap in associate_boundary_refs(
+            threats, boundaries=trust_boundaries, known_component_ids=known, components=components
+        ):
             sys.stderr.write(
                 f"  TRUST_BOUNDARY_REF_GAP: {gap['finding_id']}: {gap['reason']} "
                 f"({', '.join(gap['candidate_boundary_ids'])})\n"

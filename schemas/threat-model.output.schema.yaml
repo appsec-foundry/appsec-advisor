@@ -1049,7 +1049,7 @@ properties:
           type: array
           uniqueItems: true
           maxItems: 5
-          items: {type: string, enum: [identity, privilege, tenant, data-origin, operator]}
+          items: {type: string, enum: [identity, privilege, tenant, data-origin, operator, data-access]}
         enforcement_point: {type: string, minLength: 3, maxLength: 120}
         confidence_basis: {type: string, enum: [analyst, route-evidence]}
         covers_components:

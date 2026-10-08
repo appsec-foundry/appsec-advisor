@@ -116,6 +116,21 @@ def test_in_process_trust_changes_remain_boundaries(transition, detail):
     assert (transition[0] in svg) is detail
 
 
+@pytest.mark.parametrize("surface", ["in-process", "network"])
+@pytest.mark.parametrize("detail", [False, True])
+def test_a_data_access_crossing_draws_the_application_to_data_line(surface, detail):
+    """TB-13 and RA-15: a crossing into a store is drawn between the application
+    and data columns in the overview as well, in process or over the network,
+    while another in-process trust change stays out of the overview."""
+    model, paths, taxonomy = _model()
+    row = next(t for t in model["trust_boundaries"] if t["id"] == "tb-8")
+    row.update(surface=surface, transition=["data-access"], kind="process" if surface == "in-process" else "network")
+    svg, problems = F.check_diagram(model, paths, taxonomy, detail=detail)
+    assert problems == []
+    root = ET.fromstring(svg)
+    assert "tb-8" in _boundary_lines(root).get(1, [])
+
+
 @pytest.mark.parametrize("endpoints", [("external", "app1", "df-004"), ("app0", "db0", "df-005")])
 @pytest.mark.parametrize("count", [1, 2, 5])
 @pytest.mark.parametrize("detail", [False, True])

@@ -2,7 +2,7 @@
 
 Date: 2026-10-07, rechecked 2026-10-08 against commit d2446aa6. Status: largely implemented on `dev` (04d5e073 to 0bb41762); see [Implementation status](#implementation-status).
 
-Correct evidence-losing trust boundary classification, improve finding traceability, and extend the runtime and build figures without inventing trust transitions from architectural layers. The implementation must work across repositories. Juice Shop supplies replay evidence, not production matching rules.
+Correct evidence-losing trust boundary classification, improve finding traceability, and extend the runtime and build figures without inventing trust transitions from architectural layers. The one layer crossing that is a boundary is the crossing into a data store (TB-13, decided 2026-10-08). The implementation must work across repositories. Juice Shop supplies replay evidence, not production matching rules.
 
 ## Implementation status
 
@@ -14,7 +14,7 @@ Verified against `dev` on 2026-10-08. Commits 04d5e073, 48b197ec, c31a59e0, 0f41
 
 Deliberate deviations:
 
-- **3.1 to 3.3.** The Figure 1 overview shows network crossings only; in-process trust changes appear in the detail view and the catalogue, and the overview counts trust boundaries only (RA-15).
+- **3.1 to 3.3.** The Figure 1 overview shows network and data-access crossings; other in-process trust changes appear in the detail view and the catalogue, and the overview counts trust boundaries only (RA-15).
 - **4.2.** Figure 1b shows existence confidence without a verdict.
 
 Open:
@@ -39,7 +39,7 @@ The review inspected the current plugin working tree and the supplied Juice Shop
 
 These were targeted function reproductions and artifact inspections, not a full pipeline regression run. Acceptance of a reference by the structural validator does not independently prove that its evidence refutes the stated condition. No loss of a previously present reference during merging was demonstrated in the replay.
 
-The replay's SQLite and MarsDB accesses are represented as internal interfaces. Their absence from the diagram's trust boundary lines is not itself a defect. The published report maps API to SQLite to `tb-6` and authentication to SQLite to `tb-5`; intermediate artifacts use earlier IDs recorded in `.trust-boundary-renumber.json`. Replay checks must follow identities through that mapping rather than hardcode IDs.
+The replay's SQLite and MarsDB accesses were represented as internal interfaces. Since TB-13 they are data-access boundaries and draw the application-to-data line. The published report maps API to SQLite to `tb-6` and authentication to SQLite to `tb-5`; intermediate artifacts use earlier IDs recorded in `.trust-boundary-renumber.json`. Replay checks must follow identities through that mapping rather than hardcode IDs.
 
 ## Contracts and implementation owners
 
@@ -65,7 +65,7 @@ The violated invariant is that repository path organization cannot establish pro
 1. Remove path containment as sufficient authority to force `kind: process`. Retain it only where source ownership or containment is the actual question. Review its other consumers, including ingress consolidation and deployable-root selection, before accepting a narrow fix.
 2. Replace the corresponding analyst instruction. A shared repository, directory, deployment package, or container does not establish the absence of a trust transition.
 3. Use evidenced invocation and deployment relationships to support runtime classification. Existing workload information can contribute but does not alone prove a shared process. Preserve uncertainty when the evidence cannot decide.
-4. Preserve actual embedded-store interfaces without manufacturing an application-to-data boundary. Missing or ineffective enforcement does not remove an otherwise evidenced crossing.
+4. Classify every crossing into a data-tier store as a `data-access` boundary, embedded or networked (TB-13). Other in-process calls stay internal interfaces. Missing or ineffective enforcement does not remove an otherwise evidenced crossing.
 5. Separate crossing surface from identity, privilege, tenant, data-origin, and operator transitions in the producer contract. The current `kind` mapping cannot represent an in-process privilege transition without loss.
 6. Define canonical field precedence and backward compatibility before adding independently authored axes. Migrate legacy `kind` inputs deterministically, reject contradictory new representations, and stop overwriting validated axes from a lossy legacy field. This includes the versioned qualified contracts: `trust-boundary-candidates-v2` carries only `kind`, while `trust-boundaries-v3` derives `surface` and `transition` from it. Update downstream identity, selection, consolidation, export, and rendering consumers as required.
 
@@ -117,14 +117,14 @@ Use neutral fixtures first, a variant with different names and paths second, and
 | Same mechanism with renamed directories and components | Identical semantic result |
 | Same mechanism in the qualified multi-repository path | Identical semantic result; nested paths in one repository do not force `kind: process` |
 | In-process privilege or tenant transition | Transition survives production, validation, exports, and visualization |
-| Embedded store without an additional trust transition | Internal interface remains; no artificial network separation |
+| Embedded store without an additional trust transition | `data-access` boundary in process; no artificial network separation |
 | Missing or conflicting runtime evidence | Uncertainty remains explicit |
 | Two possible stores behind the same component | No reference based only on shared CWE or adjacency |
 | Verified violation at one evidenced interface | Correct reference and derived verdict |
 | Same weakness at another sink or with unverified evidence | No unsupported reference or refuted verdict |
 | Merge, owner change, and public renumbering | Valid references retain their intended identity; invalid references are diagnosed |
 | Real boundary between components in the same figure column | Local representation or an explicit, contracted grouping explanation |
-| Embedded and external stores in one diagram | No blanket claim that all data accesses share a separation |
+| Embedded and external stores in one diagram | Each store crossing is its own `data-access` row; a networked store keeps its network surface on the same row |
 | Several CI systems with one evidenced mapped boundary | Marker applies only to the supported scope |
 | Unknown artifact-to-execution relationship | No invented deployment path or control effectiveness |
 | Overview, detail, SVG themes, PDF, and Figure 1b table fallback | Equivalent boundary meaning, legible notation, and correct links |

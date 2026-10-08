@@ -60,7 +60,7 @@
           "type": "array",
           "uniqueItems": true,
           "maxItems": 5,
-          "items": {"type": "string", "enum": ["identity", "privilege", "tenant", "data-origin", "operator"]},
+          "items": {"type": "string", "enum": ["identity", "privilege", "tenant", "data-origin", "operator", "data-access"]},
           "description": "WHAT changes across the crossing. Derived from `kind`; empty means an enforcement interface without a trust transition."
         },
         "enforcement_point": {

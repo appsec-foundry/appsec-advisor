@@ -1234,6 +1234,28 @@ class TestFinalizeRevalidatesBoundaryRefs:
         schema = yaml.safe_load((Path(__file__).parent.parent / "schemas" / "threats-merged.schema.yaml").read_text())
         assert Draft202012Validator(schema["properties"]["boundary_traceability_gaps"]).is_valid(gaps or [])
 
+    @pytest.mark.parametrize(("cwe", "linked"), [("CWE-89", ["tb-2"]), ("CWE-94", [])])
+    def test_finalize_reads_the_target_tier_from_the_component_registry(self, mt, tmp_path, cwe, linked):
+        components = [{"id": "api", "tier": "application"}, {"id": "store", "tier": "data"}]
+        (tmp_path / ".components.json").write_text(json.dumps({"components": components}))
+        boundary = {
+            "id": "tb-2",
+            "from": "api",
+            "to": "store",
+            "kind": "process",
+            "confidence": "confirmed",
+            "resolution_status": "resolved",
+            "evidence": [{"file": "api.py", "line": 9}],
+        }
+        (tmp_path / ".trust-boundaries.json").write_text(json.dumps({"trust_boundaries": [boundary]}))
+        threat = _threat(evidence={"file": "api.py", "line": 9}, evidence_check="verified", cwe=cwe)
+        _write_stride(tmp_path, "api", [threat])
+        assert mt.main(["collect", "--output-dir", str(tmp_path)]) == 0
+        assert mt.main(["finalize", "--output-dir", str(tmp_path)]) == 0
+
+        merged = json.loads((tmp_path / ".threats-merged.json").read_text())
+        assert [ref["boundary_id"] for ref in merged["threats"][0].get("boundary_refs", [])] == linked
+
 
 class TestEndToEnd:
     def test_collect_produces_candidates_file(self, mt, tmp_path):

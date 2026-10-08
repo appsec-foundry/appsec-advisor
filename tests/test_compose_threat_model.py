@@ -7352,3 +7352,19 @@ def test_no_strength_cluster_claims_to_address_ssrf() -> None:
     )
     entries = clusters.get("clusters", clusters) if isinstance(clusters, dict) else clusters
     assert all("CWE-918" not in (c.get("addresses_cwes") or []) for c in entries)
+
+
+def test_external_boundary_elevations_use_the_ids_triage_recorded(tmp_path):
+    """TB-9: the flag already carries delivered IDs; an overlapping renumber
+    sidecar must not translate them a second time."""
+    flag = {
+        "type": "severity_reconciliation",
+        "threat_ids": ["T-001"],
+        "source": "triage_compute_ranking.py:external_boundary:tb-2",
+    }
+    (tmp_path / ".triage-flags.json").write_text(json.dumps({"flags": [flag]}), encoding="utf-8")
+    (tmp_path / ".trust-boundary-renumber.json").write_text(
+        json.dumps({"schema_version": 1, "mapping": {"tb-2": "tb-3", "tb-3": "tb-2"}}), encoding="utf-8"
+    )
+    compose._external_boundary_elevations_cached.cache_clear()
+    assert compose._external_boundary_elevations_cached(str(tmp_path)) == {"T-001": ("tb-2",)}

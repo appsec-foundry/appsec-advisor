@@ -108,25 +108,6 @@ def _load_abuse_case_titles(output_dir: Path) -> dict[str, str]:
     return titles
 
 
-def _load_boundary_renumber(output_dir: Path) -> dict[str, str]:
-    """`{pre-delivery id: delivered id}` published by `build_threat_model_yaml`.
-
-    Triage ranks against the sidecar catalogue and records those boundary ids in
-    `.triage-flags.json`; the delivered yaml carries the contiguous `tb-1 … tb-N`
-    ids `renumber_trust_boundaries` assigned afterwards. Without the translation
-    the §8 severity line would name a boundary the register no longer has.
-    Missing file → identity, i.e. the pre-renumbering behaviour.
-    """
-    try:
-        doc = json.loads((output_dir / ".trust-boundary-renumber.json").read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return {}
-    mapping = doc.get("mapping") if isinstance(doc, dict) else None
-    if not isinstance(mapping, dict):
-        return {}
-    return {str(old): new for old, new in mapping.items() if isinstance(new, str)}
-
-
 def _load_triage_flags(output_dir: Path) -> dict:
     try:
         doc = json.loads((output_dir / ".triage-flags.json").read_text(encoding="utf-8"))
@@ -136,7 +117,7 @@ def _load_triage_flags(output_dir: Path) -> dict:
 
 
 def _load_external_boundary_elevations(output_dir: Path) -> dict[str, tuple[str, ...]]:
-    return _external_boundary_elevations(_load_triage_flags(output_dir), _load_boundary_renumber(output_dir))
+    return _external_boundary_elevations(_load_triage_flags(output_dir))
 
 
 def _elevation_reasons(flags_doc: dict) -> dict[str, list[str]]:
@@ -153,12 +134,15 @@ def _elevation_reasons(flags_doc: dict) -> dict[str, list[str]]:
     return result
 
 
-def _external_boundary_elevations(doc: dict, renumber: dict[str, str]) -> dict[str, tuple[str, ...]]:
+def _external_boundary_elevations(doc: dict) -> dict[str, tuple[str, ...]]:
     """Map threat IDs to the confirmed ingress boundaries that raised them.
 
     The triage flag is the persisted audit record. Reading that record keeps
     this emitter independent from ranking internals and ensures a later rerun
-    clears stale prose when the elevation no longer applies.
+    clears stale prose when the elevation no longer applies. Triage ranks the
+    delivered `threat-model.yaml`, so the flag already carries delivered IDs;
+    translating them through `.trust-boundary-renumber.json` again named the
+    wrong boundary (TB-9).
     """
     result: dict[str, tuple[str, ...]] = {}
     source_prefix = "triage_compute_ranking.py:external_boundary:"
@@ -169,11 +153,7 @@ def _external_boundary_elevations(doc: dict, renumber: dict[str, str]) -> dict[s
         if not source.startswith(source_prefix):
             continue
         boundary_ids = tuple(
-            dict.fromkeys(
-                renumber.get(token.strip(), token.strip())
-                for token in source.removeprefix(source_prefix).split(",")
-                if token.strip()
-            )
+            dict.fromkeys(token.strip() for token in source.removeprefix(source_prefix).split(",") if token.strip())
         )
         if not boundary_ids:
             continue
@@ -320,7 +300,7 @@ def refresh_rationales(threats: list, output_dir: Path, flags_doc: dict | None =
     flags = _load_triage_flags(output_dir) if flags_doc is None else flags_doc
     baseline_high = _load_baseline_high_cwes()
     ac_titles = _load_abuse_case_titles(output_dir)
-    external_elevations = _external_boundary_elevations(flags, _load_boundary_renumber(output_dir))
+    external_elevations = _external_boundary_elevations(flags)
     reasons = _elevation_reasons(flags)
     annotated = 0
     changed = False

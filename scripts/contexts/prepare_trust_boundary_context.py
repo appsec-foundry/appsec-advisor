@@ -64,7 +64,7 @@ KINDS = {"network", "process", "identity", "privilege", "tenant", "data-origin",
 # candidate schema and re-derived here, so `kind` never silently wins over a
 # compatible axis and no repo declaration has to be migrated.
 SURFACES = {"network", "in-process", "build-pipeline"}
-TRANSITIONS = {"identity", "privilege", "tenant", "data-origin", "operator"}
+TRANSITIONS = {"identity", "privilege", "tenant", "data-origin", "operator", "data-access"}
 _KIND_AXES: dict[str, tuple[str, tuple[str, ...]]] = {
     "network": ("network", ()),
     "process": ("in-process", ()),
@@ -444,6 +444,38 @@ def _legs_for_finding(threat: dict, allowed: Iterable[str]) -> set[str]:
     return set(_cwe_leg_map().get(match.group(0).upper(), frozenset())) & set(allowed)
 
 
+@lru_cache(maxsize=1)
+def _cwe_sink_classes() -> dict[str, str]:
+    """`{CWE-89: datastore-query, CWE-94: code-evaluation}` from the leg map file."""
+    doc = _read_yaml(_CWE_LEGS_PATH, {}) or {}
+    mapping: dict[str, str] = {}
+    for sink, cwes in (doc.get("sink_classes") or {}).items():
+        for cwe in cwes if isinstance(cwes, list) else []:
+            match = _CWE_RE.search(str(cwe or ""))
+            if match:
+                mapping[match.group(0).upper()] = str(sink)
+    return mapping
+
+
+def _sink_fits_target(threat: dict, boundary: dict, tiers: dict[str, str]) -> bool:
+    """Whether the finding's sink class can be the call into an internal target.
+
+    A boundary's evidence line can sit in a handler that does more than call the
+    target, so a cited line alone does not show that a finding there breaks the
+    crossing: an `eval` next to a query is not a broken query interface.
+    """
+    if boundary_crossing_type(boundary) != "internal":
+        return True
+    match = _CWE_RE.search(str(threat.get("cwe") or ""))
+    sink = _cwe_sink_classes().get(match.group(0).upper()) if match else None
+    tier = tiers.get(str(boundary.get("to") or ""))
+    if sink == "datastore-query":
+        return tier in (None, "data")
+    if sink == "code-evaluation":
+        return tier != "data"
+    return True
+
+
 def finding_leg_candidates(threat: dict, boundary: dict) -> list[str]:
     """Legs of `boundary` this finding's CWE could bear on, sorted.
 
@@ -622,6 +654,22 @@ def _apply_axes(rows: Iterable[dict]) -> None:
     for row in rows:
         if isinstance(row, dict):
             row["surface"], row["transition"] = _axes_for_kind(row.get("kind"), row.get("surface"))
+
+
+def _apply_data_access(rows: Iterable[dict], components: dict[str, dict]) -> None:
+    """Add the ``data-access`` transition to every crossing into a data-tier store.
+
+    The store interprets queries and holds every user's records, so the crossing
+    is a trust boundary whether it runs in process or over the network (TB-13).
+    It is derived from the component tier, never from ``kind``, and must follow
+    every ``_apply_axes`` call because that call re-derives ``transition``.
+    """
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        source, target = components.get(row.get("from")), components.get(row.get("to"))
+        if source and target and source.get("tier") != "data" and target.get("tier") == "data":
+            row["transition"] = [*(row.get("transition") or []), "data-access"]
 
 
 def _clean_enforcement_point(value: Any) -> str | None:
@@ -1308,6 +1356,7 @@ def normalize(
     merged = _merge_declarations(detected, declarations, prior_rows, warnings)
     # After declaration merging, which is the last thing that can change `kind`.
     _apply_axes(merged)
+    _apply_data_access(merged, components)
     # Before IDs exist, so consolidating costs no ID churn downstream.
     merged = _consolidate(merged, components, warnings)
     _assign_ids(merged, prior_rows, output_dir, warnings)
@@ -1369,6 +1418,7 @@ def _normalize_assessment_boundaries(
     ]
     merged = _merge_declarations(detected, declared, [], warnings)
     _apply_axes(merged)
+    _apply_data_access(merged, cards)
     merged = _consolidate(merged, cards, warnings)
     _assign_ids(merged, [], output_dir, warnings)
     merged.sort(key=lambda row: _numeric_id(row["id"]))
@@ -1581,6 +1631,8 @@ def _focus(boundary: dict, component: dict, prior_refs: set[tuple[str, str]]) ->
         return "primary", reasons
     if "data-origin" in transitions:
         reasons.append("data-origin transition")
+    if "data-access" in transitions:
+        reasons.append("data-access transition")
     if component.get("handles_sensitive_data"):
         reasons.append("crossing into sensitive-data component")
     if reasons:
@@ -1909,8 +1961,10 @@ def validate_finding_boundary_refs(
             reason = f"removed duplicate reference {boundary_id!r}"
         elif boundary is None:
             reason = f"removed unknown boundary reference {boundary_id!r}"
-        elif boundary.get("resolution_status") != "resolved" or boundary.get("confidence") != "confirmed":
-            reason = f"removed non-confirmed/non-resolved boundary reference {boundary_id!r}"
+        # Confidence is not gated (TB-14): an inferred boundary must stay
+        # refutable, and a reference never raises its confidence.
+        elif boundary.get("resolution_status") != "resolved":
+            reason = f"removed non-resolved boundary reference {boundary_id!r}"
         elif (
             not boundary_endpoints_valid(boundary, known_component_ids)
             if known_component_ids is not None
@@ -2007,6 +2061,7 @@ def associate_boundary_refs(
     *,
     boundaries: Iterable[dict],
     known_component_ids: set[str] | None,
+    components: Iterable[dict] = (),
 ) -> list[dict]:
     """Link an unlinked finding to the one boundary whose cited interface it is.
 
@@ -2016,8 +2071,10 @@ def associate_boundary_refs(
     * one of its own `file:line` locations is a location a confirmed, resolved
       boundary cites — the boundary's evidence names that line as its interface,
       which is what a CWE or component adjacency alone can never show;
-    * its component is adjacent to that boundary; and
-    * its CWE bears on exactly one condition (leg) of that boundary.
+    * its component is adjacent to that boundary;
+    * its CWE bears on exactly one condition (leg) of that boundary; and
+    * on an internal crossing, its sink class fits the target's registered tier
+      in `components` (see `sink_classes` in the leg map).
 
     When more than one boundary or leg qualifies, nothing is linked and the
     finding is returned as a traceability gap, so absence of a link never reads
@@ -2025,13 +2082,14 @@ def associate_boundary_refs(
     validator, so this path cannot publish what an analyst could not.
     """
     boundaries = [row for row in boundaries if isinstance(row, dict)]
+    tiers = {
+        row["id"]: str(row["tier"])
+        for row in components
+        if isinstance(row, dict) and isinstance(row.get("id"), str) and row.get("tier")
+    }
     sites: dict[tuple[str, int], list[dict]] = {}
     for boundary in boundaries:
-        if (
-            not isinstance(boundary.get("id"), str)
-            or boundary.get("resolution_status") != "resolved"
-            or boundary.get("confidence") != "confirmed"
-        ):
+        if not isinstance(boundary.get("id"), str) or boundary.get("resolution_status") != "resolved":
             continue
         for entry in boundary.get("evidence") or []:
             if isinstance(entry, dict) and isinstance(entry.get("file"), str) and isinstance(entry.get("line"), int):
@@ -2059,7 +2117,8 @@ def associate_boundary_refs(
             for boundary, locations in matches.values()
             if len(legs := _legs_for_finding(threat, boundary_leg_vocabulary(boundary))) == 1
         ]
-        if len(matches) > 1 or len(resolved) != 1:
+        fitting = [entry for entry in resolved if _sink_fits_target(threat, entry[0], tiers)]
+        if len(matches) > 1 or len(fitting) != 1:
             gaps.append(
                 {
                     "finding_id": label,
@@ -2069,11 +2128,13 @@ def associate_boundary_refs(
                         "evidence is cited by more than one adjacent boundary"
                         if len(matches) > 1
                         else "the finding's CWE does not bear on exactly one condition of the boundary"
+                        if len(resolved) != 1
+                        else "the finding's weakness class does not match the boundary's target"
                     ),
                 }
             )
             continue
-        boundary, locations, [leg] = resolved[0]
+        boundary, locations, [leg] = fitting[0]
         cwe = _CWE_RE.search(str(threat.get("cwe") or ""))
         rationale = (
             "The finding's evidence line is the interface this boundary cites; "
@@ -2429,8 +2490,12 @@ def _consolidate_candidates(
             owners = tuple(sorted((components.get(protected) or {}).get("repository_ids") or []))
             # One control can guard crossings that change different things; the
             # survivor keeps only its own axes, so merging across them would
-            # erase a trust transition.
-            key = ("point", point.casefold(), crossing_class, owners, axes)
+            # erase a trust transition. Ingress also keys on the deployable: one
+            # middleware guarding two separately deployed targets is two
+            # crossings, and the survivor would keep only one target's
+            # assumption (TB-12 bounds every widening by path containment).
+            scope = _grouping_endpoint(candidate, crossing_class, components) if crossing_class == "ingress" else None
+            key = ("point", point.casefold(), crossing_class, owners, axes, scope)
         else:
             key = (
                 "crossing",
@@ -2446,7 +2511,11 @@ def _consolidate_candidates(
     merged: list[dict] = []
     alias: dict[str, str] = {}
     for members in groups.values():
-        survivor = members[0]
+        # The member that names the deployable itself survives, so the merged
+        # row keeps the perimeter's own name and assumption, not a nested one's.
+        root = _grouping_endpoint(members[0], _crossing_class(members[0]), components)
+        survivor = next((m for m in members if m.get("to") == root), members[0])
+        members = [survivor, *(m for m in members if m is not survivor)]
         alias[survivor["candidate_key"]] = survivor["candidate_key"]
         for other in members[1:]:
             alias[other["candidate_key"]] = survivor["candidate_key"]

@@ -4,10 +4,11 @@
 # against so a leg can report "unconfirmed" instead of silently reading as
 # unexamined — the tb-2 false negative, where three CI/CD findings tested the
 # crossing and the row still said "none examined this crossing"
-# (user 2026-08-01). It never creates a `boundary_refs` link, never drives a
-# `refuted` verdict on its own, and never touches severity. Those remain
-# analyst-authored with rationale + finding-owned evidence
-# (`validate_finding_boundary_refs`), per the shipped mechanism-1 doctrine in
+# (user 2026-08-01). It creates a `boundary_refs` link only together with a
+# finding-owned evidence line the boundary itself cites
+# (`associate_boundary_refs`), never drives a `refuted` verdict on its own, and
+# never touches severity. Every link passes `validate_finding_boundary_refs`,
+# per the shipped mechanism-1 doctrine in
 # docs/internal/analysis/proposal-boundary-scoring-impact-2026-08-01.md.
 #
 # A CWE may appear under several legs: the crossing type restricts which legs
@@ -103,3 +104,21 @@ legs:
     - CWE-74 # Injection (generic)
     - CWE-284 # Improper Access Control (excessive agency on the return path)
     - CWE-1427 # Improper Neutralization of Input Used for LLM Prompting
+
+# Sink class of a CWE, for the derived link on an INTERNAL crossing only. The
+# `data-interpretation` leg lumps query construction with code evaluation, so a
+# cited line that is not the call into the target (an `eval` in the handler
+# that also queries a database) would otherwise read as broken query
+# construction. `datastore-query` never links to a target whose registered tier
+# is not `data`; `code-evaluation` never links to a `data` target. An unlisted
+# CWE is not restricted.
+sink_classes:
+  datastore-query:
+    - CWE-89 # SQL Injection
+    - CWE-90 # LDAP Injection
+    - CWE-564 # SQL Injection via Hibernate/ORM
+    - CWE-943 # Improper Neutralization in a Data Query
+  code-evaluation:
+    - CWE-94 # Code Injection
+    - CWE-95 # Eval Injection
+    - CWE-1321 # Prototype Pollution

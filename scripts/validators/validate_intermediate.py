@@ -665,8 +665,9 @@ def _check_final_boundary_links(data: dict) -> list[str]:
             if boundary is None:
                 errors.append(f"{prefix}.boundary_id targets no canonical trust boundary")
                 continue
-            if boundary.get("resolution_status") != "resolved" or boundary.get("confidence") != "confirmed":
-                errors.append(f"{prefix}.boundary_id must target a resolved, confirmed trust boundary")
+            # Any confidence (TB-14): an inferred boundary must stay refutable.
+            if boundary.get("resolution_status") != "resolved":
+                errors.append(f"{prefix}.boundary_id must target a resolved trust boundary")
             if not is_adjacent(ref.get("origin_component_id"), boundary):
                 errors.append(f"{prefix}.origin_component_id is not adjacent to the referenced boundary")
     return errors

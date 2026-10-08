@@ -3302,7 +3302,9 @@ def merge_assessment(
 
     # Both sides still carry root-qualified file keys here, so equal names in
     # different repositories can never match each other.
-    traceability_gaps = associate_boundary_refs(threats, boundaries=boundary_view, known_component_ids=expected)
+    traceability_gaps = associate_boundary_refs(
+        threats, boundaries=boundary_view, known_component_ids=expected, components=components["components"]
+    )
     weaknesses = build_weakness_register(threats)
     seen = set()
     for row in source_rows({"threats": threats, "weaknesses": weaknesses}):
@@ -3372,14 +3374,11 @@ def cmd_finalize(args: argparse.Namespace) -> int:
 
     boundary_doc = _read_json_file(out_dir / ".trust-boundaries.json", default={})
     component_doc = _read_json_file(out_dir / ".components.json", default={})
-    registered = {
-        row["id"]
-        for row in (component_doc.get("components") or [] if isinstance(component_doc, dict) else [])
-        if isinstance(row, dict) and isinstance(row.get("id"), str)
-    }
+    component_rows = component_doc.get("components") or [] if isinstance(component_doc, dict) else []
+    registered = {row["id"] for row in component_rows if isinstance(row, dict) and isinstance(row.get("id"), str)}
     boundary_rows = boundary_doc.get("trust_boundaries") or [] if isinstance(boundary_doc, dict) else []
     traceability_gaps = associate_boundary_refs(
-        threats, boundaries=boundary_rows, known_component_ids=registered or None
+        threats, boundaries=boundary_rows, known_component_ids=registered or None, components=component_rows
     )
     for warning in revalidate_boundary_refs(
         threats,

@@ -138,7 +138,7 @@ When actors exist, assign plausible `actor_ids[]` and choose `primary_actor`
 from reachability, adjusted likelihood, then lexical ID. Actor metadata cannot
 override evidence or severity caps.
 
-A boundary ref is never a finding. Reference a confirmed adjacent candidate (max
+A boundary ref is never a finding. Reference a resolved adjacent candidate (max
 two) where the finding shows its mechanism at its crossing, e.g. a sink on the
 interface it cites; not for a shared CWE.
 Use exactly `{"boundary_id":"tb-N",

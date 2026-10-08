@@ -16421,19 +16421,14 @@ def _finding_boundary_leg(threat: dict, ref: dict, boundary: dict) -> str:
 def _external_boundary_elevations_cached(output_dir: str) -> dict[str, tuple[str, ...]]:
     """`{threat id: (boundary ids,)}` for findings the ingress rule actually raised.
 
-    Same record and same renumbering translation `emit_severity_rationale` uses
-    — the triage flag is the audit trail, and the delivered yaml carries the
-    contiguous `tb-N` ids assigned after triage ran.
+    Same record `emit_severity_rationale` uses. Triage ranks the delivered yaml,
+    so the flag already carries delivered IDs and needs no translation (TB-9).
     """
     base = Path(output_dir)
     try:
         doc = json.loads((base / ".triage-flags.json").read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
-    try:
-        renumber = json.loads((base / ".trust-boundary-renumber.json").read_text(encoding="utf-8")).get("mapping") or {}
-    except (FileNotFoundError, json.JSONDecodeError, OSError, AttributeError):
-        renumber = {}
     prefix = "triage_compute_ranking.py:external_boundary:"
     result: dict[str, tuple[str, ...]] = {}
     for flag in doc.get("flags") or []:
@@ -16442,13 +16437,7 @@ def _external_boundary_elevations_cached(output_dir: str) -> dict[str, tuple[str
         source = str(flag.get("source") or "")
         if not source.startswith(prefix):
             continue
-        ids = tuple(
-            dict.fromkeys(
-                str(renumber.get(token.strip(), token.strip()))
-                for token in source.removeprefix(prefix).split(",")
-                if token.strip()
-            )
-        )
+        ids = tuple(dict.fromkeys(token.strip() for token in source.removeprefix(prefix).split(",") if token.strip()))
         for threat_id in flag.get("threat_ids") or []:
             if threat_id and ids:
                 result[str(threat_id)] = ids

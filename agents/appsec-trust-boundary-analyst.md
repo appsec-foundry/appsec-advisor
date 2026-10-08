@@ -136,8 +136,10 @@ Components whose `workload_zones` share no network run in different workloads,
 so a call between them is never `process`. When an identity, privilege, tenant,
 data-origin, or third-party change happens inside one process, keep that `kind`
 and set `surface: in-process`; omit `surface` otherwise. An embedded store
-reached through its driver is a `process` interface, not a separate data
-boundary. A missing or weak control at a crossing is a finding, never a reason
+reached through its driver is `kind: process`; promotion adds the data-access
+transition to every crossing into a data-tier store. Looking up credentials or
+sessions in a store is not an identity change; that belongs to the ingress
+where the caller is authenticated. A missing or weak control at a crossing is a finding, never a reason
 to drop or downgrade the crossing. Do not reach for `same-trust` for a real
 in-process interface — that disposition is for a signal with no interface
 behind it at all, and using it leaves the injection and data-access findings
@@ -232,7 +234,9 @@ you leave at `inferred` therefore cannot raise any finding's severity no matter
 what evidence that finding carries. Cite the file that actually registers the
 inbound surface — promotion re-checks it and upgrades an ingress candidate whose
 evidence provably registers routes, so a precise citation is worth more than a
-cautious confidence value.
+cautious confidence value. For an internal crossing, cite the call into the
+target (the query or store call), never another line of the same handler: a
+finding on a cited line is linked to that crossing.
 
 Never author public `tb-N` IDs, `resolution_status`, `sources`, severity, CWE,
 CVSS, risk, finding references, exposure labels, commands, permissions, or

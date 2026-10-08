@@ -252,7 +252,7 @@ def _boundary_gaps(d, nodes, tbs):
         source, target = t.get("from"), t.get("to")
         if _internal_interface(t) or source == target == "external":
             continue
-        if d.get("_overview") and _boundary_surface(t) != "network":
+        if d.get("_overview") and not _overview_crossing(t):
             continue
         if source == "external":
             starts = drawn_columns(source, target, 0) or {0}
@@ -273,14 +273,15 @@ def _local_boundaries(nodes, tbs, gaps):
 
     A network crossing between components of one column has no gap to mark; the
     overview places a local marker on its target (the entry it guards), else on
-    its source. The overview stays a network view: in-process trust changes and
-    internal interfaces get no marker and remain in the detail view and the
-    catalogue. A boundary whose nodes are not drawn stays catalogue-only.
+    its source. The overview shows network and data-access crossings only: other
+    in-process trust changes and internal interfaces get no marker and remain in
+    the detail view and the catalogue. A boundary whose nodes are not drawn
+    stays catalogue-only.
     """
     lined = {tid for ids in gaps.values() for tid in ids}
     local = collections.defaultdict(list)
     for t in tbs:
-        if _internal_interface(t) or t["id"] in lined or _boundary_surface(t) != "network":
+        if _internal_interface(t) or t["id"] in lined or not _overview_crossing(t):
             continue
         guarded = next(
             (end for end in (t.get("to"), t.get("from")) if end not in (None, "external") and end in nodes),
@@ -289,6 +290,11 @@ def _local_boundaries(nodes, tbs, gaps):
         if guarded is not None and nodes[guarded].get("kind") != "ext":
             local[guarded].append(t["id"])
     return {nid: sorted(ids, key=_tb_num) for nid, ids in sorted(local.items())}
+
+
+def _overview_crossing(row):
+    """Whether the overview draws this crossing: a network crossing, or one into a data store (TB-13)."""
+    return _boundary_surface(row) == "network" or "data-access" in (row.get("transition") or [])
 
 
 def _boundary_surface(row):
