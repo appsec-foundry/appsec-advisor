@@ -55,6 +55,37 @@ def _load_yaml(path: Path) -> Any:
         return yaml.safe_load(f)
 
 
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """SafeLoader that rejects a key repeated in one mapping.
+
+    Plain YAML keeps the last value, so a repeated key would silently replace
+    what the author wrote first.
+    """
+
+
+def _construct_unique_mapping(loader: yaml.SafeLoader, node: yaml.MappingNode) -> dict:
+    seen: set = set()
+    for key_node, _value in node.value:
+        if key_node.tag == "tag:yaml.org,2002:merge":
+            continue
+        key = loader.construct_object(key_node, deep=True)
+        try:
+            repeated = key in seen
+        except TypeError:
+            continue
+        if repeated:
+            raise yaml.constructor.ConstructorError(None, None, f"duplicate key {str(key)[:60]!r}", key_node.start_mark)
+        seen.add(key)
+    return loader.construct_mapping(node, deep=True)
+
+
+_UniqueKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_unique_mapping)
+
+
+def _load_case_yaml(text: str | bytes) -> Any:
+    return yaml.load(text, Loader=_UniqueKeyLoader)  # noqa: S506 — SafeLoader subclass
+
+
 def _load_schema() -> dict:
     return _load_yaml(ABUSE_CASE_SCHEMA)
 
@@ -138,9 +169,9 @@ def _load_case_file(path: Path, schema: dict, max_bytes: int | None = None) -> t
     label = path.name
     try:
         if max_bytes is None:
-            doc = _load_yaml(path)
+            doc = _load_case_yaml(path.read_text(encoding="utf-8"))
         else:
-            doc = yaml.safe_load(_read_bounded(path, max_bytes))
+            doc = _load_case_yaml(_read_bounded(path, max_bytes))
     except ValueError as exc:
         return [], [f"{label}: {exc}"]
     except OSError:

@@ -606,3 +606,33 @@ def test_locators_reject_a_malformed_rule_id_and_stay_off_probe_cases(tmp_path: 
     profile = {"abuse_cases": {"inherit_defaults": False, "add": "abuse-cases/*.yaml"}}
     cases, errors = rac.resolve_abuse_cases(profile, _write_org(tmp_path, probe))
     assert cases == [] and errors
+
+
+def test_a_repeated_case_field_rejects_the_repository_file(tmp_path: Path):
+    body = _DESCRIPTIVE + '    scope_qualifier:\n      path_patterns: ["**/*"]\n'
+    _write_repo_local(tmp_path, body)
+    cases, errors, rejected = rac.resolve_abuse_case_sources(None, None, repo_root=tmp_path)
+    assert all(case.get("id") != "REPO-AC-020" for case in cases)
+    assert "duplicate key 'scope_qualifier'" in rejected[0]["reason"]
+
+
+def test_a_repeated_nested_key_rejects_an_organization_file(tmp_path: Path):
+    bad = _VALID_CASE.replace(
+        "initial_access: unauthenticated", "initial_access: unauthenticated\n      initial_access: physical"
+    )
+    assert bad != _VALID_CASE
+    profile = {"abuse_cases": {"inherit_defaults": False, "add": "abuse-cases/*.yaml"}}
+    cases, errors = rac.resolve_abuse_cases(profile, _write_org(tmp_path, bad))
+    assert cases == []
+    assert any("duplicate key 'initial_access'" in error for error in errors)
+
+
+def test_equal_keys_in_separate_mappings_and_merge_keys_still_load(tmp_path: Path):
+    body = _DESCRIPTIVE.replace("schema_version: 2\n", "schema_version: 2\nx-defaults: &defaults\n  actor: Base\n")
+    body = body.replace(
+        "    actor: Delegated administrator of one department\n",
+        "    <<: *defaults\n    actor: Delegated administrator of one department\n",
+    )
+    two = body + _DESCRIPTIVE.split("abuse_cases:\n", 1)[1].replace("REPO-AC-020", "REPO-AC-021")
+    doc = rac._load_case_yaml(two)
+    assert [case["actor"] for case in doc["abuse_cases"]] == ["Delegated administrator of one department"] * 2
