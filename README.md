@@ -136,6 +136,8 @@ Run `/appsec-advisor:create-threat-model` to get:
 
 The report links findings to the [OWASP Top 10:2025](https://owasp.org/Top10/2025/). If the repository contains an LLM or agentic application, it also checks the relevant [OWASP LLM](https://genai.owasp.org/llm-top-10/) and [Agentic Applications](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/) categories.
 
+The [Threat Modeler guide](docs/threat-modeler.md) covers depth, focused scans, repository context, exports, costs, and limits.
+
 **Example:** [Read a thorough assessment of OWASP Juice Shop](https://github.com/appsec-foundry/appsec-advisor-examples/blob/main/threat-modeler/threat-model-juice-shop-thorough-v0.6.0b4.md) or browse [more examples](https://github.com/appsec-foundry/appsec-advisor-examples).
 
 Figure 1a shows the runtime components, data flows, and attack paths identified in OWASP Juice Shop.
@@ -152,7 +154,7 @@ For repositories with a build pipeline, Figure 1b links build inputs and release
   <img src="docs/images/figure1b-example.svg" alt="Figure 1b of the Juice Shop threat model">
 </picture>
 
-Assessments consume model tokens and usually take tens of minutes; thorough runs may exceed an hour. The [Threat Modeler reference](docs/threat-modeler.md#assessment-depth--cost-control) covers depth, focused scans, repository context, measured costs, and limits.
+Assessments consume model tokens and usually take tens of minutes; thorough runs may exceed an hour. See [assessment depth and cost control](docs/threat-modeler.md#assessment-depth--cost-control) for measured costs.
 
 ### Assess multiple repositories
 
