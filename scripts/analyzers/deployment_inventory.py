@@ -47,6 +47,7 @@ import re
 import sys
 from functools import cache
 from pathlib import Path
+from typing import NamedTuple
 
 import yaml
 
@@ -120,21 +121,23 @@ LOCKFILES = {
     "packages.lock.json",
 }
 RANGE_RE = re.compile(r"^[\^~<>=*]|[*xX]$|\|\||\s-\s|^latest$|^next$|\[|\(|,")
-K8S_KINDS = {
-    "Namespace",
-    "Route",
-    "Ingress",
-    "Service",
-    "Deployment",
-    "StatefulSet",
-    "DaemonSet",
-    "DeploymentConfig",
-    "NetworkPolicy",
-}
-TEXT_MAX = 200
+# Kubernetes kinds that run pods; the figure draws one workload node per document of these kinds.
+_K8S_WORKLOAD_KINDS = ("Deployment", "StatefulSet", "DaemonSet", "DeploymentConfig")
+# Every kind the manifest reader keeps; other documents are ignored.
+K8S_KINDS = {"Namespace", "Route", "Ingress", "Service", "NetworkPolicy", *_K8S_WORKLOAD_KINDS}
+
+# Output limits. They mirror maxLength / maxItems in schemas/deployment-inventory.schema.json: a value past
+# them fails validation and the whole file is not written. Limits used only once stay inline next to their field.
+TEXT_MAX = 200  # fact text
+NAME_MAX = 120  # node title, service/zone/workload name, path-like label
+IMAGE_MAX = 240  # image reference, and any other string attribute of a node
+MAX_FACTS = 3  # facts per node or CI system
+MAX_CHILDREN = 24  # children per node
 
 
 # ================================================================ bounded file access
+# Every read of repository content goes through these helpers: no symlinks, nothing that resolves outside the
+# root, size- and count-bounded. Bypassing them would let a hostile repository point the scan at other files.
 def _inside(path: Path, root: Path) -> bool:
     try:
         return path.resolve().is_relative_to(root)
@@ -198,31 +201,51 @@ def _clip(s: object, n: int = TEXT_MAX) -> str:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
+# ================================================================ facts and nodes of the figure
+# Tone decides which facts survive the per-node limit: what weakens a control first, plain notes last.
+_TONE_ORDER = {"weak": 0, "decision": 1, "neutral": 2, "note": 3}
+
+
 def _fact(text: str, tone: str, file: str | None = None, line: int | None = None) -> dict:
+    """One short statement about a node; ``source`` points at the line that caused it, when known.
+
+    Pass text and tone as literals (or an inline ``a if c else b``) at every call: a test in
+    tests/test_iac_resource_checks.py reads each ``weak`` fact from this source and requires a matching
+    config finding, so a fact hidden behind a variable fails that test.
+    """
     out = {"text": _clip(text), "tone": tone}
     if file and line:
         out["source"] = {"file": file, "line": int(line)}
     return out
 
 
-def _facts(items: list[dict], limit: int = 3) -> list[dict]:
-    order = {"weak": 0, "decision": 1, "neutral": 2, "note": 3}
-    return sorted(items, key=lambda f: order[f["tone"]])[:limit]
+def _facts(items: list[dict], limit: int = MAX_FACTS) -> list[dict]:
+    """The most important facts first, cut to the limit. The sort is stable, so equal tones keep their order."""
+    return sorted(items, key=lambda f: _TONE_ORDER[f["tone"]])[:limit]
 
 
 def _node(kind: str, title: str, facts=(), children=(), **extra) -> dict:
+    """A box of the figure. Extra attributes (image, role, layout, note) are set only when they have a value."""
     node = {
         "kind": kind,
-        "title": _clip(title, 120) or kind,
+        "title": _clip(title, NAME_MAX) or kind,
         "facts": _facts(list(facts)),
-        "children": list(children)[:24],
+        "children": list(children)[:MAX_CHILDREN],
     }
     for k, v in extra.items():
         if v:
-            node[k] = _clip(v, 240) if isinstance(v, str) else v
+            node[k] = _clip(v, IMAGE_MAX) if isinstance(v, str) else v
     return node
 
 
+def _floating_image_facts(image: str, file: str | None = None, line: int | None = None) -> list[dict]:
+    """A fact for an image without a fixed version (``latest`` or no tag); nothing for a pinned or empty one."""
+    if image and image_pin(image) == "floating":
+        return [_fact(f"{image.split('/')[-1]} floats", "decision", file, line)]
+    return []
+
+
+# ================================================================ image references
 def image_pin(image: str) -> str:
     """digest, version (an exact version tag), tag (a moving major/minor tag) or floating (latest / no tag)."""
     if "@sha256:" in image:
@@ -256,6 +279,8 @@ def runtime_label(images: list[str]) -> str:
 
 
 # ================================================================ Dockerfile
+# One Dockerfile describes the runtime image: the root one if present, else the first one found near the root.
+# The section also reports secrets a `COPY .` would bake into the image.
 _DOCKERFILE_RE = re.compile(r"^(?:Dockerfile|Containerfile)(?:\.[\w.-]+)?$|^[\w.-]+\.Dockerfile$")
 
 
@@ -281,41 +306,50 @@ def scan_runtime(root: Path) -> dict | None:
     text = _read(df, root)
     if not text:
         return None
-    rel = _rel(df, root)
+    lines = text.splitlines()
+    # Each FROM starts a stage; the last one is the image that runs. A FROM with a build argument
+    # ($BASE) names no image we can judge, so it is skipped.
     stages = []
-    for i, ln in enumerate(text.splitlines(), 1):
+    for i, ln in enumerate(lines, 1):
         m = re.match(r"\s*FROM\s+(?:--platform=\S+\s+)?(\S+)", ln, re.I)
         if m and "$" not in m.group(1):
-            stages.append({"image": _clip(m.group(1), 240), "pin": image_pin(m.group(1)), "line": i})
+            stages.append({"image": _clip(m.group(1), IMAGE_MAX), "pin": image_pin(m.group(1)), "line": i})
     if not stages:
         return None
-    users = [
-        (i, m.group(1)) for i, ln in enumerate(text.splitlines(), 1) if (m := re.match(r"\s*USER\s+(\S+)", ln, re.I))
-    ]
+    users = [(i, m.group(1)) for i, ln in enumerate(lines, 1) if (m := re.match(r"\s*USER\s+(\S+)", ln, re.I))]
     expose = [p for ln in re.findall(r"^\s*EXPOSE\s+(.+)$", text, re.M | re.I) for p in ln.split()][:16]
-    cmd = (re.findall(r"^\s*(?:CMD|ENTRYPOINT)\s+(.+)$", text, re.M | re.I) or [""])[-1]
-    cmd = re.sub(r'[\[\]"]', " ", cmd).split()
-    command = next((Path(c).name for c in cmd if "/" in c or "." in c), cmd[0] if cmd else "")
-    copy_line = _line_of(text, r"^\s*(COPY|ADD)\s+(--\S+\s+)*\.\s")
-    copies = None
-    if copy_line and df.parent.resolve() == root:
-        rules = _dockerignore_rules(_read(root / ".dockerignore", root))
-        sensitive = sorted(
-            p.name + ("/" if p.is_dir() else "")
-            for p in root.iterdir()
-            if _sensitive(p.name) and not _ignored(p.name, rules) and not p.is_symlink()
-        )[:16]
-        copies = {"line": copy_line, "sensitive": [_clip(s, 120) for s in sensitive]}
     return {
-        "dockerfile": rel,
+        "dockerfile": _rel(df, root),
         "base": stages[-1],
         "build_stages": stages[:-1][:8],
         "user": {"value": _clip(users[-1][1], 64), "line": users[-1][0]} if users else None,
         "expose": [_clip(p, 32) for p in expose],
-        "command": _clip(command, 120),
-        "copies_repository": copies,
+        "command": _clip(_start_command(text), NAME_MAX),
+        "copies_repository": _copied_sensitive_entries(df, text, root),
         "runtime_label": runtime_label([s["image"] for s in stages[::-1]]),
     }
+
+
+def _start_command(text: str) -> str:
+    """The program the last CMD or ENTRYPOINT starts: the first word that looks like a path or file name."""
+    cmd = (re.findall(r"^\s*(?:CMD|ENTRYPOINT)\s+(.+)$", text, re.M | re.I) or [""])[-1]
+    words = re.sub(r'[\[\]"]', " ", cmd).split()
+    return next((Path(w).name for w in words if "/" in w or "." in w), words[0] if words else "")
+
+
+def _copied_sensitive_entries(df: Path, text: str, root: Path) -> dict | None:
+    """Sensitive root entries a ``COPY .`` / ``ADD .`` puts into the image because .dockerignore does not exclude
+    them. Only for a Dockerfile at the root, where ``.`` is the repository root."""
+    copy_line = _line_of(text, r"^\s*(COPY|ADD)\s+(--\S+\s+)*\.\s")
+    if not copy_line or df.parent.resolve() != root:
+        return None
+    rules = _dockerignore_rules(_read(root / ".dockerignore", root))
+    sensitive = sorted(
+        p.name + ("/" if p.is_dir() else "")
+        for p in root.iterdir()
+        if _sensitive(p.name) and not _ignored(p.name, rules) and not p.is_symlink()
+    )[:16]
+    return {"line": copy_line, "sensitive": [_clip(s, NAME_MAX) for s in sensitive]}
 
 
 def _sensitive(name: str) -> bool:
@@ -352,28 +386,30 @@ def _ignored(name: str, rules: list[tuple[bool, str]]) -> bool:
     return ignored
 
 
-def _root_user(user: dict | None) -> bool:
-    return user is None or user["value"].split(":")[0] in ("root", "0")
-
-
 # ================================================================ docker compose
+# Only the file `docker compose up` uses without -f, and only at the repository root: override and variant files
+# are listed by name but not drawn, because which one is used is chosen at deploy time.
+
+
 def _network_mode(spec) -> str:
     return _clip((spec.get("network_mode") if isinstance(spec, dict) else None) or "", 64)
+
+
+_COMPOSE_NAMES = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
+# A service whose name or image says it forwards traffic is drawn as the entry point of the compose host.
+_PROXY_RE = re.compile(r"nginx|traefik|envoy|haproxy|caddy|gateway|proxy|ingress|facade", re.I)
 
 
 def scan_compose(root: Path) -> tuple[dict | None, dict | None]:
     """The compose file docker compose resolves without -f (root only): services, and an environment tree."""
     primary, variants = primary_compose_file(root)
-    if (
-        primary is None
-        or primary.parent.resolve() != root
-        or primary.name not in ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
-    ):
+    if primary is None or primary.parent.resolve() != root or primary.name not in _COMPOSE_NAMES:
         return None, None
     rel = _rel(primary, root)
     services = parse_compose_file(primary, root)
     if not services:
         return None, None
+    # parse_compose_file does not keep network_mode or the top-level networks, so read those from the YAML.
     try:
         data = load_yaml_bounded(_read(primary, root)) or {}
     except yaml.YAMLError:
@@ -383,55 +419,11 @@ def scan_compose(root: Path) -> tuple[dict | None, dict | None]:
     record = {
         "file": rel,
         "variants": [_rel(v, root) for v in variants][:16],
-        "networks": [n for n in (_clip(n, 120) for n in declared) if n][:64],
-        "services": [
-            {
-                "name": _clip(s.name, 120),
-                "line": s.line,
-                "end_line": s.end_line,
-                "image": _clip(s.image, 240),
-                "builds": s.builds,
-                "ports": [
-                    {"host": _clip(p.host, 32), "container": _clip(p.container, 32), "host_ip": _clip(p.host_ip, 64)}
-                    for p in s.ports
-                ][:32],
-                "networks": [n for n in (_clip(n, 120) for n in s.networks) if n][:16],
-                "network_mode": _network_mode(specs.get(s.name)),
-            }
-            for s in services
-        ][:64],
+        "networks": [n for n in (_clip(n, NAME_MAX) for n in declared) if n][:64],
+        "services": [_compose_service_record(s, specs.get(s.name)) for s in services][:64],
     }
-    nodes = []
-    for s in services[:24]:
-        facts = []
-        open_ports = [p for p in s.ports if p.host and not p.loopback_only]
-        if open_ports:
-            facts.append(
-                _fact(
-                    "host port " + ", ".join(f":{p.host}" for p in open_ports[:3]) + " on every interface",
-                    "decision",
-                    rel,
-                    s.line,
-                )
-            )
-        if s.privileged:
-            facts.append(_fact("privileged container", "weak", rel, s.line))
-        if any("docker.sock" in v for v in s.volumes):
-            facts.append(_fact("Docker socket mounted", "weak", rel, s.line))
-        if s.image and image_pin(s.image) == "floating":
-            facts.append(_fact(f"{s.image.split('/')[-1]} floats", "decision", rel, s.line))
-        kind = "workload" if s.builds else "service"
-        nodes.append(_node(kind, s.name, facts, image=s.image or ("built from this repository" if s.builds else "")))
-    entry = next(
-        (
-            n
-            for n, s in zip(nodes, services)
-            if any(p.host and not p.loopback_only for p in s.ports)
-            and re.search(r"nginx|traefik|envoy|haproxy|caddy|gateway|proxy|ingress|facade", s.name + s.image, re.I)
-        ),
-        None,
-    )
-    entry = entry or next((n for n, s in zip(nodes, services) if s.ports), None)
+    nodes = [_compose_service_node(s, rel) for s in services[:MAX_CHILDREN]]
+    entry = _compose_entry(nodes, services)
     if entry is not None:
         entry["role"] = "entry"
     nodes.sort(key=lambda n: n.get("role") != "entry")
@@ -439,8 +431,60 @@ def scan_compose(root: Path) -> tuple[dict | None, dict | None]:
     return record, {"platform": "compose", "label": f"docker compose ({rel})", "source": rel, "tree": tree}
 
 
+def _compose_service_record(s, spec) -> dict:
+    """A service as listed under ``compose.services``; the topology reads its networks from here."""
+    return {
+        "name": _clip(s.name, NAME_MAX),
+        "line": s.line,
+        "end_line": s.end_line,
+        "image": _clip(s.image, IMAGE_MAX),
+        "builds": s.builds,
+        "ports": [
+            {"host": _clip(p.host, 32), "container": _clip(p.container, 32), "host_ip": _clip(p.host_ip, 64)}
+            for p in s.ports
+        ][:32],
+        "networks": [n for n in (_clip(n, NAME_MAX) for n in s.networks) if n][:16],
+        "network_mode": _network_mode(spec),
+    }
+
+
+def _compose_service_node(s, rel: str) -> dict:
+    """A service as a box of the figure; a service built from this repository is the workload."""
+    facts = []
+    open_ports = [p for p in s.ports if p.host and not p.loopback_only]
+    if open_ports:
+        ports = ", ".join(f":{p.host}" for p in open_ports[:3])
+        facts.append(_fact(f"host port {ports} on every interface", "decision", rel, s.line))
+    if s.privileged:
+        facts.append(_fact("privileged container", "weak", rel, s.line))
+    if any("docker.sock" in v for v in s.volumes):
+        facts.append(_fact("Docker socket mounted", "weak", rel, s.line))
+    facts += _floating_image_facts(s.image, rel, s.line)
+    kind = "workload" if s.builds else "service"
+    return _node(kind, s.name, facts, image=s.image or ("built from this repository" if s.builds else ""))
+
+
+def _compose_entry(nodes: list[dict], services) -> dict | None:
+    """The node traffic enters through: a proxy published on every interface, else the first service with ports."""
+    publicly_published_proxy = next(
+        (
+            n
+            for n, s in zip(nodes, services)
+            if any(p.host and not p.loopback_only for p in s.ports) and _PROXY_RE.search(s.name + s.image)
+        ),
+        None,
+    )
+    return publicly_published_proxy or next((n for n, s in zip(nodes, services) if s.ports), None)
+
+
 # ================================================================ Kubernetes and OpenShift manifests
+# Plain manifests only: Helm templates and values files are read in the next section. Every document is checked
+# for the shape the readers below expect (_k8s_shape_ok), so one malformed document is skipped instead of
+# aborting the scan. Each namespace with workloads becomes one environment of the figure.
+
+
 def _k8s_docs(root: Path) -> list[tuple[str, dict, int]]:
+    """(file, document, line of its ``kind:``) for every well-formed document of a kind in K8S_KINDS."""
     out = []
     files = _walk(
         root,
@@ -459,11 +503,13 @@ def _k8s_docs(root: Path) -> list[tuple[str, dict, int]]:
         except yaml.YAMLError:
             continue
         rel = _rel(p, root)
-        starts = [i + 1 for i, ln in enumerate(text.splitlines()) if re.match(r"^kind:\s*", ln)]
+        # The YAML loader gives no line numbers. The n-th top-level `kind:` line belongs to the n-th document
+        # that has a kind, so count those documents to find each one's line.
+        kind_lines = [i + 1 for i, ln in enumerate(text.splitlines()) if re.match(r"^kind:\s*", ln)]
         k = 0
         for d in docs[:64]:
             if isinstance(d, dict) and _k8s_shape_ok(d) and d["kind"] in K8S_KINDS:
-                line = starts[k] if k < len(starts) else 1
+                line = kind_lines[k] if k < len(kind_lines) else 1
                 out.append((rel, d, line))
             if isinstance(d, dict) and d.get("kind"):
                 k += 1
@@ -500,13 +546,16 @@ def _k8s_shape_ok(d: dict) -> bool:
         return False
     if any(_at(d, p) is not None and not isinstance(_at(d, p), list) for p in _K8S_LISTS):
         return False
+    # Ingress rules nest further: rules[].http.paths[].backend.service must be mappings where present.
     for rule in _at(d, ("spec", "rules")) or []:
         http = rule.get("http") if isinstance(rule, dict) else None
-        if rule is not None and not isinstance(rule, dict) or http is not None and not isinstance(http, dict):
+        if (rule is not None and not isinstance(rule, dict)) or (http is not None and not isinstance(http, dict)):
             return False
         for path in (http or {}).get("paths") or []:
             backend = path.get("backend") if isinstance(path, dict) else None
-            if path is not None and not isinstance(path, dict) or backend is not None and not isinstance(backend, dict):
+            if (path is not None and not isinstance(path, dict)) or (
+                backend is not None and not isinstance(backend, dict)
+            ):
                 return False
             if backend and backend.get("service") is not None and not isinstance(backend["service"], dict):
                 return False
@@ -514,6 +563,7 @@ def _k8s_shape_ok(d: dict) -> bool:
 
 
 def _pod_facts(spec: dict, rel: str, line: int) -> list[dict]:
+    """Hardening gaps of a pod spec. Container securityContext overrides the pod's; each fact appears once."""
     containers = [c for c in (spec.get("containers") or []) if isinstance(c, dict)]
     pod_sc = spec.get("securityContext") if isinstance(spec.get("securityContext"), dict) else {}
     facts = []
@@ -539,88 +589,19 @@ def scan_manifests(root: Path) -> list[dict]:
     The first of up to six workloads is drawn as entry → Service → workload; the others share a row below it.
     """
     docs = _k8s_docs(root)
-    if not any(d.get("kind") in ("Deployment", "StatefulSet", "DaemonSet", "DeploymentConfig") for _, d, _ in docs):
+    if not any(d.get("kind") in _K8S_WORKLOAD_KINDS for _, d, _ in docs):
         return []
-    platform = "openshift" if any("openshift.io" in str(d.get("apiVersion")) for _, d, _ in docs) else "kubernetes"
-    namespaces = sorted(
-        {str(d["metadata"].get("namespace") or "default") for _, d, _ in docs if d.get("kind") != "Namespace"}
-    )
+    platform = _k8s_platform(docs)
+    namespaces = sorted({_namespace(d) for _, d, _ in docs if d.get("kind") != "Namespace"})
     envs = []
     for ns in namespaces[:2]:
-        in_ns = [(r, d, ln) for r, d, ln in docs if str(d["metadata"].get("namespace") or "default") == ns]
-        workloads = [
-            (r, d, ln)
-            for r, d, ln in in_ns
-            if d.get("kind") in ("Deployment", "StatefulSet", "DaemonSet", "DeploymentConfig")
-        ]
+        in_ns = [(r, d, ln) for r, d, ln in docs if _namespace(d) == ns]
+        workloads = [(r, d, ln) for r, d, ln in in_ns if d.get("kind") in _K8S_WORKLOAD_KINDS]
         if not workloads:
             continue
         services = [(r, d, ln) for r, d, ln in in_ns if d.get("kind") == "Service"]
         routes = [(r, d, ln) for r, d, ln in in_ns if d.get("kind") in ("Route", "Ingress")]
-        chains = []
-        for r, w, ln in workloads[:6]:
-            spec = ((w.get("spec") or {}).get("template") or {}).get("spec") or {}
-            labels = (((w.get("spec") or {}).get("template") or {}).get("metadata") or {}).get("labels") or {}
-            image = next(
-                (str(c.get("image")) for c in spec.get("containers") or [] if isinstance(c, dict) and c.get("image")),
-                "",
-            )
-            replicas = (w.get("spec") or {}).get("replicas", 1)
-            secrets = sorted(
-                {
-                    str(e["secretRef"].get("name"))
-                    for c in spec.get("containers") or []
-                    if isinstance(c, dict)
-                    for e in c.get("envFrom") or []
-                    if isinstance(e, dict) and isinstance(e.get("secretRef"), dict)
-                }
-            )
-            facts = _pod_facts(spec, r, ln)
-            if image and image_pin(image) == "floating":
-                facts.append(_fact(f"{image.split('/')[-1]} floats", "decision", r, ln))
-            if secrets:
-                facts.append(_fact("environment from Secret " + ", ".join(secrets[:2]), "note", r, ln))
-            workload = _node(
-                "workload",
-                f"{w['kind']} {w['metadata'].get('name', '')} · {replicas} replica{'s' if replicas != 1 else ''}",
-                facts,
-                image=image,
-            )
-            chain = [workload]
-            svc = next(
-                (
-                    (sr, s, sl)
-                    for sr, s, sl in services
-                    if isinstance((s.get("spec") or {}).get("selector"), dict)
-                    and labels
-                    and all(labels.get(k) == v for k, v in s["spec"]["selector"].items())
-                ),
-                None,
-            )
-            if svc:
-                sr, s, sl = svc
-                sspec = s.get("spec") or {}
-                typ = sspec.get("type", "ClusterIP")
-                port = (sspec.get("ports") or [{}])[0] if isinstance((sspec.get("ports") or [{}])[0], dict) else {}
-                chain.insert(
-                    0,
-                    _node(
-                        "service",
-                        f"Service {s['metadata'].get('name', '')}",
-                        [
-                            _fact(
-                                f"{typ} :{port.get('port', '?')} → {port.get('targetPort', port.get('port', '?'))}",
-                                "decision" if typ in ("NodePort", "LoadBalancer") else "neutral",
-                                sr,
-                                sl,
-                            )
-                        ],
-                    ),
-                )
-                route = next(((rr, rt, rl) for rr, rt, rl in routes if _routes_to(rt, s["metadata"].get("name"))), None)
-                if route:
-                    chain.insert(0, _route_node(*route))
-            chains.append(chain)
+        chains = [_workload_chain(r, w, ln, services, routes) for r, w, ln in workloads[:6]]
         # stack the first chain (entry → service → workload); further workloads join in one row underneath
         first = chains[0]
         if len(first) > 1:
@@ -646,7 +627,85 @@ def scan_manifests(root: Path) -> list[dict]:
     return envs
 
 
+def _k8s_platform(docs: list[tuple[str, dict, int]]) -> str:
+    """OpenShift as soon as one document uses an openshift.io API group, else Kubernetes."""
+    return "openshift" if any("openshift.io" in str(d.get("apiVersion")) for _, d, _ in docs) else "kubernetes"
+
+
+def _namespace(d: dict) -> str:
+    """The document's namespace; a manifest without one is applied to ``default``."""
+    return str(d["metadata"].get("namespace") or "default")
+
+
+def _workload_chain(rel: str, w: dict, line: int, services: list, routes: list) -> list[dict]:
+    """The nodes traffic passes to reach one workload, outermost first: [route,] [service,] workload.
+
+    A Service belongs to the workload when its selector matches the pod labels; a Route or Ingress belongs to
+    that Service when it forwards to it by name.
+    """
+    spec = ((w.get("spec") or {}).get("template") or {}).get("spec") or {}
+    labels = (((w.get("spec") or {}).get("template") or {}).get("metadata") or {}).get("labels") or {}
+    chain = [_workload_node(rel, w, line, spec)]
+    svc = next(
+        (
+            (sr, s, sl)
+            for sr, s, sl in services
+            if isinstance((s.get("spec") or {}).get("selector"), dict)
+            and labels
+            and all(labels.get(k) == v for k, v in s["spec"]["selector"].items())
+        ),
+        None,
+    )
+    if svc:
+        chain.insert(0, _service_node(*svc))
+        name = svc[1]["metadata"].get("name")
+        route = next(((rr, rt, rl) for rr, rt, rl in routes if _routes_to(rt, name)), None)
+        if route:
+            chain.insert(0, _route_node(*route))
+    return chain
+
+
+def _workload_node(rel: str, w: dict, line: int, spec: dict) -> dict:
+    """A Deployment, StatefulSet, DaemonSet or DeploymentConfig with its first image and hardening gaps.
+
+    Only the names of Secrets loaded via ``envFrom`` are shown, never their values.
+    """
+    containers = spec.get("containers") or []
+    image = next((str(c.get("image")) for c in containers if isinstance(c, dict) and c.get("image")), "")
+    replicas = (w.get("spec") or {}).get("replicas", 1)
+    secrets = sorted(
+        {
+            str(e["secretRef"].get("name"))
+            for c in containers
+            if isinstance(c, dict)
+            for e in c.get("envFrom") or []
+            if isinstance(e, dict) and isinstance(e.get("secretRef"), dict)
+        }
+    )
+    facts = _pod_facts(spec, rel, line) + _floating_image_facts(image, rel, line)
+    if secrets:
+        facts.append(_fact("environment from Secret " + ", ".join(secrets[:2]), "note", rel, line))
+    title = f"{w['kind']} {w['metadata'].get('name', '')} · {replicas} replica{'s' if replicas != 1 else ''}"
+    return _node("workload", title, facts, image=image)
+
+
+def _service_node(rel: str, s: dict, line: int) -> dict:
+    """A Service with its type and first port; NodePort and LoadBalancer reach outside the cluster."""
+    spec = s.get("spec") or {}
+    typ = spec.get("type", "ClusterIP")
+    first_port = (spec.get("ports") or [{}])[0]
+    port = first_port if isinstance(first_port, dict) else {}
+    fact = _fact(
+        f"{typ} :{port.get('port', '?')} → {port.get('targetPort', port.get('port', '?'))}",
+        "decision" if typ in ("NodePort", "LoadBalancer") else "neutral",
+        rel,
+        line,
+    )
+    return _node("service", f"Service {s['metadata'].get('name', '')}", [fact])
+
+
 def _routes_to(route: dict, service: str | None) -> bool:
+    """Whether an OpenShift Route or an Ingress (current or pre-1.19 backend syntax) forwards to the Service."""
     spec = route.get("spec") or {}
     if route.get("kind") == "Route":
         return (spec.get("to") or {}).get("name") == service
@@ -659,6 +718,7 @@ def _routes_to(route: dict, service: str | None) -> bool:
 
 
 def _route_node(rel: str, route: dict, line: int) -> dict:
+    """The entry box of a chain: an OpenShift Route or an Ingress, with whether it terminates TLS."""
     spec = route.get("spec") or {}
     if route.get("kind") == "Route":
         tls = spec.get("tls") if isinstance(spec.get("tls"), dict) else {}
@@ -682,7 +742,12 @@ def _route_node(rel: str, route: dict, line: int) -> dict:
 
 
 # ================================================================ Helm values and GitLab Auto Deploy
+# Templates are not rendered. The figure is built from the values file alone, using the keys of Helm's default
+# chart scaffold (service, ingress, image, securityContext); what a chart sets elsewhere stays unknown.
+
+
 def _values_env(values: dict, rel: str, text: str, label: str, platform: str, note: str, app_version: str = "") -> dict:
+    """An environment of Ingress → Service → Pod from one values file."""
     svc = values.get("service") if isinstance(values.get("service"), dict) else {}
     ing = values.get("ingress") if isinstance(values.get("ingress"), dict) else {}
     img = values.get("image") if isinstance(values.get("image"), dict) else {}
@@ -722,8 +787,7 @@ def _values_env(values: dict, rel: str, text: str, label: str, platform: str, no
     sc = values.get("securityContext") if isinstance(values.get("securityContext"), dict) else None
     if sc is not None and sc.get("privileged") is True:
         facts.append(_fact("privileged container", "weak", rel, _line_of(text, r"securityContext:")))
-    if image and image_pin(image) == "floating":
-        facts.append(_fact(f"{image.split('/')[-1]} floats", "decision", rel, _line_of(text, r"^image:")))
+    facts += _floating_image_facts(image, rel, _line_of(text, r"^image:"))
     children.append(
         _node("workload", "Pod", facts, image=image, note=f"{repo}, tag set at deploy" if repo and not tag else None)
     )
@@ -782,6 +846,13 @@ def scan_gitlab_auto_deploy(root: Path) -> list[dict]:
 
 
 # ================================================================ Terraform (AWS)
+# Steps: group .tf files into root modules (_tf_roots), cut out the resource blocks of each root (_tf_blocks),
+# build a node per drawn resource type (_tf_nodes), then place the nodes into VPC → subnet boxes by the subnets
+# they reference (_tf_environment). Only AWS resources are drawn. A new resource type needs a builder in
+# _TF_NODE_BUILDERS.
+#
+# iac_resource_checks.py judges some of the same settings for findings; this section only describes the
+# deployment for the figure, and the two are not kept in sync automatically.
 _TF_LOCAL_MODULE_RE = re.compile(r'^\s*module\s+"[\w-]+"\s*\{[^}]*?\bsource\s*=\s*"(\.\.?/[^"]+)"', re.M | re.S)
 
 
@@ -836,154 +907,193 @@ def _tf_blocks(root: Path, files: list[Path]) -> tuple[dict[str, tuple[str, str,
 
 
 def _attr(body: str, key: str) -> str:
+    """The value of a top-level ``key = value`` line in a block body, without quotes; "" when absent."""
     m = re.search(rf'^\s*{key}\s*=\s*"?([^"\n]+?)"?\s*$', body, re.M)
     return m.group(1).strip() if m else ""
 
 
+class _TfResource(NamedTuple):
+    address: str  # "aws_lb.web"
+    rtype: str  # "aws_lb"
+    name: str  # "web"
+    body: str
+    file: str
+    line: int
+
+
+class _TfRoot:
+    """The resource blocks of one Terraform root, looked up by address and type.
+
+    Resources link to each other only by reference text such as ``aws_lb.web.arn``; this reader does not
+    evaluate HCL, so "refers to" means the address followed by a dot occurs in the other block's body.
+    """
+
+    def __init__(self, res: dict[str, tuple[str, str, int]]):
+        self.bodies = {k: v[0] for k, v in res.items()}
+        self.src = {k: (v[1], v[2]) for k, v in res.items()}
+
+    def resources(self):
+        for address, body in self.bodies.items():
+            rtype, name = address.split(".", 1)
+            yield _TfResource(address, rtype, name, body, *self.src[address])
+
+    def of_type(self, rtype: str) -> list[str]:
+        return [k for k in self.bodies if k.split(".", 1)[0] == rtype]
+
+    def referring(self, rtype: str, address: str) -> list[str]:
+        """Addresses of ``rtype`` resources whose body refers to ``address``."""
+        return [k for k in self.of_type(rtype) if f"{address}." in self.bodies[k]]
+
+
+# One builder per AWS resource type the figure draws. Each returns a node with at most a few rule-chosen facts;
+# a fact about something missing says "in this Terraform", because the control may live in another root.
+
+
+def _tf_load_balancer(tf: _TfRoot, r: _TfResource) -> dict:
+    internal = _attr(r.body, "internal") == "true"
+    listeners = [tf.bodies[x] for x in tf.referring("aws_lb_listener", r.address)]
+    protos = sorted({(_attr(b, "protocol"), _attr(b, "port")) for b in listeners})
+    sgs = [tf.bodies.get(f"aws_security_group.{s}", "") for s in re.findall(r"aws_security_group\.([\w-]+)", r.body)]
+    world = any("0.0.0.0/0" in sg for sg in sgs)
+    tls = any(p == "HTTPS" for p, _ in protos)
+    facts = []
+    for proto, port in protos:
+        if proto == "HTTP" and not tls:
+            facts.append(_fact(f"HTTP :{port}{' from 0.0.0.0/0' if world else ''} — no TLS", "weak", r.file, r.line))
+        elif proto == "HTTPS":
+            facts.append(_fact(f"HTTPS :{port}", "neutral", r.file, r.line))
+    if not internal and not tf.referring("aws_wafv2_web_acl_association", r.address):
+        facts.append(_fact("no WAF in this Terraform", "decision", r.file, r.line))
+    title = "Load balancer" + (" (internal)" if internal else "")
+    return _node("managed", title, facts, role=None if internal else "entry")
+
+
+def _tf_nat_gateway(tf: _TfRoot, r: _TfResource) -> dict:
+    facts = [_fact("outbound traffic of the private subnets", "note", r.file, r.line)]
+    return _node("managed", "NAT gateway", facts, role="egress")
+
+
+def _tf_ecs_service(tf: _TfRoot, r: _TfResource) -> dict:
+    """An ECS service, judged together with its task definition and the IAM role policies of that task."""
+    facts = []
+    if re.search(r"assign_public_ip\s*=\s*true", r.body):
+        facts.append(_fact("public IP on the tasks", "weak", r.file, r.line))
+    td_names = re.findall(r"aws_ecs_task_definition\.([\w-]+)", r.body)
+    td_address = f"aws_ecs_task_definition.{td_names[0]}" if td_names else ""
+    td = tf.bodies.get(td_address, "")
+    roles = re.findall(r"aws_iam_role\.([\w-]+)", td)
+    for pol in tf.of_type("aws_iam_role_policy"):
+        if any(f"aws_iam_role.{role}." in tf.bodies[pol] for role in roles):
+            act = re.search(r'Action\s*=\s*"([\w-]+:\*|\*)"', tf.bodies[pol])
+            if act and re.search(r'Resource\s*=\s*"\*"', tf.bodies[pol]):
+                facts.append(_fact(f"task role may use {act.group(1)} on every resource", "weak", *tf.src[pol]))
+    if re.search(r"readonlyRootFilesystem\s*=\s*false", td):
+        facts.append(_fact("writable root file system", "decision", *tf.src.get(td_address, (r.file, r.line))))
+    launch = _attr(r.body, "launch_type") or "EC2"
+    count = _attr(r.body, "desired_count") or "1"
+    title = f"ECS {'Fargate' if launch == 'FARGATE' else launch} · {count} task{'s' if count != '1' else ''}"
+    return _node("workload", title, facts, image=_ecs_image(tf, td))
+
+
+def _ecs_image(tf: _TfRoot, task_definition: str) -> str:
+    """The task's image, with an ECR repository reference shown as ``ECR <name>`` and other interpolations as …"""
+    image = (re.search(r'image\s*=\s*"([^"]+)"', task_definition) or [None, ""])[1]
+    ecr = re.search(r"\$\{aws_ecr_repository\.([\w-]+)\.repository_url\}", image)
+    if ecr:
+        repo_name = _attr(tf.bodies.get(f"aws_ecr_repository.{ecr.group(1)}", ""), "name") or ecr.group(1)
+        image = image.replace(ecr.group(0), f"ECR {repo_name}")
+    return re.sub(r"\$\{[^}]*\}", "…", image)
+
+
+def _tf_lambda(tf: _TfRoot, r: _TfResource) -> dict:
+    facts = [_fact(_attr(r.body, "runtime") or "runtime not set", "note", r.file, r.line)]
+    return _node("managed", f"Lambda {_attr(r.body, 'function_name') or r.name}", facts)
+
+
+def _tf_ec2_instance(tf: _TfRoot, r: _TfResource) -> dict:
+    facts = []
+    if re.search(r"associate_public_ip_address\s*=\s*true", r.body):
+        facts.append(_fact("public IP", "weak", r.file, r.line))
+    if not re.search(r'http_tokens\s*=\s*"required"', r.body):
+        facts.append(_fact("IMDSv1 allowed", "decision", r.file, r.line))
+    return _node("managed", f"EC2 {_attr(r.body, 'instance_type')}".strip(), facts)
+
+
+def _tf_rds_instance(tf: _TfRoot, r: _TfResource) -> dict:
+    facts = []
+    if re.search(r"publicly_accessible\s*=\s*true", r.body):
+        facts.append(_fact("publicly accessible", "weak", r.file, r.line))
+    if not re.search(r"storage_encrypted\s*=\s*true", r.body):
+        facts.append(_fact("storage not encrypted", "weak", r.file, r.line))
+    facts = facts or [_fact("private, encrypted", "neutral", r.file, r.line)]
+    return _node("managed", f"RDS {_attr(r.body, 'engine')}".strip(), facts)
+
+
+def _tf_ecr_repository(tf: _TfRoot, r: _TfResource) -> dict:
+    facts = []
+    if _attr(r.body, "image_tag_mutability") != "IMMUTABLE":
+        facts.append(_fact("mutable tags", "decision", r.file, r.line))
+    if not re.search(r"scan_on_push\s*=\s*true", r.body):
+        facts.append(_fact("no scan on push", "decision", r.file, r.line))
+    return _node("managed", f"ECR {_attr(r.body, 'name') or r.name}", facts)
+
+
+def _tf_s3_bucket(tf: _TfRoot, r: _TfResource) -> dict:
+    blocked = any(
+        re.search(r"block_public_policy\s*=\s*true", tf.bodies[b])
+        for b in tf.referring("aws_s3_bucket_public_access_block", r.address)
+    )
+    if blocked:
+        fact = _fact("public access blocked", "neutral", r.file, r.line)
+    else:
+        fact = _fact("no public access block in this Terraform", "decision", r.file, r.line)
+    return _node("managed", f"S3 {_attr(r.body, 'bucket') or r.name}", [fact])
+
+
+def _tf_secret(tf: _TfRoot, r: _TfResource) -> dict:
+    if tf.referring("aws_secretsmanager_secret_rotation", r.address):
+        fact = _fact("rotated", "neutral", r.file, r.line)
+    else:
+        fact = _fact("no rotation in this Terraform", "decision", r.file, r.line)
+    return _node("managed", "Secrets Manager", [fact])
+
+
+def _tf_efs(tf: _TfRoot, r: _TfResource) -> dict:
+    encrypted = _attr(r.body, "encrypted") == "true"
+    fact = _fact("encrypted" if encrypted else "not encrypted", "neutral" if encrypted else "weak", r.file, r.line)
+    return _node("managed", "EFS", [fact])
+
+
+def _tf_eks_cluster(tf: _TfRoot, r: _TfResource) -> dict:
+    # The EKS API endpoint is public unless the configuration turns it off.
+    public = not re.search(r"endpoint_public_access\s*=\s*false", r.body)
+    if public:
+        fact = _fact("public API endpoint", "decision", r.file, r.line)
+    else:
+        fact = _fact("private API endpoint", "neutral", r.file, r.line)
+    return _node("cluster", f"EKS {_attr(r.body, 'name') or r.name}", [fact])
+
+
+_TF_NODE_BUILDERS = {
+    "aws_lb": _tf_load_balancer,
+    "aws_nat_gateway": _tf_nat_gateway,
+    "aws_ecs_service": _tf_ecs_service,
+    "aws_lambda_function": _tf_lambda,
+    "aws_instance": _tf_ec2_instance,
+    "aws_db_instance": _tf_rds_instance,
+    "aws_ecr_repository": _tf_ecr_repository,
+    "aws_s3_bucket": _tf_s3_bucket,
+    "aws_secretsmanager_secret": _tf_secret,
+    "aws_efs_file_system": _tf_efs,
+    "aws_eks_cluster": _tf_eks_cluster,
+}
+
+
 def _tf_nodes(res: dict) -> dict[str, dict]:
-    bodies = {k: v[0] for k, v in res.items()}
-    src = {k: (v[1], v[2]) for k, v in res.items()}
-    has = lambda t: [k for k in res if k.split(".", 1)[0] == t]  # noqa: E731
-    out: dict[str, dict] = {}
-    for k, body in bodies.items():
-        rtype, name = k.split(".", 1)
-        f, ln = src[k]
-        facts: list[dict] = []
-        if rtype == "aws_lb":
-            internal = _attr(body, "internal") == "true"
-            listeners = [bodies[x] for x in has("aws_lb_listener") if f"aws_lb.{name}." in bodies[x]]
-            protos = sorted({(_attr(b, "protocol"), _attr(b, "port")) for b in listeners})
-            sgs = [bodies.get(f"aws_security_group.{s}", "") for s in re.findall(r"aws_security_group\.([\w-]+)", body)]
-            world = any("0.0.0.0/0" in sg for sg in sgs)
-            tls = any(p == "HTTPS" for p, _ in protos)
-            for proto, port in protos:
-                if proto == "HTTP" and not tls:
-                    facts.append(_fact(f"HTTP :{port}{' from 0.0.0.0/0' if world else ''} — no TLS", "weak", f, ln))
-                elif proto == "HTTPS":
-                    facts.append(_fact(f"HTTPS :{port}", "neutral", f, ln))
-            if not internal and not any(f"aws_lb.{name}." in bodies[w] for w in has("aws_wafv2_web_acl_association")):
-                facts.append(_fact("no WAF in this Terraform", "decision", f, ln))
-            out[k] = _node(
-                "managed",
-                "Load balancer" + (" (internal)" if internal else ""),
-                facts,
-                role=None if internal else "entry",
-            )
-        elif rtype == "aws_nat_gateway":
-            out[k] = _node(
-                "managed",
-                "NAT gateway",
-                [_fact("outbound traffic of the private subnets", "note", f, ln)],
-                role="egress",
-            )
-        elif rtype == "aws_ecs_service":
-            if re.search(r"assign_public_ip\s*=\s*true", body):
-                facts.append(_fact("public IP on the tasks", "weak", f, ln))
-            td_names = re.findall(r"aws_ecs_task_definition\.([\w-]+)", body)
-            td = bodies.get(f"aws_ecs_task_definition.{td_names[0]}", "") if td_names else ""
-            roles = re.findall(r"aws_iam_role\.([\w-]+)", td)
-            for pol in has("aws_iam_role_policy"):
-                if any(f"aws_iam_role.{r}." in bodies[pol] for r in roles):
-                    act = re.search(r'Action\s*=\s*"([\w-]+:\*|\*)"', bodies[pol])
-                    if act and re.search(r'Resource\s*=\s*"\*"', bodies[pol]):
-                        facts.append(
-                            _fact(
-                                f"task role may use {act.group(1)} on every resource", "weak", src[pol][0], src[pol][1]
-                            )
-                        )
-            if re.search(r"readonlyRootFilesystem\s*=\s*false", td):
-                facts.append(
-                    _fact(
-                        "writable root file system",
-                        "decision",
-                        *src.get(f"aws_ecs_task_definition.{td_names[0]}", (f, ln)),
-                    )
-                )
-            image = (re.search(r'image\s*=\s*"([^"]+)"', td) or [None, ""])[1]
-            ecr = re.search(r"\$\{aws_ecr_repository\.([\w-]+)\.repository_url\}", image)
-            if ecr:
-                repo_name = _attr(bodies.get(f"aws_ecr_repository.{ecr.group(1)}", ""), "name") or ecr.group(1)
-                image = image.replace(ecr.group(0), f"ECR {repo_name}")
-            image = re.sub(r"\$\{[^}]*\}", "…", image)
-            launch = _attr(body, "launch_type") or "EC2"
-            count = _attr(body, "desired_count") or "1"
-            out[k] = _node(
-                "workload",
-                f"ECS {'Fargate' if launch == 'FARGATE' else launch} · {count} task{'s' if count != '1' else ''}",
-                facts,
-                image=image,
-            )
-        elif rtype == "aws_lambda_function":
-            out[k] = _node(
-                "managed",
-                f"Lambda {_attr(body, 'function_name') or name}",
-                [_fact(_attr(body, "runtime") or "runtime not set", "note", f, ln)],
-            )
-        elif rtype == "aws_instance":
-            if re.search(r"associate_public_ip_address\s*=\s*true", body):
-                facts.append(_fact("public IP", "weak", f, ln))
-            if not re.search(r'http_tokens\s*=\s*"required"', body):
-                facts.append(_fact("IMDSv1 allowed", "decision", f, ln))
-            out[k] = _node("managed", f"EC2 {_attr(body, 'instance_type')}".strip(), facts)
-        elif rtype == "aws_db_instance":
-            if re.search(r"publicly_accessible\s*=\s*true", body):
-                facts.append(_fact("publicly accessible", "weak", f, ln))
-            if not re.search(r"storage_encrypted\s*=\s*true", body):
-                facts.append(_fact("storage not encrypted", "weak", f, ln))
-            out[k] = _node(
-                "managed",
-                f"RDS {_attr(body, 'engine')}".strip(),
-                facts or [_fact("private, encrypted", "neutral", f, ln)],
-            )
-        elif rtype == "aws_ecr_repository":
-            if _attr(body, "image_tag_mutability") != "IMMUTABLE":
-                facts.append(_fact("mutable tags", "decision", f, ln))
-            if not re.search(r"scan_on_push\s*=\s*true", body):
-                facts.append(_fact("no scan on push", "decision", f, ln))
-            out[k] = _node("managed", f"ECR {_attr(body, 'name') or name}", facts)
-        elif rtype == "aws_s3_bucket":
-            blocked = any(
-                f"aws_s3_bucket.{name}." in bodies[b] and re.search(r"block_public_policy\s*=\s*true", bodies[b])
-                for b in has("aws_s3_bucket_public_access_block")
-            )
-            facts.append(
-                _fact(
-                    "public access blocked" if blocked else "no public access block in this Terraform",
-                    "neutral" if blocked else "decision",
-                    f,
-                    ln,
-                )
-            )
-            out[k] = _node("managed", f"S3 {_attr(body, 'bucket') or name}", facts)
-        elif rtype == "aws_secretsmanager_secret":
-            rot = any(
-                f"aws_secretsmanager_secret.{name}." in bodies[r] for r in has("aws_secretsmanager_secret_rotation")
-            )
-            out[k] = _node(
-                "managed",
-                "Secrets Manager",
-                [_fact("rotated" if rot else "no rotation in this Terraform", "neutral" if rot else "decision", f, ln)],
-            )
-        elif rtype == "aws_efs_file_system":
-            enc = _attr(body, "encrypted") == "true"
-            out[k] = _node(
-                "managed", "EFS", [_fact("encrypted" if enc else "not encrypted", "neutral" if enc else "weak", f, ln)]
-            )
-        elif rtype == "aws_eks_cluster":
-            public = not re.search(r"endpoint_public_access\s*=\s*false", body)
-            out[k] = _node(
-                "cluster",
-                f"EKS {_attr(body, 'name') or name}",
-                [
-                    _fact(
-                        "public API endpoint" if public else "private API endpoint",
-                        "decision" if public else "neutral",
-                        f,
-                        ln,
-                    )
-                ],
-            )
-    return out
+    """address -> figure node for every resource of a drawn type, in file order. Other resources (listeners,
+    policies, subnets, ...) only contribute facts to these nodes or decide where they are placed."""
+    tf = _TfRoot(res)
+    return {r.address: _TF_NODE_BUILDERS[r.rtype](tf, r) for r in tf.resources() if r.rtype in _TF_NODE_BUILDERS}
 
 
 def scan_terraform(root: Path) -> list[dict]:
@@ -992,11 +1102,13 @@ def scan_terraform(root: Path) -> list[dict]:
     if len(envs) > 1:
         for d, env in envs:
             where = _rel(d, root) if d != root else "repository root"
-            env["label"] = env["tree"]["title"] = _clip(f"{env['label']} · {where}", 120)
+            env["label"] = env["tree"]["title"] = _clip(f"{env['label']} · {where}", NAME_MAX)
     return [env for _, env in envs]
 
 
 def _tf_environment(root: Path, files: list[Path]) -> dict | None:
+    """One AWS environment: cloud → VPC → public then private subnets → nodes; nodes that reference no subnet
+    (S3, Lambda, ECR, ...) go into a "regional services" row. ``None`` when the root draws nothing."""
     res, region = _tf_blocks(root, files)
     if not any(k.startswith("aws_") for k in res):
         return None
@@ -1031,118 +1143,105 @@ def _tf_environment(root: Path, files: list[Path]) -> dict | None:
 
 
 # ================================================================ CI systems
+# Which CI systems build and deploy the code, and where they publish to. GitHub Actions and GitLab CI get facts
+# (action pinning, disabled scanners); other systems are only recognised by their definition file.
+# model/build_plane.py lists the same definition files; keep both in step.
 _APPLY_RE = re.compile(
     r"\b(kubectl|oc)\s+apply\b|\bhelm\s+(upgrade|install)\b|\bkustomize\s+build\b|\bargocd\s+app\b|\bterraform\s+apply\b"
+)
+_REGISTRY_PATTERNS = (
+    (r"amazon-ecr-login|\.dkr\.ecr\.", "Amazon ECR"),
+    (r"ghcr\.io", "GitHub Container Registry"),
+    (r"quay\.io", "Quay"),
+    (r"gcr\.io|docker\.pkg\.dev", "Google Artifact Registry"),
+    (r"azurecr\.io", "Azure Container Registry"),
+)
+# CI systems recognised only by their definition file, in the order they are listed.
+_OTHER_CI_FILES = (
+    ("Jenkinsfile", "Jenkins"),
+    (".circleci/config.yml", "CircleCI"),
+    ("azure-pipelines.yml", "Azure Pipelines"),
+    ("bitbucket-pipelines.yml", "Bitbucket Pipelines"),
+    (".travis.yml", "Travis CI"),
 )
 
 
 def scan_ci(root: Path) -> list[dict]:
     """CI systems with their facts and what each publishes to (registries, Kubernetes); at most eight."""
-    out = []
-    wf_dir = root / ".github" / "workflows"
-    if wf_dir.is_dir() and not wf_dir.is_symlink():
-        workflows = [p for p in sorted(wf_dir.iterdir()) if p.suffix in (".yml", ".yaml") and not p.is_symlink()][
-            :MAX_FILES
-        ]
-        texts = {p.name: _read(p, root) for p in workflows}
-        actions = {
-            a
-            for t in texts.values()
-            for a in re.findall(r"^\s*-?\s*uses:\s*['\"]?([^\s'\"#]+)", t, re.M)
-            if "@" in a and not a.startswith(("./", "docker://"))
-        }
-        names = {a.split("@")[0] for a in actions}
-        pinned = {a.split("@")[0] for a in actions if re.search(r"@[0-9a-f]{40}$", a)}
-        pushes = [n for n, t in texts.items() if re.search(r"docker/build-push-action|docker push|podman push", t)]
-        facts = [_fact(f"{len(workflows)} workflows", "note")]
-        applies = [n for n, t in texts.items() if _APPLY_RE.search(t)]
-        if names:
-            loose = len(names - pinned)
-            facts.insert(
-                0,
-                _fact(
-                    f"{loose} of {len(names)} actions not SHA-pinned"
-                    if loose
-                    else f"all {len(names)} actions SHA-pinned",
-                    "decision" if loose else "neutral",
-                ),
-            )
-        targets = []
-        joined = "\n".join(texts[n] for n in pushes)
-        for rx, label in (
-            (r"amazon-ecr-login|\.dkr\.ecr\.", "Amazon ECR"),
-            (r"ghcr\.io", "GitHub Container Registry"),
-            (r"quay\.io", "Quay"),
-            (r"gcr\.io|docker\.pkg\.dev", "Google Artifact Registry"),
-            (r"azurecr\.io", "Azure Container Registry"),
-        ):
-            if re.search(rx, joined):
-                targets.append(label)
-        if pushes and not targets:
-            targets.append(
-                "Docker Hub"
-                if re.search(r"docker/login-action|DOCKERHUB|docker\.io", joined, re.I)
-                else "container registry"
-            )
-        if applies:
-            targets.append("Kubernetes (kubectl/Helm)")
-        out.append(
-            {
-                "system": "GitHub Actions",
-                "source": ".github/workflows",
-                "facts": _facts(facts),
-                "publishes": targets[:4],
-            }
-        )
-    gl = _read(root / ".gitlab-ci.yml", root)
-    if gl:
-        facts = []
-        if "Auto-DevOps" in gl:
-            facts.append(_fact("Auto DevOps template", "note", ".gitlab-ci.yml", _line_of(gl, r"Auto-DevOps")))
-        off = [
-            k.replace("_DISABLED", "").lower()
-            for k in re.findall(r"^\s*(\w+_DISABLED):\s*['\"]?(?:true|1|yes)", gl, re.M | re.I)
-        ]
-        if off:
-            facts.insert(
-                0, _fact(f"{', '.join(off)} disabled", "decision", ".gitlab-ci.yml", _line_of(gl, r"_DISABLED"))
-            )
-        if re.search(r"SAST_EXCLUDED_PATHS", gl):
-            facts.append(
-                _fact("SAST excludes paths", "decision", ".gitlab-ci.yml", _line_of(gl, r"SAST_EXCLUDED_PATHS"))
-            )
-        publishes = (
-            ["GitLab registry", "Kubernetes (auto deploy)"]
-            if "Auto-DevOps" in gl
-            else (["container registry"] if re.search(r"docker push|kaniko|buildah", gl) else [])
-        )
-        if _APPLY_RE.search(gl):
-            publishes.append("Kubernetes (kubectl/Helm)")
-        out.append({"system": "GitLab CI", "source": ".gitlab-ci.yml", "facts": _facts(facts), "publishes": publishes})
-    for rel, system in (
-        ("Jenkinsfile", "Jenkins"),
-        (".circleci/config.yml", "CircleCI"),
-        ("azure-pipelines.yml", "Azure Pipelines"),
-        ("bitbucket-pipelines.yml", "Bitbucket Pipelines"),
-        (".travis.yml", "Travis CI"),
-    ):
+    out = [_github_actions(root), _gitlab_ci(root)]
+    for rel, system in _OTHER_CI_FILES:
         text = _read(root / rel, root)
         if text:
-            out.append(
-                {
-                    "system": system,
-                    "source": rel,
-                    "facts": [],
-                    "publishes": (
-                        ["container registry"] if re.search(r"docker push|docker\.build|kaniko|buildah", text) else []
-                    )
-                    + (["Kubernetes (kubectl/Helm)"] if _APPLY_RE.search(text) else []),
-                }
-            )
-    return out[:8]
+            publishes = ["container registry"] if re.search(r"docker push|docker\.build|kaniko|buildah", text) else []
+            if _APPLY_RE.search(text):
+                publishes.append("Kubernetes (kubectl/Helm)")
+            out.append({"system": system, "source": rel, "facts": [], "publishes": publishes})
+    return [system for system in out if system][:8]
+
+
+def _github_actions(root: Path) -> dict | None:
+    """GitHub Actions: how many third-party actions are pinned to a commit SHA, and where the workflows push."""
+    wf_dir = root / ".github" / "workflows"
+    if not wf_dir.is_dir() or wf_dir.is_symlink():
+        return None
+    workflows = [p for p in sorted(wf_dir.iterdir()) if p.suffix in (".yml", ".yaml") and not p.is_symlink()]
+    texts = {p.name: _read(p, root) for p in workflows[:MAX_FILES]}
+    # Local actions (./) and docker:// images are not versioned by a ref, so they are not counted.
+    actions = {
+        a
+        for t in texts.values()
+        for a in re.findall(r"^\s*-?\s*uses:\s*['\"]?([^\s'\"#]+)", t, re.M)
+        if "@" in a and not a.startswith(("./", "docker://"))
+    }
+    names = {a.split("@")[0] for a in actions}
+    pinned = {a.split("@")[0] for a in actions if re.search(r"@[0-9a-f]{40}$", a)}
+    facts = []
+    if names:
+        loose = len(names - pinned)
+        if loose:
+            facts.append(_fact(f"{loose} of {len(names)} actions not SHA-pinned", "decision"))
+        else:
+            facts.append(_fact(f"all {len(names)} actions SHA-pinned", "neutral"))
+    facts.append(_fact(f"{len(texts)} workflows", "note"))
+    pushing = "\n".join(t for t in texts.values() if re.search(r"docker/build-push-action|docker push|podman push", t))
+    targets = [label for rx, label in _REGISTRY_PATTERNS if re.search(rx, pushing)]
+    if pushing and not targets:
+        docker_hub = re.search(r"docker/login-action|DOCKERHUB|docker\.io", pushing, re.I)
+        targets.append("Docker Hub" if docker_hub else "container registry")
+    if any(_APPLY_RE.search(t) for t in texts.values()):
+        targets.append("Kubernetes (kubectl/Helm)")
+    return {"system": "GitHub Actions", "source": ".github/workflows", "facts": _facts(facts), "publishes": targets[:4]}
+
+
+def _gitlab_ci(root: Path) -> dict | None:
+    """GitLab CI: the Auto DevOps template, security jobs it disables, and where it publishes."""
+    gl = _read(root / ".gitlab-ci.yml", root)
+    if not gl:
+        return None
+    src = ".gitlab-ci.yml"
+    facts = []
+    off = [
+        k.replace("_DISABLED", "").lower()
+        for k in re.findall(r"^\s*(\w+_DISABLED):\s*['\"]?(?:true|1|yes)", gl, re.M | re.I)
+    ]
+    if off:
+        facts.append(_fact(f"{', '.join(off)} disabled", "decision", src, _line_of(gl, r"_DISABLED")))
+    if "Auto-DevOps" in gl:
+        facts.append(_fact("Auto DevOps template", "note", src, _line_of(gl, r"Auto-DevOps")))
+    if re.search(r"SAST_EXCLUDED_PATHS", gl):
+        facts.append(_fact("SAST excludes paths", "decision", src, _line_of(gl, r"SAST_EXCLUDED_PATHS")))
+    if "Auto-DevOps" in gl:
+        publishes = ["GitLab registry", "Kubernetes (auto deploy)"]
+    else:
+        publishes = ["container registry"] if re.search(r"docker push|kaniko|buildah", gl) else []
+    if _APPLY_RE.search(gl):
+        publishes.append("Kubernetes (kubectl/Helm)")
+    return {"system": "GitLab CI", "source": src, "facts": _facts(facts), "publishes": publishes}
 
 
 # ================================================================ dependencies and packages
+# Counts how many declared dependencies use version ranges and whether a lockfile pins them, and lists the
+# packages data/deployment-technology.yaml gives a role (framework, database, identity, ...) for the figure.
 def scan_dependencies(root: Path) -> tuple[dict, list[dict]]:
     """Dependency counts over up to 40 manifests, and per manifest the packages a vocabulary role matches."""
     vocab = _vocab()
@@ -1177,7 +1276,8 @@ def scan_dependencies(root: Path) -> tuple[dict, list[dict]]:
 
 
 # ================================================================ topology: zones and the workloads in them
-_K8S_WORKLOAD_KINDS = ("Deployment", "StatefulSet", "DaemonSet", "DeploymentConfig")
+# Not drawn in the figure: the architecture analysis context reads which workload sits in which network zone.
+# Zone names are kept exactly as declared; mapping them onto a fixed vocabulary would invent boundaries.
 MAX_ZONES = 64
 MAX_TOPOLOGY_WORKLOADS = 256
 
@@ -1215,16 +1315,16 @@ def _k8s_topology(root: Path) -> tuple[list[dict], list[dict]]:
     found = [(r, d, ln) for r, d, ln in docs if d.get("kind") in _K8S_WORKLOAD_KINDS]
     if not found:
         return [], []
-    platform = "openshift" if any("openshift.io" in str(d.get("apiVersion")) for _, d, _ in docs) else "kubernetes"
+    platform = _k8s_platform(docs)
 
     def namespace(d: dict) -> str:
-        return _clip(d["metadata"].get("namespace") or "default", 120)
+        return _clip(_namespace(d), NAME_MAX)
 
     policies = {namespace(d) for _, d, _ in docs if d.get("kind") == "NetworkPolicy"}
     zones: dict[str, dict] = {}
     for r, d, ln in docs:
         if d.get("kind") == "Namespace" and d["metadata"].get("name"):
-            name = _clip(d["metadata"]["name"], 120)
+            name = _clip(d["metadata"]["name"], NAME_MAX)
             zones.setdefault(name, {"name": name, "platform": platform, "source": r, "line": ln})
     workloads = []
     for r, d, ln in found:
@@ -1232,7 +1332,7 @@ def _k8s_topology(root: Path) -> tuple[list[dict], list[dict]]:
         zones.setdefault(ns, {"name": ns, "platform": platform, "source": r})
         workloads.append(
             {
-                "name": _clip(d["metadata"].get("name") or d["kind"], 120),
+                "name": _clip(d["metadata"].get("name") or d["kind"], NAME_MAX),
                 "platform": platform,
                 "kind": d["kind"],
                 "source": r,
