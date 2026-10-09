@@ -1,14 +1,12 @@
 # architecture-coverage-rules.yaml — rule catalog for scripts/analyzers/architecture_coverage_checks.py
 #
 # Two rule families:
-#   * hard_rules         — 5 high-confidence rules (arch.md §Erste Lieferung)
-#                          may emit anti_pattern_candidates or strong control
-#                          assessments; severity capped per critical-criteria.yaml.
-#   * hypothesis_rules   — 7 conservative threat-hypothesis rules
-#                          (arch.md §Threat-Hypothesis-Regeln).
-#                          MUST default to emit_hypothesis_only; promotion to
-#                          a hard candidate requires source-to-sink evidence
-#                          (proof_state=confirmed).
+#   * hard_rules         — high-confidence rules; may emit anti_pattern_candidates
+#                          or control assessments; severity capped per rule.
+#   * hypothesis_rules   — conservative threat-hypothesis rules. They emit
+#                          hypotheses, never anti-pattern candidates;
+#                          proof_state=confirmed comes solely from confirmed
+#                          database-separation records.
 #
 # Field reference (per rule):
 #   id                       — ARCH-<TOKEN>-<NNN> (validated against schema regex)
@@ -25,12 +23,19 @@
 #   cwe                      — primary CWE (CWE-NNN)
 #   threat_category_id       — TH-NN (matches threat-category-taxonomy.yaml)
 #   stride                   — STRIDE letter
-#   preconditions            — gates that must hold for `applies: true`.
-#                              Each precondition: {kind, source, signal}.
-#   positive_signals         — regex / file-pattern signals proving the weakness
-#   exculpatory_signals      — regex / file-pattern signals refuting the weakness
-#                              (e.g. presence of a framework guard near the sink)
-#   severity_cap             — hard cap per arch.md §Severity-Policy
+#   preconditions            — list of {kind, description, ...}. Only
+#                              `kind: code_signal` with `any_pattern` gates
+#                              `applies: true`; other kinds document the rule.
+#   positive_signals         — `any_pattern` regexes proving the weakness;
+#                              optionally `cooccurrence_pattern` +
+#                              `requires_cooccurrence_window` (a positive line
+#                              counts only within N lines of one), or the
+#                              route-inventory keys `route_requires`,
+#                              `forbidden_route_signals`, `inventory_pattern`.
+#   exculpatory_signals      — `any_pattern` regexes refuting the weakness
+#                              (e.g. a framework guard). A line matching one is
+#                              never a positive hit.
+#   severity_cap             — highest severity the rule may produce
 #                              (CORS High, JWT High, etc.). NEVER Critical here.
 #   output                   — default decision verb (engine may downgrade)
 #                              hard rules:     control_only | anti_pattern_candidate

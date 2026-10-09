@@ -69,14 +69,11 @@ def _compiled_rule(**overrides) -> acc.CompiledRule:
         "domain": "AuthN",
         "control": "Test Control",
         "output": "control_only",
-        "family": "hard",
         "precondition_patterns": [],
         "positive_patterns": [],
         "cooccurrence_patterns": [],
         "cooccurrence_window": 0,
         "exculpatory_patterns": [],
-        "route_inventory_required": False,
-        "requires_management_surface": False,
         "route_requires": {},
         "forbidden_route_signals": {},
         "inventory_pattern": {},
@@ -904,12 +901,11 @@ def test_generic_hard_rule_precondition_exculpatory_and_anti_pattern_branches(tm
 
 
 def test_generic_hypothesis_rule_precondition_exculpatory_and_positive_branches(tmp_path: Path) -> None:
-    pre_rule = _compiled_rule(family="hypothesis", precondition_patterns=[acc.re.compile("PRE")])
+    pre_rule = _compiled_rule(precondition_patterns=[acc.re.compile("PRE")])
     assert acc._evaluate_hypothesis_rule(pre_rule, tmp_path, None)["skip_reason"] == "no precondition signal in repo"
 
     (tmp_path / "app.ts").write_text("PRE\nSAFE\n", encoding="utf-8")
     exculpatory_rule = _compiled_rule(
-        family="hypothesis",
         precondition_patterns=[acc.re.compile("PRE")],
         positive_patterns=[acc.re.compile("POS")],
         exculpatory_patterns=[acc.re.compile("SAFE")],
