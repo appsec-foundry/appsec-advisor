@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -13,6 +14,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SMOKE = REPO_ROOT / "scripts" / "smoke_test_package.py"
 
 NAME = "acme-appsec"
+ABUSE_CASE_FILES = (
+    "scripts/model/resolve_abuse_cases.py",
+    "schemas/abuse-cases.schema.yaml",
+    "schemas/abuse-case-limits.schema.json",
+    "data/abuse-case-limits.yaml",
+    "data/abuse-cases/default-library.yaml",
+    "data/abuse-cases/business-cases.yaml",
+)
 
 
 def _make_valid(root: Path, name: str = NAME) -> None:
@@ -39,6 +48,11 @@ def _make_valid(root: Path, name: str = NAME) -> None:
     skill = root / "skills" / "create-threat-model" / "SKILL.md"
     skill.parent.mkdir(parents=True, exist_ok=True)
     skill.write_text(f"Run /{name}:create-threat-model.\n")
+
+    for rel in ABUSE_CASE_FILES:
+        target = root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(REPO_ROOT / rel, target)
 
 
 def _run(root: Path, name: str = NAME) -> subprocess.CompletedProcess:
@@ -511,3 +525,21 @@ def test_check_surface_manifest_mcp_removed_still_present(tmp_path):
     (tmp_path / ".mcp.json").write_text(json.dumps({"mcpServers": {"acme-sast": {"url": "x"}}}))
     with pytest.raises(SystemExit):
         smk.check_surface_manifest(tmp_path)
+
+
+@pytest.mark.parametrize("rel", ["data/abuse-cases/business-cases.yaml", "data/abuse-case-limits.yaml"])
+def test_fails_when_abuse_case_data_is_missing(tmp_path: Path, rel: str) -> None:
+    _make_valid(tmp_path)
+    (tmp_path / rel).unlink()
+    result = _run(tmp_path)
+    assert result.returncode != 0
+    assert rel in result.stderr + result.stdout
+
+
+def test_fails_when_a_packaged_case_catalog_is_invalid(tmp_path: Path) -> None:
+    _make_valid(tmp_path)
+    catalog = tmp_path / "data/abuse-cases/business-cases.yaml"
+    catalog.write_text(catalog.read_text(encoding="utf-8").replace("kind: descriptive", "kind: imaginary", 1))
+    result = _run(tmp_path)
+    assert result.returncode != 0
+    assert "business-cases.yaml" in result.stderr + result.stdout

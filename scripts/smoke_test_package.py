@@ -3,7 +3,8 @@
 
 Checks the *built artifact contract* a developer relies on, independently of how
 the build ran: plugin identity, org-profile wiring, a fully rewritten command
-namespace, and a discoverable entry command. No API calls, no analysis run.
+namespace, a discoverable entry command, and abuse-case catalogs that load from
+the packaged tree. No API calls, no analysis run.
 
     python3 scripts/smoke_test_package.py build/acme-appsec --name acme-appsec
 
@@ -218,6 +219,41 @@ def check_artifact_hygiene(root: Path) -> None:
                 _die(f"personal absolute path found in package text: {rel}")
 
 
+ABUSE_CASE_FILES = (
+    "scripts/model/resolve_abuse_cases.py",
+    "schemas/abuse-cases.schema.yaml",
+    "schemas/abuse-case-limits.schema.json",
+    "data/abuse-case-limits.yaml",
+    "data/abuse-cases/default-library.yaml",
+    "data/abuse-cases/business-cases.yaml",
+)
+
+
+def check_abuse_case_data(root: Path) -> None:
+    """The packaged resolver loads the case catalogs and limits from its own tree.
+
+    The resolver anchors every path at its file, so loading through the
+    packaged copy proves the files arrived and resolve after relocation.
+    """
+    missing = [rel for rel in ABUSE_CASE_FILES if not (root / rel).is_file()]
+    if missing:
+        _die("abuse-case data missing from the package: " + ", ".join(missing))
+    import importlib.util  # noqa: PLC0415
+
+    spec = importlib.util.spec_from_file_location("packaged_resolve_abuse_cases", root / ABUSE_CASE_FILES[0])
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    try:
+        spec.loader.exec_module(module)
+        module.load_limits()
+        schema = module._load_schema()
+        errors = [error for rel in ABUSE_CASE_FILES[4:] for error in module._load_case_file(root / rel, schema)[1]]
+    except Exception as exc:  # noqa: BLE001 — any failure is a broken package
+        _die(f"packaged abuse-case data does not load: {exc}")
+    if errors:
+        _die("packaged abuse-case catalog is invalid: " + "; ".join(errors[:3]))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("plugin_dir", help="packaged plugin root (e.g. build/acme-appsec)")
@@ -233,6 +269,7 @@ def main(argv: list[str] | None = None) -> int:
     check_org_profile_wired(root)
     check_namespace_rewritten(root, args.name)
     check_surface_manifest(root)
+    check_abuse_case_data(root)
 
     print(f"==> Smoke test passed for {args.name} ({root})")
     return 0

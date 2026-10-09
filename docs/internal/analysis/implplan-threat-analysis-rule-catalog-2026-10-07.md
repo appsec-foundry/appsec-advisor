@@ -33,7 +33,7 @@ A comprehensive catalog of Python detector meanings, automated translation of ca
 - **Open.**
   - P0: the caps are not operator-confirmed; `added_token_share` is not read by any gate; no product requirement or requirement binding covers the new behavior.
   - P1: overlap with AC-T-002, AC-T-003, and AC-T-004 is not reconciled; `appsec/core` questions are not refined; no reviewer has confirmed the cases; only AC-T-101 has evaluation variants.
-  - P2: packaging and the installed smoke test do not cover the new data files; cases carry no provenance (path, digest) in the report or YAML.
+  - P2: cases carry no provenance (path, digest) in the report or YAML.
   - P3: admission checks file and excerpt, not the component or route inventory; thorough depth does not escalate inconclusive candidates; verified requested cases carry no requested marker.
   - The fixtures are small and the cost baseline comes from a different repository. The ceiling and caps stay provisional until P4.
 
