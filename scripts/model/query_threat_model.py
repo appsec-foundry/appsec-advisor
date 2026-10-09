@@ -823,11 +823,18 @@ def render_detail(focus: dict) -> str:
         if f["scenario"]:
             buf.append(f"  Scenario: {f['scenario']}")
         if f["boundary_refs"]:
+            # A merged finding may cite one boundary from both of its origins (FE-16):
+            # one entry per boundary, naming every origin, with the first rationale.
+            boundaries: dict[str, dict] = {}
+            for ref in f["boundary_refs"]:
+                entry = boundaries.setdefault(ref["boundary_id"], {"origins": [], "rationale": ref["rationale"]})
+                if ref["origin_component_id"] and ref["origin_component_id"] not in entry["origins"]:
+                    entry["origins"].append(ref["origin_component_id"])
             buf.append(
                 "  Trust boundary gap(s): "
                 + ", ".join(
-                    f"{ref['boundary_id']} ({ref['origin_component_id']}): {ref['rationale']}"
-                    for ref in f["boundary_refs"]
+                    f"{boundary_id} ({', '.join(entry['origins'])}): {entry['rationale']}"
+                    for boundary_id, entry in boundaries.items()
                 )
             )
         if focus["mitigations"]:

@@ -14,6 +14,8 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "model/query_threat_model.py"
 
@@ -818,3 +820,33 @@ def test_cli_severity_filter_is_case_insensitive(tmp_path):
     assert r.returncode == 0
     assert "MATCHES for severity Critical — 1 finding(s)" in r.stdout
     assert "F-002" not in r.stdout.split("FINDINGS", 1)[1]
+
+
+def _two_origin_facts(boundary: str, origins: tuple[str, ...], extra: str = "") -> dict:
+    import yaml
+
+    model = yaml.safe_load(textwrap.dedent(SYS_SAMPLE))
+    refs = [
+        {"boundary_id": boundary, "origin_component_id": origin, "rationale": f"Reached from {origin}."}
+        for origin in origins
+    ]
+    if extra:
+        refs.append({"boundary_id": extra, "origin_component_id": origins[0], "rationale": "Second crossing."})
+    model["threats"][0]["boundary_refs"] = refs
+    return qtm.build_facts(model, None)
+
+
+@pytest.mark.parametrize(("boundary", "origins"), [("tb-1", ("backend-api", "user-db")), ("tb-2", ("ledger", "api"))])
+def test_a_boundary_cited_from_two_origins_is_listed_once_with_both(boundary, origins):
+    facts = _two_origin_facts(boundary, origins)
+    detail = qtm.render_detail(qtm.lookup_id(facts, "F-001"))
+    line = next(row for row in detail.splitlines() if "Trust boundary gap(s):" in row)
+    assert line.count(boundary) == 1
+    assert f"{boundary} ({origins[0]}, {origins[1]}): Reached from {origins[0]}." in line
+    linked = qtm.lookup_id(facts, boundary)
+    assert [finding["id"] for finding in linked["findings"]] == ["F-001"]
+
+
+def test_distinct_boundaries_stay_separate_entries():
+    detail = qtm.render_detail(qtm.lookup_id(_two_origin_facts("tb-1", ("backend-api",), extra="tb-2"), "F-001"))
+    assert "tb-1 (backend-api): Reached from backend-api., tb-2 (backend-api): Second crossing." in detail

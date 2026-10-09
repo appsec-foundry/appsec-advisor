@@ -1263,9 +1263,8 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
         for cid in _affected_components(t):
             sev[cid][register_severity(t)] += 1
             stride[cid][(t.get("stride") or "?")[0].upper()] += 1
-        for b in t.get("boundary_refs") or []:
-            if isinstance(b, dict):
-                tb_threats[b.get("boundary_id")] += 1
+        # A merged finding may cite one boundary from both of its origins (FE-16); it is still one finding.
+        tb_threats.update({b.get("boundary_id") for b in t.get("boundary_refs") or [] if isinstance(b, dict)})
     tbs = _figure_boundaries(d)
     component_ids = {c["id"] for c in comps}
     exposed = {

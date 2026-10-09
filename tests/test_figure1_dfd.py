@@ -3977,3 +3977,25 @@ def test_local_marker_audit_rejects_missing_or_unbacked_markers():
     canvas.o = [line.replace('data-boundary-local="app2"', 'data-boundary-local="app1"') for line in original]
     problems = F._audit(*args)
     assert any("tb-1: trust-change marker on app1" in p for p in problems)
+
+
+@pytest.mark.parametrize(
+    ("boundary", "origins"),
+    [("tb-1", ("app0", "spa")), ("tb-8", ("app0", "db0"))],
+)
+def test_a_finding_citing_one_boundary_from_two_origins_counts_once(boundary, origins):
+    yaml_data, paths, taxonomy = _model()
+    finding = next(t for t in yaml_data["threats"] if t["component"] == "app0")
+    finding["boundary_refs"] = [{"boundary_id": boundary, "origin_component_id": origin} for origin in origins]
+    single = copy.deepcopy(yaml_data)
+    next(t for t in single["threats"] if t["id"] == finding["id"])["boundary_refs"] = finding["boundary_refs"][:1]
+    assert F.build_figure1_dfd_svg(yaml_data, paths, taxonomy) == F.build_figure1_dfd_svg(single, paths, taxonomy)
+
+
+def test_two_findings_on_one_boundary_still_count_twice():
+    yaml_data, paths, taxonomy = _model()
+    one = copy.deepcopy(yaml_data)
+    for t in one["threats"]:
+        if t["component"] == "app0" and t["id"] != one["threats"][2]["id"]:
+            t["boundary_refs"] = []
+    assert F.build_figure1_dfd_svg(yaml_data, paths, taxonomy) != F.build_figure1_dfd_svg(one, paths, taxonomy)
