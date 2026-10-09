@@ -34,7 +34,7 @@ A comprehensive catalog of Python detector meanings, automated translation of ca
   - P0: the caps are not operator-confirmed; `added_token_share` is not read by any gate; no product requirement or requirement binding covers the new behavior.
   - P1: overlap with AC-T-002, AC-T-003, and AC-T-004 is not reconciled; `appsec/core` questions are not refined; no reviewer has confirmed the cases; only AC-T-101 has evaluation variants.
   - P2: cases carry no provenance (path, digest) in the report or YAML.
-  - P3: admission checks file and excerpt, not the component or route inventory; thorough depth does not escalate inconclusive candidates; verified requested cases carry no requested marker.
+  - P3: admission checks file and excerpt, not the component inventory. A verifier step cites only file, line, and excerpt, so the route inventory has nothing to check against. A component check needs complete component coverage first: on 2026-10-09, 21 runtime handler files of the juice-shop model, among them `routes/updateProductReviews.ts` and `routes/profileImageUrlUpload.ts`, matched no component glob, and admitting only covered files would have downgraded correctly evidenced steps; thorough depth does not escalate inconclusive candidates; verified requested cases carry no requested marker.
   - The fixtures are small and the cost baseline comes from a different repository. The ceiling and caps stay provisional until P4.
 
 Deviations from the plan text below, decided during implementation:
