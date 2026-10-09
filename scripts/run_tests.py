@@ -141,6 +141,7 @@ GROUPS = {
         crypto_path_xxe_checks
         database_privilege_separation
         detect_open_registration
+        egress_clients
         handler_resolver
         iac_resource_checks
         lib_manifest
@@ -4014,6 +4015,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/contexts/build_architecture_analysis_context.py": _tests("""
+        aggregate_run_issues
         validate_assessment_architecture review_multi_repo_connections
         build_trust_boundary_assessment_input
         finalize_component_inventory
@@ -5439,6 +5441,11 @@ SOURCE_TESTS = {
         threat_fixture
         validate_fragment
         validate_intermediate
+    """),
+    "scripts/analyzers/egress_clients.py": _tests("""
+        egress_clients
+        build_architecture_analysis_context
+        orchestration_controller
     """),
     "scripts/analyzers/recon_patterns.py": _tests("""
         validate_assessment_architecture review_multi_repo_connections

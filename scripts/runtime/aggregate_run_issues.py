@@ -1702,6 +1702,98 @@ def _extract_unconnected_injected_components(output_dir: Path) -> list[dict]:
     ]
 
 
+def _load_architecture(output_dir: Path) -> tuple[list[dict], list[dict]] | None:
+    try:
+        components = json.loads((output_dir / ".components.json").read_text(encoding="utf-8")).get("components")
+        flows = json.loads((output_dir / ".data-flows.json").read_text(encoding="utf-8")).get("data_flows")
+    except (OSError, ValueError, AttributeError):
+        return None
+    if not isinstance(components, list) or not isinstance(flows, list):
+        return None
+    return [c for c in components if isinstance(c, dict)], [f for f in flows if isinstance(f, dict)]
+
+
+def _extract_components_without_flows(output_dir: Path) -> list[dict]:
+    """Report runtime components the analyst modelled but connected to nothing.
+
+    Boundary signals derive from data flows, so such a component has no
+    boundary and its exposure rests on its card alone. Build-plane components
+    are left out because Figure 1b draws them from the supply-chain facts, and
+    finalization-injected ones are reported by their own check.
+    """
+    from model.build_plane import is_build_component  # noqa: PLC0415
+
+    loaded = _load_architecture(output_dir)
+    if loaded is None:
+        return []
+    components, flows = loaded
+    try:
+        receipt = json.loads((output_dir / ".component-inventory-finalization.json").read_text(encoding="utf-8"))
+        injected = set(receipt.get("injected_component_ids") or [])
+    except (OSError, ValueError, AttributeError, TypeError):
+        injected = set()
+    connected = {f.get(side) for f in flows for side in ("from", "to")}
+    return [
+        {
+            "category": "component_without_flows",
+            "severity": "warning",
+            "title": f"Component {component['id']} has no data flow, so no trust boundary can reach it",
+            "component_id": component["id"],
+            "evidence": {
+                "log_file": ".data-flows.json",
+                "log_line": 1,
+                "raw_event": f".components.json lists {component['id']}; .data-flows.json names it in no flow",
+                "outcome": "unconnected_component",
+            },
+        }
+        for component in components
+        if isinstance(component.get("id"), str)
+        and component["id"] not in connected
+        and component["id"] not in injected
+        and not is_build_component(component)
+    ]
+
+
+def _extract_egress_without_flow(output_dir: Path) -> list[dict]:
+    """Report evidenced outbound destinations whose owning component has no flow to `external`."""
+    from contexts.build_architecture_analysis_context import EGRESS_CONTEXT  # noqa: PLC0415
+    from model.reclassify_components import resolve_owner  # noqa: PLC0415
+
+    loaded = _load_architecture(output_dir)
+    try:
+        destinations = json.loads((output_dir / EGRESS_CONTEXT).read_text(encoding="utf-8")).get("destinations")
+    except (OSError, ValueError, AttributeError):
+        return []
+    if loaded is None or not isinstance(destinations, list):
+        return []
+    components, flows = loaded
+    leaving = {f.get("from") for f in flows if f.get("to") == "external"}
+    issues = []
+    for row in destinations:
+        evidence = [e for e in row.get("evidence") or [] if isinstance(e, dict) and e.get("file")]
+        owners = {owner[0] for e in evidence if (owner := resolve_owner(e["file"], components))}
+        if not evidence or owners & leaving:
+            continue
+        target = row.get("host") or "a request-chosen URL"
+        first = evidence[0]
+        issues.append(
+            {
+                "category": "egress_without_flow",
+                "severity": "warning",
+                "title": f"Outbound call to {target} has no data flow to an external service",
+                "component_id": sorted(owners)[0] if owners else None,
+                "evidence": {
+                    "log_file": EGRESS_CONTEXT,
+                    "log_line": 1,
+                    "raw_event": f"{first['file']}:{first.get('line')} calls {target}; "
+                    f"no flow leaves {', '.join(sorted(owners)) or 'its owner'} for external",
+                    "outcome": "unmodelled_egress",
+                },
+            }
+        )
+    return issues
+
+
 def _extract_unmodelled_workloads(output_dir: Path) -> list[dict]:
     """Report deployment-topology workloads that no component models and none declares unmodelled.
 
@@ -2780,6 +2872,8 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     issues.extend(_extract_recovery_events(output_dir))
     issues.extend(_extract_business_context_reach(output_dir))
     issues.extend(_extract_unconnected_injected_components(output_dir))
+    issues.extend(_extract_components_without_flows(output_dir))
+    issues.extend(_extract_egress_without_flow(output_dir))
     issues.extend(_extract_unmodelled_workloads(output_dir))
     issues.extend(_extract_actor_model_corrections(output_dir, agent_log))
     issues.extend(_extract_pillar_cwe_findings(output_dir))

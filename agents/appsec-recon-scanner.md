@@ -168,7 +168,7 @@ Run these in parallel where possible:
 
 The controller runs this pre-pass, so `.recon-patterns.json` should already exist when the recon-scanner agent starts. If it does, **skip the Bash call below and read the file directly**. Only invoke the script when the file is missing (controller pre-pass failed, or this agent was invoked standalone).
 
-> **Findings are capped per category** (40 examples each) to keep this file's Read from bloating your context — a recon pre-pass is a *signal*, not an exhaustive list. Each category's `count` is the **true** total and a `findings_truncated` field records how many were dropped; treat the listed findings as representative and re-grep on demand if you need more from a high-`count` category.
+> **Findings are capped** (12 examples per category, 96 in total) to keep this file's Read from bloating your context — a recon pre-pass is a *signal*, not an exhaustive list. Each category's `count` is the **true** total and a `findings_truncated` field records how many were dropped; treat the listed findings as representative and re-grep on demand if you need more from a high-`count` category.
 
 ```bash
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
@@ -756,7 +756,7 @@ already gathered; do not issue additional Grep calls.
     "has_role_concept": "<bool> — true only when executable application code evaluates user, tenant, or service roles/permissions for access",
     "has_secrets_in_repo": "<bool> — true when Cat 12 found ≥1 hardcoded secret or .env in repo",
     "has_ci_pipeline": "<bool> — true when Cat 14 found ≥1 CI/CD pipeline file (.github/workflows, .gitlab-ci.yml, Jenkinsfile, etc.)",
-    "has_external_apis": "<bool> — true when Cat 25b found ≥1 SaaS integration OR Cat 7 found external HTTP client patterns",
+    "has_external_apis": "<bool> — true when Cat 25b found ≥1 SaaS integration OR code calls an external HTTP, WebSocket or RPC client (fetch, axios, requests, provider SDKs)",
     "has_client_storage": "<bool> — true when Cat 10 found `spa-token-browser-storage` / `spa-refresh-token-browser-storage`, Cat 29 found mobile token-storage subcategories, OR Cat 8 found client-side patterns",
     "has_multi_tenancy_signal": "<bool> — true ONLY when BOTH conditions met: (a) tenant ID field detected (tenant_id, tenantId, organization_id, orgId, workspace_id, customer_id, realm_id or camelCase variants) AND (b) tenant scoping pattern (tenantContext/current_tenant middleware, RLS policy reference, FK to tenants table). Single tenant_id field without scoping pattern → false.",
     "has_open_self_registration": "<bool> — true when registration route exists WITHOUT invite-token, email-whitelist, payment gate, or admin-approval requirement. Detect via Cat 11 route listing + Cat 1/2 auth pattern cross-check; when the gating is ambiguous keep it false.",

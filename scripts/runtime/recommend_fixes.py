@@ -1003,6 +1003,53 @@ def _recommend_injected_component_without_flows(issue: dict, output_dir: Path) -
     }
 
 
+def _recommend_component_without_flows(issue: dict, output_dir: Path) -> dict:
+    """The architecture analyst modelled a runtime component but connected nothing to it."""
+    component = issue.get("component_id") or "the component"
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "medium",
+        "risk_level": "medium",
+        "summary": f"{component} has no data flow, so no trust boundary or exposure derives from it.",
+        "rationale": (
+            "Trust-boundary signals are derived from data flows. A runtime component without any "
+            "flow stays outside every boundary however it is reached."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": ".data-flows.json",
+                "details": f"Check which callers and outbound calls the code evidences for {component}.",
+            },
+        ],
+        "verification": [],
+    }
+
+
+def _recommend_egress_without_flow(issue: dict, output_dir: Path) -> dict:
+    """An evidenced outbound call reached the analyst but no flow models it."""
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "high",
+        "risk_level": "medium",
+        "summary": "An evidenced outbound call has no data flow to an external service, so it has no trust boundary.",
+        "rationale": (
+            "The architecture analyst receives `.dispatch-context/architecture/egress.json` before it writes "
+            "flows and must model each destination as a flow to `external`."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": ".data-flows.json",
+                "details": "Compare the destinations in egress.json with the flows that leave their owning components.",
+            },
+        ],
+        "verification": [],
+    }
+
+
 def _recommend_topology_workload_unmodelled(issue: dict, output_dir: Path) -> dict:
     """The component inventory left deployed workloads unaccounted for."""
     return {
@@ -1250,6 +1297,8 @@ RECOMMENDERS: dict[str, Callable[[dict, Path], dict]] = {
     "privileged_role_unevidenced": _recommend_privileged_role_unevidenced,
     "business_context_unmapped": _recommend_business_context_unmapped,
     "injected_component_without_flows": _recommend_injected_component_without_flows,
+    "component_without_flows": _recommend_component_without_flows,
+    "egress_without_flow": _recommend_egress_without_flow,
     "topology_workload_unmodelled": _recommend_topology_workload_unmodelled,
     "topology_workloads_not_delivered": _recommend_topology_workloads_not_delivered,
     "actor_attribution_corrected": _recommend_actor_attribution_corrected,

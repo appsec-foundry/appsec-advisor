@@ -34,9 +34,10 @@ RECON_SCHEMA = "recon-summary-context.schema.json"
 ROUTE_SCHEMA = "architecture-route-context.schema.json"
 ROLE_UNITS_SCHEMA = "architecture-role-units.schema.json"
 TOPOLOGY_SCHEMA = "architecture-topology-context.schema.json"
+EGRESS_SCHEMA = "architecture-egress-context.schema.json"
 _VALIDATORS = {
     name: Draft202012Validator(json.loads((_SCHEMA_DIR / name).read_text(encoding="utf-8")))
-    for name in (RECON_SCHEMA, ROUTE_SCHEMA, ROLE_UNITS_SCHEMA, TOPOLOGY_SCHEMA)
+    for name in (RECON_SCHEMA, ROUTE_SCHEMA, ROLE_UNITS_SCHEMA, TOPOLOGY_SCHEMA, EGRESS_SCHEMA)
 }
 
 
@@ -78,6 +79,9 @@ MAX_TOPOLOGY_WORKLOADS = _schema_at(TOPOLOGY_SCHEMA, "properties", "limits", "pr
 MAX_WORKLOAD_DEFINITIONS = _schema_at(TOPOLOGY_SCHEMA, "properties", "limits", "properties", "max_definitions", "const")
 MAX_WORKLOAD_ZONES = _schema_at(TOPOLOGY_SCHEMA, *_WORKLOAD, "properties", "zones", "maxItems")
 TOPOLOGY_CONTEXT = ".dispatch-context/architecture/topology.json"
+MAX_EGRESS_DESTINATIONS = _schema_at(EGRESS_SCHEMA, "properties", "limits", "properties", "max_destinations", "const")
+MAX_EGRESS_EVIDENCE = _schema_at(EGRESS_SCHEMA, "properties", "limits", "properties", "max_evidence", "const")
+EGRESS_CONTEXT = ".dispatch-context/architecture/egress.json"
 
 # The projection carries only the route fields its own schema declares; a field
 # the inventory gains stays out until that schema opts in, never aborts the run.
@@ -89,6 +93,9 @@ _valid_unsupported_file = _item_check(
 )
 _valid_role_unit = _item_check(ROLE_UNITS_SCHEMA, "properties", "units", "items")
 _valid_role_unit_path = _item_check(ROLE_UNITS_SCHEMA, "properties", "units", "items", "properties", "paths", "items")
+_valid_egress_file = _item_check(
+    EGRESS_SCHEMA, "properties", "destinations", "items", "properties", "evidence", "items", "properties", "file"
+)
 _valid_workload = _item_check(TOPOLOGY_SCHEMA, *_WORKLOAD)
 _valid_zone = _item_check(TOPOLOGY_SCHEMA, *_WORKLOAD, "properties", "zones", "items")
 _valid_definition = _item_check(TOPOLOGY_SCHEMA, *_WORKLOAD, "properties", "definitions", "items")
@@ -365,6 +372,45 @@ def build_role_units(output_dir: Path, repo_root: Path) -> Path:
     return target
 
 
+def project_egress(repo_root: Path) -> dict[str, Any]:
+    """Bound the outbound destinations the data flows must account for."""
+    from analyzers.egress_clients import scan  # noqa: PLC0415
+
+    found = []
+    for row in scan(repo_root):
+        # Keep the projection total: a path the schema rejects is dropped, never passed on.
+        evidence = [e for e in row["evidence"] if _valid_egress_file(e["file"])]
+        if evidence:
+            found.append({**row, "evidence": evidence})
+    destinations = [
+        {
+            **row,
+            "evidence": row["evidence"][:MAX_EGRESS_EVIDENCE],
+            "omitted_evidence": len(row["evidence"]) - min(len(row["evidence"]), MAX_EGRESS_EVIDENCE),
+        }
+        for row in found[:MAX_EGRESS_DESTINATIONS]
+    ]
+    return _checked(
+        EGRESS_SCHEMA,
+        {
+            "schema_version": 1,
+            "limits": {
+                "max_destinations": MAX_EGRESS_DESTINATIONS,
+                "max_evidence": MAX_EGRESS_EVIDENCE,
+                "omitted_destinations": len(found) - len(destinations),
+            },
+            "destinations": destinations,
+        },
+    )
+
+
+def build_egress(output_dir: Path, repo_root: Path) -> Path:
+    target = output_dir / EGRESS_CONTEXT
+    target.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(target, project_egress(repo_root), sort_keys=False)
+    return target
+
+
 def topology_workloads(inventory: Any) -> list[dict[str, Any]]:
     """One row per workload name with platform-qualified zones, in name order.
 
@@ -484,7 +530,11 @@ def build(output_dir: Path) -> tuple[Path, Path]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", required=True, type=Path)
-    parser.add_argument("--repo-root", type=Path, help="also project the role-bearing units of this repository")
+    parser.add_argument(
+        "--repo-root",
+        type=Path,
+        help="also project the role-bearing units and outbound destinations of this repository",
+    )
     args = parser.parse_args(argv)
     try:
         recon, routes = build(args.output_dir.resolve())
@@ -501,6 +551,7 @@ def main(argv: list[str] | None = None) -> int:
         result["topology_context"] = str(topology)
     if args.repo_root is not None:
         result["role_units"] = str(build_role_units(args.output_dir.resolve(), args.repo_root.resolve()))
+        result["egress_context"] = str(build_egress(args.output_dir.resolve(), args.repo_root.resolve()))
     print(json.dumps(result, sort_keys=True))
     return 0
 

@@ -2710,6 +2710,7 @@ def _write_architecture_receipt_inputs(output: Path, *, discovery_enabled: bool 
     architecture_context.build(output)
     config = json.loads((output / ".skill-config.json").read_text(encoding="utf-8"))
     architecture_context.build_role_units(output, Path(config["repo_root"]))
+    architecture_context.build_egress(output, Path(config["repo_root"]))
 
 
 def _valid_recon_signals() -> dict:
@@ -5973,6 +5974,33 @@ class TestContextV2PostActors:
         job = action["dispatch_jobs"][0]
         assert ".dispatch-context/architecture/role-units.json" in job["input_artifacts"]
         receipt = next(r for r in action["artifact_receipts"] if r["artifact_path"].endswith("role-units.json"))
+        assert receipt["record_count"] == 1
+
+    @pytest.mark.parametrize("tamper", [None, "edited", "missing"])
+    def test_architecture_receives_current_egress_destinations_before_writing_flows(
+        self, tmp_path, monkeypatch, tamper
+    ):
+        output = self._prepare(tmp_path)
+        repo = Path(json.loads((output / ".skill-config.json").read_text())["repo_root"])
+        repo.mkdir(exist_ok=True)
+        (repo / "client.ts").write_text("await fetch('https://api.vendor.io/v1/rates')\n", encoding="utf-8")
+        architecture_context.build_egress(output, repo)
+        target = output / ".dispatch-context/architecture/egress.json"
+        if tamper == "edited":
+            payload = json.loads(target.read_text())
+            payload["destinations"] = []
+            target.write_text(json.dumps(payload), encoding="utf-8")
+        elif tamper == "missing":
+            target.unlink()
+        monkeypatch.setattr(controller, "_run_script", self._script([]))
+        if tamper:
+            with pytest.raises(controller.ControllerError, match="egress"):
+                controller.context_v2_post_actors(output)
+            return
+        action = controller.context_v2_post_actors(output)
+        job = action["dispatch_jobs"][0]
+        assert ".dispatch-context/architecture/egress.json" in job["input_artifacts"]
+        receipt = next(r for r in action["artifact_receipts"] if r["artifact_path"].endswith("egress.json"))
         assert receipt["record_count"] == 1
 
     @staticmethod

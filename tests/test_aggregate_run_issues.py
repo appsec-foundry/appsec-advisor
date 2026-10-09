@@ -1965,6 +1965,52 @@ def test_connected_or_absent_injections_produce_no_issue(tmp_path):
     assert agg._extract_unconnected_injected_components(out) == []
 
 
+def _architecture_run(tmp_path, components, flows, destinations=None) -> Path:
+    (tmp_path / ".components.json").write_text(json.dumps({"components": components}), encoding="utf-8")
+    (tmp_path / ".data-flows.json").write_text(json.dumps({"data_flows": flows}), encoding="utf-8")
+    if destinations is not None:
+        target = tmp_path / ".dispatch-context/architecture/egress.json"
+        target.parent.mkdir(parents=True)
+        target.write_text(json.dumps({"destinations": destinations}), encoding="utf-8")
+    return tmp_path
+
+
+_API = {"id": "api", "name": "API", "paths": ["src/api/**"]}
+_WALLET = {"id": "wallet", "name": "Wallet", "paths": ["src/wallet/**"]}
+_PIPELINE = {"id": "pipeline", "name": "Pipeline", "paths": [".github/workflows/*"], "deployment_zones": ["ci"]}
+
+
+def test_a_runtime_component_without_flows_is_surfaced_but_a_build_component_is_not(tmp_path):
+    out = _architecture_run(tmp_path, [_API, _WALLET, _PIPELINE], [{"id": "df-001", "from": "external", "to": "api"}])
+
+    issues = agg._extract_components_without_flows(out)
+
+    assert [(i["category"], i["component_id"]) for i in issues] == [("component_without_flows", "wallet")]
+
+
+def test_an_egress_destination_without_a_flow_from_its_owner_is_surfaced(tmp_path):
+    destination = {
+        "kind": "fixed-host",
+        "host": "rpc.ledgerco.io",
+        "evidence": [{"file": "src/wallet/w.ts", "line": 3}],
+    }
+    flows = [{"id": "df-001", "from": "api", "to": "external"}]
+    out = _architecture_run(tmp_path, [_API, _WALLET], flows, [destination])
+
+    (issue,) = agg._extract_egress_without_flow(out)
+
+    assert issue["category"] == "egress_without_flow" and issue["component_id"] == "wallet"
+    assert "rpc.ledgerco.io" in issue["title"]
+
+
+def test_an_egress_destination_modelled_as_a_flow_produces_no_issue(tmp_path):
+    destination = {"kind": "user-controlled", "host": None, "evidence": [{"file": "src/api/u.ts", "line": 9}]}
+    flows = [{"id": "df-001", "from": "api", "to": "external"}]
+    assert agg._extract_egress_without_flow(_architecture_run(tmp_path, [_API], flows, [destination])) == []
+    (tmp_path / "none").mkdir()
+    assert agg._extract_egress_without_flow(_architecture_run(tmp_path / "none", [_API], flows)) == []
+
+
 def _cost_run(tmp_path, *, start: str, stop_at: str | None, usage: bool = True) -> Path:
     from datetime import datetime, timezone
 

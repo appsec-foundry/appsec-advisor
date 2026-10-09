@@ -154,6 +154,7 @@ _RECEIPT_RECORD_KEYS = {
     "schemas/recon-summary-context.schema.json#v1": "sections",
     "schemas/architecture-route-context.schema.json#v1": "routes",
     "schemas/architecture-role-units.schema.json#v1": "units",
+    "schemas/architecture-egress-context.schema.json#v1": "destinations",
     "schemas/architecture-topology-context.schema.json#v1": "workloads",
     "schemas/recon-signals.schema.json#v2": "signals",
     "schemas/evidence-verifier-context.schema.json#v1": "samples",
@@ -5003,6 +5004,29 @@ def _context_v2_role_units_receipt(output_dir: Path, cfg: dict[str, Any]) -> dic
     )
 
 
+def _context_v2_egress_receipt(output_dir: Path, cfg: dict[str, Any]) -> dict[str, Any]:
+    """Bind the outbound-destination projection to what the repository still yields."""
+    from contexts.build_architecture_analysis_context import EGRESS_CONTEXT, project_egress  # noqa: PLC0415
+
+    projected = _validate_json_artifact(
+        output_dir / EGRESS_CONTEXT,
+        PLUGIN_ROOT / "schemas" / "architecture-egress-context.schema.json",
+        contract="schemas/architecture-egress-context.schema.json#v1",
+    )
+    try:
+        expected = project_egress(Path(str(cfg.get("repo_root") or output_dir)))
+    except (OSError, ValueError) as exc:
+        raise ControllerError(f"cannot reconstruct deterministic projection {EGRESS_CONTEXT}: {exc}") from exc
+    if projected != expected:
+        raise ControllerError(f"{EGRESS_CONTEXT} differs from its deterministic projection")
+    return _validated_json_receipt(
+        output_dir,
+        EGRESS_CONTEXT,
+        schema_id="schemas/architecture-egress-context.schema.json#v1",
+        record_count=len(projected["destinations"]),
+    )
+
+
 def _context_v2_topology_receipt(output_dir: Path) -> dict[str, Any] | None:
     """Bind the workload projection to the inventory bytes, when the run has a topology."""
     from contexts.build_architecture_analysis_context import TOPOLOGY_CONTEXT, project_topology  # noqa: PLC0415
@@ -5046,6 +5070,7 @@ def _context_v2_dispatch_architecture(output_dir: Path, cfg: dict[str, Any], rec
         _context_v2_recon_projection_receipt(output_dir),
         _context_v2_route_projection_receipt(output_dir),
         _context_v2_role_units_receipt(output_dir, cfg),
+        _context_v2_egress_receipt(output_dir, cfg),
         _validated_json_receipt(
             output_dir,
             ".actors-resolved.json",
@@ -5057,6 +5082,7 @@ def _context_v2_dispatch_architecture(output_dir: Path, cfg: dict[str, Any], rec
         ".dispatch-context/architecture/recon-summary-context.json",
         ".dispatch-context/architecture/route-context.json",
         ".dispatch-context/architecture/role-units.json",
+        ".dispatch-context/architecture/egress.json",
         ".actors-resolved.json",
     ]
     topology = _context_v2_topology_receipt(output_dir)
