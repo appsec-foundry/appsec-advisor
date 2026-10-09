@@ -1527,6 +1527,59 @@ def test_same_crossing_without_a_stated_reason_collapses(tmp_path: Path):
     assert any("merged into c1" in n for n in notes)
 
 
+_BUILD_COMPONENTS = {
+    "release-pipeline": {"id": "release-pipeline", "paths": [".ci/**", "Containerfile"]},
+}
+
+
+@pytest.mark.parametrize(
+    ("target", "channels"),
+    [
+        ("worker", ["signal-images", "signal-npm", "signal-installer"]),
+        ("release-pipeline", ["signal-pypi", "signal-remote-script"]),
+    ],
+    ids=["three-channels", "renamed-variant"],
+)
+def test_build_crossings_on_distinct_supply_channels_stay_apart(tmp_path: Path, target: str, channels: list[str]):
+    """Each scoped build signal is its own supply channel: merging them would
+    keep one channel's assumption over every channel's evidence."""
+    candidates = [
+        _cand(f"c{n}", frm="external", to=target, kind="build", signals=[sid]) for n, sid in enumerate(channels)
+    ]
+    merged, _alias, _notes = prep._consolidate_candidates(
+        candidates, components={**_COMPONENTS, **_BUILD_COMPONENTS}, repo_root=tmp_path
+    )
+    assert [c["candidate_key"] for c in merged] == [c["candidate_key"] for c in candidates]
+
+
+def test_build_crossings_on_one_supply_channel_still_collapse(tmp_path: Path):
+    merged, alias, _notes = prep._consolidate_candidates(
+        [
+            _cand("c1", frm="external", to="worker", kind="build", signals=["signal-npm"]),
+            _cand("c2", frm="external", to="worker", kind="build", signals=["signal-npm"]),
+        ],
+        components=_COMPONENTS,
+        repo_root=tmp_path,
+    )
+    assert [c["candidate_key"] for c in merged] == ["c1"]
+    assert alias["c2"] == "c1"
+
+
+def test_build_ingress_rows_into_one_component_are_not_folded(tmp_path: Path) -> None:
+    """The shared-perimeter fold applies to network ingress, not supply channels."""
+    components = [{"id": "release-pipeline", "name": "Release pipeline", "paths": [".ci/**"]}]
+    rows, warnings = _normalized(
+        tmp_path,
+        [
+            _resolved(id="tb-1", name="Base images", to="release-pipeline", kind="build"),
+            _resolved(id="tb-2", name="Package registry", to="release-pipeline", kind="build"),
+        ],
+        components,
+    )
+    assert sorted(row["name"] for row in rows) == ["Base images", "Package registry"]
+    assert not any("folded ingress boundary" in w for w in warnings)
+
+
 def test_same_crossing_with_differing_kinds_stays_apart(tmp_path: Path):
     """`kind` is a weaker separation claim than `enforcement_point`, but it is
     still one: a generic HTTPS perimeter and an operator crossing on the same

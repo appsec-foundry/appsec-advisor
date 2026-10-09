@@ -1269,7 +1269,9 @@ def _consolidate(rows: list[dict], components: dict[str, dict], warnings: list[s
             )
             row["from"] = target
 
-    ingress = [r for r in out if r.get("from") == "external" and r.get("to") in components]
+    # A build crossing enters through its own supply channel, not a shared port
+    # and process, so shared code is no reason to fold it.
+    ingress = [r for r in out if r.get("from") == "external" and r.get("to") in components and r.get("kind") != "build"]
     folded: list[dict] = []
     for index, row in enumerate(ingress):
         for other_index, other in enumerate(ingress):
@@ -2363,7 +2365,7 @@ def _consolidate_candidates(
     3. **Merge** — candidates sharing one `enforcement_point` within the same
        crossing class are one boundary; those naming none fall back to the
        crossing itself, with ingress compared per deployable rather than per
-       component label. A merge spanning components records them in
+       component label, and build crossings also by their covered signals. A merge spanning components records them in
        `covers_components` so nothing loses its anchor. Over-merging destroys
        information silently, whereas under-merging stays visible in the
        catalogue and is fixable next run — so every widening here is bounded by
@@ -2517,6 +2519,13 @@ def _consolidate_candidates(
             scope = _deployable_scope(candidate.get("to"), components) if crossing_class == "ingress" else None
             key = ("point", point.casefold(), crossing_class, owners, axes, scope)
         else:
+            # Build signals are scoped per supply channel (registry, base image,
+            # piped installer, push destination), so each covered signal set is
+            # its own stated reason. Merging across them would keep one channel's
+            # assumption over every channel's evidence.
+            channels = (
+                tuple(sorted(candidate.get("covered_signal_ids") or [])) if candidate.get("kind") == "build" else ()
+            )
             key = (
                 "crossing",
                 candidate.get("from"),
@@ -2524,6 +2533,7 @@ def _consolidate_candidates(
                 crossing_class,
                 candidate.get("kind"),
                 axes,
+                channels,
             )
         groups.setdefault(key, []).append(candidate)
 
