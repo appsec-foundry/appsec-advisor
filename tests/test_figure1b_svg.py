@@ -178,6 +178,7 @@ def test_the_table_form_carries_elements_relationships_entries_and_the_path():
 
 
 def _boundary_model(*rows):
+    """Boundaries as (id, from, to, evidence line, confidence)."""
     model = _model()
     model["trust_boundaries"] = [
         {
@@ -185,68 +186,116 @@ def _boundary_model(*rows):
             "from": frm,
             "to": to,
             "kind": "build",
-            "confidence": "inferred",
+            "confidence": confidence,
             "resolution_status": "resolved",
-            "evidence": [{"file": ".github/workflows/build.yml", "line": 5}],
+            "evidence": [{"file": ".github/workflows/build.yml", "line": line}],
         }
-        for tid, frm, to in rows
+        for tid, frm, to, line, confidence in rows
     ]
     return model
 
 
 def _boundary_lines(svg):
-    """x of each drawn boundary line and the IDs its tooltip names."""
+    """(x, top, bottom, ids, class) of each drawn boundary line."""
     return [
-        (float(x), ids)
-        for ids, x in re.findall(r"<title>Trust boundary crossing: ([^<]*)</title>\s*<path d=\"M ([\d.]+) ", svg)
+        (float(x), float(top), float(bottom), ids, "inferred" if inferred.startswith("Inferred") else "confirmed")
+        for inferred, ids, x, top, bottom in re.findall(
+            r"<title>(Inferred t|T)rust boundary crossing: ([^<]*)</title>"
+            r'<path d="M ([\d.]+) ([\d.]+) V ([\d.]+)"',
+            svg,
+        )
     ]
 
 
 @pytest.mark.parametrize(
     ("rows", "columns"),
     [
-        ([("tb-4", "external", "pipeline")], {"tb-4": "build"}),
-        ([("tb-9", "pipeline", "external")], {"tb-9": "artifacts"}),
-        ([("tb-2", "external", "pipeline"), ("tb-3", "pipeline", "external")], {"tb-2": "build", "tb-3": "artifacts"}),
+        ([("tb-4", "external", "pipeline", 5, "confirmed")], {"tb-4": "build"}),
+        ([("tb-9", "pipeline", "external", 5, "confirmed")], {"tb-9": "artifacts"}),
+        (
+            [("tb-2", "external", "pipeline", 5, "confirmed"), ("tb-3", "pipeline", "external", 5, "confirmed")],
+            {"tb-2": "build", "tb-3": "artifacts"},
+        ),
     ],
     ids=["ingress", "egress", "both-borders"],
 )
-def test_a_mapped_boundary_is_one_line_at_the_column_border_it_crosses(rows, columns):
-    view = build_view(_boundary_model(*rows), _facts(), {})
-    svg = _render(view)
+def test_a_mapped_boundary_is_a_line_at_the_column_border_it_crosses(rows, columns):
+    svg = _render(build_view(_boundary_model(*rows), _facts(), {}))
     zones = {
         title: float(x)
         for x, title in re.findall(r'<text x="([\d.]+)" y="81.0"[^>]*>([^<]+)</text>', svg)
         if title in {"Build", "Release artifacts"}
     }
     lines = _boundary_lines(svg)
-    assert sorted(ids for _x, ids in lines) == sorted(columns)
-    for x, ids in lines:
+    assert sorted(line[3] for line in lines) == sorted(columns)
+    for x, _top, _bottom, ids, _cls in lines:
         column = "Build" if columns[ids] == "build" else "Release artifacts"
         # Just left of the zone it leads into; the zone title sits 4 px left of the column.
         assert x == pytest.approx(zones[column] + 4 - figure.ZONE_PAD - figure.BOUNDARY_INSET, abs=0.1)
     assert "Trust boundary tb-" not in re.sub(r"<title>[^<]*</title>", "", svg)
-    assert "trust boundary crossed between these columns" in svg
-    assert svg.count(">TRUST BOUNDARY<") == len(lines)
+    assert "trust boundary crossed by these flows" in svg
+    assert "inferred trust boundary" not in svg
 
 
-def test_one_line_carries_every_boundary_that_crosses_its_border():
+def test_one_line_carries_every_boundary_on_the_same_flow():
     view = build_view(
-        _boundary_model(("tb-12", "external", "pipeline"), ("tb-4", "external", "pipeline")), _facts(), {}
+        _boundary_model(
+            ("tb-12", "external", "pipeline", 5, "confirmed"), ("tb-4", "external", "pipeline", 5, "confirmed")
+        ),
+        _facts(),
+        {},
     )
     svg = _render(view)
-    assert _boundary_lines(svg) == [(_boundary_lines(svg)[0][0], "tb-4, tb-12")]
+    assert [line[3] for line in _boundary_lines(svg)] == ["tb-4, tb-12"]
     assert "2 trust boundaries mapped here" in svg
+
+
+@pytest.mark.parametrize("cited", [10, 5], ids=["registry-install", "action"])
+def test_a_line_spans_only_the_flows_its_boundary_marks(cited):
+    """A second CI system and the repository checkout are not drawn as behind the boundary."""
+    inventory = {"ci": [{"system": "GitLab CI", "source": ".gitlab-ci.yml"}]}
+    view = build_view(_boundary_model(("tb-1", "external", "pipeline", cited, "confirmed")), _facts(), inventory)
+    (line,) = _boundary_lines(_render(view))
+    assert line[2] - line[1] == pytest.approx(2 * figure.BOUNDARY_OVERHANG)
+
+
+def test_two_marked_flows_stretch_the_line_between_them():
+    view = build_view(
+        _boundary_model(
+            ("tb-1", "external", "pipeline", 5, "confirmed"), ("tb-2", "external", "pipeline", 10, "confirmed")
+        ),
+        _facts(),
+        {},
+    )
+    (line,) = _boundary_lines(_render(view))
+    assert line[2] - line[1] > 2 * figure.BOUNDARY_OVERHANG
+
+
+def test_an_inferred_boundary_keeps_its_own_pale_line_and_legend_row():
+    view = build_view(
+        _boundary_model(
+            ("tb-1", "external", "pipeline", 5, "confirmed"), ("tb-2", "external", "pipeline", 10, "inferred")
+        ),
+        _facts(),
+        {},
+    )
+    svg = _render(view)
+    lines = {line[4]: line for line in _boundary_lines(svg)}
+    assert lines["confirmed"][3] == "tb-1" and lines["inferred"][3] == "tb-2"
+    assert lines["confirmed"][0] == lines["inferred"][0]
+    assert svg.count(figure.INFERRED_STYLE) == 2  # the line and its legend sample
+    assert "trust boundary crossed by these flows" in svg
+    assert "inferred trust boundary, existence not confirmed" in svg
 
 
 def test_without_a_mapped_boundary_no_line_and_no_legend_row():
     svg = _render(build_view(_model(), _facts(), {}))
-    assert "Trust boundary crossing" not in svg and "TRUST BOUNDARY" not in svg
-    assert "trust boundary crossed between these columns" not in svg
+    assert "rust boundary crossing" not in svg
+    assert "trust boundary crossed by these flows" not in svg and "inferred trust boundary" not in svg
 
 
 def test_the_table_form_still_names_each_mapped_boundary():
-    view = build_view(_boundary_model(("tb-4", "external", "pipeline")), _facts(), {})
+    view = build_view(_boundary_model(("tb-4", "external", "pipeline", 5, "inferred")), _facts(), {})
     assert "Trust boundary tb-4 · inferred" in figure.render_table(view, ACTOR, ["⑤"])
 
 

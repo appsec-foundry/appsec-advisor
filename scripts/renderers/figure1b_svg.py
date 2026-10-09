@@ -59,6 +59,8 @@ BOX_TOP = 110
 ARROW = 10
 BADGE_R = 8
 BOUNDARY_INSET = 4  # boundary line distance left of the zone it leads into
+BOUNDARY_OVERHANG = 18  # boundary line reach beyond its outermost crossing flow
+INFERRED_STYLE = 'stroke-width="1.8" stroke-dasharray="2 4" stroke-opacity="0.55"'
 
 INK, MUTED, RED, FLOW, OK, NAVY = "#1f2a37", "#5b6675", "#9c3d3d", "#6b7a8c", "#3f8a4f", "#22344a"
 SEV = {"Critical": "#b03a3a", "High": "#d08a3a", "Medium": "#c9a43a", "Low": "#7a8a99", "Informational": "#9aa5b1"}
@@ -363,7 +365,8 @@ def render(view: dict, actor: dict | None, scenario_numbers: list[str], project:
     problems = list(layout["problems"])
     height_diagram = max(layout["bottom"] + 30, BOX_TOP + 160)
     borders = _boundary_borders(view, x)
-    legend_svg, legend_height, legend_canvas = _legend(view, plan, actor, scenario_numbers, width, bool(borders))
+    classes = {_line_class(conf) for border in borders.values() for conf in border["confidence"].values()}
+    legend_svg, legend_height, legend_canvas = _legend(view, plan, actor, scenario_numbers, width, classes)
     height = round(height_diagram + 16 + legend_height + 20)
 
     cv.parts.append(
@@ -407,7 +410,7 @@ def render(view: dict, actor: dict | None, scenario_numbers: list[str], project:
         cv.zones[column] = (zx, ZTOP, zw, zh)
         cv.text(x[column] - 4, ZTOP + 17, title, FONT["zone"], weight="bold", fill=stroke)
         cv.text(x[column] - 4, ZTOP + 30, sub, FONT["zone_sub"], fill=MUTED, italic=True)
-    _draw_boundaries(cv, borders, layout["bottom"] + 16)
+    lines_at = len(cv.parts)  # boundary lines go under boxes and flows, drawn once the flows are routed
 
     for key, box in layout["boxes"].items():
         _draw_box(cv, key, box, plan, view)
@@ -418,6 +421,7 @@ def render(view: dict, actor: dict | None, scenario_numbers: list[str], project:
     _draw_edges(cv, view, plan, layout, highlighted, problems, [border["x"] for border in borders.values()])
     if actor:
         _draw_entries(cv, view, layout, x, widths, problems)
+    _draw_boundaries(cv, view, borders, layout, lines_at)
 
     cv.parts.append(f'<g transform="translate(0,{height_diagram + 16:.1f})">{legend_svg}</g>')
     cv.min_font = min(cv.min_font, legend_canvas.min_font)
@@ -578,30 +582,101 @@ def _draw_box(cv, key, box, plan, view):
 def _boundary_borders(view, x) -> dict[str, dict[str, Any]]:
     """The column borders a mapped build boundary crosses: into the build, or out to the release artifacts.
 
-    One line per border however many boundaries cross it, as in Figure 1a; the
-    IDs go into the tooltip and the report catalogue, never onto the drawing.
+    Lines sit at these borders as in Figure 1a; the IDs go into the tooltip and
+    the report catalogue, never onto the drawing.
     """
     borders: dict[str, dict[str, Any]] = {}
     for element in view["elements"]:
         for boundary in element.get("boundaries") or []:
             column = "build" if boundary["crossing"] == "ingress" else "artifacts"
-            border = borders.setdefault(column, {"x": x[column] - ZONE_PAD - BOUNDARY_INSET, "ids": []})
-            if boundary["id"] not in border["ids"]:
-                border["ids"].append(boundary["id"])
+            border = borders.setdefault(column, {"x": x[column] - ZONE_PAD - BOUNDARY_INSET, "confidence": {}})
+            border["confidence"].setdefault(boundary["id"], boundary["confidence"])
     return borders
 
 
-def _draw_boundaries(cv, borders, bottom):
+def _line_class(confidence: str) -> str:
+    return "confirmed" if confidence == "confirmed" else "inferred"
+
+
+def _crossing_ids(view, column) -> dict[tuple[str, str], set[str]]:
+    """Boundary IDs per flow across one border, keyed by the flow's element ids.
+
+    A boundary marks the flows of the element that names the supplier or the
+    release target. One carried only by the CI system marks that system's
+    flows across the border, except its checkout of the own repository.
+    """
+    crossing = "ingress" if column == "build" else "egress"
+    elements = {e["id"]: e for e in view["elements"]}
+    carried = {
+        eid: {b["id"] for b in e.get("boundaries") or [] if b["crossing"] == crossing} for eid, e in elements.items()
+    }
+    near_column, before = ("sources", "sources") if column == "build" else ("artifacts", "build")
+    on_near = set().union(*(ids for eid, ids in carried.items() if elements[eid]["column"] == near_column))
+    out: dict[tuple[str, str], set[str]] = {}
+    for edge in view["edges"]:
+        src, dst = elements.get(edge["from"]), elements.get(edge["to"])
+        if not src or not dst or src["column"] != before or dst["column"] != column:
+            continue
+        near, far = (src, dst) if column == "build" else (dst, src)
+        ids = set(carried[near["id"]])
+        if src["kind"] != "repository":
+            ids |= carried[far["id"]] - on_near
+        if ids:
+            out[(edge["from"], edge["to"])] = ids
+    return out
+
+
+def _y_at(points, x):
+    for (x1, y1), (x2, y2) in _segs(points):
+        if x1 != x2 and min(x1, x2) <= x <= max(x1, x2):
+            return y1 + (y2 - y1) * (x - x1) / (x2 - x1)
+    return None
+
+
+def _draw_boundaries(cv, view, borders, layout, at):
+    """Draw each border's line over the flows its boundaries mark, confirmed and inferred apart.
+
+    The line spans only those flows, so a CI system or registry no boundary
+    names is not drawn as behind it. An inferred boundary keeps its own pale
+    line wherever it crosses, so the drawing never shows it as confirmed.
+    """
+    parts: list[str] = []
     for column, border in borders.items():
-        bx, ids = border["x"], sorted(border["ids"], key=lambda tid: int(tid.split("-")[1]))
-        cv.parts.append(f"<g><title>{html.escape('Trust boundary crossing: ' + ', '.join(ids))}</title>")
-        cv.parts.append(
-            f'<path d="M {bx:.1f} {ZTOP:.1f} V {bottom:.1f}" fill="none" stroke="{RED}" stroke-width="2.2" '
-            'stroke-dasharray="6 5"/>'
-        )
-        cv.parts.append("</g>")
-        cv.text(bx, bottom + 12, "TRUST BOUNDARY", FONT["label"], weight="bold", fill=RED, anchor="middle")
-        cv.boundaries.append((bx, ZTOP, bottom))
+        bx, confidence = border["x"], border["confidence"]
+        spans: dict[str, list[float]] = {}
+        ids_by_class: dict[str, set[str]] = {}
+        flows = _crossing_ids(view, column)
+        for edge in cv.edges:
+            ids = flows.get(edge.get("elements"))
+            y = _y_at(edge["points"], bx) if ids else None
+            if y is None:
+                continue
+            for tid in ids:
+                spans.setdefault(_line_class(confidence[tid]), []).append(y)
+                ids_by_class.setdefault(_line_class(confidence[tid]), set()).add(tid)
+        for tid, conf in confidence.items():
+            if not any(tid in ids for ids in ids_by_class.values()):
+                # No drawn flow carries it: span the boxes that hold its evidence instead.
+                for element in view["elements"]:
+                    box = layout["boxes"].get(_box_of(element["id"], layout["boxes"]) or "")
+                    if box and tid in {b["id"] for b in element.get("boundaries") or []}:
+                        spans.setdefault(_line_class(conf), []).extend((box["y"] + 12, box["y"] + box["h"] - 12))
+                        ids_by_class.setdefault(_line_class(conf), set()).add(tid)
+        for cls in ("inferred", "confirmed"):
+            if cls not in spans:
+                continue
+            top, bottom = min(spans[cls]) - BOUNDARY_OVERHANG, max(spans[cls]) + BOUNDARY_OVERHANG
+            ids = sorted(ids_by_class[cls], key=lambda tid: int(tid.split("-")[1]))
+            title = ("Trust boundary crossing: " if cls == "confirmed" else "Inferred trust boundary crossing: ") + (
+                ", ".join(ids)
+            )
+            style = 'stroke-width="2.2" stroke-dasharray="6 5"' if cls == "confirmed" else INFERRED_STYLE
+            parts.append(
+                f"<g><title>{html.escape(title)}</title>"
+                f'<path d="M {bx:.1f} {top:.1f} V {bottom:.1f}" fill="none" stroke="{RED}" {style}/></g>'
+            )
+            cv.boundaries.append((bx, top, bottom))
+    cv.parts[at:at] = parts
 
 
 def _draw_actor(cv, actor, numbers, x, w, layout):
@@ -743,7 +818,16 @@ def _draw_edges(cv, view, plan, layout, highlighted, problems, stops=()):
         else:
             cv.path(points, FLOW, 1.5, "flow")
             _edge_label(cv, points, edge["label"], key, stops)
-        cv.edges.append({"key": key, "from": edge["src_box"], "to": edge["dst_box"], "points": points, "attack": False})
+        cv.edges.append(
+            {
+                "key": key,
+                "from": edge["src_box"],
+                "to": edge["dst_box"],
+                "elements": (edge["from"], edge["to"]),
+                "points": points,
+                "attack": False,
+            }
+        )
 
 
 def _edge_label(cv, points, label, key, stops=()):
@@ -935,7 +1019,7 @@ def _legibility_gate(cv, width) -> list[str]:
 # ---- legend ------------------------------------------------------------------------------
 
 
-def _legend(view, plan, actor, numbers, width, boundaries=False):
+def _legend(view, plan, actor, numbers, width, boundaries=frozenset()):
     cv = Canvas()
     elements = plan["elements"]
     half = (width - 60) / 2
@@ -1024,14 +1108,14 @@ def _legend(view, plan, actor, numbers, width, boundaries=False):
         ("High", "High finding"),
         ("Medium", "Medium finding or decision"),
     ]
-    if boundaries:
-        rows.insert(4, ("boundary", "trust boundary crossed between these columns"))
+    if "inferred" in boundaries:
+        rows.insert(4, ("inferred", "inferred trust boundary, existence not confirmed"))
+    if "confirmed" in boundaries:
+        rows.insert(4, ("boundary", "trust boundary crossed by these flows"))
     for sym, label in rows:
-        if sym == "boundary":
-            cv.parts.append(
-                f'<path d="M {sx:.1f} {y - 4:.1f} H {sx + 44:.1f}" fill="none" stroke="{RED}" stroke-width="2.2" '
-                'stroke-dasharray="6 5"/>'
-            )
+        if sym in {"boundary", "inferred"}:
+            style = 'stroke-width="2.2" stroke-dasharray="6 5"' if sym == "boundary" else INFERRED_STYLE
+            cv.parts.append(f'<path d="M {sx:.1f} {y - 4:.1f} H {sx + 44:.1f}" fill="none" stroke="{RED}" {style}/>')
         elif sym == "flow":
             cv.path([(sx, y - 4), (sx + 44, y - 4)], FLOW, 1.5, "flow")
         elif sym == "unknown":
