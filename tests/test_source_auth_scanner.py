@@ -1372,6 +1372,32 @@ def test_glob_matcher_handles_braces_question_and_char_classes() -> None:
     assert not S._matches_any_glob("src/baz.js", ["src/{foo,bar}.js"])
 
 
+@pytest.mark.parametrize(
+    ("path", "glob"),
+    [
+        ("src/a.ts", "src/{a.ts,b.ts}"),
+        ("src/a-b.ts", "src/{a-b,c}.ts"),
+        ("pkg/x/util.spec.ts", "**/*.{test,spec}.ts"),
+        ("lib/deep/x.js", "{src/*.ts,lib/**}"),
+        ("src/(x).ts", "src/(x).ts"),
+    ],
+)
+def test_glob_matcher_applies_glob_rules_inside_braces(path: str, glob: str) -> None:
+    assert S._matches_any_glob(path, [glob])
+
+
+@pytest.mark.parametrize(
+    ("path", "glob"),
+    [
+        ("src/aXts", "src/{a.ts,b.ts}"),
+        ("src/x.ts", "src/(x).ts"),
+        ("src/sub/a.ts", "{src/*.ts,lib/**}"),
+    ],
+)
+def test_glob_matcher_keeps_literals_literal(path: str, glob: str) -> None:
+    assert not S._matches_any_glob(path, [glob])
+
+
 def test_call_scope_without_closing_paren_returns_capped_window() -> None:
     assert S._scope_lines_for_call(["guard(", "  req.body.userId", "  more"], 0, 2) == [
         "guard(",

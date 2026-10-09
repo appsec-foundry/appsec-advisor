@@ -244,8 +244,10 @@ def _load_config():
         "requirements_source": {"paths": list(_DEFAULT_REQ_SOURCE_PATHS)},
     }
 
+    # An unreadable file keeps the defaults but must not skip the org-profile
+    # merge below, which the activation order in the module docstring relies on.
     if not loaded:
-        return cfg
+        loaded = {}
 
     cfg["enabled"] = bool(loaded.get("enabled", False))
     if "baseline" in loaded and isinstance(loaded["baseline"], str):

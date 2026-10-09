@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import jsonschema
+import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 ENGINE = REPO_ROOT / "scripts" / "analyzers/architecture_coverage_checks.py"
@@ -326,6 +327,27 @@ def test_cors_wildcard_with_credentials_anti_pattern(tmp_path: Path) -> None:
     cors = [c for c in out["anti_pattern_candidates"] if c["rule_id"] == "ARCH-CORS-001"][0]
     assert "weakness_id" not in cors
     assert cors["architectural_theme"] == "SecureDefaults"
+
+
+@pytest.mark.parametrize(
+    ("name", "source"),
+    [
+        ("server.ts", "app.use(cors({ origin: '*' }));\n"),
+        ("app.py", 'CORS(app, origin="*")\n'),
+    ],
+)
+def test_cors_wildcard_without_credentials_no_anti_pattern(tmp_path: Path, name: str, source: str) -> None:
+    (tmp_path / name).write_text(source)
+    out = _run_engine(tmp_path)
+    v = _verdict(out, "ARCH-CORS-001")
+    assert v["status"] != "anti_pattern"
+    assert "ARCH-CORS-001" not in [c["rule_id"] for c in out["anti_pattern_candidates"]]
+
+
+def test_cooccurrence_window_without_any_cooccurrence_hit_keeps_nothing() -> None:
+    hits = acc.PatternHits()
+    hits.positive.append(("app.ts", 3, "POS"))
+    assert acc._cooccurrence_satisfied(hits, 8) == []
 
 
 def test_cors_specific_origin_no_anti_pattern(tmp_path: Path) -> None:

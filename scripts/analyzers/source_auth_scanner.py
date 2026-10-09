@@ -264,91 +264,54 @@ def _glob_to_regex(pattern: str) -> re.Pattern[str]:
       `**`          → `.*`  (matches any path including slashes)
       `*`           → `[^/]*`  (matches anything except slash)
       `?`           → `[^/]`
-      `{a,b,c}`     → `(?:a|b|c)`  (brace expansion)
+      `{a,b,c}`     → `(?:a|b|c)`  (brace expansion; each alternative
+                      follows these same rules, braces do not nest)
       every other char is regex-escaped.
 
     Pattern `**/foo.ts` matches both `foo.ts` (top-level) AND
     `sub/dir/foo.ts` — this is the cross-shell convention that fnmatch
     + PurePath.match do not give us.
     """
+    return re.compile("^" + _glob_body_to_regex(pattern) + "$")
 
-    # 1) handle brace expansion first
-    def expand_braces(s: str) -> str:
-        out = []
-        i = 0
-        while i < len(s):
-            if s[i] == "{":
-                j = s.find("}", i)
-                if j == -1:
-                    out.append(s[i])
-                    i += 1
-                    continue
-                alts = s[i + 1 : j].split(",")
-                out.append("(?:" + "|".join(re.escape(a.strip()) for a in alts) + ")")
-                i = j + 1
-            else:
-                out.append(None)  # placeholder; we re-escape below
-                i += 1
-        # rebuild — placeholders become the original char
-        result = []
-        k = 0
-        i = 0
-        while i < len(s):
-            if s[i] == "{":
-                j = s.find("}", i)
-                if j == -1:
-                    result.append(s[i])
-                    i += 1
-                    continue
-                alts = s[i + 1 : j].split(",")
-                result.append("(?:" + "|".join(re.escape(a.strip()) for a in alts) + ")")
-                i = j + 1
-            else:
-                result.append(s[i])
-                i += 1
-        return "".join(result)
 
-    # Convert glob meta to regex tokens.
-    expanded = expand_braces(pattern)
+def _glob_body_to_regex(glob: str) -> str:
+    """Translate a glob into an unanchored regex body (see `_glob_to_regex`)."""
     out: list[str] = []
     i = 0
-    while i < len(expanded):
-        ch = expanded[i]
-        if expanded[i : i + 3] == "**/" or expanded[i : i + 3] == "**\\":
+    while i < len(glob):
+        ch = glob[i]
+        if glob[i : i + 3] == "**/" or glob[i : i + 3] == "**\\":
             # `**/` consumed greedily: matches "" or "any/path/"
             out.append("(?:.*/)?")
             i += 3
-        elif expanded[i : i + 2] == "**":
+        elif glob[i : i + 2] == "**":
             out.append(".*")
             i += 2
-        elif expanded[i : i + 3] == "(?:":
-            # Internal brace-expansion token, not a glob `?` wildcard.
-            out.append("(?:")
-            i += 3
         elif ch == "*":
             out.append("[^/]*")
             i += 1
         elif ch == "?":
             out.append("[^/]")
             i += 1
-        elif ch in ("(", ")", "|", "\\"):
-            # already-expanded brace tokens; keep regex semantics
-            out.append(ch)
-            i += 1
+        elif ch == "{" and "}" in glob[i:]:
+            j = glob.index("}", i)
+            alts = glob[i + 1 : j].split(",")
+            out.append("(?:" + "|".join(_glob_body_to_regex(a.strip()) for a in alts) + ")")
+            i = j + 1
         elif ch == "[":
             # Char class — copy verbatim until matching ]
-            j = expanded.find("]", i)
+            j = glob.find("]", i)
             if j == -1:
                 out.append(re.escape(ch))
                 i += 1
             else:
-                out.append(expanded[i : j + 1])
+                out.append(glob[i : j + 1])
                 i = j + 1
         else:
             out.append(re.escape(ch))
             i += 1
-    regex = "^" + "".join(out) + "$"
-    return re.compile(regex)
+    return "".join(out)
 
 
 _GLOB_CACHE: dict[str, re.Pattern[str]] = {}

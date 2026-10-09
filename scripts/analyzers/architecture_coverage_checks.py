@@ -399,8 +399,9 @@ def _scan_file_for_rule(rel: str, lines: list[str], rule: CompiledRule) -> Patte
 
 def _cooccurrence_satisfied(hits: PatternHits, window: int) -> list[tuple[str, int, str]]:
     """Return the subset of positive hits whose line is within +/- window
-    lines of a cooccurrence hit in the same file."""
-    if window <= 0 or not hits.cooccurrence:
+    lines of a cooccurrence hit in the same file. Without any cooccurrence hit
+    no positive hit qualifies; a window of 0 disables the requirement."""
+    if window <= 0:
         return hits.positive[:]
     matched: list[tuple[str, int, str]] = []
     by_file: dict[str, list[int]] = {}

@@ -210,6 +210,24 @@ def test_load_config_defaults_when_no_file(tmp_path, monkeypatch):
     assert cfg["topics"] == {}
 
 
+def test_load_config_applies_org_profile_when_no_file(tmp_path, monkeypatch):
+    """An unreadable steering_keywords.json must not hide the org profile:
+    activation and the org's own baseline still apply."""
+    root = tmp_path / "empty-plugin"
+    root.mkdir()
+    monkeypatch.setattr(ss, "_plugin_roots", lambda: [str(root)])
+    monkeypatch.setattr(
+        ss,
+        "_load_org_profile_coach",
+        lambda: {"enabled_by_default": True, "baseline": "Org baseline text"},
+    )
+    monkeypatch.delenv("APPSEC_COACH", raising=False)
+    cfg = ss._load_config()
+    assert cfg["_org_profile_security_coach"]["enabled_by_default"] is True
+    assert cfg["baseline"] == "Org baseline text"
+    assert cfg["code_keywords"] == set(ss._DEFAULT_CODE)
+
+
 def test_load_config_old_schema_code_action_strong(tmp_path, monkeypatch):
     """Old schema keys: code / action / strong (lines 224-225, 229-230, 239-241)."""
     root = tmp_path / "plugin"

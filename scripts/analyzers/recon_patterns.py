@@ -436,7 +436,7 @@ _CAT9_AUTH_REQUEST = re.compile(
 _CAT9_IMPLICIT = re.compile(
     r"(?i)(response[_-]?type\s*[:=]\s*['\"]?(?:token|id_token\s+token|token\s+id_token)\b|"
     r"responseType\s*[:=]\s*['\"]?(?:token|id_token\s+token|token\s+id_token)\b|"
-    r"#(?:access_token|id_token)=|location\.hash[^\\n]*(?:access_token|id_token))"
+    r"#(?:access_token|id_token)=|location\.hash[^\n]*(?:access_token|id_token))"
 )
 _CAT9_CODE_FLOW = re.compile(
     r"(?i)(response[_-]?type\s*[:=]\s*['\"]?code\b|responseType\s*[:=]\s*['\"]?code\b|"
