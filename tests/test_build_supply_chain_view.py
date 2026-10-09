@@ -351,8 +351,30 @@ def test_a_workflow_boundary_maps_to_its_ci_system_not_to_the_repository_row(tmp
     assert "repository" not in _mapped(view) and "execution" not in _mapped(view)
     ci = next(e for e in view["elements"] if e["id"] == "ci:github-actions")
     assert ci["boundaries"] == [
-        {"id": "tb-2", "confidence": "inferred", "evidence": {"file": ".github/workflows/publish.yml", "line": 8}}
+        {
+            "id": "tb-2",
+            "confidence": "inferred",
+            "crossing": "ingress",
+            "evidence": {"file": ".github/workflows/publish.yml", "line": 8},
+        }
     ]
+
+
+@pytest.mark.parametrize(
+    ("frm", "to", "crossing"),
+    [
+        ("external", "release", "ingress"),  # a supplier enters the build
+        ("release", "external", "egress"),  # a push leaves it for a registry
+        ("release", "api", "egress"),  # a deploy step reaches the runtime
+    ],
+)
+def test_a_mapped_boundary_says_whether_it_enters_or_leaves_the_build(frm, to, crossing):
+    inventory = {"ci": [{"system": "Jenkins", "source": "Jenkinsfile"}]}
+    model = _model([])
+    model["trust_boundaries"] = [_boundary("tb-1", "Jenkinsfile", **{"from": frm, "to": to})]
+    view = _view(model, {}, inventory)
+    rows = [b for e in view["elements"] for b in e.get("boundaries") or []]
+    assert [(b["id"], b["crossing"]) for b in rows] == [("tb-1", crossing)]
 
 
 @pytest.mark.parametrize(

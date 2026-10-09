@@ -39,10 +39,11 @@
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["id", "confidence", "evidence"],
+              "required": ["id", "confidence", "crossing", "evidence"],
               "properties": {
                 "id": {"type": "string", "pattern": "^tb-\\d+$"},
                 "confidence": {"enum": ["confirmed", "inferred", "unknown"]},
+                "crossing": {"description": "ingress enters the build, egress leaves it toward a release target; Figure 1b draws the boundary at that column border.", "enum": ["ingress", "egress"]},
                 "evidence": {"$ref": "#/$defs/source"}
               }
             }

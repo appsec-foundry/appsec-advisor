@@ -16,7 +16,8 @@ of the sources and one lane above the zones.
 
 Gates: the geometry gate rejects crossing lines, lines through foreign boxes,
 texts or badges, badges touching arrowheads, overflowing text, attack routes
-over a foreign zone border and content outside the canvas. The legibility gate
+over a foreign zone border, boundary lines through boxes, texts, badges or
+along a flow, and content outside the canvas. The legibility gate
 rejects any text whose effective size at a supported display width falls below
 ``MIN_EFFECTIVE_PX``.
 """
@@ -57,6 +58,7 @@ ZTOP = 64
 BOX_TOP = 110
 ARROW = 10
 BADGE_R = 8
+BOUNDARY_INSET = 4  # boundary line distance left of the zone it leads into
 
 INK, MUTED, RED, FLOW, OK, NAVY = "#1f2a37", "#5b6675", "#9c3d3d", "#6b7a8c", "#3f8a4f", "#22344a"
 SEV = {"Critical": "#b03a3a", "High": "#d08a3a", "Medium": "#c9a43a", "Low": "#7a8a99", "Informational": "#9aa5b1"}
@@ -139,6 +141,7 @@ class Canvas:
         self.zones: dict[str, tuple[float, float, float, float]] = {}
         self.badges: dict[str, tuple[float, float, float, float]] = {}
         self.edges: list[dict[str, Any]] = []
+        self.boundaries: list[tuple[float, float, float]] = []  # (x, top, bottom) of each boundary line
         self.min_font = 99.0
 
     def text(
@@ -254,8 +257,6 @@ def _box_lines(element: dict, findings: list[dict]) -> list[tuple[str, Any]]:
     for fact in (element.get("facts") or [])[: CAPS["facts_per_row"]]:
         if fact != element.get("detail"):
             lines.append(("detail", fact))  # an inventory fact, not a finding
-    for boundary in element.get("boundaries") or []:
-        lines.append(("boundary", _boundary_text(boundary)))
     for row in _finding_lines(findings):
         lines.append(("fact", row))
     return lines
@@ -280,9 +281,6 @@ def _measure(lines, width) -> list[tuple[str, Any, float]]:
         elif role == "detail":
             for part in wrap(payload, FONT["detail"], width - 20):
                 out.append(("detail", part, 12.5))
-        elif role == "boundary":
-            for part in wrap(payload, FONT["fact"], width - 20, True):
-                out.append(("boundary", part, 13.0))
         elif role == "fact":
             sev, text, ref = payload
             ref_w = text_width(ref, FONT["label"], True) + 8 if ref else 0
@@ -364,7 +362,8 @@ def render(view: dict, actor: dict | None, scenario_numbers: list[str], project:
     layout = _place(plan, x, widths)
     problems = list(layout["problems"])
     height_diagram = max(layout["bottom"] + 30, BOX_TOP + 160)
-    legend_svg, legend_height, legend_canvas = _legend(view, plan, actor, scenario_numbers, width)
+    borders = _boundary_borders(view, x)
+    legend_svg, legend_height, legend_canvas = _legend(view, plan, actor, scenario_numbers, width, bool(borders))
     height = round(height_diagram + 16 + legend_height + 20)
 
     cv.parts.append(
@@ -408,6 +407,7 @@ def render(view: dict, actor: dict | None, scenario_numbers: list[str], project:
         cv.zones[column] = (zx, ZTOP, zw, zh)
         cv.text(x[column] - 4, ZTOP + 17, title, FONT["zone"], weight="bold", fill=stroke)
         cv.text(x[column] - 4, ZTOP + 30, sub, FONT["zone_sub"], fill=MUTED, italic=True)
+    _draw_boundaries(cv, borders, layout["bottom"] + 16)
 
     for key, box in layout["boxes"].items():
         _draw_box(cv, key, box, plan, view)
@@ -415,7 +415,7 @@ def render(view: dict, actor: dict | None, scenario_numbers: list[str], project:
         _draw_actor(cv, actor, scenario_numbers, x["attacker"], widths["attacker"], layout)
 
     highlighted = {(s["from"], s["to"]): s["n"] for s in (view.get("highlighted_path") or {}).get("steps") or []}
-    _draw_edges(cv, view, plan, layout, highlighted, problems)
+    _draw_edges(cv, view, plan, layout, highlighted, problems, [border["x"] for border in borders.values()])
     if actor:
         _draw_entries(cv, view, layout, x, widths, problems)
 
@@ -540,8 +540,6 @@ def _draw_lines(cv, key, x, y, w, measured):
             cv.text(x + w / 2, y + 12, payload, FONT["box"], weight="bold", anchor="middle", owner=key)
         elif role == "detail":
             cv.text(x + w / 2, y + 10, payload, FONT["detail"], fill=MUTED, anchor="middle", italic=True, owner=key)
-        elif role == "boundary":
-            cv.text(x + w / 2, y + 10, payload, FONT["fact"], weight="bold", fill=RED, anchor="middle", owner=key)
         elif role == "fact":
             sev, text, ref = payload
             cv.mark(x + 10, y + 10, sev)
@@ -575,6 +573,35 @@ def _draw_box(cv, key, box, plan, view):
         stroke, sw = NAVY, 2.2
     cv.rect(x, y, w, h, stroke, fill, sw=sw)
     _draw_lines(cv, key, x, y + 6, w, box["measured"])
+
+
+def _boundary_borders(view, x) -> dict[str, dict[str, Any]]:
+    """The column borders a mapped build boundary crosses: into the build, or out to the release artifacts.
+
+    One line per border however many boundaries cross it, as in Figure 1a; the
+    IDs go into the tooltip and the report catalogue, never onto the drawing.
+    """
+    borders: dict[str, dict[str, Any]] = {}
+    for element in view["elements"]:
+        for boundary in element.get("boundaries") or []:
+            column = "build" if boundary["crossing"] == "ingress" else "artifacts"
+            border = borders.setdefault(column, {"x": x[column] - ZONE_PAD - BOUNDARY_INSET, "ids": []})
+            if boundary["id"] not in border["ids"]:
+                border["ids"].append(boundary["id"])
+    return borders
+
+
+def _draw_boundaries(cv, borders, bottom):
+    for column, border in borders.items():
+        bx, ids = border["x"], sorted(border["ids"], key=lambda tid: int(tid.split("-")[1]))
+        cv.parts.append(f"<g><title>{html.escape('Trust boundary crossing: ' + ', '.join(ids))}</title>")
+        cv.parts.append(
+            f'<path d="M {bx:.1f} {ZTOP:.1f} V {bottom:.1f}" fill="none" stroke="{RED}" stroke-width="2.2" '
+            'stroke-dasharray="6 5"/>'
+        )
+        cv.parts.append("</g>")
+        cv.text(bx, bottom + 12, "TRUST BOUNDARY", FONT["label"], weight="bold", fill=RED, anchor="middle")
+        cv.boundaries.append((bx, ZTOP, bottom))
 
 
 def _draw_actor(cv, actor, numbers, x, w, layout):
@@ -682,7 +709,7 @@ def _route(edges, out_y, in_y, boxes, problems):
             e["points"] = [(sx, out_y[i]), (lane, out_y[i]), (lane, in_y[i]), (tx, in_y[i])]
 
 
-def _draw_edges(cv, view, plan, layout, highlighted, problems):
+def _draw_edges(cv, view, plan, layout, highlighted, problems, stops=()):
     boxes = layout["boxes"]
     drawable = []
     for edge in view["edges"]:
@@ -712,17 +739,24 @@ def _draw_edges(cv, view, plan, layout, highlighted, problems):
             cv.badge(key, points[0][0] + 16, points[0][1], str(edge["step"]), filled=False)
         elif edge["status"] == "unknown":
             cv.path(points, "#9aa5b1", 1.4, "flow", dash="5 4")
-            _edge_label(cv, points, edge["label"], key)
+            _edge_label(cv, points, edge["label"], key, stops)
         else:
             cv.path(points, FLOW, 1.5, "flow")
-            _edge_label(cv, points, edge["label"], key)
+            _edge_label(cv, points, edge["label"], key, stops)
         cv.edges.append({"key": key, "from": edge["src_box"], "to": edge["dst_box"], "points": points, "attack": False})
 
 
-def _edge_label(cv, points, label, key):
+def _edge_label(cv, points, label, key, stops=()):
+    """Centre the label on the last horizontal run, left of any boundary line it crosses."""
     (ax, ay), (bx, by) = points[-2], points[-1]
-    if ay == by and label and text_width(label, FONT["label"]) + 8 <= abs(bx - ax):
-        cv.text((ax + bx) / 2, by - 6, label, FONT["label"], fill=MUTED, anchor="middle", owner=key)
+    lo, hi = sorted((ax, bx))
+    pad = 8
+    for stop in stops:
+        if lo < stop < hi:
+            # No arrowhead shares the run left of the line, so a narrower margin suffices.
+            hi, pad = stop - 2, 4
+    if ay == by and label and text_width(label, FONT["label"]) + pad <= hi - lo:
+        cv.text((lo + hi) / 2, by - 6, label, FONT["label"], fill=MUTED, anchor="middle", owner=key)
 
 
 def _box_of(element_id, boxes):
@@ -864,6 +898,21 @@ def _geometry_gate(cv, width, height) -> list[str]:
         for px, py in e1["points"]:
             if not (0 <= px <= width and 0 <= py <= height):
                 problems.append(f"{e1['key']} leaves the canvas")
+    for bx, top, bottom in cv.boundaries:
+        line = ((bx, top), (bx, bottom))
+        for key, box in cv.boxes.items():
+            if _hits(line, box, 0):
+                problems.append(f"boundary line at x={bx:.0f} runs through box {key}")
+        for text, box, _owner in cv.texts:
+            if _hits(line, box):
+                problems.append(f"boundary line at x={bx:.0f} runs through text {text!r}")
+        for key, box in cv.badges.items():
+            if _hits(line, box):
+                problems.append(f"boundary line at x={bx:.0f} runs through badge {key}")
+        for edge in cv.edges:
+            for (ax, ay), (cx, cy) in _segs(edge["points"]):
+                if ax == cx and abs(ax - bx) < 3 and max(min(ay, cy), top) < min(max(ay, cy), bottom):
+                    problems.append(f"boundary line at x={bx:.0f} runs along {edge['key']}")
     for text, box, owner in cv.texts:
         if owner in cv.boxes and not _inside(box, cv.boxes[owner]):
             problems.append(f"text {text!r} overflows box {owner}")
@@ -886,7 +935,7 @@ def _legibility_gate(cv, width) -> list[str]:
 # ---- legend ------------------------------------------------------------------------------
 
 
-def _legend(view, plan, actor, numbers, width):
+def _legend(view, plan, actor, numbers, width, boundaries=False):
     cv = Canvas()
     elements = plan["elements"]
     half = (width - 60) / 2
@@ -975,8 +1024,15 @@ def _legend(view, plan, actor, numbers, width):
         ("High", "High finding"),
         ("Medium", "Medium finding or decision"),
     ]
+    if boundaries:
+        rows.insert(4, ("boundary", "trust boundary crossed between these columns"))
     for sym, label in rows:
-        if sym == "flow":
+        if sym == "boundary":
+            cv.parts.append(
+                f'<path d="M {sx:.1f} {y - 4:.1f} H {sx + 44:.1f}" fill="none" stroke="{RED}" stroke-width="2.2" '
+                'stroke-dasharray="6 5"/>'
+            )
+        elif sym == "flow":
             cv.path([(sx, y - 4), (sx + 44, y - 4)], FLOW, 1.5, "flow")
         elif sym == "unknown":
             cv.path([(sx, y - 4), (sx + 44, y - 4)], "#9aa5b1", 1.4, "flow", dash="5 4")

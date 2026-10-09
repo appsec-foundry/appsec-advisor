@@ -403,9 +403,15 @@ def _map_boundaries(model: dict, elements: dict[str, dict]) -> None:
     sits in one CI system's definition marks that system, and an input or
     artifact only when the boundary cites the exact line of one of its fact
     rows. The aggregate repository row and the running system are never
-    mapped; a boundary nothing cites stays in the report catalogue.
+    mapped; a boundary nothing cites stays in the report catalogue. Each row
+    says whether the crossing enters the build or leaves it, which decides the
+    column border Figure 1b draws it on.
     """
+    build_ids = build_component_ids(model.get("components") or [])
     for boundary in _build_boundaries(model):
+        source, target = boundary.get("from"), boundary.get("to")
+        leaves = target == "external" or (source in build_ids and target not in build_ids)
+        crossing = "egress" if leaves else "ingress"
         for element in elements.values():
             if element["kind"] in {"repository", "execution"}:
                 continue
@@ -426,6 +432,7 @@ def _map_boundaries(model: dict, elements: dict[str, dict]) -> None:
                     "confidence": boundary.get("confidence")
                     if boundary.get("confidence") in {"confirmed", "inferred"}
                     else "unknown",
+                    "crossing": crossing,
                     "evidence": _source(cited),
                 }
             )

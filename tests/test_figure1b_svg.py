@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+import pytest
 import renderers.figure1b_svg as figure
 from model.build_supply_chain_view import build_view
 
@@ -176,24 +177,87 @@ def test_the_table_form_carries_elements_relationships_entries_and_the_path():
     assert "1. PyPI → GitHub Actions (`.github/workflows/build.yml:10`)" in table
 
 
-def test_a_mapped_boundary_is_drawn_on_its_element_and_listed_in_the_table():
+def _boundary_model(*rows):
     model = _model()
     model["trust_boundaries"] = [
         {
-            "id": "tb-4",
-            "from": "external",
-            "to": "pipeline",
+            "id": tid,
+            "from": frm,
+            "to": to,
             "kind": "build",
             "confidence": "inferred",
             "resolution_status": "resolved",
             "evidence": [{"file": ".github/workflows/build.yml", "line": 5}],
         }
+        for tid, frm, to in rows
     ]
-    view = build_view(model, _facts(), {})
+    return model
+
+
+def _boundary_lines(svg):
+    """x of each drawn boundary line and the IDs its tooltip names."""
+    return [
+        (float(x), ids)
+        for ids, x in re.findall(r"<title>Trust boundary crossing: ([^<]*)</title>\s*<path d=\"M ([\d.]+) ", svg)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("rows", "columns"),
+    [
+        ([("tb-4", "external", "pipeline")], {"tb-4": "build"}),
+        ([("tb-9", "pipeline", "external")], {"tb-9": "artifacts"}),
+        ([("tb-2", "external", "pipeline"), ("tb-3", "pipeline", "external")], {"tb-2": "build", "tb-3": "artifacts"}),
+    ],
+    ids=["ingress", "egress", "both-borders"],
+)
+def test_a_mapped_boundary_is_one_line_at_the_column_border_it_crosses(rows, columns):
+    view = build_view(_boundary_model(*rows), _facts(), {})
     svg = _render(view)
-    assert "Trust boundary tb-4 · inferred" in svg
-    assert "1 trust boundary mapped here" in svg
+    zones = {
+        title: float(x)
+        for x, title in re.findall(r'<text x="([\d.]+)" y="81.0"[^>]*>([^<]+)</text>', svg)
+        if title in {"Build", "Release artifacts"}
+    }
+    lines = _boundary_lines(svg)
+    assert sorted(ids for _x, ids in lines) == sorted(columns)
+    for x, ids in lines:
+        column = "Build" if columns[ids] == "build" else "Release artifacts"
+        # Just left of the zone it leads into; the zone title sits 4 px left of the column.
+        assert x == pytest.approx(zones[column] + 4 - figure.ZONE_PAD - figure.BOUNDARY_INSET, abs=0.1)
+    assert "Trust boundary tb-" not in re.sub(r"<title>[^<]*</title>", "", svg)
+    assert "trust boundary crossed between these columns" in svg
+    assert svg.count(">TRUST BOUNDARY<") == len(lines)
+
+
+def test_one_line_carries_every_boundary_that_crosses_its_border():
+    view = build_view(
+        _boundary_model(("tb-12", "external", "pipeline"), ("tb-4", "external", "pipeline")), _facts(), {}
+    )
+    svg = _render(view)
+    assert _boundary_lines(svg) == [(_boundary_lines(svg)[0][0], "tb-4, tb-12")]
+    assert "2 trust boundaries mapped here" in svg
+
+
+def test_without_a_mapped_boundary_no_line_and_no_legend_row():
+    svg = _render(build_view(_model(), _facts(), {}))
+    assert "Trust boundary crossing" not in svg and "TRUST BOUNDARY" not in svg
+    assert "trust boundary crossed between these columns" not in svg
+
+
+def test_the_table_form_still_names_each_mapped_boundary():
+    view = build_view(_boundary_model(("tb-4", "external", "pipeline")), _facts(), {})
     assert "Trust boundary tb-4 · inferred" in figure.render_table(view, ACTOR, ["⑤"])
+
+
+def test_a_boundary_line_through_a_label_or_along_a_flow_fails_the_geometry_gate():
+    cv = figure.Canvas()
+    cv.text(100, 50, "fetched", figure.FONT["label"], owner="e1")
+    cv.edges.append({"key": "e2", "from": "a", "to": "b", "points": [(200, 0), (200, 90)], "attack": False})
+    cv.boundaries += [(110, 0, 100), (201, 0, 100)]
+    problems = figure._geometry_gate(cv, 400, 120)
+    assert any("runs through text 'fetched'" in p for p in problems)
+    assert any("runs along e2" in p for p in problems)
 
 
 def test_short_title_keeps_titles_without_a_location():
