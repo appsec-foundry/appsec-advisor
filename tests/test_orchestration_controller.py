@@ -1147,6 +1147,7 @@ def test_prepare_abuse_never_redispatches_a_finalized_verdict(tmp_path, monkeypa
     _verdict(output, "AC-T-001", [{"step": 1, "verdict": "confirmed", "reason": "sink reachable"}])
     _verdict(output, "AC-T-002", [{"step": 1, "verdict": "inconclusive"}])
     _write_abuse_matches(output, ["AC-T-001", "AC-T-002"])
+    _write_abuse_projections(output, ["AC-T-001"])  # what AC-T-001 was verified with
 
     def fake_script(name, args, **kwargs):
         if "list-candidates" in args:
@@ -1166,6 +1167,8 @@ def test_prepare_abuse_never_redispatches_a_finalized_verdict(tmp_path, monkeypa
 def test_prepare_abuse_skips_fan_out_when_every_candidate_is_verified(tmp_path, monkeypatch):
     output = _abuse_output(tmp_path)
     _verdict(output, "AC-T-001", [{"step": 1, "verdict": "confirmed", "reason": "sink reachable"}])
+    _write_abuse_matches(output, ["AC-T-001"])
+    _write_abuse_projections(output, ["AC-T-001"])
 
     def fake_script(name, args, **kwargs):
         return _completed("AC-T-001\n" if "list-candidates" in args else "")
@@ -1174,6 +1177,32 @@ def test_prepare_abuse_skips_fan_out_when_every_candidate_is_verified(tmp_path, 
     action = controller.prepare_abuse(output)
     assert action["action"] == "run_gate"
     assert action["candidates"] == []
+    controller._validate_action(action)
+
+
+@pytest.mark.parametrize("change", ["case edited", "projection missing"])
+def test_prepare_abuse_reverifies_a_finalized_verdict_whose_input_changed(tmp_path, monkeypatch, change):
+    output = _abuse_output(tmp_path)
+    _verdict(output, "AC-T-001", [{"step": 1, "verdict": "confirmed", "reason": "sink reachable"}])
+    _write_abuse_matches(output, ["AC-T-001"])
+    _write_abuse_projections(output, ["AC-T-001"])
+    if change == "case edited":
+        _write_abuse_matches(output, ["AC-T-001"], {"AC-T-001": "Edited after verification"})
+    else:
+        (output / ".dispatch-context/abuse-cases/AC-T-001.json").unlink()
+
+    def fake_script(name, args, **kwargs):
+        if "list-candidates" in args:
+            return _completed("AC-T-001\n")
+        if name == "contexts/build_abuse_case_contexts.py":
+            _write_abuse_projections(output, ["AC-T-001"])
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+    action = controller.prepare_abuse(output)
+    assert action["action"] == "dispatch_parallel"
+    assert action["candidates"] == ["AC-T-001"]
+    assert any("re-verifying: AC-T-001" in receipt for receipt in action["receipts"])
     controller._validate_action(action)
 
 

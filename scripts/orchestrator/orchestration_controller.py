@@ -6569,6 +6569,31 @@ _ABUSE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 # ---------------------------------------------------------------------------
 
 
+def _abuse_verdict_input_is_current(output_dir: Path, candidate: str, repo_root: Path) -> bool:
+    """Whether a verdict's verifier input still equals what this run would dispatch.
+
+    The projection a verifier was dispatched with stays at its fixed path, so
+    its ``candidate`` block is compared with a fresh projection of the current
+    match set: the case definition, preselected sources and their source
+    windows. A changed case file or changed evidence makes the verdict stale;
+    a missing or unreadable projection counts as changed.
+    """
+    from contexts.build_abuse_case_contexts import AbuseContextError, project_candidate  # noqa: PLC0415
+
+    try:
+        dispatched = json.loads(
+            (output_dir / f".dispatch-context/abuse-cases/{candidate}.json").read_text(encoding="utf-8")
+        )
+        expected = project_candidate(
+            (output_dir / ".abuse-case-matches.json").read_bytes(), candidate, repo_root=repo_root
+        )
+    except (OSError, ValueError, AbuseContextError):
+        return False
+    return isinstance(dispatched, dict) and dispatched.get("candidate") == json.loads(
+        json.dumps(expected.get("candidate"))
+    )
+
+
 def _finalized_abuse_verdicts(output_dir: Path, candidates: list[str]) -> list[str]:
     """Candidate ids whose verdict file on disk is already fully decided.
 
@@ -6769,7 +6794,11 @@ def prepare_abuse(output_dir: Path, restrict_to: list[str] | None = None) -> dic
         rejected = None
     if isinstance(rejected, list) and rejected:
         receipts.append(f"rejected repository case files: {len(rejected)} (run issues name each file)")
-    if already := _finalized_abuse_verdicts(output_dir, candidates):
+    already = _finalized_abuse_verdicts(output_dir, candidates)
+    if stale := [item for item in already if not _abuse_verdict_input_is_current(output_dir, item, Path(repo_root))]:
+        receipts.append("case or evidence changed since verification, re-verifying: " + ", ".join(stale))
+        already = [item for item in already if item not in stale]
+    if already:
         receipts.append("already verified, not re-dispatched: " + ", ".join(already))
         candidates = [item for item in candidates if item not in already]
     if restrict_to is not None:
