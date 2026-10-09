@@ -12,19 +12,23 @@ The facts are also the input of the §6.11 supply-chain view. They are written
 under ``supply_chain_facts`` in ``$OUTPUT_DIR/.config-scan-findings.json`` and
 shaped by ``$defs/supplyChainFacts`` in schemas/config-scan-findings.schema.yaml:
 
-- ``workflows``: one row per CI workflow — token permissions and whether it
-  builds or pushes a container image or publishes a package.
+- ``workflows``: one row per CI definition (a GitHub workflow or a root
+  ``.gitlab-ci.yml``) — token permissions and whether it builds or pushes a
+  container image or publishes a package.
 - ``inputs``: third-party code entering the build — GitHub Actions, container
-  base images and piped remote installers — each with its pinning.
+  base images and GitLab job and service images, piped remote installers and
+  GitLab ``include:`` entries from outside the repository — each with its
+  pinning.
 - ``outputs``: artifacts the pipeline produces — container images (pushed or
   not) and published packages.
-- ``installs``: package-install steps in workflows and Dockerfiles, with the
-  ecosystem and whether the command enforces the lockfile.
+- ``installs``: package-install steps in CI definitions and Dockerfiles, with
+  the ecosystem and whether the command enforces the lockfile.
 - ``capabilities``: ``sbom``, ``image_signing`` and ``dependency_updates``,
   each with the evidence that establishes it and the files that were searched.
 
-A workflow row carries the ``job`` it sits in, so the supply-chain view joins an
-input, an install and an output only when they share a job (RA-30). A container
+A CI row carries the ``job`` it sits in, so the supply-chain view joins an
+input, an install and an output only when they share a job (RA-30). A GitLab
+image, service or include declared globally or under ``default:`` names no job. A container
 output names the Dockerfile it builds and the image it pushes to when the
 workflow states them.
 
@@ -55,6 +59,8 @@ FACTS_VERSION = 1
 SEARCHED_FILES_LISTED = 50
 
 WORKFLOW_GLOBS = ("**/.github/workflows/*.yml", "**/.github/workflows/*.yaml")
+# GitLab reads its pipeline definition from the repository root.
+GITLAB_CI_PATHS = (".gitlab-ci.yml", ".gitlab-ci.yaml")
 DOCKERFILE_GLOBS = ("**/Dockerfile", "**/Dockerfile.*", "**/*.dockerfile")
 BUILD_SCRIPT_GLOBS = ("**/package.json", "**/Makefile")
 DEPENDABOT_PATHS = (".github/dependabot.yml", ".github/dependabot.yaml")
@@ -78,7 +84,8 @@ _IMAGE_SIGNING = (
 _IMAGE_BUILD = re.compile(
     r"docker/build-push-action|docker\s+(?:buildx\s+)?build\b|buildah\s+(?:bud|build)\b|kaniko|\bko\s+build\b|\bjib\b"
 )
-_IMAGE_PUSH = re.compile(r"(?m)^\s*push\s*:\s*true\b|docker\s+push\b|buildah\s+push\b|crane\s+push\b")
+# kaniko pushes every --destination it is given.
+_IMAGE_PUSH = re.compile(r"(?m)^\s*push\s*:\s*true\b|docker\s+push\b|buildah\s+push\b|crane\s+push\b|--destination[ =]")
 _PACKAGE_PUBLISH = (
     ("npm", re.compile(r"\b(?:npm|pnpm)\s+publish\b|\byarn\s+(?:npm\s+)?publish\b")),
     ("pypi", re.compile(r"\btwine\s+upload\b|\bpoetry\s+publish\b|\buv\s+publish\b")),
@@ -91,11 +98,29 @@ _FROM = re.compile(r"(?im)^\s*FROM\s+(?:--platform=\S+\s+)?(\S+)(?:\s+AS\s+(\S+)
 _REMOTE_INSTALLER = re.compile(r"\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z|da)?sh\b")
 _JOBS_KEY = re.compile(r"(?m)^jobs\s*:\s*$")
 _JOB_KEY = re.compile(r"(?m)^([ \t]+)([A-Za-z0-9_.-]+)\s*:\s*$")
-_DOCKERFILE_ARG = re.compile(r"(?m)^\s*file\s*:\s*['\"]?([^\s'\"#]+)|(?:\s-f|--file)[ =]['\"]?([^\s'\"]+)")
+_DOCKERFILE_ARG = re.compile(r"(?m)^\s*file\s*:\s*['\"]?([^\s'\"#]+)|(?:\s-f|--file|--dockerfile)[ =]['\"]?([^\s'\"]+)")
+# GitLab checks the repository out at $CI_PROJECT_DIR.
+_PROJECT_DIR = re.compile(r"^\$\{?CI_PROJECT_DIR\}?/")
 _CONTEXT_ARG = re.compile(r"(?m)^\s*context\s*:\s*['\"]?([^\s'\"#]+)")
 _TAGS_INLINE = re.compile(r"(?m)^\s*tags\s*:\s*['\"]?([^\s'\"#|>,]+)")
 _TAGS_BLOCK = re.compile(r"(?m)^\s*tags\s*:\s*[|>]?-?\s*\n\s*(?:-\s*)?['\"]?([^\s'\"#,]+)")
-_PUSH_REF = re.compile(r"\b(?:docker|buildah|podman)\s+push\s+['\"]?([^\s'\"]+)")
+_PUSH_REF = re.compile(r"\b(?:docker|buildah|podman)\s+push\s+['\"]?([^\s'\"]+)|--destination[ =]['\"]?([^\s'\"]+)")
+# Top-level .gitlab-ci.yml keys that are not jobs.
+_GITLAB_GLOBALS = frozenset(
+    {
+        "default",
+        "include",
+        "stages",
+        "variables",
+        "workflow",
+        "image",
+        "services",
+        "before_script",
+        "after_script",
+        "cache",
+        "spec",
+    }
+)
 # (ecosystem, install command, lockfile-enforcing form or None when the tool always reads its lockfile)
 _INSTALLS = (
     (
@@ -267,12 +292,13 @@ def _image_destination(reference: str) -> dict | None:
     return {"registry": registry[:MAX_REFERENCE], "repository": repository[:MAX_REFERENCE]}
 
 
-def _built_dockerfile(job_text: str, rel: str, dockerfiles: set[str]) -> str | None:
-    """The Dockerfile a job builds: an explicit ``file``/``-f`` argument, else ``<context>/Dockerfile``."""
-    root = rel.split(".github/workflows/", 1)[0]
+def _built_dockerfile(job_text: str, root: str, dockerfiles: set[str]) -> str | None:
+    """The Dockerfile a job builds: an explicit ``file``/``-f`` argument, else ``<context>/Dockerfile``.
+
+    ``root`` is the directory prefix the CI definition resolves paths against."""
     explicit = _DOCKERFILE_ARG.search(job_text)
     if explicit:
-        candidate = (explicit.group(1) or explicit.group(2) or "").removeprefix("./")
+        candidate = _PROJECT_DIR.sub("", explicit.group(1) or explicit.group(2) or "").removeprefix("./")
     else:
         context = _CONTEXT_ARG.search(job_text)
         base = (context.group(1) if context else ".").removeprefix("./").strip("/")
@@ -302,6 +328,58 @@ def _installs(rel: str, text: str, spans: list[tuple[str, int, int]]) -> list[di
     return rows
 
 
+def _artifacts(
+    rel: str,
+    text: str,
+    spans: list[tuple[str, int, int]],
+    root: str,
+    dockerfiles: set[str],
+    destinations: tuple[re.Pattern[str], ...],
+    image_lines: frozenset[int] = frozenset(),
+) -> tuple[dict, list[dict]]:
+    """The build flags of one CI definition and the image and package outputs it produces.
+
+    ``destinations`` name the patterns that state where an image is pushed. A
+    build outside every job reads only its own line, so a job's arguments never
+    describe a step they do not belong to. A builder named on one of
+    ``image_lines`` is the job's runtime image, not the step that builds."""
+    builds = [m for m in _IMAGE_BUILD.finditer(text) if _line(text, m.start()) not in image_lines]
+    pushed = bool(builds and _IMAGE_PUSH.search(text))
+    published = [(name, m) for name, pattern in _PACKAGE_PUBLISH for m in [pattern.search(text)] if m]
+    flags = {
+        "builds_container_image": bool(builds),
+        "pushes_container_image": pushed,
+        "publishes_packages": sorted({name for name, _ in published}),
+    }
+    outputs: list[dict] = []
+    for match in builds:
+        job = _job_at(spans, match.start())
+        if any(row.get("job") == job for row in outputs):
+            continue  # one image output per job
+        output = {"kind": "container_image", "file": rel, "line": _line(text, match.start()), "pushed": pushed}
+        if job or not spans:
+            job_text = _span_text(text, spans, match.start())
+        else:
+            line_end = text.find("\n", match.start())
+            job_text = text[text.rfind("\n", 0, match.start()) + 1 : line_end if line_end >= 0 else len(text)]
+        stated = next((m for pattern in destinations for m in [pattern.search(job_text)] if m), None)
+        destination = _image_destination(stated.group(stated.lastindex or 0)) if stated and pushed else None
+        if destination:
+            output["destination"] = destination
+        dockerfile = _built_dockerfile(job_text, root, dockerfiles)
+        if dockerfile:
+            output["dockerfile"] = dockerfile
+        outputs.append(_with_job(output, job))
+    for name, match in published:
+        outputs.append(
+            _with_job(
+                {"kind": "package", "ecosystem": name, "file": rel, "line": _line(text, match.start())},
+                _job_at(spans, match.start()),
+            )
+        )
+    return flags, outputs
+
+
 def _workflows(
     repo_root: Path, files: list[str], dockerfiles: set[str] | None = None
 ) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
@@ -316,39 +394,16 @@ def _workflows(
         except yaml.YAMLError:
             document = None
         spans = _job_spans(text, document)
-        build = _IMAGE_BUILD.search(text)
-        pushed = bool(build and _IMAGE_PUSH.search(text))
-        published = [(name, m) for name, pattern in _PACKAGE_PUBLISH for m in [pattern.search(text)] if m]
-        workflows.append(
-            {
-                "file": rel,
-                "token_permissions": _token_permissions(document),
-                "builds_container_image": bool(build),
-                "pushes_container_image": pushed,
-                "publishes_packages": sorted({name for name, _ in published}),
-            }
+        flags, produced = _artifacts(
+            rel,
+            text,
+            spans,
+            rel.split(".github/workflows/", 1)[0],
+            dockerfiles or set(),
+            (_TAGS_INLINE, _TAGS_BLOCK, _PUSH_REF),
         )
-        for match in _IMAGE_BUILD.finditer(text):
-            job = _job_at(spans, match.start())
-            if any(row.get("job") == job and row["file"] == rel for row in outputs if row["kind"] == "container_image"):
-                continue  # one image output per job
-            output = {"kind": "container_image", "file": rel, "line": _line(text, match.start()), "pushed": pushed}
-            job_text = _span_text(text, spans, match.start())
-            tags = _TAGS_INLINE.search(job_text) or _TAGS_BLOCK.search(job_text) or _PUSH_REF.search(job_text)
-            destination = _image_destination(tags.group(1)) if tags and pushed else None
-            if destination:
-                output["destination"] = destination
-            dockerfile = _built_dockerfile(job_text, rel, dockerfiles or set())
-            if dockerfile:
-                output["dockerfile"] = dockerfile
-            outputs.append(_with_job(output, job))
-        for name, match in published:
-            outputs.append(
-                _with_job(
-                    {"kind": "package", "ecosystem": name, "file": rel, "line": _line(text, match.start())},
-                    _job_at(spans, match.start()),
-                )
-            )
+        workflows.append({"file": rel, "token_permissions": _token_permissions(document), **flags})
+        outputs.extend(produced)
         for match in _USES.finditer(text):
             reference = match.group(1)
             if reference.startswith("./"):
@@ -365,6 +420,159 @@ def _workflows(
                     _job_at(spans, match.start(1)),
                 )
             )
+        inputs.extend(_remote_installers(rel, text, spans))
+        installs.extend(_installs(rel, text, spans))
+    return workflows, inputs, outputs, installs
+
+
+def _gitlab_documents(text: str) -> list[yaml.MappingNode]:
+    """The mapping documents of a GitLab CI file as nodes.
+
+    Composing without constructing keeps the line of every key and accepts
+    GitLab's ``!reference`` tag, which ``safe_load`` rejects."""
+    try:
+        documents = list(yaml.compose_all(text, Loader=yaml.SafeLoader))
+    except yaml.YAMLError:
+        return []
+    return [document for document in documents if isinstance(document, yaml.MappingNode)]
+
+
+def _scalar(node: yaml.Node | None) -> str | None:
+    return node.value if isinstance(node, yaml.ScalarNode) and isinstance(node.value, str) else None
+
+
+def _entry(node: yaml.MappingNode, key: str) -> yaml.Node | None:
+    return next((value for name, value in node.value if _scalar(name) == key), None)
+
+
+def _gitlab_images(rel: str, keyword: str, node: yaml.Node, job: str | None) -> list[dict]:
+    """``image:`` and ``services:`` references: a name, or a mapping with ``name``."""
+    items = node.value if keyword == "services" and isinstance(node, yaml.SequenceNode) else [node]
+    rows = []
+    for item in items:
+        named = _entry(item, "name") if isinstance(item, yaml.MappingNode) else item
+        reference = _scalar(named)
+        if not reference:
+            continue
+        rows.append(
+            _with_job(
+                {
+                    "kind": "base_image",
+                    "reference": reference[:MAX_REFERENCE],
+                    "pinning": _image_pinning(reference),
+                    "file": rel,
+                    "line": named.start_mark.line + 1,
+                },
+                job,
+            )
+        )
+    return rows
+
+
+def _include_reference(item: yaml.Node) -> tuple[str, str] | None:
+    """``(reference, pinning)`` of one ``include:`` entry from outside the repository; None for a local file."""
+    if isinstance(item, yaml.ScalarNode):
+        value = _scalar(item) or ""
+        return (f"remote:{value}", _remote_pinning(value)) if re.match(r"https?://", value) else None
+    if not isinstance(item, yaml.MappingNode):
+        return None
+    for keyword in ("template", "remote", "component", "project"):
+        value = _scalar(_entry(item, keyword))
+        if not value:
+            continue
+        if keyword == "template":
+            return f"template:{value}", "unresolved" if "$" in value else "none"
+        if keyword == "remote":
+            return f"remote:{value}", _remote_pinning(value)
+        if keyword == "component":
+            version = value.rpartition("@")[2] if "@" in value else ""
+            return f"component:{value}", _revision_pinning(version)
+        ref = _scalar(_entry(item, "ref")) or ""
+        files = _entry(item, "file")
+        names = (
+            [_scalar(files)]
+            if isinstance(files, yaml.ScalarNode)
+            else [_scalar(n) for n in getattr(files, "value", [])]
+        )
+        reference = (
+            f"project:{value}"
+            + (f"@{ref}" if ref else "")
+            + (f":{','.join(n for n in names if n)}" if any(names) else "")
+        )
+        return reference, "unresolved" if "$" in value else _revision_pinning(ref)
+    return None
+
+
+def _revision_pinning(revision: str) -> str:
+    if "$" in revision:
+        return "unresolved"
+    if not revision or revision == "~latest":
+        return "none"
+    return _action_pinning(f"ref@{revision}")
+
+
+def _remote_pinning(url: str) -> str:
+    if "$" in url:
+        return "unresolved"
+    return "commit-sha" if re.search(r"/[0-9a-fA-F]{40}/", url) else "none"
+
+
+def _gitlab_includes(rel: str, node: yaml.Node) -> list[dict]:
+    items = node.value if isinstance(node, yaml.SequenceNode) else [node]
+    rows = []
+    for item in items:
+        included = _include_reference(item)
+        if included:
+            reference, pinning = included
+            rows.append(
+                {
+                    "kind": "ci_include",
+                    "reference": reference[:MAX_REFERENCE],
+                    "pinning": pinning,
+                    "file": rel,
+                    "line": item.start_mark.line + 1,
+                }
+            )
+    return rows
+
+
+def _gitlab_pipelines(
+    repo_root: Path, files: list[str], dockerfiles: set[str]
+) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
+    """The facts of each GitLab CI definition, in the shape of the GitHub workflow facts.
+
+    A top-level key is a job unless GitLab reserves it. The job token's scope
+    is a project setting, so the definition never states token permissions."""
+    workflows: list[dict] = []
+    inputs: list[dict] = []
+    outputs: list[dict] = []
+    installs: list[dict] = []
+    for rel in files:
+        text = _read(repo_root, rel)
+        spans: list[tuple[str, int, int]] = []
+        for document in _gitlab_documents(text):
+            entries = [(key, value) for key, value in document.value if _scalar(key)]
+            for index, (key, value) in enumerate(entries):
+                name = _scalar(key)
+                end = entries[index + 1][0].start_mark.index if index + 1 < len(entries) else document.end_mark.index
+                if name == "include":
+                    inputs.extend(_gitlab_includes(rel, value))
+                elif name in ("image", "services"):
+                    inputs.extend(_gitlab_images(rel, name, value, None))
+                elif name == "default" and isinstance(value, yaml.MappingNode):
+                    for keyword in ("image", "services"):
+                        if (node := _entry(value, keyword)) is not None:
+                            inputs.extend(_gitlab_images(rel, keyword, node, None))
+                elif name not in _GITLAB_GLOBALS and isinstance(value, yaml.MappingNode):
+                    spans.append((name, key.start_mark.index, end))
+                    for keyword in ("image", "services"):
+                        if (node := _entry(value, keyword)) is not None:
+                            inputs.extend(_gitlab_images(rel, keyword, node, name))
+        root = rel.rpartition("/")[0] + "/" if "/" in rel else ""
+        images = frozenset(row["line"] for row in inputs if row["file"] == rel and row["kind"] == "base_image")
+        flags, produced = _artifacts(rel, text, spans, root, dockerfiles, (_PUSH_REF,), images)
+        workflows.append({"file": rel, "token_permissions": "unknown", **flags})
+        outputs.extend(produced)
         inputs.extend(_remote_installers(rel, text, spans))
         installs.extend(_installs(rel, text, spans))
     return workflows, inputs, outputs, installs
@@ -463,11 +671,16 @@ def collect(repo_root: Path, inventory: RepoInventory) -> dict[str, Any]:
     workflow_files = _files(repo_root, inventory, WORKFLOW_GLOBS)
     dockerfiles = _files(repo_root, inventory, DOCKERFILE_GLOBS)
     build_scripts = _files(repo_root, inventory, BUILD_SCRIPT_GLOBS)
+    gitlab_files = _files(repo_root, inventory, GITLAB_CI_PATHS)
     workflows, inputs, outputs, installs = _workflows(repo_root, workflow_files, set(dockerfiles))
+    for rows, more in zip(
+        (workflows, inputs, outputs, installs), _gitlab_pipelines(repo_root, gitlab_files, set(dockerfiles))
+    ):
+        rows.extend(more)
     inputs.extend(_base_images(repo_root, dockerfiles))
     for rel in dockerfiles:
         installs.extend(_installs(rel, _read(repo_root, rel), []))
-    build_files = sorted(set(workflow_files) | set(dockerfiles) | set(build_scripts))
+    build_files = sorted(set(workflow_files) | set(gitlab_files) | set(dockerfiles) | set(build_scripts))
     return {
         "version": FACTS_VERSION,
         "workflows": workflows,

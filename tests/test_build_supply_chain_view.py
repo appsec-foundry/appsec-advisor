@@ -453,3 +453,68 @@ def test_a_boundary_without_a_fact_row_on_its_line_marks_only_the_ci_system(tmp_
     model = _model([])
     model["trust_boundaries"] = [_boundary("tb-1", file, line)]
     assert _mapped(_view(model, _facts(repo))) == {"ci:github-actions": ["tb-1"]}
+
+
+GITLAB_RELEASE = """\
+include:
+  - project: platform/pipelines
+    file: /lint.yml
+stages: [ship]
+bundle:
+  stage: ship
+  image: python:3.12
+  script:
+    - pip install -r requirements.txt
+    - docker build -t registry.example.net/team/ledger:1 .
+    - docker push registry.example.net/team/ledger:1
+"""
+
+
+def test_gitlab_facts_are_drawn_on_the_gitlab_system_not_on_github(tmp_path):
+    repo = _repo(
+        tmp_path,
+        {
+            ".gitlab-ci.yml": GITLAB_RELEASE,
+            ".github/workflows/checks.yml": TEST_ONLY,
+            "Dockerfile": "FROM python:3.12\n",
+        },
+    )
+    inventory = {"ci": [{"system": "GitLab CI", "source": ".gitlab-ci.yml", "publishes": ["container registry"]}]}
+    model = _model([], [{"id": "release", "paths": [".gitlab-ci.yml"]}])
+    view = _view(model, _facts(repo), inventory)
+    elements = {e["id"]: e for e in view["elements"]}
+    assert elements["ci:gitlab-ci"]["coverage"] == "full"
+    assert elements["ci:github-actions"]["coverage"] == "full"
+    artifact = "artifact:image:registry-example-net-team-ledger"
+    for source in ("input:package:pip", "input:base_image"):
+        assert _edge(view, source, "ci:gitlab-ci")["status"] == "evidenced"
+    assert _edge(view, "ci:gitlab-ci", artifact)["label"] == "push"
+    assert _edge(view, "ci:github-actions", artifact) is None
+    # The GitHub test job installs pip packages too, so pip is fetched by both systems.
+    assert _edge(view, "input:package:pip", "ci:github-actions")["status"] == "evidenced"
+    # The include names no job, so it is drawn as an input without an evidenced edge.
+    assert "input:ci_include" in elements
+    assert not any(e["from"] == "input:ci_include" for e in view["edges"])
+    # Evidenced outputs replace what the inventory says the system publishes.
+    assert not any(e.startswith("artifact:inventory:gitlab-ci") for e in elements)
+
+
+def test_a_dependency_path_runs_through_the_gitlab_job_that_pushes(tmp_path):
+    repo = _repo(tmp_path, {".gitlab-ci.yml": GITLAB_RELEASE, "requirements.txt": "flask>=2\n"})
+    threat = _threat("T-011", "Dependencies resolved by range", "CWE-1104", ".gitlab-ci.yml", 9)
+    model = _model([threat], [{"id": "release", "paths": [".gitlab-ci.yml"]}])
+    view = _view(model, _facts(repo), {"ci": [{"system": "GitLab CI", "source": ".gitlab-ci.yml"}]})
+    assert [(s["from"], s["to"]) for s in view["highlighted_path"]["steps"]] == [
+        ("input:package:pip", "ci:gitlab-ci"),
+        ("ci:gitlab-ci", "artifact:image:registry-example-net-team-ledger"),
+    ]
+
+
+def test_a_template_only_gitlab_pipeline_keeps_its_inventory_publish(tmp_path):
+    repo = _repo(tmp_path, {".gitlab-ci.yml": "include:\n  - template: Auto-DevOps.gitlab-ci.yml\n"})
+    inventory = {"ci": [{"system": "GitLab CI", "source": ".gitlab-ci.yml", "publishes": ["GitLab registry"]}]}
+    view = _view(_model([]), _facts(repo), inventory)
+    elements = {e["id"]: e for e in view["elements"]}
+    assert elements["ci:gitlab-ci"]["coverage"] == "full"
+    assert "ci:github-actions" not in elements
+    assert _edge(view, "ci:gitlab-ci", "artifact:inventory:gitlab-ci:gitlab-registry")["status"] == "unknown"

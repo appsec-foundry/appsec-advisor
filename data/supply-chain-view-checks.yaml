@@ -1,7 +1,7 @@
 # Where Figure 1b shows a config/IaC finding, and which attack entry it can establish (RA-30).
 #
 # `element` places the finding on a supply-chain element: repository, package
-# (one row per ecosystem), github_action, base_image, remote_script, ci (the CI
+# (one row per ecosystem), github_action, base_image, remote_script, ci_include, ci (the CI
 # system that owns the cited file) or artifact (a release artifact). `entry`
 # names the attack mechanism the finding establishes; a check without `entry`
 # is shown on its element and never draws an attack arrow. `requires: pushed`

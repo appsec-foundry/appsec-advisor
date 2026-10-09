@@ -534,3 +534,25 @@ def test_facts_outside_the_build_component_keep_only_its_placement_signal(tmp_pa
     files = {".github/workflows/release.yml": NPM_RELEASE, "deploy/run.sh": "echo deploy\n"}
     signals = _build_signals(tmp_path, files, _pipeline(["deploy/**"]))
     assert signals == {SIGNAL + "external-to-pipeline": []}
+
+
+GITLAB_PIPELINE = """\
+include:
+  - remote: https://ci.example.org/shared/build.yml
+package:
+  image: node:22
+  script:
+    - npm ci
+    - docker build -t registry.example.net/team/api:1 .
+    - docker push registry.example.net/team/api:1
+"""
+
+
+def test_a_gitlab_pipeline_raises_the_same_scoped_build_signals(tmp_path: Path):
+    signals = _build_signals(tmp_path, {".gitlab-ci.yml": GITLAB_PIPELINE}, _pipeline([".gitlab-ci.yml"]))
+    assert signals == {
+        SIGNAL + "external-to-pipeline-npm-dependencies": [{"file": ".gitlab-ci.yml", "line": 6}],
+        SIGNAL + "external-to-pipeline-base-images": [{"file": ".gitlab-ci.yml", "line": 4}],
+        SIGNAL + "external-to-pipeline-ci-includes": [{"file": ".gitlab-ci.yml", "line": 2}],
+        SIGNAL + "pipeline-to-external-push-registry-example-net-team-api": [{"file": ".gitlab-ci.yml", "line": 7}],
+    }

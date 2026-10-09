@@ -53,7 +53,7 @@ SCHEMA_VERSION = 1
 BUILD_TIME = "build-time"
 GITHUB = "GitHub Actions"
 
-INPUT_KINDS = ("package", "github_action", "base_image", "remote_script")
+INPUT_KINDS = ("package", "github_action", "base_image", "remote_script", "ci_include")
 ECOSYSTEM_LABELS = {
     "npm": "npm registry",
     "pip": "PyPI",
@@ -112,6 +112,7 @@ INPUT_ENTRY = {
     "github_action": "ci-input",
     "base_image": "ci-input",
     "remote_script": "ci-input",
+    "ci_include": "ci-input",
 }
 MAX_SOURCES = 5
 # Internal: every (file, line) of an element's fact rows, beyond the capped display sources.
@@ -161,6 +162,13 @@ def _ci_system_of(path: str, systems: list[str]) -> str | None:
     return owners[0] if len(owners) == 1 else None
 
 
+def _ci_element(path: str, elements: dict[str, dict]) -> str | None:
+    """The drawn CI element whose definition file is ``path``."""
+    system = _ci_system_of(path, list(CI_FILES))
+    element = f"ci:{_slug(system)}" if system else None
+    return element if element in elements else None
+
+
 def _actor_slugs(model: dict) -> dict[str, str]:
     return {
         str(a.get("id")): str(a.get("heatmap_slug") or "")
@@ -202,8 +210,9 @@ def has_build_evidence(facts: dict | None, inventory: dict | None, build_time_sc
 def _elements(facts: dict, inventory: dict) -> tuple[dict[str, dict], list[str]]:
     elements: dict[str, dict] = {}
     systems = [str(row.get("system")) for row in inventory.get("ci") or [] if row.get("system")]
-    if facts.get("workflows") and GITHUB not in systems:
-        systems.insert(0, GITHUB)
+    workflows = facts.get("workflows") or []
+    covered = list(dict.fromkeys(s for row in workflows if (s := _ci_system_of(row["file"], list(CI_FILES)))))
+    systems = [s for s in covered if s not in systems] + systems
     ci_files = sorted({row["file"] for row in facts.get("workflows") or []}) or [
         str(row.get("source")) for row in inventory.get("ci") or [] if row.get("source")
     ]
@@ -242,11 +251,12 @@ def _elements(facts: dict, inventory: dict) -> tuple[dict[str, dict], list[str]]
         ("github_action", "GitHub Actions"),
         ("base_image", "Base images"),
         ("remote_script", "Remote installers"),
+        ("ci_include", "CI includes"),
     ):
         rows = [row for row in inputs if row["kind"] == kind]
         if not rows:
             continue
-        strong = {"github_action": "commit-sha", "base_image": "digest"}.get(kind)
+        strong = {"github_action": "commit-sha", "base_image": "digest", "ci_include": "commit-sha"}.get(kind)
         if strong:
             weak = sum(row["pinning"] != strong for row in rows)
             detail = f"{len(rows)} reference{'s' if len(rows) != 1 else ''} · {weak} not {'SHA' if strong == 'commit-sha' else 'digest'}-pinned"
@@ -264,8 +274,10 @@ def _elements(facts: dict, inventory: dict) -> tuple[dict[str, dict], list[str]]
     inventory_rows = {str(row.get("system")): row for row in inventory.get("ci") or []}
     for system in systems:
         row = inventory_rows.get(system) or {}
-        full = system == GITHUB and bool(facts.get("workflows"))
-        workflow_count = len(facts.get("workflows") or []) if system == GITHUB else 0
+        full = system in covered
+        workflow_count = (
+            sum(_ci_system_of(w["file"], list(CI_FILES)) == GITHUB for w in workflows) if system == GITHUB else 0
+        )
         elements[f"ci:{_slug(system)}"] = {
             "id": f"ci:{_slug(system)}",
             "column": "build",
@@ -312,7 +324,8 @@ def _elements(facts: dict, inventory: dict) -> tuple[dict[str, dict], list[str]]
             EVIDENCE_KEYS: _evidence_keys([output]),
         }
     for system, row in inventory_rows.items():
-        if system == GITHUB and facts.get("workflows"):
+        # Facts that evidence an artifact of this system replace what the inventory says it publishes.
+        if any(_ci_system_of(o["file"], list(CI_FILES)) == system for o in facts.get("outputs") or []):
             continue
         for target in row.get("publishes") or []:
             if str(target).lower().startswith("kubernetes"):
@@ -475,17 +488,18 @@ def _used_in_ci(row: dict, outputs: list[dict]) -> list[dict]:
 def _edges(elements: dict[str, dict], facts: dict) -> list[dict]:
     edges: list[dict] = []
     outputs = facts.get("outputs") or []
-    github = f"ci:{_slug(GITHUB)}"
     for element in elements.values():
         if element["column"] != "sources" or element["kind"] == "repository":
             continue
-        rows = _rows_of(element, facts)
-        evidence = [ev for row in rows for ev in _used_in_ci(row, outputs)]
-        if evidence and github in elements:
+        by_ci: dict[str, list[dict]] = {}
+        for evidence in (ev for row in _rows_of(element, facts) for ev in _used_in_ci(row, outputs)):
+            if ci := _ci_element(evidence["file"], elements):
+                by_ci.setdefault(ci, []).append(evidence)
+        for ci, evidence in by_ci.items():
             edges.append(
                 {
                     "from": element["id"],
-                    "to": github,
+                    "to": ci,
                     "status": "evidenced",
                     "label": "fetched",
                     "sources": _sources(evidence),
@@ -496,9 +510,9 @@ def _edges(elements: dict[str, dict], facts: dict) -> list[dict]:
             {"from": "repository", "to": ci["id"], "status": "evidenced", "label": "checkout", "sources": ci["sources"]}
         )
     for output in outputs:
-        if output.get("job") and github in elements:
+        if output.get("job") and (ci := _ci_element(output["file"], elements)):
             edge = {
-                "from": github,
+                "from": ci,
                 "to": _artifact_id(output),
                 "status": "evidenced",
                 "label": "push" if output.get("pushed") or output["kind"] == "package" else "build",
@@ -592,7 +606,7 @@ def _element_for_kind(kind, ecosystem, locations, elements, systems) -> str | No
             return target
         packages = [e for e in elements if e.startswith("input:package:")]
         return packages[0] if len(packages) == 1 else None
-    if kind in ("github_action", "base_image", "remote_script"):
+    if kind in ("github_action", "base_image", "remote_script", "ci_include"):
         return f"input:{kind}" if f"input:{kind}" in elements else None
     if kind == "ci":
         for path, _line in locations:
@@ -628,17 +642,22 @@ def _path(entry: dict, elements: dict, facts: dict) -> list[dict]:
         # whichever element displays the finding.
         target = element["id"] if element["kind"] == "ci" else github
         return [{"from": "repository", "to": target}] if target in elements else []
-    if element["column"] != "sources" or element["kind"] == "repository" or github not in elements:
+    if element["column"] != "sources" or element["kind"] == "repository":
         return []
     rows = [entry["row"]] if entry.get("row") else _rows_of(element, facts)
     best: list[dict] = []
     for row in sorted(rows, key=lambda r: (r["file"], r["line"])):
-        if not _used_in_ci(row, outputs):
+        used = _used_in_ci(row, outputs)
+        ci = _ci_element(used[0]["file"], elements) if used else None
+        if not ci:
             continue
-        steps = [{"from": element["id"], "to": github, "via": _source(row)}]
-        produced = sorted(_consumers(row, outputs), key=lambda o: (not o.get("pushed"), o["file"], o["line"]))
+        steps = [{"from": element["id"], "to": ci, "via": _source(row)}]
+        produced = sorted(
+            (o for o in _consumers(row, outputs) if _ci_element(o["file"], elements) == ci),
+            key=lambda o: (not o.get("pushed"), o["file"], o["line"]),
+        )
         if produced:
-            steps.append({"from": github, "to": _artifact_id(produced[0]), "via": _source(produced[0])})
+            steps.append({"from": ci, "to": _artifact_id(produced[0]), "via": _source(produced[0])})
         if len(steps) > len(best):
             best = steps
     return best

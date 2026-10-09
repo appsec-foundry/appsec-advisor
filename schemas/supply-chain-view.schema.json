@@ -19,7 +19,7 @@
         "properties": {
           "id": {"$ref": "#/$defs/id"},
           "column": {"enum": ["sources", "build", "artifacts", "execution"]},
-          "kind": {"enum": ["repository", "package", "github_action", "base_image", "remote_script", "ci", "artifact", "execution"]},
+          "kind": {"enum": ["repository", "package", "github_action", "base_image", "remote_script", "ci_include", "ci", "artifact", "execution"]},
           "label": {"$ref": "#/$defs/text"},
           "detail": {"type": "string", "maxLength": 300},
           "manifest_detail": {"type": "string", "maxLength": 200},

@@ -39,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `/appsec-advisor:analyze-threats` and `scripts/appsec-analyst-cli` analyze a planned feature or a selected code change on request; the [Threat Analyst](docs/threat-analyst.md) is experimental.
 - Repositories with a build pipeline get Figure 1b, a supply-chain diagram linking build inputs and release artifacts to the most severe evidenced attack and the relevant controls.
+- GitLab CI pipelines get the same supply-chain facts, build trust-boundary signals and Figure 1b detail as GitHub workflows: job and service images, script installs, piped installers, external `include:` entries and registry pushes.
 - `scripts/analyzers/repo_scan.py` lists findings by severity, endpoints and detected technologies without a threat model; it and Security Score accept HTTPS GitHub/GitLab URLs and write YAML or JSON.
 - `.appsec/actors.yaml` accepts `legitimate_roles` for declared user roles whose login lives outside the repository.
 - Report figures ship with a dark-background variant that GitHub and browsers show automatically in dark mode.

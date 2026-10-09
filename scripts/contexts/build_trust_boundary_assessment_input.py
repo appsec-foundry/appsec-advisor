@@ -200,7 +200,7 @@ _BUILD_INPUT_SCOPES = (
     (
         "base_image",
         "base-images",
-        "a container build starts from a base image pulled from a registry",
+        "a container build or CI job starts from an image pulled from a registry",
         ["image used only for local development", "inactive example Dockerfile"],
     ),
     (
@@ -208,6 +208,12 @@ _BUILD_INPUT_SCOPES = (
         "remote-scripts",
         "a build step pipes a downloaded script into a shell on the runner",
         ["script fetched from the repository itself", "inactive example workflow"],
+    ),
+    (
+        "ci_include",
+        "ci-includes",
+        "a pipeline includes CI configuration from another project, a remote URL or a template",
+        ["configuration from a project owned by the same organization", "inactive example pipeline"],
     ),
 )
 
@@ -219,7 +225,7 @@ def _supply_chain_signals(
 
     A build component holds several crossings with different enforcement
     points: packages from a dependency registry, third-party actions, base
-    images and piped installers enter the build, and pushed images or
+    images, piped installers and included CI configuration enter the build, and pushed images or
     published packages leave it for an artifact registry. Each gets its own
     signal, scoped by kind, ecosystem or destination, with the exact lines that
     evidence it. Only facts in the component's own files count. No deploy
