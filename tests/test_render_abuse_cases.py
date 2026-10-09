@@ -833,6 +833,25 @@ def test_unlinked_descriptive_case_is_not_rated(tmp_path: Path):
     assert "**Source:** business case" in md
 
 
+def test_an_open_business_case_carries_its_bounded_questions_to_the_model(tmp_path: Path, monkeypatch):
+    questions = [f"Which roles may administrator tier {n} assign?" for n in range(1, 6)]
+    monkeypatch.setitem(_DESCRIPTIVE_CASE, "open_questions", questions)
+    repo = _descriptive_setup(tmp_path, chain_verdict="inconclusive")
+    out = tmp_path / "out"
+    assert rac.main(["--output-dir", str(out), "--repo-root", str(repo)]) == 0
+    analysis = yaml.safe_load((out / "threat-model.yaml").read_text(encoding="utf-8"))["abuse_case_analysis"]
+    case = next(c for c in analysis["cases"] if c["id"] == "REPO-AC-020")
+    assert case["open_questions"] == questions[:3]
+
+
+def test_a_business_case_without_questions_adds_no_question_field(tmp_path: Path):
+    repo = _descriptive_setup(tmp_path, chain_verdict="inconclusive")
+    out = tmp_path / "out"
+    assert rac.main(["--output-dir", str(out), "--repo-root", str(repo)]) == 0
+    analysis = yaml.safe_load((out / "threat-model.yaml").read_text(encoding="utf-8"))["abuse_case_analysis"]
+    assert all("open_questions" not in case for case in analysis["cases"])
+
+
 def test_business_coverage_is_summarized_and_requests_answered_individually(tmp_path: Path):
     repo = _descriptive_setup(tmp_path)
     out = tmp_path / "out"

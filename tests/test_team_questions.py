@@ -617,3 +617,61 @@ def test_answer_topic_vocabulary_matches_the_question_catalog_and_both_schemas()
         )
         == expected
     )
+
+
+def _business_case(verdict: str = "inconclusive", questions=("Which roles may each administrator tier assign?",)):
+    return {
+        "status": "completed",
+        "cases": [
+            {
+                "id": "REPO-AC-020",
+                "source": "descriptive",
+                "chain_verdict": verdict,
+                "verification_complete": True,
+                "unverified_steps": [],
+                "matched_finding_ids": ["F-003"],
+                "steps": [{"finding_id": "F-003", "verdict": "inconclusive", "unverified": False}],
+                "open_questions": list(questions),
+            }
+        ],
+    }
+
+
+def _business_model(analysis: dict) -> dict:
+    return {
+        "components": [{"id": "grants", "name": "Grant Service"}],
+        "threats": [finding(3, cwe="CWE-269", component="grants")],
+        "abuse_case_analysis": analysis,
+    }
+
+
+@pytest.mark.parametrize(
+    "authored",
+    ["Which roles may each administrator tier assign?", "  Who may approve   a refund above the limit?  "],
+)
+def test_an_open_business_case_asks_its_question_about_the_bound_component(authored) -> None:
+    selection = tq.select_open_questions(_business_model(_business_case(questions=[authored])), anchors("F-003"))
+    (topic,) = selection["questions"]
+    assert (
+        topic["question"]
+        == "In Grant Service, " + " ".join(authored.split())[0].lower() + " ".join(authored.split())[1:]
+    )
+    assert [ref["id"] for ref in topic["refs"]] == ["F-003"]
+    assert topic["impact"] and "?" not in topic["impact"]
+
+
+@pytest.mark.parametrize(
+    ("verdict", "questions", "visible"),
+    [
+        ("fully_viable", ["Which roles may each administrator tier assign?"], ("F-003",)),
+        ("inconclusive", ["Which roles may each administrator tier assign?"], ()),
+        ("inconclusive", ["Which roles does the [admin guide](https://x.example) allow?"], ("F-003",)),
+        ("inconclusive", ["Which roles are listed at www.example.org?"], ("F-003",)),
+        ("inconclusive", ["Roles: which may be assigned?"], ("F-003",)),
+        ("inconclusive", ["Which roles may be assigned? And by whom?"], ("F-003",)),
+        ("inconclusive", ["List the roles each administrator tier may assign."], ("F-003",)),
+    ],
+)
+def test_a_decided_case_unsafe_text_or_an_unanchored_finding_asks_nothing(verdict, questions, visible) -> None:
+    selection = tq.select_open_questions(_business_model(_business_case(verdict, questions)), anchors(*visible))
+    assert selection["questions"] == []

@@ -10,6 +10,9 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+import yaml
+
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "model/resolve_abuse_cases.py"
 
@@ -580,3 +583,26 @@ def test_descriptive_prose_is_bounded(tmp_path: Path):
     _write_repo_local(tmp_path, _DESCRIPTIVE.replace("Obtain a role", "x" * 700))
     _, _, rejected = rac.resolve_abuse_case_sources(None, None, repo_root=tmp_path)
     assert "REPO-AC-020" in rejected[0]["reason"] and "goal" in rejected[0]["reason"]
+
+
+@pytest.mark.parametrize(
+    "qualifier",
+    ["      detector_rules: [AUTHZ-003]\n", '      route_patterns: ["*role*"]\n'],
+)
+def test_a_detector_rule_or_route_pattern_alone_preselects_a_descriptive_case(tmp_path: Path, qualifier):
+    body = _DESCRIPTIVE.replace('      path_patterns: ["**/*role*"]\n', qualifier)
+    _write_repo_local(tmp_path, body)
+    cases, errors, rejected = rac.resolve_abuse_case_sources(None, None, repo_root=tmp_path)
+    assert (errors, rejected) == ([], [])
+    assert cases[-1]["scope_qualifier"] == yaml.safe_load(qualifier)
+
+
+def test_locators_reject_a_malformed_rule_id_and_stay_off_probe_cases(tmp_path: Path):
+    body = _DESCRIPTIVE.replace('      path_patterns: ["**/*role*"]\n', '      detector_rules: ["$(id)"]\n')
+    _write_repo_local(tmp_path, body)
+    _, _, rejected = rac.resolve_abuse_case_sources(None, None, repo_root=tmp_path)
+    assert rejected
+    probe = _VALID_CASE + "    scope_qualifier:\n      route_patterns: ['*role*']\n"
+    profile = {"abuse_cases": {"inherit_defaults": False, "add": "abuse-cases/*.yaml"}}
+    cases, errors = rac.resolve_abuse_cases(profile, _write_org(tmp_path, probe))
+    assert cases == [] and errors

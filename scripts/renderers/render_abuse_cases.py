@@ -372,6 +372,9 @@ def render_case(
         "matched_finding_ids": matched_ids,
         "combined_risk_rationale": case.get("combined_risk_rationale", ""),
         "blocking_mitigations": blocking,
+        "open_questions": [str(q) for q in case.get("open_questions") or [] if str(q).strip()][:3]
+        if case.get("kind") == "descriptive"
+        else [],
     }
 
 
@@ -437,6 +440,7 @@ def build_canonical_analysis(
                     )
                 ),
                 "steps": steps,
+                **({"open_questions": model["open_questions"]} if model.get("open_questions") else {}),
             }
         )
     evaluated = [

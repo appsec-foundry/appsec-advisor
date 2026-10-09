@@ -845,6 +845,11 @@ properties:
               type: array
               uniqueItems: true
               items: {type: string, pattern: "^M-[0-9]{3,}$"}
+            open_questions:
+              description: Business facts a descriptive case leaves to the team; the team-question selector reads them.
+              type: array
+              maxItems: 3
+              items: {type: string, minLength: 1, maxLength: 600}
             steps:
               type: array
               minItems: 1

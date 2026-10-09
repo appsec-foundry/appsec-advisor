@@ -49,6 +49,7 @@ if not __package__:
 
 
 import argparse
+import fnmatch
 import importlib.util
 import json
 import re
@@ -567,33 +568,58 @@ _DESCRIPTIVE_SOURCE_SUFFIXES = frozenset(
 )
 
 
+# Most specific first: a route handler file can be the router that registers every route.
+_LOCATORS = ("detector_rules", "path_patterns", "route_patterns")
+
+
 def _descriptive_preselection(
-    case: dict, findings: list[dict], repo_root: Path | None, max_files: int
+    case: dict, findings: list[dict], repo_root: Path | None, max_files: int, routes: list[dict] | None
 ) -> tuple[list[str], list[str]]:
     """Return (preselected source files, related findings).
 
-    Files come from the case's ``path_patterns`` in the bounded runtime
-    inventory and must be executable source; documentation, tests, styles,
-    and catalog data are never admitted.
+    Three locators select files, in this order: files of findings a
+    detector raised under one of the ``detector_rules``, the case's
+    ``path_patterns``, and handlers of routes in the route inventory whose
+    path matches a ``route_patterns`` entry. A file must be executable runtime source in the
+    bounded repository inventory; documentation, tests, styles, and catalog
+    data are never admitted, and a route or finding cannot name a file outside
+    the inventory.
     Related findings are existing, unrefuted findings located in those files:
     detector results the verifier cites as evidence instead of re-deciding.
     """
-    patterns = [
-        p for p in (_safe_repo_glob(v) for v in (case.get("scope_qualifier") or {}).get("path_patterns") or []) if p
-    ]
+    qualifier = case.get("scope_qualifier") or {}
+    if repo_root is None or not repo_root.is_dir():
+        return [], []
+    runtime: dict[str, Path] = {}
+    for path in _repo_source_files(repo_root):
+        rel = path.relative_to(repo_root)
+        if path.suffix.lower() in _DESCRIPTIVE_SOURCE_SUFFIXES and _is_runtime_surface_evidence(rel.as_posix()):
+            runtime[rel.as_posix()] = rel
+    route_patterns = [str(v).lower() for v in qualifier.get("route_patterns") or [] if str(v).strip()]
+    rules = {str(v) for v in qualifier.get("detector_rules") or []}
+    path_patterns = [p for p in (_safe_repo_glob(v) for v in qualifier.get("path_patterns") or []) if p]
+    located: dict[str, list[str]] = {
+        "route_patterns": [
+            str(route["handler_file"]).replace("\\", "/").removeprefix("./")
+            for route in routes or []
+            if any(fnmatch.fnmatchcase(str(route["path"]).lower(), pattern) for pattern in route_patterns)
+        ],
+        "detector_rules": [
+            file
+            for finding in findings
+            if str(finding.get("source_check_id") or "") in rules
+            for file in [_finding_file(finding)]
+            if file
+        ],
+        "path_patterns": [
+            rel_str for rel_str, rel in runtime.items() if path_patterns and _glob_matches(rel, path_patterns)
+        ],
+    }
     files: list[str] = []
-    if patterns and repo_root is not None and repo_root.is_dir():
-        for path in _repo_source_files(repo_root):
-            rel = path.relative_to(repo_root)
-            rel_str = rel.as_posix()
-            if (
-                path.suffix.lower() in _DESCRIPTIVE_SOURCE_SUFFIXES
-                and _is_runtime_surface_evidence(rel_str)
-                and _glob_matches(rel, patterns)
-            ):
-                files.append(rel_str)
-                if len(files) >= max_files:
-                    break
+    for locator in _LOCATORS:
+        for file in located[locator]:
+            if file in runtime and file not in files and len(files) < max_files:
+                files.append(file)
     selected = set(files)
     related: dict[str, dict] = {}
     for finding in findings:
@@ -612,24 +638,46 @@ def _descriptive_preselection(
 
 
 def _match_descriptive(
-    case: dict, findings: list[dict], signals: set[str] | None, repo_root: Path | None, max_files: int
+    case: dict,
+    findings: list[dict],
+    signals: set[str] | None,
+    repo_root: Path | None,
+    max_files: int,
+    routes: list[dict] | None = None,
 ) -> dict:
     """Preselect a descriptive case deterministically; the verifier binds it.
 
     No regex matches a business boundary, so a step is never ``matched`` here.
-    A case is a candidate when its scope qualifier holds; without that it
+    A case is a candidate when every required signal holds and, if it declares
+    locators, at least one locates a runtime source file. Without that it
     reaches the verifier only through an explicit request.
     """
-    applicable, unmet_signals, unmet_paths = _scope_status(case, signals, repo_root)
-    files, related = _descriptive_preselection(case, findings, repo_root, max_files) if applicable else ([], [])
-    if applicable and (case.get("scope_qualifier") or {}).get("path_patterns") and not files:
-        # Pattern hits only in documentation or tests do not preselect.
-        applicable, unmet_paths = False, [str(p) for p in case["scope_qualifier"]["path_patterns"]]
+    qualifier = case.get("scope_qualifier") or {}
+    unmet_signals = (
+        [] if signals is None else [sig for sig in qualifier.get("required_signals") or [] if sig not in signals]
+    )
+    declared = [locator for locator in _LOCATORS if qualifier.get(locator)]
+    files, related = (
+        _descriptive_preselection(case, findings, repo_root, max_files, routes) if not unmet_signals else ([], [])
+    )
+    unlocated = bool(declared) and not files and not unmet_signals
+    applicable = not unmet_signals and not unlocated
+    unmet_paths = [str(p) for p in qualifier.get("path_patterns") or []] if unlocated else []
     reason = None
     if not applicable:
         reasons = []
         if unmet_signals:
             reasons.append("required signal(s) absent: " + ", ".join(unmet_signals))
+        if unlocated and qualifier.get("route_patterns"):
+            reasons.append(
+                "no route matched: " + ", ".join(map(str, qualifier["route_patterns"]))
+                if routes is not None
+                else "route inventory unavailable"
+            )
+        if unlocated and qualifier.get("detector_rules"):
+            reasons.append(
+                "no runtime finding from detector rule(s): " + ", ".join(map(str, qualifier["detector_rules"]))
+            )
         if unmet_paths:
             reasons.append("no runtime source path matched: " + ", ".join(unmet_paths))
         reason = "; ".join(reasons) or "scope preconditions not met for this codebase"
@@ -673,9 +721,10 @@ def match_case(
     signals: set[str] | None,
     repo_root: Path | None = None,
     max_descriptive_files: int = 12,
+    routes: list[dict] | None = None,
 ) -> dict:
     if is_descriptive(case):
-        return _match_descriptive(case, findings, signals, repo_root, max_descriptive_files)
+        return _match_descriptive(case, findings, signals, repo_root, max_descriptive_files, routes)
     applicable, unmet_signals, unmet_paths = _scope_status(case, signals, repo_root)
     step_matches = _match_chain(case, findings, repo_root if applicable else None)
     # Second pass: each step prefers findings in files its sibling steps
@@ -1009,6 +1058,22 @@ def _candidate_priority(case_match: dict, findings_by_id: dict[str, dict]) -> tu
     )
 
 
+def load_routes(out_dir: Path) -> list[dict] | None:
+    """Routes of the run's route inventory with a path and handler file; None when the inventory is absent."""
+    try:
+        document = json.loads((out_dir / ".route-inventory.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    routes = document.get("routes") if isinstance(document, dict) else None
+    if not isinstance(routes, list):
+        return None
+    return [
+        route
+        for route in routes
+        if isinstance(route, dict) and isinstance(route.get("path"), str) and isinstance(route.get("handler_file"), str)
+    ]
+
+
 def cmd_match(args: argparse.Namespace) -> int:
     out_dir = Path(args.output_dir)
     findings_path = Path(args.findings) if args.findings else out_dir / ".threats-merged.json"
@@ -1050,7 +1115,11 @@ def cmd_match(args: argparse.Namespace) -> int:
     if only_ids:
         cases = [c for c in cases if c.get("id") in only_ids]
     max_files = limits["descriptive_source_files"]
-    matches = [match_case(c, findings, signals, repo_root=repo_root, max_descriptive_files=max_files) for c in cases]
+    routes = load_routes(out_dir)
+    matches = [
+        match_case(c, findings, signals, repo_root=repo_root, max_descriptive_files=max_files, routes=routes)
+        for c in cases
+    ]
     findings_by_id = {_finding_id(finding): finding for finding in findings}
     matches.sort(key=lambda match: _candidate_priority(match, findings_by_id))
     requested = {cid for cid, origin in origins.items() if origin == "explicit"} | only_ids

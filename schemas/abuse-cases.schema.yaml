@@ -77,7 +77,11 @@ $defs:
           is rated at least this high; without it, verification adds no
           severity.
         enum: [Critical, High, Medium, Low]
-      scope_qualifier: { $ref: "#/$defs/scope_qualifier" }
+      scope_qualifier:
+        # Probe cases match chain steps to findings; only descriptive cases use the locators.
+        allOf:
+          - { $ref: "#/$defs/scope_qualifier" }
+          - properties: { detector_rules: false, route_patterns: false }
       chain:
         type: array
         minItems: 1
@@ -111,6 +115,21 @@ $defs:
           evaluated as data, never as shell paths; absolute paths and
           parent traversal do not match.
         items: { type: string }
+      detector_rules:
+        type: array
+        maxItems: 16
+        description: >
+          Detector check IDs (for example AUTHZ-003). A finding a detector
+          raised under one of them puts its file in scope.
+        items: { type: string, pattern: "^[A-Z][A-Z0-9]*(-[A-Z0-9]+)*-[0-9]{3}$" }
+      route_patterns:
+        type: array
+        maxItems: 16
+        description: >
+          Case-insensitive glob patterns over route paths in the route
+          inventory, for example "*role*". The handler file of a matching
+          route is in scope.
+        items: { type: string, minLength: 1, maxLength: 120 }
 
   prose:
     type: string
@@ -174,14 +193,19 @@ $defs:
         maxItems: 8
       scope_qualifier:
         description: >
-          Deterministic preselection. Without a matching signal or path the
-          case reaches the model only when a run explicitly requests it.
+          Deterministic preselection. Every required signal must hold. Path
+          patterns, detector rules and route patterns each locate source
+          files; when a case declares any of them, at least one must locate a
+          runtime source file. Otherwise the case reaches the model only when
+          a run explicitly requests it.
           Signals use the recon vocabulary (schemas/recon-signals.schema.json).
         allOf:
           - { $ref: "#/$defs/scope_qualifier" }
           - anyOf:
               - { required: [required_signals] }
               - { required: [path_patterns] }
+              - { required: [detector_rules] }
+              - { required: [route_patterns] }
           - properties:
               required_signals:
                 items:

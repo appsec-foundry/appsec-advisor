@@ -1212,6 +1212,89 @@ def test_descriptive_case_respects_required_signals(tmp_path: Path):
     assert mac.match_case(case, [], {"has_role_concept"}, repo_root=repo)["structural_verdict"] == "candidate"
 
 
+def _located_repo(tmp_path: Path) -> Path:
+    """Handlers whose file names carry no case vocabulary, so only routes or detectors can locate them."""
+    repo = tmp_path / "repo"
+    (repo / "app" / "handlers").mkdir(parents=True)
+    for name in ("grants.py", "billing.py"):
+        (repo / "app" / "handlers" / name).write_text("def handle(request):\n    return request.json\n")
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_grants.py").write_text("def test_x():\n    pass\n")
+    return repo
+
+
+def _route(path: str, handler: str) -> dict:
+    return {"path": path, "handler_file": handler, "method": "POST"}
+
+
+def _locating(**qualifier) -> dict:
+    case = _descriptive(patterns=None)
+    case["scope_qualifier"] = qualifier
+    return case
+
+
+def test_a_route_pattern_preselects_the_handler_of_a_matching_route(tmp_path: Path):
+    repo = _located_repo(tmp_path)
+    routes = [
+        _route("/api/Members/:id/ROLES", "app/handlers/grants.py"),
+        _route("/api/invoices", "app/handlers/billing.py"),
+    ]
+    m = mac.match_case(_locating(route_patterns=["*/roles*"]), [], None, repo_root=repo, routes=routes)
+    assert m["structural_verdict"] == "candidate"
+    assert m["preselected_sources"] == ["app/handlers/grants.py"]
+
+
+def test_a_detector_rule_preselects_the_file_of_its_finding_and_relates_the_finding(tmp_path: Path):
+    repo = _located_repo(tmp_path)
+    flagged = _finding("F-004", "privileged field bound from request", file="app/handlers/billing.py", line=2)
+    flagged["source_check_id"] = "AUTHZ-003"
+    other = _finding("F-005", "unrelated", file="app/handlers/grants.py", line=2)
+    other["source_check_id"] = "INJ-001"
+    m = mac.match_case(_locating(detector_rules=["AUTHZ-003", "AUTHZ-008"]), [flagged, other], None, repo_root=repo)
+    assert m["preselected_sources"] == ["app/handlers/billing.py"]
+    assert m["related_finding_ids"] == ["F-004"]
+
+
+def test_locators_never_admit_files_outside_runtime_source(tmp_path: Path):
+    repo = _located_repo(tmp_path)
+    routes = [_route("/roles", "tests/test_grants.py"), _route("/roles", "../outside/grants.py")]
+    flagged = _finding("F-006", "test fixture", file="tests/test_grants.py", line=1)
+    flagged["source_check_id"] = "AUTHZ-003"
+    case = _locating(route_patterns=["/roles"], detector_rules=["AUTHZ-003"])
+    m = mac.match_case(case, [flagged], None, repo_root=repo, routes=routes)
+    assert m["structural_verdict"] == "not_applicable"
+    assert "no route matched" in m["reason"] and "AUTHZ-003" in m["reason"]
+
+
+def test_a_route_only_case_without_a_route_inventory_is_not_preselected(tmp_path: Path):
+    m = mac.match_case(_locating(route_patterns=["*role*"]), [], None, repo_root=_located_repo(tmp_path), routes=None)
+    assert m["structural_verdict"] == "not_applicable"
+    assert m["reason"] == "route inventory unavailable"
+
+
+def test_any_locator_suffices_while_required_signals_still_gate(tmp_path: Path):
+    repo = _located_repo(tmp_path)
+    routes = [_route("/admin/roles", "app/handlers/grants.py")]
+    case = _locating(
+        route_patterns=["*role*"], path_patterns=["**/permissions/**"], required_signals=["has_role_concept"]
+    )
+    assert (
+        mac.match_case(case, [], {"has_role_concept"}, repo_root=repo, routes=routes)["structural_verdict"]
+        == "candidate"
+    )
+    assert mac.match_case(case, [], {"has_auth_surface"}, repo_root=repo, routes=routes)["structural_verdict"] == (
+        "not_applicable"
+    )
+
+
+def test_cli_reads_routes_from_the_route_inventory(tmp_path: Path):
+    (tmp_path / ".route-inventory.json").write_text(
+        json.dumps({"routes": [_route("/x/roles", "app/a.py"), {"path": 3}, "bad"]}), encoding="utf-8"
+    )
+    assert mac.load_routes(tmp_path) == [_route("/x/roles", "app/a.py")]
+    assert mac.load_routes(tmp_path / "missing") is None
+
+
 def _candidates(n: int) -> list[dict]:
     return [
         {
@@ -1355,3 +1438,12 @@ def test_cli_finalize_admits_descriptive_evidence_from_configured_repo(tmp_path:
     verdict = json.loads((out / ".abuse-case-verdicts.json").read_text())["verdicts"][0]
     assert verdict["step_verdicts"][1]["verdict"] == "inconclusive"
     assert verdict["chain_verdict"] == "inconclusive"
+
+
+def test_a_router_file_from_the_route_inventory_never_displaces_specific_files(tmp_path: Path):
+    repo = _located_repo(tmp_path)
+    (repo / "app" / "server.py").write_text("routes = []\n")
+    routes = [_route("/roles", "app/server.py")]
+    case = _locating(route_patterns=["/roles"], path_patterns=["**/grants.py"])
+    m = mac.match_case(case, [], None, repo_root=repo, max_descriptive_files=1, routes=routes)
+    assert m["preselected_sources"] == ["app/handlers/grants.py"]
