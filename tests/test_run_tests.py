@@ -424,6 +424,17 @@ def test_empty_diff_selects_no_tests(selection_repo):
     assert result.reasons == ("no changed paths; no tests selected",)
 
 
+def test_task_paths_normalize_relative_and_absolute_names(tmp_path):
+    names = ["./scripts/emitter.py", str(tmp_path / "scripts/emitter.py"), "docs/../tests/test_reader.py"]
+    assert runner.task_paths(names, tmp_path) == ["scripts/emitter.py", "tests/test_reader.py"]
+
+
+@pytest.mark.parametrize("name", ["../outside.py", "/elsewhere/scripts/emitter.py"])
+def test_task_paths_reject_names_outside_the_repository(tmp_path, name):
+    with pytest.raises(ValueError, match="outside the repository"):
+        runner.task_paths([name], tmp_path)
+
+
 def test_escaped_test_symlink_is_rejected(selection_repo, tmp_path):
     outside = tmp_path.parent / f"{tmp_path.name}-outside.py"
     outside.touch()
@@ -454,6 +465,50 @@ def test_make_changed_targets_share_runner_and_validate_inventory():
     assert 'scripts/run_tests.py --list --changed-against "dev"' in result.stdout
     assert 'scripts/run_tests.py --changed-against "dev" all -q' in result.stdout
     assert "scripts/run_tests.py --check-groups" in result.stdout
+
+
+def test_path_selection_ignores_unrelated_worktree_changes():
+    result = _cli("--list", "--path", "scripts/run_tests.py")
+    assert result.returncode == 0
+    selected = result.stdout.splitlines()
+    assert "tests/test_run_tests.py" in selected
+    assert "tests/" not in selected
+    assert set(selected) == set(runner.select_changed(["scripts/run_tests.py"]).paths)
+
+
+def test_path_selection_refuses_full_suite_fallback(fake_pytest_env):
+    result = _cli("--path", "unrouted/neutral-file.txt", env=fake_pytest_env)
+    assert result.returncode == 2
+    assert "full suite" in result.stderr
+    assert not result.stdout
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("--path", "scripts/run_tests.py", "--changed-against", "HEAD"),
+        ("--path", "scripts/run_tests.py", "report"),
+        ("--path", "scripts/run_tests.py", "--check-groups"),
+    ],
+)
+def test_path_selection_rejects_conflicting_modes(fake_pytest_env, args):
+    result = _cli(*args, env=fake_pytest_env)
+    assert result.returncode == 2
+    assert not result.stdout
+
+
+def test_make_test_for_passes_each_file_and_requires_files():
+    result = subprocess.run(
+        ["make", "--dry-run", "test-for", "FILES=scripts/a.py tests/test_a.py"],
+        cwd=runner.ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert 'scripts/run_tests.py --path "scripts/a.py" --path "tests/test_a.py" all -q' in result.stdout
+    missing = subprocess.run(["make", "test-for"], cwd=runner.ROOT, capture_output=True, text=True, check=False)
+    assert missing.returncode != 0
+    assert "FILES" in missing.stdout + missing.stderr
 
 
 def test_explicit_pattern_retains_name_filter(fake_pytest_env):
@@ -875,4 +930,5 @@ def test_required_selection_commands_stay_in_agent_and_maintainer_guidance():
         assert "make test-plan BASE=origin/dev" in document
         assert "make validate test-changed BASE=origin/dev" in document
         assert "make test-plan BASE=HEAD" in document
+        assert "make validate test-for FILES=" in document
         assert "scripts/run_tests.py" in document

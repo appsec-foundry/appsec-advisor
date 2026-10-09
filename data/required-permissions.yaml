@@ -41,7 +41,7 @@
 # model/authnz_report.py finalize --require-inputs and gate use the existing
 # Bash(*) and OUTPUT_DIR dotfile rules; reconciliation writes only .authnz-report.json.
 # Maintainer commands such as scripts/run_tests.py --changed-against,
-# make test-plan, make test-changed, and make test-group use the existing
+# make test-plan, make test-changed, make test-for, and make test-group use the existing
 # Bash(*) rule; local Git diffs and test selection add no permission entries.
 # scripts/appsec-analyst-cli hypothesis uses the existing Bash(*) rule to read
 # caller-selected Git blobs and write private analyst job artifacts; the model

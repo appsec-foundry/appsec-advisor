@@ -1,4 +1,4 @@
-"""Run reviewed maintainer test groups and conservative Git-based selections.
+"""Run reviewed maintainer test groups and conservative change-based selections.
 
 Exact membership detects additions and renames. Source routes name measured
 producer and consumer modules directly; requirement bindings retain their exact
@@ -6794,6 +6794,18 @@ def requirement_tests(paths: list[str], root: Path = ROOT) -> list[str]:
     return sorted(selected)
 
 
+def task_paths(paths: list[str], root: Path = ROOT) -> list[str]:
+    """Normalize explicitly named task files to repository-relative POSIX paths."""
+    normalized = set()
+    for path in paths:
+        absolute = Path(os.path.abspath(root / path))
+        try:
+            normalized.add(absolute.relative_to(root).as_posix())
+        except ValueError:
+            raise ValueError(f"path outside the repository: {path!r}") from None
+    return sorted(normalized)
+
+
 @dataclass(frozen=True)
 class Selection:
     paths: tuple[str, ...]
@@ -6860,12 +6872,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--changed-against", metavar="REF", help="select from the merge base plus all local changes; no fetch"
     )
+    parser.add_argument(
+        "--path",
+        action="append",
+        metavar="PATH",
+        help="select from the named task files only; refuses a full-suite fallback",
+    )
     parser.add_argument("group", nargs="?", default="all", choices=["all", *GROUPS])
     parser.add_argument("pytest_args", nargs=argparse.REMAINDER, help="arguments forwarded to pytest")
     args = parser.parse_args(argv)
-    if args.changed_against and args.group != "all":
-        parser.error("--changed-against cannot be combined with a named group")
-    if args.check_groups and (args.changed_against or args.list or args.group != "all" or args.pytest_args):
+    if args.changed_against and args.path:
+        parser.error("--changed-against cannot be combined with --path")
+    if (args.changed_against or args.path) and args.group != "all":
+        parser.error("--changed-against and --path cannot be combined with a named group")
+    if args.check_groups and (
+        args.changed_against or args.path or args.list or args.group != "all" or args.pytest_args
+    ):
         parser.error("--check-groups must be used alone")
     try:
         if args.check_groups:
@@ -6879,6 +6901,15 @@ def main(argv: list[str] | None = None) -> int:
             selection = select_changed(changed_paths(args.changed_against))
             paths = list(selection.paths)
             print("\n".join(selection.reasons), file=sys.stderr)
+        elif args.path:
+            selection = select_changed(task_paths(args.path))
+            print("\n".join(selection.reasons), file=sys.stderr)
+            if selection.paths == ("tests/",):
+                print(
+                    "The named files need the full suite; run `make check` only with a stated reason.", file=sys.stderr
+                )
+                return 2
+            paths = list(selection.paths)
         else:
             paths = select_tests(args.group)
     except (ValueError, OSError) as error:

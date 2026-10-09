@@ -45,6 +45,7 @@ PDF export (mermaid drives a headless Chrome over a local socket) and any write 
 ```bash
 make test-quick                    # shared base drift guards
 make test-group GROUP=report        # focused report and export tests
+make test-for FILES="a.py b.py"     # only the named files' routed tests; refuses a full-suite fallback
 make test-plan BASE=origin/dev      # explain the selection without running tests
 make test-changed BASE=origin/dev   # branch and local changes plus requirement guards
 make test-plan BASE=HEAD            # explain only staged, unstaged, and untracked work
@@ -108,7 +109,15 @@ Select tests by the affected behavior. Include the changed producer, its consume
 | Shared runtime behavior or uncertain impact | `make check`. The `runtime` group supports iteration but does not replace this gate. |
 | Release | `make release-check` and the prescribed live E2E checks. |
 
-Inspect the automatic selection before using it for a bounded implementation change:
+Select by the files of the current change:
+
+```bash
+make validate test-for FILES="scripts/example.py tests/test_example.py"
+```
+
+Only the named files count, so unrelated local changes and branch commits add no tests. When a named file has no reviewed route or needs the full suite, the command exits with code 2 and names the reason instead of running the whole suite.
+
+To verify a complete branch, inspect the Git-based selection before using it:
 
 ```bash
 make test-plan BASE=origin/dev

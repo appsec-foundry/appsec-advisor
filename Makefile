@@ -109,6 +109,11 @@ test-group:  ## Run a focused group: make test-group GROUP=<name> (see scripts/r
 test-changed:  ## Run reviewed tests for branch and local changes: make test-changed BASE=origin/dev
 	@$(PYTHON) scripts/run_tests.py --changed-against "$(or $(BASE),origin/dev)" all -q
 
+.PHONY: test-for
+test-for:  ## Run reviewed tests for this task's files only: make test-for FILES="scripts/a.py tests/test_a.py"
+	@test -n "$(strip $(FILES))" || { echo "ERROR: set FILES=\"<changed files of this task>\""; exit 2; }
+	@$(PYTHON) scripts/run_tests.py $(foreach f,$(FILES),--path "$(f)") all -q
+
 .PHONY: test-plan
 test-plan:  ## Explain changed-file selection without running pytest: make test-plan BASE=origin/dev
 	@$(PYTHON) scripts/run_tests.py --list --changed-against "$(or $(BASE),origin/dev)"

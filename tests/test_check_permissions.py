@@ -161,6 +161,8 @@ def test_maintainer_test_groups_use_existing_shell_permission():
         "python3 scripts/run_tests.py --check-groups",
         "make test-plan BASE=origin/dev",
         "make test-changed BASE=origin/dev",
+        'make test-for FILES="scripts/a.py tests/test_a.py"',
+        "python3 scripts/run_tests.py --path scripts/a.py",
         "git diff --name-only --no-renames -z HEAD --",
         "make test-full",
         "make validate",
