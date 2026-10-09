@@ -461,6 +461,18 @@ Agents read the repository and make the security judgments. Python checks their 
 
 ![Threat Model Pipeline](images/threat-model-pipeline.png)
 
+### How stages share state
+
+The stages do not talk to each other. They hand over files.
+
+Every stage writes its result into the output directory, `docs/security/` by default. The next stage reads what it needs from there. Reconnaissance writes the repository summary. Architecture writes the components and data flows. The trust-boundary and control analyses write their catalogs. Each STRIDE analysis writes its findings to one `.stride-<component>.json`. Merge, evidence verification, and triage build on those files before the report is composed.
+
+Each file has a schema. A file that fails its schema stops the run; it is never passed on.
+
+No agent reads the whole directory. The runtime gives each agent only the files its task needs, and often only part of a file. The STRIDE analyses of one component group run at the same time and do not see each other's findings. Their findings meet in the merge step.
+
+The intermediate files remain in the output directory after a run, so results can be audited and re-exported. `publish-threat-model` keeps them out of version control.
+
 ## Workflow commands
 
 | Command | Purpose |
