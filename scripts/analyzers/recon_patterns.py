@@ -104,8 +104,15 @@ _OVERSIZE_SKIPPED: set[str] = set()
 
 
 # ---------------------------------------------------------------------------
-# Default fallback excludes when scan_excludes.yaml is unavailable.
+# Which files are scanned
 # ---------------------------------------------------------------------------
+# Every category reads the repository through _walk_repo (a few read fixed paths such as .github/workflows
+# directly). A file is scanned when it survives the exclude policy below and looks like text. The policy is,
+# in order: assessment artifacts are excluded; composite GitHub actions are kept; dependency and build trees
+# (_HARD_EXCLUDE_*) are excluded; then data/scan-excludes.yaml decides, or _FALLBACK_DIRS when it is missing.
+# discover_identity_providers.py and embedded_store_access.py walk the repository through _walk_repo too.
+
+# Default fallback excludes when scan_excludes.yaml is unavailable.
 _FALLBACK_DIRS = frozenset(
     {
         "node_modules",
@@ -179,7 +186,7 @@ _TEXT_EXT = {
     ".entitlements",
     ".xcconfig",
     ".pbxproj",
-    # Also match files with no extension when the name suggests code (Dockerfile, Jenkinsfile)
+    # Files without one of these extensions (Dockerfile, Jenkinsfile, ...) are matched by name in _should_read.
 }
 
 
@@ -369,6 +376,83 @@ def _walk_repo(
             yield p
 
 
+# A matched line is evidence, not content: minified bundles put a whole file on one line, so every quoted
+# line is cut to this many characters.
+_MAX_MATCH_CHARS = 400
+
+
+def _clip_line(line: str) -> str:
+    """The line without its line break, cut to _MAX_MATCH_CHARS with a trailing ellipsis."""
+    stripped = line.rstrip("\r\n")
+    if len(stripped) > _MAX_MATCH_CHARS:
+        stripped = stripped[:_MAX_MATCH_CHARS] + "…"
+    return stripped
+
+
+def _rel(path: Path, repo_root: Path) -> str:
+    """Repository-relative path with forward slashes, as every finding's ``file`` field carries it."""
+    return str(path.relative_to(repo_root)).replace("\\", "/")
+
+
+def _read_lines(path: Path) -> list[str] | None:
+    """The file's lines, or ``None`` when it cannot be read; undecodable bytes are replaced."""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+
+
+def _source_files(repo_root: Path, exts: set[str] | None = None) -> Iterable[tuple[Path, str, list[str]]]:
+    """(path, rel, lines) for every scanned file whose suffix is in ``exts`` (all files when ``None``)."""
+    for p in _walk_repo(repo_root):
+        if exts is not None and p.suffix.lower() not in exts:
+            continue
+        lines = _read_lines(p)
+        if lines is not None:
+            yield p, _rel(p, repo_root), lines
+
+
+def _workflow_files(repo_root: Path) -> list[tuple[Path, list[str]]]:
+    """(path, lines) of every readable GitHub Actions workflow, sorted by name; [] without .github/workflows.
+
+    Read directly rather than through _walk_repo, so workflows are checked even where scan excludes apply.
+    """
+    wf_dir = repo_root / ".github" / "workflows"
+    if not wf_dir.is_dir():
+        return []
+    out = []
+    for p in sorted(wf_dir.iterdir()):
+        if p.suffix.lower() not in {".yml", ".yaml"} or not p.is_file():
+            continue
+        lines = _read_lines(p)
+        if lines is not None:
+            out.append((p, lines))
+    return out
+
+
+def _category_result(category: int, name: str, findings: list[dict[str, Any]]) -> dict[str, Any]:
+    """The per-category document every scanner returns; ``count`` is the uncapped total."""
+    return {"category": category, "name": name, "findings": findings, "count": len(findings)}
+
+
+def _scan_pattern_category(
+    repo_root: Path,
+    category: int,
+    name: str,
+    pattern: re.Pattern[str],
+    exts: set[str] | None = None,
+) -> dict[str, Any]:
+    """A category whose findings are just the lines matching one pattern, without subcategory or severity."""
+    findings: list[dict[str, Any]] = []
+    for p in _walk_repo(repo_root):
+        if exts is not None and p.suffix.lower() not in exts:
+            continue
+        rel = _rel(p, repo_root)
+        for line_no, text in _grep_file(p, pattern):
+            findings.append({"category": category, "file": rel, "line": line_no, "match": text.strip()})
+    return _category_result(category, name, findings)
+
+
 def _grep_file(path: Path, pattern: re.Pattern[str]) -> list[tuple[int, str]]:
     """Return (line_no, line_text) for every line in `path` matching `pattern`."""
     out: list[tuple[int, str]] = []
@@ -376,19 +460,31 @@ def _grep_file(path: Path, pattern: re.Pattern[str]) -> list[tuple[int, str]]:
         with path.open("r", encoding="utf-8", errors="replace") as f:
             for n, line in enumerate(f, start=1):
                 if pattern.search(line):
-                    # Strip trailing newline and trim very long lines
-                    stripped = line.rstrip("\r\n")
-                    if len(stripped) > 400:
-                        stripped = stripped[:400] + "…"
-                    out.append((n, stripped))
+                    out.append((n, _clip_line(line)))
     except OSError:
         pass
     return out
 
 
+def _line_hits(lines: list[str], pattern: re.Pattern[str]) -> list[tuple[int, str]]:
+    """(line_no, clipped and stripped text) for every line matching ``pattern``."""
+    return [(n, _clip_line(line).strip()) for n, line in enumerate(lines, start=1) if pattern.search(line)]
+
+
+def _first_hit(hits: list[tuple[int, str]], fallback: list[tuple[int, str]]) -> tuple[int, str]:
+    """The line a file-level finding points at: the first hit, else the first fallback hit."""
+    return hits[0] if hits else fallback[0]
+
+
 # ---------------------------------------------------------------------------
 # Category 9 — OAuth / OIDC
 # ---------------------------------------------------------------------------
+# Detects: files that use OAuth/OIDC (surface), then RFC 9700 / OIDC Core anti-patterns in those files —
+# implicit flow, code flow without PKCE or with plain PKCE, missing state or nonce, ID tokens without claim
+# validation, refresh tokens in browser storage, the password grant, client secrets in frontend code,
+# HTTP or loosely matched redirect URIs, static state/nonce values, and credentials derived from identity claims.
+# False-positive limits: a check runs only in a file that already shows an OAuth/OIDC surface, and every
+# "missing X" check looks for X anywhere in the same file, so a marker in the file suppresses the finding.
 
 
 _CAT9_EXTS = {
@@ -481,17 +577,6 @@ _CAT9_DERIVED_CREDENTIAL = re.compile(
     r"base64(?:url)?(?:encode|_encode)\s*\()[^\n]{0,240}?"
     r"(?:email|e-mail|username|user_name|profile\.(?:email|name)|claims?\.(?:email|sub))"
 )
-
-
-def _line_hits(lines: list[str], pattern: re.Pattern[str]) -> list[tuple[int, str]]:
-    hits: list[tuple[int, str]] = []
-    for n, line in enumerate(lines, start=1):
-        if pattern.search(line):
-            text = line.rstrip("\r\n")
-            if len(text) > 400:
-                text = text[:400] + "…"
-            hits.append((n, text.strip()))
-    return hits
 
 
 def _add_cat9(
@@ -601,39 +686,39 @@ def _oauth_flow_checks(
         )
 
     if _CAT9_AUTH_REQUEST.search(text) and not _CAT9_STATE_TOKEN.search(text):
-        auth_hits = _line_hits(lines, _CAT9_AUTH_REQUEST)
+        line, match = _first_hit(_line_hits(lines, _CAT9_AUTH_REQUEST), surface_hits)
         _add_cat9(
             findings,
             rel=rel,
             subcategory="oauth-missing-state",
             severity="High",
-            line=auth_hits[0][0] if auth_hits else surface_hits[0][0],
-            match=auth_hits[0][1] if auth_hits else surface_hits[0][1],
+            line=line,
+            match=match,
             evidence="OAuth authorization request pattern without state marker in the same file",
         )
 
     id_token_flow = bool(_CAT9_ID_TOKEN_FLOW.search(text))
     if id_token_flow and not _CAT9_NONCE_TOKEN.search(text):
-        id_hits = _line_hits(lines, _CAT9_ID_TOKEN_FLOW)
+        line, match = _first_hit(_line_hits(lines, _CAT9_ID_TOKEN_FLOW), surface_hits)
         _add_cat9(
             findings,
             rel=rel,
             subcategory="oidc-missing-nonce",
             severity="High",
-            line=id_hits[0][0] if id_hits else surface_hits[0][0],
-            match=id_hits[0][1] if id_hits else surface_hits[0][1],
+            line=line,
+            match=match,
             evidence="OIDC id_token/openid flow without nonce marker in the same file",
         )
 
     if id_token_flow and _CAT9_CLAIM_CONTEXT.search(text) and not _CAT9_CLAIM_VALIDATION.search(text):
-        id_hits = _line_hits(lines, _CAT9_ID_TOKEN_FLOW)
+        line, match = _first_hit(_line_hits(lines, _CAT9_ID_TOKEN_FLOW), surface_hits)
         _add_cat9(
             findings,
             rel=rel,
             subcategory="oidc-claim-validation-gap",
             severity="High",
-            line=id_hits[0][0] if id_hits else surface_hits[0][0],
-            match=id_hits[0][1] if id_hits else surface_hits[0][1],
+            line=line,
+            match=match,
             evidence="OIDC token handling without issuer/audience/JWKS/nonce validation markers in the same file",
         )
     return code_hits
@@ -719,14 +804,14 @@ def _oauth_pkce_s256_check(
 ) -> None:
     """Check that PKCE on a code flow uses S256."""
     if _CAT9_PKCE_PRESENT.search(text) and not _CAT9_PKCE_S256.search(text) and _CAT9_CODE_FLOW.search(text):
-        pkce_hits = _line_hits(lines, _CAT9_PKCE_PRESENT)
+        line, match = _first_hit(_line_hits(lines, _CAT9_PKCE_PRESENT), code_hits)
         _add_cat9(
             findings,
             rel=rel,
             subcategory="oauth-pkce-s256-not-evident",
             severity="Medium",
-            line=pkce_hits[0][0] if pkce_hits else code_hits[0][0],
-            match=pkce_hits[0][1] if pkce_hits else code_hits[0][1],
+            line=line,
+            match=match,
             evidence="PKCE markers found on code flow but S256 is not evident in the same file",
         )
 
@@ -741,37 +826,30 @@ def scan_oauth_oidc(repo_root: Path) -> dict[str, Any]:
     """
     findings: list[dict[str, Any]] = []
 
-    for p in _walk_repo(repo_root):
-        rel = str(p.relative_to(repo_root)).replace("\\", "/")
-        if p.suffix.lower() not in _CAT9_EXTS:
-            continue
-        try:
-            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
-            continue
-        text = "\n".join(lines)
+    for _, rel, lines in _source_files(repo_root, _CAT9_EXTS):
         surface_hits = _line_hits(lines, _CAT9_SURFACE)
         if not surface_hits:
             continue
+        text = "\n".join(lines)
 
         _oauth_surface_checks(findings, rel, lines, surface_hits)
 
+        # Browser code cannot keep a secret, so some checks weigh heavier when the path looks like frontend code.
         frontend_like = bool(_CAT9_FRONTEND_HINT.search(rel))
         code_hits = _oauth_flow_checks(findings, rel, lines, text, surface_hits, frontend_like)
         _oauth_token_and_redirect_checks(findings, rel, lines, frontend_like)
         _oauth_pkce_s256_check(findings, rel, lines, text, code_hits)
 
-    return {
-        "category": 9,
-        "name": "OAuth / OIDC",
-        "findings": findings,
-        "count": len(findings),
-    }
+    return _category_result(9, "OAuth / OIDC", findings)
 
 
 # ---------------------------------------------------------------------------
 # Category 11 — Exposed routes
 # ---------------------------------------------------------------------------
+# Detects: route strings of admin, debug, test, metrics, health and API-documentation endpoints in source code.
+# A hit is a route string, not a confirmed endpoint: reachability and protection are not judged here.
+# False-positive limits: path fragments need a non-word character before the slash (see below), and only
+# source-code extensions are read.
 
 
 # Path-fragment matches need a word-boundary on both sides so `/env` does
@@ -823,25 +901,16 @@ _CAT11_EXTS = {
 
 def scan_exposed_routes(repo_root: Path) -> dict[str, Any]:
     """Grep source files for debug, admin, actuator and API-doc route fragments (Cat 11)."""
-    findings: list[dict[str, Any]] = []
-    for p in _walk_repo(repo_root):
-        if p.suffix.lower() not in _CAT11_EXTS:
-            continue
-        for line_no, text in _grep_file(p, _CAT11_PATTERN):
-            findings.append(
-                {
-                    "category": 11,
-                    "file": str(p.relative_to(repo_root)).replace("\\", "/"),
-                    "line": line_no,
-                    "match": text.strip(),
-                }
-            )
-    return {"category": 11, "name": "Exposed Routes", "findings": findings, "count": len(findings)}
+    return _scan_pattern_category(repo_root, 11, "Exposed Routes", _CAT11_PATTERN, _CAT11_EXTS)
 
 
 # ---------------------------------------------------------------------------
 # Category 14 — CI/CD supply chain
 # ---------------------------------------------------------------------------
+# Detects: GitHub Actions `uses:` references that are not pinned to a full commit SHA, and every `image:`
+# directive in a root .gitlab-ci.yml (listed for review; tags are not judged here).
+# False-positive exclusions: SHA-pinned actions and local `./` actions. Only .github/workflows is read, so
+# composite actions elsewhere are not checked.
 
 
 # `uses: owner/name@ref` where ref is NOT a 40-char hex SHA.
@@ -861,40 +930,23 @@ def scan_ci_supply_chain(repo_root: Path) -> dict[str, Any]:
     """
     findings: list[dict[str, Any]] = []
 
-    # GitHub Actions workflows
-    wf_dir = repo_root / ".github" / "workflows"
-    if wf_dir.is_dir():
-        for p in sorted(wf_dir.iterdir()):
-            if p.suffix.lower() not in {".yml", ".yaml"} or not p.is_file():
+    for p, lines in _workflow_files(repo_root):
+        for n, line in enumerate(lines, start=1):
+            m = _CAT14_UNPINNED_ACTION.match(line)
+            if not m or _SHA40.match(m.group("tag")) or m.group("ref").startswith("./"):
                 continue
-            try:
-                lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
-            except OSError:
-                continue
-            for n, line in enumerate(lines, start=1):
-                m = _CAT14_UNPINNED_ACTION.match(line)
-                if not m:
-                    continue
-                tag = m.group("tag")
-                # Skip when pinned by 40-char SHA (the desired secure state)
-                if _SHA40.match(tag):
-                    continue
-                # Skip the special "./" local action / workflow reference
-                if m.group("ref").startswith("./"):
-                    continue
-                findings.append(
-                    {
-                        "category": 14,
-                        "subcategory": "unpinned-github-action",
-                        "file": str(p.relative_to(repo_root)).replace("\\", "/"),
-                        "line": n,
-                        "action": m.group("ref"),
-                        "tag": tag,
-                        "match": line.strip(),
-                    }
-                )
+            findings.append(
+                {
+                    "category": 14,
+                    "subcategory": "unpinned-github-action",
+                    "file": _rel(p, repo_root),
+                    "line": n,
+                    "action": m.group("ref"),
+                    "tag": m.group("tag"),
+                    "match": line.strip(),
+                }
+            )
 
-    # GitLab CI (optional)
     for candidate in (".gitlab-ci.yml", ".gitlab-ci.yaml"):
         p = repo_root / candidate
         if not p.is_file():
@@ -916,17 +968,16 @@ def scan_ci_supply_chain(repo_root: Path) -> dict[str, Any]:
                 }
             )
 
-    return {
-        "category": 14,
-        "name": "CI/CD Supply Chain",
-        "findings": findings,
-        "count": len(findings),
-    }
+    return _category_result(14, "CI/CD Supply Chain", findings)
 
 
 # ---------------------------------------------------------------------------
 # Category 15 — Container base images
 # ---------------------------------------------------------------------------
+# Detects: Dockerfile `FROM` and docker-compose `image:` references that are not pinned to a digest, graded as
+# missing tag, `latest`, or tag without digest.
+# False-positive exclusions: `scratch` and `@sha256:` references. Compose files are recognised only by the
+# `docker-compose*` name; `compose.yaml` is not read here.
 
 
 _CAT15_FROM = re.compile(r"^\s*FROM\s+(?P<image>[^\s#]+)", re.IGNORECASE)
@@ -934,6 +985,7 @@ _CAT15_COMPOSE_IMAGE = re.compile(r"^\s*image:\s*(?P<image>[^\s#]+)", re.IGNOREC
 
 
 def _container_image_issue(image: str) -> str | None:
+    """The pinning gap of an image reference, or ``None`` when it is digest-pinned or ``scratch``."""
     if image.lower() == "scratch":
         return None
     if "@sha256:" in image:
@@ -950,7 +1002,7 @@ def scan_container_images(repo_root: Path) -> dict[str, Any]:
     """Flag Dockerfile `FROM` and compose `image:` refs without a `@sha256` digest (Cat 15)."""
     findings: list[dict[str, Any]] = []
     for p in _walk_repo(repo_root):
-        rel = str(p.relative_to(repo_root)).replace("\\", "/")
+        rel = _rel(p, repo_root)
         name = p.name.lower()
         is_dockerfile = p.name == "Dockerfile" or p.name.startswith("Dockerfile.")
         is_compose = name.startswith("docker-compose") and p.suffix.lower() in {".yml", ".yaml"}
@@ -975,20 +1027,21 @@ def scan_container_images(repo_root: Path) -> dict[str, Any]:
                     "match": text.strip(),
                 }
             )
-    return {
-        "category": 15,
-        "name": "Container Base Images",
-        "findings": findings,
-        "count": len(findings),
-    }
+    return _category_result(15, "Container Base Images", findings)
 
 
 # ---------------------------------------------------------------------------
 # Category 17 — Postinstall scripts
 # ---------------------------------------------------------------------------
+# Detects: code that runs at install time — npm lifecycle scripts in any package.json, an `ignore-scripts`
+# setting in the root .npmrc (listed whatever its value), and shell calls or a custom `cmdclass` in setup.py.
+# False-positive exclusions: package.json and setup.py files under excluded paths (dependency trees, tests).
 
 
 _CAT17_NPM_LIFECYCLE_KEYS = ("preinstall", "postinstall", "prepare", "prebuild", "postpublish")
+_CAT17_SETUP_PY_SHELL = re.compile(
+    r"(?:cmdclass\s*=|install_requires.*subprocess|os\.system\s*\(|subprocess\.(?:run|call|Popen))"
+)
 
 
 def scan_postinstall(repo_root: Path) -> dict[str, Any]:
@@ -997,9 +1050,8 @@ def scan_postinstall(repo_root: Path) -> dict[str, Any]:
     """
     findings: list[dict[str, Any]] = []
 
-    # npm / node lifecycle scripts in package.json
     for p in repo_root.rglob("package.json"):
-        rel = str(p.relative_to(repo_root)).replace("\\", "/")
+        rel = _rel(p, repo_root)
         if _is_excluded(rel, repo_root):
             continue
         try:
@@ -1022,37 +1074,25 @@ def scan_postinstall(repo_root: Path) -> dict[str, Any]:
                     }
                 )
 
-    # .npmrc ignore-scripts
-    for candidate in (".npmrc", repo_root.name + "/.npmrc"):
-        p = repo_root / ".npmrc"
-        if not p.is_file():
-            break
-        try:
-            text = p.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            break
-        for n, line in enumerate(text.splitlines(), start=1):
-            if re.match(r"^\s*ignore-scripts\s*=", line, re.IGNORECASE):
-                findings.append(
-                    {
-                        "category": 17,
-                        "subcategory": "npmrc-ignore-scripts",
-                        "file": ".npmrc",
-                        "line": n,
-                        "match": line.strip(),
-                    }
-                )
-        break
+    npmrc = repo_root / ".npmrc"
+    npmrc_lines = _read_lines(npmrc) if npmrc.is_file() else None
+    for n, line in enumerate(npmrc_lines or [], start=1):
+        if re.match(r"^\s*ignore-scripts\s*=", line, re.IGNORECASE):
+            findings.append(
+                {
+                    "category": 17,
+                    "subcategory": "npmrc-ignore-scripts",
+                    "file": ".npmrc",
+                    "line": n,
+                    "match": line.strip(),
+                }
+            )
 
-    # Python setup.py install-time shell escape
-    py_shell_re = re.compile(
-        r"(?:cmdclass\s*=|install_requires.*subprocess|os\.system\s*\(|subprocess\.(?:run|call|Popen))"
-    )
     for p in repo_root.rglob("setup.py"):
-        rel = str(p.relative_to(repo_root)).replace("\\", "/")
+        rel = _rel(p, repo_root)
         if _is_excluded(rel, repo_root):
             continue
-        for line_no, text in _grep_file(p, py_shell_re):
+        for line_no, text in _grep_file(p, _CAT17_SETUP_PY_SHELL):
             findings.append(
                 {
                     "category": 17,
@@ -1063,17 +1103,14 @@ def scan_postinstall(repo_root: Path) -> dict[str, Any]:
                 }
             )
 
-    return {
-        "category": 17,
-        "name": "Postinstall Scripts",
-        "findings": findings,
-        "count": len(findings),
-    }
+    return _category_result(17, "Postinstall Scripts", findings)
 
 
 # ---------------------------------------------------------------------------
 # Category 18 — Security headers & CORS
 # ---------------------------------------------------------------------------
+# Detects: where security headers, Helmet and CORS are configured. This is an inventory of present
+# configuration, not a weakness list: a missing header and a permissive CORS value are not reported here.
 
 
 _CAT18_PATTERN = re.compile(
@@ -1122,33 +1159,23 @@ def scan_security_headers(repo_root: Path) -> dict[str, Any]:
 
     Hits mark where headers are set; a missing header is not reported here.
     """
-    findings: list[dict[str, Any]] = []
-    for p in _walk_repo(repo_root):
-        if p.suffix.lower() not in _CAT18_EXTS:
-            continue
-        for line_no, text in _grep_file(p, _CAT18_PATTERN):
-            findings.append(
-                {
-                    "category": 18,
-                    "file": str(p.relative_to(repo_root)).replace("\\", "/"),
-                    "line": line_no,
-                    "match": text.strip(),
-                }
-            )
-    return {
-        "category": 18,
-        "name": "Security Headers & CORS",
-        "findings": findings,
-        "count": len(findings),
-    }
+    return _scan_pattern_category(repo_root, 18, "Security Headers & CORS", _CAT18_PATTERN, _CAT18_EXTS)
 
 
 # ---------------------------------------------------------------------------
 # Categories 10, 19–24 — frontend/client runtime patterns
 # ---------------------------------------------------------------------------
+# What runs in the browser and therefore cannot be trusted: tokens in browser storage and client-side role
+# checks (10), unsafe HTML sinks (19), DOM XSS sources and sinks (20), secrets shipped in client bundles (21),
+# WebSocket endpoints (22), postMessage and iframe use (23), and client-side route guards (24).
+# Each category first records a low-severity "surface" finding per hit, then raises a candidate when a
+# protective marker (sanitizer, origin check, auth or server call) is missing from the same file. These markers
+# are judged per file, not per call site, so a marker anywhere in the file suppresses the candidate.
 
 
 _CLIENT_EXTS = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".vue", ".svelte", ".html", ".htm"}
+# WebSocket servers also live in backend languages.
+_CAT22_EXTS = _CLIENT_EXTS | {".py", ".go", ".java", ".kt", ".cs"}
 
 _CAT10_TOKEN_STORAGE = re.compile(
     r"(?i)((localStorage|sessionStorage|indexedDB|document\.cookie)[^\n]{0,180}"
@@ -1224,7 +1251,6 @@ _CAT23_MESSAGE_LISTENER = re.compile(r"(?i)addEventListener\s*\(\s*['\"]message"
 _CAT23_ORIGIN_CHECK = re.compile(r"(?i)(event\.origin|\borigin\b|allowedOrigins?|trustedOrigins?|includes\s*\()")
 _CAT23_IFRAME = re.compile(r"(?i)<iframe\b")
 _CAT23_IFRAME_SANDBOX = re.compile(r"(?i)\bsandbox\s*=")
-_CAT23_PERMISSIVE_SANDBOX = re.compile(r"(?i)sandbox\s*=\s*['\"][^'\"]*allow-scripts[^'\"]*allow-same-origin")
 _CAT23_BLANK_NO_NOOPENER = re.compile(
     r"(?i)(target\s*=\s*['\"]_blank['\"](?![^>\n]*(?:noopener|noreferrer))|window\.open\s*\([^;\n]*(?!noopener|noreferrer))"
 )
@@ -1249,6 +1275,7 @@ def _add_client_finding(
     evidence: str,
     **extra: Any,
 ) -> None:
+    """Append a frontend finding; ``extra`` adds fields such as ``anti_pattern`` after the common ones."""
     item: dict[str, Any] = {
         "category": category,
         "subcategory": subcategory,
@@ -1262,30 +1289,6 @@ def _add_client_finding(
     findings.append(item)
 
 
-def _scan_pattern_category(
-    repo_root: Path,
-    category: int,
-    name: str,
-    pattern: re.Pattern[str],
-    exts: set[str] | None = None,
-) -> dict[str, Any]:
-    findings: list[dict[str, Any]] = []
-    for p in _walk_repo(repo_root):
-        if exts is not None and p.suffix.lower() not in exts:
-            continue
-        rel = str(p.relative_to(repo_root)).replace("\\", "/")
-        for line_no, text in _grep_file(p, pattern):
-            findings.append(
-                {
-                    "category": category,
-                    "file": rel,
-                    "line": line_no,
-                    "match": text.strip(),
-                }
-            )
-    return {"category": category, "name": name, "findings": findings, "count": len(findings)}
-
-
 def scan_spa_bff(repo_root: Path) -> dict[str, Any]:
     """Flag browser-stored tokens, `withCredentials` use and client-side role checks (Cat 10).
 
@@ -1297,48 +1300,41 @@ def scan_spa_bff(repo_root: Path) -> dict[str, Any]:
     credentials_hits: list[dict[str, Any]] = []
     bff_seen = False
 
-    for p in _walk_repo(repo_root):
-        rel = str(p.relative_to(repo_root)).replace("\\", "/")
-        try:
-            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
-            continue
-        text = "\n".join(lines)
-        if _CAT10_BFF.search(text):
+    # Every file is read, because a BFF or server-session marker in backend code also counts;
+    # only client files are checked for the anti-patterns themselves.
+    for p, rel, lines in _source_files(repo_root):
+        if _CAT10_BFF.search("\n".join(lines)):
             bff_seen = True
         if p.suffix.lower() not in _CLIENT_EXTS:
             continue
 
         for n, line in _line_hits(lines, _CAT10_TOKEN_STORAGE):
-            subcat = "spa-token-browser-storage"
-            severity = "High"
-            if _CAT10_REFRESH_STORAGE.search(line):
-                subcat = "spa-refresh-token-browser-storage"
-            item = {
-                "category": 10,
-                "subcategory": subcat,
-                "file": rel,
-                "line": n,
-                "severity": severity,
-                "match": line,
-                "evidence": "Session credential appears in browser-accessible storage",
-                "anti_pattern": "JWT in localStorage",
-            }
-            findings.append(item)
-            token_hits.append(item)
+            refresh = _CAT10_REFRESH_STORAGE.search(line)
+            _add_client_finding(
+                findings,
+                category=10,
+                rel=rel,
+                subcategory="spa-refresh-token-browser-storage" if refresh else "spa-token-browser-storage",
+                severity="High",
+                line=n,
+                match=line,
+                evidence="Session credential appears in browser-accessible storage",
+                anti_pattern="JWT in localStorage",
+            )
+            token_hits.append(findings[-1])
 
         for n, line in _line_hits(lines, _CAT10_CREDENTIALS):
-            item = {
-                "category": 10,
-                "subcategory": "spa-withcredentials-surface",
-                "file": rel,
-                "line": n,
-                "severity": "Info",
-                "match": line,
-                "evidence": "Browser credentialed request mode is used",
-            }
-            findings.append(item)
-            credentials_hits.append(item)
+            _add_client_finding(
+                findings,
+                category=10,
+                rel=rel,
+                subcategory="spa-withcredentials-surface",
+                severity="Info",
+                line=n,
+                match=line,
+                evidence="Browser credentialed request mode is used",
+            )
+            credentials_hits.append(findings[-1])
 
         for n, line in _line_hits(lines, _CAT10_CLIENT_ROLE):
             _add_client_finding(
@@ -1381,19 +1377,13 @@ def scan_spa_bff(repo_root: Path) -> dict[str, Any]:
             anti_pattern="SPA without BFF",
         )
 
-    return {"category": 10, "name": "SPA / BFF", "findings": findings, "count": len(findings)}
+    return _category_result(10, "SPA / BFF", findings)
 
 
 def _package_json_line(path: Path, dependency: str) -> int | None:
-    try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return None
+    """Line of the first occurrence of the quoted dependency name in a package.json."""
     quoted = f'"{dependency}"'
-    for n, line in enumerate(lines, start=1):
-        if quoted in line:
-            return n
-    return None
+    return next((n for n, line in enumerate(_read_lines(path) or [], start=1) if quoted in line), None)
 
 
 def scan_frontend_xss(repo_root: Path) -> dict[str, Any]:
@@ -1405,7 +1395,7 @@ def scan_frontend_xss(repo_root: Path) -> dict[str, Any]:
     findings: list[dict[str, Any]] = []
 
     for p in repo_root.rglob("package.json"):
-        rel = str(p.relative_to(repo_root)).replace("\\", "/")
+        rel = _rel(p, repo_root)
         if _is_excluded(rel, repo_root):
             continue
         try:
@@ -1432,37 +1422,10 @@ def scan_frontend_xss(repo_root: Path) -> dict[str, Any]:
                 framework=framework,
             )
 
-    for p in _walk_repo(repo_root):
-        if p.suffix.lower() not in _CLIENT_EXTS:
-            continue
-        rel = str(p.relative_to(repo_root)).replace("\\", "/")
-        try:
-            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
-            continue
-        text = "\n".join(lines)
-        has_strong_sanitizer = bool(_CAT19_STRONG_SANITIZER.search(text))
+    for _, rel, lines in _source_files(repo_root, _CLIENT_EXTS):
+        has_strong_sanitizer = bool(_CAT19_STRONG_SANITIZER.search("\n".join(lines)))
         for n, line in _line_hits(lines, _CAT19_UNSAFE_HTML):
-            if re.search(r"(?i)bypassSecurityTrust", line):
-                subcat = "frontend-sanitizer-bypass"
-                severity = "High"
-                evidence = "Framework sanitizer bypass API is used"
-                anti_pattern = "Sanitizer bypass by default"
-            elif re.search(r"(?i)\bDomSanitizer\b", line):
-                subcat = "frontend-sanitizer-api-surface"
-                severity = "Info"
-                evidence = "Angular DomSanitizer API is referenced; verify it is not used as a default bypass"
-                anti_pattern = None
-            elif has_strong_sanitizer:
-                subcat = "frontend-html-sink-with-sanitizer"
-                severity = "Info"
-                evidence = "Unsafe HTML sink is present with sanitizer markers in the same file"
-                anti_pattern = None
-            else:
-                subcat = "frontend-unsafe-html-sink"
-                severity = "High"
-                evidence = "Unsafe HTML rendering sink is present without sanitizer markers in the same file"
-                anti_pattern = "Sanitizer bypass by default"
+            subcat, severity, evidence, anti_pattern = _html_sink_verdict(line, has_strong_sanitizer)
             extra = {"anti_pattern": anti_pattern} if anti_pattern else {}
             _add_client_finding(
                 findings,
@@ -1476,20 +1439,35 @@ def scan_frontend_xss(repo_root: Path) -> dict[str, Any]:
                 **extra,
             )
 
-    return {"category": 19, "name": "Frontend Framework & XSS Patterns", "findings": findings, "count": len(findings)}
+    return _category_result(19, "Frontend Framework & XSS Patterns", findings)
+
+
+def _html_sink_verdict(line: str, has_strong_sanitizer: bool) -> tuple[str, str, str, str | None]:
+    """(subcategory, severity, evidence, anti_pattern) for one unsafe-HTML line.
+
+    A sanitizer bypass API is High even next to a sanitizer; an Angular DomSanitizer reference is only a surface.
+    """
+    if re.search(r"(?i)bypassSecurityTrust", line):
+        return (
+            "frontend-sanitizer-bypass",
+            "High",
+            "Framework sanitizer bypass API is used",
+            "Sanitizer bypass by default",
+        )
+    if re.search(r"(?i)\bDomSanitizer\b", line):
+        evidence = "Angular DomSanitizer API is referenced; verify it is not used as a default bypass"
+        return "frontend-sanitizer-api-surface", "Info", evidence, None
+    if has_strong_sanitizer:
+        evidence = "Unsafe HTML sink is present with sanitizer markers in the same file"
+        return "frontend-html-sink-with-sanitizer", "Info", evidence, None
+    evidence = "Unsafe HTML rendering sink is present without sanitizer markers in the same file"
+    return "frontend-unsafe-html-sink", "High", evidence, "Sanitizer bypass by default"
 
 
 def scan_dom_xss(repo_root: Path) -> dict[str, Any]:
     """Record DOM XSS sources and one High candidate per file that holds both a source and a sink (Cat 20)."""
     findings: list[dict[str, Any]] = []
-    for p in _walk_repo(repo_root):
-        if p.suffix.lower() not in _CLIENT_EXTS:
-            continue
-        rel = str(p.relative_to(repo_root)).replace("\\", "/")
-        try:
-            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
-            continue
+    for _, rel, lines in _source_files(repo_root, _CLIENT_EXTS):
         source_hits = _line_hits(lines, _CAT20_DOM_SOURCE)
         sink_hits = _line_hits(lines, _CAT20_DOM_SINK)
         for n, line in source_hits:
@@ -1519,7 +1497,7 @@ def scan_dom_xss(repo_root: Path) -> dict[str, Any]:
                 sink_match=sink_match,
                 anti_pattern="Client-side trust boundary",
             )
-    return {"category": 20, "name": "DOM-Based XSS Sources", "findings": findings, "count": len(findings)}
+    return _category_result(20, "DOM-Based XSS Sources", findings)
 
 
 def scan_client_secrets(repo_root: Path) -> dict[str, Any]:
@@ -1529,14 +1507,11 @@ def scan_client_secrets(repo_root: Path) -> dict[str, Any]:
         if path.suffix.lower() not in _CLIENT_EXTS:
             continue
         rel = path.relative_to(repo_root).as_posix()
-        try:
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
-            continue
-        for line_no, line in enumerate(lines, start=1):
+        for line_no, line in enumerate(_read_lines(path) or [], start=1):
             match = _CAT21_BUNDLED_CREDENTIAL.search(line)
             if not match:
                 continue
+            # Never copy a secret into the evidence: keep four characters and the length.
             value = match.group("value")
             redacted = value[:4] + "****" if value else "****"
             _add_client_finding(
@@ -1552,7 +1527,7 @@ def scan_client_secrets(repo_root: Path) -> dict[str, Any]:
                 finding_type="configuration-defect-candidate",
                 false_positive_exclusions="empty or short placeholders and excluded test/spec/fixture paths",
             )
-    return {"category": 21, "name": "Client-Side Secrets", "findings": findings, "count": len(findings)}
+    return _category_result(21, "Client-Side Secrets", findings)
 
 
 def scan_websocket(repo_root: Path) -> dict[str, Any]:
@@ -1560,14 +1535,7 @@ def scan_websocket(repo_root: Path) -> dict[str, Any]:
     marker in the same file (Cat 22).
     """
     findings: list[dict[str, Any]] = []
-    for p in _walk_repo(repo_root):
-        if p.suffix.lower() not in (_CLIENT_EXTS | {".py", ".go", ".java", ".kt", ".cs"}):
-            continue
-        rel = str(p.relative_to(repo_root)).replace("\\", "/")
-        try:
-            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
-            continue
+    for _, rel, lines in _source_files(repo_root, _CAT22_EXTS):
         text = "\n".join(lines)
         surface_hits = _line_hits(lines, _CAT22_PATTERN)
         for n, line in surface_hits:
@@ -1592,7 +1560,9 @@ def scan_websocket(repo_root: Path) -> dict[str, Any]:
                 match=line,
                 evidence="WebSocket URL uses cleartext ws:// outside loopback",
             )
-        if surface_hits and _CAT22_SERVER_SOCKET.search(text) and not _CAT22_AUTH.search(text):
+        # Authentication and origin checks belong to the server side of a socket; a client file is not judged.
+        server_side = bool(surface_hits) and bool(_CAT22_SERVER_SOCKET.search(text))
+        if server_side and not _CAT22_AUTH.search(text):
             n, line = surface_hits[0]
             _add_client_finding(
                 findings,
@@ -1604,7 +1574,7 @@ def scan_websocket(repo_root: Path) -> dict[str, Any]:
                 match=line,
                 evidence="Server-side WebSocket surface without auth/token/session markers in the same file",
             )
-        if surface_hits and _CAT22_SERVER_SOCKET.search(text) and not _CAT22_ORIGIN.search(text):
+        if server_side and not _CAT22_ORIGIN.search(text):
             n, line = surface_hits[0]
             _add_client_finding(
                 findings,
@@ -1616,7 +1586,7 @@ def scan_websocket(repo_root: Path) -> dict[str, Any]:
                 match=line,
                 evidence="Server-side WebSocket surface without origin/cors validation markers in the same file",
             )
-    return {"category": 22, "name": "WebSocket & Real-Time", "findings": findings, "count": len(findings)}
+    return _category_result(22, "WebSocket & Real-Time", findings)
 
 
 def scan_postmessage(repo_root: Path) -> dict[str, Any]:
@@ -1625,14 +1595,7 @@ def scan_postmessage(repo_root: Path) -> dict[str, Any]:
     Origin-check and sandbox absence are judged per file, not per call site.
     """
     findings: list[dict[str, Any]] = []
-    for p in _walk_repo(repo_root):
-        if p.suffix.lower() not in _CLIENT_EXTS:
-            continue
-        rel = str(p.relative_to(repo_root)).replace("\\", "/")
-        try:
-            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
-            continue
+    for _, rel, lines in _source_files(repo_root, _CLIENT_EXTS):
         text = "\n".join(lines)
         surface_hits = _line_hits(lines, _CAT23_PATTERN)
         for n, line in surface_hits:
@@ -1697,6 +1660,7 @@ def scan_postmessage(repo_root: Path) -> dict[str, Any]:
                     evidence="iframe sandbox combines allow-scripts and allow-same-origin",
                 )
         for n, line in _line_hits(lines, _CAT23_BLANK_NO_NOOPENER):
+            # The window.open lookahead follows a greedy match and excludes nothing; this line check does.
             if "noopener" in line.lower() or "noreferrer" in line.lower():
                 continue
             _add_client_finding(
@@ -1709,7 +1673,7 @@ def scan_postmessage(repo_root: Path) -> dict[str, Any]:
                 match=line,
                 evidence="new tab/window opener lacks noopener/noreferrer marker",
             )
-    return {"category": 23, "name": "postMessage & iframe", "findings": findings, "count": len(findings)}
+    return _category_result(23, "postMessage & iframe", findings)
 
 
 def scan_client_routing(repo_root: Path) -> dict[str, Any]:
@@ -1717,14 +1681,7 @@ def scan_client_routing(repo_root: Path) -> dict[str, Any]:
     same-file server authority marker (Cat 24).
     """
     findings: list[dict[str, Any]] = []
-    for p in _walk_repo(repo_root):
-        if p.suffix.lower() not in _CLIENT_EXTS:
-            continue
-        rel = str(p.relative_to(repo_root)).replace("\\", "/")
-        try:
-            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
-            continue
+    for _, rel, lines in _source_files(repo_root, _CLIENT_EXTS):
         text = "\n".join(lines)
         guard_hits = _line_hits(lines, _CAT24_PATTERN)
         for n, line in guard_hits:
@@ -1763,17 +1720,18 @@ def scan_client_routing(repo_root: Path) -> dict[str, Any]:
                 evidence="Client-side auth guard is present without same-file server authority check marker",
                 anti_pattern="Client-side trust boundary",
             )
-    return {
-        "category": 24,
-        "name": "Client-Side Routing & Auth Guards",
-        "findings": findings,
-        "count": len(findings),
-    }
+    return _category_result(24, "Client-Side Routing & Auth Guards", findings)
 
 
 # ---------------------------------------------------------------------------
 # Category 29 — Mobile App Architecture & Platform Config
 # ---------------------------------------------------------------------------
+# Detects: Android manifest flags (debuggable, backup, cleartext), exported components without a permission,
+# unverified deep links, weak network security configs, risky WebView, storage and TLS code on Android and iOS,
+# and iOS App Transport Security exceptions and URL schemes.
+# A file is classified as Android or iOS by its name, its path (/android/, /ios/) or platform API markers; code
+# checks run only on files of that platform, so web code that mentions "WebView" in passing is the main
+# false-positive risk. Each classified file also gets one leading `mobile-app-surface` Info finding.
 
 
 _MOBILE_EXTS = {
@@ -1818,8 +1776,6 @@ _ANDROID_ACCEPT_ALL_TLS = re.compile(
     r"checkServerTrusted\s*\([^)]*\)\s*\{?\s*\}|setHostnameVerifier\s*\([^)]*ALLOW_ALL)"
 )
 
-_IOS_ATS_ARBITRARY = re.compile(r"<key>NSAllowsArbitraryLoads</key>\s*<true/>")
-_IOS_ATS_INSECURE_EXCEPTION = re.compile(r"<key>NSExceptionAllowsInsecureHTTPLoads</key>\s*<true/>")
 _IOS_URL_SCHEME = re.compile(r"<key>CFBundleURLSchemes</key>")
 _IOS_ASSOCIATED_DOMAINS = re.compile(r"com\.apple\.developer\.associated-domains|applinks:")
 _IOS_WEBVIEW_BRIDGE = re.compile(
@@ -1841,6 +1797,174 @@ _ANDROID_CODE_HINT = re.compile(
 _IOS_CODE_HINT = re.compile(
     r"(?i)(\bUIKit\b|\bFoundation\b|WKWebView|UserDefaults|NSUserDefaults|CFBundle|Keychain|SecItem|Alamofire|"
     r"NSAppTransportSecurity)"
+)
+
+# Line rules: (pattern, subcategory, severity, evidence, anti_pattern). Every matching line becomes one finding,
+# rule by rule in table order, so reordering a table reorders the findings.
+_MobileRule = tuple[re.Pattern[str], str, str, str, str]
+
+_ANDROID_MANIFEST_FLAG_RULES: tuple[_MobileRule, ...] = (
+    (
+        _ANDROID_DEBUGGABLE,
+        "android-debuggable-enabled",
+        "High",
+        "Android manifest enables debuggable runtime",
+        "Mobile debug build shipped",
+    ),
+    (
+        _ANDROID_ALLOW_BACKUP,
+        "android-allowbackup-enabled",
+        "Medium",
+        "Android app data backup is enabled in the manifest",
+        "Mobile client stores sensitive state without platform hardening",
+    ),
+    (
+        _ANDROID_CLEARTEXT,
+        "android-cleartext-traffic-enabled",
+        "High",
+        "Android manifest permits cleartext network traffic",
+        "Mobile cleartext network policy",
+    ),
+)
+
+_ANDROID_NETWORK_CONFIG_RULES: tuple[_MobileRule, ...] = (
+    (
+        _ANDROID_NETWORK_CLEAR,
+        "android-network-config-cleartext",
+        "High",
+        "Android network security config permits cleartext traffic",
+        "Mobile cleartext network policy",
+    ),
+    (
+        _ANDROID_USER_CA,
+        "android-user-ca-trusted",
+        "Medium",
+        "Android network security config trusts user-installed CAs",
+        "Mobile TLS trust weakened",
+    ),
+    (
+        _ANDROID_DEBUG_OVERRIDES,
+        "android-debug-overrides",
+        "Medium",
+        "Android debug network trust overrides are present",
+        "Mobile debug trust override",
+    ),
+)
+
+_ANDROID_CODE_RULES: tuple[_MobileRule, ...] = (
+    (
+        _ANDROID_WEBVIEW_BRIDGE,
+        "android-webview-js-bridge",
+        "High",
+        "WebView JavaScript bridge is exposed",
+        "Mobile WebView bridge",
+    ),
+    (
+        _ANDROID_WEBVIEW_JS,
+        "android-webview-javascript-enabled",
+        "Medium",
+        "WebView JavaScript execution is enabled",
+        "Mobile WebView bridge",
+    ),
+    (
+        _ANDROID_WEBVIEW_FILE,
+        "android-webview-file-access",
+        "High",
+        "WebView file/universal file URL access is enabled",
+        "Mobile WebView bridge",
+    ),
+    (
+        _ANDROID_WEBVIEW_DEBUG,
+        "android-webview-debugging-enabled",
+        "High",
+        "WebView remote debugging is enabled",
+        "Mobile debug build shipped",
+    ),
+    (
+        _ANDROID_SHARED_PREF_TOKEN,
+        "android-token-sharedpreferences",
+        "High",
+        "Sensitive token/secret marker appears in SharedPreferences usage",
+        "Mobile token in app storage",
+    ),
+    (
+        _ANDROID_WORLD_READABLE,
+        "android-world-readable-storage",
+        "High",
+        "World-readable Android storage mode is used",
+        "Mobile token in app storage",
+    ),
+    (
+        _ANDROID_ACCEPT_ALL_TLS,
+        "android-accept-all-tls",
+        "Critical",
+        "Android TLS validation appears to accept arbitrary certificates or hosts",
+        "Mobile TLS trust disabled",
+    ),
+    (
+        _MOBILE_MINIFY_FALSE,
+        "android-minify-disabled",
+        "Info",
+        "Android build disables code shrinking/obfuscation",
+        "Mobile release hardening gap",
+    ),
+)
+
+_IOS_CODE_RULES: tuple[_MobileRule, ...] = (
+    (
+        _IOS_WEBVIEW_BRIDGE,
+        "ios-webview-js-bridge",
+        "High",
+        "iOS WebView JavaScript bridge or evaluation API is present",
+        "Mobile WebView bridge",
+    ),
+    (
+        _IOS_USERDEFAULTS_TOKEN,
+        "ios-token-userdefaults",
+        "High",
+        "Sensitive token/secret marker appears in UserDefaults usage",
+        "Mobile token in app storage",
+    ),
+    (
+        _IOS_KEYCHAIN_ALWAYS,
+        "ios-keychain-accessible-always",
+        "Medium",
+        "Keychain item uses always-accessible class",
+        "Mobile token in app storage",
+    ),
+    (
+        _IOS_ACCEPT_ALL_TLS,
+        "ios-accept-all-tls",
+        "Critical",
+        "iOS TLS validation appears to accept arbitrary certificates or hosts",
+        "Mobile TLS trust disabled",
+    ),
+    (
+        _IOS_ASSOCIATED_DOMAINS,
+        "ios-associated-domains-surface",
+        "Info",
+        "iOS Associated Domains entitlement is present",
+        "Mobile deep-link trust boundary",
+    ),
+)
+
+# Info.plist booleans are a <key> line followed by a <true/> line, so they are matched by key, not by pattern:
+# (key, subcategory, severity, evidence, anti_pattern).
+_IOS_PLIST_TRUE_KEY_RULES: tuple[tuple[str, str, str, str, str], ...] = (
+    (
+        "NSAllowsArbitraryLoads",
+        "ios-ats-arbitrary-loads",
+        "High",
+        "iOS App Transport Security allows arbitrary loads",
+        "Mobile cleartext network policy",
+    ),
+    (
+        "NSExceptionAllowsInsecureHTTPLoads",
+        "ios-ats-insecure-exception",
+        "High",
+        "iOS ATS exception permits insecure HTTP loads",
+        "Mobile cleartext network policy",
+    ),
 )
 
 
@@ -1871,7 +1995,30 @@ def _add_mobile(
     findings.append(item)
 
 
+def _add_mobile_rule_hits(
+    findings: list[dict[str, Any]], rel: str, lines: list[str], rules: tuple[_MobileRule, ...], platform: str
+) -> None:
+    """One finding per line that a rule's pattern matches, rule by rule."""
+    for pattern, subcat, severity, evidence, anti_pattern in rules:
+        for n, line in _line_hits(lines, pattern):
+            _add_mobile(
+                findings,
+                rel=rel,
+                subcategory=subcat,
+                severity=severity,
+                line=n,
+                match=line,
+                evidence=evidence,
+                platform=platform,
+                anti_pattern=anti_pattern,
+            )
+
+
 def _android_component_blocks(lines: list[str]) -> list[tuple[int, str]]:
+    """(start line, joined text) of each <activity|service|receiver|provider> opening tag, which may span lines.
+
+    The tag ends at the first line holding ``>``, so an attribute value containing ``>`` ends it early.
+    """
     blocks: list[tuple[int, str]] = []
     current: list[str] = []
     start: int | None = None
@@ -1894,6 +2041,7 @@ def _android_component_blocks(lines: list[str]) -> list[tuple[int, str]]:
 
 
 def _plist_true_key_hits(lines: list[str], key: str) -> list[tuple[int, str]]:
+    """(line of <key>, "<key>… <true/>") for each occurrence of ``key`` whose next non-blank line is <true/>."""
     hits: list[tuple[int, str]] = []
     key_marker = f"<key>{key}</key>"
     for n, line in enumerate(lines, start=1):
@@ -1926,42 +2074,7 @@ def _mobile_platform(p: Path, lower_rel: str, text: str) -> tuple[bool, bool]:
 
 def _mobile_android_manifest(findings: list[dict[str, Any]], rel: str, lines: list[str], text: str) -> None:
     """Check AndroidManifest.xml flags, exported components, and deep links."""
-    for n, line in _line_hits(lines, _ANDROID_DEBUGGABLE):
-        _add_mobile(
-            findings,
-            rel=rel,
-            subcategory="android-debuggable-enabled",
-            severity="High",
-            line=n,
-            match=line,
-            evidence="Android manifest enables debuggable runtime",
-            platform="Android",
-            anti_pattern="Mobile debug build shipped",
-        )
-    for n, line in _line_hits(lines, _ANDROID_ALLOW_BACKUP):
-        _add_mobile(
-            findings,
-            rel=rel,
-            subcategory="android-allowbackup-enabled",
-            severity="Medium",
-            line=n,
-            match=line,
-            evidence="Android app data backup is enabled in the manifest",
-            platform="Android",
-            anti_pattern="Mobile client stores sensitive state without platform hardening",
-        )
-    for n, line in _line_hits(lines, _ANDROID_CLEARTEXT):
-        _add_mobile(
-            findings,
-            rel=rel,
-            subcategory="android-cleartext-traffic-enabled",
-            severity="High",
-            line=n,
-            match=line,
-            evidence="Android manifest permits cleartext network traffic",
-            platform="Android",
-            anti_pattern="Mobile cleartext network policy",
-        )
+    _add_mobile_rule_hits(findings, rel, lines, _ANDROID_MANIFEST_FLAG_RULES, "Android")
     for start, block in _android_component_blocks(lines):
         if _ANDROID_EXPORTED_TRUE.search(block) and not _ANDROID_PERMISSION.search(block):
             _add_mobile(
@@ -1970,11 +2083,12 @@ def _mobile_android_manifest(findings: list[dict[str, Any]], rel: str, lines: li
                 subcategory="android-exported-component-without-permission",
                 severity="High",
                 line=start,
-                match=block[:400],
+                match=block[:_MAX_MATCH_CHARS],
                 evidence="Exported Android component lacks an explicit permission in the component declaration",
                 platform="Android",
                 anti_pattern="Mobile IPC boundary exposed",
             )
+    # A custom scheme can be claimed by any app; an http(s) app link is OS-verified only with autoVerify.
     for n, line in _line_hits(lines, _ANDROID_SCHEME):
         scheme_match = _ANDROID_SCHEME.search(line)
         scheme = scheme_match.group("scheme").lower() if scheme_match else ""
@@ -2006,106 +2120,18 @@ def _mobile_android_manifest(findings: list[dict[str, Any]], rel: str, lines: li
 
 def _mobile_network_security_config(findings: list[dict[str, Any]], rel: str, lines: list[str]) -> None:
     """Check an Android network security config for cleartext and weakened trust."""
-    for n, line in _line_hits(lines, _ANDROID_NETWORK_CLEAR):
-        _add_mobile(
-            findings,
-            rel=rel,
-            subcategory="android-network-config-cleartext",
-            severity="High",
-            line=n,
-            match=line,
-            evidence="Android network security config permits cleartext traffic",
-            platform="Android",
-            anti_pattern="Mobile cleartext network policy",
-        )
-    for n, line in _line_hits(lines, _ANDROID_USER_CA):
-        _add_mobile(
-            findings,
-            rel=rel,
-            subcategory="android-user-ca-trusted",
-            severity="Medium",
-            line=n,
-            match=line,
-            evidence="Android network security config trusts user-installed CAs",
-            platform="Android",
-            anti_pattern="Mobile TLS trust weakened",
-        )
-    for n, line in _line_hits(lines, _ANDROID_DEBUG_OVERRIDES):
-        _add_mobile(
-            findings,
-            rel=rel,
-            subcategory="android-debug-overrides",
-            severity="Medium",
-            line=n,
-            match=line,
-            evidence="Android debug network trust overrides are present",
-            platform="Android",
-            anti_pattern="Mobile debug trust override",
-        )
+    _add_mobile_rule_hits(findings, rel, lines, _ANDROID_NETWORK_CONFIG_RULES, "Android")
 
 
 def _mobile_android_code(findings: list[dict[str, Any]], rel: str, lines: list[str]) -> None:
     """Check Android code for WebView, storage, TLS, and build hardening gaps."""
-    android_patterns = [
-        (
-            _ANDROID_WEBVIEW_BRIDGE,
-            "android-webview-js-bridge",
-            "High",
-            "WebView JavaScript bridge is exposed",
-            "Mobile WebView bridge",
-        ),
-        (
-            _ANDROID_WEBVIEW_JS,
-            "android-webview-javascript-enabled",
-            "Medium",
-            "WebView JavaScript execution is enabled",
-            "Mobile WebView bridge",
-        ),
-        (
-            _ANDROID_WEBVIEW_FILE,
-            "android-webview-file-access",
-            "High",
-            "WebView file/universal file URL access is enabled",
-            "Mobile WebView bridge",
-        ),
-        (
-            _ANDROID_WEBVIEW_DEBUG,
-            "android-webview-debugging-enabled",
-            "High",
-            "WebView remote debugging is enabled",
-            "Mobile debug build shipped",
-        ),
-        (
-            _ANDROID_SHARED_PREF_TOKEN,
-            "android-token-sharedpreferences",
-            "High",
-            "Sensitive token/secret marker appears in SharedPreferences usage",
-            "Mobile token in app storage",
-        ),
-        (
-            _ANDROID_WORLD_READABLE,
-            "android-world-readable-storage",
-            "High",
-            "World-readable Android storage mode is used",
-            "Mobile token in app storage",
-        ),
-        (
-            _ANDROID_ACCEPT_ALL_TLS,
-            "android-accept-all-tls",
-            "Critical",
-            "Android TLS validation appears to accept arbitrary certificates or hosts",
-            "Mobile TLS trust disabled",
-        ),
-        (
-            _MOBILE_MINIFY_FALSE,
-            "android-minify-disabled",
-            "Info",
-            "Android build disables code shrinking/obfuscation",
-            "Mobile release hardening gap",
-        ),
-    ]
-    for pattern, subcat, severity, evidence, anti_pattern in android_patterns:
-        for n, line in _line_hits(lines, pattern):
+    _add_mobile_rule_hits(findings, rel, lines, _ANDROID_CODE_RULES, "Android")
+
+
+def _mobile_info_plist(findings: list[dict[str, Any]], rel: str, lines: list[str]) -> None:
+    """Check Info.plist for ATS exceptions and custom URL schemes."""
+    for key, subcat, severity, evidence, anti_pattern in _IOS_PLIST_TRUE_KEY_RULES:
+        for n, line in _plist_true_key_hits(lines, key):
             _add_mobile(
                 findings,
                 rel=rel,
@@ -2114,37 +2140,9 @@ def _mobile_android_code(findings: list[dict[str, Any]], rel: str, lines: list[s
                 line=n,
                 match=line,
                 evidence=evidence,
-                platform="Android",
+                platform="iOS",
                 anti_pattern=anti_pattern,
             )
-
-
-def _mobile_info_plist(findings: list[dict[str, Any]], rel: str, lines: list[str]) -> None:
-    """Check Info.plist for ATS exceptions and custom URL schemes."""
-    for n, line in _plist_true_key_hits(lines, "NSAllowsArbitraryLoads"):
-        _add_mobile(
-            findings,
-            rel=rel,
-            subcategory="ios-ats-arbitrary-loads",
-            severity="High",
-            line=n,
-            match=line,
-            evidence="iOS App Transport Security allows arbitrary loads",
-            platform="iOS",
-            anti_pattern="Mobile cleartext network policy",
-        )
-    for n, line in _plist_true_key_hits(lines, "NSExceptionAllowsInsecureHTTPLoads"):
-        _add_mobile(
-            findings,
-            rel=rel,
-            subcategory="ios-ats-insecure-exception",
-            severity="High",
-            line=n,
-            match=line,
-            evidence="iOS ATS exception permits insecure HTTP loads",
-            platform="iOS",
-            anti_pattern="Mobile cleartext network policy",
-        )
     for n, line in _line_hits(lines, _IOS_URL_SCHEME):
         _add_mobile(
             findings,
@@ -2161,56 +2159,7 @@ def _mobile_info_plist(findings: list[dict[str, Any]], rel: str, lines: list[str
 
 def _mobile_ios_code(findings: list[dict[str, Any]], rel: str, lines: list[str]) -> None:
     """Check iOS code for WebView bridges, token storage, TLS, and associated domains."""
-    ios_patterns = [
-        (
-            _IOS_WEBVIEW_BRIDGE,
-            "ios-webview-js-bridge",
-            "High",
-            "iOS WebView JavaScript bridge or evaluation API is present",
-            "Mobile WebView bridge",
-        ),
-        (
-            _IOS_USERDEFAULTS_TOKEN,
-            "ios-token-userdefaults",
-            "High",
-            "Sensitive token/secret marker appears in UserDefaults usage",
-            "Mobile token in app storage",
-        ),
-        (
-            _IOS_KEYCHAIN_ALWAYS,
-            "ios-keychain-accessible-always",
-            "Medium",
-            "Keychain item uses always-accessible class",
-            "Mobile token in app storage",
-        ),
-        (
-            _IOS_ACCEPT_ALL_TLS,
-            "ios-accept-all-tls",
-            "Critical",
-            "iOS TLS validation appears to accept arbitrary certificates or hosts",
-            "Mobile TLS trust disabled",
-        ),
-        (
-            _IOS_ASSOCIATED_DOMAINS,
-            "ios-associated-domains-surface",
-            "Info",
-            "iOS Associated Domains entitlement is present",
-            "Mobile deep-link trust boundary",
-        ),
-    ]
-    for pattern, subcat, severity, evidence, anti_pattern in ios_patterns:
-        for n, line in _line_hits(lines, pattern):
-            _add_mobile(
-                findings,
-                rel=rel,
-                subcategory=subcat,
-                severity=severity,
-                line=n,
-                match=line,
-                evidence=evidence,
-                platform="iOS",
-                anti_pattern=anti_pattern,
-            )
+    _add_mobile_rule_hits(findings, rel, lines, _IOS_CODE_RULES, "iOS")
 
 
 def scan_mobile_architecture(repo_root: Path) -> dict[str, Any]:
@@ -2222,12 +2171,11 @@ def scan_mobile_architecture(repo_root: Path) -> dict[str, Any]:
     surface_files: dict[str, str] = {}
 
     for p in _walk_repo(repo_root):
-        rel = str(p.relative_to(repo_root)).replace("\\", "/")
+        rel = _rel(p, repo_root)
         if p.suffix.lower() not in _MOBILE_EXTS and p.name not in {"AndroidManifest.xml", "Info.plist"}:
             continue
-        try:
-            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
+        lines = _read_lines(p)
+        if lines is None:
             continue
         text = "\n".join(lines)
         lower_rel = rel.lower()
@@ -2252,6 +2200,7 @@ def scan_mobile_architecture(repo_root: Path) -> dict[str, Any]:
         if is_ios:
             _mobile_ios_code(findings, rel, lines)
 
+    # Inserting each surface row at the front in sorted order leaves them first, in reverse path order.
     for rel, platform in sorted(surface_files.items()):
         findings.insert(
             0,
@@ -2267,17 +2216,16 @@ def scan_mobile_architecture(repo_root: Path) -> dict[str, Any]:
             },
         )
 
-    return {
-        "category": 29,
-        "name": "Mobile App Architecture & Platform Config",
-        "findings": findings,
-        "count": len(findings),
-    }
+    return _category_result(29, "Mobile App Architecture & Platform Config", findings)
 
 
 # ---------------------------------------------------------------------------
 # Category 27 — GitHub Actions workflow privilege hardening
 # ---------------------------------------------------------------------------
+# Detects: `pull_request_target` triggers, `write-all` and per-scope `write` permissions, self-hosted runners,
+# and workflows without any `permissions:` block (they inherit the repository default token scope).
+# The checks are line-based: a `permissions:` key at any level counts as a block, and the trigger is found by its
+# key name, so a flow-style `on: [pull_request_target]` is not detected.
 
 
 _CAT27_PERMISSIONS_WRITE = re.compile(
@@ -2292,87 +2240,42 @@ def scan_gha_privileges(repo_root: Path) -> dict[str, Any]:
     `permissions:` block in `.github/workflows` (Cat 27).
     """
     findings: list[dict[str, Any]] = []
-    wf_dir = repo_root / ".github" / "workflows"
-    if not wf_dir.is_dir():
-        return {"category": 27, "name": "GitHub Actions Workflow Privilege Hardening", "findings": [], "count": 0}
 
-    for p in sorted(wf_dir.iterdir()):
-        if p.suffix.lower() not in {".yml", ".yaml"} or not p.is_file():
-            continue
-        rel = str(p.relative_to(repo_root)).replace("\\", "/")
-        try:
-            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
-            continue
+    for p, lines in _workflow_files(repo_root):
+        rel = _rel(p, repo_root)
         has_permissions = False
         for n, line in enumerate(lines, start=1):
             stripped = line.strip()
             if re.match(r"^pull_request_target\s*:", stripped):
-                findings.append(
-                    {
-                        "category": 27,
-                        "subcategory": "pull-request-target",
-                        "file": rel,
-                        "line": n,
-                        "match": stripped,
-                    }
-                )
+                findings.append(_cat27_finding("pull-request-target", rel, n, stripped))
             if re.match(r"^permissions\s*:", stripped):
                 has_permissions = True
                 if re.search(r":\s*write-all\s*$", stripped, re.IGNORECASE):
-                    findings.append(
-                        {
-                            "category": 27,
-                            "subcategory": "permissions-write-all",
-                            "file": rel,
-                            "line": n,
-                            "match": stripped,
-                        }
-                    )
+                    findings.append(_cat27_finding("permissions-write-all", rel, n, stripped))
             m_perm = _CAT27_PERMISSIONS_WRITE.match(line)
             if m_perm:
-                findings.append(
-                    {
-                        "category": 27,
-                        "subcategory": "permissions-write",
-                        "file": rel,
-                        "line": n,
-                        "scope": m_perm.group("scope"),
-                        "match": stripped,
-                    }
-                )
+                findings.append(_cat27_finding("permissions-write", rel, n, stripped, scope=m_perm.group("scope")))
             if _CAT27_SELF_HOSTED.match(line):
-                findings.append(
-                    {
-                        "category": 27,
-                        "subcategory": "self-hosted-runner",
-                        "file": rel,
-                        "line": n,
-                        "match": stripped,
-                    }
-                )
+                findings.append(_cat27_finding("self-hosted-runner", rel, n, stripped))
         if not has_permissions:
-            findings.append(
-                {
-                    "category": 27,
-                    "subcategory": "missing-permissions-block",
-                    "file": rel,
-                    "line": None,
-                    "match": "no permissions block",
-                }
-            )
+            findings.append(_cat27_finding("missing-permissions-block", rel, None, "no permissions block"))
 
-    return {
-        "category": 27,
-        "name": "GitHub Actions Workflow Privilege Hardening",
-        "findings": findings,
-        "count": len(findings),
-    }
+    return _category_result(27, "GitHub Actions Workflow Privilege Hardening", findings)
+
+
+def _cat27_finding(subcategory: str, rel: str, line: int | None, match: str, **extra: Any) -> dict[str, Any]:
+    return {"category": 27, "subcategory": subcategory, "file": rel, "line": line, **extra, "match": match}
 
 
 # ---------------------------------------------------------------------------
 # Category 28 — AI coding assistant & IDE agent configurations
 # ---------------------------------------------------------------------------
+# Committed assistant configuration runs with every contributor's privileges, so it is a supply-chain surface.
+# Detects: which assistant config files exist (inventory), MCP servers that are remote, fetched from a public
+# registry, carry hardcoded secrets, are auto-approved or trusted, Claude Code permission rules and hooks that
+# grant too much (graded in runtime/agent_config_checks.py), agent files that grant shell or write tools, and
+# prompt-injection payloads in instruction files.
+# Only the fixed paths and directories below are read, plus every mcp.json; excluded paths are skipped.
 
 
 _AI_CONFIG_PATTERNS = (
@@ -2520,7 +2423,7 @@ def _scan_agent_artifact(path: Path, rel: str) -> list[dict[str, Any]]:
                     "file": rel,
                     "line": line_no,
                     "severity": "High",
-                    "match": line.strip()[:400],
+                    "match": line.strip()[:_MAX_MATCH_CHARS],
                 }
             )
     return findings
@@ -2549,13 +2452,14 @@ def _scan_instruction_red_flags(path: Path, rel: str) -> list[dict[str, Any]]:
                         "file": rel,
                         "line": line_no,
                         "severity": severity,
-                        "match": line.strip()[:400],
+                        "match": line.strip()[:_MAX_MATCH_CHARS],
                     }
                 )
     return findings
 
 
 def _mcp_servers_from_config(data: Any) -> dict[str, Any]:
+    """The server map of an MCP config: ``mcpServers`` or ``servers``, at the top level or nested under ``mcp``."""
     if not isinstance(data, dict):
         return {}
     for key in ("mcpServers", "servers"):
@@ -2569,6 +2473,7 @@ def _mcp_servers_from_config(data: Any) -> dict[str, Any]:
 
 
 def _first_http_url(value: Any) -> str | None:
+    """The first http(s) URL anywhere in a nested config value, depth-first."""
     if isinstance(value, str):
         return value if _MCP_REMOTE_URL_RE.match(value) else None
     if isinstance(value, dict):
@@ -2598,11 +2503,13 @@ def _mcp_command_parts(server_cfg: Any) -> list[str]:
 
 
 def _looks_like_env_ref(value: str) -> bool:
+    """Whether the value references an environment variable ($NAME or ${NAME}) instead of holding a secret."""
     stripped = value.strip()
     return bool(re.search(r"\$\{?[A-Za-z_][A-Za-z0-9_]*\}?", stripped))
 
 
 def _mcp_hardcoded_secret(server_cfg: Any) -> tuple[str, str] | None:
+    """(key, "env"|"headers") of the first secret-named value of 8+ characters that is not an env reference."""
     if not isinstance(server_cfg, dict):
         return None
     for container_name in ("env", "headers"):
@@ -2634,6 +2541,8 @@ def _mcp_has_auth_reference(server_cfg: Any) -> bool:
 
 
 def _classify_mcp_server(server_cfg: Any) -> dict[str, Any]:
+    """Transport, origin and risk of one MCP server, worst first: hardcoded secret (Critical), remote server
+    (High), server fetched from a public registry at start (High), otherwise a local binary (Info)."""
     if not isinstance(server_cfg, dict):
         return {
             "transport": "unknown",
@@ -2698,6 +2607,7 @@ def _classify_mcp_server(server_cfg: Any) -> dict[str, Any]:
 
 
 def _scan_mcp_servers(path: Path, rel: str) -> list[dict[str, Any]]:
+    """One classification row per MCP server, plus rows for auto-approved tools, `trust: true` and plain HTTP."""
     try:
         data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
     except (OSError, json.JSONDecodeError):
@@ -2913,7 +2823,7 @@ def scan_ai_assistant_configs(repo_root: Path) -> dict[str, Any]:
 
     def add_path(path: Path) -> None:
         try:
-            rel = str(path.relative_to(repo_root)).replace("\\", "/")
+            rel = _rel(path, repo_root)
         except ValueError:
             return
         if rel in seen or _is_excluded(rel, repo_root):
@@ -2946,42 +2856,10 @@ def scan_ai_assistant_configs(repo_root: Path) -> dict[str, Any]:
         if not is_file:
             return
         seen.add(rel)
-        try:
-            size = path.stat().st_size
-        except OSError:
-            size = None
-        findings.append(
-            {
-                "category": 28,
-                "subcategory": "assistant-config-present",
-                "file": rel,
-                "line": None,
-                "size": size,
-            }
-        )
-        for line_no, text in _grep_file(path, _CAT28_DANGEROUS):
-            findings.append(
-                {
-                    "category": 28,
-                    "subcategory": "dangerous-assistant-config-pattern",
-                    "file": rel,
-                    "line": line_no,
-                    "match": text.strip(),
-                }
-            )
-        # Every JSON config is offered to the MCP parser: Gemini and Kiro declare
-        # servers inside their settings file, not in a file named `mcp.json`.
-        if _is_mcp_config_path(rel) or rel.endswith(".json"):
-            findings.extend(_scan_mcp_servers(path, rel))
-        if _is_claude_settings_path(rel):
-            findings.extend(_scan_claude_permissions(path, rel))
-        if _is_claude_settings_path(rel) or _is_claude_hooks_path(rel):
-            findings.extend(_scan_hook_commands(path, rel))
-        if _is_ai_agent_artifact(rel):
-            findings.extend(_scan_agent_artifact(path, rel))
-        if _is_ai_instruction_path(rel):
-            findings.extend(_scan_instruction_red_flags(path, rel))
+        findings.extend(_scan_assistant_config_file(path, rel))
 
+    # The same file can be reached by a fixed path, a config directory and the mcp.json search; `seen` keeps
+    # the first.
     for rel in _AI_CONFIG_PATTERNS:
         add_path(repo_root / rel)
     for rel_dir in _AI_CONFIG_DIRS:
@@ -2993,12 +2871,41 @@ def scan_ai_assistant_configs(repo_root: Path) -> dict[str, Any]:
     for p in sorted(repo_root.rglob("mcp.json")):
         add_path(p)
 
-    return {
-        "category": 28,
-        "name": "AI Coding Assistant & IDE Agent Configurations",
-        "findings": findings,
-        "count": len(findings),
-    }
+    return _category_result(28, "AI Coding Assistant & IDE Agent Configurations", findings)
+
+
+def _scan_assistant_config_file(path: Path, rel: str) -> list[dict[str, Any]]:
+    """The inventory row of one assistant config file, then the findings of every scanner its path selects."""
+    try:
+        size = path.stat().st_size
+    except OSError:
+        size = None
+    findings: list[dict[str, Any]] = [
+        {"category": 28, "subcategory": "assistant-config-present", "file": rel, "line": None, "size": size}
+    ]
+    for line_no, text in _grep_file(path, _CAT28_DANGEROUS):
+        findings.append(
+            {
+                "category": 28,
+                "subcategory": "dangerous-assistant-config-pattern",
+                "file": rel,
+                "line": line_no,
+                "match": text.strip(),
+            }
+        )
+    # Every JSON config is offered to the MCP parser: Gemini and Kiro declare
+    # servers inside their settings file, not in a file named `mcp.json`.
+    if _is_mcp_config_path(rel) or rel.endswith(".json"):
+        findings.extend(_scan_mcp_servers(path, rel))
+    if _is_claude_settings_path(rel):
+        findings.extend(_scan_claude_permissions(path, rel))
+    if _is_claude_settings_path(rel) or _is_claude_hooks_path(rel):
+        findings.extend(_scan_hook_commands(path, rel))
+    if _is_ai_agent_artifact(rel):
+        findings.extend(_scan_agent_artifact(path, rel))
+    if _is_ai_instruction_path(rel):
+        findings.extend(_scan_instruction_red_flags(path, rel))
+    return findings
 
 
 # ---------------------------------------------------------------------------
@@ -3146,10 +3053,8 @@ def scan_ai_integration(repo_root: Path) -> dict[str, Any]:
                             strong_seen.add(subcat)
                         else:
                             weak_by_file.setdefault(rel, set()).add(subcat)
+                        # The cap bounds the rows kept, never the signal: a capped hit still counts above.
                         if per_cap.get(subcat, 0) < _CAT13_PER_SUBCAT_CAP:
-                            stripped = line.rstrip("\r\n")
-                            if len(stripped) > 400:
-                                stripped = stripped[:400] + "…"
                             findings.append(
                                 {
                                     "category": 13,
@@ -3157,7 +3062,7 @@ def scan_ai_integration(repo_root: Path) -> dict[str, Any]:
                                     "strength": strength,
                                     "file": rel,
                                     "line": n,
-                                    "match": stripped.strip(),
+                                    "match": _clip_line(line).strip(),
                                 }
                             )
                             per_cap[subcat] = per_cap.get(subcat, 0) + 1
@@ -3170,14 +3075,9 @@ def scan_ai_integration(repo_root: Path) -> dict[str, Any]:
         "prompt-construction" in groups and len(groups) >= 2 for groups in weak_by_file.values()
     )
     if not has_ai_surface:
-        return {"category": 13, "name": "AI / LLM Integration", "findings": [], "count": 0}
+        return _category_result(13, "AI / LLM Integration", [])
 
-    out: dict[str, Any] = {
-        "category": 13,
-        "name": "AI / LLM Integration",
-        "findings": findings,
-        "count": len(findings),
-    }
+    out = _category_result(13, "AI / LLM Integration", findings)
     if truncated:
         out["truncated"] = True
     return out
@@ -3186,6 +3086,8 @@ def scan_ai_integration(repo_root: Path) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
+# A new category needs a scan_* function, an entry in run_all's category map and in _DISPATCH below, and a line
+# in the module docstring; the three lists must stay in step.
 
 
 # Cap findings per category and across the aggregate `.recon-patterns.json` the
