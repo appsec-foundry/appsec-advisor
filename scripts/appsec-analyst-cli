@@ -127,6 +127,9 @@ def build_parser() -> argparse.ArgumentParser:
     hypothesis.add_argument(
         "--isolated", action="store_true", help="with --abuse-case: check the code without the existing threat model"
     )
+    hypothesis.add_argument(
+        "--preview", action="store_true", help="with --abuse-case: print the cases and files to check, then stop"
+    )
     profile = hypothesis.add_mutually_exclusive_group()
     profile.add_argument("--org-profile", type=_path, help="organization profile whose abuse cases apply")
     profile.add_argument("--no-org-profile", action="store_true", help="ignore the active organization profile")
@@ -168,7 +171,7 @@ def _abuse_case_claim(args: argparse.Namespace, parser: argparse.ArgumentParser)
     if args.threat_model is None and not args.isolated and existing.is_file():
         args.threat_model = existing
     try:
-        args.hypothesis, args.path = build(
+        args.hypothesis, args.path, summary = build(
             args.repo,
             args.revision,
             args.abuse_case,
@@ -179,6 +182,8 @@ def _abuse_case_claim(args: argparse.Namespace, parser: argparse.ArgumentParser)
         )
     except (AbuseCaseError, ctl.SnapshotError) as exc:
         parser.error(f"--abuse-case: {exc}")
+    model = f"{args.threat_model}" if args.threat_model else "none (isolated)" if args.isolated else "none found"
+    args.scope_summary = f"{summary}\n  Threat model: {model}\n"
 
 
 def _scope(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict:
@@ -187,8 +192,8 @@ def _scope(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict:
             _abuse_case_claim(args, parser)
         elif not args.path:
             parser.error("--path is required with --hypothesis")
-        elif args.org_profile or args.no_org_profile or args.isolated:
-            parser.error("--org-profile, --no-org-profile, and --isolated apply only to --abuse-case")
+        elif args.org_profile or args.no_org_profile or args.isolated or args.preview:
+            parser.error("--org-profile, --no-org-profile, --isolated, and --preview apply only to --abuse-case")
         if not args.hypothesis.strip() or len(args.hypothesis) > MAX_TEXT_CHARS:
             parser.error("--hypothesis must be non-empty and at most 20000 characters")
         return {"kind": "hypothesis", "revision": args.revision, "paths": args.path}
@@ -261,11 +266,15 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("CI accepts packages only through --trusted-package")
         if args.trusted_package and not args.ci:
             parser.error("--trusted-package requires --ci")
+        scope = _scope(args, parser)
+        if getattr(args, "preview", False):
+            sys.stdout.write(args.scope_summary)
+            return 0
         packages = [Selection(spec, "explicit") for spec in args.package]
         packages += [Selection(spec, "ci_pinned") for spec in args.trusted_package]
         invocation = ctl.Invocation(
             mode=args.command,
-            scope=_scope(args, parser),
+            scope=scope,
             repo_root=args.repo,
             output_dir=args.output,
             design_text=getattr(args, "text", None),

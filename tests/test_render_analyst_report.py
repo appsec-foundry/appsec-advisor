@@ -76,7 +76,7 @@ def test_report_names_each_file_with_redacted_secret_values():
     data = result()
     data["coverage"]["redacted"] = [{"path": "lib/signing.ts", "lines": [2, 3, 4]}]
     text = rr.render(data)
-    assert "- Redacted secret value: `lib/signing.ts` line(s) 2, 3, 4" in text.splitlines()
+    assert "- `lib/signing.ts` — read; secret value redacted at line 2, 3, 4" in text.splitlines()
     assert "Redacted" not in rr.render(result())
 
 
@@ -180,3 +180,28 @@ def test_saved_hypothesis_result_rejects_inconsistent_conclusions(alter):
         data["scope"] = {}
     with pytest.raises(rr.RenderError):
         rr.render(data)
+
+
+def test_hypothesis_report_names_cited_and_uncited_files():
+    data = result(
+        mode="hypothesis",
+        hypothesis="Abuse case AC-1: forged role.\n- Step 1: role read from token.",
+        scope={"kind": "hypothesis", "revision": "HEAD", "paths": ["src/api.py", "src/auth.py"]},
+        objects={"head": "d" * 40},
+        findings=[],
+    )
+    data["hypothesis_assessment"] = {
+        "status": "not_confirmed",
+        "explanation": "The handler checks ownership.",
+        "evidence": [
+            {"side": "proposed", "path": "src/api.py", "line_start": 2, "line_end": 3, "excerpt": "check_owner(record)"}
+        ],
+        "next_action": "Review the deployment policy.",
+    }
+    data["coverage"]["excluded"] = []
+    lines = rr.render(data).splitlines()
+    assert lines[2].startswith("**Result: Not confirmed in the inspected scope.**")
+    assert "- `src/api.py` — cited at line 2-3 (conclusion)" in lines
+    assert "- `src/auth.py` — read; nothing in it is cited for this question" in lines
+    assert "- Abuse case AC\\-1: forged role\\." in lines and "- Step 1: role read from token\\." in lines
+    assert lines.index("## Technical details") > lines.index("## Conclusion")

@@ -159,8 +159,12 @@ def build(
     with_threat_model: bool,
     org_profile: Path | None = None,
     no_org_profile: bool = False,
-) -> tuple[str, list[str]]:
-    """Return (hypothesis, paths) for the selected cases."""
+) -> tuple[str, list[str], str]:
+    """Return (hypothesis, paths, summary) for the selected cases.
+
+    The summary is the plain scope a user sees before the check runs: each
+    case with its kind and origin, the files, and the threat-model context.
+    """
     cases, origins = load_cases(repo_root, org_profile, no_org_profile)
     selected = select_cases(cases, case_ids)
     paths = list(dict.fromkeys(user_paths))
@@ -170,4 +174,18 @@ def build(
         raise AbuseCaseError(
             "no file at this revision matches the selected abuse cases; name the files or directories with --path"
         )
-    return hypothesis_text(selected, origins, with_threat_model), paths[:MAX_PATHS]
+    paths = paths[:MAX_PATHS]
+    return hypothesis_text(selected, origins, with_threat_model), paths, _summary(selected, origins, revision, paths)
+
+
+def _summary(cases: list[dict], origins: dict[str, str], revision: str, paths: list[str]) -> str:
+    lines = ["ABUSE-CASE CHECK"]
+    for case in cases:
+        cid = str(case["id"])
+        kind = "business case" if matcher.is_descriptive(case) else "technical attack chain"
+        origin = resolver._ORIGIN_LABEL.get(origins.get(cid, ""), "unknown origin")
+        lines.append(f"  {cid}  {_one_line(case.get('title'))}  ({kind}, {origin})")
+    lines.append(f"  Revision: {revision}")
+    lines.append(f"  Files ({len(paths)}):")
+    lines += [f"    {p}" for p in paths]
+    return "\n".join(lines)

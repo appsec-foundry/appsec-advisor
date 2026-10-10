@@ -692,7 +692,7 @@ def _org_profile_file(tmp_path: Path, body: str) -> Path:
 
 def _list_rows(output: str) -> dict[str, list[str]]:
     rows = {}
-    for line in output.splitlines()[1:]:
+    for line in output.split("\n\n")[0].splitlines()[1:]:
         parts = line.split(maxsplit=3)
         if parts and parts[0] != "REJECTED":
             rows[parts[0]] = parts[1:]
@@ -737,7 +737,15 @@ def test_list_without_org_profile_omits_org_cases_and_shows_rejected_files(tmp_p
 
     assert rac.main(["--list", "--no-org-profile", "--repo-root", str(repo)]) == 0
     out = capsys.readouterr().out
-    assert "organization profile: none (disabled)" in out.splitlines()[0]
+    assert out.splitlines()[0] == f"ABUSE CASES — {len(_LIBRARY_IDS)} active"
     assert "ORG-AC-001" not in out
     assert "REJECTED docs/security/abuse-cases/broken.yaml" in out
     assert set(_list_rows(out)) == set(_LIBRARY_IDS)
+
+
+def test_list_ends_with_what_the_cases_are_and_how_to_add_or_check_one(tmp_path, capsys):
+    assert rac.main(["--list", "--no-org-profile", "--repo-root", str(tmp_path)]) == 0
+    footer = capsys.readouterr().out.split("\n\n")[-1]
+    assert "docs/security/abuse-cases/" in footer
+    assert "/appsec-advisor:analyze-threats --abuse-case <ID>" in footer
+    assert "organization profile" not in footer

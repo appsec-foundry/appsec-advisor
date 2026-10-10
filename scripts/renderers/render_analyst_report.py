@@ -57,117 +57,209 @@ def block(text: str) -> str:
     return f"{fence}text\n{text.rstrip()}\n{fence}"
 
 
-def _location(loc: dict) -> str:
-    where = f"{loc['path']}:{loc['line_start']}" + (
+MODE_TITLE = {"design": "design analysis", "review": "change review", "hypothesis": "hypothesis check"}
+CONCLUSION = {
+    "supported": ("Supported by code", "The checked files contain code that supports the threat."),
+    "not_confirmed": (
+        "Not confirmed in the inspected scope",
+        "The checked files do not show the threat. Files outside them were not read.",
+    ),
+    "unresolved": ("Not settled", "The checked files cannot decide the question; see what is still open."),
+}
+STATE = {
+    "complete": "Analysis complete",
+    "incomplete": "Analysis incomplete",
+    "failed": "Analysis failed",
+    "awaiting_answers": "Waiting for your answers",
+    "cancelled": "Analysis cancelled",
+    "rejected": "Request rejected",
+}
+SIDE = {"baseline": "before the change", "proposed": "after the change"}
+NOT_SAFE = "Not confirmed does not mean disproved or safe. Conclusions apply only to the inspected scope."
+
+
+def _where(loc: dict) -> str:
+    return f"{loc['path']}:{loc['line_start']}" + (
         f"-{loc['line_end']}" if loc["line_end"] != loc["line_start"] else ""
     )
-    return f"- {loc['side']}: {code(where)}\n\n{block(loc['excerpt'])}"
+
+
+def _location(loc: dict, mode: str) -> str:
+    side = f" ({SIDE[loc['side']]})" if mode == "review" else ""
+    return f"- {code(_where(loc))}{side}\n\n{block(loc['excerpt'])}"
+
+
+def _lines(spans: list[tuple[int, int]]) -> str:
+    return ", ".join(str(a) if a == b else f"{a}-{b}" for a, b in sorted(set(spans)))
+
+
+def _file_overview(result: dict) -> list[str]:
+    """One line per file: where the result cites it, or that nothing in it was cited."""
+    cited: dict[str, dict] = {}
+
+    def note(loc: dict, label: str) -> None:
+        entry = cited.setdefault(loc["path"], {"spans": [], "labels": []})
+        entry["spans"].append((loc["line_start"], loc["line_end"]))
+        if label not in entry["labels"]:
+            entry["labels"].append(label)
+
+    for loc in (result.get("hypothesis_assessment") or {}).get("evidence", []):
+        note(loc, "conclusion")
+    for f in result["findings"]:
+        for loc in f["evidence"] + f.get("comparison", []):
+            note(loc, f["id"])
+    cov = result["coverage"]
+    redacted = {e["path"]: e["lines"] for e in cov.get("redacted", [])}
+    out = []
+    for path in sorted(cited):
+        entry = cited[path]
+        line = f"- {code(path)} — cited at line {_lines(entry['spans'])} ({', '.join(entry['labels'])})"
+        if path in redacted:
+            line += f"; secret value redacted at line {_lines([(n, n) for n in redacted[path]])}"
+        out.append(line)
+    selected = result["scope"].get("paths", []) if result["mode"] == "hypothesis" else []
+    for path in selected:
+        if path in cited:
+            continue
+        inside = [c for c in cited if c.startswith(path + "/")]
+        if inside:
+            out.append(f"- {code(path + '/')} — no other file in it is cited")
+        else:
+            out.append(f"- {code(path)} — read; nothing in it is cited for this question")
+    for path, lines in sorted(redacted.items()):
+        if path not in cited:
+            out.append(f"- {code(path)} — read; secret value redacted at line {_lines([(n, n) for n in lines])}")
+    for e in cov["excluded"]:
+        out.append(
+            f"- Not read: {e['count']} × {e['reason'].replace('_', ' ')}"
+            + (f" ({code(e['path'])})" if "path" in e else "")
+        )
+    return out
+
+
+def _source(result: dict, kind: str) -> str:
+    found = [s for s in result["coverage"]["sources"] if s["kind"] == kind]
+    return found[0]["status"] if found else "not used"
 
 
 def render(result: dict) -> str:
     errors = validate_result(result)
     if errors:
         raise RenderError("; ".join(errors))
-    out = [f"# Threat analysis {code(result['job_id'])}", "", f"> {ADVISORY}", ""]
-    out += [
-        f"- State: **{result['state']}** ({inline(result['terminal_reason'])})",
-        f"- Mode: {result['mode']}",
-        f"- Input fingerprint: {code(result['input_fingerprint'])}",
-        "",
-        "## Summary",
-        "",
-        inline(result["summary"]) or "No summary.",
-        "",
-    ]
-    if result["mode"] == "hypothesis":
-        out += ["## Hypothesis", "", inline(result["hypothesis"]), ""]
-        out += [f"Revision: {code(result['objects'].get('head', 'unavailable'))}", ""]
-        out += ["Selected paths: " + ", ".join(code(p) for p in result["scope"]["paths"]), ""]
-        assessment = result.get("hypothesis_assessment")
+    mode = result["mode"]
+    assessment = result.get("hypothesis_assessment")
+    out = [f"# Threat analysis: {MODE_TITLE[mode]}", ""]
+    if mode == "hypothesis":
+        label, meaning = CONCLUSION[assessment["status"]] if assessment else CONCLUSION["unresolved"]
+    else:
+        count = len(result["findings"])
+        label = f"{count} finding" + ("" if count == 1 else "s")
+        meaning = "Each finding cites the code it is based on."
+    out += [f"**Result: {label}.** {meaning}", ""]
+    settled_open = bool(assessment) and assessment["status"] == "unresolved"
+    if result["state"] != "complete" and not settled_open:
+        out += [
+            f"{STATE.get(result['state'], result['state'])}: {inline(result['terminal_reason'].replace('_', ' '))}.",
+            "",
+        ]
+    out += [inline(result["summary"]) or "No summary.", "", f"> {ADVISORY}", ""]
+
+    out += ["## What was checked", ""]
+    if mode == "hypothesis":
+        out += [
+            f"- {inline(line.strip().removeprefix('- '))}"
+            for line in str(result["hypothesis"]).splitlines()
+            if line.strip()
+        ]
+        out += [f"- Revision: {code(result['objects'].get('head', 'unavailable'))}"]
+    out += [f"- Threat model: {_source(result, 'threat_model')}"]
+    out += [f"- Requirements: {_source(result, 'requirements')}", ""]
+
+    files = _file_overview(result)
+    if files:
+        out += ["## Files", ""] + files + [""]
+
+    if mode == "hypothesis":
+        out += ["## Conclusion", ""]
         if assessment:
-            labels = {
-                "supported": "Supported by code",
-                "not_confirmed": "Not confirmed in the inspected scope",
-                "unresolved": "Unresolved",
-            }
-            out += [f"**{labels[assessment['status']]}**", "", inline(assessment["explanation"]), ""]
-            out += [_location(loc) for loc in assessment["evidence"]]
-            out += ["", "Next action: " + inline(assessment["next_action"]), ""]
+            out += [f"**{CONCLUSION[assessment['status']][0]}.** {inline(assessment['explanation'])}", ""]
+            out += [_location(loc, mode) for loc in assessment["evidence"]]
+            out += ["", f"Next step: {inline(assessment['next_action'])}", ""]
         else:
             out += ["Unresolved: no validated conclusion is available.", ""]
-        out += ["Not confirmed does not mean disproved or safe. Conclusions apply only to the inspected scope.", ""]
+        out += [NOT_SAFE, ""]
+
     if result["findings"]:
         out += ["## Findings", ""]
         for f in result["findings"]:
-            out += [
-                f"### {f['id']} {inline(f['title'])}",
-                "",
-                f"Severity: **{f['severity']}**. "
-                + (
-                    "Observed in the inspected revision."
-                    if result["mode"] == "hypothesis"
-                    else RELATIONSHIP[f["change_relationship"]] + "."
-                ),
-                "",
-            ]
-            out += [inline(f["explanation"]), "", "Evidence:", ""]
-            out += [_location(loc) for loc in f["evidence"] + f.get("comparison", [])]
-            out += ["", f"Next action: {inline(f['next_action'])}", ""]
+            where = (
+                "observed in the inspected revision" if mode == "hypothesis" else RELATIONSHIP[f["change_relationship"]]
+            )
+            out += [f"### {f['id']} {inline(f['title'])}", "", f"Severity: **{f['severity']}**, {where}.", ""]
+            out += [inline(f["explanation"]), ""]
+            out += [_location(loc, mode) for loc in f["evidence"] + f.get("comparison", [])]
+            out += ["", f"Fix: {inline(f['next_action'])}", ""]
             if f.get("requirement_refs"):
                 out += ["Requirements: " + ", ".join(code(r) for r in f["requirement_refs"]), ""]
-    if result["scenarios"]:
-        out += ["## Scenarios", ""]
-        for s in result["scenarios"]:
-            out += [
-                f"- **{s['id']} {inline(s['title'])}.** {inline(s['description'])} Next action: {inline(s['next_action'])}"
-            ]
-        out.append("")
-    if result["assumptions"]:
-        out += ["## Assumptions", ""]
-        out += [f"- {a['id']} ({a['status']}): {inline(a['statement'])}" for a in result["assumptions"]]
-        out.append("")
+
+    cov = result["coverage"]
+    still_open = [f"- {inline(a['statement'])}" for a in result["assumptions"] if a["status"] == "unresolved"]
+    still_open += [f"- {inline(item)}" for item in result["limitations"]]
+    still_open += [
+        f"- Requested file {code(e['path'])} was {e['status'].replace('_', ' ')}: {inline(e['detail'])} "
+        f"Requested because: {inline(e['reason'])}"
+        for e in cov.get("evidence_requests", [])
+        if e["status"] != "admitted"
+    ]
     if result["questions"]:
-        out += ["## Open questions", ""]
         for q in result["questions"]:
             need = "required" if q["required"] else "optional"
-            out += [
+            still_open += [
                 f"- **{q['id']}** ({need}): {inline(q['asks'])} Why: {inline(q['why'])} Affects: {inline(q['affects'])}"
             ]
+    if still_open:
+        out += ["## Still open", ""] + still_open
+        if mode == "hypothesis":
+            out += ["", "To read more files, run the check again with an additional `--path <file or directory>`."]
         out.append("")
-    if result["requirement_observations"]:
-        out += ["## Requirement observations", ""]
-        out += [
-            f"- {code(o['requirement_ref'])}: {inline(o['observation'])}" for o in result["requirement_observations"]
-        ]
-        out.append("")
-    if result["methodology_observations"]:
-        out += ["## Methodology observations", ""]
-        out += [f"- {code(o['criterion_ref'])}: {inline(o['observation'])}" for o in result["methodology_observations"]]
-        out.append("")
-    cov = result["coverage"]
-    out += ["## Coverage", "", f"- Admitted files: {cov['admitted_files']}"]
-    out += [
-        f"- Excluded: {e['count']} × {e['reason']}" + (f" ({code(e['path'])})" if "path" in e else "")
-        for e in cov["excluded"]
+
+    background = [
+        f"- Scenario {s['id']}, {inline(s['title'])}: {inline(s['description'])} Next step: {inline(s['next_action'])}"
+        for s in result["scenarios"]
     ]
+    background += [
+        f"- Assumption {a['id']} ({a['status']}): {inline(a['statement'])}"
+        for a in result["assumptions"]
+        if a["status"] != "unresolved"
+    ]
+    background += [
+        f"- Requirement {code(o['requirement_ref'])}: {inline(o['observation'])}"
+        for o in result["requirement_observations"]
+    ]
+    background += [
+        f"- Criterion {code(o['criterion_ref'])}: {inline(o['observation'])}"
+        for o in result["methodology_observations"]
+    ]
+    if background:
+        out += ["## Background", ""] + background + [""]
+
+    out += ["## Technical details", ""]
     out += [
-        f"- Redacted secret value: {code(e['path'])} line(s) {', '.join(str(n) for n in e['lines'])}"
-        for e in cov.get("redacted", [])
+        f"- Job: {code(result['job_id'])}",
+        f"- State: {result['state']} ({inline(result['terminal_reason'])})",
+        f"- Input fingerprint: {code(result['input_fingerprint'])}",
+        f"- Admitted files: {cov['admitted_files']}",
+        f"- Required coverage complete: {'yes' if cov['required_complete'] else 'no'}",
     ]
     out += [f"- Source {s['kind']} ({inline(s['label'])}): {s['status']}" for s in cov["sources"]]
     out += [f"- Question not considered: {code(q['ref'])} ({inline(q['reason'])})" for q in cov["omitted_questions"]]
-    out += [f"- Required coverage complete: {'yes' if cov['required_complete'] else 'no'}", ""]
-    for e in cov.get("evidence_requests", []):
-        out += [
-            f"- Evidence {code(e['path'])}: {e['status']}. {inline(e['detail'])} Requested because: {inline(e['reason'])}"
-        ]
-    if cov.get("evidence_requests"):
-        out.append("")
-    out += ["## Packages", ""]
     out += [
-        f"- {code(p['id'])} {p['version']} ({p['authority']}), source: {inline(p['provenance']['source'])}, revision {inline(p['provenance']['revision'])}"
+        f"- Evidence {code(e['path'])}: {e['status']}. {inline(e['detail'])}"
+        for e in cov.get("evidence_requests", [])
+        if e["status"] == "admitted"
+    ]
+    out += [
+        f"- Package {code(p['id'])} {p['version']} ({p['authority']}), source: {inline(p['provenance']['source'])}, revision {inline(p['provenance']['revision'])}"
         for p in result["packages"]
     ]
-    if result["limitations"]:
-        out += ["", "## Limitations", ""] + [f"- {inline(item)}" for item in result["limitations"]]
     return "\n".join(out).rstrip() + "\n"

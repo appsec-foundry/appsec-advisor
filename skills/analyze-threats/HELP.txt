@@ -23,6 +23,8 @@ OPTIONS
                           the files; --path adds more. Revision defaults to HEAD.
   --isolated              With --abuse-case: check against the code alone, without
                           the existing docs/security/threat-model.yaml.
+  --preview               With --abuse-case: show the cases, files, and threat-model
+                          context, then stop without running the check.
   --org-profile <file> | --no-org-profile
                           With --abuse-case: use this organization profile, or none.
   --help                  Show this help.

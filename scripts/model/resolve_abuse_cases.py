@@ -439,9 +439,13 @@ def render_case_list(
     profile_source: str,
 ) -> str:
     """One line per active case: id, origin, kind, title. Rejected repository
-    files are listed after the cases, because a scan would skip them too."""
-    profile = f"{profile_path} ({profile_source})" if profile_path else f"none ({profile_source})"
-    lines = [f"ABUSE CASES — {len(cases)} active · organization profile: {profile}"]
+    files are listed after the cases, because a scan would skip them too. The
+    organization profile is named only when one is active, and a short footer
+    says what the cases are, where to add one, and how to check one."""
+    header = f"ABUSE CASES — {len(cases)} active"
+    if profile_path:
+        header += f" · organization profile: {profile_path} ({profile_source})"
+    lines = [header]
     for case in cases:
         cid = str(case.get("id") or "")
         origin = _ORIGIN_LABEL.get(origins.get(cid, ""), "unknown")
@@ -450,6 +454,14 @@ def render_case_list(
         lines.append(f"  {cid:<14} {origin:<14} {kind:<10} {title}")
     for item in rejected:
         lines.append(f"  REJECTED {item['path']}: {item['reason']}")
+    lines += [
+        "",
+        "Abuse cases are attack scenarios checked against your code. A technical case follows",
+        "an attack chain step by step; a business case checks one rule of your application.",
+        "Add your own as a YAML file in docs/security/abuse-cases/ of this repository",
+        '(format: docs/threat-modeler.md, section "Abuse cases" in the plugin).',
+        "Check one case:  /appsec-advisor:analyze-threats --abuse-case <ID>",
+    ]
     return "\n".join(lines)
 
 

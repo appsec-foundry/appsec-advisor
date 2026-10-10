@@ -67,7 +67,7 @@ def repo(tmp_path: Path) -> Path:
 
 
 def build(repo: Path, ids: list[str], paths=(), with_threat_model=False):
-    return ach.build(repo, "HEAD", ids, list(paths), with_threat_model, no_org_profile=True)
+    return ach.build(repo, "HEAD", ids, list(paths), with_threat_model, no_org_profile=True)[:2]
 
 
 def test_a_business_case_selects_files_by_its_path_patterns_and_names_its_origin(repo):
@@ -102,3 +102,12 @@ def test_a_case_that_locates_no_file_asks_for_paths(repo):
     git(repo, "commit", "-q", "-m", "remove")
     with pytest.raises(ach.AbuseCaseError, match="--path"):
         build(repo, ["REPO-AC-031"])
+
+
+def test_the_summary_names_each_case_its_origin_and_every_file(repo):
+    _, paths, summary = ach.build(repo, "HEAD", ["REPO-AC-031", "AC-T-003"], [], False, no_org_profile=True)
+    lines = summary.splitlines()
+    assert lines[0] == "ABUSE-CASE CHECK"
+    assert "  REPO-AC-031  Clerk releases a payout they also requested  (business case, repository)" in lines
+    assert any(line.startswith("  AC-T-003  ") and "(technical attack chain, plugin)" in line for line in lines)
+    assert f"  Files ({len(paths)}):" in lines and all(f"    {p}" in lines for p in paths)

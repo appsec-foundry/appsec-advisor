@@ -183,3 +183,19 @@ def test_abuse_case_cli_uses_the_existing_threat_model_unless_isolated(repo, mon
     assert (observed[0].threat_model_path == model) is uses_model
     assert ("uses the supplied threat model" in observed[0].hypothesis) is uses_model
     assert ("runs without a threat model" in observed[0].hypothesis) is not uses_model
+
+
+def test_abuse_case_preview_prints_the_scope_and_starts_no_job(repo, tmp_path):
+    state = tmp_path / "xdg"
+    argv = ["--abuse-case", "AC-T-003", "--revision", "HEAD", "--no-org-profile", "--isolated", "--preview"]
+    result = run("hypothesis", "--repo", str(_committed_repo(repo)), *argv, cwd=tmp_path, state=state)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [
+        "ABUSE-CASE CHECK",
+        "  AC-T-003  Privilege Escalation to Admin via JWT Algorithm Confusion  (technical attack chain, plugin)",
+        "  Revision: HEAD",
+        "  Files (1):",
+        "    src/session.js",
+        "  Threat model: none (isolated)",
+    ]
+    assert not state.exists()
