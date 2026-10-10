@@ -288,9 +288,53 @@ def test_report_orders_cases_by_verified_risk_and_preserves_export_order(tmp_pat
         assert [case["id"] for case in exported] == expected
         assert [case["combined_risk"] for case in exported[:3]] == ["Critical", "High", "High"]
         md = (tmp_path / ".fragments" / "abuse-cases.md").read_text()
-        assert [md.index(f"### {cid}") for cid in expected] == sorted(md.index(f"### {cid}") for cid in expected)
+        cards, settled = expected[:5], expected[5]
+        assert [md.index(f"### {cid}") for cid in cards] == sorted(md.index(f"### {cid}") for cid in cards)
         assert md.index("**Confirmed attack paths**") < md.index("**Unresolved scenarios**")
-        assert md.index("**Unresolved scenarios**") < md.index("**Mitigated scenarios**")
+        assert md.index("**Unresolved scenarios**") < md.index("**Checked without finding**")
+        # A case that holds is one table row with its anchor, not a card.
+        assert f"### {settled}" not in md
+        assert f'<a id="{settled.lower()}"></a>{settled}' in md
+
+
+@pytest.mark.parametrize(
+    ("step_verdicts", "chain", "result"),
+    [
+        ([("refuted", "No role assignment operation exists.")], "inconclusive", "✗ Does not apply"),
+        ([("blocked", "The delegated set is checked before assignment.")], "mitigated", "✓ Mitigated"),
+        ([("refuted", "Not reachable."), ("blocked", "Owner is checked.")], "inconclusive", "✓ Mitigated"),
+    ],
+    ids=["refuted", "blocked", "mixed"],
+)
+def test_a_case_that_holds_is_one_row_with_its_reason(step_verdicts, chain, result):
+    case = {"id": "REPO-AC-101", "kind": "descriptive", "title": "Self-granted role", "check": "Check it."}
+    case["steps"] = [f"Step {n}" for n in range(1, len(step_verdicts) + 1)]
+    verdict = {
+        "chain_verdict": chain,
+        "step_verdicts": [
+            {"step": n, "verdict": v, "reason": reason, "evidence": {"file": "src/roles.ts", "line": 4}}
+            for n, (v, reason) in enumerate(step_verdicts, 1)
+        ],
+    }
+    md = rac.render_fragment([rac.render_case(case, verdict, {}, [])])
+    assert "### REPO-AC-101" not in md
+    row = next(line for line in md.splitlines() if line.startswith('| <a id="repo-ac-101">'))
+    assert result in row and "`src/roles.ts:4`" in row
+    expected_reason = (
+        next(r for v, r in step_verdicts if v == "blocked") if "Mitigated" in result else step_verdicts[0][1]
+    )
+    assert expected_reason in row
+
+
+def test_an_open_case_keeps_its_card():
+    case = {"id": "REPO-AC-102", "kind": "descriptive", "title": "Self-approval", "check": "Check it."}
+    for v in ("confirmed", "inconclusive"):
+        verdict = {
+            "chain_verdict": "fully_viable" if v == "confirmed" else "inconclusive",
+            "step_verdicts": [{"step": 1, "verdict": v}],
+        }
+        md = rac.render_fragment([rac.render_case(case, verdict, {}, [])])
+        assert "### REPO-AC-102" in md and "Checked without finding" not in md
 
 
 def test_fragment_markdown_structure(tmp_path: Path):

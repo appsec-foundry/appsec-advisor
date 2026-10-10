@@ -351,6 +351,7 @@ def render_case(
                     str(control).strip() for control in (sv.get("controls_found") or []) if str(control).strip()
                 ],
                 "unverified": _step_unverified(sv),
+                "reason": " ".join(str(sv.get("reason") or "").split())[:240],
             }
         )
 
@@ -610,6 +611,30 @@ def _case_markdown(m: dict) -> str:
     return "\n".join(out).rstrip()
 
 
+def _settled_without_finding(m: dict) -> bool:
+    """The case was checked and holds: mitigated, or every step blocked or refuted."""
+    verdicts = [r["verdict"] for r in m["rows"]]
+    return m["chain_verdict"] == "mitigated" or (bool(verdicts) and set(verdicts) <= {"blocked", "refuted"})
+
+
+def _settled_table(models: list[dict]) -> str:
+    """One row per case that was checked and holds; it needs no card.
+
+    The row carries the case anchor, so cross-references still resolve, and the
+    verifier's reason with its code location, so the reader sees why it holds.
+    """
+    out = ["| Case | Result | Reason |", "|------|--------|--------|"]
+    for m in models:
+        blocked = [r for r in m["rows"] if r["verdict"] == "blocked"]
+        row = (blocked or m["rows"] or [{}])[0]
+        result = "✓ Mitigated" if blocked or m["chain_verdict"] == "mitigated" else "✗ Does not apply"
+        reason = (row.get("reason") or "").replace("|", "\\|").strip()
+        if row.get("evidence"):
+            reason = f"{reason} (`{row['evidence']}`)".strip()
+        out.append(f'| <a id="{m["id"].lower()}"></a>{m["id"]} — {m["title"]} | {result} | {reason or "—"} |')
+    return "\n".join(out)
+
+
 def _summary_table(models: list[dict]) -> str:
     out = ["| # | Scenario | Actor | Combined Risk | Verdict |", "|---|----------|-------|---------------|---------|"]
     for m in models:
@@ -721,15 +746,19 @@ def render_fragment(
     coverage = _business_coverage(catalog_rows or [], not_performed or [], rejected or [])
     catalog_rows = [r for r in catalog_rows or [] if r.get("source") != "descriptive"]
     if models:
+        settled = [model for model in models if _settled_without_finding(model)]
+        open_models = [model for model in models if not _settled_without_finding(model)]
         parts += [_INTRO, ""]
         for verdict, label in _VERIFICATION_GROUPS.items():
-            group = [model for model in models if model["chain_verdict"] == verdict]
+            group = [model for model in open_models if model["chain_verdict"] == verdict]
             if group:
                 parts += [f"**{label}**", "", _summary_table(group), ""]
+        if settled:
+            parts += ["**Checked without finding**", "", _settled_table(settled), ""]
         parts += [_LEGEND, ""]
-        if any(m["blocking_mitigations"] for m in models):
+        if any(m["blocking_mitigations"] for m in open_models):
             parts += [_BLOCKING_NOTE, ""]
-        for m in models:
+        for m in open_models:
             parts.append("---")
             parts.append("")
             parts.append(_case_markdown(m))
