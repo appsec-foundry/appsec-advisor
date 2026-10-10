@@ -13,7 +13,7 @@
 
 The **Threat Analyst** covers the design side: on request, it analyzes a planned feature or a selected code change for threats and asks the team for missing design facts. The plugin also includes requirements audits, change reviews, and CI gates.
 
-[Why appsec-advisor?](#why-appsec-advisor) · [Security](#security-notes) · [Quick start](#quick-start) · [Threat Modeler](#threat-modeler) · [Threat Analyst](#threat-analyst) · [Requirements Audit](#requirements-audit) · [Developer tools](#additional-developer-tools) · [Report a failed run](#report-a-failed-run) · [Enterprise rollout](#enterprise-rollout) · [Documentation](#documentation) · [What's new in 0.6.0-beta.4](#whats-new-in-060-beta4) · [Contributing](#contributing)
+[Why appsec-advisor?](#why-appsec-advisor) · [Security](#security-notes) · [Quick start](#quick-start) · [Threat Modeler](#threat-modeler) · [Threat Analyst](#threat-analyst) · [Requirements Audit](#requirements-audit) · [Developer tools](#additional-developer-tools) · [Report a failed run](#report-a-failed-run) · [Enterprise rollout](#enterprise-rollout) · [Documentation](#documentation) · [What's new in 0.6.0-beta.5](#whats-new-in-060-beta5) · [Contributing](#contributing)
 
 ---
 
@@ -315,6 +315,14 @@ The Threat Dragon export can carry generated models into Threat Dragon and Threa
 ## What's new
 
 Highlights from the 0.6.0 beta releases.
+
+### What's new in 0.6.0-beta.5
+
+- **New abuse-case catalog.** The built-in catalog now covers business misuse, such as viewing other users' data or skipping an approval, alongside technical attack chains. Runs check both by default, and you can add your own cases as one sentence each. Reworked rules keep unrelated findings from inflating severity and report unchecked cases. See [Abuse cases](docs/threat-modeler.md#abuse-cases-docssecurityabuse-cases).
+- **New `/appsec-advisor:abuse-cases` command.** It lists all abuse cases with their result and explains each one step by step.
+- **Reworked Threat Analyst.** It checks a single abuse case against your code (`--abuse-case <ID>`), rates each attack step with evidence, and uses your existing threat model as context. See [Threat Analyst](#threat-analyst).
+- **Report improvements.** Critical findings are grouped by root cause with the fix for each group, the diagrams show trust boundaries more clearly, and secrets from your code are masked in every output.
+- **More accurate analysis.** Reworked scanners fix missed detections and false positives, and standard and thorough runs use Sonnet 5.5.
 
 ### What's new in 0.6.0-beta.4
 

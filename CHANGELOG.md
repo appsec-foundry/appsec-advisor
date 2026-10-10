@@ -11,31 +11,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- The Threat Analyst checks concrete threat hypotheses or single defined abuse cases (`--abuse-case <ID>`, using an existing threat model as context) against selected files or directories at a Git revision, rating each attack-chain step with evidence and stating unresolved outcomes.
+- Standard and thorough runs check business abuse cases such as access to other users' data or a bypassed approval, thorough runs add up to three application-specific cases, and repositories and organization profiles can add their own as one-sentence checks. Confirmed cases enter the register and appear on the findings they confirm, cases with cited code but no control found enter it as unproven, and unresolved cases can become team questions.
+- The Threat Analyst checks concrete threat hypotheses or a single defined abuse case (`--abuse-case <ID>`) against selected files at a Git revision and rates each attack-chain step with evidence.
 - `/appsec-advisor:abuse-cases` lists the defined technical and business abuse cases with their origin and recorded result, and `/appsec-advisor:abuse-cases <ID>` explains one case step by step.
-- Figure 1 marks network trust boundaries between components of one column and the boundary into every data store, also an embedded one, and Figure 1b draws its evidenced build trust boundaries as lines at the column borders they cross, spanning only the flows they mark and drawn pale when only inferred.
-- Standard and thorough runs check generic business abuse cases, such as access to other users' data or a bypassed approval, thorough runs add up to three cases the model derives for the application, and repositories and organization profiles can add their own as one-sentence checks with a file-name pattern; confirmed cases enter the register, cases with cited code but no control found enter it as unproven, and unresolved cases can become team questions.
-- A finding whose code an abuse-case verification confirms is now shown as verified instead of ambiguous, and business abuse cases appear on the findings they confirm.
+- Figure 1 marks network trust boundaries within a column and into every data store, and Figure 1b draws evidenced build trust boundaries at the column borders they cross, pale when only inferred.
 
 ### Changed
 
+- The Critical Attack Tree is replaced by Critical Findings by Root Cause, which links each Critical finding to its weakness record and the structural fix that closes it.
+- A finding whose code an abuse-case verification confirms is shown as verified instead of ambiguous.
+- Standard and thorough runs use Sonnet 5.5 instead of Sonnet 5 for triage, merging, report authoring, and abuse-case verification, and run costs price the 5.5 models.
 - Repository abuse cases belong in `docs/security/abuse-cases/` beside the business context; `.appsec/abuse-cases/` is still read.
-- Standard and thorough runs pin triage, merging, report authoring, and abuse-case verification to Sonnet 5.5 instead of Sonnet 5, and run costs price the 5.5 models.
-- The Critical Attack Tree is replaced by Critical Findings by Root Cause, which links each register-Critical finding to its weakness record and lists the structural fix that closes it.
 
 ### Fixed
 
-- The completion summary of a run is shown once, in full, by the plugin itself instead of being copied by the session.
-- Threat analysis reports unfulfilled evidence requests, rejects missing follow-up questions, and accepts source-backed findings introduced by removed controls.
-- Trust boundaries keep network, privilege and in-process trust changes regardless of source layout, keep separately deployed targets and separate build supply channels apart, and can be refuted by findings even when only inferred; findings link only to boundaries whose target fits their weakness, and severity notes name the right boundary.
-- Outbound calls to fixed external services and to request-chosen URLs become data flows with their own trust boundaries, and a runtime component left without any data flow is reported as a run issue.
 - Hardcoded secrets that a finding cites, including keys passed directly as call arguments, are masked in every report output, and the secret gate fails when one remains.
-- Reports cite only published findings, and broken finding links, missing §6 scaffolds and overlong register headings are repaired or stopped right after rendering instead of aborting the run at completion.
-- `update-baseline` preserves AISCB user scope when the project path is the home directory and offers a direct signed updater fallback after delegation fails.
-- An invalid, oversized, or symlinked repository abuse-case file is now rejected on its own and reported, instead of silently dropping every abuse case from the run.
-- Section 9 and the run issues now name abuse cases that were matched but never verified, and the run returns to verification once, instead of reporting them as checked.
+- Trust boundaries are detected regardless of source layout, keep separately deployed targets and build channels apart, and link only to findings whose weakness fits them.
+- Outbound calls to external services and to request-chosen URLs become data flows with their own trust boundaries.
 - Abuse-case chains no longer credit CI, documentation, or test findings, or findings that share only a CWE family, so such findings are no longer raised to a chain's severity.
+- Abuse cases that were matched but never verified are retried once and otherwise named in Section 9 and the run issues instead of being reported as checked.
+- An invalid, oversized, or symlinked repository abuse-case file is rejected and reported on its own instead of silently dropping every abuse case from the run.
 - A wildcard CORS origin without credentials is no longer reported as a credentialed CORS anti-pattern, and OAuth implicit-flow tokens read from `location.hash` are now detected.
+- Broken finding links and similar report defects are repaired or stopped right after rendering instead of aborting the run at completion.
+- Threat Analyst runs report evidence they could not obtain and accept source-backed findings introduced by removed controls.
+- The completion summary of a run is shown once, in full, by the plugin itself instead of being copied by the session.
+- `update-baseline` keeps user scope when the project is the home directory and falls back to the signed updater when delegation fails.
 
 ## 0.6.0-beta.4 (2026-10-06)
 
