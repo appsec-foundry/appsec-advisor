@@ -1511,7 +1511,6 @@ SOURCE_TESTS = {
         context_prompt_budgets
         decision_register
         lazy_phase_group_loading
-        orchestration_controller
         requirements_verification
         run_tests
     """),
@@ -1521,10 +1520,7 @@ SOURCE_TESTS = {
     """),
     "CHANGELOG.md": _tests("requirements_verification"),
     "README.md": _tests("""
-        build_threat_model_yaml
-        business_context_preview
         marketplace_manifest
-        orchestration_controller
         requirements_verification
     """),
     "agents/shared/finding-title-contract.md": _tests("""
