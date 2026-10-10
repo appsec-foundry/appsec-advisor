@@ -36,7 +36,7 @@ from pathlib import Path
 
 import yaml
 from shared._finding_state import is_refuted
-from shared._register_titles import HEADING_SOFT_MAX, clamp_title
+from shared._register_titles import HEADING_SOFT_MAX, clamp_mitigation_title, clamp_title
 
 from model.finding_intake import apply_intake
 from model.merge_threats import _evidence_identity_key
@@ -104,20 +104,24 @@ _DESCRIPTIVE_DEFAULTS = {
     "cwe": "CWE-840",
     "stride": "Elevation of Privilege",
     "severity": "Medium",
-    "mitigation_title": "Enforce this business rule on the server for every operation it covers",
 }
 _UNPROVEN_TIER = "insecure-practice"
 _CONFIRMED_TIER = "confirmed-exploitable"
 
 
-def _descriptive_promotion(case_match: dict, verdict: dict) -> tuple[dict, str] | None:
+def _descriptive_promotion(case_match: dict, verdict: dict, live_ids: set) -> tuple[dict, str] | None:
     """The step verdict a business case is promoted at and its tier, or None.
 
     A fully viable case is confirmed at its first confirmed step. An
     inconclusive case without a blocked or refuted step is an indication when
     a decided step cites code that ``finalize`` admitted and names no control.
+    A case the verifier bound to a live finding is not promoted.
     """
     steps = [step for step in verdict.get("step_verdicts") or [] if isinstance(step, dict)]
+    # The verifier already bound the case to a live finding it cited; that
+    # finding carries the result, whatever weakness family the case defaults to.
+    if any(step.get("matched_finding_id") in live_ids for step in steps):
+        return None
     chain = verdict.get("chain_verdict")
     if chain == "fully_viable":
         wanted, tier = "confirmed", _CONFIRMED_TIER
@@ -142,6 +146,11 @@ def _descriptive_metadata(case: dict) -> dict:
     declared = case.get("finding") if isinstance(case.get("finding"), dict) else {}
     meta = {key: declared.get(key) or default for key, default in _DESCRIPTIVE_DEFAULTS.items()}
     meta["title"] = clamp_title(str(case.get("title") or "Business abuse case"), HEADING_SOFT_MAX)
+    # Mitigations group by title, so a default names this case's rule rather
+    # than folding unrelated business findings into one mitigation.
+    meta["mitigation_title"] = clamp_mitigation_title(
+        str(declared.get("mitigation_title") or f"Prevent: {case.get('title') or case.get('id')}")
+    )
     meta["remediation"] = ""
     return meta
 
@@ -244,6 +253,7 @@ def promote(output_dir: Path) -> tuple[int, list[str]]:
         for t in threats
         if isinstance(t, dict) and t.get("abuse_case_id") and isinstance(t.get("evidence"), dict)
     }
+    live_ids = {t.get("t_id") for t in threats if isinstance(t, dict) and t.get("t_id") and not is_refuted(t)}
     promoted: list[str] = []
     skipped_metadata: list[str] = []
     bindings_changed = False
@@ -259,7 +269,7 @@ def promote(output_dir: Path) -> tuple[int, list[str]]:
         # (step match, step verdict, evidence, metadata, tier, scenario) per promotable step.
         candidates: list[tuple[dict, dict, dict, dict, str, str]] = []
         if case_match.get("kind") == "descriptive":
-            promotion = _descriptive_promotion(case_match, verdict)
+            promotion = _descriptive_promotion(case_match, verdict, live_ids)
             step_match = (
                 next(
                     (
@@ -275,9 +285,8 @@ def promote(output_dir: Path) -> tuple[int, list[str]]:
             if promotion and step_match is not None:
                 step_verdict, tier = promotion
                 case = case_match.get("case") if isinstance(case_match.get("case"), dict) else {}
-                scenario = " ".join(
-                    part for part in (str(step_match.get("label") or ""), str(step_verdict.get("reason") or "")) if part
-                )
+                # The verifier's reason names the code behavior; the check is the fallback.
+                scenario = str(step_verdict.get("reason") or step_match.get("label") or case.get("title") or "")
                 candidates.append(
                     (step_match, step_verdict, step_verdict["evidence"], _descriptive_metadata(case), tier, scenario)
                 )
@@ -335,9 +344,10 @@ def promote(output_dir: Path) -> tuple[int, list[str]]:
                     "evidence": {"file": str(evidence["file"]), "line": evidence.get("line")},
                     "source": "source-scan",
                     "architectural_violation": False,
-                    "evidence_check": "verified",
-                    # The abuse-case verifier read this location.
-                    "evidence_basis": "llm-verified",
+                    # The abuse-case verifier read this location; an indication
+                    # stays ambiguous like every other unproven finding.
+                    "evidence_check": "verified" if tier == _CONFIRMED_TIER else "ambiguous",
+                    "evidence_basis": "llm-verified" if tier == _CONFIRMED_TIER else "ambiguous",
                     "abuse_case_id": case_id,
                     "abuse_case_step": step_no,
                     "source_scan_ref": f"{case_id}:{step_no}",

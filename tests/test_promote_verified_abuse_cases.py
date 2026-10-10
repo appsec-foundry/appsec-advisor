@@ -380,7 +380,7 @@ def _promoted(tmp_path: Path) -> dict:
             {"cwe": "CWE-284", "stride": "Tampering", "severity": "High", "mitigation_title": "Separate duties"},
             ("CWE-284", "Tampering", "High", "Separate duties"),
         ),
-        (None, ("CWE-840", "Elevation of Privilege", "Medium", mod._DESCRIPTIVE_DEFAULTS["mitigation_title"])),
+        (None, ("CWE-840", "Elevation of Privilege", "Medium", "Prevent: Requester approves their own request")),
     ],
     ids=["declared", "defaults"],
 )
@@ -409,7 +409,9 @@ def test_indicated_business_case_becomes_an_unproven_finding_at_the_same_severit
     assert mod.promote(tmp_path)[0] == 1
     created = _promoted(tmp_path)
     assert created["evidence_tier"] == "insecure-practice"
+    assert (created["evidence_check"], created["evidence_basis"]) == ("ambiguous", "ambiguous")
     assert created["risk"] == "High"
+    assert created["scenario"] == "approve() never compares approver and requester"
     sys.path.insert(0, str(ROOT / "scripts"))
     from shared._finding_state import is_confirmed  # type: ignore[import-not-found]
 
@@ -425,8 +427,19 @@ def test_indicated_business_case_becomes_an_unproven_finding_at_the_same_severit
         (_step("refuted"), "inconclusive"),
         (_step("blocked"), "mitigated"),
         (_step("confirmed", controls_found=["role check"]), "partially_blocked"),
+        (_step("confirmed", matched_finding_id="T-001"), "fully_viable"),
+        (_step("inconclusive", matched_finding_id="T-001"), "inconclusive"),
     ],
-    ids=["no-citation", "control-found", "pending", "refuted", "blocked", "partially-blocked"],
+    ids=[
+        "no-citation",
+        "control-found",
+        "pending",
+        "refuted",
+        "blocked",
+        "partially-blocked",
+        "confirmed-bound-to-finding",
+        "indication-bound-to-finding",
+    ],
 )
 def test_business_case_without_confirmation_or_indication_is_not_promoted(
     tmp_path: Path, step: dict, chain_verdict: str
