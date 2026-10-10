@@ -77,17 +77,22 @@ def instructions() -> str:
     return INSTRUCTIONS.read_text(encoding="utf-8")
 
 
-def response_schema() -> dict:
+def response_schema(mode: str | None = None) -> dict:
     """The response schema as the host's ``--json-schema`` accepts it.
 
     The host rejects a document that declares ``$schema`` (it cannot resolve
     the draft URI) and every analysis then ends as a transport failure. The
     keywords only identify the file; the response is still validated against
-    the full schema file afterwards.
+    the full schema file afterwards. A design analysis admits no source, so
+    its schema allows neither findings nor source requests; a request the
+    controller could never serve would otherwise end the job incomplete.
     """
     schema = json.loads(RESPONSE_SCHEMA.read_text(encoding="utf-8"))
     schema.pop("$schema", None)
     schema.pop("$id", None)
+    if mode == "design":
+        for key in ("findings", "evidence_requests"):
+            schema["properties"][key]["maxItems"] = 0
     return schema
 
 

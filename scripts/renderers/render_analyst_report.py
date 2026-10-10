@@ -167,6 +167,12 @@ def render(result: dict) -> str:
     out = [f"# Threat analysis: {MODE_TITLE[mode]}", ""]
     if mode == "hypothesis":
         label, meaning = CONCLUSION[assessment["status"]] if assessment else CONCLUSION["unresolved"]
+    elif mode == "design":
+        scenarios, questions = len(result["scenarios"]), len(result["questions"])
+        label = (
+            f"{scenarios} SCENARIO{'' if scenarios == 1 else 'S'}, {questions} QUESTION{'' if questions == 1 else 'S'}"
+        )
+        meaning = "design analysis; no repository source was inspected."
     else:
         count = len(result["findings"])
         label = f"{count} FINDING" + ("" if count == 1 else "S")

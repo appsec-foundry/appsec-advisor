@@ -349,6 +349,8 @@ def validate_response(response: object, request: dict, snapshot: dict, context: 
 
     if design and response["findings"]:
         errors.append("response: a design analysis reports scenarios and assumptions, not findings")
+    if design and response["evidence_requests"]:
+        errors.append("response: a design analysis reads no repository source")
     for i, finding in enumerate(response["findings"]):
         label = f"response: findings/{i}"
         for j, location in enumerate(finding["evidence"] + finding["comparison"]):

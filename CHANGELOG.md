@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The Critical Attack Tree is replaced by Critical Findings by Root Cause, which links each Critical finding to its weakness record and the structural fix that closes it.
 - A finding whose code an abuse-case verification confirms is shown as verified instead of ambiguous.
+- Threat Analyst design questions use the repository's threat model as context unless you pass `--isolated`.
 - Standard and thorough runs use Sonnet 5.5 instead of Sonnet 5 for triage, merging, report authoring, and abuse-case verification, and run costs price the 5.5 models.
 - Repository abuse cases belong in `docs/security/abuse-cases/` beside the business context; `.appsec/abuse-cases/` is still read.
 
@@ -33,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An invalid, oversized, or symlinked repository abuse-case file is rejected and reported on its own instead of silently dropping every abuse case from the run.
 - A wildcard CORS origin without credentials is no longer reported as a credentialed CORS anti-pattern, and OAuth implicit-flow tokens read from `location.hash` are now detected.
 - Broken finding links and similar report defects are repaired or stopped right after rendering instead of aborting the run at completion.
-- Threat Analyst runs report evidence they could not obtain and accept source-backed findings introduced by removed controls.
+- Threat Analyst runs report evidence they could not obtain, no longer end incomplete when a design question asks for code, and accept source-backed findings introduced by removed controls.
 - The completion summary of a run is shown once, in full, by the plugin itself instead of being copied by the session.
 - `update-baseline` keeps user scope when the project is the home directory and falls back to the signed updater when delegation fails.
 

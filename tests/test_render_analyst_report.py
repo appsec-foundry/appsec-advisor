@@ -116,6 +116,24 @@ def test_invalid_results_are_never_rendered():
         rr.render(result(mode="design"))
 
 
+def test_design_report_states_that_no_source_was_inspected():
+    scenario = {"id": "s-001", "title": "Cross-customer export", "description": "D.", "next_action": "N."}
+    data = result(
+        mode="design",
+        scope={"kind": "design", "source": "text", "content_sha256": "e" * 64},
+        objects={"design_sha256": "e" * 64},
+        findings=[],
+        scenarios=[scenario],
+    )
+    data["coverage"]["admitted_files"] = 0
+    data["coverage"]["excluded"] = []
+    text = rr.render(data)
+    assert "**RESULT: 1 SCENARIO, 0 QUESTIONS** — design analysis; no repository source was inspected." in text
+    assert "FINDING" not in text and "- Threat model: not used" in text
+    review = rr.render(result())
+    assert "**RESULT: 1 FINDING** — each finding cites the code" in review
+
+
 def test_hypothesis_report_preserves_scope_evidence_and_uncertainty():
     data = result(
         mode="hypothesis",

@@ -133,6 +133,14 @@ def test_shipped_instructions_and_schema_load():
     assert host.response_schema()["additionalProperties"] is False
 
 
+def test_the_design_schema_admits_no_findings_or_source_requests():
+    design = host.response_schema("design")["properties"]
+    assert design["findings"]["maxItems"] == 0 and design["evidence_requests"]["maxItems"] == 0
+    for mode in ("review", "hypothesis", None):
+        other = host.response_schema(mode)["properties"]
+        assert other["findings"]["maxItems"] > 0 and other["evidence_requests"]["maxItems"] > 0
+
+
 def test_the_host_schema_declares_no_draft_uri_the_host_cannot_resolve():
     schema = host.response_schema()
     assert "$schema" not in schema and "$id" not in schema

@@ -976,6 +976,24 @@ requirements:
       - tests/test_analyst_cli.py::test_hypothesis_cli_builds_a_bounded_controller_invocation
       - tests/test_render_analyst_report.py::test_hypothesis_report_preserves_scope_evidence_and_uncertainty
 
+  REQ-ANA-010:
+    applies_to:
+      - scripts/appsec-analyst-cli
+      - scripts/runtime/analyst_host.py
+      - scripts/validators/validate_analyst.py
+      - scripts/renderers/render_analyst_report.py
+      - schemas/analyst-response.schema.json
+      - skills/analyze-threats/**
+    decisions: []
+    documents:
+      - docs/threat-analyst.md
+    coverage: direct
+    guards:
+      - tests/test_analyst_controller.py::test_design_requests_never_produce_findings
+      - tests/test_analyst_host.py::test_the_design_schema_admits_no_findings_or_source_requests
+      - tests/test_analyst_cli.py::test_design_cli_uses_the_existing_threat_model_unless_isolated
+      - tests/test_render_analyst_report.py::test_design_report_states_that_no_source_was_inspected
+
   REQ-TRU-001:
     applies_to:
       - scripts/validators/preflight_untrusted.py

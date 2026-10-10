@@ -227,6 +227,10 @@ is unknown.
 
 A developer can ask the analyst to check a concrete threat hypothesis against named files or directories at a Git revision without supplying a code change. The result identifies the inspected revision and scope, distinguishes code-supported, not-confirmed-in-scope, and unresolved hypotheses, and cites evidence for a supported or not-confirmed conclusion. Missing required evidence leaves the analysis incomplete. The model cannot expand the authorized source scope, and a not-confirmed hypothesis never constitutes proof of safety.
 
+### REQ-ANA-010 — A design analysis needs no code
+
+A developer can ask the analyst about a planned design without supplying code. An interactive design analysis uses the repository's threat model as context when one exists, unless the developer chooses an isolated analysis. The result reports threat scenarios, protection assumptions, requirement observations, and questions, never code findings, and states that no repository source was inspected and whether a threat model was used.
+
 ## Trust
 
 ### REQ-TRU-001 — A scanned repository cannot steer the run

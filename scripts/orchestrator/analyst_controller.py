@@ -518,7 +518,7 @@ def _analyze(current: _Run, answers: list[dict], transport_factory: TransportFac
             reply = transport.invoke(
                 instructions(),
                 prompt,
-                response_schema(),
+                response_schema(request["mode"]),
                 timeout,
                 lambda: st.cancel_requested(job.root) or current.out_of_time(),
             )

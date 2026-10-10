@@ -190,6 +190,40 @@ def test_abuse_case_cli_uses_the_existing_threat_model_unless_isolated(repo, mon
     assert ("runs without a threat model" in observed[0].hypothesis) is not uses_model
 
 
+@pytest.mark.parametrize(
+    ("extra", "uses_model"), [(["--interactive"], True), (["--interactive", "--isolated"], False), ([], False)]
+)
+def test_design_cli_uses_the_existing_threat_model_unless_isolated(repo, tmp_path, monkeypatch, extra, uses_model):
+    import runpy
+
+    module = runpy.run_path(str(CLI))
+    observed = []
+    monkeypatch.setattr(
+        module["ctl"],
+        "run",
+        lambda inv, transport, interactive: observed.append(inv) or module["ctl"].Outcome(0, "complete", None, ""),
+    )
+    model = repo / "docs" / "security" / "threat-model.yaml"
+    model.parent.mkdir(parents=True)
+    model.write_text("meta: {}\n")
+    design = tmp_path / "design.md"
+    design.write_text("Let support staff export customer data.\n")
+    assert module["main"](["design", "--repo", str(repo), "--design-file", str(design), *extra]) == 0
+    assert (observed[0].threat_model_path == model) is uses_model
+    if not uses_model:
+        assert observed[0].threat_model_path is None
+
+
+@pytest.mark.parametrize(
+    "args", [["--isolated"], ["--interactive", "--isolated", "--threat-model", "/x/threat-model.yaml"]]
+)
+def test_design_isolation_is_interactive_and_excludes_an_explicit_model(repo, tmp_path, args):
+    state = tmp_path / "xdg"
+    result = run("design", "--repo", str(repo), "--text", "Export", *args, cwd=tmp_path, state=state)
+    assert result.returncode == 2 and "--isolated is interactive only" in result.stderr
+    assert not state.exists()
+
+
 def test_abuse_case_preview_prints_the_scope_and_starts_no_job(repo, tmp_path):
     state = tmp_path / "xdg"
     argv = ["--abuse-case", "AC-T-003", "--revision", "HEAD", "--no-org-profile", "--isolated", "--preview"]

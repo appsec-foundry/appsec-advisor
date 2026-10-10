@@ -106,6 +106,9 @@ def build_parser() -> argparse.ArgumentParser:
     source = design.add_mutually_exclusive_group(required=True)
     source.add_argument("--design-file", type=_path)
     source.add_argument("--text", help="free-text design request (interactive only)")
+    design.add_argument(
+        "--isolated", action="store_true", help="interactive only: analyze without the existing threat model"
+    )
     review = sub.add_parser("review", help="analyze a code change")
     _analysis(review)
     review.add_argument("--base")
@@ -206,6 +209,11 @@ def _scope(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict:
             parser.error("--hypothesis must be non-empty and at most 20000 characters")
         return {"kind": "hypothesis", "revision": args.revision, "paths": args.path}
     if args.command == "design":
+        if args.isolated and (args.threat_model is not None or not args.interactive):
+            parser.error("--isolated is interactive only and excludes --threat-model")
+        existing = args.repo / "docs" / "security" / "threat-model.yaml"
+        if args.interactive and args.threat_model is None and not args.isolated and existing.is_file():
+            args.threat_model = existing
         if args.text is not None:
             if not args.interactive:
                 parser.error("--text is interactive only; CI passes --design-file")

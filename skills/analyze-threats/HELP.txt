@@ -21,8 +21,8 @@ OPTIONS
   --abuse-case <ID>       Check a defined technical or business abuse case (list them with
                           /appsec-advisor:abuse-cases). The case's own patterns select
                           the files; --path adds more. Revision defaults to HEAD.
-  --isolated              With --abuse-case: check against the code alone, without
-                          the existing docs/security/threat-model.yaml.
+  --isolated              With --abuse-case or a design question: work without the
+                          existing docs/security/threat-model.yaml.
   --preview               With --abuse-case: show the cases, files, and threat-model
                           context, then stop without running the check.
   --model <alias>         Model for the analysis session: sonnet (default) or opus.
@@ -47,6 +47,11 @@ WHAT IT DOES
   Its conclusion is supported by code, not confirmed in the inspected scope,
   or unresolved. Not confirmed never means disproved or safe. Missing required
   evidence leaves the analysis incomplete; the model cannot expand the scope.
+
+  A design question reads no repository source. It uses the existing
+  docs/security/threat-model.yaml as context unless you pass --isolated, and
+  reports scenarios, assumptions, and questions, never code findings. To test
+  a design against existing code, use a hypothesis check.
 
   An abuse-case check is a hypothesis check built from the case. It uses the
   existing threat model as context unless you pass --isolated; the report
