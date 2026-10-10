@@ -25,6 +25,8 @@ OPTIONS
                           the existing docs/security/threat-model.yaml.
   --preview               With --abuse-case: show the cases, files, and threat-model
                           context, then stop without running the check.
+  --model <alias>         Model for the analysis session: sonnet (default) or opus.
+                          Opus reasons more thoroughly and costs more per check.
   --org-profile <file> | --no-org-profile
                           With --abuse-case: use this organization profile, or none.
   --help                  Show this help.

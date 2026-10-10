@@ -13,7 +13,10 @@ without a full assessment:
   with or without a threat model;
 * the paths are files at the selected revision that match a technical step's
   code sink patterns or a business case's path patterns. The model never
-  chooses them, and a case that locates no file needs paths from the user.
+  chooses them, and a case that locates no file needs paths from the user;
+* with a threat model, the case's previous outcome and the findings it is
+  linked to, or that share a step's CWE, come first: their files lead the
+  path list, and the hypothesis names them as context, not as proof.
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ if not __package__:
 import re
 from pathlib import Path, PurePosixPath
 
+import yaml
 from contexts.build_analyst_snapshot import _blobs, _commit, _tree
 
 from model import match_abuse_cases as matcher
@@ -36,6 +40,9 @@ from model import resolve_abuse_cases as resolver
 MAX_PATHS = 20  # analyst-request scope/paths maxItems
 MAX_HYPOTHESIS_CHARS = 20000
 MAX_SCAN_BYTES = 512 * 1024
+MAX_MODEL_BYTES = 2 * 1024 * 1024
+MAX_LINKED_FINDINGS = 8
+MAX_FIELD_CHARS = 200
 
 
 class AbuseCaseError(Exception):
@@ -75,7 +82,83 @@ def _one_line(value: object) -> str:
     return " ".join(str(value or "").split())
 
 
-def hypothesis_text(cases: list[dict], origins: dict[str, str], with_threat_model: bool) -> str:
+def _clip(value: object) -> str:
+    text = _one_line(value)
+    return text if len(text) <= MAX_FIELD_CHARS else text[: MAX_FIELD_CHARS - 1] + "…"
+
+
+def _display_id(raw: str) -> str:
+    """The report anchor of a threat id: ``T-NNN`` is shown as ``F-NNN``."""
+    return "F-" + raw[2:] if raw.startswith("T-") else raw
+
+
+def _case_cwes(case: dict) -> set[str]:
+    blocks = [case.get("finding") or {}] + [step.get("finding") or {} for step in case.get("chain") or []]
+    return {str(b.get("cwe")).upper() for b in blocks if isinstance(b, dict) and b.get("cwe")}
+
+
+def model_links(model_path: Path, cases: list[dict]) -> dict[str, dict]:
+    """Per case: its previous outcome in the threat model and the findings tied to it.
+
+    The model is untrusted input: it is read bounded, every string is clipped
+    to one line, and a file it names is used only when it exists at the
+    checked revision. An unreadable model yields no links.
+    """
+    try:
+        if model_path.stat().st_size > MAX_MODEL_BYTES:
+            return {}
+        data = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, yaml.YAMLError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    threats = [t for t in data.get("threats") or [] if isinstance(t, dict) and t.get("id")]
+    by_id = {}
+    for t in threats:
+        by_id[str(t["id"])] = t
+        by_id[_display_id(str(t["id"]))] = t
+    analysis = data.get("abuse_case_analysis") if isinstance(data.get("abuse_case_analysis"), dict) else {}
+    recorded = {str(c.get("id")): c for c in analysis.get("cases") or [] if isinstance(c, dict)}
+    links: dict[str, dict] = {}
+    for case in cases:
+        cid = str(case["id"])
+        prior = recorded.get(cid) or {}
+        linked = [by_id[str(i)] for i in prior.get("matched_finding_ids") or [] if str(i) in by_id]
+        cwes = _case_cwes(case)
+        linked += [t for t in threats if str(t.get("cwe") or "").upper() in cwes and t not in linked]
+        findings = []
+        for t in linked[:MAX_LINKED_FINDINGS]:
+            evidence = t.get("evidence") if isinstance(t.get("evidence"), list) else []
+            first = evidence[0] if evidence and isinstance(evidence[0], dict) else {}
+            file = matcher._safe_repo_glob(first.get("file"))
+            line = first.get("line") if type(first.get("line")) is int else None
+            findings.append(
+                {"id": _display_id(str(t["id"])), "title": _clip(t.get("title")), "file": file, "line": line}
+            )
+        questions = [q for q in prior.get("open_questions") or [] if isinstance(q, str) and q.strip()]
+        links[cid] = {
+            "verdict": _clip(prior.get("chain_verdict")) if prior else "",
+            "findings": findings,
+            "question": _clip(questions[0]) if questions else "",
+        }
+    return links
+
+
+def _model_lines(link: dict) -> list[str]:
+    lines = []
+    if link.get("verdict"):
+        lines.append(f"Previous threat-model result for this case: {link['verdict']}.")
+    for f in link.get("findings", []):
+        where = f" ({f['file']}" + (f":{f['line']}" if f["line"] else "") + ")" if f["file"] else ""
+        lines.append(f"- Related threat-model finding {f['id']}: {f['title']}{where}")
+    if link.get("question"):
+        lines.append(f"Open question recorded in the threat model: {link['question']}")
+    return lines
+
+
+def hypothesis_text(
+    cases: list[dict], origins: dict[str, str], with_threat_model: bool, links: dict[str, dict] | None = None
+) -> str:
     """The hypothesis the analyst checks: every selected case, then the model context."""
     parts = []
     for case in cases:
@@ -93,9 +176,10 @@ def hypothesis_text(cases: list[dict], origins: dict[str, str], with_threat_mode
                 lines.append(
                     f"- Step {step.get('step')}: {_one_line(step.get('label'))}. {_one_line(step.get('description'))}"
                 )
+        lines += _model_lines((links or {}).get(cid, {}))
         parts.append("\n".join(lines))
     parts.append(
-        "This check uses the supplied threat model as context."
+        "This check uses the supplied threat model as context; a finding it records is a lead to check in the code, not proof."
         if with_threat_model
         else "This check runs without a threat model, against the selected source only."
     )
@@ -117,12 +201,19 @@ def _runtime_sources(tree: dict[str, tuple[str, str]]) -> dict[str, str]:
     }
 
 
-def locate_paths(repo_root: Path, revision: str, cases: list[dict]) -> list[str]:
-    """Files at ``revision`` that each case's own patterns point to, capped at MAX_PATHS."""
+def locate_paths(repo_root: Path, revision: str, cases: list[dict], preferred: list[str] = ()) -> list[str]:
+    """Files at ``revision`` for the cases, capped at MAX_PATHS.
+
+    Each source of files is one group: the ``preferred`` files from the
+    threat model, each technical step with its files ranked by how many lines
+    match its code sinks, and each business case's path patterns. The groups
+    take turns, so the cap never fills with one step's matches while another
+    step gets no file.
+    """
     tree = _tree(repo_root, _commit(repo_root, revision))
     sources = _runtime_sources(tree)
-    found: list[str] = []
-    sinks: list[re.Pattern] = []
+    groups: list[list[str]] = [[p for p in preferred if p in tree and tree[p][0].startswith("100")]]
+    step_sinks: list[list[re.Pattern]] = []
     for case in cases:
         if matcher.is_descriptive(case):
             patterns = [
@@ -133,22 +224,31 @@ def locate_paths(repo_root: Path, revision: str, cases: list[dict]) -> list[str]
                 if p
             ]
             if patterns:
-                found += [p for p in sorted(sources) if matcher._path_pattern_matches(Path(p), patterns)]
+                groups.append([p for p in sorted(sources) if matcher._path_pattern_matches(Path(p), patterns)])
         else:
             for step in case.get("chain") or []:
                 raw = (step.get("probe") or {}).get("sink_patterns") or []
-                sinks += matcher._compile([p for p in raw if matcher._is_code_sink_pattern(p)])
-    if sinks:
-        sizes_ok = [p for p in sorted(sources) if p not in found]
-        blobs = _blobs(repo_root, [sources[p] for p in sizes_ok])
-        for path in sizes_ok:
+                compiled = matcher._compile([p for p in raw if matcher._is_code_sink_pattern(p)])
+                if compiled:
+                    step_sinks.append(compiled)
+    if step_sinks:
+        texts = {}
+        blobs = _blobs(repo_root, [sources[p] for p in sorted(sources)])
+        for path in sorted(sources):
             content = blobs[sources[path]]
-            if len(content) > MAX_SCAN_BYTES:
-                continue
-            text = content.decode("utf-8", "ignore")
-            if any(rx.search(text) for rx in sinks):
-                found.append(path)
-    return list(dict.fromkeys(found))[:MAX_PATHS]
+            if len(content) <= MAX_SCAN_BYTES:
+                texts[path] = content.decode("utf-8", "ignore").splitlines()
+        for sinks in step_sinks:
+            hits = {
+                path: sum(1 for line in lines if any(rx.search(line) for rx in sinks)) for path, lines in texts.items()
+            }
+            groups.append(sorted((p for p, n in hits.items() if n), key=lambda p: (-hits[p], p)))
+    found: list[str] = []
+    for rank in range(max((len(g) for g in groups), default=0)):
+        for group in groups:
+            if rank < len(group) and group[rank] not in found:
+                found.append(group[rank])
+    return found[:MAX_PATHS]
 
 
 def build(
@@ -159,32 +259,50 @@ def build(
     with_threat_model: bool,
     org_profile: Path | None = None,
     no_org_profile: bool = False,
+    threat_model_path: Path | None = None,
 ) -> tuple[str, list[str], str]:
     """Return (hypothesis, paths, summary) for the selected cases.
 
     The summary is the plain scope a user sees before the check runs: each
-    case with its kind and origin, the files, and the threat-model context.
+    case with its kind and origin, what the threat model records about it,
+    and the files.
     """
     cases, origins = load_cases(repo_root, org_profile, no_org_profile)
     selected = select_cases(cases, case_ids)
+    links = model_links(threat_model_path, selected) if threat_model_path else {}
+    preferred = [f["file"] for link in links.values() for f in link["findings"] if f["file"]]
     paths = list(dict.fromkeys(user_paths))
     if len(paths) < MAX_PATHS:
-        paths += [p for p in locate_paths(repo_root, revision, selected) if p not in paths]
+        paths += [p for p in locate_paths(repo_root, revision, selected, preferred) if p not in paths]
     if not paths:
         raise AbuseCaseError(
             "no file at this revision matches the selected abuse cases; name the files or directories with --path"
         )
     paths = paths[:MAX_PATHS]
-    return hypothesis_text(selected, origins, with_threat_model), paths, _summary(selected, origins, revision, paths)
+    hypothesis = hypothesis_text(selected, origins, with_threat_model, links)
+    return hypothesis, paths, _summary(selected, origins, links, revision, paths)
 
 
-def _summary(cases: list[dict], origins: dict[str, str], revision: str, paths: list[str]) -> str:
+def _summary(cases: list[dict], origins: dict[str, str], links: dict, revision: str, paths: list[str]) -> str:
     lines = ["ABUSE-CASE CHECK"]
     for case in cases:
         cid = str(case["id"])
         kind = "business case" if matcher.is_descriptive(case) else "technical attack chain"
         origin = resolver._ORIGIN_LABEL.get(origins.get(cid, ""), "unknown origin")
         lines.append(f"  {cid}  {_one_line(case.get('title'))}  ({kind}, {origin})")
+        if matcher.is_descriptive(case):
+            lines += [f"    Checks: {_clip(step)}" for step in resolver.descriptive_steps(case)[:3]]
+        else:
+            if case.get("goal"):
+                lines.append(f"    Goal: {_clip(case['goal'])}")
+            lines += [
+                f"    Step {step.get('step')}: {_clip(step.get('label'))}" for step in (case.get("chain") or [])[:6]
+            ]
+        link = links.get(cid) or {}
+        if link.get("verdict"):
+            lines.append(f"    previously: {link['verdict']}")
+        if link.get("findings"):
+            lines.append("    related findings: " + ", ".join(f["id"] for f in link["findings"]))
     lines.append(f"  Revision: {revision}")
     lines.append(f"  Files ({len(paths)}):")
     lines += [f"    {p}" for p in paths]

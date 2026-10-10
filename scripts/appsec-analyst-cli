@@ -177,13 +177,14 @@ def _abuse_case_claim(args: argparse.Namespace, parser: argparse.ArgumentParser)
             args.abuse_case,
             args.path,
             with_threat_model=args.threat_model is not None,
+            threat_model_path=args.threat_model,
             org_profile=args.org_profile,
             no_org_profile=args.no_org_profile,
         )
     except (AbuseCaseError, ctl.SnapshotError) as exc:
         parser.error(f"--abuse-case: {exc}")
     model = f"{args.threat_model}" if args.threat_model else "none (isolated)" if args.isolated else "none found"
-    args.scope_summary = f"{summary}\n  Threat model: {model}\n"
+    args.scope_summary = f"{summary}\n  Threat model: {model}\n  Analysis model: {args.model}\n"
 
 
 def _scope(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict:

@@ -109,5 +109,87 @@ def test_the_summary_names_each_case_its_origin_and_every_file(repo):
     lines = summary.splitlines()
     assert lines[0] == "ABUSE-CASE CHECK"
     assert "  REPO-AC-031  Clerk releases a payout they also requested  (business case, repository)" in lines
+    assert "    Checks: Request a payout and release it with the same account." in lines
     assert any(line.startswith("  AC-T-003  ") and "(technical attack chain, plugin)" in line for line in lines)
     assert f"  Files ({len(paths)}):" in lines and all(f"    {p}" in lines for p in paths)
+
+
+def _model(repo: Path, body: dict) -> Path:
+    import yaml
+
+    path = repo / "docs" / "security" / "threat-model.yaml"
+    path.write_text(yaml.safe_dump(body))
+    return path
+
+
+def test_a_threat_model_adds_the_previous_outcome_and_the_files_of_related_findings(repo):
+    (repo / "src" / "roles.js").write_text("module.exports = (req) => req.user.role\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "roles")
+    model = _model(
+        repo,
+        {
+            "threats": [
+                {
+                    "id": "T-004",
+                    "title": "Role taken from token",
+                    "cwe": "CWE-863",
+                    "evidence": [{"file": "src/roles.js", "line": 1}],
+                },
+                {
+                    "id": "T-009",
+                    "title": "Gone file",
+                    "cwe": "CWE-347",
+                    "evidence": [{"file": "src/removed.js", "line": 3}],
+                },
+                {
+                    "id": "T-011",
+                    "title": "Unrelated",
+                    "cwe": "CWE-79",
+                    "evidence": [{"file": "src/util.js", "line": 1}],
+                },
+            ],
+            "abuse_case_analysis": {
+                "cases": [
+                    {
+                        "id": "AC-T-003",
+                        "chain_verdict": "inconclusive",
+                        "matched_finding_ids": ["T-004"],
+                        "open_questions": ["Which library version verifies tokens?"],
+                    }
+                ]
+            },
+        },
+    )
+    hypothesis, paths, summary = ach.build(
+        repo, "HEAD", ["AC-T-003"], [], True, no_org_profile=True, threat_model_path=model
+    )
+    assert paths[0] == "src/roles.js" and "src/removed.js" not in paths and "src/util.js" not in paths
+    assert "Previous threat-model result for this case: inconclusive." in hypothesis
+    assert "- Related threat-model finding F-004: Role taken from token (src/roles.js:1)" in hypothesis
+    assert "F-011" not in hypothesis
+    assert "Open question recorded in the threat model: Which library version verifies tokens?" in hypothesis
+    assert "    previously: inconclusive" in summary.splitlines()
+    assert "    related findings: F-004, F-009" in summary.splitlines()
+
+
+def test_an_unreadable_threat_model_adds_no_links(repo):
+    broken = repo / "docs" / "security" / "threat-model.yaml"
+    broken.write_text("threats: [unclosed\n")
+    hypothesis, paths, _ = ach.build(
+        repo, "HEAD", ["AC-T-003"], [], True, no_org_profile=True, threat_model_path=broken
+    )
+    assert paths == ["src/session.js"] and "Previous threat-model result" not in hypothesis
+
+
+def test_every_step_gets_a_file_before_one_step_fills_the_cap(repo, monkeypatch):
+    for n in range(4):
+        (repo / "src" / f"verify{n}.js").write_text("jwt.verify(a, k)\n" * (n + 1))
+    (repo / "src" / "roles.js").write_text("if (req.user.role === 'admin') next()\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "steps")
+    monkeypatch.setattr(ach, "MAX_PATHS", 3)
+    _, paths = build(repo, ["AC-T-003"])
+    assert paths[0] == "src/verify3.js"  # step 1: the file with the most sink lines leads
+    assert "src/roles.js" in paths  # step 2 is not crowded out by step 1's matches
+    assert len(paths) == 3

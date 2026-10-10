@@ -193,9 +193,13 @@ def test_abuse_case_preview_prints_the_scope_and_starts_no_job(repo, tmp_path):
     assert result.stdout.splitlines() == [
         "ABUSE-CASE CHECK",
         "  AC-T-003  Privilege Escalation to Admin via JWT Algorithm Confusion  (technical attack chain, plugin)",
+        "    Goal: Forge an admin-role JWT without knowledge of the signing secret.",
+        "    Step 1: JWT algorithm not pinned on verification",
+        "    Step 2: Role claim trusted from token without re-fetch",
         "  Revision: HEAD",
         "  Files (1):",
         "    src/session.js",
         "  Threat model: none (isolated)",
+        "  Analysis model: sonnet",
     ]
     assert not state.exists()
