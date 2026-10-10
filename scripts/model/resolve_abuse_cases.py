@@ -422,6 +422,37 @@ def resolve_abuse_cases(
     return active, errors
 
 
+_ORIGIN_LABEL = {
+    "library": "plugin",
+    "org": "organization",
+    "repo": "repository",
+    "explicit": "per-scan file",
+    "derived": "model-derived",
+}
+
+
+def render_case_list(
+    cases: list[dict],
+    origins: dict[str, str],
+    rejected: list[dict],
+    profile_path: Path | None,
+    profile_source: str,
+) -> str:
+    """One line per active case: id, origin, kind, title. Rejected repository
+    files are listed after the cases, because a scan would skip them too."""
+    profile = f"{profile_path} ({profile_source})" if profile_path else f"none ({profile_source})"
+    lines = [f"ABUSE CASES — {len(cases)} active · organization profile: {profile}"]
+    for case in cases:
+        cid = str(case.get("id") or "")
+        origin = _ORIGIN_LABEL.get(origins.get(cid, ""), "unknown")
+        kind = "business" if case.get("kind") == "descriptive" else "technical"
+        title = " ".join(str(case.get("title") or "").split())
+        lines.append(f"  {cid:<14} {origin:<14} {kind:<10} {title}")
+    for item in rejected:
+        lines.append(f"  REJECTED {item['path']}: {item['reason']}")
+    return "\n".join(lines)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Resolve the active abuse-case set.")
     parser.add_argument("--org-profile", default=None, help="path to org-profile.yaml")
@@ -431,19 +462,39 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="target repo root; loads <repo>/docs/security/abuse-cases/ and <repo>/.appsec/abuse-cases/",
     )
-    parser.add_argument("--list-ids", action="store_true", help="print active ids only")
+    output = parser.add_mutually_exclusive_group()
+    output.add_argument("--list-ids", action="store_true", help="print active ids only")
+    output.add_argument(
+        "--list",
+        action="store_true",
+        help="print each active case with its origin, kind, and title; uses the active org profile",
+    )
+    parser.add_argument("--no-org-profile", action="store_true", help="with --list, ignore the active org profile")
     args = parser.parse_args(argv)
 
     plugin_root = Path(args.plugin_root) if args.plugin_root else PLUGIN_ROOT
     repo_root = Path(args.repo_root) if args.repo_root else None
     profile: dict | None = None
     profile_dir: Path | None = None
-    if args.org_profile:
-        p = Path(args.org_profile)
-        profile = _load_yaml(p)
-        profile_dir = p.parent
+    profile_path: Path | None = Path(args.org_profile) if args.org_profile else None
+    profile_source = "cli" if profile_path else "none"
+    if args.list and not profile_path:
+        from runtime.resolve_org_profile import discover_active_profile
 
-    cases, errors, rejected = resolve_abuse_case_sources(profile, profile_dir, plugin_root, repo_root)
+        profile_path, profile_source = discover_active_profile(None, args.no_org_profile, plugin_root)
+    if profile_path:
+        profile = _load_yaml(profile_path)
+        profile_dir = profile_path.parent
+
+    origins: dict[str, str] = {}
+    cases, errors, rejected = resolve_abuse_case_sources(profile, profile_dir, plugin_root, repo_root, origins=origins)
+    if args.list:
+        for e in errors:
+            sys.stderr.write(f"ERROR: {e}\n")
+        if errors:
+            return 1
+        print(render_case_list(cases, origins, rejected, profile_path, profile_source))
+        return 0
     # As a validation command every problem fails, including a repository
     # file that a scan would only reject on its own.
     for item in rejected:

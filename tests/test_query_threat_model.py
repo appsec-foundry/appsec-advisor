@@ -850,3 +850,117 @@ def test_a_boundary_cited_from_two_origins_is_listed_once_with_both(boundary, or
 def test_distinct_boundaries_stay_separate_entries():
     detail = qtm.render_detail(qtm.lookup_id(_two_origin_facts("tb-1", ("backend-api",), extra="tb-2"), "F-001"))
     assert "tb-1 (backend-api): Reached from backend-api., tb-2 (backend-api): Second crossing." in detail
+
+
+# --------------------------------------------------------------------------
+# Abuse-case outcomes recorded in abuse_case_analysis
+# --------------------------------------------------------------------------
+
+
+def _abuse_case(case_id: str, title: str, source: str, verdict: str, findings: list[str], **extra) -> dict:
+    return {
+        "id": case_id,
+        "title": title,
+        "source": source,
+        "actor": "Authenticated customer",
+        "goal": "Obtain goods without paying.",
+        "prerequisite": "",
+        "combined_risk": "High" if findings else None,
+        "chain_verdict": verdict,
+        "verification_complete": verdict != "inconclusive",
+        "unverified_steps": [],
+        "matched_finding_ids": findings,
+        "blocking_mitigation_ids": [],
+        "steps": [
+            {
+                "step": 1,
+                "outcome": "The order total is accepted from the client.",
+                "verdict": "confirmed" if findings else "inconclusive",
+                "finding_id": findings[0] if findings else None,
+                "evidence": None,
+                "controls_found": [],
+                "unverified": not findings,
+            }
+        ],
+        **extra,
+    }
+
+
+def _abuse_model(cases: list[dict], evaluated=(), not_performed=()) -> str:
+    import yaml
+
+    data = yaml.safe_load(textwrap.dedent(SAMPLE))
+    analysis = {
+        "status": "completed",
+        "reason": None,
+        "cases": cases,
+        "catalog_evaluated": list(evaluated),
+    }
+    if not_performed:
+        analysis["not_performed"] = list(not_performed)
+    data["abuse_case_analysis"] = analysis
+    return yaml.safe_dump(data, sort_keys=False)
+
+
+def test_cli_lists_recorded_abuse_case_outcomes(tmp_path):
+    body = _abuse_model(
+        [_abuse_case("AC-001", "Client-controlled order total", "descriptive", "fully_viable", ["F-001"])],
+        evaluated=[
+            {"id": "AC-T-004", "title": "Webhook replay", "source": "mandatory", "reason": "no webhook receiver"}
+        ],
+        not_performed=[{"id": "AC-007", "title": "Coupon stacking", "requested": False, "reason": "depth limit"}],
+    )
+    _write_model(tmp_path, body)
+    r = _run(["--output-dir", str(tmp_path)])
+    assert r.returncode == 0, r.stderr
+    block = r.stdout.split("ABUSE CASES — verification completed", 1)[1]
+    assert "AC-001" in block and "fully_viable" in block and "findings: F-001" in block
+    assert "AC-T-004" in block and "did not apply" in block and "no webhook receiver" in block
+    assert "AC-007" in block and "not performed" in block and "depth limit" in block
+
+
+def test_grep_narrows_abuse_cases_to_one_case_and_marks_model_derived():
+    import yaml
+
+    data = yaml.safe_load(
+        _abuse_model(
+            [
+                _abuse_case("ORG-AC-012", "Refund to a foreign account", "descriptive", "partially_blocked", ["F-002"]),
+                _abuse_case(
+                    "MODEL-AC-001",
+                    "Approve own expense claim",
+                    "descriptive",
+                    "inconclusive",
+                    [],
+                    open_questions=["Who may approve a claim above the limit?"],
+                ),
+            ]
+        )
+    )
+    facts = qtm.build_facts(data, "MODEL-AC-001")
+    assert [c["id"] for c in facts["abuse_cases"]["cases"]] == ["MODEL-AC-001"]
+    text = qtm.render_text(facts)
+    assert "model-derived" in text and "verification incomplete" in text
+    assert "open question: Who may approve a claim above the limit?" in text
+    assert "ORG-AC-012" not in text
+
+
+def test_model_without_abuse_analysis_renders_no_abuse_block():
+    facts = _facts()
+    assert facts["abuse_cases"]["cases"] == []
+    assert "ABUSE CASES" not in qtm.render_text(facts)
+
+
+@pytest.mark.parametrize(
+    ("reason", "header"),
+    [
+        ("skipped (auto - quick depth)", "ABUSE CASES — verification skipped (auto - quick depth)"),
+        ("operator opted out", "ABUSE CASES — verification skipped: operator opted out"),
+    ],
+)
+def test_abuse_header_states_the_status_once(reason, header):
+    import yaml
+
+    data = yaml.safe_load(textwrap.dedent(SAMPLE))
+    data["abuse_case_analysis"] = {"status": "skipped", "reason": reason, "cases": [], "catalog_evaluated": []}
+    assert header in qtm.render_text(qtm.build_facts(data, None)).splitlines()

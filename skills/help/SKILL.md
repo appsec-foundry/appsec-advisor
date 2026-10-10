@@ -187,6 +187,7 @@ A prompt hook that adds matching guidance, and your requirements when a catalog 
 - `/appsec-advisor:status` — whether a scan is running
 - `/appsec-advisor:threat-model-health` — whether the stored model is consistent
 - `/appsec-advisor:authnz-review` — authentication and authorization review, no model needed
+- `/appsec-advisor:abuse-cases` — defined abuse and business cases with their origin
 - `/appsec-advisor:security-score` — 0–100 score in seconds, no model needed
 - `/appsec-advisor:repo-profile` — size, stack, and layout
 - `/appsec-advisor:export-threat-model` — PDF, HTML, SARIF

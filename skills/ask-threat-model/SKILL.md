@@ -256,12 +256,7 @@ worst case?", use the `TOP RISK` block — the model's curated worst-case
 (`critical_findings`) — plus the severity histogram. That is the fast verdict;
 you do not need to read the whole model. Do not synthesise a new risk rating.
 
-**Abuse cases.** These are a *rendered-report* feature (§9 of `threat-model.md`),
-built from finding chains — they are **not** stored in the semantic
-`threat-model.yaml`, so they are not in the facts index and are frequently
-absent/dormant in a model. If asked, say abuse cases live in §9 of the rendered
-report (when present) and are not part of the queryable model; offer
-export-threat-model / the report path rather than inventing chains.
+**Abuse cases.** The `ABUSE CASES` block lists the recorded outcome of every abuse and business case the run checked: verdict, kind, linked findings, open questions, cases that did not apply, and cases not performed with the reason. `--grep <case id or keyword>` narrows it to one case. Report a verdict only as recorded; an `inconclusive` or not-performed case is unresolved, not safe. Step-by-step evidence lives in §9 of the rendered report. This skill cannot run a case; to check one again, point to create-threat-model with `--only-abuse-case <ID>`.
 
 **Identifiers.** Findings are cited as `F-NNN` in the report (stored as `T-NNN`
 in the yaml). Mitigations are `M-NNN`. Components have names/ids. Cite the
@@ -335,7 +330,7 @@ right one; this skill does not run them.
 **not** an exhaustive audit or a pentest — absence of a finding is not proof of
 safety. Findings carry an `evidence_check` state (`verified` … `unchecked`); do
 not present an `unchecked` one as confirmed. Coverage is bounded by scan depth
-and scope. The `verdict` and abuse-case sections are report renders, not always
+and scope. The `verdict` section is a report render, not always
 in the semantic model. Freshness needs git and is only checked on request
 (Step 3b). When a question exceeds what the model records, say so plainly.
 

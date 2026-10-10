@@ -48,6 +48,10 @@ never proves that a boundary control works.
 
 The operator controls which abuse-case sources are used. A technical abuse case becomes a finding only when target-repository evidence confirms it. Standard and thorough assessments also load the plugin's generic business abuse cases unless the organization profile disables the defaults, and a business case is verified only when deterministic preselection finds code it applies to. A confirmed business case becomes a finding. An unconfirmed business case that cites code where no enforcing control was found becomes a finding marked as unproven; any other unconfirmed business case is reported as unresolved, not as safe. Thorough assessments also let the model propose up to three application-specific business abuse cases, which are marked as model-derived and follow the same verification and reporting rules.
 
+### REQ-MOD-010 — Users can list and check abuse cases individually
+
+A user can list the abuse and business cases defined for a repository, each with its title, kind, and whether it comes from the plugin, the organization profile, the repository, or a per-scan file. A user can select one or more of these cases and have them checked without a full assessment. When a threat model exists, the check uses it; the user can instead choose an isolated check against the code alone. Either check follows REQ-MOD-004: a case is confirmed only by repository evidence, and a case without decisive evidence is reported as unresolved, never as safe. An isolated check states that it ran without a threat model. When an existing model records a case as inconclusive or not performed, the plugin may suggest this check, but never starts it on its own.
+
 ### REQ-MOD-005 — Findings require evidence from the target repository
 
 External context may identify a hypothesis, but only source, configuration, git

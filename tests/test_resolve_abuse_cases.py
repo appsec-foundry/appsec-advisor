@@ -676,3 +676,68 @@ def test_equal_keys_in_separate_mappings_and_merge_keys_still_load(tmp_path: Pat
     two = body + _DESCRIPTIVE.split("abuse_cases:\n", 1)[1].replace("REPO-AC-020", "REPO-AC-021")
     doc = rac._load_case_yaml(two)
     assert [case["actor"] for case in doc["abuse_cases"]] == ["Delegated administrator of one department"] * 2
+
+
+# ---------------------------------------------------------------------------
+# --list: defined cases with origin, kind, and title
+# ---------------------------------------------------------------------------
+
+
+def _org_profile_file(tmp_path: Path, body: str) -> Path:
+    org_dir = _write_org(tmp_path / "org", body)
+    profile = org_dir / "org-profile.yaml"
+    profile.write_text("abuse_cases:\n  add: abuse-cases/*.yaml\n", encoding="utf-8")
+    return profile
+
+
+def _list_rows(output: str) -> dict[str, list[str]]:
+    rows = {}
+    for line in output.splitlines()[1:]:
+        parts = line.split(maxsplit=3)
+        if parts and parts[0] != "REJECTED":
+            rows[parts[0]] = parts[1:]
+    return rows
+
+
+@pytest.mark.parametrize(
+    ("org_id", "repo_id", "repo_title"),
+    [
+        ("ORG-AC-001", "REPO-AC-001", "Refund to a foreign account"),
+        ("ORG-AC-077", "REPO-AC-310", "Self-approve an expense"),
+    ],
+)
+def test_list_names_origin_kind_and_title_of_the_active_profile(
+    tmp_path, monkeypatch, capsys, org_id, repo_id, repo_title
+):
+    profile = _org_profile_file(tmp_path, _VALID_CASE.replace("ORG-AC-001", org_id))
+    repo = tmp_path / "repo"
+    _write_docs_security(
+        repo,
+        f"schema_version: 2\nabuse_cases:\n  - id: {repo_id}\n    kind: descriptive\n"
+        f"    title: {repo_title}\n    check: A user cannot do this.\n",
+    )
+    monkeypatch.setenv("APPSEC_ADVISOR_ORG_PROFILE", str(profile))
+    monkeypatch.delenv("APPSEC_ADVISOR_NO_ORG_PROFILE", raising=False)
+
+    assert rac.main(["--list", "--repo-root", str(repo)]) == 0
+    out = capsys.readouterr().out
+    rows = _list_rows(out)
+    assert f"organization profile: {profile} (env)" in out.splitlines()[0]
+    assert rows["AC-T-001"][:2] == ["plugin", "technical"]
+    assert rows["AC-T-101"][:2] == ["plugin", "business"]
+    assert rows[org_id] == ["organization", "technical", "Custom org scenario"]
+    assert rows[repo_id] == ["repository", "business", repo_title]
+
+
+def test_list_without_org_profile_omits_org_cases_and_shows_rejected_files(tmp_path, monkeypatch, capsys):
+    profile = _org_profile_file(tmp_path, _VALID_CASE)
+    repo = tmp_path / "repo"
+    _write_docs_security(repo, "abuse_cases: not-a-list\n", name="broken.yaml")
+    monkeypatch.setenv("APPSEC_ADVISOR_ORG_PROFILE", str(profile))
+
+    assert rac.main(["--list", "--no-org-profile", "--repo-root", str(repo)]) == 0
+    out = capsys.readouterr().out
+    assert "organization profile: none (disabled)" in out.splitlines()[0]
+    assert "ORG-AC-001" not in out
+    assert "REJECTED docs/security/abuse-cases/broken.yaml" in out
+    assert set(_list_rows(out)) == set(_LIBRARY_IDS)

@@ -301,6 +301,62 @@ def _surface_record(e: dict) -> dict:
     }
 
 
+def _abuse_case_record(c: dict) -> dict:
+    return {
+        "id": str(c.get("id") or "").strip(),
+        "title": (c.get("title") or "").strip(),
+        "source": (c.get("source") or "").strip(),
+        "actor": (c.get("actor") or "").strip(),
+        "goal": _trim(c.get("goal") or ""),
+        "verdict": (c.get("chain_verdict") or "").strip(),
+        "risk": c.get("combined_risk") or "",
+        "verification_complete": bool(c.get("verification_complete")),
+        "findings": [str(f).strip() for f in (c.get("matched_finding_ids") or []) if str(f).strip()],
+        "mitigations": [str(m).strip() for m in (c.get("blocking_mitigation_ids") or []) if str(m).strip()],
+        "open_questions": [str(q).strip() for q in (c.get("open_questions") or []) if str(q).strip()],
+    }
+
+
+def _abuse_cases(data: dict, grep: str | None) -> dict:
+    """The model's recorded abuse-case outcomes (``abuse_case_analysis``): the
+    verified cases, the evaluated catalog cases that did not apply, and the
+    selected cases not performed. A read of stored verdicts, never a re-check."""
+    analysis = data.get("abuse_case_analysis")
+    if not isinstance(analysis, dict):
+        return {"status": "", "reason": "", "cases": [], "evaluated": [], "not_performed": []}
+    cases = [_abuse_case_record(c) for c in (analysis.get("cases") or []) if isinstance(c, dict)]
+    evaluated = [
+        {k: str(row.get(k) or "").strip() for k in ("id", "title", "source", "reason")}
+        for row in (analysis.get("catalog_evaluated") or [])
+        if isinstance(row, dict)
+    ]
+    not_performed = [
+        {
+            "id": str(row.get("id") or "").strip(),
+            "title": str(row.get("title") or "").strip(),
+            "requested": bool(row.get("requested")),
+            "reason": str(row.get("reason") or "").strip(),
+        }
+        for row in (analysis.get("not_performed") or [])
+        if isinstance(row, dict)
+    ]
+    if grep:
+        cases = [
+            c
+            for c in cases
+            if _matches([c["id"], c["title"], c["source"], c["actor"], c["goal"], " ".join(c["findings"])], grep)
+        ]
+        evaluated = [r for r in evaluated if _matches([r["id"], r["title"], r["source"], r["reason"]], grep)]
+        not_performed = [r for r in not_performed if _matches([r["id"], r["title"], r["reason"]], grep)]
+    return {
+        "status": str(analysis.get("status") or "").strip(),
+        "reason": str(analysis.get("reason") or "").strip(),
+        "cases": cases,
+        "evaluated": evaluated,
+        "not_performed": not_performed,
+    }
+
+
 def _matches(text_fields: list[str], term: str) -> bool:
     low = term.lower()
     return any(low in (f or "").lower() for f in text_fields)
@@ -541,6 +597,7 @@ def build_facts(
             "controls": len(controls),
         },
         "requirements": requirements,
+        "abuse_cases": _abuse_cases(data, grep),
         "system": {
             "components": components_l,
             "assets": assets_l,
@@ -735,6 +792,37 @@ def render_text(facts: dict) -> str:
         buf.append("REQUIREMENTS — this scan verified NO custom requirements")
         buf.append(f"  The run used {why}.")
         buf.append("  Do not report compliance with any custom requirement from this model.")
+
+    abuse = facts.get("abuse_cases") or {}
+    if abuse.get("status"):
+        buf.append("")
+        status, reason = abuse["status"], abuse["reason"]
+        # A recorded reason may already open with the status ("skipped (quick depth)").
+        state = reason if reason.startswith(status) else f"{status}: {reason}" if reason else status
+        buf.append(f"ABUSE CASES — verification {state}")
+        for c in abuse.get("cases") or []:
+            bits = " · ".join(
+                x
+                for x in (
+                    c["source"],
+                    "model-derived" if c["id"].startswith("MODEL-AC-") else "",
+                    c["risk"],
+                    "" if c["verification_complete"] else "verification incomplete",
+                )
+                if x
+            )
+            buf.append(f"  {c['id']:<12} {c['verdict'] or '?':<17} {c['title']}" + (f"  [{bits}]" if bits else ""))
+            if c["findings"]:
+                buf.append(f"               findings: {', '.join(c['findings'])}")
+            if c["mitigations"]:
+                buf.append(f"               blocked by: {', '.join(c['mitigations'])}")
+            for q in c["open_questions"]:
+                buf.append(f"               open question: {q}")
+        for r in abuse.get("evaluated") or []:
+            buf.append(f"  {r['id']:<12} {'did not apply':<17} {r['title']} — {r['reason']}")
+        for r in abuse.get("not_performed") or []:
+            label = "not performed" + (" (requested)" if r["requested"] else "")
+            buf.append(f"  {r['id']:<12} {label:<17} {r['title']} — {r['reason']}")
 
     worst = facts.get("worst_case") or []
     if worst:
