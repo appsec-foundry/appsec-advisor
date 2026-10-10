@@ -131,6 +131,7 @@ Run `/appsec-advisor:create-threat-model` to get:
 - an architecture model with components, data flows, and trust boundaries;
 - findings ordered by risk and tied to repository evidence;
 - a Weakness Register for systemic and design patterns;
+- abuse cases verified against the code, including simple one-sentence checks of business rules that you can add in `docs/security/abuse-cases/`;
 - mitigation guidance and generated diagrams;
 - `threat-model.md` and `threat-model.yaml`, with optional PDF, HTML, SARIF, Threat Dragon, and pentest-task exports.
 

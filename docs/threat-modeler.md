@@ -137,7 +137,7 @@ Before it runs STRIDE, the plugin maps routes, authentication flows, trust bound
 | **Coding-agent configuration** | Sandbox, approval, hook, and tool-trust settings a repository commits for Claude Code, Codex, Copilot, Gemini CLI, and Kiro, plus agent bypass flags in workflows and scripts. |
 | **GenAI and LLM security** | Prompt injection, tool boundaries, vector-store access, model APIs, and OWASP LLM risks. |
 | **Threat actors** | Insider, supply-chain, partner, and adjacent-tenant threats where applicable. |
-| **Abuse cases** | Catalog scenarios selected from repository signals and verified step-by-step against code evidence. |
+| **Abuse cases** | Checks of what an attacker or user must not be able to do: built-in attack chains, built-in business-rule checks such as access to other users' data or a bypassed approval, your own checks, and at thorough depth up to three checks the model derives for your application. Each is verified against the code. |
 
 These signals form the analysis context for STRIDE. They do not replace SAST, SCA, secret scanning, or IaC scanning. A hypothesis becomes a finding only when repository evidence supports it, and the resulting report still requires expert review.
 
@@ -239,7 +239,7 @@ Thorough increases both component coverage and per-component analysis depth.
 | | quick | standard | thorough |
 |---|---|---|---|
 | Analysis per component | Lighter pass for internal components | Lighter pass for internal components | Full analysis everywhere |
-| Abuse cases checked against the code | Only cases you request | Built-in cases and up to 3 business cases | Built-in cases and up to 8 business cases |
+| Abuse cases checked against the code | Only cases you request | Built-in cases and up to 3 business cases | Built-in cases, up to 8 business cases, and up to 3 derived for the application |
 | Extra review of findings | No | Final quality check | Final quality check and architect review |
 | Model for finding threats | Sonnet 4.6 | Sonnet 4.6 | Opus |
 | Model for rating and merging findings | Sonnet 4.6 | Sonnet 5.5 | Opus |
@@ -313,7 +313,7 @@ The hard cut requires an `ANTHROPIC_API_KEY`; the soft budget and time limits al
 
 ## Repo-local context
 
-Four optional files provide context that cannot be derived from code. The plugin treats their contents as data, and they cannot suppress a finding supported by repository evidence.
+These optional files provide context that cannot be derived from code. The plugin treats their contents as data, and they cannot suppress a finding supported by repository evidence.
 
 <a id="business-context--docsbusiness-contextmd"></a>
 ### Business context: `docs/security/business-context.md`
@@ -385,6 +385,21 @@ legitimate_roles:
 ```
 
 Figures group actors linked to displayed findings by access category. Adding twenty roles does not create twenty diagram nodes. Identified Actors has one row for each attacker and legitimate role that Figure 1 draws, under the same name, and names your configured roles inside the attacker group that draws them. §2.1, the threat-actor legend and the abuse cases use the same names. A role whose group Figure 1 does not draw does not appear in the report. Grouping does not imply that the roles share every permission.
+
+### Abuse cases: `docs/security/abuse-cases/`
+
+An abuse case is a simple check of what a user must not be able to do, such as reading another customer's orders or approving their own request. One sentence is enough; the assessment finds the relevant code and decides the check:
+
+```yaml
+schema_version: 2
+abuse_cases:
+  - id: REPO-AC-001
+    kind: descriptive
+    title: Employee approves their own expense report
+    check: Check whether an employee can approve an expense report they submitted.
+```
+
+Put such files in `docs/security/abuse-cases/`. Standard and thorough runs also check seven built-in business-rule cases, and thorough runs add up to three cases the model derives for your application. A confirmed case becomes a finding. A case where the code shows no control but the outcome depends on a business fact becomes a finding marked unproven. A case that holds appears in §9 with its reason. Organizations can ship cases to every repository; [Business abuse cases](org-profiles.md#business-abuse-cases) lists all fields.
 
 <a id="known-threats--docsknown-threatsyaml"></a>
 ### Known threats: `docs/known-threats.yaml`
