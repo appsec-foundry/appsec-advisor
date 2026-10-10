@@ -193,3 +193,48 @@ def location_label(reference: dict, document: dict) -> str:
     if rid not in labels:
         raise ValueError("Source location has no repository in the model inventory")
     return f"{labels[rid]}:{reference['file']}"
+
+
+def is_portable_model(document) -> bool:
+    """Whether a parsed model is the version-2 multi-repository contract."""
+    meta = document.get("meta") if isinstance(document, dict) else None
+    return isinstance(meta, dict) and meta.get("schema_version") == 2
+
+
+def model_file_is_portable(path: Path) -> bool:
+    """Whether the delivered model file is a version-2 multi-repository model.
+
+    An unreadable file is not one; its consumer reports it as before.
+    """
+    try:
+        document = yaml.load(path.read_text(encoding="utf-8"), Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader))
+    except (OSError, ValueError, yaml.YAMLError):
+        return False
+    return is_portable_model(document)
+
+
+def single_repository_only(tool: str, alternative: str) -> str:
+    """The refusal of a follow-on tool that would need a local checkout mapping."""
+    return (
+        f"This threat model covers several repositories; {tool} supports single-repository models only. {alternative}"
+    )
+
+
+def labelled_model(document: dict) -> dict:
+    """Validated read-only view whose every location reads ``<label>:<file>``.
+
+    For tools that show locations to people. The labels never name a local
+    path, so no caller can resolve them against the current directory.
+    """
+    validate_portable_model(document)
+    view = copy.deepcopy(document)
+    labels = {row["repository_id"]: row["label"] for row in view["source_inventory"]["repositories"]}
+    for component in view["components"]:
+        component["paths"] = [f"{labels[row['repository_id']]}:{row['path']}" for row in component["paths"]]
+        component["repository_labels"] = [labels[rid] for rid in component["repository_ids"]]
+    seen = set()
+    for row in source_rows(view):
+        if id(row) not in seen:
+            row["file"] = location_label(row, document)
+            seen.add(id(row))
+    return view

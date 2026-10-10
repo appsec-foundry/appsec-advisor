@@ -353,6 +353,13 @@ def build(
     cases, origins = load_cases(repo_root, org_profile, no_org_profile)
     selected = select_cases(cases, case_ids)
     data = load_model(threat_model_path) if threat_model_path else None
+    from shared.assessment_sources import is_portable_model, single_repository_only
+
+    if is_portable_model(data):
+        # Its finding files belong to several checkouts, not to this repository.
+        raise AbuseCaseError(
+            single_repository_only("an abuse-case check", "Run it with --isolated or a single-repository model")
+        )
     links = model_links(data, selected) if data else {}
     preferred = [f["file"] for link in links.values() for f in link["findings"] if f["file"]]
     paths = list(dict.fromkeys(user_paths))

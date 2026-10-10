@@ -182,6 +182,12 @@ def test_an_unreadable_threat_model_adds_no_links(repo):
     assert paths == ["src/session.js"] and "Previous threat-model result" not in hypothesis
 
 
+def test_a_multi_repository_model_is_refused_instead_of_mapped_onto_this_checkout(repo):
+    model = _model(repo, {"meta": {"schema_version": 2}, "threats": [{"id": "F-001", "file": "src/session.js"}]})
+    with pytest.raises(ach.AbuseCaseError, match="covers several repositories.*--isolated"):
+        ach.build(repo, "HEAD", ["AC-T-003"], [], True, no_org_profile=True, threat_model_path=model)
+
+
 def test_every_step_gets_a_file_before_one_step_fills_the_cap(repo, monkeypatch):
     for n in range(4):
         (repo / "src" / f"verify{n}.js").write_text("jwt.verify(a, k)\n" * (n + 1))
