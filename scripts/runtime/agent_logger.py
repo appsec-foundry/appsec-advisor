@@ -30,8 +30,8 @@ Events logged:
   MAX_TURNS     — agent hit its maxTurns limit (logged as ERROR)
   ASSESSMENT_SUMMARY — final summary (duration, mode, threat counts, tokens, cost, models)
   ASSESSMENT_FILES   — all files written during the assessment (full paths, deduplicated)
-  SUMMARY_NOT_RELAYED — the outermost Stop returned the turn once because the closing
-                  message dropped completion-summary lines (see runtime/completion_relay.py)
+  SUMMARY_SHOWN — a hook showed the completion summary as a systemMessage
+                  (see runtime/completion_relay.py)
 
 Performance-diagnostic note (added 2026-05-23): FILE_READ / GREP_RUN / GLOB_RUN /
 BASH_OK were added to close the visibility gap — previously only ~15% of tool calls
@@ -79,6 +79,8 @@ import runtime.agent_lifecycle as agent_lifecycle
 import runtime.hook_payload as hook_payload
 from runtime.event_log import format_line
 
+#: ``completion_relay.RECORD``, spelled out so the per-Bash-call check imports nothing.
+_SUMMARY_RECORD = ".completion-summary.json"
 # ---------------------------------------------------------------------------
 # Config loading — single cached read of config.json
 # ---------------------------------------------------------------------------
@@ -3409,7 +3411,8 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
     run_still_owned = _run_lock_is_ours(sid)
     if event_name == "Stop" and not run_still_owned:
         clear_terminal_active_tool_calls(session_transcript=transcript)
-        relay_decision = _review_summary_relay(event, sid)
+        # A summary the PostToolUse did not show is shown here instead.
+        relay_decision = _summary_notice(event, sid)
         sentinel = os.path.join(os.path.dirname(_log_path()), ".assessment-summary-emitted")
         try:
             with open(sentinel, "x") as fh:  # atomic O_CREAT|O_EXCL
@@ -3434,27 +3437,21 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
     return None
 
 
-def _review_summary_relay(event: hook_payload.HookEvent, sid: str) -> dict | None:
-    """Return the Stop decision that sends a rewritten completion summary back once.
+def _summary_notice(event: hook_payload.HookEvent, sid: str) -> dict | None:
+    """Return the hook output that shows the run's completion summary, once.
 
-    The outermost Stop is the first point that sees the message the reader
-    gets; ``completion_relay`` owns the rule and the record the summary script
-    left.
+    ``completion_relay`` owns the record the summary script left and decides
+    which event may take it.
     """
     try:
-        import runtime.completion_relay as completion_relay  # noqa: PLC0415 — off the per-tool-call path
+        import runtime.completion_relay as completion_relay  # noqa: PLC0415 — off the module import path
 
-        message = event.last_assistant_message or completion_relay.final_message(event.session_transcript)
-        earlier = completion_relay.turn_texts(event.session_transcript) if event.session_transcript else []
-        missing = completion_relay.review_final_message(
-            _output_dir(), sid, message, retry=event.stop_hook_active, earlier=earlier
-        )
+        notice = completion_relay.hook_notice(_output_dir(), sid, event.agent_id)
     except Exception:
         return None  # never crash a hook
-    if not missing:
-        return None
-    _write("WARN ", "SUMMARY_NOT_RELAYED", f"missing_lines={len(missing)}  first={missing[0][:120]}", sid)
-    return {"decision": "block", "reason": completion_relay.RETRY_INSTRUCTION}
+    if notice:
+        _write("INFO ", "SUMMARY_SHOWN", f"event={event.name}", sid)
+    return notice
 
 
 _USAGE_TOKEN_KEYS = (
@@ -3906,6 +3903,11 @@ def main() -> None:
 
     # PostToolUse (default)
     handle_post_tool_use(data, sid)
+    if data.get("tool_name") == "Bash" and os.path.exists(os.path.join(_output_dir(), _SUMMARY_RECORD)):
+        # The Bash call that printed the completion summary shows it to the reader.
+        notice = _summary_notice(_hook_event(data, "PostToolUse", sid), sid)
+        if notice:
+            sys.stdout.write(json.dumps(notice))
 
 
 if __name__ == "__main__":

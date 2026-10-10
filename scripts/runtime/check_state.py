@@ -137,8 +137,8 @@ _CLEANUP_TARGETS: tuple[str, ...] = (
     # Stage 4 (architect) status + repair plan.
     ".architect-status.json",
     ".architect-repair-plan.json",
-    # Hook-side completion marker, and the printed-summary record the closing
-    # Stop reviews (runtime/completion_relay.py).
+    # Hook-side completion marker, and the printed-summary record a hook shows
+    # (runtime/completion_relay.py).
     ".assessment-summary-emitted",
     ".completion-summary.json",
     # Phase 1 prior-findings cache (regenerated on every fresh start).

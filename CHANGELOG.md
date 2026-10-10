@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The completion summary of a run is shown once, in full, by the plugin itself instead of being copied by the session.
 - Threat analysis reports unfulfilled evidence requests, rejects missing follow-up questions, and accepts source-backed findings introduced by removed controls.
 - Trust boundaries keep network, privilege and in-process trust changes regardless of source layout, keep separately deployed targets and separate build supply channels apart, and can be refuted by findings even when only inferred; findings link only to boundaries whose target fits their weakness, and severity notes name the right boundary.
 - Outbound calls to fixed external services and to request-chosen URLs become data flows with their own trust boundaries, and a runtime component left without any data flow is reported as a run issue.

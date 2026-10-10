@@ -146,9 +146,9 @@ ALWAYS_FILES = [
     ".session-agent-map",
     ".assessment-summary-emitted",
     ".assessment-owner-sid",
-    # NOT listed: .completion-summary.json. The closing Stop reviews the
-    # orchestrator's final message against it after this cleanup ran, and
-    # deletes it itself (runtime/completion_relay.py).
+    # NOT listed: .completion-summary.json. The hook that shows the summary
+    # takes it after this cleanup ran, and deletes it itself
+    # (runtime/completion_relay.py).
     ".prior-findings-index.json",
     ".stage1-resume-count",
     # M3.3 — these were left behind on prior crashed runs and accumulated

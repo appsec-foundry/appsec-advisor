@@ -186,6 +186,7 @@ structured source for deterministic exports.
 
 The wrapper applies the same post-run secret checks, composition backstop,
 cleanup, and fail-closed report gate in every supported assessment mode.
+It prints the completion summary after the session's closing text.
 
 ## Flag reference
 

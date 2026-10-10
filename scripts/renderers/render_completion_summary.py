@@ -79,7 +79,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import model.stamp_threat_model as stamp_threat_model  # Owns which deliverables get stamped.
-import runtime.completion_relay as completion_relay  # Records the summary for the closing Stop hook.
+import runtime.completion_relay as completion_relay  # Records the summary for the hooks that show it.
 import runtime.run_timing as run_timing
 from shared._atomic_io import atomic_write_text
 
@@ -1618,7 +1618,7 @@ def render_files(output_dir: Path, cfg: dict) -> list[str]:
 
 # PDF and HTML need pandoc and a headless Chrome, which a sandboxed session may
 # not start. The summary prints the command itself so the closing message never
-# needs wording of its own (completion_relay rejects text after the summary).
+# needs wording of its own.
 _REEXPORT_SCRIPTS: dict[str, tuple[str, ...]] = {
     "threat-model.pdf": ("exporters/export_pdf.py",),
     "threat-model.html": ("exporters/export_html.py", "--require-mermaid"),
@@ -2883,8 +2883,8 @@ def main(argv: list[str] | None = None) -> int:
     if not args.no_print:
         summary = render_summary(args.output_dir, args.repo_root, cfg, args.plugin_root)
         print(summary, end="")
-        # The reader gets the orchestrator's closing message, not this stdout;
-        # the outermost Stop holds that message to this record.
+        # The host collapses this stdout; the plugin's hooks show the reader
+        # this record instead.
         completion_relay.persist(args.output_dir, summary)
     return 0
 

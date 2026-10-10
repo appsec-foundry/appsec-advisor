@@ -1149,6 +1149,9 @@ if [ -n "$RESULT_CAPTURE" ] && [ -s "$RESULT_CAPTURE" ]; then
         esac
     fi
 fi
+# The completion summary reaches an interactive reader as a hook systemMessage,
+# which headless output does not carry; print the run's record here instead.
+python3 "$SCRIPT_DIR/runtime/completion_relay.py" --output-dir "$OUTPUT_PATH" 2>/dev/null || true
 
 # If the run was interrupted by Ctrl-C, stop here instead of proceeding to
 # artifact parsing — the user asked to abort.

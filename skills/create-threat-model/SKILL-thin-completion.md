@@ -59,7 +59,7 @@ Do **not** call `model/stamp_threat_model.py` yourself: `renderers/render_comple
 
 ## 3. Summary, cleanup and response
 
-Mark the final task complete. Then run the closing steps as ONE Bash call, in this order. The summary is captured while the run lock is still held (its record binds to the run) and printed last, so it is the final tool output you relay instead of reconstructing it from earlier context. The baseline writers are best-effort; the first records the recon fingerprint a later depth increase reuses. Omit both cleanup lines when `KEEP_RUNTIME_FILES=true`, and the `post-architect` line unless the architect review ran. `--stage` has its own vocabulary (`all`, `pre-qa`, `post-qa`, `post-architect`), not the `stageN` labels. Cleanup preserves canonical deliverables, audit artifacts, and `.appsec-cache/baseline.json`; it leaves `.appsec-verbose` and `.appsec-tracing` to the closing Stop hook. Always release the lock, kept runtime files included.
+Mark the final task complete. Then run the closing steps as ONE Bash call, in this order. The summary is captured while the run lock is still held (its record binds to the run) and printed last, so it is the final tool output. The baseline writers are best-effort; the first records the recon fingerprint a later depth increase reuses. Omit both cleanup lines when `KEEP_RUNTIME_FILES=true`, and the `post-architect` line unless the architect review ran. `--stage` has its own vocabulary (`all`, `pre-qa`, `post-qa`, `post-architect`), not the `stageN` labels. Cleanup preserves canonical deliverables, audit artifacts, and `.appsec-cache/baseline.json`; it leaves `.appsec-verbose` and `.appsec-tracing` to the closing Stop hook. Always release the lock, kept runtime files included.
 
 ```bash
 S=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/renderers/render_completion_summary.py" --output-dir "$OUTPUT_DIR")
@@ -76,6 +76,8 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/report_plugin_issue.py" offer --out
 printf '%s\n' "$S"
 ```
 
-Send every line after the `offer` JSON as your message, exactly as printed through the last line, trailing diagnostic blocks included: no text of your own before, inside or after it, and no rewriting or summarizing. The script owns missing-deliverable warnings, verdict, timing, cost, output paths, and next steps. Only for `offer=true`, follow `skills/report-error/SKILL.md` with `--offer` and the run paths after that message.
+The plugin shows the reader the printed summary itself, in full. Do not reproduce, rewrite or summarize it: a copy shows it twice. The script owns missing-deliverable warnings, verdict, timing, cost, output paths, and next steps. Only for `offer=true`, follow `skills/report-error/SKILL.md` with `--offer` and the run paths. Then close with exactly this line and nothing else:
+
+> Threat model complete — the completion summary lists the results and next steps.
 
 On failure, first call `runtime/terminate_run.py --outcome failure` with run identity and reason. After termination, follow the same `report-error --offer` entry; skip preflight and foreign-lock refusals.
