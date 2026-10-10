@@ -278,6 +278,24 @@ def _glob_matches(relative_path: Path, patterns: list[str]) -> bool:
     return False
 
 
+def _path_pattern_matches(relative_path: Path, patterns: list[str]) -> bool:
+    """Match ``scope_qualifier.path_patterns`` the way a case author writes them.
+
+    Case is ignored, so ``*admin*`` also selects ``AdminController.java``. A
+    pattern without ``/`` is tested against every directory and file name in
+    the path, so ``*admin*`` also selects ``src/admin/users/list.ts``. A
+    pattern with ``/`` keeps the right-anchored glob semantics.
+    """
+    lowered = Path(relative_path.as_posix().lower())
+    for pattern in (p.lower() for p in patterns):
+        if "/" in pattern:
+            if _glob_matches(lowered, [pattern]):
+                return True
+        elif any(fnmatch.fnmatchcase(part, pattern) for part in lowered.parts):
+            return True
+    return False
+
+
 def _source_probe(step: dict, repo_root: Path | None) -> dict | None:
     """Return direct source evidence for a step's sink, if present.
 
@@ -512,7 +530,7 @@ def _scope_status(case: dict, signals: set[str] | None, repo_root: Path | None) 
             # absence of the inventory cannot disprove applicability.
             pass
         elif not patterns or not any(
-            _glob_matches(p.relative_to(repo_root), patterns) for p in _repo_source_files(repo_root)
+            _path_pattern_matches(p.relative_to(repo_root), patterns) for p in _repo_source_files(repo_root)
         ):
             unmet_paths = [str(p) for p in raw_patterns]
     return not unmet_signals and not unmet_paths, unmet_signals, unmet_paths
@@ -612,7 +630,7 @@ def _descriptive_preselection(
             if file
         ],
         "path_patterns": [
-            rel_str for rel_str, rel in runtime.items() if path_patterns and _glob_matches(rel, path_patterns)
+            rel_str for rel_str, rel in runtime.items() if path_patterns and _path_pattern_matches(rel, path_patterns)
         ],
     }
     files: list[str] = []

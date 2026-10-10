@@ -10,7 +10,20 @@
 # the relevant signals, so a case never produces a false positive on an
 # irrelevant codebase (it resolves to `not_applicable` instead).
 #
-# Validated against schemas/abuse-cases.schema.yaml.
+# Each case is a chain of steps. A step `grants` a capability, and a later step
+# `requires` it; a `requires` value no step grants is a precondition the
+# attacker brings, such as `low_priv_account`. A step with `required: false`
+# is usually the payoff, the point where the attack succeeds; it still gets a
+# verdict, and the chain is fully viable only when that verdict holds.
+#
+# `probe.sink_patterns` are regular expressions that match two things: lines
+# of source code and the title, CWE, and evidence text of existing findings.
+# Code patterns such as `findById` find the sink directly; text patterns such
+# as `CWE-639` or `(?i)\bIDOR\b` bind the step to a finding that already
+# describes it.
+#
+# The one-sentence business checks live in business-cases.yaml (schema
+# version 2). Validated against schemas/abuse-cases.schema.yaml.
 
 schema_version: 1
 
@@ -133,10 +146,6 @@ abuse_cases:
             endpoint_patterns: ["/api/.*/:?id", "/api/Users"]
             file_hints: ["routes/*.ts", "controllers/*"]
           sink_patterns:
-            # Code-level sinks AND finding-prose/CWE signals (the matcher
-            # searches the finding title + CWE + evidence, which for most
-            # findings is prose, not source) — so IDOR/BOLA findings match by
-            # their CWE or weakness-class words even when no code excerpt exists.
             - "findById"
             - "findOne\\(\\s*\\{?\\s*id"
             - "params\\.id"
@@ -251,10 +260,9 @@ abuse_cases:
             - "token\\.role"
             - "decoded\\.role"
             - "req\\.user\\.role"
-            # Broken-authorization CWEs only. NOT CWE-639 (user-controlled-key
-            # IDOR) — that belongs to the object-read step, and including it here
-            # mis-linked this role-claim-trust step to the IDOR finding
-            # (juice-shop 2026-07-13).
+            # Broken-authorization CWEs only. CWE-639 (IDOR) belongs to the
+            # object-read step; listing it here binds this step to the IDOR
+            # finding instead of the role-claim finding.
             - "CWE-(863|862|266|269)"
             - "(?i)(role|privilege) escalation"
             - "(?i)admin (role|takeover)"
@@ -302,9 +310,9 @@ abuse_cases:
             - "(?i)mass assignment"
             - "(?i)(role|privilege|admin) escalation"
             - "(?i)registration"
-            # Mass-assignment / privilege CWEs only. NOT CWE-639 (IDOR) — its
-            # inclusion mis-linked this mass-assignment step to the IDOR finding
-            # instead of the mass-assignment finding (juice-shop 2026-07-13).
+            # Mass-assignment and privilege CWEs only. CWE-639 (IDOR) would
+            # bind this step to the IDOR finding instead of the
+            # mass-assignment finding.
             - "CWE-(915|266|269)"
             - "\\.\\.\\.req\\.body"
             - "Object\\.assign\\(.*req\\.body"
@@ -437,8 +445,7 @@ abuse_cases:
       Make the model invoke a privileged tool or return data the attacker is not
       entitled to, using the application's own authority.
     scope_qualifier:
-      required_signals:
-        - has_llm_surface
+      required_signals: [has_llm_surface]
     chain:
       - step: 1
         label: Untrusted text reaches the model prompt unseparated
@@ -460,16 +467,16 @@ abuse_cases:
         probe:
           entry_points:
             endpoint_patterns:
-              - /chat
-              - /completion
-              - /ask
-              - /assistant
-              - /agent
+              - "/chat"
+              - "/completion"
+              - "/ask"
+              - "/assistant"
+              - "/agent"
           sink_patterns:
             - "(?i)prompt.*(inject|concat|template)"
             - "(?i)system.?prompt"
             - "(?i)messages\\.push|messages\\s*=\\s*\\["
-            - CWE-(1427|94)
+            - "CWE-(1427|94)"
           control_patterns:
             # `guardrail` deliberately absent: it matches prose describing a
             # system-prompt instruction, which is not a boundary. The remaining
@@ -495,11 +502,11 @@ abuse_cases:
         probe:
           entry_points:
             endpoint_patterns:
-              - /chat
-              - /agent
+              - "/chat"
+              - "/agent"
           sink_patterns:
             - "(?i)tool(s)?\\s*[:=]|function.?call|tool_choice"
-            - CWE-(862|863|269)
+            - "CWE-(862|863|269)"
           control_patterns:
             - "(?i)(authorize|permission|can\\(|isAuthorized|requireRole).*tool"
           control_sufficiency: any

@@ -1226,6 +1226,32 @@ def test_descriptive_preselection_admits_only_executable_source(tmp_path: Path):
     assert m["preselected_sources"] == ["src/roles/assign.ts", "src/roles/roles.component.ts"]
 
 
+def test_path_patterns_ignore_case_and_match_any_directory_or_file_name(tmp_path: Path):
+    repo = tmp_path / "repo"
+    files = (
+        "src/AdminController.java",
+        "src/admin/users/list.ts",
+        "app/Billing/Invoices/Export.cs",
+        "src/roles/nested/grant.ts",
+        "src/index.ts",
+    )
+    for rel in files:
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text("code\n")
+    m = mac.match_case(_descriptive(patterns=("*admin*", "*EXPORT*")), [], None, repo_root=repo)
+    assert sorted(m["preselected_sources"]) == [
+        "app/Billing/Invoices/Export.cs",
+        "src/AdminController.java",
+        "src/admin/users/list.ts",
+    ]
+    # A pattern with "/" stays anchored to the end of the path.
+    m = mac.match_case(_descriptive(patterns=("roles/*",)), [], None, repo_root=repo)
+    assert m["structural_verdict"] == "not_applicable"
+    technical = _case([_step(1, "refund")])
+    technical["scope_qualifier"] = {"path_patterns": ["*ADMIN*"]}
+    assert mac.match_case(technical, [], signals=None, repo_root=repo)["applicable"] is True
+
+
 def test_descriptive_case_with_only_documentation_hits_is_not_applicable(tmp_path: Path):
     repo = _repo(tmp_path)
     m = mac.match_case(_descriptive(patterns=("docs/**",)), [], None, repo_root=repo)

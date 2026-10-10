@@ -110,8 +110,10 @@ $defs:
       path_patterns:
         type: array
         description: >
-          Repository-relative glob patterns. At least one pattern must
-          match a regular file for the case to be in scope. Patterns are
+          Repository-relative glob patterns, matched ignoring case. A pattern
+          without "/" matches any directory or file name in the path; a
+          pattern with "/" matches the end of the path. At least one pattern
+          must match a regular file for the case to be in scope. Patterns are
           evaluated as data, never as shell paths; absolute paths and
           parent traversal do not match.
         items: { type: string }

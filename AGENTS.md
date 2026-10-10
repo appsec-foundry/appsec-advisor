@@ -115,6 +115,7 @@ Before writing a new or changed requirement or decision, show the operator the e
 | Runtime cost and telemetry | cost model, logging standard, decisions `OR-*`, `MD-*` | cost, event-log, and hook tests |
 | Repair | repair decisions `RP-*`, `RN-*` and repair contracts | repair-gate tests |
 | Exports | export documentation, schemas, and decisions `EX-*` | exporter and golden-fixture tests |
+| Abuse cases | `data/abuse-cases/default-library.yaml` (technical chains), `data/abuse-cases/business-cases.yaml` (one-sentence business checks), `schemas/abuse-cases.schema.yaml`, `docs/org-profiles.md#business-abuse-cases`, decisions `AC-*` | `tests/test_match_abuse_cases.py`, `tests/test_business_abuse_cases.py`, `tests/test_resolve_abuse_cases.py` |
 
 ## Before finishing
 

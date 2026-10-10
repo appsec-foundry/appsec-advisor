@@ -1,24 +1,33 @@
 # Generic business abuse cases (descriptive, schema_version 2).
 #
-# Each case states in plain language what a user must not be able to do. The
+# Each case says in one sentence what a user must not be able to do. The
 # abuse-case verifier derives the actor, the operations, and the boundary from
-# the check and the code, and must cite source for every verdict. Most
-# security checks stay deterministic; these cover business rules a pattern
-# cannot express. Teams add their own cases in
+# that check and the code, and cites source for every verdict. These cases
+# cover business rules that a code pattern cannot express. Standard and
+# thorough assessments load this file with the technical chains in
+# default-library.yaml unless the organization profile sets
+# abuse_cases.inherit_defaults: false. Teams add their own cases in
 # <repo>/docs/security/abuse-cases/ or through the organization profile.
 #
-# Standard and thorough assessments load this file with the technical library
-# unless the organization profile sets abuse_cases.inherit_defaults: false.
-# Deterministic preselection (scope_qualifier) only decides where a case can
-# apply; it describes no attack. `finding` classifies the finding a confirmed
-# or strongly indicated case becomes.
+# Fields:
+# - check: the rule to verify. Write the outcome, not the implementation.
+# - exclusions: who or what the rule does not cover.
+# - open_questions: business facts the code cannot answer.
+# - finding: how a confirmed case is classified. Omitted fields default to
+#   CWE-840, Elevation of Privilege, and Medium.
+# - scope_qualifier: where a case can apply. It only decides whether the case
+#   runs and which files the verifier reads first; the verifier follows the
+#   code from there. Every required_signals entry must hold (names from
+#   schemas/recon-signals.schema.json), and at least one locator must find
+#   runtime source:
+#   - path_patterns: file or directory names, ignoring case. "*role*" selects
+#     roleService.ts, RoleController.java, and every file below a roles/
+#     directory. "[!d]" keeps "*share[!d]*" from selecting shared/ helpers.
+#   - route_patterns: route paths in the route inventory, ignoring case.
+#   - detector_rules: source-scanner check IDs whose findings mark a file.
 #
-# Route patterns match route paths in the route inventory, ignoring case;
-# detector rules name source-scanner check IDs whose findings locate files.
-# Path patterns are right-anchored, one component per segment: "*role*"
-# matches any file whose name contains "role" at any depth, "*role*/*" any
-# file directly inside such a directory. "[!d]" keeps "share" from matching
-# generic "shared" helpers.
+# Business cases are numbered from AC-T-101; the technical chains in
+# default-library.yaml use the lower numbers.
 schema_version: 2
 abuse_cases:
 - id: AC-T-101
@@ -29,7 +38,7 @@ abuse_cases:
   finding: {cwe: CWE-639, stride: Information Disclosure, mitigation_title: Check resource ownership on every operation that returns or changes the data}
   scope_qualifier:
     required_signals: [has_auth_surface]
-    path_patterns: ['*tenant*', '*tenant*/*', '*Tenant*', '*Tenant*/*', '*export*', '*export*/*', '*Export*', '*Export*/*', '*download*', '*download*/*', '*Download*', '*Download*/*', '*share[!d]*', '*share/*', '*share[!d]*/*', '*Share[!d]*', '*Share/*', '*Share[!d]*/*', '*report*', '*report*/*', '*Report*', '*Report*/*']
+    path_patterns: ['*tenant*', '*export*', '*download*', 'share', '*share[!d]*', '*report*']
     detector_rules: [AUTHZ-001, AUTHZ-002, AUTHZ-301]
     route_patterns: ['*tenant*', '*organization*', '*export*', '*download*', '*share*']
 - id: AC-T-102
@@ -41,7 +50,7 @@ abuse_cases:
   finding: {cwe: CWE-269, mitigation_title: Limit role and permission changes to the scope the acting user may grant}
   scope_qualifier:
     required_signals: [has_role_concept]
-    path_patterns: ['*role*', '*role*/*', '*Role*', '*Role*/*', '*permission*', '*permission*/*', '*Permission*', '*Permission*/*', '*admin*', '*admin*/*']
+    path_patterns: ['*role*', '*permission*', '*admin*']
     detector_rules: [AUTHZ-003, AUTHZ-004, AUTHZ-101, AUTHZ-102, AUTHZ-008]
     route_patterns: ['*role*', '*permission*', '*grant*']
 - id: AC-T-103
@@ -52,7 +61,7 @@ abuse_cases:
   finding: {cwe: CWE-640, stride: Spoofing, mitigation_title: Require the verified owner to re-authenticate before credential or recovery changes}
   scope_qualifier:
     required_signals: [has_auth_surface]
-    path_patterns: ['*recover*', '*recover*/*', '*Recover*', '*Recover*/*', '*reset*', '*reset*/*', '*Reset*', '*Reset*/*', '*profile*', '*profile*/*', '*Profile*', '*Profile*/*', '*account*', '*account*/*']
+    path_patterns: ['*recover*', '*reset*', '*profile*', '*account*']
     route_patterns: ['*recover*', '*reset*', '*profile*']
 - id: AC-T-104
   kind: descriptive
@@ -62,7 +71,7 @@ abuse_cases:
   open_questions: ['Does the process require separation between requester and approver?']
   finding: {stride: Tampering, mitigation_title: Enforce independent approval and invalidate approvals when the approved content changes}
   scope_qualifier:
-    path_patterns: ['*approv*', '*approv*/*', '*Approv*', '*Approv*/*', '*review*', '*review*/*', '*publish*', '*publish*/*', '*Publish*', '*Publish*/*', '*workflow*', '*workflow*/*', '*Workflow*', '*Workflow*/*']
+    path_patterns: ['*approv*', '*review*', '*publish*', '*workflow*']
     route_patterns: ['*approv*', '*publish*', '*review*']
 - id: AC-T-105
   kind: descriptive
@@ -71,7 +80,7 @@ abuse_cases:
   exclusions: [Operations without a quantity or one-time limit.]
   finding: {stride: Tampering, mitigation_title: Enforce the limit atomically on the server for every use of the entitlement}
   scope_qualifier:
-    path_patterns: ['*coupon*', '*coupon*/*', '*Coupon*', '*Coupon*/*', '*voucher*', '*voucher*/*', '*Voucher*', '*Voucher*/*', '*redeem*', '*redeem*/*', '*Redeem*', '*Redeem*/*', '*quota*', '*quota*/*', '*Quota*', '*Quota*/*', '*balance*', '*balance*/*', '*Balance*', '*Balance*/*', '*wallet*', '*wallet*/*', '*Wallet*', '*Wallet*/*']
+    path_patterns: ['*coupon*', '*voucher*', '*redeem*', '*quota*', '*balance*', '*wallet*']
     route_patterns: ['*coupon*', '*voucher*', '*redeem*']
 - id: AC-T-106
   kind: descriptive
@@ -82,7 +91,7 @@ abuse_cases:
   finding: {cwe: CWE-613, mitigation_title: Re-check current roles and account status when a session or token is used}
   scope_qualifier:
     required_signals: [has_role_concept, has_auth_surface]
-    path_patterns: ['*session*', '*session*/*', '*Session*', '*Session*/*', '*token*', '*token*/*', '*Token*', '*Token*/*', '*revoke*', '*revoke*/*', '*Revoke*', '*Revoke*/*']
+    path_patterns: ['*session*', '*token*', '*revoke*']
     detector_rules: [AUTHZ-009, AUTHZ-104]
     route_patterns: ['*logout*', '*revoke*', '*session*', '*token*']
 - id: AC-T-107
@@ -93,5 +102,5 @@ abuse_cases:
   open_questions: ['Which operations may support staff perform while acting as a customer?']
   finding: {cwe: CWE-285, mitigation_title: Authorize privileged functions against the initiating user's own authority}
   scope_qualifier:
-    path_patterns: ['*impersonat*', '*impersonat*/*', '*Impersonat*', '*Impersonat*/*', '*sudo*', '*sudo*/*', '*job*', '*job*/*', '*Job*', '*Job*/*', '*worker*', '*worker*/*', '*Worker*', '*Worker*/*', '*queue*', '*queue*/*', '*Queue*', '*Queue*/*', '*admin*', '*admin*/*']
+    path_patterns: ['*impersonat*', '*sudo*', '*job*', '*worker*', '*queue*', '*admin*']
     route_patterns: ['*impersonat*', '*sudo*', '*job*', '*admin*']
