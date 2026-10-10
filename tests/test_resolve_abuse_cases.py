@@ -60,7 +60,9 @@ abuse_cases:
 # ---------------------------------------------------------------------------
 
 
-_LIBRARY_IDS = ["AC-T-001", "AC-T-002", "AC-T-003", "AC-T-004", "AC-T-005", "AC-T-006", "AC-T-007"]
+_TECHNICAL_IDS = ["AC-T-001", "AC-T-002", "AC-T-003", "AC-T-004", "AC-T-005", "AC-T-006", "AC-T-007"]
+# The generic business cases load after the technical library.
+_LIBRARY_IDS = _TECHNICAL_IDS + [f"AC-T-{n}" for n in range(101, 108)]
 
 
 def test_library_loads_mandatory_cases():
@@ -68,7 +70,7 @@ def test_library_loads_mandatory_cases():
     assert errors == [], errors
     ids = [c["id"] for c in cases]
     assert ids == _LIBRARY_IDS
-    assert all(c["source"] == "mandatory" for c in cases)
+    assert all(c.get("source") == "mandatory" or c.get("kind") == "descriptive" for c in cases)
 
 
 def test_inherit_defaults_false_yields_no_library():

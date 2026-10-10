@@ -143,12 +143,11 @@ $defs:
   descriptive_case:
     description: >
       A business abuse case written in plain language. It has no probe,
-      classification, severity, or release gate: deterministic preselection
-      decides whether it can apply, the abuse-case verifier binds it to this
-      repository's code and judges each step, and severity follows the
-      evidence of any resulting finding. Repository and organization authors
-      maintain these without pipeline knowledge. An open case states only
-      what to check; the verifier derives actor, operations, and boundary.
+      release gate: deterministic preselection decides whether it can apply,
+      and the abuse-case verifier binds it to this repository's code and
+      judges each step. Repository and organization authors maintain these
+      without pipeline knowledge. An open case states only what to check;
+      the verifier derives actor, operations, and boundary.
     type: object
     additionalProperties: false
     required: [id, kind, title]
@@ -197,6 +196,26 @@ $defs:
         description: Business facts the code cannot answer.
         $ref: "#/$defs/prose_list"
         maxItems: 8
+      finding:
+        type: object
+        description: >
+          Classification of the finding a confirmed or strongly indicated case
+          becomes. Omitted fields default to CWE-840, Elevation of Privilege,
+          and Medium.
+        additionalProperties: false
+        properties:
+          cwe: { type: string, pattern: "^CWE-[0-9]+$" }
+          stride:
+            enum:
+              - Spoofing
+              - Tampering
+              - Repudiation
+              - Information Disclosure
+              - Denial of Service
+              - Elevation of Privilege
+          severity:
+            enum: [Critical, High, Medium, Low]
+          mitigation_title: { type: string, minLength: 1, maxLength: 120 }
       scope_qualifier:
         description: >
           Deterministic preselection. Every required signal must hold. Path

@@ -8,7 +8,12 @@ a normal merged threat only when that verifier confirmed the specific step.
 
 The case author supplies the classification and remediation in
 ``chain[].finding``.  Keeping that metadata declarative prevents this script
-from guessing a CWE, severity, or fix from a regex match.  It updates both
+from guessing a CWE, severity, or fix from a regex match.
+
+A business (descriptive) case is promoted at its cited step when the chain is
+fully viable, or as an unproven finding when it is inconclusive, no step was
+blocked or refuted, and a decided step cites admitted code with no control
+found.  Its classification comes from the case's optional ``finding`` block.  It updates both
 abuse sidecars with the assigned T-ID, so triage, mitigation synthesis, and
 the §9 renderer consume the same binding.
 """
@@ -31,6 +36,7 @@ from pathlib import Path
 
 import yaml
 from shared._finding_state import is_refuted
+from shared._register_titles import HEADING_SOFT_MAX, clamp_title
 
 from model.finding_intake import apply_intake
 from model.merge_threats import _evidence_identity_key
@@ -91,6 +97,53 @@ def _metadata(step: dict) -> dict | None:
         "mitigation_title": mitigation_title,
         "remediation": str(finding.get("remediation") or "").strip(),
     }
+
+
+# A business case states no classification unless its author adds one.
+_DESCRIPTIVE_DEFAULTS = {
+    "cwe": "CWE-840",
+    "stride": "Elevation of Privilege",
+    "severity": "Medium",
+    "mitigation_title": "Enforce this business rule on the server for every operation it covers",
+}
+_UNPROVEN_TIER = "insecure-practice"
+_CONFIRMED_TIER = "confirmed-exploitable"
+
+
+def _descriptive_promotion(case_match: dict, verdict: dict) -> tuple[dict, str] | None:
+    """The step verdict a business case is promoted at and its tier, or None.
+
+    A fully viable case is confirmed at its first confirmed step. An
+    inconclusive case without a blocked or refuted step is an indication when
+    a decided step cites code that ``finalize`` admitted and names no control.
+    """
+    steps = [step for step in verdict.get("step_verdicts") or [] if isinstance(step, dict)]
+    chain = verdict.get("chain_verdict")
+    if chain == "fully_viable":
+        wanted, tier = "confirmed", _CONFIRMED_TIER
+    elif chain == "inconclusive" and not any(step.get("verdict") in {"blocked", "refuted"} for step in steps):
+        wanted, tier = "inconclusive", _UNPROVEN_TIER
+    else:
+        return None
+    for step in steps:
+        evidence = step.get("evidence")
+        if (
+            step.get("verdict") == wanted
+            and step.get("state") != "pending"
+            and not step.get("controls_found")
+            and isinstance(evidence, dict)
+            and evidence.get("file")
+        ):
+            return step, tier
+    return None
+
+
+def _descriptive_metadata(case: dict) -> dict:
+    declared = case.get("finding") if isinstance(case.get("finding"), dict) else {}
+    meta = {key: declared.get(key) or default for key, default in _DESCRIPTIVE_DEFAULTS.items()}
+    meta["title"] = clamp_title(str(case.get("title") or "Business abuse case"), HEADING_SOFT_MAX)
+    meta["remediation"] = ""
+    return meta
 
 
 def _component_for(file_path: str, components: list) -> tuple[str, str]:
@@ -203,6 +256,31 @@ def promote(output_dir: Path) -> tuple[int, list[str]]:
         if not case_id or not isinstance(verdict, dict):
             continue
         verdict_steps = {v.get("step"): v for v in verdict.get("step_verdicts") or [] if isinstance(v, dict)}
+        # (step match, step verdict, evidence, metadata, tier, scenario) per promotable step.
+        candidates: list[tuple[dict, dict, dict, dict, str, str]] = []
+        if case_match.get("kind") == "descriptive":
+            promotion = _descriptive_promotion(case_match, verdict)
+            step_match = (
+                next(
+                    (
+                        s
+                        for s in case_match.get("step_matches") or []
+                        if isinstance(s, dict) and s.get("step") == promotion[0].get("step")
+                    ),
+                    None,
+                )
+                if promotion
+                else None
+            )
+            if promotion and step_match is not None:
+                step_verdict, tier = promotion
+                case = case_match.get("case") if isinstance(case_match.get("case"), dict) else {}
+                scenario = " ".join(
+                    part for part in (str(step_match.get("label") or ""), str(step_verdict.get("reason") or "")) if part
+                )
+                candidates.append(
+                    (step_match, step_verdict, step_verdict["evidence"], _descriptive_metadata(case), tier, scenario)
+                )
         for step_match in case_match.get("step_matches") or []:
             if not isinstance(step_match, dict) or step_match.get("match_basis") != "source_probe":
                 continue
@@ -223,9 +301,14 @@ def promote(output_dir: Path) -> tuple[int, list[str]]:
             if meta is None:
                 skipped_metadata.append(f"{case_id} step {step_no}")
                 continue
+            scenario = str((step or {}).get("description") or (step or {}).get("label") or meta["title"])
+            candidates.append((step_match, step_verdict, evidence, meta, _CONFIRMED_TIER, scenario))
+
+        for step_match, step_verdict, evidence, meta, tier, scenario in candidates:
+            step_no = step_match.get("step")
             key = (case_id, step_no, str(evidence.get("file")), evidence.get("line"))
             t_id = existing.get(key)
-            basis = "promoted_source_probe"
+            basis = "promoted_source_probe" if step_match.get("match_basis") == "source_probe" else "promoted"
             if not t_id:
                 # A finding already at the same code location and weakness family
                 # is the same finding: bind the step to it instead of promoting a
@@ -243,7 +326,7 @@ def promote(output_dir: Path) -> tuple[int, list[str]]:
                 threat = {
                     "t_id": t_id,
                     "title": meta["title"],
-                    "scenario": str((step or {}).get("description") or (step or {}).get("label") or meta["title"]),
+                    "scenario": scenario,
                     "stride": meta["stride"],
                     "risk": meta["severity"],
                     "likelihood": meta["severity"],
@@ -253,19 +336,19 @@ def promote(output_dir: Path) -> tuple[int, list[str]]:
                     "source": "source-scan",
                     "architectural_violation": False,
                     "evidence_check": "verified",
-                    # The abuse-case verifier confirmed this step.
+                    # The abuse-case verifier read this location.
                     "evidence_basis": "llm-verified",
                     "abuse_case_id": case_id,
                     "abuse_case_step": step_no,
                     "source_scan_ref": f"{case_id}:{step_no}",
                     "mitigation_title": meta["mitigation_title"],
                 }
-                # A verified abuse-case step claims a proven sink.
+                # A confirmed step claims a proven sink; an indication stays unproven.
                 apply_intake(
                     threat,
                     dispatch_component=component_id,
                     component_name=component_name,
-                    claimed_tier="confirmed-exploitable",
+                    claimed_tier=tier,
                 )
                 if meta["remediation"]:
                     threat["remediation"] = {"how": meta["remediation"], "effort": "Medium"}
@@ -287,7 +370,7 @@ def promote(output_dir: Path) -> tuple[int, list[str]]:
         _write(merged_path, merged)
         _write(matches_path, matches_doc)
         _write(verdicts_path, verdicts_doc)
-    notes = [f"promoted {len(promoted)} confirmed source-probe finding(s)"]
+    notes = [f"promoted {len(promoted)} abuse-case finding(s)"]
     if promoted and not components:
         notes.append(
             "component registry unavailable (no threat-model.yaml) — promoted finding(s) "

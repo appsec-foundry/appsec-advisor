@@ -320,3 +320,127 @@ def test_missing_registry_keeps_the_default_and_says_so(tmp_path: Path) -> None:
     assert any("component registry unavailable" in n for n in notes)
     component_id, _ = _promoted_component(tmp_path)
     assert component_id == "backend-api"
+
+
+# ---------------------------------------------------------------------------
+# Business (descriptive) cases
+# ---------------------------------------------------------------------------
+
+
+def _business(tmp_path: Path, step: dict, *, chain_verdict: str, finding: dict | None = None) -> None:
+    case = {"id": "AC-T-101", "kind": "descriptive", "title": "Requester approves their own request", "check": "c"}
+    if finding is not None:
+        case["finding"] = finding
+    _write(
+        tmp_path / ".threats-merged.json",
+        {"version": 1, "generated_at": "2026-10-10T00:00:00Z", "threats": [{"t_id": "T-001", "title": "Other"}]},
+    )
+    _write(
+        tmp_path / ".abuse-case-matches.json",
+        {
+            "schema_version": 1,
+            "matches": [
+                {
+                    "abuse_case_id": "AC-T-101",
+                    "kind": "descriptive",
+                    "case": case,
+                    "step_matches": [
+                        {"step": 1, "label": "Check self-approval.", "match_basis": "descriptive", "evidence": None}
+                    ],
+                }
+            ],
+        },
+    )
+    _write(
+        tmp_path / ".abuse-case-verdicts.json",
+        {"verdicts": [{"abuse_case_id": "AC-T-101", "chain_verdict": chain_verdict, "step_verdicts": [step]}]},
+    )
+
+
+def _step(verdict: str, **extra: object) -> dict:
+    return {
+        "step": 1,
+        "verdict": verdict,
+        "state": "decided",
+        "reason": "approve() never compares approver and requester",
+        "evidence": {"file": "app/approvals/approve.py", "line": 12, "excerpt": "request.approve(user)"},
+        "controls_found": [],
+        **extra,
+    }
+
+
+def _promoted(tmp_path: Path) -> dict:
+    return json.loads((tmp_path / ".threats-merged.json").read_text())["threats"][-1]
+
+
+@pytest.mark.parametrize(
+    ("finding", "expected"),
+    [
+        (
+            {"cwe": "CWE-284", "stride": "Tampering", "severity": "High", "mitigation_title": "Separate duties"},
+            ("CWE-284", "Tampering", "High", "Separate duties"),
+        ),
+        (None, ("CWE-840", "Elevation of Privilege", "Medium", mod._DESCRIPTIVE_DEFAULTS["mitigation_title"])),
+    ],
+    ids=["declared", "defaults"],
+)
+def test_confirmed_business_case_becomes_a_confirmed_finding(tmp_path: Path, finding, expected) -> None:
+    _business(tmp_path, _step("confirmed"), chain_verdict="fully_viable", finding=finding)
+
+    assert mod.promote(tmp_path)[0] == 1
+    created = _promoted(tmp_path)
+    assert (created["cwe"], created["stride"], created["risk"], created["mitigation_title"]) == expected
+    assert created["evidence_tier"] == "confirmed-exploitable"
+    assert created["evidence"] == {"file": "app/approvals/approve.py", "line": 12}
+    assert created["title"] == "Requester approves their own request"
+    merged_schema = yaml.safe_load((ROOT / "schemas" / "threats-merged.schema.yaml").read_text())
+    jsonschema.Draft202012Validator(merged_schema).validate(
+        {"version": 1, "generated_at": "2026-10-10T00:00:00Z", "threats": [created]}
+    )
+    match = json.loads((tmp_path / ".abuse-case-matches.json").read_text())["matches"][0]
+    assert match["matched_finding_ids"] == [created["t_id"]]
+    # A rerun binds to the same finding instead of promoting it again.
+    assert mod.promote(tmp_path)[0] == 0
+
+
+def test_indicated_business_case_becomes_an_unproven_finding_at_the_same_severity(tmp_path: Path) -> None:
+    _business(tmp_path, _step("inconclusive"), chain_verdict="inconclusive", finding={"severity": "High"})
+
+    assert mod.promote(tmp_path)[0] == 1
+    created = _promoted(tmp_path)
+    assert created["evidence_tier"] == "insecure-practice"
+    assert created["risk"] == "High"
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from shared._finding_state import is_confirmed  # type: ignore[import-not-found]
+
+    assert not is_confirmed(created)
+
+
+@pytest.mark.parametrize(
+    ("step", "chain_verdict"),
+    [
+        (_step("inconclusive", evidence=None), "inconclusive"),
+        (_step("inconclusive", controls_found=["approver != requester"]), "inconclusive"),
+        (_step("inconclusive", state="pending"), "inconclusive"),
+        (_step("refuted"), "inconclusive"),
+        (_step("blocked"), "mitigated"),
+        (_step("confirmed", controls_found=["role check"]), "partially_blocked"),
+    ],
+    ids=["no-citation", "control-found", "pending", "refuted", "blocked", "partially-blocked"],
+)
+def test_business_case_without_confirmation_or_indication_is_not_promoted(
+    tmp_path: Path, step: dict, chain_verdict: str
+) -> None:
+    _business(tmp_path, step, chain_verdict=chain_verdict)
+
+    assert mod.promote(tmp_path)[0] == 0
+    assert [t["t_id"] for t in json.loads((tmp_path / ".threats-merged.json").read_text())["threats"]] == ["T-001"]
+
+
+def test_business_case_binds_to_the_finding_already_at_its_location(tmp_path: Path) -> None:
+    _business(tmp_path, _step("confirmed"), chain_verdict="fully_viable", finding={"cwe": "CWE-639"})
+    _with_existing_finding(tmp_path, cwe="CWE-639", evidence={"file": "app/approvals/approve.py", "line": 12})
+
+    assert mod.promote(tmp_path)[0] == 0
+    step = json.loads((tmp_path / ".abuse-case-matches.json").read_text())["matches"][0]["step_matches"][0]
+    assert (step["matched_finding_id"], step["match_basis"]) == ("T-001", "finding")

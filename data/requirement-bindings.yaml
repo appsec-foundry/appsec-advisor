@@ -156,6 +156,7 @@ requirements:
       - AC-2
       - AC-3
       - AC-8
+      - AC-10
     documents:
       - docs/org-profiles.md
     coverage: direct
@@ -166,6 +167,12 @@ requirements:
       - tests/test_resolve_abuse_cases.py::test_library_loads_mandatory_cases
       - tests/test_resolve_abuse_cases.py::test_repo_local_honours_disable
       - tests/test_resolve_abuse_cases.py::test_explicit_case_file_cannot_escape_repo
+      - tests/test_business_abuse_cases.py::test_business_catalog_is_loaded_with_the_technical_library_unless_defaults_are_off
+      - tests/test_match_abuse_cases.py::test_descriptive_limits_follow_depth_and_record_omissions
+      - tests/test_promote_verified_abuse_cases.py::test_confirmed_business_case_becomes_a_confirmed_finding
+      - tests/test_promote_verified_abuse_cases.py::test_indicated_business_case_becomes_an_unproven_finding_at_the_same_severity
+      - tests/test_promote_verified_abuse_cases.py::test_business_case_without_confirmation_or_indication_is_not_promoted
+      - tests/test_business_abuse_cases.py::test_an_inconclusive_step_keeps_only_a_citation_found_in_the_code
 
   REQ-MOD-005:
     applies_to:

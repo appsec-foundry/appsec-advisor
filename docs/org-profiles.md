@@ -645,7 +645,7 @@ Override requirements for one run:
 
 The plugin loads cases in this order:
 
-1. **Plugin standard library**: `data/abuse-cases/default-library.yaml` (the `AC-T-NNN` mandatory set), unless an org profile sets `abuse_cases.inherit_defaults: false`.
+1. **Plugin standard library**: the technical cases in `data/abuse-cases/default-library.yaml` and the generic business cases in `data/abuse-cases/business-cases.yaml`, unless an org profile sets `abuse_cases.inherit_defaults: false`. Disable single cases with `abuse_cases.disable`.
 2. **Org profile**: `abuse_cases.add` is a glob (relative to the org-profile directory) of extra case files; `abuse_cases.disable` removes ids. Use the `ORG-AC-NNN` ID prefix.
 3. **Repository**: any `*.yaml` or `*.yml` file directly under `<repo>/docs/security/abuse-cases/` in the target repository is loaded automatically, beside `business-context.md` and `requirements.yaml`. The legacy location `<repo>/.appsec/abuse-cases/` is still read after it; a legacy file that reuses an ID from the new location is rejected. Use the `REPO-AC-NNN` ID prefix. IDs must be unique. A file that is invalid, larger than 128 KiB, a symbolic link, or reuses a loaded ID is rejected on its own: every other case still runs, and the report and run issues name the file and the reason.
 4. **One scan**: `--abuse-case-file <repo-relative-path>` adds a YAML file below the target repository. Repeat `--only-abuse-case <ID>` to run selected cases only. Either flag runs abuse-case verification at any depth, and an unreadable file or an unknown id is reported rather than silently skipped.
@@ -696,7 +696,7 @@ release_gate:
   applies_to_presets: [release-review]
 ```
 
-### Business abuse cases (pilot)
+### Business abuse cases
 
 A business abuse case states in plain language what to check, for access-control and business rules a pattern cannot express: a delegated administrator granting themselves a role, a tenant administrator reaching another tenant, self-approval, or reuse of an approval after a content change. Most security checks stay deterministic; use business cases for the few rules that need judgment. The verifier derives the actor, the operations, and the boundary from the check and your code, and cites the source line for its verdict; a citation that does not match the file is rejected and the case stays unresolved.
 
@@ -715,7 +715,7 @@ abuse_cases:
       - Which amount, if any, may be self-approved?
 ```
 
-`check` is required; `exclusions` names legitimate behavior that is not an abuse, and `open_questions` names business facts the code cannot answer. When the verifier leaves a case unresolved, its first `open_questions` entry can appear among the team questions in the Management Summary, linked to the findings its steps bind to; it must be one plain question without links or markup. Business cases carry no `severity`, `goal_impact`, `source`, `release_gate`, or `probe`; a case linked to no finding is reported as not rated. `data/abuse-cases/business-cases.yaml` holds ten generic cases to copy; it is not loaded by default.
+`check` is required; `exclusions` names legitimate behavior that is not an abuse, and `open_questions` names business facts the code cannot answer. When the verifier leaves a case unresolved, its first `open_questions` entry can appear among the team questions in the Management Summary, linked to the findings its steps bind to; it must be one plain question without links or markup. A confirmed case becomes a finding in the register. An unresolved case becomes a finding marked unproven when the verifier cites code where it found no enforcing control; any other unresolved case is reported as unresolved, not as safe. When the cited code already has a finding of the same weakness, the case links to it instead. The optional `finding` block classifies the new finding with `cwe`, `stride`, `severity`, and `mitigation_title`; without it the finding is CWE-840, Elevation of Privilege, and Medium. Business cases carry no `goal_impact`, `source`, `release_gate`, or `probe`. Standard and thorough runs load the seven generic cases in `data/abuse-cases/business-cases.yaml`; disable one by ID or all defaults with `inherit_defaults: false`.
 
 An optional `scope_qualifier` limits where a case applies. Every entry of `required_signals` (recon signal names such as `has_role_concept`) must hold. Three locators select the source files the verifier starts from: `route_patterns` match route paths such as `"*approv*"` in the route inventory, ignoring case; `detector_rules` name source-scanner checks such as `AUTHZ-003` whose findings mark a file; `path_patterns` match file paths. When a case declares any locator, at least one must find runtime source; otherwise the case runs only when you name its ID with `--only-abuse-case`, or its file with `--abuse-case-file` when that file lies outside `docs/security/abuse-cases/` and `.appsec/abuse-cases/`. A case without `scope_qualifier` is always a candidate, within the per-run limit. A case may instead spell out `actor`, `initial_access`, `goal`, `boundary`, `steps`, and `expected_controls`; it then needs a `scope_qualifier`.
 

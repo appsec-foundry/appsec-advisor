@@ -1266,19 +1266,23 @@ def admit_descriptive_evidence(verdict: dict, step_count: int, repo_root: Path |
     location is the binding. A deciding verdict (confirmed, blocked, refuted)
     stands only on an excerpt found at the cited source line; otherwise the
     step becomes a decided ``inconclusive`` and keeps the rejected citation for
-    audit. Steps outside the case's chain are dropped.
+    audit. An inconclusive step keeps a citation only when it is found the
+    same way, because a cited location makes it an indication. Steps outside
+    the case's chain are dropped.
     """
     kept = []
     for step in verdict.get("step_verdicts") or []:
         if not isinstance(step, dict) or type(step.get("step")) is not int or not 1 <= step["step"] <= step_count:
             continue
-        if step.get("verdict") in _DECIDING_VERDICTS:
+        deciding = step.get("verdict") in _DECIDING_VERDICTS
+        if deciding or step.get("evidence") is not None:
             problem = _evidence_problem(step.get("evidence"), repo_root)
             if problem:
                 step["rejected_evidence"] = step.get("evidence")
                 step["evidence"] = None
-                step["verdict"] = _INCONCLUSIVE
-                step["reason"] = f"evidence not admitted ({problem}): {str(step.get('reason') or '')[:200]}"
+                if deciding:
+                    step["verdict"] = _INCONCLUSIVE
+                    step["reason"] = f"evidence not admitted ({problem}): {str(step.get('reason') or '')[:200]}"
         kept.append(step)
     verdict["step_verdicts"] = kept
 

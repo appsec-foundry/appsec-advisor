@@ -3,8 +3,9 @@
 
 Merges three sources into one validated list of abuse-case definitions:
 
-  1. the plugin standard library (``data/abuse-cases/default-library.yaml``)
-     unless the org profile sets ``abuse_cases.inherit_defaults: false``;
+  1. the plugin standard library (``data/abuse-cases/default-library.yaml``
+     and ``business-cases.yaml``) unless the org profile sets
+     ``abuse_cases.inherit_defaults: false``;
   2. org-specific case files matched by ``abuse_cases.add`` (a glob relative to
      the org-profile directory), validated against
      ``schemas/abuse-cases.schema.yaml``;
@@ -41,6 +42,8 @@ import yaml
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_LIBRARY = PLUGIN_ROOT / "data" / "abuse-cases" / "default-library.yaml"
+# The technical library and the generic business cases; both are defaults.
+LIBRARY_FILES = ("default-library.yaml", "business-cases.yaml")
 ABUSE_CASE_SCHEMA = PLUGIN_ROOT / "schemas" / "abuse-cases.schema.yaml"
 LIMITS_FILE = PLUGIN_ROOT / "data" / "abuse-case-limits.yaml"
 LIMITS_SCHEMA = PLUGIN_ROOT / "schemas" / "abuse-case-limits.schema.json"
@@ -301,11 +304,12 @@ def resolve_abuse_case_sources(
         for case in file_cases:
             origin_of.setdefault(case.get("id"), origin)
 
-    library = plugin_root / "data" / "abuse-cases" / "default-library.yaml"
-    if inherit and library.exists():
-        lib_cases, lib_errors = _load_case_file(library, schema)
-        _admit(lib_cases, "library")
-        errors += lib_errors
+    for name in LIBRARY_FILES:
+        library = plugin_root / "data" / "abuse-cases" / name
+        if inherit and library.exists():
+            lib_cases, lib_errors = _load_case_file(library, schema)
+            _admit(lib_cases, "library")
+            errors += lib_errors
 
     if profile_dir is not None and add_glob:
         for path in sorted(profile_dir.glob(add_glob)):

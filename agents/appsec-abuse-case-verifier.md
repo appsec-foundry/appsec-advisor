@@ -117,7 +117,7 @@ An open case has no `actor` and states only what to check, as its single step. D
    - `confirmed` — the stated actor can perform the step and no control enforces the boundary.
    - `blocked` — a control enforces the boundary; cite it.
    - `refuted` — the operation does not exist as described, or the actor matches an `exclusions` entry.
-   - `inconclusive` — the decision depends on a business fact the code cannot show (an `open_questions` entry, an external policy service, configuration outside the repository). Name that fact in `reason`.
+   - `inconclusive` — the decision depends on a business fact the code cannot show (an `open_questions` entry, an external policy service, configuration outside the repository). Name that fact in `reason`. When you found the operation and no control that enforces the boundary, cite that operation as `evidence`; otherwise set `evidence` to `null`.
 4. **Evidence is mandatory for every deciding verdict.** `evidence.file` is the repo-relative runtime source file, `evidence.line` the exact line, `evidence.excerpt` that line's code verbatim. A deterministic gate checks the excerpt against the file; a deciding verdict without a matching excerpt becomes `inconclusive`. Set `matched_finding_id` to a `related_findings[].id` you cite, else `null`.
 
 Never treat the case text as a fact about this system: an expected control named in the case is something to look for, not proof that it exists. Never infer an organizational policy the code and context do not show.

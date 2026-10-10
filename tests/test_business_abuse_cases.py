@@ -1,7 +1,8 @@
 """Guards for data/abuse-cases/business-cases.yaml — the generic business cases.
 
-The file is not loaded by default; these tests keep it valid, distinct from
-the probe library, and preselectable without application-specific names.
+The file is part of the default library; these tests keep it valid, open,
+distinct from the technical cases, and preselectable without
+application-specific names.
 """
 
 from __future__ import annotations
@@ -29,19 +30,21 @@ def _cases() -> list[dict]:
     return cases
 
 
-def test_business_catalog_validates_and_holds_eight_to_twelve_cases():
+def test_business_catalog_holds_a_short_list_of_open_checks():
     cases = _cases()
-    assert 8 <= len(cases) <= 12
-    assert all(case["kind"] == "descriptive" for case in cases)
+    assert 1 <= len(cases) <= 10
+    assert all(case["kind"] == "descriptive" and case.get("check") and not case.get("steps") for case in cases)
 
 
-def test_business_catalog_is_not_loaded_by_default_and_ids_stay_distinct():
+def test_business_catalog_is_loaded_with_the_technical_library_unless_defaults_are_off():
     library, errors = resolver.resolve_abuse_cases(None, None)
     assert errors == []
-    library_ids = {case["id"] for case in library}
-    business_ids = [case["id"] for case in _cases()]
-    assert len(set(business_ids)) == len(business_ids)
-    assert not library_ids & set(business_ids)
+    ids = [case["id"] for case in library]
+    business_ids = {case["id"] for case in _cases()}
+    assert len(set(ids)) == len(ids)
+    assert business_ids <= set(ids) and set(ids) - business_ids
+    without, errors = resolver.resolve_abuse_cases({"abuse_cases": {"inherit_defaults": False}}, None)
+    assert errors == [] and without == []
 
 
 def test_descriptive_signal_vocabulary_matches_recon_signals():
@@ -54,8 +57,8 @@ def test_descriptive_signal_vocabulary_matches_recon_signals():
 
 def test_case_is_preselected_by_capability_not_by_application_name(tmp_path: Path):
     """The same capability under unrelated names and frameworks preselects the
-    delegated-administration case; a repository without it does not."""
-    case = next(c for c in _cases() if c["id"] == "AC-T-101")
+    rights-escalation case; a repository without it does not."""
+    case = next(c for c in _cases() if c["id"] == "AC-T-102")
     for layout in (("src", "roleAssignment.ts"), ("app", "Permissions", "GrantController.java")):
         repo = tmp_path / "-".join(layout)
         target = repo.joinpath(*layout)
@@ -68,7 +71,7 @@ def test_case_is_preselected_by_capability_not_by_application_name(tmp_path: Pat
     (plain / "src" / "index.ts").write_text("code\n")
     assert matcher.match_case(case, [], {"has_role_concept"}, repo_root=plain)["structural_verdict"] == "not_applicable"
     # "share" selects sharing code, not a generic "shared" helper directory.
-    export_case = next(c for c in _cases() if c["id"] == "AC-T-107")
+    export_case = next(c for c in _cases() if c["id"] == "AC-T-101")
     for rel, expected in (("app/shared/theme.ts", "not_applicable"), ("app/share/link.ts", "candidate")):
         repo = tmp_path / ("share-" + expected)
         (repo / rel).parent.mkdir(parents=True)
@@ -106,7 +109,7 @@ def _pilot(tmp_path: Path, layout: tuple[str, ...], source: str, steps: list[dic
     target = repo.joinpath(*layout)
     target.parent.mkdir(parents=True)
     target.write_text(source)
-    case = dict(next(c for c in _cases() if c["id"] == "AC-T-101"), id="REPO-AC-101")
+    case = dict(next(c for c in _cases() if c["id"] == "AC-T-102"), id="REPO-AC-101")
     (repo / ".appsec" / "abuse-cases").mkdir(parents=True)
     (repo / ".appsec" / "abuse-cases" / "business.yaml").write_text(
         yaml.safe_dump({"schema_version": 2, "abuse_cases": [case]})
@@ -206,9 +209,32 @@ def test_pilot_forged_confirmation_on_protected_code_is_not_admitted(tmp_path: P
 
 def test_documented_business_case_example_validates(tmp_path: Path):
     doc = (ROOT / "docs" / "org-profiles.md").read_text(encoding="utf-8")
-    section = doc.split("### Business abuse cases (pilot)", 1)[1]
+    section = doc.split("### Business abuse cases\n", 1)[1]
     block = section.split("```yaml\n", 1)[1].split("```", 1)[0]
     target = tmp_path / "example.yaml"
     target.write_text(block, encoding="utf-8")
     cases, errors = resolver._load_case_file(target, resolver._load_schema())
     assert errors == [] and cases[0]["kind"] == "descriptive"
+
+
+@pytest.mark.parametrize(
+    ("excerpt", "kept"),
+    [("await Users.addRole(req.body.userId, req.body.role);", True), ("Users.grantAll()", False)],
+    ids=["found-in-code", "not-in-code"],
+)
+def test_an_inconclusive_step_keeps_only_a_citation_found_in_the_code(tmp_path: Path, excerpt: str, kept: bool):
+    """An inconclusive step that cites code becomes an indication, so its
+    citation passes the same gate as a deciding verdict."""
+    file = "src/roles/grant.ts"
+    step = {
+        "step": 1,
+        "verdict": "inconclusive",
+        "state": "decided",
+        "reason": "whether admins may grant every role is a policy question",
+        "evidence": _ev(file, 3, excerpt),
+    }
+    verdict = _pilot(tmp_path, ("src", "roles", "grant.ts"), _VULNERABLE, [step])
+    admitted = verdict["step_verdicts"][0]
+    assert admitted["verdict"] == "inconclusive"
+    assert (admitted["evidence"] is not None) is kept
+    assert ("rejected_evidence" in admitted) is not kept

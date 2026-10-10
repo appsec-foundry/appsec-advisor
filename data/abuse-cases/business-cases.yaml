@@ -1,16 +1,17 @@
 # Generic business abuse cases (descriptive, schema_version 2).
 #
-# Each case states in plain language what to check. The abuse-case verifier
-# derives the actor, the operations, and the boundary from the check and the
-# code, and must cite source for every verdict. Most security checks stay
-# deterministic; these cover business rules a pattern cannot express.
-# Deterministic preselection (scope_qualifier) only decides where a case can
-# apply; it describes no attack.
+# Each case states in plain language what a user must not be able to do. The
+# abuse-case verifier derives the actor, the operations, and the boundary from
+# the check and the code, and must cite source for every verdict. Most
+# security checks stay deterministic; these cover business rules a pattern
+# cannot express. Teams add their own cases in
+# <repo>/docs/security/abuse-cases/ or through the organization profile.
 #
-# This file is NOT loaded by default. Until built-in business cases are
-# released, a team activates a case by copying it into
-# <repo>/docs/security/abuse-cases/ with a REPO-AC id, or names a copy with
-# --abuse-case-file.
+# Standard and thorough assessments load this file with the technical library
+# unless the organization profile sets abuse_cases.inherit_defaults: false.
+# Deterministic preselection (scope_qualifier) only decides where a case can
+# apply; it describes no attack. `finding` classifies the finding a confirmed
+# or strongly indicated case becomes.
 #
 # Route patterns match route paths in the route inventory, ignoring case;
 # detector rules name source-scanner check IDs whose findings locate files.
@@ -22,93 +23,72 @@ schema_version: 2
 abuse_cases:
 - id: AC-T-101
   kind: descriptive
-  title: Delegated administrator grants themselves a role outside their delegation
-  check: Check whether an administrator whose authority covers only some roles or users can assign themselves or others a role or permission outside that scope.
+  title: User reads or changes data of another user or tenant
+  check: Check whether a user can read or change data that belongs to another user or tenant, through the primary operation or through an export, download, share link, search, or report.
+  exclusions: [Data intended to be public or shared by design., Platform operators whose role spans all users or tenants by design.]
+  finding: {cwe: CWE-639, stride: Information Disclosure, mitigation_title: Check resource ownership on every operation that returns or changes the data}
+  scope_qualifier:
+    required_signals: [has_auth_surface]
+    path_patterns: ['*tenant*', '*tenant*/*', '*Tenant*', '*Tenant*/*', '*export*', '*export*/*', '*Export*', '*Export*/*', '*download*', '*download*/*', '*Download*', '*Download*/*', '*share[!d]*', '*share/*', '*share[!d]*/*', '*Share[!d]*', '*Share/*', '*Share[!d]*/*', '*report*', '*report*/*', '*Report*', '*Report*/*']
+    detector_rules: [AUTHZ-001, AUTHZ-002, AUTHZ-301]
+    route_patterns: ['*tenant*', '*organization*', '*export*', '*download*', '*share*']
+- id: AC-T-102
+  kind: descriptive
+  title: User gains more rights than intended
+  check: Check whether a user can give themselves or others a role or permission beyond what their own role or delegation allows.
   exclusions: [Administrators with unrestricted authority over every role.]
   open_questions: ['Which roles may each administrator tier assign?']
+  finding: {cwe: CWE-269, mitigation_title: Limit role and permission changes to the scope the acting user may grant}
   scope_qualifier:
     required_signals: [has_role_concept]
     path_patterns: ['*role*', '*role*/*', '*Role*', '*Role*/*', '*permission*', '*permission*/*', '*Permission*', '*Permission*/*', '*admin*', '*admin*/*']
     detector_rules: [AUTHZ-003, AUTHZ-004, AUTHZ-101, AUTHZ-102, AUTHZ-008]
     route_patterns: ['*role*', '*permission*', '*grant*']
-- id: AC-T-102
-  kind: descriptive
-  title: Tenant administrator changes users or resources of another tenant
-  check: Check whether an administrator of one tenant can read or change users, settings, or data that belong to another tenant.
-  exclusions: [Platform operators whose role spans all tenants by design.]
-  scope_qualifier:
-    required_signals: [has_multi_tenancy_signal]
-    path_patterns: ['*tenant*', '*tenant*/*', '*Tenant*', '*Tenant*/*', '*organization*', '*organization*/*', '*Organization*', '*Organization*/*', '*admin*', '*admin*/*']
-    detector_rules: [AUTHZ-001, AUTHZ-002, AUTHZ-301]
-    route_patterns: ['*tenant*', '*organization*']
 - id: AC-T-103
   kind: descriptive
-  title: Support operator uses impersonation beyond their support duties
-  check: Check whether staff acting as a customer through impersonation can perform actions their support duties do not cover, such as changing credentials or moving funds.
-  exclusions: [Operations explicitly permitted to support staff on the customer's behalf.]
-  open_questions: ['Which customer operations may support staff perform during impersonation?']
-  scope_qualifier:
-    required_signals: [has_auth_surface]
-    path_patterns: ['*impersonat*', '*impersonat*/*', '*Impersonat*', '*Impersonat*/*', '*sudo*', '*sudo*/*', '*switch*user*', '*switch*user*/*', '*SwitchUser*', '*SwitchUser*/*']
-    route_patterns: ['*impersonat*', '*sudo*', '*switch*user*']
-- id: AC-T-104
-  kind: descriptive
-  title: Actor changes another account's recovery data and takes it over
-  check: Check whether anyone other than the verified owner can change an account's recovery data, such as email, phone number, or reset tokens, and so take the account over.
+  title: User takes over another account
+  check: Check whether anyone other than the verified owner can change an account's credentials or recovery data, such as email, phone number, or reset tokens.
   exclusions: [Verified account owners changing their own recovery data after re-authentication.]
+  finding: {cwe: CWE-640, stride: Spoofing, mitigation_title: Require the verified owner to re-authenticate before credential or recovery changes}
   scope_qualifier:
     required_signals: [has_auth_surface]
     path_patterns: ['*recover*', '*recover*/*', '*Recover*', '*Recover*/*', '*reset*', '*reset*/*', '*Reset*', '*Reset*/*', '*profile*', '*profile*/*', '*Profile*', '*Profile*/*', '*account*', '*account*/*']
     route_patterns: ['*recover*', '*reset*', '*profile*']
-- id: AC-T-105
+- id: AC-T-104
   kind: descriptive
-  title: Editor changes approved content and reuses the earlier approval
-  check: Check whether content can be changed after approval and then published or executed under the earlier approval.
-  exclusions: ['Changes that the process explicitly allows without re-approval, such as typo fixes in a draft field.']
-  open_questions: ['Which fields may change after approval without a new approval?']
+  title: User bypasses a required approval
+  check: Check whether a user can approve their own request where an independent approval is required, or change content after approval and keep the earlier approval.
+  exclusions: [Processes where self-approval is permitted by a sourced policy., Changes the process explicitly allows without re-approval.]
+  open_questions: ['Does the process require separation between requester and approver?']
+  finding: {stride: Tampering, mitigation_title: Enforce independent approval and invalidate approvals when the approved content changes}
   scope_qualifier:
     path_patterns: ['*approv*', '*approv*/*', '*Approv*', '*Approv*/*', '*review*', '*review*/*', '*publish*', '*publish*/*', '*Publish*', '*Publish*/*', '*workflow*', '*workflow*/*', '*Workflow*', '*Workflow*/*']
     route_patterns: ['*approv*', '*publish*', '*review*']
-- id: AC-T-106
+- id: AC-T-105
   kind: descriptive
-  title: Requester approves their own request despite required independent approval
-  check: Check whether a user can approve a request they created where the process requires an independent approver.
-  exclusions: [Processes where self-approval is permitted by a sourced policy.]
-  open_questions: ['Does the process require separation between requester and approver?']
-  scope_qualifier:
-    path_patterns: ['*approv*', '*approv*/*', '*Approv*', '*Approv*/*', '*request*', '*request*/*', '*workflow*', '*workflow*/*', '*Workflow*', '*Workflow*/*']
-    route_patterns: ['*approv*']
-- id: AC-T-107
-  kind: descriptive
-  title: User retrieves restricted content through an export, share link, or alternate route
-  check: Check whether a user can obtain a resource through an export, download, share link, search, report, or other alternate route that skips the read check of the primary view.
-  exclusions: [Resources intended to be public.]
-  scope_qualifier:
-    required_signals: [has_auth_surface]
-    path_patterns: ['*export*', '*export*/*', '*Export*', '*Export*/*', '*download*', '*download*/*', '*Download*', '*Download*/*', '*share[!d]*', '*share/*', '*share[!d]*/*', '*Share[!d]*', '*Share/*', '*Share[!d]*/*', '*report*', '*report*/*', '*Report*', '*Report*/*']
-    detector_rules: [AUTHZ-301]
-    route_patterns: ['*export*', '*download*', '*share*']
-- id: AC-T-108
-  kind: descriptive
-  title: Former delegate keeps using a revoked permission through a retained session or token
-  check: Check whether a withdrawn role or permission keeps working through an existing session, token, or cached authorization.
-  exclusions: [Short-lived tokens whose lifetime the policy explicitly accepts as revocation delay.]
-  open_questions: ['How quickly must a revocation take effect?']
-  scope_qualifier:
-    required_signals: [has_role_concept, has_auth_surface]
-- id: AC-T-109
-  kind: descriptive
-  title: User repeats or races an operation to exceed a one-time or cumulative entitlement
-  check: Check whether a one-time or limited entitlement, such as a coupon, voucher, quota, or balance, can be used more often or for more value than allowed by repeating or racing the operation.
+  title: User exceeds a limit or a one-time entitlement
+  check: Check whether a one-time or limited entitlement, such as a coupon, voucher, quota, or balance, can be used more often or for more value than allowed, including by repeating or racing the operation.
   exclusions: [Operations without a quantity or one-time limit.]
+  finding: {stride: Tampering, mitigation_title: Enforce the limit atomically on the server for every use of the entitlement}
   scope_qualifier:
     path_patterns: ['*coupon*', '*coupon*/*', '*Coupon*', '*Coupon*/*', '*voucher*', '*voucher*/*', '*Voucher*', '*Voucher*/*', '*redeem*', '*redeem*/*', '*Redeem*', '*Redeem*/*', '*quota*', '*quota*/*', '*Quota*', '*Quota*/*', '*balance*', '*balance*/*', '*Balance*', '*Balance*/*', '*wallet*', '*wallet*/*', '*Wallet*', '*Wallet*/*']
     route_patterns: ['*coupon*', '*voucher*', '*redeem*']
-- id: AC-T-110
+- id: AC-T-106
   kind: descriptive
-  title: User makes a privileged background worker act on resources outside their authority
-  check: Check whether a user can make a background job or worker with broader privileges read or change resources the user may not access.
-  exclusions: [Jobs that only touch resources owned by the submitting user by construction.]
+  title: User keeps using a withdrawn right
+  check: Check whether a withdrawn role, permission, or account keeps working through an existing session, token, or cached authorization.
+  exclusions: [Short-lived tokens whose lifetime the policy explicitly accepts as revocation delay.]
+  open_questions: ['How quickly must a revocation take effect?']
+  finding: {cwe: CWE-613, mitigation_title: Re-check current roles and account status when a session or token is used}
   scope_qualifier:
-    path_patterns: ['*job*', '*job*/*', '*Job*', '*Job*/*', '*worker*', '*worker*/*', '*Worker*', '*Worker*/*', '*queue*', '*queue*/*', '*Queue*', '*Queue*/*', '*task*', '*task*/*', '*import*', '*import*/*', '*Import*', '*Import*/*']
-    route_patterns: ['*job*', '*worker*', '*queue*']
+    required_signals: [has_role_concept, has_auth_surface]
+- id: AC-T-107
+  kind: descriptive
+  title: User misuses a privileged function for another purpose
+  check: Check whether a user can make a privileged function, such as support impersonation, an administrative action, or a background job, act on resources or perform operations outside that user's own authority.
+  exclusions: [Operations explicitly permitted to the privileged role on the user's behalf.]
+  open_questions: ['Which operations may support staff perform while acting as a customer?']
+  finding: {cwe: CWE-285, mitigation_title: Authorize privileged functions against the initiating user's own authority}
+  scope_qualifier:
+    path_patterns: ['*impersonat*', '*impersonat*/*', '*Impersonat*', '*Impersonat*/*', '*sudo*', '*sudo*/*', '*job*', '*job*/*', '*Job*', '*Job*/*', '*worker*', '*worker*/*', '*Worker*', '*Worker*/*', '*queue*', '*queue*/*', '*Queue*', '*Queue*/*', '*admin*', '*admin*/*']
+    route_patterns: ['*impersonat*', '*sudo*', '*job*', '*admin*']
