@@ -167,6 +167,37 @@ def test_an_entry_whose_target_is_not_drawn_fails_the_geometry_check():
     assert svg == "" and any("not drawn" in p for p in problems)
 
 
+def _capped_view(entry_target, path_step):
+    """Five inputs and four CI systems: more than either cap holds."""
+    inputs = ["npm", "action", "image", "installer", "include"]
+    elements = [{"id": f"input:{n}", "label": n, "column": "sources", "kind": n} for n in inputs]
+    elements += [{"id": f"ci:{n}", "label": n, "column": "build", "coverage": "full"} for n in "abcd"]
+    findings = [{"id": f"F-{i}", "element": "input:npm", "severity": "Medium"} for i in range(3)]
+    findings += [{"id": "F-10", "element": "input:action", "severity": "Medium"}]
+    findings += [{"id": "F-11", "element": "input:image", "severity": "Medium"}]
+    findings += [{"id": "F-12", "element": "input:installer", "severity": "High"}]
+    return {
+        "elements": elements,
+        "findings": findings,
+        "entries": [{"entry": "ci-input", "element": entry_target, "severity": "Medium", "findings": []}],
+        "highlighted_path": {"finding": "F-0", "steps": [{"n": 1, "from": path_step[0], "to": path_step[1]}]},
+    }
+
+
+def test_a_cap_keeps_the_elements_an_entry_or_the_path_points_at():
+    plan = figure._plan(_capped_view("input:include", ("input:npm", "ci:d")))
+    assert "input:include" in [e["id"] for e in plan["inputs"]]
+    assert "ci:d" in [e["id"] for e in plan["cis"]]
+    assert "include" not in plan["overflow"]["upstream"] and "d" not in plan["overflow"]["ci"]
+
+
+def test_a_cap_prefers_the_more_severe_input_over_list_order():
+    plan = figure._plan(_capped_view("input:npm", ("input:npm", "ci:a")))
+    kept = [e["id"] for e in plan["inputs"]]
+    assert kept == ["input:npm", "input:action", "input:installer"]
+    assert plan["overflow"]["upstream"] == ["image", "include"]
+
+
 def test_the_table_form_carries_elements_relationships_entries_and_the_path():
     view = build_view(_model([_threat("T-005", "CWE-1104", 10)]), _facts(), {})
     table = figure.render_table(view, ACTOR, ["⑤"])

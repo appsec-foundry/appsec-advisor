@@ -216,27 +216,57 @@ def _finding_lines(findings: list[dict], limit: int = 3) -> list[tuple[str, str,
     return lines
 
 
+def _referenced(view: dict) -> set[str]:
+    """Elements an attack entry or a highlighted path step points at."""
+    ids = {entry["element"] for entry in view["entries"]}
+    for step in (view.get("highlighted_path") or {}).get("steps") or []:
+        ids |= {step["from"], step["to"]}
+    return ids
+
+
+def _cap(items: list[dict], limit: int, rank) -> tuple[list[dict], list[str]]:
+    """Keep ``limit - 1`` items by ``rank`` (the last row says "+N more"), in their given order."""
+    if len(items) <= limit:
+        return items, []
+    keep = sorted(items, key=rank)[: limit - 1]
+    return [e for e in items if e in keep], [e["label"] for e in items if e not in keep]
+
+
 def _plan(view: dict) -> dict[str, Any]:
-    """Which boxes each column holds, with overflow aggregated into explicit "+N more" rows."""
+    """Which boxes each column holds, with overflow aggregated into explicit "+N more" rows.
+
+    A cap never drops an element an entry or the highlighted path points at: the arrow
+    would have no box to land on.
+    """
     elements = {e["id"]: e for e in view["elements"]}
     by_element: dict[str, list[dict]] = {}
     for finding in view["findings"]:
         by_element.setdefault(finding["element"], []).append(finding)
-    inputs = [e for e in view["elements"] if e["column"] == "sources" and e["kind"] != "repository"]
+    referenced = _referenced(view)
+
+    def worst(element):
+        ranks = [list(SEV).index(f["severity"]) for f in by_element.get(element["id"], []) if f["severity"] in SEV]
+        return min(ranks, default=len(SEV))
+
     overflow: dict[str, list[str]] = {}
-    if len(inputs) > CAPS["upstream_rows"]:
-        keep = sorted(inputs, key=lambda e: -len(by_element.get(e["id"], [])))[: CAPS["upstream_rows"] - 1]
-        overflow["upstream"] = [e["label"] for e in inputs if e not in keep]
-        inputs = [e for e in inputs if e in keep]
-    cis = [e for e in view["elements"] if e["column"] == "build"]
-    cis.sort(key=lambda e: (e.get("coverage") != "full",))
-    if len(cis) > CAPS["ci"]:
-        overflow["ci"] = [e["label"] for e in cis[CAPS["ci"] - 1 :]]
-        cis = cis[: CAPS["ci"] - 1]
-    artifacts = [e for e in view["elements"] if e["column"] == "artifacts"]
-    if len(artifacts) > CAPS["artifacts"]:
-        overflow["artifacts"] = [e["label"] for e in artifacts[CAPS["artifacts"] - 1 :]]
-        artifacts = artifacts[: CAPS["artifacts"] - 1]
+    inputs, dropped = _cap(
+        [e for e in view["elements"] if e["column"] == "sources" and e["kind"] != "repository"],
+        CAPS["upstream_rows"],
+        lambda e: (e["id"] not in referenced, worst(e), -len(by_element.get(e["id"], []))),
+    )
+    if dropped:
+        overflow["upstream"] = dropped
+    cis = sorted((e for e in view["elements"] if e["column"] == "build"), key=lambda e: e.get("coverage") != "full")
+    cis, dropped = _cap(cis, CAPS["ci"], lambda e: (e["id"] not in referenced, e.get("coverage") != "full"))
+    if dropped:
+        overflow["ci"] = dropped
+    artifacts, dropped = _cap(
+        [e for e in view["elements"] if e["column"] == "artifacts"],
+        CAPS["artifacts"],
+        lambda e: e["id"] not in referenced,
+    )
+    if dropped:
+        overflow["artifacts"] = dropped
     return {
         "elements": elements,
         "by_element": by_element,
