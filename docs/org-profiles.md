@@ -698,7 +698,9 @@ release_gate:
 
 ### Business abuse cases (pilot)
 
-A business abuse case describes misuse in plain language: who acts, what they want, which authority or process boundary they cross, and which control should stop them. It needs no regex and no scanner finding. Use it for rules a pattern cannot express, such as a delegated administrator granting themselves a role, self-approval, or reuse of an approval after a content change. The verifier binds each step to your code and cites the source line for its verdict; a citation that does not match the file is rejected and the step stays unresolved.
+A business abuse case states in plain language what to check, for access-control and business rules a pattern cannot express: a delegated administrator granting themselves a role, a tenant administrator reaching another tenant, self-approval, or reuse of an approval after a content change. Most security checks stay deterministic; use business cases for the few rules that need judgment. The verifier derives the actor, the operations, and the boundary from the check and your code, and cites the source line for its verdict; a citation that does not match the file is rejected and the case stays unresolved.
+
+Put cases for one repository in `<repo>/docs/security/abuse-cases/` with `REPO-AC-NNN` IDs, and cases for every repository in the organization profile through `abuse_cases.add` with `ORG-AC-NNN` IDs.
 
 ```yaml
 schema_version: 2
@@ -706,24 +708,16 @@ abuse_cases:
   - id: REPO-AC-010
     kind: descriptive
     title: Requester approves their own expense report
-    actor: An employee who also holds the approver role
-    initial_access: authenticated_low_priv
-    goal: Get an expense paid without an independent approval.
-    boundary: The approver must differ from the requester.
-    steps:
-      - Submit an expense report.
-      - Approve the same report with the same account.
-    expected_controls:
-      - The approval operation rejects an approver who created the report.
+    check: Check whether an employee can approve an expense report they submitted.
     exclusions:
       - Reports below the amount that policy lets employees self-approve.
     open_questions:
       - Which amount, if any, may be self-approved?
-    scope_qualifier:
-      path_patterns: ["*approv*", "*expense*"]
 ```
 
-`scope_qualifier` is required and decides deterministically whether the case can apply. Every entry of `required_signals` (recon signal names such as `has_role_concept`) must hold. Three locators select the source files the verifier starts from: `route_patterns` match route paths such as `"*approv*"` in the route inventory, ignoring case; `detector_rules` name source-scanner checks such as `AUTHZ-003` whose findings mark a file; `path_patterns` match file paths. When a case declares any locator, at least one must find runtime source. A case without a match runs only when you name its ID with `--only-abuse-case`, or its file with `--abuse-case-file` when that file lies outside `docs/security/abuse-cases/` and `.appsec/abuse-cases/`. Business cases carry no `severity`, `goal_impact`, `source`, `release_gate`, or `probe`; a case linked to no finding is reported as not rated. When the verifier leaves a case unresolved, its first `open_questions` entry can appear among the team questions in the Management Summary, linked to the findings its steps bind to; it must be one plain question without links or markup. `data/abuse-cases/business-cases.yaml` holds ten generic cases to copy; it is not loaded by default.
+`check` is required; `exclusions` names legitimate behavior that is not an abuse, and `open_questions` names business facts the code cannot answer. When the verifier leaves a case unresolved, its first `open_questions` entry can appear among the team questions in the Management Summary, linked to the findings its steps bind to; it must be one plain question without links or markup. Business cases carry no `severity`, `goal_impact`, `source`, `release_gate`, or `probe`; a case linked to no finding is reported as not rated. `data/abuse-cases/business-cases.yaml` holds ten generic cases to copy; it is not loaded by default.
+
+An optional `scope_qualifier` limits where a case applies. Every entry of `required_signals` (recon signal names such as `has_role_concept`) must hold. Three locators select the source files the verifier starts from: `route_patterns` match route paths such as `"*approv*"` in the route inventory, ignoring case; `detector_rules` name source-scanner checks such as `AUTHZ-003` whose findings mark a file; `path_patterns` match file paths. When a case declares any locator, at least one must find runtime source; otherwise the case runs only when you name its ID with `--only-abuse-case`, or its file with `--abuse-case-file` when that file lies outside `docs/security/abuse-cases/` and `.appsec/abuse-cases/`. A case without `scope_qualifier` is always a candidate, within the per-run limit. A case may instead spell out `actor`, `initial_access`, `goal`, `boundary`, `steps`, and `expected_controls`; it then needs a `scope_qualifier`.
 
 Business cases cost model time, so they are bounded per run by `data/abuse-case-limits.yaml`. Quick depth checks only requested cases. Standard depth checks up to three and thorough depth up to eight, strongest preselection evidence first. The report counts cases that did not apply or were not performed and names each requested case that was not performed. Validate your files before a run by executing `python3 scripts/model/resolve_abuse_cases.py --repo-root <repo> --list-ids` in the plugin directory, where `<repo>` is the target repository path; every problem names the file, case ID, and field.
 

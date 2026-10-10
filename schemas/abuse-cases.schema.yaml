@@ -147,10 +147,13 @@ $defs:
       decides whether it can apply, the abuse-case verifier binds it to this
       repository's code and judges each step, and severity follows the
       evidence of any resulting finding. Repository and organization authors
-      maintain these without pipeline knowledge.
+      maintain these without pipeline knowledge. An open case states only
+      what to check; the verifier derives actor, operations, and boundary.
     type: object
     additionalProperties: false
-    required: [id, kind, title, actor, initial_access, goal, boundary, steps, expected_controls, scope_qualifier]
+    required: [id, kind, title]
+    if: { not: { required: [check] } }
+    then: { required: [actor, initial_access, goal, boundary, steps, expected_controls, scope_qualifier] }
     properties:
       id:
         type: string
@@ -161,6 +164,9 @@ $defs:
         type: string
         minLength: 1
         maxLength: 160
+      check:
+        description: What to check, in one or two sentences. Replaces actor, boundary, steps, and expected controls.
+        $ref: "#/$defs/prose"
       actor: { $ref: "#/$defs/prose" }
       initial_access:
         enum: [unauthenticated, authenticated_low_priv, authenticated_high_priv, physical]

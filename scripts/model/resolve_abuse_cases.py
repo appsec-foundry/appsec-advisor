@@ -188,6 +188,11 @@ def _load_case_file(path: Path, schema: dict, max_bytes: int | None = None) -> t
     return (cases if not errors else []), errors
 
 
+def descriptive_steps(case: dict) -> list[str]:
+    """A descriptive case's steps; an open case has one step, its check."""
+    return list(case.get("steps") or ([case["check"]] if case.get("check") else []))
+
+
 def case_chain(case: dict) -> list[dict]:
     """Return a case's chain steps; descriptive steps become prose-only steps.
 
@@ -199,7 +204,7 @@ def case_chain(case: dict) -> list[dict]:
         return list(case.get("chain") or [])
     return [
         {"step": index, "label": text, "description": text, "required": True}
-        for index, text in enumerate(case.get("steps") or [], start=1)
+        for index, text in enumerate(descriptive_steps(case), start=1)
     ]
 
 

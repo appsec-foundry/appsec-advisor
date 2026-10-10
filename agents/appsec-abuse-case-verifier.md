@@ -109,7 +109,9 @@ Process the steps in order. For each step:
 
 A descriptive case states a business abuse in prose: `actor`, `boundary`, `steps`, `expected_controls`, `exclusions`, `open_questions`. It has no probes and no matched findings. Your job is to bind it to this repository's code and judge each step. `preselected_sources` lists runtime files a deterministic scan selected; `related_findings` are existing detector findings in those files, with exact source windows. Cite a related finding as evidence instead of re-deciding it; do not re-report its defect.
 
-1. **Bind.** Find the operation that implements the step for the stated actor, starting from `preselected_sources` and `related_findings`. Use at most two focused searches and one batched Read per step. If no operation in the code performs the step, the case does not apply as described.
+An open case has no `actor` and states only what to check, as its single step. Derive the actor, the operations the check covers, and the boundary from the check and the code; the procedure below then applies to those operations. The step is `confirmed` when any of them violates the check (cite that one), and `blocked` only when every operation you found enforces it.
+
+1. **Bind.** Find the operation that implements the step for the stated actor, starting from `preselected_sources` and `related_findings`. Use at most two focused searches and one batched Read per step, or four searches for an open case without preselected sources. If no operation in the code performs the step, the case does not apply as described.
 2. **Check the boundary.** Decide whether the code enforces `boundary` for that operation, using `expected_controls` as the controls to look for. A check that only authenticates the caller, or only checks a role, does not enforce a narrower delegation, tenant, ownership, or state boundary. `controls_found` lists only controls that enforce the boundary; name an insufficient check in `reason`.
 3. **Emit the step verdict:**
    - `confirmed` — the stated actor can perform the step and no control enforces the boundary.

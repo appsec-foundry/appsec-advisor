@@ -324,8 +324,10 @@ def _project_descriptive(
     It reads further code itself within its turn budget; nothing here claims
     the case applies.
     """
-    steps = case.get("steps")
-    if not isinstance(steps, list) or not steps or len(steps) > MAX_DESCRIPTIVE_ITEMS:
+    from model.resolve_abuse_cases import descriptive_steps  # noqa: PLC0415
+
+    steps = descriptive_steps(case)
+    if not steps or len(steps) > MAX_DESCRIPTIVE_ITEMS:
         raise AbuseContextError(f"descriptive case steps must contain 1-{MAX_DESCRIPTIVE_ITEMS} entries")
     sources = row.get("preselected_sources") or []
     if not isinstance(sources, list) or len(sources) > MAX_DESCRIPTIVE_SOURCES:
@@ -376,11 +378,11 @@ def _project_descriptive(
             "structural_verdict": "candidate",
             "reason": _string(row.get("reason"), "candidate.reason", maximum=2000, nullable=True),
             "requested": row.get("requested") is True,
-            "actor": _string(case.get("actor"), "candidate.actor", maximum=600),
+            "actor": _string(case.get("actor"), "candidate.actor", maximum=600, nullable=True),
             "initial_access": case.get("initial_access"),
             "prerequisites": _string(case.get("prerequisites"), "candidate.prerequisites", maximum=600, nullable=True),
-            "goal": _string(case.get("goal"), "candidate.goal", maximum=600),
-            "boundary": _string(case.get("boundary"), "candidate.boundary", maximum=600),
+            "goal": _string(case.get("goal"), "candidate.goal", maximum=600, nullable=True),
+            "boundary": _string(case.get("boundary"), "candidate.boundary", maximum=600, nullable=True),
             "steps": [
                 {"step": index, "label": _string(text, f"steps[{index}]", maximum=600)}
                 for index, text in enumerate(steps, start=1)

@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The Threat Analyst checks concrete threat hypotheses against selected files or directories at a Git revision, with evidence and explicit unresolved outcomes.
 - Figure 1 marks network trust boundaries between components of one column and the boundary into every data store, also an embedded one, and Figure 1b draws its evidenced build trust boundaries as lines at the column borders they cross, spanning only the flows they mark and drawn pale when only inferred.
-- Repositories can describe business abuse cases in plain language (pilot), which the assessment selects by route, scanner finding or path, checks against the code within per-depth limits, reports with cited evidence, and turns into a team question when only the team can decide them.
+- Repositories and organization profiles can add business abuse cases (pilot) that only state what to check, such as access-control or approval rules; the assessment checks them against the code within per-depth limits, reports with cited evidence, and turns them into a team question when only the team can decide them.
 
 ### Changed
 

@@ -579,6 +579,44 @@ def test_descriptive_case_needs_a_preselection_qualifier(tmp_path: Path):
     assert "scope_qualifier" in rejected[0]["reason"]
 
 
+_OPEN = """\
+schema_version: 2
+abuse_cases:
+  - id: REPO-AC-021
+    kind: descriptive
+    title: No self-approval
+    check: Check whether a user can approve a request they created.
+"""
+
+
+def test_an_open_case_states_only_what_to_check(tmp_path: Path):
+    _write_repo_local(tmp_path, _OPEN)
+    cases, errors, rejected = rac.resolve_abuse_case_sources(None, None, repo_root=tmp_path)
+    assert (errors, rejected) == ([], [])
+    chain = rac.case_chain(cases[-1])
+    assert [(s["step"], s["description"]) for s in chain] == [
+        (1, "Check whether a user can approve a request they created.")
+    ]
+
+
+def test_an_organization_ships_an_open_case(tmp_path: Path):
+    profile_dir = _write_org(tmp_path, _OPEN.replace("REPO-AC-021", "ORG-AC-021"))
+    profile = {"abuse_cases": {"inherit_defaults": False, "add": "abuse-cases/*.yaml"}}
+    cases, errors = rac.resolve_abuse_cases(profile, profile_dir)
+    assert errors == [], errors
+    assert [(c["id"], c["check"]) for c in cases] == [
+        ("ORG-AC-021", "Check whether a user can approve a request they created.")
+    ]
+
+
+def test_a_case_without_check_or_steps_is_rejected(tmp_path: Path):
+    _write_repo_local(
+        tmp_path, _OPEN.replace("    check: Check whether a user can approve a request they created.\n", "")
+    )
+    _, _, rejected = rac.resolve_abuse_case_sources(None, None, repo_root=tmp_path)
+    assert rejected and "REPO-AC-021" in rejected[0]["reason"]
+
+
 def test_descriptive_prose_is_bounded(tmp_path: Path):
     _write_repo_local(tmp_path, _DESCRIPTIVE.replace("Obtain a role", "x" * 700))
     _, _, rejected = rac.resolve_abuse_case_sources(None, None, repo_root=tmp_path)

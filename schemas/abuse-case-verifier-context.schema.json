@@ -77,11 +77,11 @@
         "structural_verdict": {"const": "candidate"},
         "reason": {"type": ["string", "null"], "maxLength": 2000},
         "requested": {"type": "boolean"},
-        "actor": {"$ref": "#/$defs/prose"},
-        "initial_access": {"enum": ["unauthenticated", "authenticated_low_priv", "authenticated_high_priv", "physical"]},
+        "actor": {"type": ["string", "null"], "minLength": 1, "maxLength": 600},
+        "initial_access": {"enum": ["unauthenticated", "authenticated_low_priv", "authenticated_high_priv", "physical", null]},
         "prerequisites": {"type": ["string", "null"], "maxLength": 600},
-        "goal": {"$ref": "#/$defs/prose"},
-        "boundary": {"$ref": "#/$defs/prose"},
+        "goal": {"type": ["string", "null"], "minLength": 1, "maxLength": 600},
+        "boundary": {"type": ["string", "null"], "minLength": 1, "maxLength": 600},
         "steps": {
           "type": "array",
           "minItems": 1,
@@ -93,7 +93,7 @@
             "additionalProperties": false
           }
         },
-        "expected_controls": {"allOf": [{"$ref": "#/$defs/prose_list"}, {"minItems": 1}]},
+        "expected_controls": {"$ref": "#/$defs/prose_list"},
         "evidence": {"$ref": "#/$defs/prose_list"},
         "exclusions": {"$ref": "#/$defs/prose_list"},
         "open_questions": {"$ref": "#/$defs/prose_list"},

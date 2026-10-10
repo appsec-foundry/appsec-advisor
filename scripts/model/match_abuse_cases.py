@@ -694,7 +694,8 @@ def _match_descriptive(
             "match_basis": "descriptive",
             "controls_found": [],
         }
-        for index, text in enumerate(case.get("steps") or [], start=1)
+        # Mirrors resolve_abuse_cases.descriptive_steps: an open case has one step, its check.
+        for index, text in enumerate(case.get("steps") or ([case["check"]] if case.get("check") else []), start=1)
     ]
     return {
         "abuse_case_id": case.get("id"),

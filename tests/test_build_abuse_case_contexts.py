@@ -226,6 +226,24 @@ def test_descriptive_candidate_projects_prose_sources_and_finding_windows(tmp_pa
     assert "probe" not in json.dumps(candidate)
 
 
+def test_an_open_case_reaches_the_verifier_as_its_check(tmp_path: Path):
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import model.match_abuse_cases as matcher  # noqa: PLC0415
+
+    check = "Check whether a tenant administrator can change users of another tenant."
+    case = {"id": "REPO-AC-022", "kind": "descriptive", "title": "Tenant isolation", "check": check}
+    match = matcher.match_case(case, [], None, repo_root=tmp_path)
+    assert match["structural_verdict"] == "candidate"
+    payload = json.dumps({"matches": [match]}).encode()
+    value = contexts.project_candidate(payload, "REPO-AC-022", repo_root=tmp_path)
+    schema = json.loads((ROOT / "schemas" / "abuse-case-verifier-context.schema.json").read_text())
+    value["limits"]["serialized_bytes"] = 1
+    Draft202012Validator(schema).validate(value)
+    candidate = value["candidate"]
+    assert candidate["steps"] == [{"step": 1, "label": check}]
+    assert (candidate["actor"], candidate["boundary"], candidate["expected_controls"]) == (None, None, [])
+
+
 def _abuse_candidate_limits() -> dict:
     bindings = json.loads((ROOT / "data" / "context-routing-bindings.json").read_text())
     return bindings["limit_profiles"]["abuse_candidate"]
