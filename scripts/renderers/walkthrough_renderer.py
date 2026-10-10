@@ -10,7 +10,7 @@ no repair loop, no QA-fixer pass.
 §3 is a flat list of per-Critical walkthroughs (`### 3.1`, `### 3.2`, …).
 The §3.1 "Attack Chain Overview" cross-finding view (graph LR kill-chains)
 was retired — the cross-finding/strategic picture is the standalone
-`## Critical Attack Tree` section above §1, so attack paths are not narrated
+`## Critical Findings by Root Cause` section above §1, so attack paths are not narrated
 in two competing places.
 
 Contract (see `data/sections-contract.yaml → sections.attack_walkthroughs`):
@@ -1442,7 +1442,7 @@ def render_cross_references(
 
 
 # ---------------------------------------------------------------------------
-# (§3.1 Attack Chain Overview was retired — the Critical Attack Tree above
+# (§3.1 Attack Chain Overview was retired — Critical Findings by Root Cause above
 # §1 is the single cross-finding/strategic view. The deterministic chain
 # catalogue, its label helpers, and the per-chain renderer were removed with
 # it; §3 now renders only the per-finding walkthroughs below.)
@@ -1638,8 +1638,8 @@ def render_attack_walkthroughs_md(
             f"by severity, chain relevance, and threat-category diversity, with "
             f"Access Control and LLM Abuse represented when present. Each walkthrough "
             f"has attack steps, a focused sequence diagram, and the primary "
-            f"mitigation. How weaknesses combine toward the worst-case goal is "
-            f"in the [Critical Attack Tree](#critical-attack-tree); every other "
+            f"mitigation. Which root cause each Critical traces back to is in "
+            f"[Critical Findings by Root Cause](#critical-findings-by-root-cause); every other "
             f"Critical, plus full per-finding context (severity rationale, "
             f"assets, detection signals), is in the "
             f"[§8 Findings Register](#8-findings-register)."
@@ -1648,16 +1648,16 @@ def render_attack_walkthroughs_md(
         out.append(
             "This section walks through how the highest-risk findings are "
             "exploited — one short walkthrough per Critical, each with attack "
-            "steps, a focused sequence diagram, and the primary mitigation. How "
-            "weaknesses combine toward the worst-case goal is in the "
-            "[Critical Attack Tree](#critical-attack-tree); full per-finding "
+            "steps, a focused sequence diagram, and the primary mitigation. Which "
+            "root cause each Critical traces back to is in "
+            "[Critical Findings by Root Cause](#critical-findings-by-root-cause); full per-finding "
             "context (severity rationale, assets, detection signals) is in the "
             "[§8 Findings Register](#8-findings-register)."
         )
     out.append("")
 
     # §3.1+ per-finding walkthroughs (the cross-finding chain overview was
-    # retired — the Critical Attack Tree above §1 is the single strategic view).
+    # retired — Critical Findings by Root Cause above §1 is the single strategic view).
     for i, threat in enumerate(picks, start=1):
         block = _render_walkthrough_block(
             threat,

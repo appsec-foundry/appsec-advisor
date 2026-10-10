@@ -16,13 +16,12 @@ Six of the eight REQUIRED_FRAGMENTS are pure structural projections of
 
 Pre-generating these takes 6 LLM Write tool-calls off the orchestrator's
 Phase-11 budget. The remaining REQUIRED_FRAGMENTS are normally LLM-authored
-by the Stage-2 renderer, but three of them now carry a deterministic
+by the Stage-2 renderer, but two of them now carry a deterministic
 backstop generator here so a renderer cutoff cannot leave a MANDATORY
 fragment missing (idempotent — a richer LLM version already on disk wins):
 
   +  ``ms-verdict.json``          — Management-Summary verdict (mandatory; compose
                                     HARD-fails without it → gen_verdict is its floor)
-  +  ``ms-critical-attack-tree.json`` — Critical Attack Tree (self-gates: <2 Criticals → none)
   +  ``attack-walkthroughs.md``   — narrative sequence diagrams
 
 Idempotency
@@ -37,6 +36,7 @@ run regenerates them from the current model and removes a copy left from
 an earlier run when the generator finds nothing to show.
 
   *  ``ms-ai-exposure.json``      — AI/LLM Exposure callout (self-gates: no LLM surface → none)
+  *  ``ms-critical-attack-tree.json`` — Critical Findings by Root Cause (self-gates: <2 Criticals → none)
 
 Exit codes
 ----------
@@ -5231,7 +5231,7 @@ _LLM_SURFACE_RE = re.compile(
 
 # Fragments derived only from the canonical model: no agent authors them, so a
 # copy already on disk is never preferred over the current model's.
-_MODEL_OWNED_FRAGMENTS = frozenset({"ms-ai-exposure.json"})
+_MODEL_OWNED_FRAGMENTS = frozenset({"ms-ai-exposure.json", "ms-critical-attack-tree.json"})
 
 
 def gen_ai_exposure(yaml_data: dict):
@@ -5419,112 +5419,113 @@ def gen_ai_exposure(yaml_data: dict):
 
 
 # ---------------------------------------------------------------------------
-# Critical Attack Tree (`ms-critical-attack-tree.json`)
+# Critical Findings by Root Cause (`ms-critical-attack-tree.json`)
 # ---------------------------------------------------------------------------
-# Root cause it fixes (juice-shop 2026-06-27): the unnumbered "## Critical Attack
-# Tree" section is MANDATORY whenever critical_count >= 2 (compose's
-# has_multi_critical gate + section_integrity's required-section check), but it
-# was only ever LLM-authored by the Stage-2 renderer — which skipped it at quick
-# depth and rationalised the skip as "expected at quick depth". compose then only
-# SOFT-warns on the missing fragment (back-compat guard for legacy fixtures)
-# while section_integrity HARD-fails (RC=2), so the gap surfaced as a late
-# hard-gate failure instead of being filled at authoring time. Generating it
-# deterministically here removes the renderer dependency entirely — the same
-# pattern as ms-ai-exposure.json (idempotent: an LLM-authored richer fragment
-# already on disk is preserved).
+# The section groups the Critical findings under the weakness records that
+# explain them, so a reader sees which structural fix closes which Criticals.
+# It is derived from the canonical model only: an agent-authored copy grouped
+# the Criticals by effective severity and its own capability guesses, which
+# contradicted the register's Critical count.
 
-# Canonical STRIDE order → (match-needles, node-id, capability label). The
-# Criticals are grouped under their STRIDE class so the tree's middle layer is
-# the attacker's capability decomposition, derived deterministically (no LLM).
-_ATTACK_TREE_STRIDE_CAPABILITIES: list[tuple[tuple[str, ...], str, str]] = [
-    (("spoof",), "CAP_SPOOF", "Spoofing — identity & auth bypass"),
-    (("tamper", "inject"), "CAP_TAMPER", "Tampering — injection & data manipulation"),
-    (("repudiat",), "CAP_REPUD", "Repudiation — audit & accountability gaps"),
-    (("information", "disclos", "info"), "CAP_INFO", "Information Disclosure — secret & data exposure"),
-    (("denial", "dos", "availab"), "CAP_DOS", "Denial of Service — availability loss"),
-    (("elevation", "privilege", "eop", "rce", "execution"), "CAP_EOP", "Elevation of Privilege — escalation & RCE"),
-]
-_ATTACK_TREE_CANONICAL_CAPS = [c for _, c, _ in _ATTACK_TREE_STRIDE_CAPABILITIES] + ["CAP_OTHER"]
+_ROOT_CAUSE_TREE_MAX_NODES = 30  # schema caps on `mermaid.nodes` / `mermaid.edges`
+_ROOT_CAUSE_TREE_MAX_EDGES = 60
 
 
-def _attack_tree_capability_for_stride(stride: str) -> tuple[str, str]:
-    """Map a threat's STRIDE class to its (capability-node-id, label). Falls back
-    to a generic 'Other' capability for unknown/missing STRIDE so every Critical
-    lands under exactly one capability node."""
-    s = (stride or "").strip().lower()
-    for needles, node_id, label in _ATTACK_TREE_STRIDE_CAPABILITIES:
-        if any(n in s for n in needles):
-            return node_id, label
-    return "CAP_OTHER", "Other attack capabilities"
+def _mermaid_node_id(ref: str) -> str:
+    """``T-001`` / ``W-002`` → ``T001`` / ``W002`` (schema: ``^[A-Z][A-Z0-9_]*$``)."""
+    node = re.sub(r"[^A-Z0-9_]", "", ref.upper())
+    return node if re.match(r"^[A-Z]", node) else "N" + node
 
 
 def gen_critical_attack_tree(yaml_data: dict):
-    """Deterministically emit ms-critical-attack-tree.json when ≥2 Critical
-    findings exist, else return ``None`` (no file → the conditional section
-    renders nothing).
+    """Emit the Critical-findings-by-root-cause fragment, or ``None`` below two Criticals.
 
-    The Critical set mirrors renderers/compose_threat_model.py's ``_severity_counts``
-    EXACTLY (``risk`` → ``severity``, NOT ``effective_severity``) so the fragment
-    is generated precisely when the composer marks the section in-scope
-    (``has_multi_critical = severity_counts["critical"] >= 2``). Keying on
-    effective_severity here would over-/under-generate relative to the gate.
+    The Critical set is ``risk == Critical`` (the register severity the
+    composer's ``has_multi_critical`` gate counts), never ``effective_severity``.
     """
-    threats = yaml_data.get("threats") or []
+
+    def _ref(item: dict) -> str:
+        return str(item.get("id") or item.get("t_id") or "").strip()
+
+    def _id_key(item: dict) -> tuple:
+        m = re.search(r"(\d+)", _ref(item))
+        return (int(m.group(1)) if m else 1_000_000, _ref(item))
+
+    threats = [t for t in yaml_data.get("threats") or [] if isinstance(t, dict) and _ref(t)]
     crits = [t for t in threats if str(t.get("risk") or t.get("severity") or "").strip().lower() == "critical"]
     if len(crits) < 2:
-        # Section is conditional on has_multi_critical (>=2). With <2 Criticals
-        # the composer skips it, so a fragment here would be dead weight.
         return None
 
-    # Stable ordering by finding id so the tree is reproducible run-to-run.
-    def _id_key(t: dict) -> tuple:
-        m = re.search(r"(\d+)", str(t.get("id") or ""))
-        return (int(m.group(1)) if m else 1_000_000, str(t.get("id") or ""))
-
     crits = sorted(crits, key=_id_key)
+    crit_ids = [_ref(t) for t in crits]
+    by_id = dict(zip(crit_ids, crits))
 
-    # Schema caps `nodes` at 30. Reserve 1 goal + up to 7 capabilities; cap the
-    # leaves so a pathological Critical count never overflows the schema. The
-    # Criticals are id-sorted, so an over-cap run keeps the lowest ids (the rare
-    # dropped tail is still fully visible in §8 Findings Register).
-    _MAX_LEAVES = 22
+    groups: list[tuple[dict, list[str]]] = []
+    weaknesses = [w for w in yaml_data.get("weaknesses") or [] if isinstance(w, dict)]
+    for weakness in sorted(weaknesses, key=_id_key):
+        members = {_ref(i) for i in weakness.get("instances") or [] if isinstance(i, dict)}
+        ids = [tid for tid in crit_ids if tid in members]
+        if ids and weakness.get("id") and weakness.get("title"):
+            groups.append((weakness, ids))
+    linked = {tid for _, ids in groups for tid in ids}
+    unlinked = [tid for tid in crit_ids if tid not in linked]
 
-    cap_label: dict[str, str] = {}
-    cap_members: dict[str, list[dict]] = {}
-    for t in crits[:_MAX_LEAVES]:
-        cap_id, label = _attack_tree_capability_for_stride(t.get("stride"))
-        cap_label.setdefault(cap_id, label)
-        cap_members.setdefault(cap_id, []).append(t)
-
-    # Order capability nodes by the canonical STRIDE sequence, not first-seen.
-    cap_order = sorted(
-        cap_members,
-        key=lambda c: _ATTACK_TREE_CANONICAL_CAPS.index(c) if c in _ATTACK_TREE_CANONICAL_CAPS else 99,
-    )
-
-    nodes: list[dict] = [{"id": "GOAL", "label": "Full application compromise", "class": "goal"}]
+    nodes: list[dict] = [{"id": "GOAL", "label": f"{len(crits)} Critical findings", "class": "goal"}]
     edges: list[dict] = []
-    for cap_id in cap_order:
-        nodes.append({"id": cap_id, "label": cap_label[cap_id], "class": "or_node"})
-        edges.append({"from": "GOAL", "to": cap_id})
-        for t in cap_members[cap_id]:
-            tid = str(t.get("id") or "").strip()
-            # Node id must match ^[A-Z][A-Z0-9_]*$ — "T-001" → "T001".
-            leaf_id = re.sub(r"[^A-Z0-9_]", "", tid.upper().replace("-", "")) or f"N{len(nodes)}"
-            if not re.match(r"^[A-Z]", leaf_id):
-                leaf_id = "N" + leaf_id
-            # Leaf label MUST carry the id token (`_derive_attack_tree_findings`
-            # in compose keys the §8 Findings pointer off `[FT]-\d{3,4}` in the
-            # label, and only on `class == "leaf"` nodes). The composer strips
-            # the id + truncates the title at render, so the full short title is
-            # safe here.
-            short = _clean_finding_label(t.get("title", ""))
-            nodes.append({"id": leaf_id, "label": f"{tid} {short}".strip(), "class": "leaf"})
-            edges.append({"from": cap_id, "to": leaf_id})
+    fixes: list[dict] = []
+    declared: set[str] = set()
+
+    def _add_leaf(tid: str, parent: str) -> None:
+        leaf = _mermaid_node_id(tid)
+        if leaf not in declared:
+            threat = by_id[tid]
+            node = {"id": leaf, "label": f"{tid} {_clean_finding_label(threat.get('title', ''))}", "class": "leaf"}
+            evidence = threat.get("evidence") or []
+            first = evidence[0] if evidence and isinstance(evidence[0], dict) else {}
+            if first.get("file"):
+                node["detail"] = str(first["file"]).rsplit("/", 1)[-1][:80]
+            nodes.append(node)
+            declared.add(leaf)
+        edges.append({"from": leaf, "to": parent})
+
+    def _fits(extra_nodes: int, extra_edges: int) -> bool:
+        # One node and one edge stay free for the unlinked node so a capped run still shows it.
+        reserve = 1 if unlinked else 0
+        return (
+            len(nodes) + extra_nodes <= _ROOT_CAUSE_TREE_MAX_NODES - reserve
+            and len(edges) + extra_edges <= _ROOT_CAUSE_TREE_MAX_EDGES - reserve
+        )
+
+    for weakness, ids in groups:
+        new_leaves = [tid for tid in ids if _mermaid_node_id(tid) not in declared]
+        if not _fits(1 + len(new_leaves), 1 + len(ids)):
+            break
+        parent = _mermaid_node_id(weakness["id"])
+        nodes.append({"id": parent, "label": f"{weakness['id']} · {weakness['title']}"[:120], "class": "rootcause"})
+        edges.append({"from": parent, "to": "GOAL"})
+        for tid in ids:
+            _add_leaf(tid, parent)
+        if weakness.get("structural_recommendation"):
+            fixes.append(
+                {
+                    "weakness": weakness["id"],
+                    "recommendation": str(weakness["structural_recommendation"])[:400],
+                    "findings": ids,
+                }
+            )
+    if unlinked:
+        nodes.append({"id": "UNLINKED", "label": "No root cause linked", "class": "unassigned"})
+        edges.append({"from": "UNLINKED", "to": "GOAL"})
+        for tid in unlinked:
+            if len(nodes) >= _ROOT_CAUSE_TREE_MAX_NODES or len(edges) >= _ROOT_CAUSE_TREE_MAX_EDGES:
+                break
+            _add_leaf(tid, "UNLINKED")
 
     payload = {
-        "root_goal": "Full application compromise via chained Critical defects",
+        "root_goal": f"{len(crits)} Critical findings",
+        "critical_count": len(crits),
         "mermaid": {"orientation": "TD", "nodes": nodes, "edges": edges},
+        "fixes": fixes,
     }
     return json.dumps(payload, indent=2) + "\n"
 

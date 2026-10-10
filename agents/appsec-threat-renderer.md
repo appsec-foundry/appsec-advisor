@@ -87,9 +87,9 @@ That file is **not** a template to be rendered — it is the proven reference sh
 Author only the fragments that require LLM judgement or explicitly requested enrichment:
 
 - `.fragments/ms-verdict.json` — do NOT cite exact severity counts in the `opening` prose (e.g. "eight Critical and eleven High"); those drift from the real totals. The composer injects an authoritative deterministic `**Risk distribution:** 🔴 Critical: N · 🟠 High: M · …` line directly under the opening. Describe posture + consequence in words; let the injected line carry the numbers.
-- `.fragments/ms-critical-attack-tree.json` only when `threats[].risk == Critical` count is ≥ 2 in `threat-model.yaml` (the composer gate is `has_multi_critical`; skip authoring when fewer than 2 Critical findings exist)
 - `.fragments/ms-anti-patterns.json` when one or more §6 control blocks carry an `⚠ Anti-pattern:` label — derive from those labels. **Omit the file entirely** when no §6 anti-pattern is tagged; the schema requires `minItems:1` and the composer soft-skips the section when the fragment is absent.
 - Do not write `.fragments/ms-ai-exposure.json`: `renderers/pregenerate_fragments.py` generates it from the findings' OWASP LLM and Agentic tags.
+- Do not write `.fragments/ms-critical-attack-tree.json`: `renderers/pregenerate_fragments.py` generates it from the Critical findings and their weakness records.
 - `.fragments/security-posture-attack-paths.json` unless `SKIP_ATTACK_PATHS_AUTHORING=true`
 - `.fragments/requirements-compliance.md` when `CHECK_REQUIREMENTS=true` — see authoring contract below
 - Never write `.fragments/top-threats-architecture.md` (Figure 1): the composer builds it deterministically (`_render_top_threats_architecture`), and a file here would override it in the no-attack-paths fallback.
@@ -180,47 +180,6 @@ Renders as the optional **`### Architectural Anti-Patterns`** callout in the Man
 
 **Naming vocabulary** (use a canonical label, do not invent one to pad the list): `SPA without BFF` · `JWT in localStorage` · `Raw SQL string interpolation` · `Secrets hardcoded in source` · `Missing server-side authorization layer` · `Mass-assignment / unscoped object binding` · `Client-side trust boundary` · `Sanitizer bypass by default` · `Unvalidated OAuth/OIDC token` · `Server-side eval of untrusted input`. Derive each entry from the §6 control blocks / threat scenarios you have already written — this fragment is a *headline index* of them, not new analysis. The same pattern you tag here should carry the `⚠ Anti-pattern:` label in its §6 control block (see the §6.X authoring pattern below).
 
-### `ms-critical-attack-tree.json` authoring contract
-
-The Critical Attack Tree renders as an unnumbered `## Critical Attack Tree` section between the Management Summary and Section 1. It is a **goal-decomposition** tree (root = worst-case business impact, leaves = individual Critical findings, internal nodes = AND/OR refinement of preconditions) — NOT a linear attack chain. It is the report's single cross-finding view; the per-finding detail (one `sequenceDiagram` each) lives in §3 Attack Walkthroughs.
-
-**When to author.** Only when `threat-model.yaml` contains ≥ 2 `threats[].risk == Critical` entries. With 0 or 1 Critical the composer's `has_multi_critical` gate is false and the section is silently skipped — do not write the fragment in that case (an empty / one-leaf tree adds noise without insight).
-
-**Schema** (full: `schemas/fragments/critical-attack-tree.schema.json`, template: `templates/fragments/critical-attack-tree.md.j2`):
-
-```json
-{
-  "root_goal": "<optional, 5-120 chars — short business-impact statement, e.g. 'Full admin takeover'>",
-  "mermaid": {
-    "orientation": "TD",
-    "nodes": [
-      { "id": "G_ROOT",  "label": "Full admin takeover",                  "class": "goal" },
-      { "id": "AND_JWT", "label": "Forge admin JWT",                      "class": "and_node" },
-      { "id": "L_T001",  "label": "T-001 Hardcoded RSA key",              "class": "leaf", "finding_ref": "T-001" },
-      { "id": "L_T011",  "label": "T-011 JWT alg:none accepted",          "class": "leaf", "finding_ref": "T-011" }
-    ],
-    "edges": [
-      { "from": "AND_JWT", "to": "G_ROOT" },
-      { "from": "L_T001",  "to": "AND_JWT" },
-      { "from": "L_T011",  "to": "AND_JWT" }
-    ]
-  }
-}
-```
-
-> **Authored fields.** Author only `root_goal` (optional) and `mermaid`. The section renders as a single `graph LR` tree whose leaf boxes show only their `T-NNN` id, with a one-line explanation above and a one-line findings pointer below (leaf id → title → §8 anchor; mitigations live in §9). Edge AND/OR labels derive from each parent node's `class`, so omit per-edge `refinement`.
-
-**Mandatory authoring rules.**
-
-1. **Build the tree from `threats[].risk == Critical` rows.** Each Critical finding becomes a `leaf` node with `finding_ref: "T-NNN"` (or `F-NNN` for findings-shaped models). Internal `and_node` / `or_node` entries describe the **preconditions** that combine the leaves into a higher-level capability (e.g. `T-001 hardcoded key` AND `T-011 alg:none` → `Forge admin JWT`). The single `goal` node at the root names the worst-case impact and SHOULD match one of the Worst-Case-Scenario bullets in `ms-verdict.json`.
-2. **AND vs OR is encoded by the parent node's `class`, not per edge.** An `and_node` means all its children are required to satisfy that capability; an `or_node` means any one child suffices; capabilities feeding the `goal` are OR-alternatives. The renderer DERIVES each edge's AND/OR label from the destination node's class — so a per-edge `refinement` is ignored, and a mismatched one (an `AND` edge into an `or_node`) can no longer corrupt the diagram. Choose the parent class deliberately; that is the only place the boolean structure lives.
-3. **`orientation`: author `TD`.** The renderer normalizes the unified tree to `graph LR` regardless (vertical leaf stacking keeps one diagram readable at any fan-out); the authored value is not used for layout.
-4. **Node id grammar.** Mermaid node ids match `^[A-Z][A-Z0-9_]*$`. Use semantic prefixes (`G_`, `AND_`, `OR_`, `L_`) so the structure is readable in the raw JSON without rendering the diagram. The reader never sees a node id — they see the rendered diagram and the derived findings line.
-5. **Leaf labels carry the finding title; only the id renders in the box.** Author each leaf label as `T-NNN <short title>` (e.g. `T-001 Hardcoded RSA key`) and set `finding_ref`. The diagram box shows just `T-001`; the composer strips the id prefix to build the one-line findings pointer (`[T-001](#t-001) Hardcoded RSA key …`). A clean, prose title (2–4 words) is what the reader sees there — so no code snippets (`jwt.sign(..., {algorithm:'none'})`) in labels, same rule as finding titles (`prose-style.md`).
-6. **Dual anchor preserved.** The template emits both `#critical-attack-tree` (canonical) and `#critical-attack-chain` (legacy back-compat). External deep-links to the legacy anchor continue to resolve; cross-references inside the model should use the canonical anchor.
-
-The fragment is validated against `schemas/fragments/critical-attack-tree.schema.json` at compose time; a schema-invalid fragment falls back to the soft-skip path. The deterministic `renderers/walkthrough_renderer.py` does NOT author this fragment — the LLM judgement on which preconditions combine into which capability is required.
-
 ### `security-posture-attack-paths.json` authoring contract
 
 Renders as the Figure 2 attack-paths table in §1. **Author EXACTLY this schema** (`schemas/fragments/security-posture-attack-paths.schema.json`, `additionalProperties:false`). The composer schema-validates and **silently falls back to a deterministic CWE-derived table on ANY deviation**, so a single wrong enum value means everything you authored here (descriptions, finding links) is discarded — get the slugs exactly right:
@@ -304,7 +263,7 @@ sequenceDiagram
 
 ### Node-label derivation rule — MANDATORY
 
-Every T-NNN reference embedded in a Mermaid node label (e.g. a Critical Attack Tree `leaf` node) MUST share at least one content-keyword with that threat's `title` in `threat-model.yaml`, so the cross-reference is verifiable rather than invented.
+Every T-NNN reference embedded in a Mermaid node label MUST share at least one content-keyword with that threat's `title` in `threat-model.yaml`, so the cross-reference is verifiable rather than invented.
 
 ### §3 Attack Walkthroughs — out of your scope
 

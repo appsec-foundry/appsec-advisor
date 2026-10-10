@@ -1,19 +1,53 @@
 {
-  "root_goal": "Full database compromise from an unauthenticated position",
+  "root_goal": "3 Critical findings",
+  "critical_count": 3,
   "mermaid": {
     "orientation": "TD",
     "nodes": [
-      { "id": "GOAL", "label": "Full database compromise", "class": "goal" },
-      { "id": "ADMIN", "label": "Impersonate an admin session", "class": "or_node" },
-      { "id": "SQLI_SEARCH", "label": "T-001 SQL injection (product search)", "class": "leaf", "finding_ref": "T-001" },
-      { "id": "SQLI_LOGIN", "label": "T-002 SQL injection (login)", "class": "leaf", "finding_ref": "T-002" },
-      { "id": "RSA_KEY", "label": "T-003 Hardcoded RSA signing key", "class": "leaf", "finding_ref": "T-003" }
+      {
+        "id": "GOAL",
+        "label": "3 Critical findings",
+        "class": "goal"
+      },
+      {
+        "id": "UNLINKED",
+        "label": "No root cause linked",
+        "class": "unassigned"
+      },
+      {
+        "id": "T001",
+        "label": "T-001 SQL injection in product search",
+        "class": "leaf"
+      },
+      {
+        "id": "T002",
+        "label": "T-002 SQL injection in login",
+        "class": "leaf"
+      },
+      {
+        "id": "T003",
+        "label": "T-003 Hardcoded RSA private key",
+        "class": "leaf"
+      }
     ],
     "edges": [
-      { "from": "SQLI_SEARCH", "to": "ADMIN" },
-      { "from": "SQLI_LOGIN", "to": "ADMIN" },
-      { "from": "RSA_KEY", "to": "ADMIN" },
-      { "from": "ADMIN", "to": "GOAL" }
+      {
+        "from": "UNLINKED",
+        "to": "GOAL"
+      },
+      {
+        "from": "T001",
+        "to": "UNLINKED"
+      },
+      {
+        "from": "T002",
+        "to": "UNLINKED"
+      },
+      {
+        "from": "T003",
+        "to": "UNLINKED"
+      }
     ]
-  }
+  },
+  "fixes": []
 }

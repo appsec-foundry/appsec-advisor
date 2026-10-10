@@ -1,78 +1,84 @@
 {
-  "root_goal": "Full application compromise via chained Critical defects",
+  "root_goal": "4 Critical findings",
+  "critical_count": 4,
   "mermaid": {
     "orientation": "TD",
     "nodes": [
       {
         "id": "GOAL",
-        "label": "Full application compromise",
+        "label": "4 Critical findings",
         "class": "goal"
       },
       {
-        "id": "CAP_SPOOF",
-        "label": "Spoofing \u2014 identity & auth bypass",
-        "class": "or_node"
+        "id": "W001",
+        "label": "W-001 \u00b7 Database access relies on concatenated queries",
+        "class": "rootcause"
       },
       {
         "id": "T001",
         "label": "T-001 SQL Injection authentication bypass",
-        "class": "leaf"
-      },
-      {
-        "id": "CAP_TAMPER",
-        "label": "Tampering \u2014 injection & data manipulation",
-        "class": "or_node"
-      },
-      {
-        "id": "T002",
-        "label": "T-002 OS command injection",
-        "class": "leaf"
+        "class": "leaf",
+        "detail": "server.js"
       },
       {
         "id": "T003",
         "label": "T-003 SQL injection request data interpolated into a SQL string",
-        "class": "leaf"
+        "class": "leaf",
+        "detail": "server.js"
       },
       {
-        "id": "CAP_INFO",
-        "label": "Information Disclosure \u2014 secret & data exposure",
-        "class": "or_node"
+        "id": "UNLINKED",
+        "label": "No root cause linked",
+        "class": "unassigned"
+      },
+      {
+        "id": "T002",
+        "label": "T-002 OS command injection",
+        "class": "leaf",
+        "detail": "server.js"
       },
       {
         "id": "T004",
         "label": "T-004 Unauthenticated debug environment endpoint",
-        "class": "leaf"
+        "class": "leaf",
+        "detail": "server.js"
       }
     ],
     "edges": [
       {
-        "from": "GOAL",
-        "to": "CAP_SPOOF"
+        "from": "W001",
+        "to": "GOAL"
       },
       {
-        "from": "CAP_SPOOF",
-        "to": "T001"
+        "from": "T001",
+        "to": "W001"
       },
       {
-        "from": "GOAL",
-        "to": "CAP_TAMPER"
+        "from": "T003",
+        "to": "W001"
       },
       {
-        "from": "CAP_TAMPER",
-        "to": "T002"
+        "from": "UNLINKED",
+        "to": "GOAL"
       },
       {
-        "from": "CAP_TAMPER",
-        "to": "T003"
+        "from": "T002",
+        "to": "UNLINKED"
       },
       {
-        "from": "GOAL",
-        "to": "CAP_INFO"
-      },
-      {
-        "from": "CAP_INFO",
-        "to": "T004"
+        "from": "T004",
+        "to": "UNLINKED"
       }
     ]
-  }
+  },
+  "fixes": [
+    {
+      "weakness": "W-001",
+      "recommendation": "provide one parameterised repository or query-builder path and prohibit application-value interpolation in database queries",
+      "findings": [
+        "T-001",
+        "T-003"
+      ]
+    }
+  ]
 }

@@ -4423,16 +4423,15 @@ def test_qa_enrichment_keeps_open_question_refs_identical_to_console_refs(tmp_pa
     assert line in md.read_text(encoding="utf-8")
 
 
-def test_enrichment_skips_attack_tree_findings_pointer(tmp_path: Path):
-    """The Critical Attack Tree findings pointer lists bare `[F-NNN]` ids; neither
-    the dot retrofit nor the title-suffix pass may decorate them (the tree above
-    already carries id + title). Guards against the double-title bug where a
-    space-separated (non-em-dash) title triggered a second appended title."""
+def test_enrichment_skips_the_root_cause_fix_list(tmp_path: Path):
+    """The structural-fix list under Critical Findings by Root Cause lists bare
+    `[F-NNN]` ids; neither the dot retrofit nor the title-suffix pass may
+    decorate them (the graph above already carries id + title)."""
     md = _write_tw_pair(
         tmp_path,
-        "## Critical Attack Tree\n\n"
-        "**Findings** (full detail in [§8 Findings Register](#8-findings-register)): "
-        "[F-013](#f-013) · [F-014](#f-014)\n\n"
+        "## Critical Findings by Root Cause\n\n"
+        "- **[W-001](#w-001)** — Use one query path _(closes [F-013](#f-013), [F-014](#f-014))_\n"
+        "- **No root cause linked** — [F-013](#f-013): see the [§8 Findings Register](#8-findings-register)\n\n"
         "Normal prose ref to [F-013](#f-013) elsewhere.\n",
     )
     # Title-suffix pass.
@@ -4441,12 +4440,13 @@ def test_enrichment_skips_attack_tree_findings_pointer(tmp_path: Path):
     # Dot retrofit.
     qa._annotate_id_refs(md)
     out = md.read_text()
-    ptr = next(ln for ln in out.splitlines() if "**Findings** (full detail" in ln)
+    fixes = [ln for ln in out.splitlines() if ln.startswith("- **")]
     normal = next(ln for ln in out.splitlines() if "Normal prose" in ln)
-    # Pointer stays bare: no dot, no title, and (critically) no doubled title.
-    assert "🔴 [F-013]" not in ptr
-    assert "Anonymous Attacker" not in ptr
-    assert ptr.count("[F-013](#f-013)") == 1
+    assert len(fixes) == 2
+    for line in fixes:
+        assert "🔴 [F-013]" not in line
+        assert "Anonymous Attacker" not in line
+        assert line.count("[F-013](#f-013)") == 1
     # A normal ref elsewhere still gets its dot + title.
     assert "🔴 [F-013](#f-013) — Anonymous Attacker" in normal
 

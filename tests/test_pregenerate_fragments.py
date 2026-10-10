@@ -670,11 +670,82 @@ class TestCriticalAttackTree:
         for n in data["mermaid"]["nodes"]:
             assert re.match(r"^[A-Z][A-Z0-9_]*$", n["id"])
 
-    def test_capabilities_in_canonical_stride_order(self):
+    @staticmethod
+    def _with_weaknesses(*weaknesses):
+        model = json.loads(json.dumps(TestCriticalAttackTree._CRIT_YAML))
+        model["threats"][1]["evidence"] = [{"file": "routes/login.ts", "line": 34}]
+        model["weaknesses"] = [
+            {"id": wid, "title": title, "structural_recommendation": fix, "instances": [{"id": t} for t in ids]}
+            for wid, title, fix, ids in weaknesses
+        ]
+        return model
+
+    def test_groups_criticals_under_their_weakness_records(self):
+        model = self._with_weaknesses(
+            ("W-002", "Queries are concatenated", "use one parameterised query path", ["T-006", "T-020"]),
+            ("W-001", "Interpreters evaluate input", "replace evaluation with a parser", ["T-012"]),
+        )
+        data = json.loads(pf.gen_critical_attack_tree(model))
+        nodes = {n["id"]: n for n in data["mermaid"]["nodes"]}
+        edges = {(e["from"], e["to"]) for e in data["mermaid"]["edges"]}
+        assert nodes["GOAL"]["label"] == "3 Critical findings"
+        assert [n["id"] for n in data["mermaid"]["nodes"] if n["class"] == "rootcause"] == ["W001", "W002"]
+        assert nodes["W002"]["label"] == "W-002 · Queries are concatenated"
+        assert {("T006", "W002"), ("T012", "W001"), ("W001", "GOAL"), ("W002", "GOAL")} <= edges
+        assert nodes["T006"]["detail"] == "login.ts"
+        # The High T-020 in W-002 is no leaf; T-001 has no weakness and lands in the unlinked node.
+        assert "T020" not in nodes and ("T001", "UNLINKED") in edges
+        assert nodes["UNLINKED"]["class"] == "unassigned"
+        assert data["fixes"] == [
+            {"weakness": "W-001", "recommendation": "replace evaluation with a parser", "findings": ["T-012"]},
+            {"weakness": "W-002", "recommendation": "use one parameterised query path", "findings": ["T-006"]},
+        ]
+
+    def test_a_critical_under_two_weaknesses_is_one_leaf_with_two_links(self):
+        model = self._with_weaknesses(
+            ("W-003", "Sessions are not bound", "bind sessions", ["T-001", "T-006"]),
+            ("W-007", "Inputs are not validated", "validate at the boundary", ["T-006", "T-012"]),
+        )
+        data = json.loads(pf.gen_critical_attack_tree(model))
+        leaves = [n["id"] for n in data["mermaid"]["nodes"] if n["class"] == "leaf"]
+        assert sorted(leaves) == ["T001", "T006", "T012"]
+        edges = {(e["from"], e["to"]) for e in data["mermaid"]["edges"]}
+        assert {("T006", "W003"), ("T006", "W007")} <= edges
+        assert not any(n["class"] == "unassigned" for n in data["mermaid"]["nodes"])
+
+    def test_reads_t_id_and_skips_criticals_without_an_id(self):
+        model = {
+            "threats": [
+                {"t_id": "T-004", "title": "Command injection — run.go:9", "risk": "Critical"},
+                {"t_id": "T-009", "title": "Path traversal — files.go:3", "risk": "Critical"},
+                {"title": "Unnumbered — x.go:1", "risk": "Critical"},
+            ],
+            "weaknesses": [{"id": "W-002", "title": "Paths are joined from input", "instances": [{"t_id": "T-009"}]}],
+        }
+        data = json.loads(pf.gen_critical_attack_tree(model))
+        assert data["critical_count"] == 2
+        assert {n["id"] for n in data["mermaid"]["nodes"] if n["class"] == "leaf"} == {"T004", "T009"}
+        assert ("T009", "W002") in {(e["from"], e["to"]) for e in data["mermaid"]["edges"]}
+
+    def test_without_weakness_records_every_critical_is_unlinked(self):
         data = json.loads(pf.gen_critical_attack_tree(self._CRIT_YAML))
-        caps = [n["id"] for n in data["mermaid"]["nodes"] if n["class"] == "or_node"]
-        # Tampering before Information Disclosure before Elevation of Privilege.
-        assert caps == ["CAP_TAMPER", "CAP_INFO", "CAP_EOP"]
+        assert data["fixes"] == []
+        assert {e["from"] for e in data["mermaid"]["edges"] if e["to"] == "UNLINKED"} == {"T001", "T006", "T012"}
+
+    def test_many_criticals_stay_within_the_schema_caps(self):
+        import jsonschema
+
+        threats = [{"id": f"T-{i:03d}", "title": f"Finding {i} — a.py:{i}", "risk": "Critical"} for i in range(40)]
+        weaknesses = [
+            {"id": f"W-{w:03d}", "title": f"Weakness {w}", "instances": [{"id": f"T-{i:03d}"} for i in range(w, 40, 9)]}
+            for w in range(9)
+        ]
+        data = json.loads(pf.gen_critical_attack_tree({"threats": threats, "weaknesses": weaknesses}))
+        schema = json.loads((REPO_ROOT / "schemas" / "fragments" / "critical-attack-tree.schema.json").read_text())
+        jsonschema.validate(data, schema)
+        assert data["critical_count"] == 40
+        leaves = [n for n in data["mermaid"]["nodes"] if n["class"] == "leaf"]
+        assert 0 < len(leaves) < 40
 
 
 class TestVerdict:
@@ -4479,6 +4550,24 @@ def test_ranked_verdict_floor_matches_the_gate(tmp_path, offset, prefix):
     assert validate_fragment.verdict_floor_errors(tmp_path, verdict) == []
     cited = {ref for b in verdict["bullets"] for ref in b["refs"]}
     assert set(ids[-8:]) <= cited
+
+
+def test_root_cause_fragment_replaces_an_agent_written_copy_and_clears_a_stale_one(tmp_path):
+    """The fragment is model-owned: no --force is needed to replace an earlier copy."""
+    frag = tmp_path / ".fragments" / "ms-critical-attack-tree.json"
+    frag.parent.mkdir()
+    frag.write_text(json.dumps({"mermaid": {"orientation": "TD", "nodes": [], "edges": []}}))
+    model = {
+        "threats": [{"id": f"T-{i:03d}", "title": f"Finding {i} — a.rb:{i}", "risk": "Critical"} for i in (3, 8)],
+        "weaknesses": [{"id": "W-005", "title": "Uploads are trusted", "instances": [{"id": "T-008"}]}],
+    }
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(model))
+    assert pf.main([str(tmp_path), "--only", "ms-critical-attack-tree.json"]) == 0
+    assert json.loads(frag.read_text())["critical_count"] == 2
+    model["threats"][0]["risk"] = "High"
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(model))
+    assert pf.main([str(tmp_path), "--only", "ms-critical-attack-tree.json"]) == 0
+    assert not frag.exists()
 
 
 @pytest.mark.parametrize("wid,risk", [("W-031", "Critical"), ("W-204", "High")])

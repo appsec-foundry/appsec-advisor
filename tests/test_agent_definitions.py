@@ -444,10 +444,10 @@ def test_focused_renderer_line_slices_match_their_owned_contracts():
     ms = (AGENTS_DIR / "appsec-ms-renderer.md").read_text(encoding="utf-8")
     secarch = (AGENTS_DIR / "appsec-secarch-renderer.md").read_text(encoding="utf-8")
 
-    assert "lines 106–277" in ms
+    assert "lines 106–236" in ms
     assert renderer_lines[105].startswith("### MS prose")
-    assert renderer_lines[275].startswith("Finding severity does not determine compliance status")
-    assert renderer_lines[276] == ""
+    assert renderer_lines[234].startswith("Finding severity does not determine compliance status")
+    assert renderer_lines[235] == ""
     # The §6 contract lives in one shared file both renderers read; neither
     # carries a line window into the other's prompt any more.
     sec6 = (AGENTS_DIR / "shared" / "sec6-authoring.md").read_text(encoding="utf-8")
@@ -461,7 +461,7 @@ def test_focused_renderer_line_slices_match_their_owned_contracts():
     # The MS slice must actually carry the ms-verdict rules the MS renderer is
     # sent here for — an edit that lands one outside the bounds ships a rule no
     # agent ever reads (which is what the line numbers above are protecting).
-    ms_slice = "\n".join(renderer_lines[105:275])
+    ms_slice = "\n".join(renderer_lines[105:234])
     assert "`ms-verdict.json` authoring contract" in ms_slice
     assert "Assert no ranking or shared prerequisite" in ms_slice
     assert "Security concerns behind this assessment:" in ms_slice

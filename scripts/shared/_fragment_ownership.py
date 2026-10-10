@@ -24,7 +24,7 @@ FORCE_REGENERATED_FRAGMENTS: tuple[str, ...] = (
 )
 
 # Model-free fragments the generator rebuilds from the yaml without `--force`.
-_SELF_REBUILT_FRAGMENTS: tuple[str, ...] = ("ms-ai-exposure.json",)
+_SELF_REBUILT_FRAGMENTS: tuple[str, ...] = ("ms-ai-exposure.json", "ms-critical-attack-tree.json")
 
 RECOMPOSE_REGENERATED_FRAGMENTS = frozenset(FORCE_REGENERATED_FRAGMENTS + _SELF_REBUILT_FRAGMENTS)
 

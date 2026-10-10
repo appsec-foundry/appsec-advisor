@@ -502,20 +502,6 @@ class TestBuildAttackTreeBlocks:
         assert "F-001" in blocks[0]["src"]
 
 
-class TestDeriveAttackTreeFindings:
-    def test_leaf_pointers(self):
-        data = {
-            "mermaid": {
-                "nodes": [
-                    {"id": "G", "label": "Goal", "class": "goal"},
-                    {"id": "L1", "label": "T-001 — SQLi", "class": "leaf"},
-                ]
-            }
-        }
-        out = compose._derive_attack_tree_findings(data)
-        assert any(e.get("id", "").startswith("F-001") or "001" in str(e) for e in out)
-
-
 class TestStripFindingLocation:
     def test_strips_tail(self):
         out = compose._strip_finding_location("SQL Injection routes/login.ts:18")

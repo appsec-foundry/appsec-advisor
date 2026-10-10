@@ -128,7 +128,7 @@ coverage, and labels are generator/gate responsibilities.
 The Section 3 Branch labelling check expects `alt Current state — T-` and
 `else After M-`; report a semantic mismatch only when the branch content
 contradicts those labels. The deterministic renderer owns the labels and the
-Critical Attack Tree `Findings pointer`.
+Critical Findings by Root Cause section.
 
 #### Section 2.4 per-theme diagram check
 

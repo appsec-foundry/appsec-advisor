@@ -1,6 +1,6 @@
 ## 3. Attack Walkthroughs
 
-This section walks through how the highest-risk findings are exploited — one short walkthrough per Critical, each with attack steps, a focused sequence diagram, and the primary mitigation. How weaknesses combine toward the worst-case goal is in the [Critical Attack Tree](#critical-attack-tree); full per-finding context (severity rationale, assets, detection signals) is in the [§8 Findings Register](#8-findings-register).
+This section walks through how the highest-risk findings are exploited — one short walkthrough per Critical, each with attack steps, a focused sequence diagram, and the primary mitigation. Which root cause each Critical traces back to is in [Critical Findings by Root Cause](#critical-findings-by-root-cause); full per-finding context (severity rationale, assets, detection signals) is in the [§8 Findings Register](#8-findings-register).
 
 ### 3.1 SQL injection request data interpolated into a SQL string in Express Web API
 

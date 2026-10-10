@@ -158,7 +158,7 @@ def test_every_link_target_resolves(tmp_path: Path) -> None:
             # Conditional section (>=2 Critical): soft-skipped when its
             # ms-critical-attack-tree.json fragment is absent, so the TOC /
             # walkthrough refs to it dangle — same tolerated correctness gap.
-            "critical-attack-tree",
+            "critical-findings-by-root-cause",
         }
     )
     assert not missing, "Dangling Markdown link targets (no matching <a id> or heading slug):\n  " + "\n  ".join(
@@ -272,12 +272,12 @@ def test_toc_anchors_all_resolve(tmp_path: Path) -> None:
     toc_anchors = [m.group(1) for m in re.finditer(r"\]\(#([^)]+)\)", toc_body)]
     declared = _anchors_declared(rendered)
     unresolved = [a for a in toc_anchors if a not in declared]
-    # Conditional §8.C and §8.D — and the >=2-Critical Critical Attack Tree —
-    # may legitimately be missing from a minimal fixture (no fragment authored).
+    # Conditional §8.C and §8.D — and the >=2-Critical root-cause section —
+    # may legitimately be missing from a minimal fixture (no fragment generated).
     unresolved = [
         a
         for a in unresolved
-        if a not in {"8c-compound-attack-chains", "8d-architectural-findings", "critical-attack-tree"}
+        if a not in {"8c-compound-attack-chains", "8d-architectural-findings", "critical-findings-by-root-cause"}
     ]
     assert not unresolved, f"TOC points to anchors that don't exist in the body: {unresolved}"
 

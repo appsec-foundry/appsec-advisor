@@ -602,11 +602,14 @@ def test_ms_structure_flags_a_missing_or_misplaced_selected_question_block(tmp_p
 
 
 def test_ms_structure_critical_attack_tree_required(tmp_path: Path):
-    # 2 criticals via risk distribution, no Critical Attack Tree section.
+    # 2 criticals via risk distribution, no Critical Findings by Root Cause section.
     src = "**Risk Distribution:** Critical: 2 · High: 1 · Medium: 0 · Low: 0 · **Total: 3**\n\n" + _GOOD_MS
     md = _md(tmp_path, src)
     report, _ = qa.check_ms_structure(md)
-    assert any("Critical Attack Tree" in i for i in report.issues)
+    assert any("Critical Findings by Root Cause" in i for i in report.issues)
+    present = _md(tmp_path, src + "\n## Critical Findings by Root Cause\n\nBody.\n")
+    report, _ = qa.check_ms_structure(present)
+    assert not any("Critical Findings by Root Cause" in i for i in report.issues)
 
 
 def test_ms_structure_skip_walkthroughs_suppresses_tree(tmp_path: Path):
@@ -614,7 +617,7 @@ def test_ms_structure_skip_walkthroughs_suppresses_tree(tmp_path: Path):
     md = _md(tmp_path, src)
     (tmp_path / ".skill-config.json").write_text('{"SKIP_ATTACK_WALKTHROUGHS": true}', encoding="utf-8")
     report, _ = qa.check_ms_structure(md)
-    assert not any("Critical Attack Tree" in i for i in report.issues)
+    assert not any("Critical Findings by Root Cause" in i for i in report.issues)
 
 
 # ---------------------------------------------------------------------------

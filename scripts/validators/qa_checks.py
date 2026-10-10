@@ -1317,7 +1317,7 @@ _VERDICT_BLOCKQUOTE_RE = re.compile(
     re.IGNORECASE,
 )
 # Matches the canonical unnumbered promoted block above §1.
-_CRITICAL_CHAIN_RE = re.compile(r"^##\s+Critical Attack Tree\s*$", re.MULTILINE)
+_CRITICAL_CHAIN_RE = re.compile(r"^##\s+Critical Findings by Root Cause\s*$", re.MULTILINE)
 
 
 def _slice_management_summary(text: str) -> tuple[int, int, str] | None:
@@ -1356,7 +1356,7 @@ def check_ms_structure(md_path: Path) -> tuple[Report, str]:
     Flagged but NOT auto-rewritten (too destructive — require a full rerun):
         * Missing required sub-sections from the canonical set.
         * Missing red HTML blockquote inside the Verdict section.
-        * Missing `## Critical Attack Tree` section after MS when ≥2 Criticals.
+        * Missing `## Critical Findings by Root Cause` section after MS when ≥2 Criticals.
     """
     report = Report("ms_structure")
     original = md_path.read_text(encoding="utf-8")
@@ -1402,6 +1402,7 @@ def check_ms_structure(md_path: Path) -> tuple[Report, str]:
         "Risk Distribution": None,  # forbidden — strip entire heading
         "STRIDE Coverage": None,  # forbidden — strip entire heading
         "Critical Attack Tree": None,  # must be ## (promoted), not ### inside MS
+        "Critical Findings by Root Cause": None,  # must be ## (promoted), not ### inside MS
         "Overall Security Rating": None,  # Verdict already carries the rating
         "Executive Overview": "Verdict",  # narrative-only → rename, body usually works as Verdict prose
     }
@@ -1529,10 +1530,9 @@ def check_ms_structure(md_path: Path) -> tuple[Report, str]:
                 'style="border-left: 3px solid #dc2626; …"> worst-case-scenarios block'
             )
 
-    # --- Check 4: Critical Attack Tree is present.
-    # The cross-finding/strategic view is the standalone `## Critical Attack
-    # Tree` block between the Management Summary and §1. The §3.1 Attack
-    # Chain Overview was retired. Skipped when .skill-config.json sets
+    # --- Check 4: Critical Findings by Root Cause is present.
+    # The cross-finding view is the standalone `## Critical Findings by Root
+    # Cause` block between the Management Summary and §1. Skipped when .skill-config.json sets
     # SKIP_ATTACK_WALKTHROUGHS=true — a skip-notice stub is intentional then.
     rd = RISK_DIST_RE.search(text)
     critical_count = _rd_count(rd, 1)
@@ -1549,8 +1549,8 @@ def check_ms_structure(md_path: Path) -> tuple[Report, str]:
     has_chain = bool(_CRITICAL_CHAIN_RE.search(text))
     if critical_count >= 2 and not has_chain and not _skip_walkthroughs:
         report.issues.append(
-            "Critical Attack Tree missing — required when Critical count ≥ 2. "
-            "Expected the `## Critical Attack Tree` section between the "
+            "Critical Findings by Root Cause missing — required when Critical count ≥ 2. "
+            "Expected the `## Critical Findings by Root Cause` section between the "
             "Management Summary and §1."
         )
 
@@ -8907,7 +8907,7 @@ def check_attack_tree_node_id_leak(md_path: Path) -> Report:
     report = Report("attack_tree_node_id_leak")
     text = _read_md(md_path)
 
-    m = re.search(r"^##\s+Critical Attack (?:Tree|Chain)\b.*$", text, re.MULTILINE)
+    m = re.search(r"^##\s+Critical (?:Attack (?:Tree|Chain)|Findings by Root Cause)\b.*$", text, re.MULTILINE)
     if not m:
         report.ok = 1
         return report

@@ -1,6 +1,6 @@
 ## 3. Attack Walkthroughs
 
-This section walks through how each Critical finding would be exploited. The cross-finding view is the [Critical Attack Tree](#critical-attack-tree) above §1.
+This section walks through how each Critical finding would be exploited. The cross-finding view is [Critical Findings by Root Cause](#critical-findings-by-root-cause) above §1.
 
 ### 3.1 SQL Injection in Product Search
 

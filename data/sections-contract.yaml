@@ -59,16 +59,11 @@ document:
     - { id: quick_mode_notice, condition: "is_quick_depth" }
     - toc
     - management_summary
-    # Item 3 (2026-05-28): activate the previously dormant Critical
-    # Attack Tree fragment producer. The unnumbered `## Critical Attack
-    # Tree` section sits between the Management Summary and §1 and
-    # carries one `graph TD` goal-decomposition Mermaid tree for the
-    # Critical findings. Producer = Phase 11 substep 4 (LLM-authored
-    # fragment `.fragments/ms-critical-attack-tree.json`). The renderer
-    # path (`_render_critical_attack_tree`), schema, and template all
-    # exist; this entry wires them into the document order. The section
-    # is gated on `critical_count >= 2` so a single-Critical assessment
-    # does not render a degenerate one-node tree.
+    # The unnumbered `## Critical Findings by Root Cause` section sits
+    # between the Management Summary and §1. It links each Critical
+    # finding to the weakness records that explain it; the producer is
+    # renderers/pregenerate_fragments.py (`ms-critical-attack-tree.json`).
+    # The section is gated on `critical_count >= 2`.
     - { id: critical_attack_tree, condition: "has_multi_critical" }
     - system_overview
     - { id: identified_actors, condition: "has_resolved_actors" }
@@ -147,7 +142,7 @@ document:
         - { id: quick_mode_notice, condition: "is_quick_depth" }
         - toc
         - management_summary
-        # Item 3 — activated dormant Critical Attack Tree fragment producer.
+        # Critical Findings by Root Cause — see the main `order:` block.
         - { id: critical_attack_tree, condition: "has_multi_critical" }
         - system_overview
         - { id: identified_actors, condition: "has_resolved_actors" }
@@ -409,20 +404,19 @@ sections:
     fragment_type: computed
     conditional: "has_weakness_register"
 
-  # -- Critical Attack Tree (post-MS, unnumbered) --------------------------
-  # Item 3 (2026-05-28): activated dormant section. The renderer
-  # function `_render_critical_attack_tree`, schema, and Jinja template
-  # all existed before — only the wiring was missing.
+  # -- Critical Findings by Root Cause (post-MS, unnumbered) ---------------
+  # The template also keeps the earlier anchors `critical-attack-tree` and
+  # `critical-attack-chain` for external deep-links.
   critical_attack_tree:
-    heading: "## Critical Attack Tree"
+    heading: "## Critical Findings by Root Cause"
     heading_numbered: false
-    anchor: "critical-attack-tree"
+    anchor: "critical-findings-by-root-cause"
     fragment_type: data
     fragment: "ms-critical-attack-tree.json"
     schema:   "critical-attack-tree.schema.json"
     template: "critical-attack-tree.md.j2"
-    # Skipped when there are 0 or 1 Critical findings — a single-node
-    # decomposition tree adds noise without insight. The condition
+    # Skipped when there are 0 or 1 Critical findings — one finding has
+    # nothing to group. The condition
     # grammar only supports bare names, so the >=2 check is computed
     # in renderers/compose_threat_model.py and exposed as `has_multi_critical`.
     conditional: "has_multi_critical"
@@ -870,7 +864,7 @@ sections:
     #
     # The retired §3.1 "Attack Chain Overview" cross-finding view (graph LR
     # kill-chains) has been removed — the cross-finding/strategic picture now
-    # lives solely in the `## Critical Attack Tree` section above §1, so the
+    # lives solely in the `## Critical Findings by Root Cause` section above §1, so the
     # plugin no longer narrates attack paths in two competing places.
     #
     # No specific sub-section is mandated by title here; the per-Critical

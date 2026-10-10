@@ -2395,7 +2395,7 @@ def test_attack_tree_renders_single_lr_block() -> None:
     assert len(blocks) == 1
     assert blocks[0]["title"] is None
     src = blocks[0]["src"]
-    assert src.startswith("graph LR")
+    assert src.splitlines()[:2] == [compose._ATTACK_TREE_INIT, "graph LR"]
     assert "classDef goal" in src
     # Trimmed palette — the unused classes are gone.
     assert "classDef attacker" not in src and "classDef crit" not in src
@@ -2411,7 +2411,7 @@ def test_attack_tree_wide_still_single_block() -> None:
     blocks = compose._build_attack_tree_blocks(_attack_tree_data(8))
     assert len(blocks) == 1
     src = blocks[0]["src"]
-    assert src.startswith("graph LR")
+    assert src.splitlines()[:2] == [compose._ATTACK_TREE_INIT, "graph LR"]
     assert "graph TD" not in src
     assert "OR_A" in src and "OR_B" in src
     assert all(f"L_T{i:03d}" in src for i in range(8))
@@ -2571,36 +2571,104 @@ def test_curate_top_mitigations_drops_unknown_and_floor_dupes() -> None:
     assert [m["id"] for m in out] == ["M-001", "M-007", "M-006"]
 
 
-def test_attack_tree_findings_pointer_from_leaves() -> None:
-    """The compact findings pointer is derived deterministically from the tree's
-    leaf nodes in declaration order: each leaf's id + title (label minus the id
-    prefix) + lowercased §8 anchor, deduped, no mitigations."""
-    data = _attack_tree_data(4)  # leaves L_T000..L_T003, labels "T-000 finding" ...
-    findings = compose._derive_attack_tree_findings(data)
-    # Visible ids normalise T-NNN → F-NNN (the §8 register's canonical id).
-    assert [f["id"] for f in findings] == ["F-000", "F-001", "F-002", "F-003"]
-    assert findings[0] == {"id": "F-000", "title": "finding", "anchor": "#f-000"}
-    # No mitigation data leaks into the pointer.
-    assert all("mitigation" not in f and "mitigations" not in f for f in findings)
+def _root_cause_tree(unlinked: bool) -> dict:
+    """Two root causes over three Criticals, optionally one Critical without a weakness."""
+    nodes = [
+        {"id": "GOAL", "label": "4 Critical findings", "class": "goal"},
+        {"id": "W001", "label": "W-001 · Queries are concatenated", "class": "rootcause"},
+        {"id": "T011", "label": "T-011 SQL injection in report export", "class": "leaf", "detail": "export.py"},
+        {"id": "T012", "label": "T-012 SQL injection in search", "class": "leaf"},
+        {"id": "W004", "label": "W-004 · Code is built from input", "class": "rootcause"},
+        {"id": "T013", "label": "T-013 Template injection", "class": "leaf"},
+    ]
+    edges = [
+        {"from": "W001", "to": "GOAL"},
+        {"from": "T011", "to": "W001"},
+        {"from": "T012", "to": "W001"},
+        {"from": "W004", "to": "GOAL"},
+        {"from": "T013", "to": "W004"},
+    ]
+    if unlinked:
+        nodes += [
+            {"id": "UNLINKED", "label": "No root cause linked", "class": "unassigned"},
+            {"id": "T014", "label": "T-014 Admin route without login", "class": "leaf"},
+        ]
+        edges += [{"from": "UNLINKED", "to": "GOAL"}, {"from": "T014", "to": "UNLINKED"}]
+    fixes = [
+        {"weakness": "W-001", "recommendation": "use one parameterised query path.", "findings": ["T-011", "T-012"]},
+        {"weakness": "W-004", "recommendation": "render templates from data only", "findings": ["T-013"]},
+    ]
+    return {"mermaid": {"orientation": "TD", "nodes": nodes, "edges": edges}, "fixes": fixes}
 
 
-def test_attack_tree_findings_pointer_dedups_and_skips_non_leaves() -> None:
-    """Capability/goal nodes are excluded; a repeated finding id appears once."""
-    data = {
+def test_root_cause_overview_counts_causes_fixes_and_unlinked_findings() -> None:
+    overview = compose._root_cause_overview(_root_cause_tree(unlinked=True))
+    assert overview["summary"] == (
+        "3 of 4 Critical findings trace back to 2 root causes; fixing a root cause addresses every "
+        "finding linked to it. 1 has no root cause linked yet."
+    )
+    assert overview["fixes"][0] == {
+        "weakness": "W-001",
+        "anchor": "#w-001",
+        "recommendation": "Use one parameterised query path",
+        "findings": ["F-011", "F-012"],
+    }
+    assert overview["unlinked"] == ["F-014"]
+
+
+def test_root_cause_overview_without_unlinked_findings_or_weaknesses() -> None:
+    linked = compose._root_cause_overview(_root_cause_tree(unlinked=False))
+    assert linked["summary"].startswith("3 of 3 Critical findings trace back to 2 root causes;")
+    assert "no root cause linked" not in linked["summary"] and linked["unlinked"] == []
+    bare = {
         "mermaid": {
             "nodes": [
-                {"id": "G", "label": "Goal", "class": "goal"},
-                {"id": "OR_A", "label": "Cap", "class": "or_node"},
-                {"id": "L1", "label": "T-005 SQLi login bypass", "class": "leaf"},
-                {"id": "L2", "label": "T-005 dup", "class": "leaf"},
-                {"id": "L3", "label": "T-009 RCE via eval", "class": "leaf", "finding_ref": "T-009"},
+                {"id": "GOAL", "label": "2 Critical findings", "class": "goal"},
+                {"id": "UNLINKED", "label": "No root cause linked", "class": "unassigned"},
+                {"id": "T001", "label": "T-001 A", "class": "leaf"},
+                {"id": "T002", "label": "T-002 B", "class": "leaf"},
             ],
-            "edges": [],
+            "edges": [
+                {"from": "UNLINKED", "to": "GOAL"},
+                {"from": "T001", "to": "UNLINKED"},
+                {"from": "T002", "to": "UNLINKED"},
+            ],
         }
     }
-    findings = compose._derive_attack_tree_findings(data)
-    assert [f["id"] for f in findings] == ["F-005", "F-009"]
-    assert findings[0]["title"] == "SQLi login bypass"
+    overview = compose._root_cause_overview(bare)
+    assert overview["summary"] == (
+        "No weakness record links the 2 Critical findings to a root cause yet. "
+        "See the [§8 Findings Register](#8-findings-register)."
+    )
+    assert overview["fixes"] == [] and overview["unlinked"] == ["F-001", "F-002"]
+
+
+def test_root_cause_overview_names_criticals_left_out_by_the_node_cap() -> None:
+    data = _root_cause_tree(unlinked=False) | {"critical_count": 9}
+    assert compose._root_cause_overview(data)["summary"] == (
+        "3 of 9 Critical findings trace back to 2 root causes; fixing a root cause addresses every finding "
+        "linked to it. 6 more are listed only in the [§8 Findings Register](#8-findings-register)."
+    )
+
+
+def test_root_cause_tree_draws_attribution_without_and_or_labels() -> None:
+    src = compose._build_attack_tree_blocks(_root_cause_tree(unlinked=True))[0]["src"]
+    assert '    W001["W-001<br/>Queries are concatenated"]:::rootcause' in src
+    assert '    T011["F-011 — SQL injection in report export<br/>export.py"]:::leaf' in src
+    assert "    T011 --> W001" in src and "    W001 --> GOAL" in src and "    T014 --> UNLINKED" in src
+    assert '|"OR"|' not in src and '|"AND"|' not in src
+    assert "classDef rootcause" in src and "classDef unassigned" in src
+
+
+def test_root_cause_leaf_title_is_cut_at_a_word_boundary() -> None:
+    label = compose._attack_tree_node_label(
+        {
+            "label": "T-009 Sensitive Routes Registered Without Authentication Middleware",
+            "class": "leaf",
+            "detail": "a.ts",
+        }
+    )
+    assert label == "F-009 — Sensitive Routes Registered Without Authentication…<br/>a.ts"
 
 
 def test_is_bare_finding_ref_line() -> None:
@@ -2617,12 +2685,14 @@ def test_is_bare_finding_ref_line() -> None:
     assert f("- Unverified evidence: confirm or rule it out before scheduling the fix. ([F-014](#f-014))")
     # A question whose own text ends in a parenthetical is not a reference tail.
     assert not f("- Which policy should own authorization (per route or per service)?")
-    # Critical Attack Tree findings pointer.
-    assert f("**Findings** (full detail in [§8 Findings Register](#8-findings-register)): [F-001](#f-001)")
+    # Structural-fix list under Critical Findings by Root Cause.
+    assert f("- **[W-002](#w-002)** — Use one query path _(closes [F-003](#f-003), [F-004](#f-004))_")
+    assert f("- **No root cause linked** — [F-009](#f-009): see the [§8 Findings Register](#8-findings-register)")
     # Normal contexts keep their enrichment.
+    assert not f("- **[W-002](#w-002)** — Queries are concatenated. Proven by [F-003](#f-003).")
     assert not f("🔴 [F-005](#f-005) — OS Command Injection in a Verdict bullet")
     assert not f("| 🔴 [F-001](#f-001) — Insecure JWT | C-02 |")
-    # A §8 reference that is NOT the pointer line (no finding list) stays enriched.
+    assert not f("**Findings** (full detail in [§8 Findings Register](#8-findings-register)): [F-001](#f-001)")
     assert not f("See the [§8 Findings Register](#8-findings-register) for detail.")
 
 

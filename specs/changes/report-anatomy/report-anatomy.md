@@ -10,7 +10,7 @@ A report has these chapters, in this order. Chapters in *italics* appear only un
 
 1. Front matter: info box, *Changelog*, *quick-mode notice*, Table of Contents
 2. Management Summary
-3. *Critical Attack Tree*
+3. *Critical Findings by Root Cause*
 4. §1 System Overview
 5. §2 Architecture Diagrams
 6. *§3 Attack Walkthroughs*
@@ -60,11 +60,11 @@ Covers the overall verdict, the systemic weaknesses, the most important threats,
   - `### Operational Strengths` — always, closing with a **Bottom line**.
     - Table: `| Strength | What's in Place | Effectiveness |`
 
-## Critical Attack Tree
+## Critical Findings by Root Cause
 
-Covers how the Critical findings combine toward the attacker's goal.
+Covers which weakness each Critical finding traces back to and which structural fix closes it.
 
-- `## Critical Attack Tree` — only when there are at least two Critical findings. One goal-decomposition diagram.
+- `## Critical Findings by Root Cause` — only when there are at least two Critical findings. One diagram linking each Critical finding to its weakness records, with Critical findings that have none in a separate node, followed by the list of **Structural fixes**.
 
 ## §1 System Overview
 

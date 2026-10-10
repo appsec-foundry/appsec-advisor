@@ -10268,11 +10268,18 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
 # the impact-node navy (#0f172a); intermediate AND/OR capability nodes use two
 # slate shades (darker = AND/all-required, lighter = OR/alternatives) instead of
 # the off-palette purple/blue; leaf (threat) nodes keep the attacker red.
+# Tight spacing keeps one row per leaf readable without stretching the graph.
+_ATTACK_TREE_INIT = (
+    '%%{init: {"flowchart": {"nodeSpacing": 14, "rankSpacing": 50, "padding": 8, "wrappingWidth": 260}}}%%'
+)
+
 _ATTACK_TREE_CLASSDEFS = (
     "    classDef goal fill:#0f172a,stroke:#000,color:#fff,stroke-width:3px\n"
     "    classDef and_node fill:#334155,stroke:#1e293b,color:#fff,stroke-width:2px\n"
     "    classDef or_node fill:#64748b,stroke:#334155,color:#fff,stroke-width:2px\n"
-    "    classDef leaf fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px"
+    "    classDef leaf fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px\n"
+    "    classDef rootcause fill:#334155,stroke:#1e293b,color:#fff,stroke-width:2px\n"
+    "    classDef unassigned fill:#f8fafc,stroke:#94a3b8,color:#334155,stroke-dasharray:4 3"
 )
 
 
@@ -10292,15 +10299,16 @@ def _normalize_tid_to_fid(ref: str) -> str:
 
 
 def _attack_tree_node_label(node: dict[str, Any]) -> str:
-    """Display label for a tree node. Leaf nodes show their finding id PLUS a
-    short title (`F-NNN — <title>`) so the diagram is self-describing instead
-    of a wall of bare IDs (2026-05-30 user request); the full title still lives
-    in the Branch table below. The title is truncated so leaf boxes stay
-    readable rather than ballooning. Goal/capability nodes keep their label.
+    """Display label for a tree node: a leaf shows ``F-NNN — <short title>`` and
+    its optional file line, a root cause its weakness id above its title, and
+    every other node its label.
 
     The leaf id is normalised T-NNN → F-NNN (see `_normalize_tid_to_fid`) so
     the box matches the F-NNN ids used everywhere else in the document."""
-    label = node.get("label", node.get("id", ""))
+    label = node.get("label", node.get("id", "")).replace('"', "'")
+    if node.get("class") == "rootcause":
+        ref, sep, title = label.partition(" · ")
+        return f"{ref}<br/>{title}" if sep else label
     if node.get("class") == "leaf":
         m = re.search(r"[FT]-\d{3,}", label)
         if m:
@@ -10309,13 +10317,13 @@ def _attack_tree_node_label(node: dict[str, Any]) -> str:
             title = (label[: m.start()] + label[m.end() :]).strip(" -—:·\t")
             if not title:
                 return tid
-            _MAX = 32
-            if len(title) > _MAX:
-                title = title[: _MAX - 1].rstrip() + "…"
-            # Leaf labels are emitted inside mermaid ["..."]; a literal double
-            # quote would break the node declaration.
-            title = title.replace('"', "'")
-            return f"{tid} — {title}"
+            # Root-cause leaves carry a file line and wrap; legacy leaves stay one short line.
+            limit = 60 if node.get("detail") else 32
+            if len(title) > limit:
+                cut = title[: limit - 1]
+                title = (cut.rsplit(" ", 1)[0] if " " in cut else cut).rstrip(" ,;:-") + "…"
+            detail = str(node.get("detail") or "").replace('"', "'")
+            return f"{tid} — {title}" + (f"<br/>{detail}" if detail else "")
     return label
 
 
@@ -10334,6 +10342,9 @@ def _attack_tree_edge_line(edge: dict[str, Any], nodes_by_id: dict[str, dict[str
     the authored `label`/`refinement` only for unclassed destinations)."""
     src, dst = edge.get("from"), edge.get("to")
     dst_class = (nodes_by_id.get(dst) or {}).get("class")
+    if {dst_class, (nodes_by_id.get(src) or {}).get("class")} & {"rootcause", "unassigned"}:
+        # Root-cause grouping is attribution, not AND/OR logic.
+        return f"    {src} --> {dst}"
     label = _ATTACK_TREE_EDGE_LABEL_BY_DST_CLASS.get(dst_class) or edge.get("label") or edge.get("refinement")
     if label:
         return f'    {src} -->|"{label}"| {dst}'
@@ -10349,7 +10360,7 @@ def _attack_tree_block(
     """Build a complete mermaid `graph` source (header + nodes + edges +
     classDefs) for the given node subset, preserving the fragment's node
     declaration order for stability."""
-    lines = [f"graph {orientation}"]
+    lines = [_ATTACK_TREE_INIT, f"graph {orientation}"]
     for nid in node_ids:
         n = nodes_by_id.get(nid)
         if not n:
@@ -10386,30 +10397,51 @@ def _build_attack_tree_blocks(data: dict[str, Any]) -> list[dict[str, str]]:
     return [{"title": None, "src": _attack_tree_block("LR", order, edges, nodes_by_id)}]
 
 
-def _derive_attack_tree_findings(data: dict[str, Any]) -> list[dict[str, str]]:
-    """Ordered leaf-finding pointer for the compact line under the tree.
+def _root_cause_overview(data: dict[str, Any]) -> dict[str, Any]:
+    """Opening sentence, structural fixes and unlinked findings of the section."""
+    mermaid = data.get("mermaid") or {}
+    nodes = {n.get("id"): n for n in mermaid.get("nodes") or [] if n.get("id")}
 
-    The diagram shows only short `T-NNN` leaf boxes, so this tells the reader
-    what each id is and links it to its §8 Findings Register row. One entry per
-    leaf in tree-declaration order: ``{"id": "T-001", "title": "SQL injection
-    login bypass", "anchor": "#t-001"}``. Title is the leaf label with its id
-    prefix stripped; mitigations are intentionally NOT surfaced here (they live
-    in §9) — this section only points at the findings.
-    """
-    out: list[dict[str, str]] = []
-    seen: set[str] = set()
-    for n in (data.get("mermaid") or {}).get("nodes") or []:
-        if n.get("class") != "leaf":
-            continue
-        label = n.get("label", "")
-        m = re.search(r"[FT]-\d{3,4}", label)
-        fid = _normalize_tid_to_fid((m.group(0) if m else (n.get("finding_ref") or "")).strip())
-        if not fid or fid in seen:
-            continue
-        seen.add(fid)
-        title = (label[: m.start()] + label[m.end() :]).strip(" -—:·") if m else label.strip()
-        out.append({"id": fid, "title": title, "anchor": "#" + fid.lower()})
-    return out
+    def _fid(node: dict[str, Any]) -> str:
+        m = re.search(r"[FT]-\d{3,4}", node.get("label", "")) or re.search(r"[FT]-\d{3,4}", node.get("finding_ref", ""))
+        return _normalize_tid_to_fid(m.group(0)) if m else ""
+
+    leaves = [_fid(n) for n in nodes.values() if n.get("class") == "leaf"]
+    leaves = [f for f in leaves if f]
+    causes = [n for n in nodes.values() if n.get("class") == "rootcause"]
+    unlinked = [
+        _fid(nodes[e.get("from")])
+        for e in mermaid.get("edges") or []
+        if (nodes.get(e.get("to")) or {}).get("class") == "unassigned" and nodes.get(e.get("from"))
+    ]
+    unlinked = [f for f in unlinked if f]
+    total = max(int(data.get("critical_count") or 0), len(leaves))
+    if causes:
+        summary = (
+            f"{len(leaves) - len(unlinked)} of {pluralize(total, 'Critical finding')} trace back to "
+            f"{pluralize(len(causes), 'root cause')}; fixing a root cause addresses every finding linked to it."
+        )
+        if unlinked:
+            summary += f" {len(unlinked)} {'has' if len(unlinked) == 1 else 'have'} no root cause linked yet."
+    else:
+        summary = f"No weakness record links the {pluralize(total, 'Critical finding')} to a root cause yet."
+    if total > len(leaves):
+        summary += (
+            f" {total - len(leaves)} more {'is' if total - len(leaves) == 1 else 'are'} listed only in the "
+            "[§8 Findings Register](#8-findings-register)."
+        )
+    elif not causes:
+        summary += " See the [§8 Findings Register](#8-findings-register)."
+    fixes = [
+        {
+            "weakness": fix["weakness"],
+            "anchor": "#" + fix["weakness"].lower(),
+            "recommendation": fix["recommendation"][:1].upper() + fix["recommendation"][1:].rstrip("."),
+            "findings": [_normalize_tid_to_fid(f) for f in fix["findings"]],
+        }
+        for fix in data.get("fixes") or []
+    ]
+    return {"summary": summary, "fixes": fixes, "unlinked": unlinked}
 
 
 def _render_critical_attack_tree(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
@@ -10436,14 +10468,8 @@ def _render_critical_attack_tree(ctx: RenderContext, env: jinja2.Environment, se
         return ""
     _validate_fragment("critical_attack_tree", data, section["schema"])
     blocks = _build_attack_tree_blocks(data)
-    findings = _derive_attack_tree_findings(data)
-    # Leading severity dot per finding so the compact pointer line under the
-    # tree is annotated like every other linked-findings context (§2/§8).
-    for f in findings:
-        emoji = ctx.severity_emoji(ctx.severity_for_ref(f.get("id", "")))
-        f["dot"] = f"{emoji} " if emoji else ""
     tpl = env.get_template(section["template"])
-    return tpl.render(data=data, blocks=blocks, findings=findings).rstrip() + "\n"
+    return tpl.render(blocks=blocks, **_root_cause_overview(data)).rstrip() + "\n"
 
 
 def _subsection_drift_hint(md: str, section: dict, level: int) -> str:
@@ -10760,9 +10786,9 @@ _ATTACK_WALKTHROUGHS_DEFAULT_INTRO = (
     "This section reconstructs how each Critical finding would actually play "
     "out as an attack — one short walkthrough per finding, with attack steps "
     "and a sequence diagram contrasting current behaviour with the "
-    "post-mitigation state. The cross-finding view (which weaknesses combine "
-    "toward the worst-case goal, and where one fix severs several paths) is "
-    "in the [Critical Attack Tree](#critical-attack-tree) above §1. Medium- "
+    "post-mitigation state. The cross-finding view (which root cause each "
+    "Critical traces back to, and which structural fix closes it) is in "
+    "[Critical Findings by Root Cause](#critical-findings-by-root-cause) above §1. Medium- "
     "and Low-severity findings are not walked through here — they are "
     "documented in [§8 Findings Register](#8-findings-register)."
 )
@@ -13272,6 +13298,12 @@ def _apply_outside_changelog(md: str, fn) -> str:
     return fn(md[:start]) + md[start:end] + fn(md[end:])
 
 
+# Structural-fix list of Critical Findings by Root Cause (critical-attack-tree.md.j2).
+_ROOT_CAUSE_FIX_LINE_RE = re.compile(
+    r"^- \*\*(?:\[W-\d{3,4}\]\(#w-\d{3,4}\)\*\* — .*_\(closes |No root cause linked\*\* — )"
+)
+
+
 def _is_bare_finding_ref_line(line: str) -> bool:
     """True for lines that deliberately list BARE finding ids — no severity dot,
     no ``— Title`` suffix — because a single higher-level signal already owns the
@@ -13288,8 +13320,8 @@ def _is_bare_finding_ref_line(line: str) -> bool:
         not by a separator glyph: `_normalize_emdashes` rewrites mid-line em dashes,
         so a glyph-keyed guard silently stopped matching whenever a bullet carried
         a `+N more` tail and the block shipped dotted, titled refs (2026-09-17).
-      • Critical Attack Tree findings pointer — the tree leaves above already
-        carry each finding's id + title, so the pointer is a bare jump-index.
+      • Structural-fix list under Critical Findings by Root Cause — the graph
+        above already carries each Critical's id + title.
       • §1 Trust Boundaries catalogue row (carries its `<a id="tb-N">` declaration
         anchor) — its Linked-findings column is the narrowest in the fixed-layout
         table; appended titles collapsed it into a column of single
@@ -13299,7 +13331,7 @@ def _is_bare_finding_ref_line(line: str) -> bool:
         return True
     if _team_questions.is_report_question_line(line):
         return True
-    if "full detail in" in line and "#8-findings-register" in line:
+    if _ROOT_CAUSE_FIX_LINE_RE.match(line):
         return True
     if '<a id="tb-' in line:
         return True

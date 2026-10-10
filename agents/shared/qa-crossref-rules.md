@@ -48,5 +48,5 @@ d. **Comma-list inside tables → `<br/>`-separated.** Any table cell matching `
 - Markdown headings and Table of Contents entries, where nested links break the generated slug.
 - Existing HTML anchors produced by fixed-layout tables.
 - Inline references already followed by a parenthetical short title.
-- Compact references in the Verdict, narrow Assets cells, Top Weaknesses proof lists, and the Critical Attack Tree findings pointer.
+- Compact references in the Verdict, narrow Assets cells, Top Weaknesses proof lists, and the structural-fix list under Critical Findings by Root Cause.
 - A reference whose title cannot be resolved. Keep the link compact and let orphan and schema checks report the missing source data.

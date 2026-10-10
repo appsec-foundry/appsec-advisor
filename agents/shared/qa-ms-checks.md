@@ -26,7 +26,7 @@ If a standalone `### ⚠ Worst Case Scenarios` heading still exists after the he
 - Extract bold scenario names + F-NNN/T-NNN references.
 - Convert to single-line bullets (`- **<Name>** — <sentence>. *([F-NNN](#f-NNN))*`) if needed.
 - Append to Verdict blockquote bullets; deduplicate by scenario name.
-- Drop any trailing "See [Critical Attack Tree]" link.
+- Drop any trailing "See [Critical Findings by Root Cause]" link.
 
 If a Markdown blockquote (`> `) wraps the Verdict bullets instead of the canonical HTML form, auto-convert to the HTML blockquote with the red style above.
 

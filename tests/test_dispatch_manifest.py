@@ -859,6 +859,21 @@ def test_no_renderer_authors_the_model_owned_ai_fragment():
     assert "### `ms-ai-exposure.json` authoring contract" not in threat_md
 
 
+def test_no_renderer_authors_the_model_owned_root_cause_fragment():
+    """ms-critical-attack-tree.json is generated from the Critical findings and
+    their weakness records. An agent-authored copy counted effective severity
+    and contradicted the register's Critical total."""
+    import renderers.pregenerate_fragments as pf
+
+    assert "ms-critical-attack-tree.json" in pf._MODEL_OWNED_FRAGMENTS
+    ms_md = (AGENTS_DIR / "appsec-ms-renderer.md").read_text(encoding="utf-8")
+    allowed = ms_md.split("You may write only", 1)[1].split("\n", 1)[0]
+    assert "ms-critical-attack-tree.json" not in allowed
+    threat_md = (AGENTS_DIR / "appsec-threat-renderer.md").read_text(encoding="utf-8")
+    assert "### `ms-critical-attack-tree.json` authoring contract" not in threat_md
+    assert "Do not write `.fragments/ms-critical-attack-tree.json`" in threat_md
+
+
 def test_renderer_delegates_every_export_to_the_controller_tail():
     """Stage 2 must not regain export ownership after the compact cutover."""
     renderer_md = (AGENTS_DIR / "appsec-threat-renderer.md").read_text(encoding="utf-8")

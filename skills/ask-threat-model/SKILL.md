@@ -304,7 +304,7 @@ Two honesty rules here, both load-bearing:
 
 **Document structure (the rendered `threat-model.md`).** Top matter is a
 **Management Summary** (exec-level verdict + top risks + posture) and a
-**Critical Attack Tree** (worst-case attack paths). Then numbered sections:
+**Critical Findings by Root Cause** (Critical findings grouped by weakness). Then numbered sections:
 §1 System Overview · §2 Architecture Diagrams · §3 Attack Walkthroughs
 (attacker-POV narratives of key findings) · §4 Assets · §5 Attack Surface ·
 §6 Security Architecture · §7 Weakness Register (systemic/design weaknesses,
