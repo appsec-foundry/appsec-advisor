@@ -641,6 +641,33 @@ class TestCriticalAttackTree:
         }
         assert pf.gen_critical_attack_tree(d) is None
 
+    def test_a_practice_evidence_site_links_its_critical_to_the_weakness(self):
+        # Same ownership as the §7 register: practice sites count, not only
+        # confirmed instances, so a practice-tier Critical is not shown as unlinked.
+        d = dict(
+            self._CRIT_YAML,
+            weaknesses=[
+                {
+                    "id": "W-001",
+                    "title": "Tokens live in script-readable storage",
+                    "structural_recommendation": "keep tokens in HttpOnly cookies",
+                    "observable_backing": {"practice_evidence": [{"id": "T-001", "file": "a.ts"}]},
+                },
+                {
+                    "id": "W-002",
+                    "title": "Queries are concatenated",
+                    "structural_recommendation": "parameterize every query",
+                    "instances": [{"id": "T-006"}, {"id": "T-012"}],
+                },
+            ],
+        )
+        data = json.loads(pf.gen_critical_attack_tree(d))
+        assert [(f["weakness"], f["findings"]) for f in data["fixes"]] == [
+            ("W-001", ["T-001"]),
+            ("W-002", ["T-006", "T-012"]),
+        ]
+        assert not any(n["class"] == "unassigned" for n in data["mermaid"]["nodes"])
+
     def test_emits_tree_for_two_plus_criticals(self):
         out = pf.gen_critical_attack_tree(self._CRIT_YAML)
         assert out is not None

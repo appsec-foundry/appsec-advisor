@@ -5463,7 +5463,10 @@ def gen_critical_attack_tree(yaml_data: dict):
     groups: list[tuple[dict, list[str]]] = []
     weaknesses = [w for w in yaml_data.get("weaknesses") or [] if isinstance(w, dict)]
     for weakness in sorted(weaknesses, key=_id_key):
-        members = {_ref(i) for i in weakness.get("instances") or [] if isinstance(i, dict)}
+        # Ownership matches the §7 register: confirmed instances plus practice-evidence sites.
+        sites = list(weakness.get("instances") or [])
+        sites += (weakness.get("observable_backing") or {}).get("practice_evidence") or []
+        members = {_ref(s) for s in sites if isinstance(s, dict)}
         ids = [tid for tid in crit_ids if tid in members]
         if ids and weakness.get("id") and weakness.get("title"):
             groups.append((weakness, ids))
