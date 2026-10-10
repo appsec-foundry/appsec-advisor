@@ -193,3 +193,82 @@ def test_every_step_gets_a_file_before_one_step_fills_the_cap(repo, monkeypatch)
     assert paths[0] == "src/verify3.js"  # step 1: the file with the most sink lines leads
     assert "src/roles.js" in paths  # step 2 is not crowded out by step 1's matches
     assert len(paths) == 3
+
+
+def test_a_finding_that_only_shares_a_cwe_adds_no_ci_file(repo):
+    (repo / ".github" / "workflows").mkdir(parents=True)
+    (repo / ".github" / "workflows" / "ci.yml").write_text("on: push\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "ci")
+    model = _model(
+        repo,
+        {
+            "threats": [
+                {
+                    "id": "T-002",
+                    "title": "CI token",
+                    "cwe": "CWE-347",
+                    "evidence": [{"file": ".github/workflows/ci.yml", "line": 1}],
+                }
+            ]
+        },
+    )
+    _, paths, summary = ach.build(repo, "HEAD", ["AC-T-003"], [], True, no_org_profile=True, threat_model_path=model)
+    assert ".github/workflows/ci.yml" not in paths
+    assert "related findings" not in summary
+
+
+def test_a_threat_model_is_recommended_only_where_it_sharpens_the_check(repo):
+    _, _, chain = ach.build(repo, "HEAD", ["AC-T-003"], [], False, no_org_profile=True)
+    assert "  Recommendation: create a threat model first with /appsec-advisor:create-threat-model" in chain
+    assert "    AC-T-003 has 2 steps; a threat model links the findings across them" in chain.splitlines()
+    _, _, path_only = ach.build(repo, "HEAD", ["REPO-AC-031"], [], False, no_org_profile=True)
+    assert "Recommendation" not in path_only
+    model = _model(repo, {"threats": []})
+    _, _, with_model = ach.build(repo, "HEAD", ["AC-T-003"], [], True, no_org_profile=True, threat_model_path=model)
+    assert "Recommendation" not in with_model
+
+
+def test_findings_carry_their_model_record_and_controls_in_checked_files_are_named(repo):
+    model = _model(
+        repo,
+        {
+            "threats": [
+                {
+                    "id": "T-010",
+                    "title": "Insecure JWT verification",
+                    "cwe": "CWE-347",
+                    "evidence": [{"file": "src/session.js", "line": 1}],
+                    "evidence_check": "verified",
+                    "controls_in_place": "RS256 signing; verification does not pin it",
+                    "mitigation_ids": ["M-001"],
+                }
+            ],
+            "mitigations": [{"id": "M-001", "title": "Pin RS256 in JWT verification"}],
+            "security_controls": [
+                {
+                    "control": "Token signing",
+                    "effectiveness": "Unsafe",
+                    "implementation": "src/session.js:1",
+                    "assessment": "Key is hardcoded.",
+                },
+                {
+                    "control": "Upload checks",
+                    "effectiveness": "Weak",
+                    "implementation": "src/session.json:4",
+                    "assessment": "Elsewhere.",
+                },
+            ],
+        },
+    )
+    hypothesis, _, summary = ach.build(
+        repo, "HEAD", ["AC-T-003"], [], True, no_org_profile=True, threat_model_path=model
+    )
+    lines = hypothesis.splitlines()
+    assert "- Related threat-model finding F-010: Insecure JWT verification (src/session.js:1)" in lines
+    assert "  Evidence status in the model: verified." in lines
+    assert "  Controls recorded: RS256 signing; verification does not pin it" in lines
+    assert "  Planned mitigation: Pin RS256 in JWT verification" in lines
+    assert "- Token signing (Unsafe): Key is hardcoded." in lines
+    assert "Upload checks" not in hypothesis  # cites a different file
+    assert "  Assessed controls in these files: Token signing (Unsafe)" in summary.splitlines()

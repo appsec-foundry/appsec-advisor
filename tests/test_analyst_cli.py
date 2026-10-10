@@ -203,3 +203,28 @@ def test_abuse_case_preview_prints_the_scope_and_starts_no_job(repo, tmp_path):
         "  Analysis model: sonnet",
     ]
     assert not state.exists()
+
+
+def test_preview_without_a_threat_model_warns_and_isolated_does_not(repo, tmp_path):
+    repo = _committed_repo(repo)
+    base = ["hypothesis", "--repo", str(repo), "--abuse-case", "AC-T-104", "--revision", "HEAD", "--no-org-profile"]
+    base += ["--path", "src/session.js", "--preview"]
+    warned = run(*base, cwd=tmp_path, state=tmp_path / "a").stdout
+    assert "  Recommendation: create a threat model first" in warned
+    plain = run(*base, "--isolated", cwd=tmp_path, state=tmp_path / "b").stdout
+    assert "Recommendation" not in plain and "Note:" not in plain
+
+
+def test_preview_notes_a_missing_threat_model_for_a_case_that_needs_none(repo, tmp_path):
+    repo = _committed_repo(repo)
+    cases = repo / "docs" / "security" / "abuse-cases"
+    cases.mkdir(parents=True)
+    (cases / "own.yaml").write_text(
+        "schema_version: 2\nabuse_cases:\n  - id: REPO-AC-040\n    kind: descriptive\n"
+        "    title: Session reused after logout\n    check: Check whether a session stays valid after logout.\n"
+        "    scope_qualifier:\n      path_patterns: ['*session*']\n"
+    )
+    argv = ["--repo", str(repo), "--abuse-case", "REPO-AC-040", "--revision", "HEAD", "--no-org-profile", "--preview"]
+    out = run("hypothesis", *argv, cwd=tmp_path, state=tmp_path / "s").stdout
+    assert "  Note: without a threat model only the selected files are checked" in out
+    assert "Recommendation" not in out

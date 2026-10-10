@@ -184,7 +184,14 @@ def _abuse_case_claim(args: argparse.Namespace, parser: argparse.ArgumentParser)
     except (AbuseCaseError, ctl.SnapshotError) as exc:
         parser.error(f"--abuse-case: {exc}")
     model = f"{args.threat_model}" if args.threat_model else "none (isolated)" if args.isolated else "none found"
-    args.scope_summary = f"{summary}\n  Threat model: {model}\n  Analysis model: {args.model}\n"
+    scope, _, advice = summary.partition("\n  Recommendation:")
+    advice = f"  Recommendation:{advice}\n" if advice and not args.isolated else ""
+    if not args.threat_model and not args.isolated and not advice:
+        advice = (
+            "  Note: without a threat model only the selected files are checked; "
+            "/appsec-advisor:create-threat-model adds earlier findings and their files.\n"
+        )
+    args.scope_summary = f"{scope}\n  Threat model: {model}\n  Analysis model: {args.model}\n{advice}"
 
 
 def _scope(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict:

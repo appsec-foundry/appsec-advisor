@@ -42,6 +42,7 @@ MAX_HYPOTHESIS_CHARS = 20000
 MAX_SCAN_BYTES = 512 * 1024
 MAX_MODEL_BYTES = 2 * 1024 * 1024
 MAX_LINKED_FINDINGS = 8
+MAX_CONTROLS = 8
 MAX_FIELD_CHARS = 200
 
 
@@ -97,44 +98,68 @@ def _case_cwes(case: dict) -> set[str]:
     return {str(b.get("cwe")).upper() for b in blocks if isinstance(b, dict) and b.get("cwe")}
 
 
-def model_links(model_path: Path, cases: list[dict]) -> dict[str, dict]:
-    """Per case: its previous outcome in the threat model and the findings tied to it.
-
-    The model is untrusted input: it is read bounded, every string is clipped
-    to one line, and a file it names is used only when it exists at the
-    checked revision. An unreadable model yields no links.
-    """
+def load_model(model_path: Path) -> dict | None:
+    """The threat model as untrusted data, read bounded; ``None`` when unreadable."""
     try:
         if model_path.stat().st_size > MAX_MODEL_BYTES:
-            return {}
+            return None
         data = yaml.safe_load(model_path.read_text(encoding="utf-8"))
     except (OSError, ValueError, yaml.YAMLError):
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    threats = [t for t in data.get("threats") or [] if isinstance(t, dict) and t.get("id")]
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _records(data: dict, key: str) -> list[dict]:
+    return [r for r in data.get(key) or [] if isinstance(r, dict)]
+
+
+def model_links(data: dict, cases: list[dict]) -> dict[str, dict]:
+    """Per case: its previous outcome and the findings tied to it, with what the
+    model recorded about each: evidence status, controls in place, mitigations.
+
+    Every string is clipped to one line. A finding the case only shares a CWE
+    with is kept only when its evidence is runtime code, so a CI or
+    documentation finding of the same weakness class does not steer the check.
+    """
+    threats = [t for t in _records(data, "threats") if t.get("id")]
     by_id = {}
     for t in threats:
         by_id[str(t["id"])] = t
         by_id[_display_id(str(t["id"]))] = t
+    mitigations = {str(m.get("id")): m for m in _records(data, "mitigations")}
     analysis = data.get("abuse_case_analysis") if isinstance(data.get("abuse_case_analysis"), dict) else {}
     recorded = {str(c.get("id")): c for c in analysis.get("cases") or [] if isinstance(c, dict)}
     links: dict[str, dict] = {}
     for case in cases:
         cid = str(case["id"])
         prior = recorded.get(cid) or {}
-        linked = [by_id[str(i)] for i in prior.get("matched_finding_ids") or [] if str(i) in by_id]
+        linked = [(by_id[str(i)], True) for i in prior.get("matched_finding_ids") or [] if str(i) in by_id]
         cwes = _case_cwes(case)
-        linked += [t for t in threats if str(t.get("cwe") or "").upper() in cwes and t not in linked]
+        linked += [
+            (t, False) for t in threats if str(t.get("cwe") or "").upper() in cwes and t not in [x for x, _ in linked]
+        ]
         findings = []
-        for t in linked[:MAX_LINKED_FINDINGS]:
+        for t, explicit in linked:
             evidence = t.get("evidence") if isinstance(t.get("evidence"), list) else []
             first = evidence[0] if evidence and isinstance(evidence[0], dict) else {}
             file = matcher._safe_repo_glob(first.get("file"))
+            if not explicit and not (file and matcher._is_runtime_surface_evidence(file)):
+                continue
             line = first.get("line") if type(first.get("line")) is int else None
+            fixes = [_clip(mitigations[m].get("title")) for m in t.get("mitigation_ids") or [] if m in mitigations]
             findings.append(
-                {"id": _display_id(str(t["id"])), "title": _clip(t.get("title")), "file": file, "line": line}
+                {
+                    "id": _display_id(str(t["id"])),
+                    "title": _clip(t.get("title")),
+                    "file": file,
+                    "line": line,
+                    "status": _clip(t.get("evidence_check")),
+                    "controls": _clip(t.get("controls_in_place")),
+                    "fixes": fixes[:2],
+                }
             )
+            if len(findings) >= MAX_LINKED_FINDINGS:
+                break
         questions = [q for q in prior.get("open_questions") or [] if isinstance(q, str) and q.strip()]
         links[cid] = {
             "verdict": _clip(prior.get("chain_verdict")) if prior else "",
@@ -144,6 +169,47 @@ def model_links(model_path: Path, cases: list[dict]) -> dict[str, dict]:
     return links
 
 
+def model_controls(data: dict, paths: list[str]) -> list[dict]:
+    """Security controls the threat model assessed whose implementation or
+    assessment cites one of the checked files."""
+    found = []
+    for c in _records(data, "security_controls"):
+        cited = f"{c.get('implementation') or ''} {c.get('assessment') or ''}"
+        if any(re.search(rf"(?<![\w/.-]){re.escape(p)}(?![\w/.-])", cited) for p in paths):
+            found.append(
+                {
+                    "control": _clip(c.get("control")),
+                    "effectiveness": _clip(c.get("effectiveness")),
+                    "assessment": _clip(c.get("assessment")),
+                }
+            )
+        if len(found) >= MAX_CONTROLS:
+            break
+    return found
+
+
+def model_recommendation(cases: list[dict]) -> list[str]:
+    """Why a threat model would sharpen this check, one reason per case that needs it.
+
+    A technical chain with more than one step usually spans components whose
+    findings only a threat model links. A business case that locates code
+    through routes or scanner rules depends on data only a threat-model run
+    collects; without it, only its path patterns apply.
+    """
+    reasons = []
+    for case in cases:
+        cid = str(case["id"])
+        if matcher.is_descriptive(case):
+            qualifier = case.get("scope_qualifier") or {}
+            if qualifier.get("route_patterns") or qualifier.get("detector_rules"):
+                reasons.append(
+                    f"{cid} finds code through routes and scanner results that only a threat-model run collects"
+                )
+        elif len(case.get("chain") or []) > 1:
+            reasons.append(f"{cid} has {len(case['chain'])} steps; a threat model links the findings across them")
+    return reasons
+
+
 def _model_lines(link: dict) -> list[str]:
     lines = []
     if link.get("verdict"):
@@ -151,13 +217,23 @@ def _model_lines(link: dict) -> list[str]:
     for f in link.get("findings", []):
         where = f" ({f['file']}" + (f":{f['line']}" if f["line"] else "") + ")" if f["file"] else ""
         lines.append(f"- Related threat-model finding {f['id']}: {f['title']}{where}")
+        if f.get("status"):
+            lines.append(f"  Evidence status in the model: {f['status']}.")
+        if f.get("controls"):
+            lines.append(f"  Controls recorded: {f['controls']}")
+        if f.get("fixes"):
+            lines.append(f"  Planned mitigation: {'; '.join(f['fixes'])}")
     if link.get("question"):
         lines.append(f"Open question recorded in the threat model: {link['question']}")
     return lines
 
 
 def hypothesis_text(
-    cases: list[dict], origins: dict[str, str], with_threat_model: bool, links: dict[str, dict] | None = None
+    cases: list[dict],
+    origins: dict[str, str],
+    with_threat_model: bool,
+    links: dict[str, dict] | None = None,
+    controls: list[dict] | None = None,
 ) -> str:
     """The hypothesis the analyst checks: every selected case, then the model context."""
     parts = []
@@ -178,6 +254,13 @@ def hypothesis_text(
                 )
         lines += _model_lines((links or {}).get(cid, {}))
         parts.append("\n".join(lines))
+    if controls:
+        parts.append(
+            "\n".join(
+                ["Security controls the threat model assessed in the checked files:"]
+                + [f"- {c['control']} ({c['effectiveness']}): {c['assessment']}" for c in controls]
+            )
+        )
     parts.append(
         "This check uses the supplied threat model as context; a finding it records is a lead to check in the code, not proof."
         if with_threat_model
@@ -269,7 +352,8 @@ def build(
     """
     cases, origins = load_cases(repo_root, org_profile, no_org_profile)
     selected = select_cases(cases, case_ids)
-    links = model_links(threat_model_path, selected) if threat_model_path else {}
+    data = load_model(threat_model_path) if threat_model_path else None
+    links = model_links(data, selected) if data else {}
     preferred = [f["file"] for link in links.values() for f in link["findings"] if f["file"]]
     paths = list(dict.fromkeys(user_paths))
     if len(paths) < MAX_PATHS:
@@ -279,8 +363,18 @@ def build(
             "no file at this revision matches the selected abuse cases; name the files or directories with --path"
         )
     paths = paths[:MAX_PATHS]
-    hypothesis = hypothesis_text(selected, origins, with_threat_model, links)
-    return hypothesis, paths, _summary(selected, origins, links, revision, paths)
+    controls = model_controls(data, paths) if data else []
+    hypothesis = hypothesis_text(selected, origins, with_threat_model, links, controls)
+    summary = _summary(selected, origins, links, revision, paths)
+    if controls:
+        summary += "\n  Assessed controls in these files: " + ", ".join(
+            f"{c['control']} ({c['effectiveness']})" for c in controls
+        )
+    reasons = [] if with_threat_model else model_recommendation(selected)
+    if reasons:
+        summary += "\n  Recommendation: create a threat model first with /appsec-advisor:create-threat-model"
+        summary += "".join(f"\n    {r}" for r in reasons)
+    return hypothesis, paths, summary
 
 
 def _summary(cases: list[dict], origins: dict[str, str], links: dict, revision: str, paths: list[str]) -> str:
