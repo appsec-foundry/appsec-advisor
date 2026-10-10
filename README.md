@@ -136,8 +136,6 @@ Run `/appsec-advisor:create-threat-model` to get:
 - mitigation guidance and generated diagrams;
 - `threat-model.md` and `threat-model.yaml`, with optional PDF, HTML, SARIF, Threat Dragon, and pentest-task exports.
 
-`/appsec-advisor:abuse-cases` lists the defined technical and business abuse cases with their origin: plugin, organization profile, or repository. `/appsec-advisor:analyze-threats --abuse-case <ID>` checks one case against the code without a full assessment, with the existing threat model as context or, with `--isolated`, without it. `/appsec-advisor:create-threat-model --only-abuse-case <ID>` runs a new full assessment that checks only the selected cases; it replaces the existing threat model. `/appsec-advisor:ask-threat-model` reports how each case turned out.
-
 The report links findings to the [OWASP Top 10:2025](https://owasp.org/Top10/2025/). If the repository contains an LLM or agentic application, it also checks the relevant [OWASP LLM](https://genai.owasp.org/llm-top-10/) and [Agentic Applications](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/) categories.
 
 The [Threat Modeler guide](docs/threat-modeler.md) covers depth, focused scans, repository context, exports, costs, and limits.
@@ -166,6 +164,36 @@ Figure 2 connects threat actors through example attack routes and the linked wea
 </picture>
 
 Assessments consume model tokens and usually take tens of minutes; thorough runs may exceed an hour. See [assessment depth and cost control](docs/threat-modeler.md#assessment-depth--cost-control) for measured costs.
+
+### Abuse cases
+
+An abuse case describes something an attacker or a user must not be able to do. The plugin ships two kinds:
+
+- Technical attack chains, for example: inject a script into a page, read the session token, and log in as the victim.
+- Business rules, for example: a customer must not see another customer's orders, and a request must not skip its approval.
+
+Each run finds the code behind these operations and checks whether the rule holds. The result changes the findings:
+
+- The code breaks a rule and no finding covers it yet: the run adds one, for example for an order endpoint that loads an order by its ID without checking who owns it.
+- A finding already covers it: the case is linked to that finding, and a finding whose evidence was ambiguous is shown as verified.
+- Every step of an attack chain holds: its findings can be raised to the impact the case declares, such as Critical for a path to an admin account.
+- The code does not settle the question: §9 lists the case as open, not as safe, and it can become a question for your team.
+
+You can add your own cases. For a rule in one repository, put a YAML file into `docs/security/abuse-cases/`. One sentence and a file-name pattern are enough:
+
+```yaml
+schema_version: 2
+abuse_cases:
+  - id: REPO-AC-001
+    kind: descriptive
+    title: Employee approves their own expense report
+    check: Check whether an employee can approve an expense report they submitted.
+    scope_qualifier: {path_patterns: ["*expense*"]}
+```
+
+The next run checks this rule in files such as `ExpenseController.java` or below `expenses/`. [Repository abuse cases](docs/threat-modeler.md#abuse-cases-docssecurityabuse-cases) explains when a case runs and how its result is reported. To apply cases to every repository of your organization, add them to an organization profile. [Abuse cases in organization profiles](docs/org-profiles.md#abuse-cases) also covers technical attack chains, turning off built-in cases, and failing a CI run on a confirmed case.
+
+`/appsec-advisor:abuse-cases` lists the defined technical and business abuse cases with their origin: plugin, organization profile, or repository. `/appsec-advisor:analyze-threats --abuse-case <ID>` checks one case against the code without a full assessment, with the existing threat model as context or, with `--isolated`, without it. `/appsec-advisor:create-threat-model --only-abuse-case <ID>` runs a new full assessment that checks only the selected cases; it replaces the existing threat model. `/appsec-advisor:ask-threat-model` reports how each case turned out.
 
 ### Assess multiple repositories
 

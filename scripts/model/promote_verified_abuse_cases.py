@@ -287,6 +287,7 @@ def promote(output_dir: Path) -> tuple[int, list[str]]:
         raise ValueError("abuse-case promotion sidecars have an unexpected shape")
 
     components = _registered_components(output_dir)
+    repo_root = _configured_repo_root(output_dir)
     verdict_by_case = {v.get("abuse_case_id"): v for v in verdicts if isinstance(v, dict)}
     existing = {
         (
@@ -351,10 +352,14 @@ def promote(output_dir: Path) -> tuple[int, list[str]]:
             step_verdict = verdict_steps.get(step_no)
             if not isinstance(step_verdict, dict) or step_verdict.get("verdict") != "confirmed":
                 continue
+            # The verifier's location wins only when its excerpt is found there;
+            # otherwise the probe's own source hit stands, as for an omission.
             verifier_evidence = step_verdict.get("evidence")
             evidence = (
                 verifier_evidence
-                if isinstance(verifier_evidence, dict) and verifier_evidence.get("file")
+                if isinstance(verifier_evidence, dict)
+                and verifier_evidence.get("file")
+                and not _evidence_problem(verifier_evidence, repo_root)
                 else step_match.get("evidence") or {}
             )
             if not isinstance(evidence, dict) or not evidence.get("file"):
@@ -430,7 +435,7 @@ def promote(output_dir: Path) -> tuple[int, list[str]]:
             if isinstance(step, dict) and step.get("matched_finding_id")
         ]
 
-    verified = _verify_bound_findings(matches, verdict_by_case, threats, _configured_repo_root(output_dir))
+    verified = _verify_bound_findings(matches, verdict_by_case, threats, repo_root)
     if promoted or bindings_changed or verified:
         _write(merged_path, merged)
         _write(matches_path, matches_doc)

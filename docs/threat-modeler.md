@@ -388,23 +388,73 @@ Figures group actors linked to displayed findings by access category. Adding twe
 
 ### Abuse cases: `docs/security/abuse-cases/`
 
-An abuse case describes something a user must not be able to do, such as reading another customer's orders or approving their own request. One sentence and a file-name pattern are enough. The assessment finds the matching code and checks whether the rule holds:
+An abuse case describes something a user must not be able to do in your application, such as reading another customer's orders or approving their own request. Scanners rarely catch these rules because they depend on what your business allows. You write the rule as one sentence, and the assessment finds the matching code and checks whether the rule holds.
+
+#### Example
+
+An expense tool lets employees submit reports and managers approve them. Nobody should approve their own report, except small amounts that policy allows:
 
 ```yaml
+# docs/security/abuse-cases/expenses.yaml
 schema_version: 2
 abuse_cases:
   - id: REPO-AC-001
     kind: descriptive
     title: Employee approves their own expense report
     check: Check whether an employee can approve an expense report they submitted.
-    scope_qualifier: {path_patterns: ["*expense*"]}
+    exclusions:
+      - Reports below the amount that policy lets employees self-approve.
+    open_questions:
+      - Which amount, if any, may be self-approved?
+    finding: {severity: High, mitigation_title: Reject approval when the approver submitted the report}
+    scope_qualifier: {path_patterns: ["*expense*", "*approv*"]}
 ```
 
-The case runs only if the name of a source file, or of a directory above it, matches a pattern, ignoring case, such as `ExpenseController.java` or a file below `expenses/`. A case that matches no source file is listed as not applicable; name its ID with `--only-abuse-case` to check it anyway.
+What the next assessment does with this case:
 
-Standard and thorough runs also check seven built-in business rules. Thorough runs add up to three cases derived for your application.
+- It reads files whose path matches a pattern, such as `ExpenseController.java` or `src/approvals/service.ts`, and looks for the operation that approves a report.
+- The handler checks that the user has the approver role, but never compares the approver with the submitter: the case is confirmed. The report gets a High finding for that handler, and §9 quotes the cited line.
+- The handler rejects approval when approver and submitter are the same person: the case is mitigated, and §9 cites that check.
+- The rule lives somewhere the code does not show, such as an external policy service: the case is unresolved, and the first `open_questions` entry can become a question for your team.
 
-If the code breaks the rule, the case becomes a finding, or is linked to an existing finding for the same weakness. If the code shows no control but the answer depends on a business fact, the finding is marked unproven. A rule that holds appears in §9 with the reason. Organizations can add cases for every repository; [Business abuse cases](org-profiles.md#business-abuse-cases) lists all fields.
+#### Add your own case
+
+1. Create a YAML file in `docs/security/abuse-cases/` of the repository, for example by copying the example above. One file can hold several cases.
+2. Run `/appsec-advisor:abuse-cases` and check that your case is listed with origin `repository`. A file the assessment would reject is listed with the reason.
+3. Optional: run `/appsec-advisor:analyze-threats --abuse-case REPO-AC-001` to check the case against the code without a full assessment. The result does not change the threat model.
+4. Run `/appsec-advisor:create-threat-model`. Afterwards, `/appsec-advisor:abuse-cases REPO-AC-001` shows the result step by step with the cited code.
+
+#### Fields
+
+| Field | Required | Meaning |
+|---|---|---|
+| `id` | yes | `REPO-AC-` followed by at least three digits, unique in the repository. |
+| `kind` | yes | Always `descriptive` for a case written as a sentence. |
+| `title` | yes | Short name shown in the report and in `/appsec-advisor:abuse-cases`. |
+| `check` | yes | The rule to check, in one or two sentences. Name who acts and on what, for example "a customer" and "another customer's invoice". |
+| `scope_qualifier.path_patterns` | yes, unless `route_patterns` locate the code | File-name patterns that locate the code, matched ignoring case against each file and directory name. `*invoice*` matches `InvoiceService.java` and every file below `invoices/`. |
+| `exclusions` | no | Behavior that looks like the abuse but is allowed, so it is not reported. |
+| `open_questions` | no | Business facts the code cannot answer. If the case stays unresolved, the first one can become a question for your team. |
+| `finding` | no | How a confirmed case is classified: `severity`, `cwe`, `stride`, and `mitigation_title`. Without it, the finding is Medium, CWE-840, Elevation of Privilege. |
+
+[Business abuse cases](org-profiles.md#business-abuse-cases) describes further fields, such as `route_patterns` for locating code by URL path.
+
+#### Results
+
+| Result | Meaning |
+|---|---|
+| Confirmed | The code breaks the rule. The case becomes a finding, or is linked to an existing finding for the same weakness. |
+| Unproven | The code shows no control, but the answer depends on a business fact. The case becomes a finding marked as unproven. |
+| Mitigated | A control enforces the rule. §9 cites it. |
+| Unresolved | The code does not settle the question. This is not a statement that the rule holds. |
+| Not applicable | No file matches the patterns. Check the patterns, or name the case with `--only-abuse-case` to check it anyway. |
+| Not checked | The run reached its limit for business abuse cases, or the check did not finish. |
+
+#### Limits
+
+Business abuse cases cost model time, so each run checks only a limited number of them. Your own cases share this limit with the seven built-in business rules: a standard run checks at most three, a thorough run at most eight, and a quick run only the cases you name. Cases with the most matching code and findings go first. To make sure a case is checked, name it: `/appsec-advisor:analyze-threats --abuse-case <ID>` checks it on its own, and `/appsec-advisor:create-threat-model --only-abuse-case <ID>` runs a new assessment that checks only the named cases and replaces the existing threat model. Thorough runs also add up to three cases derived for your application.
+
+To apply cases to every repository of your organization, or to write technical attack chains with code patterns, see [Abuse cases in organization profiles](org-profiles.md#abuse-cases).
 
 <a id="known-threats--docsknown-threatsyaml"></a>
 ### Known threats: `docs/known-threats.yaml`

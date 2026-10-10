@@ -35,7 +35,7 @@ abuse_cases:
   title: User reads or changes data of another user or tenant
   check: Check whether a user can read or change data that belongs to another user or tenant, through the primary operation or through an export, download, share link, search, or report.
   exclusions: [Data intended to be public or shared by design., Platform operators whose role spans all users or tenants by design.]
-  finding: {cwe: CWE-639, stride: Information Disclosure, mitigation_title: Check resource ownership on every operation that returns or changes the data}
+  finding: {cwe: CWE-639, stride: Information Disclosure, severity: High, mitigation_title: Check resource ownership on every operation that returns or changes the data}
   scope_qualifier:
     required_signals: [has_auth_surface]
     path_patterns: ['*tenant*', '*export*', '*download*', 'share', '*share[!d]*', '*report*']
@@ -47,7 +47,7 @@ abuse_cases:
   check: Check whether a user can give themselves or others a role or permission beyond what their own role or delegation allows.
   exclusions: [Administrators with unrestricted authority over every role.]
   open_questions: ['Which roles may each administrator tier assign?']
-  finding: {cwe: CWE-269, mitigation_title: Limit role and permission changes to the scope the acting user may grant}
+  finding: {cwe: CWE-269, severity: High, mitigation_title: Limit role and permission changes to the scope the acting user may grant}
   scope_qualifier:
     required_signals: [has_role_concept]
     path_patterns: ['*role*', '*permission*', '*admin*']
@@ -100,7 +100,7 @@ abuse_cases:
   check: Check whether a user can make a privileged function, such as support impersonation, an administrative action, or a background job, act on resources or perform operations outside that user's own authority.
   exclusions: [Operations explicitly permitted to the privileged role on the user's behalf.]
   open_questions: ['Which operations may support staff perform while acting as a customer?']
-  finding: {cwe: CWE-285, mitigation_title: Authorize privileged functions against the initiating user's own authority}
+  finding: {cwe: CWE-285, severity: High, mitigation_title: Authorize privileged functions against the initiating user's own authority}
   scope_qualifier:
     path_patterns: ['*impersonat*', '*sudo*', '*job*', '*worker*', '*queue*', '*admin*']
     route_patterns: ['*impersonat*', '*sudo*', '*job*', '*admin*']

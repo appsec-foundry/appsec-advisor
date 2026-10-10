@@ -245,6 +245,37 @@ def test_source_probe_evidence_wins_when_verifier_omits_a_file(tmp_path: Path) -
     assert created["evidence"] == {"file": "src/template.ts", "line": 17}
 
 
+@pytest.mark.parametrize(
+    ("verifier_evidence", "expected"),
+    [
+        ({"file": "src/missing.ts", "line": 40, "excerpt": "eval(input)"}, {"file": "src/template.ts", "line": 17}),
+        ({"file": "lib/run.py", "line": 3, "excerpt": "exec(payload)"}, {"file": "src/template.ts", "line": 17}),
+        ({"file": "lib/run.py", "line": 3, "excerpt": "run(eval(code))"}, {"file": "lib/run.py", "line": 3}),
+    ],
+    ids=["file-not-in-repo", "excerpt-not-at-line", "excerpt-found"],
+)
+def test_verifier_location_wins_only_when_its_excerpt_is_in_the_code(
+    tmp_path: Path, verifier_evidence: dict, expected: dict
+) -> None:
+    """A confirmed source probe never becomes a verified finding at a location
+    the deterministic excerpt gate cannot find; the probe's own hit stands."""
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "lib").mkdir()
+    (repo / "src" / "template.ts").write_text("\n" * 16 + "eval(input)\n")
+    (repo / "lib" / "run.py").write_text("\n\nrun(eval(code))\n")
+    _write(tmp_path / ".skill-config.json", {"repo_root": str(repo)})
+    _sidecars(tmp_path)
+    verdicts_path = tmp_path / ".abuse-case-verdicts.json"
+    verdicts = json.loads(verdicts_path.read_text())
+    verdicts["verdicts"][0]["step_verdicts"][0]["evidence"] = verifier_evidence
+    _write(verdicts_path, verdicts)
+
+    assert mod.promote(tmp_path)[0] == 1
+    created = json.loads((tmp_path / ".threats-merged.json").read_text())["threats"][-1]
+    assert created["evidence"] == expected
+
+
 def _registry(tmp_path: Path, components: list[dict]) -> None:
     (tmp_path / "threat-model.yaml").write_text(
         yaml.safe_dump({"components": components}, sort_keys=False), encoding="utf-8"
@@ -544,3 +575,18 @@ def test_a_confirmed_business_case_is_promoted_despite_an_insufficient_check_bes
 
     assert mod.promote(tmp_path)[0] == 1
     assert _promoted(tmp_path)["evidence_tier"] == "confirmed-exploitable"
+
+
+def test_access_control_business_cases_rate_like_their_technical_counterpart() -> None:
+    """An ownership or privilege business case promotes at the severity the
+    technical catalog gives the same weakness, not at the Medium default."""
+    business = yaml.safe_load((ROOT / "data" / "abuse-cases" / "business.yaml").read_text())["abuse_cases"]
+    technical = yaml.safe_load((ROOT / "data" / "abuse-cases" / "technical.yaml").read_text())["abuse_cases"]
+    technical_severity = {
+        step["finding"]["cwe"]: step["finding"]["severity"] for case in technical for step in case["chain"]
+    }
+    by_id = {case["id"]: case for case in business}
+
+    for case_id in ("AC-B-001", "AC-B-002", "AC-B-007"):
+        assert mod._descriptive_metadata(by_id[case_id])["severity"] == "High", case_id
+    assert technical_severity["CWE-639"] == mod._descriptive_metadata(by_id["AC-B-001"])["severity"]
