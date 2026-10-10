@@ -19,23 +19,24 @@ The **Threat Analyst** covers the design side: on request, it analyzes a planned
 
 ## Why appsec-advisor?
 
-Threat modeling examines what could go wrong with a system and which controls it needs. Teams can start from an intended design or an existing implementation. Both perspectives inform security decisions throughout development.
+`appsec-advisor` prepares threat models from code and configuration. It does not replace collaborative threat modeling with the people who own the system. You do not need an existing threat model or a workshop to start.
 
-| | Starting from design | Starting from implementation |
+| | [Threat Modeler](#threat-modeler) | Collaborative threat modeling |
 |---|---|---|
-| **Basis** | Planned architecture, requirements, and security assumptions | Code, configuration, and supplied context |
-| **Focus** | Anticipate threats and choose controls | Identify threats and control gaps in the implemented architecture |
-| **Use of results** | Guide implementation and review | Inform design reviews and remediation |
+| **Works from** | Code, configuration, and supplied context | Design intent, business context, and knowledge of runtime and production controls |
+| **Delivers** | Architecture, trust boundaries, and threats; every finding cites repository evidence | Judgment on which threats matter and which assumptions hold |
+| **Strength** | Covers the whole repository the same way on every run | Sees what the code cannot show |
+| **Leaves open** | Business impact, risk acceptance, and controls outside the repository | Consistent coverage of a large or fast-changing codebase |
 
-`appsec-advisor` supports both starting points. The [Threat Modeler](#threat-modeler) derives a full model from the implementation; run it again as code and configuration change to revisit security assumptions and design decisions. The [Threat Analyst](#threat-analyst) assesses a planned feature before it is built and checks single changes while they are developed. Business context and trust-boundary declarations help explain conditions that the code alone cannot establish.
+Run the Threat Modeler for a first assessment and again when code or configuration changes. Before code exists, the experimental [Threat Analyst](#threat-analyst) prepares the team discussion of a planned feature with threat scenarios, protection assumptions, and open questions. It also reviews single changes and reports evidence-backed findings.
 
-An existing threat model is not required. The generated architecture and findings provide a starting point for team review.
+The code cannot tell the tool which networks you trust or which data is critical to your business. You add that as business context and trust-boundary declarations, and the analysis then treats them as stated assumptions.
 
-Organizations can add their own requirements and tools without maintaining a fork of the core analysis pipeline. See [Enterprise rollout](#enterprise-rollout).
+Results come as Markdown and YAML, with optional PDF, HTML, SARIF, Threat Dragon, and pentest-task exports. Organizations can add their own requirements and tools without maintaining a fork of the core analysis pipeline. See [Enterprise rollout](#enterprise-rollout).
 
 ### Scope and limitations
 
-The assessment uses evidence from the analyzed repository and supplied context, including configured related-repository models. It cannot verify runtime behavior or production-only controls. Business context and design intent require input from the team. Automated analysis supports workshops and expert review. An AppSec engineer or security architect should validate findings before they drive remediation or risk acceptance.
+The assessment uses evidence from the analyzed repository and supplied context, including configured related-repository models. It cannot verify runtime behavior or production-only controls. An AppSec engineer or security architect should validate findings before they drive remediation or risk acceptance.
 
 ## Security notes
 
