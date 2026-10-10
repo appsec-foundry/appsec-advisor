@@ -737,7 +737,9 @@ def test_list_without_org_profile_omits_org_cases_and_shows_rejected_files(tmp_p
 
     assert rac.main(["--list", "--no-org-profile", "--repo-root", str(repo)]) == 0
     out = capsys.readouterr().out
-    assert out.splitlines()[0] == f"ABUSE CASES — {len(_LIBRARY_IDS)} active"
+    assert (
+        out.splitlines()[0] == f"ABUSE CASES in repo — {len(_LIBRARY_IDS)} active · no threat model in docs/security/"
+    )
     assert "ORG-AC-001" not in out
     assert "REJECTED docs/security/abuse-cases/broken.yaml" in out
     assert set(_list_rows(out)) == set(_LIBRARY_IDS)
@@ -749,3 +751,169 @@ def test_list_ends_with_what_the_cases_are_and_how_to_add_or_check_one(tmp_path,
     assert "docs/security/abuse-cases/" in footer
     assert "/appsec-advisor:analyze-threats --abuse-case <ID>" in footer
     assert "organization profile" not in footer
+
+
+def test_list_shows_the_outcome_the_threat_model_records_for_each_case(tmp_path, capsys):
+    model = {
+        "meta": {"generated": "2026-10-10T11:10:30Z"},
+        "abuse_case_analysis": {
+            "status": "completed",
+            "cases": [
+                {"id": "AC-T-001", "chain_verdict": "fully_viable", "verification_complete": True},
+                {"id": "AC-T-002", "chain_verdict": "inconclusive", "verification_complete": True},
+                {"id": "AC-T-003", "chain_verdict": "mitigated", "verification_complete": False},
+                {"id": "MODEL-AC-001", "title": "Coupon reused after refund", "chain_verdict": "fully_viable"},
+            ],
+            "catalog_evaluated": [{"id": "AC-T-004", "reason": "no registration"}],
+            "not_performed": [{"id": "AC-T-005", "reason": "limit"}],
+        },
+    }
+    (tmp_path / "docs" / "security").mkdir(parents=True)
+    (tmp_path / "docs" / "security" / "threat-model.yaml").write_text(yaml.safe_dump(model))
+    assert rac.main(["--list", "--no-org-profile", "--repo-root", str(tmp_path)]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].endswith("· threat model of 2026-10-10")
+    result = {line.split()[0]: line[43:65].strip() for line in lines[1:] if line.startswith("  ")}
+    assert result["AC-T-001"] == "confirmed"
+    assert result["AC-T-002"] == "unresolved"
+    assert result["AC-T-003"] == "mitigated (incomplete)"
+    assert result["AC-T-004"] == "not applicable"
+    assert result["AC-T-005"] == "not checked"
+    assert result["AC-T-101"] == "not checked"
+    assert any(line.startswith("  MODEL-AC-001   model-derived  business") for line in lines)
+
+
+def test_list_without_a_threat_model_has_no_outcome_column(tmp_path, capsys):
+    assert rac.main(["--list", "--no-org-profile", "--repo-root", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert out.splitlines()[0].endswith("· no threat model in docs/security/") and "not checked" not in out
+    assert out.splitlines()[-1] == "Results per case:  create a threat model with /appsec-advisor:create-threat-model"
+
+
+def _write_model(repo: Path, analysis: dict, **extra) -> None:
+    (repo / "docs" / "security").mkdir(parents=True, exist_ok=True)
+    body = {"meta": {"generated": "2026-10-10T11:10:30Z"}, "abuse_case_analysis": analysis, **extra}
+    (repo / "docs" / "security" / "threat-model.yaml").write_text(yaml.safe_dump(body))
+
+
+def _show(tmp_path: Path, cid: str, capsys) -> list[str]:
+    assert rac.main(["--show", cid, "--no-org-profile", "--repo-root", str(tmp_path)]) == 0
+    return capsys.readouterr().out.splitlines()
+
+
+def test_show_puts_a_confirmed_chain_into_sections_with_a_step_table(tmp_path, capsys):
+    record = {
+        "id": "AC-T-003",
+        "chain_verdict": "fully_viable",
+        "combined_risk": "Critical",
+        "matched_finding_ids": ["F-010"],
+        "blocking_mitigation_ids": ["M-098"],
+        "open_questions": ["Which jws version runs in production?"],
+        "steps": [
+            {"step": 1, "verdict": "confirmed", "finding_id": "F-010", "evidence": {"file": "lib/auth.ts", "line": 52}},
+            {"step": 2, "verdict": "inconclusive", "evidence": {"file": "lib/auth.ts"}},
+        ],
+    }
+    _write_model(
+        tmp_path,
+        {"status": "completed", "cases": [record]},
+        threats=[
+            {
+                "id": "T-010",
+                "title": "Insecure JWT verification",
+                "risk": "High",
+                "scenario": "Attacker signs a token with the public key.",
+                "impact_description": "Admin access.",
+            }
+        ],
+        mitigations=[{"id": "M-098", "title": "Pin RS256"}],
+    )
+    lines = _show(tmp_path, "AC-T-003", capsys)
+    assert lines[0] == "AC-T-003 · Privilege Escalation to Admin via JWT Algorithm Confusion"
+    assert lines[1] == "Technical attack chain · plugin"
+    assert "RESULT: CONFIRMED — this case applies to the code." in lines
+    assert "  (risk Critical · docs/security/threat-model.yaml, 2026-10-10)" in lines
+    assert lines[lines.index("HOW") + 1] == "  Attacker signs a token with the public key."
+    assert lines[lines.index("IMPACT") + 1] == "  Admin access."
+    table = lines[lines.index("STEPS") + 1 : lines.index("STEPS") + 4]
+    assert table[0].split() == ["#", "Result", "Step", "Where"]
+    assert table[1].split()[:2] == ["1", "CONFIRMED"] and table[1].endswith("lib/auth.ts:52 (F-010)")
+    assert table[2].split()[:2] == ["2", "INCONCLUSIVE"] and table[2].endswith("lib/auth.ts")
+    assert "  F-010  Insecure JWT verification (High)" in lines
+    assert "  M-098  Pin RS256" in lines
+    assert lines[lines.index("OPEN QUESTIONS") + 1] == "  Which jws version runs in production?"
+    assert "  Finding:        /appsec-advisor:ask-threat-model --id F-010" in lines
+    assert not any(line.startswith("  Report:") for line in lines)  # no rendered report here
+    assert lines[-1] == "  Check again:    /appsec-advisor:analyze-threats --abuse-case AC-T-003 [--model opus]"
+
+
+def test_show_gives_a_business_case_a_where_section_and_links_the_report(tmp_path, capsys):
+    record = {
+        "id": "AC-T-103",
+        "chain_verdict": "fully_viable",
+        "matched_finding_ids": ["F-011"],
+        "steps": [
+            {
+                "step": 1,
+                "verdict": "confirmed",
+                "finding_id": "F-011",
+                "evidence": {"file": "routes/reset.ts", "line": 41},
+                "controls_found": ["rate limit, bypassable"],
+            }
+        ],
+    }
+    _write_model(
+        tmp_path,
+        {"status": "completed", "cases": [record]},
+        threats=[{"id": "T-011", "title": "Weak reset", "controls_in_place": "Rate limit, bypassable."}],
+    )
+    (tmp_path / "docs" / "security" / "threat-model.md").write_text("# report\n")
+    lines = _show(tmp_path, "AC-T-103", capsys)
+    assert lines[1] == "Business case · plugin" and "WHAT IT CHECKS" in lines
+    assert lines[lines.index("WHERE") + 1] == "  routes/reset.ts:41 · finding F-011"
+    assert "  Control found: rate limit, bypassable" in lines
+    assert not any("Existing control" in line for line in lines)  # the step's control is not repeated
+    assert "STEPS" not in lines
+    assert "  Report:         docs/security/threat-model.md#ac-t-103" in lines
+
+
+def test_show_says_what_blocks_a_mitigated_case_and_explains_no_attack(tmp_path, capsys):
+    record = {
+        "id": "AC-T-002",
+        "chain_verdict": "mitigated",
+        "steps": [{"step": 1, "verdict": "blocked", "controls_found": ["owner check in lib/auth.ts:178"]}],
+    }
+    _write_model(tmp_path, {"status": "completed", "cases": [record]})
+    lines = _show(tmp_path, "AC-T-002", capsys)
+    assert "RESULT: MITIGATED — a control in the code blocks this case." in lines
+    assert any(line.strip() == "control found: owner check in lib/auth.ts:178" for line in lines)
+    assert "HOW" not in lines
+
+
+def test_show_says_when_a_case_has_no_recorded_result(tmp_path, capsys):
+    lines = _show(tmp_path, "AC-T-101", capsys)
+    assert lines[1] == "Business case · plugin"
+    assert any(line.startswith("RESULT: NOT CHECKED — no threat model in") for line in lines)
+    assert "  Threat model:   /appsec-advisor:create-threat-model" in lines
+    _write_model(
+        tmp_path,
+        {"status": "completed", "cases": [], "catalog_evaluated": [{"id": "AC-T-101", "reason": "no tenants"}]},
+    )
+    lines = _show(tmp_path, "AC-T-101", capsys)
+    assert "RESULT: NOT APPLICABLE  (docs/security/threat-model.yaml, 2026-10-10)" in lines
+    assert "  Reason: no tenants" in lines
+
+
+def test_show_finds_a_model_derived_case_and_rejects_an_unknown_id(tmp_path, capsys):
+    _write_model(
+        tmp_path,
+        {
+            "status": "completed",
+            "cases": [{"id": "MODEL-AC-001", "title": "Coupon reused", "chain_verdict": "inconclusive"}],
+        },
+    )
+    lines = _show(tmp_path, "MODEL-AC-001", capsys)
+    assert lines[:2] == ["MODEL-AC-001 · Coupon reused", "Business case · model-derived"]
+    assert any(line.startswith("RESULT: UNRESOLVED — ") and "not a safe result" in line for line in lines)
+    assert rac.main(["--show", "AC-NOPE", "--no-org-profile", "--repo-root", str(tmp_path)]) == 1
+    assert "unknown abuse case ID AC-NOPE" in capsys.readouterr().err

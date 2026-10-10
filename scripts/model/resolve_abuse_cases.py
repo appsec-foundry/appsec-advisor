@@ -35,6 +35,7 @@ import json
 import os
 import stat
 import sys
+import textwrap
 from pathlib import Path
 from typing import Any
 
@@ -431,35 +432,279 @@ _ORIGIN_LABEL = {
 }
 
 
+_VERDICT_LABEL = {
+    "fully_viable": "confirmed",
+    "partially_blocked": "partly blocked",
+    "mitigated": "mitigated",
+    "inconclusive": "unresolved",
+}
+_VERDICT_MEANING = {
+    "confirmed": "this case applies to the code.",
+    "partly blocked": "this case partly applies; a control blocks part of it.",
+    "mitigated": "a control in the code blocks this case.",
+    "unresolved": "the code neither confirms nor rules it out. This is not a safe result.",
+}
+THREAT_MODEL_FILE = Path("docs") / "security" / "threat-model.yaml"
+MAX_THREAT_MODEL_BYTES = 2 * 1024 * 1024
+
+
+def load_threat_model(repo_root: Path | None) -> dict | None:
+    """The repository's threat model as untrusted data, read bounded; ``None`` without one."""
+    if repo_root is None:
+        return None
+    path = repo_root / THREAT_MODEL_FILE
+    try:
+        if path.stat().st_size > MAX_THREAT_MODEL_BYTES:
+            return None
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, yaml.YAMLError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def recorded_outcomes(repo_root: Path | None) -> dict | None:
+    """What the repository's threat model records about each abuse case.
+
+    Returns ``None`` without a readable model. Only verdict words from a fixed
+    vocabulary and plain ids and titles are taken from it.
+    """
+    data = load_threat_model(repo_root)
+    if data is None:
+        return None
+    meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+    analysis = data.get("abuse_case_analysis") if isinstance(data.get("abuse_case_analysis"), dict) else {}
+    outcomes: dict[str, str] = {}
+    derived: list[dict] = []
+    if analysis.get("status") == "completed":
+        for case in [c for c in analysis.get("cases") or [] if isinstance(c, dict)]:
+            cid = str(case.get("id") or "")
+            label = _VERDICT_LABEL.get(str(case.get("chain_verdict")), "unresolved")
+            if case.get("verification_complete") is False and label != "unresolved":
+                label += " (incomplete)"
+            outcomes[cid] = label
+            if cid.startswith("MODEL-AC"):
+                derived.append(
+                    {"id": cid, "kind": "descriptive", "title": " ".join(str(case.get("title") or "").split())}
+                )
+        for row in analysis.get("catalog_evaluated") or []:
+            if isinstance(row, dict) and row.get("id"):
+                outcomes.setdefault(str(row["id"]), "not applicable")
+        for row in analysis.get("not_performed") or []:
+            if isinstance(row, dict) and row.get("id"):
+                outcomes.setdefault(str(row["id"]), "not checked")
+    return {
+        "date": str(meta.get("generated") or "")[:10],
+        "checked": analysis.get("status") == "completed",
+        "outcomes": outcomes,
+        "derived": derived,
+    }
+
+
 def render_case_list(
     cases: list[dict],
     origins: dict[str, str],
     rejected: list[dict],
     profile_path: Path | None,
     profile_source: str,
+    recorded: dict | None = None,
+    repo_name: str = "",
 ) -> str:
-    """One line per active case: id, origin, kind, title. Rejected repository
-    files are listed after the cases, because a scan would skip them too. The
-    organization profile is named only when one is active, and two footer
-    lines say how to check one case and where to add one."""
-    header = f"ABUSE CASES — {len(cases)} active"
+    """One line per active case: id, origin, kind, title, and, when the
+    repository has a threat model, the outcome it records for the case.
+    Rejected repository files are listed after the cases, because a scan would
+    skip them too. The organization profile is named only when one is active,
+    and two footer lines say how to check one case and where to add one."""
+    header = f"ABUSE CASES{f' in {repo_name}' if repo_name else ''} — {len(cases)} active"
     if profile_path:
         header += f" · organization profile: {profile_path} ({profile_source})"
+    if recorded is not None:
+        when = f" of {recorded['date']}" if recorded["date"] else ""
+        header += f" · threat model{when}" + ("" if recorded["checked"] else ": abuse cases were not checked")
+    else:
+        header += " · no threat model in docs/security/"
     lines = [header]
-    for case in cases:
+    rows = [(c, _ORIGIN_LABEL.get(origins.get(str(c.get("id") or ""), ""), "unknown")) for c in cases]
+    known = {str(c.get("id") or "") for c in cases}
+    if recorded is not None:
+        rows += [(c, "model-derived") for c in recorded["derived"] if c["id"] not in known]
+    for case, origin in rows:
         cid = str(case.get("id") or "")
-        origin = _ORIGIN_LABEL.get(origins.get(cid, ""), "unknown")
         kind = "business" if case.get("kind") == "descriptive" else "technical"
         title = " ".join(str(case.get("title") or "").split())
-        lines.append(f"  {cid:<14} {origin:<14} {kind:<10} {title}")
+        result = ""
+        if recorded is not None:
+            result = f"{recorded['outcomes'].get(cid, 'not checked'):<22} "
+        lines.append(f"  {cid:<14} {origin:<14} {kind:<10} {result}{title}")
     for item in rejected:
         lines.append(f"  REJECTED {item['path']}: {item['reason']}")
     lines += [
         "",
         "Check one:  /appsec-advisor:analyze-threats --abuse-case <ID> [--model opus]",
+        "Details:    /appsec-advisor:abuse-cases <ID>",
         "Add your own:  YAML file in docs/security/abuse-cases/ (format: docs/threat-modeler.md)",
     ]
+    if recorded is None:
+        lines.append("Results per case:  create a threat model with /appsec-advisor:create-threat-model")
     return "\n".join(lines)
+
+
+def _line(value: object, limit: int = 200) -> str:
+    text = " ".join(str(value or "").split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _display_id(raw: str) -> str:
+    return "F-" + raw[2:] if raw.startswith("T-") else raw
+
+
+def _wrap(text: str, indent: str = "  ") -> list[str]:
+    return textwrap.wrap(text, width=100, initial_indent=indent, subsequent_indent=indent) or [indent.rstrip()]
+
+
+def _record_for(analysis: dict, cid: str) -> dict | None:
+    return next((c for c in analysis.get("cases") or [] if isinstance(c, dict) and str(c.get("id")) == cid), None)
+
+
+def _cited(step: dict) -> str:
+    ev = step.get("evidence") if isinstance(step.get("evidence"), dict) else {}
+    parts = []
+    if ev.get("file"):
+        parts.append(f"{_line(ev['file'])}:{ev['line']}" if ev.get("line") else _line(ev["file"]))
+    if step.get("finding_id"):
+        parts.append(f"finding {_line(step['finding_id'])}")
+    return " · ".join(parts)
+
+
+def render_case_detail(case: dict, origin: str, data: dict | None, repo_name: str, report: Path | None = None) -> str:
+    """One case in sections: what it checks, the result the threat model
+    records with how and where it applies, the steps, mitigations, open
+    questions, and where to go next. Strings from the model are clipped and
+    wrapped; nothing in it is executed or followed."""
+    cid = str(case.get("id") or "")
+    business = case.get("kind") == "descriptive"
+    out = [
+        f"{cid} · {_line(case.get('title'))}",
+        f"{'Business case' if business else 'Technical attack chain'} · {origin}",
+        "",
+    ]
+
+    out.append("WHAT IT CHECKS")
+    if business:
+        for step in descriptive_steps(case):
+            out += _wrap(_line(step, 400))
+        for item in case.get("exclusions") or []:
+            out += _wrap(f"Out of scope: {_line(item, 300)}")
+    elif case.get("goal"):
+        out += _wrap(f"Attacker goal: {_line(case['goal'], 300)}")
+    out.append("")
+
+    analysis = (data or {}).get("abuse_case_analysis")
+    analysis = analysis if isinstance(analysis, dict) else {}
+    record = _record_for(analysis, cid) if data is not None else None
+    generated = str(((data or {}).get("meta") or {}).get("generated") or "")[:10]
+    source = THREAT_MODEL_FILE.as_posix() + (f", {generated}" if generated else "")
+    definition_steps = {s.get("step"): s for s in case.get("chain") or [] if isinstance(s, dict)}
+    recorded_steps = [st for st in (record or {}).get("steps") or [] if isinstance(st, dict)]
+
+    if data is None:
+        out += [f"RESULT: NOT CHECKED — no threat model in {repo_name or 'this repository'}/docs/security/", ""]
+    elif record is None:
+        skipped = next(
+            (
+                r
+                for key in ("catalog_evaluated", "not_performed")
+                for r in analysis.get(key) or []
+                if isinstance(r, dict) and str(r.get("id")) == cid
+            ),
+            None,
+        )
+        state = (
+            "NOT APPLICABLE"
+            if skipped is not None and skipped in (analysis.get("catalog_evaluated") or [])
+            else "NOT CHECKED"
+        )
+        out += [f"RESULT: {state}  ({source})"]
+        if skipped is not None and skipped.get("reason"):
+            out += _wrap(f"Reason: {_line(skipped['reason'], 300)}")
+        out.append("")
+    else:
+        label = _VERDICT_LABEL.get(str(record.get("chain_verdict")), "unresolved")
+        if record.get("verification_complete") is False and label != "unresolved":
+            label += " (incomplete)"
+        risk = f"risk {_line(record['combined_risk'])} · " if record.get("combined_risk") else ""
+        meaning = _VERDICT_MEANING.get(label.split(" (")[0], _VERDICT_MEANING["unresolved"])
+        out += [f"RESULT: {label.upper()} — {meaning}", f"  ({risk}{source})", ""]
+
+        threats = {
+            _display_id(str(t.get("id"))): t for t in (data.get("threats") or []) if isinstance(t, dict) and t.get("id")
+        }
+        found = [_line(f) for f in record.get("matched_finding_ids") or []]
+        lead = next((threats[_display_id(f)] for f in found if _display_id(f) in threats), {})
+        if lead and label.split(" (")[0] in ("confirmed", "partly blocked"):
+            if lead.get("scenario"):
+                out += ["HOW", *_wrap(_line(lead["scenario"], 600)), ""]
+            if lead.get("impact_description"):
+                out += ["IMPACT", *_wrap(_line(lead["impact_description"], 400)), ""]
+
+        if business and len(recorded_steps) <= 1:
+            step = recorded_steps[0] if recorded_steps else {}
+            out += ["WHERE", f"  {_cited(step) or 'no code cited'}"]
+            for c in step.get("controls_found") or []:
+                out += _wrap(f"Control found: {_line(c, 300)}")
+            if lead.get("controls_in_place") and not step.get("controls_found"):
+                out += _wrap(f"Existing control, not sufficient: {_line(lead['controls_in_place'], 300)}")
+            out.append("")
+        else:
+            rows = []
+            for step in recorded_steps:
+                n = step.get("step")
+                title = _line((definition_steps.get(n) or {}).get("label")) or _line(step.get("outcome"), 160)
+                cited = _cited(step).replace(" · finding ", " (") + (
+                    ")" if step.get("finding_id") and step.get("evidence") else ""
+                )
+                rows.append(
+                    (str(n), (_line(step.get("verdict")) or "not verified").upper(), _line(title, 48), cited, step)
+                )
+            widths = [max(len(h), *(len(r[k]) for r in rows)) for k, h in enumerate(("#", "Result", "Step"))]
+            out.append("STEPS")
+            out.append(f"  {'#':<{widths[0]}}  {'Result':<{widths[1]}}  {'Step':<{widths[2]}}  Where")
+            for n, verdict, title, cited, step in rows:
+                out.append(f"  {n:<{widths[0]}}  {verdict:<{widths[1]}}  {title:<{widths[2]}}  {cited}".rstrip())
+                for c in step.get("controls_found") or []:
+                    out += _wrap(f"control found: {_line(c, 300)}", " " * (6 + widths[0] + widths[1]))
+            out.append("")
+
+        if found:
+            out.append("FINDINGS")
+            for fid in found:
+                t = threats.get(_display_id(fid)) or {}
+                risk_text = f" ({_line(t.get('risk'))})" if t.get("risk") else ""
+                out.append(f"  {fid}  {_line(t.get('title')) or 'not in the register'}{risk_text}")
+            out.append("")
+        mitigations = {str(m.get("id")): m for m in (data.get("mitigations") or []) if isinstance(m, dict)}
+        blocking = [str(m) for m in record.get("blocking_mitigation_ids") or []]
+        if blocking:
+            out.append("MITIGATIONS")
+            out += [f"  {_line(m)}  {_line((mitigations.get(m) or {}).get('title')) or 'not listed'}" for m in blocking]
+            out.append("")
+        questions = [q for q in record.get("open_questions") or [] if isinstance(q, str) and q.strip()]
+        if questions:
+            out.append("OPEN QUESTIONS")
+            for q in questions:
+                out += _wrap(_line(q, 300))
+            out.append("")
+
+    out.append("NEXT")
+    if record is not None and report is not None:
+        out.append(f"  Report:         {report.as_posix()}#{cid.lower()}")
+    found = [_line(f) for f in (record or {}).get("matched_finding_ids") or []]
+    if found:
+        out.append(f"  Finding:        /appsec-advisor:ask-threat-model --id {found[0]}")
+        out.append(f"  Fix or accept:  /appsec-advisor:review-threat-model, then pick {', '.join(found)}")
+    if data is None:
+        out.append("  Threat model:   /appsec-advisor:create-threat-model")
+    out.append(f"  Check again:    /appsec-advisor:analyze-threats --abuse-case {cid} [--model opus]")
+    return "\n".join(out)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -473,6 +718,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     output = parser.add_mutually_exclusive_group()
     output.add_argument("--list-ids", action="store_true", help="print active ids only")
+    output.add_argument("--show", metavar="ID", help="one case: its definition and the result the threat model records")
     output.add_argument(
         "--list",
         action="store_true",
@@ -487,7 +733,7 @@ def main(argv: list[str] | None = None) -> int:
     profile_dir: Path | None = None
     profile_path: Path | None = Path(args.org_profile) if args.org_profile else None
     profile_source = "cli" if profile_path else "none"
-    if args.list and not profile_path:
+    if (args.list or args.show) and not profile_path:
         from runtime.resolve_org_profile import discover_active_profile
 
         profile_path, profile_source = discover_active_profile(None, args.no_org_profile, plugin_root)
@@ -497,12 +743,42 @@ def main(argv: list[str] | None = None) -> int:
 
     origins: dict[str, str] = {}
     cases, errors, rejected = resolve_abuse_case_sources(profile, profile_dir, plugin_root, repo_root, origins=origins)
+    if args.show:
+        for e in errors:
+            sys.stderr.write(f"ERROR: {e}\n")
+        case = next((c for c in cases if str(c.get("id")) == args.show), None)
+        data = load_threat_model(repo_root)
+        if case is None and data is not None:
+            recorded = recorded_outcomes(repo_root) or {"derived": []}
+            case = next((c for c in recorded["derived"] if c["id"] == args.show), None)
+            origins[args.show] = "derived"
+        if errors or case is None:
+            if case is None:
+                sys.stderr.write(
+                    f"ERROR: unknown abuse case ID {args.show}; list them with /appsec-advisor:abuse-cases\n"
+                )
+            return 1
+        origin = _ORIGIN_LABEL.get(origins.get(args.show, ""), "unknown")
+        report = THREAT_MODEL_FILE.with_suffix(".md")
+        report = report if repo_root and (repo_root / report).is_file() else None
+        print(render_case_detail(case, origin, data, repo_root.name if repo_root else "", report))
+        return 0
     if args.list:
         for e in errors:
             sys.stderr.write(f"ERROR: {e}\n")
         if errors:
             return 1
-        print(render_case_list(cases, origins, rejected, profile_path, profile_source))
+        print(
+            render_case_list(
+                cases,
+                origins,
+                rejected,
+                profile_path,
+                profile_source,
+                recorded_outcomes(repo_root),
+                repo_root.name if repo_root else "",
+            )
+        )
         return 0
     # As a validation command every problem fails, including a repository
     # file that a scan would only reject on its own.

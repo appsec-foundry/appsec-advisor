@@ -21,6 +21,7 @@ If the user's arguments contain `--help` or `-h`, print this block verbatim and 
 
 USAGE
   /appsec-advisor:abuse-cases [--repo <path>] [--org-profile <path> | --no-org-profile]
+  /appsec-advisor:abuse-cases <ID> [--repo <path>]
 
 FLAGS
   --repo <path>          Repository whose own cases to include (default: current working dir)
@@ -33,6 +34,17 @@ WHAT IT SHOWS
   organization profile disables are not listed. A repository case file that
   a run would reject is listed with its reason. The organization profile is
   named only when one is active.
+
+  When docs/security/threat-model.yaml exists, a column shows what the last
+  threat-model run recorded for each case: confirmed, partly blocked,
+  mitigated, unresolved, not applicable, or not checked. Unresolved is never
+  safe. Cases the model derived for the application are listed too.
+
+  With an ID: that case's definition (goal and steps, or what it checks) and
+  what the threat model records for it, step by step with the cited code,
+  the findings, the fixes that would block it, and its open questions, then
+  where to read more: the report section, ask-threat-model for the finding,
+  and review-threat-model to fix or accept it.
 
 ADD YOUR OWN
   Put a YAML file in docs/security/abuse-cases/ of the repository; the
@@ -55,7 +67,9 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/model/resolve_abuse_cases.py" --list --re
 
 Use exactly `Listing the defined abuse cases` as the tool call's description.
 
-Exit code `1` means a plugin or organization case file is invalid; the script names it on stderr. Report that file and its reason, and stop.
+When the arguments contain a case ID (a word such as `AC-T-003`, `ORG-AC-001`, `REPO-AC-002`, or `MODEL-AC-001`), run `--show <ID>` in place of `--list`, with the same `--repo-root` and profile flags. Use exactly `Showing abuse case <ID>` as its tool description.
+
+Exit code `1` means a plugin or organization case file is invalid, or the ID is unknown; the script names the reason on stderr. Report it, and stop.
 
 ## Present the result
 
