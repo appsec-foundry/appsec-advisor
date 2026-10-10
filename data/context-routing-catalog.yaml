@@ -106,6 +106,11 @@ agents:
     purpose: Synthesize only requested root-cause or mitigation decisions from validated threat inputs.
     scope: whole_run
     stage: Root cause synthesis
+  - id: abuse_case_deriver
+    name: Abuse-case deriver
+    purpose: Propose up to three application-specific business abuse cases from bounded architecture context.
+    scope: whole_run
+    stage: Abuse case verification
   - id: abuse_case_verifier
     name: Abuse-case verifier
     purpose: Verify one matched abuse case against bounded entry-point, sink, and control evidence.
@@ -293,6 +298,11 @@ contexts:
     category: actors_and_abuse_cases
     description: One bounded candidate definition and its matched finding evidence, projected from the complete match set.
     scope: one_candidate
+  - id: abuse_cases.derivation
+    name: Abuse-case derivation context
+    category: actors_and_abuse_cases
+    description: Validated components, actors, assets, the confirmed use case, and active case titles; no source code.
+    scope: whole_run
   - id: abuse_cases.evidence
     name: Abuse-case verification evidence
     category: actors_and_abuse_cases
@@ -894,6 +904,14 @@ assignments:
     importance: essential
     applies_to: current_candidate
     reason: Each verification job is constrained to a deterministically matched abuse-case candidate.
+  - id: abuse-case-derivation-context
+    context: abuse_cases.derivation
+    agents:
+      - abuse_case_deriver
+    delivery: required
+    importance: essential
+    applies_to: whole_run
+    reason: The deriver proposes cases from validated architecture only; the verifier reads the code.
   - id: abuse-case-evidence
     context: abuse_cases.evidence
     agents:

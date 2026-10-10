@@ -1341,6 +1341,7 @@ def test_descriptive_limits_follow_depth_and_record_omissions():
         "descriptive_candidates_standard": 2,
         "descriptive_candidates_thorough": 4,
         "descriptive_candidates_explicit": 1,
+        "descriptive_candidates_derived": 1,
     }
     for depth, expected in (("quick", 0), ("standard", 2), ("thorough", 4)):
         matches = _candidates(5)
@@ -1353,11 +1354,32 @@ def test_descriptive_limits_follow_depth_and_record_omissions():
         assert len(omitted) == 5 - expected and all(m["reason"] for m in omitted)
 
 
+@pytest.mark.parametrize(("depth", "expected"), [("quick", 0), ("standard", 0), ("thorough", 2)])
+def test_derived_cases_run_only_at_thorough_within_their_own_limit(depth: str, expected: int):
+    """Model-derived cases neither take library slots nor run below thorough."""
+    limits = {
+        "descriptive_candidates_standard": 1,
+        "descriptive_candidates_thorough": 1,
+        "descriptive_candidates_explicit": 1,
+        "descriptive_candidates_derived": 2,
+    }
+    matches = _candidates(2) + [
+        {**m, "abuse_case_id": f"MODEL-AC-00{i}"} for i, m in enumerate(_candidates(3), start=1)
+    ]
+    derived = {m["abuse_case_id"] for m in matches if m["abuse_case_id"].startswith("MODEL-AC-")}
+    mac.apply_descriptive_limits(matches, set(), depth, limits, derived)
+    kept = [m["abuse_case_id"] for m in matches if m["structural_verdict"] == "candidate"]
+    assert len([cid for cid in kept if cid in derived]) == expected
+    assert len([cid for cid in kept if cid not in derived]) == (0 if depth == "quick" else 1)
+    assert all(m["reason"] for m in matches if m["structural_verdict"] == "not_performed")
+
+
 def test_explicit_request_runs_at_quick_depth_even_without_preselection():
     limits = {
         "descriptive_candidates_standard": 0,
         "descriptive_candidates_thorough": 0,
         "descriptive_candidates_explicit": 1,
+        "descriptive_candidates_derived": 1,
     }
     matches = _candidates(1)
     matches[0]["structural_verdict"] = "not_applicable"
@@ -1381,6 +1403,7 @@ def test_probe_cases_are_untouched_by_descriptive_limits():
             "descriptive_candidates_standard": 0,
             "descriptive_candidates_thorough": 0,
             "descriptive_candidates_explicit": 0,
+            "descriptive_candidates_derived": 1,
         },
     )
     assert probe == {"abuse_case_id": "AC-T-001", "structural_verdict": "candidate"}

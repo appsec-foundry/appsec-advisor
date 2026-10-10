@@ -149,6 +149,8 @@ requirements:
       - scripts/validators/verify_abuse_cases.py
       - scripts/validators/abuse_case_gate.py
       - scripts/model/resolve_abuse_cases.py
+      - scripts/model/derive_abuse_cases.py
+      - agents/appsec-abuse-case-deriver.md
       - data/abuse-cases/**
       - schemas/abuse-cases.schema.yaml
     decisions:
@@ -158,6 +160,7 @@ requirements:
       - AC-8
       - AC-10
       - AC-11
+      - AC-12
     documents:
       - docs/org-profiles.md
     coverage: direct
@@ -176,6 +179,9 @@ requirements:
       - tests/test_business_abuse_cases.py::test_an_inconclusive_step_keeps_only_a_citation_found_in_the_code
       - tests/test_promote_verified_abuse_cases.py::test_a_confirmed_step_verifies_the_finding_it_cites
       - tests/test_promote_verified_abuse_cases.py::test_a_finding_the_verifier_cites_is_bound_in_the_match_sidecar
+      - tests/test_derive_abuse_cases.py::test_derived_cases_are_validated_bounded_and_deduplicated
+      - tests/test_orchestration_controller.py::test_thorough_prepare_abuse_derives_cases_once_before_matching
+      - tests/test_match_abuse_cases.py::test_derived_cases_run_only_at_thorough_within_their_own_limit
 
   REQ-MOD-005:
     applies_to:

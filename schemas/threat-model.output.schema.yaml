@@ -310,7 +310,7 @@ properties:
               type: array
               items:
                 type: string
-                pattern: "^(AC-T|AC|ORG-AC|REPO-AC)-\\d{3,}$"
+                pattern: "^(AC-T|AC|ORG-AC|REPO-AC|MODEL-AC)-\\d{3,}$"
             components:
               type: array
               items: { type: string }
@@ -821,7 +821,7 @@ properties:
           additionalProperties: false
           required: [id, title, source, actor, goal, prerequisite, combined_risk, chain_verdict, verification_complete, unverified_steps, matched_finding_ids, blocking_mitigation_ids, steps]
           properties:
-            id: {type: string, pattern: "^(AC-T|AC|ORG-AC|REPO-AC)-[0-9]{3,}$"}
+            id: {type: string, pattern: "^(AC-T|AC|ORG-AC|REPO-AC|MODEL-AC)-[0-9]{3,}$"}
             title: {type: string, minLength: 1, maxLength: 200}
             source: {type: string, minLength: 1, maxLength: 64}
             actor: {type: string, minLength: 1, maxLength: 256}
@@ -888,7 +888,7 @@ properties:
           additionalProperties: false
           required: [id, title, source, reason]
           properties:
-            id: {type: string, pattern: "^(AC-T|AC|ORG-AC|REPO-AC)-[0-9]{3,}$"}
+            id: {type: string, pattern: "^(AC-T|AC|ORG-AC|REPO-AC|MODEL-AC)-[0-9]{3,}$"}
             title: {type: string, minLength: 1, maxLength: 200}
             source: {type: [string, "null"], maxLength: 64}
             reason: {type: string, minLength: 1, maxLength: 1000}
@@ -900,7 +900,7 @@ properties:
           additionalProperties: false
           required: [id, title, requested, reason]
           properties:
-            id: {type: string, pattern: "^(AC-T|AC|ORG-AC|REPO-AC)-[0-9]{3,}$"}
+            id: {type: string, pattern: "^(AC-T|AC|ORG-AC|REPO-AC|MODEL-AC)-[0-9]{3,}$"}
             title: {type: string, minLength: 1, maxLength: 200}
             requested: {type: boolean}
             reason: {type: string, minLength: 1, maxLength: 1000}

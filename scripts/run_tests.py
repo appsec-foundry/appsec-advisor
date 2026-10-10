@@ -364,6 +364,7 @@ GROUPS = {
         critical_findings_sync
         cvss_eligibility
         decision_register
+        derive_abuse_cases
         detect_impl_strategy
         emit_auth_coverage
         emit_clean_finding_titles
@@ -6310,6 +6311,23 @@ SOURCE_TESTS = {
         analyst_controller
         resolve_analyst_catalog
         schemas
+    """),
+    "agents/appsec-abuse-case-deriver.md": _tests("""
+        agent_definitions
+        orchestration_controller
+        stage1_context_edge_inventory
+    """),
+    "scripts/model/derive_abuse_cases.py": _tests("""
+        derive_abuse_cases
+        orchestration_controller
+    """),
+    "schemas/abuse-case-deriver-context.schema.json": _tests("""
+        context_routing
+        derive_abuse_cases
+        orchestration_controller
+    """),
+    "schemas/abuse-case-deriver-output.schema.json": _tests("""
+        orchestration_controller
     """),
     "agents/appsec-abuse-case-verifier.md": _tests("""
         active_tool_calls

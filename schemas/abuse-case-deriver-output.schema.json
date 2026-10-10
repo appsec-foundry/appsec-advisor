@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/abuse-case-deriver-output.schema.json",
+  "title": "Untrusted abuse-case deriver proposals",
+  "description": "Model-proposed business abuse cases (decision AC-12). model/derive_abuse_cases.py admit validates each proposal as an open descriptive case, applies the limit, drops duplicate titles, and assigns MODEL-AC ids.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["cases"],
+  "properties": {
+    "cases": {
+      "type": "array",
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "check"],
+        "properties": {
+          "title": {"type": "string", "minLength": 1, "maxLength": 160},
+          "check": {"type": "string", "minLength": 1, "maxLength": 600},
+          "exclusions": {"type": "array", "maxItems": 8, "items": {"type": "string", "minLength": 1, "maxLength": 600}},
+          "open_questions": {"type": "array", "maxItems": 8, "items": {"type": "string", "minLength": 1, "maxLength": 600}},
+          "finding": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "cwe": {"type": "string", "pattern": "^CWE-[0-9]+$"},
+              "stride": {"enum": ["Spoofing", "Tampering", "Repudiation", "Information Disclosure", "Denial of Service", "Elevation of Privilege"]},
+              "mitigation_title": {"type": "string", "minLength": 1, "maxLength": 120}
+            }
+          }
+        }
+      }
+    }
+  }
+}

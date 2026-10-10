@@ -60,7 +60,13 @@ surfaces:
     # cut past the point of clarity. 4000 restores headroom comparable to
     # thin_stage2_runtime (81%), so the guard measures drift again rather than
     # rationing a control-flow rule the orchestrator has to follow exactly.
-    max_bytes: 4000
+    #
+    # 4000 -> 4400 (2026-10-10). Thorough runs dispatch one abuse-case deriver
+    # before matching (decision AC-12), so the runtime describes a third action
+    # from `prepare-abuse`: launch the job, join it, and run its boundary. The
+    # instruction takes 284 bytes, which left the file at 96.8% of 4000. 4400
+    # restores the ten-percent headroom without trimming dispatch guidance.
+    max_bytes: 4400
   thin_stage2_runtime:
     path: skills/create-threat-model/SKILL-thin-stage2.md
     # 3600 -> 3800 (2026-09-12): the runtime joins its asynchronous renderer

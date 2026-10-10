@@ -988,6 +988,10 @@ def _scan_case_config(output_dir: Path) -> tuple[list[Path], set[str]]:
     return files, ids
 
 
+# Admitted model-derived cases of this run, written by model/derive_abuse_cases.py.
+DERIVED_CASE_FILE = ".derived-abuse-cases.yaml"
+
+
 def _assessment_depth(output_dir: Path) -> str:
     try:
         cfg = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8"))
@@ -997,12 +1001,15 @@ def _assessment_depth(output_dir: Path) -> str:
     return depth if depth in {"quick", "standard", "thorough"} else "standard"
 
 
-def apply_descriptive_limits(matches: list[dict], requested: set[str], depth: str, limits: dict[str, int]) -> None:
+def apply_descriptive_limits(
+    matches: list[dict], requested: set[str], depth: str, limits: dict[str, int], derived: set[str] = frozenset()
+) -> None:
     """Bound model work on descriptive candidates; record every omission.
 
     Explicitly requested cases run at every depth up to their own limit.
     Optional ones run from standard depth up to the depth's limit, strongest
-    preselection evidence first. An omitted candidate becomes
+    preselection evidence first. Model-derived cases run only at thorough
+    depth, within their own limit (AC-12). An omitted candidate becomes
     ``not_performed`` with its reason, so it is reported rather than lost.
     """
     optional_cap = {
@@ -1011,6 +1018,7 @@ def apply_descriptive_limits(matches: list[dict], requested: set[str], depth: st
         "thorough": limits["descriptive_candidates_thorough"],
     }[depth]
     explicit_cap = limits["descriptive_candidates_explicit"]
+    derived_cap = limits["descriptive_candidates_derived"] if depth == "thorough" else 0
     for match in matches:
         # A request is answered even when preselection found nothing: the
         # verifier then binds the case without a preselected file set.
@@ -1030,17 +1038,28 @@ def apply_descriptive_limits(matches: list[dict], requested: set[str], depth: st
             m["abuse_case_id"],
         ),
     )
-    used = {"explicit": 0, "optional": 0}
+    used = {"explicit": 0, "derived": 0, "optional": 0}
+    caps = {"explicit": explicit_cap, "derived": derived_cap, "optional": optional_cap}
     for match in ranked:
         match["requested"] = match["abuse_case_id"] in requested
-        kind = "explicit" if match["requested"] else "optional"
-        cap = explicit_cap if match["requested"] else optional_cap
-        if used[kind] < cap:
+        if match["requested"]:
+            kind = "explicit"
+        elif match["abuse_case_id"] in derived:
+            kind = "derived"
+        else:
+            kind = "optional"
+        if used[kind] < caps[kind]:
             used[kind] += 1
             continue
         match["structural_verdict"] = "not_performed"
         if match["requested"]:
             match["reason"] = f"exceeds the limit of {explicit_cap} explicitly requested business cases per run"
+        elif kind == "derived":
+            match["reason"] = (
+                f"exceeds the limit of {derived_cap} model-derived business cases"
+                if depth == "thorough"
+                else "model-derived business cases run only at thorough depth"
+            )
         elif depth == "quick":
             match["reason"] = "quick depth verifies business cases only on explicit request"
         else:
@@ -1112,7 +1131,13 @@ def cmd_match(args: argparse.Namespace) -> int:
     rac = _rac()
     limits = rac.load_limits()
     cases, errors, rejected = rac.resolve_abuse_case_sources(
-        profile, profile_dir, PLUGIN_ROOT, repo_root, extra_case_files=extra_case_files, origins=origins
+        profile,
+        profile_dir,
+        PLUGIN_ROOT,
+        repo_root,
+        extra_case_files=extra_case_files,
+        origins=origins,
+        derived_case_file=out_dir / DERIVED_CASE_FILE,
     )
     for item in rejected:
         sys.stderr.write(f"REJECTED: {item['path']}: {item['reason']}\n")
@@ -1137,7 +1162,8 @@ def cmd_match(args: argparse.Namespace) -> int:
     findings_by_id = {_finding_id(finding): finding for finding in findings}
     matches.sort(key=lambda match: _candidate_priority(match, findings_by_id))
     requested = {cid for cid, origin in origins.items() if origin == "explicit"} | only_ids
-    apply_descriptive_limits(matches, requested, _assessment_depth(out_dir), limits)
+    derived = {cid for cid, origin in origins.items() if origin == "derived"}
+    apply_descriptive_limits(matches, requested, _assessment_depth(out_dir), limits, derived)
     result = {"schema_version": 1, "matches": matches}
     if rejected:
         result["rejected_case_files"] = rejected

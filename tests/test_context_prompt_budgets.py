@@ -30,8 +30,9 @@ SURFACE_MAX_BYTES_RATCHET = {
     # which decides it from the merged verdicts rather than an exit status a
     # background launch reports as 0 regardless — so the runtime must describe
     # a second possible `finalize-abuse` action, more text than the branch it
-    # replaces. See the note in data/context-budgets.yaml.
-    "thin_stage1d_runtime": 4000,
+    # replaces. 4000 -> 4400 (2026-10-10): thorough runs dispatch the abuse-case
+    # deriver from `prepare-abuse` (AC-12). See the note in data/context-budgets.yaml.
+    "thin_stage1d_runtime": 4400,
     # 3600 -> 3800, 8000 -> 8200, 3600 -> 3800 (2026-09-12): the post-Stage-1d
     # runtimes join their asynchronous agent calls with orchestrator/wait_agent_calls.py.
     # See the notes in data/context-budgets.yaml.

@@ -1049,6 +1049,97 @@ def test_context_v2_prepare_abuse_dispatches_receipted_candidate_projections(tmp
         controller._context_v2_abuse_candidate_receipt(output, "AC-T-001", tmp_path / "repo")
 
 
+def _thorough_abuse_run(tmp_path: Path, **overrides) -> Path:
+    output = _write_context_v2_config(
+        tmp_path, **{"skip_abuse_case_verification": False, "assessment_depth": "thorough", **overrides}
+    )
+    (output / ".components.json").write_text(
+        json.dumps({"components": [{"id": "api", "name": "API", "description": "Handles refunds."}]}),
+        encoding="utf-8",
+    )
+    return output
+
+
+def _no_candidates(name, args, **kwargs):
+    if name == "model/match_abuse_cases.py" and "match" in args:
+        (kwargs.get("output") or Path(args[args.index("--output-dir") + 1])).joinpath(
+            ".abuse-case-matches.json"
+        ).write_text(json.dumps({"schema_version": 1, "matches": []}), encoding="utf-8")
+    return _completed()
+
+
+def test_thorough_prepare_abuse_derives_cases_once_before_matching(tmp_path, monkeypatch, capsys):
+    """AC-12: one receipted deriver job precedes matching; derive-abuse admits its
+    proposals, records the outcome, and continues to the normal matching step."""
+    output = _thorough_abuse_run(tmp_path)
+    calls: list[str] = []
+
+    def fake_script(name, args, **kwargs):
+        calls.append(name)
+        return _no_candidates(name, args, **kwargs)
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+    action = controller.prepare_abuse(output)
+
+    assert action["action"] == "dispatch_agent"
+    assert action["semantic_role"] == "abuse_case_deriver"
+    assert action["next_boundary"] == "derive-abuse"
+    assert action["dispatch_jobs"][0]["input_artifacts"] == [".dispatch-context/abuse-cases/deriver.json"]
+    assert action["artifact_receipts"][0]["validation_status"] == "valid"
+    assert "model/match_abuse_cases.py" not in calls
+    assert controller._emit(action) == 0
+    assert json.loads(capsys.readouterr().out)["dispatch_jobs"][0]["context_delivery_ids"]
+
+    (output / ".abuse-case-deriver-output.json").write_text(
+        json.dumps(
+            {"cases": [{"title": "Refund an order twice", "check": "Check whether an order can be refunded twice."}]}
+        ),
+        encoding="utf-8",
+    )
+    after = controller.derive_abuse(output)
+
+    record = json.loads((output / controller.ABUSE_DERIVATION_RECORD).read_text(encoding="utf-8"))
+    assert record["admitted"] == ["MODEL-AC-001"]
+    assert (output / ".derived-abuse-cases.yaml").is_file()
+    assert "model/match_abuse_cases.py" in calls
+    assert after["action"] == "run_gate"
+    assert after["receipts"][0].startswith("derived business cases admitted: 1")
+    # Derivation happens once per run.
+    assert controller.prepare_abuse(output)["action"] == "run_gate"
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [{"assessment_depth": "standard"}, {"only_abuse_case_ids": ["AC-T-001"]}],
+    ids=["standard-depth", "restricted-run"],
+)
+def test_prepare_abuse_derives_nothing_below_thorough_or_in_a_restricted_run(tmp_path, monkeypatch, overrides):
+    output = _thorough_abuse_run(tmp_path, **overrides)
+    monkeypatch.setattr(controller, "_run_script", _no_candidates)
+
+    assert controller.prepare_abuse(output)["action"] == "run_gate"
+    assert not (output / ".dispatch-context/abuse-cases/deriver.json").exists()
+
+
+@pytest.mark.parametrize(
+    "body", [None, "not json", '{"cases": [{"title": "t"}]}'], ids=["missing", "garbled", "invalid"]
+)
+def test_an_unusable_deriver_output_derives_nothing_and_matching_continues(tmp_path, monkeypatch, body):
+    output = _thorough_abuse_run(tmp_path)
+    monkeypatch.setattr(controller, "_run_script", _no_candidates)
+    controller.prepare_abuse(output)
+    if body is not None:
+        (output / ".abuse-case-deriver-output.json").write_text(body, encoding="utf-8")
+
+    action = controller.derive_abuse(output)
+
+    record = json.loads((output / controller.ABUSE_DERIVATION_RECORD).read_text(encoding="utf-8"))
+    assert record["admitted"] == [] and record["problem"]
+    assert not (output / ".derived-abuse-cases.yaml").exists()
+    assert action["action"] == "run_gate"
+    assert any(r.startswith("derived business cases admitted: 0") for r in action["receipts"])
+
+
 def test_prepare_abuse_carries_candidate_titles_for_dispatch_labels(tmp_path, monkeypatch):
     """Without titles the verifier fan-out is a column of bare AC-ids in the
     agent list. Titles are advisory: an id with none stays unlabelled rather
@@ -6833,7 +6924,7 @@ class TestStage1TaskRows:
         assert "in_progress" in text and "completed" in text
 
     def test_every_stage1_role_maps_to_one_controller_owned_row(self):
-        stage1_roles = set(controller.SEMANTIC_ROLE_REGISTRY) - {"abuse_case_verifier"}
+        stage1_roles = set(controller.SEMANTIC_ROLE_REGISTRY) - {"abuse_case_verifier", "abuse_case_deriver"}
 
         assert set(controller._STAGE1_TASK_ROW_BY_ROLE) == stage1_roles
         assert set(controller._STAGE1_TASK_ROW_BY_ROLE.values()) == set(controller.STAGE1_TASK_ROWS)

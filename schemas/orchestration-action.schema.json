@@ -254,6 +254,7 @@
         "context-v2-post-architect-review",
         "context-v2-post-triage",
         "context-v2-finalize",
+        "derive-abuse",
         "finalize-abuse"
       ]
     },
@@ -394,6 +395,7 @@
     "semantic_role": {
       "enum": [
         "actor_discoverer",
+        "abuse_case_deriver",
         "abuse_case_verifier",
         "architect_reviewer",
         "architecture_analyst",
@@ -441,7 +443,7 @@
         },
         "candidate_id": {
           "type": "string",
-          "pattern": "^(AC-T|AC|ORG-AC|REPO-AC)-[0-9]{3,}$"
+          "pattern": "^(AC-T|AC|ORG-AC|REPO-AC|MODEL-AC)-[0-9]{3,}$"
         },
         "semantic_role": {
           "$ref": "#/$defs/semantic_role"
@@ -449,6 +451,7 @@
         "agent_type": {
           "enum": [
             "appsec-advisor:appsec-actor-discoverer",
+            "appsec-advisor:appsec-abuse-case-deriver",
             "appsec-advisor:appsec-abuse-case-verifier",
             "appsec-advisor:appsec-architect-reviewer",
             "appsec-advisor:appsec-architecture-analyst",

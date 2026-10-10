@@ -259,12 +259,15 @@ def resolve_abuse_case_sources(
     extra_case_files: list[Path] | None = None,
     limits: dict[str, int] | None = None,
     origins: dict[str, str] | None = None,
+    derived_case_file: Path | None = None,
 ) -> tuple[list[dict], list[str], list[dict]]:
     """Return (active_cases, errors, rejected_repo_files).
 
     When ``origins`` is a dict, it receives ``{case id: origin}`` with origin
-    ``library``, ``org``, ``repo``, or ``explicit``. Only ``explicit`` cases
-    came from this invocation's own arguments.
+    ``library``, ``org``, ``repo``, ``derived``, or ``explicit``. Only
+    ``explicit`` cases came from this invocation's own arguments.
+    ``derived_case_file`` holds the admitted model-derived cases of this run
+    (``derive_abuse_cases.py admit``); a problem with it rejects that file only.
 
     Sources, in load order:
       1. plugin standard library (unless ``inherit_defaults: false``);
@@ -340,6 +343,19 @@ def resolve_abuse_case_sources(
             _admit(file_cases, "repo")
             known_ids.update(ids)
             loaded_paths.add(path.resolve())
+
+    if derived_case_file is not None and derived_case_file.is_file():
+        file_cases, file_errors = _load_case_file(derived_case_file, schema, max_bytes)
+        ids = [case.get("id") for case in file_cases]
+        if not file_errors and any(not str(cid).startswith("MODEL-AC-") for cid in ids):
+            file_errors = [f"{derived_case_file.name}: a derived case must use a MODEL-AC id"]
+        if not file_errors and any(case.get("kind") != "descriptive" for case in file_cases):
+            file_errors = [f"{derived_case_file.name}: a derived case must be descriptive"]
+        if file_errors:
+            rejected.append({"path": derived_case_file.name, "reason": _reason(file_errors)})
+        else:
+            _admit(file_cases, "derived")
+            known_ids.update(ids)
 
     # Explicit per-scan files are constrained to the target repository. They
     # are untrusted data, not arbitrary host-file reads. Unlike the automatic

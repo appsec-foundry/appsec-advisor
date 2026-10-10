@@ -46,7 +46,7 @@ never proves that a boundary control works.
 
 ### REQ-MOD-004 — Abuse cases remain hypotheses until evidence confirms them
 
-The operator controls which abuse-case sources are used. A technical abuse case becomes a finding only when target-repository evidence confirms it. Standard and thorough assessments also load the plugin's generic business abuse cases unless the organization profile disables the defaults, and a business case is verified only when deterministic preselection finds code it applies to. A confirmed business case becomes a finding. An unconfirmed business case that cites code where no enforcing control was found becomes a finding marked as unproven; any other unconfirmed business case is reported as unresolved, not as safe.
+The operator controls which abuse-case sources are used. A technical abuse case becomes a finding only when target-repository evidence confirms it. Standard and thorough assessments also load the plugin's generic business abuse cases unless the organization profile disables the defaults, and a business case is verified only when deterministic preselection finds code it applies to. A confirmed business case becomes a finding. An unconfirmed business case that cites code where no enforcing control was found becomes a finding marked as unproven; any other unconfirmed business case is reported as unresolved, not as safe. Thorough assessments also let the model propose up to three application-specific business abuse cases, which are marked as model-derived and follow the same verification and reporting rules.
 
 ### REQ-MOD-005 — Findings require evidence from the target repository
 

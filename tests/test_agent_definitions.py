@@ -46,6 +46,8 @@ REQUIRED_MODEL = "sonnet"
 #     skipped its required Markdown validator after writing an incomplete
 #     heading sequence.
 EXPECTED_MAX_TURNS = {
+    # One read of a bounded context, one write, and two log calls (AC-12).
+    "appsec-abuse-case-deriver": 6,
     "appsec-architecture-analyst": 60,
     "appsec-control-analyst": 40,
     "appsec-post-stride-synthesizer": 20,

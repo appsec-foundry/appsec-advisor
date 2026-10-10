@@ -46,7 +46,7 @@ $defs:
         # is reserved for analysis-discovered cases — NOT yet produced by any
         # pipeline step (no discovered-case generator exists); kept in the
         # pattern for forward-compat only.
-        pattern: "^(AC-T|AC|ORG-AC|REPO-AC)-[0-9]{3,}$"
+        pattern: "^(AC-T|AC|ORG-AC|REPO-AC|MODEL-AC)-[0-9]{3,}$"
       kind:
         const: probe
       title:
@@ -156,7 +156,7 @@ $defs:
     properties:
       id:
         type: string
-        pattern: "^(AC-T|ORG-AC|REPO-AC)-[0-9]{3,}$"
+        pattern: "^(AC-T|ORG-AC|REPO-AC|MODEL-AC)-[0-9]{3,}$"
       kind:
         const: descriptive
       title:

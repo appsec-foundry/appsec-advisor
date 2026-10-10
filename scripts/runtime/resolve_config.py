@@ -497,6 +497,7 @@ CONTEXT_V2_ARTIFACT_SCHEMA_VERSIONS = {
     "post-stride-generated-threats": 1,
     "post-stride-proposed-mitigations": 1,
     "abuse-case-verifier-context": 1,
+    "abuse-case-deriver-context": 1,
     "triage-flags": 2,
     "mitigation-overrides": 1,
     "tier-root-causes": 1,

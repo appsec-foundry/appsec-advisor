@@ -15,6 +15,11 @@ Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; use no other Stage-1d instru
      prepare-abuse --output-dir "$OUTPUT_DIR"
    ```
 
+   `dispatch_agent` (thorough): launch its job as `agent_type`, prompt
+   `ABUSE_CASE_DERIVER_CONTEXT_PATH=<input_artifact>` plus step 3's run lines;
+   join via `wait_agent_calls.py "$OUTPUT_DIR"` (repeat `75`), run its
+   `next_boundary` like step 4 and continue with that action.
+
 3. Launch every job as an `appsec-advisor:appsec-abuse-case-verifier` call,
    launching the wave in ONE message (the Agent hook runs `verify-receipts`). Pass no `run_in_background`. Description:
    `Abuse case: <candidate_id> — <title>`; use the ID if its title is missing.

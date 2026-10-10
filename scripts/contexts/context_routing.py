@@ -359,7 +359,7 @@ def _render_artifact(pattern: str, component_id: str | None, candidate_id: str |
             raise ContextRoutingError(f"component-scoped context requires a valid component id for {pattern!r}")
         pattern = pattern.replace("{component_id}", component_id)
     if "{candidate_id}" in pattern:
-        if not candidate_id or not re.fullmatch(r"(?:AC-T|AC|ORG-AC|REPO-AC)-[0-9]{3,}", candidate_id):
+        if not candidate_id or not re.fullmatch(r"(?:AC-T|AC|ORG-AC|REPO-AC|MODEL-AC)-[0-9]{3,}", candidate_id):
             raise ContextRoutingError(f"candidate-scoped context requires a valid candidate id for {pattern!r}")
         pattern = pattern.replace("{candidate_id}", candidate_id)
     return pattern

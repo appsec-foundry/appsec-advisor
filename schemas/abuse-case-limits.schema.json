@@ -29,6 +29,7 @@
         "descriptive_candidates_standard",
         "descriptive_candidates_thorough",
         "descriptive_candidates_explicit",
+        "descriptive_candidates_derived",
         "descriptive_source_files",
         "descriptive_source_kib",
         "added_token_share"

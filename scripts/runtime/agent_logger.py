@@ -2361,6 +2361,7 @@ def _context_v2_agent_identity_reason(event: hook_payload.HookEvent) -> str | No
         "appsec-advisor:appsec-triage-validator",
         "appsec-advisor:appsec-post-stride-synthesizer",
         "appsec-advisor:appsec-abuse-case-verifier",
+        "appsec-advisor:appsec-abuse-case-deriver",
     }
     if subtype not in context_v2_agents:
         return None

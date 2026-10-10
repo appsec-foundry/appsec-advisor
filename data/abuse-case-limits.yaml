@@ -14,6 +14,8 @@ limits:
   descriptive_candidates_standard: {value: 3, unit: candidates}
   descriptive_candidates_thorough: {value: 8, unit: candidates}
   descriptive_candidates_explicit: {value: 16, unit: candidates}
+  # Model-derived cases (AC-12): proposed and verified at thorough depth only.
+  descriptive_candidates_derived: {value: 3, unit: candidates}
   # Source files and bytes preselected for one descriptive candidate.
   descriptive_source_files: {value: 12, unit: files}
   # Shared source-window budget inside one verifier context (64 KiB cap).

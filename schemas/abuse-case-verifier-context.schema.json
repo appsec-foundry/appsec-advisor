@@ -118,7 +118,7 @@
       },
       "additionalProperties": false
     },
-    "candidate_id": {"type": "string", "pattern": "^(AC-T|AC|ORG-AC|REPO-AC)-[0-9]{3,}$"},
+    "candidate_id": {"type": "string", "pattern": "^(AC-T|AC|ORG-AC|REPO-AC|MODEL-AC)-[0-9]{3,}$"},
     "nullable_string": {"type": ["string", "null"], "maxLength": 2000},
     "string_list": {"type": "array", "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 1000}},
     "evidence": {

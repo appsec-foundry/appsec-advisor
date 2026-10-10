@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/abuse-case-deriver-context.schema.json",
+  "title": "Bounded abuse-case deriver input",
+  "description": "Validated architecture context for the model-derived business abuse cases of one thorough run (decision AC-12). It carries no source code.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "max_cases", "use_case", "components", "actors", "assets", "active_case_titles"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "max_cases": {"type": "integer", "minimum": 0, "maximum": 3},
+    "use_case": {"type": ["string", "null"], "maxLength": 600},
+    "components": {
+      "type": "array",
+      "maxItems": 30,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "description"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1, "maxLength": 80},
+          "name": {"type": "string", "maxLength": 120},
+          "description": {"type": "string", "maxLength": 300}
+        }
+      }
+    },
+    "actors": {
+      "type": "array",
+      "maxItems": 15,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "label", "description"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1, "maxLength": 40},
+          "label": {"type": "string", "maxLength": 120},
+          "description": {"type": "string", "maxLength": 300}
+        }
+      }
+    },
+    "assets": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "classification"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1, "maxLength": 40},
+          "name": {"type": "string", "maxLength": 160},
+          "classification": {"type": "string", "maxLength": 40}
+        }
+      }
+    },
+    "active_case_titles": {"type": "array", "maxItems": 64, "items": {"type": "string", "maxLength": 160}}
+  }
+}

@@ -161,6 +161,7 @@ _RECEIPT_RECORD_KEYS = {
     "schemas/post-stride-generated-threats.schema.json#v1": "threats",
     "schemas/post-stride-proposed-mitigations.schema.json#v1": "mitigations",
     "schemas/abuse-case-verifier-context.schema.json#v1": "candidate",
+    "schemas/abuse-case-deriver-context.schema.json#v1": "components",
     "schemas/architect-review-job.schema.json#v1": "packets",
     "schemas/actors-merged-static.schema.yaml#v1": "resolved_actors",
     "schemas/actors-resolved.schema.yaml#v1": "resolved_actors",
@@ -169,6 +170,12 @@ _OPTIONAL_RECEIPT_RECORD_KEYS = {
     "schemas/fragments/mitigation-overrides.schema.json#v1",
 }
 SEMANTIC_ROLE_REGISTRY: dict[str, dict[str, Any]] = {
+    "abuse_case_deriver": {
+        "agent": "appsec-abuse-case-deriver",
+        "instruction": PLUGIN_ROOT / "agents" / "appsec-abuse-case-deriver.md",
+        "tools": ("Read", "Bash", "Write"),
+        "output_contracts": ("schemas/abuse-case-deriver-output.schema.json",),
+    },
     "abuse_case_verifier": {
         "agent": "appsec-abuse-case-verifier",
         "instruction": PLUGIN_ROOT / "agents" / "appsec-abuse-case-verifier.md",
@@ -273,6 +280,7 @@ SEMANTIC_ROLE_REGISTRY: dict[str, dict[str, Any]] = {
 }
 
 SEMANTIC_ROLE_MODEL_KEYS = {
+    "abuse_case_deriver": "abuse_verifier_model",
     "abuse_case_verifier": "abuse_verifier_model",
     "actor_discoverer": "actor_discovery_model",
     "architecture_analyst": "orchestrator_model",
@@ -312,7 +320,9 @@ CONTEXT_V2_PRODUCER_GATED_ROLES = frozenset(
         "trust_boundary_analyst",
     }
 )
-CONTEXT_V2_CONTROLLER_RECOVERY_ROLES = frozenset({"architect_reviewer", "stride_analyzer"})
+# The abuse-case deriver is optional work: derive-abuse admits what validates
+# and records an invalid or missing proposal file as zero derived cases.
+CONTEXT_V2_CONTROLLER_RECOVERY_ROLES = frozenset({"abuse_case_deriver", "architect_reviewer", "stride_analyzer"})
 
 _CACHE_READ_RE = re.compile(r"\bcache_read=([0-9][0-9,]*)")
 
@@ -6752,6 +6762,8 @@ def prepare_abuse(output_dir: Path, restrict_to: list[str] | None = None) -> dic
     }
     if cfg.get("skip_abuse_case_verification"):
         return {**common, "action": "run_gate", "receipts": ["Abuse verification disabled"]}
+    if restrict_to is None and _abuse_derivation_pending(output_dir, cfg):
+        return _dispatch_abuse_deriver(output_dir, cfg, common)
 
     repo_root = str(cfg.get("repo_root") or output_dir)
     args = [
@@ -6855,6 +6867,99 @@ def prepare_abuse(output_dir: Path, restrict_to: list[str] | None = None) -> dic
     }
     _prepare_context_v2_dispatch_outputs(output_dir, jobs)
     return _validate_action(action)
+
+
+ABUSE_DERIVATION_RECORD = ".abuse-case-derivation.json"
+_ABUSE_DERIVER_CONTEXT = ".dispatch-context/abuse-cases/deriver.json"
+_ABUSE_DERIVER_OUTPUT = ".abuse-case-deriver-output.json"
+
+
+def _abuse_derivation_pending(output_dir: Path, cfg: dict[str, Any]) -> bool:
+    """A thorough run derives business cases once, before matching (AC-12).
+
+    A run restricted to named cases keeps its restriction, so it derives none.
+    """
+    return (
+        cfg.get("assessment_depth") == "thorough"
+        and not cfg.get("only_abuse_case_ids")
+        and not (output_dir / ABUSE_DERIVATION_RECORD).is_file()
+    )
+
+
+def _dispatch_abuse_deriver(output_dir: Path, cfg: dict[str, Any], common: dict[str, Any]) -> dict[str, Any]:
+    """Open the one deriver job; ``derive-abuse`` admits its proposals."""
+    import model.derive_abuse_cases as derive_abuse_cases
+
+    derive_abuse_cases.write_context(output_dir)
+    role = "abuse_case_deriver"
+    jobs = [
+        {
+            "schema_version": 1,
+            "job_id": "phase10c-abuse-derive",
+            "semantic_role": role,
+            **_context_v2_job_metadata(cfg, role),
+            "input_artifacts": [_ABUSE_DERIVER_CONTEXT],
+            "output_artifacts": [_ABUSE_DERIVER_OUTPUT],
+            "unresolved_decision_keys": ["derived_abuse_cases"],
+        }
+    ]
+    action = {
+        **common,
+        "action": "dispatch_agent",
+        "instruction_file": str(THIN_STAGE1D_RUNTIME),
+        "semantic_role": role,
+        "next_boundary": _checked_next_boundary("derive-abuse"),
+        "dispatch_jobs": jobs,
+        "artifact_receipts": [
+            _validated_json_receipt(
+                output_dir,
+                _ABUSE_DERIVER_CONTEXT,
+                schema_id="schemas/abuse-case-deriver-context.schema.json#v1",
+                record_count=_record_count(output_dir / _ABUSE_DERIVER_CONTEXT, "components"),
+            )
+        ],
+        "unresolved_decision_keys": ["derived_abuse_cases"],
+        "receipts": ["thorough depth: deriving application-specific business cases before matching"],
+    }
+    _prepare_context_v2_dispatch_outputs(output_dir, jobs)
+    return _validate_action(action)
+
+
+def derive_abuse(output_dir: Path) -> dict[str, Any]:
+    """Admit the deriver's proposals, record the outcome, then match and fan out.
+
+    A missing or invalid proposal file derives nothing; the record still
+    closes derivation for this run, so the next ``prepare-abuse`` matches.
+    """
+    import model.derive_abuse_cases as derive_abuse_cases
+
+    output_dir, _cfg = _load_run_config(output_dir)
+    proposal = output_dir / _ABUSE_DERIVER_OUTPUT
+    problem = None
+    if Draft202012Validator is None:
+        raise ControllerError("cannot validate deriver output: jsonschema dependency is unavailable")
+    if proposal.is_file():
+        try:
+            value = json.loads(proposal.read_text(encoding="utf-8"))
+            schema = json.loads(
+                (PLUGIN_ROOT / "schemas" / "abuse-case-deriver-output.schema.json").read_text(encoding="utf-8")
+            )
+            error = next(iter(Draft202012Validator(schema).iter_errors(value)), None)
+        except (OSError, ValueError) as exc:
+            error = exc
+        if error is not None:
+            problem = f"deriver output rejected: {str(getattr(error, 'message', error))[:200]}"
+    else:
+        problem = "deriver wrote no proposals"
+    if problem:
+        proposal.unlink(missing_ok=True)
+    result = derive_abuse_cases.admit(output_dir)
+    record = {"schema_version": 1, **result, **({"problem": problem} if problem else {})}
+    (output_dir / ABUSE_DERIVATION_RECORD).write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    action = prepare_abuse(output_dir)
+    note = f"derived business cases admitted: {len(result['admitted'])}, dropped: {len(result['dropped'])}"
+    action["receipts"] = [note, *([problem] if problem else []), *action.get("receipts", [])]
+    return action
 
 
 _ABUSE_TITLE_MAX = 60
@@ -7845,6 +7950,7 @@ _SEMANTIC_RETURN_COMMANDS = frozenset(
         "context-v2-post-architect-review",
         "context-v2-post-triage",
         "context-v2-finalize",
+        "derive-abuse",
         "finalize-abuse",
     }
 )
@@ -8307,6 +8413,8 @@ def _build_argument_parser() -> argparse.ArgumentParser:
     complete_preflight_parser.add_argument("--use-case-choice", choices=("confirmed", "corrected"))
     prepare_abuse_parser = sub.add_parser("prepare-abuse")
     prepare_abuse_parser.add_argument("--output-dir", required=True)
+    derive_abuse_parser = sub.add_parser("derive-abuse")
+    derive_abuse_parser.add_argument("--output-dir", required=True)
     finalize_abuse_parser = sub.add_parser("finalize-abuse")
     finalize_abuse_parser.add_argument("--output-dir", required=True)
     prepare_stage2_parser = sub.add_parser("prepare-stage2")
@@ -8378,6 +8486,8 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.command == "prepare-abuse":
             action = prepare_abuse(Path(args.output_dir))
+        elif args.command == "derive-abuse":
+            action = derive_abuse(Path(args.output_dir))
         elif args.command == "finalize-abuse":
             action = finalize_abuse(Path(args.output_dir))
         elif args.command == "prepare-stage2":

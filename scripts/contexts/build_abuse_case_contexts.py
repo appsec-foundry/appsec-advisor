@@ -28,7 +28,7 @@ MAX_CHAIN_STEPS = 16
 MAX_PATTERNS = 32
 MAX_SOURCE_WINDOW_LINES = 17
 MAX_SOURCE_WINDOW_CHARS = 32_768
-_CANDIDATE_RE = re.compile(r"^(?:AC-T|AC|ORG-AC|REPO-AC)-[0-9]{3,}$")
+_CANDIDATE_RE = re.compile(r"^(?:AC-T|AC|ORG-AC|REPO-AC|MODEL-AC)-[0-9]{3,}$")
 
 
 class AbuseContextError(ValueError):

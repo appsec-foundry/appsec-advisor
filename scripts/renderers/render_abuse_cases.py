@@ -509,6 +509,8 @@ def _case_markdown(m: dict) -> str:
     src = _SOURCE_LABEL.get(m["source"], "analysis-discovered")
     if m.get("requested"):
         src += ", requested"
+    if str(m["id"]).startswith("MODEL-AC-"):
+        src += ", model-derived"
     cid = m["id"]
     out: list[str] = []
     # Anchor on its OWN line before the heading (matches the Findings / Weakness
