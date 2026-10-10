@@ -133,7 +133,8 @@ def test_hypothesis_report_preserves_scope_evidence_and_uncertainty():
         "next_action": "Review the deployment policy.",
     }
     text = rr.render(data)
-    assert "Not confirmed in the inspected scope" in text
+    assert "**RESULT: NOT CONFIRMED** — the checked files do not show the threat" in text
+    assert "This is not a safe result." in text
     assert "does not mean disproved or safe" in text
     assert "d" * 40 in text and "src/api.py:2" in text and "check_owner(record)" in text
     assert "](https://" not in text
@@ -185,7 +186,7 @@ def test_saved_hypothesis_result_rejects_inconsistent_conclusions(alter):
 def test_hypothesis_report_names_cited_and_uncited_files():
     data = result(
         mode="hypothesis",
-        hypothesis="Abuse case AC-1: forged role.\n- Step 1: role read from token.",
+        hypothesis="Abuse case AC-T-001 (technical attack chain, plugin): forged role.\n- Step 1: role read from token.",
         scope={"kind": "hypothesis", "revision": "HEAD", "paths": ["src/api.py", "src/auth.py"]},
         objects={"head": "d" * 40},
         findings=[],
@@ -200,8 +201,14 @@ def test_hypothesis_report_names_cited_and_uncited_files():
     }
     data["coverage"]["excluded"] = []
     lines = rr.render(data).splitlines()
-    assert lines[2].startswith("**Result: Not confirmed in the inspected scope.**")
+    assert lines[2].startswith("**RESULT: NOT CONFIRMED** — ")
     assert "- `src/api.py` — cited at line 2-3 (conclusion)" in lines
     assert "- `src/auth.py` — read; nothing in it is cited for this question" in lines
-    assert "- Abuse case AC\\-1: forged role\\." in lines and "- Step 1: role read from token\\." in lines
-    assert lines.index("## Technical details") > lines.index("## Conclusion")
+    assert (
+        "- Abuse case AC\\-T\\-001 \\(technical attack chain, plugin\\): forged role\\." in lines
+        and "- Step 1: role read from token\\." in lines
+    )
+    assert lines.index("## Technical details") > lines.index("## Why") > lines.index("## Where")
+    assert "- Read more files: run the check again with `--path <file or directory>`." in lines
+    assert "- Result of a full run: `/appsec-advisor:abuse-cases AC-T-001`" in lines
+    assert "- Use earlier findings as context: `/appsec-advisor:create-threat-model`" in lines

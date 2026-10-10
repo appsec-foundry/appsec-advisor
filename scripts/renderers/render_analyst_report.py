@@ -59,13 +59,17 @@ def block(text: str) -> str:
 
 MODE_TITLE = {"design": "design analysis", "review": "change review", "hypothesis": "hypothesis check"}
 CONCLUSION = {
-    "supported": ("Supported by code", "The checked files contain code that supports the threat."),
+    "supported": ("SUPPORTED", "the checked files contain code that supports the threat."),
     "not_confirmed": (
-        "Not confirmed in the inspected scope",
-        "The checked files do not show the threat. Files outside them were not read.",
+        "NOT CONFIRMED",
+        "the checked files do not show the threat; files outside them were not read. This is not a safe result.",
     ),
-    "unresolved": ("Not settled", "The checked files cannot decide the question; see what is still open."),
+    "unresolved": (
+        "NOT SETTLED",
+        "the checked files cannot decide it; see what is still open. This is not a safe result.",
+    ),
 }
+_ABUSE_CASE_LINE = re.compile(r"^Abuse case ([A-Z][A-Z0-9-]{1,40}) \(")
 STATE = {
     "complete": "Analysis complete",
     "incomplete": "Analysis incomplete",
@@ -153,9 +157,9 @@ def render(result: dict) -> str:
         label, meaning = CONCLUSION[assessment["status"]] if assessment else CONCLUSION["unresolved"]
     else:
         count = len(result["findings"])
-        label = f"{count} finding" + ("" if count == 1 else "s")
-        meaning = "Each finding cites the code it is based on."
-    out += [f"**Result: {label}.** {meaning}", ""]
+        label = f"{count} FINDING" + ("" if count == 1 else "S")
+        meaning = "each finding cites the code it is based on."
+    out += [f"**RESULT: {label}** — {meaning}", ""]
     settled_open = bool(assessment) and assessment["status"] == "unresolved"
     if result["state"] != "complete" and not settled_open:
         out += [
@@ -164,7 +168,7 @@ def render(result: dict) -> str:
         ]
     out += [inline(result["summary"]) or "No summary.", "", f"> {ADVISORY}", ""]
 
-    out += ["## What was checked", ""]
+    out += ["## What it checks" if mode == "hypothesis" else "## What was checked", ""]
     if mode == "hypothesis":
         out += [
             f"- {inline(line.strip().removeprefix('- '))}"
@@ -177,12 +181,12 @@ def render(result: dict) -> str:
 
     files = _file_overview(result)
     if files:
-        out += ["## Files", ""] + files + [""]
+        out += ["## Where", ""] + files + [""]
 
     if mode == "hypothesis":
-        out += ["## Conclusion", ""]
+        out += ["## Why", ""]
         if assessment:
-            out += [f"**{CONCLUSION[assessment['status']][0]}.** {inline(assessment['explanation'])}", ""]
+            out += [inline(assessment["explanation"]), ""]
             out += [_location(loc, mode) for loc in assessment["evidence"]]
             out += ["", f"Next step: {inline(assessment['next_action'])}", ""]
         else:
@@ -218,10 +222,16 @@ def render(result: dict) -> str:
                 f"- **{q['id']}** ({need}): {inline(q['asks'])} Why: {inline(q['why'])} Affects: {inline(q['affects'])}"
             ]
     if still_open:
-        out += ["## Still open", ""] + still_open
-        if mode == "hypothesis":
-            out += ["", "To read more files, run the check again with an additional `--path <file or directory>`."]
-        out.append("")
+        out += ["## Still open", ""] + still_open + [""]
+
+    if mode == "hypothesis":
+        cases = [m.group(1) for line in str(result["hypothesis"]).splitlines() if (m := _ABUSE_CASE_LINE.match(line))]
+        nxt = ["- Read more files: run the check again with `--path <file or directory>`."]
+        for cid in cases:
+            nxt.append(f"- Result of a full run: {code('/appsec-advisor:abuse-cases ' + cid)}")
+        if _source(result, "threat_model") != "delivered":
+            nxt.append(f"- Use earlier findings as context: {code('/appsec-advisor:create-threat-model')}")
+        out += ["## Next", ""] + nxt + [""]
 
     background = [
         f"- Scenario {s['id']}, {inline(s['title'])}: {inline(s['description'])} Next step: {inline(s['next_action'])}"
