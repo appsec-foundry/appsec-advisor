@@ -157,6 +157,13 @@ For repositories with a build pipeline, Figure 1b links build inputs and release
   <img src="docs/images/figure1b-example.svg" alt="Figure 1b of the Juice Shop threat model">
 </picture>
 
+Figure 2 connects threat actors through example attack routes and the linked weaknesses to the potential business harm.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/figure2-example-dark.svg">
+  <img src="docs/images/figure2-example.svg" alt="Figure 2 of the Juice Shop threat model">
+</picture>
+
 Assessments consume model tokens and usually take tens of minutes; thorough runs may exceed an hour. See [assessment depth and cost control](docs/threat-modeler.md#assessment-depth--cost-control) for measured costs.
 
 ### Assess multiple repositories
