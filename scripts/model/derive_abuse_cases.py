@@ -77,7 +77,10 @@ def _active_cases(output_dir: Path, cfg: dict) -> list[dict]:
         profile = rac._load_yaml(Path(profile_path))
         profile_dir = Path(profile_path).parent
     repo_root = Path(cfg["repo_root"]) if cfg.get("repo_root") else None
-    cases, _errors, _rejected = rac.resolve_abuse_case_sources(profile, profile_dir, rac.PLUGIN_ROOT, repo_root)
+    extra = [Path(p) for p in cfg.get("abuse_case_files") or [] if isinstance(p, str)]
+    cases, _errors, _rejected = rac.resolve_abuse_case_sources(
+        profile, profile_dir, rac.PLUGIN_ROOT, repo_root, extra or None
+    )
     return cases
 
 
@@ -170,10 +173,17 @@ def admit(output_dir: Path) -> dict:
         if _title_key(title) in taken:
             dropped.append({"title": title, "reason": "duplicates the title of an active case"})
             continue
+        patterns = proposal.get("path_patterns")
+        if not isinstance(patterns, list) or not patterns:
+            # Preselection needs a locator; a case without one would reach the
+            # verifier although no code was found for it (REQ-MOD-004).
+            dropped.append({"title": title, "reason": "a derived case must name path_patterns"})
+            continue
         case = {
             "id": f"MODEL-AC-{len(admitted) + 1:03d}",
             "kind": "descriptive",
             **{key: proposal[key] for key in _PROPOSAL_FIELDS if key in proposal},
+            "scope_qualifier": {"path_patterns": patterns},
         }
         if isinstance(case.get("finding"), dict):
             # The model classifies; it does not rate. Severity stays the default.

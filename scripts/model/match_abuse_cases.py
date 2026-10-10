@@ -666,9 +666,9 @@ def _match_descriptive(
     """Preselect a descriptive case deterministically; the verifier binds it.
 
     No regex matches a business boundary, so a step is never ``matched`` here.
-    A case is a candidate when every required signal holds and, if it declares
-    locators, at least one locates a runtime source file. Without that it
-    reaches the verifier only through an explicit request.
+    A case is a candidate when every required signal holds and one of its
+    locators finds a runtime source file; a case that declares no locator finds
+    none. Without that it reaches the verifier only through an explicit request.
     """
     qualifier = case.get("scope_qualifier") or {}
     unmet_signals = (
@@ -678,7 +678,7 @@ def _match_descriptive(
     files, related = (
         _descriptive_preselection(case, findings, repo_root, max_files, routes) if not unmet_signals else ([], [])
     )
-    unlocated = bool(declared) and not files and not unmet_signals
+    unlocated = not files and not unmet_signals
     applicable = not unmet_signals and not unlocated
     unmet_paths = [str(p) for p in qualifier.get("path_patterns") or []] if unlocated else []
     reason = None
@@ -698,6 +698,8 @@ def _match_descriptive(
             )
         if unmet_paths:
             reasons.append("no runtime source path matched: " + ", ".join(unmet_paths))
+        if unlocated and not declared:
+            reasons.append("declares no path, route, or detector locator")
         reason = "; ".join(reasons) or "scope preconditions not met for this codebase"
     steps = [
         {
@@ -1071,17 +1073,17 @@ def apply_descriptive_limits(
             continue
         match["structural_verdict"] = "not_performed"
         if match["requested"]:
-            match["reason"] = f"exceeds the limit of {explicit_cap} explicitly requested business cases per run"
+            match["reason"] = f"exceeds the limit of {explicit_cap} explicitly requested business abuse cases per run"
         elif kind == "derived":
             match["reason"] = (
-                f"exceeds the limit of {derived_cap} model-derived business cases"
+                f"exceeds the limit of {derived_cap} model-derived business abuse cases"
                 if depth == "thorough"
-                else "model-derived business cases run only at thorough depth"
+                else "model-derived business abuse cases run only at thorough depth"
             )
         elif depth == "quick":
-            match["reason"] = "quick depth verifies business cases only on explicit request"
+            match["reason"] = "quick depth verifies business abuse cases only on explicit request"
         else:
-            match["reason"] = f"exceeds the limit of {optional_cap} business cases at {depth} depth"
+            match["reason"] = f"exceeds the limit of {optional_cap} business abuse cases at {depth} depth"
 
 
 def _candidate_priority(case_match: dict, findings_by_id: dict[str, dict]) -> tuple:

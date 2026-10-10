@@ -16,13 +16,13 @@ import model.derive_abuse_cases as derive  # noqa: E402
 import model.match_abuse_cases as matcher  # noqa: E402
 
 
-def _run(tmp_path: Path, proposals: object) -> tuple[Path, dict]:
+def _run(tmp_path: Path, proposals: object, **cfg: object) -> tuple[Path, dict]:
     repo = tmp_path / "repo"
-    (repo / "src").mkdir(parents=True)
+    (repo / "src").mkdir(parents=True, exist_ok=True)
     (repo / "src" / "refunds.ts").write_text("export function refund() {}\n")
     out = tmp_path / "out"
     out.mkdir()
-    (out / ".skill-config.json").write_text(json.dumps({"repo_root": str(repo), "assessment_depth": "thorough"}))
+    (out / ".skill-config.json").write_text(json.dumps({"repo_root": str(repo), "assessment_depth": "thorough", **cfg}))
     (out / ".components.json").write_text(
         json.dumps({"components": [{"id": "api", "name": "API", "description": "Handles refunds.", "paths": ["src"]}]})
     )
@@ -31,7 +31,12 @@ def _run(tmp_path: Path, proposals: object) -> tuple[Path, dict]:
 
 
 def _proposal(title: str, **extra: object) -> dict:
-    return {"title": title, "check": f"Check whether a customer can {title.lower()}.", **extra}
+    return {
+        "title": title,
+        "check": f"Check whether a customer can {title.lower()}.",
+        "path_patterns": ["*refund*"],
+        **extra,
+    }
 
 
 def test_derived_cases_are_validated_bounded_and_deduplicated(tmp_path: Path):
@@ -104,3 +109,24 @@ def test_context_is_bounded_and_carries_no_source(tmp_path: Path):
     assert context["components"] == [{"id": "api", "name": "API", "description": "Handles refunds."}]
     assert "User reads or changes data of another user or tenant" in context["active_case_titles"]
     assert "refund()" not in json.dumps(context)
+
+
+def test_a_derived_case_needs_a_locator_and_carries_it_to_preselection(tmp_path: Path):
+    out, result = _run(tmp_path, [{"title": "Refund twice", "check": "Check whether an order is refunded twice."}])
+    assert result["admitted"] == []
+    assert result["dropped"] == [{"title": "Refund twice", "reason": "a derived case must name path_patterns"}]
+    out2, result = _run(tmp_path / "second", [_proposal("Refund an order twice")])
+    case = yaml.safe_load((out2 / matcher.DERIVED_CASE_FILE).read_text())["abuse_cases"][0]
+    assert case["scope_qualifier"] == {"path_patterns": ["*refund*"]}
+
+
+def test_a_derived_title_that_repeats_a_per_scan_case_is_dropped(tmp_path: Path):
+    repo = tmp_path / "repo"
+    (repo / "cases").mkdir(parents=True)
+    (repo / "cases" / "scan.yaml").write_text(
+        "schema_version: 2\nabuse_cases:\n  - id: REPO-AC-400\n    kind: descriptive\n"
+        "    title: Refund an order twice\n    check: Check whether an order can be refunded twice.\n"
+    )
+    _, result = _run(tmp_path, [_proposal("Refund an order twice")], abuse_case_files=["cases/scan.yaml"])
+    assert result["admitted"] == []
+    assert result["dropped"][0]["reason"] == "duplicates the title of an active case"

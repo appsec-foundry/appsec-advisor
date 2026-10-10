@@ -503,6 +503,10 @@ properties:
               $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/cases/items/properties/open_questions
             requested:
               $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/cases/items/properties/requested
+            check:
+              $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/cases/items/properties/check
+            path_patterns:
+              $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/cases/items/properties/path_patterns
             steps:
               type: array
               minItems: 1

@@ -180,6 +180,20 @@ def _safe_path(path: str) -> bool:
     )
 
 
+def rejection_reason(path: str, content: bytes, limits: dict) -> str | None:
+    """Why the snapshot would exclude this file on its own, before any job limit; ``None`` to admit."""
+    if not _safe_path(path):
+        return "special_file"
+    name = PurePosixPath(path).name
+    if any(fnmatch.fnmatch(name, pattern) for pattern in SENSITIVE_NAMES):
+        return "sensitive"
+    if len(content) > limits["file_kib"] * 1024:
+        return "too_large"
+    if b"\0" in content[:BINARY_PROBE_BYTES]:
+        return "binary"
+    return None
+
+
 @dataclass
 class _Capture:
     repo: Path
@@ -197,16 +211,7 @@ class _Capture:
             self.excluded.append({"path": path, "reason": reason, "count": 1})
 
     def reason_to_reject(self, path: str, content: bytes) -> str | None:
-        if not _safe_path(path):
-            return "special_file"
-        name = PurePosixPath(path).name
-        if any(fnmatch.fnmatch(name, pattern) for pattern in SENSITIVE_NAMES):
-            return "sensitive"
-        if len(content) > self.limits["file_kib"] * 1024:
-            return "too_large"
-        if b"\0" in content[:BINARY_PROBE_BYTES]:
-            return "binary"
-        return None
+        return rejection_reason(path, content, self.limits)
 
     def admit(self, path: str, side: str, change: str, content: bytes, previous: str | None = None) -> None:
         reason = self.reason_to_reject(path, content)

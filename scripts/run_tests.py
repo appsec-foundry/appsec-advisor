@@ -6374,7 +6374,7 @@ SOURCE_TESTS = {
         match_abuse_cases
         resolve_abuse_cases
     """),
-    "data/abuse-cases/business-cases.yaml": _tests("""
+    "data/abuse-cases/business.yaml": _tests("""
         business_abuse_cases
     """),
     "schemas/analyst-limits.schema.json": _tests("""

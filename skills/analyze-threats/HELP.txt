@@ -18,7 +18,7 @@ OPTIONS
   --requirements-required  Stop incomplete if the catalog is unavailable.
   --threat-model <file>   Use this structured threat-model.yaml as context.
   --threat-model-required  Stop incomplete if the model is unavailable.
-  --abuse-case <ID>       Check a defined abuse or business case (list them with
+  --abuse-case <ID>       Check a defined technical or business abuse case (list them with
                           /appsec-advisor:abuse-cases). The case's own patterns select
                           the files; --path adds more. Revision defaults to HEAD.
   --isolated              With --abuse-case: check against the code alone, without

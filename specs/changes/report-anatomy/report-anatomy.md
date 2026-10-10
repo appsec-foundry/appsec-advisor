@@ -207,7 +207,7 @@ Covers which abuse scenarios were checked against the code and with what outcome
 - `## 9. Abuse Cases` — always.
   - `### AC-T-NNN — <title>` — only when a scenario was checked. A summary line with **Source**, **Actor**, **Combined Risk**, and **Verdict**, then **Goal**, **Prerequisite** when one exists, **Attack chain**, and **Scenario impact** and **Blocking mitigations** when they exist.
     - Table: `| Step | Finding | Outcome |`
-  - `### Generic catalog — evaluated, not applicable` — only when catalog scenarios were ruled out.
+  - `### Technical abuse cases — evaluated, not applicable` — only when technical abuse cases were ruled out.
     - Table: `| Scenario | Source | Why not applicable |`
 
 ## §10 Mitigation Register

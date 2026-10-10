@@ -14,7 +14,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
 SCHEMA_PATH = REPO_ROOT / "schemas" / "abuse-cases.schema.yaml"
-LIBRARY_PATH = REPO_ROOT / "data" / "abuse-cases" / "default-library.yaml"
+LIBRARY_PATH = REPO_ROOT / "data" / "abuse-cases" / "technical.yaml"
 
 
 @pytest.fixture(scope="module")

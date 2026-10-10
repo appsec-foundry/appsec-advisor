@@ -1,4 +1,4 @@
-"""Guards for data/abuse-cases/business-cases.yaml — the generic business cases.
+"""Guards for data/abuse-cases/business.yaml — the generic business cases.
 
 The file is part of the default library; these tests keep it valid, open,
 distinct from the technical cases, and preselectable without
@@ -21,7 +21,7 @@ import contexts.build_abuse_case_contexts as contexts  # noqa: E402
 import model.match_abuse_cases as matcher  # noqa: E402
 import model.resolve_abuse_cases as resolver  # noqa: E402
 
-CATALOG = ROOT / "data" / "abuse-cases" / "business-cases.yaml"
+CATALOG = ROOT / "data" / "abuse-cases" / "business.yaml"
 
 
 def _cases() -> list[dict]:
@@ -58,7 +58,7 @@ def test_descriptive_signal_vocabulary_matches_recon_signals():
 def test_case_is_preselected_by_capability_not_by_application_name(tmp_path: Path):
     """The same capability under unrelated names and frameworks preselects the
     rights-escalation case; a repository without it does not."""
-    case = next(c for c in _cases() if c["id"] == "AC-T-102")
+    case = next(c for c in _cases() if c["id"] == "AC-B-002")
     for layout in (("src", "roleAssignment.ts"), ("app", "Permissions", "GrantController.java")):
         repo = tmp_path / "-".join(layout)
         target = repo.joinpath(*layout)
@@ -71,7 +71,7 @@ def test_case_is_preselected_by_capability_not_by_application_name(tmp_path: Pat
     (plain / "src" / "index.ts").write_text("code\n")
     assert matcher.match_case(case, [], {"has_role_concept"}, repo_root=plain)["structural_verdict"] == "not_applicable"
     # "share" selects sharing code, not a generic "shared" helper directory.
-    export_case = next(c for c in _cases() if c["id"] == "AC-T-101")
+    export_case = next(c for c in _cases() if c["id"] == "AC-B-001")
     for rel, expected in (("app/shared/theme.ts", "not_applicable"), ("app/share/link.ts", "candidate")):
         repo = tmp_path / ("share-" + expected)
         (repo / rel).parent.mkdir(parents=True)
@@ -109,7 +109,7 @@ def _pilot(tmp_path: Path, layout: tuple[str, ...], source: str, steps: list[dic
     target = repo.joinpath(*layout)
     target.parent.mkdir(parents=True)
     target.write_text(source)
-    case = dict(next(c for c in _cases() if c["id"] == "AC-T-102"), id="REPO-AC-101")
+    case = dict(next(c for c in _cases() if c["id"] == "AC-B-002"), id="REPO-AC-101")
     (repo / ".appsec" / "abuse-cases").mkdir(parents=True)
     (repo / ".appsec" / "abuse-cases" / "business.yaml").write_text(
         yaml.safe_dump({"schema_version": 2, "abuse_cases": [case]})
@@ -243,7 +243,7 @@ def test_an_inconclusive_step_keeps_only_a_citation_found_in_the_code(tmp_path: 
 def test_withdrawn_rights_case_is_located_by_session_code_or_a_token_lifetime_finding(tmp_path: Path):
     """The case reaches the verifier where sessions or tokens live, not only
     when no other case competes for the per-depth limit."""
-    case = next(c for c in _cases() if c["id"] == "AC-T-106")
+    case = next(c for c in _cases() if c["id"] == "AC-B-006")
     signals = {"has_role_concept", "has_auth_surface"}
     layouts = {
         "path": ("lib/auth/SessionStore.py", []),

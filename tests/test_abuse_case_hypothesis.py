@@ -73,7 +73,7 @@ def build(repo: Path, ids: list[str], paths=(), with_threat_model=False):
 def test_a_business_case_selects_files_by_its_path_patterns_and_names_its_origin(repo):
     hypothesis, paths = build(repo, ["REPO-AC-031"])
     assert paths == ["src/finance/PayoutController.java"]
-    assert hypothesis.startswith("Abuse case REPO-AC-031 (business case, repository): Clerk releases a payout")
+    assert hypothesis.startswith("Abuse case REPO-AC-031 (business abuse case, repository): Clerk releases a payout")
     assert "- Out of scope: Payouts below the approval threshold." in hypothesis
     assert "runs without a threat model" in hypothesis
 
@@ -81,7 +81,7 @@ def test_a_business_case_selects_files_by_its_path_patterns_and_names_its_origin
 def test_a_technical_case_selects_files_by_its_code_sinks_and_skips_tests(repo):
     hypothesis, paths = build(repo, ["AC-T-003"], with_threat_model=True)
     assert paths == ["src/session.js"]
-    assert "(technical attack chain, plugin)" in hypothesis and "- Step 1:" in hypothesis
+    assert "(technical abuse case, plugin)" in hypothesis and "- Step 1:" in hypothesis
     assert "uses the supplied threat model" in hypothesis
 
 
@@ -108,17 +108,77 @@ def test_the_summary_names_each_case_its_origin_and_every_file(repo):
     _, paths, summary = ach.build(repo, "HEAD", ["REPO-AC-031", "AC-T-003"], [], False, no_org_profile=True)
     lines = summary.splitlines()
     assert lines[0] == "ABUSE-CASE CHECK"
-    assert "  REPO-AC-031  Clerk releases a payout they also requested  (business case, repository)" in lines
+    assert "  REPO-AC-031  Clerk releases a payout they also requested  (business abuse case, repository)" in lines
     assert "    Checks: Request a payout and release it with the same account." in lines
-    assert any(line.startswith("  AC-T-003  ") and "(technical attack chain, plugin)" in line for line in lines)
+    assert any(line.startswith("  AC-T-003  ") and "(technical abuse case, plugin)" in line for line in lines)
     assert f"  Files ({len(paths)}):" in lines and all(f"    {p}" in lines for p in paths)
 
 
+def _case_record(**fields) -> dict:
+    record = {
+        "title": fields.get("id", "case"),
+        "source": "mandatory",
+        "actor": "attacker",
+        "goal": "",
+        "prerequisite": "",
+        "combined_risk": "Low",
+        "chain_verdict": "inconclusive",
+        "verification_complete": True,
+        "unverified_steps": [],
+        "matched_finding_ids": [],
+        "blocking_mitigation_ids": [],
+        "steps": [
+            {
+                "step": 1,
+                "outcome": "",
+                "verdict": "inconclusive",
+                "finding_id": None,
+                "evidence": None,
+                "controls_found": [],
+                "unverified": False,
+            }
+        ],
+    }
+    return {**record, **fields}
+
+
 def _model(repo: Path, body: dict) -> Path:
+    """Write ``body`` as a threat model that passes output validation.
+
+    The tests name only the fields they exercise; the defaults below are what
+    production composition always writes.
+    """
     import yaml
 
+    data = {
+        "meta": {"schema_version": 1, "project": "Fixture", "generated": "2026-10-10T00:00:00Z", "mode": "full"},
+        **{key: [] for key in ("components", "assets", "attack_surface", "trust_boundaries", "threats")},
+        "security_controls": [],
+        "mitigations": [],
+        **body,
+    }
+    data["meta"].setdefault("model", "sonnet")
+    for threat in data["threats"]:
+        threat.setdefault("component", "C-01")
+        threat.setdefault("stride", "Spoofing")
+        threat.setdefault("scenario", "A test scenario with grounded evidence.")
+        for key in ("likelihood", "impact", "risk"):
+            threat.setdefault(key, "Low")
+    for control in data["security_controls"]:
+        control.setdefault("domain", "authentication")
+    for mitigation in data["mitigations"]:
+        mitigation.setdefault("priority", "P2")
+        mitigation.setdefault(
+            "threat_ids", [t["id"] for t in data["threats"] if mitigation["id"] in (t.get("mitigation_ids") or [])]
+        )
+    analysis = data.get("abuse_case_analysis")
+    if analysis is not None:
+        analysis.setdefault("status", "completed")
+        analysis.setdefault("reason", None)
+        analysis.setdefault("catalog_evaluated", [])
+        analysis["cases"] = [_case_record(**case) for case in analysis.get("cases") or []]
     path = repo / "docs" / "security" / "threat-model.yaml"
-    path.write_text(yaml.safe_dump(body))
+    path.write_text(yaml.safe_dump(data))
     return path
 
 
@@ -138,13 +198,13 @@ def test_a_threat_model_adds_the_previous_outcome_and_the_files_of_related_findi
                 },
                 {
                     "id": "T-009",
-                    "title": "Gone file",
+                    "title": "Signature check in a removed file",
                     "cwe": "CWE-347",
                     "evidence": [{"file": "src/removed.js", "line": 3}],
                 },
                 {
                     "id": "T-011",
-                    "title": "Unrelated",
+                    "title": "Unrelated reflected markup",
                     "cwe": "CWE-79",
                     "evidence": [{"file": "src/util.js", "line": 1}],
                 },
@@ -154,7 +214,18 @@ def test_a_threat_model_adds_the_previous_outcome_and_the_files_of_related_findi
                     {
                         "id": "AC-T-003",
                         "chain_verdict": "inconclusive",
-                        "matched_finding_ids": ["T-004"],
+                        "matched_finding_ids": ["F-004"],
+                        "steps": [
+                            {
+                                "step": 1,
+                                "outcome": "",
+                                "verdict": "inconclusive",
+                                "finding_id": "F-004",
+                                "evidence": None,
+                                "controls_found": [],
+                                "unverified": False,
+                            }
+                        ],
                         "open_questions": ["Which library version verifies tokens?"],
                     }
                 ]
@@ -278,3 +349,63 @@ def test_findings_carry_their_model_record_and_controls_in_checked_files_are_nam
     assert "- Token signing (Unsafe): Key is hardcoded." in lines
     assert "Upload checks" not in hypothesis  # cites a different file
     assert "  Assessed controls in these files: Token signing (Unsafe)" in summary.splitlines()
+
+
+def test_a_derived_case_is_checked_from_the_threat_model_that_records_it(repo):
+    derived = {
+        "id": "MODEL-AC-001",
+        "title": "Clerk releases another clerk's payout",
+        "source": "descriptive",
+        "combined_risk": None,
+        "check": "Check whether a clerk can release a payout another clerk requested.",
+        "path_patterns": ["*payout*"],
+    }
+    unrecorded = {"id": "MODEL-AC-002", "title": "Older derived case", "source": "descriptive", "combined_risk": None}
+    model = _model(repo, {"abuse_case_analysis": {"cases": [derived, unrecorded]}})
+
+    hypothesis, paths, _ = ach.build(
+        repo, "HEAD", ["MODEL-AC-001"], [], True, no_org_profile=True, threat_model_path=model
+    )
+    assert hypothesis.startswith("Abuse case MODEL-AC-001 (business abuse case, model-derived)")
+    assert "- Check whether a clerk can release a payout another clerk requested." in hypothesis
+    assert paths == ["src/finance/PayoutController.java"]
+    with pytest.raises(ach.AbuseCaseError, match="does not record the derived check"):
+        ach.build(repo, "HEAD", ["MODEL-AC-002"], [], True, no_org_profile=True, threat_model_path=model)
+    with pytest.raises(ach.AbuseCaseError, match="without --isolated"):
+        build(repo, ["MODEL-AC-001"])
+
+
+def test_an_invalid_threat_model_is_not_cited_as_context(repo):
+    model = repo / "docs" / "security" / "threat-model.yaml"
+    model.write_text("components: []\nabuse_case_analysis: {status: completed, cases: []}\n")
+    hypothesis, _, summary = ach.build(
+        repo, "HEAD", ["AC-T-003"], [], True, no_org_profile=True, threat_model_path=model
+    )
+    assert "runs without a threat model" in hypothesis and "uses the supplied threat model" not in hypothesis
+    assert "  Threat model: threat-model.yaml is unreadable or invalid and is not used" in summary.splitlines()
+
+
+def test_chains_checked_together_number_their_steps_once_and_stay_within_the_step_limit(repo):
+    hypothesis, _ = build(repo, ["AC-T-003", "AC-T-001"])
+    numbers = [
+        int(line.split(":")[0][len("- Step ") :]) for line in hypothesis.splitlines() if line.startswith("- Step ")
+    ]
+    assert numbers == list(range(1, len(numbers) + 1)) and len(numbers) > 2
+    assert "- Step 1: AC-T-003: " in hypothesis and "- Step 3: AC-T-001: " in hypothesis
+    alone, _ = build(repo, ["AC-T-003"])
+    assert "- Step 1: JWT algorithm not pinned" in alone  # one chain keeps its plain step titles
+    with pytest.raises(ach.AbuseCaseError, match="more than the 10 one check rates"):
+        build(repo, [f"AC-T-00{n}" for n in range(1, 8)])
+
+
+def test_a_located_file_the_snapshot_would_exclude_is_left_out_not_named(repo):
+    (repo / "src" / "big_session.js").write_text("const c = jwt.verify(token, key)\n" + "// pad\n" * 12000)
+    (repo / "src" / "zz_session.js").write_text("jwt.verify(a, b)\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "big")
+    _, paths, summary = ach.build(repo, "HEAD", ["AC-T-003"], [], False, no_org_profile=True)
+    assert "src/big_session.js" not in paths and "src/zz_session.js" in paths
+    assert "  Not added, beyond the analyst's file limits: 1 located file(s)" in summary.splitlines()
+    # A file the user names is passed on unchanged; the analyst reports it.
+    _, named, _ = ach.build(repo, "HEAD", ["AC-T-003"], ["src/big_session.js"], False, no_org_profile=True)
+    assert named[0] == "src/big_session.js"

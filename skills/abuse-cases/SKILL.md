@@ -1,11 +1,11 @@
 ---
 name: abuse-cases
 description: >-
-  List the abuse and business cases defined for a repository — the plugin's
-  standard cases, the organization profile's cases, and the repository's own
+  List the technical and business abuse cases defined for a repository — the
+  plugin's standard cases, the organization profile's cases, and the repository's own
   cases in docs/security/abuse-cases/ — each with its origin, kind, and title.
   Use for "which abuse cases are defined?", "welche abuse cases gibt es?",
-  "show our business cases", or to look up the ID to pass to
+  "show our business abuse cases", or to look up the ID to pass to
   analyze-threats --abuse-case. Read-only; it does not check a case
   against the code. For the outcome a past run recorded, use ask-threat-model.
 ---
@@ -17,7 +17,7 @@ You are listing the abuse cases that a threat-model run in this repository would
 If the user's arguments contain `--help` or `-h`, print this block verbatim and exit.
 
 ```
-/appsec-advisor:abuse-cases — List the defined abuse and business cases.
+/appsec-advisor:abuse-cases — List the defined technical and business abuse cases.
 
 USAGE
   /appsec-advisor:abuse-cases [--repo <path>] [--org-profile <path> | --no-org-profile]
@@ -30,7 +30,7 @@ FLAGS
 
 WHAT IT SHOWS
   One line per active case: ID, origin (plugin, organization, repository),
-  kind (technical chain or one-sentence business case), and title. Cases the
+  kind (technical: an attack chain; business: a one-sentence check), and title. Cases the
   organization profile disables are not listed. A repository case file that
   a run would reject is listed with its reason. The organization profile is
   named only when one is active.
@@ -67,7 +67,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/model/resolve_abuse_cases.py" --list --re
 
 Use exactly `Listing the defined abuse cases` as the tool call's description.
 
-When the arguments contain a case ID (a word such as `AC-T-003`, `ORG-AC-001`, `REPO-AC-002`, or `MODEL-AC-001`), run `--show <ID>` in place of `--list`, with the same `--repo-root` and profile flags. Use exactly `Showing abuse case <ID>` as its tool description.
+When the arguments contain a case ID (a word such as `AC-T-003`, `AC-B-001`, `ORG-AC-001`, `REPO-AC-002`, or `MODEL-AC-001`), run `--show <ID>` in place of `--list`, with the same `--repo-root` and profile flags. Use exactly `Showing abuse case <ID>` as its tool description.
 
 Exit code `1` means a plugin or organization case file is invalid, or the ID is unknown; the script names the reason on stderr. Report it, and stop.
 

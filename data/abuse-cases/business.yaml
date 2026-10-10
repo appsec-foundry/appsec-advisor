@@ -4,8 +4,8 @@
 # abuse-case verifier derives the actor, the operations, and the boundary from
 # that check and the code, and cites source for every verdict. These cases
 # cover business rules that a code pattern cannot express. Standard and
-# thorough assessments load this file with the technical chains in
-# default-library.yaml unless the organization profile sets
+# thorough assessments load this file with the technical abuse cases in
+# technical.yaml unless the organization profile sets
 # abuse_cases.inherit_defaults: false. Teams add their own cases in
 # <repo>/docs/security/abuse-cases/ or through the organization profile.
 #
@@ -26,11 +26,11 @@
 #   - route_patterns: route paths in the route inventory, ignoring case.
 #   - detector_rules: source-scanner check IDs whose findings mark a file.
 #
-# Business cases are numbered from AC-T-101; the technical chains in
-# default-library.yaml use the lower numbers.
+# Business abuse cases use AC-B ids; the technical abuse cases in
+# technical.yaml use AC-T ids.
 schema_version: 2
 abuse_cases:
-- id: AC-T-101
+- id: AC-B-001
   kind: descriptive
   title: User reads or changes data of another user or tenant
   check: Check whether a user can read or change data that belongs to another user or tenant, through the primary operation or through an export, download, share link, search, or report.
@@ -41,7 +41,7 @@ abuse_cases:
     path_patterns: ['*tenant*', '*export*', '*download*', 'share', '*share[!d]*', '*report*']
     detector_rules: [AUTHZ-001, AUTHZ-002, AUTHZ-301]
     route_patterns: ['*tenant*', '*organization*', '*export*', '*download*', '*share*']
-- id: AC-T-102
+- id: AC-B-002
   kind: descriptive
   title: User gains more rights than intended
   check: Check whether a user can give themselves or others a role or permission beyond what their own role or delegation allows.
@@ -53,7 +53,7 @@ abuse_cases:
     path_patterns: ['*role*', '*permission*', '*admin*']
     detector_rules: [AUTHZ-003, AUTHZ-004, AUTHZ-101, AUTHZ-102, AUTHZ-008]
     route_patterns: ['*role*', '*permission*', '*grant*']
-- id: AC-T-103
+- id: AC-B-003
   kind: descriptive
   title: User takes over another account
   check: Check whether anyone other than the verified owner can change an account's credentials or recovery data, such as email, phone number, or reset tokens.
@@ -63,7 +63,7 @@ abuse_cases:
     required_signals: [has_auth_surface]
     path_patterns: ['*recover*', '*reset*', '*profile*', '*account*']
     route_patterns: ['*recover*', '*reset*', '*profile*']
-- id: AC-T-104
+- id: AC-B-004
   kind: descriptive
   title: User bypasses a required approval
   check: Check whether a user can approve their own request where an independent approval is required, or change content after approval and keep the earlier approval.
@@ -73,7 +73,7 @@ abuse_cases:
   scope_qualifier:
     path_patterns: ['*approv*', '*review*', '*publish*', '*workflow*']
     route_patterns: ['*approv*', '*publish*', '*review*']
-- id: AC-T-105
+- id: AC-B-005
   kind: descriptive
   title: User exceeds a limit or a one-time entitlement
   check: Check whether a one-time or limited entitlement, such as a coupon, voucher, quota, or balance, can be used more often or for more value than allowed, including by repeating or racing the operation.
@@ -82,7 +82,7 @@ abuse_cases:
   scope_qualifier:
     path_patterns: ['*coupon*', '*voucher*', '*redeem*', '*quota*', '*balance*', '*wallet*']
     route_patterns: ['*coupon*', '*voucher*', '*redeem*']
-- id: AC-T-106
+- id: AC-B-006
   kind: descriptive
   title: User keeps using a withdrawn right
   check: Check whether a withdrawn role, permission, or account keeps working through an existing session, token, or cached authorization.
@@ -94,7 +94,7 @@ abuse_cases:
     path_patterns: ['*session*', '*token*', '*revoke*']
     detector_rules: [AUTHZ-009, AUTHZ-104]
     route_patterns: ['*logout*', '*revoke*', '*session*', '*token*']
-- id: AC-T-107
+- id: AC-B-007
   kind: descriptive
   title: User misuses a privileged function for another purpose
   check: Check whether a user can make a privileged function, such as support impersonation, an administrative action, or a background job, act on resources or perform operations outside that user's own authority.

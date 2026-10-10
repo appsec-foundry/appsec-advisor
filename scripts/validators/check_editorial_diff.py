@@ -70,7 +70,7 @@ EDITABLE_FRAGMENTS = (
 # `.fragments/ms-verdict.json`, which carry the same shape.
 _VERDICT_PROSE = ("opening", "bullets_intro", "closing")
 
-_ID_RE = re.compile(r"\b(?:AC-T|CWE|CVE|F|T|M|C|TB|AC)-\d+(?:-\d+)?\b")
+_ID_RE = re.compile(r"\b(?:AC-T|AC-B|CWE|CVE|F|T|M|C|TB|AC)-\d+(?:-\d+)?\b")
 _CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
 _LINK_TARGET_RE = re.compile(r"\]\(([^)\s]+)")
 _URL_RE = re.compile(r"https?://[^\s)\]>]+")

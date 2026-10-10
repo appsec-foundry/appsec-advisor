@@ -130,7 +130,7 @@ def test_candidate_projection_rejects_oversized_pattern_list() -> None:
 
 
 def test_default_library_candidates_project_without_schema_or_chain_loss(tmp_path: Path) -> None:
-    library = yaml.safe_load((ROOT / "data/abuse-cases/default-library.yaml").read_text())
+    library = yaml.safe_load((ROOT / "data/abuse-cases/technical.yaml").read_text())
     matches = []
     for case in library["abuse_cases"]:
         matches.append(
@@ -232,6 +232,9 @@ def test_an_open_case_reaches_the_verifier_as_its_check(tmp_path: Path):
 
     check = "Check whether a tenant administrator can change users of another tenant."
     case = {"id": "REPO-AC-022", "kind": "descriptive", "title": "Tenant isolation", "check": check}
+    case["scope_qualifier"] = {"path_patterns": ["*tenant*"]}  # preselection needs a locator hit
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "tenants.ts").write_text("export function updateUser() {}\n")
     match = matcher.match_case(case, [], None, repo_root=tmp_path)
     assert match["structural_verdict"] == "candidate"
     payload = json.dumps({"matches": [match]}).encode()

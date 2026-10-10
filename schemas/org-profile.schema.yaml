@@ -541,8 +541,8 @@ properties:
     additionalProperties: false
     description: |
       Controls which abuse-case scenarios (AC-NNN) are evaluated against the
-      repository. The plugin standard library
-      (data/abuse-cases/default-library.yaml) is activated unless
+      repository. The plugin's technical and business abuse cases
+      (data/abuse-cases/technical.yaml and business.yaml) are activated unless
       inherit_defaults is false; org-specific cases are loaded from the glob in
       `add` (relative to the profile directory) and validated against
       schemas/abuse-cases.schema.yaml.
@@ -554,7 +554,7 @@ properties:
         type: array
         items:
           type: string
-          pattern: "^(AC-T|AC|ORG-AC)-[0-9]{3,}$"
+          pattern: "^(AC-T|AC-B|AC|ORG-AC)-[0-9]{3,}$"
       add:
         type: string
         default: "abuse-cases/*.yaml"

@@ -3,8 +3,8 @@
 
 Merges three sources into one validated list of abuse-case definitions:
 
-  1. the plugin standard library (``data/abuse-cases/default-library.yaml``
-     and ``business-cases.yaml``) unless the org profile sets
+  1. the plugin standard library (``data/abuse-cases/technical.yaml``
+     and ``business.yaml``) unless the org profile sets
      ``abuse_cases.inherit_defaults: false``;
   2. org-specific case files matched by ``abuse_cases.add`` (a glob relative to
      the org-profile directory), validated against
@@ -42,9 +42,9 @@ from typing import Any
 import yaml
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_LIBRARY = PLUGIN_ROOT / "data" / "abuse-cases" / "default-library.yaml"
-# The technical library and the generic business cases; both are defaults.
-LIBRARY_FILES = ("default-library.yaml", "business-cases.yaml")
+DEFAULT_LIBRARY = PLUGIN_ROOT / "data" / "abuse-cases" / "technical.yaml"
+# The technical and the generic business abuse cases; both are defaults.
+LIBRARY_FILES = ("technical.yaml", "business.yaml")
 ABUSE_CASE_SCHEMA = PLUGIN_ROOT / "schemas" / "abuse-cases.schema.yaml"
 LIMITS_FILE = PLUGIN_ROOT / "data" / "abuse-case-limits.yaml"
 LIMITS_SCHEMA = PLUGIN_ROOT / "schemas" / "abuse-case-limits.schema.json"
@@ -303,6 +303,15 @@ def resolve_abuse_case_sources(
     loaded_paths: set[Path] = set()
     origin_of: dict[str, str] = {}
 
+    def _reserved(path: Path, file_cases: list[dict]) -> list[str]:
+        # Only the deriver mints MODEL-AC ids, so the prefix marks a case as
+        # model-derived and a copied derived case cannot collide with a run's own.
+        return [
+            f"{path.name}: abuse-case id {case.get('id')!r} uses the MODEL-AC prefix reserved for model-derived cases"
+            for case in file_cases
+            if str(case.get("id")).startswith("MODEL-AC-")
+        ]
+
     def _admit(file_cases: list[dict], origin: str) -> None:
         cases.extend(file_cases)
         for case in file_cases:
@@ -313,13 +322,13 @@ def resolve_abuse_case_sources(
         if inherit and library.exists():
             lib_cases, lib_errors = _load_case_file(library, schema)
             _admit(lib_cases, "library")
-            errors += lib_errors
+            errors += lib_errors + _reserved(library, lib_cases)
 
     if profile_dir is not None and add_glob:
         for path in sorted(profile_dir.glob(add_glob)):
             file_cases, file_errors = _load_case_file(path, schema)
             _admit(file_cases, "org")
-            errors += file_errors
+            errors += file_errors + _reserved(path, file_cases)
 
     # Every id loaded so far, disabled or not: a repository file reusing one
     # would otherwise shadow or be shadowed by a trusted definition.
@@ -338,6 +347,7 @@ def resolve_abuse_case_sources(
             clash = sorted({cid for cid in ids if cid in known_ids or ids.count(cid) > 1})
             if not file_errors and clash:
                 file_errors = [f"{path.name}: duplicate abuse-case id {cid!r}" for cid in clash]
+            file_errors = file_errors or _reserved(path, file_cases)
             if file_errors:
                 rejected.append({"path": rel, "reason": _reason(file_errors)})
                 continue
@@ -384,7 +394,7 @@ def resolve_abuse_case_sources(
                 loaded_paths.add(candidate)
                 file_cases, file_errors = _load_case_file(candidate, schema, max_bytes)
                 _admit(file_cases, "explicit")
-                errors += file_errors
+                errors += file_errors + _reserved(candidate, file_cases)
 
     # Apply disable + detect duplicate ids (org override wins is NOT supported —
     # a duplicate id is an authoring error, surfaced rather than silently merged).
@@ -442,8 +452,36 @@ _VERDICT_MEANING = {
     "confirmed": "this case applies to the code.",
     "partly blocked": "this case partly applies; a control blocks part of it.",
     "mitigated": "a control in the code blocks this case.",
+    "does not apply": "every step was checked and the code has no such operation.",
     "unresolved": "the code neither confirms nor rules it out. This is not a safe result.",
 }
+
+
+def held_result(chain_verdict: str, step_verdicts: list[str]) -> str | None:
+    """How a checked case holds — ``mitigated`` or ``does not apply`` — or ``None`` while it is open.
+
+    A refuted step caps the chain verdict at ``inconclusive`` (AC-6), yet a case
+    whose every step was decided as blocked or refuted leaves nothing open. The
+    §9 report and the abuse-case list both read this, so a case never appears
+    settled in one and unresolved in the other.
+    """
+    verdicts = set(step_verdicts)
+    if chain_verdict == "mitigated" or ("blocked" in verdicts and verdicts <= {"blocked", "refuted"}):
+        return "mitigated"
+    if verdicts == {"refuted"}:
+        return "does not apply"
+    return None
+
+
+def _recorded_label(case: dict) -> str:
+    steps = [s for s in case.get("steps") or [] if isinstance(s, dict)]
+    held = held_result(str(case.get("chain_verdict")), [str(s.get("verdict")) for s in steps])
+    label = held or _VERDICT_LABEL.get(str(case.get("chain_verdict")), "unresolved")
+    if case.get("verification_complete") is False and label != "unresolved":
+        label += " (incomplete)"
+    return label
+
+
 THREAT_MODEL_FILE = Path("docs") / "security" / "threat-model.yaml"
 MAX_THREAT_MODEL_BYTES = 2 * 1024 * 1024
 
@@ -462,30 +500,50 @@ def load_threat_model(repo_root: Path | None) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def derived_cases(data: dict | None) -> list[dict]:
+    """The model-derived cases a threat model records, rebuilt as descriptive cases.
+
+    Only a derived case keeps its check in the model; a case without one can be
+    listed but not checked again.
+    """
+    analysis = (data or {}).get("abuse_case_analysis")
+    if not isinstance(analysis, dict) or analysis.get("status") != "completed":
+        return []
+    found = []
+    for record in analysis.get("cases") or []:
+        if not isinstance(record, dict) or not str(record.get("id") or "").startswith("MODEL-AC-"):
+            continue
+        case = {
+            "id": str(record["id"]),
+            "kind": "descriptive",
+            "title": " ".join(str(record.get("title") or "").split()),
+        }
+        if isinstance(record.get("check"), str) and record["check"].strip():
+            case["check"] = " ".join(record["check"].split())
+            patterns = [str(p) for p in record.get("path_patterns") or [] if isinstance(p, str)]
+            if patterns:
+                case["scope_qualifier"] = {"path_patterns": patterns}
+        found.append(case)
+    return found
+
+
 def recorded_outcomes(repo_root: Path | None) -> dict | None:
     """What the repository's threat model records about each abuse case.
 
     Returns ``None`` without a readable model. Only verdict words from a fixed
     vocabulary and plain ids and titles are taken from it.
     """
+    from shared.assessment_sources import is_portable_model
+
     data = load_threat_model(repo_root)
     if data is None:
         return None
     meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
     analysis = data.get("abuse_case_analysis") if isinstance(data.get("abuse_case_analysis"), dict) else {}
     outcomes: dict[str, str] = {}
-    derived: list[dict] = []
     if analysis.get("status") == "completed":
         for case in [c for c in analysis.get("cases") or [] if isinstance(c, dict)]:
-            cid = str(case.get("id") or "")
-            label = _VERDICT_LABEL.get(str(case.get("chain_verdict")), "unresolved")
-            if case.get("verification_complete") is False and label != "unresolved":
-                label += " (incomplete)"
-            outcomes[cid] = label
-            if cid.startswith("MODEL-AC"):
-                derived.append(
-                    {"id": cid, "kind": "descriptive", "title": " ".join(str(case.get("title") or "").split())}
-                )
+            outcomes[str(case.get("id") or "")] = _recorded_label(case)
         for row in analysis.get("catalog_evaluated") or []:
             if isinstance(row, dict) and row.get("id"):
                 outcomes.setdefault(str(row["id"]), "not applicable")
@@ -496,7 +554,8 @@ def recorded_outcomes(repo_root: Path | None) -> dict | None:
         "date": str(meta.get("generated") or "")[:10],
         "checked": analysis.get("status") == "completed",
         "outcomes": outcomes,
-        "derived": derived,
+        "derived": derived_cases(data),
+        "combined": is_portable_model(data),
     }
 
 
@@ -539,7 +598,10 @@ def render_case_list(
         lines.append(f"  REJECTED {item['path']}: {item['reason']}")
     lines += [
         "",
-        "Check one:  /appsec-advisor:analyze-threats --abuse-case <ID> [--model opus]",
+        # A combined threat model cannot serve as context for a single-repository check.
+        "Check one:  /appsec-advisor:analyze-threats --abuse-case <ID>"
+        + (" --isolated" if recorded and recorded.get("combined") else "")
+        + " [--model opus]",
         "Details:    /appsec-advisor:abuse-cases <ID>",
         "Add your own:  YAML file in docs/security/abuse-cases/ (format: docs/threat-modeler.md)",
     ]
@@ -584,7 +646,7 @@ def render_case_detail(case: dict, origin: str, data: dict | None, repo_name: st
     business = case.get("kind") == "descriptive"
     out = [
         f"{cid} · {_line(case.get('title'))}",
-        f"{'Business case' if business else 'Technical attack chain'} · {origin}",
+        f"{'Business abuse case' if business else 'Technical abuse case'} · {origin}",
         "",
     ]
 
@@ -628,9 +690,7 @@ def render_case_detail(case: dict, origin: str, data: dict | None, repo_name: st
             out += _wrap(f"Reason: {_line(skipped['reason'], 300)}")
         out.append("")
     else:
-        label = _VERDICT_LABEL.get(str(record.get("chain_verdict")), "unresolved")
-        if record.get("verification_complete") is False and label != "unresolved":
-            label += " (incomplete)"
+        label = _recorded_label(record)
         risk = f"risk {_line(record['combined_risk'])} · " if record.get("combined_risk") else ""
         meaning = _VERDICT_MEANING.get(label.split(" (")[0], _VERDICT_MEANING["unresolved"])
         out += [f"RESULT: {label.upper()} — {meaning}", f"  ({risk}{source})", ""]
@@ -703,8 +763,21 @@ def render_case_detail(case: dict, origin: str, data: dict | None, repo_name: st
         out.append(f"  Fix or accept:  /appsec-advisor:review-threat-model, then pick {', '.join(found)}")
     if data is None:
         out.append("  Threat model:   /appsec-advisor:create-threat-model")
-    out.append(f"  Check again:    /appsec-advisor:analyze-threats --abuse-case {cid} [--model opus]")
+    out.append(_check_hint(cid, case, data))
     return "\n".join(out)
+
+
+def _check_hint(cid: str, case: dict, data: dict | None) -> str:
+    """How to check this case again, or why it cannot be checked on its own."""
+    from shared.assessment_sources import is_portable_model
+
+    if cid.startswith("MODEL-AC-") and not case.get("check"):
+        return "  Check again:    a new thorough run; this threat model does not record the derived check"
+    if is_portable_model(data):
+        if cid.startswith("MODEL-AC-"):
+            return "  Check again:    a new thorough run; a combined threat model cannot serve as context"
+        return f"  Check again:    /appsec-advisor:analyze-threats --abuse-case {cid} --isolated [--model opus]"
+    return f"  Check again:    /appsec-advisor:analyze-threats --abuse-case {cid} [--model opus]"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -717,14 +790,20 @@ def main(argv: list[str] | None = None) -> int:
         help="target repo root; loads <repo>/docs/security/abuse-cases/ and <repo>/.appsec/abuse-cases/",
     )
     output = parser.add_mutually_exclusive_group()
-    output.add_argument("--list-ids", action="store_true", help="print active ids only")
+    output.add_argument(
+        "--list-ids", action="store_true", help="validate and print active ids only; uses the active org profile"
+    )
     output.add_argument("--show", metavar="ID", help="one case: its definition and the result the threat model records")
     output.add_argument(
         "--list",
         action="store_true",
         help="print each active case with its origin, kind, and title; uses the active org profile",
     )
-    parser.add_argument("--no-org-profile", action="store_true", help="with --list, ignore the active org profile")
+    parser.add_argument(
+        "--no-org-profile",
+        action="store_true",
+        help="with --list, --show, or --list-ids, ignore the active org profile",
+    )
     args = parser.parse_args(argv)
 
     plugin_root = Path(args.plugin_root) if args.plugin_root else PLUGIN_ROOT
@@ -733,7 +812,9 @@ def main(argv: list[str] | None = None) -> int:
     profile_dir: Path | None = None
     profile_path: Path | None = Path(args.org_profile) if args.org_profile else None
     profile_source = "cli" if profile_path else "none"
-    if (args.list or args.show) and not profile_path:
+    # The validation command must see the profile a run would use: its ids
+    # and `disable` list decide whether a repository file is accepted.
+    if (args.list or args.show or args.list_ids) and not profile_path:
         from runtime.resolve_org_profile import discover_active_profile
 
         profile_path, profile_source = discover_active_profile(None, args.no_org_profile, plugin_root)

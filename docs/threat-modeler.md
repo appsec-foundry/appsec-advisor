@@ -239,7 +239,7 @@ Thorough increases both component coverage and per-component analysis depth.
 | | quick | standard | thorough |
 |---|---|---|---|
 | Analysis per component | Lighter pass for internal components | Lighter pass for internal components | Full analysis everywhere |
-| Abuse cases checked against the code | Only cases you request | Attack chains and up to 3 business-rule cases | Attack chains, up to 8 business-rule cases, and up to 3 derived for the application |
+| Abuse cases checked against the code | Only cases you request | Technical abuse cases and up to 3 business abuse cases | Technical abuse cases, up to 8 business abuse cases, and up to 3 derived for the application |
 | Extra review of findings | No | Final quality check | Final quality check and architect review |
 | Model for finding threats | Sonnet 4.6 | Sonnet 4.6 | Opus |
 | Model for rating and merging findings | Sonnet 4.6 | Sonnet 5.5 | Opus |
@@ -388,7 +388,7 @@ Figures group actors linked to displayed findings by access category. Adding twe
 
 ### Abuse cases: `docs/security/abuse-cases/`
 
-An abuse case describes something a user must not be able to do, such as reading another customer's orders or approving their own request. One sentence is enough. The assessment finds the relevant code and checks whether the rule holds:
+An abuse case describes something a user must not be able to do, such as reading another customer's orders or approving their own request. One sentence and a file-name pattern are enough. The assessment finds the matching code and checks whether the rule holds:
 
 ```yaml
 schema_version: 2
@@ -397,9 +397,10 @@ abuse_cases:
     kind: descriptive
     title: Employee approves their own expense report
     check: Check whether an employee can approve an expense report they submitted.
+    scope_qualifier: {path_patterns: ["*expense*"]}
 ```
 
-To check a case only where it fits, add `scope_qualifier: {path_patterns: ["*expense*"]}`. The case then runs only if a file or directory name matches, ignoring case, such as `ExpenseController.java` or `expenses/`.
+The case runs only if the name of a source file, or of a directory above it, matches a pattern, ignoring case, such as `ExpenseController.java` or a file below `expenses/`. A case that matches no source file is listed as not applicable; name its ID with `--only-abuse-case` to check it anyway.
 
 Standard and thorough runs also check seven built-in business rules. Thorough runs add up to three cases derived for your application.
 

@@ -29,6 +29,7 @@ if not __package__:
 
 
 import argparse
+import functools
 import importlib.util
 import json
 import subprocess
@@ -376,6 +377,13 @@ def render_case(
         "open_questions": [str(q) for q in case.get("open_questions") or [] if str(q).strip()][:3]
         if case.get("kind") == "descriptive"
         else [],
+        # A derived case has no file to reload it from; the model keeps what a later check needs.
+        "derived_definition": {
+            "check": " ".join(str(case.get("check") or "").split())[:600],
+            "path_patterns": [str(p) for p in (case.get("scope_qualifier") or {}).get("path_patterns") or []][:6],
+        }
+        if str(cid).startswith("MODEL-AC-") and case.get("check")
+        else None,
     }
 
 
@@ -443,6 +451,7 @@ def build_canonical_analysis(
                 "steps": steps,
                 **({"open_questions": model["open_questions"]} if model.get("open_questions") else {}),
                 **({"requested": True} if model.get("requested") else {}),
+                **(model.get("derived_definition") or {}),
             }
         )
     evaluated = [
@@ -611,10 +620,14 @@ def _case_markdown(m: dict) -> str:
     return "\n".join(out).rstrip()
 
 
-def _settled_without_finding(m: dict) -> bool:
-    """The case was checked and holds: mitigated, or every step blocked or refuted."""
-    verdicts = [r["verdict"] for r in m["rows"]]
-    return m["chain_verdict"] == "mitigated" or (bool(verdicts) and set(verdicts) <= {"blocked", "refuted"})
+@functools.cache
+def _held_result():
+    return _rac().held_result
+
+
+def _held(m: dict) -> str | None:
+    """How the checked case holds, by the rule the abuse-case list also applies."""
+    return _held_result()(m["chain_verdict"], [r["verdict"] for r in m["rows"]])
 
 
 def _settled_table(models: list[dict]) -> str:
@@ -627,7 +640,7 @@ def _settled_table(models: list[dict]) -> str:
     for m in models:
         blocked = [r for r in m["rows"] if r["verdict"] == "blocked"]
         row = (blocked or m["rows"] or [{}])[0]
-        result = "✓ Mitigated" if blocked or m["chain_verdict"] == "mitigated" else "✗ Does not apply"
+        result = "✓ Mitigated" if _held(m) == "mitigated" else "✗ Does not apply"
         reason = (row.get("reason") or "").replace("|", "\\|").strip()
         if row.get("evidence"):
             reason = f"{reason} (`{row['evidence']}`)".strip()
@@ -679,7 +692,7 @@ _LEGEND = (
 )
 
 
-_SOURCE_LABEL = {"mandatory": "mandatory", "descriptive": "business case"}
+_SOURCE_LABEL = {"mandatory": "technical abuse case", "descriptive": "business abuse case"}
 
 
 def _risk_text(risk: str | None, emoji: str) -> str:
@@ -700,11 +713,11 @@ def _business_coverage(catalog_rows: list[dict], not_performed: list[dict], reje
     optional = [r for r in not_performed if not r.get("requested")]
     if inapplicable:
         out.append(
-            f"- {len(inapplicable)} business case(s) did not apply: preselection found no matching runtime code or signal."
+            f"- {len(inapplicable)} business abuse case(s) did not apply: preselection found no matching runtime code or signal."
         )
     if optional:
         reasons = sorted({r["reason"] for r in optional})
-        out.append(f"- {len(optional)} business case(s) were not performed: {'; '.join(reasons)}.")
+        out.append(f"- {len(optional)} business abuse case(s) were not performed: {'; '.join(reasons)}.")
     for r in requested:
         out.append(f"- Requested case {r['id']} — {r['title']}: not performed ({r['reason']}).")
     for r in rejected:
@@ -715,11 +728,11 @@ def _business_coverage(catalog_rows: list[dict], not_performed: list[dict], reje
 
 
 def _catalog_table(rows: list[dict]) -> str:
-    """Compact 'generic catalog evaluated, not applicable' table so the reader
+    """Compact 'technical abuse cases evaluated, not applicable' table so the reader
     sees WHICH common abuse-case scenarios were checked and why each was ruled
     out for this codebase — not just the viable ones."""
     out = [
-        "### Generic catalog — evaluated, not applicable",
+        "### Technical abuse cases — evaluated, not applicable",
         "",
         "_These common abuse-case scenarios from the standard library were "
         "checked against this codebase and did not apply. They are listed so "
@@ -746,8 +759,8 @@ def render_fragment(
     coverage = _business_coverage(catalog_rows or [], not_performed or [], rejected or [])
     catalog_rows = [r for r in catalog_rows or [] if r.get("source") != "descriptive"]
     if models:
-        settled = [model for model in models if _settled_without_finding(model)]
-        open_models = [model for model in models if not _settled_without_finding(model)]
+        settled = [model for model in models if _held(model)]
+        open_models = [model for model in models if not _held(model)]
         parts += [_INTRO, ""]
         for verdict, label in _VERIFICATION_GROUPS.items():
             group = [model for model in open_models if model["chain_verdict"] == verdict]
@@ -766,8 +779,8 @@ def render_fragment(
     elif not unverified:
         parts += [
             "_No abuse-case chain was verified end-to-end on this codebase. "
-            "The generic catalog evaluation below records which standard "
-            "scenarios were checked._",
+            "The evaluation below records which technical abuse cases "
+            "were checked._",
             "",
         ]
     if catalog_rows:

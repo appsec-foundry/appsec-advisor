@@ -19,8 +19,8 @@ ABUSE_CASE_FILES = (
     "schemas/abuse-cases.schema.yaml",
     "schemas/abuse-case-limits.schema.json",
     "data/abuse-case-limits.yaml",
-    "data/abuse-cases/default-library.yaml",
-    "data/abuse-cases/business-cases.yaml",
+    "data/abuse-cases/technical.yaml",
+    "data/abuse-cases/business.yaml",
 )
 
 
@@ -527,7 +527,7 @@ def test_check_surface_manifest_mcp_removed_still_present(tmp_path):
         smk.check_surface_manifest(tmp_path)
 
 
-@pytest.mark.parametrize("rel", ["data/abuse-cases/business-cases.yaml", "data/abuse-case-limits.yaml"])
+@pytest.mark.parametrize("rel", ["data/abuse-cases/business.yaml", "data/abuse-case-limits.yaml"])
 def test_fails_when_abuse_case_data_is_missing(tmp_path: Path, rel: str) -> None:
     _make_valid(tmp_path)
     (tmp_path / rel).unlink()
@@ -538,8 +538,8 @@ def test_fails_when_abuse_case_data_is_missing(tmp_path: Path, rel: str) -> None
 
 def test_fails_when_a_packaged_case_catalog_is_invalid(tmp_path: Path) -> None:
     _make_valid(tmp_path)
-    catalog = tmp_path / "data/abuse-cases/business-cases.yaml"
+    catalog = tmp_path / "data/abuse-cases/business.yaml"
     catalog.write_text(catalog.read_text(encoding="utf-8").replace("kind: descriptive", "kind: imaginary", 1))
     result = _run(tmp_path)
     assert result.returncode != 0
-    assert "business-cases.yaml" in result.stderr + result.stdout
+    assert "business.yaml" in result.stderr + result.stdout

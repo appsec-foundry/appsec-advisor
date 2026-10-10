@@ -224,8 +224,8 @@ ABUSE_CASE_FILES = (
     "schemas/abuse-cases.schema.yaml",
     "schemas/abuse-case-limits.schema.json",
     "data/abuse-case-limits.yaml",
-    "data/abuse-cases/default-library.yaml",
-    "data/abuse-cases/business-cases.yaml",
+    "data/abuse-cases/technical.yaml",
+    "data/abuse-cases/business.yaml",
 )
 
 

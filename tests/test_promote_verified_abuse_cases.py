@@ -328,7 +328,7 @@ def test_missing_registry_keeps_the_default_and_says_so(tmp_path: Path) -> None:
 
 
 def _business(tmp_path: Path, step: dict, *, chain_verdict: str, finding: dict | None = None) -> None:
-    case = {"id": "AC-T-101", "kind": "descriptive", "title": "Requester approves their own request", "check": "c"}
+    case = {"id": "AC-B-001", "kind": "descriptive", "title": "Requester approves their own request", "check": "c"}
     if finding is not None:
         case["finding"] = finding
     _write(
@@ -341,7 +341,7 @@ def _business(tmp_path: Path, step: dict, *, chain_verdict: str, finding: dict |
             "schema_version": 1,
             "matches": [
                 {
-                    "abuse_case_id": "AC-T-101",
+                    "abuse_case_id": "AC-B-001",
                     "kind": "descriptive",
                     "case": case,
                     "step_matches": [
@@ -353,7 +353,7 @@ def _business(tmp_path: Path, step: dict, *, chain_verdict: str, finding: dict |
     )
     _write(
         tmp_path / ".abuse-case-verdicts.json",
-        {"verdicts": [{"abuse_case_id": "AC-T-101", "chain_verdict": chain_verdict, "step_verdicts": [step]}]},
+        {"verdicts": [{"abuse_case_id": "AC-B-001", "chain_verdict": chain_verdict, "step_verdicts": [step]}]},
     )
 
 

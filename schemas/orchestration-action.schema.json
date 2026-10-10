@@ -443,7 +443,7 @@
         },
         "candidate_id": {
           "type": "string",
-          "pattern": "^(AC-T|AC|ORG-AC|REPO-AC|MODEL-AC)-[0-9]{3,}$"
+          "pattern": "^(AC-T|AC-B|AC|ORG-AC|REPO-AC|MODEL-AC)-[0-9]{3,}$"
         },
         "semantic_role": {
           "$ref": "#/$defs/semantic_role"

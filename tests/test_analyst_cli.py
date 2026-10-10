@@ -144,7 +144,7 @@ def test_abuse_case_cli_fills_hypothesis_and_paths_from_the_case(repo, monkeypat
     argv = ["hypothesis", "--repo", str(_committed_repo(repo)), "--abuse-case", "AC-T-003", "--revision", "HEAD"]
     assert module["main"]([*argv, "--no-org-profile"]) == 0
     assert observed[0].scope["paths"] == ["src/session.js"]
-    assert observed[0].hypothesis.startswith("Abuse case AC-T-003 (technical attack chain, plugin)")
+    assert observed[0].hypothesis.startswith("Abuse case AC-T-003 (technical abuse case, plugin)")
     assert "runs without a threat model" in observed[0].hypothesis
 
 
@@ -176,7 +176,12 @@ def test_abuse_case_cli_uses_the_existing_threat_model_unless_isolated(repo, mon
     )
     repo = _committed_repo(repo)
     (repo / "docs" / "security").mkdir(parents=True)
-    (repo / "docs" / "security" / "threat-model.yaml").write_text("schema_version: 1\n")
+    # The smallest model that passes output validation; an invalid one is not used as context.
+    (repo / "docs" / "security" / "threat-model.yaml").write_text(
+        "meta: {schema_version: 1, project: Fixture, generated: '2026-10-10T00:00:00Z', mode: full, model: sonnet}\n"
+        "components: []\nassets: []\nattack_surface: []\ntrust_boundaries: []\nsecurity_controls: []\n"
+        "threats: []\nmitigations: []\n"
+    )
     argv = ["hypothesis", "--repo", str(repo), "--abuse-case", "AC-T-003", "--revision", "HEAD", "--no-org-profile"]
     assert module["main"]([*argv, *extra]) == 0
     model = repo / "docs" / "security" / "threat-model.yaml"
@@ -192,7 +197,7 @@ def test_abuse_case_preview_prints_the_scope_and_starts_no_job(repo, tmp_path):
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == [
         "ABUSE-CASE CHECK",
-        "  AC-T-003  Privilege Escalation to Admin via JWT Algorithm Confusion  (technical attack chain, plugin)",
+        "  AC-T-003  Privilege Escalation to Admin via JWT Algorithm Confusion  (technical abuse case, plugin)",
         "    Goal: Forge an admin-role JWT without knowledge of the signing secret.",
         "    Step 1: JWT algorithm not pinned on verification",
         "    Step 2: Role claim trusted from token without re-fetch",
@@ -207,7 +212,7 @@ def test_abuse_case_preview_prints_the_scope_and_starts_no_job(repo, tmp_path):
 
 def test_preview_without_a_threat_model_warns_and_isolated_does_not(repo, tmp_path):
     repo = _committed_repo(repo)
-    base = ["hypothesis", "--repo", str(repo), "--abuse-case", "AC-T-104", "--revision", "HEAD", "--no-org-profile"]
+    base = ["hypothesis", "--repo", str(repo), "--abuse-case", "AC-B-004", "--revision", "HEAD", "--no-org-profile"]
     base += ["--path", "src/session.js", "--preview"]
     warned = run(*base, cwd=tmp_path, state=tmp_path / "a").stdout
     assert "  Recommendation: create a threat model first" in warned

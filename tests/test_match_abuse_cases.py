@@ -1111,7 +1111,7 @@ def test_cmd_finalize_unknown_case_uses_empty_step_matches(tmp_path: Path):
 def _shipped_case(case_id: str) -> dict:
     import yaml
 
-    library = yaml.safe_load((REPO_ROOT / "data" / "abuse-cases" / "default-library.yaml").read_text(encoding="utf-8"))
+    library = yaml.safe_load((REPO_ROOT / "data" / "abuse-cases" / "technical.yaml").read_text(encoding="utf-8"))
     return next(case for case in library["abuse_cases"] if case["id"] == case_id)
 
 
@@ -1150,7 +1150,7 @@ def test_the_llm_signal_is_part_of_the_recon_contract():
 def _prompt_injection_control_patterns():
     import yaml
 
-    library = yaml.safe_load((REPO_ROOT / "data" / "abuse-cases" / "default-library.yaml").read_text(encoding="utf-8"))
+    library = yaml.safe_load((REPO_ROOT / "data" / "abuse-cases" / "technical.yaml").read_text(encoding="utf-8"))
     case = next(row for row in library["abuse_cases"] if row["id"] == "AC-T-007")
     return case["chain"][0]["probe"]["control_patterns"]
 
@@ -1524,3 +1524,15 @@ def test_a_router_file_from_the_route_inventory_never_displaces_specific_files(t
     case = _locating(route_patterns=["/roles"], path_patterns=["**/grants.py"])
     m = mac.match_case(case, [], None, repo_root=repo, max_descriptive_files=1, routes=routes)
     assert m["preselected_sources"] == ["app/handlers/grants.py"]
+
+
+def test_a_business_case_without_a_locator_is_verified_only_on_request(tmp_path: Path):
+    # REQ-MOD-004: a business case is verified only when preselection finds code.
+    repo = _repo(tmp_path)
+    open_case = {"id": "REPO-AC-020", "kind": "descriptive", "title": "Self-approval", "check": "Check it."}
+    for case in (open_case, dict(open_case, scope_qualifier={"required_signals": ["has_role_concept"]})):
+        m = mac.match_case(case, [], {"has_role_concept"}, repo_root=repo)
+        assert m["structural_verdict"] == "not_applicable"
+        assert "declares no path, route, or detector locator" in m["reason"]
+    located = dict(open_case, scope_qualifier={"path_patterns": ["*role*"]})
+    assert mac.match_case(located, [], None, repo_root=repo)["structural_verdict"] == "candidate"

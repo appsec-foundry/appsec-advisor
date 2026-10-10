@@ -1092,7 +1092,15 @@ def test_thorough_prepare_abuse_derives_cases_once_before_matching(tmp_path, mon
 
     (output / ".abuse-case-deriver-output.json").write_text(
         json.dumps(
-            {"cases": [{"title": "Refund an order twice", "check": "Check whether an order can be refunded twice."}]}
+            {
+                "cases": [
+                    {
+                        "title": "Refund an order twice",
+                        "check": "Check whether an order can be refunded twice.",
+                        "path_patterns": ["*refund*"],
+                    }
+                ]
+            }
         ),
         encoding="utf-8",
     )

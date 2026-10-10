@@ -1,6 +1,6 @@
-# AppSec Advisor — plugin standard abuse-case library.
+# AppSec Advisor — the plugin's technical abuse cases.
 #
-# These templates are activated for every repository when the org profile sets
+# These cases are activated for every repository when the org profile sets
 # `abuse_cases.inherit_defaults: true` (the default). Each case is `source:
 # mandatory` — it is evaluated against the repo on every run and its resolution
 # must be confirmed per run, never assumed carried forward. Individual cases can
@@ -22,7 +22,7 @@
 # as `CWE-639` or `(?i)\bIDOR\b` bind the step to a finding that already
 # describes it.
 #
-# The one-sentence business checks live in business-cases.yaml (schema
+# The one-sentence business abuse cases live in business.yaml (schema
 # version 2). Validated against schemas/abuse-cases.schema.yaml.
 
 schema_version: 1

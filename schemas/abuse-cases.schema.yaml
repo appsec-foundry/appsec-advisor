@@ -2,10 +2,12 @@ $schema: "https://json-schema.org/draft/2020-12/schema"
 $id: "https://appsec-advisor/schemas/abuse-cases.schema.yaml"
 title: AppSec Advisor Abuse Case Library
 description: |
-  Schema for abuse-case definition files. An abuse case is a narrative,
-  end-to-end attack scenario (AC-NNN) that chains atomic findings (F-NNN)
-  into a verifiable exploitation path. Both the plugin standard library
-  (data/abuse-cases/default-library.yaml) and org-profile custom files
+  Schema for abuse-case definition files. A technical abuse case is an
+  end-to-end attack chain that links atomic findings (F-NNN) into a
+  verifiable exploitation path; a business abuse case (`kind: descriptive`)
+  states in one sentence what a user must not be able to do. The plugin
+  defaults (data/abuse-cases/technical.yaml and business.yaml) and
+  org-profile custom files
   (abuse-cases/*.yaml referenced via org_profile.abuse_cases.add) use this
   shape: a top-level `abuse_cases:` list of case objects.
 
@@ -41,7 +43,7 @@ $defs:
     properties:
       id:
         type: string
-        # AC-T-001 (library template), ORG-AC-001 (org custom), REPO-AC-001
+        # AC-T-001 (plugin technical case), ORG-AC-001 (org custom), REPO-AC-001
         # (repo-local: <repo>/docs/security/abuse-cases/*.yaml). The bare AC-NNN form
         # is reserved for analysis-discovered cases — NOT yet produced by any
         # pipeline step (no discovered-case generator exists); kept in the
@@ -158,7 +160,7 @@ $defs:
     properties:
       id:
         type: string
-        pattern: "^(AC-T|ORG-AC|REPO-AC|MODEL-AC)-[0-9]{3,}$"
+        pattern: "^(AC-B|ORG-AC|REPO-AC|MODEL-AC)-[0-9]{3,}$"
       kind:
         const: descriptive
       title:

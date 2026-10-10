@@ -62,7 +62,7 @@ abuse_cases:
 
 _TECHNICAL_IDS = ["AC-T-001", "AC-T-002", "AC-T-003", "AC-T-004", "AC-T-005", "AC-T-006", "AC-T-007"]
 # The generic business cases load after the technical library.
-_LIBRARY_IDS = _TECHNICAL_IDS + [f"AC-T-{n}" for n in range(101, 108)]
+_LIBRARY_IDS = _TECHNICAL_IDS + [f"AC-B-{n:03d}" for n in range(1, 8)]
 
 
 def test_library_loads_mandatory_cases():
@@ -468,7 +468,7 @@ def test_main_default_emits_json(capsys):
 
 
 def test_main_list_ids(capsys):
-    rc = rac.main(["--list-ids"])
+    rc = rac.main(["--list-ids", "--no-org-profile"])
     assert rc == 0
     ids = capsys.readouterr().out.split()
     assert ids == _LIBRARY_IDS
@@ -724,7 +724,7 @@ def test_list_names_origin_kind_and_title_of_the_active_profile(
     rows = _list_rows(out)
     assert f"organization profile: {profile} (env)" in out.splitlines()[0]
     assert rows["AC-T-001"][:2] == ["plugin", "technical"]
-    assert rows["AC-T-101"][:2] == ["plugin", "business"]
+    assert rows["AC-B-001"][:2] == ["plugin", "business"]
     assert rows[org_id] == ["organization", "technical", "Custom org scenario"]
     assert rows[repo_id] == ["repository", "business", repo_title]
 
@@ -779,7 +779,7 @@ def test_list_shows_the_outcome_the_threat_model_records_for_each_case(tmp_path,
     assert result["AC-T-003"] == "mitigated (incomplete)"
     assert result["AC-T-004"] == "not applicable"
     assert result["AC-T-005"] == "not checked"
-    assert result["AC-T-101"] == "not checked"
+    assert result["AC-B-001"] == "not checked"
     assert any(line.startswith("  MODEL-AC-001   model-derived  business") for line in lines)
 
 
@@ -830,7 +830,7 @@ def test_show_puts_a_confirmed_chain_into_sections_with_a_step_table(tmp_path, c
     )
     lines = _show(tmp_path, "AC-T-003", capsys)
     assert lines[0] == "AC-T-003 · Privilege Escalation to Admin via JWT Algorithm Confusion"
-    assert lines[1] == "Technical attack chain · plugin"
+    assert lines[1] == "Technical abuse case · plugin"
     assert "RESULT: CONFIRMED — this case applies to the code." in lines
     assert "  (risk Critical · docs/security/threat-model.yaml, 2026-10-10)" in lines
     assert lines[lines.index("HOW") + 1] == "  Attacker signs a token with the public key."
@@ -849,7 +849,7 @@ def test_show_puts_a_confirmed_chain_into_sections_with_a_step_table(tmp_path, c
 
 def test_show_gives_a_business_case_a_where_section_and_links_the_report(tmp_path, capsys):
     record = {
-        "id": "AC-T-103",
+        "id": "AC-B-003",
         "chain_verdict": "fully_viable",
         "matched_finding_ids": ["F-011"],
         "steps": [
@@ -868,13 +868,13 @@ def test_show_gives_a_business_case_a_where_section_and_links_the_report(tmp_pat
         threats=[{"id": "T-011", "title": "Weak reset", "controls_in_place": "Rate limit, bypassable."}],
     )
     (tmp_path / "docs" / "security" / "threat-model.md").write_text("# report\n")
-    lines = _show(tmp_path, "AC-T-103", capsys)
-    assert lines[1] == "Business case · plugin" and "WHAT IT CHECKS" in lines
+    lines = _show(tmp_path, "AC-B-003", capsys)
+    assert lines[1] == "Business abuse case · plugin" and "WHAT IT CHECKS" in lines
     assert lines[lines.index("WHERE") + 1] == "  routes/reset.ts:41 · finding F-011"
     assert "  Control found: rate limit, bypassable" in lines
     assert not any("Existing control" in line for line in lines)  # the step's control is not repeated
     assert "STEPS" not in lines
-    assert "  Report:         docs/security/threat-model.md#ac-t-103" in lines
+    assert "  Report:         docs/security/threat-model.md#ac-b-003" in lines
 
 
 def test_show_says_what_blocks_a_mitigated_case_and_explains_no_attack(tmp_path, capsys):
@@ -891,15 +891,15 @@ def test_show_says_what_blocks_a_mitigated_case_and_explains_no_attack(tmp_path,
 
 
 def test_show_says_when_a_case_has_no_recorded_result(tmp_path, capsys):
-    lines = _show(tmp_path, "AC-T-101", capsys)
-    assert lines[1] == "Business case · plugin"
+    lines = _show(tmp_path, "AC-B-001", capsys)
+    assert lines[1] == "Business abuse case · plugin"
     assert any(line.startswith("RESULT: NOT CHECKED — no threat model in") for line in lines)
     assert "  Threat model:   /appsec-advisor:create-threat-model" in lines
     _write_model(
         tmp_path,
-        {"status": "completed", "cases": [], "catalog_evaluated": [{"id": "AC-T-101", "reason": "no tenants"}]},
+        {"status": "completed", "cases": [], "catalog_evaluated": [{"id": "AC-B-001", "reason": "no tenants"}]},
     )
-    lines = _show(tmp_path, "AC-T-101", capsys)
+    lines = _show(tmp_path, "AC-B-001", capsys)
     assert "RESULT: NOT APPLICABLE  (docs/security/threat-model.yaml, 2026-10-10)" in lines
     assert "  Reason: no tenants" in lines
 
@@ -913,7 +913,83 @@ def test_show_finds_a_model_derived_case_and_rejects_an_unknown_id(tmp_path, cap
         },
     )
     lines = _show(tmp_path, "MODEL-AC-001", capsys)
-    assert lines[:2] == ["MODEL-AC-001 · Coupon reused", "Business case · model-derived"]
+    assert lines[:2] == ["MODEL-AC-001 · Coupon reused", "Business abuse case · model-derived"]
     assert any(line.startswith("RESULT: UNRESOLVED — ") and "not a safe result" in line for line in lines)
     assert rac.main(["--show", "AC-NOPE", "--no-org-profile", "--repo-root", str(tmp_path)]) == 1
     assert "unknown abuse case ID AC-NOPE" in capsys.readouterr().err
+
+
+_DERIVED_ID_CASE = (
+    "schema_version: 2\nabuse_cases:\n  - id: MODEL-AC-001\n    kind: descriptive\n"
+    "    title: Copied derived case\n    check: Check whether a coupon can be reused.\n"
+)
+
+
+def test_only_the_deriver_may_use_the_model_ac_prefix(tmp_path: Path):
+    repo = tmp_path / "repo"
+    _write_docs_security(repo, _DERIVED_ID_CASE, name="copied.yaml")
+    derived = tmp_path / "derived.yaml"
+    derived.write_text(_DERIVED_ID_CASE.replace("Copied derived case", "Derived this run"), encoding="utf-8")
+    origins: dict[str, str] = {}
+    cases, errors, rejected = rac.resolve_abuse_case_sources(
+        None, None, repo_root=repo, derived_case_file=derived, origins=origins
+    )
+    # The copied repository file is rejected on its own; the run's derived case stays.
+    assert errors == []
+    assert [r["path"] for r in rejected] == ["docs/security/abuse-cases/copied.yaml"]
+    assert "reserved for model-derived cases" in rejected[0]["reason"]
+    assert origins["MODEL-AC-001"] == "derived"
+    org_dir = _write_org(tmp_path / "org", _DERIVED_ID_CASE)
+    _, org_errors = rac.resolve_abuse_cases({"abuse_cases": {"inherit_defaults": False}}, org_dir)
+    assert any("reserved for model-derived cases" in e for e in org_errors)
+
+
+def test_validation_command_uses_the_active_org_profile(tmp_path, monkeypatch, capsys):
+    profile = _org_profile_file(tmp_path, _VALID_CASE)
+    repo = tmp_path / "repo"
+    _write_docs_security(repo, _VALID_CASE)  # reuses the organization's ORG-AC-001
+    monkeypatch.setenv("APPSEC_ADVISOR_ORG_PROFILE", str(profile))
+    monkeypatch.delenv("APPSEC_ADVISOR_NO_ORG_PROFILE", raising=False)
+    assert rac.main(["--repo-root", str(repo), "--list-ids"]) == 1
+    assert "duplicate abuse-case id 'ORG-AC-001'" in capsys.readouterr().err
+    assert rac.main(["--repo-root", str(repo), "--list-ids", "--no-org-profile"]) == 0
+
+
+def _step(n: int, verdict: str) -> dict:
+    return {"step": n, "verdict": verdict, "evidence": {"file": "src/a.ts", "line": n}}
+
+
+@pytest.mark.parametrize(
+    ("verdicts", "chain", "label"),
+    [
+        (["refuted"], "inconclusive", "does not apply"),
+        (["refuted", "blocked"], "inconclusive", "mitigated"),
+        (["blocked"], "mitigated", "mitigated"),
+        (["refuted", "inconclusive"], "inconclusive", "unresolved"),
+    ],
+    ids=["refuted", "mixed", "blocked", "open"],
+)
+def test_list_and_report_agree_on_a_case_that_holds(tmp_path, capsys, verdicts, chain, label):
+    record = {"id": "AC-T-002", "chain_verdict": chain, "steps": [_step(n, v) for n, v in enumerate(verdicts, 1)]}
+    _write_model(tmp_path, {"status": "completed", "cases": [record]})
+    assert rac.main(["--list", "--no-org-profile", "--repo-root", str(tmp_path)]) == 0
+    row = next(line for line in capsys.readouterr().out.splitlines() if line.startswith("  AC-T-002 "))
+    assert row[43:65].strip() == label
+    held = rac.held_result(chain, verdicts)
+    assert (held or "unresolved") == label  # the §9 report settles a case by the same rule
+
+
+def test_show_offers_a_check_only_where_one_can_run(tmp_path, capsys):
+    recorded = {"id": "MODEL-AC-001", "title": "Coupon reused", "chain_verdict": "inconclusive"}
+    checkable = dict(recorded, id="MODEL-AC-002", check="Check whether a coupon can be reused.")
+    _write_model(tmp_path, {"status": "completed", "cases": [recorded, checkable]})
+    lines = _show(tmp_path, "MODEL-AC-002", capsys)
+    assert lines[lines.index("WHAT IT CHECKS") + 1] == "  Check whether a coupon can be reused."
+    assert lines[-1] == "  Check again:    /appsec-advisor:analyze-threats --abuse-case MODEL-AC-002 [--model opus]"
+    lines = _show(tmp_path, "MODEL-AC-001", capsys)
+    assert lines[-1].startswith("  Check again:    a new thorough run")
+    _write_model(tmp_path, {"status": "completed", "cases": []}, meta={"schema_version": 2})
+    lines = _show(tmp_path, "AC-T-003", capsys)
+    assert (
+        lines[-1] == "  Check again:    /appsec-advisor:analyze-threats --abuse-case AC-T-003 --isolated [--model opus]"
+    )

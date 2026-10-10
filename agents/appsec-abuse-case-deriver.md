@@ -32,6 +32,7 @@ Read `$ABUSE_CASE_DERIVER_CONTEXT_PATH`. Propose up to `max_cases` business abus
 - Each case is one plain check in the form "Check whether …", naming the business operation and what must not happen. Do not prescribe an attack technique, payload, or code location; the verifier reads the code.
 - Propose only cases the context gives a concrete reason for. Fewer cases, or none, is a valid answer.
 - Do not repeat or rephrase a title in `active_case_titles`, and do not propose generic technical weaknesses such as injection, XSS, or missing TLS; deterministic checks cover them.
+- `path_patterns` lists one to six file or directory name globs, ignoring case, built from the business vocabulary of the case, such as `*order*` or `*refund*`. Deterministic preselection uses them to find the code the verifier reads; a case whose patterns match no source file does not run.
 - `exclusions` names legitimate behavior that is not an abuse; `open_questions` names a business fact the code cannot answer, as one plain question. Both are optional.
 - `finding` is optional and may set `cwe`, `stride`, and `mitigation_title`; never a severity.
 
@@ -40,7 +41,7 @@ Read `$ABUSE_CASE_DERIVER_CONTEXT_PATH`. Propose up to `max_cases` business abus
 Write `$OUTPUT_DIR/.abuse-case-deriver-output.json` once and stop:
 
 ```json
-{"cases": [{"title": "Customer cancels another customer's order", "check": "Check whether a customer can cancel an order that belongs to another customer.", "exclusions": ["Support staff cancelling on a customer's request."], "open_questions": ["May a household share orders between accounts?"], "finding": {"cwe": "CWE-639", "stride": "Tampering", "mitigation_title": "Check order ownership before cancellation"}}]}
+{"cases": [{"title": "Customer cancels another customer's order", "check": "Check whether a customer can cancel an order that belongs to another customer.", "path_patterns": ["*order*", "*cancel*"], "exclusions": ["Support staff cancelling on a customer's request."], "open_questions": ["May a household share orders between accounts?"], "finding": {"cwe": "CWE-639", "stride": "Tampering", "mitigation_title": "Check order ownership before cancellation"}}]}
 ```
 
 `title` is at most 160 characters, `check` at most 600. Write `{"cases": []}` when the context gives no concrete reason for a case. A deterministic step validates every case, drops duplicates and cases beyond the limit, and assigns IDs.

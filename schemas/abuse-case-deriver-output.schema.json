@@ -13,10 +13,11 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["title", "check"],
+        "required": ["title", "check", "path_patterns"],
         "properties": {
           "title": {"type": "string", "minLength": 1, "maxLength": 160},
           "check": {"type": "string", "minLength": 1, "maxLength": 600},
+          "path_patterns": {"type": "array", "minItems": 1, "maxItems": 6, "items": {"type": "string", "minLength": 1, "maxLength": 60}},
           "exclusions": {"type": "array", "maxItems": 8, "items": {"type": "string", "minLength": 1, "maxLength": 600}},
           "open_questions": {"type": "array", "maxItems": 8, "items": {"type": "string", "minLength": 1, "maxLength": 600}},
           "finding": {

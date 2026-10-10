@@ -563,7 +563,7 @@ def test_fragment_renders_catalog_table_when_no_viable_cases(tmp_path: Path):
     rows = rac.build_catalog_evaluation(tmp_path)
     md = rac.render_fragment([], rows)
     assert md.startswith("## 9. Abuse Cases")
-    assert "### Generic catalog — evaluated, not applicable" in md
+    assert "### Technical abuse cases — evaluated, not applicable" in md
     assert "| Scenario | Source | Why not applicable |" in md
     assert "Bulk Data Exfiltration via BOLA" in md
     # honest 'nothing verified' line instead of the bare empty placeholder
@@ -575,7 +575,7 @@ def test_main_renders_catalog_even_without_verdicts(tmp_path: Path):
     rc = rac.main(["--output-dir", str(tmp_path)])
     assert rc == 0
     frag = (tmp_path / ".fragments" / "abuse-cases.md").read_text()
-    assert "Generic catalog" in frag
+    assert "Technical abuse cases — evaluated" in frag
 
 
 def test_main_writes_fragment_and_sidecar_validates(tmp_path: Path):
@@ -874,7 +874,7 @@ def test_unlinked_descriptive_case_is_not_rated(tmp_path: Path):
     assert [s["outcome"] for s in case["steps"]] == _DESCRIPTIVE_CASE["steps"]
     md = (out / ".fragments" / "abuse-cases.md").read_text(encoding="utf-8")
     assert "not rated (no linked finding)" in md
-    assert "**Source:** business case" in md
+    assert "**Source:** business abuse case" in md
 
 
 def test_an_open_business_case_carries_its_bounded_questions_to_the_model(tmp_path: Path, monkeypatch):
@@ -911,10 +911,10 @@ def test_a_verified_case_is_marked_requested_only_by_the_matcher(tmp_path: Path,
     md = (out / ".fragments" / "abuse-cases.md").read_text(encoding="utf-8")
     if flag:
         assert case["requested"] is True
-        assert "**Source:** business case, requested" in md
+        assert "**Source:** business abuse case, requested" in md
     else:
         assert "requested" not in case
-        assert "business case, requested" not in md
+        assert "business abuse case, requested" not in md
 
 
 def test_business_coverage_is_summarized_and_requests_answered_individually(tmp_path: Path):
@@ -923,10 +923,10 @@ def test_business_coverage_is_summarized_and_requests_answered_individually(tmp_
     assert rac.main(["--output-dir", str(out), "--repo-root", str(repo)]) == 0
     md = (out / ".fragments" / "abuse-cases.md").read_text(encoding="utf-8")
     assert "### Business-case coverage" in md
-    assert "1 business case(s) did not apply" in md
+    assert "1 business abuse case(s) did not apply" in md
     assert "Self-approval" not in md  # templates are counted, not listed
     assert "Requested case REPO-AC-022 — Approval reuse: not performed" in md
-    assert "1 business case(s) were not performed: exceeds the limit of 3" in md
+    assert "1 business abuse case(s) were not performed: exceeds the limit of 3" in md
     assert "`.appsec/abuse-cases/bad.yaml` was rejected" in md
     analysis = yaml.safe_load((out / "threat-model.yaml").read_text(encoding="utf-8"))["abuse_case_analysis"]
     assert {r["id"]: r["requested"] for r in analysis["not_performed"]} == {"REPO-AC-022": True, "REPO-AC-023": False}
@@ -975,3 +975,22 @@ def test_unrated_risk_is_reserved_for_unlinked_descriptive_cases():
     assert any("only an unlinked descriptive case may be unrated" in e for e in errors)
     errors = semantic({"abuse_case_analysis": {"status": "completed", "cases": [dict(base, source="descriptive")]}})
     assert not any("unrated" in e for e in errors)
+
+
+def test_a_derived_case_keeps_its_check_in_the_canonical_model(tmp_path):
+    derived = {
+        "id": "MODEL-AC-001",
+        "kind": "descriptive",
+        "title": "Coupon reused after a refund",
+        "check": "Check whether a coupon can be redeemed again after its order is refunded.",
+        "scope_qualifier": {"path_patterns": ["*coupon*"]},
+    }
+    repo_case = dict(derived, id="REPO-AC-001")
+    verdict = {"chain_verdict": "inconclusive", "step_verdicts": [{"step": 1, "verdict": "inconclusive"}]}
+    models = [rac.render_case(case, verdict, {}, []) for case in (derived, repo_case)]
+    (tmp_path / ".abuse-case-verdicts.json").write_text("{}")
+    by_id = {c["id"]: c for c in rac.build_canonical_analysis(tmp_path, models, [])["cases"]}
+    assert by_id["MODEL-AC-001"]["check"] == derived["check"]
+    assert by_id["MODEL-AC-001"]["path_patterns"] == ["*coupon*"]
+    # A case with a file of its own is reloaded from it; the model does not copy it.
+    assert "check" not in by_id["REPO-AC-001"]

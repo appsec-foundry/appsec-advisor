@@ -32,12 +32,14 @@ import re
 from pathlib import Path, PurePosixPath
 
 import yaml
-from contexts.build_analyst_snapshot import _blobs, _commit, _tree
+from contexts.build_analyst_snapshot import _blobs, _commit, _redact_secrets, _tree, rejection_reason
+from contexts.resolve_analyst_catalog import load_limits
 
 from model import match_abuse_cases as matcher
 from model import resolve_abuse_cases as resolver
 
 MAX_PATHS = 20  # analyst-request scope/paths maxItems
+MAX_STEPS = 10  # analyst-response hypothesis_assessment/steps maxItems
 MAX_HYPOTHESIS_CHARS = 20000
 MAX_SCAN_BYTES = 512 * 1024
 MAX_MODEL_BYTES = 2 * 1024 * 1024
@@ -72,9 +74,20 @@ def load_cases(
 def select_cases(cases: list[dict], ids: list[str]) -> list[dict]:
     by_id = {str(c.get("id")): c for c in cases}
     unknown = [cid for cid in ids if cid not in by_id]
+    derived = [cid for cid in unknown if cid.startswith("MODEL-AC-")]
+    if derived:
+        raise AbuseCaseError(
+            f"{', '.join(derived)}: a model-derived case is checked from the threat model that records it; "
+            "run without --isolated"
+        )
     if unknown:
         raise AbuseCaseError(
             f"unknown abuse case ID(s): {', '.join(unknown)}; list them with /appsec-advisor:abuse-cases"
+        )
+    unrecorded = [cid for cid in ids if cid.startswith("MODEL-AC-") and not by_id[cid].get("check")]
+    if unrecorded:
+        raise AbuseCaseError(
+            f"{', '.join(unrecorded)}: this threat model does not record the derived check; a new thorough run checks it"
         )
     return [by_id[cid] for cid in dict.fromkeys(ids)]
 
@@ -99,14 +112,26 @@ def _case_cwes(case: dict) -> set[str]:
 
 
 def load_model(model_path: Path) -> dict | None:
-    """The threat model as untrusted data, read bounded; ``None`` when unreadable."""
+    """The threat model as untrusted data, read bounded; ``None`` when unreadable or invalid.
+
+    A single-repository model must pass the output validation the analyst
+    context applies, so the hypothesis never cites a model the report marks
+    invalid. A combined model is returned as is, and ``build`` refuses it.
+    """
+    from shared.assessment_sources import is_portable_model
+    from validators.validate_intermediate import validate_threat_model_output
+
     try:
         if model_path.stat().st_size > MAX_MODEL_BYTES:
             return None
         data = yaml.safe_load(model_path.read_text(encoding="utf-8"))
     except (OSError, ValueError, yaml.YAMLError):
         return None
-    return data if isinstance(data, dict) else None
+    if not isinstance(data, dict):
+        return None
+    if not is_portable_model(data) and not validate_threat_model_output(data)[0]:
+        return None
+    return data
 
 
 def _records(data: dict, key: str) -> list[dict]:
@@ -210,6 +235,28 @@ def model_recommendation(cases: list[dict]) -> list[str]:
     return reasons
 
 
+def numbered_steps(cases: list[dict]) -> dict[str, list[tuple[int, dict]]]:
+    """Per technical case its chain steps, numbered across all selected cases.
+
+    The analyst answers each ``- Step N:`` line once by its number, so two
+    chains checked together must not both declare a step 1.
+    """
+    numbered: dict[str, list[tuple[int, dict]]] = {}
+    n = 0
+    for case in cases:
+        if matcher.is_descriptive(case):
+            continue
+        steps = [s for s in case.get("chain") or [] if isinstance(s, dict)]
+        numbered[str(case["id"])] = [(n + i, step) for i, step in enumerate(steps, start=1)]
+        n += len(steps)
+    if n > MAX_STEPS:
+        raise AbuseCaseError(
+            f"the selected abuse cases have {n} chain steps, more than the {MAX_STEPS} one check rates; "
+            "check fewer at a time"
+        )
+    return numbered
+
+
 def _model_lines(link: dict) -> list[str]:
     lines = []
     if link.get("verdict"):
@@ -237,9 +284,11 @@ def hypothesis_text(
 ) -> str:
     """The hypothesis the analyst checks: every selected case, then the model context."""
     parts = []
+    numbered = numbered_steps(cases)
+    several = len(numbered) > 1
     for case in cases:
         cid = str(case["id"])
-        kind = "business case" if matcher.is_descriptive(case) else "technical attack chain"
+        kind = "business abuse case" if matcher.is_descriptive(case) else "technical abuse case"
         origin = resolver._ORIGIN_LABEL.get(origins.get(cid, ""), "unknown origin")
         lines = [f"Abuse case {cid} ({kind}, {origin}): {_one_line(case.get('title'))}."]
         if matcher.is_descriptive(case):
@@ -248,10 +297,9 @@ def hypothesis_text(
         else:
             if case.get("goal"):
                 lines.append(f"Attacker goal: {_one_line(case['goal'])}")
-            for step in case.get("chain") or []:
-                lines.append(
-                    f"- Step {step.get('step')}: {_one_line(step.get('label'))}. {_one_line(step.get('description'))}"
-                )
+            for n, step in numbered.get(cid, []):
+                owner = f"{cid}: " if several else ""
+                lines.append(f"- Step {n}: {owner}{_one_line(step.get('label'))}. {_one_line(step.get('description'))}")
         lines += _model_lines((links or {}).get(cid, {}))
         parts.append("\n".join(lines))
     if controls:
@@ -284,8 +332,10 @@ def _runtime_sources(tree: dict[str, tuple[str, str]]) -> dict[str, str]:
     }
 
 
-def locate_paths(repo_root: Path, revision: str, cases: list[dict], preferred: list[str] = ()) -> list[str]:
-    """Files at ``revision`` for the cases, capped at MAX_PATHS.
+def locate_paths(
+    repo_root: Path, revision: str, cases: list[dict], preferred: list[str] = (), limit: int | None = MAX_PATHS
+) -> list[str]:
+    """Files at ``revision`` for the cases, capped at ``limit``.
 
     Each source of files is one group: the ``preferred`` files from the
     threat model, each technical step with its files ranked by how many lines
@@ -331,7 +381,47 @@ def locate_paths(repo_root: Path, revision: str, cases: list[dict], preferred: l
         for group in groups:
             if rank < len(group) and group[rank] not in found:
                 found.append(group[rank])
-    return found[:MAX_PATHS]
+    return found[:limit]
+
+
+def admissible_paths(
+    repo_root: Path, revision: str, user_paths: list[str], candidates: list[str], max_kept: int
+) -> tuple[list[str], list[str]]:
+    """Split located files into those the snapshot admits whole and those it would exclude.
+
+    The controller ends a check as incomplete when a named path is not
+    admitted. A file the plugin located, not the user, is therefore left out
+    beforehand when the snapshot would exclude it: a sensitive name, binary
+    content, an unredactable secret, or the per-file and per-job size limits,
+    counted after the files the user named. At most ``max_kept`` files are kept.
+    """
+    limits = load_limits()
+    tree = _tree(repo_root, _commit(repo_root, revision))
+    blobs = {path: oid for path, (mode, oid) in tree.items() if mode.startswith("100")}
+    named = sorted({q for p in user_paths for q in blobs if q == p or q.startswith(p.rstrip("/") + "/")})
+    contents = _blobs(repo_root, sorted({blobs[q] for q in named}))
+    total = sum(len(contents[blobs[q]]) for q in named if not rejection_reason(q, contents[blobs[q]], limits))
+    count = len(named)
+    kept: list[str] = []
+    skipped: list[str] = []
+    for path in candidates:
+        if len(kept) >= max_kept:
+            break
+        content = _blobs(repo_root, [blobs[path]])[blobs[path]] if path in blobs else None
+        if content is not None and not rejection_reason(path, content, limits):
+            content = _redact_secrets(content)[0]
+        if (
+            content is None
+            or rejection_reason(path, content, limits)
+            or total + len(content) > limits["job_kib"] * 1024
+            or count >= limits["admitted_files"]
+        ):
+            skipped.append(path)
+            continue
+        kept.append(path)
+        total += len(content)
+        count += 1
+    return kept, skipped
 
 
 def build(
@@ -351,7 +441,6 @@ def build(
     and the files.
     """
     cases, origins = load_cases(repo_root, org_profile, no_org_profile)
-    selected = select_cases(cases, case_ids)
     data = load_model(threat_model_path) if threat_model_path else None
     from shared.assessment_sources import is_portable_model, single_repository_only
 
@@ -360,19 +449,34 @@ def build(
         raise AbuseCaseError(
             single_repository_only("an abuse-case check", "Run it with --isolated or a single-repository model")
         )
+    # A model-derived case exists only in the threat model that records it.
+    for case in resolver.derived_cases(data):
+        if case["id"] not in origins:
+            cases.append(case)
+            origins[case["id"]] = "derived"
+    selected = select_cases(cases, case_ids)
     links = model_links(data, selected) if data else {}
     preferred = [f["file"] for link in links.values() for f in link["findings"] if f["file"]]
     paths = list(dict.fromkeys(user_paths))
+    skipped: list[str] = []
     if len(paths) < MAX_PATHS:
-        paths += [p for p in locate_paths(repo_root, revision, selected, preferred) if p not in paths]
+        located = [p for p in locate_paths(repo_root, revision, selected, preferred, None) if p not in paths]
+        located, skipped = admissible_paths(repo_root, revision, paths, located, MAX_PATHS - len(paths))
+        paths += located
     if not paths:
         raise AbuseCaseError(
             "no file at this revision matches the selected abuse cases; name the files or directories with --path"
         )
     paths = paths[:MAX_PATHS]
     controls = model_controls(data, paths) if data else []
-    hypothesis = hypothesis_text(selected, origins, with_threat_model, links, controls)
+    # An unreadable or invalid model is not context, and the hypothesis says so.
+    unusable = threat_model_path is not None and data is None
+    hypothesis = hypothesis_text(selected, origins, with_threat_model and not unusable, links, controls)
     summary = _summary(selected, origins, links, revision, paths)
+    if unusable:
+        summary += f"\n  Threat model: {threat_model_path.name} is unreadable or invalid and is not used"
+    if skipped:
+        summary += f"\n  Not added, beyond the analyst's file limits: {len(skipped)} located file(s)"
     if controls:
         summary += "\n  Assessed controls in these files: " + ", ".join(
             f"{c['control']} ({c['effectiveness']})" for c in controls
@@ -386,9 +490,10 @@ def build(
 
 def _summary(cases: list[dict], origins: dict[str, str], links: dict, revision: str, paths: list[str]) -> str:
     lines = ["ABUSE-CASE CHECK"]
+    numbered = numbered_steps(cases)
     for case in cases:
         cid = str(case["id"])
-        kind = "business case" if matcher.is_descriptive(case) else "technical attack chain"
+        kind = "business abuse case" if matcher.is_descriptive(case) else "technical abuse case"
         origin = resolver._ORIGIN_LABEL.get(origins.get(cid, ""), "unknown origin")
         lines.append(f"  {cid}  {_one_line(case.get('title'))}  ({kind}, {origin})")
         if matcher.is_descriptive(case):
@@ -396,9 +501,7 @@ def _summary(cases: list[dict], origins: dict[str, str], links: dict, revision: 
         else:
             if case.get("goal"):
                 lines.append(f"    Goal: {_clip(case['goal'])}")
-            lines += [
-                f"    Step {step.get('step')}: {_clip(step.get('label'))}" for step in (case.get("chain") or [])[:6]
-            ]
+            lines += [f"    Step {n}: {_clip(step.get('label'))}" for n, step in numbered.get(cid, [])]
         link = links.get(cid) or {}
         if link.get("verdict"):
             lines.append(f"    previously: {link['verdict']}")

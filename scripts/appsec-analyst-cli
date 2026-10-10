@@ -118,7 +118,7 @@ def build_parser() -> argparse.ArgumentParser:
     claim = hypothesis.add_mutually_exclusive_group(required=True)
     claim.add_argument("--hypothesis", help="concrete threat hypothesis to investigate")
     claim.add_argument(
-        "--abuse-case", action="append", help="ID of a defined abuse or business case to check; repeatable"
+        "--abuse-case", action="append", help="ID of a defined technical or business abuse case to check; repeatable"
     )
     hypothesis.add_argument("--revision", required=True, help="Git revision to inspect, such as HEAD")
     hypothesis.add_argument(
