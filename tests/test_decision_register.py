@@ -180,3 +180,8 @@ def test_agents_md_points_at_the_register():
     """The pointer is the only thing that makes the register findable in a session."""
     agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
     assert "docs/internal/decisions.md" in agents, "AGENTS.md must point at the decision register"
+
+
+def test_agents_routes_to_orchestration_action_contract():
+    agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    assert "docs/internal/contracts/orchestration-actions.md" in agents

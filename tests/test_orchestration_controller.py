@@ -4875,11 +4875,6 @@ def test_runtime_environment_opt_outs_are_absent():
     assert "APPSEC_CONTEXT_V2" not in source
 
 
-def test_agents_routes_to_orchestration_action_contract():
-    agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
-    assert "docs/internal/contracts/orchestration-actions.md" in agents
-
-
 # --- _emit / main: the CLI + exit-code boundary --------------------------------
 
 

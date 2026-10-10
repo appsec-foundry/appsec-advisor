@@ -39,12 +39,32 @@ ROOT = run_tests.ROOT
 # reading during collection and test execution, and counts skipped and failed
 # tests. Cached bytecode keeps imports from opening script sources.
 _WORKER = r"""
-import json, os, sys
+import json, os, sys, threading
 import pytest
 
 root, out, args = sys.argv[1], sys.argv[2], sys.argv[3:]
 prefix = os.path.join(root, "")
 state = {"active": False, "reads": set(), "copying": set(), "skipped": 0, "failed": 0}
+opening = threading.local()
+real_open = os.open
+
+
+def open_at(path, flags, mode=0o777, *, dir_fd=None):
+    # The open audit event omits dir_fd, so a relative name would resolve against the
+    # working directory. Unresolvable descriptors keep that conservative reading.
+    opening.directory = None
+    if dir_fd is not None:
+        try:
+            opening.directory = os.readlink(f"/proc/self/fd/{dir_fd}")
+        except OSError:
+            pass
+    try:
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+    finally:
+        opening.directory = None
+
+
+os.open = open_at
 
 
 def hook(event, hook_args):
@@ -60,7 +80,7 @@ def hook(event, hook_args):
     if not isinstance(path, (str, bytes, os.PathLike)):
         return
     reading = not set(mode) & set("wax+") if isinstance(mode, str) else (flags & 3) == os.O_RDONLY
-    path = os.path.abspath(os.fsdecode(path))
+    path = os.path.abspath(os.path.join(getattr(opening, "directory", None) or "", os.fsdecode(path)))
     if path in state["copying"]:
         state["copying"].discard(path)
         return

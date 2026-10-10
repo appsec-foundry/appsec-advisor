@@ -503,38 +503,40 @@ def test_attack_surface_completeness_restores_uncurated_routes():
 # (§7b traceability, MS subsection, requirements-compliance.md authoring) on
 # meta.check_requirements. build_meta must propagate the resolved skill_cfg flag
 # into the yaml, else a --requirements run that ran Phase 8b renders nothing.
-def _meta(**cfg):
+def _meta(repo_root, **cfg):
     return b.build_meta(
         skill_cfg=cfg,
         org=None,
         recon_project=None,
         plugin_root=ROOT,
-        repo_root=ROOT,
+        repo_root=repo_root,
         prior_yaml=None,
     )
 
 
-def test_build_meta_propagates_check_requirements_true():
-    assert _meta(check_requirements=True)["check_requirements"] is True
+def test_build_meta_propagates_check_requirements_true(tmp_path):
+    assert _meta(tmp_path, check_requirements=True)["check_requirements"] is True
 
 
-def test_build_meta_check_requirements_defaults_false():
-    assert _meta()["check_requirements"] is False
-    assert _meta(check_requirements=False)["check_requirements"] is False
+def test_build_meta_check_requirements_defaults_false(tmp_path):
+    assert _meta(tmp_path)["check_requirements"] is False
+    assert _meta(tmp_path, check_requirements=False)["check_requirements"] is False
 
 
-def test_build_meta_stride_cap_propagated_when_active():
+def test_build_meta_stride_cap_propagated_when_active(tmp_path):
     """--stride-cap N → .skill-config stride_profile.max_threats_per_category
     reaches meta so the report self-discloses the reduced scope."""
-    m = _meta(stride_profile={"max_threats_per_category": 2, "stride_profile_label": "full (per-category cap 2)"})
+    m = _meta(
+        tmp_path, stride_profile={"max_threats_per_category": 2, "stride_profile_label": "full (per-category cap 2)"}
+    )
     assert m["stride_per_category_cap"] == 2
 
 
-def test_build_meta_records_the_register_severity_floor():
+def test_build_meta_records_the_register_severity_floor(tmp_path):
     """Reader-facing tallies need the floor to tell "no Low finding" apart from
     "Low was never collected"; .skill-config.json does not survive cleanup."""
-    assert _meta()["register_severity_floor"] == "medium"
-    assert _meta(register_severity_floor="low")["register_severity_floor"] == "low"
+    assert _meta(tmp_path)["register_severity_floor"] == "medium"
+    assert _meta(tmp_path, register_severity_floor="low")["register_severity_floor"] == "low"
 
 
 @pytest.mark.parametrize(
@@ -626,31 +628,31 @@ def test_build_meta_leaves_the_context_source_empty_without_context(tmp_path):
     assert m["business_context_sha256"] is None
 
 
-def test_build_meta_stride_cap_none_when_full():
+def test_build_meta_stride_cap_none_when_full(tmp_path):
     """No cap (full profile or missing) → None, renderer omits the row."""
-    assert _meta()["stride_per_category_cap"] is None
-    assert _meta(stride_profile={"stride_profile_label": "full"})["stride_per_category_cap"] is None
+    assert _meta(tmp_path)["stride_per_category_cap"] is None
+    assert _meta(tmp_path, stride_profile={"stride_profile_label": "full"})["stride_per_category_cap"] is None
 
 
-def test_build_meta_propagates_per_stage_reasoning_models():
+def test_build_meta_propagates_per_stage_reasoning_models(tmp_path):
     """Per-stage models reach meta so the report can disclose mixed tiers
     (e.g. APPSEC_TRIAGE_MODEL=opus while STRIDE stays sonnet)."""
-    m = _meta(stride_model="sonnet", triage_model="opus", merger_model="sonnet")
+    m = _meta(tmp_path, stride_model="sonnet", triage_model="opus", merger_model="sonnet")
     assert m["stride_model"] == "sonnet"
     assert m["triage_model"] == "opus"
     assert m["merger_model"] == "sonnet"
 
 
-def test_build_meta_records_invocation():
+def test_build_meta_records_invocation(tmp_path):
     """The exact invocation flags reach meta (reproducibility anchor that
     survives runtime cleanup, unlike .skill-config.json)."""
-    m = _meta(invocation_args="--reasoning-model sonnet-economy --triage-model opus --stride-cap 2")
+    m = _meta(tmp_path, invocation_args="--reasoning-model sonnet-economy --triage-model opus --stride-cap 2")
     assert m["invocation"] == "--reasoning-model sonnet-economy --triage-model opus --stride-cap 2"
-    assert _meta()["invocation"] is None  # absent → None (renderer falls back)
+    assert _meta(tmp_path)["invocation"] is None  # absent → None (renderer falls back)
 
 
-def test_build_meta_serializes_rebuild_as_full_assessment():
-    assert _meta(mode="rebuild")["mode"] == "full"
+def test_build_meta_serializes_rebuild_as_full_assessment(tmp_path):
+    assert _meta(tmp_path, mode="rebuild")["mode"] == "full"
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -2123,7 +2125,9 @@ def test_main_requirements_run_fixture(tmp_path, monkeypatch):
     if not _LAST_RUN_REQ.is_dir():
         pytest.skip("requirements-run fixture absent")
     run = _copy_run(_LAST_RUN_REQ, tmp_path)
-    rc = _run_main(monkeypatch, [str(run), "--plugin-root", str(ROOT), "--dry-run"])
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    rc = _run_main(monkeypatch, [str(run), "--repo-root", str(repo), "--plugin-root", str(ROOT), "--dry-run"])
     assert rc == 0
 
 
