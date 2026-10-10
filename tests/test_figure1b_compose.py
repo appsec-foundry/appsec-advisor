@@ -187,7 +187,7 @@ def test_a_failed_gate_renders_the_table_and_removes_the_stale_image(evidence, m
     monkeypatch.setattr(figure1b, "render", lambda *args, **kwargs: ("", ["forced geometry failure"]))
     block = compose._render_figure1b(ctx)
     assert block.startswith('<a id="figure-1b"></a>')  # links resolve in either form
-    assert "| From | To | Status | Evidence |" in block
+    assert "| Stage | Element | Entry | Trust boundary | Findings |" in block
     assert not (evidence / "figure1b.svg").exists()
     assert any("forced geometry failure" in w for w in ctx.warnings)
 

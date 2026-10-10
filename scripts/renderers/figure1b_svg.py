@@ -297,7 +297,7 @@ def _box_lines(element: dict, findings: list[dict]) -> list[tuple[str, Any]]:
 def _boundary_text(boundary: dict) -> str:
     """Existence and confidence of a mapped boundary; its verdict stays in the catalogue."""
     confidence = boundary.get("confidence")
-    return f"Trust boundary {boundary['id']}" + ("" if confidence == "confirmed" else f" · {confidence}")
+    return boundary["id"] + ("" if confidence == "confirmed" else f" · {confidence}")
 
 
 # ---- layout ------------------------------------------------------------------------------
@@ -1188,56 +1188,55 @@ def _where(source: dict | None) -> str:
 
 
 def render_table(view: dict, actor: dict | None, scenario_numbers: list[str]) -> str:
-    """The same content as the figure, as Markdown tables (fallback when a gate fails)."""
+    """The figure as one table of the elements that carry a finding, an entry, a path step or a boundary.
+
+    Fallback when a gate fails; elements with none of these are named in one line below it.
+    """
     elements = {e["id"]: e for e in view["elements"]}
-    by_element: dict[str, list[str]] = {}
+    by_element: dict[str, list[dict]] = {}
     for finding in view["findings"]:
-        by_element.setdefault(finding["element"], []).append(finding["id"])
+        by_element.setdefault(finding["element"], []).append(finding)
+    entries: dict[str, list[str]] = {}
+    for index, entry in enumerate(view["entries"]):
+        target = "repository" if entry["entry"] == "repository" else entry["element"]
+        entries.setdefault(target, []).append(f"{ENTRY_LETTERS[index]} · {ENTRY_TITLES[entry['entry']]}")
+    referenced = _referenced(view)
+
+    def label(element_id):
+        return elements.get(element_id, {}).get("label", element_id)
+
     lines = []
     if actor:
         lines.append(f"Build-time attacker: **{actor_title(actor)}** {' '.join(scenario_numbers)}".rstrip())
         if goal := goal_text(actor):
             lines += ["", goal]
         lines.append("")
-    lines += ["| Column | Element | Detail | Findings | Evidence |", "|---|---|---|---|---|"]
-    for element in view["elements"]:
-        detail = "; ".join(
-            p
-            for p in (
-                element.get("detail"),
-                element.get("manifest_detail"),
-                "inventory only" if element.get("coverage") == "inventory-only" else "",
-                ", ".join(element.get("channels") or []),
-                *(_boundary_text(boundary) for boundary in element.get("boundaries") or []),
-            )
-            if p
-        )
-        lines.append(
-            f"| {_cell(element['column'])} | {_cell(element['label'])} | {_cell(detail or '—')} | "
-            f"{_cell(', '.join(by_element.get(element['id'], [])) or '—')} | {_where((element.get('sources') or [None])[0])} |"
-        )
-    lines += ["", "| From | To | Status | Evidence |", "|---|---|---|---|"]
-    for edge in view["edges"]:
-        lines.append(
-            f"| {_cell(elements.get(edge['from'], {}).get('label', edge['from']))} | "
-            f"{_cell(elements.get(edge['to'], {}).get('label', edge['to']))} | {edge['status']} | {_where((edge.get('sources') or [None])[0])} |"
-        )
-    if view["entries"]:
-        lines += ["", "| Entry | Element | Severity | Findings |", "|---|---|---|---|"]
-        for index, entry in enumerate(view["entries"]):
-            lines.append(
-                f"| {ENTRY_LETTERS[index]} · {ENTRY_TITLES[entry['entry']]} | "
-                f"{_cell(elements.get(entry['element'], {}).get('label', entry['element']))} | {entry['severity']} | {', '.join(entry['findings'])} |"
-            )
     path = view.get("highlighted_path") or {}
     if path.get("steps"):
-        lines += ["", f"Path of {path['finding']}:", ""]
-        for step in path["steps"]:
-            lines.append(
-                f"{step['n']}. {elements.get(step['from'], {}).get('label', step['from'])} → "
-                f"{elements.get(step['to'], {}).get('label', step['to'])} ({_where(step.get('via'))})"
-            )
+        route = label(path["steps"][0]["from"]) + "".join(
+            f" → {label(step['to'])} ({_where(step.get('via'))})" for step in path["steps"]
+        )
+        lines += [f"Highlighted path of {path['finding']}: {route}", ""]
+    lines += ["| Stage | Element | Entry | Trust boundary | Findings |", "|---|---|---|---|---|"]
+    quiet = []
+    for element in view["elements"]:
+        findings = sorted(
+            by_element.get(element["id"], []),
+            key=lambda f: (list(SEV).index(f["severity"]) if f["severity"] in SEV else len(SEV), f["id"]),
+        )
+        boundaries = element.get("boundaries") or []
+        if not (findings or boundaries or element["id"] in entries or element["id"] in referenced):
+            quiet.append(element["label"])
+            continue
+        lines.append(
+            f"| {ZONES[element['column']][0]} | {_cell(element['label'])} | "
+            f"{_cell(', '.join(entries.get(element['id'], [])) or '—')} | "
+            f"{_cell(', '.join(_boundary_text(b) for b in boundaries) or '—')} | "
+            f"{', '.join(f['id'] for f in findings) or '—'} |"
+        )
+    if quiet:
+        lines += ["", "No findings, entry or boundary: " + ", ".join(quiet) + "."]
     unowned = by_element.get("unowned")
     if unowned:
-        lines += ["", "Findings without an evidenced CI owner: " + ", ".join(unowned)]
+        lines += ["", "Findings without an evidenced CI owner: " + ", ".join(f["id"] for f in unowned)]
     return "\n".join(lines)

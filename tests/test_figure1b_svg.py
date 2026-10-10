@@ -198,14 +198,15 @@ def test_a_cap_prefers_the_more_severe_input_over_list_order():
     assert plan["overflow"]["upstream"] == ["image", "include"]
 
 
-def test_the_table_form_carries_elements_relationships_entries_and_the_path():
+def test_the_table_form_is_one_table_of_the_elements_that_carry_something():
     view = build_view(_model([_threat("T-005", "CWE-1104", 10)]), _facts(), {})
     table = figure.render_table(view, ACTOR, ["⑤"])
     assert "Build-time attacker: **Build Pipeline Intruder** ⑤" in table
-    assert "| sources | PyPI |" in table
-    assert "| evidenced |" in table and "| unknown |" in table
-    assert "a · Manipulated dependency" in table
-    assert "1. PyPI → GitHub Actions (`.github/workflows/build.yml:10`)" in table
+    assert "Highlighted path of F-005: PyPI → GitHub Actions (`.github/workflows/build.yml:10`)" in table
+    assert "| Sources and inputs | PyPI | a · Manipulated dependency | — | F-005 |" in table
+    assert "| Release artifacts | ghcr.io/acme/ledger |" in table  # a path step without a finding keeps its row
+    assert table.count("| Stage |") == 1
+    assert "No findings, entry or boundary: Source repository" in table
 
 
 def _boundary_model(*rows):
@@ -327,7 +328,7 @@ def test_without_a_mapped_boundary_no_line_and_no_legend_row():
 
 def test_the_table_form_still_names_each_mapped_boundary():
     view = build_view(_boundary_model(("tb-4", "external", "pipeline", 5, "inferred")), _facts(), {})
-    assert "Trust boundary tb-4 · inferred" in figure.render_table(view, ACTOR, ["⑤"])
+    assert "| tb-4 · inferred |" in figure.render_table(view, ACTOR, ["⑤"])
 
 
 def test_a_boundary_line_through_a_label_or_along_a_flow_fails_the_geometry_gate():
