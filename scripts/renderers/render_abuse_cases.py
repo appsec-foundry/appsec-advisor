@@ -441,6 +441,7 @@ def build_canonical_analysis(
                 ),
                 "steps": steps,
                 **({"open_questions": model["open_questions"]} if model.get("open_questions") else {}),
+                **({"requested": True} if model.get("requested") else {}),
             }
         )
     evaluated = [
@@ -506,6 +507,8 @@ def _case_markdown(m: dict) -> str:
     icon, label = _CHAIN_VERDICT.get(m["chain_verdict"], ("?", "Inconclusive"))
     risk_emoji = _RISK_EMOJI.get(m["combined_risk"], "")
     src = _SOURCE_LABEL.get(m["source"], "analysis-discovered")
+    if m.get("requested"):
+        src += ", requested"
     cid = m["id"]
     out: list[str] = []
     # Anchor on its OWN line before the heading (matches the Findings / Weakness
@@ -840,9 +843,10 @@ def build_models(output_dir: Path, org_profile: str | None, repo_root: str | Non
         cv = verdict.get("chain_verdict", "inconclusive")
         if cv == "not_applicable":
             continue
-        models.append(
-            render_case(case, verdict, findings_idx, mitigations, matches_by_id.get(cid), tm.get("meta") or {})
-        )
+        model = render_case(case, verdict, findings_idx, mitigations, matches_by_id.get(cid), tm.get("meta") or {})
+        # Only the matcher knows the invocation's request intent; case data cannot assert it.
+        model["requested"] = (case_match_by_id.get(cid) or {}).get("requested") is True
+        models.append(model)
     group_order = {verdict: index for index, verdict in enumerate(_VERIFICATION_GROUPS)}
 
     def priority(model: dict) -> tuple:

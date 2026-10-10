@@ -852,6 +852,27 @@ def test_a_business_case_without_questions_adds_no_question_field(tmp_path: Path
     assert all("open_questions" not in case for case in analysis["cases"])
 
 
+@pytest.mark.parametrize("flag", [True, False, None])
+def test_a_verified_case_is_marked_requested_only_by_the_matcher(tmp_path: Path, flag):
+    repo = _descriptive_setup(tmp_path)
+    out = tmp_path / "out"
+    matches_path = out / ".abuse-case-matches.json"
+    matches = json.loads(matches_path.read_text(encoding="utf-8"))
+    if flag is not None:
+        next(m for m in matches["matches"] if m["abuse_case_id"] == "REPO-AC-020")["requested"] = flag
+    matches_path.write_text(json.dumps(matches), encoding="utf-8")
+    assert rac.main(["--output-dir", str(out), "--repo-root", str(repo)]) == 0
+    analysis = yaml.safe_load((out / "threat-model.yaml").read_text(encoding="utf-8"))["abuse_case_analysis"]
+    case = next(c for c in analysis["cases"] if c["id"] == "REPO-AC-020")
+    md = (out / ".fragments" / "abuse-cases.md").read_text(encoding="utf-8")
+    if flag:
+        assert case["requested"] is True
+        assert "**Source:** business case, requested" in md
+    else:
+        assert "requested" not in case
+        assert "business case, requested" not in md
+
+
 def test_business_coverage_is_summarized_and_requests_answered_individually(tmp_path: Path):
     repo = _descriptive_setup(tmp_path)
     out = tmp_path / "out"

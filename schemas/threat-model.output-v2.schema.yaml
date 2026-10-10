@@ -501,6 +501,8 @@ properties:
               $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/cases/items/properties/blocking_mitigation_ids
             open_questions:
               $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/cases/items/properties/open_questions
+            requested:
+              $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/cases/items/properties/requested
             steps:
               type: array
               minItems: 1
