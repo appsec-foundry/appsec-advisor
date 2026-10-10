@@ -198,11 +198,31 @@ def test_hypothesis_report_names_cited_and_uncited_files():
             {"side": "proposed", "path": "src/api.py", "line_start": 2, "line_end": 3, "excerpt": "check_owner(record)"}
         ],
         "next_action": "Review the deployment policy.",
+        "steps": [
+            {
+                "step": 1,
+                "status": "not_confirmed",
+                "note": "Ownership is checked before the read.",
+                "evidence": [
+                    {
+                        "side": "proposed",
+                        "path": "src/api.py",
+                        "line_start": 2,
+                        "line_end": 3,
+                        "excerpt": "check_owner(record)",
+                    }
+                ],
+            }
+        ],
     }
     data["coverage"]["excluded"] = []
     lines = rr.render(data).splitlines()
     assert lines[2].startswith("**RESULT: NOT CONFIRMED** — ")
-    assert "- `src/api.py` — cited at line 2-3 (conclusion)" in lines
+    assert (
+        "| 1 | NOT CONFIRMED | role read from token | `src/api.py:2-3` | Ownership is checked before the read\\. |"
+        in lines
+    )
+    assert "- `src/api.py` — cited at line 2-3 (conclusion, step 1)" in lines
     assert "- `src/auth.py` — read; nothing in it is cited for this question" in lines
     assert (
         "- Abuse case AC\\-T\\-001 \\(technical attack chain, plugin\\): forged role\\." in lines
@@ -212,3 +232,44 @@ def test_hypothesis_report_names_cited_and_uncited_files():
     assert "- Read more files: run the check again with `--path <file or directory>`." in lines
     assert "- Result of a full run: `/appsec-advisor:abuse-cases AC-T-001`" in lines
     assert "- Use earlier findings as context: `/appsec-advisor:create-threat-model`" in lines
+
+
+def test_a_listed_step_without_a_verdict_or_without_code_is_never_rendered():
+    def data(steps):
+        d = result(
+            mode="hypothesis",
+            hypothesis="Abuse case AC-T-001 (technical attack chain, plugin): x.\n- Step 1: a.\n- Step 2: b.",
+            scope={"kind": "hypothesis", "revision": "HEAD", "paths": ["src/api.py"]},
+            objects={"head": "d" * 40},
+            findings=[],
+        )
+        loc = {"side": "proposed", "path": "src/api.py", "line_start": 2, "line_end": 2, "excerpt": "x"}
+        d["hypothesis_assessment"] = {
+            "status": "supported",
+            "explanation": "e",
+            "evidence": [loc],
+            "next_action": "n",
+            "steps": steps(loc),
+        }
+        return d
+
+    with pytest.raises(rr.RenderError, match="answered exactly once"):
+        rr.render(data(lambda loc: [{"step": 1, "status": "supported", "note": "n", "evidence": [loc]}]))
+    with pytest.raises(rr.RenderError, match="step 2 needs source evidence"):
+        rr.render(
+            data(
+                lambda loc: [
+                    {"step": 1, "status": "supported", "note": "n", "evidence": [loc]},
+                    {"step": 2, "status": "supported", "note": "n", "evidence": []},
+                ]
+            )
+        )
+    rendered = rr.render(
+        data(
+            lambda loc: [
+                {"step": 1, "status": "supported", "note": "n", "evidence": [loc]},
+                {"step": 2, "status": "unresolved", "note": "version unknown", "evidence": []},
+            ]
+        )
+    )
+    assert "| 2 | NOT SETTLED | b | no code cited | version unknown |" in rendered.splitlines()

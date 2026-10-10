@@ -34,6 +34,7 @@ import os
 import shutil
 import signal
 import subprocess
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -214,9 +215,29 @@ class ClaudeCliTransport:
         return HostReply(outcome["structured_output"], usd if isinstance(usd, (int, float)) else None)
 
 
+def _feed(pipe, data: bytes) -> None:
+    """Write the whole prompt, then close stdin so the host sees its end."""
+    try:
+        pipe.write(data)
+    except (BrokenPipeError, OSError, ValueError):
+        pass
+    finally:
+        try:
+            pipe.close()
+        except (BrokenPipeError, OSError):
+            pass
+
+
 def _communicate(
     proc: subprocess.Popen, data: bytes, deadline: float, should_stop: Callable[[], bool]
 ) -> tuple[bytes, bytes]:
+    # The prompt is written by its own thread. Handing it to communicate() with
+    # a poll timeout lost every byte past the pipe buffer when the host began
+    # reading after the first poll, and the host then waited for the rest until
+    # the call limit: every prompt over 64 KiB, such as one with a threat model.
+    stdin, proc.stdin = proc.stdin, None
+    if stdin is not None:
+        threading.Thread(target=_feed, args=(stdin, data), daemon=True).start()
     while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -224,9 +245,9 @@ def _communicate(
         if should_stop():
             raise HostCancelled("job cancelled")
         try:
-            return proc.communicate(data, timeout=min(POLL_SECONDS, remaining))
+            return proc.communicate(timeout=min(POLL_SECONDS, remaining))
         except subprocess.TimeoutExpired:
-            data = None
+            pass
 
 
 def _stop_group(proc: subprocess.Popen) -> None:

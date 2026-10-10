@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -138,3 +139,26 @@ def test_the_host_schema_declares_no_draft_uri_the_host_cannot_resolve():
     assert "$defs" in schema and schema["required"]
     argv = host.ClaudeCliTransport(Path("/nonexistent")).argv("system", schema)
     assert "draft/2020-12" not in argv[argv.index("--json-schema") + 1]
+
+
+@pytest.mark.parametrize("size", [70_000, 300_000])
+def test_a_prompt_larger_than_the_pipe_reaches_a_host_that_starts_reading_late(size):
+    data = (b"x" * 99 + b"\n") * (size // 100)
+    proc = subprocess.Popen(
+        ["sh", "-c", "sleep 0.5; cat"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+    )
+    try:
+        out, _ = host._communicate(proc, data, time.monotonic() + 10, lambda: False)
+    finally:
+        proc.kill()
+    assert out == data
+
+
+def test_the_call_limit_and_cancellation_still_stop_a_host_that_never_answers():
+    for should_stop, deadline in ((lambda: False, 0.5), (lambda: True, 10)):
+        proc = subprocess.Popen(["sleep", "30"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        try:
+            with pytest.raises(host.HostCancelled):
+                host._communicate(proc, b"prompt", time.monotonic() + deadline, should_stop)
+        finally:
+            proc.kill()

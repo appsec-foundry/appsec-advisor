@@ -355,6 +355,45 @@
         },
         "next_action": {
           "$ref": "#/$defs/text"
+        },
+        "steps": {
+          "description": "One verdict per numbered step the hypothesis lists (lines starting with '- Step N:'), each with the code it rests on.",
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "step",
+              "status",
+              "note",
+              "evidence"
+            ],
+            "properties": {
+              "step": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20
+              },
+              "status": {
+                "enum": [
+                  "supported",
+                  "not_confirmed",
+                  "unresolved"
+                ]
+              },
+              "note": {
+                "$ref": "#/$defs/text"
+              },
+              "evidence": {
+                "type": "array",
+                "maxItems": 5,
+                "items": {
+                  "$ref": "#/$defs/location"
+                }
+              }
+            }
+          }
         }
       }
     }

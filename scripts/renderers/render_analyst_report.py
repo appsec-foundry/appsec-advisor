@@ -107,8 +107,12 @@ def _file_overview(result: dict) -> list[str]:
         if label not in entry["labels"]:
             entry["labels"].append(label)
 
-    for loc in (result.get("hypothesis_assessment") or {}).get("evidence", []):
+    assessment = result.get("hypothesis_assessment") or {}
+    for loc in assessment.get("evidence", []):
         note(loc, "conclusion")
+    for step in assessment.get("steps") or []:
+        for loc in step["evidence"]:
+            note(loc, f"step {step['step']}")
     for f in result["findings"]:
         for loc in f["evidence"] + f.get("comparison", []):
             note(loc, f["id"])
@@ -139,6 +143,14 @@ def _file_overview(result: dict) -> list[str]:
             + (f" ({code(e['path'])})" if "path" in e else "")
         )
     return out
+
+
+def _step_titles(hypothesis: str) -> dict[int, str]:
+    """Step number -> its short title, from the ``- Step N: Title. Detail`` lines."""
+    titles = {}
+    for match in re.finditer(r"^- Step (\d+): (.+)$", hypothesis, re.M):
+        titles[int(match.group(1))] = match.group(2).split(". ")[0].rstrip(".")
+    return titles
 
 
 def _source(result: dict, kind: str) -> str:
@@ -184,6 +196,17 @@ def render(result: dict) -> str:
         out += ["## Where", ""] + files + [""]
 
     if mode == "hypothesis":
+        steps = sorted((assessment or {}).get("steps") or [], key=lambda st: st["step"])
+        if steps:
+            titles = _step_titles(str(result["hypothesis"]))
+            out += ["## Steps", "", "| # | Result | Step | Where | Note |", "|---|---|---|---|---|"]
+            for st in steps:
+                where = ", ".join(code(_where(loc)) for loc in st["evidence"]) or "no code cited"
+                out.append(
+                    f"| {st['step']} | {CONCLUSION[st['status']][0]} | {inline(titles.get(st['step'], ''))} "
+                    f"| {where} | {inline(st['note'])} |"
+                )
+            out.append("")
         out += ["## Why", ""]
         if assessment:
             out += [inline(assessment["explanation"]), ""]

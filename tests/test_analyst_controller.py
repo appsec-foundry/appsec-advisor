@@ -993,3 +993,60 @@ def test_partially_admitted_evidence_stays_incomplete(repo, state_root):
     assert outcome.state == "incomplete" and len(fake.prompts) == 1
     assert [e["status"] for e in result["coverage"]["evidence_requests"]] == ["admitted", "rejected"]
     assert "missing.js" in outcome.report
+
+
+STEP_HYPOTHESIS = (
+    "Abuse case AC-T-002 (technical attack chain, plugin): Export of another customer's records.\n"
+    "- Step 1: Export route skips ownership. The handler returns any record.\n"
+    "- Step 2: Support role is trusted. The role comes from the request."
+)
+
+
+def _step_reply(steps):
+    def reply(prompt):
+        r = hypothesis_response(prompt, "supported")
+        loc = r["hypothesis_assessment"]["evidence"][0]
+        r["hypothesis_assessment"]["steps"] = steps(loc)
+        return r
+
+    return reply
+
+
+@pytest.mark.parametrize(
+    ("steps", "state"),
+    [
+        (
+            lambda loc: [
+                {"step": 1, "status": "supported", "note": "No owner check.", "evidence": [loc]},
+                {"step": 2, "status": "unresolved", "note": "Role source not in scope.", "evidence": []},
+            ],
+            "complete",
+        ),
+        (lambda loc: [{"step": 1, "status": "supported", "note": "No owner check.", "evidence": [loc]}], "failed"),
+        (
+            lambda loc: [
+                {"step": 1, "status": "supported", "note": "x", "evidence": [dict(loc, excerpt="invented()")]},
+                {"step": 2, "status": "unresolved", "note": "y", "evidence": []},
+            ],
+            "failed",
+        ),
+    ],
+    ids=["every-step-answered", "a-listed-step-missing", "a-step-quote-invented"],
+)
+def test_a_chain_hypothesis_needs_one_evidenced_verdict_per_listed_step(repo, state_root, steps, state):
+    invocation = ctl.Invocation(
+        mode="hypothesis",
+        scope={"kind": "hypothesis", "revision": "HEAD", "paths": ["export.js"]},
+        hypothesis=STEP_HYPOTHESIS,
+        repo_root=repo,
+        state_root=state_root,
+        env={},
+    )
+    outcome = ctl.run(invocation, Fake(_step_reply(steps)))
+    assert outcome.state == state
+    if state == "complete":
+        assert "| 1 | SUPPORTED | Export route skips ownership |" in outcome.report
+        assert (
+            "| 2 | NOT SETTLED | Support role is trusted | no code cited | Role source not in scope\\. |"
+            in outcome.report
+        )

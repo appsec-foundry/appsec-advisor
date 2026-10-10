@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import posixpath
+import re
 from collections import Counter
 from difflib import SequenceMatcher
 from functools import cache
@@ -295,6 +296,27 @@ def _relationship_errors(finding: dict, admitted: dict, source_dir: Path, label:
     return []
 
 
+_DECLARED_STEP = re.compile(r"^- Step (\d+):", re.M)
+
+
+def declared_steps(hypothesis: str) -> list[int]:
+    """Step numbers a hypothesis lists as ``- Step N:`` lines (an abuse-case chain)."""
+    return [int(n) for n in _DECLARED_STEP.findall(hypothesis)]
+
+
+def _step_errors(assessment: dict, hypothesis: str, label: str) -> list[str]:
+    """Each listed step is answered exactly once, and a step verdict cites code."""
+    declared = declared_steps(hypothesis)
+    given = [s["step"] for s in assessment.get("steps") or []]
+    errors = []
+    if sorted(given) != sorted(declared):
+        errors.append(f"{label}: hypothesis steps must be answered exactly once each: expected {declared}, got {given}")
+    for step in assessment.get("steps") or []:
+        if step["status"] != "unresolved" and not step["evidence"]:
+            errors.append(f"{label}: step {step['step']} needs source evidence for its verdict")
+    return errors
+
+
 def validate_response(response: object, request: dict, snapshot: dict, context: dict, source_dir: Path) -> list[str]:
     """Validate one untrusted model response against what the job delivered."""
     errors = schema_errors("response", response)
@@ -318,6 +340,12 @@ def validate_response(response: object, request: dict, snapshot: dict, context: 
             errors += _location_errors(location, admitted, source_dir, f"response: hypothesis_assessment/{i}")
         if assessment["status"] == "not_confirmed" and response["findings"]:
             errors.append("response: a not-confirmed hypothesis cannot carry findings")
+        errors += _step_errors(assessment, request.get("hypothesis") or "", "response")
+        for step in assessment.get("steps") or []:
+            for i, location in enumerate(step["evidence"]):
+                errors += _location_errors(
+                    location, admitted, source_dir, f"response: hypothesis_assessment/step {step['step']}/{i}"
+                )
 
     if design and response["findings"]:
         errors.append("response: a design analysis reports scenarios and assumptions, not findings")
@@ -396,7 +424,9 @@ def validate_result(result: object) -> list[str]:
                 errors.append("result: a hypothesis conclusion requires source evidence")
             if assessment["status"] == "not_confirmed" and result["findings"]:
                 errors.append("result: a not-confirmed hypothesis cannot carry findings")
-            for location in assessment["evidence"]:
+            errors += _step_errors(assessment, result.get("hypothesis") or "", "result")
+            step_locations = [loc for st in assessment.get("steps") or [] for loc in st["evidence"]]
+            for location in assessment["evidence"] + step_locations:
                 if location["side"] != "proposed" or not any(
                     location["path"] == p or location["path"].startswith(p + "/") for p in result["scope"]["paths"]
                 ):
