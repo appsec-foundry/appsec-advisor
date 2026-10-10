@@ -28,6 +28,8 @@ normative requirement first only when the product promise must change, and do so
 only with explicit operator approval. Technical binding maintenance is ordinary
 reviewed implementation work.
 
+Before writing a new or changed requirement or decision, show the operator the exact wording together with a plain-language summary of what it promises or settles, and write it only after the operator confirms both.
+
 ## Rules that always apply
 
 ### Branch flow
