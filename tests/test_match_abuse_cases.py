@@ -883,6 +883,17 @@ def test_finalize_business_chain_stopped_at_one_step_is_mitigated(verdicts):
     assert mac.finalize_verdict(_cm(cm["step_matches"]), sv) == "partially_blocked"
 
 
+@pytest.mark.parametrize("steps", [1, 2])
+def test_finalize_confirmed_business_step_ignores_the_insufficient_check_beside_it(steps):
+    """A confirmed business step says no control enforces its boundary; a check
+    the verifier lists beside it does not turn the case partially blocked."""
+    cm = {"kind": "descriptive", "step_matches": [{"step": n, "required": True} for n in range(1, steps + 1)]}
+    sv = [{"step": n, "verdict": "confirmed", "controls_found": ["role check only"]} for n in range(1, steps + 1)]
+    assert mac.finalize_verdict(cm, sv) == "fully_viable"
+    # A technical chain still treats a listed control as impeding it.
+    assert mac.finalize_verdict(_cm(cm["step_matches"]), sv) == "partially_blocked"
+
+
 def test_finalize_business_chain_with_an_open_step_stays_inconclusive():
     cm = {"kind": "descriptive", "step_matches": [{"step": 1, "required": True}, {"step": 2, "required": True}]}
     sv = [{"step": 1, "verdict": "blocked"}, {"step": 2, "verdict": "inconclusive"}]

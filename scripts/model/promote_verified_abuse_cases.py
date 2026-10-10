@@ -35,10 +35,11 @@ import sys
 from pathlib import Path
 
 import yaml
-from shared._finding_state import is_refuted
+from shared._finding_state import is_refuted, record_evidence
 from shared._register_titles import HEADING_SOFT_MAX, clamp_mitigation_title, clamp_title
 
 from model.finding_intake import apply_intake
+from model.match_abuse_cases import _configured_repo_root, _evidence_problem, _finding_file
 from model.merge_threats import _evidence_identity_key
 from model.reclassify_components import resolve_owner  # canonical registry resolver
 
@@ -134,7 +135,7 @@ def _descriptive_promotion(case_match: dict, verdict: dict, live_ids: set) -> tu
         if (
             step.get("verdict") == wanted
             and step.get("state") != "pending"
-            and not step.get("controls_found")
+            and (tier == _CONFIRMED_TIER or not step.get("controls_found"))
             and isinstance(evidence, dict)
             and evidence.get("file")
         ):
@@ -153,6 +154,50 @@ def _descriptive_metadata(case: dict) -> dict:
     )
     meta["remediation"] = ""
     return meta
+
+
+_UNSETTLED_EVIDENCE = {None, "", "ambiguous", "unchecked"}
+
+
+def _verify_bound_findings(matches: list, verdict_by_case: dict, threats: list, repo_root: Path | None) -> list[str]:
+    """Verify findings whose bound step the abuse-case verifier confirmed (AC-11).
+
+    The cited excerpt must pass the same gate that admits descriptive
+    evidence, at the finding's own file. Only ambiguous or unchecked evidence
+    changes; the exploitability tier is left alone.
+    """
+    by_id: dict[str, dict] = {}
+    for threat in threats:
+        if isinstance(threat, dict):
+            for key in ("t_id", "f_id", "id"):
+                if threat.get(key):
+                    by_id.setdefault(str(threat[key]), threat)
+    verified: list[str] = []
+    for case_match in matches:
+        if not isinstance(case_match, dict):
+            continue
+        verdict = verdict_by_case.get(case_match.get("abuse_case_id"))
+        if not isinstance(verdict, dict):
+            continue
+        steps = {v.get("step"): v for v in verdict.get("step_verdicts") or [] if isinstance(v, dict)}
+        for step_match in case_match.get("step_matches") or []:
+            if not isinstance(step_match, dict):
+                continue
+            finding = by_id.get(str(step_match.get("matched_finding_id") or ""))
+            step_verdict = steps.get(step_match.get("step")) or {}
+            evidence = step_verdict.get("evidence")
+            if (
+                finding is None
+                or step_verdict.get("verdict") != "confirmed"
+                or finding.get("evidence_check") not in _UNSETTLED_EVIDENCE
+                or not isinstance(evidence, dict)
+                or evidence.get("file") != _finding_file(finding)
+                or _evidence_problem(evidence, repo_root)
+            ):
+                continue
+            record_evidence(finding, "verified", "llm-verified")
+            verified.append(str(finding.get("t_id") or finding.get("id")))
+    return verified
 
 
 def _component_for(file_path: str, components: list) -> tuple[str, str]:
@@ -269,6 +314,15 @@ def promote(output_dir: Path) -> tuple[int, list[str]]:
         # (step match, step verdict, evidence, metadata, tier, scenario) per promotable step.
         candidates: list[tuple[dict, dict, dict, dict, str, str]] = []
         if case_match.get("kind") == "descriptive":
+            # The verifier binds a business case to the findings it cites; the
+            # match sidecar carries that binding to triage and the report, as
+            # the matcher's binding does for a technical case.
+            for step_match in case_match.get("step_matches") or []:
+                cited = (verdict_steps.get(step_match.get("step")) or {}).get("matched_finding_id")
+                if isinstance(step_match, dict) and cited in live_ids and step_match.get("matched_finding_id") != cited:
+                    step_match["matched_finding_id"] = cited
+                    step_match["match_basis"] = "finding"
+                    bindings_changed = True
             promotion = _descriptive_promotion(case_match, verdict, live_ids)
             step_match = (
                 next(
@@ -376,11 +430,12 @@ def promote(output_dir: Path) -> tuple[int, list[str]]:
             if isinstance(step, dict) and step.get("matched_finding_id")
         ]
 
-    if promoted or bindings_changed:
+    verified = _verify_bound_findings(matches, verdict_by_case, threats, _configured_repo_root(output_dir))
+    if promoted or bindings_changed or verified:
         _write(merged_path, merged)
         _write(matches_path, matches_doc)
         _write(verdicts_path, verdicts_doc)
-    notes = [f"promoted {len(promoted)} abuse-case finding(s)"]
+    notes = [f"promoted {len(promoted)} abuse-case finding(s); verified {len(verified)} bound finding(s)"]
     if promoted and not components:
         notes.append(
             "component registry unavailable (no threat-model.yaml) — promoted finding(s) "

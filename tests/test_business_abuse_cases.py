@@ -238,3 +238,24 @@ def test_an_inconclusive_step_keeps_only_a_citation_found_in_the_code(tmp_path: 
     assert admitted["verdict"] == "inconclusive"
     assert (admitted["evidence"] is not None) is kept
     assert ("rejected_evidence" in admitted) is not kept
+
+
+def test_withdrawn_rights_case_is_located_by_session_code_or_a_token_lifetime_finding(tmp_path: Path):
+    """The case reaches the verifier where sessions or tokens live, not only
+    when no other case competes for the per-depth limit."""
+    case = next(c for c in _cases() if c["id"] == "AC-T-106")
+    signals = {"has_role_concept", "has_auth_surface"}
+    layouts = {
+        "path": ("lib/auth/SessionStore.py", []),
+        "finding": (
+            "src/server/auth.js",
+            [{"id": "F-001", "source_check_id": "AUTHZ-009", "evidence": {"file": "src/server/auth.js", "line": 3}}],
+        ),
+        "none": ("src/index.ts", []),
+    }
+    for label, (rel, findings) in layouts.items():
+        repo = tmp_path / label
+        (repo / rel).parent.mkdir(parents=True)
+        (repo / rel).write_text("code\n")
+        verdict = matcher.match_case(case, findings, signals, repo_root=repo)["structural_verdict"]
+        assert verdict == ("not_applicable" if label == "none" else "candidate"), label

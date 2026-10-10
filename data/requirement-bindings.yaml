@@ -157,6 +157,7 @@ requirements:
       - AC-3
       - AC-8
       - AC-10
+      - AC-11
     documents:
       - docs/org-profiles.md
     coverage: direct
@@ -173,6 +174,8 @@ requirements:
       - tests/test_promote_verified_abuse_cases.py::test_indicated_business_case_becomes_an_unproven_finding_at_the_same_severity
       - tests/test_promote_verified_abuse_cases.py::test_business_case_without_confirmation_or_indication_is_not_promoted
       - tests/test_business_abuse_cases.py::test_an_inconclusive_step_keeps_only_a_citation_found_in_the_code
+      - tests/test_promote_verified_abuse_cases.py::test_a_confirmed_step_verifies_the_finding_it_cites
+      - tests/test_promote_verified_abuse_cases.py::test_a_finding_the_verifier_cites_is_bound_in_the_match_sidecar
 
   REQ-MOD-005:
     applies_to:

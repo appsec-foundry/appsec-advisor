@@ -851,7 +851,14 @@ def finalize_verdict(case_match: dict, step_verdicts: list[dict]) -> str:
     verdicts = [(by_step.get(s.get("step")) or {}).get("verdict", _INCONCLUSIVE) for s in required_steps]
     # Controls from EVERY step (required or not) — a control anywhere on the
     # chain impedes it. Per step the verifier's reading wins over the matcher's.
-    any_control = any(_step_controls(s, by_step.get(s.get("step"))) for s in step_matches)
+    # A confirmed business step states that no control enforces its boundary,
+    # so a control listed beside it is the insufficient check its reason names.
+    descriptive = case_match.get("kind") == "descriptive"
+    any_control = any(
+        _step_controls(s, by_step.get(s.get("step")))
+        for s in step_matches
+        if not (descriptive and (by_step.get(s.get("step")) or {}).get("verdict") == _CONFIRMED)
+    )
 
     if all(v == _BLOCKED for v in verdicts):
         return "mitigated"

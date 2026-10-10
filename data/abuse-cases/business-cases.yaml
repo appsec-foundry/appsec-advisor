@@ -82,6 +82,9 @@ abuse_cases:
   finding: {cwe: CWE-613, mitigation_title: Re-check current roles and account status when a session or token is used}
   scope_qualifier:
     required_signals: [has_role_concept, has_auth_surface]
+    path_patterns: ['*session*', '*session*/*', '*Session*', '*Session*/*', '*token*', '*token*/*', '*Token*', '*Token*/*', '*revoke*', '*revoke*/*', '*Revoke*', '*Revoke*/*']
+    detector_rules: [AUTHZ-009, AUTHZ-104]
+    route_patterns: ['*logout*', '*revoke*', '*session*', '*token*']
 - id: AC-T-107
   kind: descriptive
   title: User misuses a privileged function for another purpose
