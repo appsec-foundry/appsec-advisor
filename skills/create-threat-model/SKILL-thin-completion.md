@@ -57,32 +57,25 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/exporters/export_html.py" --require-mermaid
 
 Do **not** call `model/stamp_threat_model.py` yourself: `renderers/render_completion_summary.py` backfills missing SARIF, Threat Dragon and pentest-task exports, then stamps, but never exports PDF or HTML, so run those first. Keep stamped-copy paths out of the response.
 
-Run `python3 "$CLAUDE_PLUGIN_ROOT/scripts/renderers/render_completion_summary.py" --output-dir "$OUTPUT_DIR"` once more. Capture stdout for the final response;
-do not rewrite or summarize it. The script owns missing-deliverable warnings,
-verdict, timing, cost, output paths, and next steps.
+## 3. Summary, cleanup and response
 
-Before cleanup, run these best-effort baseline writers; the first records the recon fingerprint a later depth increase reuses:
+Mark the final task complete. Then run the closing steps as ONE Bash call, in this order. The summary is captured while the run lock is still held (its record binds to the run) and printed last, so it is the final tool output you relay instead of reconstructing it from earlier context. The baseline writers are best-effort; the first records the recon fingerprint a later depth increase reuses. Omit both cleanup lines when `KEEP_RUNTIME_FILES=true`, and the `post-architect` line unless the architect review ran. `--stage` has its own vocabulary (`all`, `pre-qa`, `post-qa`, `post-architect`), not the `stageN` labels. Cleanup preserves canonical deliverables, audit artifacts, and `.appsec-cache/baseline.json`; it leaves `.appsec-verbose` and `.appsec-tracing` to the closing Stop hook. Always release the lock, kept runtime files included.
 
 ```bash
+S=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/renderers/render_completion_summary.py" --output-dir "$OUTPUT_DIR")
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline/baseline_state.py" update \
   --output-dir "$OUTPUT_DIR" --repo-root "$REPO_ROOT" --mode full || true
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/model/persist_run_baseline.py" \
   --output-dir "$OUTPUT_DIR" --mode "$MODE" --depth "$ASSESSMENT_DEPTH" \
   --plugin-root "$CLAUDE_PLUGIN_ROOT" || true
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/record_component_durations.py" \
-  "$OUTPUT_DIR" || true
-```
-
-## 3. Cleanup and response
-
-Mark the final task complete. Unless `KEEP_RUNTIME_FILES=true`, run `python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/runtime_cleanup.py" "$OUTPUT_DIR" --stage post-qa --keep-run-issues` and, when enabled, the same call with `--stage post-architect --keep-run-issues`. The stage is a `--stage` flag with its own vocabulary (`all`, `pre-qa`, `post-qa`, `post-architect`) — neither a positional argument nor the `stageN` labels used elsewhere in this pipeline. Cleanup must preserve canonical deliverables, audit artifacts, and `.appsec-cache/baseline.json`. Always release the run lock, kept runtime files included: `rm -f "$OUTPUT_DIR/.appsec-lock"`. Leave `.appsec-verbose` and `.appsec-tracing` alone: the closing Stop hook still reads them and removes them.
-
-After releasing the lock, run:
-
-```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/record_component_durations.py" "$OUTPUT_DIR" || true
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/runtime_cleanup.py" "$OUTPUT_DIR" --stage post-qa --keep-run-issues
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/runtime_cleanup.py" "$OUTPUT_DIR" --stage post-architect --keep-run-issues
+rm -f "$OUTPUT_DIR/.appsec-lock"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime/report_plugin_issue.py" offer --output-dir "$OUTPUT_DIR"
+printf '%s\n' "$S"
 ```
 
-Then send the captured completion-summary stdout as your message, exactly as printed: no text of your own before, inside or after it. Only for `offer=true`, follow `skills/report-error/SKILL.md` with `--offer` and the run paths after that message.
+Send every line after the `offer` JSON as your message, exactly as printed through the last line, trailing diagnostic blocks included: no text of your own before, inside or after it, and no rewriting or summarizing. The script owns missing-deliverable warnings, verdict, timing, cost, output paths, and next steps. Only for `offer=true`, follow `skills/report-error/SKILL.md` with `--offer` and the run paths after that message.
 
 On failure, first call `runtime/terminate_run.py --outcome failure` with run identity and reason. After termination, follow the same `report-error --offer` entry; skip preflight and foreign-lock refusals.
