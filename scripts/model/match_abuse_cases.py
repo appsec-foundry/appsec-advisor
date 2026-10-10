@@ -828,6 +828,7 @@ def finalize_verdict(case_match: dict, step_verdicts: list[dict]) -> str:
     all required steps confirmed, nothing unresolved -> fully_viable
     >=1 required confirmed AND >=1 step has a control -> partially_blocked
     all required steps blocked                        -> mitigated
+    descriptive case, a step blocked, none unresolved -> mitigated
     any ASSESSED step inconclusive or refuted         -> inconclusive
 
     ``fully_viable`` is a positive claim of end-to-end exploitability, so it
@@ -887,6 +888,11 @@ def finalize_verdict(case_match: dict, step_verdicts: list[dict]) -> str:
     # elevating the member findings off an unproven chain.
     if any(v.get("verdict") in _UNESTABLISHED for v in step_verdicts):
         return "inconclusive"
+    # A business chain is one short sequence through one operation: a verified
+    # control at any step stops the abuse. A technical chain keeps the mixed
+    # verdict, because an attacker may reach its later steps another way.
+    if case_match.get("kind") == "descriptive" and _BLOCKED in verdicts:
+        return "mitigated"
     confirmed = [v == _CONFIRMED for v in verdicts]
     if all(confirmed):
         return "partially_blocked" if any_control else "fully_viable"

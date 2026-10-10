@@ -872,6 +872,23 @@ def test_finalize_mixed_confirmed_blocked_is_partially_blocked():
     assert mac.finalize_verdict(cm, sv) == "partially_blocked"
 
 
+@pytest.mark.parametrize(
+    "verdicts", [("confirmed", "blocked"), ("blocked", "confirmed"), ("confirmed", "blocked", "confirmed")]
+)
+def test_finalize_business_chain_stopped_at_one_step_is_mitigated(verdicts):
+    cm = {"kind": "descriptive", "step_matches": [{"step": n, "required": True} for n in range(1, len(verdicts) + 1)]}
+    sv = [{"step": n, "verdict": v} for n, v in enumerate(verdicts, 1)]
+    assert mac.finalize_verdict(cm, sv) == "mitigated"
+    # A technical chain with the same steps stays partially blocked.
+    assert mac.finalize_verdict(_cm(cm["step_matches"]), sv) == "partially_blocked"
+
+
+def test_finalize_business_chain_with_an_open_step_stays_inconclusive():
+    cm = {"kind": "descriptive", "step_matches": [{"step": 1, "required": True}, {"step": 2, "required": True}]}
+    sv = [{"step": 1, "verdict": "blocked"}, {"step": 2, "verdict": "inconclusive"}]
+    assert mac.finalize_verdict(cm, sv) == "inconclusive"
+
+
 def test_finalize_missing_verdict_defaults_inconclusive():
     cm = _cm([{"step": 1, "required": True}])
     # no step_verdict provided → defaults to inconclusive
