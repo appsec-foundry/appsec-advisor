@@ -6,6 +6,7 @@ USAGE
   /appsec-advisor:analyze-threats --worktree | --staged
   /appsec-advisor:analyze-threats --base <commit> --head <commit> [--exact-base]
   /appsec-advisor:analyze-threats --hypothesis <text> --revision <commit> --path <path> [--path <path> ...]
+  /appsec-advisor:analyze-threats --abuse-case <ID> [--abuse-case <ID> ...] [--revision <commit>] [--path <path> ...] [--isolated]
 
 OPTIONS
   --feature <file>        Reviewed feature-context file with saved declarations and answers.
@@ -17,6 +18,13 @@ OPTIONS
   --requirements-required  Stop incomplete if the catalog is unavailable.
   --threat-model <file>   Use this structured threat-model.yaml as context.
   --threat-model-required  Stop incomplete if the model is unavailable.
+  --abuse-case <ID>       Check a defined abuse or business case (list them with
+                          /appsec-advisor:abuse-cases). The case's own patterns select
+                          the files; --path adds more. Revision defaults to HEAD.
+  --isolated              With --abuse-case: check against the code alone, without
+                          the existing docs/security/threat-model.yaml.
+  --org-profile <file> | --no-org-profile
+                          With --abuse-case: use this organization profile, or none.
   --help                  Show this help.
 
   To stop a job or remove a saved answer, ask; the skill runs
@@ -35,6 +43,11 @@ WHAT IT DOES
   Its conclusion is supported by code, not confirmed in the inspected scope,
   or unresolved. Not confirmed never means disproved or safe. Missing required
   evidence leaves the analysis incomplete; the model cannot expand the scope.
+
+  An abuse-case check is a hypothesis check built from the case. It uses the
+  existing threat model as context unless you pass --isolated; the report
+  states which. The result stays in the analyst job and never changes
+  threat-model.yaml.
 
 WHAT IT IS NOT
   Not a security approval, not a full threat model, and not a requirements

@@ -78,6 +78,22 @@ REQUEST_LIMITS = (
 )
 
 
+def _scope_notes(request: dict, snapshot: dict) -> list[str]:
+    """A hypothesis read only part of a selected directory when files in it were excluded."""
+    if request["mode"] != "hypothesis" or not snapshot.get("excluded") or not snapshot.get("admitted"):
+        return []
+    return ["Files excluded inside the selected directories were not read; the conclusion does not cover them."]
+
+
+def _redacted(snapshot: dict) -> list[dict]:
+    """Admitted files with redacted secret values, both sides merged per path."""
+    lines: dict[str, set[int]] = {}
+    for entry in snapshot.get("admitted", []):
+        if entry.get("redacted_lines"):
+            lines.setdefault(entry["path"], set()).update(entry["redacted_lines"])
+    return [{"path": path, "lines": sorted(found)} for path, found in sorted(lines.items())]
+
+
 class AdmissionError(Exception):
     """The invocation is rejected before any job state or model call."""
 
@@ -272,6 +288,7 @@ class _Run:
                 "omitted_questions": context.get("question_selection", {}).get("omitted", []),
                 "question_coverage": response.get("question_coverage", []),
                 "evidence_requests": self.evidence_requests,
+                "redacted": _redacted(snapshot),
                 "required_complete": bool(context and context["question_selection"]["required_complete"])
                 and not any(e["status"] != "admitted" for e in self.evidence_requests)
                 and not any(q["required"] for q in questions or [])
@@ -284,7 +301,7 @@ class _Run:
             "requirement_observations": response.get("requirement_observations", []),
             "methodology_observations": response.get("methodology_observations", []),
             "questions": questions or [],
-            "limitations": [*response.get("limitations", []), *notes],
+            "limitations": [*response.get("limitations", []), *_scope_notes(self.request, snapshot), *notes],
             "costs": {"host_calls": self.counters["host_calls"], **({"usd": round(self.usd, 4)} if self.usd else {})},
             "generated_at": st.utc_now(),
         }
@@ -461,14 +478,18 @@ def _prepare(
     current.fingerprint = _sha([request, current.snapshot, current.context])
     current.ensure_started()
     snapshot = current.snapshot
-    if inv.mode == "hypothesis" and (snapshot["excluded"] or not snapshot["admitted"]):
-        return current.finish(
-            "incomplete",
-            "required_input_missing",
-            [
-                "The selected hypothesis scope was not fully admitted; inspect the exclusions and narrow or correct the paths."
-            ],
-        )
+    if inv.mode == "hypothesis":
+        # A named path that was not admitted is missing required evidence; an
+        # exclusion inside a selected directory only narrows what was read.
+        named = set(request["scope"]["paths"])
+        if not snapshot["admitted"] or any(e.get("path") in named for e in snapshot["excluded"]):
+            return current.finish(
+                "incomplete",
+                "required_input_missing",
+                [
+                    "A selected hypothesis path was not admitted; inspect the exclusions and narrow or correct the paths."
+                ],
+            )
     changed = snapshot["admitted"] or any(e["reason"] != "ignored" for e in snapshot["excluded"])
     if inv.mode == "review" and not changed and feature is None:
         return current.finish(

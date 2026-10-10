@@ -130,3 +130,11 @@ def test_prompt_marks_untrusted_input_and_cannot_be_closed_by_file_content(tmp_p
 def test_shipped_instructions_and_schema_load():
     assert "untrusted data" in host.instructions()
     assert host.response_schema()["additionalProperties"] is False
+
+
+def test_the_host_schema_declares_no_draft_uri_the_host_cannot_resolve():
+    schema = host.response_schema()
+    assert "$schema" not in schema and "$id" not in schema
+    assert "$defs" in schema and schema["required"]
+    argv = host.ClaudeCliTransport(Path("/nonexistent")).argv("system", schema)
+    assert "draft/2020-12" not in argv[argv.index("--json-schema") + 1]

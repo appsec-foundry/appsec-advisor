@@ -227,14 +227,24 @@ requirements:
   REQ-MOD-010:
     applies_to:
       - scripts/model/resolve_abuse_cases.py
+      - scripts/model/abuse_case_hypothesis.py
       - scripts/model/query_threat_model.py
+      - scripts/appsec-analyst-cli
+      - skills/abuse-cases/SKILL.md
+      - skills/analyze-threats/SKILL.md
       - skills/ask-threat-model/SKILL.md
     decisions:
       - AC-1
     documents:
       - docs/org-profiles.md
-    coverage: advisory
-    guards: []
+      - docs/threat-analyst.md
+    coverage: partial
+    guards:
+      - tests/test_resolve_abuse_cases.py::test_list_names_origin_kind_and_title_of_the_active_profile
+      - tests/test_abuse_case_hypothesis.py::test_a_business_case_selects_files_by_its_path_patterns_and_names_its_origin
+      - tests/test_abuse_case_hypothesis.py::test_a_technical_case_selects_files_by_its_code_sinks_and_skips_tests
+      - tests/test_abuse_case_hypothesis.py::test_an_unknown_id_is_an_error_not_a_guess
+      - tests/test_analyst_cli.py::test_abuse_case_cli_fills_hypothesis_and_paths_from_the_case
 
   REQ-ARC-001:
     applies_to:

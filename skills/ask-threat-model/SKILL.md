@@ -256,7 +256,7 @@ worst case?", use the `TOP RISK` block — the model's curated worst-case
 (`critical_findings`) — plus the severity histogram. That is the fast verdict;
 you do not need to read the whole model. Do not synthesise a new risk rating.
 
-**Abuse cases.** The `ABUSE CASES` block lists the recorded outcome of every abuse and business case the run checked: verdict, kind, linked findings, open questions, cases that did not apply, and cases not performed with the reason. `--grep <case id or keyword>` narrows it to one case. Report a verdict only as recorded; an `inconclusive` or not-performed case is unresolved, not safe. Step-by-step evidence lives in §9 of the rendered report. This skill cannot run a case; to check one again, point to create-threat-model with `--only-abuse-case <ID>`.
+**Abuse cases.** The `ABUSE CASES` block lists the recorded outcome of every abuse and business case the run checked: verdict, kind, linked findings, open questions, cases that did not apply, and cases not performed with the reason. `--grep <case id or keyword>` narrows it to one case. Report a verdict only as recorded; an `inconclusive` or not-performed case is unresolved, not safe. Step-by-step evidence lives in §9 of the rendered report. This skill cannot run a case. For an `inconclusive` or not-performed case, you may suggest `/appsec-advisor:analyze-threats --abuse-case <ID>`; never start it yourself.
 
 **Identifiers.** Findings are cited as `F-NNN` in the report (stored as `T-NNN`
 in the yaml). Mitigations are `M-NNN`. Components have names/ids. Cite the

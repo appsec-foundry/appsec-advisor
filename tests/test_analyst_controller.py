@@ -878,6 +878,54 @@ def test_hypothesis_cannot_expand_authorized_paths(repo, state_root):
     assert all(f["path"] != "auth.js" for f in envelope(fake.prompts[0])["files"])
 
 
+def _directory_reply(path: str):
+    def reply(prompt):
+        source = next(f for f in envelope(prompt)["files"] if f["path"] == path)
+        excerpt = source["numbered_lines"].splitlines()[0].split("| ", 1)[1]
+        assessment = {
+            "status": "supported",
+            "explanation": "The inspected route establishes the bounded conclusion.",
+            "evidence": [{"side": "proposed", "path": path, "line_start": 1, "line_end": 1, "excerpt": excerpt}],
+            "next_action": "Verify the authorization behavior with the system owner.",
+        }
+        return response(prompt, hypothesis_assessment=assessment)
+
+    return reply
+
+
+@pytest.mark.parametrize(
+    ("folder", "unreadable", "content"),
+    [("api", ".env", b"SESSION_SECRET=x\n"), ("server/routes", "logo.png", b"\x00\x01png")],
+)
+def test_an_exclusion_inside_a_selected_directory_narrows_but_does_not_stop_the_check(
+    repo, state_root, folder, unreadable, content
+):
+    area = repo / folder
+    area.mkdir(parents=True)
+    (area / "records.js").write_text("app.get('/records/:id', (req, res) => res.json(db.find(req.params.id)))\n")
+    (area / unreadable).write_bytes(content)
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "area")
+    fake = Fake(_directory_reply(f"{folder}/records.js"))
+    outcome = ctl.run(hypothesis(repo, state_root, [folder]), fake)
+    result = st.read_artifact(job_root(state_root, repo, outcome.job_id), "result.json")
+    assert outcome.state == "complete" and len(fake.prompts) == 1
+    assert any("does not cover them" in note for note in result["limitations"])
+    assert f"{folder}/{unreadable}" in outcome.report
+
+
+def test_a_named_path_that_is_not_admitted_stops_the_check_before_the_model(repo, state_root):
+    (repo / "api").mkdir()
+    (repo / "api" / "records.js").write_text("module.exports = {}\n")
+    (repo / "api" / ".env").write_text("SESSION_SECRET=x\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "area")
+    fake = Fake()
+    outcome = ctl.run(hypothesis(repo, state_root, ["api/records.js", "api/.env"]), fake)
+    assert outcome.state == "incomplete" and fake.prompts == []
+    assert "selected hypothesis path was not admitted" in outcome.report
+
+
 @pytest.mark.parametrize("paths", [["absent"], ["."], ["../outside"], ["/tmp"], ["src//api"], ["export.js/"]])
 def test_hypothesis_invalid_or_missing_scope_never_calls_the_model(repo, state_root, paths):
     fake = Fake()

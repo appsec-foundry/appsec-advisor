@@ -119,3 +119,67 @@ def test_hypothesis_cli_builds_a_bounded_controller_invocation(repo, monkeypatch
     assert observed[0].hypothesis == "Check ownership"
     assert observed[0].scope == {"kind": "hypothesis", "revision": "HEAD", "paths": ["src/api", "src/auth"]}
     assert "Scoped result" in capsys.readouterr().out
+
+
+def _committed_repo(repo: Path) -> Path:
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@e.invalid"}
+    env.update(GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@e.invalid", GIT_CONFIG_GLOBAL=os.devnull)
+    (repo / "src").mkdir()
+    (repo / "src" / "session.js").write_text("const claims = jwt.verify(token, publicKey)\n")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, env=env)
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", "base"], check=True, env=env)
+    return repo
+
+
+def test_abuse_case_cli_fills_hypothesis_and_paths_from_the_case(repo, monkeypatch):
+    import runpy
+
+    module = runpy.run_path(str(CLI))
+    observed = []
+    monkeypatch.setattr(
+        module["ctl"],
+        "run",
+        lambda inv, transport, interactive: observed.append(inv) or module["ctl"].Outcome(0, "complete", None, ""),
+    )
+    argv = ["hypothesis", "--repo", str(_committed_repo(repo)), "--abuse-case", "AC-T-003", "--revision", "HEAD"]
+    assert module["main"]([*argv, "--no-org-profile"]) == 0
+    assert observed[0].scope["paths"] == ["src/session.js"]
+    assert observed[0].hypothesis.startswith("Abuse case AC-T-003 (technical attack chain, plugin)")
+    assert "runs without a threat model" in observed[0].hypothesis
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["--abuse-case", "AC-NOPE-1", "--revision", "HEAD", "--no-org-profile"], "unknown abuse case ID"),
+        (["--abuse-case", "AC-T-003", "--hypothesis", "x", "--revision", "HEAD"], "not allowed with"),
+        (["--hypothesis", "x", "--revision", "HEAD", "--path", "src", "--no-org-profile"], "only to --abuse-case"),
+    ],
+)
+def test_abuse_case_cli_rejects_bad_selections_before_any_job(repo, tmp_path, args, message):
+    state = tmp_path / "xdg"
+    result = run("hypothesis", "--repo", str(_committed_repo(repo)), *args, cwd=tmp_path, state=state)
+    assert result.returncode == 2 and message in result.stderr + result.stdout
+    assert not state.exists()
+
+
+@pytest.mark.parametrize(("extra", "uses_model"), [([], True), (["--isolated"], False)])
+def test_abuse_case_cli_uses_the_existing_threat_model_unless_isolated(repo, monkeypatch, extra, uses_model):
+    import runpy
+
+    module = runpy.run_path(str(CLI))
+    observed = []
+    monkeypatch.setattr(
+        module["ctl"],
+        "run",
+        lambda inv, transport, interactive: observed.append(inv) or module["ctl"].Outcome(0, "complete", None, ""),
+    )
+    repo = _committed_repo(repo)
+    (repo / "docs" / "security").mkdir(parents=True)
+    (repo / "docs" / "security" / "threat-model.yaml").write_text("schema_version: 1\n")
+    argv = ["hypothesis", "--repo", str(repo), "--abuse-case", "AC-T-003", "--revision", "HEAD", "--no-org-profile"]
+    assert module["main"]([*argv, *extra]) == 0
+    model = repo / "docs" / "security" / "threat-model.yaml"
+    assert (observed[0].threat_model_path == model) is uses_model
+    assert ("uses the supplied threat model" in observed[0].hypothesis) is uses_model
+    assert ("runs without a threat model" in observed[0].hypothesis) is not uses_model

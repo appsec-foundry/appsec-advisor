@@ -77,7 +77,17 @@ def instructions() -> str:
 
 
 def response_schema() -> dict:
-    return json.loads(RESPONSE_SCHEMA.read_text(encoding="utf-8"))
+    """The response schema as the host's ``--json-schema`` accepts it.
+
+    The host rejects a document that declares ``$schema`` (it cannot resolve
+    the draft URI) and every analysis then ends as a transport failure. The
+    keywords only identify the file; the response is still validated against
+    the full schema file afterwards.
+    """
+    schema = json.loads(RESPONSE_SCHEMA.read_text(encoding="utf-8"))
+    schema.pop("$schema", None)
+    schema.pop("$id", None)
+    return schema
 
 
 def _numbered(text: str) -> str:

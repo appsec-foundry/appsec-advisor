@@ -107,6 +107,8 @@ def test_loose_assignment_flagged(secret_scan, raw):
         "secret = config.apiKey",  # dotted path with camelCase tail
         "token: PublicKey",  # PascalCase identifier
         "api_key: this.that.other",  # multi-segment dotted path
+        "password: user.password?.replace",  # optional chaining
+        "token = req.headers?.authorization",  # optional chaining mid-path
     ],
 )
 def test_bareword_code_reference_not_flagged(secret_scan, raw):
@@ -123,6 +125,8 @@ def test_bareword_code_reference_not_flagged(secret_scan, raw):
         "bearer=abcdefghijklmnop",  # opaque all-lowercase token
         "token: someopaquetoken1234",  # has digits
         "secret = config2apiKey",  # has a digit → not a pure code ref
+        "password: 'user.password?.replace'",  # quoted — a literal despite the shape
+        "secret = cfg1?.apiKey",  # optional chaining with a digit
     ],
 )
 def test_real_or_opaque_credentials_still_flagged(secret_scan, raw):

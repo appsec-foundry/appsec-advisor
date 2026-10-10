@@ -72,6 +72,14 @@ def test_report_states_advisory_scope_and_coverage():
     assert "1 × sensitive" in text and "Required coverage complete: yes" in text
 
 
+def test_report_names_each_file_with_redacted_secret_values():
+    data = result()
+    data["coverage"]["redacted"] = [{"path": "lib/signing.ts", "lines": [2, 3, 4]}]
+    text = rr.render(data)
+    assert "- Redacted secret value: `lib/signing.ts` line(s) 2, 3, 4" in text.splitlines()
+    assert "Redacted" not in rr.render(result())
+
+
 @pytest.mark.parametrize(
     "hostile",
     [

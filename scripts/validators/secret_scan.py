@@ -206,7 +206,7 @@ _SOURCE_FILE_EXTENSIONS = (
 # ``deadbeef1234``) are NOT excluded — those stay flagged.
 _CODE_REFERENCE_RE = re.compile(
     r"^(?:"
-    r"[A-Za-z_]+(?:\.[A-Za-z_]+)+"  # dotted path:  security.hash
+    r"[A-Za-z_]+(?:\??\.[A-Za-z_]+)+"  # dotted path:  security.hash, user.password?.replace
     r"|[a-z]+[A-Z][A-Za-z]*"  # camelCase:    publicKey
     r"|[A-Z][a-z]+[A-Z][A-Za-z]*"  # PascalCase:   PublicKey
     r"|[a-z]+(?:_[a-z]+)+"  # snake_case:   read_unsigned_jwt_claims

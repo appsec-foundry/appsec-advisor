@@ -17,7 +17,11 @@ Git is read without side effects of repository or user configuration:
 
 Ignored files are never admitted and appear only as a count. Symlinks,
 submodules, nested repositories, special files, binaries, oversized files,
-sensitive files, and files beyond the job limits are recorded as exclusions.
+files named like key or environment files, and files beyond the job limits are
+recorded as exclusions. A detected secret value inside an otherwise admitted
+file is replaced by a marker that keeps every line in place, and the entry
+lists the redacted lines; a file whose secrets cannot all be replaced is
+excluded as sensitive.
 Worktree renames appear as a deletion plus an addition. Nothing here writes
 outside the job root or runs repository code.
 """
@@ -69,6 +73,7 @@ SENSITIVE_NAMES = (
     "*.jks",
 )
 BINARY_PROBE_BYTES = 8192
+REDACTION = "[REDACTED secret value]"
 MAX_EXCLUDED_ENTRIES = 1900
 VIEW_FILE = ".view.json"
 SUBMODULE_MODE = "160000"
@@ -201,12 +206,15 @@ class _Capture:
             return "too_large"
         if b"\0" in content[:BINARY_PROBE_BYTES]:
             return "binary"
-        if scan_text(content.decode("utf-8", "replace")):
-            return "sensitive"
         return None
 
     def admit(self, path: str, side: str, change: str, content: bytes, previous: str | None = None) -> None:
         reason = self.reason_to_reject(path, content)
+        redacted_lines: list[int] = []
+        if reason is None:
+            content, redacted_lines = _redact_secrets(content)
+            if content is None:
+                reason = "sensitive"
         if reason is None and (
             len(self.admitted) >= self.limits["admitted_files"]
             or self.total + len(content) > self.limits["job_kib"] * 1024
@@ -229,11 +237,40 @@ class _Capture:
         }
         if previous is not None:
             entry["previous_path"] = previous
+        if redacted_lines:
+            entry["redacted_lines"] = redacted_lines
         self.admitted.append(entry)
         self.total += len(content)
 
     def excluded_entries(self) -> list[dict]:
         return self.excluded + [{"reason": r, "count": n} for r, n in sorted(self.counts.items())]
+
+
+def _redact_secrets(content: bytes) -> tuple[bytes | None, list[int]]:
+    """Replace every detected secret value; return the content and its redacted lines.
+
+    The marker keeps each line break of the value, so line numbers cited as
+    evidence still point at the same code. Returns ``(None, [])`` when a value
+    cannot be located or a secret is still detected afterwards.
+    """
+    text = content.decode("utf-8", "replace")
+    hits = scan_text(text)
+    if not hits:
+        return content, []
+    lines: set[int] = set()
+    for hit in hits:
+        if not hit.value:
+            return None, []
+        span = hit.value.count("\n")
+        start = text.find(hit.value)
+        while start != -1:
+            first = text.count("\n", 0, start) + 1
+            lines.update(range(first, first + span + 1))
+            start = text.find(hit.value, start + 1)
+        text = text.replace(hit.value, "\n".join([REDACTION] * (span + 1)))
+    if scan_text(text):
+        return None, []
+    return text.encode("utf-8"), sorted(lines)
 
 
 def _excluded_by_mode(capture: _Capture, path: str, mode: str) -> bool:

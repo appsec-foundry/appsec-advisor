@@ -190,15 +190,74 @@ def test_sensitive_binary_large_symlinked_and_nested_content_is_excluded(repo, s
     snapshot = snap.capture(request(job, repo, {"kind": "worktree"}), job)
     assert excluded(snapshot) == {
         ".env": "sensitive",
-        "config.js": "sensitive",
         "blob.bin": "binary",
         "big.js": "too_large",
         "escape.js": "symlink",
         "vendor": "nested_repository",
     }
     assert not any(p for _, p in admitted(snapshot) if p in excluded(snapshot))
+    assert admitted(snapshot)[("proposed", "config.js")]["redacted_lines"] == [1]
     assert "wJalrXUtnFEMI" not in str(snapshot)
+    assert b"wJalrXUtnFEMI" not in captured(job, "proposed", "config.js")
     assert not (job.root / "source" / "proposed" / "escape.js").exists()
+
+
+PEM_BODY = "MIICXAIBAAKBgQDNwqLEe9wgTXCbC7+RPdDbBbeqjdbs4kOPOIGzqLpXvJXlxxW8\n"
+PEM = "-----BEGIN RSA PRIVATE KEY-----\n" + PEM_BODY * 3 + "-----END RSA PRIVATE KEY-----"
+
+
+@pytest.mark.parametrize(
+    ("name", "body", "key_line"),
+    [
+        (
+            "lib/signing.ts",
+            "import jwt from 'jsonwebtoken'\nconst privateKey = `"
+            + PEM
+            + "`\nexport const sign = (claims) => jwt.sign(claims, privateKey, { algorithm: 'RS256' })\n",
+            2,
+        ),
+        (
+            "server/keys.py",
+            'import jwt\n\nSIGNING_KEY = """'
+            + PEM
+            + '"""\n\n\ndef sign(claims):\n    return jwt.encode(claims, SIGNING_KEY, algorithm="RS256")\n',
+            3,
+        ),
+    ],
+)
+def test_a_secret_value_is_redacted_and_the_surrounding_code_is_admitted(repo, state_root, name, body, key_line):
+    """The code that uses a hard-coded key stays readable at its original line
+    numbers; only the key itself never reaches the job."""
+    (repo / name).parent.mkdir(parents=True, exist_ok=True)
+    (repo / name).write_text(body)
+    job = st.create_job(repo, state_root)
+    snapshot = snap.capture(request(job, repo, {"kind": "worktree"}), job)
+    entry = admitted(snapshot)[("proposed", name)]
+    text = captured(job, "proposed", name).decode()
+    assert PEM_BODY.strip() not in text and "PRIVATE KEY" not in text
+    assert text.count("\n") == body.count("\n")
+    assert text.splitlines()[-1] == body.splitlines()[-1]
+    assert entry["redacted_lines"][0] == key_line
+    assert entry["sha256"] == hashlib.sha256(text.encode()).hexdigest()
+    assert name not in excluded(snapshot)
+
+
+def test_a_file_without_secrets_is_admitted_unchanged(repo, state_root):
+    body = "const password = user.password?.replace(/./g, '*')\nexport default password\n"
+    (repo / "mask.js").write_text(body)
+    job = st.create_job(repo, state_root)
+    snapshot = snap.capture(request(job, repo, {"kind": "worktree"}), job)
+    assert "redacted_lines" not in admitted(snapshot)[("proposed", "mask.js")]
+    assert captured(job, "proposed", "mask.js").decode() == body
+
+
+def test_a_secret_the_redactor_cannot_remove_excludes_the_file(repo, state_root, monkeypatch):
+    (repo / "config.js").write_text(SECRET_LINE)
+    monkeypatch.setattr(snap, "_redact_secrets", lambda content: (None, []))
+    job = st.create_job(repo, state_root)
+    snapshot = snap.capture(request(job, repo, {"kind": "worktree"}), job)
+    assert excluded(snapshot)["config.js"] == "sensitive"
+    assert ("proposed", "config.js") not in admitted(snapshot)
 
 
 def test_submodules_are_reported_not_followed(repo, state_root):

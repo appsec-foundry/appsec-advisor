@@ -150,6 +150,10 @@ def render(result: dict) -> str:
         f"- Excluded: {e['count']} × {e['reason']}" + (f" ({code(e['path'])})" if "path" in e else "")
         for e in cov["excluded"]
     ]
+    out += [
+        f"- Redacted secret value: {code(e['path'])} line(s) {', '.join(str(n) for n in e['lines'])}"
+        for e in cov.get("redacted", [])
+    ]
     out += [f"- Source {s['kind']} ({inline(s['label'])}): {s['status']}" for s in cov["sources"]]
     out += [f"- Question not considered: {code(q['ref'])} ({inline(q['reason'])})" for q in cov["omitted_questions"]]
     out += [f"- Required coverage complete: {'yes' if cov['required_complete'] else 'no'}", ""]

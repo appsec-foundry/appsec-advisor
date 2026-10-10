@@ -9,6 +9,7 @@ and never prompts.
     appsec-analyst-cli design --repo DIR (--design-file FILE | --text TEXT) [options]
     appsec-analyst-cli review --repo DIR (--base REV --head REV [--exact-base] | --staged | --worktree) [options]
     appsec-analyst-cli hypothesis --repo DIR --hypothesis TEXT --revision REV --path PATH [--path PATH ...]
+    appsec-analyst-cli hypothesis --repo DIR --abuse-case ID [--abuse-case ID ...] --revision REV [--path PATH ...]
     appsec-analyst-cli answer --repo DIR --job ID (--answers FILE | --answer QID=TEXT ...) [--save-feature FILE ...]
     appsec-analyst-cli cancel --repo DIR --job ID
     appsec-analyst-cli forget --repo DIR --feature FILE --feature-sha SHA --question-fingerprint FP
@@ -114,11 +115,21 @@ def build_parser() -> argparse.ArgumentParser:
     review.add_argument("--worktree", action="store_true")
     hypothesis = sub.add_parser("hypothesis", help="check a threat hypothesis in selected committed source")
     _analysis(hypothesis)
-    hypothesis.add_argument("--hypothesis", required=True, help="concrete threat hypothesis to investigate")
+    claim = hypothesis.add_mutually_exclusive_group(required=True)
+    claim.add_argument("--hypothesis", help="concrete threat hypothesis to investigate")
+    claim.add_argument(
+        "--abuse-case", action="append", help="ID of a defined abuse or business case to check; repeatable"
+    )
     hypothesis.add_argument("--revision", required=True, help="Git revision to inspect, such as HEAD")
     hypothesis.add_argument(
-        "--path", action="append", required=True, help="literal repository-relative file or directory; repeatable"
+        "--path", action="append", default=[], help="literal repository-relative file or directory; repeatable"
     )
+    hypothesis.add_argument(
+        "--isolated", action="store_true", help="with --abuse-case: check the code without the existing threat model"
+    )
+    profile = hypothesis.add_mutually_exclusive_group()
+    profile.add_argument("--org-profile", type=_path, help="organization profile whose abuse cases apply")
+    profile.add_argument("--no-org-profile", action="store_true", help="ignore the active organization profile")
     answer = sub.add_parser("answer", help="answer the open questions of a job")
     _common(answer)
     answer.add_argument("--job", required=True)
@@ -147,8 +158,37 @@ def _terminate(signum, frame):
     raise ctl.Terminated()
 
 
+def _abuse_case_claim(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    """Fill --hypothesis and --path from the selected abuse cases."""
+    from model.abuse_case_hypothesis import AbuseCaseError, build
+
+    if args.isolated and args.threat_model is not None:
+        parser.error("--isolated excludes --threat-model")
+    existing = args.repo / "docs" / "security" / "threat-model.yaml"
+    if args.threat_model is None and not args.isolated and existing.is_file():
+        args.threat_model = existing
+    try:
+        args.hypothesis, args.path = build(
+            args.repo,
+            args.revision,
+            args.abuse_case,
+            args.path,
+            with_threat_model=args.threat_model is not None,
+            org_profile=args.org_profile,
+            no_org_profile=args.no_org_profile,
+        )
+    except (AbuseCaseError, ctl.SnapshotError) as exc:
+        parser.error(f"--abuse-case: {exc}")
+
+
 def _scope(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict:
     if args.command == "hypothesis":
+        if args.abuse_case:
+            _abuse_case_claim(args, parser)
+        elif not args.path:
+            parser.error("--path is required with --hypothesis")
+        elif args.org_profile or args.no_org_profile or args.isolated:
+            parser.error("--org-profile, --no-org-profile, and --isolated apply only to --abuse-case")
         if not args.hypothesis.strip() or len(args.hypothesis) > MAX_TEXT_CHARS:
             parser.error("--hypothesis must be non-empty and at most 20000 characters")
         return {"kind": "hypothesis", "revision": args.revision, "paths": args.path}

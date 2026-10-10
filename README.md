@@ -135,7 +135,7 @@ Run `/appsec-advisor:create-threat-model` to get:
 - mitigation guidance and generated diagrams;
 - `threat-model.md` and `threat-model.yaml`, with optional PDF, HTML, SARIF, Threat Dragon, and pentest-task exports.
 
-`/appsec-advisor:abuse-cases` lists the defined abuse and business cases with their origin: plugin, organization profile, or repository. `/appsec-advisor:create-threat-model --only-abuse-case <ID>` checks selected cases in a run, and `/appsec-advisor:ask-threat-model` reports how each case turned out.
+`/appsec-advisor:abuse-cases` lists the defined abuse and business cases with their origin: plugin, organization profile, or repository. `/appsec-advisor:analyze-threats --abuse-case <ID>` checks one case against the code without a full assessment, with the existing threat model as context or, with `--isolated`, without it. `/appsec-advisor:create-threat-model --only-abuse-case <ID>` runs a new full assessment that checks only the selected cases; it replaces the existing threat model. `/appsec-advisor:ask-threat-model` reports how each case turned out.
 
 The report links findings to the [OWASP Top 10:2025](https://owasp.org/Top10/2025/). If the repository contains an LLM or agentic application, it also checks the relevant [OWASP LLM](https://genai.owasp.org/llm-top-10/) and [Agentic Applications](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/) categories.
 

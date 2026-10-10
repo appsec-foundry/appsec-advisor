@@ -470,6 +470,7 @@ GROUPS = {
         business_impact_scope
         business_use_case
         abuse_case_gate
+        abuse_case_hypothesis
         abuse_case_verdicts
         abuse_cases_schema
         build_abuse_case_contexts
@@ -1123,6 +1124,7 @@ SOURCE_TESTS = {
         authnz_report
     """),
     "scripts/model/match_abuse_cases.py": _tests("""
+        abuse_case_hypothesis
         abuse_case_verdicts
         build_abuse_case_contexts
         build_threat_model_yaml
@@ -5708,7 +5710,12 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
+    "scripts/model/abuse_case_hypothesis.py": _tests("""
+        abuse_case_hypothesis
+        analyst_cli
+    """),
     "scripts/model/resolve_abuse_cases.py": _tests("""
+        abuse_case_hypothesis
         build_abuse_case_contexts
         business_abuse_cases
         check_target_specificity
@@ -6210,6 +6217,7 @@ SOURCE_TESTS = {
         requirements_verification
     """),
     "scripts/contexts/build_analyst_snapshot.py": _tests("""
+        abuse_case_hypothesis
         analyst_controller
         analyst_isolation
         build_analyst_snapshot
@@ -6276,6 +6284,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/appsec-analyst-cli": _tests("""
+        abuse_case_hypothesis
         analyst_cli
         analyst_skill
         requirements_verification
