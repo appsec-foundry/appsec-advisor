@@ -20,6 +20,13 @@ from analyzers.weakness_signals import finding_signals, validate_document
         ("CWE-922", "sessionStorage.getItem('access_token')", "browser-readable-session-credentials"),
         ("CWE-352", "const actor = sessions.get(request.cookies.sid)", "unprotected-cookie-mutations"),
         ("CWE-352", "account = request.session['account']", "unprotected-cookie-mutations"),
+        # Shell commands built from application values.
+        ("CWE-78", 'exec("ping -c 1 " + host, (err, out) => done(out))', "application-data-as-command"),
+        ("CWE-78", 'subprocess.run(f"tar -xf {name}", shell=True)', "application-data-as-command"),
+        ("CWE-77", "child_process.execSync(`convert ${file} out.png`)", "application-data-as-command"),
+        # Access gates granting entry on a caller-set value.
+        ("CWE-288", 'if (req.query.debug === "1") return next();', "request-controlled-authentication-bypass"),
+        ("CWE-288", 'if request.headers.get("X-Internal") == "yes": return view', "request-controlled-authentication-bypass"),
         # Database engines evaluating application values as JavaScript.
         ("CWE-94", "db.reviews.find({ $where: 'this.product == ' + id })", "application-data-as-code"),
         ("CWE-95", 'rows = collection.find({"$where": f"this.owner == {owner}"})', "application-data-as-code"),
@@ -96,6 +103,31 @@ def test_safe_source_does_not_establish_claimed_mechanism(tmp_path, cwe, body):
         "cwe": cwe,
         "evidence_check": "verified",
         "evidence": {"file": "handler.ts", "line": 1},
+    }
+    assert finding_signals([threat], tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    ("cwe", "body"),
+    [
+        ("CWE-78", "const match = pattern.exec(text);"),
+        ("CWE-78", 'subprocess.run(["tar", "-xf", name])'),
+        ("CWE-288", 'if (req.user && req.user.role === "admin") return next();'),
+    ],
+)
+def test_a_command_or_bypass_finding_needs_the_cited_mechanism(tmp_path, cwe, body):
+    source = tmp_path / "service" / "operation.ts"
+    source.parent.mkdir()
+    source.write_text(body + "\n")
+    threat = {
+        "t_id": "T-001",
+        "source": "stride",
+        "cwe": cwe,
+        "risk": "High",
+        "component_id": "service",
+        "evidence_check": "verified",
+        "evidence_tier": "confirmed-exploitable",
+        "evidence": {"file": "service/operation.ts", "line": 1},
     }
     assert finding_signals([threat], tmp_path) == []
 

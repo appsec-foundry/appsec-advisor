@@ -72,6 +72,7 @@ diagram_annotations:
     Insecure Command Handling:
       tie_break_order: 50
       cwes: [CWE-77, CWE-78]
+      mechanisms: [application-data-as-command]
       priority_group: interpreter
     Insecure Code Evaluation:
       tie_break_order: 30
@@ -114,8 +115,8 @@ diagram_annotations:
       tie_break_order: 10
       control_family: authentication
       variant_order: 2
-      cwes: [CWE-287, CWE-290, CWE-294, CWE-303, CWE-306, CWE-620]
-      mechanisms: [missing-endpoint-authentication]
+      cwes: [CWE-287, CWE-288, CWE-290, CWE-294, CWE-303, CWE-306, CWE-620]
+      mechanisms: [missing-endpoint-authentication, request-controlled-authentication-bypass]
     Weak Authentication:
       tie_break_order: 11
       control_family: authentication
@@ -249,10 +250,11 @@ clusters:
   - id: injection
     label: Injection
     plural_label: Injections
-    cwes: [CWE-89, CWE-943, CWE-78, CWE-94, CWE-95, CWE-1336, CWE-611, CWE-22, CWE-23, CWE-502, CWE-1427]
+    cwes: [CWE-89, CWE-943, CWE-77, CWE-78, CWE-94, CWE-95, CWE-1336, CWE-611, CWE-22, CWE-23, CWE-502, CWE-1427]
     variants_by_cwe:
       CWE-89:  SQLi
       CWE-943: NoSQLi
+      CWE-77:  OS-cmd
       CWE-78:  OS-cmd
       CWE-94:  code
       CWE-95:  template
@@ -277,7 +279,7 @@ clusters:
     # credential is a secret-handling weakness (fix: managed secret store), not a
     # broken-auth-flow defect. Same preferred_tier so the moved findings keep their
     # application-tier routing.
-    cwes: [CWE-287, CWE-347, CWE-345, CWE-640, CWE-294, CWE-261, CWE-307, CWE-306, CWE-620]
+    cwes: [CWE-287, CWE-288, CWE-347, CWE-345, CWE-640, CWE-294, CWE-261, CWE-307, CWE-306, CWE-620]
     variants_by_cwe:
       CWE-287: auth bypass
       CWE-347: JWT alg
@@ -582,6 +584,51 @@ mechanism_guidance:
         - '[{,(]\s*[''"]?\$(?:where|function|accumulator)[''"]?\s*:'
         - '\.\$where\s*\('
         - '\bmapReduce\s*\('
+  # application-data-as-command (2026-10-11): verified OS command injection
+  # (CWE-77/78) had no mechanism, so it never reached the weakness register or a
+  # Critical root cause. The patterns corroborate the cited shell-invoking API
+  # only. Excluded: JavaScript `RegExp.prototype.exec` (`pattern.exec(text)`),
+  # argument-list process calls without a shell, and Python's `exec()` builtin,
+  # which is code evaluation (application-data-as-code).
+  application-data-as-command:
+    weakness_name: "Application data builds operating-system commands"
+    cwes: [CWE-77, CWE-78]
+    description: >-
+      A command line is assembled from application values and handed to a
+      shell. Shell syntax in those values runs as further commands with the
+      privileges of the service.
+    structural_fix: >-
+      call a fixed executable with an argument list and no shell, and accept
+      only allowlisted argument values from callers
+    finding_signal:
+      any_pattern:
+        - '(?<![\w.])(?:exec|execSync)\s*\('
+        - '\b(?:child_process|childProcess|cp)\.(?:exec|execSync)\s*\('
+        - '\b(?:spawn|spawnSync|execFile|execFileSync)\s*\([^)]*\bshell\s*:\s*true'
+        - '\bsubprocess\.(?:run|call|Popen|check_output|check_call)\s*\([^)]*\bshell\s*=\s*True'
+        - '\bos\.(?:system|popen)\s*\('
+        - '\b(?:shell_exec|passthru|proc_open|popen)\s*\('
+        - '\bRuntime\.getRuntime\(\)\.exec\s*\('
+        - '`[^`\n]*#\{'
+  # request-controlled-authentication-bypass (2026-10-11): an authentication or
+  # authorization gate that grants access on a value the caller sets (query
+  # parameter, header, cookie, body field) — CWE-288, an alternate path past an
+  # existing check. Distinct from missing-endpoint-authentication, where no check
+  # exists. The pattern needs the request value and the grant on one line.
+  request-controlled-authentication-bypass:
+    weakness_name: "Access gates accept a caller-controlled bypass"
+    cwes: [CWE-288]
+    description: >-
+      An access check grants entry when a request carries a particular value,
+      such as a debug flag or a header, besides the verified identity it is
+      meant to require. Any caller who sets that value passes the gate.
+    structural_fix: >-
+      remove request-controlled bypass branches from access checks and grant
+      access only on a verified identity and its role
+    finding_signal:
+      any_pattern:
+        - '\b(?:req|request)\.(?:query|params|body|headers|cookies|get)\b[^;\n]*\)\s*(?:\{\s*)?return\s+next\s*\('
+        - '\brequest\.(?:args|GET|POST|headers|cookies|values)\b[^:\n]*:\s*return\s+(?:True|view|func|f)\b'
   browser-readable-session-credentials:
     weakness_name: "Browser scripts retain reusable session credentials"
     cwes: [CWE-922]
