@@ -44,8 +44,19 @@ def _scheme(flow: dict) -> str:
 
 
 def _counted(flow: dict, data_tier: set) -> bool:
-    """A request hop: store access and outbound integrations carry service credentials, not the caller's."""
-    return not flow.get("interaction") and flow.get("to") not in data_tier and flow.get("to") != "external"
+    """A request hop: store access and outbound integrations carry service credentials, not the caller's.
+
+    A reviewed connection into another repository (`connection_id`) ends the
+    path too: the role is modelled, and returned for repair, by its own
+    repository's analyst, so the combined model must reach the same verdict
+    that analyst could see.
+    """
+    return (
+        not flow.get("interaction")
+        and not flow.get("connection_id")
+        and flow.get("to") not in data_tier
+        and flow.get("to") != "external"
+    )
 
 
 def _flows(document: dict) -> list[dict]:

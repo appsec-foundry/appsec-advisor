@@ -162,10 +162,37 @@ def validate_finalization(scope: AssessmentScope, components: dict, receipt: dic
         raise AssessmentArchitectureError("Component receipt reconciliation identities disagree")
 
 
-def validate_flows(scope: AssessmentScope, components: dict, receipt: dict, document: dict) -> None:
-    """Check the canonical flow handoff, including nested source evidence."""
+def _qualified_view(value):
+    """A read-only view that keeps repository identity for the existing relational guards.
+
+    The qualified names exist for comparisons only, never as filesystem paths
+    or rendered output.
+    """
+    if isinstance(value, dict):
+        result = {k: _qualified_view(v) for k, v in value.items()}
+        if "file" in value:
+            result["file"] = value["repository_id"] + "/" + value["file"]
+        if "paths" in value:
+            result["paths"] = [p["repository_id"] + "/" + p["path"] for p in value["paths"]]
+        return result
+    if isinstance(value, list):
+        return [_qualified_view(v) for v in value]
+    return value
+
+
+def flow_invariant_errors(document: dict, components: dict) -> list[str]:
+    """The relational flow invariants of the combined gate, for any subset of flows and components.
+
+    A per-repository job checks its own result with this same function, so a
+    rule never surfaces first in the combined gate, where no job can repair it.
+    """
     from validators.validate_fragment import fragment_invariant_errors
 
+    return fragment_invariant_errors("data-flows", _qualified_view(document), context=_qualified_view(components))
+
+
+def validate_flows(scope: AssessmentScope, components: dict, receipt: dict, document: dict) -> None:
+    """Check the canonical flow handoff, including nested source evidence."""
     validate_finalization(scope, components, receipt)
     validate_schema(document, FLOW_SCHEMA)
     if document["source_scope_sha256"] != components["source_scope_sha256"]:
@@ -174,23 +201,7 @@ def validate_flows(scope: AssessmentScope, components: dict, receipt: dict, docu
         raise AssessmentArchitectureError("Data flows refer to a stale component inventory")
     for row in _evidence_rows(document):
         validate_source(scope, row, path_key="file")
-
-    # A read-only view preserves repository identity for existing relational
-    # guards, including client-owned interaction evidence. These are virtual
-    # names for comparisons only, never filesystem paths or rendered output.
-    def qualify(value):
-        if isinstance(value, dict):
-            result = {k: qualify(v) for k, v in value.items()}
-            if "file" in value:
-                result["file"] = value["repository_id"] + "/" + value["file"]
-            if "paths" in value:
-                result["paths"] = [p["repository_id"] + "/" + p["path"] for p in value["paths"]]
-            return result
-        if isinstance(value, list):
-            return [qualify(v) for v in value]
-        return value
-
-    errors = fragment_invariant_errors("data-flows", qualify(document), context=qualify(components))
+    errors = flow_invariant_errors(document, components)
     if errors:
         raise AssessmentArchitectureError(
             "Data flows violate architecture reference or interaction invariants: " + "; ".join(errors[:3])

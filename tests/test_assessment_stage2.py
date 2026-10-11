@@ -354,3 +354,14 @@ def test_a_diagram_placeholder_names_its_exact_format_in_context_and_rejection(w
     assert listed["format"] == stage2.MERMAID_FORMAT
     with pytest.raises(ExchangeError, match="exact form"):
         stage2._check_fill(diagram, "The flow is shown below.")
+
+
+def test_a_combined_model_larger_than_one_context_is_still_read(tmp_path):
+    """The read bound covers controller-written artifacts; model context is limited separately."""
+    model = tmp_path / "threat-model.yaml"
+    model.write_text("threats:\n" + "  - title: " + "x" * 600_000 + "\n")
+    assert stage2._bounded_text(model).startswith("threats:")
+    link = tmp_path / "linked.yaml"
+    link.symlink_to(model)
+    with pytest.raises(ExchangeError, match="bounded regular file"):
+        stage2._bounded_text(link)

@@ -1467,6 +1467,23 @@ def test_ingress_fold_never_lends_a_control_to_a_row_without_one(
             assert "covers_components" not in row
 
 
+def test_folding_ingress_rows_keeps_the_covered_component_limit(tmp_path: Path) -> None:
+    """Each row fits the covered-component contract; their fold must fit it too."""
+    others = [{"id": f"svc-{n:02d}", "name": f"Service {n}", "paths": [f"svc{n}/**"]} for n in range(30)]
+    components = [
+        {"id": "web-api", "name": "Web API", "paths": ["src/**/*.py"], "handles_sensitive_data": True},
+        {"id": "ws-gateway", "name": "WS Gateway", "paths": ["src/ws.py"]},
+        *others,
+    ]
+    host = _resolved(id="tb-1", name="Internet to API", to="web-api")
+    embedded = _resolved(id="tb-2", name="Internet to WS", to="ws-gateway")
+    host["covers_components"] = [c["id"] for c in others[:20]]
+    embedded["covers_components"] = [c["id"] for c in others[20:]]
+    rows, _warnings = _normalized(tmp_path, [host, embedded], components)
+    assert [row["to"] for row in rows] == ["web-api"]
+    assert len(rows[0]["covers_components"]) == 24
+
+
 def test_ingress_rows_to_unrelated_components_are_both_kept(tmp_path: Path) -> None:
     """Folding is justified by shared code, not by both being internet-facing."""
     components = [

@@ -56,6 +56,26 @@ def contract(name: str) -> dict:
     return copy.deepcopy(_contract(name))
 
 
+def job_share(schema: dict, combined: str, *, jobs: int, used: dict[str, int] | None = None) -> dict:
+    """A job schema whose top-level lists fit one equal share of the combined contract's limits.
+
+    The controller concatenates the lists of several jobs into one document
+    that the `combined` contract bounds. Each job alone may fit its own schema
+    while the concatenation exceeds the combined limit, and no job could repair
+    that afterwards. Bounding every job to its share instead turns an excess
+    into contract feedback inside that job's exchange. `used` counts entries
+    the controller already placed in a combined list.
+    """
+    result = copy.deepcopy(schema)
+    for field, spec in contract(combined).get("properties", {}).items():
+        own = result.get("properties", {}).get(field)
+        if not isinstance(own, dict) or not isinstance(spec, dict) or "maxItems" not in spec:
+            continue
+        share = max(0, spec["maxItems"] - (used or {}).get(field, 0)) // max(1, jobs)
+        own["maxItems"] = min(own.get("maxItems", share), share)
+    return result
+
+
 @lru_cache(maxsize=len(CONTRACTS))
 def _contract(name: str) -> dict:
     """Resolve only known plugin contracts to a tool-host-compatible schema."""
@@ -214,8 +234,7 @@ def validate_local_architecture(scope, repository_id, components, receipt, artif
             raise ExchangeError("Local asset refers to a component outside its repository")
     # The combined flow handoff applies the single-root evidence guards later;
     # apply them here too, so this job can still correct its own result.
-    from validators.validate_assessment_architecture import legacy_source_errors
-    from validators.validate_fragment import legitimate_role_errors
+    from validators.validate_assessment_architecture import flow_invariant_errors, legacy_source_errors
 
     errors = legacy_source_errors(
         scope,
@@ -225,12 +244,15 @@ def validate_local_architecture(scope, repository_id, components, receipt, artif
     )
     if errors:
         raise ExchangeError("Local architecture violates repository evidence rules: " + "; ".join(errors[:3]))
-    # The combined flow gate enforces the same role rules, but no job can still
-    # correct a role there. Roles and their own flows are repository-local, so
-    # checking them here lets the analyst repair its result in the exchange.
-    errors = legitimate_role_errors(artifact, local)
+    # The combined flow gate enforces these invariants too, but no job can
+    # still correct its result there; checking them here lets the analyst
+    # repair it in the exchange.
+    errors = flow_invariant_errors(
+        {"data_flows": artifact["data_flows"], "external_entities": artifact["external_entities"]},
+        {"components": local},
+    )
     if errors:
-        raise ExchangeError("Local architecture violates legitimate-role rules: " + "; ".join(errors[:3]))
+        raise ExchangeError("Local architecture violates flow invariants: " + "; ".join(errors[:3]))
 
 
 def _comparison(value):

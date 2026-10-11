@@ -32,12 +32,16 @@ from model.build_threat_model_yaml import (
     build_requirements_provenance,
 )
 from runtime.assessment_host import ExchangeError
+from runtime.assessment_state import MAX_DELIVERABLE_BYTES
 from shared._atomic_io import atomic_write_text
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "scripts"
 AGENTS = ROOT / "agents"
-MAX_INPUT_BYTES = 262_144
+# Workspace inputs are controller-written artifacts, so they share the
+# deliverable bound. Model context is limited separately below: a single-root
+# threat-model.yaml already measures 430-480 KB, and a combined model is larger.
+MAX_INPUT_BYTES = MAX_DELIVERABLE_BYTES
 MAX_SECARCH_CONTEXT_BYTES = 240_000
 MAX_INLINE_FILL = 600
 MAX_BLOCK_FILL = 2_500

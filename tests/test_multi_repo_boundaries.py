@@ -119,6 +119,33 @@ def test_source_claims_use_the_admitted_frozen_view(tmp_path):
         _canonical_evidence(scope, [forged], [], "test")
 
 
+@pytest.mark.parametrize("points", [("Route guard", "Session check"), ("Route guard", "Route guard")])
+def test_merging_two_crossings_of_one_receiver_stays_within_the_evidence_contract(tmp_path, points):
+    """Two contract-sized rows for one crossing fold into one row instead of aborting the assessment."""
+    source = "".join(f"check_{n} = guard(request)\n" for n in range(1, 7))
+    scope, components, _ = fixture(tmp_path, files={"edge": {"app.py": source}})
+    repository = scope.repositories[0]
+    sha = hashlib.sha256(repository.files["app.py"]).hexdigest()
+    components["components"][0]["paths"][0]["sha256"] = sha
+    rows = []
+    for index, (point, lines) in enumerate(zip(points, ((1, 2, 3), (4, 5, 6)), strict=True), 1):
+        row = candidate(f"candidate-{index}", "component-1", None)
+        row.update(
+            name=f"Ingress {index}",
+            enforcement_point=point,
+            evidence=[dict(repository_id=repository.repository_id, file="app.py", line=n, sha256=sha) for n in lines],
+        )
+        rows.append(row)
+    scope.output.mkdir()
+    document, _ = normalize_assessment_boundaries(scope, components, rows, output_dir=scope.output)
+    merged = [b for b in document["trust_boundaries"] if b["to"] == "component-1"]
+    assert len(merged) == 1
+    lines = [e["line"] for e in merged[0]["evidence"]]
+    assert len(lines) == 5 and set(lines) <= set(range(1, 7))
+    # The surviving row keeps all of its own evidence.
+    assert {1, 2, 3} <= set(lines) or {4, 5, 6} <= set(lines)
+
+
 @pytest.mark.parametrize("kind", ["foreign", "traversal", "missing-line", "overflow"])
 def test_qualified_normalization_rejects_invalid_evidence(tmp_path, kind):
     scope, _, evidence = fixture(tmp_path)

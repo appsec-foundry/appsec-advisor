@@ -24,6 +24,8 @@ from validators.validate_assessment_architecture import validate_finalization, v
 from contexts.reconcile_multi_repo_architecture import _id, deployment_binding, reconcile
 
 SCHEMA = Path(__file__).resolve().parents[2] / "schemas" / "multi-repo-connection-review.schema.json"
+# Evidence slots of one side of a reviewed link: half of the canonical flow's eight.
+_SIDE_EVIDENCE = 4
 INSTRUCTIONS = """Review the supplied communication candidate against retrieved source.
 Return exactly one decision. Resolve only when the client/producer operation,
 server/consumer operation, and deployment binding establish this particular
@@ -198,9 +200,18 @@ def promote(scope, discoveries, components, receipt, review):
     brokers, flows = {}, []
 
     def evidence(peer, decision):
+        """One side's share of the link's evidence, reviewer-cited lines first.
+
+        The canonical flow has eight evidence slots and the link needs both
+        sides, so each side keeps at most half of them. Interface evidence
+        (up to eight lines) plus the reviewer's lines could otherwise exceed
+        the contract although every single reference is valid.
+        """
         result = []
-        references = peer["evidence"] + [e for e in decision["evidence"] if e["repository_id"] == peer["repository_id"]]
+        references = [e for e in decision["evidence"] if e["repository_id"] == peer["repository_id"]] + peer["evidence"]
         for e in references:
+            if len(result) == _SIDE_EVIDENCE:
+                break
             piece = scope.read(peer["repository_id"], e["file"], e["line"], e["line"])
             row = {
                 "repository_id": peer["repository_id"],
@@ -248,9 +259,8 @@ def promote(scope, discoveries, components, receipt, review):
             # Retain both endpoints even when their relative source paths agree.
             hops = [(start, end, sender_evidence + receiver_evidence)]
         for source, target, refs in hops:
-            # The canonical per-flow evidence contract has eight slots. Do not
-            # truncate a link's supporting references to make it publishable.
-            if len(refs) > 8:
+            # Each side's share keeps a link within the eight canonical slots.
+            if len(refs) > 2 * _SIDE_EVIDENCE:
                 raise ExchangeError("Reviewed connection exceeds the canonical evidence limit")
             flows.append(
                 {

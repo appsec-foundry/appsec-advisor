@@ -328,3 +328,20 @@ def test_controller_keeps_a_declared_login_outside_the_repository(tmp_path):
     assert role["declared"]["authentication"] == "SSO via oauth2-proxy at the ingress"
     assert role["evidence"][0] == {"file": ".appsec/actors.yaml", "line": 2}
     assert "ROLE_DECLARED" in log and "ROLE_ACCESS_WITHDRAWN" not in log
+
+
+@pytest.mark.parametrize("connected", [True, False])
+def test_a_role_path_ends_at_a_reviewed_connection_into_another_repository(connected):
+    """The combined model reaches the verdict the role's own repository analyst saw."""
+    link = flow("df-3", "backend", "gateway")
+    if connected:
+        link["connection_id"] = "connection-" + "a" * 16
+    flows = [
+        flow("df-1", "external", "spa", entity="ext-role", interaction=True),
+        flow("df-2", "spa", "backend", "bearer"),
+        link,
+        # A hop inside the other repository, which the role's analyst never saw.
+        flow("df-4", "gateway", "backend", "none"),
+    ]
+    mixed = mixed_request_path("ext-role", flows, {"db"})
+    assert (mixed is None) is connected

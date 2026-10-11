@@ -21,7 +21,7 @@ from runtime.multi_repo_scope import admit
 from validators.validate_assessment_architecture import AssessmentArchitectureError, validate_flows
 
 
-def fixture(tmp_path, protocol="HTTP", names=("edge", "service"), separate=False):
+def fixture(tmp_path, protocol="HTTP", names=("edge", "service"), separate=False, lines=1):
     roots = []
     for index, name in enumerate(names):
         root = tmp_path / name
@@ -47,7 +47,7 @@ def fixture(tmp_path, protocol="HTTP", names=("edge", "service"), separate=False
         deployment = "system-b" if separate and index else "system-a"
         operation = f"/records-{index // 2}" if len(names) > 2 else "/records"
         (root / "app.py").write_text(
-            f'endpoint = "service:8080"; deployment = "{deployment}"; operation = "{operation}"\n'
+            f'endpoint = "service:8080"; deployment = "{deployment}"; operation = "{operation}"\n' * lines
         )
         (root / "extra.py").write_text("def enforce_identity(): return True\n")
         roots.append(str(root))
@@ -56,7 +56,7 @@ def fixture(tmp_path, protocol="HTTP", names=("edge", "service"), separate=False
     for repo in scope.repositories:
         # Roles and topics follow the written sources, not admission order.
         index = names.index(repo.root.name)
-        text = repo.files["app.py"].decode().strip()
+        text = repo.files["app.py"].decode().splitlines()[0]
         documents.append(
             {
                 "schema_version": 1,
@@ -81,7 +81,7 @@ def fixture(tmp_path, protocol="HTTP", names=("edge", "service"), separate=False
                         "address": "service:8080",
                         "deployment": "system-b" if separate and index else "system-a",
                         "operation": f"/records-{index // 2}" if len(names) > 2 else "/records",
-                        "evidence": [{"file": "app.py", "line": 1, "quote": text}],
+                        "evidence": [{"file": "app.py", "line": n, "quote": text} for n in range(1, lines + 1)],
                     }
                 ],
             }
@@ -147,6 +147,18 @@ def test_two_reviewed_topics_share_only_the_evidenced_broker(tmp_path):
     assert len(brokers) == 1 and len(brokers[0]["repository_ids"]) == 4
     assert len(flows["data_flows"]) == 4
     assert len(receipt["injected_component_ids"]) == 1
+
+
+@pytest.mark.parametrize("protocol", ["HTTP", "Kafka"])
+def test_a_richly_evidenced_link_fits_the_flow_contract_with_both_owners(tmp_path, protocol):
+    """Eight evidence lines per side are each valid; the promoted link keeps both sides within eight slots."""
+    args = fixture(tmp_path, protocol=protocol, lines=8)
+    components, receipt, flows = review.promote(*args)
+    owners = {r.repository_id for r in args[0].repositories}
+    evidence = [e for f in flows["data_flows"] for e in f["evidence"]]
+    assert all(len(f["evidence"]) <= 8 for f in flows["data_flows"])
+    assert {e["repository_id"] for e in evidence} == owners
+    validate_flows(args[0], components, receipt, flows)
 
 
 @pytest.mark.parametrize("status", ["unresolved", "rejected"])

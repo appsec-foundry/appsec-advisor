@@ -8139,9 +8139,15 @@ def _assessment_architecture(scope, jobs, *, progress):
     assets = []
     flows.setdefault("external_entities", [])
     labels = {r["repository_id"]: r["label"] for r in scope.inventory()["repositories"]}
-    schema = analysis.contract("multi-repo-architecture.schema.json")
-    for repository in scope.repositories:
+    for index, repository in enumerate(scope.repositories):
         rid = repository.repository_id
+        # The combined flow contract bounds the concatenation of every job's lists.
+        schema = analysis.job_share(
+            analysis.contract("multi-repo-architecture.schema.json"),
+            "fragments/data-flows-v2.schema.json",
+            jobs=len(scope.repositories) - index,
+            used={key: len(flows[key]) for key in ("data_flows", "external_entities")},
+        )
         local = [row for row in components["components"] if row["repository_ids"] == [rid]]
         progress("Analyzing local architecture: " + labels[rid])
         artifact = jobs.execute(
@@ -8218,7 +8224,7 @@ def _assessment_boundary_candidates(scope, jobs, architecture, source_context, d
         depth,
     )
     candidates, dispositions, ranges = [], [], []
-    for signal in assessment["signals"]:
+    for index, signal in enumerate(assessment["signals"]):
         projection = project_assessment_signal(assessment, signal["id"], architecture["data_flows"]["data_flows"])
         allowed = analysis.source_selection(projection["components"])
         progress("Reviewing trust crossing: " + signal["id"])
@@ -8236,7 +8242,12 @@ def _assessment_boundary_candidates(scope, jobs, architecture, source_context, d
                 "exactly once and keep candidate coverage consistent with its real endpoints and flow IDs.",
             ),
             context=projection,
-            schema=analysis.contract("fragments/trust-boundary-candidates-v2.schema.json"),
+            schema=analysis.job_share(
+                analysis.contract("fragments/trust-boundary-candidates-v2.schema.json"),
+                "fragments/trust-boundary-candidates-v2.schema.json",
+                jobs=len(assessment["signals"]) - index,
+                used={"candidates": len(candidates)},
+            ),
             allowed_sources=allowed,
             validate=lambda artifact, ranges: analysis.validate_boundary_candidates(
                 scope, projection, artifact, ranges, allowed

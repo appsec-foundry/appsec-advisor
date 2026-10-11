@@ -65,7 +65,7 @@ def stride(component, evidence, identity):
         cwe="CWE-20",
         remediation=dict(
             effort="Low",
-            steps=["Validate the input against the accepted data type."],
+            steps=["Validate the input against the accepted data type.", "Reject requests that fail validation."],
             verification="Submit malformed input and assert that the endpoint rejects it.",
         ),
     )
@@ -461,3 +461,35 @@ def test_an_absence_is_verified_by_any_retrieved_range_of_its_anchor_file(tmp_pa
     else:
         with pytest.raises(ExchangeError, match="independent reading"):
             check()
+
+
+def test_local_architecture_returns_every_combined_flow_invariant_to_its_author(tmp_path):
+    """Rules beyond the role check, here a human interaction aimed at a server, reach the analyst too."""
+    scope, components, evidence, ranges, identity = sources(tmp_path)
+    local = [dict(components[0], id="component-api")]
+    artifact = _role_architecture(evidence[0], identity, ["none"], via_client=False, access="internet-anon")
+    artifact["data_flows"][0]["interaction"] = True
+    artifact["data_flows"][0].pop("authentication")
+    with pytest.raises(ExchangeError, match="human interaction must target a client component"):
+        stage.validate_local_architecture(
+            scope,
+            evidence[0]["repository_id"],
+            dict(components=local + components[1:], source_scope_sha256=identity["source_scope_sha256"]),
+            dict(component_inventory_fingerprint=FP),
+            artifact,
+            ranges[:1],
+        )
+
+
+@pytest.mark.parametrize(("jobs", "used", "expected"), [(5, 0, 100), (2, 100, 200), (3, 500, 0)])
+def test_each_job_gets_its_share_of_a_combined_list_limit(jobs, used, expected):
+    """Concatenated job lists can no longer exceed the combined contract that bounds them."""
+    schema = stage.job_share(
+        stage.contract("multi-repo-architecture.schema.json"),
+        "fragments/data-flows-v2.schema.json",
+        jobs=jobs,
+        used={"data_flows": used},
+    )
+    assert schema["properties"]["data_flows"]["maxItems"] == expected
+    assert schema["properties"]["external_entities"]["maxItems"] == 64 // jobs
+    assert stage.contract("multi-repo-architecture.schema.json")["properties"]["data_flows"]["maxItems"] == 500

@@ -163,7 +163,10 @@ class Host:
                     threat_category_id="TH-01",
                     remediation=dict(
                         effort="Low",
-                        steps=["Validate the accepted input type in the request handler."],
+                        steps=[
+                            "Validate the accepted input type in the request handler.",
+                            "Reject requests that fail validation.",
+                        ],
                         verification="Submit malformed input and assert that the handler rejects it.",
                     ),
                 )

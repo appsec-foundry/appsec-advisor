@@ -557,10 +557,11 @@
               "steps": {
                 "type": "array",
                 "items": {
-                  "type": "string"
+                  "type": "string",
+                  "minLength": 1
                 },
                 "maxItems": 100,
-                "minItems": 1
+                "minItems": 2
               },
               "code_example": {
                 "type": [

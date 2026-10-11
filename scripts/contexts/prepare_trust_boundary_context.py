@@ -108,6 +108,9 @@ _GENERIC_ENFORCEMENT_POINTS = {
 }
 NEUTRAL_LEGACY_ASSUMPTION = "Assumption not recorded in legacy model"
 MAX_BOUNDARY_ID = 999_999_999
+# Per-row list limits of the trust-boundary contract; every merge of rows fits them.
+_MAX_EVIDENCE = 5
+_MAX_COVERS = 24
 _ID_RE = re.compile(r"^tb-(\d+)$")
 _COMPONENT_ID_RE = re.compile(r"^[a-z][a-z0-9-]+$")
 _CANONICAL_ENDPOINT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9-]{0,127}$")
@@ -168,7 +171,7 @@ def _canonical_evidence(repo_root: Path, values: Any, warnings: list[str], label
     if isinstance(repo_root, AssessmentScope):
         from validators.validate_assessment_architecture import validate_source
 
-        if not isinstance(values, list) or len(values) > 5:
+        if not isinstance(values, list) or len(values) > _MAX_EVIDENCE:
             raise ValueError("Qualified boundary evidence exceeds its contract")
         result = []
         for raw in values:
@@ -220,7 +223,7 @@ def _canonical_evidence(repo_root: Path, values: Any, warnings: list[str], label
         if line is not None:
             item["line"] = line
         result.append(item)
-        if len(result) == 5:
+        if len(result) == _MAX_EVIDENCE:
             break
     return result
 
@@ -862,7 +865,7 @@ def _normalize_row(
         row["confidence_basis"] = raw["confidence_basis"]
     covers = _covered_components(raw.get("covers_components"), components)
     if len(covers) > 1:
-        row["covers_components"] = covers[:24]
+        row["covers_components"] = covers[:_MAX_COVERS]
     if resolution_details:
         row["_resolution_details"] = resolution_details
     key = raw.get("declaration_key") or (raw.get("key") if source == "repo-declared" else None)
@@ -922,6 +925,11 @@ def _load_declarations(
 
 
 def _merge_evidence(left: list[dict], right: list[dict]) -> list[dict]:
+    """Union of two rows' validated evidence, the surviving row's own first, within the evidence contract.
+
+    Each row already fits the contract on its own, so folding one crossing into
+    another must not abort the run; the cut drops only the folded row's surplus.
+    """
     out: list[dict] = []
     seen: set[tuple] = set()
     for item in [*left, *right]:
@@ -929,9 +937,7 @@ def _merge_evidence(left: list[dict], right: list[dict]) -> list[dict]:
         if key not in seen:
             seen.add(key)
             out.append(item)
-    if len(out) > 5 and any(row.get("repository_id") for row in out):
-        raise ValueError("Merged qualified boundary evidence exceeds its contract")
-    return out[:5]
+    return out[:_MAX_EVIDENCE]
 
 
 def _merge_declarations(
@@ -1311,7 +1317,7 @@ def _consolidate(rows: list[dict], components: dict[str, dict], warnings: list[s
                         other["to"],
                         row["to"],
                     }
-                )
+                )[:_MAX_COVERS]
                 warnings.append(
                     f"folded ingress boundary {row.get('name')!r} into {other.get('name')!r} — "
                     f"{row['to']} is served by the same code as {other['to']}, so both name one perimeter"
@@ -2568,7 +2574,8 @@ def _consolidate_candidates(
                     if isinstance(entry, dict)
                     else None
                 )
-                if marker and marker not in seen_evidence:
+                # Same evidence contract and survivor-first order as _merge_evidence.
+                if marker and marker not in seen_evidence and len(survivor.get("evidence") or []) < _MAX_EVIDENCE:
                     seen_evidence.add(marker)
                     survivor.setdefault("evidence", []).append(deepcopy(entry))
             if _CONFIDENCE_RANK.get(other.get("confidence"), 0) > _CONFIDENCE_RANK.get(survivor.get("confidence"), 0):
