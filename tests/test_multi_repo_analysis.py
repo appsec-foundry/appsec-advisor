@@ -405,6 +405,32 @@ def test_controls_cannot_borrow_evidence_from_another_owner(tmp_path):
         stage.validate_controls(scope, components, FP, artifact, ranges)
 
 
+@pytest.mark.parametrize(
+    ("domain", "control"),
+    [
+        ("Trust-boundary enforcement", "postMessage origin validation"),
+        ("Perimeter hygiene", "Open redirect and navigation validation"),
+    ],
+)
+def test_a_control_no_report_section_takes_is_corrected_in_its_job(tmp_path, domain, control):
+    scope, components, evidence, ranges, identity = sources(tmp_path)
+    row = dict(
+        domain=domain,
+        control=control,
+        effectiveness="Missing",
+        assessment="No check was found.",
+        component_ids=[components[0]["id"]],
+        evidence=[evidence[0]],
+    )
+    artifact = dict(**identity, security_controls=[row])
+    with pytest.raises(ExchangeError, match="Browser and Cross-Origin Controls") as caught:
+        stage.validate_controls(scope, components, FP, artifact, ranges)
+    assert "Security Control Overview" not in str(caught.value)
+    # The everyday domains the report normalizes keep passing.
+    artifact["security_controls"] = [dict(row, domain="Authentication", control="Password hashing")]
+    stage.validate_controls(scope, components, FP, artifact, ranges)
+
+
 def test_stage_contracts_are_closed_and_local_refs_do_not_fetch_network():
     for name in stage.CONTRACTS[:4]:
         schema = stage.contract(name)

@@ -209,6 +209,35 @@ def validate_controls(scope, components, component_fingerprint, artifact, ranges
         related = source_selection([by_id[key] for key in control["component_ids"]])
         if any((row["repository_id"], row["file"]) not in related for row in control["evidence"]):
             raise ExchangeError("Control evidence is not owned by its declared components")
+    # The report gate requires a §6 place for every control. Apply the same
+    # taxonomy normalization here, so an unplaceable domain becomes a
+    # correction turn instead of a failed run after every model call.
+    unplaced = _unplaced_controls(artifact["security_controls"])
+    if unplaced:
+        from renderers.pregenerate_fragments import describe_unplaced_controls
+
+        raise ExchangeError(
+            describe_unplaced_controls(unplaced) + ". Use one of these domains: " + "; ".join(_placeable_domains())
+        )
+
+
+def _unplaced_controls(controls: list[dict]) -> list[dict]:
+    """Controls that no §6 section takes after the report's taxonomy normalization."""
+    from model.enforce_control_taxonomy import enforce
+    from renderers.pregenerate_fragments import unplaced_security_controls
+
+    document = {"security_controls": copy.deepcopy(controls)}
+    enforce(document)
+    return unplaced_security_controls(document["security_controls"])
+
+
+@lru_cache(maxsize=1)
+def _placeable_domains() -> tuple[str, ...]:
+    """The §6 titles a control can carry as its domain, derived from the placement rule itself."""
+    from model.enforce_control_taxonomy import _section_titles
+
+    probe = {"control": "Control", "effectiveness": "Weak", "component_ids": [], "evidence": [], "assessment": "-"}
+    return tuple(title for title in sorted(_section_titles()) if not _unplaced_controls([{**probe, "domain": title}]))
 
 
 def validate_local_architecture(scope, repository_id, components, receipt, artifact, ranges):
