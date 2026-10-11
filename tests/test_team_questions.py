@@ -133,7 +133,7 @@ def test_disputed_registration_is_shared_without_invented_finding_links(source):
     question = selected[0]["question"]
     report = composer._render_ms_open_questions(SimpleNamespace(yaml_data=model))
     console = completion.build_manual_review_step(model, report + '\n<a id="f-001"></a>')
-    assert "- " + question in report
+    assert f"- _{question}_" in report
     assert "- " + question in console
     assert "-  —" not in report + console
     assert "#f-001" in report

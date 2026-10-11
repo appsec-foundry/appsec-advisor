@@ -10146,15 +10146,18 @@ def _render_ms_open_questions(ctx: RenderContext) -> str:
     # the bullet: `is_report_question_line` anchors on the reference tail ending
     # the bullet, and a trailing clause would silently re-enable title enrichment
     # on these ids. The impact carries no ids of its own for the same reason.
+    # The question is set in italics so it reads as the quoted ask; its impact
+    # stays upright beneath it. `_plain_question` rejects `_`, so the emphasis
+    # cannot be broken by the question text.
     for topic in selection["questions"]:
         refs = ", ".join(link(item["id"], unproven=item["unproven"]) for item in topic["refs"])
         if topic["hidden"] > 0:
             refs += f" +{topic['hidden']} more"
         if topic["weakness_id"]:
             refs = f"{link(topic['weakness_id'])}: {refs}" if refs else link(topic["weakness_id"])
-        out.append(f"- {topic['question']}" + (f" ({refs})" if refs else ""))
+        out.append(f"- _{topic['question']}_" + (f" ({refs})" if refs else ""))
         if topic.get("impact"):
-            out.append(f"  _{topic['impact']}_")
+            out.append(f"  {topic['impact']}")
     out.append("")
     return "\n".join(out)
 

@@ -6829,6 +6829,10 @@ def test_ms_open_questions_follow_top_weaknesses(monkeypatch) -> None:
     for report_line in [line for line in report_questions.splitlines() if line.startswith("- ")]:
         # The rendered shape is what keeps the enrichment passes off the block.
         assert compose._is_bare_finding_ref_line(report_line)
+        # The question is italic; its impact line beneath stays upright.
+        assert re.match(r"- _[^_]+\?_( \(|$)", report_line), report_line
+    for impact_line in [line for line in report_questions.splitlines() if line.startswith("  ")]:
+        assert not impact_line.strip().startswith("_"), impact_line
 
     monkeypatch.setattr(compose, "_render_by_id", lambda _ctx, _env, _sid, section: section["heading"])
     monkeypatch.setattr(compose, "_render_ai_exposure", lambda _ctx, _env: "")
