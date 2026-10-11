@@ -93,6 +93,9 @@ Options:
   --sarif                    Also write threat-model.sarif.json (SARIF v2.1.0)
   --threatdragon             Also write threat-model.threatdragon.json
                              (OWASP Threat Dragon v2 — ALPHA, opt-in only)
+  --slug [<value>]           Also write a copy set named threat-model-<value>.*
+                             (1-64 of A-Z a-z 0-9 . _ -); bare --slug picks a
+                             random value
   --requirements [<src>]     Enable requirements check, optionally from an
                              http(s):// URL or a local file path
   --no-requirements          Skip requirements even when enabled in config

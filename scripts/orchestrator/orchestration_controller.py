@@ -8054,8 +8054,9 @@ def _assessment_session(scope, arguments, *, budget, host_factory, resume=False,
     from runtime.assessment_state import AssessmentState
 
     cfg = resolve_config.resolve_assessment(scope, arguments, PLUGIN_ROOT, model=model)
-    # Invocation spelling and argument order do not change assessment policy.
-    identity = {key: value for key, value in cfg.items() if key != "invocation_args"}
+    # Invocation spelling, argument order, and the deliverable postfix (random for a
+    # bare --slug) do not change assessment policy.
+    identity = {key: value for key, value in cfg.items() if key not in ("invocation_args", "slug")}
     state = AssessmentState(
         scope,
         configuration=identity,

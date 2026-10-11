@@ -201,6 +201,7 @@ It prints the completion summary after the session's closing text.
 | `--reasoning-model <tier>` | Select the centrally routed reasoning tier. |
 | `--sarif` | Write SARIF in addition to Markdown and YAML. |
 | `--threatdragon` | Write the alpha Threat Dragon export. |
+| `--slug [value]` | Also write a copy of every deliverable named `threat-model-<value>.*`, so several models can share one directory. A bare `--slug` picks a random value. |
 | `--requirements [source]` | Include the requirements catalog. |
 | `--context <source>` | Supply business context as untrusted data for this run. |
 | `--max-duration <seconds>` | Stop the wrapper after the host deadline. |
