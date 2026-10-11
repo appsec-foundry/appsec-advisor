@@ -8497,9 +8497,10 @@ ASSESSMENT_CALL_USD = 2.0
 # whole call budget on thinking without returning one (live run, 2026-10-10).
 ASSESSMENT_EFFORT = "medium"
 # Adaptive effort leaves thinking unbounded, and the host ignores a thinking
-# budget. A replayed STRIDE completion thought 4,850-7,600 tokens in three
-# runs; a live one passed 18,950 without output and hit the 900 s limit
-# (2026-10-11). A call past this estimate is stopped and retried once.
+# budget. The same STRIDE completion thought 3,700-7,600 tokens on Sonnet 5.5
+# and passed 20,000 without output on Sonnet 4.6 at every effort level
+# (2026-10-11), so STRIDE leaves the 4.6 pin (MD-9). This stop is a backstop:
+# a call past this estimate is stopped and retried once.
 ASSESSMENT_MAX_THINKING_TOKENS = 20_000
 ASSESSMENT_DEFAULT_SECONDS = 14_400
 # Lifecycle and mode options that the combined assessment does not provide.
@@ -8588,8 +8589,8 @@ class _ReportedTransport:
 
     While a call runs, a line each minute says whether the model is thinking,
     writing its result, or silent (waiting for the API); afterwards a line names
-    the source ranges it requested or counts the lists in its result, with
-    duration and cost. Paths are admitted repository files, shown printable
+    the source ranges it requested or counts the lists in its result, with its
+    duration. Paths are admitted repository files, shown printable
     only; result field names are reduced to identifier characters.
     """
 
@@ -8654,9 +8655,8 @@ class _ReportedTransport:
             raise
         finally:
             done.set()
+        # Duration only: cost belongs to the end-of-run summary, never mid-run.
         timing = f"{round(time.monotonic() - started)} s"
-        if isinstance(reply.usd, (int, float)):
-            timing += f", ${reply.usd:.2f}"
         payload = reply.payload if isinstance(reply.payload, dict) else {}
         if payload.get("action") == "read":
             rows = [r for r in payload.get("reads") or [] if isinstance(r, dict)]
@@ -8671,6 +8671,36 @@ class _ReportedTransport:
             ][:4]
             self.report(f"result: {', '.join(counts) or 'returned'} ({timing})")
         return reply
+
+
+def _assessment_model_lines(cfg: dict[str, Any]) -> tuple[str, str | None]:
+    """Return the model of each role and a STRIDE model warning when one applies (MD-9).
+
+    The warning names an automatic move off Sonnet 4.6 and its cost, or an
+    explicit Sonnet 4.6 setting that is expected to return no STRIDE result.
+    """
+    from orchestrator.assessment_stage2 import RENDERER_MODEL_KEYS
+
+    by_model: dict[str, list[str]] = {}
+    for role, key in sorted({**SEMANTIC_ROLE_MODEL_KEYS, **RENDERER_MODEL_KEYS}.items()):
+        if cfg.get(key):
+            by_model.setdefault(str(cfg[key]), []).append(role)
+    lineup = "Models: " + "; ".join(f"{model} ({', '.join(roles)})" for model, roles in sorted(by_model.items()))
+    warning = None
+    if cfg.get("stride_model_moved_from"):
+        warning = (
+            f"STRIDE runs on {cfg['stride_model']} instead of {cfg['stride_model_moved_from']}: "
+            f"{cfg['stride_model_moved_from']} returns no STRIDE result in a multi-repository "
+            "assessment. STRIDE calls cost more, because the newer model counts the same text "
+            "in about 30% more tokens at the same price per token."
+        )
+    elif cfg.get("stride_model") == resolve_config.SONNET46:
+        warning = (
+            f"STRIDE is set to {resolve_config.SONNET46}. In a multi-repository assessment it "
+            "exhausts its thinking without returning a result; drop the explicit STRIDE model "
+            f"to use {resolve_config.SONNET5}."
+        )
+    return lineup, warning
 
 
 def _assessment_cli_host_factory(work_root: Path, events_dir: Path | None = None):
@@ -9008,6 +9038,11 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
             )
             with session as (cfg, state, jobs):
                 _assessment_unsupported_configuration(cfg, scope)
+                lineup, model_warning = _assessment_model_lines(cfg)
+                say(lineup)
+                if model_warning:
+                    # Shown even with --quiet: it changes the run's cost or outcome.
+                    print(f"⚠ {model_warning}", file=sys.stderr, flush=True)
                 from orchestrator import assessment_context
 
                 try:

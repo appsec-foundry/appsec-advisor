@@ -130,6 +130,8 @@ SONNET = "sonnet"
 # alias, so a headless run pins the version rather than following the session.
 # The pin follows the latest Sonnet release; Sonnet 5.5 has no A/B of its own.
 SONNET5 = "claude-sonnet-5-5"
+# The economy pin; a combined assessment moves STRIDE off it (MD-9).
+SONNET46 = "claude-sonnet-4-6"
 
 EXTENDED_MODEL_MATRIX: dict[tuple[str, str], dict[str, str]] = {
     # sonnet-economy: extended-agent routing.
@@ -2365,6 +2367,20 @@ def resolve_assessment(scope, argv: list[str], plugin_root: Path, *, model: str 
             if key.endswith("_model") and key != "reasoning_model" and not explicit.get(key):
                 cfg[key] = model
         cfg.update(apply_opus_ban(cfg, bool(cfg.get("opus_disabled") or cfg.get("disable_opus"))))
+    # MD-9: each combined STRIDE artifact comes back from one tool-less call, where
+    # Sonnet 4.6 exhausts its thinking without returning one at any effort level
+    # (user-service replay, 2026-10-11). Only the economy pin moves; an explicit
+    # stage model, environment pin, or shared model is kept and warned about.
+    if (
+        cfg.get("stride_model") == SONNET46
+        and not (ns.stride_model or os.environ.get("APPSEC_STRIDE_MODEL") or model)
+    ):
+        cfg["stride_model"] = SONNET5
+        cfg["stride_model_moved_from"] = SONNET46
+        cfg["reasoning_label"] = (
+            f"{cfg['reasoning_model']} (STRIDE: {SONNET5}, triage: {cfg['triage_model']}, "
+            f"merger: {cfg['merger_model']})"
+        )
     cfg.update(
         assessment_scope="multiple-repositories",
         source_scope_sha256=scope.inventory()["scope_sha256"],

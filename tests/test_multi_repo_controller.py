@@ -574,10 +574,12 @@ def test_each_model_call_reports_progress_without_echoing_model_text(monkeypatch
     transport.invoke("s", "p", {}, 30, lambda: False)
     with pytest.raises(HostTimeout):
         transport.invoke("s", "p", {}, 30, lambda: False)
-    assert lines[0].startswith("reads user-service/app.py?:1-159 (") and lines[0].endswith(", $0.01)")
+    assert lines[0].startswith("reads user-service/app.py?:1-159 (") and lines[0].endswith(" s)")
     assert any(line.endswith("model is thinking (~4,800 tokens)") for line in lines)
     assert any("model is writing its result (~" in line for line in lines)
-    assert any(line.startswith("result: 9 threats (") and line.endswith(", $0.21)") for line in lines)
+    assert any(line.startswith("result: 9 threats (") and line.endswith(" s)") for line in lines)
+    # Cost is reported only at the end of the run, never per call.
+    assert not any("$" in line for line in lines)
     assert lines[-1].startswith("model call stopped after") and lines[-1].endswith("its time limit")
     assert not any("injected" in line or "\x1b" in line for line in lines)
 

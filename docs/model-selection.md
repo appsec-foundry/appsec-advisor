@@ -34,6 +34,8 @@ The default role assignments are:
 | QA | qa_content, qa_routine | Sonnet 4.6; Haiku for qa_routine | Sonnet 4.6; Haiku for qa_routine | Sonnet 4.6 |
 | Coordination | orchestrator | Session model | Session model | Session model |
 
+A multi-repository assessment runs STRIDE on the latest Sonnet at quick and standard depth, because Sonnet 4.6 returns no STRIDE result through its single-call exchange. The run prints each role's model at the start, warns that STRIDE calls cost more after this move, and warns when an explicit setting puts STRIDE on Sonnet 4.6.
+
 The explicit `sonnet` tier selects the latest Sonnet instead of this version split. `EXTENDED_MODEL_MATRIX` supplies the Haiku defaults for context resolution, reconnaissance, configuration scanning, and routine QA, subject to depth-specific routing.
 
 **Interactive dispatch limitation:** exact model IDs apply on the headless path and the hybrid-merger path. The interactive Agent tool accepts tier aliases only; its `sonnet` alias follows the session model. Selecting an exact Sonnet version in the resolved configuration therefore does not guarantee that version runs interactively.
@@ -113,6 +115,16 @@ Opus reasoning for STRIDE, triage, and merging cost $40.78 versus $30.01 for `so
 ### Practical recipe
 
 For a repository below the size threshold, use a Sonnet 4.6 session and the default role assignments. For headless runs requiring explicit overrides, set `APPSEC_MERGER_MODEL`, `APPSEC_TRIAGE_MODEL`, and `APPSEC_RENDERER_MODEL` to `claude-sonnet-5-5`, while retaining Sonnet 4.6 for STRIDE. For larger repositories, consider the session context window before reducing cost.
+
+## When to use the latest Sonnet
+
+Sonnet 4.6 is the default because it does the same work for less money. Use the latest Sonnet, currently 5.5, in these cases:
+
+- **Large repository.** From about 2,500 source files on, run the session on Sonnet 5.5. A long run needs its larger context window to finish cleanly.
+- **Several repositories in one run.** You don't need to change anything. STRIDE switches to Sonnet 5.5 on its own, because Sonnet 4.6 returns no result there.
+- **Quality before cost.** `--reasoning-model sonnet` puts finding, rating and merging threats on the latest Sonnet. It is not a pure upgrade: in our benchmark, Sonnet 5 missed some findings that 4.6 caught.
+
+In every other case, stay on the default.
 
 ## Quick recipes
 

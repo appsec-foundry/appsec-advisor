@@ -55,7 +55,7 @@ Python renders reports from validated structured data. If a run artifact contain
 
 Requires [Claude Code](https://docs.claude.com/en/docs/claude-code), Python 3.10+, and `git` on `PATH`. Optional Mermaid dependencies provide stricter diagram validation; see the [Threat Modeler reference](docs/threat-modeler.md).
 
-For most repositories, run the Claude Code session on Sonnet 4.6. The orchestration session remains active for the full assessment and therefore has the largest effect on cost. Agent models are routed separately: a standard scan uses Sonnet 5.5 for judgment and report authoring, while STRIDE discovery remains on Sonnet 4.6. Very large repositories may require a Sonnet 5.5 session for the larger context window. See [Model Selection](docs/model-selection.md).
+For most repositories, run the Claude Code session on Sonnet 4.6. The orchestration session remains active for the full assessment and therefore has the largest effect on cost. Agent models are routed separately: a standard scan uses Sonnet 5.5 for judgment and report authoring, while STRIDE discovery remains on Sonnet 4.6. A [multi-repository assessment](#assess-multiple-repositories) runs STRIDE on Sonnet 5.5 instead. Very large repositories may require a Sonnet 5.5 session for the larger context window. See [when to use the latest Sonnet](docs/model-selection.md#when-to-use-the-latest-sonnet).
 
 ### 1. Install the plugin
 
@@ -213,6 +213,8 @@ A combined run has these requirements:
 - Select 2–16 top-level Git checkouts that do not contain each other.
 - Choose an `--output` directory outside every selected checkout.
 - Set `--soft-budget` or `--hard-budget`. The run stops when the budget is exhausted.
+
+A combined run uses Sonnet 5.5 for STRIDE at quick and standard depth instead of Sonnet 4.6, because Sonnet 4.6 returns no STRIDE result in this mode. STRIDE calls therefore cost more than in a single-repository scan. The run prints each role's model at the start and warns about this change. See [Assess several repositories as one system](docs/headless-mode.md#assess-several-repositories-as-one-system).
 
 Components, findings and exports name the repository they come from, for example `Order API [backend]` and `backend/src/orders.ts:42`. The order of the `--repo` flags does not matter, and no repository takes precedence. A connection between repositories appears only when source evidence supports it, and repository membership never creates a trust boundary. The run supports full assessments and `--resume` of an interrupted run whose sources and settings are unchanged; `--incremental`, `--rerender` and `--rebuild` are not available for combined runs. See [non-interactive mode](docs/headless-mode.md#assess-several-repositories-as-one-system) for details and limits.
 

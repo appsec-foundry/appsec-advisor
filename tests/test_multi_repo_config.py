@@ -49,6 +49,62 @@ def test_explicit_stage_pin_wins_over_shared_model(tmp_path):
     assert resolved["stride_model"] == "sonnet" and resolved["triage_model"] == "haiku"
 
 
+@pytest.mark.parametrize("depth", ["quick", "standard"])
+def test_combined_assessment_moves_economy_stride_off_sonnet_46(tmp_path, monkeypatch, depth):
+    monkeypatch.delenv("APPSEC_STRIDE_MODEL", raising=False)
+    arguments = ["--no-requirements", "--assessment-depth", depth]
+    resolved = config.resolve_assessment(scope(tmp_path), arguments, ROOT)
+    assert resolved["stride_model"] == config.SONNET5
+    assert f"STRIDE: {config.SONNET5}" in resolved["reasoning_label"]
+    # Only STRIDE moves; the other economy roles keep their pins.
+    single = config.resolve(
+        ["--repo", str(tmp_path), "--output", str(tmp_path / "single"), "--full", *arguments],
+        ROOT,
+        create_output_dir=False,
+        source_count=1,
+    )
+    assert single["stride_model"] == config.SONNET46
+    assert resolved["stride_model_moved_from"] == config.SONNET46
+    assert {k: v for k, v in resolved.items() if k.endswith("_model") and k != "stride_model"} == {
+        k: v for k, v in single.items() if k.endswith("_model") and k != "stride_model"
+    }
+
+
+@pytest.mark.parametrize("origin", ["environment", "shared"])
+def test_explicit_sonnet_46_stride_is_kept_and_warned(tmp_path, monkeypatch, origin):
+    from orchestrator import orchestration_controller as controller
+
+    monkeypatch.delenv("APPSEC_STRIDE_MODEL", raising=False)
+    if origin == "environment":
+        monkeypatch.setenv("APPSEC_STRIDE_MODEL", config.SONNET46)
+    model = config.SONNET46 if origin == "shared" else None
+    resolved = config.resolve_assessment(scope(tmp_path), ["--no-requirements"], ROOT, model=model)
+    assert resolved["stride_model"] == config.SONNET46
+    lineup, warning = controller._assessment_model_lines(resolved)
+    assert f"{config.SONNET46} (" in lineup and "stride_analyzer" in lineup
+    assert warning and "returning a result" in warning and "stride_model_moved_from" not in resolved
+
+
+def test_default_combined_lineup_names_the_stride_move_and_its_cost(tmp_path, monkeypatch):
+    from orchestrator import orchestration_controller as controller
+
+    monkeypatch.delenv("APPSEC_STRIDE_MODEL", raising=False)
+    resolved = config.resolve_assessment(scope(tmp_path), ["--no-requirements"], ROOT)
+    lineup, warning = controller._assessment_model_lines(resolved)
+    stride_group = next(group for group in lineup.removeprefix("Models: ").split("; ") if "stride_analyzer" in group)
+    assert stride_group.startswith(config.SONNET5)
+    assert warning and f"instead of {config.SONNET46}" in warning and "cost more" in warning
+
+
+def test_an_explicit_latest_sonnet_stride_is_not_reported_as_a_move(tmp_path, monkeypatch):
+    from orchestrator import orchestration_controller as controller
+
+    monkeypatch.setenv("APPSEC_STRIDE_MODEL", config.SONNET5)
+    resolved = config.resolve_assessment(scope(tmp_path), ["--no-requirements"], ROOT)
+    assert resolved["stride_model"] == config.SONNET5 and "stride_model_moved_from" not in resolved
+    assert controller._assessment_model_lines(resolved)[1] is None
+
+
 @pytest.mark.parametrize("origin", ["cli", "environment"])
 def test_shared_model_cannot_bypass_the_opus_ceiling(tmp_path, monkeypatch, origin):
     arguments = ["--no-requirements"]
