@@ -33,6 +33,13 @@ ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = ROOT / "schemas/multi-repo-state.schema.json"
 STATE_NAME = ".assessment-state.json"
 WORK_NAME = ".assessment-work"
+# What a refused resume names when its recorded identity no longer matches.
+_IDENTITY_LABELS = (
+    ("scope_sha256", "the selected source code"),
+    ("configuration_sha256", "the assessment settings"),
+    ("runtime_sha256", "the plugin version"),
+    ("limits", "the budget or time limits"),
+)
 # The controller keeps accepted job receipts under the work directory.
 JOBS_NAME = "jobs"
 MAX_STATE_BYTES = 2_097_152
@@ -144,7 +151,16 @@ class AssessmentState:
         if self.resume:
             self.state = _read_state(self.path)
             if self.state["identity"] != self.identity:
-                raise ExchangeError("Assessment resume requires unchanged sources, settings and runtime")
+                changed = [
+                    label
+                    for key, label in _IDENTITY_LABELS
+                    if self.state["identity"].get(key) != self.identity.get(key)
+                ]
+                raise ExchangeError(
+                    "Assessment cannot resume: "
+                    + (", ".join(changed) or "its identity")
+                    + " changed since it started; start a fresh assessment"
+                )
             accounting = self.state["accounting"]
             if not math.isfinite(accounting["spent_usd"]):
                 raise ExchangeError("Assessment resume cost accounting is invalid")

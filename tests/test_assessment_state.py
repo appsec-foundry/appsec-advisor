@@ -94,13 +94,21 @@ def test_complete_session_binds_deliverables_and_detects_later_changes(scope):
             pytest.fail("Altered deliverables must not be accepted")
 
 
-@pytest.mark.parametrize("field,value", [("configuration", {"stride_model": "sonnet"}), ("runtime_sha256", "b" * 64)])
-def test_changed_settings_or_runtime_reject_resume(scope, field, value):
+@pytest.mark.parametrize(
+    "field,value,named",
+    [
+        ("configuration", {"stride_model": "sonnet"}, "the assessment settings changed"),
+        ("runtime_sha256", "b" * 64, "the plugin version changed"),
+        ("budget", AssessmentBudget(2.0, 0.05, 10, 60), "the budget or time limits changed"),
+    ],
+)
+def test_changed_settings_or_runtime_reject_resume_and_name_the_change(scope, field, value, named):
     with lifecycle(scope).hold():
         pass
-    with pytest.raises(ExchangeError, match="unchanged"):
+    with pytest.raises(ExchangeError, match=f"cannot resume: {named} .*fresh assessment") as caught:
         with lifecycle(scope, resume=True, **{field: value}).hold():
             pytest.fail("Changed request must not resume")
+    assert "source code" not in str(caught.value)
 
 
 def test_changed_source_cannot_resume_or_complete(scope):
