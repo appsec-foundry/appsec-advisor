@@ -52,10 +52,11 @@ def validate_discovery(scope: AssessmentScope, expected_repository: str, documen
         interface_ids.add(interface["id"])
         if (interface["role"] in {"publish", "consume"}) != (interface["protocol"] in {"AMQP", "Kafka"}):
             raise ArchitectureError("Interface role and protocol disagree")
-        # Only a forwarder may leave its operation open: it passes on whatever
-        # path it receives. Every served route and topic names its operation.
-        if interface["operation"] is None and interface["role"] != "request":
-            raise ArchitectureError("Only a forwarding request may omit its operation")
+        # A forwarder passes on whatever path it receives and a listener
+        # serves no single route, so both may leave the operation open. A
+        # message always names its topic.
+        if interface["operation"] is None and interface["role"] in {"publish", "consume"}:
+            raise ArchitectureError("A published or consumed message must name its topic")
         quotes = []
         for reference in interface["evidence"]:
             try:
@@ -321,7 +322,8 @@ def reconcile(scope: AssessmentScope, discoveries: list[dict]) -> dict:
         binding = identity["name"]
         family = _PROTOCOL_FAMILY.get(sender["protocol"], sender["protocol"])
         receiving = "consume" if family in _MESSAGING else "serve"
-        # A forwarder without its own operation reaches any route of its peer.
+        # A forwarder without its own operation reaches any route of its peer;
+        # a fixed operation needs a receiver that names the same route.
         operation = None if sender["operation"] is None else _operation(sender["operation"])
         port = _address_parts(sender.get("address"))[2]
         # A peer shares the protocol family, the operation and the deployment
@@ -339,7 +341,10 @@ def reconcile(scope: AssessmentScope, discoveries: list[dict]) -> dict:
                 and receiver["role"] == receiving
                 and receiver["repository_id"] != sender["repository_id"]
                 and _PROTOCOL_FAMILY.get(receiver["protocol"], receiver["protocol"]) == family
-                and (operation is None or _operation(receiver["operation"]) == operation)
+                and (
+                    operation is None
+                    or (receiver["operation"] is not None and _operation(receiver["operation"]) == operation)
+                )
                 and (host is None or peer_host is None or host == peer_host)
             ):
                 peers.append((receiver, peer_host, match))

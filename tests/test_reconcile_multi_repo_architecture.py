@@ -333,8 +333,24 @@ def test_a_catch_all_forwarder_reaches_its_one_bound_peer(tmp_path):
     assert "ambiguous-peer" in {r["reason"] for r in result["unresolved"]}
 
 
-def test_only_a_forwarding_request_may_omit_its_operation(tmp_path):
-    _, documents = fixture(tmp_path)
-    scope = _rewrite(tmp_path, documents, [("http://ledger:9000", None, "POST /records"), (None, None, None)])
-    with pytest.raises(architecture.ArchitectureError, match="forwarding"):
+def test_a_message_must_name_its_topic(tmp_path):
+    _, documents = fixture(tmp_path, protocol="Kafka", operation="orders", address="kafka:9092")
+    scope = _rewrite(tmp_path, documents, [("kafka:9092", None, "orders"), ("kafka:9092", None, None)])
+    with pytest.raises(architecture.ArchitectureError, match="topic"):
         architecture.reconcile(scope, documents)
+
+
+@pytest.mark.parametrize("sender_operation,joined", [("POST /records", False), (None, True)])
+def test_a_listener_without_a_route_joins_only_a_catch_all_forwarder(tmp_path, sender_operation, joined):
+    _, documents = fixture(tmp_path)
+    service = {"deploy/service.yaml": SERVICE.format(name="ledger").encode()}
+    scope = _rewrite(
+        tmp_path,
+        documents,
+        [("http://ledger:9000", None, sender_operation), ("0.0.0.0:9000", None, None)],
+        ({}, service),
+    )
+    result = architecture.reconcile(scope, documents)
+    assert bool(result["candidates"]) == joined
+    if not joined:
+        assert "no-matching-peer" in {r["reason"] for r in result["unresolved"]}

@@ -29,7 +29,8 @@ address, deployment, and operation must occur in those quotations. Record
 every outbound call or publish as a request or publish interface, including
 calls that forward or proxy inbound requests; cite the call site and the line
 that names its target address, such as a configuration default. A request
-that forwards whatever path it receives has a null operation. Use null
+that forwards whatever path it receives, and a listener that serves no
+single route, have a null operation; a topic is never null. Use null
 for address or deployment when their identity cannot be established. A shared
 route or topic name does not establish deployment identity. Do not infer
 authentication, encryption, authorization, or production activation from
