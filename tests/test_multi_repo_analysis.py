@@ -321,6 +321,79 @@ def test_local_architecture_cannot_promote_a_peer_without_connection_review(tmp_
         )
 
 
+def _role_architecture(evidence, identity, schemes, *, via_client, access=None):
+    """One legitimate role whose request path carries the given authentication schemes."""
+    role = dict(id="ext-member", name="Member", kind="legitimate-role", description="Uses the service.")
+    role["evidence"] = [evidence]
+    if access:
+        role["access"] = access
+
+    def flow(number, source, target, scheme=None, **extra):
+        row = dict(
+            id=f"df-{number:03d}",
+            label="Request",
+            protocol="HTTPS",
+            data_classification="internal",
+            direction="unidirectional",
+            evidence=[evidence],
+            provenance="architecture",
+            **{"from": source, "to": target},
+            **extra,
+        )
+        if scheme:
+            row["authentication"] = dict(scheme=scheme, scope="Request handler check.", evidence=[evidence])
+        return row
+
+    if via_client:
+        flows = [flow(1, "external", "component-ui", from_entity="ext-member", interaction=True)]
+        flows += [flow(n, "component-ui", "component-api", s) for n, s in enumerate(schemes, 2)]
+    else:
+        flows = [flow(n, "external", "component-api", s, from_entity="ext-member") for n, s in enumerate(schemes, 1)]
+    return dict(
+        **identity,
+        repository_id=evidence["repository_id"],
+        data_flows=flows,
+        external_entities=[role],
+        assets=[],
+    )
+
+
+@pytest.mark.parametrize("via_client", [False, True])
+@pytest.mark.parametrize(
+    ("schemes", "access", "rejected"),
+    [
+        (["none", "bearer"], None, True),
+        (["none", "bearer"], "internet-user", False),
+        (["none", "none"], None, False),
+    ],
+)
+def test_local_architecture_returns_an_underivable_role_access_to_its_author(
+    tmp_path, via_client, schemes, access, rejected
+):
+    """A mixed request path is rejected inside the exchange, where the analyst can still set `access`."""
+    scope, components, evidence, ranges, identity = sources(tmp_path)
+    rid = evidence[0]["repository_id"]
+    local = [dict(components[0], id="component-api")]
+    if via_client:
+        local.append(dict(components[0], id="component-ui", name="Browser client", tier="client"))
+    artifact = _role_architecture(evidence[0], identity, schemes, via_client=via_client, access=access)
+    call = (
+        lambda: stage.validate_local_architecture(  # noqa: E731
+            scope,
+            rid,
+            dict(components=local + components[1:], source_scope_sha256=identity["source_scope_sha256"]),
+            dict(component_inventory_fingerprint=FP),
+            artifact,
+            ranges[:1],
+        )
+    )
+    if rejected:
+        with pytest.raises(ExchangeError, match="ext-member: its request path reaches unauthenticated hops"):
+            call()
+    else:
+        call()
+
+
 def test_controls_cannot_borrow_evidence_from_another_owner(tmp_path):
     scope, components, evidence, ranges, identity = sources(tmp_path)
     artifact = dict(

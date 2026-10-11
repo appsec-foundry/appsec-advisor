@@ -215,6 +215,7 @@ def validate_local_architecture(scope, repository_id, components, receipt, artif
     # The combined flow handoff applies the single-root evidence guards later;
     # apply them here too, so this job can still correct its own result.
     from validators.validate_assessment_architecture import legacy_source_errors
+    from validators.validate_fragment import legitimate_role_errors
 
     errors = legacy_source_errors(
         scope,
@@ -224,6 +225,12 @@ def validate_local_architecture(scope, repository_id, components, receipt, artif
     )
     if errors:
         raise ExchangeError("Local architecture violates repository evidence rules: " + "; ".join(errors[:3]))
+    # The combined flow gate enforces the same role rules, but no job can still
+    # correct a role there. Roles and their own flows are repository-local, so
+    # checking them here lets the analyst repair its result in the exchange.
+    errors = legitimate_role_errors(artifact, local)
+    if errors:
+        raise ExchangeError("Local architecture violates legitimate-role rules: " + "; ".join(errors[:3]))
 
 
 def _comparison(value):
