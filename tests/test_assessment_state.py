@@ -207,11 +207,14 @@ def _fail(state):
     with pytest.raises(RuntimeError):
         with state.hold():
             (state.directory / "jobs").mkdir()
+            (state.directory / "jobs" / "job-000000000000000000000000.json").write_text("{}")
+            (state.directory / "context").mkdir()
             raise RuntimeError("stage failed")
 
 
 @pytest.mark.parametrize("finish", ["failed", "interrupted"])
-def test_fresh_start_clears_what_an_unfinished_run_left(scope, finish):
+def test_fresh_start_clears_an_unfinished_run_but_keeps_its_job_cache(scope, finish):
+    """Accepted jobs stay reusable; the job layer rechecks each against its new request."""
     first = lifecycle(scope)
     if finish == "failed":
         _fail(first)
@@ -221,7 +224,10 @@ def test_fresh_start_clears_what_an_unfinished_run_left(scope, finish):
     assert stored(scope)["status"] == finish
     with lifecycle(scope).hold() as fresh:
         assert fresh.state["run_id"] != first.state["run_id"]
-        assert not (fresh.directory / "jobs").exists()
+        assert fresh.state["accounting"]["calls"] == 0
+        assert not (fresh.directory / "context").exists()
+        if finish == "failed":
+            assert (fresh.directory / "jobs" / "job-000000000000000000000000.json").exists()
 
 
 @pytest.mark.parametrize("extra", ["completed", "user-file", "malformed-state"])

@@ -209,3 +209,49 @@ def test_each_host_call_gets_at_most_the_per_call_time_limit(tmp_path):
     jobs.budget.deadline += 10 * MAX_CALL_SECONDS
     jobs.execute(**kwargs)
     assert granted and all(value <= MAX_CALL_SECONDS for value in granted)
+
+
+def _inherit(tmp_path, jobs, kwargs, **change):
+    """A fresh session over the job directory an unfinished earlier run left."""
+    budget = AssessmentBudget(1.0, 0.05, 10, 60)
+    host = Host([{"action": "complete", "reads": [], "artifact": {"result": "redone"}}])
+    fresh = AssessmentJobs(
+        jobs.scope, jobs.directory, budget, lambda role, ceiling: host, lambda: False, lambda: None, inherited=True
+    )
+    return fresh, host, {**kwargs, **change}
+
+
+def test_a_fresh_run_reuses_an_earlier_run_s_accepted_job_and_counts_its_cost(tmp_path):
+    jobs, host, kwargs, _ = setup(tmp_path)
+    jobs.execute(**kwargs)
+    fresh, fresh_host, request = _inherit(tmp_path, jobs, kwargs)
+    assert fresh.execute(**request) == {"result": "accepted"}
+    assert fresh_host.calls == 0
+    assert (fresh.budget.calls, fresh.budget.spent_usd) == (1, pytest.approx(0.01))
+
+
+@pytest.mark.parametrize("change", [{"instructions": "changed task"}, {"validate": "reject"}])
+def test_an_inherited_job_that_no_longer_fits_is_redone_not_fatal(tmp_path, change):
+    jobs, host, kwargs, _ = setup(tmp_path)
+    jobs.execute(**kwargs)
+    if change.get("validate") == "reject":
+
+        def stricter(artifact, ranges):
+            if artifact["result"] == "accepted":
+                raise ValueError("rule added since the earlier run")
+
+        change = {"validate": stricter}
+    fresh, fresh_host, request = _inherit(tmp_path, jobs, kwargs, **change)
+    assert fresh.execute(**request) == {"result": "redone"}
+    assert fresh_host.calls == 1
+
+
+def test_an_inherited_job_whose_artifact_changed_still_fails(tmp_path):
+    jobs, host, kwargs, _ = setup(tmp_path)
+    jobs.execute(**kwargs)
+    artifact = next(path for path in jobs.directory.iterdir() if not path.name.endswith(".receipt.json"))
+    artifact.write_text(json.dumps({"result": "changed"}))
+    fresh, fresh_host, request = _inherit(tmp_path, jobs, kwargs)
+    with pytest.raises(ExchangeError, match="changed"):
+        fresh.execute(**request)
+    assert fresh_host.calls == 0

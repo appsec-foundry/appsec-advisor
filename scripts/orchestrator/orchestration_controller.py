@@ -8080,7 +8080,16 @@ def _assessment_session(scope, arguments, *, budget, host_factory, resume=False,
         return host_factory(role, cfg[key], ceiling)
 
     with state.hold():
-        jobs = AssessmentJobs(scope, state.directory / "jobs", budget, factory, state.should_stop, state.checkpoint)
+        # A fresh session may reuse the accepted jobs of an unfinished earlier run.
+        jobs = AssessmentJobs(
+            scope,
+            state.directory / "jobs",
+            budget,
+            factory,
+            state.should_stop,
+            state.checkpoint,
+            inherited=not state.resume,
+        )
         yield cfg, state, jobs
         if _assessment_runtime_fingerprint() != state.identity["runtime_sha256"]:
             raise ControllerError("assessment runtime changed while the session was running")

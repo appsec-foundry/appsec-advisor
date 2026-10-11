@@ -181,14 +181,16 @@ class AssessmentState:
                 "accounting": {"calls": 0, "spent_usd": 0.0, "unavailable": False},
                 "deliverables": {},
             }
-            self.directory.mkdir(mode=0o700)
+            self.directory.mkdir(mode=0o700, exist_ok=True)
 
     def _discard_unfinished_run(self):
         """Clear what an unfinished earlier assessment left, or refuse a fresh start.
 
         Only its own state file and work directory qualify, and only while the
-        state is not complete. A completed run, a deliverable or any other file
-        still blocks, so a fresh start never erases a report or a user's file.
+        state is not complete. Its accepted jobs stay as a cache that the job
+        layer rechecks against each new request. A completed run, a deliverable
+        or any other file still blocks, so a fresh start never erases a report
+        or a user's file.
         """
         leftovers = {child.name for child in self.output.iterdir()} - {".appsec-lock", ".appsec-lock.guard"}
         if not leftovers:
@@ -200,8 +202,16 @@ class AssessmentState:
                 status = None
             if status not in (None, "complete"):
                 if WORK_NAME in leftovers:
+                    # Accepted jobs stay as a cache the job layer rechecks
+                    # against each new request; everything else is cleared.
                     _real_directory(self.directory)
-                    shutil.rmtree(self.directory)
+                    for child in self.directory.iterdir():
+                        if child.name == JOBS_NAME:
+                            _real_directory(child)
+                        elif child.is_dir() and not child.is_symlink():
+                            shutil.rmtree(child)
+                        else:
+                            child.unlink()
                 self.path.unlink()
                 return
         raise ExchangeError(

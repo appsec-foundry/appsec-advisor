@@ -76,7 +76,13 @@ def _ranges(slices) -> list[dict]:
 
 
 class AssessmentJobs:
-    def __init__(self, scope, directory, budget, host_factory, should_stop, checkpoint):
+    def __init__(self, scope, directory, budget, host_factory, should_stop, checkpoint, *, inherited=False):
+        """`inherited` marks receipts already present as an earlier, unfinished run's cache.
+
+        Such a job is reused only when it still matches its request and passes
+        today's acceptance checks, and is redone otherwise. A receipt this
+        session wrote, or a resumed session's, stays strict.
+        """
         self.scope = scope
         self.directory = Path(directory)
         self.budget = budget
@@ -88,6 +94,11 @@ class AssessmentJobs:
             raise ExchangeError("Assessment job directory must be a real directory")
         self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.directory.chmod(0o700)
+        self._inherited = (
+            {path.name.removesuffix(".receipt.json") for path in self.directory.glob("*.receipt.json")}
+            if inherited
+            else set()
+        )
 
     def execute(self, **kwargs):
         """Return the accepted artifact of one controller-selected job."""
@@ -125,24 +136,42 @@ class AssessmentJobs:
             validate(artifact, ranges)
 
         if receipt_path.exists() or receipt_path.is_symlink():
+            inherited = job_id in self._inherited
+            self._inherited.discard(job_id)
             receipt = _read_json(receipt_path)
-            if (
-                not validator.is_valid(receipt)
-                or receipt["job_id"] != job_id
-                or receipt["role"] != role
-                or receipt["request_sha256"] != request_sha256
-                or receipt["scope_sha256"] != self.scope_sha256
-            ):
-                raise ExchangeError("Assessment job receipt is stale or belongs to another request")
-            artifact = _read_json(artifact_path)
-            if digest(artifact) != receipt["artifact_sha256"]:
-                raise ExchangeError("Assessment job artifact changed after acceptance")
-            accept(artifact, receipt["source_ranges"])
-            slices = tuple(
-                self.scope.read(r["repository_id"], r["path"], r["start_line"], r["end_line"])
-                for r in receipt["source_ranges"]
+            current = (
+                validator.is_valid(receipt)
+                and receipt["job_id"] == job_id
+                and receipt["role"] == role
+                and receipt["request_sha256"] == request_sha256
+                and receipt["scope_sha256"] == self.scope_sha256
             )
-            return ExchangeResult(copy.deepcopy(artifact), slices, receipt["calls"], receipt["usd"])
+            if not current and not inherited:
+                raise ExchangeError("Assessment job receipt is stale or belongs to another request")
+            if current:
+                artifact = _read_json(artifact_path)
+                # A changed artifact is tampering, not a changed request: never redo it silently.
+                if digest(artifact) != receipt["artifact_sha256"]:
+                    raise ExchangeError("Assessment job artifact changed after acceptance")
+                try:
+                    accept(artifact, receipt["source_ranges"])
+                except ValueError:
+                    if not inherited:
+                        raise
+                    current = False
+            if current:
+                if inherited:
+                    # The reused calls count against this run, so its accounting covers every receipt.
+                    self.budget.calls += receipt["calls"]
+                    self.budget.spent_usd += receipt["usd"]
+                    self.checkpoint()
+                slices = tuple(
+                    self.scope.read(r["repository_id"], r["path"], r["start_line"], r["end_line"])
+                    for r in receipt["source_ranges"]
+                )
+                return ExchangeResult(copy.deepcopy(artifact), slices, receipt["calls"], receipt["usd"])
+            receipt_path.unlink()
+            artifact_path.unlink(missing_ok=True)
 
         # Persist the call reservation before the host starts. The caller's
         # checkpoint retains failed/unknown accounting and owns resume policy.
