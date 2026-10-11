@@ -540,6 +540,8 @@ def test_each_model_call_reports_progress_without_echoing_model_text(monkeypatch
     from runtime.analyst_host import HostReply, HostTimeout
 
     class Inner:
+        on_event = None
+
         def __init__(self, replies):
             self.replies = iter(replies)
 
@@ -547,29 +549,57 @@ def test_each_model_call_reports_progress_without_echoing_model_text(monkeypatch
             reply = next(self.replies)
             if isinstance(reply, Exception):
                 raise reply
-            if reply.payload.get("slow"):
-                clock.sleep(0.25)
+            for event in reply.payload.pop("events", []):
+                self.on_event(event)
+                clock.sleep(0.15)
             return reply
 
     lines = []
     monkeypatch.setattr(_ReportedTransport, "HEARTBEAT_SECONDS", 0.1)
+    thinking = {"type": "system", "subtype": "thinking_tokens", "estimated_tokens": 4800}
+    writing = {"type": "stream_event", "event": {"delta": {"partial_json": '{"threats": [\x1b[2J injected'}}}
+    reads = [{"repository_id": "repo-1", "path": "app.py\x1b", "start_line": 1, "end_line": 159}]
     inner = Inner(
         [
-            HostReply({"action": "read", "reads": [{}, {}], "artifact": None}, 0.01),
-            HostReply({"action": "complete", "reads": [], "artifact": {"x": "\x1b[2Jinjected"}, "slow": True}, 0.21),
+            HostReply({"action": "read", "reads": reads, "artifact": None}, 0.01),
+            HostReply(
+                {"action": "complete", "reads": [], "artifact": {"threats": [{}] * 9}, "events": [thinking, writing]},
+                0.21,
+            ),
             HostTimeout("host call exceeded its time limit"),
         ]
     )
-    transport = _ReportedTransport(inner, lines.append)
+    transport = _ReportedTransport(inner, lines.append, {"repo-1": "user-service"})
     transport.invoke("s", "p", {}, 30, lambda: False)
     transport.invoke("s", "p", {}, 30, lambda: False)
     with pytest.raises(HostTimeout):
         transport.invoke("s", "p", {}, 30, lambda: False)
-    assert lines[0].startswith("model requested 2 source range(s) (") and lines[0].endswith(", $0.01)")
-    assert any(line.startswith("waiting for the model … 1 min") for line in lines)
-    assert any(line.startswith("model returned a result (") and line.endswith(", $0.21)") for line in lines)
-    assert lines[-1].startswith("model call exceeded its time limit after")
+    assert lines[0].startswith("reads user-service/app.py?:1-159 (") and lines[0].endswith(", $0.01)")
+    assert any(line.endswith("model is thinking (~4,800 tokens)") for line in lines)
+    assert any("model is writing its result (~" in line for line in lines)
+    assert any(line.startswith("result: 9 threats (") and line.endswith(", $0.21)") for line in lines)
+    assert lines[-1].startswith("model call stopped after") and lines[-1].endswith("its time limit")
     assert not any("injected" in line or "\x1b" in line for line in lines)
+
+
+def test_a_silent_model_call_is_reported_as_waiting_for_the_api(monkeypatch):
+    import time as clock
+
+    from orchestrator.orchestration_controller import _ReportedTransport
+    from runtime.analyst_host import HostReply
+
+    class Silent:
+        on_event = None
+
+        def invoke(self, *args):
+            clock.sleep(0.35)
+            return HostReply({"action": "complete", "reads": [], "artifact": {}}, None)
+
+    lines = []
+    monkeypatch.setattr(_ReportedTransport, "HEARTBEAT_SECONDS", 0.1)
+    monkeypatch.setattr(_ReportedTransport, "SILENT_SECONDS", 0)
+    _ReportedTransport(Silent(), lines.append).invoke("s", "p", {}, 30, lambda: False)
+    assert any("no model activity for" in line and "(waiting for the API)" in line for line in lines)
 
 
 def test_each_cli_host_call_records_its_events_in_its_own_file(tmp_path):
@@ -580,4 +610,6 @@ def test_each_cli_host_call_records_its_events_in_its_own_file(tmp_path):
     first, second = factory("stride_analyzer", "sonnet", 1.0), factory("control_analyst", "sonnet", 1.0)
     assert first.events_path == tmp_path / "events" / "0001-stride_analyzer.jsonl"
     assert second.events_path == tmp_path / "events" / "0002-control_analyst.jsonl"
-    assert _assessment_cli_host_factory(tmp_path / "hosts")("x", "sonnet", 1.0).events_path is None
+    assert first.max_thinking_tokens == 20_000
+    unrecorded = _assessment_cli_host_factory(tmp_path / "hosts")("x", "sonnet", 1.0)
+    assert unrecorded.events_path is None and unrecorded.max_thinking_tokens is None

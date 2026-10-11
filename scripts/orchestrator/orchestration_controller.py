@@ -8496,6 +8496,11 @@ ASSESSMENT_CALL_USD = 2.0
 # One tool-less call returns one bounded artifact. Unbounded reasoning spent a
 # whole call budget on thinking without returning one (live run, 2026-10-10).
 ASSESSMENT_EFFORT = "medium"
+# Adaptive effort leaves thinking unbounded, and the host ignores a thinking
+# budget. A replayed STRIDE completion thought 4,850-7,600 tokens in three
+# runs; a live one passed 18,950 without output and hit the 900 s limit
+# (2026-10-11). A call past this estimate is stopped and retried once.
+ASSESSMENT_MAX_THINKING_TOKENS = 20_000
 ASSESSMENT_DEFAULT_SECONDS = 14_400
 # Lifecycle and mode options that the combined assessment does not provide.
 # They are rejected before admission instead of being silently ignored.
@@ -8579,17 +8584,51 @@ def _assessment_preflight(roots: list[str]) -> None:
 
 
 class _ReportedTransport:
-    """Report each host call's progress without echoing model text.
+    """Report what each host call is doing without echoing model text.
 
-    A call prints a heartbeat each minute while it runs, then its action, its
-    duration and its cost; a timed-out call says so before the budget retries
-    it. Only the action and a count of requested reads come from the reply.
+    While a call runs, a line each minute says whether the model is thinking,
+    writing its result, or silent (waiting for the API); afterwards a line names
+    the source ranges it requested or counts the lists in its result, with
+    duration and cost. Paths are admitted repository files, shown printable
+    only; result field names are reduced to identifier characters.
     """
 
     HEARTBEAT_SECONDS = 60
+    SILENT_SECONDS = 90
 
-    def __init__(self, inner, report):
-        self.inner, self.report = inner, report
+    def __init__(self, inner, report, labels=None):
+        self.inner, self.report, self.labels = inner, report, labels or {}
+        self.phase, self.thinking, self.written, self.active = "starting", 0, 0, time.monotonic()
+        if hasattr(inner, "on_event"):
+            inner.on_event = self._observe
+
+    def _observe(self, event):
+        self.active = time.monotonic()
+        if event.get("type") == "system" and event.get("subtype") == "thinking_tokens":
+            self.phase = "thinking"
+            self.thinking = int(event.get("estimated_tokens") or 0)
+        elif event.get("type") == "stream_event":
+            delta = (event.get("event") or {}).get("delta") or {}
+            if "thinking" in delta:
+                self.phase = "thinking"
+            elif delta.get("partial_json") or delta.get("text"):
+                self.phase = "writing"
+                self.written += len(delta.get("partial_json") or delta.get("text") or "")
+
+    def _status(self, minutes):
+        quiet = round(time.monotonic() - self.active)
+        if quiet >= self.SILENT_SECONDS:
+            return f"{minutes} min: no model activity for {quiet} s (waiting for the API)"
+        if self.phase == "writing":
+            return f"{minutes} min: model is writing its result (~{self.written:,} characters)"
+        if self.phase == "thinking":
+            return f"{minutes} min: model is thinking (~{self.thinking:,} tokens)"
+        return f"{minutes} min: waiting for the model's first response"
+
+    def _source(self, row):
+        label = self.labels.get(row.get("repository_id"), "")
+        path = re.sub(r"[^\w./@+-]", "?", str(row.get("path") or ""))[:120]
+        return f"{label + '/' if label else ''}{path}:{row.get('start_line')}-{row.get('end_line')}"
 
     def invoke(self, system, prompt, schema, timeout_s, should_stop):
         import threading
@@ -8597,30 +8636,40 @@ class _ReportedTransport:
         from runtime.analyst_host import HostTimeout
 
         started = time.monotonic()
+        self.phase, self.thinking, self.written, self.active = "starting", 0, 0, started
         done = threading.Event()
 
         def heartbeat():
             minutes = 0
             while not done.wait(self.HEARTBEAT_SECONDS):
                 minutes += 1
-                self.report(f"waiting for the model … {minutes} min")
+                self.report(self._status(minutes))
 
         threading.Thread(target=heartbeat, daemon=True).start()
         try:
             reply = self.inner.invoke(system, prompt, schema, timeout_s, should_stop)
-        except HostTimeout:
-            self.report(f"model call exceeded its time limit after {round(time.monotonic() - started)} s")
+        except HostTimeout as exc:
+            reason = "thinking limit" if "thinking limit" in str(exc) else "time limit"
+            self.report(f"model call stopped after {round(time.monotonic() - started)} s: it exceeded its {reason}")
             raise
         finally:
             done.set()
-        seconds = round(time.monotonic() - started)
-        cost = f", ${reply.usd:.2f}" if isinstance(reply.usd, (int, float)) else ""
+        timing = f"{round(time.monotonic() - started)} s"
+        if isinstance(reply.usd, (int, float)):
+            timing += f", ${reply.usd:.2f}"
         payload = reply.payload if isinstance(reply.payload, dict) else {}
-        reads = payload.get("reads") if isinstance(payload.get("reads"), list) else []
         if payload.get("action") == "read":
-            self.report(f"model requested {len(reads)} source range(s) ({seconds} s{cost})")
+            rows = [r for r in payload.get("reads") or [] if isinstance(r, dict)]
+            shown = ", ".join(self._source(r) for r in rows[:4]) + (f" +{len(rows) - 4} more" if len(rows) > 4 else "")
+            self.report(f"reads {shown or 'nothing'} ({timing})")
         else:
-            self.report(f"model returned a result ({seconds} s{cost})")
+            artifact = payload.get("artifact") if isinstance(payload.get("artifact"), dict) else {}
+            counts = [
+                f"{len(value)} {re.sub(r'[^a-z_]', '', str(key))[:40]}"
+                for key, value in artifact.items()
+                if isinstance(value, list)
+            ][:4]
+            self.report(f"result: {', '.join(counts) or 'returned'} ({timing})")
         return reply
 
 
@@ -8647,6 +8696,7 @@ def _assessment_cli_host_factory(work_root: Path, events_dir: Path | None = None
             executable=executable,
             effort=ASSESSMENT_EFFORT,
             events_path=events_dir / f"{next(sequence):04d}-{role}.jsonl" if events_dir else None,
+            max_thinking_tokens=ASSESSMENT_MAX_THINKING_TOKENS if events_dir else None,
         )
 
     return factory
@@ -8943,9 +8993,13 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
             # Per-call detail lines show that a long model call is still alive.
             plain = factory
 
+            names = {row["repository_id"]: row["label"] for row in scope.inventory()["repositories"]}
+
             def factory(role, model, ceiling):
                 return _ReportedTransport(
-                    plain(role, model, ceiling), lambda text: print(f"  · {text}", file=sys.stderr, flush=True)
+                    plain(role, model, ceiling),
+                    lambda text: print(f"  · {text}", file=sys.stderr, flush=True),
+                    names,
                 )
 
         try:

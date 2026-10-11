@@ -234,3 +234,41 @@ def test_an_unrecorded_call_keeps_the_plain_json_output(tmp_path):
     transport(tmp_path, f"print(json.dumps({REPLY!r}))\n").invoke("s", "p", {}, 30, lambda: False)
     argv = json.loads((tmp_path / "host-log.json").read_text())["argv"]
     assert argv[argv.index("--output-format") + 1] == "json" and "--verbose" not in argv
+
+
+def test_streamed_output_is_counted_but_never_written_to_the_event_file(tmp_path):
+    events = tmp_path / "events.jsonl"
+    delta = {"type": "stream_event", "event": {"type": "content_block_delta", "delta": {"partial_json": "SECRET-TEXT"}}}
+    body = (
+        f"[print(json.dumps({delta!r}), flush=True) for _ in range(3)]\n"
+        f"print(json.dumps({{'type': 'result', **{REPLY!r}}}), flush=True)\n"
+    )
+    seen = []
+    transport = _streaming(tmp_path, body, events)
+    transport.on_event = seen.append
+    transport.invoke("s", "p", {}, 30, lambda: False)
+    argv = json.loads((tmp_path / "host-log.json").read_text())["argv"]
+    assert "--include-partial-messages" in argv
+    assert "SECRET-TEXT" not in events.read_text()
+    assert '"output_chars": 33' in events.read_text()
+    assert sum(1 for event in seen if event["type"] == "stream_event") == 3
+
+
+@pytest.mark.parametrize("estimate,stopped", [(25_000, True), (15_000, False)])
+def test_a_call_whose_thinking_runs_away_is_stopped_as_a_time_limit(tmp_path, estimate, stopped):
+    events = tmp_path / "events.jsonl"
+    thinking = {"type": "system", "subtype": "thinking_tokens", "estimated_tokens": estimate}
+    body = (
+        f"print(json.dumps({thinking!r}), flush=True)\n"
+        "time.sleep(1)\n"
+        f"print(json.dumps({{'type': 'result', **{REPLY!r}}}), flush=True)\n"
+    )
+    transport = host.ClaudeCliTransport(
+        tmp_path / "work", executable=fake_host(tmp_path, body), events_path=events, max_thinking_tokens=20_000
+    )
+    if stopped:
+        with pytest.raises(host.HostTimeout, match="thinking limit of 20,000 tokens"):
+            transport.invoke("s", "p", {}, 30, lambda: False)
+    else:
+        assert transport.invoke("s", "p", {}, 30, lambda: False).payload == {"ok": True}
+    assert str(estimate) in events.read_text()

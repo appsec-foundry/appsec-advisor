@@ -51,6 +51,7 @@ DEFAULT_MODEL = "sonnet"
 EXPLORE_TOOLS = "Read,Grep,Glob"
 TERMINATE_GRACE_SECONDS = 5
 POLL_SECONDS = 0.2
+EVENT_SUMMARY_SECONDS = 5
 MARKER = "UNTRUSTED_ANALYSIS_INPUT"
 MARKER_ESCAPED = "UNTRUSTED_ANALYSIS_\\u0049NPUT"
 # Variables a model session never needs; dropped so they cannot leak into it.
@@ -177,11 +178,15 @@ class ClaudeCliTransport:
         effort: str | None = None,
         read_root: Path | None = None,
         events_path: Path | None = None,
+        max_thinking_tokens: int | None = None,
     ):
         """`events_path` records the host's event stream, one timestamped line per event.
 
         The file is written while the call runs, so a call stopped at its time
         limit still shows its turns, thinking estimates and retries.
+        `max_thinking_tokens` stops a recorded call whose streamed thinking
+        estimate exceeds it, as a time-limit stop; the host itself offers no
+        such bound with adaptive effort.
         """
         if effort is not None and effort not in ("low", "medium", "high", "xhigh", "max"):
             raise ValueError("unsupported host effort level")
@@ -192,6 +197,10 @@ class ClaudeCliTransport:
         self.effort = effort
         self.read_root = read_root
         self.events_path = events_path
+        self.max_thinking_tokens = max_thinking_tokens
+        # Receives every parsed event of a recorded call, including partial
+        # model output; a consumer may count it but must never display it.
+        self.on_event: Callable[[dict], None] | None = None
 
     def argv(self, system: str, schema: dict) -> list[str]:
         return [
@@ -209,7 +218,7 @@ class ClaudeCliTransport:
             "--permission-prompts",
             "none",
             "--output-format",
-            *(["stream-json", "--verbose"] if self.events_path is not None else ["json"]),
+            *(["stream-json", "--verbose", "--include-partial-messages"] if self.events_path is not None else ["json"]),
             "--json-schema",
             json.dumps(schema),
             "--system-prompt",
@@ -249,7 +258,15 @@ class ClaudeCliTransport:
             if self.events_path is None:
                 stdout, _ = _communicate(proc, prompt.encode("utf-8"), deadline, should_stop)
             else:
-                stdout = _communicate_events(proc, prompt.encode("utf-8"), deadline, should_stop, self.events_path)
+                stdout = _communicate_events(
+                    proc,
+                    prompt.encode("utf-8"),
+                    deadline,
+                    should_stop,
+                    self.events_path,
+                    self.on_event,
+                    self.max_thinking_tokens,
+                )
         finally:
             _stop_group(proc)
         try:
@@ -302,25 +319,65 @@ def _communicate(
 
 
 def _communicate_events(
-    proc: subprocess.Popen, data: bytes, deadline: float, should_stop: Callable[[], bool], events_path: Path
+    proc: subprocess.Popen,
+    data: bytes,
+    deadline: float,
+    should_stop: Callable[[], bool],
+    events_path: Path,
+    on_event: Callable[[dict], None] | None = None,
+    max_thinking_tokens: int | None = None,
 ) -> bytes:
-    """Record each event line with its elapsed seconds as it arrives; return the result event."""
+    """Record each event line with its elapsed seconds as it arrives; return the result event.
+
+    Partial output chunks are only counted: one summary line every few seconds
+    records how much thinking and output text has streamed, without the text.
+    """
     stdin, proc.stdin = proc.stdin, None
     if stdin is not None:
         threading.Thread(target=_feed, args=(stdin, data), daemon=True).start()
     started = time.monotonic()
     result: list[bytes] = []
 
+    streamed = {"thinking_chars": 0, "output_chars": 0}
+    thinking = [0]
+    last_summary = 0.0
+
     def pump(pipe, sink):
+        nonlocal last_summary
         for line in iter(pipe.readline, b""):
-            sink.write(f"{time.monotonic() - started:.1f}\t".encode() + line)
-            sink.flush()
+            elapsed = time.monotonic() - started
             try:
                 event = json.loads(line)
             except (json.JSONDecodeError, UnicodeDecodeError):
-                continue
-            if isinstance(event, dict) and event.get("type") == "result":
-                result[:] = [line]
+                event = None
+            if isinstance(event, dict) and event.get("type") == "stream_event":
+                delta = (event.get("event") or {}).get("delta") or {}
+                text = delta.get("thinking") or delta.get("text") or delta.get("partial_json") or ""
+                key = "thinking_chars" if "thinking" in delta else "output_chars"
+                streamed[key] += len(text) if isinstance(text, str) else 0
+                if elapsed - last_summary >= EVENT_SUMMARY_SECONDS:
+                    last_summary = elapsed
+                    sink.write(
+                        f"{elapsed:.1f}\t".encode() + json.dumps({"type": "streamed", **streamed}).encode() + b"\n"
+                    )
+                    sink.flush()
+            else:
+                sink.write(f"{elapsed:.1f}\t".encode() + line)
+                sink.flush()
+            if isinstance(event, dict):
+                if event.get("subtype") == "thinking_tokens" and isinstance(event.get("estimated_tokens"), int):
+                    thinking[0] = max(thinking[0], event["estimated_tokens"])
+                if event.get("type") == "result":
+                    result[:] = [line]
+                if on_event is not None:
+                    try:
+                        on_event(event)
+                    except Exception:  # noqa: BLE001 - reporting must never break the call
+                        pass
+        if any(streamed.values()):
+            elapsed = time.monotonic() - started
+            sink.write(f"{elapsed:.1f}\t".encode() + json.dumps({"type": "streamed", **streamed}).encode() + b"\n")
+            sink.flush()
 
     events_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with open(events_path, "wb") as sink:
@@ -330,6 +387,8 @@ def _communicate_events(
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise HostTimeout("host call exceeded its time limit")
+            if max_thinking_tokens is not None and thinking[0] > max_thinking_tokens:
+                raise HostTimeout(f"host call exceeded its thinking limit of {max_thinking_tokens:,} tokens")
             if should_stop():
                 raise HostCancelled("job cancelled")
             try:
