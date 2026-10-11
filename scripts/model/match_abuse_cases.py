@@ -591,7 +591,12 @@ _LOCATORS = ("detector_rules", "path_patterns", "route_patterns")
 
 
 def _descriptive_preselection(
-    case: dict, findings: list[dict], repo_root: Path | None, max_files: int, routes: list[dict] | None
+    case: dict,
+    findings: list[dict],
+    repo_root: Path | None,
+    max_files: int,
+    routes: list[dict] | None,
+    owned: frozenset[str] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Return (preselected source files, related findings).
 
@@ -611,6 +616,10 @@ def _descriptive_preselection(
     runtime: dict[str, Path] = {}
     for path in _repo_source_files(repo_root):
         rel = path.relative_to(repo_root)
+        # `owned` limits the search to files a component lists, so a confirmed
+        # step can become a finding of the component that owns its file.
+        if owned is not None and rel.as_posix() not in owned:
+            continue
         if path.suffix.lower() in _DESCRIPTIVE_SOURCE_SUFFIXES and _is_runtime_surface_evidence(rel.as_posix()):
             runtime[rel.as_posix()] = rel
     route_patterns = [str(v).lower() for v in qualifier.get("route_patterns") or [] if str(v).strip()]
@@ -662,6 +671,7 @@ def _match_descriptive(
     repo_root: Path | None,
     max_files: int,
     routes: list[dict] | None = None,
+    owned: frozenset[str] | None = None,
 ) -> dict:
     """Preselect a descriptive case deterministically; the verifier binds it.
 
@@ -676,7 +686,9 @@ def _match_descriptive(
     )
     declared = [locator for locator in _LOCATORS if qualifier.get(locator)]
     files, related = (
-        _descriptive_preselection(case, findings, repo_root, max_files, routes) if not unmet_signals else ([], [])
+        _descriptive_preselection(case, findings, repo_root, max_files, routes, owned)
+        if not unmet_signals
+        else ([], [])
     )
     unlocated = not files and not unmet_signals
     applicable = not unmet_signals and not unlocated
@@ -743,9 +755,10 @@ def match_case(
     repo_root: Path | None = None,
     max_descriptive_files: int = 12,
     routes: list[dict] | None = None,
+    owned: frozenset[str] | None = None,
 ) -> dict:
     if is_descriptive(case):
-        return _match_descriptive(case, findings, signals, repo_root, max_descriptive_files, routes)
+        return _match_descriptive(case, findings, signals, repo_root, max_descriptive_files, routes, owned)
     applicable, unmet_signals, unmet_paths = _scope_status(case, signals, repo_root)
     step_matches = _match_chain(case, findings, repo_root if applicable else None)
     # Second pass: each step prefers findings in files its sibling steps
@@ -1127,6 +1140,22 @@ def load_routes(out_dir: Path) -> list[dict] | None:
     ]
 
 
+def _component_owned_files(out_dir: Path) -> frozenset[str]:
+    """Files the finalized components list literally; empty when the inventory is missing or malformed."""
+    try:
+        document = json.loads((out_dir / ".components.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return frozenset()
+    rows = document.get("components") if isinstance(document, dict) else None
+    return frozenset(
+        str(path)
+        for row in rows or []
+        if isinstance(row, dict)
+        for path in row.get("paths") or []
+        if isinstance(path, str)
+    )
+
+
 def cmd_match(args: argparse.Namespace) -> int:
     out_dir = Path(args.output_dir)
     findings_path = Path(args.findings) if args.findings else out_dir / ".threats-merged.json"
@@ -1175,8 +1204,11 @@ def cmd_match(args: argparse.Namespace) -> int:
         cases = [c for c in cases if c.get("id") in only_ids]
     max_files = limits["descriptive_source_files"]
     routes = load_routes(out_dir)
+    owned = _component_owned_files(out_dir) if getattr(args, "component_owned_only", False) else None
     matches = [
-        match_case(c, findings, signals, repo_root=repo_root, max_descriptive_files=max_files, routes=routes)
+        match_case(
+            c, findings, signals, repo_root=repo_root, max_descriptive_files=max_files, routes=routes, owned=owned
+        )
         for c in cases
     ]
     findings_by_id = {_finding_id(finding): finding for finding in findings}
@@ -1376,6 +1408,11 @@ def main(argv: list[str] | None = None) -> int:
         help="target repo root; loads <repo>/docs/security/abuse-cases/ and <repo>/.appsec/abuse-cases/",
     )
     m.add_argument("--signals", default=None, help="recon signals json (optional)")
+    m.add_argument(
+        "--component-owned-only",
+        action="store_true",
+        help="preselect only files that <output-dir>/.components.json lists literally",
+    )
     m.set_defaults(func=cmd_match)
 
     lc = sub.add_parser("list-candidates", help="print candidate ids")

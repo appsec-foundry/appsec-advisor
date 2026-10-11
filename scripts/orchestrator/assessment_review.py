@@ -306,6 +306,8 @@ def run_abuse_cases(
             str(root),
             "--signals",
             str(workspace / ".recon-signals.json"),
+            # A confirmed step becomes a finding of the component listing its file.
+            "--component-owned-only",
             *org,
         ],
         acceptable=(0, 1, 2),

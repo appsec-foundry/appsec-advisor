@@ -1218,6 +1218,29 @@ def test_descriptive_case_is_preselected_from_runtime_paths(tmp_path: Path):
     assert not any(s["matched"] for s in m["step_matches"])
 
 
+@pytest.mark.parametrize("owned_extra", [[], ["src/other.ts"]])
+def test_component_owned_preselection_skips_files_no_component_lists(tmp_path: Path, owned_extra):
+    repo = _repo(tmp_path)
+    finding = _finding("F-001", "role update", file="src/roles/assign.ts", line=3)
+    unowned = mac.match_case(_descriptive(), [finding], None, repo_root=repo, owned=frozenset(owned_extra))
+    assert unowned["preselected_sources"] == [] and unowned["structural_verdict"] != "candidate"
+    owned = frozenset(["src/roles/assign.ts", *owned_extra])
+    m = mac.match_case(_descriptive(), [finding], None, repo_root=repo, owned=owned)
+    assert m["preselected_sources"] == ["src/roles/assign.ts"]
+    # Without the option every runtime file stays searchable, as in a single-repository run.
+    assert mac.match_case(_descriptive(), [finding], None, repo_root=repo)["preselected_sources"] == [
+        "src/roles/assign.ts"
+    ]
+
+
+def test_component_owned_files_come_from_the_literal_inventory(tmp_path: Path):
+    (tmp_path / ".components.json").write_text(
+        json.dumps({"components": [{"id": "c", "paths": ["edge/app.js", 7]}, {"id": "d"}, "junk"]})
+    )
+    assert mac._component_owned_files(tmp_path) == frozenset({"edge/app.js"})
+    assert mac._component_owned_files(tmp_path / "missing") == frozenset()
+
+
 def test_descriptive_preselection_admits_only_executable_source(tmp_path: Path):
     repo = _repo(tmp_path)
     for name in ("roles.component.scss", "roles.component.html", "roles.md.bak", "roles.component.ts"):
