@@ -192,20 +192,29 @@ def test_host_schema_resource_identifiers_are_unambiguous(identifier):
 
 
 def test_a_selected_repository_is_not_automatically_readable_by_every_task(tmp_path):
-    admitted = view(tmp_path)
-    model = Model([read(), complete()])
-    with pytest.raises(host.ExchangeError, match="task's selection"):
-        host.run_exchange(
-            model,
-            admitted,
-            instructions="task",
-            context={},
-            artifact_schema=ARTIFACT,
-            allowed_sources=frozenset(),
-            timeout_s=30,
-            should_stop=lambda: False,
-        )
-    assert len(model.prompts) == 1
+    """An admitted file outside the task's selection is never served; the model is told its files."""
+    scope = AssessmentScope(
+        (
+            RepositoryView(
+                REPO, tmp_path / "source", "a" * 40, "b" * 64, {"app.py": b"print('frozen')\n", "admin.js": b"x()\n"}
+            ),
+        ),
+        tmp_path / "out",
+    )
+    model = Model([read("admin.js"), complete()])
+    result = host.run_exchange(
+        model,
+        scope,
+        instructions="task",
+        context={},
+        artifact_schema=ARTIFACT,
+        allowed_sources=frozenset({(REPO, "app.py")}),
+        timeout_s=30,
+        should_stop=lambda: False,
+    )
+    assert result.source_slices == () and not any("x()" in prompt for prompt in model.prompts)
+    assert "admin.js is not among this task's source files" in model.prompts[1]
+    assert "Read only these files: app.py" in model.prompts[1]
 
 
 def test_host_schema_drops_keywords_a_strict_host_rejects_but_keeps_structure():

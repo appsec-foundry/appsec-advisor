@@ -273,7 +273,17 @@ def run_exchange(
         for request in reply.payload["reads"]:
             key = tuple(request[k] for k in ("repository_id", "path", "start_line", "end_line"))
             if key[:2] not in allowed_sources:
-                raise ExchangeError("Model requested a source outside this task's selection")
+                # An admitted file outside this task's selection is a scope
+                # question the model can correct; anything not admitted is not.
+                if key[:2] not in admitted:
+                    raise ExchangeError("Model requested a source outside this task's selection")
+                seen.add(key)
+                range_feedback = {
+                    "reason": f"{key[1]} is not among this task's source files and was not served.",
+                    "instruction": "Read only these files: "
+                    + ", ".join(sorted(path for _, path in allowed_sources))[:MAX_FEEDBACK_CHARS],
+                }
+                continue
             # Each call is stateless; a slice already in source_slices is not
             # served twice and does not count against the read limit.
             if key in seen:
