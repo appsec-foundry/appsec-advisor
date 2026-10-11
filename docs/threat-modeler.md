@@ -117,7 +117,7 @@ Figure 2 connects actors, attack routes, underlying weaknesses and impact using 
 
 ## Example report: OWASP Juice Shop
 
-The [OWASP Juice Shop example](https://github.com/appsec-foundry/appsec-advisor-examples/blob/main/threat-modeler/threat-model-juice-shop-thorough-v0.6.0b4.md) shows a thorough assessment with evidence links, abuse cases, and attack paths.
+The [OWASP Juice Shop example](https://github.com/appsec-foundry/appsec-advisor-examples/blob/main/threat-modeler/threat-model-juice-shop-thorough-v0.6.0b5.md) shows a thorough assessment with evidence links, abuse cases, and attack paths.
 
 ![Figure 1a of the Juice Shop threat model](images/figure1-example.svg)
 
