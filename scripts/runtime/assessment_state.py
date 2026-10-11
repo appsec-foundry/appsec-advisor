@@ -88,12 +88,12 @@ def _deliverable(output: Path, name: str) -> str:
 
 
 class AssessmentState:
-    def __init__(self, scope, *, configuration, runtime_sha256, budget, resume=False):
+    def __init__(self, scope, *, configuration, runtime_sha256, budget, resume=False, replace=False):
         if not isinstance(scope, AssessmentScope) or not isinstance(budget, AssessmentBudget):
             raise ExchangeError("Assessment lifecycle requires an admitted scope and full budget")
         if not isinstance(runtime_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", runtime_sha256):
             raise ExchangeError("Assessment lifecycle requires the trusted runtime fingerprint")
-        self.scope, self.budget, self.resume = scope, budget, resume
+        self.scope, self.budget, self.resume, self.replace = scope, budget, resume, replace
         self.output = scope.output
         self.path = self.output / STATE_NAME
         self.directory = self.output / WORK_NAME
@@ -151,15 +151,11 @@ class AssessmentState:
         if self.resume:
             self.state = _read_state(self.path)
             if self.state["identity"] != self.identity:
-                changed = [
-                    label
-                    for key, label in _IDENTITY_LABELS
-                    if self.state["identity"].get(key) != self.identity.get(key)
-                ]
                 raise ExchangeError(
                     "Assessment cannot resume: "
-                    + (", ".join(changed) or "its identity")
-                    + " changed since it started; start a fresh assessment"
+                    + self._changed(self.state["identity"])
+                    + " changed since it started. A new scan is required: run without --resume in another "
+                    "--output or an emptied one"
                 )
             accounting = self.state["accounting"]
             if not math.isfinite(accounting["spent_usd"]):
@@ -199,6 +195,11 @@ class AssessmentState:
             }
             self.directory.mkdir(mode=0o700, exist_ok=True)
 
+    def _changed(self, identity) -> str:
+        """Name what differs between a stored run identity and this one."""
+        changed = [label for key, label in _IDENTITY_LABELS if identity.get(key) != self.identity.get(key)]
+        return ", ".join(changed) or "its identity"
+
     def _discard_unfinished_run(self):
         """Clear what an unfinished earlier assessment left, or refuse a fresh start.
 
@@ -206,7 +207,8 @@ class AssessmentState:
         state is not complete. Its accepted jobs stay as a cache that the job
         layer rechecks against each new request. A completed run, a deliverable
         or any other file still blocks, so a fresh start never erases a report
-        or a user's file.
+        or a user's file; only --rebuild removes an earlier run's own files.
+        The refusal names why the earlier run cannot continue.
         """
         leftovers = {child.name for child in self.output.iterdir()} - {".appsec-lock", ".appsec-lock.guard"}
         if not leftovers:
@@ -230,10 +232,63 @@ class AssessmentState:
                             child.unlink()
                 self.path.unlink()
                 return
+        if STATE_NAME in leftovers:
+            try:
+                earlier = _read_state(self.path)
+            except ExchangeError:
+                earlier = None
+            if self.replace and earlier is not None and self._remove_earlier_run(earlier, leftovers):
+                return
+            fresh = "choose another --output or empty this one"
+            if earlier is None:
+                message = f"holds an unreadable earlier combined assessment; {fresh}"
+            elif self.replace:
+                message = f"holds files the earlier combined assessment did not write or that changed since; {fresh}"
+            elif earlier["identity"] != self.identity:
+                message = (
+                    "holds an earlier combined assessment that cannot be continued because "
+                    f"{self._changed(earlier['identity'])} changed since it started. A new scan is required: "
+                    f"add --rebuild to replace it, or {fresh}"
+                )
+            elif earlier["status"] == "complete":
+                message = (
+                    "holds a completed combined assessment with nothing left to continue. For a new scan, "
+                    f"add --rebuild to replace it, or {fresh}"
+                )
+            else:
+                message = (
+                    f"holds an unfinished combined assessment. Add --resume to continue it, or for a new scan, {fresh}"
+                )
+            raise ExchangeError("This output directory " + message)
+        shown = ", ".join(sorted(leftovers)[:3]) + (", ..." if len(leftovers) > 3 else "")
         raise ExchangeError(
-            "A fresh multi-repository assessment requires an empty output directory, and this one holds "
-            "a completed assessment or other files; choose another --output or empty it"
+            f"A fresh combined assessment needs an empty output directory, and this one contains other files "
+            f"({shown}); choose another --output or empty this one"
         )
+
+    def _remove_earlier_run(self, earlier, leftovers) -> bool:
+        """Remove an earlier assessment for --rebuild when it owns every file.
+
+        Owned are its state, its work directory and each recorded deliverable
+        whose bytes are unchanged. Any other or edited file keeps the
+        directory, so a rebuild never erases a user's file.
+        """
+        owned = {STATE_NAME, WORK_NAME}
+        for name, expected in earlier["deliverables"].items():
+            try:
+                if _deliverable(self.output, name) == expected:
+                    owned.add(name)
+            except ExchangeError:
+                continue
+        if not leftovers <= owned:
+            return False
+        if WORK_NAME in leftovers:
+            _real_directory(self.directory)
+            shutil.rmtree(self.directory)
+        for name in sorted(leftovers - {STATE_NAME, WORK_NAME}):
+            (self.output / name).unlink()
+        self.path.unlink()
+        return True
 
     def _check_receipts(self, accounting):
         """Require state accounting to cover every accepted job receipt.

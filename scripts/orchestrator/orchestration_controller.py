@@ -8067,6 +8067,7 @@ def _assessment_session(scope, arguments, *, budget, host_factory, resume=False,
         runtime_sha256=_assessment_runtime_fingerprint(),
         budget=budget,
         resume=resume,
+        replace=rebuild,
     )
 
     from orchestrator.assessment_stage2 import RENDERER_MODEL_KEYS

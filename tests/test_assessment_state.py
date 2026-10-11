@@ -105,7 +105,7 @@ def test_complete_session_binds_deliverables_and_detects_later_changes(scope):
 def test_changed_settings_or_runtime_reject_resume_and_name_the_change(scope, field, value, named):
     with lifecycle(scope).hold():
         pass
-    with pytest.raises(ExchangeError, match=f"cannot resume: {named} .*fresh assessment") as caught:
+    with pytest.raises(ExchangeError, match=f"cannot resume: {named} .*new scan is required") as caught:
         with lifecycle(scope, resume=True, **{field: value}).hold():
             pytest.fail("Changed request must not resume")
     assert "source code" not in str(caught.value)
@@ -253,7 +253,7 @@ def test_fresh_start_still_refuses_a_report_or_foreign_files(scope, extra):
     else:
         preserved.write_text("not json")
     before = preserved.read_bytes()
-    with pytest.raises(ExchangeError, match="choose another --output or empty it"):
+    with pytest.raises(ExchangeError, match="choose another --output or empty this one"):
         with lifecycle(scope).hold():
             pytest.fail("A fresh start must not erase a report or foreign file")
     assert preserved.read_bytes() == before
@@ -463,3 +463,49 @@ def test_resume_accepts_accounting_that_retains_extra_reservations(scope):
     _rewrite_accounting(scope, 3, 0.11)
     with lifecycle(scope, resume=True).hold() as resumed:
         assert resumed.budget.calls == 3 and resumed.budget.spent_usd == pytest.approx(0.11)
+
+
+def _completed(scope, **changes):
+    with lifecycle(scope, **changes).hold() as state:
+        (scope.output / "threat-model.md").write_text("report\n")
+        state.complete(["threat-model.md"])
+
+
+@pytest.mark.parametrize(
+    "field,value,named",
+    [
+        ("runtime_sha256", "b" * 64, "the plugin version"),
+        ("configuration", {"stride_model": "sonnet"}, "the assessment settings"),
+    ],
+)
+def test_a_report_that_cannot_continue_names_why_a_new_scan_is_required(scope, field, value, named):
+    _completed(scope)
+    with pytest.raises(
+        ExchangeError, match=f"cannot be continued because {named} changed.*new scan is required.*--rebuild"
+    ):
+        with lifecycle(scope, **{field: value}).hold():
+            pytest.fail("A fresh start must not replace a report without --rebuild")
+    assert (scope.output / "threat-model.md").read_text() == "report\n"
+    # An unchanged completed run has nothing to continue either.
+    with pytest.raises(ExchangeError, match="completed combined assessment.*--rebuild"):
+        with lifecycle(scope).hold():
+            pytest.fail("A fresh start must not replace a report without --rebuild")
+
+
+def test_rebuild_replaces_only_an_earlier_run_that_owns_every_file(scope):
+    _completed(scope)
+    with lifecycle(scope, runtime_sha256="b" * 64, replace=True).hold() as fresh:
+        assert fresh.state["status"] == "running"
+        assert not (scope.output / "threat-model.md").exists()
+        assert not (fresh.directory / "jobs").exists()
+
+
+@pytest.mark.parametrize("extra", ["edited-report", "user-file"])
+def test_rebuild_keeps_a_directory_with_edited_or_foreign_files(scope, extra):
+    _completed(scope)
+    kept = scope.output / ("threat-model.md" if extra == "edited-report" else "notes.txt")
+    kept.write_text("mine\n")
+    with pytest.raises(ExchangeError, match="did not write or that changed"):
+        with lifecycle(scope, replace=True).hold():
+            pytest.fail("--rebuild must not erase a user's file")
+    assert kept.read_text() == "mine\n" and (scope.output / ".assessment-state.json").exists()
