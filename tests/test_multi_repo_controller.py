@@ -531,3 +531,42 @@ def test_boundary_analyst_cannot_select_a_foreign_component(tmp_path):
             "standard",
             progress=lambda text: None,
         )
+
+
+def test_each_model_call_reports_progress_without_echoing_model_text(monkeypatch):
+    import time as clock
+
+    from orchestrator.orchestration_controller import _ReportedTransport
+    from runtime.analyst_host import HostReply, HostTimeout
+
+    class Inner:
+        def __init__(self, replies):
+            self.replies = iter(replies)
+
+        def invoke(self, *args):
+            reply = next(self.replies)
+            if isinstance(reply, Exception):
+                raise reply
+            if reply.payload.get("slow"):
+                clock.sleep(0.25)
+            return reply
+
+    lines = []
+    monkeypatch.setattr(_ReportedTransport, "HEARTBEAT_SECONDS", 0.1)
+    inner = Inner(
+        [
+            HostReply({"action": "read", "reads": [{}, {}], "artifact": None}, 0.01),
+            HostReply({"action": "complete", "reads": [], "artifact": {"x": "\x1b[2Jinjected"}, "slow": True}, 0.21),
+            HostTimeout("host call exceeded its time limit"),
+        ]
+    )
+    transport = _ReportedTransport(inner, lines.append)
+    transport.invoke("s", "p", {}, 30, lambda: False)
+    transport.invoke("s", "p", {}, 30, lambda: False)
+    with pytest.raises(HostTimeout):
+        transport.invoke("s", "p", {}, 30, lambda: False)
+    assert lines[0].startswith("model requested 2 source range(s) (") and lines[0].endswith(", $0.01)")
+    assert any(line.startswith("waiting for the model … 1 min") for line in lines)
+    assert any(line.startswith("model returned a result (") and line.endswith(", $0.21)") for line in lines)
+    assert lines[-1].startswith("model call exceeded its time limit after")
+    assert not any("injected" in line or "\x1b" in line for line in lines)

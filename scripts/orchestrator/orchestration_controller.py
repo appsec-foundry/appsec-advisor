@@ -8578,6 +8578,52 @@ def _assessment_preflight(roots: list[str]) -> None:
             )
 
 
+class _ReportedTransport:
+    """Report each host call's progress without echoing model text.
+
+    A call prints a heartbeat each minute while it runs, then its action, its
+    duration and its cost; a timed-out call says so before the budget retries
+    it. Only the action and a count of requested reads come from the reply.
+    """
+
+    HEARTBEAT_SECONDS = 60
+
+    def __init__(self, inner, report):
+        self.inner, self.report = inner, report
+
+    def invoke(self, system, prompt, schema, timeout_s, should_stop):
+        import threading
+
+        from runtime.analyst_host import HostTimeout
+
+        started = time.monotonic()
+        done = threading.Event()
+
+        def heartbeat():
+            minutes = 0
+            while not done.wait(self.HEARTBEAT_SECONDS):
+                minutes += 1
+                self.report(f"waiting for the model … {minutes} min")
+
+        threading.Thread(target=heartbeat, daemon=True).start()
+        try:
+            reply = self.inner.invoke(system, prompt, schema, timeout_s, should_stop)
+        except HostTimeout:
+            self.report(f"model call exceeded its time limit after {round(time.monotonic() - started)} s")
+            raise
+        finally:
+            done.set()
+        seconds = round(time.monotonic() - started)
+        cost = f", ${reply.usd:.2f}" if isinstance(reply.usd, (int, float)) else ""
+        payload = reply.payload if isinstance(reply.payload, dict) else {}
+        reads = payload.get("reads") if isinstance(payload.get("reads"), list) else []
+        if payload.get("action") == "read":
+            self.report(f"model requested {len(reads)} source range(s) ({seconds} s{cost})")
+        else:
+            self.report(f"model returned a result ({seconds} s{cost})")
+        return reply
+
+
 def _assessment_cli_host_factory(work_root: Path):
     """Launch each exchange as a tool-less `claude -p` in a fresh private directory."""
     import tempfile
@@ -8880,6 +8926,15 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
     project = (ns.project or " + ".join(labels)).strip()
     with tempfile.TemporaryDirectory(prefix="appsec-hosts-") as hosts:
         factory = host_factory or _assessment_cli_host_factory(Path(hosts))
+        if progress is None and not ns.quiet:
+            # Per-call detail lines show that a long model call is still alive.
+            plain = factory
+
+            def factory(role, model, ceiling):
+                return _ReportedTransport(
+                    plain(role, model, ceiling), lambda text: print(f"  · {text}", file=sys.stderr, flush=True)
+                )
+
         try:
             session = _assessment_session(
                 scope, rest, budget=budget, host_factory=factory, resume=ns.resume, model=ns.model
