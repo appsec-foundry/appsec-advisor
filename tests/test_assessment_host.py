@@ -264,3 +264,62 @@ def test_an_out_of_file_range_is_reported_back_and_an_oversized_one_is_narrowed(
     assert [(s["start_line"], s["end_line"]) for s in result.source_slices] == [(1, 1)]
     with pytest.raises(host.ExchangeError, match="outside"):
         invoke(Model([read("missing.py")]), tmp_path)
+
+
+def _reviewed(model, tmp_path, review, context=None):
+    return host.run_exchange(
+        model,
+        view(tmp_path),
+        instructions="trusted task",
+        context=context or {},
+        artifact_schema=ARTIFACT,
+        allowed_sources=frozenset({(REPO, "app.py")}),
+        timeout_s=60,
+        should_stop=lambda: False,
+        review=review,
+    )
+
+
+def _result(summary):
+    return {"action": "complete", "reads": [], "artifact": {"summary": summary}}
+
+
+def test_a_correction_turn_carries_the_rejected_result_and_its_full_reason(tmp_path):
+    """Each call is stateless: the model can only correct a result and reason it is shown."""
+    reason = "flow df-001 cites a comment; " + "x" * 1_200
+    attempts = []
+
+    def review(artifact, slices):
+        attempts.append(artifact["summary"])
+        if artifact["summary"] == "first draft":
+            raise ValueError(reason)
+
+    model = Model([_result("first draft"), _result("corrected draft")])
+    assert _reviewed(model, tmp_path, review).artifact["summary"] == "corrected draft"
+    packet = json.loads(model.prompts[1].split("\n", 4)[4].rsplit("\n", 2)[0])
+    assert packet["rejected_result"]["result"] == {"summary": "first draft"}
+    assert packet["rejected_result"]["reason"] == reason
+
+
+def test_a_rejected_result_too_large_for_the_packet_is_left_out_not_fatal(tmp_path):
+    def review(artifact, slices):
+        if artifact["summary"] != "short":
+            raise ValueError("too vague")
+
+    context = {"padding": "c" * (host.MAX_CONTEXT_BYTES - 120_000)}
+    model = Model([_result("y" * 200_000), _result("short")])
+    assert _reviewed(model, tmp_path, review, context).artifact["summary"] == "short"
+    assert "too vague" in model.prompts[1] and "y" * 1_000 not in model.prompts[1]
+
+
+@pytest.mark.parametrize("repeat", [True, False])
+def test_an_exhausted_correction_says_whether_every_attempt_failed_alike(tmp_path, repeat):
+    reasons = iter(["same"] * 3 if repeat else ["first", "second", "third"])
+
+    def review(artifact, slices):
+        raise ValueError(next(reasons))
+
+    model = Model([_result("a"), _result("b"), _result("c")])
+    with pytest.raises(host.ExchangeError) as raised:
+        _reviewed(model, tmp_path, review)
+    assert ("each for the same reason" in str(raised.value)) is repeat

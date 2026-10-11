@@ -26,7 +26,9 @@ MAX_CORRECTIONS = 2
 # AssessmentScope.read serves at most this many lines per slice.
 MAX_SLICE_LINES = 400
 _CORRECTABLE_RANGE_ERRORS = frozenset({"Source line range does not exist", "Source slice exceeds its byte limit"})
-MAX_FEEDBACK_CHARS = 400
+# A rejection reason names up to three violations with their locations;
+# three already exceed 900 characters, and a cut reason hides what to fix.
+MAX_FEEDBACK_CHARS = 2_000
 MAX_CONTEXT_BYTES = 262_144
 MAX_RESPONSE_BYTES = 262_144
 MARKER = "UNTRUSTED_ASSESSMENT_DATA"
@@ -164,7 +166,9 @@ def run_exchange(
     ``review(artifact, slices)`` applies the caller's deterministic acceptance
     checks to a complete result. A rejection is returned to the model as a
     bounded controller-authored reason, at most ``MAX_CORRECTIONS`` times; the
-    caller still validates the returned artifact before using it.
+    caller still validates the returned artifact before using it. Each call is
+    stateless, so the correction turn also carries the rejected result itself,
+    which the reason refers to, unless that exceeds the context limit.
     """
     import time
 
@@ -187,6 +191,7 @@ def run_exchange(
     cost: float | None = 0.0
     feedback: dict | None = None
     corrections = 0
+    reasons: list[str] = []
     for number in range(1, MAX_EXCHANGES + 1):
         if should_stop():
             raise HostCancelled("Assessment cancelled")
@@ -196,7 +201,13 @@ def run_exchange(
         packet = {"context": context, "source_slices": slices}
         if feedback is not None:
             packet["rejected_result"] = feedback
-        prompt = _prompt(packet)
+        try:
+            prompt = _prompt(packet)
+        except ExchangeError:
+            if not feedback or "result" not in feedback:
+                raise
+            packet["rejected_result"] = {k: v for k, v in feedback.items() if k != "result"}
+            prompt = _prompt(packet)
         reply = transport.invoke(instructions, prompt, projected, remaining, should_stop)
         if should_stop() or time.monotonic() >= deadline:
             raise HostCancelled("Assessment cancelled or exceeded its time limit")
@@ -241,12 +252,19 @@ def run_exchange(
                     review(reply.payload["artifact"], tuple(slices))
             except ValueError as exc:
                 corrections += 1
+                reasons.append(str(exc))
                 if corrections > MAX_CORRECTIONS or number == MAX_EXCHANGES:
-                    raise ExchangeError(f"Result rejected after {corrections} attempt(s): {exc}") from None
+                    repeated = len(set(reasons)) == 1 and len(reasons) > 1
+                    raise ExchangeError(
+                        f"Result rejected after {corrections} attempt(s)"
+                        + (", each for the same reason" if repeated else "")
+                        + f": {exc}"
+                    ) from None
                 feedback = {
                     "reason": str(exc)[:MAX_FEEDBACK_CHARS],
-                    "instruction": "The controller rejected your previous complete result for this reason. "
-                    "Return a corrected complete result, or read more source first.",
+                    "instruction": "The controller rejected your previous complete result, included as `result`, "
+                    "for this reason. Correct that result and return it complete, or read more source first.",
+                    "result": reply.payload["artifact"],
                 }
                 continue
             return ExchangeResult(reply.payload["artifact"], tuple(slices), number, cost)

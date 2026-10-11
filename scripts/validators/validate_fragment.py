@@ -253,7 +253,8 @@ def repository_evidence_errors(
         problem = _cited_line_problem(lines[line - 1], allow_imports=allow_imports) if require_code else None
         if problem:
             errors.append(
-                f"{label}[{index}] cites {problem} ({relative}:{line}); cite the code that implements the claim"
+                f"{label}[{index}] cites {problem} ({relative}:{line}); cite the executable code the claim is "
+                "about, such as the handler that performs or omits a check, not text describing it"
             )
     return errors
 
