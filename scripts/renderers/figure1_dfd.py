@@ -1071,13 +1071,26 @@ def _project_name(d):
     return project.get("name") or d.get("project_name") or meta.get("project_name") or legacy
 
 
+def _role_prefix(d) -> str:
+    """The system name that prefixes a legitimate role, or "" when it names no product.
+
+    A combined assessment's system name covers several repositories (by
+    default "Combined system (N repositories)"), so "<name> User" would not
+    name a user population.
+    """
+    sources = (d.get("meta") or {}).get("source_repositories")
+    if isinstance(sources, list) and len(sources) > 1:
+        return ""
+    return str(_project_name(d) or "").strip()
+
+
 def _role_name(d, access):
     """`<project> <noun>` for a classified legitimate role; the noun alone without a project name."""
     entry = _role_labels().get(access) or {}
     noun = entry.get("legitimate_role_noun")
     if access == "internet-anon" and (d.get("meta") or {}).get("open_user_registration") is True:
         noun = entry.get("open_registration_role_noun") or noun
-    return " ".join(part for part in (str(_project_name(d) or "").strip(), noun) if part) if noun else None
+    return " ".join(part for part in (_role_prefix(d), noun) if part) if noun else None
 
 
 def _project_legitimate_roles(yaml_data):
@@ -1403,7 +1416,7 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
     nodes[USER_ID] = {
         "id": USER_ID,
         "kind": "ext",
-        "name": " ".join(part for part in (str(_project_name(d) or "").strip(), "User") if part),
+        "name": " ".join(part for part in (_role_prefix(d), "User") if part),
         "sub": "legitimate client"
         + (
             " · victim of " + " ".join("①②③④⑤⑥⑦⑧⑨"[int(n) - 1] for n in victim_of[:4])
@@ -4299,7 +4312,7 @@ def legitimate_role_people(yaml_data):
     flows = [f for f in d.get("data_flows") or [] if isinstance(f, dict)]
     rows = [(e["id"], e) for e in d.get("external_entities") or [] if e.get("kind") == "legitimate-role"]
     if any(f.get("from") == "external" and not f.get("from_entity") for f in flows):
-        rows.append((USER_ID, {"name": " ".join(p for p in (str(_project_name(d) or "").strip(), "User") if p)}))
+        rows.append((USER_ID, {"name": " ".join(p for p in (_role_prefix(d), "User") if p)}))
     return [
         {
             "name": entity["name"],

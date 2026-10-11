@@ -683,7 +683,10 @@ def test_trust_boundary_is_drawn_as_a_divider_at_the_tier_transition():
     trust zones — not an annotation on the attack vectors, which would make it
     read as a property of the attack."""
     svg = _build(exposed=("app0", "app1"))
-    assert "trust boundary · external → app0 (tb-1) · external → app1 (tb-2)" in svg
+    # Component names are longer than ids; a crossing past the width budget is
+    # named in the legend panel instead.
+    assert _divider_captions(svg) == ["trust boundary · external → Service 0 (tb-1) · +1 more (see legend)"]
+    assert "external → Service 1 · tb-2" in svg
     assert _TRUST_STROKE in svg
 
 
@@ -691,7 +694,7 @@ def test_divider_names_the_crossing_not_just_the_id():
     """A bare `tb-1` is a lookup key, not information — the reader cannot tell
     what the divider separates without leaving the figure. The caption names the
     crossing and keeps the id as the secondary locator into §1."""
-    assert _divider_captions(_build(exposed=("app0",))) == ["trust boundary · external → app0 (tb-1)"]
+    assert _divider_captions(_build(exposed=("app0",))) == ["trust boundary · external → Service 0 (tb-1)"]
 
 
 def test_two_boundaries_on_the_same_crossing_share_one_caption_entry():
@@ -710,7 +713,7 @@ def test_two_boundaries_on_the_same_crossing_share_one_caption_entry():
         }
     )
 
-    assert _divider_captions(F.build_figure1_svg(y, apd, tax)) == ["trust boundary · external → app0 (tb-1, tb-5)"]
+    assert _divider_captions(F.build_figure1_svg(y, apd, tax)) == ["trust boundary · external → Service 0 (tb-1, tb-5)"]
 
 
 def test_every_placed_boundary_is_named_in_the_legend_panel():
@@ -734,9 +737,9 @@ def test_every_placed_boundary_is_named_in_the_legend_panel():
     # Panel presence, not its wording — the "(see §1)" pointer was dropped once
     # the caption below the figure carried a clickable link to the catalogue.
     assert "Trust Boundaries" in svg
-    assert "external → app0 · tb-1" in svg
-    assert "external → app1 · tb-2" in svg
-    assert "app0 → external · tb-7" in svg  # the band-header note is named too
+    assert "external → Service 0 · tb-1" in svg
+    assert "external → Service 1 · tb-2" in svg
+    assert "Service 0 → external · tb-7" in svg  # the band-header note is named too
 
 
 def test_legend_states_an_exposure_the_figure_does_not_assert():
@@ -759,8 +762,8 @@ def test_legend_states_an_exposure_the_figure_does_not_assert():
 
     svg = F.build_figure1_svg(y, apd, tax)
 
-    assert "external → app1 · tb-2 · Unverified" in svg
-    assert "external → app0 · tb-1" in svg
+    assert "· tb-2 · Unverified" in svg
+    assert "external → Service 0 · tb-1" in svg
     assert "tb-1 · internet-facing" not in svg
 
 
@@ -818,7 +821,7 @@ def test_crossing_that_spans_more_than_one_tier_gap_still_draws():
 
     svg = F.build_figure1_svg(y, apd, tax)
 
-    assert _divider_captions(svg) == ["trust boundary · external → db (tb-3)"]
+    assert _divider_captions(svg) == ["trust boundary · external → Data Layer (tb-3)"]
 
 
 def test_divider_sits_below_the_client_tier_not_above_it():
@@ -949,9 +952,9 @@ def test_quiet_crossings_are_still_drawn_and_still_named_in_the_legend():
     svg = F.build_figure1_svg(y, apd, tax)
 
     caption = _divider_captions(svg)[0]
-    assert caption.startswith("trust boundary · external → app0 (tb-1)")
-    assert "spa → app1" not in caption  # the internal hop recedes…
-    assert "spa → app1 · tb-3" in svg  # …into the panel, named, with its id
+    assert caption.startswith("trust boundary · external → Service 0 (tb-1)")
+    assert "Angular SPA → Service 1" not in caption  # the internal hop recedes…
+    assert "Angular SPA → Service 1 · tb-3" in svg  # …into the panel, named, with its id
     assert _TRUST_STROKE in svg  # …and the divider it annotates is still drawn
     for bid in ("tb-1", "tb-2", "tb-3", "tb-4"):
         assert bid in svg
@@ -1026,8 +1029,8 @@ def test_boundary_inside_a_tier_is_named_in_the_band_instead_of_dropped():
 
     assert "internal: tb-9" in svg
     # It is NOT promoted onto the tier divider, which separates zones.
-    assert _divider_captions(svg) == ["trust boundary · external → app0 (tb-1)"]
-    assert "app0 → app1 · tb-9" in svg  # …but it IS named in the legend panel
+    assert _divider_captions(svg) == ["trust boundary · external → Service 0 (tb-1)"]
+    assert "Service 0 → Service 1 · tb-9" in svg  # …but it IS named in the legend panel
 
 
 def test_classification_separates_gap_crossings_from_intra_tier_boundaries():
@@ -1076,7 +1079,7 @@ def test_outbound_boundary_is_not_placed_on_the_client_server_divider():
 
     svg = F.build_figure1_svg(y, apd, tax)
     assert "outbound: tb-9" in svg
-    assert _divider_captions(svg) == ["trust boundary · external → app0 (tb-1)"]
+    assert _divider_captions(svg) == ["trust boundary · external → Service 0 (tb-1)"]
 
 
 def test_ingress_and_egress_between_the_same_pair_stay_apart():

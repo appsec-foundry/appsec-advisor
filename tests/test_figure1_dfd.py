@@ -1471,6 +1471,21 @@ def test_classified_roles_carry_the_project_name_and_privileged_roles_stay_disti
     assert "Browser" not in " ".join(n["name"] for n in state["nodes"].values())
 
 
+@pytest.mark.parametrize("project", ["Combined system (2 repositories)", "Order Gateway"])
+def test_a_combined_assessment_never_prefixes_roles_with_its_system_name(project):
+    model, paths, taxonomy, ids = _role_access_model(registration=False)
+    model["meta"]["project"] = project
+    model["meta"]["source_repositories"] = [{"label": "edge", "head": "a" * 40}, {"label": "api", "head": "b" * 40}]
+    scenarios, actors = F.scenarios_from_attack_paths(model, paths, taxonomy)
+    _, state = F._build(model, scenarios, actors, detail=False)
+    names = [state["nodes"][key]["name"] for key in ids]
+    assert names == ["Visitor", "User"]
+    # One selected repository keeps the product-name prefix.
+    model["meta"]["source_repositories"] = model["meta"]["source_repositories"][:1]
+    _, state = F._build(model, scenarios, actors, detail=False)
+    assert [state["nodes"][key]["name"] for key in ids] == [f"{project} Visitor", f"{project} User"]
+
+
 def test_declared_roles_keep_their_declared_names_and_are_never_folded():
     model, paths, taxonomy, ids = _role_access_model(registration=True)
     declared = {"source": ".appsec/actors.yaml", "authentication": "SSO at the ingress"}

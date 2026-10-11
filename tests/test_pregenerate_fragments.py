@@ -1545,7 +1545,7 @@ class TestSection2TrustBoundaries:
         block = self._block(md, "2.2 Container Architecture")
 
         assert "subgraph TBSERVER[" in block
-        assert "external → api (tb-1)" in block and "spa → api (tb-2)" in block
+        assert "external → API (tb-1)" in block and "SPA → API (tb-2)" in block
         # Application AND Data sit inside it; the client tier does not.
         assert block.index("subgraph TBSERVER") < block.index("subgraph Application")
         assert block.index("subgraph Client") < block.index("subgraph TBSERVER")
@@ -1561,7 +1561,7 @@ class TestSection2TrustBoundaries:
         md = pf.gen_architecture_diagrams(self._data([self._tb("tb-9", "api", "db")]))
         block = self._block(md, "2.2 Container Architecture")
 
-        assert 'subgraph TBDATA["Trust boundary · api → db (tb-9)"]' in block
+        assert 'subgraph TBDATA["Trust boundary · API → DB (tb-9)"]' in block
         assert "subgraph TBSERVER" not in block
         assert block.index("subgraph TBDATA") < block.index("subgraph Data")
 
@@ -1578,7 +1578,7 @@ class TestSection2TrustBoundaries:
             )
         )
 
-        assert "*Trust boundaries not drawn above: api → db (tb-2), api → external (tb-3)" in md
+        assert "*Trust boundaries not drawn above: API → DB (tb-2), API → external (tb-3)" in md
         assert "[§1 Trust Boundaries](#trust-boundaries)" in md
 
     @pytest.mark.parametrize(
@@ -1606,9 +1606,9 @@ class TestSection2TrustBoundaries:
         assert "tb-2" not in block
         if interface:
             assert not not_drawn
-            assert interfaces and "api → db (tb-2)" in interfaces[0]
+            assert interfaces and "API → DB (tb-2)" in interfaces[0]
         else:
-            assert not_drawn and "api → db (tb-2)" in not_drawn[0]
+            assert not_drawn and "API → DB (tb-2)" in not_drawn[0]
             assert not interfaces
 
     @pytest.mark.parametrize(
@@ -1657,7 +1657,7 @@ class TestSection2TrustBoundaries:
         block = self._block(md, "2.2 Container Architecture")
 
         assert "subgraph TBDATA" not in block
-        assert "*Internal interfaces (in-process, no trust transition): api → db (tb-9)" in md
+        assert "*Internal interfaces (in-process, no trust transition): API → DB (tb-9)" in md
 
     def test_unresolved_boundaries_are_never_drawn(self):
         md = pf.gen_architecture_diagrams(self._data([self._tb("tb-1", "external", "api", status="unresolved")]))
@@ -4230,6 +4230,44 @@ def test_assessment_intro_states_the_method_and_the_model_size():
         "It reconstructs the implemented architecture (2 components and 1 external service, see "
         "[§2](#2-architecture-diagrams)) and identifies threats and control gaps in it."
     )
+
+
+@pytest.mark.parametrize(("first", "second"), [("frontend", "backend"), ("north", "south")])
+def test_combined_scope_groups_components_by_repository(first, second):
+    model = {
+        "meta": {
+            "project_name": "Combined system (2 repositories)",
+            "source_repositories": [{"label": first, "head": "a" * 40}, {"label": second, "head": "b" * 40}],
+        },
+        "components": [
+            {"id": "c1", "name": f"Web client [{first}]", "paths": [f"{first}/public/app.js"]},
+            {"id": "c2", "name": f"Order API [{second}]", "paths": [f"{second}/app.py"]},
+            {"id": "c3", "name": f"Edge proxy [{first}]", "paths": [f"{first}/nginx.conf"]},
+        ],
+    }
+    md = pf.gen_system_overview(model)
+    assert "This threat model covers 3 components in 2 repositories:" in md
+    assert f"- **{first}:** Web client, Edge proxy" in md and f"- **{second}:** Order API" in md
+    # A component spanning repositories keeps the flat sentence instead of a wrong grouping.
+    model["components"][0]["paths"].append(f"{second}/shared.py")
+    assert "in 2 repositories:" not in pf.gen_system_overview(model)
+
+
+@pytest.mark.parametrize("labels", [["frontend", "backend"], ["north", "south", "east"]])
+def test_assessment_intro_names_the_repositories_of_a_combined_assessment(labels):
+    model = {
+        "meta": {
+            "project_name": "Shop",
+            "source_repositories": [{"label": label, "head": "a" * 40} for label in labels],
+        },
+        "components": [{"id": "api", "name": "Order API"}],
+    }
+    intro = pf.assessment_intro(model)
+    assert f" It analyzes {len(labels)} repositories together as one system ({', '.join(labels)});" in intro
+    assert "multi-repository assessment is experimental." in intro
+    # A single repository is not called a combined assessment.
+    single = {**model, "meta": {**model["meta"], "source_repositories": model["meta"]["source_repositories"][:1]}}
+    assert "repositories together" not in pf.assessment_intro(single)
 
 
 def test_assessment_intro_states_the_confirmed_use_case_in_plain_words():

@@ -1054,6 +1054,15 @@ def _normalize_actor_voice(steps: list[str]) -> list[str]:
     return out
 
 
+def _component_display(threat: dict) -> str:
+    """The finding's component as readers know it: its name, else its identifier."""
+    for key in ("component_name", "component"):
+        value = " ".join(str(threat.get(key) or "").split())
+        if value:
+            return value
+    return ""
+
+
 def render_attack_steps(threat: dict, template: dict) -> list[str]:
     """Attacker-voice, chronological steps for §3.
 
@@ -1148,7 +1157,7 @@ def render_attack_steps(threat: dict, template: dict) -> list[str]:
     mapping = {
         "file": (evidence.get("file") or "<unknown>"),
         "line": str(evidence.get("line") or "?"),
-        "component": (threat.get("component") or "the application").strip() or "the application",
+        "component": _component_display(threat) or "the application",
         "cwe": (threat.get("cwe") or "").strip() or "the weakness class",
         "title": _short_title(threat.get("title") or "", 120),
         "tid": _to_fid(str(threat.get("id") or "")),
@@ -1313,7 +1322,7 @@ def render_sequence_diagram(
         # terminators/entities in sequence diagrams).
         "weakness": _short_title(re.sub(r"[;#]", "", title_without_locator(threat.get("title") or "")), 70)
         or "the weakness executes",
-        "component": (threat.get("component") or "the application").strip() or "the application",
+        "component": _component_display(threat) or "the application",
         "file": (evidence.get("file") or "<unknown>"),
         "line": str(evidence.get("line") or "?"),
         "excerpt": _excerpt(evidence),
@@ -1357,7 +1366,7 @@ def render_detection_signals(threat: dict, template: dict) -> list[str]:
         return []
     evidence = (threat.get("evidence") or [{}])[0] or {}
     mapping = {
-        "component": (threat.get("component") or "the application").strip(),
+        "component": _component_display(threat) or "the application",
         "file": evidence.get("file") or "<unknown>",
         "line": str(evidence.get("line") or "?"),
         "cwe": (threat.get("cwe") or "").strip() or "the weakness class",

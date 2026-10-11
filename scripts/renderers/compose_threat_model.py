@@ -148,6 +148,7 @@ import renderers._severity_rollup as _severity_rollup
 import renderers.inline_code_formatter as _inline_code_formatter
 import renderers.team_questions as _team_questions
 from renderers.actor_presentation import attacker_display, inventory_actors
+from renderers.component_labels import component_names, endpoint_label
 from renderers.pregenerate_fragments import _TIER_HINTS as _pregen_tier_hints
 from renderers.pregenerate_fragments import _classify_tier as _pregen_classify_tier
 from renderers.pregenerate_fragments import assessment_intro as _pregen_assessment_intro
@@ -11238,7 +11239,7 @@ def _inject_boundary_leg_crossrefs(ctx: RenderContext, md: str) -> str:
             if leg["state"] == "unexamined":
                 continue
             ids = [_visible_finding_id(fid) for fid in leg["finding_ids"][:3]]
-            crossing, _mechanism = _boundary_crossing_and_mechanism(row)
+            crossing, _mechanism = _boundary_crossing_and_mechanism(row, component_names(ctx.yaml_data))
             entry = [
                 f"- [{row['id']}](#{row['id']})"
                 + (f" — {crossing}" if crossing else "")
@@ -15563,7 +15564,7 @@ def _build_threat_card(
             if boundary:
                 if _boundary_exposure(boundary, component_ids) == "internet-facing":
                     label += " {} {}".format(*rating_of("internet-facing"))
-                crossing, _mechanism = _boundary_crossing_and_mechanism(boundary)
+                crossing, _mechanism = _boundary_crossing_and_mechanism(boundary, component_names(ctx.yaml_data))
                 label += f" — {_safe_boundary_text(crossing)}"
                 # WHICH condition of the crossing this finding breaks. The
                 # catalogue states the legs; without naming one here the reader
@@ -16130,7 +16131,7 @@ def _normalize_boundary_arrows(value: Any) -> str:
     return _ASCII_ARROW_BETWEEN_WORDS_RE.sub(" → ", str(value or ""))
 
 
-def _boundary_crossing_and_mechanism(row: dict) -> tuple[str, str]:
+def _boundary_crossing_and_mechanism(row: dict, names: dict[str, str] | None = None) -> tuple[str, str]:
     """Split a boundary row into its two distinct facts: the crossing and the
     mechanism that enforces it.
 
@@ -16158,12 +16159,17 @@ def _boundary_crossing_and_mechanism(row: dict) -> tuple[str, str]:
     enforced when nothing was found enforcing it. The name tail is still used for
     the crossing HEAD, which is a naming fact, not a control claim.
 
+    Endpoints show component names from ``names`` (identifiers are lookup
+    keys, opaque in a combined model); the name head is matched on the
+    identifiers it was written with.
+
     Returns raw (unescaped) text; the caller escapes for its context. An empty
     mechanism is a valid, expected result.
     """
     source = str(row.get("from") or "?")
     target = str(row.get("to") or "?")
-    crossing = f"{source} → {target}"
+    shown = f"{endpoint_label(names or {}, source)} → {endpoint_label(names or {}, target)}"
+    crossing = shown
     name = " ".join(str(row.get("name") or "").split())
     head, sep, _tail = name.partition(": ")
     if sep and re.match(rf"^{re.escape(source)}{_BOUNDARY_ARROW_RE}{re.escape(target)}\b", head):
@@ -16177,7 +16183,7 @@ def _boundary_crossing_and_mechanism(row: dict) -> tuple[str, str]:
         # construction and leaves nothing for either pass to escape.
         crossing = re.sub(
             rf"^{re.escape(source)}{_BOUNDARY_ARROW_RE}{re.escape(target)}",
-            f"{source} → {target}",
+            lambda _match: shown,
             head,
             count=1,
         )
@@ -16624,6 +16630,7 @@ def _render_trust_boundary_catalog(ctx: RenderContext, env: jinja2.Environment, 
     linked = _boundary_link_index(ctx)
     component_ids = _boundary_component_ids(ctx)
     shown = _visible_trust_boundaries(ctx)
+    names = component_names(ctx.yaml_data)
     # Provenance / confidence / status are collapsed out of the table when every
     # row agrees on them and the shared value is the unexceptional one; the
     # footnote then states each collapsed fact once. See `_uniform_boundary_value`.
@@ -16664,7 +16671,7 @@ def _render_trust_boundary_catalog(ctx: RenderContext, env: jinja2.Environment, 
         # No emphasis markers around the mechanism / covers text: a later pass
         # backticks the identifiers in it, and markdown emphasis wrapped around a
         # code span does not survive the fixed-layout HTML conversion.
-        crossing, mechanism = _boundary_crossing_and_mechanism(row)
+        crossing, mechanism = _boundary_crossing_and_mechanism(row, names)
         boundary = f"**{_safe_boundary_text(crossing, table=True)}**"
         # "Control:" — the thing that decides whether the crossing is allowed.
         # The label used to read "enforced by:", which readers could not
@@ -16673,7 +16680,9 @@ def _render_trust_boundary_catalog(ctx: RenderContext, env: jinja2.Environment, 
         # over: say that no single control was identified rather than
         # reconstructing one from the boundary name.
         detail = f"Control: {_safe_boundary_text(mechanism, table=True)}" if mechanism else "Control: none identified"
-        covers = [cid for cid in _boundary_covered_components(row) if cid != str(row.get("to") or "")]
+        covers = [
+            endpoint_label(names, cid) for cid in _boundary_covered_components(row) if cid != str(row.get("to") or "")
+        ]
         if covers:
             detail += f" · Also covers: {_safe_boundary_text(', '.join(covers), table=True)}"
         boundary += f"<br>{detail}"

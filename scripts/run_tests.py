@@ -52,6 +52,7 @@ GROUPS = {
     "report": _tests("""
         actor_attribution
         actor_presentation
+        component_labels
         annotate_architecture
         annotate_sequences
         build_plane
@@ -1932,6 +1933,12 @@ SOURCE_TESTS = {
         requirements_verification
         run_path_guard
         stride_outputs
+    """),
+    "scripts/renderers/component_labels.py": _tests("""
+        component_labels
+        compose_threat_model
+        figure1_svg
+        pregenerate_fragments
     """),
     "scripts/renderers/walkthrough_renderer.py": _tests("""
         report_anatomy

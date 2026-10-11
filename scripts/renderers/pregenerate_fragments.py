@@ -88,6 +88,7 @@ from renderers._severity_rollup import (
     verdict_ranked_ids,
     verdict_severity,
 )
+from renderers.component_labels import component_names, crossing_text
 
 # Sibling module — deterministic §3 walkthrough renderer. Imported here
 # (and not lazily) so its GENERATORS entry below resolves at import time.
@@ -371,12 +372,44 @@ def assessment_intro(yaml_data: dict) -> str:
     trace = yaml_data.get("business_context_trace")
     use_case = trace.get("confirmed_use_case") if isinstance(trace, dict) else ""
     use_case = " ".join(_SYSTEM_UNSAFE_RE.sub("", str(use_case or "")).split())[:200].strip(" .")
+    # A combined assessment names the repositories it analyzed together.
+    sources = meta.get("source_repositories") if isinstance(meta.get("source_repositories"), list) else []
+    labels = [label for row in sources if isinstance(row, dict) and (label := _plain_name(row.get("label")))]
+    combined = ""
+    if len(labels) > 1:
+        shown = ", ".join(labels[:6]) + (f" and {len(labels) - 6} more" if len(labels) > 6 else "")
+        combined = (
+            f" It analyzes {len(labels)} repositories together as one system ({shown}); "
+            "this multi-repository assessment is experimental."
+        )
     return (
         f"**About this assessment:** An AI-assisted threat model derived from the implementation of "
         f"{name or 'the system'}. It reconstructs the implemented architecture "
         f"({size}, see [§2](#2-architecture-diagrams)) and identifies threats and control gaps in it."
+        + combined
         + (f" Confirmed use case: {use_case}." if use_case else "")
     )
+
+
+def _components_by_repository(components: list, sources: list | None) -> list[tuple[str, list[str]]]:
+    """Component names grouped by the selected repository whose `<label>/` paths they own.
+
+    Empty unless several repositories were selected and every component falls
+    into exactly one of them; the flat scope sentence applies otherwise.
+    """
+    labels = [str(row.get("label")) for row in sources or [] if isinstance(row, dict) and row.get("label")]
+    if len(labels) < 2:
+        return []
+    groups: dict[str, list[str]] = {label: [] for label in labels}
+    for component in components:
+        paths = [str(p) for p in component.get("paths") or [] if isinstance(p, str)]
+        owners = {label for label in labels for p in paths if p.startswith(label + "/")}
+        if len(owners) != 1:
+            return []
+        label = owners.pop()
+        name = str(component.get("name") or component.get("id") or "?")
+        groups[label].append(name.removesuffix(f" [{label}]"))
+    return [(label, names) for label, names in groups.items() if names]
 
 
 def gen_system_overview(yaml_data: dict) -> str:
@@ -501,6 +534,13 @@ def gen_system_overview(yaml_data: dict) -> str:
             "Not analysed at this depth: " + ", ".join(exc_names) + "; a higher `--assessment-depth` covers them."
         )
         lines.append("")
+    elif groups := _components_by_repository(components, sources):
+        lines.append(
+            f"This threat model covers {len(components)} {'component' if len(components) == 1 else 'components'} "
+            f"in {len(groups)} repositories:"
+        )
+        lines.append("")
+        lines.extend(f"- **{label}:** " + ", ".join(names) for label, names in groups)
     else:
         lines.append(
             f"This threat model covers {len(components)} {'component' if len(components) == 1 else 'components'} of {name}: "
@@ -639,19 +679,22 @@ _TB_EDGE_MAX_IDS = 2  # boundary ids named on a §2.3 edge label before "+N"
 
 
 def _resolved_boundaries(yaml_data: dict) -> list[dict]:
-    """Resolved trust boundaries carrying an id, in model order."""
+    """Resolved trust boundaries carrying an id, in model order.
+
+    Each is a copy carrying its reader-facing crossing in `_crossing`, so every
+    caption names components instead of printing their identifiers.
+    """
+    names = component_names(yaml_data)
     return [
-        tb
+        {**tb, "_crossing": crossing_text(tb, names)}
         for tb in (yaml_data.get("trust_boundaries") or [])
         if isinstance(tb, dict) and tb.get("resolution_status") == "resolved" and (tb.get("id") or "")
     ]
 
 
 def _tb_crossing(tb: dict) -> str:
-    """`from → to` for a boundary, or "" when the endpoints are unknown."""
-    src = (tb.get("from") or "").strip()
-    dst = (tb.get("to") or "").strip()
-    return f"{src} → {dst}" if src and dst else ""
+    """`from → to` for a boundary with component names, or "" when the endpoints are unknown."""
+    return tb["_crossing"] if "_crossing" in tb else crossing_text(tb, {})
 
 
 def _tb_entries(boundaries: list[dict]) -> list[str]:
