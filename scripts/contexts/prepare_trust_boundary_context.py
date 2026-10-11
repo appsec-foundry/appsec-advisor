@@ -882,6 +882,10 @@ def _normalize_row(
         and isinstance(authored_id, str)
     ):
         row["_normalized_id"] = authored_id
+    # Provenance, not output: coverage maps each candidate to the canonical row
+    # it became, whatever consolidation later does to its endpoints or name.
+    if isinstance(raw.get("candidate_key"), str):
+        row["_candidate_keys"] = [raw["candidate_key"]]
     return row
 
 
@@ -938,6 +942,22 @@ def _merge_evidence(left: list[dict], right: list[dict]) -> list[dict]:
             seen.add(key)
             out.append(item)
     return out[:_MAX_EVIDENCE]
+
+
+def _absorb_provenance(survivor: dict, absorbed: dict) -> None:
+    """A row that absorbs another also stands for the candidates the absorbed row came from."""
+    keys = [*(survivor.get("_candidate_keys") or []), *(absorbed.get("_candidate_keys") or [])]
+    if keys:
+        survivor["_candidate_keys"] = list(dict.fromkeys(keys))
+
+
+def _candidate_boundary_ids(rows: list[dict]) -> dict[str, list[str]]:
+    """Remove the provenance marker and return each candidate key's canonical boundary IDs."""
+    mapping: dict[str, set[str]] = {}
+    for row in rows:
+        for key in row.pop("_candidate_keys", None) or []:
+            mapping.setdefault(key, set()).add(row["id"])
+    return {key: sorted(ids, key=_numeric_id) for key, ids in mapping.items()}
 
 
 def _merge_declarations(
@@ -1012,6 +1032,7 @@ def _merge_declarations(
         target["kind"] = declaration["kind"]
         target["assumption"] = declaration["assumption"]
         target["evidence"] = _merge_evidence(target["evidence"], declaration["evidence"])
+        _absorb_provenance(target, declaration)
         target["sources"] = list(dict.fromkeys([*target["sources"], "repo-declared"]))
         target["declaration_key"] = key
         # Declaration prose/evidence cannot self-confirm. Existing independently
@@ -1255,6 +1276,7 @@ def _consolidate(rows: list[dict], components: dict[str, dict], warnings: list[s
         )
         if key in seen:
             seen[key]["evidence"] = _merge_evidence(seen[key].get("evidence") or [], row.get("evidence") or [])
+            _absorb_provenance(seen[key], row)
             warnings.append(f"consolidated duplicate boundary {row.get('name')!r}")
             continue
         seen[key] = row
@@ -1308,6 +1330,7 @@ def _consolidate(rows: list[dict], components: dict[str, dict], warnings: list[s
                 continue
             if _contained_in(components[row["to"]], components[other["to"]]):
                 other["evidence"] = _merge_evidence(other.get("evidence") or [], row.get("evidence") or [])
+                _absorb_provenance(other, row)
                 # The folded-in component keeps a claim on the surviving row, so a
                 # finding it owns can still reference the perimeter it sits behind.
                 other["covers_components"] = sorted(
@@ -1335,7 +1358,9 @@ def normalize(
     output_dir: Path,
     raw_sidecar: dict | None = None,
     destination: Path | None = None,
+    provenance: dict[str, list[str]] | None = None,
 ) -> tuple[dict, list[str]]:
+    """Canonicalize boundary rows; `provenance` receives each candidate key's boundary IDs."""
     repo_root, output_dir = repo_root.resolve(), output_dir.resolve()
     raw = raw_sidecar if raw_sidecar is not None else _read_json(sidecar, None)
     if not isinstance(raw, dict) or not isinstance(raw.get("trust_boundaries"), list):
@@ -1372,6 +1397,9 @@ def normalize(
     if len({row["id"] for row in merged}) != len(merged):
         raise ValueError("normalization produced duplicate trust-boundary IDs")
     merged.sort(key=lambda row: _numeric_id(row["id"]))
+    candidate_ids = _candidate_boundary_ids(merged)
+    if provenance is not None:
+        provenance.update(candidate_ids)
     _write_diagnostics(output_dir, merged)
     result = {"schema_version": 2, "trust_boundaries": merged}
     schema = json.loads(NORMALIZED_SCHEMA.read_text(encoding="utf-8"))
@@ -1435,6 +1463,7 @@ def _normalize_assessment_boundaries(
     with tempfile.TemporaryDirectory(prefix="appsec-boundary-ids-") as counters:
         _assign_ids(merged, [], Path(counters), warnings)
     merged.sort(key=lambda row: _numeric_id(row["id"]))
+    candidate_ids = _candidate_boundary_ids(merged)
     document = {
         "schema_version": 3,
         "source_scope_sha256": components["source_scope_sha256"],
@@ -1445,7 +1474,16 @@ def _normalize_assessment_boundaries(
     # IDs or treating a discarded client-side crossing as a trust boundary.
     warnings.extend(f"{key}: {reason}" for key, reason in sorted(dropped.items()))
     scope.verify_unchanged()
-    return document, warnings, {"candidates": consolidated, "aliases": aliases, "dropped": dropped}
+    return (
+        document,
+        warnings,
+        {
+            "candidates": consolidated,
+            "aliases": aliases,
+            "dropped": dropped,
+            "candidate_ids": candidate_ids,
+        },
+    )
 
 
 def normalize_assessment_boundaries(
@@ -1492,7 +1530,7 @@ def promote_assessment_boundaries(scope, components, assessment, candidate_doc, 
         scope, components, candidate_doc["candidates"], output_dir=output_dir, declarations=declarations
     )
     coverage = _coverage_document(
-        assessment, candidate_doc, canonical, audit["candidates"], audit["aliases"], audit["dropped"]
+        assessment, candidate_doc, audit["candidates"], audit["aliases"], audit["dropped"], audit["candidate_ids"]
     )
     coverage.update(schema_version=2, source_scope_sha256=assessment["source_scope_sha256"])
     jsonschema.Draft202012Validator(contract("trust-boundary-coverage-v2.schema.json")).validate(coverage)
@@ -2686,46 +2724,18 @@ def _looks_inbound(repo_root: Path, candidate: dict) -> bool:
     return False
 
 
-def _coverage_document(assessment, candidate_doc, canonical, candidates, candidate_alias, dropped_candidates):
-    """Reconcile dispositions with the existing canonical promotion outcome."""
+def _coverage_document(assessment, candidate_doc, candidates, candidate_alias, dropped_candidates, candidate_ids):
+    """Reconcile dispositions with the canonical boundaries each candidate became.
+
+    `candidate_ids` comes from the provenance normalization carries through
+    every merge, fold and re-anchoring, so a candidate is never matched again
+    by fields that normalization may have changed.
+    """
     candidate_by_key = {row["candidate_key"]: row for row in candidates}
     signal_by_id = {row["id"]: row for row in assessment["signals"]}
     mandatory = {sid for sid, row in signal_by_id.items() if row.get("mandatory")}
     disposition_by_signal = {row["signal_id"]: row for row in candidate_doc["dispositions"]}
-    canonical_rows = canonical["trust_boundaries"]
-    candidate_to_ids: dict[str, list[str]] = {}
-    for key, candidate in candidate_by_key.items():
-        exact = [
-            row["id"]
-            for row in canonical_rows
-            if row.get("from") == candidate["from"]
-            and row.get("to") == candidate["to"]
-            and str(row.get("name", "")).casefold() == candidate["name"].casefold()
-        ]
-        if not exact:
-            # `kind` joins the fallback: two crossings can share endpoints and
-            # still ask different questions (the B2B `vm.createContext` sandbox
-            # and the HTTPS perimeter are both `external -> backend-api`), so a
-            # candidate whose name changed upstream must not claim both.
-            exact = [
-                row["id"]
-                for row in canonical_rows
-                if row.get("from") == candidate["from"]
-                and row.get("to") == candidate["to"]
-                and row.get("kind") == candidate.get("kind")
-            ]
-        if not exact:
-            # normalize()'s _consolidate() may have folded the candidate's target
-            # component into a parent boundary (covers_components lists the absorbed
-            # sub-components).  Match on the folded-in component so a sub-component
-            # candidate (e.g. external → realtime-channel folded into
-            # external → backend-api) still resolves to a canonical boundary.
-            exact = [
-                row["id"]
-                for row in canonical_rows
-                if row.get("from") == candidate["from"] and candidate.get("to") in (row.get("covers_components") or [])
-            ]
-        candidate_to_ids[key] = sorted(set(exact), key=_numeric_id)
+    candidate_to_ids = {key: list(candidate_ids.get(key, [])) for key in candidate_by_key}
     # Dispositions still reference the pre-merge keys; point every alias at the
     # survivor so signal promotion resolves after consolidation.
     for original, survivor in candidate_alias.items():
@@ -2875,7 +2885,7 @@ def promote_candidates(
     for candidate in candidates:
         row = {
             key: deepcopy(candidate[key])
-            for key in ("name", "from", "to", "kind", "assumption", "evidence", "confidence")
+            for key in ("candidate_key", "name", "from", "to", "kind", "assumption", "evidence", "confidence")
         }
         # Carried, not dropped: without these the finished model cannot show why
         # two crossings became one row, and the next run cannot reproduce the
@@ -2896,6 +2906,7 @@ def promote_candidates(
         provisional_rows.append(row)
     provisional = {"schema_version": 2, "trust_boundaries": provisional_rows}
     sidecar = output_dir / ".trust-boundaries.json"
+    candidate_ids: dict[str, list[str]] = {}
     canonical, _warnings = normalize(
         repo_root=repo_root,
         sidecar=sidecar,
@@ -2903,9 +2914,12 @@ def promote_candidates(
         output_dir=output_dir,
         raw_sidecar=provisional,
         destination=sidecar,
+        provenance=candidate_ids,
     )
 
-    coverage = _coverage_document(assessment, candidate_doc, canonical, candidates, candidate_alias, dropped_candidates)
+    coverage = _coverage_document(
+        assessment, candidate_doc, candidates, candidate_alias, dropped_candidates, candidate_ids
+    )
     schema = json.loads(COVERAGE_SCHEMA.read_text(encoding="utf-8"))
     jsonschema.Draft202012Validator(schema).validate(coverage)
     atomic_write_json(output_dir / ".trust-boundary-coverage.json", coverage, sort_keys=False)

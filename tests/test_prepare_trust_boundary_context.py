@@ -191,6 +191,57 @@ def test_promote_candidates_writes_canonical_and_coverage(tmp_path: Path):
     assert coverage["signals"][0]["boundary_ids"] == ["tb-1"]
 
 
+@pytest.mark.parametrize(
+    ("network_name", "privilege_name"),
+    [("Internet to Web API", "Anonymous to admin"), ("Public ingress", "User to operator role")],
+)
+def test_a_signal_promotes_to_its_re_anchored_privilege_boundary(tmp_path: Path, network_name, privilege_name):
+    """Normalization moves a perimeter privilege crossing inside its component;
+    coverage still finds the boundary the candidate became."""
+    repo, out = _repo(tmp_path)
+    component_fp, input_fp = "sha256:" + "1" * 64, "sha256:" + "2" * 64
+    doc = _candidate_doc(component_fp, input_fp)
+    network = doc["candidates"][0]
+    network.update(name=network_name, candidate_key="candidate-network")
+    privilege_signal = "signal-identity-or-privilege-transition-external-to-web-api"
+    privilege = {
+        **network,
+        "candidate_key": "candidate-privilege",
+        "name": privilege_name,
+        "kind": "privilege",
+        "assumption": "Only verified administrators reach the privileged operations.",
+        "covered_signal_ids": [privilege_signal],
+    }
+    doc["candidates"].append(privilege)
+    doc["dispositions"][0]["candidate_keys"] = ["candidate-network"]
+    doc["dispositions"].append(
+        {
+            "signal_id": privilege_signal,
+            "disposition": "boundary",
+            "candidate_keys": ["candidate-privilege"],
+            "rationale": "Administrative operations are reachable from the internet behind a role check.",
+        }
+    )
+    document = _assessment(component_fp, input_fp)
+    document["signals"].append(
+        {**document["signals"][0], "id": privilege_signal, "class": "identity-or-privilege-transition"}
+    )
+    assessment, candidates = out / ".trust-boundary-assessment-input.json", out / ".trust-boundary-candidates.json"
+    _write_json(assessment, document)
+    _write_json(candidates, doc)
+
+    canonical, coverage = prep.promote_candidates(
+        repo_root=repo, output_dir=out, candidates_path=candidates, assessment_input_path=assessment, prior_model=None
+    )
+
+    by_name = {row["name"]: row for row in canonical["trust_boundaries"]}
+    assert (by_name[privilege_name]["from"], by_name[privilege_name]["to"]) == ("web-api", "web-api")
+    # The re-anchored row, never the network row that shares the original endpoints.
+    by_signal = {row["signal_id"]: row["boundary_ids"] for row in coverage["signals"]}
+    assert by_signal[privilege_signal] == [by_name[privilege_name]["id"]]
+    assert by_signal["signal-external-ingress-external-to-web-api"] == [by_name[network_name]["id"]]
+
+
 def test_assessment_and_coverage_schemas_close_evidence_locations(tmp_path: Path):
     component_fp = "sha256:" + "1" * 64
     input_fp = "sha256:" + "2" * 64
