@@ -18,6 +18,7 @@ from pathlib import Path
 from jsonschema import Draft202012Validator
 from shared._atomic_io import atomic_write_json
 
+from runtime.analyst_host import HostTimeout
 from runtime.assessment_host import MAX_EXCHANGES, ExchangeError, ExchangeResult, run_exchange
 from runtime.multi_repo_discovery import BudgetedHost, DiscoveryBudget
 
@@ -182,17 +183,21 @@ class AssessmentJobs:
         def review(artifact, slices):
             accept(copy.deepcopy(artifact), _ranges(slices))
 
-        result = run_exchange(
-            BudgetedHost(factory, self.budget),
-            self.scope,
-            instructions=instructions,
-            context=context,
-            artifact_schema=schema,
-            allowed_sources=allowed_sources,
-            timeout_s=self.budget.remaining_seconds(),
-            should_stop=self.should_stop,
-            review=review,
-        )
+        try:
+            result = run_exchange(
+                BudgetedHost(factory, self.budget),
+                self.scope,
+                instructions=instructions,
+                context=context,
+                artifact_schema=schema,
+                allowed_sources=allowed_sources,
+                timeout_s=self.budget.remaining_seconds(),
+                should_stop=self.should_stop,
+                review=review,
+            )
+        except HostTimeout as exc:
+            # Name the job, so a hang that survived its retry can be traced.
+            raise HostTimeout(f"{selector}: {exc}") from None
         ranges = _ranges(result.source_slices)
         artifact = copy.deepcopy(result.artifact)
         accept(artifact, ranges)

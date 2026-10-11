@@ -255,3 +255,52 @@ def test_an_inherited_job_whose_artifact_changed_still_fails(tmp_path):
     with pytest.raises(ExchangeError, match="changed"):
         fresh.execute(**request)
     assert fresh_host.calls == 0
+
+
+class Hanging(Host):
+    """Times out for the first `hangs` calls, as a stalled host call does."""
+
+    def __init__(self, hangs, error=None):
+        super().__init__([{"action": "complete", "reads": [], "artifact": {"result": "accepted"}}])
+        self.hangs, self.error = hangs, error
+
+    def invoke(self, *args):
+        self.calls += 1
+        if self.calls <= self.hangs:
+            from runtime.analyst_host import HostTimeout
+
+            raise (self.error or HostTimeout("host call exceeded its time limit"))
+        return HostReply(next(self.replies), 0.01)
+
+
+def _hanging(tmp_path, host):
+    jobs, _, kwargs, _ = setup(tmp_path)
+    jobs.host_factory = lambda role, ceiling: host
+    return jobs, kwargs
+
+
+def test_a_hung_call_is_retried_once_with_its_reservation_kept(tmp_path):
+    host = Hanging(1)
+    jobs, kwargs = _hanging(tmp_path, host)
+    assert jobs.execute(**kwargs) == {"result": "accepted"}
+    assert host.calls == 2 and jobs.budget.calls == 2
+    # The hung call keeps its full reservation; accounting stays available.
+    assert jobs.budget.spent_usd == pytest.approx(0.05 + 0.01) and not jobs.budget.failed
+
+
+def test_a_second_hang_fails_and_names_its_job(tmp_path):
+    from runtime.analyst_host import HostTimeout
+
+    host = Hanging(2)
+    jobs, kwargs = _hanging(tmp_path, host)
+    with pytest.raises(HostTimeout, match="^one: host call exceeded its time limit"):
+        jobs.execute(**kwargs)
+    assert host.calls == 2
+
+
+def test_a_cancelled_call_is_never_retried(tmp_path):
+    host = Hanging(1, error=HostCancelled("job cancelled"))
+    jobs, kwargs = _hanging(tmp_path, host)
+    with pytest.raises(HostCancelled, match="job cancelled"):
+        jobs.execute(**kwargs)
+    assert host.calls == 1

@@ -65,6 +65,10 @@ class HostCancelled(Exception):
     """The call was stopped because the job was cancelled or ran out of time."""
 
 
+class HostTimeout(HostCancelled):
+    """One host call exceeded its own time limit; the job itself was not cancelled."""
+
+
 @dataclass
 class HostReply:
     payload: object
@@ -278,7 +282,7 @@ def _communicate(
     while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            raise HostCancelled("host call exceeded its time limit")
+            raise HostTimeout("host call exceeded its time limit")
         if should_stop():
             raise HostCancelled("job cancelled")
         try:

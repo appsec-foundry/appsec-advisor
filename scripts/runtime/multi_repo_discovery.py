@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 from contexts.reconcile_multi_repo_architecture import SCHEMA, reconcile, validate_discovery
 
-from runtime.analyst_host import HostCancelled, HostReply, Transport, TransportError
+from runtime.analyst_host import HostCancelled, HostReply, HostTimeout, Transport, TransportError
 from runtime.assessment_host import ExchangeError, run_exchange
 from runtime.multi_repo_scope import AssessmentScope
 
@@ -39,6 +39,10 @@ source coverage or hide a required component to fit the response limits.
 # One host call produces one bounded artifact without tools. A call that runs
 # longer is stopped; its reservation stays spent because its cost is unknown.
 MAX_CALL_SECONDS = 900
+# A stateless call that hangs past its limit is tried once more. A replayed
+# STRIDE call that had exceeded 900 s in a live run (2026-10-11) finished in
+# 104 s, so a hang is transient; a second timeout still fails the job.
+MAX_TIMEOUT_RETRIES = 1
 
 
 @dataclass
@@ -79,6 +83,20 @@ class DiscoveryBudget:
         return remaining
 
     def invoke(self, factory, system, prompt, schema, timeout_s, should_stop) -> HostReply:
+        timeouts = 0
+        while True:
+            try:
+                return self._invoke_once(factory, system, prompt, schema, timeout_s, should_stop)
+            except HostTimeout:
+                # The host enforces the reservation as its own spending limit, so
+                # the reserved amount bounds the unknown cost: keep it as spent
+                # and leave accounting available for the retry.
+                self.failed = False
+                timeouts += 1
+                if timeouts > MAX_TIMEOUT_RETRIES:
+                    raise
+
+    def _invoke_once(self, factory, system, prompt, schema, timeout_s, should_stop) -> HostReply:
         if should_stop():
             raise HostCancelled("Discovery cancelled")
         if self.failed or self.calls >= self.max_calls:
