@@ -32,6 +32,7 @@ if not __package__:
 
 import hashlib
 import json
+import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -145,20 +146,42 @@ def _plugin_version() -> str:
         return "unknown"
 
 
-def _org_inputs(repo: Path, env: dict | None) -> tuple[list[Selection], dict | None]:
-    """Packages and requirements source the active organization profile requires.
+def _org_profile(repo: Path, env: dict | None) -> dict:
+    """The effective organization profile.
 
     An active profile that fails validation rejects the analysis: its required
-    inputs are unknown, so no analysis can claim to honor them.
+    inputs and policies are unknown, so no analysis can claim to honor them.
     """
     effective, errors = resolve_org_profile(None, None, False, str(repo), PLUGIN_ROOT, env)
     if errors:
         raise AdmissionError("organization profile is invalid: " + "; ".join(errors))
+    return effective
+
+
+def _org_inputs(effective: dict) -> tuple[list[Selection], dict | None]:
+    """Packages and requirements source the active organization profile requires."""
     block = effective.get("analyst") or {}
     selections = [Selection(spec, "org_required") for spec in block.get("required", [])]
     selections += [Selection(spec, "org_default") for spec in block.get("default", [])]
     source = effective.get("requirements_source")
     return selections, source if source and source.get("enabled") else None
+
+
+def _check_model_policy(model: str, effective: dict, env: dict | None) -> None:
+    """Refuse an Opus host model when the organization or environment forbids Opus (MD-6).
+
+    The same sources as the assessment ceiling apply: ``policy.disable_opus``
+    or ``APPSEC_DISABLE_OPUS``. The analyst refuses instead of downgrading, so
+    a result never names a model other than the one requested.
+    """
+    env = env if env is not None else dict(os.environ)
+    banned = bool((effective.get("defaults") or {}).get("disable_opus")) or env.get(
+        "APPSEC_DISABLE_OPUS", ""
+    ).strip().lower() in ("1", "true", "yes", "on")
+    if banned and "opus" in model.lower():
+        raise AdmissionError(
+            "Opus is disabled by policy.disable_opus or APPSEC_DISABLE_OPUS; run the analysis without --model opus"
+        )
 
 
 def _admit(inv: Invocation, limits: dict) -> tuple[dict, dict, dict, dict | None, dict | None]:
@@ -183,7 +206,9 @@ def _admit(inv: Invocation, limits: dict) -> tuple[dict, dict, dict, dict | None
         raise AdmissionError("the design text contains a secret; describe the design without the value")
     if inv.hypothesis is not None and scan_text(inv.hypothesis):
         raise AdmissionError("the hypothesis contains a secret; describe it without the value")
-    org_packages, org_requirements = _org_inputs(repo, inv.env)
+    effective = _org_profile(repo, inv.env)
+    _check_model_policy(inv.model, effective, inv.env)
+    org_packages, org_requirements = _org_inputs(effective)
     try:
         resolved = resolve([*org_packages, *inv.packages], limits, repo_root=repo, ci=inv.ci)
     except CatalogError as exc:
@@ -616,6 +641,7 @@ def answer(
     feature_sha256: str | None = None,
     feature_id: str | None = None,
     inline_answers: dict[str, str] | None = None,
+    env: dict | None = None,
 ) -> Outcome:
     """Resume a job waiting for answers.
 
@@ -635,7 +661,13 @@ def answer(
         st.release(job)
         name = state["state"] if state else "unknown"
         return Outcome(EXIT_NOT_COMPLETE, "rejected", job_id, f"Rejected: job is {name}, not waiting for answers\n")
-    current = _Run(job, st.read_artifact(root, "request.json"), st.read_artifact(root, "packages.json"), state_root)
+    request = st.read_artifact(root, "request.json")
+    try:
+        _check_model_policy(request["host"]["model"], _org_profile(repo_root.resolve(), env), env)
+    except AdmissionError as exc:
+        st.release(job)
+        return Outcome(EXIT_NOT_COMPLETE, "rejected", job_id, f"Rejected: {exc}\n")
+    current = _Run(job, request, st.read_artifact(root, "packages.json"), state_root)
     current.snapshot = st.read_artifact(root, "snapshot.json")
     current.context = st.read_artifact(root, "context.json")
     saved_questions = st.read_artifact(root, "questions.json")

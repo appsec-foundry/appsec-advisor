@@ -121,6 +121,22 @@ def test_hypothesis_cli_builds_a_bounded_controller_invocation(repo, monkeypatch
     assert "Scoped result" in capsys.readouterr().out
 
 
+def test_the_cli_transport_uses_the_admitted_job_model(repo, monkeypatch):
+    import runpy
+
+    module = runpy.run_path(str(CLI))
+    seen = []
+
+    def resume(job_id, repo_root, answers, transport, state_root, **kwargs):
+        seen.append(transport(type("J", (), {"root": repo})(), {"host": {"model": "sonnet"}}))
+        return module["ctl"].Outcome(0, "complete", job_id, "")
+
+    monkeypatch.setattr(module["ctl"], "answer", resume)
+    argv = ["answer", "--repo", str(repo), "--job", "aj-" + "0" * 32, "--answers", str(repo / "a.json")]
+    assert module["main"]([*argv, "--model", "opus"]) == 0
+    assert seen[0].model == "sonnet"
+
+
 def _committed_repo(repo: Path) -> Path:
     env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@e.invalid"}
     env.update(GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@e.invalid", GIT_CONFIG_GLOBAL=os.devnull)

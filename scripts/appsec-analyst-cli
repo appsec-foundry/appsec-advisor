@@ -247,7 +247,8 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGTERM, _terminate)
 
     def transport(job, request):
-        return ClaudeCliTransport(job.root / "work", model=args.model, max_budget_usd=args.max_budget_usd)
+        # The job's admitted model, so a resumed job cannot switch models past the policy check.
+        return ClaudeCliTransport(job.root / "work", model=request["host"]["model"], max_budget_usd=args.max_budget_usd)
 
     if args.command == "cancel":
         outcome = ctl.cancel(args.job, args.repo, args.state_dir)

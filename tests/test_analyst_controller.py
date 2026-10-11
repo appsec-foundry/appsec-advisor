@@ -531,6 +531,50 @@ def test_an_invalid_organization_profile_rejects_the_analysis(repo, state_root, 
     assert "organization profile is invalid" in outcome.report
 
 
+def opus_banned_profile(tmp_path: Path) -> dict:
+    env = org_profile(tmp_path, {})
+    path = Path(env["APPSEC_ADVISOR_ORG_PROFILE"])
+    profile = yaml.safe_load(path.read_text())
+    profile.pop("analyst")
+    profile.setdefault("policy", {})["disable_opus"] = True
+    profile.pop("requirements")
+    path.write_text(yaml.safe_dump(profile))
+    return env
+
+
+def test_an_organization_opus_ban_refuses_an_opus_host_model(repo, state_root, tmp_path):
+    fake = Fake(lambda p: response(p))
+    outcome = ctl.run(review(repo, state_root, env=opus_banned_profile(tmp_path), model="opus"), fake)
+    assert (outcome.exit_code, outcome.state, outcome.job_id) == (2, "rejected", None)
+    assert "Opus is disabled" in outcome.report and fake.prompts == []
+
+
+def test_the_environment_opus_ban_also_matches_a_full_release_id(repo, state_root):
+    fake = Fake(lambda p: response(p))
+    invocation = review(repo, state_root, env={"APPSEC_DISABLE_OPUS": "true"}, model="claude-opus-5-5")
+    outcome = ctl.run(invocation, fake)
+    assert (outcome.state, fake.prompts) == ("rejected", [])
+
+
+def test_an_opus_ban_leaves_other_models_and_unbanned_opus_running(repo, state_root, tmp_path):
+    banned = ctl.run(review(repo, state_root, env=opus_banned_profile(tmp_path)), Fake(lambda p: response(p)))
+    assert banned.state == "complete"
+    allowed = ctl.run(review(repo, state_root, model="opus"), Fake(lambda p: response(p)))
+    assert allowed.state == "complete"
+
+
+def test_a_resumed_job_rechecks_the_opus_ban_before_its_model_call(repo, state_root, tmp_path, monkeypatch):
+    clock = Clock()
+    monkeypatch.setattr(ctl.time, "monotonic", clock)
+    question = {"asks": "Who may export?", "why": "Scope of access.", "affects": "export.js", "required": True}
+    fake = Fake(lambda p: response(p, questions=[question]), lambda p: response(p))
+    first = ctl.run(review(repo, state_root, model="opus"), fake, interactive=True)
+    assert first.state == "awaiting_answers"
+    env = opus_banned_profile(tmp_path)
+    done = ctl.answer(first.job_id, repo, None, fake, state_root, inline_answers={"q-001": "Assigned."}, env=env)
+    assert (done.exit_code, done.state) == (2, "rejected") and len(fake.prompts) == 1
+
+
 def test_configuring_the_organization_profile_starts_nothing(tmp_path):
     env = org_profile(tmp_path, {"default_packages": [{"ref": "tmm/threat-modeling-manifesto@1.0.0"}]})
     state = tmp_path / "xdg"
