@@ -4,15 +4,16 @@ The Threat Analyst analyzes a planned feature, a selected code change, or a conc
 
 ```text
 /appsec-advisor:analyze-threats Let support staff export customer data as CSV.
-/appsec-advisor:analyze-threats --worktree
+/appsec-advisor:analyze-threats --worktree --question "Can a tenant read another tenant's export?"
+/appsec-advisor:analyze-threats --explore How should we add password reset?
 ```
 
-Results are advisory. They separate evidence-backed findings from threat scenarios, protection assumptions, requirement observations, and open questions, and they state what the analysis covered. A result is never a security approval and never changes `threat-model.yaml`. For a full assessment use `/appsec-advisor:create-threat-model`; for requirement grading use `/appsec-advisor:verify-requirements`.
+Results are advisory. They separate evidence-backed findings from threat scenarios, protection assumptions, recommendations, requirement observations, and open questions, and they state what the analysis covered. A result is never a security approval and never changes `threat-model.yaml`. For a full assessment use `/appsec-advisor:create-threat-model`; for requirement grading use `/appsec-advisor:verify-requirements`.
 
 The analysis runs only when you invoke `/appsec-advisor:analyze-threats` or when your team configures it in its own CI. Installing the plugin, configuring an organization profile, or selecting a question package never starts an analysis.
 
 > [!IMPORTANT]
-> The model session runs `claude -p` without tools, project configuration, or session persistence. It does not use the model of your conversation: it runs Sonnet unless you pass `--model opus`, which reasons more thoroughly and costs more per check. In a test on Claude Code 2.1.289, the model did not follow instructions planted in a hostile repository. Whether Claude Code retains host-side session data for these calls is not yet verified. See the [test results](proposals/security-advisor-threat-analyst-wp1-results.md).
+> The model session runs `claude -p` without project configuration or session persistence, and without tools unless you pass [`--explore`](#let-the-analysis-explore-the-repository). It does not use the model of your conversation: it runs Sonnet unless you pass `--model opus`, which reasons more thoroughly and costs more per check. When your organization profile sets `policy.disable_opus`, `--model opus` is refused. In a test on Claude Code 2.1.289, the model did not follow instructions planted in a hostile repository. Whether Claude Code retains host-side session data for these calls is not yet verified. See the [test results](proposals/security-advisor-threat-analyst-wp1-results.md).
 
 ## Analyze a design or a change
 
@@ -22,11 +23,26 @@ Ask a design question without any code, or pass a longer description with `--des
 /appsec-advisor:analyze-threats Let support staff export customer data as CSV.
 ```
 
-A design analysis reads no repository source. It reports threat scenarios, protection assumptions, requirement observations, and questions, never code findings, and its result header says that no source was inspected. It uses `docs/security/threat-model.yaml` as context when that file exists; pass `--isolated` to analyze the design without it, or `--threat-model <file>` to use another model. To test a design against existing code, use a [hypothesis check](#check-a-concrete-threat-in-existing-code).
+A design analysis reads no repository source unless you add `--explore`. It reports threat scenarios, protection assumptions, recommendations, requirement observations, and questions, never code findings, and its result says whether repository source was read. Each recommendation names a control or design choice, why it helps, and what it costs. To test a design against existing code, use `--explore` for advice or a [hypothesis check](#check-a-concrete-threat-in-existing-code) for a verified conclusion.
 
-Review a change by naming exactly one scope: `--worktree` (including untracked, not ignored files), `--staged`, or `--base <commit> --head <commit>`. For a feature branch, use its fetched target branch as `--base` and the feature tip as `--head`. A commit range compares the merge base of both commits with the head; `--exact-base` compares the two commits directly. An empty change completes without a model call.
+Review a change by naming exactly one scope: `--worktree` (including untracked, not ignored files), `--staged`, or `--base <commit> --head <commit>`. For a feature branch, use its fetched target branch as `--base` and the feature tip as `--head`. A commit range compares the merge base of both commits with the head; `--exact-base` compares the two commits directly. An empty change completes without a model call. Add `--question <text>` to have the review answer a concrete question about the change first; it still reports other weaknesses the change introduces.
 
-The analysis reads your requirements catalog, `docs/security/business-context.md`, and a structured `threat-model.yaml` when `scripts/appsec-analyst-cli` receives `--threat-model` or, for an interactive design question, finds `docs/security/threat-model.yaml`. A missing optional source is reported and the analysis continues. A source marked as required that is missing or invalid ends the analysis as incomplete; a required catalog is never replaced by the packaged fallback. When your organization profile names a requirements catalog, the analysis needs a trusted local copy passed with `--requirements`; it does not download catalogs.
+Before the first model call, a review also reads files the changed files import through a relative path (JavaScript, TypeScript, and Python) and the files that earlier threat-model findings cite for the components the change touches. These files come from the same snapshot, count against the file limits, and are listed under technical details with the reason they were added. Package imports and aliases are not followed; the model can still request such files.
+
+The analysis reads your requirements catalog, `docs/security/business-context.md`, and a structured `threat-model.yaml`. In an interactive session it uses `docs/security/threat-model.yaml` when that file exists; pass `--isolated` to analyze without it, or `--threat-model <file>` to use another model. In CI it uses a threat model only when `--threat-model` names one. The analysis receives the model's components, findings with their controls and cited files, mitigations, actors, trust boundaries, and security controls; the components the selected files touch come first, and entries that do not fit the size limit are counted. Scenarios, findings, and recommendations name the existing findings they relate to by their `F-NNN` id. A missing optional source is reported and the analysis continues. A source marked as required that is missing or invalid ends the analysis as incomplete; a required catalog is never replaced by the packaged fallback. When your organization profile names a requirements catalog, the analysis needs a trusted local copy passed with `--requirements`; it does not download catalogs.
+
+## Let the analysis explore the repository
+
+By default, a design analysis reads no code and a review reads only the change and the files described above. Add `--explore` to a design question or a review when the answer depends on code you cannot name in advance:
+
+```text
+/appsec-advisor:analyze-threats --explore Support staff should export a customer's notes as CSV.
+/appsec-advisor:analyze-threats --worktree --explore --question "Can a regular user delete accounts?"
+```
+
+With `--explore`, the model session gets `Read`, `Grep`, and `Glob` on a copy of the tracked files at the analyzed revision. The copy follows the same rules as the snapshot: key and environment files, binaries, oversized files, symlinks, and submodules are left out, and detected secret values are replaced. The session has no tool that runs commands, writes files, or reaches the network. Every cited line must match the copy, or the result fails. A design analysis can then back or contradict a protection assumption with code; it still reports no findings. The result says that repository source was read, lists the cited files, and counts what the copy left out. The copy is deleted with the job's other temporary files.
+
+`--explore` is interactive only: CI and other non-interactive runs refuse it, and it does not apply to a hypothesis or abuse-case check, which read only their selected paths. Your organization can turn it off with `analyst.allow_exploration: false` in the [organization profile](org-profiles.md#on-demand-threat-analysis). Use it for your own repository and your team's changes. For a foreign repository, a fork merge request, or a result someone else relies on, use the default analysis or a hypothesis check. Exploration usually costs more per check because the session reads files before it answers.
 
 ## Check a concrete threat in existing code
 
@@ -76,7 +92,7 @@ Organizations set defaults and requirements in the `analyst` block of the [organ
 
 Your team can run the same analysis on merge requests with `scripts/appsec-analyst-cli review --ci --repo <repo> --base <target-branch-sha> --head <feature-branch-sha>`. The plugin never installs this job. Start from the [GitHub Actions](../examples/analyst/github-actions.yml) or [GitLab CI](../examples/analyst/gitlab-ci.yml) example and pin every version they name.
 
-In CI, packages come only from trusted pipeline configuration through `--trusted-package`, and a package file must be pinned with `#sha256=` and live outside the checkout under review. A merge request therefore cannot choose the packages that assess it. The CLI never fetches history; fetch enough history for the merge base before you call it.
+In CI, packages come only from trusted pipeline configuration through `--trusted-package`, and a package file must be pinned with `#sha256=` and live outside the checkout under review. A merge request therefore cannot choose the packages that assess it. For the same reason, the examples read the threat model from the base commit and pass it with `--threat-model`; a model taken from the merge request's own checkout would let the change choose its context. Never run the job on `pull_request_target` or any trigger that gives secrets to code from a fork. The CLI never fetches history; fetch enough history for the merge base before you call it.
 
 | Exit code | Meaning |
 |---|---|
@@ -88,7 +104,7 @@ Exit code `1` is reserved for a future blocking gate. Upload the report on every
 
 ## Limits, state, and retention
 
-The plugin enforces the limits in [`data/analyst-limits.yaml`](../data/analyst-limits.yaml) in code, outside the model: wall-clock time, model calls, evidence rounds, question rounds, retries, files and bytes read, response size, packages, and questions. The values are provisional until measured. An exhausted limit ends the analysis as incomplete.
+The plugin enforces the limits in [`data/analyst-limits.yaml`](../data/analyst-limits.yaml) in code, outside the model: wall-clock time, model calls, evidence rounds, question rounds, retries, files and bytes read, files added as surrounding code, the size of the explore copy, response size, packages, and questions. The values are provisional until measured. An exhausted limit ends the analysis as incomplete.
 
 Each analysis gets a private job directory under `$XDG_STATE_HOME/appsec-advisor/analyst/` (default `~/.local/state/appsec-advisor/analyst/`), outside the repository and outside any assessment output. Captured source is deleted when the analysis ends; a job waiting for answers keeps it for `answer_hours` and is then closed as incomplete. Results are deleted after `result_days`. Each invocation closes abandoned jobs of the same repository. Stop a running job or close a waiting one with `scripts/appsec-analyst-cli cancel --repo <repo> --job <id>`; SIGTERM and Ctrl-C also stop the model session and record the cancellation. Assessment cleanup never touches these directories, and the analysis never touches assessment state, locks, or outputs.
 
@@ -96,4 +112,4 @@ Your parent Claude Code conversation and the model provider keep their own recor
 
 ## What the analysis cannot see
 
-A change review or hypothesis check reads only the files of the selected scope and surrounding files it requests from the same snapshot of the repository; a design analysis reads none. Ignored files, symlinks, submodules, nested repositories, binaries, oversized files, and key or environment files such as `.env` or `*.pem` are excluded and listed in the coverage section. In any other file, a detected secret value is replaced by a marker before the analysis reads it, and the coverage section lists the file and the redacted lines. The rest of that file stays readable, so code that uses a hard-coded key can still be analyzed. Related repositories are not read. A narrow scope is not complete feature coverage; recommend a full assessment when the result says the context is insufficient.
+A change review or hypothesis check reads only the files of the selected scope and surrounding files it selects or requests from the same snapshot of the repository; a design analysis reads none. With `--explore`, the session reads the explore copy described above. Ignored files, symlinks, submodules, nested repositories, binaries, oversized files, and key or environment files such as `.env` or `*.pem` are excluded and listed in the coverage section. In any other file, a detected secret value is replaced by a marker before the analysis reads it, and the coverage section lists the file and the redacted lines. The rest of that file stays readable, so code that uses a hard-coded key can still be analyzed. Related repositories are not read. A narrow scope is not complete feature coverage; recommend a full assessment when the result says the context is insufficient.

@@ -467,8 +467,8 @@ def resolve(
     return base, []
 
 
-def analyst_packages(profile: dict, profile_dir: Path) -> dict[str, list[str]] | None:
-    """Package selections of the on-demand threat analysis.
+def analyst_packages(profile: dict, profile_dir: Path) -> dict | None:
+    """Package selections and the exploration switch of the on-demand threat analysis.
 
     Consumed only by the analyst controller through ``resolve()``; it never
     reaches the assessment configuration. A profile file becomes an absolute,
@@ -486,6 +486,7 @@ def analyst_packages(profile: dict, profile_dir: Path) -> dict[str, list[str]] |
     return {
         "required": [spec(e) for e in block.get("required_packages") or []],
         "default": [spec(e) for e in block.get("default_packages") or []],
+        "allow_exploration": block.get("allow_exploration", True) is not False,
     }
 
 

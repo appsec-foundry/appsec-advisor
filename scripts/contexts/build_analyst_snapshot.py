@@ -24,6 +24,11 @@ lists the redacted lines; a file whose secrets cannot all be replaced is
 excluded as sensitive.
 Worktree renames appear as a deletion plus an addition. Nothing here writes
 outside the job root or runs repository code.
+
+An exploring job (REQ-ANA-011) also gets ``explore/``: a copy of every file of
+the frozen proposed view that the same rules admit, with the same redaction,
+so a citation of that copy can be admitted and checked like any other context.
+A design request that explores freezes ``HEAD`` for this view.
 """
 
 from __future__ import annotations
@@ -395,6 +400,13 @@ def capture(request: dict, job: Job, design_text: str | None = None) -> dict:
         with os.fdopen(fd, "wb") as handle:
             handle.write(content)
         objects["design_sha256"] = scope["content_sha256"]
+        if request.get("explore"):
+            objects["head"] = _commit(repo, "HEAD")
+            view = {
+                p: ["blob", oid]
+                for p, (mode, oid) in _tree(repo, objects["head"]).items()
+                if mode not in (SUBMODULE_MODE, SYMLINK_MODE)
+            }
     else:
         revision = scope["revision"] if scope["kind"] == "hypothesis" else scope.get("head", "HEAD")
         objects["head"] = _commit(repo, revision)
@@ -462,6 +474,59 @@ def capture(request: dict, job: Job, design_text: str | None = None) -> dict:
     return snapshot
 
 
+def export_view(request: dict, job: Job, snapshot: dict, limits: dict) -> dict:
+    """Write the redacted explore copy of the frozen proposed view; return its counts.
+
+    Each file passes the snapshot's own rejection and redaction rules, so the
+    copy holds exactly what ``admit_context`` would admit for the same path.
+    A worktree view contributes tracked files and the files of the change
+    itself, not other untracked files. The copy stops at ``explore_files``
+    files or ``explore_kib`` KiB.
+    """
+    with open(job.root / "source" / VIEW_FILE, encoding="utf-8") as handle:
+        view = json.load(handle)
+    repo = Path(request["repository"]["root"])
+    if any(kind == "worktree" for kind, _oid in view.values()):
+        keep = set(_index(repo)) | {e["path"] for e in snapshot["admitted"] if e["side"] == "proposed"}
+        view = {p: v for p, v in view.items() if p in keep}
+    root = job.root / "explore"
+    root.mkdir(mode=0o700)
+    cap = _Capture(repo, job, request["limits"])
+    written = total = 0
+    blobs = _blobs(repo, sorted({oid for kind, oid in view.values() if kind == "blob"}))
+    for path in sorted(view):
+        kind, oid = view[path]
+        if kind == "blob":
+            content = blobs[oid]
+        else:
+            content = _read_worktree(repo, path)
+            if _hash_blob(repo, content) != oid:
+                raise SnapshotError("worktree changed since capture")
+        reason = cap.reason_to_reject(path, content)
+        if reason is None:
+            content, _lines = _redact_secrets(content)
+            reason = "sensitive" if content is None else None
+        if reason is None and (
+            written >= limits["explore_files"] or total + len(content) > limits["explore_kib"] * 1024
+        ):
+            reason = "limit_reached"
+        if reason is not None:
+            cap.counts[reason] = cap.counts.get(reason, 0) + 1
+            continue
+        target = root / path
+        target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(content)
+        written += 1
+        total += len(content)
+    return {
+        "files": written,
+        "bytes": total,
+        "excluded": [{"reason": r, "count": n} for r, n in sorted(cap.counts.items())],
+    }
+
+
 def _read_design(path: str) -> bytes:
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, "rb") as handle:
@@ -476,6 +541,12 @@ def _write_view(job: Job, view: dict) -> None:
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         json.dump(view, handle)
+
+
+def view_paths(job: Job) -> set[str]:
+    """Paths of the frozen proposed view; empty for a design without exploration."""
+    with open(job.root / "source" / VIEW_FILE, encoding="utf-8") as handle:
+        return set(json.load(handle))
 
 
 def admit_context(request: dict, job: Job, snapshot: dict, path: str) -> dict:

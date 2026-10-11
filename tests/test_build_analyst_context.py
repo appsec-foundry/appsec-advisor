@@ -113,3 +113,53 @@ def test_invalid_applicability_signals_reject_context(setup, signals):
     selection["selected"][0] = dict(selection["selected"][0], applies_when=signals)
     with pytest.raises(bc.ContextContractError):
         bc.build(request, resolved, selection)
+
+
+def _model(threats=40, mitigations=True):
+    return {
+        "meta": {"generated": "2026-10-01"},
+        "components": [
+            {"id": "C-01", "name": "Export", "paths": ["src/export/**"]},
+            {"id": "C-02", "name": "Admin", "paths": ["admin.py"]},
+        ],
+        "threats": [
+            {
+                "id": f"T-{i:03d}",
+                "component": "C-02" if i % 2 else "C-01",
+                "title": f"Threat {i}",
+                "risk": "Critical" if i % 2 else "Low",
+                "evidence": [{"file": "src/export/handler.ts", "line": 3}],
+                "controls_in_place": "x" * 2000,
+            }
+            for i in range(1, threats + 1)
+        ],
+        **(
+            {"mitigations": [{"id": "M-001", "title": "Bind exports", "threat_ids": ["T-002"], "priority": "P1"}]}
+            if mitigations
+            else {}
+        ),
+        "trust_boundaries": [{"id": "tb-1", "name": "Edge", "covers_components": ["C-01"], "assumption": "TLS"}],
+    }
+
+
+def test_projection_puts_touched_components_first_and_uses_reader_ids():
+    projection = bc._project(_model(threats=4), ["src/export/handler.ts"])
+    assert projection["focus_components"] == ["C-01"]
+    assert [t["id"] for t in projection["threats"]][:2] == ["F-002", "F-004"]
+    assert projection["threats"][0]["files"] == ["src/export/handler.ts"]
+    assert len(projection["threats"][0]["controls_in_place"]) == bc.MAX_FIELD_CHARS
+    assert projection["mitigations"][0]["threat_ids"] == ["F-002"]
+
+
+def test_projection_without_focus_orders_by_risk_and_tolerates_missing_sections():
+    projection = bc._project(_model(threats=4, mitigations=False), [])
+    assert projection["focus_components"] == [] and projection["mitigations"] == []
+    assert [t["risk"] for t in projection["threats"]][:2] == ["Critical", "Critical"]
+
+
+def test_an_oversized_model_is_bounded_by_size_and_counts_omissions():
+    projection = bc._project(_model(threats=2000), ["src/export/handler.ts"])
+    assert len(__import__("json").dumps(projection)) <= bc.MAX_PROJECTION_BYTES + 1024
+    assert projection["omitted"]["threats"] > 0
+    assert projection["trust_boundaries"] and projection["mitigations"], "every section keeps entries"
+    assert all(t["component"] == "C-01" for t in projection["threats"][:10])

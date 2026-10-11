@@ -19,3 +19,6 @@ limits:
   package_kib: {value: 256, unit: KiB}
   answer_hours: {value: 72, unit: hours}
   result_days: {value: 30, unit: days}
+  context_files: {value: 12, unit: files}
+  explore_files: {value: 5000, unit: files}
+  explore_kib: {value: 51200, unit: KiB}

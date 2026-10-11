@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -200,6 +201,63 @@ def test_existing_user_files_are_preserved_and_block_fresh_assessment(scope):
             pytest.fail("Fresh assessment must not erase unrelated output")
     assert original.read_text() == "preserve"
     assert not (scope.output / ".assessment-state.json").exists()
+
+
+def _fail(state):
+    with pytest.raises(RuntimeError):
+        with state.hold():
+            (state.directory / "jobs").mkdir()
+            raise RuntimeError("stage failed")
+
+
+@pytest.mark.parametrize("finish", ["failed", "interrupted"])
+def test_fresh_start_clears_what_an_unfinished_run_left(scope, finish):
+    first = lifecycle(scope)
+    if finish == "failed":
+        _fail(first)
+    else:
+        with first.hold():
+            pass
+    assert stored(scope)["status"] == finish
+    with lifecycle(scope).hold() as fresh:
+        assert fresh.state["run_id"] != first.state["run_id"]
+        assert not (fresh.directory / "jobs").exists()
+
+
+@pytest.mark.parametrize("extra", ["completed", "user-file", "malformed-state"])
+def test_fresh_start_still_refuses_a_report_or_foreign_files(scope, extra):
+    _fail(lifecycle(scope))
+    preserved = scope.output / ".assessment-state.json"
+    if extra == "completed":
+        with lifecycle(scope, resume=True).hold() as state:
+            (scope.output / "threat-model.md").write_text("report\n")
+            state.complete(["threat-model.md"])
+        (scope.output / "threat-model.md").unlink()
+    elif extra == "user-file":
+        preserved = scope.output / "notes.txt"
+        preserved.write_text("preserve")
+    else:
+        preserved.write_text("not json")
+    before = preserved.read_bytes()
+    with pytest.raises(ExchangeError, match="choose another --output or empty it"):
+        with lifecycle(scope).hold():
+            pytest.fail("A fresh start must not erase a report or foreign file")
+    assert preserved.read_bytes() == before
+    assert (scope.output / ".assessment-work").is_dir()
+
+
+def test_fresh_start_does_not_follow_a_linked_work_directory(scope, tmp_path):
+    first = lifecycle(scope)
+    _fail(first)
+    target = tmp_path / "external"
+    target.mkdir()
+    (target / "keep.txt").write_text("preserve")
+    shutil.rmtree(first.directory)
+    first.directory.symlink_to(target)
+    with pytest.raises(ExchangeError, match="non-directory or link"):
+        with lifecycle(scope).hold():
+            pytest.fail("A linked work directory must not be cleared")
+    assert (target / "keep.txt").read_text() == "preserve"
 
 
 def test_live_ordinary_lock_blocks_multi_repo_assessment(scope):

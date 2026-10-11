@@ -94,6 +94,10 @@ def validate_request(data: object) -> list[str]:
         errors.append("request: hypothesis mode does not match scope")
     if (data["mode"] == "hypothesis") != ("hypothesis" in data):
         errors.append("request: hypothesis text is required exactly in hypothesis mode")
+    if "question" in data and data["mode"] != "review":
+        errors.append("request: a focus question applies only to a review")
+    if data.get("explore") and data["mode"] == "hypothesis":
+        errors.append("request: a hypothesis check never explores beyond its selected paths")
     if scope["kind"] == "hypothesis" and any(posixpath.normpath(p) != p or p.endswith("/") for p in scope["paths"]):
         errors.append("request: hypothesis paths must be canonical repository-relative paths")
     paths = {"repository/root": data["repository"]["root"], "output_dir": data["output_dir"]}
@@ -173,9 +177,10 @@ def validate_snapshot(data: object, request: dict | None = None) -> list[str]:
     if missing:
         errors.append(f"snapshot: scope {kind} requires objects {sorted(missing)}")
     if kind == "design":
-        if set(objects) != {"design_sha256"}:
+        # An exploring design (REQ-ANA-011) freezes HEAD and admits cited files as context.
+        if not set(objects) <= {"design_sha256", "head"}:
             errors.append("snapshot: a design scope carries no source objects")
-        if data["admitted"]:
+        if any(entry["side"] != "proposed" or entry["change"] != "context" for entry in data["admitted"]):
             errors.append("snapshot: a design scope admits no source files")
     elif "design_sha256" in objects:
         errors.append("snapshot: a review scope carries no design hash")
@@ -202,6 +207,12 @@ def _snapshot_against_request(data: dict, request: dict) -> list[str]:
         errors.append("snapshot: a merge-base comparison requires objects/merge_base")
     if scope["kind"] == "design" and data["objects"].get("design_sha256") != scope["content_sha256"]:
         errors.append("snapshot: design_sha256 does not match the request")
+    if (
+        scope["kind"] == "design"
+        and not request.get("explore")
+        and (set(data["objects"]) != {"design_sha256"} or data["admitted"])
+    ):
+        errors.append("snapshot: a design scope without exploration reads no repository source")
     if scope["kind"] == "hypothesis" and any(
         entry["side"] != "proposed"
         or entry["change"] != "context"
@@ -281,7 +292,9 @@ def _relationship_errors(finding: dict, admitted: dict, source_dir: Path, label:
     if relationship == "introduced":
         proposed = any(loc["side"] == "proposed" for loc in finding["evidence"])
         added = any(loc["side"] == "proposed" and _is_changed_code(loc, admitted, source_dir) for loc in locations)
-        removed = sides == {"baseline", "proposed"} and any(
+        # A removed control is proven by its removed baseline lines in the
+        # comparison; the affected proposed code may sit in either list.
+        removed = any(
             loc["side"] == "baseline" and _is_changed_code(loc, admitted, source_dir) for loc in finding["comparison"]
         )
         if not proposed or not (added or removed):
@@ -329,6 +342,7 @@ def validate_response(response: object, request: dict, snapshot: dict, context: 
     criteria = {c["ref"] for c in context["criteria"]}
     delivered = [q["ref"] for q in context["questions"]]
     design = request["mode"] == "design"
+    explore = bool(request.get("explore"))
     hypothesis = request["mode"] == "hypothesis"
     assessment = response.get("hypothesis_assessment")
     if hypothesis != (assessment is not None):
@@ -363,7 +377,7 @@ def validate_response(response: object, request: dict, snapshot: dict, context: 
     for i, assumption in enumerate(response["assumptions"]):
         label = f"response: assumptions/{i}"
         evidence = assumption.get("evidence", [])
-        if assumption["status"] in ("supported", "contradicted") and (design or not evidence):
+        if assumption["status"] in ("supported", "contradicted") and ((design and not explore) or not evidence):
             errors.append(f"{label}: '{assumption['status']}' needs evidence from a reviewed change")
         for j, location in enumerate(evidence):
             errors += _location_errors(location, admitted, source_dir, f"{label}/location {j}")
@@ -372,7 +386,20 @@ def validate_response(response: object, request: dict, snapshot: dict, context: 
             errors += _location_errors(
                 location, admitted, source_dir, f"response: requirement_observations/{i}/location {j}"
             )
-    cited = [ref for item in response["findings"] + response["scenarios"] for ref in item.get("requirement_refs", [])]
+    recommendations = response.get("recommendations", [])
+    threat_ids = {t["id"] for t in (context.get("threat_model") or {}).get("threats", [])}
+    related = {
+        ref
+        for item in response["findings"] + response["scenarios"] + recommendations
+        for ref in item.get("related_threats", [])
+    }
+    if related - threat_ids:
+        errors.append(f"response: {len(related - threat_ids)} related threat(s) are not in the delivered threat model")
+    cited = [
+        ref
+        for item in response["findings"] + response["scenarios"] + recommendations
+        for ref in item.get("requirement_refs", [])
+    ]
     cited += [o["requirement_ref"] for o in response["requirement_observations"]]
     if set(cited) - requirement_ids:
         errors.append(f"response: {len(set(cited) - requirement_ids)} cited requirement(s) were not delivered")
@@ -410,6 +437,8 @@ def validate_result(result: object) -> list[str]:
         errors.append("result: a complete result cannot leave required questions open")
     if result["mode"] == "design" and result["findings"]:
         errors.append("result: a design result carries no findings")
+    if "question" in result and result["mode"] != "review":
+        errors.append("result: a focus question applies only to a review")
     errors += _question_consistency(
         {"question_coverage": result["coverage"]["question_coverage"], "questions": result["questions"]}
     )

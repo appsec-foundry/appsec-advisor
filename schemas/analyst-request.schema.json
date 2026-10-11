@@ -218,6 +218,15 @@
       "minLength": 1,
       "maxLength": 20000,
       "pattern": "\\S"
+    },
+    "question": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 20000,
+      "pattern": "\\S"
+    },
+    "explore": {
+      "const": true
     }
   },
   "$defs": {

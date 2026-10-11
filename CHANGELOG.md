@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The headless runner assesses several local checkouts as one system when `--repo` is repeated, producing one threat model, report, and Figure 1 that name the repository of every component and finding.
 - Standard and thorough runs check business abuse cases such as access to other users' data or a bypassed approval, thorough runs add up to three application-specific cases, and repositories and organization profiles can add their own as one-sentence checks. Confirmed cases enter the register, at High for access to other users' data, extra rights, or a misused privileged function, and appear on the findings they confirm, cases with cited code but no control found enter it as unproven, and unresolved cases can become team questions.
 - The Threat Analyst checks concrete threat hypotheses or a single defined abuse case (`--abuse-case <ID>`) against selected files at a Git revision and rates each attack-chain step with evidence.
+- The Threat Analyst can explore a redacted, read-only copy of the repository with `--explore`, answers a concrete question about a change with `--question`, and recommends controls linked to existing threat-model findings.
 - `/appsec-advisor:abuse-cases` lists the defined technical and business abuse cases with their origin and recorded result, and `/appsec-advisor:abuse-cases <ID>` explains one case step by step.
 - Figure 1 marks network trust boundaries within a column and into every data store, and Figure 1b draws evidenced build trust boundaries at the column borders they cross, pale when only inferred.
 
@@ -21,7 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The Critical Attack Tree is replaced by Critical Findings by Root Cause, which links each Critical finding to its weakness record and the structural fix that closes it.
 - A finding whose code an abuse-case verification confirms is shown as verified instead of ambiguous.
-- Threat Analyst design questions use the repository's threat model as context unless you pass `--isolated`.
+- Threat Analyst design questions, reviews, and hypothesis checks use the repository's threat model as context unless you pass `--isolated`, and a review also reads the files the change imports and the files earlier findings cite.
+- `appsec-reviewer-cli` refuses a repository that carries its own Claude Code configuration unless you pass `--trust-mode trusted`.
 - Standard and thorough runs use Sonnet 5.5 instead of Sonnet 5 for triage, merging, report authoring, and abuse-case verification, and run costs price the 5.5 models.
 - Repository abuse cases belong in `docs/security/abuse-cases/` beside the business context; `.appsec/abuse-cases/` is still read.
 
@@ -38,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Threat Analyst runs report evidence they could not obtain, no longer end incomplete when a design question asks for code, and accept source-backed findings introduced by removed controls.
 - The completion summary of a run is shown once, in full, by the plugin itself instead of being copied by the session.
 - `update-baseline` keeps user scope when the project is the home directory and falls back to the signed updater when delegation fails.
+- The Threat Analyst honors the organization's Opus ban, and `appsec-reviewer-cli` no longer reports a verdict file from the checkout as its own result.
 
 ## 0.6.0-beta.4 (2026-10-06)
 

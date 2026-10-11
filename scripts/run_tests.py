@@ -223,6 +223,9 @@ GROUPS = {
         analyst_state
         build_analyst_context
         build_analyst_snapshot
+        select_analyst_context
+        eval_analyst
+        appsec_reviewer_cli
         render_analyst_report
         resolve_analyst_catalog
         agent_logger_cov
@@ -6294,6 +6297,20 @@ SOURCE_TESTS = {
         check_target_specificity
         requirements_verification
     """),
+    "scripts/validators/eval_analyst.py": _tests("""
+        eval_analyst
+        check_target_specificity
+        requirements_verification
+    """),
+    "tests/fixtures/analyst-eval/cases.yaml": _tests("""
+        eval_analyst
+    """),
+    "scripts/contexts/select_analyst_context.py": _tests("""
+        analyst_controller
+        select_analyst_context
+        check_target_specificity
+        requirements_verification
+    """),
     "scripts/contexts/analyst_questions.py": _tests("""
         analyst_controller
         analyst_questions
@@ -6335,6 +6352,10 @@ SOURCE_TESTS = {
         gate_preconditions
         shared_paths
         stride_outputs
+    """),
+    "scripts/appsec-reviewer-cli": _tests("""
+        appsec_reviewer_cli
+        package_internal_plugin
     """),
     "scripts/appsec-analyst-cli": _tests("""
         abuse_case_hypothesis

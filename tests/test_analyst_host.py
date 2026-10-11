@@ -180,3 +180,24 @@ def test_effort_is_passed_only_when_requested(tmp_path):
     assert argv[argv.index("--effort") + 1] == "medium"
     with pytest.raises(ValueError):
         ClaudeCliTransport(tmp_path, effort="unbounded")
+
+
+def test_only_an_exploring_session_gets_read_only_file_tools(tmp_path):
+    from runtime.analyst_host import EXPLORE_TOOLS, ClaudeCliTransport
+
+    plain = ClaudeCliTransport(tmp_path).argv("system", {})
+    explore = ClaudeCliTransport(tmp_path, read_root=tmp_path / "copy").argv("system", {})
+    assert plain[plain.index("--tools") + 1] == ""
+    assert explore[explore.index("--tools") + 1] == EXPLORE_TOOLS == "Read,Grep,Glob"
+    assert "--restricted" in explore and "--safe-mode" in explore and "--strict-mcp-config" in explore
+
+
+@pytest.mark.parametrize("explore", [True, False])
+def test_only_an_exploring_prompt_asks_the_model_to_read_the_copy(tmp_path, explore):
+    request = {"mode": "design", **({"explore": True} if explore else {})}
+    (tmp_path / "design").write_text("Plan a password reset.\n")
+    context = {k: [] for k in ("requirements", "questions", "criteria", "sources")}
+    context.update(business_context=None, threat_model=None)
+    prompt = host.build_prompt(request, {"admitted": [], "excluded": []}, context, tmp_path, [])
+    head = prompt[: prompt.index("<<<")]
+    assert ("use Glob, Grep, and Read" in head) is explore

@@ -41,8 +41,9 @@ from pathlib import Path
 from contexts import analyst_questions as aq
 from contexts.build_analyst_context import ContextContractError, ContextError
 from contexts.build_analyst_context import build as build_context
-from contexts.build_analyst_snapshot import SnapshotError, admit_context, capture
+from contexts.build_analyst_snapshot import SnapshotError, admit_context, capture, export_view, view_paths
 from contexts.resolve_analyst_catalog import CatalogError, Selection, load_limits, resolve, select_questions
+from contexts.select_analyst_context import select as select_context
 from renderers.render_analyst_report import render
 from runtime import analyst_state as st
 from runtime.analyst_host import (
@@ -111,6 +112,8 @@ class Invocation:
     output_dir: Path | None = None
     design_text: str | None = None
     hypothesis: str | None = None
+    question: str | None = None
+    explore: bool = False
     feature_path: Path | None = None
     packages: list[Selection] = field(default_factory=list)
     ci: bool = False
@@ -184,7 +187,7 @@ def _check_model_policy(model: str, effective: dict, env: dict | None) -> None:
         )
 
 
-def _admit(inv: Invocation, limits: dict) -> tuple[dict, dict, dict, dict | None, dict | None]:
+def _admit(inv: Invocation, limits: dict, interactive: bool) -> tuple[dict, dict, dict, dict | None, dict | None]:
     """Validate an invocation; return (request, resolved, selection, feature, org requirements source)."""
     repo = inv.repo_root
     if not repo.is_absolute() or not repo.is_dir() or not (repo / ".git").exists():
@@ -206,8 +209,15 @@ def _admit(inv: Invocation, limits: dict) -> tuple[dict, dict, dict, dict | None
         raise AdmissionError("the design text contains a secret; describe the design without the value")
     if inv.hypothesis is not None and scan_text(inv.hypothesis):
         raise AdmissionError("the hypothesis contains a secret; describe it without the value")
+    if inv.question is not None and (inv.mode != "review" or scan_text(inv.question)):
+        raise AdmissionError("a focus question applies only to a review and must not contain a secret")
     effective = _org_profile(repo, inv.env)
     _check_model_policy(inv.model, effective, inv.env)
+    if inv.explore:
+        if inv.ci or not interactive or inv.mode == "hypothesis":
+            raise AdmissionError("repository exploration is interactive only and does not apply to a hypothesis check")
+        if (effective.get("analyst") or {}).get("allow_exploration") is False:
+            raise AdmissionError("the organization profile forbids repository exploration")
     org_packages, org_requirements = _org_inputs(effective)
     try:
         resolved = resolve([*org_packages, *inv.packages], limits, repo_root=repo, ci=inv.ci)
@@ -237,6 +247,10 @@ def _admit(inv: Invocation, limits: dict) -> tuple[dict, dict, dict, dict | None
         request["feature"] = {"path": str(inv.feature_path.resolve()), "sha256": feature["sha256"]}
     if inv.hypothesis is not None:
         request["hypothesis"] = inv.hypothesis
+    if inv.question is not None:
+        request["question"] = inv.question
+    if inv.explore:
+        request["explore"] = True
     if inv.mode == "hypothesis" or inv.hypothesis is not None:
         if validate_request(dict(request, job_id="aj-" + "0" * 32, requested_at=st.utc_now())):
             raise AdmissionError("invalid hypothesis, revision, or source paths")
@@ -276,6 +290,8 @@ class _Run:
     )
     fingerprint: str = ""
     evidence_requests: list[dict] = field(default_factory=list)
+    context_selection: list[dict] = field(default_factory=list)
+    exploration: dict | None = None
     usd: float = 0.0
     deadline: float = 0.0
 
@@ -314,6 +330,8 @@ class _Run:
                 "question_coverage": response.get("question_coverage", []),
                 "evidence_requests": self.evidence_requests,
                 "redacted": _redacted(snapshot),
+                **({"context_selection": self.context_selection} if self.context_selection else {}),
+                **({"exploration": self.exploration} if self.exploration is not None else {}),
                 "required_complete": bool(context and context["question_selection"]["required_complete"])
                 and not any(e["status"] != "admitted" for e in self.evidence_requests)
                 and not any(q["required"] for q in questions or [])
@@ -322,14 +340,21 @@ class _Run:
             "summary": response.get("summary", ""),
             "findings": _number(response.get("findings", []), "f"),
             "scenarios": _number(response.get("scenarios", []), "s"),
+            "recommendations": _number(response.get("recommendations", []), "r"),
             "assumptions": _number(response.get("assumptions", []), "a"),
             "requirement_observations": response.get("requirement_observations", []),
             "methodology_observations": response.get("methodology_observations", []),
             "questions": questions or [],
             "limitations": [*response.get("limitations", []), *_scope_notes(self.request, snapshot), *notes],
-            "costs": {"host_calls": self.counters["host_calls"], **({"usd": round(self.usd, 4)} if self.usd else {})},
+            "costs": {
+                "host_calls": self.counters["host_calls"],
+                "model": self.request["host"]["model"],
+                **({"usd": round(self.usd, 4)} if self.usd else {}),
+            },
             "generated_at": st.utc_now(),
         }
+        if "question" in self.request:
+            result["question"] = self.request["question"]
         if self.request["mode"] == "hypothesis":
             result["hypothesis"] = self.request["hypothesis"]
             if "hypothesis_assessment" in response:
@@ -350,7 +375,7 @@ class _Run:
                 withheld = "The output directory became unusable; the result stays in the job directory."
                 publish = False
         if withheld:
-            empty = {k: [] for k in ("findings", "scenarios", "assumptions", "questions")}
+            empty = {k: [] for k in ("findings", "scenarios", "recommendations", "assumptions", "questions")}
             result = dict(
                 result,
                 **empty,
@@ -427,7 +452,7 @@ def run(inv: Invocation, transport_factory: TransportFactory, interactive: bool 
     """Run one analysis from admission to a published result or a question checkpoint."""
     limits = load_limits()
     try:
-        request, resolved, selection, feature, org_requirements = _admit(inv, limits)
+        request, resolved, selection, feature, org_requirements = _admit(inv, limits, interactive)
     except AdmissionError as exc:
         return Outcome(EXIT_NOT_COMPLETE, "rejected", None, f"Rejected before analysis: {exc}\n")
     repo = Path(request["repository"]["root"])
@@ -494,12 +519,21 @@ def _prepare(
             threat_model_path=inv.threat_model_path,
             threat_model_required=inv.threat_model_required,
             feature=delivered_feature,
+            focus_paths=sorted({e["path"] for e in current.snapshot["admitted"]}),
         )
     except ContextContractError:
         return current.finish("failed", "validation_failure", ["The analysis context violated its contract."])
     except ContextError as exc:
         return current.finish("incomplete", "required_input_missing", [f"{exc}."])
     st.write_artifact(job, "context.json", current.context)
+    all_limits = load_limits()
+    if inv.mode == "review" and current.snapshot["admitted"]:
+        _select_surrounding_code(current, all_limits["context_files"])
+    if request.get("explore"):
+        try:
+            current.exploration = export_view(request, job, current.snapshot, all_limits)
+        except SnapshotError as exc:
+            return current.finish("failed", "validation_failure", [f"The explore copy could not be written: {exc}."])
     current.fingerprint = _sha([request, current.snapshot, current.context])
     current.ensure_started()
     snapshot = current.snapshot
@@ -521,6 +555,52 @@ def _prepare(
             "complete", "empty_scope", ["The selected scope contains no changes; no model call was made."]
         )
     return _analyze(current, [], transport_factory, interactive)
+
+
+def _select_surrounding_code(current: _Run, limit: int) -> None:
+    """Admit the files the change most likely depends on before the first model call."""
+    job, request = current.job, current.request
+    for candidate in select_context(
+        current.snapshot, view_paths(job), job.root / "source", current.context["threat_model"], limit
+    ):
+        try:
+            current.snapshot = admit_context(request, job, current.snapshot, candidate["path"])
+        except SnapshotError:
+            continue
+        if any(e["path"] == candidate["path"] and e["side"] == "proposed" for e in current.snapshot["admitted"]):
+            current.context_selection.append(candidate)
+    st.write_artifact(job, "snapshot.json", current.snapshot)
+
+
+def _cited_proposed_paths(payload: object) -> list[str]:
+    """Proposed-side paths an unvalidated reply cites; malformed entries are left to validation."""
+    if not isinstance(payload, dict):
+        return []
+    locations = []
+    for key, fields in (
+        ("findings", ("evidence", "comparison")),
+        ("assumptions", ("evidence",)),
+        ("requirement_observations", ("evidence",)),
+    ):
+        for item in payload.get(key) or []:
+            if isinstance(item, dict):
+                for name in fields:
+                    locations += [loc for loc in item.get(name) or [] if isinstance(loc, dict)]
+    return sorted(
+        {loc["path"] for loc in locations if loc.get("side") == "proposed" and isinstance(loc.get("path"), str)}
+    )
+
+
+def _admit_explored_citations(current: _Run, payload: object) -> None:
+    """Admit the files an exploring reply cites from the frozen view, so the usual receipt check applies."""
+    admitted = {e["path"] for e in current.snapshot["admitted"] if e["side"] == "proposed"}
+    for path in _cited_proposed_paths(payload):
+        if path not in admitted:
+            try:
+                current.snapshot = admit_context(current.request, current.job, current.snapshot, path)
+            except SnapshotError:
+                continue
+    st.write_artifact(current.job, "snapshot.json", current.snapshot)
 
 
 def _analyze(current: _Run, answers: list[dict], transport_factory: TransportFactory, interactive: bool) -> Outcome:
@@ -557,9 +637,13 @@ def _analyze(current: _Run, answers: list[dict], transport_factory: TransportFac
             current.counters["transport_retries"] += 1
             continue
         current.usd += reply.usd or 0.0
+        if request.get("explore"):
+            _admit_explored_citations(current, reply.payload)
         errors = validate_response(reply.payload, request, current.snapshot, current.context, source_dir)
         if errors:
-            note = f"The model reply failed validation ({len(errors)} problem(s)); nothing from it was published."
+            # Validator messages name locations and rules, never rejected values.
+            shown = "; ".join(errors[:3])[:900]
+            note = f"The model reply failed validation ({len(errors)} problem(s)): {shown}. Nothing from it was published."
             return current.finish("failed", "invalid_model_output", [note])
         wanted = reply.payload["evidence_requests"]
         rounds_left = current.counters["evidence_rounds"] < limits["evidence_rounds"]
@@ -601,7 +685,13 @@ def _analyze(current: _Run, answers: list[dict], transport_factory: TransportFac
     st.write_artifact(
         job,
         "questions.json",
-        {"questions": questions, "usd": current.usd, "evidence_requests": current.evidence_requests},
+        {
+            "questions": questions,
+            "usd": current.usd,
+            "evidence_requests": current.evidence_requests,
+            "context_selection": current.context_selection,
+            "exploration": current.exploration,
+        },
     )
     required = [q for q in questions if q["required"]]
     if required and interactive and current.counters["question_rounds"] < limits["question_rounds"]:
@@ -672,6 +762,8 @@ def answer(
     current.context = st.read_artifact(root, "context.json")
     saved_questions = st.read_artifact(root, "questions.json")
     current.evidence_requests = saved_questions.get("evidence_requests", [])
+    current.context_selection = saved_questions.get("context_selection") or []
+    current.exploration = saved_questions.get("exploration")
     current.usd = saved_questions.get("usd", 0.0)
     current.counters = dict(state["counters"])
     current.fingerprint = state["input_fingerprint"]

@@ -280,7 +280,7 @@ def test_snapshot_rejects_non_relative_or_escaping_paths(path):
     ("overrides", "expected"),
     [
         ({"objects": {"head": OID}}, "requires objects"),
-        ({"scope_kind": "design", "objects": {"design_sha256": SHA, "head": OID}}, "carries no source objects"),
+        ({"scope_kind": "design", "objects": {"design_sha256": SHA, "base": OID}}, "carries no source objects"),
         ({"objects": {"head": OID, "base": OID, "design_sha256": SHA}}, "carries no design hash"),
         ({"admitted": [_entry("a.js"), _entry("a.js")]}, "admitted twice"),
         ({"admitted": [_entry("a.js", change="renamed")]}, "previous_path"),
@@ -348,3 +348,17 @@ def test_hypothesis_snapshot_cannot_claim_outside_or_baseline_evidence():
     for e in (_entry("src-other/api.py", change="context"), _entry("src/api.py", side="baseline", change="context")):
         s["admitted"] = [e]
         assert va.validate_snapshot(s, r)
+
+
+def test_a_design_snapshot_reads_source_only_for_an_exploring_request():
+    snapshot = _snapshot(scope_kind="design", objects={"design_sha256": SHA, "head": OID}, admitted=[])
+    assert va.validate_snapshot(snapshot) == []
+    request = {
+        "job_id": snapshot["job_id"],
+        "scope": {"kind": "design", "content_sha256": SHA},
+        "limits": {"admitted_files": 10, "file_kib": 64, "job_kib": 400},
+    }
+    assert any("without exploration" in e for e in va._snapshot_against_request(snapshot, request))
+    assert not any(
+        "without exploration" in e for e in va._snapshot_against_request(snapshot, dict(request, explore=True))
+    )

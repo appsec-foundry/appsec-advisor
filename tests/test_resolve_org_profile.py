@@ -576,3 +576,10 @@ def test_invalid_analyst_packages_fail_profile_validation(isolated_root, tmp_pat
     path = _profile_with_analyst(tmp_path, {"required_packages": [entry]})
     _effective, errors = rop.resolve(str(path), None, False, None, isolated_root, env={})
     assert errors
+
+
+@pytest.mark.parametrize(("block", "allowed"), [({}, True), ({"allow_exploration": False}, False)])
+def test_analyst_block_carries_the_exploration_switch(tmp_path, block, allowed):
+    from runtime.resolve_org_profile import analyst_packages
+
+    assert analyst_packages({"analyst": {"default_packages": [], **block}}, tmp_path)["allow_exploration"] is allowed

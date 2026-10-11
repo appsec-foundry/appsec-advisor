@@ -80,6 +80,9 @@
           },
           "next_action": {
             "$ref": "#/$defs/text"
+          },
+          "related_threats": {
+            "$ref": "#/$defs/threat_refs"
           }
         }
       }
@@ -107,6 +110,9 @@
           },
           "requirement_refs": {
             "$ref": "#/$defs/requirement_refs"
+          },
+          "related_threats": {
+            "$ref": "#/$defs/threat_refs"
           }
         }
       }
@@ -355,6 +361,36 @@
           }
         }
       }
+    },
+    "recommendations": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "title",
+          "rationale",
+          "trade_off"
+        ],
+        "properties": {
+          "title": {
+            "$ref": "#/$defs/title"
+          },
+          "rationale": {
+            "$ref": "#/$defs/text"
+          },
+          "trade_off": {
+            "$ref": "#/$defs/text"
+          },
+          "requirement_refs": {
+            "$ref": "#/$defs/requirement_refs"
+          },
+          "related_threats": {
+            "$ref": "#/$defs/threat_refs"
+          }
+        }
+      }
     }
   },
   "$defs": {
@@ -421,6 +457,15 @@
           "minLength": 1,
           "maxLength": 400
         }
+      }
+    },
+    "threat_refs": {
+      "type": "array",
+      "maxItems": 6,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^F-[0-9]{3,}$"
       }
     }
   }

@@ -228,7 +228,11 @@ A developer can ask the analyst to check a concrete threat hypothesis against na
 
 ### REQ-ANA-010 — A design analysis needs no code
 
-A developer can ask the analyst about a planned design without supplying code. An interactive design analysis uses the repository's threat model as context when one exists, unless the developer chooses an isolated analysis. The result reports threat scenarios, protection assumptions, requirement observations, and questions, never code findings, and states that no repository source was inspected and whether a threat model was used.
+A developer can ask the analyst about a planned design without supplying code. An interactive design analysis uses the repository's threat model as context when one exists, unless the developer chooses an isolated analysis. The result reports threat scenarios, protection assumptions, requirement observations, recommendations, and questions, never code findings. It states whether a threat model was used and whether repository source was read; without repository exploration (REQ-ANA-011) it reads none.
+
+### REQ-ANA-011 — Repository exploration is opt-in, interactive, and read-only
+
+A developer can let an interactive analysis explore the repository instead of reading only the selected change. Exploration runs only when the developer enables it; CI and other non-interactive runs refuse it, and an organization can forbid it. The exploring session reads only a copy of the tracked files at the analyzed revision from which excluded and secret content is removed, and it has no tool that executes commands, writes files, or reaches the network. Every citation must match that copy, the result lists the files it cites, and a hypothesis check never explores beyond its selected paths.
 
 ## Trust
 

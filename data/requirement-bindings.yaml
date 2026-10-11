@@ -1021,9 +1021,38 @@ requirements:
       - tests/test_analyst_host.py::test_the_design_schema_admits_no_findings_or_source_requests
       - tests/test_analyst_cli.py::test_design_cli_uses_the_existing_threat_model_unless_isolated
       - tests/test_render_analyst_report.py::test_design_report_states_that_no_source_was_inspected
+      - tests/test_render_analyst_report.py::test_a_design_report_without_exploration_says_no_source_was_read
+      - tests/test_analyst_controller.py::test_a_design_without_exploration_still_rejects_code_backed_assumptions
+      - tests/test_validate_analyst.py::test_a_design_snapshot_reads_source_only_for_an_exploring_request
+
+  REQ-ANA-011:
+    applies_to:
+      - scripts/appsec-analyst-cli
+      - scripts/orchestrator/analyst_controller.py
+      - scripts/runtime/analyst_host.py
+      - scripts/contexts/build_analyst_snapshot.py
+      - scripts/validators/validate_analyst.py
+      - scripts/runtime/resolve_org_profile.py
+      - schemas/org-profile.schema.yaml
+      - skills/analyze-threats/**
+    decisions: []
+    documents:
+      - docs/threat-analyst.md
+      - docs/org-profiles.md
+    coverage: direct
+    guards:
+      - tests/test_analyst_controller.py::test_an_exploring_design_reads_only_the_redacted_copy_and_cites_it
+      - tests/test_analyst_controller.py::test_an_exploring_citation_that_does_not_match_the_copy_fails
+      - tests/test_analyst_controller.py::test_exploration_is_refused_outside_an_interactive_session
+      - tests/test_analyst_controller.py::test_exploration_is_refused_for_a_hypothesis_check
+      - tests/test_analyst_controller.py::test_an_organization_can_forbid_exploration
+      - tests/test_analyst_cli.py::test_exploration_and_question_misuse_exit_2_before_any_job
+      - tests/test_analyst_cli.py::test_an_exploring_job_gets_a_transport_confined_to_its_copy
+      - tests/test_analyst_host.py::test_only_an_exploring_session_gets_read_only_file_tools
 
   REQ-TRU-001:
     applies_to:
+      - scripts/appsec-reviewer-cli
       - scripts/validators/preflight_untrusted.py
       - scripts/runtime/multi_repo_scope.py
       - scripts/runtime/assessment_host.py
@@ -1038,6 +1067,8 @@ requirements:
       - SECURITY.md
     coverage: direct
     guards:
+      - tests/test_appsec_reviewer_cli.py::test_repository_owned_claude_configuration_is_refused_unless_trusted
+      - tests/test_appsec_reviewer_cli.py::test_a_checked_in_verdict_is_never_reported_as_this_review
       - tests/test_preflight_untrusted.py::test_repo_owned_claude_settings_flagged
       - tests/test_preflight_untrusted.py::test_repo_root_claude_memory_is_flagged
       - tests/test_preflight_untrusted.py::test_escaping_symlink_flagged

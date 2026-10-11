@@ -96,6 +96,14 @@ def _analysis(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--requirements-required", action="store_true")
     parser.add_argument("--threat-model", type=_path, help="structured threat-model.yaml to use as context")
     parser.add_argument("--threat-model-required", action="store_true")
+    parser.add_argument(
+        "--isolated", action="store_true", help="analyze without the existing docs/security/threat-model.yaml"
+    )
+    parser.add_argument(
+        "--explore",
+        action="store_true",
+        help="interactive only: let the analysis read a redacted copy of the tracked files (design or review)",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -106,9 +114,6 @@ def build_parser() -> argparse.ArgumentParser:
     source = design.add_mutually_exclusive_group(required=True)
     source.add_argument("--design-file", type=_path)
     source.add_argument("--text", help="free-text design request (interactive only)")
-    design.add_argument(
-        "--isolated", action="store_true", help="interactive only: analyze without the existing threat model"
-    )
     review = sub.add_parser("review", help="analyze a code change")
     _analysis(review)
     review.add_argument("--base")
@@ -116,6 +121,7 @@ def build_parser() -> argparse.ArgumentParser:
     review.add_argument("--exact-base", action="store_true", help="compare base directly instead of the merge base")
     review.add_argument("--staged", action="store_true")
     review.add_argument("--worktree", action="store_true")
+    review.add_argument("--question", help="optional security question the review answers for this change")
     hypothesis = sub.add_parser("hypothesis", help="check a threat hypothesis in selected committed source")
     _analysis(hypothesis)
     claim = hypothesis.add_mutually_exclusive_group(required=True)
@@ -126,9 +132,6 @@ def build_parser() -> argparse.ArgumentParser:
     hypothesis.add_argument("--revision", required=True, help="Git revision to inspect, such as HEAD")
     hypothesis.add_argument(
         "--path", action="append", default=[], help="literal repository-relative file or directory; repeatable"
-    )
-    hypothesis.add_argument(
-        "--isolated", action="store_true", help="with --abuse-case: check the code without the existing threat model"
     )
     hypothesis.add_argument(
         "--preview", action="store_true", help="with --abuse-case: print the cases and files to check, then stop"
@@ -197,23 +200,34 @@ def _abuse_case_claim(args: argparse.Namespace, parser: argparse.ArgumentParser)
     args.scope_summary = f"{scope}\n  Threat model: {model}\n  Analysis model: {args.model}\n{advice}"
 
 
+def _default_threat_model(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    """An interactive analysis uses the repository's threat model unless --isolated; CI names it explicitly."""
+    if args.isolated and (args.threat_model is not None or not args.interactive):
+        parser.error("--isolated is interactive only and excludes --threat-model")
+    existing = args.repo / "docs" / "security" / "threat-model.yaml"
+    if args.interactive and args.threat_model is None and not args.isolated and existing.is_file():
+        args.threat_model = existing
+
+
 def _scope(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict:
+    if args.explore and (args.ci or not args.interactive):
+        parser.error("--explore is interactive only")
     if args.command == "hypothesis":
+        if args.explore:
+            parser.error("--explore does not apply to a hypothesis check; it reads only its selected paths")
         if args.abuse_case:
             _abuse_case_claim(args, parser)
         elif not args.path:
             parser.error("--path is required with --hypothesis")
-        elif args.org_profile or args.no_org_profile or args.isolated or args.preview:
-            parser.error("--org-profile, --no-org-profile, --isolated, and --preview apply only to --abuse-case")
+        elif args.org_profile or args.no_org_profile or args.preview:
+            parser.error("--org-profile, --no-org-profile, and --preview apply only to --abuse-case")
+        else:
+            _default_threat_model(args, parser)
         if not args.hypothesis.strip() or len(args.hypothesis) > MAX_TEXT_CHARS:
             parser.error("--hypothesis must be non-empty and at most 20000 characters")
         return {"kind": "hypothesis", "revision": args.revision, "paths": args.path}
     if args.command == "design":
-        if args.isolated and (args.threat_model is not None or not args.interactive):
-            parser.error("--isolated is interactive only and excludes --threat-model")
-        existing = args.repo / "docs" / "security" / "threat-model.yaml"
-        if args.interactive and args.threat_model is None and not args.isolated and existing.is_file():
-            args.threat_model = existing
+        _default_threat_model(args, parser)
         if args.text is not None:
             if not args.interactive:
                 parser.error("--text is interactive only; CI passes --design-file")
@@ -221,6 +235,9 @@ def _scope(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict:
                 parser.error("--text must be non-empty and at most 20000 characters")
             return {"kind": "design", "source": "text"}
         return {"kind": "design", "source": "file", "design_path": str(args.design_file)}
+    if args.question is not None and (not args.question.strip() or len(args.question) > MAX_TEXT_CHARS):
+        parser.error("--question must be non-empty and at most 20000 characters")
+    _default_threat_model(args, parser)
     commits = args.base is not None or args.head is not None
     chosen = [name for name, on in (("commits", commits), ("staged", args.staged), ("worktree", args.worktree)) if on]
     if len(chosen) != 1:
@@ -248,7 +265,12 @@ def main(argv: list[str] | None = None) -> int:
 
     def transport(job, request):
         # The job's admitted model, so a resumed job cannot switch models past the policy check.
-        return ClaudeCliTransport(job.root / "work", model=request["host"]["model"], max_budget_usd=args.max_budget_usd)
+        return ClaudeCliTransport(
+            job.root / "work",
+            model=request["host"]["model"],
+            max_budget_usd=args.max_budget_usd,
+            read_root=job.root / "explore" if request.get("explore") else None,
+        )
 
     if args.command == "cancel":
         outcome = ctl.cancel(args.job, args.repo, args.state_dir)
@@ -296,6 +318,8 @@ def main(argv: list[str] | None = None) -> int:
             output_dir=args.output,
             design_text=getattr(args, "text", None),
             hypothesis=getattr(args, "hypothesis", None),
+            question=getattr(args, "question", None),
+            explore=args.explore,
             feature_path=args.feature,
             packages=packages,
             ci=args.ci,

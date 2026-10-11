@@ -116,6 +116,12 @@ def _file_overview(result: dict) -> list[str]:
     for f in result["findings"]:
         for loc in f["evidence"] + f.get("comparison", []):
             note(loc, f["id"])
+    for a in result["assumptions"]:
+        for loc in a.get("evidence", []):
+            note(loc, a["id"])
+    for o in result["requirement_observations"]:
+        for loc in o.get("evidence", []):
+            note(loc, f"requirement {o['requirement_ref']}")
     cov = result["coverage"]
     redacted = {e["path"]: e["lines"] for e in cov.get("redacted", [])}
     out = []
@@ -158,6 +164,11 @@ def _source(result: dict, kind: str) -> str:
     return found[0]["status"] if found else "not used"
 
 
+def _related(item: dict) -> str:
+    refs = item.get("related_threats") or []
+    return f" Related threat-model findings: {', '.join(code(r) for r in refs)}." if refs else ""
+
+
 def render(result: dict) -> str:
     errors = validate_result(result)
     if errors:
@@ -172,7 +183,11 @@ def render(result: dict) -> str:
         label = (
             f"{scenarios} SCENARIO{'' if scenarios == 1 else 'S'}, {questions} QUESTION{'' if questions == 1 else 'S'}"
         )
-        meaning = "design analysis; no repository source was inspected."
+        meaning = (
+            "design analysis with repository exploration; the files it cites are listed below."
+            if "exploration" in result["coverage"]
+            else "design analysis; no repository source was inspected."
+        )
     else:
         count = len(result["findings"])
         label = f"{count} FINDING" + ("" if count == 1 else "S")
@@ -194,6 +209,13 @@ def render(result: dict) -> str:
             if line.strip()
         ]
         out += [f"- Revision: {code(result['objects'].get('head', 'unavailable'))}"]
+    if result.get("question"):
+        out += [f"- Question: {inline(result['question'])}"]
+    exploration = result["coverage"].get("exploration")
+    if exploration is not None:
+        out += [f"- Repository source: explored, a redacted copy of {exploration['files']} tracked files"]
+    elif mode == "design":
+        out += ["- Repository source: not read"]
     out += [f"- Threat model: {_source(result, 'threat_model')}"]
     out += [f"- Requirements: {_source(result, 'requirements')}", ""]
 
@@ -231,9 +253,18 @@ def render(result: dict) -> str:
             out += [f"### {f['id']} {inline(f['title'])}", "", f"Severity: **{f['severity']}**, {where}.", ""]
             out += [inline(f["explanation"]), ""]
             out += [_location(loc, mode) for loc in f["evidence"] + f.get("comparison", [])]
-            out += ["", f"Fix: {inline(f['next_action'])}", ""]
+            out += ["", f"Fix: {inline(f['next_action'])}{_related(f)}", ""]
             if f.get("requirement_refs"):
                 out += ["Requirements: " + ", ".join(code(r) for r in f["requirement_refs"]), ""]
+
+    if result.get("recommendations"):
+        out += ["## Recommendations", ""]
+        for r in result["recommendations"]:
+            line = f"- **{r['id']}** {inline(r['title'])}: {inline(r['rationale'])} Trade-off: {inline(r['trade_off'])}"
+            if r.get("requirement_refs"):
+                line += " Requirements: " + ", ".join(code(ref) for ref in r["requirement_refs"]) + "."
+            out += [line + _related(r)]
+        out += [""]
 
     cov = result["coverage"]
     still_open = [f"- {inline(a['statement'])}" for a in result["assumptions"] if a["status"] == "unresolved"]
@@ -264,6 +295,7 @@ def render(result: dict) -> str:
 
     background = [
         f"- Scenario {s['id']}, {inline(s['title'])}: {inline(s['description'])} Next step: {inline(s['next_action'])}"
+        f"{_related(s)}"
         for s in result["scenarios"]
     ]
     background += [
@@ -288,9 +320,19 @@ def render(result: dict) -> str:
         f"- State: {result['state']} ({inline(result['terminal_reason'])})",
         f"- Input fingerprint: {code(result['input_fingerprint'])}",
         f"- Admitted files: {cov['admitted_files']}",
+        *([f"- Model: {code(result['costs']['model'])}"] if result.get("costs", {}).get("model") else []),
         f"- Required coverage complete: {'yes' if cov['required_complete'] else 'no'}",
     ]
     out += [f"- Source {s['kind']} ({inline(s['label'])}): {s['status']}" for s in cov["sources"]]
+    out += [
+        f"- Context added before analysis: {code(c['path'])} ({inline(c['reason'])})"
+        for c in cov.get("context_selection", [])
+    ]
+    if exploration is not None:
+        out += [
+            f"- Explore copy: {exploration['files']} files, {exploration['bytes']} bytes"
+            + "".join(f"; {e['count']} × {e['reason'].replace('_', ' ')} not copied" for e in exploration["excluded"])
+        ]
     out += [f"- Question not considered: {code(q['ref'])} ({inline(q['reason'])})" for q in cov["omitted_questions"]]
     out += [
         f"- Evidence {code(e['path'])}: {e['status']}. {inline(e['detail'])}"

@@ -8,7 +8,9 @@
 #   workflow, never from the checkout under review.
 # - ANTHROPIC_API_KEY is a repository secret. Do not expose it to workflows
 #   that run code from forks; GitHub withholds secrets from fork pull requests
-#   by default.
+#   by default. Never switch this workflow to pull_request_target.
+# - The threat model used as context is read from the base commit, so the
+#   change under review cannot choose it.
 # - Findings are advisory. A failed, incomplete, or invalid analysis fails the
 #   job; there is no blanket success override.
 name: threat-analysis
@@ -41,12 +43,18 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        # The threat model comes from the base commit, never from the change under review.
         run: |
+          set --
+          if git -C "$GITHUB_WORKSPACE/target" show "$BASE_SHA:docs/security/threat-model.yaml" \
+              > "$RUNNER_TEMP/threat-model.yaml" 2>/dev/null; then
+            set -- --threat-model "$RUNNER_TEMP/threat-model.yaml"
+          fi
           python3 appsec-advisor/scripts/appsec-analyst-cli review --ci \
             --repo "$GITHUB_WORKSPACE/target" \
             --base "$BASE_SHA" --head "$HEAD_SHA" \
             --state-dir "$RUNNER_TEMP/analyst-state" \
-            --output "$RUNNER_TEMP/analyst-report"
+            --output "$RUNNER_TEMP/analyst-report" "$@"
       - name: Upload the report on every outcome
         if: always()
         uses: actions/upload-artifact@<pinned-commit-sha>

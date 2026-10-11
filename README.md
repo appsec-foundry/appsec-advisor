@@ -223,6 +223,7 @@ To keep separate reports instead, run one assessment per repository with its own
 Run `/appsec-advisor:analyze-threats` before or while you build a feature. It reports:
 
 - likely threats to the planned feature or the selected change;
+- recommended controls or design choices, with their trade-offs;
 - the security requirements that apply to it;
 - assumptions it made and questions the team needs to answer.
 
@@ -231,10 +232,10 @@ The report is advisory and does not change `threat-model.yaml`. The Threat Analy
 | When | Command |
 |---|---|
 | Before coding | `/appsec-advisor:analyze-threats Let support staff export customer data as CSV.` |
-| During implementation | `/appsec-advisor:analyze-threats --worktree` |
+| During implementation | `/appsec-advisor:analyze-threats --worktree --question "Can a tenant read another tenant's export?"` |
 | Before merging | `/appsec-advisor:analyze-threats --base <target-branch> --head HEAD` |
 
-The [Threat Analyst guide](docs/threat-analyst.md) covers staged changes, saved answers, the [advisory CI job](docs/threat-analyst.md#advisory-ci), and limitations.
+Add `--explore` when the answer depends on code you cannot name: the analysis then reads a redacted copy of the tracked files, without tools that run commands or write files. The [Threat Analyst guide](docs/threat-analyst.md) covers exploration, staged changes, saved answers, the [advisory CI job](docs/threat-analyst.md#advisory-ci), and limitations.
 
 ## Requirements Audit
 

@@ -477,6 +477,11 @@ properties:
         $ref: "#/$defs/analyst_packages"
       default_packages:
         $ref: "#/$defs/analyst_packages"
+      allow_exploration:
+        type: boolean
+        description: >-
+          false refuses --explore, which lets an interactive analysis read a
+          redacted copy of the tracked files. Absent means allowed.
 
   skill_toggles:
     type: object

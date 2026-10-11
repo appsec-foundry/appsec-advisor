@@ -231,6 +231,100 @@ def test_design_cli_uses_the_existing_threat_model_unless_isolated(repo, tmp_pat
 
 
 @pytest.mark.parametrize(
+    ("command", "extra", "uses_model"),
+    [
+        (["review", "--worktree", "--interactive"], [], True),
+        (["review", "--worktree", "--interactive"], ["--isolated"], False),
+        (["review", "--base", "a", "--head", "b"], [], False),
+        (["hypothesis", "--hypothesis", "Check", "--revision", "HEAD", "--path", "src", "--interactive"], [], True),
+        (
+            ["hypothesis", "--hypothesis", "Check", "--revision", "HEAD", "--path", "src", "--interactive"],
+            ["--isolated"],
+            False,
+        ),
+    ],
+)
+def test_reviews_and_hypothesis_checks_use_the_existing_threat_model_interactively(
+    repo, monkeypatch, command, extra, uses_model
+):
+    import runpy
+
+    module = runpy.run_path(str(CLI))
+    observed = []
+    monkeypatch.setattr(
+        module["ctl"],
+        "run",
+        lambda inv, transport, interactive: observed.append(inv) or module["ctl"].Outcome(0, "complete", None, ""),
+    )
+    model = repo / "docs" / "security" / "threat-model.yaml"
+    model.parent.mkdir(parents=True)
+    model.write_text("meta: {}\n")
+    assert module["main"]([command[0], "--repo", str(repo), *command[1:], *extra]) == 0
+    assert (observed[0].threat_model_path == model) is uses_model
+
+
+def test_a_focus_question_and_exploration_reach_the_review_invocation(repo, monkeypatch):
+    import runpy
+
+    module = runpy.run_path(str(CLI))
+    observed = []
+    monkeypatch.setattr(
+        module["ctl"],
+        "run",
+        lambda inv, transport, interactive: observed.append(inv) or module["ctl"].Outcome(0, "complete", None, ""),
+    )
+    argv = ["review", "--repo", str(repo), "--worktree", "--interactive", "--explore", "--question", "Tenant leak?"]
+    assert module["main"](argv) == 0
+    assert (observed[0].question, observed[0].explore) == ("Tenant leak?", True)
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["review", "--base", "a", "--head", "b", "--explore"], "--explore is interactive only"),
+        (["review", "--base", "a", "--head", "b", "--ci", "--explore"], "--explore is interactive only"),
+        (
+            [
+                "hypothesis",
+                "--hypothesis",
+                "Check",
+                "--revision",
+                "HEAD",
+                "--path",
+                "src",
+                "--interactive",
+                "--explore",
+            ],
+            "does not apply to a hypothesis check",
+        ),
+        (["review", "--worktree", "--interactive", "--question", " "], "--question must be non-empty"),
+    ],
+)
+def test_exploration_and_question_misuse_exit_2_before_any_job(repo, tmp_path, args, message):
+    state = tmp_path / "xdg"
+    result = run(args[0], "--repo", str(repo), *args[1:], cwd=tmp_path, state=state)
+    assert result.returncode == 2 and message in result.stderr
+    assert not state.exists()
+
+
+def test_an_exploring_job_gets_a_transport_confined_to_its_copy(repo, monkeypatch):
+    import runpy
+
+    module = runpy.run_path(str(CLI))
+    seen = []
+
+    def invoke(invocation, transport, interactive):
+        job = type("J", (), {"root": repo})()
+        seen.append(transport(job, {"host": {"model": "sonnet"}, "explore": True}))
+        seen.append(transport(job, {"host": {"model": "sonnet"}}))
+        return module["ctl"].Outcome(0, "complete", None, "")
+
+    monkeypatch.setattr(module["ctl"], "run", invoke)
+    assert module["main"](["review", "--repo", str(repo), "--worktree", "--interactive", "--explore"]) == 0
+    assert seen[0].read_root == repo / "explore" and seen[1].read_root is None
+
+
+@pytest.mark.parametrize(
     "args", [["--isolated"], ["--interactive", "--isolated", "--threat-model", "/x/threat-model.yaml"]]
 )
 def test_design_isolation_is_interactive_and_excludes_an_explicit_model(repo, tmp_path, args):

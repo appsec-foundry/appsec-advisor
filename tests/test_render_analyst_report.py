@@ -291,3 +291,48 @@ def test_a_listed_step_without_a_verdict_or_without_code_is_never_rendered():
         )
     )
     assert "| 2 | NOT SETTLED | b | no code cited | version unknown |" in rendered.splitlines()
+
+
+def test_an_exploring_design_report_says_source_was_read_and_lists_recommendations():
+    design = dict(
+        mode="design",
+        scope={"kind": "design", "source": "text", "content_sha256": "e" * 64},
+        objects={"design_sha256": "e" * 64, "head": "c" * 40},
+        findings=[],
+        scenarios=[
+            {
+                "id": "s-001",
+                "title": "Bulk export",
+                "description": "Any user exports all.",
+                "next_action": "Bind exports.",
+                "related_threats": ["F-001"],
+            }
+        ],
+        recommendations=[
+            {
+                "id": "r-001",
+                "title": "Enforce the role server-side",
+                "rationale": "Closes the path.",
+                "trade_off": "One lookup per request.",
+                "related_threats": ["F-001"],
+            }
+        ],
+    )
+    data = result(**design)
+    data["coverage"]["exploration"] = {"files": 12, "bytes": 3400, "excluded": [{"reason": "sensitive", "count": 1}]}
+    data["costs"] = {"host_calls": 1, "model": "opus"}
+    text = rr.render(data)
+    assert "design analysis with repository exploration" in text
+    assert "Repository source: explored, a redacted copy of 12 tracked files" in text
+    assert "## Recommendations" in text and "**r-001**" in text and "`F-001`" in text
+    assert "Model: `opus`" in text and "1 × sensitive not copied" in text
+
+
+def test_a_design_report_without_exploration_says_no_source_was_read():
+    data = result(
+        mode="design",
+        scope={"kind": "design", "source": "text", "content_sha256": "e" * 64},
+        objects={"design_sha256": "e" * 64},
+        findings=[],
+    )
+    assert "Repository source: not read" in rr.render(data)

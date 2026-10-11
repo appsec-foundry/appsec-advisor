@@ -195,6 +195,69 @@
               }
             }
           }
+        },
+        "exploration": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "files",
+            "bytes",
+            "excluded"
+          ],
+          "properties": {
+            "files": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "excluded": {
+              "type": "array",
+              "maxItems": 50,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "reason",
+                  "count"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 40
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "context_selection": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "reason"
+            ],
+            "properties": {
+              "path": {
+                "$ref": "#/$defs/relative_path"
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              }
+            }
+          }
         }
       }
     },
@@ -219,6 +282,9 @@
           "id": {
             "type": "string",
             "pattern": "^f-[0-9]{3}$"
+          },
+          "related_threats": {
+            "$ref": "#/$defs/threat_refs"
           }
         }
       }
@@ -236,6 +302,9 @@
           "id": {
             "type": "string",
             "pattern": "^s-[0-9]{3}$"
+          },
+          "related_threats": {
+            "$ref": "#/$defs/threat_refs"
           }
         }
       }
@@ -313,6 +382,10 @@
         "usd": {
           "type": "number",
           "minimum": 0
+        },
+        "model": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"
         }
       }
     },
@@ -396,6 +469,34 @@
           }
         }
       }
+    },
+    "recommendations": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "rationale",
+          "trade_off"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^r-[0-9]{3}$"
+          },
+          "related_threats": {
+            "$ref": "#/$defs/threat_refs"
+          }
+        }
+      }
+    },
+    "question": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 20000,
+      "pattern": "\\S"
     }
   },
   "$defs": {
@@ -454,6 +555,15 @@
       "minLength": 1,
       "maxLength": 256,
       "pattern": "^[^\\s\\x00-]"
+    },
+    "threat_refs": {
+      "type": "array",
+      "maxItems": 6,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^F-[0-9]{3,}$"
+      }
     }
   },
   "allOf": [

@@ -547,7 +547,10 @@ analyst:
       sha256: <sha256 of the file>
   default_packages:
     - ref: tmm/threat-modeling-manifesto@1.0.0
+  allow_exploration: false
 ```
+
+`allow_exploration: false` refuses [`--explore`](threat-analyst.md#let-the-analysis-explore-the-repository), which lets an interactive analysis read a redacted copy of the tracked files. Without the key, developers may use it. `policy.disable_opus` also applies to the analysis: `--model opus` is refused.
 
 `required_packages` apply to every invoked analysis; a developer cannot remove them. `default_packages` apply unless a developer adds more. Name a packaged package by `ref`, or ship your own package as a `file` under the profile directory pinned by its `sha256`. A file outside the profile directory, a missing file, or an unpinned file fails profile validation, and an invalid active profile rejects the analysis instead of running it without its required packages.
 

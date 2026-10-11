@@ -45,6 +45,11 @@ This is the "just ask" surface. It is distinct from its siblings:
   fixes* or build a remediation plan. Route the user there when they want to
   **act** ("fix these", "accept this risk", "build a remediation plan").
 - **create-threat-model** *generates or updates* the model (analyzes code).
+- **analyze-threats** advises on a *planned* feature or a change ("how should
+  we build X securely?", "is this plan safe?", "can my change leak data?").
+  Answer what the model already says, then name
+  `/appsec-advisor:analyze-threats <question>` for the design advice; never
+  start it yourself.
 - **ask-threat-model** (this skill) **answers questions** and changes nothing.
 
 ## Step 0 — Classify the question

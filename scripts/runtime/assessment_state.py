@@ -14,6 +14,7 @@ import math
 import os
 import re
 import secrets
+import shutil
 import stat
 import time
 from contextlib import contextmanager
@@ -168,9 +169,7 @@ class AssessmentState:
             if self.state["status"] != "complete":
                 self.state["status"] = "running"
         else:
-            allowed = {".appsec-lock", ".appsec-lock.guard"}
-            if any(child.name not in allowed for child in self.output.iterdir()):
-                raise ExchangeError("A fresh multi-repository assessment requires an empty output directory")
+            self._discard_unfinished_run()
             now = int(time.time())
             self.state = {
                 "schema_version": 1,
@@ -183,6 +182,32 @@ class AssessmentState:
                 "deliverables": {},
             }
             self.directory.mkdir(mode=0o700)
+
+    def _discard_unfinished_run(self):
+        """Clear what an unfinished earlier assessment left, or refuse a fresh start.
+
+        Only its own state file and work directory qualify, and only while the
+        state is not complete. A completed run, a deliverable or any other file
+        still blocks, so a fresh start never erases a report or a user's file.
+        """
+        leftovers = {child.name for child in self.output.iterdir()} - {".appsec-lock", ".appsec-lock.guard"}
+        if not leftovers:
+            return
+        if STATE_NAME in leftovers and leftovers <= {STATE_NAME, WORK_NAME}:
+            try:
+                status = _read_state(self.path)["status"]
+            except ExchangeError:
+                status = None
+            if status not in (None, "complete"):
+                if WORK_NAME in leftovers:
+                    _real_directory(self.directory)
+                    shutil.rmtree(self.directory)
+                self.path.unlink()
+                return
+        raise ExchangeError(
+            "A fresh multi-repository assessment requires an empty output directory, and this one holds "
+            "a completed assessment or other files; choose another --output or empty it"
+        )
 
     def _check_receipts(self, accounting):
         """Require state accounting to cover every accepted job receipt.

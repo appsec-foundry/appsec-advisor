@@ -68,7 +68,7 @@ Documentation: https://github.com/appsec-foundry/appsec-advisor
 
 ### Threat Analyst
 
-- `/appsec-advisor:analyze-threats <feature>` — threats in a planned feature, before coding
+- `/appsec-advisor:analyze-threats <feature>` — threats and recommended controls for a planned feature
 - `/appsec-advisor:analyze-threats --worktree` — threats in your current changes
 
 ### Security requirements
@@ -150,6 +150,8 @@ Advisory analysis of a planned feature or a selected change, only when you ask. 
   - `--worktree` — review uncommitted changes, including untracked files
   - `--staged` — review staged changes
   - `--base <commit> --head <commit>` — review a branch against its merge base
+  - `--question <text>` — with a review: answer a concrete question about the change
+  - `--explore` — let the analysis read a redacted copy of the tracked files (interactive only)
   - `--feature <file>` — reuse answers saved in a reviewed feature file
   - `--package <ref>` — add a question package, e.g. the Threat Modeling Manifesto
   - `--help` — list every flag
