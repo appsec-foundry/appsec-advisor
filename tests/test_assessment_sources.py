@@ -142,3 +142,34 @@ def test_yaml_aliases_are_qualified_once_and_cycles_fail_closed(tmp_path, monkey
     monkeypatch.setattr(sources, "MAX_MODEL_NODES", 2)
     with pytest.raises(ValueError, match="structural limits"):
         sources.validate_portable_model(document)
+
+
+def test_a_system_wide_control_with_a_textual_statement_is_a_valid_portable_row(tmp_path):
+    from model.build_threat_model_yaml import build_assessment_model
+    from shared.assessment_sources import validate_portable_model
+
+    from tests.test_multi_repo_builder import inputs
+
+    scope, kwargs = inputs(tmp_path)
+    document, _ = build_assessment_model(scope, **kwargs)
+    document["security_controls"].append(
+        {
+            "domain": "Identity and Authentication",
+            "control": "User Registration",
+            "kind": "lifecycle",
+            "effectiveness": "Missing",
+            "implementation": None,
+            "evidence": "No endpoint detected in scope",
+            "main_reason": "No registration endpoint was found in the selected repositories.",
+            "auto_source": "auth-coverage",
+        }
+    )
+    validate_portable_model(document)
+    foreign = dict(document["components"][0]["paths"][0])
+    document["security_controls"][-1]["component_ids"] = [document["components"][1]["id"]]
+    document["security_controls"][-1]["evidence"] = [
+        {"repository_id": foreign["repository_id"], "file": foreign["path"], "line": 1, "sha256": foreign["sha256"]}
+    ]
+    if foreign["repository_id"] not in document["components"][1]["repository_ids"]:
+        with pytest.raises(ValueError, match="outside its component ownership"):
+            validate_portable_model(document)

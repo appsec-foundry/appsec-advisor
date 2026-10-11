@@ -25,13 +25,15 @@ from shared._atomic_io import atomic_write_json
 from runtime import acquire_lock
 from runtime.analyst_host import HostCancelled
 from runtime.assessment_host import ExchangeError
-from runtime.assessment_jobs import AssessmentBudget, digest
+from runtime.assessment_jobs import RECEIPT_SCHEMA, AssessmentBudget, _read_json, digest
 from runtime.multi_repo_scope import AssessmentScope
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = ROOT / "schemas/multi-repo-state.schema.json"
 STATE_NAME = ".assessment-state.json"
 WORK_NAME = ".assessment-work"
+# The controller keeps accepted job receipts under the work directory.
+JOBS_NAME = "jobs"
 MAX_STATE_BYTES = 2_097_152
 MAX_DELIVERABLE_BYTES = 67_108_864
 
@@ -156,6 +158,7 @@ class AssessmentState:
             ):
                 raise ExchangeError("Assessment resume budget is exhausted")
             _real_directory(self.directory)
+            self._check_receipts(accounting)
             self.budget.calls = accounting["calls"]
             self.budget.spent_usd = accounting["spent_usd"]
             self.budget.deadline = time.monotonic() + self.state["expires_at"] - time.time()
@@ -180,6 +183,44 @@ class AssessmentState:
                 "deliverables": {},
             }
             self.directory.mkdir(mode=0o700)
+
+    def _check_receipts(self, accounting):
+        """Require state accounting to cover every accepted job receipt.
+
+        State also retains reservations of failed calls, so it may exceed the
+        receipt totals but never fall below them.
+        """
+        jobs = self.directory / JOBS_NAME
+        if not (jobs.exists() or jobs.is_symlink()):
+            return
+        _real_directory(jobs)
+        validator = Draft202012Validator(json.loads(RECEIPT_SCHEMA.read_text(encoding="utf-8")))
+        calls, costs = 0, []
+        try:
+            entries = sorted(entry.name for entry in os.scandir(jobs))
+        except OSError:
+            raise ExchangeError("Assessment job receipts are unreadable") from None
+        for name in entries:
+            if not name.endswith(".receipt.json"):
+                continue
+            match = re.fullmatch(r"(job-[0-9a-f]{24})\.receipt\.json", name)
+            receipt = _read_json(jobs / name)
+            if (
+                match is None
+                or not validator.is_valid(receipt)
+                or receipt["job_id"] != match.group(1)
+                or receipt["scope_sha256"] != self.identity["scope_sha256"]
+                or not math.isfinite(receipt["usd"])
+            ):
+                raise ExchangeError("Assessment job receipt is foreign or malformed")
+            calls += receipt["calls"]
+            costs.append(receipt["usd"])
+            # Stop as soon as receipts exceed the state; this bounds the scan.
+            if calls > accounting["calls"]:
+                break
+        spent = math.fsum(costs)
+        if calls > accounting["calls"] or spent > accounting["spent_usd"] + 1e-9 * max(1.0, spent):
+            raise ExchangeError("Assessment resume accounting is below its accepted job receipts")
 
     def _check_lock(self):
         # Link-safe, bounded checks precede any read or in-place write.

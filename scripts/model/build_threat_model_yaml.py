@@ -3050,6 +3050,7 @@ def build_assessment_model(
     merged: dict,
     plugin_root: Path,
     project: str,
+    context: dict | None = None,
 ) -> tuple[dict, list[str]]:
     """Build the qualified pre-enrichment model without publishing completion.
 
@@ -3077,18 +3078,19 @@ def build_assessment_model(
     inventory = scope.inventory()
     if skill_cfg.get("source_scope_sha256") != inventory["scope_sha256"]:
         raise ValueError("Combined configuration belongs to another source scope")
-    # These context features need their qualified producers before they can be
-    # represented faithfully. Refuse them rather than publish an unused source
-    # as not_configured or invent an assessment/trace.
+    # Declared context reaches the analysis only through the captured record
+    # (orchestrator/assessment_context.py). Without it, refuse rather than
+    # publish an unused source as not_configured or invent an assessment/trace.
     configured_business = skill_cfg.get("business_context_source") or any(
         path in repo.files
         for repo in scope.repositories
         for path in ("docs/security/business-context.md", "docs/business-context.md")
     )
-    if configured_business and not skill_cfg.get("skip_business_context"):
-        raise ValueError("Combined business-context projection is not implemented")
-    if skill_cfg.get("check_requirements"):
-        raise ValueError("Combined requirements assessment is not implemented")
+    if configured_business and not skill_cfg.get("skip_business_context") and context is None:
+        raise ValueError("Combined business context was not captured")
+    catalog_ids = frozenset(((context or {}).get("requirements") or {}).get("ids") or ())
+    if skill_cfg.get("check_requirements") and not catalog_ids:
+        raise ValueError("Combined requirements catalog was not captured")
     scope.verify_unchanged()
     components, receipt = architecture["components"], architecture["finalization"]
     validate_flows(scope, components, receipt, architecture["data_flows"])
@@ -3131,8 +3133,8 @@ def build_assessment_model(
             validate_source(scope, evidence, path_key="file")
 
     threats, warnings = build_threats(copy.deepcopy(merged), skill_cfg.get("register_severity_floor") or "medium")
-    if any(t.get("violated_requirements") for t in threats):
-        raise ValueError("Combined finding carries a requirement link without an assessed catalog")
+    if any(set(t.get("violated_requirements") or ()) - catalog_ids for t in threats):
+        raise ValueError("Combined finding carries a requirement link outside the captured catalog")
     mitigations = build_mitigations(threats)
     mitigations, mitigation_warnings = prune_dangling_mitigation_threat_ids(threats, mitigations)
     warnings.extend(mitigation_warnings)
@@ -3150,7 +3152,7 @@ def build_assessment_model(
         "assessment_depth": skill_cfg.get("assessment_depth", "standard"),
         "reasoning_model": skill_cfg.get("reasoning_model", "sonnet-economy"),
         "register_severity_floor": skill_cfg.get("register_severity_floor") or "medium",
-        "check_requirements": False,
+        "check_requirements": bool(catalog_ids),
         "source_scope_sha256": inventory["scope_sha256"],
         "component_inventory_fingerprint": fingerprint,
     }

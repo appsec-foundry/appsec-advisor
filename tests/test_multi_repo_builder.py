@@ -61,6 +61,27 @@ def inputs(tmp_path, *, names=("edge", "service")):
     )
 
 
+def test_cited_catalog_requirements_reach_the_merged_and_combined_model(tmp_path, monkeypatch):
+    real = stride
+
+    def citing(component, evidence, identity):
+        document = real(component, evidence, identity)
+        document["threats"][0]["violated_requirements"] = ["SEC-AUTH-1"]
+        return document
+
+    monkeypatch.setitem(globals(), "stride", citing)
+    scope, kwargs = inputs(tmp_path)
+    cited = [t.get("violated_requirements") for t in kwargs["merged"]["threats"]]
+    assert cited == [["SEC-AUTH-1"], ["SEC-AUTH-1"]]
+    with pytest.raises(ValueError, match="outside the captured catalog"):
+        build_assessment_model(scope, **kwargs)
+    with pytest.raises(ValueError, match="outside the captured catalog"):
+        build_assessment_model(scope, **kwargs, context={"requirements": {"ids": ["SEC-LOG-2"]}})
+    document, _ = build_assessment_model(scope, **kwargs, context={"requirements": {"ids": ["SEC-AUTH-1"]}})
+    assert [t.get("violated_requirements") for t in document["threats"]] == [["SEC-AUTH-1"], ["SEC-AUTH-1"]]
+    assert document["meta"]["check_requirements"] is True
+
+
 @pytest.mark.parametrize("names", [("edge", "service"), ("gateway", "processor")])
 def test_assembler_preserves_all_roots_and_qualified_nested_findings(tmp_path, names):
     scope, kwargs = inputs(tmp_path, names=names)

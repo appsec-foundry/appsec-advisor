@@ -92,8 +92,12 @@ def test_unauthorized_proposals_fail_before_another_model_call(tmp_path, proposa
 
 
 def test_repeated_reads_and_incomplete_results_are_not_silently_accepted(tmp_path):
-    with pytest.raises(host.ExchangeError, match="Repeated"):
-        invoke(Model([read(), read()]), tmp_path)
+    # A repeated slice is not served twice; the model is told to use it.
+    model = Model([read(), read(), complete()])
+    assert invoke(model, tmp_path).source_slices and len(model.prompts) == 3
+    assert "already in source_slices" in model.prompts[2]
+    with pytest.raises(host.ExchangeError, match="exchange limit"):
+        invoke(Model([read()] * host.MAX_EXCHANGES), tmp_path)
     with pytest.raises(host.ExchangeError, match="contract"):
         invoke(Model([{"action": "complete", "reads": [], "artifact": None}]), tmp_path)
 
@@ -202,3 +206,61 @@ def test_a_selected_repository_is_not_automatically_readable_by_every_task(tmp_p
             should_stop=lambda: False,
         )
     assert len(model.prompts) == 1
+
+
+def test_host_schema_drops_keywords_a_strict_host_rejects_but_keeps_structure():
+    from contexts.multi_repo_analysis import contract
+
+    for name in (
+        "multi-repo-architecture.schema.json",
+        "multi-repo-stride.schema.json",
+        "multi-repo-controls.schema.json",
+        "fragments/trust-boundary-candidates-v2.schema.json",
+    ):
+        projected = host.host_schema(host.response_schema(contract(name)))
+        text = json.dumps(projected)
+        assert not any(f'"{key}"' in text for key in ("dependentSchemas", "allOf", "contains", "if"))
+        artifact = projected["$defs"]["assessment_artifact"]
+        assert artifact.get("additionalProperties") is False and artifact["required"]
+
+
+def test_a_result_breaking_only_a_full_contract_condition_gets_a_correction_turn(tmp_path):
+    conditional = {
+        **ARTIFACT,
+        "dependentSchemas": {"summary": {"required": ["detail"]}},
+        "properties": {**ARTIFACT["properties"], "detail": {"type": "string"}},
+    }
+    first = {**complete(), "artifact": {**complete()["artifact"]}}
+    second = {**complete(), "artifact": {**complete()["artifact"], "detail": "added"}}
+    schemas = []
+
+    class Recording(Model):
+        def invoke(self, system, prompt, schema, timeout_s, should_stop):
+            schemas.append(schema)
+            return super().invoke(system, prompt, schema, timeout_s, should_stop)
+
+    model = Recording([first, second])
+    result = host.run_exchange(
+        model,
+        view(tmp_path),
+        instructions="task",
+        context={},
+        artifact_schema=conditional,
+        allowed_sources=frozenset({(REPO, "app.py")}),
+        timeout_s=60,
+        should_stop=lambda: False,
+    )
+    assert result.artifact["detail"] == "added"
+    assert "dependentSchemas" not in json.dumps(schemas[0])
+    assert "rejected_result" in model.prompts[1]
+
+
+def test_an_out_of_file_range_is_reported_back_and_an_oversized_one_is_narrowed(tmp_path):
+    past_end = {**read(), "reads": [{"repository_id": REPO, "path": "app.py", "start_line": 50, "end_line": 60}]}
+    oversized = {**read(), "reads": [{"repository_id": REPO, "path": "app.py", "start_line": 1, "end_line": 900}]}
+    model = Model([past_end, oversized, complete()])
+    result = invoke(model, tmp_path)
+    assert "lines 50-60" in model.prompts[1] and "does not exist" in model.prompts[1]
+    assert [(s["start_line"], s["end_line"]) for s in result.source_slices] == [(1, 1)]
+    with pytest.raises(host.ExchangeError, match="outside"):
+        invoke(Model([read("missing.py")]), tmp_path)

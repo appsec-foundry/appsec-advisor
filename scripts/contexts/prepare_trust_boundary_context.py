@@ -22,6 +22,7 @@ import hashlib
 import json
 import re
 import sys
+import tempfile
 from collections import Counter, defaultdict
 from copy import deepcopy
 from functools import lru_cache
@@ -1422,7 +1423,11 @@ def _normalize_assessment_boundaries(
     _apply_axes(merged)
     _apply_data_access(merged, cards)
     merged = _consolidate(merged, cards, warnings)
-    _assign_ids(merged, [], output_dir, warnings)
+    # A combined assessment is always fresh and has no prior model, so its
+    # boundary IDs come from a private counter. A resumed run with unchanged
+    # input then allocates the same IDs instead of continuing a shared one.
+    with tempfile.TemporaryDirectory(prefix="appsec-boundary-ids-") as counters:
+        _assign_ids(merged, [], Path(counters), warnings)
     merged.sort(key=lambda row: _numeric_id(row["id"]))
     document = {
         "schema_version": 3,

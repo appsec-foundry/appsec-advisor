@@ -170,3 +170,13 @@ def test_the_call_limit_and_cancellation_still_stop_a_host_that_never_answers():
                 host._communicate(proc, b"prompt", time.monotonic() + deadline, should_stop)
         finally:
             proc.kill()
+
+
+def test_effort_is_passed_only_when_requested(tmp_path):
+    from runtime.analyst_host import ClaudeCliTransport
+
+    assert "--effort" not in ClaudeCliTransport(tmp_path).argv("system", {})
+    argv = ClaudeCliTransport(tmp_path, effort="medium").argv("system", {})
+    assert argv[argv.index("--effort") + 1] == "medium"
+    with pytest.raises(ValueError):
+        ClaudeCliTransport(tmp_path, effort="unbounded")

@@ -21,7 +21,7 @@ from runtime.multi_repo_discovery import BudgetedHost
 from runtime.multi_repo_scope import ScopeError
 from validators.validate_assessment_architecture import validate_finalization, validate_flows
 
-from contexts.reconcile_multi_repo_architecture import _id, reconcile
+from contexts.reconcile_multi_repo_architecture import _id, deployment_binding, reconcile
 
 SCHEMA = Path(__file__).resolve().parents[2] / "schemas" / "multi-repo-connection-review.schema.json"
 INSTRUCTIONS = """Review the supplied communication candidate against retrieved source.
@@ -102,9 +102,15 @@ def review_connections(scope, discoveries, components, receipt, *, host_factory,
             raise HostCancelled("Connection review cancelled")
         participants = [component_index[candidate[k]] for k in ("from", "to")]
         interfaces = [interface_index[candidate[k]] for k in ("sender_interface", "receiver_interface")]
+        declared = [
+            binding
+            for binding in (deployment_binding(scope, i["repository_id"]) for i in interfaces)
+            if binding is not None
+        ]
         allowed = frozenset(
             [(p["repository_id"], p["path"]) for c in participants for p in c["paths"]]
             + [(i["repository_id"], e["file"]) for i in interfaces for e in i["evidence"]]
+            + [(b["repository_id"], b["file"]) for b in declared]
         )
         context = {
             "scope_sha256": document["scope_sha256"],
@@ -113,6 +119,7 @@ def review_connections(scope, discoveries, components, receipt, *, host_factory,
             "candidate": candidate,
             "components": participants,
             "interfaces": interfaces,
+            "deployment_bindings": declared,
         }
 
         def accept(artifact, ranges):

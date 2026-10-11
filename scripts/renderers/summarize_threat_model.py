@@ -747,6 +747,15 @@ def main(argv: list[str] | None = None) -> int:
     if not isinstance(data, dict):
         print(f"Error: {yaml_path} is not a mapping.", file=sys.stderr)
         return 2
+    from shared.assessment_sources import is_portable_model, labelled_model
+
+    if is_portable_model(data):
+        # Locations read `<repository label>:<file>`; none is resolved locally.
+        try:
+            data = labelled_model(data)
+        except ValueError as exc:
+            print(f"Error: {yaml_path} is not a valid multi-repository model: {exc}", file=sys.stderr)
+            return 2
 
     summary = build_summary(data, output_dir)
     freshness = load_health_freshness(args.health_json)

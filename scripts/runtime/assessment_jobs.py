@@ -71,6 +71,10 @@ def _read_json(path: Path):
         raise ExchangeError("Assessment artifact is unreadable or malformed") from None
 
 
+def _ranges(slices) -> list[dict]:
+    return [{k: row[k] for k in ("repository_id", "path", "sha256", "start_line", "end_line")} for row in slices]
+
+
 class AssessmentJobs:
     def __init__(self, scope, directory, budget, host_factory, should_stop, checkpoint):
         self.scope = scope
@@ -146,6 +150,9 @@ class AssessmentJobs:
             self.checkpoint()
             return self.host_factory(role, ceiling)
 
+        def review(artifact, slices):
+            accept(copy.deepcopy(artifact), _ranges(slices))
+
         result = run_exchange(
             BudgetedHost(factory, self.budget),
             self.scope,
@@ -155,11 +162,9 @@ class AssessmentJobs:
             allowed_sources=allowed_sources,
             timeout_s=self.budget.remaining_seconds(),
             should_stop=self.should_stop,
+            review=review,
         )
-        ranges = [
-            {k: row[k] for k in ("repository_id", "path", "sha256", "start_line", "end_line")}
-            for row in result.source_slices
-        ]
+        ranges = _ranges(result.source_slices)
         artifact = copy.deepcopy(result.artifact)
         accept(artifact, ranges)
         receipt = {

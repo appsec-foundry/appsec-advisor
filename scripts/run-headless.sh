@@ -8,6 +8,7 @@
 #
 # Options:
 #   --repo <path>           Repository to analyze (default: current directory)
+#                           Repeat to assess several checkouts as one system
 #   --output <path>         Output directory (default: <repo>/docs/security)
 #   --yaml                  (no-op) yaml is always written by default
 #   --no-yaml               Suppress threat-model.yaml
@@ -87,6 +88,9 @@ Run the AppSec plugin non-interactively via Claude Code's headless mode.
 
 Options:
   --repo <path>              Repository to analyze (default: current directory)
+                             Repeat --repo to assess several local checkouts as one
+                             system; this requires --output outside every checkout
+                             and --soft-budget or --hard-budget
   --output <path>            Output directory (default: <repo>/docs/security)
   --yaml                     (no-op) yaml is always written by default
   --no-yaml                  Suppress threat-model.yaml output
@@ -209,6 +213,26 @@ else
     BILLING_MODE="subscription"
 fi
 
+# ── Combined multi-repository assessment ────────────────────────────
+# Two or more --repo selections assess the checkouts as one system. The
+# controller runs every stage itself, through tool-less model exchanges, so no
+# headless orchestrator session is started. The arguments travel as argv, so
+# paths with spaces or shell metacharacters stay literal data.
+REPO_COUNT=0
+for _a in "$@"; do
+    [ "$_a" = "--repo" ] && REPO_COUNT=$((REPO_COUNT + 1))
+done
+if [ "$REPO_COUNT" -gt 1 ]; then
+    if [ "$BILLING_MODE" = "subscription" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+        AUTH_JSON=$("$CLAUDE_EXECUTABLE" auth status 2>/dev/null) || AUTH_JSON="{}"
+        if ! echo "$AUTH_JSON" | grep -q '"loggedIn": true'; then
+            die "Not authenticated. Run 'claude auth login', set CLAUDE_CODE_OAUTH_TOKEN, or export ANTHROPIC_API_KEY."
+        fi
+    fi
+    export APPSEC_CLAUDE_EXECUTABLE="$CLAUDE_EXECUTABLE"
+    exec python3 "$PLUGIN_DIR/scripts/orchestrator/orchestration_controller.py" assess -- "$@"
+fi
+
 # ── Parse arguments ─────────────────────────────────────────────────
 REPO_PATH=""
 OUTPUT_PATH=""
@@ -264,9 +288,9 @@ fi
 while [ $# -gt 0 ]; do
     case "$1" in
         --repo)
-            # One repository per run until the combined assessment is wired;
+            # Several selections were handed to the combined assessment above;
             # keeping only the last value would silently drop a selection.
-            [ -z "$REPO_PATH" ] || die "--repo may be given only once; multi-repository assessment is not available yet"
+            [ -z "$REPO_PATH" ] || die "--repo may be given only once in a single-repository run"
             REPO_PATH="$2"; shift 2 ;;
         --output)
             OUTPUT_PATH="$2"; shift 2 ;;

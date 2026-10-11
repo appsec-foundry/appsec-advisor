@@ -133,6 +133,17 @@ def _threat_model(path: Path | None, required: bool) -> tuple[dict | None, dict 
         valid, _errors = validate_threat_model_output(data)
     except yaml.YAMLError:
         valid = False
+    from shared.assessment_sources import is_portable_model, single_repository_only
+
+    if valid and is_portable_model(data):
+        # Its locations belong to several checkouts; the analysis reads one.
+        raise ContextError(
+            single_repository_only(
+                "the threat analyst",
+                f"Rerun without {path.name} (--isolated) or with a single-repository model of this repository",
+            ),
+            required=True,
+        )
     if not valid:
         if required:
             raise ContextError(f"required threat model {path.name} is invalid", required=True)

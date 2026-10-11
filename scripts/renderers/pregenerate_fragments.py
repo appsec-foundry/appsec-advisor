@@ -398,7 +398,7 @@ def gen_system_overview(yaml_data: dict) -> str:
     # Walk from CWD (the repo root when called as
     #   python3 .../renderers/pregenerate_fragments.py <output_dir>)
     # rather than from __file__ (which is inside the plugin, not the repo).
-    if not desc or not runtime:
+    if (not desc or not runtime) and not meta.get("source_repositories"):
         try:
             search_root = Path.cwd()
             for _ in range(6):
@@ -424,6 +424,17 @@ def gen_system_overview(yaml_data: dict) -> str:
             pass
     top_project = yaml_data.get("project") or {}
     repository = project.get("repository") or top_project.get("repository") or meta.get("repo_url") or ""
+    # A combined assessment names every selected checkout; the working
+    # directory of this process is never one of them.
+    sources = meta.get("source_repositories") if isinstance(meta.get("source_repositories"), list) else None
+    if sources:
+        repository = ", ".join(
+            f"`{row.get('label')}` (revision `{str(row.get('head') or '')[:12]}`"
+            + (", uncommitted changes" if row.get("dirty") else "")
+            + ")"
+            for row in sources
+            if isinstance(row, dict)
+        )
     if not repository:
         try:
             result = subprocess.run(
@@ -442,7 +453,7 @@ def gen_system_overview(yaml_data: dict) -> str:
         lines.append(desc.rstrip("."))
         lines.append("")
 
-    lines.append(f"**Repository:** {repository or '_n/a_'}")
+    lines.append(f"**{'Repositories' if sources else 'Repository'}:** {repository or '_n/a_'}")
     if runtime:
         # Runtime values like "Node.js 20 - 24" are product/version labels,
         # not code. Render in normal prose weight. The dot-TLD safety pass

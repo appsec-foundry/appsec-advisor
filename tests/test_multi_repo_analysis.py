@@ -157,6 +157,39 @@ def test_stride_rejects_forged_or_incomplete_work(tmp_path, kind):
         )
 
 
+@pytest.mark.parametrize(
+    ("cited", "allowed", "accepted"),
+    [
+        (["SEC-AUTH-1"], {"SEC-AUTH-1", "SEC-LOG-2"}, True),
+        (["SEC-AUTH-1", "SEC-AUTH-9"], {"SEC-AUTH-1"}, False),
+        (["SEC-AUTH-1"], frozenset(), False),
+    ],
+)
+def test_stride_cites_only_requirements_of_its_supplied_catalog(tmp_path, cited, allowed, accepted):
+    scope, components, evidence, ranges, identity = sources(tmp_path)
+    artifact = stride(components[0], evidence[0], identity)
+    artifact["threats"][0]["violated_requirements"] = cited
+    original = copy.deepcopy(artifact)
+
+    def run():
+        stage.validate_stride(
+            scope,
+            components[0],
+            components,
+            dict(component_inventory_fingerprint=FP, data_flows=[]),
+            artifact,
+            ranges[:1],
+            allowed_requirement_ids=allowed,
+        )
+
+    if accepted:
+        run()
+        assert artifact == original
+    else:
+        with pytest.raises(ExchangeError, match="requirements absent"):
+            run()
+
+
 def test_peer_neighborhood_does_not_expand_through_a_shared_broker(tmp_path):
     _, components, _, _, _ = sources(tmp_path)
     broker = dict(id="broker", paths=[], repository_ids=[])
@@ -316,3 +349,42 @@ def test_stage_contracts_are_closed_and_local_refs_do_not_fetch_network():
         Draft202012Validator.check_schema(schema)
     with pytest.raises(ExchangeError, match="Unknown"):
         stage.contract("https://example.invalid/remote.json")
+
+
+@pytest.mark.parametrize(("kind", "accepted"), [("absence", True), (None, False)])
+def test_an_absence_is_verified_by_any_retrieved_range_of_its_anchor_file(tmp_path, kind, accepted):
+    data = b"COPY . .\nRUN install\nCMD start\n"
+    repo, other = (
+        RepositoryView(f"repo-{i:016x}", tmp_path / f"repo{i}", "b" * 40, "c" * 64, {"Dockerfile": data})
+        for i in (1, 2)
+    )
+    scope = AssessmentScope((repo, other), tmp_path / "output")
+    sha = hashlib.sha256(data).hexdigest()
+    anchor = dict(repository_id=repo.repository_id, file="Dockerfile", line=1, sha256=sha)
+    if kind:
+        anchor.update(kind=kind, searched_files=["Dockerfile"], searched_file_count=1)
+    identity = dict(
+        schema_version=2, source_scope_sha256=scope.inventory()["scope_sha256"], component_inventory_fingerprint=FP
+    )
+    cited = dict(repository_id=repo.repository_id, file="Dockerfile", line=3, sha256=sha)
+    review = dict(
+        **identity,
+        decisions=[
+            dict(
+                local_id="cfg-1",
+                verdict="verified",
+                reason="The whole file declares no runtime user.",
+                evidence=[cited],
+            )
+        ],
+    )
+    ranges = [dict(repository_id=repo.repository_id, path="Dockerfile", sha256=sha, start_line=2, end_line=3)]
+    allowed = frozenset({(repo.repository_id, "Dockerfile")})
+    check = lambda: stage.validate_evidence_review(  # noqa: E731
+        scope, [dict(local_id="cfg-1", evidence=anchor)], FP, review, ranges, allowed
+    )
+    if accepted:
+        check()
+    else:
+        with pytest.raises(ExchangeError, match="independent reading"):
+            check()

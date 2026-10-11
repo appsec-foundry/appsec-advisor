@@ -356,7 +356,40 @@
           ],
           "properties": {
             "values": {
-              "$ref": "https://appsec-advisor/schemas/trust-boundary-assessment-input.schema.json#/properties/source_context/properties/recon_signals/properties/values"
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "has_public_routes",
+                "has_auth_surface",
+                "has_role_concept",
+                "has_ci_pipeline",
+                "has_external_apis",
+                "has_client_storage",
+                "has_multi_tenancy_signal"
+              ],
+              "properties": {
+                "has_public_routes": {
+                  "$ref": "#/$defs/recon_value"
+                },
+                "has_auth_surface": {
+                  "$ref": "#/$defs/recon_value"
+                },
+                "has_role_concept": {
+                  "$ref": "#/$defs/recon_value"
+                },
+                "has_ci_pipeline": {
+                  "$ref": "#/$defs/recon_value"
+                },
+                "has_external_apis": {
+                  "$ref": "#/$defs/recon_value"
+                },
+                "has_client_storage": {
+                  "$ref": "#/$defs/recon_value"
+                },
+                "has_multi_tenancy_signal": {
+                  "$ref": "#/$defs/recon_value"
+                }
+              }
             },
             "evidence": {
               "type": "array",
@@ -381,6 +414,13 @@
     }
   },
   "$defs": {
+    "recon_value": {
+      "description": "true when a deterministic scanner found supporting evidence in a selected repository, false only for a measured absence, null when no scanner established the signal.",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
     "endpoint": {
       "$ref": "https://appsec-advisor/schemas/trust-boundary-assessment-input.schema.json#/$defs/endpoint"
     },

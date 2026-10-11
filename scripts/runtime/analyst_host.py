@@ -150,12 +150,20 @@ class ClaudeCliTransport:
     """``claude -p`` without tools, project configuration, or session persistence."""
 
     def __init__(
-        self, work_dir: Path, model: str = DEFAULT_MODEL, max_budget_usd: float = 1.0, executable: str = "claude"
+        self,
+        work_dir: Path,
+        model: str = DEFAULT_MODEL,
+        max_budget_usd: float = 1.0,
+        executable: str = "claude",
+        effort: str | None = None,
     ):
+        if effort is not None and effort not in ("low", "medium", "high", "xhigh", "max"):
+            raise ValueError("unsupported host effort level")
         self.work_dir = work_dir
         self.model = model
         self.max_budget_usd = max_budget_usd
         self.executable = executable
+        self.effort = effort
 
     def argv(self, system: str, schema: dict) -> list[str]:
         return [
@@ -180,6 +188,7 @@ class ClaudeCliTransport:
             system,
             "--max-budget-usd",
             f"{self.max_budget_usd:.2f}",
+            *(["--effort", self.effort] if self.effort else []),
         ]
 
     def environment(self) -> dict[str, str]:
@@ -215,7 +224,11 @@ class ClaudeCliTransport:
         except (json.JSONDecodeError, UnicodeDecodeError):
             raise TransportError("host returned no parseable result") from None
         if not isinstance(outcome, dict) or outcome.get("is_error") or "structured_output" not in outcome:
-            raise TransportError("host reported an error or no structured output")
+            # The subtype is a fixed host vocabulary (for example a budget or
+            # structured-output limit); bound it, never echo model text.
+            subtype = outcome.get("subtype") if isinstance(outcome, dict) else None
+            detail = f" ({str(subtype)[:60]})" if isinstance(subtype, str) and subtype.isascii() else ""
+            raise TransportError("host reported an error or no structured output" + detail)
         usd = outcome.get("total_cost_usd")
         return HostReply(outcome["structured_output"], usd if isinstance(usd, (int, float)) else None)
 

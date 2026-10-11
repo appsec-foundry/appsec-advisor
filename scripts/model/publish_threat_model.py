@@ -296,6 +296,18 @@ def main() -> int:
     yaml_path = output_dir / "threat-model.yaml"
     if not yaml_path.exists():
         results["blockers"].append("threat-model.yaml not found — run /appsec-advisor:create-threat-model --yaml first")
+    else:
+        from shared.assessment_sources import model_file_is_portable, single_repository_only
+
+        if model_file_is_portable(yaml_path):
+            # Committing a combined model into one source repository would
+            # present it as that repository's own model.
+            results["blockers"].append(
+                single_repository_only(
+                    "publish-threat-model",
+                    "Share the combined threat-model.md or its exports from the output directory instead.",
+                )
+            )
 
     md_path = output_dir / "threat-model.md"
     if not md_path.exists():

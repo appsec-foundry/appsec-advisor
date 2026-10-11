@@ -11,8 +11,7 @@ approved product specification.
 
 ### REQ-PUR-001 — The model is derived from the repository and stays current
 
-The threat model comes from code and configuration rather than a workshop.
-Running the analysis again produces a model of the repository as it exists then.
+The threat model comes from code and configuration rather than a workshop. Running the analysis again produces a model of the analyzed repository, or of every repository selected for a combined assessment, as it exists then.
 
 ### REQ-PUR-002 — The subject is the design, not only the code
 
@@ -22,16 +21,13 @@ a release verdict.
 
 ### REQ-PUR-003 — Developer and AppSec teams can both run it
 
-A team can analyze its own repository or select separate input and output
-locations without changing the analysis semantics.
+A team can analyze its own repository or select separate input and output locations without changing the analysis semantics. A headless run can also analyze several selected local checkouts as one system: every selected repository is analyzed afresh, and the order of the selection does not change the result.
 
 ## Finding model
 
 ### REQ-MOD-001 — A finding is a concrete instance backed by evidence
 
-A finding identifies a security problem in the target repository and cites the
-evidence that supports it. Separate instances remain separate unless they share
-the same affected object and security mechanism.
+A finding identifies a security problem in the target repository and cites the evidence that supports it. In a combined assessment, a finding and its evidence name the selected repository they belong to. Separate instances remain separate unless they share the same affected object and security mechanism.
 
 ### REQ-MOD-002 — A weakness describes the class above its findings
 
@@ -52,10 +48,9 @@ The operator controls which abuse-case sources are used. A technical abuse case 
 
 A user can list the abuse and business cases defined for a repository, each with its title, kind, and whether it comes from the plugin, the organization profile, the repository, or a per-scan file. A user can select one or more of these cases and have them checked without a full assessment. When a threat model exists, the check uses it; the user can instead choose an isolated check against the code alone. Either check follows REQ-MOD-004: a case is confirmed only by repository evidence, and a case without decisive evidence is reported as unresolved, never as safe. An isolated check states that it ran without a threat model. When an existing model records a case as inconclusive or not performed, the plugin may suggest this check, but never starts it on its own.
 
-### REQ-MOD-005 — Findings require evidence from the target repository
+### REQ-MOD-005 — Findings require evidence from the analyzed repositories
 
-External context may identify a hypothesis, but only source, configuration, git
-history, or target-owned declarations can establish and score a finding.
+External context may identify a hypothesis, but only source, configuration, git history, or target-owned declarations of an analyzed repository can establish and score a finding.
 
 ### REQ-MOD-009 — An unproven finding says that it is unproven
 
@@ -72,6 +67,10 @@ verdict that asserts confirmed exploitation does not rest on it.
 Each control domain is rated from evidence of what the system actually uses.
 An absent surface is not applicable, and a broken control remains distinct from
 a missing control.
+
+### REQ-ARC-002 — A combined model keeps repository identity
+
+In a combined assessment, components, findings, figures, and exports name the repository each element comes from. A connection between repositories appears only when evidence from both sides supports it, and membership in different repositories never establishes a trust boundary.
 
 ## Analysis
 
@@ -235,9 +234,7 @@ A developer can ask the analyst about a planned design without supplying code. A
 
 ### REQ-TRU-001 — A scanned repository cannot steer the run
 
-Repository content is untrusted by default. Repository-owned agent settings,
-instructions, hooks, and paths outside the selected root are rejected before
-they can influence analysis behavior.
+Repository content is untrusted by default. Repository-owned agent settings, instructions, hooks, and paths outside the selected roots are rejected before they can influence analysis behavior. A combined assessment applies this to every selected repository, and its models read only source excerpts the controller serves from those repositories.
 
 ### REQ-TRU-002 — A leaked secret prevents publication
 

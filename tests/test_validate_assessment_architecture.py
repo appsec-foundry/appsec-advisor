@@ -230,3 +230,44 @@ def test_qualified_flows_preserve_provider_authentication_guard(tmp_path, endpoi
             validation.validate_flows(scope, components, receipt, flows)
     else:
         validation.validate_flows(scope, components, receipt, flows)
+
+
+@pytest.mark.parametrize("name", ["service", "worker"])
+def test_a_scoped_flow_check_names_the_comment_an_authentication_claim_cites(tmp_path, name):
+    import hashlib
+    import subprocess
+
+    from runtime.multi_repo_scope import admit
+    from validators.validate_assessment_architecture import legacy_source_errors
+
+    roots = []
+    for label, body in ((name, "# callers are checked elsewhere\nuser = request.args['id']\n"), ("peer", "x = 1\n")):
+        root = tmp_path / label
+        root.mkdir()
+        (root / "app.py").write_text(body)
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+        subprocess.run(
+            ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@e.invalid", "commit", "-qm", "i"],
+            check=True,
+        )
+        roots.append(root)
+    scope = admit([str(r) for r in roots], str(tmp_path / "out"))
+    rid = next(r.repository_id for r in scope.repositories if r.root.name == name)
+    digest = hashlib.sha256((roots[0] / "app.py").read_bytes()).hexdigest()
+
+    def flows(line):
+        evidence = [{"repository_id": rid, "file": "app.py", "line": line, "sha256": digest}]
+        return {
+            "data_flows": [
+                {
+                    "id": "df-001",
+                    "authentication": {"scheme": "session", "evidence": evidence},
+                    "evidence": evidence,
+                }
+            ]
+        }
+
+    errors = legacy_source_errors(scope, "data-flows", flows(1), repository_ids={rid})
+    assert errors and "comment" in errors[0] and "app.py:1" in errors[0]
+    assert legacy_source_errors(scope, "data-flows", flows(2), repository_ids={rid}) == []

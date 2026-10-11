@@ -212,6 +212,18 @@ def validate_local_architecture(scope, repository_id, components, receipt, artif
     for asset in artifact["assets"]:
         if any(ref["component_id"] not in local_ids for ref in asset["component_refs"]):
             raise ExchangeError("Local asset refers to a component outside its repository")
+    # The combined flow handoff applies the single-root evidence guards later;
+    # apply them here too, so this job can still correct its own result.
+    from validators.validate_assessment_architecture import legacy_source_errors
+
+    errors = legacy_source_errors(
+        scope,
+        "data-flows",
+        {"data_flows": artifact["data_flows"], "external_entities": artifact["external_entities"]},
+        repository_ids={repository_id},
+    )
+    if errors:
+        raise ExchangeError("Local architecture violates repository evidence rules: " + "; ".join(errors[:3]))
 
 
 def _comparison(value):
@@ -227,8 +239,14 @@ def _comparison(value):
     return value
 
 
-def validate_stride(scope, component, neighborhood, flows, artifact, ranges, *, boundaries=()):
-    """Preserve legacy policy/trace checks and scoped executable evidence."""
+def validate_stride(
+    scope, component, neighborhood, flows, artifact, ranges, *, boundaries=(), allowed_requirement_ids=frozenset()
+):
+    """Preserve legacy policy/trace checks and scoped executable evidence.
+
+    A finding may cite only requirement IDs of the catalog supplied to this job;
+    without a catalog the allowed set is empty.
+    """
     from validators.validate_fragment import repository_evidence_errors
     from validators.validate_intermediate import validate_stride as legacy_validate
 
@@ -259,7 +277,7 @@ def validate_stride(scope, component, neighborhood, flows, artifact, ranges, *, 
         anchor = finding["evidence"]
         if (anchor["repository_id"], anchor["file"]) not in own:
             raise ExchangeError("Finding evidence is not owned by the assessed component")
-        if finding.get("violated_requirements"):
+        if set(finding.get("violated_requirements") or ()) - set(allowed_requirement_ids):
             raise ExchangeError("Finding cites requirements absent from this job's catalog")
         trace = finding.get("mechanism_trace")
         if trace and trace["input"]["repository_id"] != anchor["repository_id"]:
@@ -322,10 +340,11 @@ def validate_evidence_review(scope, findings, component_fingerprint, artifact, r
     for decision in artifact["decisions"]:
         original = next(finding for finding in findings if finding["local_id"] == decision["local_id"])
         anchor = original["evidence"]
+        # An absence has no line of its own: reading any retrieved range of
+        # its anchor file is the independent reading.
+        fields = ("repository_id", "file") if anchor.get("kind") == "absence" else ("repository_id", "file", "line")
         if decision["verdict"] == "verified" and not any(
-            (row["repository_id"], row["file"], row["line"])
-            == (anchor["repository_id"], anchor["file"], anchor["line"])
-            for row in decision["evidence"]
+            tuple(row[key] for key in fields) == tuple(anchor[key] for key in fields) for row in decision["evidence"]
         ):
             raise ExchangeError("Verified finding lacks an independent reading of its anchor")
 

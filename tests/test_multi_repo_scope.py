@@ -137,8 +137,98 @@ def test_symlinked_sources_are_never_read(tmp_path, directory):
         child.symlink_to(sentinel, target_is_directory=True)
     else:
         (Path(roots[0]) / "link").symlink_to(sentinel / "marker")
-    with pytest.raises(scope.ScopeError):
-        scope.admit(roots, str(tmp_path / "out"))
+    admitted = scope.admit(roots, str(tmp_path / "out"))
+    first = next(r for r in admitted.repositories if str(r.root) == roots[0])
+    omitted = {"path": "linked/marker" if directory else "link", "reason": "symlink"}
+    assert omitted in first.exclusions
+    assert "app.py" in first.files
+    assert not any(name.startswith(("link", "linked/")) for name in first.files)
+    assert "unselected source" not in json.dumps(admitted.inventory())
+    with pytest.raises(scope.ScopeError, match="outside admitted"):
+        admitted.read(first.repository_id, "linked/marker" if directory else "link")
+    with admitted.scanner_snapshot(first.repository_id) as snapshot:
+        assert not (snapshot / ("linked" if directory else "link")).exists()
+
+
+def _commit(root: str, *paths: str) -> None:
+    subprocess.run(["git", "-C", root, "add", *paths], check=True)
+    subprocess.run(
+        ["git", "-C", root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "add"],
+        check=True,
+    )
+
+
+@pytest.mark.parametrize("name", ["link", "config/alias.py"])
+def test_tracked_symlink_is_recorded_as_omitted_not_followed(tmp_path, name):
+    roots = pair(tmp_path)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("unselected source\n")
+    link = Path(roots[0]) / name
+    link.parent.mkdir(exist_ok=True)
+    link.symlink_to(outside)
+    _commit(roots[0], name)
+    admitted = scope.admit(roots, str(tmp_path / "out"))
+    first = next(r for r in admitted.repositories if str(r.root) == roots[0])
+    assert {"path": name, "reason": "symlink"} in first.exclusions
+    assert name not in first.files
+    row = next(r for r in admitted.inventory()["repositories"] if r["repository_id"] == first.repository_id)
+    assert {"path": name, "reason": "symlink"} in row["exclusions"]
+    admitted.verify_unchanged()
+
+
+@pytest.mark.parametrize("name", ["vendor/lib", "deps"])
+def test_submodule_is_recorded_as_omitted_and_never_read(tmp_path, name):
+    roots = pair(tmp_path)
+    inner = repository(tmp_path / "inner")
+    (inner / "secret.py").write_text("inner = 1\n")
+    _commit(str(inner), "secret.py")
+    subprocess.run(
+        ["git", "-C", roots[0], "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(inner), name],
+        check=True,
+        capture_output=True,
+    )
+    admitted = scope.admit(roots, str(tmp_path / "out"))
+    first = next(r for r in admitted.repositories if str(r.root) == roots[0])
+    assert {"path": name, "reason": "submodule"} in first.exclusions
+    assert not any(path.startswith(name) for path in first.files)
+    assert ".gitmodules" in first.files
+
+
+@pytest.mark.parametrize("name", ["nested", "tools/embedded"])
+def test_untracked_nested_repository_is_recorded_as_omitted(tmp_path, name):
+    roots = pair(tmp_path)
+    nested = repository(Path(roots[0]) / name)
+    (nested / "inner.py").write_text("inner = 1\n")
+    admitted = scope.admit(roots, str(tmp_path / "out"))
+    first = next(r for r in admitted.repositories if str(r.root) == roots[0])
+    assert {"path": name, "reason": "nested-repository"} in first.exclusions
+    assert not any(path.startswith(name + "/") for path in first.files)
+    assert "app.py" in first.files
+    admitted.verify_unchanged()
+
+
+def test_omissions_are_covered_by_the_scope_fingerprint(tmp_path):
+    roots = pair(tmp_path)
+    before = scope.admit(roots, str(tmp_path / "out")).inventory()
+    (Path(roots[0]) / "link").symlink_to(tmp_path / "missing-target")
+    after = scope.admit(roots, str(tmp_path / "out")).inventory()
+    assert after["schema_version"] == 2
+    assert before["scope_sha256"] != after["scope_sha256"]
+
+
+def test_captured_file_replaced_by_link_after_admission_never_yields_new_content(tmp_path):
+    roots = pair(tmp_path)
+    admitted = scope.admit(roots, str(tmp_path / "out"))
+    first = next(r for r in admitted.repositories if str(r.root) == roots[0])
+    outside = tmp_path / "outside.py"
+    outside.write_text("unselected source\n")
+    (first.root / "app.py").unlink()
+    (first.root / "app.py").symlink_to(outside)
+    assert admitted.read(first.repository_id, "app.py")["lines"] == ["print('source')"]
+    with admitted.scanner_snapshot(first.repository_id) as snapshot:
+        assert (snapshot / "app.py").read_text() == "print('source')\n"
+    with pytest.raises(scope.ScopeError, match="state changed"):
+        admitted.verify_unchanged()
 
 
 def test_snapshot_reads_are_frozen_and_publication_rejects_changed_secondary_root(tmp_path):
@@ -267,3 +357,101 @@ def test_slice_lines_end_only_at_line_feeds(tmp_path):
     reply = admitted.read(first.repository_id, "app.py", 1, 10)
     assert reply["end_line"] == 3
     assert reply["lines"][0] == "a = 1" and reply["lines"][2] == "c = 3"
+
+
+def _alias_stat(monkeypatch, alias: Path, real: Path) -> None:
+    """Let one distinct directory report another's identity, like a bind mount."""
+    original = os.stat
+
+    def fake(path, *args, **kwargs):
+        if kwargs.get("dir_fd") is None and isinstance(path, (str, os.PathLike)) and os.fspath(path) == str(alias):
+            return original(real, *args, **kwargs)
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(scope.os, "stat", fake)
+
+
+@pytest.mark.parametrize("child", ["", "report"])
+def test_output_aliasing_a_selected_root_by_identity_is_rejected(tmp_path, monkeypatch, child):
+    roots = pair(tmp_path)
+    mounted = (tmp_path / "mounted").resolve()
+    mounted.mkdir()
+    _alias_stat(monkeypatch, mounted, Path(roots[0]))
+    with pytest.raises(scope.ScopeError, match="separate"):
+        scope.admit(roots, str(mounted / child) if child else str(mounted))
+    assert not (mounted / "report").exists()
+
+
+def test_output_containing_a_selected_root_by_identity_is_rejected(tmp_path, monkeypatch):
+    roots = pair(tmp_path)
+    holder = (tmp_path / "holder").resolve()
+    holder.mkdir()
+    # The output reports the identity of the checkouts' common parent.
+    _alias_stat(monkeypatch, holder, tmp_path.resolve())
+    with pytest.raises(scope.ScopeError, match="separate"):
+        scope.admit(roots, str(holder))
+
+
+@pytest.mark.parametrize("label", ["alias", "renamed"])
+def test_selection_aliasing_another_root_by_identity_is_rejected(tmp_path, monkeypatch, label):
+    roots = pair(tmp_path)
+    other = repository((tmp_path / label).resolve())
+    _alias_stat(monkeypatch, other, Path(roots[0]))
+    with pytest.raises(scope.ScopeError, match="overlapping"):
+        scope.admit([roots[0], str(other)], str(tmp_path / "out"))
+
+
+def test_selection_through_a_symlinked_parent_is_an_alias(tmp_path):
+    roots = pair(tmp_path)
+    (tmp_path / "linked-parent").symlink_to(tmp_path, target_is_directory=True)
+    with pytest.raises(scope.ScopeError, match="overlapping"):
+        scope.admit([roots[0], str(tmp_path / "linked-parent" / "one")], str(tmp_path / "out"))
+    with pytest.raises(scope.ScopeError, match="separate"):
+        scope.admit(roots, str(tmp_path / "linked-parent" / "two" / "out"))
+
+
+def test_distinct_identities_keep_admission(tmp_path, monkeypatch):
+    roots = pair(tmp_path)
+    unrelated = (tmp_path / "unrelated").resolve()
+    unrelated.mkdir()
+    _alias_stat(monkeypatch, unrelated, unrelated)
+    admitted = scope.admit(roots, str(unrelated / "report"))
+    assert len(admitted.repositories) == 2
+
+
+@pytest.mark.parametrize("name", ["notes/settings.txt", "deploy/values.yaml"])
+def test_untracked_unlisted_file_secret_is_masked_in_reads_and_snapshots(tmp_path, name):
+    roots = pair(tmp_path)
+    # Built at runtime so no credential-shaped literal is committed.
+    key = "AK" + "IA" + "Q7RZ3K5V2M8N4P6T"
+    target = Path(roots[0]) / name
+    target.parent.mkdir(parents=True)
+    target.write_text(f"first: 1\naccess_key: {key}\nlast: 3\n")
+    (Path(roots[0]) / ".env.local").write_text(f"KEY={key}\n")
+    admitted = scope.admit(roots, str(tmp_path / "out"))
+    first = next(r for r in admitted.repositories if str(r.root) == roots[0])
+    assert name in first.files
+    assert {"path": ".env.local", "reason": "sensitive-name"} in first.exclusions
+    reply = admitted.read(first.repository_id, name, 1, 3)
+    assert key not in json.dumps(reply)
+    assert reply["lines"][0] == "first: 1" and reply["lines"][2] == "last: 3"
+    with admitted.scanner_snapshot(first.repository_id) as snapshot:
+        text = (snapshot / name).read_text()
+        assert key not in text
+        assert text.splitlines() == reply["lines"]
+        assert not (snapshot / ".env.local").exists()
+        assert all(key.encode() not in path.read_bytes() for path in snapshot.rglob("*") if path.is_file())
+
+
+def test_snapshot_keeps_line_numbers_after_multiline_masking(tmp_path):
+    roots = pair(tmp_path)
+    # Artificial, non-functional key material inside a temporary fixture.
+    body = "\n".join(["MIIB" + "A" * 60] * 2)
+    header, footer = "-----BEGIN " + "PRIVATE KEY-----", "-----END " + "PRIVATE KEY-----"
+    (Path(roots[0]) / "app.py").write_text(f"first = 1\n{header}\n{body}\n{footer}\nafter = 6\n")
+    admitted = scope.admit(roots, str(tmp_path / "out"))
+    first = next(r for r in admitted.repositories if str(r.root) == roots[0])
+    with admitted.scanner_snapshot(first.repository_id) as snapshot:
+        lines = (snapshot / "app.py").read_text().split("\n")
+    assert lines[0] == "first = 1" and lines[5] == "after = 6" and lines[6] == ""
+    assert "MIIB" not in "\n".join(lines)

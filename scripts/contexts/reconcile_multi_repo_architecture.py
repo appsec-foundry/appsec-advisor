@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections import defaultdict
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
@@ -66,6 +65,66 @@ def validate_discovery(scope: AssessmentScope, expected_repository: str, documen
                 raise ArchitectureError("Interface identity is not present in cited evidence")
 
 
+_PROTOCOL_FAMILY = {"HTTPS": "HTTP", "HTTP": "HTTP", "gRPC": "gRPC", "AMQP": "AMQP", "Kafka": "Kafka"}
+_MESSAGING = {"AMQP", "Kafka"}
+
+
+def _operation(value: str) -> str:
+    """Compare operations without a query string or trailing separator."""
+    return value.split("?", 1)[0].rstrip("/") or value
+
+
+def _endpoint(row: dict) -> tuple[str | None, str | None]:
+    """The deployment binding and host an interface's cited identity establishes.
+
+    The host is the address without scheme, credentials, path or virtual host.
+    The binding is the declared deployment, else the service a cluster-local
+    (``<service>.<namespace>.svc``) or single-label host names. A public host
+    alone is not a binding: equal addresses in separate deployments stay apart.
+    """
+    host = None
+    binding = row["deployment"].lower() if row.get("deployment") else None
+    if row.get("address"):
+        rest = row["address"].split("://", 1)[-1].rsplit("@", 1)[-1]
+        host = rest.split("/", 1)[0].lower() or None
+        name = host.split(":", 1)[0] if host else ""
+        labels = name.split(".")
+        if binding is None and name and (len(labels) == 1 or (len(labels) >= 3 and labels[2] == "svc")):
+            binding = labels[0]
+    return binding, host
+
+
+_MANIFEST_SUFFIXES = (".yaml", ".yml")
+_MAX_MANIFEST_BYTES = 262_144
+
+
+def deployment_binding(scope: AssessmentScope, repository_id: str) -> dict | None:
+    """The one Kubernetes Service a repository declares, as a deployment binding.
+
+    Manifests are parsed as data from the captured bytes; executable YAML tags
+    are rejected by the safe loader. Zero or several Services bind nothing.
+    """
+    import yaml
+
+    repo = next(r for r in scope.repositories if r.repository_id == repository_id)
+    found = []
+    for path, data in sorted(repo.files.items()):
+        if not path.endswith(_MANIFEST_SUFFIXES) or len(data) > _MAX_MANIFEST_BYTES:
+            continue
+        try:
+            documents = list(yaml.safe_load_all(data.decode("utf-8")))
+        except (UnicodeDecodeError, yaml.YAMLError):
+            continue
+        for document in documents:
+            if isinstance(document, dict) and document.get("kind") == "Service":
+                name = (document.get("metadata") or {}).get("name")
+                if isinstance(name, str) and name.strip():
+                    text = data.decode("utf-8").splitlines()
+                    line = next((n for n, value in enumerate(text, 1) if "name:" in value and name in value), 1)
+                    found.append({"repository_id": repository_id, "file": path, "line": line, "service": name.lower()})
+    return found[0] if len(found) == 1 else None
+
+
 def reconcile(scope: AssessmentScope, discoveries: list[dict]) -> dict:
     """Namespace components and expose matches without promoting them to flows."""
     expected = {r.repository_id for r in scope.repositories}
@@ -92,47 +151,76 @@ def reconcile(scope: AssessmentScope, discoveries: list[dict]) -> dict:
                     "component_id": _id("component", rid, row["component_id"]),
                 }
             )
-    indexed = defaultdict(list)
     unresolved = []
+    identified = []
+    bindings = {r.repository_id: deployment_binding(scope, r.repository_id) for r in scope.repositories}
     for row in interfaces:
-        if row["address"] is None or row["deployment"] is None:
+        binding, host = _endpoint(row)
+        declared = bindings[row["repository_id"]]
+        # A receiving interface without its own binding is bound by the one
+        # Service its repository declares (Kubernetes service selection).
+        if binding is None and declared and row["role"] in {"serve", "consume"}:
+            binding = declared["service"]
+        if binding is None:
             unresolved.append({"interface_id": row["id"], "reason": "identity-not-established"})
             continue
-        indexed[(row["deployment"], row["address"], row["protocol"], row["operation"])].append(row)
+        identified.append((row, binding, host))
     candidates = []
-    for key, rows in sorted(indexed.items()):
-        role = "consume" if key[2] in {"AMQP", "Kafka"} else "serve"
-        receivers = [r for r in rows if r["role"] == role]
-        senders = [r for r in rows if r["role"] in {"request", "publish"}]
-        used: set[str] = set()
-        for sender in senders:
-            peers = [r for r in receivers if r["repository_id"] != sender["repository_id"]]
-            # Multiple messaging consumers may be legitimate fan-out, but the
-            # consumer-group semantics require review rather than a guess.
-            if len(peers) != 1:
-                unresolved.append(
-                    {"interface_id": sender["id"], "reason": "ambiguous-peer" if peers else "no-matching-peer"}
-                )
-                used.add(sender["id"])
-                continue
-            receiver = peers[0]
-            used.update((sender["id"], receiver["id"]))
-            candidates.append(
-                {
-                    "id": _id("connection", sender["id"], receiver["id"]),
-                    "sender_interface": sender["id"],
-                    "receiver_interface": receiver["id"],
-                    "from": sender["component_id"],
-                    "to": receiver["component_id"],
-                    "protocol": key[2],
-                    "operation": key[3],
-                    "address": key[1],
-                    "deployment": key[0],
-                    "status": "requires-architecture-review",
-                    "via": "message-broker" if role == "consume" else None,
-                }
+    used: set[str] = set()
+    seen: set[tuple] = set()
+    for sender, binding, host in sorted(identified, key=lambda item: item[0]["id"]):
+        if sender["role"] not in {"request", "publish"}:
+            continue
+        family = _PROTOCOL_FAMILY.get(sender["protocol"], sender["protocol"])
+        receiving = "consume" if family in _MESSAGING else "serve"
+        operation = _operation(sender["operation"])
+        # A peer shares the protocol family, the operation and the deployment
+        # binding, and its host when both cite one. This only narrows the
+        # review; the architecture analyst decides each candidate from both
+        # sides' evidence.
+        peers = [
+            (receiver, peer_host)
+            for receiver, peer_binding, peer_host in identified
+            if receiver["role"] == receiving
+            and receiver["repository_id"] != sender["repository_id"]
+            and _PROTOCOL_FAMILY.get(receiver["protocol"], receiver["protocol"]) == family
+            and _operation(receiver["operation"]) == operation
+            and peer_binding == binding
+            and (host is None or peer_host is None or host == peer_host)
+        ]
+        # Several interfaces of one receiving component (for example two
+        # methods on one route) name one peer; only distinct components are
+        # an ambiguity.
+        if len({receiver["component_id"] for receiver, _ in peers}) != 1:
+            unresolved.append(
+                {"interface_id": sender["id"], "reason": "ambiguous-peer" if peers else "no-matching-peer"}
             )
-        unresolved.extend({"interface_id": r["id"], "reason": "no-matching-peer"} for r in rows if r["id"] not in used)
+            used.add(sender["id"])
+            continue
+        receiver, peer_host = min(peers, key=lambda pair: pair[0]["id"])
+        used.update([sender["id"], *(row["id"] for row, _ in peers)])
+        key = (sender["component_id"], receiver["component_id"], receiver["protocol"], operation)
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append(
+            {
+                "id": _id("connection", sender["id"], receiver["id"]),
+                "sender_interface": sender["id"],
+                "receiver_interface": receiver["id"],
+                "from": sender["component_id"],
+                "to": receiver["component_id"],
+                "protocol": receiver["protocol"],
+                "operation": operation,
+                "address": (host or peer_host or binding)[:240],
+                "deployment": binding[:120],
+                "status": "requires-architecture-review",
+                "via": "message-broker" if family in _MESSAGING else None,
+            }
+        )
+    unresolved.extend(
+        {"interface_id": row["id"], "reason": "no-matching-peer"} for row, _, _ in identified if row["id"] not in used
+    )
     result = {
         "schema_version": 1,
         "scope_sha256": scope.inventory()["scope_sha256"],

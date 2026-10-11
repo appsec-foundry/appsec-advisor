@@ -197,17 +197,26 @@ The next run checks this rule in files such as `ExpenseController.java` or below
 
 ### Assess multiple repositories
 
-The current headless runner accepts one repository per invocation. From the plugin checkout, run a separate assessment for each local checkout and select a distinct output directory. Replace the example paths with your repository and report locations:
+To assess several local checkouts as one system, repeat `--repo` in the headless runner. Every selected repository is scanned freshly, and the run produces one threat model, one report and one Figure 1. Run it from the plugin checkout and replace the example paths with your checkouts and report location:
 
 ```bash
-./scripts/run-headless.sh --repo /repos/repo1 --output /reports/repo1 --full
-./scripts/run-headless.sh --repo /repos/repo2 --output /reports/repo2 --full
-./scripts/run-headless.sh --repo /repos/repo3 --output /reports/repo3 --full
+./scripts/run-headless.sh \
+  --repo /repos/frontend \
+  --repo /repos/backend \
+  --repo /repos/worker \
+  --output /reports/order-system \
+  --soft-budget 40
 ```
 
-Each run produces its own threat model and Figure 1. Configure `docs/related-repos.yaml` in the repository being assessed to include existing dependency models as [cross-repository context](docs/threat-modeler.md#cross-repo-context). These imports inform the local analysis; they do not rescan dependency source code or produce one combined Figure 1. See [non-interactive mode](docs/headless-mode.md) for authentication, budgets, and other runner options.
+A combined run has these requirements:
 
-A combined source assessment using multiple `--repo` arguments is still under development. Until it is available, the runner rejects a repeated `--repo` flag instead of assessing only one of the selected repositories.
+- Select 2–16 top-level Git checkouts that do not contain each other.
+- Choose an `--output` directory outside every selected checkout.
+- Set `--soft-budget` or `--hard-budget`. The run stops when the budget is exhausted.
+
+Components, findings and exports name the repository they come from, for example `Order API [backend]` and `backend/src/orders.ts:42`. The order of the `--repo` flags does not matter, and no repository takes precedence. A connection between repositories appears only when source evidence supports it, and repository membership never creates a trust boundary. The run supports full assessments and `--resume` of an interrupted run whose sources and settings are unchanged; `--incremental`, `--rerender` and `--rebuild` are not available for combined runs. See [non-interactive mode](docs/headless-mode.md#assess-several-repositories-as-one-system) for details and limits.
+
+To keep separate reports instead, run one assessment per repository with its own `--output` directory. Configure `docs/related-repos.yaml` in a repository to include existing dependency models as [cross-repository context](docs/threat-modeler.md#cross-repo-context). These imports inform the local analysis; they do not rescan dependency source code.
 
 ## Threat Analyst
 
@@ -349,6 +358,7 @@ Highlights from the 0.6.0 beta releases.
 - **New abuse-case catalog.** The built-in catalog now covers business misuse, such as viewing other users' data or skipping an approval, alongside technical attack chains. Runs check both by default, and you can add your own cases as one sentence each. Reworked rules keep unrelated findings from inflating severity and report unchecked cases. See [Abuse cases](docs/threat-modeler.md#abuse-cases-docssecurityabuse-cases).
 - **New `/appsec-advisor:abuse-cases` command.** It lists all abuse cases with their result and explains each one step by step.
 - **Reworked Threat Analyst.** It checks a single abuse case against your code (`--abuse-case <ID>`), rates each attack step with evidence, and uses your existing threat model as context. See [Threat Analyst](#threat-analyst).
+- **Several repositories, one threat model.** Repeat `--repo` in headless mode to assess a system split across repositories in a single report. See [Assess multiple repositories](#assess-multiple-repositories).
 - **Report improvements.** Critical findings are grouped by root cause with the fix for each group, the diagrams show trust boundaries more clearly, and secrets from your code are masked in every output.
 - **More accurate analysis.** Reworked scanners fix missed detections and false positives, and standard and thorough runs use Sonnet 5.5.
 

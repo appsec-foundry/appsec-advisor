@@ -716,8 +716,16 @@ def test_an_explicit_hard_budget_wins_over_the_derived_one(tmp_path: Path, monke
     assert argv[argv.index("--max-budget-usd") + 1] == "50"
 
 
-def test_repeated_repository_selection_is_rejected_before_output_or_claude(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        ((), "requires --soft-budget or --hard-budget"),
+        (("--hard-budget", "5", "--trust-mode", "trusted"), "repository selection rejected"),
+        (("--hard-budget", "5", "--incremental"), "--incremental is not supported"),
+    ],
+)
+def test_repeated_repository_selection_reaches_the_combined_assessment_before_output_or_claude(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extra: tuple[str, ...], message: str
 ) -> None:
     first, second, output = tmp_path / "first", tmp_path / "second", tmp_path / "not-created"
     first.mkdir()
@@ -733,13 +741,15 @@ def test_repeated_repository_selection_is_rejected_before_output_or_claude(
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
 
     result = subprocess.run(
-        [str(SCRIPT), "--repo", str(first), "--repo", str(second), "--output", str(output)],
+        [str(SCRIPT), "--repo", str(first), "--repo", str(second), "--output", str(output), *extra],
         capture_output=True,
         text=True,
-        timeout=15,
+        timeout=30,
     )
 
-    assert result.returncode == 1, result.stdout + result.stderr
-    assert "--repo may be given only once" in result.stderr
+    # Neither directory is a Git checkout and no budget may be missing: the
+    # combined assessment refuses before it creates output or starts a model.
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert message in result.stderr
     assert not output.exists()
     assert not marker.exists()

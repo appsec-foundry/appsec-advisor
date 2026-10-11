@@ -858,6 +858,99 @@ def build_assessment(scope, components, receipt, flow_doc, source_context, depth
     return body
 
 
+_RECON_EVIDENCE_PER_SIGNAL = 3
+
+
+def _is_ci_definition(path: str) -> bool:
+    if path in supply_chain_facts.GITLAB_CI_PATHS:
+        return True
+    return any(
+        fnmatchcase(path, pattern) or fnmatchcase(path, pattern.removeprefix("**/"))
+        for pattern in supply_chain_facts.WORKFLOW_GLOBS
+    )
+
+
+def _qualified_evidence(repo, path: str, line: int) -> dict[str, Any]:
+    return {
+        "repository_id": repo.repository_id,
+        "file": path,
+        "line": line,
+        "sha256": hashlib.sha256(repo.files[path]).hexdigest(),
+    }
+
+
+def assessment_source_context(scope) -> dict[str, Any]:
+    """Measure the boundary source context of every admitted repository.
+
+    Trusted scanners read only frozen snapshots, and every evidence row names
+    its repository and file hash. The scanners prove presence, not absence:
+    a recon signal without supporting evidence stays null instead of false.
+    """
+    from analyzers.route_inventory import _AUTHN_PRESENT, _AUTHZ_PRESENT, build_inventory
+    from orchestrator.assessment_declarations import declaration_summary
+
+    scope.verify_unchanged()
+    per_repository: list[list[dict[str, Any]]] = []
+    ci_evidence: list[dict[str, Any]] = []
+    for repo in sorted(scope.repositories, key=lambda row: row.repository_id):
+        with scope.scanner_snapshot(repo.repository_id) as root:
+            inventory = build_inventory(root)
+        _validate(inventory, ROUTE_SCHEMA)
+        cards = []
+        for row in inventory["routes"]:
+            if row["handler_file"] not in repo.files:
+                raise ValueError(f"route {row['route_id']} has invalid repository evidence")
+            cards.append(
+                {
+                    "route_id": row["route_id"],
+                    "method": row["method"],
+                    "path": _bounded_text(row["path"], 180),
+                    "authn_signal": row["authn_signal"],
+                    "authz_signal": row["authz_signal"],
+                    "management_surface": row["management_surface"],
+                    "evidence": [_qualified_evidence(repo, row["handler_file"], row["handler_line"])],
+                }
+            )
+        per_repository.append(cards)
+        ci_evidence.extend(_qualified_evidence(repo, path, 1) for path in sorted(repo.files) if _is_ci_definition(path))
+
+    # Interleave repositories so the route cap cannot drop a whole repository;
+    # renumbering keeps route IDs unique across the combined inventory.
+    routes = [
+        cards[rank]
+        for rank in range(max(map(len, per_repository), default=0))
+        for cards in per_repository
+        if rank < len(cards)
+    ]
+    supporting = {
+        "has_public_routes": [row for row in routes if row["authn_signal"] == "absent"],
+        "has_auth_surface": [row for row in routes if row["authn_signal"] in _AUTHN_PRESENT],
+        "has_role_concept": [row for row in routes if row["authz_signal"] in _AUTHZ_PRESENT],
+    }
+    recon_evidence: list[dict[str, Any]] = []
+    for row in [
+        row["evidence"][0] for rows in supporting.values() for row in rows[:_RECON_EVIDENCE_PER_SIGNAL]
+    ] + ci_evidence[:_RECON_EVIDENCE_PER_SIGNAL]:
+        if row not in recon_evidence:
+            recon_evidence.append(row)
+    values: dict[str, bool | None] = dict.fromkeys(_RECON_SIGNAL_KEYS)
+    values.update({key: True for key, rows in supporting.items() if rows})
+    if ci_evidence:
+        values["has_ci_pipeline"] = True
+    routes = routes[:100]
+    for index, row in enumerate(routes, 1):
+        row["route_id"] = f"R-{index:03d}"
+    return {
+        "route_inventory": {"status": "present", "routes": routes},
+        "attack_surface_additions": [],
+        "cross_repository": {"status": "missing", "entries": []},
+        "recon_signals": {"values": values, "evidence": recon_evidence[:12]},
+        # Validated, repository-namespaced keys; the rows reach promotion separately.
+        "boundary_declarations": declaration_summary(scope),
+        "incremental": False,
+    }
+
+
 def _assessment_input_fingerprint(body):
     fingerprint_body = {key: value for key, value in body.items() if key != "assessment_input_fingerprint"}
     encoded = json.dumps(fingerprint_body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)

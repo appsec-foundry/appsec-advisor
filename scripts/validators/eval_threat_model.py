@@ -183,6 +183,19 @@ def prepare(run_dir: Path, out: Path, repo: Path | None) -> int:
         model = _load_yaml(yml)
     except Exception as exc:  # noqa: BLE001 — surface any parse failure as usage error
         return _err(f"cannot parse {yml}: {exc}")
+    from shared.assessment_sources import is_portable_model, labelled_model, single_repository_only
+
+    if is_portable_model(model):
+        if repo is not None:
+            return _err(
+                single_repository_only(
+                    "eval-threat-model --repo", "Omit --repo; component paths cannot be checked in one checkout."
+                )
+            )
+        try:
+            model = labelled_model(model)
+        except ValueError as exc:
+            return _err(f"invalid multi-repository model {yml}: {exc}")
 
     # Optional enrichment from the merged-threats sidecar (cwe / source / evidence).
     merged_by_id: dict[str, dict] = {}

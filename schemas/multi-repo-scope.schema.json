@@ -6,7 +6,7 @@
   "additionalProperties": false,
   "required": ["schema_version", "scope_sha256", "repositories"],
   "properties": {
-    "schema_version": {"const": 1},
+    "schema_version": {"const": 2},
     "scope_sha256": {"$ref": "#/$defs/sha256"},
     "repositories": {
       "type": "array", "minItems": 2, "maxItems": 16,
@@ -38,7 +38,7 @@
               "required": ["path", "reason"],
               "properties": {
                 "path": {"$ref": "#/$defs/path"},
-                "reason": {"enum": ["sensitive-name", "deleted", "binary"]}
+                "reason": {"enum": ["sensitive-name", "deleted", "binary", "symlink", "submodule", "nested-repository"]}
               }
             }
           }

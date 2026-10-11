@@ -741,7 +741,9 @@ def render_text(data: dict) -> str:
     buf.append(_emit_table("Configuration sources", data["config"]))
 
     fp = data.get("fast_path")
-    if fp:
+    if fp and fp.get("status") == "unsupported":
+        buf.append(_emit_table("Fast-path preview (vs. current working tree)", [("Decision", str(fp.get("reason")))]))
+    elif fp:
         rows = [
             ("Baseline SHA", (fp.get("baseline_sha") or "?")[:12]),
             ("HEAD SHA", (fp.get("head_sha") or "?")[:12]),

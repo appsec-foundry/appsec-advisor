@@ -58,7 +58,7 @@ from runtime.stride_outputs import component_id as _stride_component_id
 from runtime.stride_outputs import stride_output_files
 from shared._artifact_stamp import carry_generated_at
 from shared._atomic_io import atomic_write_json, atomic_write_text
-from shared._finding_state import is_refuted
+from shared._finding_state import is_refuted, record_evidence
 from shared._severity_policy import normalize_risks
 from shared._shared_sources import CODE_LEVEL_SOURCES, CONFIG_DEFECT_SOURCES, DESIGN_LEVEL_SOURCES
 
@@ -3208,6 +3208,9 @@ def _reconcile_actor_attribution(out_dir: Path, threats: list[dict]) -> list[dic
     return reconcile_output_dir(out_dir, threats)
 
 
+_REVIEW_BASIS = {"verified": "llm-verified"}
+
+
 def merge_assessment(
     scope,
     components: dict,
@@ -3215,6 +3218,7 @@ def merge_assessment(
     reviews: list[dict],
     *,
     boundaries: list[dict],
+    scanner_threats: dict[str, list[dict]] | None = None,
     started_at=None,
 ) -> dict:
     """Use existing intake, evidence deduplication and ranking for v2 sources.
@@ -3222,7 +3226,9 @@ def merge_assessment(
     Scoped jobs have already validated retrieval and independent review. This
     handoff checks inventory coverage and provenance again. Equal source names
     in different roots remain distinct; a model-authored shared-control name
-    never authorizes cross-repository consolidation.
+    never authorizes cross-repository consolidation. ``scanner_threats`` holds
+    deterministic scanner findings per component; the component's evidence
+    review decides them together with its STRIDE findings.
     """
     import copy
 
@@ -3243,7 +3249,10 @@ def merge_assessment(
     supplied = [row["component_id"] for row in stride_documents]
     if len(supplied) != len(set(supplied)) or set(supplied) != expected or len(reviews) != len(stride_documents):
         raise ValueError("Assessment merge must cover every finalized component exactly once")
-    pairs, locations = [], {}
+    scanner_threats = scanner_threats or {}
+    if not set(scanner_threats) <= expected:
+        raise ValueError("Assessment merge received scanner findings for an unknown component")
+    pairs, scanned_threats, locations = [], [], {}
     boundary_view = copy.deepcopy(boundaries)
     for row in source_rows(boundary_view):
         validate_source(scope, row, path_key="file")
@@ -3258,11 +3267,19 @@ def merge_assessment(
         if not Draft202012Validator(contract("multi-repo-evidence-review.schema.json")).is_valid(review):
             raise ValueError("Assessment merge received an invalid evidence review")
         decisions = {row["local_id"]: row for row in review["decisions"]}
-        if len(decisions) != len(review["decisions"]) or set(decisions) != {t["local_id"] for t in document["threats"]}:
+        scanned = copy.deepcopy(scanner_threats.get(document["component_id"], []))
+        if any(threat["component_id"] != document["component_id"] for threat in scanned):
+            raise ValueError("Assessment merge received a scanner finding under another component")
+        local_ids = [t["local_id"] for t in document["threats"]] + [t["local_id"] for t in scanned]
+        if (
+            len(local_ids) != len(set(local_ids))
+            or len(decisions) != len(review["decisions"])
+            or set(decisions) != set(local_ids)
+        ):
             raise ValueError("Assessment merge received incomplete evidence decisions")
         normalized = copy.deepcopy(document)
         seen = set()
-        for row in source_rows(normalized):
+        for row in source_rows([normalized, scanned]):
             if id(row) in seen:
                 continue
             seen.add(id(row))
@@ -3270,10 +3287,10 @@ def merge_assessment(
             key = source_key(row)
             locations[key] = {k: row[k] for k in ("repository_id", "sha256")}
             row["file"] = key
-        for threat in normalized["threats"]:
+        for threat in normalized["threats"] + scanned:
             decision = decisions[threat["local_id"]]
-            threat["evidence_check"] = decision["verdict"]
-            threat["evidence_basis"] = "llm-verified" if decision["verdict"] == "verified" else decision["verdict"]
+            # An independent review is the basis of a verified verdict.
+            record_evidence(threat, decision["verdict"], _REVIEW_BASIS.get(decision["verdict"]))
             if decision["verdict"] == "ambiguous":
                 threat["evidence_tier"] = "insecure-practice"
                 threat.pop("cvss_v4", None)
@@ -3282,7 +3299,10 @@ def merge_assessment(
             if threat.get("control_scope"):
                 threat["control_scope"] = document["component_id"] + ":" + threat["control_scope"]
         pairs.append((document["component_id"], normalized))
+        scanned_threats.extend(scanned)
     flat = _flatten_threats(pairs, assessment_boundaries=boundary_view)
+    # Scanner findings already passed intake when they were converted.
+    flat.extend(scanned_threats)
     normalize_risks(flat)
     # Reviews already decided each finding. Deduplication keeps the riskiest
     # member, so it must not let a refuted or unproven duplicate absorb a

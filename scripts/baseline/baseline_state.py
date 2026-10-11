@@ -1386,6 +1386,7 @@ def cmd_dirty_set(args: argparse.Namespace) -> int:
       3  ambiguous — relevant files do not map to any component but are
          not pure top-level globals (potential new-component signal);
          caller should run the standard incremental flow to be safe
+      4  the output directory holds a multi-repository model (see main)
     """
     output_dir = Path(args.output_dir).resolve()
     yaml_path = output_dir / "threat-model.yaml"
@@ -1845,6 +1846,21 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
+    # A multi-repository model is not the baseline of one checkout: its paths
+    # are relative to separate repositories. Each command keeps its error code.
+    error_code = {"update": 1, "check-fingerprint": 2, "check-changes": 3, "dirty-set": 4}.get(args.cmd)
+    yaml_path = Path(args.output_dir).resolve() / "threat-model.yaml" if error_code else None
+    if yaml_path is not None and yaml_path.is_file():
+        from shared.assessment_sources import model_file_is_portable, single_repository_only
+
+        if model_file_is_portable(yaml_path):
+            reason = single_repository_only(
+                "change detection",
+                "Rerun the combined assessment with scripts/run-headless.sh and every --repo.",
+            )
+            print(json.dumps({"status": "unsupported", "reason": reason}))
+            print(f"baseline_state: {reason}", file=sys.stderr)
+            return error_code
     return args.func(args)
 
 

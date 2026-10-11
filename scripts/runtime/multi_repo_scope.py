@@ -173,6 +173,15 @@ def _masked_lines(text: str) -> list[str]:
     return result
 
 
+def _masked_bytes(data: bytes) -> bytes:
+    """Redact captured bytes for a scanner file without moving any line."""
+    text = data.decode("utf-8")
+    masked = mask_text(text)[0]
+    if len(_lines(masked)) != len(_lines(text)):
+        masked = "\n".join(_masked_lines(text)) + ("\n" if text.endswith("\n") else "")
+    return masked.encode("utf-8")
+
+
 def _relative(value: str) -> tuple[str, ...]:
     if (
         not isinstance(value, str)
@@ -257,6 +266,32 @@ class RepositoryView:
         }
 
 
+def _omission(root: Path, parts: tuple[str, ...], mode: str | None) -> str | None:
+    """Name why a listed path is not captured, without following or reading it.
+
+    Git index modes mark tracked links and submodules; ``lstat`` marks a link
+    or nested worktree that replaced a path or any of its parents.
+    """
+    if mode == "160000":
+        return "submodule"
+    if mode == "120000":
+        return "symlink"
+    current = root
+    for segment in parts:
+        current = current / segment
+        try:
+            info = os.lstat(current)
+            if stat.S_ISLNK(info.st_mode):
+                return "symlink"
+            if stat.S_ISDIR(info.st_mode) and os.path.lexists(current / ".git"):
+                return "nested-repository"
+        except (FileNotFoundError, NotADirectoryError):
+            return "deleted"
+        except OSError:
+            raise ScopeError("Source cannot be inspected without following links") from None
+    return None
+
+
 def _capture(root: Path, repository_id: str, remaining: int) -> RepositoryView:
     head = _git(root, "rev-parse", "--verify", "HEAD^{commit}").decode("ascii").strip()
     dirty = bool(
@@ -270,22 +305,38 @@ def _capture(root: Path, repository_id: str, remaining: int) -> RepositoryView:
             overrides=_filter_overrides(root),
         )
     )
-    raw_paths = _git(root, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
+    # Index modes identify tracked links and submodules; untracked nested
+    # repositories are listed once, as a directory with a trailing slash.
+    modes: dict[str, str | None] = {}
     try:
-        paths = sorted(set(p.decode("utf-8") for p in raw_paths.split(b"\0") if p))
+        for row in _git(root, "ls-files", "--cached", "--stage", "-z").split(b"\0"):
+            if row:
+                meta, _, name = row.partition(b"\t")
+                modes[name.decode("utf-8")] = meta.split(b" ", 1)[0].decode("ascii")
+        for raw in _git(root, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0"):
+            if raw:
+                modes.setdefault(raw.decode("utf-8"), None)
     except UnicodeError:
         raise ScopeError("Source paths must be valid UTF-8") from None
+    paths = sorted(modes)
     if len(paths) > MAX_FILES:
         raise ScopeError("Source inventory exceeds the file limit")
     files: dict[str, bytes] = {}
     exclusions: list[dict[str, str]] = []
-    for path in paths:
+    for listed in paths:
+        path = listed[:-1] if listed.endswith("/") else listed
         parts = _relative(path)
+        reason = _omission(root, parts, modes[listed])
+        if listed.endswith("/") and reason not in ("nested-repository", "symlink"):
+            raise ScopeError("Unexpected directory entry in the source inventory")
+        if reason not in (None, "deleted"):
+            exclusions.append({"path": path, "reason": reason})
+            continue
         if any(fnmatch.fnmatchcase(parts[-1].lower(), pattern) for pattern in SENSITIVE_NAMES):
             exclusions.append({"path": path, "reason": "sensitive-name"})
             continue
         # A deletion is recorded, not confused with an empty captured file.
-        if not os.path.lexists(root / path):
+        if reason == "deleted":
             exclusions.append({"path": path, "reason": "deleted"})
             continue
         data = _read(root, path)
@@ -321,7 +372,7 @@ class AssessmentScope:
         for row in rows:
             if counts[row["label"]] > 1:
                 row["label"] = row["label"][:240] + " [" + row["repository_id"][-8:] + "]"
-        result = {"schema_version": 1, "scope_sha256": _json_digest(rows), "repositories": rows}
+        result = {"schema_version": 2, "scope_sha256": _json_digest(rows), "repositories": rows}
         schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
         errors = list(Draft202012Validator(schema).iter_errors(result))
         if errors:
@@ -363,7 +414,8 @@ class AssessmentScope:
         """Expose one frozen checkout to trusted, read-only Python scanners.
 
         The private temporary tree contains regular, non-executable files,
-        not links to original sources. Never launch a model, build command or
+        not links to original sources. Each file holds the same redacted text
+        that ``read`` serves, at unchanged line numbers. Never launch a model, build command or
         repository executable in it. It has no Git metadata and is destroyed
         on normal completion and exceptions.
         """
@@ -378,8 +430,26 @@ class AssessmentScope:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 with target.open("xb") as handle:
                     os.chmod(target, 0o600)
-                    handle.write(data)
+                    handle.write(_masked_bytes(data))
             yield root
+
+
+def _identity(path: Path, *, missing_ok: bool = False) -> tuple[int, int] | None:
+    """Return the (device, inode) pair that names a directory in any spelling."""
+    try:
+        info = os.stat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        if missing_ok:
+            return None
+        raise ScopeError("Selected path cannot be identified") from None
+    except OSError:
+        raise ScopeError("Selected path cannot be identified") from None
+    return (info.st_dev, info.st_ino)
+
+
+def _lineage(path: Path) -> set[tuple[int, int]]:
+    """Identify a path and every existing ancestor directory."""
+    return {i for i in (_identity(item, missing_ok=True) for item in (path, *path.parents)) if i is not None}
 
 
 def admit(selections: list[str], output: str) -> AssessmentScope:
@@ -402,11 +472,25 @@ def admit(selections: list[str], output: str) -> AssessmentScope:
         if any(root == other or root in other.parents or other in root.parents for other in roots):
             raise ScopeError("Duplicate or overlapping repository selections")
         roots.append(root)
+    # Lexical checks miss bind mounts and case-insensitive or other aliases;
+    # equal device and inode numbers name the same directory in any spelling.
+    identities = {root: _identity(root) for root in roots}
+    lineages = {root: _lineage(root) for root in roots}
+    for root in roots:
+        if any(other != root and identities[other] in lineages[root] for other in roots):
+            raise ScopeError("Duplicate or overlapping repository selections")
     try:
         target = Path(output).resolve()
     except (OSError, RuntimeError, ValueError):
         raise ScopeError("Invalid output directory") from None
     if any(target == root or root in target.parents or target in root.parents for root in roots):
+        raise ScopeError("Output must be separate from all selected repositories")
+    output_lineage = _lineage(target)
+    output_identity = _identity(target, missing_ok=True)
+    if any(
+        identities[root] in output_lineage or (output_identity is not None and output_identity in lineages[root])
+        for root in roots
+    ):
         raise ScopeError("Output must be separate from all selected repositories")
     if target.exists() and not target.is_dir():
         raise ScopeError("Output is not a directory")

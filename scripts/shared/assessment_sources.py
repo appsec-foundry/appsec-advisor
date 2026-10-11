@@ -138,7 +138,10 @@ def validate_portable_model(document: dict) -> None:
         if not set(ids) <= component_ids:
             raise ValueError("Security control refers to an unknown component")
         owned = {(p["repository_id"], p["path"]) for cid in ids for p in by_component[cid]["paths"]}
-        if any((e["repository_id"], e["file"]) not in owned for e in control.get("evidence") or []):
+        # A textual statement carries no location, and a system-wide control
+        # names no component; every location still passed `check` above.
+        locations = [e for e in control.get("evidence") or [] if isinstance(e, dict) and "file" in e]
+        if ids and any((e["repository_id"], e["file"]) not in owned for e in locations):
             raise ValueError("Security control evidence is outside its component ownership")
     entities = document.get("external_entities") or []
     entity_ids = {row["id"] for row in entities}

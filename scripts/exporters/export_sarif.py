@@ -265,7 +265,11 @@ def _build_result(
                 }
             }
             if qualified:
-                physical["properties"] = {"repositoryId": ev["repository_id"], "sourceSha256": ev["sha256"]}
+                physical["properties"] = {"repositoryId": ev["repository_id"]}
+                # The anchor hash identifies the anchor file only; another
+                # searched file of an absence has no captured hash here.
+                if uri == ev["file"]:
+                    physical["properties"]["sourceSha256"] = ev["sha256"]
             if isinstance(line, int) and line > 0:
                 physical["region"] = {"startLine": line}
             else:

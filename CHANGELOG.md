@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The headless runner assesses several local checkouts as one system when `--repo` is repeated, producing one threat model, report, and Figure 1 that name the repository of every component and finding.
 - Standard and thorough runs check business abuse cases such as access to other users' data or a bypassed approval, thorough runs add up to three application-specific cases, and repositories and organization profiles can add their own as one-sentence checks. Confirmed cases enter the register, at High for access to other users' data, extra rights, or a misused privileged function, and appear on the findings they confirm, cases with cited code but no control found enter it as unproven, and unresolved cases can become team questions.
 - The Threat Analyst checks concrete threat hypotheses or a single defined abuse case (`--abuse-case <ID>`) against selected files at a Git revision and rates each attack-chain step with evidence.
 - `/appsec-advisor:abuse-cases` lists the defined technical and business abuse cases with their origin and recorded result, and `/appsec-advisor:abuse-cases <ID>` explains one case step by step.

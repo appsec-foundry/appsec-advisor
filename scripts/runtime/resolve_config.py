@@ -1651,11 +1651,18 @@ def read_requirements_config(plugin_root: Path) -> bool:
 
 
 class _SingleRepository(argparse.Action):
-    """Reject a repeated --repo instead of keeping only the last selection."""
+    """Reject a repeated --repo instead of keeping only the last selection.
+
+    One resolution configures one checkout. The headless runner hands several
+    selections to the controller's combined assessment instead.
+    """
 
     def __call__(self, parser, namespace, values, option_string=None):
         if getattr(namespace, self.dest, None) is not None:
-            parser.error(f"{option_string} may be given only once; multi-repository assessment is not available yet")
+            parser.error(
+                f"{option_string} may be given only once here; assess several repositories together with "
+                "scripts/run-headless.sh --repo <path> --repo <path>"
+            )
         setattr(namespace, self.dest, values)
 
 
@@ -2054,7 +2061,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def resolve(
-    argv: list[str], plugin_root: Path, *, create_output_dir: bool = True, source_count: int | None = None
+    argv: list[str],
+    plugin_root: Path,
+    *,
+    create_output_dir: bool = True,
+    source_count: int | None = None,
+    combined: bool = False,
 ) -> dict:
     if source_count is not None and (type(source_count) is not int or not 0 <= source_count <= 320_000):
         raise SystemExit("Error: invalid captured source count")
@@ -2184,6 +2196,18 @@ def resolve(
         cfg["skip_attack_walkthroughs_label"] = "authored (LLM)"
     cfg.update(resolve_abuse_case_verification(ns, depth_info["assessment_depth"]))
     cfg.update(resolve_paths(ns, ns.dry_run, create_output_dir=create_output_dir))
+    prior = Path(cfg["output_dir"]) / "threat-model.yaml"
+    if not combined and prior.is_file():
+        from shared.assessment_sources import model_file_is_portable
+
+        # Its paths are relative to several repositories, so it can be neither
+        # this checkout's baseline nor its rerender input.
+        if model_file_is_portable(prior):
+            raise SystemExit(
+                f"Error: {prior} covers several repositories and cannot be the prior model of a "
+                "single-repository run. Choose another --output, or rerun the combined assessment "
+                "with scripts/run-headless.sh and every --repo."
+            )
     # Paths are consumed as data by model/resolve_abuse_cases.py, which constrains
     # them to REPO_ROOT before reading. Never interpolate these values in Bash.
     cfg["abuse_case_files"] = list(ns.abuse_case_file or [])
@@ -2329,6 +2353,7 @@ def resolve_assessment(scope, argv: list[str], plugin_root: Path, *, model: str 
                 plugin_root,
                 create_output_dir=False,
                 source_count=source_count,
+                combined=True,
             )
         candidates.append({key: value for key, value in cfg.items() if key not in transient})
     if any(cfg != candidates[0] for cfg in candidates[1:]):

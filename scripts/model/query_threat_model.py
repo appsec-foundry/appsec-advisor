@@ -1048,7 +1048,16 @@ def main(argv: list[str] | None = None) -> int:
     if not isinstance(data, dict):
         print(f"Error: {yaml_path} is not a mapping.", file=sys.stderr)
         return 2
-    contract_errors = _validate_output_contract(data)
+    from shared.assessment_sources import is_portable_model, labelled_model
+
+    if is_portable_model(data):
+        # Facts name `<repository label>:<file>`; no location is resolved locally.
+        try:
+            data, contract_errors = labelled_model(data), []
+        except ValueError as exc:
+            contract_errors = [str(exc)]
+    else:
+        contract_errors = _validate_output_contract(data)
     if contract_errors:
         print(f"Error: {yaml_path} does not satisfy the threat-model output contract.", file=sys.stderr)
         for error in contract_errors[:5]:

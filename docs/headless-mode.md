@@ -105,6 +105,37 @@ Rerender after a report template, renderer, or QA contract change:
 Rerender is not a source-code rescan. It fails closed if its required
 structured Stage-1 artifacts are missing or invalid.
 
+## Assess several repositories as one system
+
+Repeat `--repo` to assess several local Git checkouts as one system. Every selected repository is scanned freshly, and the run publishes one `threat-model.yaml`, one `threat-model.md` and one Figure 1 in the `--output` directory. `--project` sets the system name in the report, and `--slug` adds a stamped copy of the deliverables.
+
+```bash
+./scripts/run-headless.sh \
+  --repo /repos/frontend \
+  --repo /repos/backend \
+  --output /appsec-reports/order-system \
+  --soft-budget 40 \
+  --sarif
+```
+
+A combined run has these requirements:
+
+- Select 2–16 top-level Git checkouts. A checkout inside another selected checkout, or two paths that name the same directory, stop the run.
+- Choose an `--output` directory outside every selected checkout. The run writes nothing into a selected checkout.
+- Set `--soft-budget` or `--hard-budget`. The run reserves each model call against this budget and stops when it is exhausted. With only `--soft-budget`, the limit is 1.25 times that value.
+- The untrusted-repository preflight checks every selected checkout. `--trust-mode trusted` skips it for all of them.
+
+What the result shows:
+
+- Each component card and source location names its repository, for example `Order API [backend]` and `backend/src/orders.ts:42`. The YAML records the repository separately in a `source_inventory` and in every source reference, and SARIF uses one location base per repository.
+- The order of the `--repo` flags does not change the result. No repository takes precedence.
+- A connection between repositories appears only when source evidence on both sides supports it. Matching names alone never connect two repositories, and repository membership never creates a trust boundary.
+- Symbolic links, submodules and nested repositories inside a checkout are not read. The model lists each of them as an omitted path.
+
+The models in a combined run have no file, shell or network tools. The controller serves every source excerpt a model reads, only from the selected checkouts, with secrets masked. Each analysis step is recorded, so `--resume` continues an interrupted run without repeating accepted steps, as long as the sources, settings and plugin version are unchanged. A run whose model cost became unknown cannot resume; start a new run.
+
+`--incremental`, `--rerender`, `--rebuild`, `--dry-run`, `--base`, `--pr-mode` and `--restore-from` are not available for combined runs and stop them before any model call. Business context, known threats and a run-wide `--requirements` catalog are supported; each repository keeps its own business context and known threats. A requirements catalog inside one of the selected repositories stops the run unless you pass `--requirements <source>`. Repository-local abuse-case files stop the run; use `--no-abuse-cases` or move the cases to the organization profile. The follow-on skills that only support single-repository models, such as fixing findings in place or publishing the model into a repository, say so when they open a combined model.
+
 ## Cost and duration limits
 
 Headless limits are enforced outside the model runtime:
@@ -192,7 +223,7 @@ It prints the completion summary after the session's closing text.
 
 | Flag | Meaning |
 |---|---|
-| `--repo <path>` | Repository to analyze; defaults to the current directory. |
+| `--repo <path>` | Repository to analyze; defaults to the current directory. Repeat it to [assess several repositories as one system](#assess-several-repositories-as-one-system). |
 | `--output <path>` | Output directory; defaults to `<repo>/docs/security`. |
 | `--full` | Force a full assessment and preserve report history. |
 | `--rebuild` | Clear prior model state and start fresh. |

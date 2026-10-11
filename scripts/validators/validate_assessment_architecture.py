@@ -85,23 +85,36 @@ def _repository_projection(value, repository_id):
     return value
 
 
-def _legacy_source_guards(scope, fragment_type, document):
+def legacy_source_errors(scope, fragment_type, document, repository_ids=None) -> list[str]:
+    """Run the single-root evidence guards per repository; return their findings.
+
+    Each message names the repository-relative location the guard rejected,
+    so a scoped job can correct its own result.
+    """
     from validators.validate_fragment import repository_path_errors
 
+    errors = []
     for repo in scope.repositories:
+        if repository_ids is not None and repo.repository_id not in repository_ids:
+            continue
         projection = _repository_projection(document, repo.repository_id)
         if fragment_type == "components":
             projection["components"] = [r for r in projection["components"] if r["paths"]]
         with scope.scanner_snapshot(repo.repository_id) as root:
-            errors = repository_path_errors(fragment_type, projection, root)
+            errors += repository_path_errors(fragment_type, projection, root)
             if fragment_type == "data-flows":
                 from analyzers.discover_identity_providers import identity_authentication_errors
 
                 errors += identity_authentication_errors(root, projection.get("data_flows", []))
-            if errors:
-                raise AssessmentArchitectureError(
-                    "Assessment architecture violates repository evidence or ownership rules"
-                )
+    return errors
+
+
+def _legacy_source_guards(scope, fragment_type, document):
+    errors = legacy_source_errors(scope, fragment_type, document)
+    if errors:
+        raise AssessmentArchitectureError(
+            "Assessment architecture violates repository evidence or ownership rules: " + "; ".join(errors[:3])
+        )
 
 
 def validate_components(scope: AssessmentScope, document: dict) -> None:
@@ -179,7 +192,9 @@ def validate_flows(scope: AssessmentScope, components: dict, receipt: dict, docu
 
     errors = fragment_invariant_errors("data-flows", qualify(document), context=qualify(components))
     if errors:
-        raise AssessmentArchitectureError("Data flows violate architecture reference or interaction invariants")
+        raise AssessmentArchitectureError(
+            "Data flows violate architecture reference or interaction invariants: " + "; ".join(errors[:3])
+        )
     _legacy_source_guards(scope, "data-flows", document)
     for flow in document["data_flows"]:
         # Keep the legacy code-evidence rule for authentication claims. The

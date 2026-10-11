@@ -227,6 +227,20 @@ def _load_model(output_dir: Path) -> dict:
     if not isinstance(data, dict):
         print(f"Unexpected threat-model.yaml shape in {model_path}", file=sys.stderr)
         raise SystemExit(2)
+    from shared.assessment_sources import is_portable_model, single_repository_only
+
+    if is_portable_model(data):
+        # Fixes, plans, and accepted-risk entries target one checkout; this
+        # model has no mapping from its locations to local repositories.
+        print(
+            single_repository_only(
+                "review-threat-model",
+                "Ask about its findings with /appsec-advisor:ask-threat-model, "
+                "or review a single-repository model of the repository you want to change.",
+            ),
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     return data
 
 

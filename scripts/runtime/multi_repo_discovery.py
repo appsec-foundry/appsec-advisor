@@ -36,6 +36,11 @@ source coverage or hide a required component to fit the response limits.
 """
 
 
+# One host call produces one bounded artifact without tools. A call that runs
+# longer is stopped; its reservation stays spent because its cost is unknown.
+MAX_CALL_SECONDS = 900
+
+
 @dataclass
 class DiscoveryBudget:
     """Shared admission accounting; reserve each call before creating its host.
@@ -82,7 +87,7 @@ class DiscoveryBudget:
         ceiling = math.floor(min(self.call_usd, self.max_usd - self.spent_usd) * 100 + 1e-9) / 100
         if ceiling < 0.01:
             raise ExchangeError("Discovery cost budget exhausted")
-        remaining = min(timeout_s, self.remaining_seconds())
+        remaining = min(timeout_s, self.remaining_seconds(), MAX_CALL_SECONDS)
         self.calls += 1
         self.spent_usd += ceiling
         self.failed = True

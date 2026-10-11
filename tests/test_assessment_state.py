@@ -318,3 +318,76 @@ def test_output_ancestor_link_is_rejected(scope, tmp_path):
     with pytest.raises(ExchangeError, match="non-directory or link"):
         with lifecycle(untrusted).hold():
             pytest.fail("Linked output ancestry must not be admitted")
+
+
+def _accept_job(scope, selector="one", usd=0.01):
+    """Run one accepted job and return its receipt path."""
+
+    class Host:
+        def invoke(self, *args):
+            return HostReply({"action": "complete", "reads": [], "artifact": {"ok": True}}, usd)
+
+    with lifecycle(scope).hold() as state:
+        jobs = AssessmentJobs(
+            scope,
+            state.directory / "jobs",
+            state.budget,
+            lambda role, ceiling: Host(),
+            state.should_stop,
+            state.checkpoint,
+        )
+        jobs.execute(
+            role="recon_scanner",
+            selector=selector,
+            instructions="trusted",
+            context={},
+            schema={"type": "object"},
+            allowed_sources=frozenset(),
+            validate=lambda a, r: None,
+        )
+    (receipt,) = (state.directory / "jobs").glob("*.receipt.json")
+    return receipt
+
+
+def _rewrite_accounting(scope, calls, spent):
+    state = stored(scope)
+    state["accounting"].update(calls=calls, spent_usd=spent)
+    (scope.output / ".assessment-state.json").write_text(json.dumps(state))
+
+
+@pytest.mark.parametrize(("selector", "calls", "spent"), [("one", 0, 0.0), ("one", 1, 0.0), ("renamed", 0, 0.02)])
+def test_resume_rejects_accounting_below_accepted_receipts(scope, selector, calls, spent):
+    _accept_job(scope, selector, usd=0.02)
+    _rewrite_accounting(scope, calls, spent)
+    with pytest.raises(ExchangeError, match="below its accepted job receipts"):
+        with lifecycle(scope, resume=True).hold():
+            pytest.fail("Lowered accounting must not refund accepted calls")
+
+
+@pytest.mark.parametrize("change", ["unreadable", "foreign-scope", "renamed-job", "link"])
+def test_resume_rejects_unreadable_or_foreign_receipts(scope, tmp_path, change):
+    receipt = _accept_job(scope)
+    document = json.loads(receipt.read_text())
+    if change == "unreadable":
+        receipt.write_text("{not json")
+    elif change == "foreign-scope":
+        document["scope_sha256"] = "0" * 64
+        receipt.write_text(json.dumps(document))
+    elif change == "renamed-job":
+        receipt.rename(receipt.with_name("job-" + "f" * 24 + ".receipt.json"))
+    else:
+        outside = tmp_path / "outside.json"
+        outside.write_text(json.dumps(document))
+        receipt.unlink()
+        receipt.symlink_to(outside)
+    with pytest.raises(ExchangeError):
+        with lifecycle(scope, resume=True).hold():
+            pytest.fail("Unverifiable receipts must not resume")
+
+
+def test_resume_accepts_accounting_that_retains_extra_reservations(scope):
+    _accept_job(scope, usd=0.01)
+    # A failed call's reservation stays in state without a receipt.
+    _rewrite_accounting(scope, 3, 0.11)
+    with lifecycle(scope, resume=True).hold() as resumed:
+        assert resumed.budget.calls == 3 and resumed.budget.spent_usd == pytest.approx(0.11)

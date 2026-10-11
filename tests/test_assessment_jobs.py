@@ -69,7 +69,8 @@ def test_accepted_job_is_revalidated_and_reused_without_dispatch(tmp_path):
     first = jobs.execute(**kwargs)
     first["result"] = "modified by caller"
     assert jobs.execute(**kwargs) == {"result": "accepted"}
-    assert host.calls == 1 and seen == ["accepted", "accepted"]
+    # Reviewed inside the exchange, accepted before the receipt, revalidated on reuse.
+    assert host.calls == 1 and seen == ["accepted", "accepted", "accepted"]
     assert checkpoints == [(1, True), (1, False)]
     assert all(path.stat().st_mode & 0o777 == 0o600 for path in jobs.directory.iterdir())
 
@@ -113,11 +114,38 @@ def test_rejected_semantics_never_get_a_completion_receipt(tmp_path):
     def reject(artifact, ranges):
         raise ExchangeError("semantics rejected")
 
-    jobs, host, kwargs, _ = setup(tmp_path, validate=reject)
+    reply = {"action": "complete", "reads": [], "artifact": {"result": "accepted"}}
+    jobs, host, kwargs, _ = setup(tmp_path, replies=[reply] * 6, validate=reject)
     with pytest.raises(ExchangeError, match="semantics"):
         jobs.execute(**kwargs)
     assert list(jobs.directory.iterdir()) == []
-    assert host.calls == 1
+    # The first result and at most two corrections; no receipt for any of them.
+    assert host.calls == 3
+
+
+def test_a_rejected_result_is_corrected_with_the_controller_reason(tmp_path):
+    prompts = []
+
+    def accept_only_corrected(artifact, ranges):
+        if artifact["result"] != "corrected":
+            raise ExchangeError("result must name the corrected state")
+
+    replies = [
+        {"action": "complete", "reads": [], "artifact": {"result": "first"}},
+        {"action": "complete", "reads": [], "artifact": {"result": "corrected"}},
+    ]
+    jobs, host, kwargs, _ = setup(tmp_path, replies=replies, validate=accept_only_corrected)
+    original = host.invoke
+
+    def record(*args):
+        prompts.append(args[1])
+        return original(*args)
+
+    host.invoke = record
+    assert jobs.execute(**kwargs) == {"result": "corrected"}
+    assert host.calls == 2
+    assert "rejected_result" not in prompts[0]
+    assert "result must name the corrected state" in prompts[1]
 
 
 def test_cancellation_stops_even_a_cached_job(tmp_path):
@@ -163,3 +191,21 @@ def test_aggregate_deadline_and_unknown_cost_close_dispatch(tmp_path):
     with pytest.raises(ExchangeError):
         jobs.budget.invoke(lambda ceiling: host, "", "", {}, 1, lambda: False)
     assert host.calls == 0
+
+
+def test_each_host_call_gets_at_most_the_per_call_time_limit(tmp_path):
+    from runtime.multi_repo_discovery import MAX_CALL_SECONDS
+
+    granted = []
+
+    class Timed(Host):
+        def invoke(self, system, prompt, schema, timeout_s, should_stop):
+            granted.append(timeout_s)
+            return super().invoke(system, prompt, schema, timeout_s, should_stop)
+
+    jobs, host, kwargs, _ = setup(tmp_path)
+    timed = Timed([{"action": "complete", "reads": [], "artifact": {"result": "accepted"}}])
+    jobs.host_factory = lambda role, ceiling: timed
+    jobs.budget.deadline += 10 * MAX_CALL_SECONDS
+    jobs.execute(**kwargs)
+    assert granted and all(value <= MAX_CALL_SECONDS for value in granted)

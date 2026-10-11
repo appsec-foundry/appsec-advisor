@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from contexts.build_trust_boundary_assessment_input import (
     _crossing_connections,
     _signal_specs,
+    assessment_source_context,
     build_assessment,
     project_assessment_signal,
 )
@@ -27,7 +28,7 @@ from model.finalize_component_inventory import component_inventory_fingerprint
 from runtime.multi_repo_scope import admit
 
 
-def fixture(tmp_path, *, names=("edge", "service")):
+def fixture(tmp_path, *, names=("edge", "service"), files=None):
     roots = []
     for name in names:
         root = tmp_path / name
@@ -51,6 +52,9 @@ def fixture(tmp_path, *, names=("edge", "service")):
             check=True,
         )
         (root / "app.py").write_text("return_value = validate_request(payload)\n")
+        for relative, text in (files or {}).get(name, {}).items():
+            (root / relative).parent.mkdir(parents=True, exist_ok=True)
+            (root / relative).write_text(text)
         roots.append(root)
     scope = admit([str(r) for r in roots], str(tmp_path / "out"))
     components, evidence = [], []
@@ -192,8 +196,8 @@ def test_same_crossing_keeps_equal_relative_evidence_from_both_participants(tmp_
     assert {e["repository_id"] for e in merged[0]["evidence"]} == {e["repository_id"] for e in evidence}
 
 
-def crossing_input(tmp_path, *, names=("edge", "service")):
-    scope, components, evidence = fixture(tmp_path, names=names)
+def crossing_input(tmp_path, *, names=("edge", "service"), files=None):
+    scope, components, evidence = fixture(tmp_path, names=names, files=files)
     fingerprint = component_inventory_fingerprint(components["components"])
     receipt = dict(
         schema_version=2,
@@ -282,3 +286,78 @@ def test_assessment_input_rejects_foreign_source_context_and_missing_measurement
         build_assessment(scope, components, receipt, flows, context, "standard")
     with pytest.raises(ValidationError):
         build_assessment(scope, components, receipt, flows, {}, "standard")
+
+
+def flask_routes(*routes):
+    lines = ["from flask import Flask", "app = Flask(__name__)", ""]
+    for path, decorators in routes:
+        lines += [
+            f'@app.route("{path}", methods=["GET"])',
+            *decorators,
+            f"def handler_{len(lines)}():",
+            "    return 1",
+            "",
+        ]
+    return "\n".join(lines)
+
+
+@pytest.mark.parametrize(
+    ("names", "layout"),
+    [
+        (("edge", "service"), {"api": "src/api.py", "workflow": ".github/workflows/ci.yml"}),
+        (("north", "south"), {"api": "lib/handlers/views.py", "workflow": "pkg/.github/workflows/build.yaml"}),
+    ],
+)
+def test_measured_source_context_qualifies_every_repository(tmp_path, names, layout):
+    files = {
+        names[0]: {layout["api"]: flask_routes(("/session", ["@login_required"]))},
+        names[1]: {
+            layout["api"]: flask_routes(("/records", [])),
+            layout["workflow"]: "on: push\njobs: {}\n",
+        },
+    }
+    scope, components, receipt, flows, _ = crossing_input(tmp_path, names=names, files=files)
+    context = assessment_source_context(scope)
+    by_label = {r.root.name: r for r in scope.repositories}
+    routes = context["route_inventory"]["routes"]
+    assert [row["route_id"] for row in routes] == ["R-001", "R-002"]
+    assert {(row["path"], row["evidence"][0]["repository_id"]) for row in routes} == {
+        ("/session", by_label[names[0]].repository_id),
+        ("/records", by_label[names[1]].repository_id),
+    }
+    for row in routes:
+        repo = next(r for r in scope.repositories if r.repository_id == row["evidence"][0]["repository_id"])
+        assert row["evidence"][0]["sha256"] == hashlib.sha256(repo.files[layout["api"]]).hexdigest()
+    values = context["recon_signals"]["values"]
+    assert values["has_public_routes"] is values["has_auth_surface"] is values["has_ci_pipeline"] is True
+    assert values["has_external_apis"] is values["has_client_storage"] is values["has_multi_tenancy_signal"] is None
+    assert (by_label[names[1]].repository_id, layout["workflow"]) in {
+        (row["repository_id"], row["file"]) for row in context["recon_signals"]["evidence"]
+    }
+    assessment = build_assessment(scope, components, receipt, flows, context, "standard")
+    assert assessment["source_context"] == context
+
+
+def test_unmeasured_recon_signals_stay_null_instead_of_false(tmp_path):
+    scope, components, receipt, flows, _ = crossing_input(tmp_path)
+    context = assessment_source_context(scope)
+    assert context["route_inventory"] == {"status": "present", "routes": []}
+    assert set(context["recon_signals"]["values"].values()) == {None}
+    assert context["recon_signals"]["evidence"] == []
+    assert build_assessment(scope, components, receipt, flows, context, "standard")["signals"]
+
+
+def test_route_cap_keeps_every_repository_represented(tmp_path):
+    many = flask_routes(*((f"/item{index}", []) for index in range(105)))
+    files = {"edge": {"src/api.py": many}, "service": {"src/api.py": flask_routes(("/only", []))}}
+    scope, *_ = crossing_input(tmp_path, files=files)
+    routes = assessment_source_context(scope)["route_inventory"]["routes"]
+    assert len(routes) == 100
+    assert "/only" in {row["path"] for row in routes}
+    assert len({row["route_id"] for row in routes}) == 100
+
+
+def test_an_unreadable_boundary_declaration_stops_the_assessment(tmp_path):
+    scope, *_ = crossing_input(tmp_path, files={"service": {".appsec/trust-boundaries.yaml": "boundaries: [x\n"}})
+    with pytest.raises(ValueError):
+        assessment_source_context(scope)

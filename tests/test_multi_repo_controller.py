@@ -68,12 +68,16 @@ class Host:
         else:
             components = ctx.get("components", [ctx.get("component")])
             allowed = [(p["repository_id"], p["path"]) for c in components if c for p in c["paths"]]
+            allowed += [(f["evidence"]["repository_id"], f["evidence"]["file"]) for f in ctx.get("findings", [])]
         if not slices:
             return HostReply(
                 dict(
                     action="read",
                     artifact=None,
-                    reads=[dict(repository_id=r, path=p, start_line=1, end_line=2) for r, p in sorted(set(allowed))],
+                    reads=[
+                        dict(repository_id=r, path=p, start_line=1, end_line=20 if "findings" in ctx else 2)
+                        for r, p in sorted(set(allowed))
+                    ],
                 ),
                 0.01,
             )
@@ -188,11 +192,12 @@ class Host:
                     **identity,
                     decisions=[
                         dict(
-                            local_id="issue-1",
+                            local_id=finding["local_id"],
                             verdict="verified",
                             reason="Independent reading confirms the insecure practice at the anchor.",
-                            evidence=[evidence[0]],
+                            evidence=[{k: finding["evidence"][k] for k in ("repository_id", "file", "line", "sha256")}],
                         )
+                        for finding in ctx["findings"]
                     ],
                 )
         return HostReply(dict(action="complete", reads=[], artifact=artifact), 0.01)
@@ -234,6 +239,40 @@ def test_controller_fresh_architecture_controls_and_stride_keep_equal_paths_dist
     assert before == [
         {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in root.iterdir() if p.is_file()} for root in roots
     ]
+
+
+def test_scanner_findings_reach_the_merge_through_independent_review(tmp_path):
+    roots = [tmp_path / name for name in ("caller", "receiver")]
+    for root in roots:
+        checkout(root)
+    tool = roots[1] / "lib/tool.py"
+    tool.parent.mkdir()
+    tool.write_text(
+        "import subprocess\nfrom flask import request\n\ndef run():\n"
+        '    name = request.args["name"]\n    return subprocess.call("ls " + name, shell=True)\n'
+    )
+    scope = admit([str(r) for r in roots], str(tmp_path / "out"))
+    host = Host(scope)
+    jobs = AssessmentJobs(
+        scope,
+        scope.output / ".assessment/jobs",
+        AssessmentBudget(2, 0.05, 60, 120),
+        host.factory,
+        lambda: False,
+        lambda: None,
+    )
+    architecture = controller._assessment_architecture(scope, jobs, progress=lambda text: None)
+    controls = controller._assessment_controls(scope, jobs, architecture, progress=lambda text: None)
+    _, reviews, merged = controller._assessment_stride(
+        scope, jobs, architecture, controls, [], progress=lambda text: None
+    )
+    receiver = next(r.repository_id for r in scope.repositories if r.root.name == "receiver")
+    [scanned] = [t for t in merged["threats"] if t["source"] == "source-scan"]
+    assert scanned["evidence"]["repository_id"] == receiver
+    assert scanned["evidence"]["file"] == "lib/tool.py"
+    assert scanned["evidence_check"] == "verified"
+    reviewed = [row["local_id"] for review in reviews for row in review["decisions"]]
+    assert reviewed.count("deterministic-scan-001") == 1
 
 
 def test_controller_rejects_unknown_semantic_owner():

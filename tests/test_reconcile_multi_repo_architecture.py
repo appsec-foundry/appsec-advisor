@@ -97,9 +97,16 @@ def test_missing_deployment_identity_and_ambiguous_peers_remain_unresolved(tmp_p
     documents[0]["interfaces"][0]["deployment"] = None
     assert architecture.reconcile(scope, documents)["candidates"] == []
     documents[0]["interfaces"][0]["deployment"] = "system-one"
+    # A second method of the same component names the same peer.
     duplicate = copy.deepcopy(documents[1]["interfaces"][0])
     duplicate["id"] = "second-operation"
     documents[1]["interfaces"].append(duplicate)
+    assert len(architecture.reconcile(scope, documents)["candidates"]) == 1
+    # The same endpoint served by a second component is an ambiguity.
+    other = copy.deepcopy(documents[1]["components"][0])
+    other["id"] = "second-service"
+    documents[1]["components"].append(other)
+    duplicate["component_id"] = "second-service"
     result = architecture.reconcile(scope, documents)
     assert result["candidates"] == []
     assert any(r["reason"] == "ambiguous-peer" for r in result["unresolved"])
@@ -129,3 +136,78 @@ def test_missing_repository_discovery_cannot_be_published_as_complete(tmp_path):
     scope, documents = fixture(tmp_path)
     with pytest.raises(architecture.ArchitectureError, match="every selected"):
         architecture.reconcile(scope, documents[:1])
+
+
+@pytest.mark.parametrize(
+    ("client", "server"),
+    [
+        # A cluster-local client address names the service a server deployment declares.
+        (("http://orders.shop.svc.cluster.local:8080", None), (None, "orders")),
+        # A compose service name binds both sides.
+        (("http://ledger:9000", None), ("ledger:9000", None)),
+    ],
+)
+def test_a_service_binding_joins_a_client_address_to_its_server(tmp_path, client, server):
+    scope, documents = fixture(tmp_path)
+    for document, (address, deployment) in zip(documents, (client, server), strict=True):
+        row = document["interfaces"][0]
+        row["address"], row["deployment"] = address, deployment
+        quote = " ".join(value for value in (address, deployment, row["operation"]) if value)
+        row["evidence"][0]["quote"] = quote
+    files = [
+        {row["evidence"][0]["file"]: (row["evidence"][0]["quote"] + "\n").encode()}
+        for row in (d["interfaces"][0] for d in documents)
+    ]
+    scope = replace(
+        scope, repositories=tuple(replace(r, files=f) for r, f in zip(scope.repositories, files, strict=True))
+    )
+    result = architecture.reconcile(scope, documents)
+    assert len(result["candidates"]) == 1
+
+
+def test_a_public_address_alone_is_not_a_deployment_binding(tmp_path):
+    scope, documents = fixture(tmp_path)
+    files = []
+    for document in documents:
+        row = document["interfaces"][0]
+        row["address"], row["deployment"] = "https://api.example.invalid", None
+        row["evidence"][0]["quote"] = f"{row['address']} {row['operation']}"
+        files.append({row["evidence"][0]["file"]: (row["evidence"][0]["quote"] + "\n").encode()})
+    scope = replace(
+        scope, repositories=tuple(replace(r, files=f) for r, f in zip(scope.repositories, files, strict=True))
+    )
+    result = architecture.reconcile(scope, documents)
+    assert result["candidates"] == []
+    assert {r["reason"] for r in result["unresolved"]} == {"identity-not-established"}
+
+
+SERVICE = "apiVersion: v1\nkind: Service\nmetadata:\n  name: {name}\n  namespace: shop\n"
+
+
+@pytest.mark.parametrize(
+    ("manifests", "joined"),
+    [
+        ({"deploy/service.yaml": SERVICE.format(name="ledger")}, True),
+        ({"deploy/a.yaml": SERVICE.format(name="ledger"), "deploy/b.yaml": SERVICE.format(name="other")}, False),
+        ({"deploy/service.yaml": "!!python/object/apply:os.system ['true']\n"}, False),
+    ],
+)
+def test_a_single_declared_service_binds_the_server_route(tmp_path, manifests, joined):
+    scope, documents = fixture(tmp_path)
+    client, server = (d["interfaces"][0] for d in documents)
+    client["address"], client["deployment"] = "http://ledger.shop.svc.cluster.local:9000", None
+    server["address"], server["deployment"] = None, None
+    files = []
+    for row, extra in ((client, {}), (server, manifests)):
+        row["evidence"][0]["quote"] = " ".join(v for v in (row["address"], row["operation"]) if v)
+        files.append(
+            {row["evidence"][0]["file"]: (row["evidence"][0]["quote"] + "\n").encode()}
+            | {path: text.encode() for path, text in extra.items()}
+        )
+    scope = replace(
+        scope, repositories=tuple(replace(r, files=f) for r, f in zip(scope.repositories, files, strict=True))
+    )
+    candidates = architecture.reconcile(scope, documents)["candidates"]
+    assert bool(candidates) == joined
+    if joined:
+        assert candidates[0]["deployment"] == "ledger"
