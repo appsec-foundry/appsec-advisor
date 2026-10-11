@@ -229,6 +229,8 @@ def validate_local_architecture(scope, repository_id, components, receipt, artif
             raise ExchangeError("Local architecture cannot create a cross-repository connection")
         if flow["from"] == flow["to"] == "external":
             raise ExchangeError("Local architecture must attach each flow to a selected component")
+        if "connection_id" in flow:
+            raise ExchangeError("Local architecture cannot mark a flow as a reviewed cross-repository connection")
     for asset in artifact["assets"]:
         if any(ref["component_id"] not in local_ids for ref in asset["component_refs"]):
             raise ExchangeError("Local asset refers to a component outside its repository")

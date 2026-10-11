@@ -389,3 +389,32 @@ def test_a_role_path_ends_at_a_reviewed_connection_into_another_repository(conne
     ]
     mixed = mixed_request_path("ext-role", flows, {"db"})
     assert (mixed is None) is connected
+
+
+@pytest.mark.parametrize("mode", ["alternatives", "sequence"])
+def test_a_split_keeps_every_access_group_valid(mode):
+    """A group spans one sender; each role's share stays a valid group or none."""
+    from renderers.figure1_security import access_groups
+
+    def member(fid, scheme, step):
+        row = flow(fid, "external", "backend", scheme, entity="ext-role")
+        row.update(protocol="HTTPS", direction="unidirectional")
+        row["authentication"].update(scope="Request handler check.", evidence=[{"file": "app.py", "line": 1}])
+        row["access_group"] = {"id": "inbound-api", "mode": mode, "label": "Inbound API"}
+        if mode == "sequence":
+            row["access_group"]["step"] = step
+        return row
+
+    flows = [member("df-001", "none", 1), member("df-002", "bearer", 2), member("df-003", "api-key", 3)]
+    assert access_groups(flows)[1] == []
+    doc = document(flows, access=None)
+    del doc["external_entities"][0]["access"]
+    result, _ = classify(doc, COMPONENTS)
+    accepted, errors = access_groups(result["data_flows"])
+    assert errors == []
+    assert list(accepted) == ["inbound-api-authenticated"]
+    assert {f["from_entity"] for f in accepted["inbound-api-authenticated"]} == {"ext-role-authenticated"}
+    anonymous = [f for f in result["data_flows"] if f["from_entity"] == "ext-role"]
+    assert anonymous and all("access_group" not in f for f in anonymous)
+    if mode == "sequence":
+        assert [f["access_group"]["step"] for f in accepted["inbound-api-authenticated"]] == [1, 2]

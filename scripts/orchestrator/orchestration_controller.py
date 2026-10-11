@@ -8103,6 +8103,26 @@ def _assessment_role_instructions(role: str, adaptation: str) -> str:
     )
 
 
+def _namespace_local_flow(flow: dict, repository_id: str, label: str, external_ids: dict) -> dict:
+    """Qualify every repository-local name a flow carries before flows of several jobs meet.
+
+    Entity references, access groups and protocol groups are local like the
+    entity IDs; two repositories may reuse one, which would join unrelated flows.
+    """
+    from contexts.reconcile_multi_repo_architecture import _id
+
+    for field in ("from_entity", "to_entity"):
+        if field in flow:
+            if flow[field] not in external_ids:
+                raise ControllerError("local flow refers to an unknown external entity")
+            flow[field] = external_ids[flow[field]]
+    if "access_group" in flow:
+        flow["access_group"]["id"] = _id("group", repository_id, flow["access_group"]["id"])
+    if "protocol_group" in flow:
+        flow["protocol_group"] = f"{flow['protocol_group']} ({label})"[:80]
+    return flow
+
+
 def _assessment_architecture(scope, jobs, *, progress):
     """Sequence fresh per-root discovery and the existing architecture handoff.
 
@@ -8181,12 +8201,7 @@ def _assessment_architecture(scope, jobs, *, progress):
             entity["id"] = external_ids[entity["id"]]
             flows["external_entities"].append(entity)
         for flow in artifact["data_flows"]:
-            for field in ("from_entity", "to_entity"):
-                if field in flow:
-                    if flow[field] not in external_ids:
-                        raise ControllerError("local flow refers to an unknown external entity")
-                    flow[field] = external_ids[flow[field]]
-            flows["data_flows"].append(flow)
+            flows["data_flows"].append(_namespace_local_flow(flow, rid, labels[rid], external_ids))
         for asset in artifact["assets"]:
             asset["id"] = _id("asset", rid, asset["id"])
             assets.append(asset)

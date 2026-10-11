@@ -179,7 +179,32 @@ def _split_mixed(document: dict, entity: dict) -> dict:
     }
     entity["access"] = "internet-anon"
     document["external_entities"].append(derived)
+    _regroup(document["data_flows"], entity["id"], "")
+    _regroup(document["data_flows"], derived_id, "-authenticated")
     return {"entity_id": entity["id"], "to": "internet-anon", "split_into": derived_id}
+
+
+def _regroup(flows: list[dict], role_id: str, suffix: str) -> None:
+    """Keep each role's share of a split access group a valid group of its own.
+
+    A group spans one sender, so the split gives the derived role its own group
+    ID. A share of fewer than two methods is no group, and a sequence keeps
+    consecutive steps in its original order.
+    """
+    shares: dict[str, list[dict]] = {}
+    for flow in flows:
+        if flow.get("from_entity") == role_id and isinstance(flow.get("access_group"), dict):
+            shares.setdefault(flow["access_group"].get("id"), []).append(flow)
+    for group_id, members in shares.items():
+        if len(members) < 2:
+            for flow in members:
+                del flow["access_group"]
+            continue
+        ordered = sorted(members, key=lambda f: f["access_group"].get("step") or 0)
+        for step, flow in enumerate(ordered, 1):
+            flow["access_group"] = {**flow["access_group"], "id": f"{group_id}{suffix}"[:80]}
+            if flow["access_group"].get("mode") == "sequence":
+                flow["access_group"]["step"] = step
 
 
 def system_proven_anonymous(document: dict, components: list) -> bool:

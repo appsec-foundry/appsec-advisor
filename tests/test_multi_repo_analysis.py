@@ -483,3 +483,41 @@ def test_each_job_gets_its_share_of_a_combined_list_limit(jobs, used, expected):
     assert schema["properties"]["data_flows"]["maxItems"] == expected
     assert schema["properties"]["external_entities"]["maxItems"] == 64 // jobs
     assert stage.contract("multi-repo-architecture.schema.json")["properties"]["data_flows"]["maxItems"] == 500
+
+
+def test_local_group_names_of_two_repositories_never_join_their_flows():
+    from orchestrator.orchestration_controller import _namespace_local_flow
+
+    def local():
+        return {
+            "id": "df-001",
+            "from": "external",
+            "from_entity": "ext-client",
+            "to": "component-api",
+            "access_group": {"id": "inbound-api", "mode": "alternatives", "label": "Inbound API"},
+            "protocol_group": "Sign-in",
+        }
+
+    first = _namespace_local_flow(local(), "repo-0000000000000001", "edge", {"ext-client": "ext-a"})
+    second = _namespace_local_flow(local(), "repo-0000000000000002", "service", {"ext-client": "ext-b"})
+    assert first["access_group"]["id"] != second["access_group"]["id"]
+    assert first["protocol_group"] != second["protocol_group"]
+    assert first["access_group"]["label"] == "Inbound API" and first["protocol_group"].startswith("Sign-in")
+
+
+def test_a_local_flow_cannot_claim_a_reviewed_connection(tmp_path):
+    scope, components, evidence, ranges, identity = sources(tmp_path)
+    artifact = _role_architecture(evidence[0], identity, ["none"], via_client=False, access="internet-anon")
+    artifact["data_flows"][0]["connection_id"] = "connection-" + "a" * 16
+    with pytest.raises(ExchangeError, match="reviewed cross-repository connection"):
+        stage.validate_local_architecture(
+            scope,
+            evidence[0]["repository_id"],
+            dict(
+                components=[dict(components[0], id="component-api")] + components[1:],
+                source_scope_sha256=identity["source_scope_sha256"],
+            ),
+            dict(component_inventory_fingerprint=FP),
+            artifact,
+            ranges[:1],
+        )
