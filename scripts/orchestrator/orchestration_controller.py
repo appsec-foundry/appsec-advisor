@@ -6405,7 +6405,8 @@ def _bind_finalized_component_fingerprint(output_dir: Path, repo_root: Path) -> 
         _append_event(
             output_dir,
             "ROLE_ACCESS_CLASSIFIED",
-            f"entity={change['entity_id']} access={change['to']} reason=request path proves the class",
+            f"entity={change['entity_id']} access={change['to']} reason=request path proves the class"
+            + (f" split_into={change['split_into']}" if change.get("split_into") else ""),
         )
     from model.reconcile_privileged_roles import reconcile as reconcile_privileged_roles
     from model.reconcile_privileged_roles import unevidenced_privileged_actors
@@ -8193,6 +8194,11 @@ def _assessment_architecture(scope, jobs, *, progress):
     # gates. Local IDs never enter it; numbering is controller-owned.
     for index, flow in enumerate(flows["data_flows"], 1):
         flow["id"] = f"df-{index:03d}"
+    # The single-repository handoff's role-access steps, so both paths model roles alike.
+    from model.reconcile_role_access import classify, reconcile
+
+    flows, _withdrawn = reconcile(flows, components["components"])
+    flows, _classified = classify(flows, components["components"])
     validate_flows(scope, components, receipt, flows)
     scope.verify_unchanged()
     return {

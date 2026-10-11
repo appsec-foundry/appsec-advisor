@@ -485,8 +485,6 @@ def legitimate_role_errors(data: dict, components: list) -> list[str]:
     A published model is not re-checked: these rules return the fragment to its
     author, and an exported model has no author left to correct it.
     """
-    from model.reconcile_role_access import _data_tier, mixed_request_path, unclassified_regular_roles
-
     flows = [row for row in data.get("data_flows") or [] if isinstance(row, dict)]
     roles = [
         e
@@ -505,15 +503,8 @@ def legitimate_role_errors(data: dict, components: list) -> list[str]:
             f"no legitimate role uses the client component(s) {', '.join(clients)}: add an interaction flow "
             f"from the role that uses each client ({', '.join(sorted(role_ids))})"
         )
-    data_tier = _data_tier(components)
-    for entity in unclassified_regular_roles({"external_entities": roles}):
-        mixed = mixed_request_path(entity.get("id"), flows, data_tier)
-        if mixed:
-            errors.append(
-                f"{entity.get('id')}: its request path reaches unauthenticated hops ({', '.join(mixed[0])}) and "
-                f"authenticated hops ({', '.join(mixed[1])}), so its access cannot be derived; set `access`, "
-                "modelling one role per privilege level"
-            )
+    # A request path that mixes unauthenticated and authenticating hops is not
+    # an error: the role-access classification splits it into one role per class.
     return errors
 
 

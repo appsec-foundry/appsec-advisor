@@ -220,20 +220,64 @@ def test_unclassified_role_behind_a_client_takes_the_class_its_whole_path_proves
 @pytest.mark.parametrize(
     "flows",
     [
-        # One authenticated endpoint behind an anonymous entry proves no login for this role.
-        [
-            flow("df-001", "external", "gateway", "none", entity="ext-role"),
-            flow("df-002", "gateway", "backend", "bearer"),
-        ],
         [flow("df-001", "external", "backend", "unknown", entity="ext-role")],
         [flow("df-001", "external", "spa", entity="ext-role", interaction=True)],
     ],
-    ids=["mixed", "unknown-only", "no-request-hop"],
+    ids=["unknown-only", "no-request-hop"],
 )
-def test_mixed_or_unknown_paths_leave_the_role_unclassified(flows):
+def test_unknown_paths_leave_the_role_unclassified(flows):
     assert _classified(flows) == (None, [])
-    if flows[0].get("authentication", {}).get("scheme") == "none":
-        assert mixed_request_path("ext-role", flows, {"db"}) == (["df-001"], ["df-002"])
+
+
+@pytest.mark.parametrize(
+    ("flows", "anonymous_flows", "authenticated_flows"),
+    [
+        # Public and signed-in endpoints called directly by one role.
+        (
+            [
+                flow("df-001", "external", "backend", "none", entity="ext-role"),
+                flow("df-002", "external", "backend", "bearer", entity="ext-role"),
+            ],
+            {"df-001"},
+            {"df-003"},
+        ),
+        # A client that serves both public and signed-in requests.
+        (
+            [
+                flow("df-001", "external", "spa", entity="ext-role", interaction=True),
+                flow("df-002", "spa", "backend", "none"),
+                flow("df-003", "spa", "backend", "cookie"),
+            ],
+            {"df-001"},
+            {"df-004"},
+        ),
+        # Authentication only behind a pass-through entry: both roles enter there.
+        (
+            [
+                flow("df-001", "external", "gateway", "none", entity="ext-role"),
+                flow("df-002", "gateway", "backend", "bearer"),
+            ],
+            {"df-001"},
+            {"df-003"},
+        ),
+    ],
+    ids=["direct", "via-client", "behind-entry"],
+)
+def test_a_mixed_path_splits_the_role_into_one_role_per_class(flows, anonymous_flows, authenticated_flows):
+    """A mixed path proves both classes; the controller models both instead of asking the analyst."""
+    doc = document(flows, access=None)
+    del doc["external_entities"][0]["access"]
+    result, changes = classify(doc, COMPONENTS)
+    assert changes == [{"entity_id": "ext-role", "to": "internet-anon", "split_into": "ext-role-authenticated"}]
+    roles = {e["id"]: e for e in result["external_entities"]}
+    assert roles["ext-role"]["access"] == "internet-anon"
+    assert roles["ext-role-authenticated"]["access"] == "internet-user"
+    owned = lambda role: {f["id"] for f in result["data_flows"] if f.get("from_entity") == role}  # noqa: E731
+    assert owned("ext-role") == anonymous_flows and owned("ext-role-authenticated") == authenticated_flows
+    assert len({f["id"] for f in result["data_flows"]}) == len(result["data_flows"])
+    assert doc["external_entities"][0].get("access") is None
+    # The split model is stable: classifying it again changes nothing.
+    assert classify(result, COMPONENTS)[1] == []
 
 
 def test_classification_leaves_classified_and_declared_roles_alone():

@@ -976,7 +976,7 @@ def _role_model(client="spa", role="ext-shopper", *, interaction=True, access=No
 
 
 @pytest.mark.parametrize("client,role", [("spa", "ext-shopper"), ("web-portal", "ext-member")])
-def test_roles_must_use_the_client_and_reach_one_privilege_level(client, role):
+def test_roles_must_use_the_client_while_a_mixed_path_is_left_to_classification(client, role):
     data, components = _role_model(client, role, interaction=False, behind=("none", "none"))
     errors = vf.fragment_invariant_errors("data-flows", data, context={"components": components})
     assert [e for e in errors if "uses the client" in e] == [
@@ -985,10 +985,8 @@ def test_roles_must_use_the_client_and_reach_one_privilege_level(client, role):
     ]
     data, components = _role_model(client, role)
     errors = vf.fragment_invariant_errors("data-flows", data, context={"components": components})
-    assert [e for e in errors if "cannot be derived" in e] == [
-        f"{role}: its request path reaches unauthenticated hops (df-001) and authenticated hops (df-002), "
-        "so its access cannot be derived; set `access`, modelling one role per privilege level"
-    ]
+    # The role-access classification splits a mixed path; the analyst is never asked to.
+    assert vf.legitimate_role_errors(data, components) == []
 
 
 @pytest.mark.parametrize(

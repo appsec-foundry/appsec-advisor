@@ -11,8 +11,9 @@ a path that is only unknown is left as authored.
 
 A regular role the analyst left unclassified takes the class its request path
 proves: `internet-anon` when every hop is `none`, `internet-user` when every
-hop with a known scheme authenticates. A path that mixes both proves neither;
-the architecture validator returns it to the analyst (`mixed_request_path`).
+hop with a known scheme authenticates. A path that mixes both proves that both
+classes use the system, so the role is split into one role per class (`classify`)
+instead of being returned to the analyst.
 
 Access control outside the repository (ingress SSO, VPN, authenticating proxy)
 is invisible to the code, so the owner may declare roles under
@@ -119,7 +120,12 @@ def unclassified_regular_roles(document: dict) -> list[dict]:
 
 
 def classify(document: dict, components: list) -> tuple[dict, list[dict]]:
-    """Return the data-flow document and one receipt per unclassified role its request path classifies."""
+    """Return the data-flow document and one receipt per unclassified role its request path classifies.
+
+    A mixed path proves that anonymous and authenticated people both use the
+    system: the role becomes `internet-anon` and a derived role takes
+    `internet-user` (`_split_mixed`). Only an unknown-only path stays unclassified.
+    """
     result = copy.deepcopy(document)
     flows = _flows(result)
     data_tier = _data_tier(components)
@@ -129,7 +135,51 @@ def classify(document: dict, components: list) -> tuple[dict, list[dict]]:
         if access:
             entity["access"] = access
             changes.append({"entity_id": entity["id"], "to": access})
+        elif mixed_request_path(entity.get("id"), flows, data_tier):
+            changes.append(_split_mixed(result, entity))
+            flows = _flows(result)
     return result, changes
+
+
+def _split_mixed(document: dict, entity: dict) -> dict:
+    """Give a mixed-path role's authenticated use its own `internet-user` role.
+
+    The anonymous role keeps every own flow except the authenticating ones; the
+    derived role takes copies of every own flow except the unauthenticated ones.
+    When authentication happens only behind the shared entry, the derived role
+    enters through copies of all own flows, so each role keeps an edge.
+    """
+    flows = document["data_flows"]
+    own = [f for f in flows if isinstance(f, dict) and f.get("from_entity") == entity["id"]]
+    authenticating = [f for f in own if f.get("interaction") is not True and _scheme(f) not in _UNPROVEN]
+    derived_flows = [f for f in own if f.get("interaction") is True or _scheme(f) != "none"]
+    if not [f for f in derived_flows if f.get("interaction") is not True] and not authenticating:
+        derived_flows = own
+    taken = {e.get("id") for e in document.get("external_entities") or [] if isinstance(e, dict)}
+    base = entity["id"][:85]
+    derived_id = next(
+        candidate
+        for candidate in (f"{base}-authenticated", *(f"{base}-authenticated-{n}" for n in range(2, 100)))
+        if candidate not in taken
+    )
+    numbers = [int(m.group(1)) for f in flows if (m := re.fullmatch(r"df-(\d+)", str(f.get("id"))))]
+    next_number = max(numbers, default=0) + 1
+    for row in derived_flows:
+        copy_row = copy.deepcopy(row)
+        copy_row["id"], copy_row["from_entity"] = f"df-{next_number:03d}", derived_id
+        next_number += 1
+        flows.append(copy_row)
+    moved = {id(f) for f in authenticating}
+    document["data_flows"] = [f for f in flows if id(f) not in moved]
+    derived = {
+        **copy.deepcopy(entity),
+        "id": derived_id,
+        "name": f"{entity.get('name') or entity['id']} (authenticated)"[:80],
+        "access": "internet-user",
+    }
+    entity["access"] = "internet-anon"
+    document["external_entities"].append(derived)
+    return {"entity_id": entity["id"], "to": "internet-anon", "split_into": derived_id}
 
 
 def system_proven_anonymous(document: dict, components: list) -> bool:

@@ -360,17 +360,11 @@ def _role_architecture(evidence, identity, schemes, *, via_client, access=None):
 
 @pytest.mark.parametrize("via_client", [False, True])
 @pytest.mark.parametrize(
-    ("schemes", "access", "rejected"),
-    [
-        (["none", "bearer"], None, True),
-        (["none", "bearer"], "internet-user", False),
-        (["none", "none"], None, False),
-    ],
+    ("schemes", "access"),
+    [(["none", "bearer"], None), (["none", "bearer"], "internet-user"), (["none", "none"], None)],
 )
-def test_local_architecture_returns_an_underivable_role_access_to_its_author(
-    tmp_path, via_client, schemes, access, rejected
-):
-    """A mixed request path is rejected inside the exchange, where the analyst can still set `access`."""
+def test_local_architecture_leaves_a_mixed_role_path_to_classification(tmp_path, via_client, schemes, access):
+    """A mixed request path is no analyst error; the controller splits the role after the handoff."""
     scope, components, evidence, ranges, identity = sources(tmp_path)
     rid = evidence[0]["repository_id"]
     local = [dict(components[0], id="component-api")]
@@ -387,11 +381,7 @@ def test_local_architecture_returns_an_underivable_role_access_to_its_author(
             ranges[:1],
         )
     )
-    if rejected:
-        with pytest.raises(ExchangeError, match="ext-member: its request path reaches unauthenticated hops"):
-            call()
-    else:
-        call()
+    call()
 
 
 def test_controls_cannot_borrow_evidence_from_another_owner(tmp_path):
