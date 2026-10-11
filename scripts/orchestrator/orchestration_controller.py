@@ -8624,18 +8624,29 @@ class _ReportedTransport:
         return reply
 
 
-def _assessment_cli_host_factory(work_root: Path):
-    """Launch each exchange as a tool-less `claude -p` in a fresh private directory."""
+def _assessment_cli_host_factory(work_root: Path, events_dir: Path | None = None):
+    """Launch each exchange as a tool-less `claude -p` in a fresh private directory.
+
+    With `events_dir`, each call records the host's event stream there, so a
+    slow or stopped call can be diagnosed from its turns and thinking estimates.
+    """
+    import itertools
     import tempfile
 
     from runtime.analyst_host import ClaudeCliTransport
 
     executable = os.environ.get("APPSEC_CLAUDE_EXECUTABLE") or "claude"
+    sequence = itertools.count(1)
 
     def factory(role, model, ceiling):
         directory = Path(tempfile.mkdtemp(prefix=f"{role}-", dir=work_root))
         return ClaudeCliTransport(
-            directory / "work", model=model, max_budget_usd=ceiling, executable=executable, effort=ASSESSMENT_EFFORT
+            directory / "work",
+            model=model,
+            max_budget_usd=ceiling,
+            executable=executable,
+            effort=ASSESSMENT_EFFORT,
+            events_path=events_dir / f"{next(sequence):04d}-{role}.jsonl" if events_dir else None,
         )
 
     return factory
@@ -8925,7 +8936,9 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
     warnings: list[str] = []
     project = (ns.project or " + ".join(labels)).strip()
     with tempfile.TemporaryDirectory(prefix="appsec-hosts-") as hosts:
-        factory = host_factory or _assessment_cli_host_factory(Path(hosts))
+        factory = host_factory or _assessment_cli_host_factory(
+            Path(hosts), scope.output / ".assessment-work" / "host-events"
+        )
         if progress is None and not ns.quiet:
             # Per-call detail lines show that a long model call is still alive.
             plain = factory

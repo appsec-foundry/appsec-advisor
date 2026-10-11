@@ -570,3 +570,14 @@ def test_each_model_call_reports_progress_without_echoing_model_text(monkeypatch
     assert any(line.startswith("model returned a result (") and line.endswith(", $0.21)") for line in lines)
     assert lines[-1].startswith("model call exceeded its time limit after")
     assert not any("injected" in line or "\x1b" in line for line in lines)
+
+
+def test_each_cli_host_call_records_its_events_in_its_own_file(tmp_path):
+    from orchestrator.orchestration_controller import _assessment_cli_host_factory
+
+    factory = _assessment_cli_host_factory(tmp_path / "hosts", tmp_path / "events")
+    (tmp_path / "hosts").mkdir()
+    first, second = factory("stride_analyzer", "sonnet", 1.0), factory("control_analyst", "sonnet", 1.0)
+    assert first.events_path == tmp_path / "events" / "0001-stride_analyzer.jsonl"
+    assert second.events_path == tmp_path / "events" / "0002-control_analyst.jsonl"
+    assert _assessment_cli_host_factory(tmp_path / "hosts")("x", "sonnet", 1.0).events_path is None

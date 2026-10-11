@@ -201,3 +201,36 @@ def test_only_an_exploring_prompt_asks_the_model_to_read_the_copy(tmp_path, expl
     prompt = host.build_prompt(request, {"admitted": [], "excluded": []}, context, tmp_path, [])
     head = prompt[: prompt.index("<<<")]
     assert ("use Glob, Grep, and Read" in head) is explore
+
+
+def _streaming(tmp_path: Path, body: str, events: Path) -> host.ClaudeCliTransport:
+    return host.ClaudeCliTransport(tmp_path / "work", executable=fake_host(tmp_path, body), events_path=events)
+
+
+def test_a_recorded_call_keeps_its_event_stream_and_returns_the_result_event(tmp_path):
+    events = tmp_path / "events" / "0001-stride.jsonl"
+    body = (
+        "print(json.dumps({'type': 'system', 'subtype': 'thinking_tokens', 'estimated_tokens': 50}), flush=True)\n"
+        f"print(json.dumps({{'type': 'result', **{REPLY!r}}}), flush=True)\n"
+    )
+    reply = _streaming(tmp_path, body, events).invoke("s", "p", {}, 30, lambda: False)
+    assert reply.payload == {"ok": True} and reply.usd == 0.01
+    argv = json.loads((tmp_path / "host-log.json").read_text())["argv"]
+    assert argv[argv.index("--output-format") + 1] == "stream-json" and "--verbose" in argv
+    lines = events.read_text().splitlines()
+    assert len(lines) == 2 and all(float(line.split("\t", 1)[0]) >= 0 for line in lines)
+    assert '"thinking_tokens"' in lines[0]
+
+
+def test_a_recorded_call_stopped_at_its_limit_keeps_the_events_so_far(tmp_path):
+    events = tmp_path / "events.jsonl"
+    body = "print(json.dumps({'type': 'system', 'subtype': 'thinking_tokens', 'estimated_tokens': 9000}), flush=True)\ntime.sleep(60)\n"
+    with pytest.raises(host.HostTimeout):
+        _streaming(tmp_path, body, events).invoke("s", "p", {}, 2, lambda: False)
+    assert "9000" in events.read_text()
+
+
+def test_an_unrecorded_call_keeps_the_plain_json_output(tmp_path):
+    transport(tmp_path, f"print(json.dumps({REPLY!r}))\n").invoke("s", "p", {}, 30, lambda: False)
+    argv = json.loads((tmp_path / "host-log.json").read_text())["argv"]
+    assert argv[argv.index("--output-format") + 1] == "json" and "--verbose" not in argv

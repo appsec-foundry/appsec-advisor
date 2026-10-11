@@ -176,7 +176,13 @@ class ClaudeCliTransport:
         executable: str = "claude",
         effort: str | None = None,
         read_root: Path | None = None,
+        events_path: Path | None = None,
     ):
+        """`events_path` records the host's event stream, one timestamped line per event.
+
+        The file is written while the call runs, so a call stopped at its time
+        limit still shows its turns, thinking estimates and retries.
+        """
         if effort is not None and effort not in ("low", "medium", "high", "xhigh", "max"):
             raise ValueError("unsupported host effort level")
         self.work_dir = work_dir
@@ -185,6 +191,7 @@ class ClaudeCliTransport:
         self.executable = executable
         self.effort = effort
         self.read_root = read_root
+        self.events_path = events_path
 
     def argv(self, system: str, schema: dict) -> list[str]:
         return [
@@ -202,7 +209,7 @@ class ClaudeCliTransport:
             "--permission-prompts",
             "none",
             "--output-format",
-            "json",
+            *(["stream-json", "--verbose"] if self.events_path is not None else ["json"]),
             "--json-schema",
             json.dumps(schema),
             "--system-prompt",
@@ -239,7 +246,10 @@ class ClaudeCliTransport:
             raise TransportError("host could not be started") from None
         deadline = time.monotonic() + timeout_s
         try:
-            stdout, _ = _communicate(proc, prompt.encode("utf-8"), deadline, should_stop)
+            if self.events_path is None:
+                stdout, _ = _communicate(proc, prompt.encode("utf-8"), deadline, should_stop)
+            else:
+                stdout = _communicate_events(proc, prompt.encode("utf-8"), deadline, should_stop, self.events_path)
         finally:
             _stop_group(proc)
         try:
@@ -289,6 +299,46 @@ def _communicate(
             return proc.communicate(timeout=min(POLL_SECONDS, remaining))
         except subprocess.TimeoutExpired:
             pass
+
+
+def _communicate_events(
+    proc: subprocess.Popen, data: bytes, deadline: float, should_stop: Callable[[], bool], events_path: Path
+) -> bytes:
+    """Record each event line with its elapsed seconds as it arrives; return the result event."""
+    stdin, proc.stdin = proc.stdin, None
+    if stdin is not None:
+        threading.Thread(target=_feed, args=(stdin, data), daemon=True).start()
+    started = time.monotonic()
+    result: list[bytes] = []
+
+    def pump(pipe, sink):
+        for line in iter(pipe.readline, b""):
+            sink.write(f"{time.monotonic() - started:.1f}\t".encode() + line)
+            sink.flush()
+            try:
+                event = json.loads(line)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            if isinstance(event, dict) and event.get("type") == "result":
+                result[:] = [line]
+
+    events_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with open(events_path, "wb") as sink:
+        reader = threading.Thread(target=pump, args=(proc.stdout, sink), daemon=True)
+        reader.start()
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise HostTimeout("host call exceeded its time limit")
+            if should_stop():
+                raise HostCancelled("job cancelled")
+            try:
+                proc.wait(timeout=min(POLL_SECONDS, remaining))
+                break
+            except subprocess.TimeoutExpired:
+                pass
+        reader.join(timeout=TERMINATE_GRACE_SECONDS)
+    return result[0] if result else b""
 
 
 def _stop_group(proc: subprocess.Popen) -> None:
