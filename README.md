@@ -197,6 +197,8 @@ The next run checks this rule in files such as `ExpenseController.java` or below
 
 ### Assess multiple repositories
 
+This mode is experimental: expect rough edges, and review its results more closely than those of a single-repository scan.
+
 To assess several local checkouts as one system, repeat `--repo` in the headless runner. Every selected repository is scanned freshly, and the run produces one threat model, one report and one Figure 1. Run it from the plugin checkout and replace the example paths with your checkouts and report location:
 
 ```bash

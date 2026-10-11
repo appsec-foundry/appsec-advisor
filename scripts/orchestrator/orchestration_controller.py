@@ -8044,7 +8044,7 @@ def _assessment_runtime_fingerprint() -> str:
 
 
 @contextmanager
-def _assessment_session(scope, arguments, *, budget, host_factory, resume=False, model=None):
+def _assessment_session(scope, arguments, *, budget, host_factory, resume=False, model=None, rebuild=False):
     """Admit one owned analysis session without selecting a primary source root.
 
     The caller qualifies its trusted transport first. This controller chooses
@@ -8089,6 +8089,7 @@ def _assessment_session(scope, arguments, *, budget, host_factory, resume=False,
             state.should_stop,
             state.checkpoint,
             inherited=not state.resume,
+            reuse_inherited=not rebuild,
         )
         yield cfg, state, jobs
         if _assessment_runtime_fingerprint() != state.identity["runtime_sha256"]:
@@ -8508,7 +8509,6 @@ ASSESSMENT_DEFAULT_SECONDS = 14_400
 _ASSESSMENT_UNSUPPORTED = (
     "--incremental",
     "--rerender",
-    "--rebuild",
     "--dry-run",
     "--base",
     "--pr-mode",
@@ -8540,6 +8540,8 @@ def _assessment_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", required=True, metavar="PATH")
     parser.add_argument("--full", action="store_true", help="Accepted for symmetry; every run is a full assessment.")
     parser.add_argument("--resume", action="store_true")
+    # Redo every model job instead of reusing an earlier run's accepted ones.
+    parser.add_argument("--rebuild", action="store_true")
     parser.add_argument("--soft-budget", "--max-cost", type=float, metavar="USD")
     parser.add_argument("--hard-budget", "--max-budget", type=float, metavar="USD")
     parser.add_argument("--max-duration", type=int, metavar="SECONDS")
@@ -8755,8 +8757,14 @@ def _assessment_synthesis(jobs, workspace: Path, *, progress) -> None:
     from orchestrator.assessment_workspace import read_json, write_json
 
     _run_script("contexts/build_post_stride_contexts.py", ["synthesis", "--output-dir", str(workspace)])
+    # `source` hashes timestamped artifacts; kept in the job request it made
+    # every run a cache miss although the findings the model reads were equal.
     context = {
-        name: read_json(workspace / ".dispatch-context/post-stride" / name)
+        name: {
+            key: value
+            for key, value in read_json(workspace / ".dispatch-context/post-stride" / name).items()
+            if key != "source"
+        }
         for name in ("generated-threats.json", "proposed-mitigations.json")
     }
     schema = json.loads((PLUGIN_ROOT / "schemas/fragments/tier-root-causes.schema.json").read_text(encoding="utf-8"))
@@ -9001,6 +9009,8 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
     unsupported = sorted({arg.split("=", 1)[0] for arg in rest} & set(_ASSESSMENT_UNSUPPORTED))
     if unsupported:
         raise CallError(f"{', '.join(unsupported)} is not supported for a multi-repository assessment")
+    if ns.rebuild and ns.resume:
+        raise CallError("--rebuild starts the assessment again and cannot be combined with --resume")
     if len(ns.repo) < 2:
         raise CallError("a multi-repository assessment requires at least two --repo selections")
     say = progress or (lambda text: None if ns.quiet else print(f"▶ {text}", file=sys.stderr, flush=True))
@@ -9014,7 +9024,9 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
         raise CallError(f"repository selection rejected: {exc}") from exc
     labels = sorted(row["label"] for row in scope.inventory()["repositories"])
     warnings: list[str] = []
-    project = (ns.project or " + ".join(labels)).strip()
+    # The repository list is stated in the report's assessment notes; joined
+    # into the system name it surfaced in titles, scope and actor labels.
+    project = (ns.project or f"Combined system ({len(labels)} repositories)").strip()
     with tempfile.TemporaryDirectory(prefix="appsec-hosts-") as hosts:
         factory = host_factory or _assessment_cli_host_factory(
             Path(hosts), scope.output / ".assessment-work" / "host-events"
@@ -9023,22 +9035,28 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
             # Per-call detail lines show that a long model call is still alive.
             plain = factory
 
-            names = {row["repository_id"]: row["label"] for row in scope.inventory()["repositories"]}
-
-            def factory(role, model, ceiling):
+            # Bound as a default: the enclosing `names` is later reassigned to
+            # the workspace namespaces, and calls made after that still need labels.
+            def factory(
+                role,
+                model,
+                ceiling,
+                labels={row["repository_id"]: row["label"] for row in scope.inventory()["repositories"]},  # noqa: B006
+            ):
                 return _ReportedTransport(
                     plain(role, model, ceiling),
                     lambda text: print(f"  · {text}", file=sys.stderr, flush=True),
-                    names,
+                    labels,
                 )
 
         try:
             session = _assessment_session(
-                scope, rest, budget=budget, host_factory=factory, resume=ns.resume, model=ns.model
+                scope, rest, budget=budget, host_factory=factory, resume=ns.resume, model=ns.model, rebuild=ns.rebuild
             )
             with session as (cfg, state, jobs):
                 _assessment_unsupported_configuration(cfg, scope)
                 lineup, model_warning = _assessment_model_lines(cfg)
+                print("⚠ Multi-repository assessment is experimental.", file=sys.stderr, flush=True)
                 say(lineup)
                 if model_warning:
                     # Shown even with --quiet: it changes the run's cost or outcome.
@@ -9051,17 +9069,19 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                     raise CallError(f"declared context cannot be delivered: {exc}") from exc
                 depth = str(cfg.get("assessment_depth") or "standard")
                 architecture = _assessment_architecture(scope, jobs, progress=say)
+                from orchestrator.assessment_declarations import DeclarationError, boundary_declarations
+
+                # Needs only the finalized components: reject a bad declaration
+                # before the boundary jobs are paid for, not after them.
+                try:
+                    declarations = boundary_declarations(scope, architecture["components"])
+                except DeclarationError as exc:
+                    raise CallError(f"repository boundary declaration rejected: {exc}") from exc
                 say("Measuring the boundary source context")
                 source_context = assessment_source_context(scope)
                 assessment, candidates = _assessment_boundary_candidates(
                     scope, jobs, architecture, source_context, depth, progress=say
                 )
-                from orchestrator.assessment_declarations import DeclarationError, boundary_declarations
-
-                try:
-                    declarations = boundary_declarations(scope, architecture["components"])
-                except DeclarationError as exc:
-                    raise CallError(f"repository boundary declaration rejected: {exc}") from exc
                 boundaries, _coverage, _warnings = promote_assessment_boundaries(
                     scope,
                     architecture["components"],
@@ -9154,6 +9174,16 @@ def _assessment_gate_violations(model_path: Path, level: str) -> list[str]:
     )
 
 
+def _unpublished_draft(argv: list[str]) -> Path | None:
+    """The kept render workspace of a stopped run, which must not be read as its report."""
+    try:
+        ns, _rest = _assessment_argument_parser().parse_known_args(argv)
+    except SystemExit:
+        return None
+    draft = Path(ns.output) / ".assessment-work" / "render" if getattr(ns, "output", None) else None
+    return draft if draft and (draft / "threat-model.md").is_file() else None
+
+
 def assess_main(argv: list[str]) -> int:
     """Command-line entry for `assess`; prints a short summary and returns an exit code."""
     from runtime.analyst_host import HostCancelled, TransportError
@@ -9173,6 +9203,12 @@ def assess_main(argv: list[str]) -> int:
         return 2
     except (ControllerError, ExchangeError, TransportError, HostCancelled, ValueError, OSError) as exc:
         print(f"✗ multi-repository assessment stopped: {_cap_reason(str(exc))}", file=sys.stderr)
+        draft = _unpublished_draft(argv)
+        if draft:
+            print(
+                f"  Unpublished draft kept for diagnosis in {draft}; it did not pass publication.",
+                file=sys.stderr,
+            )
         return 1
     print(
         f"✓ Combined threat model of {', '.join(outcome['repositories'])} written to {outcome['output']} "

@@ -107,6 +107,8 @@ structured Stage-1 artifacts are missing or invalid.
 
 ## Assess several repositories as one system
 
+This mode is experimental. The report says so in its Management Summary, and the run says so when it starts.
+
 Repeat `--repo` to assess several local Git checkouts as one system. Every selected repository is scanned freshly, and the run publishes one `threat-model.yaml`, one `threat-model.md` and one Figure 1 in the `--output` directory. `--project` sets the system name in the report, and `--slug` adds a stamped copy of the deliverables.
 
 ```bash
@@ -136,7 +138,7 @@ A combined run uses Sonnet 5.5 for STRIDE at quick and standard depth, while a s
 
 The models in a combined run have no file, shell or network tools. The controller serves every source excerpt a model reads, only from the selected checkouts, with secrets masked. Each analysis step is recorded, so `--resume` continues an interrupted run without repeating accepted steps, as long as the sources, settings and plugin version are unchanged. A run whose model cost became unknown cannot resume; start a new run.
 
-`--incremental`, `--rerender`, `--rebuild`, `--dry-run`, `--base`, `--pr-mode` and `--restore-from` are not available for combined runs and stop them before any model call. Business context, known threats and a run-wide `--requirements` catalog are supported; each repository keeps its own business context and known threats. A requirements catalog inside one of the selected repositories stops the run unless you pass `--requirements <source>`. Repository-local abuse-case files stop the run; use `--no-abuse-cases` or move the cases to the organization profile. The follow-on skills that only support single-repository models, such as fixing findings in place or publishing the model into a repository, say so when they open a combined model.
+A new run in the same `--output` directory reuses every model step whose input is unchanged; `--rebuild` redoes all of them instead and cannot be combined with `--resume`. `--incremental`, `--rerender`, `--dry-run`, `--base`, `--pr-mode` and `--restore-from` are not available for combined runs and stop them before any model call. Business context, known threats and a run-wide `--requirements` catalog are supported; each repository keeps its own business context and known threats. A requirements catalog inside one of the selected repositories stops the run unless you pass `--requirements <source>`. Repository-local abuse-case files stop the run; use `--no-abuse-cases` or move the cases to the organization profile. The follow-on skills that only support single-repository models, such as fixing findings in place or publishing the model into a repository, say so when they open a combined model.
 
 ## Cost and duration limits
 

@@ -246,7 +246,7 @@ Thorough increases both component coverage and per-component analysis depth.
 | Model for writing the report and checking abuse cases | Sonnet 4.6 | Sonnet 5.5 | Sonnet 5.5 |
 | Model for scanning and routine fixes | Haiku | Haiku | Haiku and Sonnet 4.6 |
 
-A [multi-repository assessment](headless-mode.md#assess-several-repositories-as-one-system) finds threats with Sonnet 5.5 at quick and standard depth, because Sonnet 4.6 returns no STRIDE result in that mode; its STRIDE calls cost more than in a single-repository scan.
+An experimental [multi-repository assessment](headless-mode.md#assess-several-repositories-as-one-system) finds threats with Sonnet 5.5 at quick and standard depth, because Sonnet 4.6 returns no STRIDE result in that mode; its STRIDE calls cost more than in a single-repository scan.
 
 Your Claude Code session model runs the overall assessment at every depth. In an interactive session, agents may run on the session's Sonnet instead of a specific Sonnet version; the overview at the start of each run shows the models it actually uses.
 

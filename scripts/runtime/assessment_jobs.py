@@ -77,12 +77,15 @@ def _ranges(slices) -> list[dict]:
 
 
 class AssessmentJobs:
-    def __init__(self, scope, directory, budget, host_factory, should_stop, checkpoint, *, inherited=False):
+    def __init__(
+        self, scope, directory, budget, host_factory, should_stop, checkpoint, *, inherited=False, reuse_inherited=True
+    ):
         """`inherited` marks receipts already present as an earlier, unfinished run's cache.
 
         Such a job is reused only when it still matches its request and passes
-        today's acceptance checks, and is redone otherwise. A receipt this
-        session wrote, or a resumed session's, stays strict.
+        today's acceptance checks, and is redone otherwise; with
+        `reuse_inherited` false it is always redone. A receipt this session
+        wrote, or a resumed session's, stays strict.
         """
         self.scope = scope
         self.directory = Path(directory)
@@ -90,6 +93,7 @@ class AssessmentJobs:
         self.host_factory = host_factory
         self.should_stop = should_stop
         self.checkpoint = checkpoint
+        self.reuse_inherited = reuse_inherited
         self.scope_sha256 = scope.inventory()["scope_sha256"]
         if self.directory.exists() and not stat.S_ISDIR(self.directory.lstat().st_mode):
             raise ExchangeError("Assessment job directory must be a real directory")
@@ -147,6 +151,8 @@ class AssessmentJobs:
                 and receipt["request_sha256"] == request_sha256
                 and receipt["scope_sha256"] == self.scope_sha256
             )
+            if inherited and not self.reuse_inherited:
+                current = False  # A rebuild redoes every earlier run's job.
             if not current and not inherited:
                 raise ExchangeError("Assessment job receipt is stale or belongs to another request")
             if current:

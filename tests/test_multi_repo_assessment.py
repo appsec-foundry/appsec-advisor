@@ -1,6 +1,7 @@
 """A combined assessment runs every stage through scoped exchanges and publishes one model."""
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -150,7 +151,7 @@ class FullHost:
         return {"verdict": verdict, "attack_paths": attack_paths, "anti_patterns": None}
 
 
-def _assess(tmp_path, monkeypatch, names, extra=(), seed=None):
+def _assess(tmp_path, monkeypatch, names, extra=(), seed=None, progress=lambda text: None):
     from runtime import multi_repo_scope
 
     roots = [tmp_path / name for name in names]
@@ -182,7 +183,7 @@ def _assess(tmp_path, monkeypatch, names, extra=(), seed=None):
             *extra,
         ],
         host_factory=host.factory,
-        progress=lambda text: None,
+        progress=progress,
     )
     return outcome, host, tmp_path / "out"
 
@@ -201,7 +202,8 @@ def test_combined_assessment_publishes_one_qualified_model(tmp_path, monkeypatch
     for name in names:
         assert f"{name}/app.py" in report
         assert f"[{name}]" in report
-    assert report.startswith(f"# Threat Model - {' + '.join(sorted(names))}")
+    assert report.startswith(f"# Threat Model - Combined system ({len(names)} repositories)")
+    assert f"together as one system ({', '.join(sorted(names))})" in report
     assert "**Repositories:**" in report and "github.com" not in report.split("## 2.")[0]
     figure = (out / "threat-model.figure1.svg").read_text()
     assert all(f"[{name}]" in figure for name in names)
@@ -213,6 +215,63 @@ def test_combined_assessment_publishes_one_qualified_model(tmp_path, monkeypatch
     assert {"actor_discoverer", "ms_renderer", "secarch_renderer"} <= set(host.roles)
     assert ({"architect_reviewer", "abuse_case_deriver"} <= set(host.roles)) == (depth == "thorough")
     assert not list(out.glob("threat-model-*"))
+
+
+@pytest.mark.parametrize("names", [("edge", "service"), ("west", "east")])
+def test_per_call_progress_lines_reach_the_end_of_a_combined_run(tmp_path, monkeypatch, capsys, names):
+    """Calls made after the workspace exists, such as the report renderers, still label their reads."""
+    outcome, host, _ = _assess(tmp_path, monkeypatch, names, progress=None)
+    assert outcome["status"] == "complete" and "ms_renderer" in host.roles
+    lines = [line for line in capsys.readouterr().err.splitlines() if line.startswith("  · reads ")]
+    assert lines and any(f"{name}/" in line for line in lines for name in names)
+
+
+@pytest.mark.parametrize(("names", "target"), [(("edge", "service"), "nowhere"), (("west", "east"), "ghost-api")])
+def test_a_declaration_naming_no_component_stops_before_any_boundary_job(tmp_path, monkeypatch, names, target):
+    def seed(roots):
+        declared = {
+            "api_version": "appsec-advisor/trust-boundaries/v1",
+            "boundaries": [
+                {
+                    "key": "public-ingress",
+                    "name": "Public ingress",
+                    "kind": "network",
+                    "assumption": "Every request must carry a session the receiver validates.",
+                    "from": "external",
+                    "to": target,
+                }
+            ],
+        }
+        (roots[1] / ".appsec").mkdir()
+        (roots[1] / ".appsec" / "trust-boundaries.yaml").write_text(yaml.safe_dump(declared))
+        subprocess.run(["git", "-C", str(roots[1]), "add", "-A"], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(roots[1]),
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@example.invalid",
+                "commit",
+                "-qm",
+                "d",
+            ],
+            check=True,
+        )
+
+    host = {}
+    real = FullHost.factory
+
+    def recording(self, role, model, ceiling):
+        host.setdefault("roles", []).append(role)
+        return real(self, role, model, ceiling)
+
+    monkeypatch.setattr(FullHost, "factory", recording)
+    with pytest.raises(controller.CallError, match="names no component"):
+        _assess(tmp_path, monkeypatch, names, seed=seed)
+    assert "trust_boundary_analyst" not in host.get("roles", [])
 
 
 @pytest.mark.parametrize("slug", ["team-a", "v2.release_1"])
@@ -231,6 +290,41 @@ def test_invalid_slug_stops_the_run_before_publication(tmp_path, monkeypatch):
     with pytest.raises((SystemExit, controller.CallError)):
         _assess(tmp_path, monkeypatch, ("edge", "service"), ("--slug", "../escape"))
     assert not (tmp_path / "out" / "threat-model.yaml").exists()
+
+
+@pytest.mark.parametrize("names", [("caller", "receiver"), ("west", "east")])
+def test_rebuild_redoes_every_job_an_earlier_run_accepted(tmp_path, monkeypatch, names):
+    from runtime import multi_repo_scope
+    from runtime.assessment_host import ExchangeError
+
+    roots = [tmp_path / name for name in names]
+    for root in roots:
+        checkout(root)
+    host = FullHost()
+    real_admit = multi_repo_scope.admit
+
+    def admit(selections, output):
+        host.scope = real_admit(selections, output)
+        return host.scope
+
+    monkeypatch.setattr(multi_repo_scope, "admit", admit)
+    monkeypatch.setattr(controller, "_assessment_runtime_fingerprint", lambda: "a" * 64)
+    argv = [
+        *[arg for root in roots for arg in ("--repo", str(root))],
+        *("--output", str(tmp_path / "out"), "--hard-budget", "5", "--trust-mode", "trusted", "--model", "haiku"),
+    ]
+    original = host.stage2
+    host.stage2 = lambda role, context: {"unexpected": True}
+    with pytest.raises(ExchangeError):
+        controller.assess_repositories(argv, host_factory=host.factory, progress=lambda text: None)
+    host.roles.clear()
+    host.stage2 = original
+    with pytest.raises(controller.CallError, match="--resume"):
+        controller.assess_repositories([*argv, "--rebuild", "--resume"], host_factory=host.factory)
+    outcome = controller.assess_repositories([*argv, "--rebuild"], host_factory=host.factory, progress=lambda t: None)
+    assert outcome["status"] == "complete"
+    # Accepted Stage-1 jobs reach the host again instead of being replayed.
+    assert {"stride_analyzer", "trust_boundary_analyst"} <= set(host.roles)
 
 
 def test_resume_reuses_accepted_jobs_after_an_interrupted_render(tmp_path, monkeypatch):
@@ -420,4 +514,18 @@ def test_a_host_failure_ends_with_a_message_not_a_traceback(tmp_path, monkeypatc
 
     monkeypatch.setattr(controller, "assess_repositories", fail)
     assert controller.assess_main(["--repo", "a", "--repo", "b"]) == 1
-    assert "stopped: host returned no parseable result" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "stopped: host returned no parseable result" in err and "Unpublished draft" not in err
+
+
+def test_a_stopped_run_names_its_kept_draft_as_unpublished(tmp_path, monkeypatch, capsys):
+    draft = tmp_path / "out" / ".assessment-work" / "render"
+    draft.mkdir(parents=True)
+    (draft / "threat-model.md").write_text("# Threat Model\n")
+
+    def fail(*args, **kwargs):
+        raise ValueError("Multi-repository model violates its versioned output schema: meta: bad")
+
+    monkeypatch.setattr(controller, "assess_repositories", fail)
+    assert controller.assess_main(["--repo", "a", "--repo", "b", "--output", str(tmp_path / "out")]) == 1
+    assert f"Unpublished draft kept for diagnosis in {draft}" in capsys.readouterr().err

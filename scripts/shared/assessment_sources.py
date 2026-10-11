@@ -76,8 +76,15 @@ def validate_portable_model(document: dict) -> None:
     """Validate the portable model without granting access to local sources."""
     # Check expansion before recursive JSON-Schema validation.
     list(source_rows(document))
-    if not output_validator().is_valid(document):
-        raise ValueError("Multi-repository model violates its versioned output schema")
+    errors = sorted(output_validator().iter_errors(document), key=lambda error: list(error.absolute_path))
+    if errors:
+        # Name the failing fields so a stopped run says what to fix.
+        details = "; ".join(
+            f"{'/'.join(str(part) for part in error.absolute_path) or '<root>'}: {error.message[:160]}"
+            for error in errors[:5]
+        )
+        more = f" (+{len(errors) - 5} more)" if len(errors) > 5 else ""
+        raise ValueError(f"Multi-repository model violates its versioned output schema: {details}{more}")
     inventory = document["source_inventory"]
     rows = inventory["repositories"]
     encoded = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()

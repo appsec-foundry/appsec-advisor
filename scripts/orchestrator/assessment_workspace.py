@@ -178,7 +178,9 @@ def canonical_model(view: dict, original: dict, names: Namespaces) -> dict:
         components.append(row)
     if {row["id"] for row in components} != set(by_id):
         raise WorkspaceError("Enrichment removed an accepted component")
-    meta = {k: v for k, v in view["meta"].items() if k != "source_repositories"}
+    # `meta` carries evidence too (for example the open-registration
+    # resolution), so it takes the same location rule as the rest.
+    meta = _qualify({k: v for k, v in view["meta"].items() if k != "source_repositories"}, names)
     meta.update(
         schema_version=2,
         source_scope_sha256=original["meta"]["source_scope_sha256"],
