@@ -273,9 +273,10 @@ def run_exchange(
         for request in reply.payload["reads"]:
             key = tuple(request[k] for k in ("repository_id", "path", "start_line", "end_line"))
             if key[:2] not in allowed_sources:
-                # An admitted file outside this task's selection is a scope
-                # question the model can correct; anything not admitted is not.
-                if key[:2] not in admitted:
+                # Another file of the task's own repositories is a scope question
+                # the model can correct; another repository or an unadmitted
+                # path breaks repository isolation and fails.
+                if key[:2] not in admitted or key[0] not in {rid for rid, _ in allowed_sources}:
                     raise ExchangeError("Model requested a source outside this task's selection")
                 seen.add(key)
                 range_feedback = {
