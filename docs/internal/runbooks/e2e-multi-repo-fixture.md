@@ -45,3 +45,7 @@ Check `$ROOT/report/threat-model.yaml` and `threat-model.md`:
 - `threat-model.sarif.json` uses one `appsec-repository://<repository-id>/` base per repository.
 
 Record the commands, the three commit IDs, the spent amount and the duration with the result. A failed check is a plugin defect; fix the producer, not the fixture.
+
+## Larger fixture with an oracle
+
+`appsec-advisor-fixtures` carries `multi-repo-system-threat-fixture`: five repositories (`web-frontend`, `api-gateway`, `user-service`, `orders-api`, `fulfillment-worker`) with findings that need more than one repository, such as a JWT secret shared by issuer and verifier and identity headers the gateway lets callers set. Its `orders-api` and `fulfillment-worker` come from `tests/fixtures/multi_repo_system/`. The commands and the out-of-repository verifier are in `oracles/multi-repo-system-threat-fixture/README.md` there.
