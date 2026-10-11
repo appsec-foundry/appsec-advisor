@@ -17,7 +17,7 @@ from runtime.multi_repo_scope import ScopeError, admit
 from validators import validate_assessment_architecture as validation
 
 
-def fixture(tmp_path, *, names=("north", "south"), store=False, source="value = 1\n"):
+def fixture(tmp_path, *, names=("north", "south"), store=False, source="value = 1\n", extra=None):
     roots = []
     for index, name in enumerate(names):
         root = tmp_path / name
@@ -48,6 +48,9 @@ def fixture(tmp_path, *, names=("north", "south"), store=False, source="value = 
             (root / "src").mkdir()
             (root / "src/store.js").write_text("const Cache = require('nedb')\nconst records = new Cache()\n")
         (root / "app.py").write_text(text)
+        for relative, content in ((extra or {}).get(name) or {}).items():
+            (root / relative).parent.mkdir(parents=True, exist_ok=True)
+            (root / relative).write_text(content)
         roots.append(str(root))
     scope = admit(roots, str(tmp_path / "out"))
     documents = [
@@ -84,6 +87,19 @@ def test_existing_finalization_namespaces_identical_local_ids_and_paths(tmp_path
     assert (result, receipt) == finalize_assessment(scope, list(reversed(documents)))
     assert not scope.output.exists()
     assert str(tmp_path) not in json.dumps(result)
+
+
+@pytest.mark.parametrize(("names", "path"), [(("north", "south"), "Dockerfile"), (("red", "blue"), "image/Dockerfile")])
+def test_finalization_gives_an_unlisted_scanner_anchor_to_its_repository_component(tmp_path, names, path):
+    dockerfile = "FROM python:latest\nCOPY . .\nCMD python app.py\n"
+    scope, documents = fixture(tmp_path, names=names, extra={names[0]: {path: dockerfile}})
+    result, receipt = finalize_assessment(scope, documents)
+    validation.validate_finalization(scope, result, receipt)
+    rid = next(r.repository_id for r in scope.repositories if r.root.name == names[0])
+    [owner] = [c for c in result["components"] if c["repository_ids"] == [rid] and c["tier"] == "application"]
+    assert {"app.py", path} <= {p["path"] for p in owner["paths"]}
+    other = next(c for c in result["components"] if c["repository_ids"] != [rid])
+    assert path not in {p["path"] for p in other["paths"]}
 
 
 def test_reconciled_embedded_store_stays_with_its_own_repository(tmp_path):

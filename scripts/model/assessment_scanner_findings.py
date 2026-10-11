@@ -74,6 +74,71 @@ def config_scan(root: Path, depth: str) -> dict | None:
     return document
 
 
+def _scanner_outputs(scope, rid: str, depth: str) -> tuple[list[dict], dict | None]:
+    """Run every deterministic scanner on one frozen repository snapshot."""
+    with scope.scanner_snapshot(rid) as root, tempfile.TemporaryDirectory(prefix="appsec-scan-") as directory:
+        output = Path(directory)
+        _run_scanners(root, output)
+        documents = [json.loads((output / name).read_text(encoding="utf-8")) for name in SIDECARS]
+        config = config_scan(root, depth)
+    return documents, config
+
+
+def _config_anchor(finding: dict) -> str | None:
+    """The file a config/IaC finding is anchored at; None for an absence that searched nothing."""
+    if finding.get("evidence_kind") != "absence":
+        return finding["file"]
+    searched = finding.get("searched_files") or []
+    if not searched:
+        return None
+    return finding["file"] if finding["file"] in searched else searched[0]
+
+
+def _anchor_files(scope, repo) -> set[str]:
+    """Files of one repository that a deterministic scanner finding can cite.
+
+    Standard depth selects a superset of the files quick depth scans.
+    """
+    documents, config = _scanner_outputs(scope, repo.repository_id, "standard")
+    files = {finding["file"] for document in documents for finding in document.get("findings") or []}
+    files.update(anchor for finding in (config or {}).get("findings", []) if (anchor := _config_anchor(finding)))
+    return {path for path in files if path in repo.files}
+
+
+def own_scanner_anchors(scope, components: list[dict]) -> int:
+    """Give every file a scanner finding can cite an owner that lists it; return how many were added.
+
+    The combined model accepts a finding only when its component lists the
+    cited file. A file no component lists, such as a root Dockerfile or
+    package manifest, goes to the owner the single-repository rule picks
+    (`resolve_owner`), as a literal path. Component finalization calls this
+    before the inventory fingerprint is taken.
+    """
+    added = 0
+    for repo in sorted(scope.repositories, key=lambda row: row.repository_id):
+        rid = repo.repository_id
+        rows = [row for row in components if rid in row["repository_ids"]]
+        listed = {p["path"] for row in rows for p in row["paths"] if p["repository_id"] == rid}
+        registry = [
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "paths": [p["path"] for p in row["paths"] if p["repository_id"] == rid],
+            }
+            for row in rows
+        ]
+        by_id = {row["id"]: row for row in rows}
+        for path in sorted(_anchor_files(scope, repo) - listed):
+            owner = resolve_owner(path, registry)
+            if owner is None:
+                continue  # No component in this repository; scanner intake refuses its findings.
+            paths = by_id[owner[0]]["paths"]
+            paths.append({"repository_id": rid, "path": path, "sha256": hashlib.sha256(repo.files[path]).hexdigest()})
+            paths.sort(key=lambda p: (p["repository_id"], p["path"]))
+            added += 1
+    return added
+
+
 def _qualify(threat: dict, rid: str, repo, owned: list[dict]) -> None:
     threat["local_id"] = f"{LOCAL_ID_PREFIX}{len(owned) + 1:03d}"
     evidence = threat["evidence"]
@@ -115,11 +180,7 @@ def scan(scope, components: dict, *, depth: str = "standard") -> dict[str, list[
             for row in components["components"]
             if rid in row["repository_ids"]
         ]
-        with scope.scanner_snapshot(rid) as root, tempfile.TemporaryDirectory(prefix="appsec-scan-") as directory:
-            output = Path(directory)
-            _run_scanners(root, output)
-            documents = [json.loads((output / name).read_text(encoding="utf-8")) for name in SIDECARS]
-            config = config_scan(root, depth)
+        documents, config = _scanner_outputs(scope, rid, depth)
         threats = []
         for document in documents:
             errors = sorted(validator.iter_errors(document), key=lambda error: list(error.path))
@@ -132,14 +193,12 @@ def scan(scope, components: dict, *, depth: str = "standard") -> dict[str, list[
                     raise ValueError("A deterministic scanner finding lacks a source line in its repository")
                 threats.append(_source_auth_finding_to_threat(finding, local))
         for finding in (config or {}).get("findings", []):
-            anchor = finding["file"]
+            anchor = _config_anchor(finding)
+            if anchor is None:
+                continue
             if finding.get("evidence_kind") == "absence":
-                searched = finding["searched_files"]
-                if not searched:
-                    continue
-                if any(path not in repo.files for path in searched):
+                if any(path not in repo.files for path in finding["searched_files"]):
                     raise ValueError("A config/IaC absence searched a file outside its repository")
-                anchor = finding["file"] if finding["file"] in searched else searched[0]
             elif finding["file"] not in repo.files or not finding.get("line"):
                 raise ValueError("A config/IaC finding lacks a source line in its repository")
             threat = _config_finding_to_threat(finding)
@@ -151,9 +210,15 @@ def scan(scope, components: dict, *, depth: str = "standard") -> dict[str, list[
                 raise ValueError("A deterministic scanner finding has no owner in its repository")
             apply_intake(threat, dispatch_component=owner[0], component_name=owner[1])
             threats.append(threat)
+        owned = {row["id"]: set(row["paths"]) for row in local}
         for threat in threats:
             if threat["component_id"] not in result:
                 raise ValueError("A deterministic scanner finding has no owner in its repository")
+            # The combined model requires the owner to list the cited file.
+            # Finalization makes every scanner anchor owned; stop here, before
+            # any model call, if that ever fails.
+            if threat["evidence"]["file"] not in owned[threat["component_id"]]:
+                raise ValueError("A deterministic scanner finding cites a file its component does not own")
             _qualify(threat, rid, repo, result[threat["component_id"]])
     scope.verify_unchanged()
     return result

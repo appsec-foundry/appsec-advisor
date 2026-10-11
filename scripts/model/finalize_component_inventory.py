@@ -330,6 +330,8 @@ def finalize_assessment(scope, discoveries: list[dict]) -> tuple[dict, dict]:
         RECEIPT_SCHEMA as V2_RECEIPT_SCHEMA,
     )
 
+    from model.assessment_scanner_findings import own_scanner_anchors
+
     scope.verify_unchanged()
     reconcile(scope, discoveries)  # Requires one valid discovery per selected root.
     by_repo = {d["repository_id"]: d for d in discoveries}
@@ -385,6 +387,10 @@ def finalize_assessment(scope, discoveries: list[dict]) -> tuple[dict, dict]:
 
             qualify_evidence(row)
             components.append(row)
+    # Scanner findings must cite a file their component lists (see own_scanner_anchors).
+    reference_count += own_scanner_anchors(scope, components)
+    if reference_count > MAX_SOURCE_REFERENCES:
+        raise ValueError("Reconciled components exceed the source-reference limit")
     components.sort(key=lambda c: c["id"])
     payload = {
         "schema_version": 2,
