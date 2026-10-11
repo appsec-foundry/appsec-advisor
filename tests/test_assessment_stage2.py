@@ -213,8 +213,10 @@ def test_secarch_fills_must_cover_exactly_the_scaffold_placeholders(workspace, d
         "<script>alert(1)</script>",
         "Cites an unpublished finding [F-077](#f-077).",
         "```ts\nconst q = input;\n```",
+        "See [authorization](#6-4-authorization-controls).",
+        "See [the gap](#no-such-anchor-here).",
     ],
-    ids=["heading", "url", "html", "unpublished-ref", "code-fence"],
+    ids=["heading", "url", "html", "unpublished-ref", "code-fence", "dead-section-anchor", "dead-anchor"],
 )
 def test_secarch_fill_content_is_held_to_the_section6_contract(workspace, text):
     scaffold_path = workspace / ".fragments" / "security-architecture.md"
@@ -226,6 +228,24 @@ def test_secarch_fill_content_is_held_to_the_section6_contract(workspace, text):
     with pytest.raises(ExchangeError):
         stage2.render(FakeJobs(_replies(workspace, fills=fills)), workspace)
     assert scaffold_path.read_text(encoding="utf-8") == scaffold
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Token handling is described in [§6.3 Session and Token Controls](#63-session-and-token-controls).",
+        "The scope is listed in [the system overview](#1-system-overview).",
+    ],
+)
+def test_secarch_fill_may_link_to_report_sections(workspace, text):
+    scaffold = (workspace / ".fragments" / "security-architecture.md").read_text(encoding="utf-8")
+    fills = _fills(workspace)
+    block = next(i for i, row in enumerate(stage2.placeholders(scaffold)) if not row["inline"] and not row["mermaid"])
+    fills["fills"][block]["text"] = text
+
+    stage2.render(FakeJobs(_replies(workspace, fills=fills)), workspace)
+
+    assert text in (workspace / ".fragments" / "security-architecture.md").read_text(encoding="utf-8")
 
 
 def test_filled_scaffold_needs_no_job(workspace):

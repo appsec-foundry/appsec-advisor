@@ -594,14 +594,80 @@ def apply_fills(scaffold: str, rows: list[dict], artifact) -> str:
     return filled
 
 
-def _check_section6(workspace: Path, filled: str) -> None:
-    """The pre-render citation gate for §6: only published findings may be cited."""
+def _check_section6(workspace: Path, filled: str, scaffold: str = "") -> None:
+    """The pre-render gates for §6: only published findings, and only anchors the report will contain."""
     with tempfile.TemporaryDirectory(prefix="appsec-stage2-") as raw:
         staged = _staging(workspace, Path(raw))
         atomic_write_text(staged / ".fragments" / "security-architecture.md", filled)
         failed, removed = validate_fragment.unpublished_finding_ref_errors(staged, staged / ".fragments")
         if failed or removed:
             raise ExchangeError("Security architecture cites findings the report does not publish")
+    # The final structure gate rejects a link to an anchor the composed report
+    # lacks; reject it here, where the model can still correct it.
+    # Only links the model added: the scaffold's own links are composer-owned.
+    authored = _link_targets(filled) - _link_targets(scaffold)
+    known = _report_anchors(workspace, filled)
+    missing = sorted({target for target in authored if not _anchor_known(target, known)})
+    if missing:
+        raise ExchangeError(
+            "Security architecture links to anchors the report does not contain: "
+            + ", ".join(f"#{target}" for target in missing[:8])
+            + ". Link only to findings, to §6 subsections in this text, or to report section headings."
+        )
+
+
+_LINK_TARGET_RE = re.compile(r"\]\(#([^)\s]+)\)")
+_ANCHOR_ID_RE = re.compile(r'<a\s+id="([^"]+)"')
+_HEADING_LINE_RE = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*$", re.MULTILINE)
+# Entity anchors the composer emits for every finding, mitigation, weakness,
+# boundary and component; findings are checked against publication above.
+_ENTITY_ANCHOR_RE = re.compile(r"(?:f|t|m|w|tb|c)-\d+")
+
+
+def _link_targets(text: str) -> set[str]:
+    """In-document link targets of rendered prose; comments and code render no link."""
+    prose = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
+    prose = re.sub(r"```.*?```", "", prose, flags=re.DOTALL)
+    prose = _CODE_SPAN_RE.sub("", prose)
+    return set(_LINK_TARGET_RE.findall(prose))
+
+
+def _anchors_in(text: str) -> set[str]:
+    from shared._slug import github_render_slug
+
+    anchors = set(_ANCHOR_ID_RE.findall(text))
+    anchors.update(github_render_slug(heading) for heading in _HEADING_LINE_RE.findall(text))
+    return anchors
+
+
+def _report_anchors(workspace: Path, filled: str) -> set[str]:
+    """Anchors of the filled §6, every pre-rendered fragment, and the report's section headings."""
+    from shared._slug import github_render_slug
+
+    anchors = _anchors_in(filled)
+    fragments = workspace / ".fragments"
+    for path in sorted(fragments.glob("*.md")) if fragments.is_dir() else []:
+        if path.is_file() and not path.is_symlink():
+            anchors |= _anchors_in(_bounded_text(path))
+    contract = yaml.safe_load((ROOT / "data" / "sections-contract.yaml").read_text(encoding="utf-8"))
+    stack = [contract]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            for key in ("title", "heading"):
+                if isinstance(node.get(key), str) and node[key].strip("# "):
+                    anchors.add(github_render_slug(node[key].lstrip("#").strip()))
+            if isinstance(node.get("anchor"), str):
+                anchors.add(node["anchor"])
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return {anchor.lower() for anchor in anchors}
+
+
+def _anchor_known(target: str, known: set[str]) -> bool:
+    lowered = target.strip().lower()
+    return lowered in known or bool(_ENTITY_ANCHOR_RE.fullmatch(lowered))
 
 
 def _secarch_context(workspace: Path, marked: str, rows: list[dict]) -> dict:
@@ -701,7 +767,7 @@ def _security_architecture(jobs, workspace: Path, override) -> str:
     def validate(artifact, ranges):
         if ranges:
             raise ExchangeError("Security-architecture job cannot retrieve source")
-        _check_section6(workspace, apply_fills(scaffold, rows, artifact))
+        _check_section6(workspace, apply_fills(scaffold, rows, artifact), scaffold)
 
     artifact = jobs.execute(
         role="secarch_renderer",
