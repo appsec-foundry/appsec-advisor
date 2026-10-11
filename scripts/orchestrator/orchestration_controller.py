@@ -8180,6 +8180,11 @@ def _assessment_architecture(scope, jobs, *, progress):
             used={key: len(flows[key]) for key in ("data_flows", "external_entities")},
         )
         local = [row for row in components["components"] if row["repository_ids"] == [rid]]
+        reviewed = [
+            flow
+            for flow in flows["data_flows"]
+            if "connection_id" in flow and any(e["repository_id"] == rid for e in flow["evidence"])
+        ]
         progress("Analyzing local architecture: " + labels[rid])
         artifact = jobs.execute(
             role="architecture_analyst",
@@ -8190,7 +8195,8 @@ def _assessment_architecture(scope, jobs, *, progress):
                 "already finalized and cannot be changed. Cross-repository connections have a separate review "
                 "and cannot be added here. Cite retrieved qualified sources for every claim. Use local "
                 "asset-<slug> and ext-<slug> identifiers; the controller namespaces them. Do not infer "
-                "authentication, encryption, deployment activation, trust or identity propagation from names.",
+                "authentication, encryption, deployment activation, trust or identity propagation from names. "
+                "The reviewed connections are already modelled; do not repeat their calls as external services.",
             ),
             context={
                 "repository_id": rid,
@@ -8199,11 +8205,14 @@ def _assessment_architecture(scope, jobs, *, progress):
                 "component_inventory_fingerprint": receipt["component_inventory_fingerprint"],
                 "components": local,
                 "interfaces": [i for d in discovery.observations if d["repository_id"] == rid for i in d["interfaces"]],
+                "reviewed_connections": [
+                    {k: flow[k] for k in ("from", "to", "label", "protocol", "evidence")} for flow in reviewed
+                ],
             },
             schema=schema,
             allowed_sources=analysis.source_selection(local),
             validate=lambda artifact, ranges: analysis.validate_local_architecture(
-                scope, rid, components, receipt, artifact, ranges
+                scope, rid, components, receipt, artifact, ranges, reviewed
             ),
         )
         external_ids = {row["id"]: _id("ext", rid, row["id"]) for row in artifact["external_entities"]}

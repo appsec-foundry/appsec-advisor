@@ -35,7 +35,7 @@
           "protocol": {"$ref": "#/$defs/protocol"},
           "address": {"type": ["string", "null"], "minLength": 1, "maxLength": 240},
           "deployment": {"type": ["string", "null"], "minLength": 1, "maxLength": 120},
-          "operation": {"type": "string", "minLength": 1, "maxLength": 120},
+          "operation": {"type": ["string", "null"], "minLength": 1, "maxLength": 120},
           "evidence": {
             "type": "array", "minItems": 1, "maxItems": 8,
             "items": {
@@ -54,7 +54,7 @@
       "type": "array", "maxItems": 4096,
       "items": {
         "type": "object", "additionalProperties": false,
-        "required": ["id", "sender_interface", "receiver_interface", "from", "to", "protocol", "operation", "address", "deployment", "status", "via"],
+        "required": ["id", "sender_interface", "receiver_interface", "from", "to", "protocol", "operation", "operation_match", "address", "deployment", "binding_basis", "binding_evidence", "status", "via"],
         "properties": {
           "id": {"type": "string", "pattern": "^connection-[a-f0-9]{16}$"},
           "sender_interface": {"$ref": "#/$defs/interface"}, "receiver_interface": {"$ref": "#/$defs/interface"},
@@ -62,7 +62,17 @@
           "protocol": {"$ref": "#/$defs/protocol"},
           "operation": {"type": "string", "minLength": 1, "maxLength": 120},
           "address": {"type": "string", "minLength": 1, "maxLength": 240},
+          "operation_match": {"enum": ["exact", "catch-all"]},
           "deployment": {"type": "string", "minLength": 1, "maxLength": 120},
+          "binding_basis": {"enum": ["declared", "address", "service", "compose", "repository-label"]},
+          "binding_evidence": {
+            "type": ["object", "null"], "additionalProperties": false, "required": ["repository_id", "file", "line"],
+            "properties": {
+              "repository_id": {"$ref": "#/$defs/repository"},
+              "file": {"type": "string", "minLength": 1, "maxLength": 512},
+              "line": {"type": "integer", "minimum": 1}
+            }
+          },
           "status": {"const": "requires-architecture-review"},
           "via": {"enum": ["message-broker", null]}
         }

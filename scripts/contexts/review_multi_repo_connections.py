@@ -28,9 +28,15 @@ SCHEMA = Path(__file__).resolve().parents[2] / "schemas" / "multi-repo-connectio
 _SIDE_EVIDENCE = 4
 INSTRUCTIONS = """Review the supplied communication candidate against retrieved source.
 Return exactly one decision. Resolve only when the client/producer operation,
-server/consumer operation, and deployment binding establish this particular
-communication. A matching string in unused config, documentation, or an example
-does not suffice. Retrieve the implementation and configuration before deciding.
+server/consumer operation, and the candidate's binding establish this particular
+communication. The controller derived the binding from source: binding_basis
+names whether a cited address, a declared Service, a compose service, or the
+selected repository's name at an exposed port identifies the peer. Do not
+require a deployment manifest beyond that basis; a broker address both sides
+cite is the broker's identity. A catch-all candidate forwards any path, so
+check that the forwarder reaches this peer. A matching string in unused config,
+documentation, or an example does not suffice. Retrieve the implementation and
+configuration before deciding.
 Cite exact source lines from both endpoint repositories for a resolved link.
 Reject only with cited contradictory evidence; otherwise leave it unresolved
 with the missing evidence stated. Do not infer production activation, payload
@@ -113,6 +119,7 @@ def review_connections(scope, discoveries, components, receipt, *, host_factory,
             [(p["repository_id"], p["path"]) for c in participants for p in c["paths"]]
             + [(i["repository_id"], e["file"]) for i in interfaces for e in i["evidence"]]
             + [(b["repository_id"], b["file"]) for b in declared]
+            + [(b["repository_id"], b["file"]) for b in [candidate["binding_evidence"]] if b]
         )
         context = {
             "scope_sha256": document["scope_sha256"],
@@ -267,7 +274,9 @@ def promote(scope, discoveries, components, receipt, review):
                     "id": f"df-{len(flows) + 1:03d}",
                     "from": source,
                     "to": target,
-                    "label": candidate["operation"],
+                    "label": "Forwarded requests"
+                    if candidate["operation_match"] == "catch-all"
+                    else candidate["operation"],
                     "protocol": candidate["protocol"],
                     "data_classification": "unknown",
                     "direction": "unidirectional",

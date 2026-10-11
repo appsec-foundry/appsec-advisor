@@ -34,7 +34,7 @@
           "protocol": {"enum": ["HTTP", "HTTPS", "gRPC", "AMQP", "Kafka"]},
           "address": {"type": ["string", "null"], "minLength": 1, "maxLength": 240},
           "deployment": {"type": ["string", "null"], "minLength": 1, "maxLength": 120},
-          "operation": {"type": "string", "minLength": 1, "maxLength": 120},
+          "operation": {"type": ["string", "null"], "minLength": 1, "maxLength": 120},
           "evidence": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"$ref": "#/$defs/evidence"}}
         }
       }

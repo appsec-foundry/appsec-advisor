@@ -211,3 +211,130 @@ def test_a_single_declared_service_binds_the_server_route(tmp_path, manifests, j
     assert bool(candidates) == joined
     if joined:
         assert candidates[0]["deployment"] == "ledger"
+
+
+def _rewrite(tmp_path, documents, rows, extra=({}, {})):
+    """Set (address, deployment, operation) per side and capture matching source."""
+    files = []
+    for document, (address, deployment, operation), more in zip(documents, rows, extra, strict=True):
+        row = document["interfaces"][0]
+        row["address"], row["deployment"], row["operation"] = address, deployment, operation
+        row["evidence"][0]["quote"] = " ".join(v for v in (address, deployment, operation) if v) or "call"
+        files.append({"config.txt": (row["evidence"][0]["quote"] + "\n").encode()} | more)
+    return AssessmentScope(
+        tuple(
+            RepositoryView(r.repository_id, r.root, r.head, r.state_sha256, f)
+            for r, f in zip(fixture(tmp_path)[0].repositories, files, strict=True)
+        ),
+        tmp_path / "out",
+    )
+
+
+@pytest.mark.parametrize("listen", ["0.0.0.0", "http://127.0.0.1:8080", "[::]:8080", "localhost"])
+def test_a_listen_address_does_not_hide_the_declared_service(tmp_path, listen):
+    _, documents = fixture(tmp_path)
+    service = {"deploy/service.yaml": SERVICE.format(name="ledger").encode()}
+    scope = _rewrite(
+        tmp_path,
+        documents,
+        [("http://ledger:9000", None, "POST /records"), (listen, None, "POST /records")],
+        ({}, service),
+    )
+    candidates = architecture.reconcile(scope, documents)["candidates"]
+    assert [c["binding_basis"] for c in candidates] == ["service"]
+
+
+def test_a_named_server_host_still_separates_peers(tmp_path):
+    _, documents = fixture(tmp_path)
+    service = {"deploy/service.yaml": SERVICE.format(name="ledger").encode()}
+    scope = _rewrite(
+        tmp_path,
+        documents,
+        [("http://ledger:9000", None, "POST /records"), ("http://other-host:9000", None, "POST /records")],
+        ({}, service),
+    )
+    assert architecture.reconcile(scope, documents)["candidates"] == []
+
+
+@pytest.mark.parametrize(
+    ("names", "client", "dockerfile", "joined"),
+    [
+        (("one", "two"), "http://two:8080", "EXPOSE 8080\n", True),
+        (("edge", "ledger-api"), "https://ledger-api", "EXPOSE 443/tcp\n", True),
+        # Same name, another port: a coincidental host stays apart.
+        (("one", "two"), "http://two:9090", "EXPOSE 8080\n", False),
+        # A label without any evidenced port binds nothing.
+        (("one", "two"), "http://two:8080", "", False),
+        # Another selected name never binds this repository.
+        (("one", "two"), "http://three:8080", "EXPOSE 8080\n", False),
+    ],
+)
+def test_the_repository_label_binds_only_at_an_evidenced_port(tmp_path, names, client, dockerfile, joined):
+    _, documents = fixture(tmp_path, names=names)
+    scope = _rewrite(
+        tmp_path,
+        documents,
+        [(client, None, "POST /records"), (None, None, "POST /records")],
+        ({}, {"Dockerfile": dockerfile.encode()} if dockerfile else {}),
+    )
+    scope = AssessmentScope(
+        tuple(replace(r, root=tmp_path / name) for r, name in zip(scope.repositories, names, strict=True)),
+        scope.output,
+    )
+    result = architecture.reconcile(scope, documents)
+    assert bool(result["candidates"]) == joined
+    if joined:
+        assert result["candidates"][0]["binding_basis"] == "repository-label"
+        assert result["candidates"][0]["binding_evidence"]["file"] == "Dockerfile"
+
+
+@pytest.mark.parametrize(
+    ("compose_owner", "compose", "joined"),
+    [
+        # An infrastructure file in the client repository builds the peer.
+        (0, "services:\n  books:\n    build: ../two\n", True),
+        # The peer's own compose file builds itself.
+        (1, "services:\n  books:\n    build:\n      context: .\n", True),
+        # A build context outside the selection binds nothing.
+        (0, "services:\n  books:\n    build: ../elsewhere\n", False),
+        (0, "services:\n  books:\n    image: books:1\n", False),
+    ],
+)
+def test_a_compose_service_binds_the_repository_it_builds(tmp_path, compose_owner, compose, joined):
+    _, documents = fixture(tmp_path)
+    extra = [{}, {}]
+    extra[compose_owner] = {"docker-compose.yml": compose.encode()}
+    scope = _rewrite(
+        tmp_path, documents, [("http://books:7000", None, "POST /records"), (None, None, "POST /records")], extra
+    )
+    result = architecture.reconcile(scope, documents)
+    assert bool(result["candidates"]) == joined
+    if joined:
+        assert result["candidates"][0]["binding_basis"] == "compose"
+
+
+def test_a_catch_all_forwarder_reaches_its_one_bound_peer(tmp_path):
+    _, documents = fixture(tmp_path)
+    service = {"deploy/service.yaml": SERVICE.format(name="ledger").encode()}
+    scope = _rewrite(
+        tmp_path, documents, [("http://ledger:9000", None, None), (None, None, "GET /records/<id>")], ({}, service)
+    )
+    (candidate,) = architecture.reconcile(scope, documents)["candidates"]
+    assert (candidate["operation"], candidate["operation_match"]) == ("*", "catch-all")
+    # A second receiving component behind the same binding is ambiguous.
+    other = copy.deepcopy(documents[1]["components"][0])
+    other["id"] = "second-service"
+    documents[1]["components"].append(other)
+    second = copy.deepcopy(documents[1]["interfaces"][0])
+    second.update(id="second-operation", component_id="second-service")
+    documents[1]["interfaces"].append(second)
+    result = architecture.reconcile(scope, documents)
+    assert result["candidates"] == []
+    assert "ambiguous-peer" in {r["reason"] for r in result["unresolved"]}
+
+
+def test_only_a_forwarding_request_may_omit_its_operation(tmp_path):
+    _, documents = fixture(tmp_path)
+    scope = _rewrite(tmp_path, documents, [("http://ledger:9000", None, "POST /records"), (None, None, None)])
+    with pytest.raises(architecture.ArchitectureError, match="forwarding"):
+        architecture.reconcile(scope, documents)

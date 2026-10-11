@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import posixpath
+import re
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
@@ -49,6 +52,10 @@ def validate_discovery(scope: AssessmentScope, expected_repository: str, documen
         interface_ids.add(interface["id"])
         if (interface["role"] in {"publish", "consume"}) != (interface["protocol"] in {"AMQP", "Kafka"}):
             raise ArchitectureError("Interface role and protocol disagree")
+        # Only a forwarder may leave its operation open: it passes on whatever
+        # path it receives. Every served route and topic names its operation.
+        if interface["operation"] is None and interface["role"] != "request":
+            raise ArchitectureError("Only a forwarding request may omit its operation")
         quotes = []
         for reference in interface["evidence"]:
             try:
@@ -74,23 +81,55 @@ def _operation(value: str) -> str:
     return value.split("?", 1)[0].rstrip("/") or value
 
 
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _split_host(host: str) -> tuple[str, int | None]:
+    """A host's name and explicit port, keeping a bracketed IPv6 literal whole."""
+    if host.startswith("["):
+        name, _, rest = host.partition("]")
+        name, port = name + "]", rest[1:] if rest.startswith(":") else ""
+    elif host.count(":") == 1:
+        name, port = host.split(":")
+    else:
+        name, port = host, ""
+    return name, int(port) if port.isdigit() else None
+
+
+def _is_listen_address(name: str) -> bool:
+    """A wildcard or loopback address only says where a server listens."""
+    return name in {"0.0.0.0", "*", "::", "[::]", "::1", "[::1]", "localhost"} or name.startswith("127.")
+
+
+def _address_parts(address: str | None) -> tuple[str | None, str | None, int | None]:
+    """Host, host name and port of an address, or nothing for a listen address.
+
+    The host is the address without scheme, credentials, path or virtual host.
+    The port is the explicit one, else the scheme's default.
+    """
+    if not address:
+        return None, None, None
+    scheme, _, rest = address.rpartition("://")
+    host = rest.rsplit("@", 1)[-1].split("/", 1)[0].lower()
+    name, port = _split_host(host)
+    if not name or _is_listen_address(name):
+        return None, None, None
+    return host, name, port if port is not None else _DEFAULT_PORTS.get(scheme.lower())
+
+
 def _endpoint(row: dict) -> tuple[str | None, str | None]:
     """The deployment binding and host an interface's cited identity establishes.
 
-    The host is the address without scheme, credentials, path or virtual host.
     The binding is the declared deployment, else the service a cluster-local
     (``<service>.<namespace>.svc``) or single-label host names. A public host
     alone is not a binding: equal addresses in separate deployments stay apart.
+    A listen address such as ``0.0.0.0`` names no peer and binds nothing.
     """
-    host = None
     binding = row["deployment"].lower() if row.get("deployment") else None
-    if row.get("address"):
-        rest = row["address"].split("://", 1)[-1].rsplit("@", 1)[-1]
-        host = rest.split("/", 1)[0].lower() or None
-        name = host.split(":", 1)[0] if host else ""
-        labels = name.split(".")
-        if binding is None and name and (len(labels) == 1 or (len(labels) >= 3 and labels[2] == "svc")):
-            binding = labels[0]
+    host, name, _port = _address_parts(row.get("address"))
+    labels = name.split(".") if name else []
+    if binding is None and labels and (len(labels) == 1 or (len(labels) >= 3 and labels[2] == "svc")):
+        binding = labels[0]
     return binding, host
 
 
@@ -125,6 +164,96 @@ def deployment_binding(scope: AssessmentScope, repository_id: str) -> dict | Non
     return found[0] if len(found) == 1 else None
 
 
+_COMPOSE_FILE = re.compile(r"(?:docker-)?compose(?:\.[a-z0-9_-]+)?\.ya?ml")
+_DNS_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
+_EXPOSE = re.compile(r"\s*EXPOSE\s+(.+)", re.IGNORECASE)
+
+
+def _line_of(text: str, wanted: str) -> int:
+    return next((n for n, value in enumerate(text.splitlines(), 1) if value.strip() == wanted), 1)
+
+
+def compose_bindings(scope: AssessmentScope) -> dict[str, list[dict]]:
+    """Compose service names whose build context is a selected repository.
+
+    A compose file in any selected repository may name the service another
+    selected repository builds. The context is resolved against the admitted
+    roots only to compare paths; nothing outside the captured bytes is read.
+    """
+    import yaml
+
+    roots = {r.repository_id: os.path.normpath(str(r.root)) for r in scope.repositories}
+    found: dict[str, list[dict]] = {}
+    for repo in scope.repositories:
+        for path, data in sorted(repo.files.items()):
+            if not _COMPOSE_FILE.fullmatch(posixpath.basename(path).lower()) or len(data) > _MAX_MANIFEST_BYTES:
+                continue
+            try:
+                text = data.decode("utf-8")
+                document = yaml.safe_load(text)
+            except (UnicodeDecodeError, yaml.YAMLError):
+                continue
+            services = document.get("services") if isinstance(document, dict) else None
+            for name, spec in sorted((services or {}).items(), key=lambda item: str(item[0])):
+                build = spec.get("build") if isinstance(spec, dict) else None
+                context = build.get("context", ".") if isinstance(build, dict) else build
+                if not isinstance(name, str) or not isinstance(context, str) or "://" in context:
+                    continue
+                target = os.path.normpath(os.path.join(roots[repo.repository_id], posixpath.dirname(path), context))
+                for rid, root in roots.items():
+                    if target == root and _DNS_LABEL.fullmatch(name.lower()):
+                        line = _line_of(text, name + ":")
+                        evidence = {"repository_id": repo.repository_id, "file": path, "line": line}
+                        found.setdefault(rid, []).append(
+                            {"name": name.lower(), "basis": "compose", "evidence": evidence}
+                        )
+    return found
+
+
+def repository_binding(scope: AssessmentScope, repository_id: str, label: str, interfaces: list[dict]) -> dict | None:
+    """The repository label as a service name, valid only at an evidenced port.
+
+    The selection of repositories as one system makes a client address naming
+    a selected repository a candidate peer. A matching port the receiver
+    exposes or listens on must corroborate it, so a coincidental name with
+    another port stays apart. A deduplicated label never forms a host name.
+    """
+    name = label.lower()
+    if not _DNS_LABEL.fullmatch(name):
+        return None
+    repo = next(r for r in scope.repositories if r.repository_id == repository_id)
+    ports, evidence = set(), None
+    for path, data in sorted(repo.files.items()):
+        base = posixpath.basename(path).lower()
+        if not (base == "dockerfile" or base.startswith("dockerfile.") or base.endswith(".dockerfile")):
+            continue
+        for number, value in enumerate(data.decode("utf-8", "replace").splitlines(), 1):
+            match = _EXPOSE.fullmatch(value)
+            exposed = (
+                [int(p.split("/", 1)[0]) for p in match.group(1).split() if p.split("/", 1)[0].isdigit()]
+                if match
+                else []
+            )
+            if exposed:
+                ports.update(exposed)
+                evidence = evidence or {"repository_id": repository_id, "file": path, "line": number}
+    for row in interfaces:
+        if row["repository_id"] == repository_id and row["role"] == "serve" and row.get("address"):
+            host = row["address"].rpartition("://")[2].rsplit("@", 1)[-1].split("/", 1)[0]
+            port = _split_host(host)[1]
+            if port is not None:
+                ports.add(port)
+                reference = row["evidence"][0]
+                evidence = evidence or {
+                    "repository_id": repository_id,
+                    "file": reference["file"],
+                    "line": reference["line"],
+                }
+    if not ports:
+        return None
+    return {"name": name, "basis": "repository-label", "evidence": evidence, "ports": frozenset(ports)}
+
+
 def reconcile(scope: AssessmentScope, discoveries: list[dict]) -> dict:
     """Namespace components and expose matches without promoting them to flows."""
     expected = {r.repository_id for r in scope.repositories}
@@ -153,52 +282,78 @@ def reconcile(scope: AssessmentScope, discoveries: list[dict]) -> dict:
             )
     unresolved = []
     identified = []
-    bindings = {r.repository_id: deployment_binding(scope, r.repository_id) for r in scope.repositories}
+    services = {r.repository_id: deployment_binding(scope, r.repository_id) for r in scope.repositories}
+    composed = compose_bindings(scope)
+    labels = {r["repository_id"]: r["label"] for r in scope.inventory()["repositories"]}
     for row in interfaces:
         binding, host = _endpoint(row)
-        declared = bindings[row["repository_id"]]
-        # A receiving interface without its own binding is bound by the one
-        # Service its repository declares (Kubernetes service selection).
-        if binding is None and declared and row["role"] in {"serve", "consume"}:
-            binding = declared["service"]
-        if binding is None:
+        rid = row["repository_id"]
+        if binding is not None:
+            basis = "declared" if row.get("deployment") else "address"
+            identities = [{"name": binding, "basis": basis, "evidence": None}]
+        else:
+            # A receiving interface without its own binding is bound by the
+            # deployment that builds or selects its repository: the one
+            # Kubernetes Service it declares or a compose service of the
+            # selection. Without either, its repository label binds it at an
+            # evidenced port only.
+            identities = []
+            if row["role"] in {"serve", "consume"} and services[rid]:
+                service = services[rid]
+                evidence = {k: service[k] for k in ("repository_id", "file", "line")}
+                identities.append({"name": service["service"], "basis": "service", "evidence": evidence})
+            if row["role"] == "serve":
+                identities.extend(composed.get(rid, []))
+                if not identities:
+                    label = repository_binding(scope, rid, labels[rid], interfaces)
+                    identities.extend([label] if label else [])
+        if not identities:
             unresolved.append({"interface_id": row["id"], "reason": "identity-not-established"})
             continue
-        identified.append((row, binding, host))
+        identified.append((row, identities, host))
     candidates = []
     used: set[str] = set()
     seen: set[tuple] = set()
-    for sender, binding, host in sorted(identified, key=lambda item: item[0]["id"]):
-        if sender["role"] not in {"request", "publish"}:
-            continue
+    for sender, (identity,), host in sorted(
+        ((row, ids, host) for row, ids, host in identified if row["role"] in {"request", "publish"}),
+        key=lambda item: item[0]["id"],
+    ):
+        binding = identity["name"]
         family = _PROTOCOL_FAMILY.get(sender["protocol"], sender["protocol"])
         receiving = "consume" if family in _MESSAGING else "serve"
-        operation = _operation(sender["operation"])
+        # A forwarder without its own operation reaches any route of its peer.
+        operation = None if sender["operation"] is None else _operation(sender["operation"])
+        port = _address_parts(sender.get("address"))[2]
         # A peer shares the protocol family, the operation and the deployment
-        # binding, and its host when both cite one. This only narrows the
-        # review; the architecture analyst decides each candidate from both
-        # sides' evidence.
-        peers = [
-            (receiver, peer_host)
-            for receiver, peer_binding, peer_host in identified
-            if receiver["role"] == receiving
-            and receiver["repository_id"] != sender["repository_id"]
-            and _PROTOCOL_FAMILY.get(receiver["protocol"], receiver["protocol"]) == family
-            and _operation(receiver["operation"]) == operation
-            and peer_binding == binding
-            and (host is None or peer_host is None or host == peer_host)
-        ]
+        # binding, and its host when both cite one. A port-corroborated label
+        # also needs the client's port. This only narrows the review; the
+        # architecture analyst decides each candidate from both sides' evidence.
+        peers = []
+        for receiver, identities, peer_host in identified:
+            match = next(
+                (i for i in identities if i["name"] == binding and ("ports" not in i or port in i["ports"])),
+                None,
+            )
+            if (
+                match
+                and receiver["role"] == receiving
+                and receiver["repository_id"] != sender["repository_id"]
+                and _PROTOCOL_FAMILY.get(receiver["protocol"], receiver["protocol"]) == family
+                and (operation is None or _operation(receiver["operation"]) == operation)
+                and (host is None or peer_host is None or host == peer_host)
+            ):
+                peers.append((receiver, peer_host, match))
         # Several interfaces of one receiving component (for example two
         # methods on one route) name one peer; only distinct components are
         # an ambiguity.
-        if len({receiver["component_id"] for receiver, _ in peers}) != 1:
+        if len({receiver["component_id"] for receiver, _, _ in peers}) != 1:
             unresolved.append(
                 {"interface_id": sender["id"], "reason": "ambiguous-peer" if peers else "no-matching-peer"}
             )
             used.add(sender["id"])
             continue
-        receiver, peer_host = min(peers, key=lambda pair: pair[0]["id"])
-        used.update([sender["id"], *(row["id"] for row, _ in peers)])
+        receiver, peer_host, match = min(peers, key=lambda item: item[0]["id"])
+        used.update([sender["id"], *(row["id"] for row, _, _ in peers)])
         key = (sender["component_id"], receiver["component_id"], receiver["protocol"], operation)
         if key in seen:
             continue
@@ -211,9 +366,12 @@ def reconcile(scope: AssessmentScope, discoveries: list[dict]) -> dict:
                 "from": sender["component_id"],
                 "to": receiver["component_id"],
                 "protocol": receiver["protocol"],
-                "operation": operation,
+                "operation": operation or "*",
+                "operation_match": "exact" if operation is not None else "catch-all",
                 "address": (host or peer_host or binding)[:240],
                 "deployment": binding[:120],
+                "binding_basis": match["basis"],
+                "binding_evidence": match["evidence"],
                 "status": "requires-architecture-review",
                 "via": "message-broker" if family in _MESSAGING else None,
             }

@@ -547,3 +547,41 @@ def test_a_local_flow_cannot_claim_a_reviewed_connection(tmp_path):
             artifact,
             ranges[:1],
         )
+
+
+@pytest.mark.parametrize(("kind", "rejected"), [("external-service", True), ("legitimate-role", False)])
+def test_local_architecture_cannot_repeat_a_reviewed_call_as_an_external_service(tmp_path, kind, rejected):
+    scope, components, evidence, ranges, identity = sources(tmp_path)
+    rid = evidence[0]["repository_id"]
+    local = next(c for c in components if c["repository_ids"] == [rid])
+    peer = dict(id="ext-peer", name="peer", kind=kind, description="Called peer.", evidence=[evidence[0]])
+    flow = dict(
+        id="df-001",
+        **(
+            {"from": local["id"], "to": "external", "to_entity": "ext-peer"}
+            if kind != "legitimate-role"
+            else {"from": "external", "from_entity": "ext-peer", "to": local["id"]}
+        ),
+        label="Peer call",
+        protocol="HTTP",
+        data_classification="unknown",
+        direction="unidirectional",
+        evidence=[evidence[0]],
+        provenance="architecture",
+    )
+    artifact = dict(**identity, repository_id=rid, data_flows=[flow], external_entities=[peer], assets=[])
+    reviewed = [dict(connection_id="connection-" + "a" * 16, evidence=[evidence[0]])]
+    arguments = (
+        scope,
+        rid,
+        dict(components=components, source_scope_sha256=identity["source_scope_sha256"]),
+        dict(component_inventory_fingerprint=FP),
+        artifact,
+        ranges,
+    )
+    if rejected:
+        with pytest.raises(ExchangeError, match="connection-a"):
+            stage.validate_local_architecture(*arguments, reviewed)
+    # Without a reviewed connection the same external call stays a valid local flow.
+    assert stage._reviewed_call_flows(rid, artifact, []) == []
+    assert stage._reviewed_call_flows(rid, artifact, reviewed) == (["connection-" + "a" * 16] if rejected else [])

@@ -240,7 +240,32 @@ def _placeable_domains() -> tuple[str, ...]:
     return tuple(title for title in sorted(_section_titles()) if not _unplaced_controls([{**probe, "domain": title}]))
 
 
-def validate_local_architecture(scope, repository_id, components, receipt, artifact, ranges):
+def _reviewed_call_flows(repository_id, artifact, connections) -> list[str]:
+    """Local flows that model a reviewed connection's call again as external.
+
+    A service peer is not a role: a flow between a local component and a
+    non-role external entity that cites a line of a reviewed connection in this
+    repository duplicates that connection. Role flows may cite a served route.
+    """
+    reviewed = {
+        (e["file"], e["line"]): flow["connection_id"]
+        for flow in connections
+        for e in flow["evidence"]
+        if e["repository_id"] == repository_id
+    }
+    services = {e["id"] for e in artifact["external_entities"] if e["kind"] != "legitimate-role"}
+    return sorted(
+        {
+            reviewed[(e["file"], e["line"])]
+            for flow in artifact["data_flows"]
+            if {flow.get("from_entity"), flow.get("to_entity")} & services
+            for e in flow.get("evidence") or []
+            if (e["file"], e["line"]) in reviewed
+        }
+    )
+
+
+def validate_local_architecture(scope, repository_id, components, receipt, artifact, ranges, connections=()):
     if not Draft202012Validator(contract("multi-repo-architecture.schema.json")).is_valid(artifact):
         raise ExchangeError("Local architecture violates its versioned contract")
     if (
@@ -260,6 +285,12 @@ def validate_local_architecture(scope, repository_id, components, receipt, artif
             raise ExchangeError("Local architecture must attach each flow to a selected component")
         if "connection_id" in flow:
             raise ExchangeError("Local architecture cannot mark a flow as a reviewed cross-repository connection")
+    duplicated = _reviewed_call_flows(repository_id, artifact, connections)
+    if duplicated:
+        raise ExchangeError(
+            "Local architecture models reviewed cross-repository connections again as external services: "
+            + ", ".join(duplicated)
+        )
     for asset in artifact["assets"]:
         if any(ref["component_id"] not in local_ids for ref in asset["component_refs"]):
             raise ExchangeError("Local asset refers to a component outside its repository")
