@@ -271,7 +271,6 @@ def test_route_rejects_live_phase(monkeypatch, tmp_path):
 @pytest.mark.parametrize(
     "arguments",
     [
-        ["--incremental"],
         ["--resume"],
         ["--dry-run"],
         ["--full", "--max-wall-time", "30m"],
@@ -288,21 +287,65 @@ def test_unsupported_modes_fail_before_output_mutation(monkeypatch, tmp_path, ar
     assert not output.exists()
 
 
-def test_an_existing_model_without_a_mode_flag_is_refused_before_output_mutation(monkeypatch, tmp_path, capsys):
-    """A bare rerun resolves to an automatic incremental scan; the refusal names the model that selected it."""
+@pytest.mark.parametrize("arguments", [[], ["--incremental"]], ids=["bare-rerun", "explicit"])
+def test_incremental_without_carry_state_is_refused_before_output_mutation(monkeypatch, tmp_path, arguments, capsys):
+    """A model without a verifiable carry baseline never becomes a silent full run (DP-3)."""
     output = tmp_path / "out"
     output.mkdir()
     (output / "threat-model.yaml").write_text("meta:\n  assessment_depth: standard\nthreats: []\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
 
-    code = controller.main(["route", "--", "--repo", str(tmp_path), "--output", str(output)])
+    code = controller.main(["route", "--", *arguments, "--repo", str(tmp_path), "--output", str(output)])
 
     assert code == 2
     action = json.loads(capsys.readouterr().out)
     assert action["action"] == "abort"
-    assert "existing threat model" in action["reason"]
+    assert "incremental run refused" in action["reason"]
     assert "--full" in action["reason"]
     assert sorted(path.name for path in output.iterdir()) == ["threat-model.yaml"]
+
+
+def test_incremental_without_an_existing_model_is_refused_before_output_mutation(monkeypatch, tmp_path, capsys):
+    output = tmp_path / "not-created"
+    monkeypatch.chdir(tmp_path)
+
+    code = controller.main(["route", "--", "--incremental", "--repo", str(tmp_path), "--output", str(output)])
+
+    assert code == 2
+    assert json.loads(capsys.readouterr().out)["action"] == "abort"
+    assert not output.exists()
+
+
+def test_shallower_incremental_is_refused_before_output_mutation(monkeypatch, tmp_path, capsys):
+    """Carried output would keep the deeper depth a shallower report cannot represent (DP-2)."""
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / "threat-model.yaml").write_text("meta:\n  assessment_depth: thorough\nthreats: []\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    code = controller.main(
+        ["route", "--", "--assessment-depth", "standard", "--repo", str(tmp_path), "--output", str(output)]
+    )
+
+    assert code == 2
+    action = json.loads(capsys.readouterr().out)
+    assert action["action"] == "abort"
+    assert "shallower" in action["reason"]
+    assert "--full" in action["reason"]
+    assert sorted(path.name for path in output.iterdir()) == ["threat-model.yaml"]
+
+
+def test_a_verified_incremental_run_routes_to_the_compact_runtime(monkeypatch, tmp_path):
+    cfg = _cfg(tmp_path, mode="incremental")
+    cfg["incremental"] = True
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    monkeypatch.setattr(controller.carry_plan, "admission_refusal", lambda *args, **kwargs: None)
+
+    action = controller.route([])
+
+    assert action["action"] == "load_runtime"
+    assert action["runtime"] == "thin-full"
+    assert action["mode"] == "incremental"
 
 
 def test_a_budget_refusal_creates_no_output(monkeypatch, tmp_path, capsys):
@@ -375,6 +418,81 @@ def test_full_prepare_wipes_only_intermediates(monkeypatch, tmp_path):
     assert not (output / ".fragments").exists()
     persisted = json.loads((output / ".skill-config.json").read_text())
     assert persisted["mode"] == "full"
+
+
+def _prepare_with_stubs(monkeypatch, cfg: dict, argv: list[str]) -> dict:
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    monkeypatch.setattr(controller, "_run_script", lambda name, args, **kwargs: _completed("LOCK_ACQUIRED\n"))
+    monkeypatch.setattr(controller, "_prepasses", lambda cfg, receipts: None)
+    monkeypatch.setattr(controller, "_fetch_requirements", lambda cfg: None)
+    monkeypatch.setattr(controller.resolve_config, "render_run_plan", lambda *args: "Threat Model — Pre-flight\n")
+    return controller.prepare(argv)
+
+
+@pytest.mark.parametrize(("eligible", "kept"), [(True, True), (False, False)])
+def test_full_prepare_keeps_the_recon_summary_only_for_recon_reuse(monkeypatch, tmp_path, eligible, kept):
+    """DP-4 reuse needs the prior summary `_recon_skip` verifies; any other run drops it."""
+    cfg = _cfg(tmp_path)
+    cfg["reuse_recon_eligible"] = eligible
+    output = Path(cfg["output_dir"])
+    output.mkdir(parents=True)
+    Path(cfg["repo_root"]).mkdir()
+    (output / ".recon-summary.md").write_text("# Recon\n", encoding="utf-8")
+    (output / ".recon-signals.json").write_text("{}", encoding="utf-8")
+    (output / ".threats-merged.json").write_text("{}", encoding="utf-8")
+
+    _prepare_with_stubs(monkeypatch, cfg, ["--full"])
+
+    assert (output / ".recon-summary.md").exists() is kept
+    assert not (output / ".threats-merged.json").exists()
+
+
+def test_recon_dispatch_clears_a_retained_summary_before_the_scanner_runs(tmp_path):
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / ".recon-summary.md").write_text("# stale\n", encoding="utf-8")
+    job = {
+        "job_id": "phase2-recon",
+        "semantic_role": "recon_scanner",
+        "input_artifacts": [".skill-config.json"],
+        "output_artifacts": [".recon-summary.md", ".recon-signals.json"],
+    }
+    controller._prepare_context_v2_dispatch_outputs(output, [job])
+    assert not (output / ".recon-summary.md").exists()
+
+
+def test_incremental_prepare_holds_verified_stride_outputs_out_of_the_cleanup(monkeypatch, tmp_path):
+    cfg = _cfg(tmp_path, mode="incremental")
+    cfg["incremental"] = True
+    output = Path(cfg["output_dir"])
+    output.mkdir(parents=True)
+    Path(cfg["repo_root"]).mkdir()
+    verified = output / ".stride-api.json"
+    verified.write_text('{"component_id": "api"}', encoding="utf-8")
+    stale = output / ".stride-worker.json"
+    stale.write_text('{"component_id": "worker"}', encoding="utf-8")
+    (output / ".appsec-cache").mkdir()
+    (output / ".appsec-cache" / "baseline.json").write_text(
+        json.dumps(
+            {
+                "stride_files": {
+                    "api": {"sha256": "sha256:" + hashlib.sha256(verified.read_bytes()).hexdigest()},
+                    "worker": {"sha256": "sha256:" + "0" * 64},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(controller.carry_plan, "admission_refusal", lambda *args, **kwargs: None)
+
+    action = _prepare_with_stubs(monkeypatch, cfg, [])
+
+    assert action["action"] == "dispatch_agent"
+    assert action["mode"] == "incremental"
+    assert (output / controller.carry_plan.CARRY_DIR / ".stride-api.json").is_file()
+    assert not verified.exists() and not stale.exists()
+    assert (output / ".appsec-cache" / "baseline.json").is_file()
+    assert json.loads((output / ".skill-config.json").read_text())["mode"] == "incremental"
 
 
 def test_prepare_passes_detected_session_model_to_box(monkeypatch, tmp_path):
@@ -3005,6 +3123,57 @@ def test_context_v2_post_stride_dispatches_merger_only_for_ambiguous_groups(tmp_
     assert action["dispatch_jobs"][0]["input_artifacts"] == [".merge-context/candidates.json"]
     assert action["dispatch_jobs"][0]["output_artifacts"] == [".merge-decisions.json"]
     assert action["artifact_receipts"][0]["artifact_path"] == ".merge-context/candidates.json"
+
+
+def _incremental_prepare_stride(tmp_path, monkeypatch, carried: list[str], wave_action):
+    output = _write_context_v2_config(tmp_path, mode="incremental", incremental=True)
+    (output / ".stride-analyst-context.json").write_text("{}", encoding="utf-8")
+
+    def fake_script(name, args, **kwargs):
+        if name == "orchestrator/build_stride_dispatch_manifest.py":
+            (output / ".stride-dispatch-manifest.json").write_text(
+                json.dumps({"context_version": 2, "components": [{"component_id": "api"}, {"component_id": "db"}]}),
+                encoding="utf-8",
+            )
+        return _completed()
+
+    plan = {
+        "schema_version": 1,
+        "baseline_commit": "a" * 40,
+        "changed_file_count": 1,
+        "carried": carried,
+        "reanalyzed": [{"component_id": c, "reason": "files_changed"} for c in ("api", "db") if c not in carried],
+    }
+    captured: dict = {}
+
+    def fake_wave(output_dir, cfg, manifest, *, initialize, extra_receipts=None):
+        captured["extra_receipts"] = extra_receipts
+        return wave_action
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+    monkeypatch.setattr(controller.carry_plan, "plan", lambda *args, **kwargs: plan)
+    monkeypatch.setattr(controller, "_context_v2_stride_wave_action", fake_wave)
+    monkeypatch.setattr(controller, "_normalize_context_v2_analyst_context", lambda output_dir: None)
+    monkeypatch.setattr(controller, "_apply_application_impact", lambda output_dir, cfg: None)
+    monkeypatch.setattr(controller, "_validate_context_v2_analyst_context", lambda output_dir, repo_root: None)
+    monkeypatch.setattr(evidence_bundles, "write_repository_registry", lambda repo_root, path: None)
+    monkeypatch.setattr(controller, "context_v2_post_stride", lambda output_dir: {"action": "post-stride-sentinel"})
+    return output, controller.context_v2_prepare_stride(output), captured
+
+
+def test_incremental_prepare_stride_dispatches_only_reanalyzed_components(tmp_path, monkeypatch):
+    output, action, captured = _incremental_prepare_stride(tmp_path, monkeypatch, ["db"], {"action": "dispatch"})
+    assert action == {"action": "dispatch"}
+    assert captured["extra_receipts"] == [
+        "incremental carry: 1 component(s) carried from the previous model, 1 re-analyzed"
+    ]
+    log = (output / ".agent-run.log").read_text(encoding="utf-8")
+    assert "INCREMENTAL_CARRY" in log and "carried=1 reanalyzed=1" in log
+
+
+def test_incremental_prepare_stride_with_every_component_carried_continues_past_stride(tmp_path, monkeypatch):
+    _output, action, _captured = _incremental_prepare_stride(tmp_path, monkeypatch, ["api", "db"], None)
+    assert action == {"action": "post-stride-sentinel"}
 
 
 def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeypatch, capsys):

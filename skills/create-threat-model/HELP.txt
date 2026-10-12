@@ -159,16 +159,19 @@ MODES
   --rerender                   Re-render the report + re-run QA from existing
                                fragments (no re-analysis); for fragment/render
                                changes, not code changes
+  --incremental                Re-analyze only components whose files changed
+                               and carry the rest from the previous model. A
+                               rerun without a mode flag over an existing model
+                               does the same. Refused before any change when
+                               the previous model cannot be carried (other
+                               depth, requirements setting or analysis
+                               version, no git baseline or .appsec-cache/).
 
   --base <ref>                 Git ref the change summary diffs against
                                (default: the prior scan commit)
 
-  These three modes are the supported ones. A run reassesses the whole
-  repository; reassess a changed repository with --full, which preserves
-  report history.
-
   Rejected before any run state changes or any agent is dispatched:
-  --incremental, --pr-mode, --resume, --dry-run, --max-wall-time
+  --pr-mode, --resume, --dry-run, --max-wall-time
   and APPSEC_LIVE_PHASE=1.
 
   --soft-budget <usd>          Steer the run to this cost. A run whose projected

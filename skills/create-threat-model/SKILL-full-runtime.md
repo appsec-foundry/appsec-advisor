@@ -1,6 +1,6 @@
 # Compact Full/Rebuild Runtime
 
-Only for `full` and `rebuild` scans. Unsupported modes are rejected by the
+Only for `full`, `incremental`, and `rebuild` scans. Unsupported modes are rejected by the
 router before dispatch or run-state mutation.
 
 The controller owns deterministic preflight/state; the session owns output,
@@ -69,8 +69,8 @@ The controller has already:
 
 - resolved and persisted config;
 - cleaned stale run state and quarantined corrupt intermediates;
-- preserved deep sections on `full`, or performed the exact destructive wipe
-  on `rebuild`;
+- preserved deep sections on `full` and `incremental`, or performed the exact
+  destructive wipe on `rebuild`;
 - acquired and heartbeated the run lock;
 - generated route, architecture-coverage, and source-auth prepasses;
 - fetched requirements according to the resolved fail mode;

@@ -643,7 +643,9 @@ def _analyze(current: _Run, answers: list[dict], transport_factory: TransportFac
         if errors:
             # Validator messages name locations and rules, never rejected values.
             shown = "; ".join(errors[:3])[:900]
-            note = f"The model reply failed validation ({len(errors)} problem(s)): {shown}. Nothing from it was published."
+            note = (
+                f"The model reply failed validation ({len(errors)} problem(s)): {shown}. Nothing from it was published."
+            )
             return current.finish("failed", "invalid_model_output", [note])
         wanted = reply.payload["evidence_requests"]
         rounds_left = current.counters["evidence_rounds"] < limits["evidence_rounds"]

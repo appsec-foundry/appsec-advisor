@@ -1736,6 +1736,12 @@ def test_reanalyzed_component_ids_detects_sha_mismatch(tmp_path):
     assert b._reanalyzed_component_ids(tmp_path) == {"auth"}
 
 
+def test_reanalyzed_component_ids_counts_a_component_the_baseline_never_analyzed(tmp_path):
+    _setup_incremental(tmp_path, prior_depth="standard", stride={"api": (b'{"b":1}', b'{"b":1}')})
+    (tmp_path / ".stride-billing.json").write_text('{"c":1}')
+    assert b._reanalyzed_component_ids(tmp_path) == {"billing"}
+
+
 def test_reanalyzed_component_ids_none_without_baseline(tmp_path):
     assert b._reanalyzed_component_ids(tmp_path) is None
 

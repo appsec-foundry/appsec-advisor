@@ -11,10 +11,11 @@ The headless wrapper uses the compact controller runtime only.
 | Mode | Command | Behavior |
 |---|---|---|
 | Full | `run-headless.sh` or `--full` | Reassesses the repository and preserves report history. |
+| Incremental | `run-headless.sh` without a mode flag over an existing model | Re-analyzes only changed components and carries the rest from the previous model; refused before output creation when the previous model cannot be carried, for example in a fresh clone without its `.appsec-cache/`. |
 | Rebuild | `--rebuild` | Clears the prior model and cache before a fresh assessment; IDs may change. |
 | Rerender | `--rerender` | Rebuilds the report from validated Stage-1 artifacts without analyzing source again. |
 
-Incremental, resume, assessment dry-run, PR mode, baseline restore,
+The `--incremental` flag, resume, assessment dry-run, PR mode, baseline restore,
 `--max-wall-time`, and `APPSEC_LIVE_PHASE=1` are unsupported.
 They fail before output creation, run-state mutation, or model dispatch. Use
 `--full` after source changes, `--rebuild` for a clean restart, and `--rerender`

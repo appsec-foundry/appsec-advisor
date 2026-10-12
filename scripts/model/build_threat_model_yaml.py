@@ -838,6 +838,12 @@ def _reanalyzed_component_ids(output_dir: Path) -> set[str] | None:
         actual = "sha256:" + hashlib.sha256(sfile.read_bytes()).hexdigest()
         if actual != (rec or {}).get("sha256"):
             changed.add(cid)
+    # A component the baseline never analyzed was analyzed by this run, so it
+    # is re-analyzed rather than carried forward.
+    for sfile in stride_output_files(output_dir):
+        cid = sfile.name[len(".stride-") : -len(".json")]
+        if cid not in prior_hashes:
+            changed.add(cid)
     return changed
 
 

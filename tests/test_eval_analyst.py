@@ -143,4 +143,3 @@ def test_score_reads_recorded_results_without_calling_a_model(tmp_path):
 def test_only_required_questions_are_answered():
     report = "- q-001 (optional): A?\n  Why: x\n- q-002 (required): B?\n  Why: y\n"
     assert ev._pending_question_ids(report) == ["q-002"]
-

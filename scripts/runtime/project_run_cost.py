@@ -123,7 +123,7 @@ def project(output_dir: Path | str, mode: str, depth: str, budget_usd: float | N
     # The floor describes a run that analyzes source. A rerender only rebuilds
     # the report from existing Stage-1 artifacts and costs a fraction of it, so
     # holding it against the analysis floor would refuse a run that easily fits.
-    analyses_source = (mode or "").lower() in {"full", "rebuild"}
+    analyses_source = (mode or "").lower() in {"full", "rebuild", "incremental"}
     if measured is not None and budget_usd < measured:
         result["fits"] = False
         result["reason"] = (

@@ -23,7 +23,7 @@
       ]
     },
     "mode": {
-      "enum": ["full", "rebuild", "rerender"]
+      "enum": ["full", "rebuild", "incremental", "rerender"]
     },
     "stage": {
       "type": "string",

@@ -154,9 +154,9 @@ revalidated before dispatch. The shared effective plan remains a controller
 audit artifact and never enters an Agent input or prompt.
 
 Both plan files are local audit artifacts. Successful runtime cleanup preserves
-them, while the next full or rebuild preflight removes them before a fresh plan
-is created. Incremental and resume invocations are refused before dispatch or
-run-state mutation; stale catalog,
+them, while the next full, incremental, or rebuild preflight removes them before a fresh plan
+is created. Resume invocations, and incremental ones whose carry state does
+not verify, are refused before dispatch or run-state mutation; stale catalog,
 binding, run, plan, or receipt bytes block rather than being carried forward.
 Diagnostic bundles include only their filename, byte count, and hash through
 the existing metadata inventory and never copy their contents.
@@ -395,8 +395,13 @@ schema-incompatible generation and requires a new full or rebuild run.
 
 ## Supported modes
 
-Full and rebuild use `SKILL-full-runtime.md`; rerender uses
-`SKILL-rerender-runtime.md`. Incremental, resume, dry-run, `--max-wall-time`,
+Full, incremental, and rebuild use `SKILL-full-runtime.md`; rerender uses
+`SKILL-rerender-runtime.md`. An incremental run is admitted only when
+`baseline/carry_plan.py` verifies the previous model as a carry baseline
+(decisions DP-2, DP-3); otherwise the router refuses it with the failing
+condition. It runs the full pipeline, and `context-v2-prepare-stride` restores
+the carried STRIDE outputs before the wave plan is initialized, so only the
+other components are dispatched (IN-5). Resume, dry-run, `--max-wall-time`,
 and `APPSEC_LIVE_PHASE=1` are unsupported until they have bounded
 controller implementations. The router resolves these invocations without
 creating their output directory, then aborts before dispatch or run-state

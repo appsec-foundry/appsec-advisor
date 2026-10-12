@@ -211,6 +211,8 @@ ALWAYS_FILES = [
     # an earlier run's verification.
     ".pending-dispatch.json",
     ".receipt-verification.json",
+    # Incremental carry decision of this run; the next run decides afresh.
+    ".incremental-carry.json",
 ]
 ALWAYS_DIRS = [
     ".progress",

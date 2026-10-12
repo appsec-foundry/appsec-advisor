@@ -77,6 +77,7 @@ PLUGIN_ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import analyzers.detect_session_model as detect_session_model  # noqa: E402
+import baseline.carry_plan as carry_plan  # noqa: E402
 import check_permissions  # noqa: E402
 import contexts.context_routing as context_routing  # noqa: E402
 import model.merge_threats as merge_decision_contract  # noqa: E402
@@ -1340,21 +1341,38 @@ def _unsupported_runtime_reason(cfg: dict[str, Any]) -> str | None:
         return "--dry-run is not implemented by the compact runtime"
     if cfg.get("resume"):
         return "--resume is not implemented by the compact runtime"
-    if cfg.get("mode") == "incremental" or cfg.get("incremental"):
-        # A bare rerun over an existing model resolves to an incremental scan
-        # without the user asking for one, so the refusal names that cause.
-        return (
-            "incremental scans are not implemented by the compact runtime, and the existing "
-            f"threat model at {cfg.get('output_dir') or 'the output directory'} selects one "
-            "unless a mode flag is given; pass --full to reassess it with its history preserved"
-        )
     if cfg.get("max_wall_time_seconds"):
         return "--max-wall-time is not implemented by the compact runtime"
     if os.environ.get("APPSEC_LIVE_PHASE") == "1" or cfg.get("live_phase"):
         return "APPSEC_LIVE_PHASE=1 is not implemented by the compact runtime"
+    if cfg.get("mode") == "incremental" or cfg.get("incremental"):
+        return _incremental_refusal(cfg)
     if cfg.get("mode") not in {"full", "rebuild", "rerender"}:
         return f"mode {cfg.get('mode')!r} is not implemented by the compact runtime"
     return None
+
+
+def _incremental_refusal(cfg: dict[str, Any]) -> str | None:
+    """Refuse an incremental run whose carry state does not verify (DP-2, DP-3).
+
+    Read-only. An incremental run never silently becomes a full one: a bare
+    rerun selects it without the user asking, so the refusal names that cause.
+    """
+    output_dir = Path(str(cfg.get("output_dir") or "."))
+    refusal = carry_plan.admission_refusal(
+        output_dir,
+        Path(str(cfg.get("repo_root") or ".")),
+        depth=str(cfg.get("assessment_depth") or "standard"),
+        check_requirements=bool(cfg.get("check_requirements")),
+        analysis_version=cfg.get("analysis_version"),
+    )
+    if refusal is None:
+        return None
+    if "--incremental" in str(cfg.get("mode_label") or ""):
+        cause = "--incremental was requested"
+    else:
+        cause = f"the existing threat model at {output_dir} selects an incremental run unless a mode flag is given"
+    return f"incremental run refused: {refusal}; {cause}. Pass --full to reassess it with its history preserved"
 
 
 def _budget_admission_reason(cfg: dict[str, Any]) -> str | None:
@@ -1403,7 +1421,7 @@ def _runtime_for(cfg: dict[str, Any]) -> tuple[str, Path]:
             f"declared budget cannot hold this run: {budget_reason}; no run state was changed and no agent "
             "was dispatched. Raise --soft-budget, or lower --assessment-depth."
         )
-    if cfg.get("mode") in {"full", "rebuild"} and not cfg.get("rerender"):
+    if cfg.get("mode") in {"full", "rebuild", "incremental"} and not cfg.get("rerender"):
         return "thin-full", THIN_RUNTIME
     if cfg.get("mode") == "rerender":
         return "thin-rerender", THIN_RERENDER_RUNTIME
@@ -1664,10 +1682,14 @@ def _remove_dir_entry(path: Path) -> bool:
 
 # Full analysis resets intermediate state while retaining prior deliverables
 # and baseline history. Rebuild below deliberately has a wider removal scope.
-def _cleanup_full(output_dir: Path) -> list[str]:
+def _cleanup_full(output_dir: Path, *, keep_recon_summary: bool = False) -> list[str]:
+    # A run eligible for recon reuse (DP-4) keeps the prior summary for
+    # `_recon_skip` to verify; a recon dispatch clears it before it runs, so a
+    # stale summary never satisfies the recon wave.
+    names = _FULL_INTERMEDIATE_NAMES - {".recon-summary.md"} if keep_recon_summary else _FULL_INTERMEDIATE_NAMES
     removed = _unlink_matching(
         output_dir,
-        _FULL_INTERMEDIATE_NAMES,
+        names,
         _FULL_INTERMEDIATE_GLOBS,
     )
     for name in (".progress", ".fragments"):
@@ -2441,7 +2463,7 @@ def prepare(argv: list[str], *, force: bool = False, interactive_context: bool =
             for name in existing_names
         )
 
-    if cfg["mode"] in {"full", "rebuild"} and _checkpoint_needs_render(output_dir) and not force:
+    if cfg["mode"] in {"full", "rebuild", "incremental"} and _checkpoint_needs_render(output_dir) and not force:
         return {
             "schema_version": 1,
             "action": "abort",
@@ -2479,7 +2501,7 @@ def prepare(argv: list[str], *, force: bool = False, interactive_context: bool =
             acceptable=(0, 1, 2),
         )
 
-        if cfg["mode"] == "full":
+        if cfg["mode"] in {"full", "incremental"}:
             _run_script(
                 "repairs/snapshot_preserved_sections.py",
                 [
@@ -2491,7 +2513,15 @@ def prepare(argv: list[str], *, force: bool = False, interactive_context: bool =
                 ],
                 acceptable=(0, 1, 2),
             )
-            removed = _cleanup_full(output_dir)
+            # The incremental run moves its hash-verified prior STRIDE outputs
+            # out of the cleanup's reach; `context_v2_prepare_stride` decides
+            # which of them still carry.
+            if cfg["mode"] == "incremental":
+                stashed = carry_plan.stash(output_dir)
+                receipts.append(f"incremental carry: {len(stashed)} prior STRIDE output(s) held for reuse")
+            else:
+                carry_plan.discard(output_dir)
+            removed = _cleanup_full(output_dir, keep_recon_summary=bool(cfg.get("reuse_recon_eligible")))
         else:
             removed = _cleanup_rebuild(output_dir)
             cfg["baseline_state"] = "empty"
@@ -5630,6 +5660,7 @@ def _context_v2_stride_wave_action(
     manifest: dict[str, Any],
     *,
     initialize: bool,
+    extra_receipts: list[str] | None = None,
 ) -> dict[str, Any] | None:
     """Claim and admit exactly one persisted STRIDE wave.
 
@@ -5651,6 +5682,7 @@ def _context_v2_stride_wave_action(
         "dispatch_jobs": jobs,
         "artifact_receipts": structured,
         "receipts": [
+            *(extra_receipts or []),
             f"Context-v2 STRIDE wave admitted for {len(jobs)} component(s) after persisted attempt accounting",
             *([f"Thin evidence routing (advisory): {'; '.join(thin_coverage[:6])}"] if thin_coverage else []),
         ],
@@ -5701,9 +5733,38 @@ def context_v2_prepare_stride(output_dir: Path) -> dict[str, Any]:
     manifest_path = output_dir / ".stride-dispatch-manifest.json"
     _run_script("validators/validate_dispatch_manifest.py", [str(manifest_path), str(output_dir)])
     manifest = _load_json_object(manifest_path, contract="stride-dispatch-manifest-v2")
-    action = _context_v2_stride_wave_action(output_dir, cfg, manifest, initialize=True)
+    carry_receipts: list[str] = []
+    if cfg.get("mode") == "incremental":
+        # Restore carried outputs before the wave plan is initialized: the plan
+        # treats a valid canonical file as complete and dispatches the rest.
+        try:
+            carry = carry_plan.plan(
+                output_dir,
+                repo_root,
+                manifest,
+                check_requirements=bool(cfg.get("check_requirements")),
+            )
+        except carry_plan.CarryError as exc:
+            raise ControllerError(f"incremental carry state could not be verified: {exc}") from exc
+        reasons = Counter(row["reason"] for row in carry["reanalyzed"])
+        _append_event(
+            output_dir,
+            "INCREMENTAL_CARRY",
+            f"carried={len(carry['carried'])} reanalyzed={len(carry['reanalyzed'])} "
+            f"changed_files={carry['changed_file_count']} baseline={carry['baseline_commit']} "
+            + " ".join(f"{reason}={count}" for reason, count in sorted(reasons.items())),
+        )
+        carry_receipts.append(
+            f"incremental carry: {len(carry['carried'])} component(s) carried from the previous model, "
+            f"{len(carry['reanalyzed'])} re-analyzed"
+        )
+    action = _context_v2_stride_wave_action(output_dir, cfg, manifest, initialize=True, extra_receipts=carry_receipts)
     if action is None:
-        raise ControllerError("new context-v2 STRIDE wave plan unexpectedly has no pending components")
+        if not carry_receipts:
+            raise ControllerError("new context-v2 STRIDE wave plan unexpectedly has no pending components")
+        # Every component carried: continue exactly as a joined final wave does.
+        # The INCREMENTAL_CARRY event above records the carry for this path.
+        return context_v2_post_stride(output_dir)
     return action
 
 
@@ -9442,6 +9503,7 @@ _FULL_INTERMEDIATE_NAMES = {
     ".budget-warning",
     ".trust-boundary-assessment-input.json",
     ".trust-boundary-candidates.json",
+    ".incremental-carry.json",
     # Business context supplied for a previous run. `effective_source` gives the
     # run-only file precedence over the repository's own, so a leftover would
     # shadow `docs/security/business-context.md` and rate this run against a document

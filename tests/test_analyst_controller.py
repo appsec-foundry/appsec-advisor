@@ -1389,7 +1389,9 @@ def test_a_removed_control_is_accepted_with_proposed_code_in_the_evidence(
 
 def test_an_unchanged_baseline_line_does_not_prove_a_removal(tmp_path, state_root):
     repo = _removal_repo(
-        tmp_path, "app.js", "const app = express()\napp.use(csrf())\napp.use('/notes', notes)\n",
+        tmp_path,
+        "app.js",
+        "const app = express()\napp.use(csrf())\napp.use('/notes', notes)\n",
         "const app = express()\napp.use('/notes', notes)\n",
     )
     finding = removed_check_finding(

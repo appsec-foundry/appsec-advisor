@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Threat Analyst checks concrete threat hypotheses or a single defined abuse case (`--abuse-case <ID>`) against selected files at a Git revision and rates each attack-chain step with evidence.
 - The Threat Analyst can explore a redacted, read-only copy of the repository with `--explore`, answers a concrete question about a change with `--question`, and recommends controls linked to existing threat-model findings.
 - `/appsec-advisor:abuse-cases` lists the defined technical and business abuse cases with their origin and recorded result, and `/appsec-advisor:abuse-cases <ID>` explains one case step by step.
+- Rerunning `/appsec-advisor:create-threat-model` over an existing model, or passing `--incremental`, re-analyzes only components whose files changed and carries the others' STRIDE results, and is refused before any change when the previous model cannot be carried.
 - Figure 1 marks network trust boundaries within a column and into every data store, and Figure 1b draws evidenced build trust boundaries at the column borders they cross, pale when only inferred.
 
 ### Changed

@@ -333,5 +333,38 @@ def test_removed_incremental_gate_bypass_is_rejected(tmp_path):
     assert "unrecognized arguments" in result.stderr
 
 
+def _write_carry(output_dir: Path, carried: list[str], reanalyzed: list[str]) -> None:
+    plan = {
+        "schema_version": 1,
+        "baseline_commit": "a" * 40,
+        "changed_file_count": 1,
+        "carried": carried,
+        "reanalyzed": [{"component_id": cid, "reason": "files_changed"} for cid in reanalyzed],
+    }
+    (output_dir / ".incremental-carry.json").write_text(json.dumps(plan), encoding="utf-8")
+
+
+def test_carried_components_are_not_reported_as_inlined(tmp_path):
+    """An incremental run carries outputs it never dispatched; only the re-analyzed one needs evidence."""
+    _write_manifest(tmp_path, "backend-api", "frontend-spa", generated_at="2026-06-05T09:00:00Z")
+    _write_stride(tmp_path, "backend-api", _real_stride())
+    _write_stride(tmp_path, "frontend-spa", _real_stride())
+    _write_progress(tmp_path, "backend-api")
+    _write_carry(tmp_path, ["frontend-spa"], ["backend-api"])
+    assert _run(tmp_path) == 0
+    # The carry record exempts only the components it names.
+    _write_carry(tmp_path, [], ["backend-api", "frontend-spa"])
+    assert _run(tmp_path) == 2
+
+
+def test_carried_components_reduce_the_expected_spawn_count(tmp_path):
+    _write_manifest(tmp_path, "backend-api", "frontend-spa", generated_at="2026-06-05T09:00:00Z")
+    _write_stride(tmp_path, "backend-api", _real_stride())
+    _write_stride(tmp_path, "frontend-spa", _real_stride())
+    _write_spawns(tmp_path, 1)
+    _write_carry(tmp_path, ["frontend-spa"], ["backend-api"])
+    assert _run(tmp_path) == 0
+
+
 def test_bad_path_errors(tmp_path):
     assert _run(tmp_path / "does-not-exist") == 3

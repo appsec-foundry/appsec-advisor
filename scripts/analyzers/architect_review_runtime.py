@@ -522,7 +522,7 @@ def main(argv: list[str] | None = None) -> int:
         value = verify_model(args.output_dir, model)
         cfg_path = args.output_dir / ".skill-config.json"
         cfg = _read(cfg_path) if cfg_path.exists() else {}
-        if value is None and cfg.get("architect_review") and cfg.get("mode", "full") in {"full", "rebuild"}:
+        if value is None and cfg.get("architect_review") and cfg.get("mode", "full") in {"full", "rebuild", "incremental"}:
             raise ReviewError("required architect review transaction is missing")
         # The gate verifies preservation; review completeness is reported
         # separately, so an unavailable review still closes with status pass.

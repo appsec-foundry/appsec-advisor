@@ -84,7 +84,7 @@ flowchart LR
 
 ### Create or update the model
 
-Use `/appsec-advisor:create-threat-model` for the first assessment. After a code change, `/appsec-advisor:create-threat-model --full` reassesses the repository while preserving report history. Incremental updates are not supported by the compact runtime.
+Use `/appsec-advisor:create-threat-model` for the first assessment. After a code change, running it again without a mode flag, or with `--incremental`, re-analyzes only the components whose files changed and carries the STRIDE results of the others from the previous model. The run is refused before it changes anything when the previous model cannot be carried: a different `--assessment-depth`, a changed requirements setting or plugin analysis version, a combined multi-repository model, or a missing git history or `.appsec-cache/` as in a fresh clone. `/appsec-advisor:create-threat-model --full` reassesses every component while preserving report history.
 
 `--full` overwrites the model but preserves changelog history, and prints a Change Summary against the previous run. `--rebuild` deliberately clears the prior model, cache, and history, allowing finding IDs to be reassigned; audit logs are kept.
 

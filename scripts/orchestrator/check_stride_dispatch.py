@@ -73,9 +73,8 @@ The check is intentionally narrow so it never false-positives on:
   * **Empty / partial wrap-ups** — ``{"threats": []}``. No real work to
     attribute, excluded.
   * **Incremental carry-forward** — a reused ``.stride-<id>.json`` has no
-    fresh progress file by design. The whole gate is skipped when
-    ``--incremental`` is passed (carry-forward makes progress-file absence
-    ambiguous).
+    fresh progress file and no dispatch by design. Components listed as
+    carried in ``.incremental-carry.json`` are excluded from both checks.
 
 Timing
 ------
@@ -86,7 +85,7 @@ per-component progress files are still on disk when this script runs.
 
 Usage
 -----
-    python3 scripts/orchestrator/check_stride_dispatch.py <output-dir> [--incremental]
+    python3 scripts/orchestrator/check_stride_dispatch.py <output-dir>
 """
 
 from __future__ import annotations
@@ -105,6 +104,7 @@ import re
 import sys
 from pathlib import Path
 
+import baseline.carry_plan as carry_plan
 from runtime.stride_outputs import stride_output_files
 
 import orchestrator.stride_dispatch_waves as stride_dispatch_waves
@@ -244,7 +244,8 @@ def _stride_was_dispatched(output_dir: Path) -> bool:
     """
     manifest = _read_manifest(output_dir)
     comps = manifest.get("components")
-    expected = len(comps) if isinstance(comps, list) else 0
+    # A component an incremental run carried was not dispatched by design.
+    expected = len(comps) - len(carry_plan.carried_ids(output_dir)) if isinstance(comps, list) else 0
     if expected > 0:
         # Bound the spawn count to this run via the manifest's own timestamp —
         # the fan-out reads the manifest, so every real spawn is at-or-after it.
@@ -269,9 +270,12 @@ def detect_inlined_components(output_dir: Path) -> list[str]:
     if _stride_was_dispatched(output_dir):
         return []
     progress_dir = output_dir / ".progress"
+    carried = carry_plan.carried_ids(output_dir)
     inlined: list[str] = []
     for stride_path in stride_output_files(output_dir):
         cid = _component_id(stride_path)
+        if cid in carried:
+            continue  # carried from the previous model, never dispatched in this run
         if not _stride_has_real_threats(stride_path):
             continue  # stub or empty — legitimately inline / no work
         if not (progress_dir / f"{cid}.json").is_file():

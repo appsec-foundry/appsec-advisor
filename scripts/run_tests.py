@@ -319,6 +319,7 @@ GROUPS = {
     "incremental": _tests("""
         analysis_version_upgrade
         build_threat_model_yaml
+        carry_plan
         incremental_two_run_e2e
         persist_run_baseline
         validate_cache
@@ -1444,6 +1445,7 @@ SOURCE_TESTS = {
         refusal_aware_stride
     """),
     "scripts/orchestrator/stride_dispatch_waves.py": _tests("""
+        carry_plan
         check_stride_dispatch
         check_target_specificity
         gate_preconditions
@@ -3963,6 +3965,20 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
     """),
+    "scripts/baseline/carry_plan.py": _tests("""
+        carry_plan
+        check_stride_dispatch
+        check_target_specificity
+        gate_preconditions
+        orchestration_controller
+        requirements_verification
+        run_path_guard
+    """),
+    "schemas/incremental-carry.schema.json": _tests("""
+        carry_plan
+        check_stride_dispatch
+        schemas
+    """),
     "scripts/baseline/baseline_check.py": _tests("""
         appsec_status
         baseline_check
@@ -4014,6 +4030,7 @@ SOURCE_TESTS = {
         portable_model_readers
         analysis_version_upgrade
         baseline_content_unchanged
+        carry_plan
         baseline_state_coverage
         check_target_specificity
         e2e_pipeline
@@ -6036,6 +6053,7 @@ SOURCE_TESTS = {
     """),
     "scripts/analyzers/security_relevance_filter.py": _tests("""
         baseline_content_unchanged
+        carry_plan
         baseline_state_coverage
         check_target_specificity
         gate_preconditions

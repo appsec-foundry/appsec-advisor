@@ -26,7 +26,11 @@ from analyzers.weakness_signals import finding_signals, validate_document
         ("CWE-77", "child_process.execSync(`convert ${file} out.png`)", "application-data-as-command"),
         # Access gates granting entry on a caller-set value.
         ("CWE-288", 'if (req.query.debug === "1") return next();', "request-controlled-authentication-bypass"),
-        ("CWE-288", 'if request.headers.get("X-Internal") == "yes": return view', "request-controlled-authentication-bypass"),
+        (
+            "CWE-288",
+            'if request.headers.get("X-Internal") == "yes": return view',
+            "request-controlled-authentication-bypass",
+        ),
         # Database engines evaluating application values as JavaScript.
         ("CWE-94", "db.reviews.find({ $where: 'this.product == ' + id })", "application-data-as-code"),
         ("CWE-95", 'rows = collection.find({"$where": f"this.owner == {owner}"})', "application-data-as-code"),

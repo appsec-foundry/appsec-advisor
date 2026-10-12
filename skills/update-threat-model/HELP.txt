@@ -1,9 +1,14 @@
-update-threat-model — unavailable in the compact runtime
+update-threat-model — how to update an existing threat model
 
-  Incremental updates are not supported and this command never dispatches an
-  agent or changes run state.
+  This command only explains the update path; it never dispatches an agent or
+  changes run state.
 
-  Reassess while preserving prior history:
+  Re-analyze only changed components and carry the rest:
+
+    /appsec-advisor:create-threat-model
+    /appsec-advisor:create-threat-model --incremental
+
+  Reassess every component while preserving prior history:
 
     /appsec-advisor:create-threat-model --full
 

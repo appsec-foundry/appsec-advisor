@@ -50,6 +50,7 @@ Audit artifacts (`docs/internal/contracts/audit-artifacts.md`) and incremental a
 .business-context-raw.md
 .pending-dispatch.json
 .receipt-verification.json
+.incremental-carry.json
 ```
 
 `.business-context-input.md` is business context the user supplied for one run without persisting it to `docs/security/business-context.md`. It is cleaned like any other run input so it cannot shape a later scan unnoticed. Persistent `business-context.md` is never a run-cleanup target, including when the output directory is `docs/security/`.
@@ -58,6 +59,8 @@ Audit artifacts (`docs/internal/contracts/audit-artifacts.md`) and incremental a
 is waiting for its receipts to be re-hashed and which ones were. Both belong to
 one run's dispatch chain; carrying them forward would let a boundary pass on an
 earlier run's verification.
+
+`.incremental-carry.json` records which components one incremental run carried from the previous model. The carry area `.appsec-cache/carry/` is not in this list: the run empties it when it restores the carried STRIDE outputs, and the next full or incremental preflight removes a leftover one.
 
 ## Opt-outs
 

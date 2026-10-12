@@ -488,6 +488,32 @@ def completion_error(
     return None
 
 
+def carried_output_error(output_dir: Path, component_id: str, data: Any) -> str | None:
+    """Why a prior run's canonical output cannot be carried unchanged, or ``None``.
+
+    A carried file must pass the canonical completion gate with no repair:
+    ``completion_error`` persists its repairs, and a carried file that changed
+    on restore would no longer be the analysis its baseline hash recorded.
+    """
+    if not isinstance(data, dict):
+        return "output root is not an object"
+    if data.get("component_id") != component_id:
+        return f"component_id mismatch: {data.get('component_id')!r}"
+    if isinstance(data.get("coverage_declined"), dict):
+        return "prior analysis declared a coverage gap"
+    if data.get("partial") is not False or data.get("skipped_categories") != []:
+        return "prior analysis is partial"
+    if not isinstance(data.get("threats"), list):
+        return "threats is not an array"
+    candidate = copy.deepcopy(data)
+    if _repair_in_place(output_dir, component_id, candidate, log_pruned=False):
+        return "prior analysis needs repair under the current contract"
+    errors = _gate_validation_errors(output_dir, candidate)
+    if errors:
+        return "schema validation failed: " + "; ".join(errors[:3])
+    return None
+
+
 #: Bounds for the rejection a retry receives; the error list is the gate's own
 #: wording and names threats by index, so the rejected threats travel with it.
 REPAIR_MAX_ERRORS = 20
