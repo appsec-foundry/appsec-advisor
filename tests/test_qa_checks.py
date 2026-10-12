@@ -2475,7 +2475,7 @@ class TestTableSchemaDriftClassification:
         assert set(qa._TABLE_LABEL_TO_SECTION) == {
             "Top Threats",
             "Operational Strengths",
-            "Top Mitigations",
+            "Remediation Priorities",
         }
         assert "Top Findings" not in qa._TABLE_LABEL_TO_SECTION
         assert "Prioritized Mitigations" not in qa._TABLE_LABEL_TO_SECTION
@@ -4339,13 +4339,6 @@ def test_autofix_priority_circle_styling_is_idempotent(tmp_path: Path):
     assert 'style="color:' not in second  # no fragile colour span
 
 
-# ---------------------------------------------------------------------------
-# MS "Top Weaknesses" proof run stays BARE — the single weakness dot owns the
-# bullet's severity signal, so the finding refs must NOT pick up the global
-# severity-dot / title-suffix enrichment (user 2026-07-15). Every other
-# context still gets its dots + titles.
-# ---------------------------------------------------------------------------
-
 _TW_YAML = textwrap.dedent(
     """\
     threats:
@@ -4366,42 +4359,46 @@ def _write_tw_pair(path: Path, md_body: str) -> Path:
     return f
 
 
-def test_annotate_id_refs_skips_top_weaknesses_proof_dots(tmp_path: Path):
-    md = _write_tw_pair(
-        tmp_path,
-        "## Management Summary\n\n"
-        "- 🔴 **[W-001](#w-001) — Endpoints reachable** (Critical) — desc. "
-        "_Proven by [F-013](#f-013), [F-014](#f-014)._\n\n"
-        "Normal prose ref to [F-013](#f-013) elsewhere.\n",
-    )
+# ---------------------------------------------------------------------------
+# The Remediation Priorities table is raw HTML. Markdown is not parsed inside
+# it, so the QA link and dot passes must leave its anchors untouched.
+# ---------------------------------------------------------------------------
+
+_RP_YAML = textwrap.dedent(
+    """\
+    threats:
+      - id: T-013
+        title: Anonymous Attacker Obtains ADMIN Role
+        severity: critical
+    mitigations:
+      - id: M-001
+        title: Require the admin role server-side
+        priority: P1
+        threat_ids: [T-013]
+    """
+)
+
+_RP_ROW = (
+    '<tr><td rowspan="1">🔴 <a href="#w-001">W-001</a> - Endpoints reachable</td>'
+    '<td>● <a href="#m-001">M-001</a> - Require the admin role server-side</td>'
+    '<td>🔴 <a href="#f-013">F-013</a></td><td>Low</td></tr>'
+)
+
+
+def _write_rp_pair(path: Path) -> Path:
+    (path / "threat-model.yaml").write_text(_RP_YAML)
+    f = path / "threat-model.md"
+    f.write_text("## Management Summary\n\n" + _RP_ROW + "\n\nNormal prose ref to F-013 elsewhere.\n")
+    return f
+
+
+def test_qa_link_passes_leave_remediation_table_anchors_untouched(tmp_path: Path):
+    md = _write_rp_pair(tmp_path)
     qa._annotate_id_refs(md)
-    out = md.read_text()
-    tw_line = next(ln for ln in out.splitlines() if "_Proven by" in ln)
-    normal_line = next(ln for ln in out.splitlines() if "Normal prose" in ln)
-    # Proof run: bare, no severity dot injected before its F-refs.
-    assert "🔴 [F-013]" not in tw_line and "[F-013](#f-013)" in tw_line
-    # The weakness's own dot survives.
-    assert "🔴 **[W-001]" in tw_line
-    # A normal F-ref elsewhere DID get its severity dot.
-    assert "🔴 [F-013](#f-013)" in normal_line
-
-
-def test_linkify_anchors_skips_top_weaknesses_proof_titles(tmp_path: Path):
-    md = _write_tw_pair(
-        tmp_path,
-        "## Management Summary\n\n"
-        "- 🔴 **[W-001](#w-001) — Endpoints reachable** (Critical) — desc. "
-        "_Proven by [F-013](#f-013), [F-014](#f-014)._\n\n"
-        "Normal prose ref to [F-014](#f-014) elsewhere.\n",
-    )
     _report, new_text = qa.linkify_anchors(md)
-    tw_line = next(ln for ln in new_text.splitlines() if "_Proven by" in ln)
+    assert _RP_ROW in new_text.splitlines()
     normal_line = next(ln for ln in new_text.splitlines() if "Normal prose" in ln)
-    # Proof run: no `— Title` suffix appended to its F-refs.
-    assert "Anonymous Attacker" not in tw_line
-    assert "H2 Database Console" not in tw_line
-    # A normal F-ref elsewhere DID get its title suffix.
-    assert "F-014](#f-014) — H2 Database Console" in normal_line
+    assert "[F-013](#f-013) — Anonymous Attacker Obtains ADMIN Role" in normal_line
 
 
 @pytest.mark.parametrize(

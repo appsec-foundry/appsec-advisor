@@ -79,7 +79,6 @@ FRAGMENT_SCHEMAS: dict[str, str] = {
     "security-posture-attack-paths": "security-posture-attack-paths.schema.json",
     "anti-patterns": "anti-patterns.schema.json",
     "ai-exposure": "ai-exposure.schema.json",
-    "ms-top-mitigations": "ms-top-mitigations.schema.json",
     # Substep 2 deterministic migration sidecars. These are INPUTS to
     # scripts/model/build_threat_model_yaml.py, NOT render fragments — they
     # live at $OUTPUT_DIR/.X.json (dot-prefix, repo root of output_dir)
@@ -122,7 +121,6 @@ _FRAGMENT_FILENAMES: dict[str, str] = {
     "security-posture-attack-paths": "security-posture-attack-paths.json",
     "anti-patterns": "ms-anti-patterns.json",
     "ai-exposure": "ms-ai-exposure.json",
-    "ms-top-mitigations": "ms-top-mitigations.json",
 }
 
 _URL_OR_DRIVE_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|[A-Za-z][A-Za-z0-9+.-]*://)")

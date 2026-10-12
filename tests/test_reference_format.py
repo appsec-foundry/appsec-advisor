@@ -320,6 +320,20 @@ def test_bare_ref_skips_code_links_anchors_headings():
     assert compose._linkify_bare_finding_refs(ctx, row) == row
 
 
+def test_bare_ref_in_html_table_row_stays_html():
+    ctx = _ctx_with_locals()
+    # An ID that is already the text of an HTML anchor is not linked again.
+    linked = '<tr><td>🔴 <a href="#f-007">F-007</a></td></tr>'
+    assert compose._linkify_bare_finding_refs(ctx, linked) == linked
+    # A bare ID in a raw HTML row gets an HTML anchor; markdown is not parsed there.
+    row = "<tr><td>Encode output (F-010) and auth-004</td></tr>"
+    assert compose._linkify_bare_finding_refs(ctx, row) == (
+        '<tr><td>Encode output (<a href="#f-010">F-010</a>) and <a href="#f-012">F-012</a></td></tr>'
+    )
+    # Outside an HTML row the same text keeps the markdown link.
+    assert compose._linkify_bare_finding_refs(ctx, "Encode output (F-010).") == "Encode output ([F-010](#f-010))."
+
+
 def test_bare_ref_no_false_positive_on_versions():
     ctx = _ctx_with_locals()
     # `sha-256` matches the id shape but is not a known local_id → untouched.

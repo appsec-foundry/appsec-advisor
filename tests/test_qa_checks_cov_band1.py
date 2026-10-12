@@ -480,9 +480,9 @@ _GOOD_MS = (
     "## Management Summary\n"
     "### Verdict\n"
     '<blockquote style="border-left: 3px solid #dc2626; padding:1px">worst case</blockquote>\n'
-    "### Security Posture & Top Threats\n"
+    "### Remediation Priorities\n"
     "body\n"
-    "### Top Mitigations\n"
+    "### Security Posture & Top Threats\n"
     "body\n"
     "### Operational Strengths\n"
     "body\n"
@@ -513,7 +513,7 @@ def test_ms_structure_strips_numeric_prefix(tmp_path: Path):
 
 
 def test_ms_structure_renames_legacy_subsection(tmp_path: Path):
-    src = _GOOD_MS.replace("### Top Mitigations", "### Follow-up Actions")
+    src = _GOOD_MS.replace("### Remediation Priorities", "### Follow-up Actions")
     md = _md(tmp_path, src)
     report, new_text = qa.check_ms_structure(md)
     assert any("Renamed" in f for f in report.fixes)
@@ -572,7 +572,6 @@ def test_ms_structure_requires_selected_team_questions_in_the_canonical_slot(tmp
     _write_question_model(tmp_path)
     src = _GOOD_MS.replace(
         "### Security Posture & Top Threats",
-        "### Top Weaknesses\nbody\n"
         "### Open Questions for the Team\n"
         "The analysis could not fully resolve these points from the code.\n"
         "- [W-001](#w-001): [F-001](#f-001) — Which policy owns authorization?\n"
@@ -593,8 +592,8 @@ def test_ms_structure_flags_a_missing_or_misplaced_selected_question_block(tmp_p
     assert any("missing deterministic sub-section" in issue for issue in report.issues)
 
     misplaced_text = anchored.replace(
-        "### Top Mitigations\nbody\n",
-        "### Top Mitigations\nbody\n### Open Questions for the Team\nbody\n",
+        "### Operational Strengths\nbody\n",
+        "### Operational Strengths\nbody\n### Open Questions for the Team\nbody\n",
     )
     misplaced = _md(tmp_path, misplaced_text)
     report, _ = qa.check_ms_structure(misplaced)
@@ -899,8 +898,8 @@ _DOC_WITH_MISSING_SECTION = (
     "## Management Summary\n"
     "### Verdict\n"
     '<blockquote style="border-left: 3px solid #dc2626;">x</blockquote>\n'
+    "### Remediation Priorities\n"
     "### Security Posture & Top Threats\n"
-    "### Top Mitigations\n"
     "### Operational Strengths\n"
     "**Risk Distribution:** Critical: 0 · High: 1 · Medium: 0 · Low: 0\n"
     "## 1. System Overview\nbody\n"

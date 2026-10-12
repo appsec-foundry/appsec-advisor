@@ -7956,340 +7956,226 @@ def _compute_top_findings_rows(ctx: RenderContext) -> tuple[list[dict[str, Any]]
     return rendered, len(qualifying_ids)
 
 
-def _curate_top_mitigations(
-    floor: list[dict[str, Any]],
-    extras_sorted: list[dict[str, Any]],
-    llm_order: list[str],
-    mit_min: int,
-    mit_max: int,
-) -> list[dict[str, Any]]:
-    """Select the §1 Top-Mitigations leader-board: Critical-floor + curation.
+_REMEDIATION_HEADERS = ("Root cause → lasting fix", "Do first", "Resolves", "Effort")
+_REMEDIATION_COL_WIDTHS = ("34%", "46%", "12%", "8%")
+_REMEDIATION_FIXES_PER_CAUSE = 3
+_REMEDIATION_MIN_ROWS = 5
+_REMEDIATION_RESOLVES_SHOWN = 3
 
-    `floor` (always shown, coverage guarantee) + the most important extras.
-    Extras are ordered by the LLM `llm_order` first (valid + de-duped against
-    the floor), then by the caller's deterministic `extras_sorted` so the soft
-    minimum can always be met and the no-fragment fallback is deterministic.
-    `mit_max` is a SOFT clamp — the floor is never truncated even if it alone
-    exceeds `mit_max` (Critical coverage wins). Pure function — unit-tested.
-    """
-    floor_ids = {m["id"] for m in floor}
-    extras_by_id = {m["id"]: m for m in extras_sorted}
-    ordered: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for mid in llm_order:
-        m = extras_by_id.get(mid)
-        if m and mid not in seen and mid not in floor_ids:
-            ordered.append(m)
-            seen.add(mid)
-    for m in extras_sorted:
-        if m["id"] not in seen and m["id"] not in floor_ids:
-            ordered.append(m)
-            seen.add(m["id"])
-    budget = max(0, mit_max - len(floor))
-    display = list(floor) + ordered[:budget]
-    for m in ordered[budget:]:
-        if len(display) >= mit_min:
-            break
-        display.append(m)
-    return display
+
+def _finding_key(ref: str) -> str:
+    """Visible F-NNN for a T-NNN or F-NNN reference."""
+    return _normalize_tid_to_fid(str(ref or "").strip().upper())
 
 
 def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
-    """Render the §1.x Management Summary Mitigations block as a SINGLE
-    table covering only the immediate-action (P1) items, with a `Component`
-    column and a single linked-mitigation column. P2+ items live in §9
-    Mitigation Register; the table footer points the reader there.
+    """Render ``### Remediation Priorities``: the Management Summary's answer to
+    what the team fixes first.
 
-    Schema:
-        | Mitigation | Component | Priority | Addresses | Effort |
-        - Mitigation: `[M-NNN — <title>](#m-nnn)` (one column, one link).
-        - Component:  comma-joined list of component IDs whose threats
-                      this mitigation addresses (cross-cutting → multiple).
-        - Addresses:  bare-ID `[F-NNN](#f-nnn)` links (titles live in §8 /
-                      §9 — the MS table stays scannable).
-        - Effort / Priority: unchanged.
+    One row per mitigation, grouped under the top root causes (`_ms_top_weaknesses`).
+    The root-cause cell spans its group's rows and carries the weakness's
+    structural fix as the lasting fix; the other cells name the measure, the
+    findings it resolves and its effort. Each group lists its P1/P2 measures,
+    every Critical-fixing one included and the rest capped at
+    `_REMEDIATION_FIXES_PER_CAUSE`. A Critical-fixing measure without a root
+    cause lands in a trailing "No root cause linked" group, so no Critical is
+    left without a surfaced fix; that group also tops a short table up to
+    `_REMEDIATION_MIN_ROWS` with the best measures that have no root cause. Declared business context orders measures
+    first within their priority (FE-7). The table is raw HTML because the
+    grouping needs ``rowspan``; cells are rendered from the canonical
+    reference forms."""
+    from validators.qa_checks import _render_inline_md_to_html
 
-    Sort: severity asc (Critical first) → effort asc (Low first) →
-    component → mid.
-
-    Cut-off rule: the MS shows only P1 items. When zero P1 mitigations
-    exist (rare — small/early-stage report), fall back to the top 5
-    mitigations by severity to keep the section informative. The full
-    inventory is always available in §9 Mitigation Register.
-    """
     mitigations = ctx.yaml_data.get("mitigations", []) or []
     threats = _threat_lookup(ctx)
-    components = _component_lookup(ctx)
     business_relevant = _business_relevance.relevant_findings(ctx.yaml_data)
 
     def _derive_priority(max_sev_rank: int) -> str:
-        # _severity_rank: critical=0, high=1, medium=2, low=3
         return {0: "P1", 1: "P2", 2: "P3", 3: "P4"}.get(max_sev_rank, "P4")
 
     def enrich(m: dict[str, Any]) -> dict[str, Any]:
-        mid = m.get("m_id") or m.get("id") or ""
-        addressed_ids = m.get("addresses") or m.get("threat_ids") or []
-        addressed = []
+        addressed_ids = [str(a) for a in (m.get("addresses") or m.get("threat_ids") or []) if a]
         max_sev = 99
+        critical = False
         for tid in addressed_ids:
             t = threats.get(tid, {})
-            sev = _severity_rank(t.get("effective_severity") or t.get("risk") or t.get("severity"))
-            max_sev = min(max_sev, sev)
-            # Same locator-free label as every other finding reference (RA-4).
-            short_label = ctx.lookup_label(tid) or _strip_trailing_locator(
-                (t.get("title") or t.get("scenario_short") or "").strip()
-            )
-            # Criticality dot — the Addresses column lists findings and so
-            # carries the same severity glyph as every other finding cross-ref
-            # (§8 register, asset/component tables). Empty when severity unknown.
-            dot = ctx.severity_emoji(ctx.severity_for_ref(tid))
-            addressed.append({"ref": tid, "label": short_label, "dot": dot})
-        comp_ids = m.get("components") or []
-        if not comp_ids:
-            seen: set[str] = set()
-            for tid in addressed_ids:
-                # Threats may carry the component reference under either
-                # `component_id` (canonical) or `component` (the field name
-                # actually emitted by the orchestrator's YAML writer pre-2026-05).
-                # Support both forms so the per-component grouping in the MS
-                # Top Mitigations table doesn't fall back to "Cross-cutting"
-                # for every row.
-                t_dict = threats.get(tid) or {}
-                c = t_dict.get("component_id") or t_dict.get("component")
-                if c and c not in seen:
-                    comp_ids.append(c)
-                    seen.add(c)
-        component_list = [{"id": cid, "name": (components.get(cid) or {}).get("name", cid)} for cid in comp_ids]
+            sev = t.get("effective_severity") or t.get("risk") or t.get("severity")
+            max_sev = min(max_sev, _severity_rank(sev))
+            critical = critical or str(sev or "").strip().lower() == "critical"
         priority = (m.get("priority") or "").strip().upper()
         if priority not in ("P1", "P2", "P3", "P4"):
             priority = _derive_priority(max_sev)
         return {
-            "id": mid,
-            "title": (m.get("title") or m.get("mitigation_title") or "").strip(),
-            "component_list": component_list,
-            "primary_component_id": comp_ids[0] if comp_ids else "",
-            "addresses": addressed,
-            "effort": m.get("effort", "Medium"),
+            "id": m.get("m_id") or m.get("id") or "",
+            "finding_keys": list(dict.fromkeys(_finding_key(a) for a in addressed_ids)),
+            "effort": m.get("effort") or "Medium",
             "priority": priority,
             "max_sev_rank": max_sev,
-            "addressed_count": len(addressed),
+            "covers_critical": critical,
             "business_note": _business_relevance.mitigation_note(addressed_ids, business_relevant),
         }
 
-    enriched = [enrich(m) for m in mitigations]
-
-    def _priority_rank(p: str) -> int:
-        return {"P1": 0, "P2": 1, "P3": 2, "P4": 3}.get(p, 99)
-
-    def _sort_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return sorted(
-            rows,
-            key=lambda r: (
-                r.get("max_sev_rank", 9),
-                _effort_rank(r["effort"]),
-                ",".join(c["id"] for c in r.get("component_list", [])),
-                r["id"],
-            ),
-        )
-
-    # ----------------------------------------------------------------------
-    # MS Top Mitigations — single central table, sub-grouped by component
-    # via divider rows (post-2026-05 layout per user request).
-    #
-    # All P1+P2 mitigations live in one table; each component-bucket is
-    # introduced by a "divider row" whose first cell carries the bold
-    # component name and whose remaining cells are empty. Within a bucket,
-    # rows are sorted P1 → P2 → severity (Critical first) → effort (Low
-    # first) → ID. Cross-cutting mitigations (no primary_component_id) land
-    # in a synthetic "Cross-cutting" bucket rendered last.
-    #
-    # Each row dict carries `is_divider: True|False` — the j2 template
-    # branches on it to render either a divider row or a data row.
-    # ----------------------------------------------------------------------
-    p12_rows = [m for m in enriched if m.get("priority") in ("P1", "P2")]
-    if not p12_rows:
-        # Fall-back: top 6 mitigations by severity → effort, single bucket.
-        p12_rows = _sort_rows(enriched)[:6]
-
-    # Component ordering: preserve YAML `components[]` order so the user
-    # sees the same component sequence as in §2.3 and §8. Unknown components
-    # (somehow not in the YAML) appear after the known ones alphabetically.
-    yaml_component_order: dict[str, int] = {}
-    for i, c in enumerate(ctx.yaml_data.get("components", []) or []):
-        cid = (c.get("id") or "").strip()
-        if cid:
-            yaml_component_order[cid] = i
-
-    def _component_sort_key(cid: str) -> tuple[int, str]:
-        return (yaml_component_order.get(cid, 10_000), cid or "~cross-cutting")
-
-    def _row_sort_key(r: dict[str, Any]) -> tuple[int, int, int, int, str]:
-        # Sort order:
-        #   1. priority           (P1 first)
-        #   1b. declared business context first within its priority (FE-7)
-        #   2. -addressed_count   (high-leverage mitigations first — closes
-        #                          the historic "P1 fix addressing 1 finding
-        #                          outranks P1 fix addressing 4 findings"
-        #                          symmetry break)
-        #   3. severity rank      (Critical first inside same leverage tier)
-        #   4. effort             (Low first)
-        #   5. id                 (stable tie-break)
+    def _row_sort_key(r: dict[str, Any]) -> tuple[Any, ...]:
         return (
-            {"P1": 0, "P2": 1, "P3": 2, "P4": 3}.get(r.get("priority", "P4"), 9),
-            not r.get("business_note"),
-            -int(r.get("addressed_count") or 0),
-            r.get("max_sev_rank", 9),
-            _effort_rank(r.get("effort", "Medium")),
-            r.get("id") or "",
+            {"P1": 0, "P2": 1, "P3": 2, "P4": 3}.get(r["priority"], 9),
+            not r["business_note"],
+            -len(r["finding_keys"]),
+            r["max_sev_rank"],
+            _effort_rank(r["effort"]),
+            r["id"],
         )
 
-    # 2026-05 user-request: cap the Management-Summary mitigations list at
-    # the contract-configured `rows.max` (default 10). Overflow drops into
-    # §9 Mitigation Register which carries the full P1/P2/P3 catalogue with
-    # `Why` / `How` / verification detail. Cap applied AFTER priority-sort
-    # so the highest-priority + highest-leverage items always survive.
-    mit_max = (ctx.contract["sections"].get("mitigations") or {}).get("table", {}).get("rows", {}).get("max", 5)
-    mit_min = (ctx.contract["sections"].get("mitigations") or {}).get("table", {}).get("rows", {}).get("min", 3)
-    p12_total_before_cap = len(p12_rows)
+    enriched = sorted((enrich(m) for m in mitigations), key=_row_sort_key)
+    eligible = [r for r in enriched if r["priority"] in ("P1", "P2")]
 
-    # ── Top-Mitigations selection: Critical-floor + LLM curation ──────────
-    # The Management-Summary leader-board is no longer a blind top-N cut.
-    #   1. Critical-floor (deterministic, non-negotiable): every mitigation
-    #      that fixes at least one Critical finding is ALWAYS shown, so no
-    #      Critical is left without a surfaced remediation — even if the LLM
-    #      curation omits it.
-    #   2. LLM curation (optional `.fragments/ms-top-mitigations.json`,
-    #      authored by the Stage-2 renderer): an ordered list of the most
-    #      important *additional* mitigations + a one-line rationale. The
-    #      composer honours the LLM order for the extras but validates the
-    #      ids, drops unknowns/dupes, and clamps to `rows.max`.
-    #   3. Fallback (no fragment, e.g. quick mode): extras are ordered by the
-    #      deterministic `_row_sort_key` — byte-identical to the legacy
-    #      behaviour except the Critical-floor guarantee is now explicit.
-    threats_by_id = _threat_lookup(ctx)
+    top = _ms_top_weaknesses(ctx)
+    ranked = _ranked_weaknesses(ctx)
+    findings_of = {(w.get("id") or "").strip(): {_finding_key(f) for f in _weakness_finding_ids(w)} for w in ranked}
 
-    def _is_critical(tid: str) -> bool:
-        t = threats_by_id.get(tid) or {}
-        return (t.get("effective_severity") or t.get("risk") or t.get("severity") or "").strip().lower() == "critical"
-
-    def _covers_critical(m: dict[str, Any]) -> bool:
-        return any(_is_critical(a.get("ref")) for a in (m.get("addresses") or []))
-
-    floor = sorted([m for m in p12_rows if _covers_critical(m)], key=_row_sort_key)
-    extras = [m for m in p12_rows if not _covers_critical(m)]
-
-    llm_order: list[str] = []
-    curation_rationale = ""
-    try:
-        _sel = _load_fragment(ctx, "top_mitigations", "ms-top-mitigations.json")
-        if isinstance(_sel, dict):
-            llm_order = [s for s in (_sel.get("selected") or []) if isinstance(s, str)]
-            curation_rationale = (_sel.get("rationale") or "").strip()
-    except FragmentError:
-        pass  # optional — fall back to deterministic extras ordering
-
-    p12_rows = _curate_top_mitigations(floor, sorted(extras, key=_row_sort_key), llm_order, mit_min, mit_max)
-    p12_curated = bool(llm_order)
-    p12_dropped = max(0, p12_total_before_cap - len(p12_rows))
-
-    # Canonical C-NN resolution for the linked Component column. `cid` is the
-    # mitigation's primary_component_id, which may be a slug (`express-backend`)
-    # or already-canonical (`C-01`); `_component_lookup` aliases both and carries
-    # `_canonical_id`. The link target matches the §8 register and the
-    # Architecture Assessment "Affected components" cell: `[C-NN](#c-nn) — Name`.
-    comp_lookup = _component_lookup(ctx)
-
-    def _component_cell_label(cid: str) -> str:
-        if not cid:
-            return "Cross-cutting"
-        c = comp_lookup.get(cid) or {}
-        name = (c.get("name") or cid).strip()
-        if re.match(r"^C-\d+$", cid):
-            canonical = cid
-        else:
-            canonical = (c.get("_canonical_id") or "").strip()
-        if canonical:
-            return f"[{canonical}](#{canonical.lower()}) — {name}"
-        return name
-
-    # 2026-05-30 user request: the leader-board is sorted PRIORITY-FIRST, THEN
-    # by component — i.e. all P1 rows (across components, in canonical component
-    # order) come before any P2 row, rather than grouping all of one component's
-    # rows together. The Component value is therefore carried PER ROW (the
-    # template falls back to the row-level `component_label` when the group has
-    # none) instead of as a once-per-component group label.
-    def _display_sort_key(r: dict[str, Any]) -> tuple[Any, ...]:
-        return (
-            {"P1": 0, "P2": 1, "P3": 2, "P4": 3}.get(r.get("priority", "P4"), 9),
-            not r.get("business_note"),
-            _component_sort_key(r.get("primary_component_id") or ""),
-            -int(r.get("addressed_count") or 0),
-            r.get("max_sev_rank", 9),
-            _effort_rank(r.get("effort", "Medium")),
-            r.get("id") or "",
+    def _cause_of(r: dict[str, Any], pool: list[dict]) -> str:
+        keys = set(r["finding_keys"])
+        return next(
+            ((w.get("id") or "").strip() for w in pool if findings_of.get((w.get("id") or "").strip(), set()) & keys),
+            "",
         )
 
-    group_rows: list[dict[str, Any]] = []
-    _row_number = 0
-    for r in sorted(p12_rows, key=_display_sort_key):
-        r["is_divider"] = False
-        _row_number += 1
-        r["number"] = _row_number
-        r["component_label"] = _component_cell_label(r.get("primary_component_id") or "")
-        group_rows.append(r)
-    groups: list[dict[str, Any]] = [
-        {
-            "header": None,
-            # Group-level label is None now — the Component column is filled
-            # per row (see `component_label` on each row) so priority-first
-            # ordering can interleave components.
-            "component_label": None,
-            "divider_label": None,
-            "include_affects_column": False,
-            "mitigations": group_rows,
-        }
-    ]
+    groups: dict[str, list[dict[str, Any]]] = {(w.get("id") or "").strip(): [] for w in top}
+    weakness_by_id = {(w.get("id") or "").strip(): w for w in ranked}
+    orphans: list[dict[str, Any]] = []
+    for r in eligible:
+        wid = _cause_of(r, top)
+        if not wid and r["covers_critical"]:
+            wid = _cause_of(r, ranked)
+            if wid:
+                groups.setdefault(wid, [])
+        if wid:
+            groups[wid].append(r)
+        elif r["covers_critical"]:
+            orphans.append(r)
 
-    total_count = len(enriched)
-    p1_count = sum(1 for r in p12_rows if r.get("priority") == "P1")
-    p2_count = sum(1 for r in p12_rows if r.get("priority") == "P2")
-    # `rest_count` = items NOT eligible for the P1/P2 leader-board (P3+).
-    # Computed against the pre-cap P1/P2 total so the "capped" and
-    # "backlog" footer counters are disjoint and don't double-count.
-    rest_count = max(0, total_count - p12_total_before_cap)
+    def _cap(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        kept = [r for r in rows if r["covers_critical"]]
+        for r in rows:
+            if len(kept) >= _REMEDIATION_FIXES_PER_CAUSE:
+                break
+            if r not in kept:
+                kept.append(r)
+        return sorted(kept, key=_row_sort_key)
 
-    # 2026-05 user-request: surface BOTH (a) P3 backlog overflow and (b)
-    # P1/P2 entries that did not fit under `rows.max`. The MS leader-board
-    # is the most-impactful subset; the full inventory always lives in §9.
-    overflow_p12 = p12_dropped
-    overflow_p3 = rest_count
-    _floor_n = sum(1 for r in p12_rows if _covers_critical(r))
-    intro = (
-        f"Highest-impact P1/P2 mitigations — {len(p12_rows)} of "
-        f"{p12_total_before_cap} qualifying ({total_count} total). "
-        f"Full detail in [§10 Mitigation Register](#10-mitigation-register)."
+    assigned = {r["id"] for rows in groups.values() for r in rows} | {r["id"] for r in orphans}
+    shown_groups: list[tuple[dict | None, list[dict[str, Any]]]] = []
+    for wid, rows in groups.items():
+        if not rows:
+            # A top root cause without a P1/P2 measure of its own keeps its best
+            # remaining one; with none, its row still names the lasting fix.
+            best = next(
+                (r for r in enriched if r["id"] not in assigned and _cause_of(r, [weakness_by_id[wid]])),
+                None,
+            )
+            rows = [best] if best else []
+        shown_groups.append((weakness_by_id[wid], _cap(rows)))
+    # A model with few or no root causes would leave the table nearly empty:
+    # top up with the best P1/P2 measures that have no root cause.
+    shown_count = sum(max(1, len(rows)) for _w, rows in shown_groups) + len(orphans)
+    for r in eligible:
+        if shown_count >= _REMEDIATION_MIN_ROWS:
+            break
+        if r["id"] not in assigned and not _cause_of(r, ranked):
+            orphans.append(r)
+            assigned.add(r["id"])
+            shown_count += 1
+    if orphans:
+        shown_groups.append((None, sorted(orphans, key=_row_sort_key)))
+
+    def _md(text: str) -> str:
+        return _render_inline_md_to_html(text)
+
+    def _cause_cell(w: dict | None) -> str:
+        if w is None:
+            return "<em>No root cause linked</em>"
+        wid = (w.get("id") or "").strip()
+        title = re.sub(r"\s+safeguards\s+in\s+.*$", "", (w.get("title") or "").strip()).strip()
+        sev = ctx.severity_emoji((w.get("severity") or "").strip().lower())
+        cell = _md(f"{sev + ' ' if sev else ''}[{wid}](#{wid.lower()}) — {title}")
+        lasting = " ".join((w.get("structural_recommendation") or "").split())
+        if lasting:
+            cell += f"<br/><em>→ {html.escape(lasting, quote=False)}</em>"
+        return cell
+
+    def _fix_cell(r: dict[str, Any] | None) -> str:
+        if r is None:
+            return "—"
+        cell = _md(ctx.linkify_with_label(r["id"]))
+        if r["business_note"]:
+            cell += f"<br/><em>{html.escape(r['business_note'], quote=False)}</em>"
+        return cell
+
+    def _resolves_cell(r: dict[str, Any] | None) -> str:
+        if r is None:
+            return "—"
+        keys = r["finding_keys"]
+        refs = [_md(ctx.linkify_with_label(k, compact=True)) for k in keys[:_REMEDIATION_RESOLVES_SHOWN]]
+        if len(keys) > _REMEDIATION_RESOLVES_SHOWN:
+            refs.append(f"+{len(keys) - _REMEDIATION_RESOLVES_SHOWN} more")
+        return "<br/>".join(refs)
+
+    wrap = ' style="overflow-wrap:break-word"'
+    rows_html: list[str] = []
+    shown_ids: set[str] = set()
+    for w, rows in shown_groups:
+        span = max(1, len(rows))
+        cause = f'<td rowspan="{span}"{wrap}>{_cause_cell(w)}</td>'
+        for i, r in enumerate(rows or [None]):
+            if r is not None:
+                shown_ids.add(r["id"])
+            effort = html.escape(str(r["effort"]), quote=False) if r else "—"
+            cells = (cause if i == 0 else "") + (
+                f"<td{wrap}>{_fix_cell(r)}</td><td>{_resolves_cell(r)}</td><td>{effort}</td>"
+            )
+            rows_html.append(f"<tr>{cells}</tr>")
+
+    out = ["### Remediation Priorities", ""]
+    if not rows_html:
+        out.append("No mitigation is recorded. See [§10 Mitigation Register](#10-mitigation-register).")
+        return "\n".join(out) + "\n"
+    out.append(
+        "The root causes behind the findings, ranked by severity, each with the measures to do first. "
+        "The lasting fix under a root cause removes it and every finding it causes. "
+        "Every mitigation that fixes a Critical finding is listed. "
+        "Details in the [§7 Weakness Register](#7-weakness-register) and the "
+        "[§10 Mitigation Register](#10-mitigation-register)."
     )
-    if _floor_n:
-        intro += f" All {_floor_n} mitigation(s) that fix a Critical finding are always listed here" + (
-            f"; the remaining entries are curated by impact: {curation_rationale}"
-            if (p12_curated and curation_rationale)
-            else "."
-        )
-    footer_parts: list[str] = []
-    if overflow_p12:
-        footer_parts.append(
-            f"{pluralize(overflow_p12, 'additional P1/P2 mitigation', 'additional P1/P2 mitigations')} "
-            f"capped from the leader-board"
-        )
-    if overflow_p3:
-        footer_parts.append(f"{pluralize(overflow_p3, 'P3 backlog item')}")
-    if footer_parts:
-        footer = "*" + " · ".join(footer_parts) + " in [§10 Mitigation Register](#10-mitigation-register).*"
-    else:
-        footer = None
+    out.append("")
+    out.append('<table style="table-layout:fixed;width:100%">')
+    out.append(
+        "<colgroup>" + "".join(f'<col width="{w}" style="width:{w}">' for w in _REMEDIATION_COL_WIDTHS) + "</colgroup>"
+    )
+    out.append(
+        "<thead><tr>"
+        + "".join(f"<th>{html.escape(h, quote=False)}</th>" for h in _REMEDIATION_HEADERS)
+        + "</tr></thead>"
+    )
+    out.append("<tbody>")
+    out.extend(rows_html)
+    out.append("</tbody>")
+    out.append("</table>")
 
-    tpl = env.get_template("mitigations.md.j2")
-    return tpl.render(groups=groups, intro=intro, footer=footer).rstrip() + "\n"
+    hidden_p12 = sum(1 for r in eligible if r["id"] not in shown_ids)
+    hidden_rest = sum(1 for r in enriched if r["priority"] not in ("P1", "P2") and r["id"] not in shown_ids)
+    footer_parts = []
+    if hidden_p12:
+        footer_parts.append(pluralize(hidden_p12, "more P1/P2 mitigation", "more P1/P2 mitigations"))
+    if hidden_rest:
+        footer_parts.append(pluralize(hidden_rest, "P3/P4 backlog item"))
+    legend = "● P1 · ◕ P2 · ◑ P3 · ○ P4"
+    out.append("")
+    if footer_parts:
+        out.append(
+            f"*{' and '.join(footer_parts)} in the [§10 Mitigation Register](#10-mitigation-register). {legend}*"
+        )
+    else:
+        out.append(f"*{legend}*")
+    return "\n".join(out) + "\n"
 
 
 def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
@@ -9921,7 +9807,7 @@ def _compute_top_threats_rows(ctx: RenderContext) -> list[dict[str, Any]]:
             # link non-breaking so an F-NNN / C-NN id never wraps mid-token;
             # the title between them still wraps on normal spaces.
             # Component link carries its NAME (not a bare ID) — consistent with
-            # Top Mitigations / §2.3. The `→ [C-NN]` stays non-breaking; the name
+            # §2.3. The `→ [C-NN]` stays non-breaking; the name
             # sits OUTSIDE the span so it wraps with the rest of the cell.
             _c_suffix = f"&nbsp;{_c_name}" if _c_name and _c_name != c_anchor else ""
             finding_cells.append(
@@ -10059,16 +9945,8 @@ def _abuse_chain_ms_note(ctx: RenderContext) -> str:
     return note
 
 
-def _render_ms_top_weaknesses(ctx: RenderContext) -> str:
-    """Render the MS ``### Top Weaknesses`` table (2026-07-14 redesign).
-
-    The executive view of the systemic root-cause control gaps, placed before the
-    Mitigations tables. Top weaknesses by severity, each with the findings that
-    prove it and a link into the full Weakness Register. Computed from
-    ``weaknesses[]``; returns "" when the register is empty (nothing to show)."""
-    weaknesses = ctx.yaml_data.get("weaknesses") or []
-    if not weaknesses:
-        return ""
+def _ranked_weaknesses(ctx: RenderContext) -> list[dict]:
+    """Weaknesses by severity, then design risk before confirmed, then id."""
     _sev_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
     _basis_rank = {"design-risk": 0, "confirmed": 1}
 
@@ -10079,50 +9957,18 @@ def _render_ms_top_weaknesses(ctx: RenderContext) -> str:
             w.get("id") or "",
         )
 
-    ranked = sorted(weaknesses, key=_sort_key)
-    # Executive focus: the Critical/High root causes. Cap at 6 rows; if fewer than
-    # 3 reach High, top up from the ranked list so the table is never trivially short.
+    return sorted((w for w in ctx.yaml_data.get("weaknesses") or [] if isinstance(w, dict)), key=_sort_key)
+
+
+def _ms_top_weaknesses(ctx: RenderContext) -> list[dict]:
+    """The root causes the Management Summary leads with: the Critical/High
+    weaknesses, capped at 6, topped up from the ranked list when fewer than 3
+    reach High so the view is never trivially short."""
+    ranked = _ranked_weaknesses(ctx)
     top = [w for w in ranked if (w.get("severity") or "").strip().lower() in ("critical", "high")]
     if len(top) < 3:
         top = ranked[: min(5, len(ranked))]
-    top = top[:6]
-    if not top:
-        return ""
-
-    out: list[str] = ["### Top Weaknesses", ""]
-    out.append(
-        "The systemic root-cause problems behind the findings — the classes to fix, "
-        "not just individual bugs. Each links to the full [Weakness Register]"
-        "(#7-weakness-register) with its findings and remediation."
-    )
-    out.append("")
-    for w in top:
-        wid = (w.get("id") or "").strip()
-        title = (w.get("title") or "").strip()
-        title = re.sub(r"\s+safeguards\s+in\s+.*$", "", title).strip()
-        sev = (w.get("severity") or "").strip()
-        sev_emoji = ctx.severity_emoji(sev.lower())
-        # Short, plain-language explanation: the first sentence of the per-class
-        # description (kept concise so the bullet stays scannable).
-        desc = (w.get("description") or w.get("statement") or "").strip()
-        first = re.split(r"(?<=[.!?])\s+", desc)[0] if desc else ""
-        if len(first) > 200:
-            first = first[:197].rstrip() + "…"
-        n_findings = len(_weakness_finding_ids(w))
-        proof_links = []
-        for fid in _weakness_finding_ids(w)[:3]:
-            m = re.search(r"(\d+)$", fid)
-            if m:
-                proof_links.append(f"[F-{m.group(1)}](#f-{m.group(1)})")
-        proof = ", ".join(proof_links)
-        if proof and n_findings > len(proof_links):
-            proof += f" (+{n_findings - len(proof_links)} more)"
-        proof_txt = f" _Proven by {proof}._" if proof else ""
-        lead = f"{sev_emoji} **[{wid}](#{wid.lower()}) — {title}** ({sev})"
-        expl = f" — {first}" if first else ""
-        out.append(f"- {lead}{expl}{proof_txt}")
-    out.append("")
-    return "\n".join(out)
+    return top[:6]
 
 
 def _render_ms_open_questions(ctx: RenderContext) -> str:
@@ -10180,29 +10026,25 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
         # (_get_weakness_antipatterns). No standalone MS block.
         #
         # systemic_posture ("### Security Principles" VIOLATED/WEAK/ADEQUATE table)
-        # RETIRED from the MS (2026-07-14): it duplicated Top Weaknesses as a second
+        # RETIRED from the MS (2026-07-14): it duplicated the root-cause view as a second
         # systemic-framing block, scored every principle identically on a
         # systemically-broken repo (no discrimination vs. the one-line Verdict), and
         # only partially linked to the register (principles without a W-NNN rendered
-        # as dead all-red rows). The systemic story is now carried solely by Top
-        # Weaknesses + the §6 Weakness Register. `_render_security_principles` is
+        # as dead all-red rows). The systemic story is now carried solely by
+        # Remediation Priorities + the §7 Weakness Register. `_render_security_principles` is
         # retained for standalone callers/tests but is no longer wired into the MS.
         #
-        # top_weaknesses — the executive view of the root-cause control gaps
-        # (2026-07-14), placed BEFORE the Security-Posture / Top-Threats block so
-        # the reader sees "what is systemically wrong" before the per-finding view.
-        # Computed from weaknesses[]; renders nothing when the register is empty.
-        "top_weaknesses",
+        # mitigations renders "### Remediation Priorities": the root causes with
+        # the measures to do first, right after the Verdict so the reader sees
+        # what to fix before the per-threat detail.
+        "mitigations",
         # The same deterministic selection used by the completion summary.
-        # This slot follows Top Weaknesses when present and still surfaces
-        # unresolved attack-chain or deployment questions without a register.
         "open_questions_for_team",
         # security_posture_at_a_glance renders "### Security Posture & Top Threats"
         # (Figure 1 + Figure 2 heatmap + the Top Threats table).
         "security_posture_at_a_glance",
-        "mitigations",
         # ai_exposure_ms — optional AI/LLM-exposure callout, moved (2026-07-14) from
-        # MS position #2 into the specialized-surface band AFTER Top Mitigations. On
+        # MS position #2 into the specialized-surface band AFTER Top Threats. On
         # a typical repo the LLM surface is a scoped secondary attack surface, not a
         # headline finding, so its placement now matches its risk weight (the reader
         # sees Verdict → root causes → concrete threats/mitigations first). Renders
@@ -10230,11 +10072,6 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
         # systemic_posture ("### Security Principles") retired from the MS tuple
         # (2026-07-14); _render_security_principles is kept for standalone use but
         # is no longer dispatched here.
-        if sid == "top_weaknesses":
-            tw_ms = _render_ms_top_weaknesses(ctx)
-            if tw_ms.strip():
-                parts.append(tw_ms.rstrip())
-            continue
         if sid == "open_questions_for_team":
             questions_ms = _render_ms_open_questions(ctx)
             if questions_ms.strip():
@@ -10756,7 +10593,7 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
     # §5 Attack Surface + §7 Security Architecture author their finding
     # cross-references WITHOUT the severity dot (the §5 entry-point tables and
     # the §7 control tables / DiD bullets). Prefix each with its criticality
-    # glyph so they match §8, the asset/component tables, and Top Mitigations.
+    # glyph so they match §8, the asset/component tables, and Remediation Priorities.
     # Runs after enrich so any dot it already produced is seen (idempotent).
     # NOTE: §3 Attack Walkthroughs and §9 Abuse Cases are handled by the GLOBAL
     # retrofit pass at the end of render() instead — their F-refs are rewritten
@@ -13044,8 +12881,15 @@ def _linkify_bare_refs_in_prose(ctx: RenderContext, md: str) -> str:
 _BARE_FNNN_RE = re.compile(r"(?<![\w/#-])(F-\d{2,4})(?![\w-])")
 _BARE_LOCAL_ID_RE = re.compile(r"(?<![\w/#-])([a-z][a-z0-9]*(?:-[a-z0-9]+)*-\d{3})(?![\w-])")
 # Opaque spans we must NOT rewrite inside: backtick code, full markdown links,
-# link TEXT brackets, HTML tags/anchors.
-_PROSE_MASK_RE = re.compile(r"`[^`]+`|\[[^\]]*\]\([^)]*\)|<[^>]+>")
+# and HTML. Whole `<a>` / `<code>` ELEMENTS are opaque, not just their tags: an
+# HTML table (Remediation Priorities, the compliance tables) already links an ID
+# as `<a href="…">F-003</a>`, and masking only the tags would leave the inner
+# text exposed and nest a markdown link inside the anchor. Element alternatives
+# precede the generic tag so they win.
+_PROSE_MASK_RE = re.compile(
+    r"`[^`]+`|\[[^\]]*\]\([^)]*\)|<a\b[^>]*>.*?</a>|<code\b[^>]*>.*?</code>|<[^>]+>",
+    re.DOTALL,
+)
 
 
 def _linkify_bare_finding_refs(ctx: RenderContext, md: str) -> str:
@@ -13082,18 +12926,21 @@ def _linkify_bare_finding_refs(ctx: RenderContext, md: str) -> str:
     if not f_exists:
         return md
 
-    def _link(fid: str) -> str:
-        return f"[{fid}](#{fid.lower()})"
-
-    def _rewrite_run(run: str) -> str:
-        run = _BARE_FNNN_RE.sub(lambda m: _link(m.group(1)) if m.group(1) in f_exists else m.group(0), run)
-        run = _BARE_LOCAL_ID_RE.sub(
-            lambda m: _link(local_to_f[m.group(1).lower()]) if m.group(1).lower() in local_to_f else m.group(0),
-            run,
-        )
-        return run
-
     def _process_line(line: str) -> str:
+        # Markdown is not parsed inside a raw HTML table row, so a row links
+        # with an HTML anchor.
+        html_row = line.lstrip().startswith("<tr")
+
+        def _link(fid: str) -> str:
+            return f'<a href="#{fid.lower()}">{fid}</a>' if html_row else f"[{fid}](#{fid.lower()})"
+
+        def _rewrite_run(run: str) -> str:
+            run = _BARE_FNNN_RE.sub(lambda m: _link(m.group(1)) if m.group(1) in f_exists else m.group(0), run)
+            return _BARE_LOCAL_ID_RE.sub(
+                lambda m: _link(local_to_f[m.group(1).lower()]) if m.group(1).lower() in local_to_f else m.group(0),
+                run,
+            )
+
         out: list[str] = []
         pos = 0
         for mm in _PROSE_MASK_RE.finditer(line):
@@ -13120,16 +12967,6 @@ def _linkify_bare_finding_refs(ctx: RenderContext, md: str) -> str:
 
 
 _BARE_REQ_ID_RE = re.compile(r"(?<![\w/#-])([A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+)(?![\w-])")
-
-# Like `_PROSE_MASK_RE`, but whole `<a>` / `<code>` ELEMENTS are opaque, not
-# just their tags. The compliance tables reach this pass as HTML, where an ID
-# already carries a link as `<a href="…"><code>AC-002</code></a>`; masking only
-# the tags would leave the inner text exposed and nest a markdown link inside
-# the anchor. Element alternatives precede the generic tag so they win.
-_REQ_PROSE_MASK_RE = re.compile(
-    r"`[^`]+`|\[[^\]]*\]\([^)]*\)|<a\b[^>]*>.*?</a>|<code\b[^>]*>.*?</code>|<[^>]+>",
-    re.DOTALL,
-)
 
 
 def _linkify_bare_requirement_refs(ctx: RenderContext, md: str) -> str:
@@ -13163,7 +13000,7 @@ def _linkify_bare_requirement_refs(ctx: RenderContext, md: str) -> str:
     def _process_line(line: str) -> str:
         out: list[str] = []
         pos = 0
-        for mm in _REQ_PROSE_MASK_RE.finditer(line):
+        for mm in _PROSE_MASK_RE.finditer(line):
             if mm.start() > pos:
                 out.append(_rewrite_run(line[pos : mm.start()]))
             out.append(mm.group(0))  # opaque span — passthrough
@@ -13315,9 +13152,7 @@ def _is_bare_finding_ref_line(line: str) -> bool:
     this module, plus ``linkify_anchors`` / ``_annotate_id_refs`` in qa_checks)
     skip these lines so their `[F-NNN](#f-nnn)` links stay compact.
 
-    Four contexts (user 2026-07-15, 2026-07-31, 2026-09-13):
-      • MS "Top Weaknesses" proof run — the single weakness dot owns the bullet's
-        severity signal (`… _Proven by [F-NNN], …._`).
+    Contexts (user 2026-07-15, 2026-07-31, 2026-09-13):
       • MS "Open Questions for the Team" bullets — the linked W/F ids trail the
         question in parentheses and are the same compact evidence references the
         console prints. Recognised by shape (`_team_questions.is_report_question_line`),
@@ -13331,8 +13166,6 @@ def _is_bare_finding_ref_line(line: str) -> bool:
         table; appended titles collapsed it into a column of single
         stacked characters. The renderer emits the severity dot itself.
     """
-    if "_Proven by " in line and "](#w-" in line:
-        return True
     if _team_questions.is_report_question_line(line):
         return True
     if _ROOT_CAUSE_FIX_LINE_RE.match(line):
@@ -13352,7 +13185,7 @@ def _prepend_finding_severity_dots(ctx: RenderContext, md: str) -> str:
     """Prefix every finding cross-reference ``[F-NNN](#f-nnn)`` with its
     severity glyph so §5 Attack Surface and §7 Security Architecture carry the
     same criticality dot the reader already sees in §8, the asset / component
-    tables, and the Top Mitigations Addresses column.
+    tables, and the Remediation Priorities Resolves column.
 
     Idempotent — a ref already preceded by a severity emoji is left untouched.
     Skips fenced code blocks and inline code spans; heading lines never carry a
@@ -13372,8 +13205,8 @@ def _prepend_finding_severity_dots(ctx: RenderContext, md: str) -> str:
         if chunk.startswith("```") or (chunk.startswith("`") and chunk.endswith("`")):
             out_chunks.append(chunk)
         else:
-            # Bare-finding-ref lines (MS Top Weaknesses proof run, Critical Attack
-            # Tree findings pointer) deliberately list undotted `[F-NNN]` ids — a
+            # Bare-finding-ref lines (Open Questions, Critical Attack Tree
+            # findings pointer) deliberately list undotted `[F-NNN]` ids — a
             # single higher-level signal owns the context. The global F-dot retrofit
             # would put an identical dot in front of every ref, collapsing the
             # hierarchy into a flat row of same-looking dots (user 2026-07-15). Skip
@@ -17330,13 +17163,13 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
 
     # ---- Systemic weakness back-reference ---------------------------------
     # The standalone "Security Principles" MS verdict table was retired
-    # (2026-07-14); the executive systemic view is now Top Weaknesses in the
-    # Management Summary, and the evidence-backed detail lives in the Weakness
+    # (2026-07-14); the executive systemic view is now Remediation Priorities in
+    # the Management Summary, and the evidence-backed detail lives in the Weakness
     # Register. §8 keeps only this pointer so the systemic story is not repeated.
     if ctx.yaml_data.get("weaknesses"):
         lines.append(
-            "The systemic root-cause view is summarized in **Top Weaknesses** in "
-            "the Management Summary; evidence-backed weaknesses are documented in "
+            "The root causes and the fixes to do first are summarized in "
+            "**Remediation Priorities** in the Management Summary; evidence-backed weaknesses are documented in "
             "the [Weakness Register](#weakness-register)."
         )
         lines.append("")
@@ -19086,7 +18919,7 @@ def render(
     # Neutralise TLD-shaped brand tokens (Socket.IO, Node.js, …) across the
     # WHOLE document — not just markdown fragments. `_render_markdown_fragment`
     # already runs this per-fragment, but COMPUTED sections (the Mitigation
-    # Register / Top Mitigations, component tables, …) bypass it, so a
+    # Register / Remediation Priorities, component tables, …) bypass it, so a
     # mitigation title like "Attach JWT to Socket.IO handshake" shipped with
     # `Socket.IO` auto-linked by GFM (user report 2026-06). Idempotent — an
     # already-escaped `Socket\.IO` is not re-matched; fenced code/links/comments

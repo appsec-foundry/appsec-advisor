@@ -97,6 +97,22 @@ No meaningful security boundary exists between the internet-facing attack surfac
 
 **Method and limits:** Automated static analysis of code and configuration, not a pentest or a team threat-modeling session; Low and Informational findings not reported (threshold: medium) - see [§11 Out of Scope](#11-out-of-scope).
 
+### Remediation Priorities
+
+The root causes behind the findings, ranked by severity, each with the measures to do first. The lasting fix under a root cause removes it and every finding it causes. Every mitigation that fixes a Critical finding is listed. Details in the [§7 Weakness Register](#7-weakness-register) and the [§10 Mitigation Register](#10-mitigation-register).
+
+<table style="table-layout:fixed;width:100%">
+<colgroup><col width="34%" style="width:34%"><col width="46%" style="width:46%"><col width="12%" style="width:12%"><col width="8%" style="width:8%"></colgroup>
+<thead><tr><th>Root cause → lasting fix</th><th>Do first</th><th>Resolves</th><th>Effort</th></tr></thead>
+<tbody>
+<tr><td rowspan="3" style="overflow-wrap:break-word"><em>No root cause linked</em></td><td style="overflow-wrap:break-word">● <a href="#m-001">M-001</a> - Parameterize SQL queries</td><td>🔴 <a href="#f-001">F-001</a><br/>🔴 <a href="#f-002">F-002</a></td><td>Medium</td></tr>
+<tr><td style="overflow-wrap:break-word">● <a href="#m-002">M-002</a> - Externalize RSA key</td><td>🔴 <a href="#f-003">F-003</a></td><td>Medium</td></tr>
+<tr><td style="overflow-wrap:break-word">◕ <a href="#m-003">M-003</a> - Remove DomSanitizer bypasses</td><td>🟠 <a href="#f-010">F-010</a></td><td>Medium</td></tr>
+</tbody>
+</table>
+
+*● P1 · ◕ P2 · ◑ P3 · ○ P4*
+
 ### Security Posture & Top Threats
 
 **Figure 2 - Attack Routes and Impact**
@@ -111,16 +127,6 @@ Each numbered route names one example finding from the corresponding Top Threats
 |---|------------------|----------------------|--------------|--------|
 
 _STRIDE: S spoofing · T tampering · R repudiation · I information disclosure · D denial of service · E elevation of privilege. Risk, findings, components, impact and Fix are derived deterministically; only the one-line weakness description is authored._
-
-### Top Mitigations
-
-Highest-impact P1/P2 mitigations - 3 of 3 qualifying (3 total). Full detail in [§10 Mitigation Register](#10-mitigation-register). All 2 mitigation(s) that fix a Critical finding are always listed here.
-
-| # | Component | Mitigation | Addresses | Effort |
-|---|-------------------|--------------------------------------|------------------------------------------------|------|
-| **1** | [C-01](#c-01) — REST API | ● [M-001](#m-001) — Parameterize SQL queries | 🔴 [F-001](#f-001) — SQL injection in product search<br/>🔴 [F-002](#f-002) — SQL injection in login | Medium |
-| **2** | [C-02](#c-02) — Auth Service | ● [M-002](#m-002) — Externalize RSA key | 🔴 [F-003](#f-003) — Hardcoded RSA private key | Medium |
-| **3** | [C-01](#c-01) — REST API | ◕ [M-003](#m-003) — Remove DomSanitizer bypasses | 🟠 [F-010](#f-010) — Persistent XSS via bypassSecurityTrustHtml | Medium |
 
 ### Operational Strengths
 

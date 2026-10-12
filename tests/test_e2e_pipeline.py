@@ -237,10 +237,10 @@ def test_compose_renders_canonical_document(rendered_run: Path) -> None:
     assert "## Management Summary\n" in md
     for heading in (
         "### Verdict",
+        "### Remediation Priorities",
         # Top Findings + Architecture Assessment were merged into the single
-        # "Security Posture & Top Threats" block; Mitigations → Top Mitigations.
+        # "Security Posture & Top Threats" block.
         "### Security Posture & Top Threats",
-        "### Top Mitigations",
         "### Operational Strengths",
     ):
         assert heading in md, f"missing MS subsection: {heading}"
@@ -805,21 +805,17 @@ def test_weakness_register_renders_and_is_qa_safe(e2e_run: Path) -> None:
     assert "SQL built by concatenation; no parametrized layer." in rendered
     assert "**Confirmed findings:**" in rendered
     # The standalone "### Security Principles" verdict table was retired from the
-    # Management Summary (2026-07-14): it duplicated Top Weaknesses as a second
-    # systemic-framing block and only partially linked to the register. The
-    # executive systemic view is now carried solely by `### Top Weaknesses`.
+    # Management Summary (2026-07-14): it duplicated the root-cause view as a
+    # second systemic-framing block and only partially linked to the register.
+    # The executive view is now carried by `### Remediation Priorities`.
     assert "### Security Principles" not in rendered
-    # `### Top Weaknesses` renders INSIDE the Management Summary (between its
-    # `## Management Summary` heading and the next `## ` section) and before the
-    # central Weakness Register it links into.
-    assert "### Top Weaknesses" in rendered
+    # `### Remediation Priorities` renders INSIDE the Management Summary and
+    # links each root cause into the central Weakness Register.
     ms_start = rendered.index("## Management Summary")
     ms_end = rendered.index("\n## ", ms_start + 1)
-    assert ms_start < rendered.index("### Top Weaknesses") < ms_end, (
-        "Top Weaknesses table must render inside the Management Summary"
-    )
+    assert ms_start < rendered.index("### Remediation Priorities") < ms_end
+    assert '<a href="#w-001">W-001</a>' in rendered[ms_start:ms_end]
     assert "[Weakness Register](#weakness-register)" in rendered
-    assert rendered.index("### Top Weaknesses") < rendered.index("## 7. Weakness Register")
     # Findings and systemic weaknesses are reported as separate evidence types.
     assert "**Assessment evidence:**" in rendered
     assert "finding(s) confirmed in code" in rendered

@@ -3036,20 +3036,6 @@ SOURCE_TESTS = {
         runtime_doc_cli_contract
         skill_definitions
     """),
-    "templates/fragments/mitigations.md.j2": _tests("""
-        analysis_version_upgrade
-        compose_threat_model
-        compose_threat_model_cov2
-        e2e_pipeline
-        enforcement_mutations
-        p1_renderer_correctness
-        reference_format
-        render_integrity
-        render_properties
-        requirements_mapping
-        requirements_verification
-        threat_fixture
-    """),
     "templates/fragments/verdict.md.j2": _tests("""
         analysis_version_upgrade
         compose_threat_model

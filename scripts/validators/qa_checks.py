@@ -48,13 +48,12 @@ document changed and avoids the duplicate `all` detector pass.
 
 `ms_structure` validates that `## Management Summary` is unnumbered and
 contains its required sub-sections in canonical order and places the optional
-team-question block directly after Top Weaknesses:
+team-question block directly after Remediation Priorities:
 
     ### Verdict (with a red HTML <blockquote …>)
-    ### Top Weaknesses (optional)
+    ### Remediation Priorities
     ### Open Questions for the Team (optional)
     ### Security Posture & Top Threats
-    ### Top Mitigations
     ### Operational Strengths
 
 Safe auto-repairs (numeric-prefix strip, legacy-name rename) are applied in
@@ -744,7 +743,7 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
         # AND trigger heading_hygiene's `[…]([…]) — <text>` rule.
         if stripped_lstrip.startswith("#"):
             continue
-        # Bare-finding-ref lines (MS Top Weaknesses proof run, Critical Attack
+        # Bare-finding-ref lines (Open Questions, Critical Attack
         # Tree findings pointer) list BARE finding ids by design — a single
         # higher-level signal owns the context (user 2026-07-15). Their F-refs are
         # already linked by the composer, so skip label-suffix enrichment here;
@@ -1286,17 +1285,16 @@ def check_invariants(md_path: Path) -> Report:
 # defect the renderer must fix before releasing the file.
 _MS_REQUIRED_SUBSECTIONS: tuple[str, ...] = (
     "Verdict",
+    "Remediation Priorities",
     "Security Posture & Top Threats",
-    "Top Mitigations",
     "Operational Strengths",
 )
 
 _MS_CANONICAL_SUBSECTION_ORDER: tuple[str, ...] = (
     "Verdict",
-    "Top Weaknesses",
+    "Remediation Priorities",
     "Open Questions for the Team",
     "Security Posture & Top Threats",
-    "Top Mitigations",
     "AI / LLM Exposure",
     "Requirements Compliance",
     "Operational Strengths",
@@ -1508,7 +1506,7 @@ def check_ms_structure(md_path: Path) -> tuple[Report, str]:
         report.issues.append("Management Summary contains duplicate '### Open Questions for the Team' sub-sections")
     if question_count == 1:
         question_index = names.index("Open Questions for the Team")
-        expected_previous = "Top Weaknesses" if "Top Weaknesses" in names else "Verdict"
+        expected_previous = "Remediation Priorities"
         if question_index == 0 or names[question_index - 1] != expected_previous:
             report.issues.append(
                 "Management Summary must place '### Open Questions for the Team' directly after "
@@ -1975,28 +1973,11 @@ _TABLE_SCHEMA_CHECKS: list[tuple[str, str, list[str]]] = [
     ),
     (
         "mitigations",
-        "Top Mitigations",
+        "Remediation Priorities",
         [
-            # 2026-06-03 — Priority column dropped: the rollout priority now
-            # rides on the linked mitigation as a leading prefix (2026-06-04
-            # Variant B: a monochrome circled digit, `❶`…`❹`), so the
-            # dedicated column is redundant.
-            "| # | Component | Mitigation | Addresses | Effort |",
-            # Post-2026-05-29 — numbered table with a dedicated Component
-            # column (label printed once per group, blank on continuation
-            # rows). Replaces the in-table divider-row form, which rendered
-            # the component label displaced in the `#`/ID column.
-            "| # | Priority | Component | Mitigation | Addresses | Effort |",
-            # Post-2026-05 iteration 3 — numbered table. Sequential `#` column
-            # added so each data row carries an at-a-glance position; divider
-            # rows continue to carry the component label in the first cell.
-            "| # | Priority | Mitigation | Addresses | Effort |",
-            # Post-2026-05 iteration 1 — single central table, sub-grouped by
-            # component via divider rows; Component column dropped.
-            "| Priority | Mitigation | Addresses | Effort |",
-            # M3.10 legacy — kept as accepted form so legacy reports are not
-            # falsely flagged.
-            "| Priority | Mitigation | Component | Addresses | Effort |",
+            # Raw HTML (the root-cause cell spans its group's rows), matched
+            # through the `<th>` form derived from this signature.
+            "| Root cause → lasting fix | Do first | Resolves | Effort |",
         ],
     ),
 ]
@@ -4460,7 +4441,7 @@ def _annotate_id_refs(md_path: Path) -> int:
         if chunk.startswith("```") or (chunk.startswith("`") and chunk.endswith("`")):
             out.append(chunk)
         else:
-            # Bare-finding-ref lines (MS Top Weaknesses proof run, Critical Attack
+            # Bare-finding-ref lines (Open Questions, Critical Attack
             # Tree findings pointer) list BARE finding ids by design — a single
             # higher-level signal owns the context (user 2026-07-15). Skip the
             # F-dot retrofit on those lines only (M-refs are not present there, so

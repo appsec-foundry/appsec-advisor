@@ -164,15 +164,12 @@ def test_render_produces_canonical_ms_structure(tmp_path: Path) -> None:
     assert "## Management Summary\n" in rendered
     assert "## 1. Management Summary" not in rendered
 
-    # Post-2026-05 — four canonical sub-sections, in order. The former
-    # `### Security Posture at a Glance`, `### Top Findings` and
-    # `### Architecture Assessment` were MERGED into the single
-    # `### Security Posture & Top Threats` section (heatmap = Figure 2 + the
-    # Top Threats table). `### Mitigations` renders as `### Top Mitigations`.
+    # Four canonical sub-sections, in order. `mitigations` renders as
+    # `### Remediation Priorities` directly after the Verdict.
     expected_order = [
         "### Verdict",
+        "### Remediation Priorities",
         "### Security Posture & Top Threats",
-        "### Top Mitigations",
         "### Operational Strengths",
     ]
     positions = [rendered.find(h) for h in expected_order]
@@ -189,6 +186,8 @@ def test_render_produces_canonical_ms_structure(tmp_path: Path) -> None:
         "### Top Findings",
         "### Architecture Assessment",
         "### Immediate Actions",
+        "### Top Weaknesses",
+        "### Top Mitigations",
     ):
         assert forbidden not in ms_slice, f"forbidden MS heading leaked: {forbidden!r}"
 
@@ -251,8 +250,7 @@ def test_ai_exposure_absent_renders_nothing(tmp_path: Path) -> None:
 def test_ai_exposure_renders_in_specialized_band(tmp_path: Path) -> None:
     """When ms-ai-exposure.json is present, the callout renders inside the
     Management Summary in the specialized-surface band — after the Security
-    Posture / Top Threats and Top Mitigations tables (2026-07-14 move from MS
-    position #2) — naming each risk with its OWASP LLM id, a severity emoji and a
+    Posture / Top Threats table (2026-07-14 move from MS position #2) — naming each risk with its OWASP LLM id, a severity emoji and a
     linkified finding reference."""
     out = _prepare_output_dir(tmp_path)
     frag = {
@@ -2537,40 +2535,6 @@ def test_canonical_formatter_leaves_standalone_span_and_prose_untouched() -> Non
     assert compose._codify_inline_identifiers("plain prose, no code") == "plain prose, no code"
 
 
-def test_curate_top_mitigations_floor_and_llm_order() -> None:
-    """Critical-floor always shown; LLM curates the extras within the soft max."""
-    floor = [{"id": "M-001"}, {"id": "M-002"}]
-    extras_sorted = [{"id": "M-006"}, {"id": "M-007"}, {"id": "M-008"}, {"id": "M-009"}]
-    # LLM prefers M-008 then M-006; max 4 → floor(2) + 2 extras.
-    out = compose._curate_top_mitigations(floor, extras_sorted, ["M-008", "M-006"], 3, 4)
-    assert [m["id"] for m in out] == ["M-001", "M-002", "M-008", "M-006"]
-
-
-def test_curate_top_mitigations_no_fragment_is_deterministic() -> None:
-    """No LLM order → extras in caller's deterministic order; clamped to max."""
-    floor = [{"id": "M-001"}]
-    extras_sorted = [{"id": "M-006"}, {"id": "M-007"}, {"id": "M-008"}]
-    out = compose._curate_top_mitigations(floor, extras_sorted, [], 3, 3)
-    assert [m["id"] for m in out] == ["M-001", "M-006", "M-007"]
-
-
-def test_curate_top_mitigations_floor_never_truncated() -> None:
-    """Coverage wins: a floor larger than max is shown in full (no truncation)."""
-    floor = [{"id": "M-001"}, {"id": "M-002"}, {"id": "M-003"}, {"id": "M-004"}]
-    extras_sorted = [{"id": "M-009"}]
-    out = compose._curate_top_mitigations(floor, extras_sorted, ["M-009"], 3, 2)
-    assert [m["id"] for m in out] == ["M-001", "M-002", "M-003", "M-004"]  # extras dropped, floor intact
-
-
-def test_curate_top_mitigations_drops_unknown_and_floor_dupes() -> None:
-    """Unknown ids and floor ids listed by the LLM are ignored in the extras slot."""
-    floor = [{"id": "M-001"}]
-    extras_sorted = [{"id": "M-006"}, {"id": "M-007"}]
-    out = compose._curate_top_mitigations(floor, extras_sorted, ["M-001", "M-999", "M-007"], 3, 10)
-    # M-001 (floor dupe) + M-999 (unknown) ignored; M-007 first, then remaining M-006.
-    assert [m["id"] for m in out] == ["M-001", "M-007", "M-006"]
-
-
 def _root_cause_tree(unlinked: bool) -> dict:
     """Two root causes over three Criticals, optionally one Critical without a weakness."""
     nodes = [
@@ -2674,8 +2638,6 @@ def test_root_cause_leaf_title_is_cut_at_a_word_boundary() -> None:
 def test_is_bare_finding_ref_line() -> None:
     """The bare-finding-ref predicate matches the contracted compact contexts."""
     f = compose._is_bare_finding_ref_line
-    # Top Weaknesses proof run.
-    assert f("- 🔴 **[W-001](#w-001) — X** (Critical) — d. _Proven by [F-013](#f-013)._")
     # Open team questions shared with the console — question first, refs trailing.
     assert f("- Which policy should own authorization? ([W-001](#w-001): [F-013](#f-013))")
     assert f(
@@ -2690,6 +2652,7 @@ def test_is_bare_finding_ref_line() -> None:
     assert f("- **No root cause linked** — [F-009](#f-009): see the [§8 Findings Register](#8-findings-register)")
     # Normal contexts keep their enrichment.
     assert not f("- **[W-002](#w-002)** — Queries are concatenated. Proven by [F-003](#f-003).")
+    assert not f("- 🔴 **[W-001](#w-001) — X** (Critical) — d. _Proven by [F-013](#f-013)._")
     assert not f("🔴 [F-005](#f-005) — OS Command Injection in a Verdict bullet")
     assert not f("| 🔴 [F-001](#f-001) — Insecure JWT | C-02 |")
     assert not f("**Findings** (full detail in [§8 Findings Register](#8-findings-register)): [F-001](#f-001)")
@@ -2751,99 +2714,156 @@ def test_changelog_finding_refs_have_no_severity_dot(tmp_path: Path) -> None:
     assert "🔴 [F-002]" not in section and "🟠 [F-002]" not in section
 
 
-def test_mitigations_section_uses_component_column(tmp_path: Path) -> None:
-    """The Management Summary Top Mitigations section is a single ranked table
-    with a dedicated `Component` column (2026-05-29 update).
+def _remediation_slice(rendered: str) -> str:
+    return rendered.split("### Remediation Priorities", 1)[1].split("\n### ", 1)[0]
 
-    The earlier in-table divider-row form `| **↳ Component …** | | | | |`
-    rendered the component label jammed into the `#`/ID column with four empty
-    trailing cells — it looked displaced. The component label now lives in its
-    own column, printed once per group (blank on continuation rows), so the
-    table reads as grouped-by-component while every value sits in a real
-    column. Matches the sibling Top Findings table.
 
-    Layout (2026-06-03 — the dedicated `Priority` column was dropped; the
-    rollout priority now rides on the linked mitigation as a leading prefix.
-    2026-07-04 — fill-ramp restored: a single monochrome circle whose FILL is
-    the priority as a dark→light ramp, `●` … `○`):
-        | # | Component               | Mitigation                  | Addresses | Effort |
-        |---|---|---|---|---|
-        | 1 | **Express Backend (c-…)**  | ● [M-001](#m-001) — …      | ...       | ...    |
-        | 2 |                            | ● [M-002](#m-002) — …      | ...       | ...    |
-    """
+def _remediation_rows(rendered: str) -> list[str]:
+    return [ln for ln in _remediation_slice(rendered).splitlines() if ln.startswith("<tr><td")]
+
+
+def _with_model(out: Path, **fields) -> None:
+    yml_path = out / "threat-model.yaml"
+    data = yaml.safe_load(yml_path.read_text())
+    data.update(fields)
+    yml_path.write_text(yaml.safe_dump(data, sort_keys=False))
+
+
+def _fixture_mitigations(out: Path, extra: list[dict]) -> list[dict]:
+    data = yaml.safe_load((out / "threat-model.yaml").read_text())
+    return list(data["mitigations"]) + extra
+
+
+def test_remediation_priorities_group_fixes_under_their_root_cause(tmp_path: Path) -> None:
+    """Each root cause spans the rows of its fixes and names its lasting fix; a
+    Critical fix without a root cause still appears, in the trailing group."""
+    out = _prepare_output_dir(tmp_path)
+    _with_model(
+        out,
+        weaknesses=[
+            {
+                "id": "W-001",
+                "title": "Queries are concatenated",
+                "severity": "Critical",
+                "instances": [{"id": "T-001"}, {"id": "T-002"}],
+                "structural_recommendation": "route every query through one parameterised path",
+            },
+            {
+                "id": "W-002",
+                "title": "Output is not encoded",
+                "severity": "High",
+                "instances": [{"id": "T-010"}],
+                "structural_recommendation": "encode output by default",
+            },
+        ],
+        mitigations=_fixture_mitigations(
+            out,
+            [
+                {
+                    "id": "M-004",
+                    "title": "Bind the report filter",
+                    "priority": "P2",
+                    "effort": "Low",
+                    "threat_ids": ["T-002"],
+                }
+            ],
+        ),
+    )
+    rendered, _ = compose.render(CONTRACT, out)
+    section = _remediation_slice(rendered)
+    rows = _remediation_rows(rendered)
+
+    assert "<th>Root cause → lasting fix</th><th>Do first</th><th>Resolves</th><th>Effort</th>" in section
+    assert "](#" not in "\n".join(rows), "table cells are HTML; markdown would show raw"
+    w1 = next(i for i, r in enumerate(rows) if '<a href="#w-001">W-001</a>' in r)
+    assert 'rowspan="2"' in rows[w1]
+    assert "<em>→ route every query through one parameterised path</em>" in rows[w1]
+    assert '<a href="#m-001">M-001</a>' in rows[w1] and '<a href="#m-004">M-004</a>' in rows[w1 + 1]
+    assert '<a href="#f-001">F-001</a>' in rows[w1] and '<a href="#f-002">F-002</a>' in rows[w1]
+    w2 = next(i for i, r in enumerate(rows) if '<a href="#w-002">W-002</a>' in r)
+    assert '<a href="#m-003">M-003</a>' in rows[w2]
+    orphan = next(i for i, r in enumerate(rows) if "<em>No root cause linked</em>" in r)
+    assert '<a href="#m-002">M-002</a>' in rows[orphan]
+    assert w1 < w2 < orphan
+
+
+def test_remediation_priorities_cap_fixes_per_root_cause_but_keep_critical_ones(tmp_path: Path) -> None:
+    out = _prepare_output_dir(tmp_path)
+    extra = [
+        {"id": f"M-00{n}", "title": f"Harden step {n}", "priority": "P2", "effort": "Low", "threat_ids": ["T-010"]}
+        for n in (4, 5, 6)
+    ]
+    _with_model(
+        out,
+        weaknesses=[
+            {
+                "id": "W-001",
+                "title": "Authorization is implemented route by route",
+                "severity": "Critical",
+                "instances": [{"id": "T-001"}, {"id": "T-003"}, {"id": "T-010"}],
+            }
+        ],
+        mitigations=_fixture_mitigations(out, extra),
+    )
+    rendered, _ = compose.render(CONTRACT, out)
+    rows = _remediation_rows(rendered)
+    group = "\n".join(rows)
+    assert 'rowspan="3"' in rows[0]
+    assert '<a href="#m-001">M-001</a>' in group and '<a href="#m-002">M-002</a>' in group
+    # Both Critical fixes stay; the cap leaves room for one more measure.
+    assert sum(f'<a href="#m-00{n}">' in group for n in (3, 4, 5, 6)) == 1
+    assert "3 more P1/P2 mitigations" in _remediation_slice(rendered)
+
+
+def test_remediation_priorities_keep_a_root_cause_without_any_fix(tmp_path: Path) -> None:
+    out = _prepare_output_dir(tmp_path)
+    _with_model(
+        out,
+        weaknesses=[
+            {
+                "id": "W-001",
+                "title": "Build pipeline trusts mutable references",
+                "severity": "High",
+                "instances": [{"id": "T-050"}],
+                "structural_recommendation": "pin every reference to an immutable digest",
+            }
+        ],
+    )
+    rendered, _ = compose.render(CONTRACT, out)
+    row = next(r for r in _remediation_rows(rendered) if '<a href="#w-001">W-001</a>' in r)
+    assert "<em>→ pin every reference to an immutable digest</em>" in row
+    # No measure: the cells hold the placeholder dash (prose-normalised to "-").
+    assert row.endswith("<td>-</td><td>-</td></tr>")
+
+
+def test_remediation_priorities_without_root_causes_list_the_top_fixes(tmp_path: Path) -> None:
+    """Without a weakness register the table still lists the P1/P2 measures."""
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
-
-    # Slice the Top Mitigations section out of the Management Summary.
-    ms_slice = rendered.split("### Top Mitigations", 1)[1].split("\n### ", 1)[0]
-
-    # Legacy headers from earlier layouts are gone.
-    assert "#### Prioritized Mitigations" not in ms_slice
-    assert "#### Follow-up Mitigations" not in ms_slice
-    assert "####" not in ms_slice, "Top Mitigations layout must not emit `####` sub-headers"
-
-    # Canonical 5-column pipe-table header — the dedicated Priority column was
-    # dropped (2026-06-03); priority now rides on the linked mitigation prefix.
-    assert "| # | Component | Mitigation | Addresses | Effort |" in ms_slice
-
-    import re as _re
-
-    # The retired in-table divider-row form must NOT appear (regression guard).
-    assert not _re.search(
-        r"^\|\s*\*\*↳\s+.+?\s+[—\-]\s+\d+\s+item\(s\)\*\*\s*\|",
-        ms_slice,
-        flags=_re.MULTILINE,
-    ), "in-table `↳ Component — N item(s)` divider row is retired (2026-05-29)"
-    # No `↳` group glyph anywhere in the section any more.
-    assert "↳" not in ms_slice, "component grouping no longer uses the ↳ glyph"
-
-    # Priority now rides on the linked mitigation as a single monochrome circle
-    # whose FILL is the priority as a dark→light ramp (2026-07-04 user request —
-    # ●◕◑○) rather than a dedicated bold column cell. Assert the ramp prefix renders.
-    assert _re.search(r"[●◕◑○]\s+\[M-", ms_slice), "expected a `● [M-NNN]` fill-ramp priority prefix"
-    assert "● [M-001](#m-001)" in ms_slice
-    assert "● [M-002](#m-002)" in ms_slice
-    assert "◕ [M-003](#m-003)" in ms_slice
-
-    # The Component column carries a label on the first row of each group,
-    # linked to the component anchor exactly like the Architecture Assessment
-    # "Affected components" cell: `[C-NN](#c-nn) — Name` (or the unlinked
-    # "Cross-cutting" sentinel when a mitigation maps to no component).
-    data_rows = [
-        ln
-        for ln in ms_slice.splitlines()
-        if _re.match(r"^\|\s*\*\*\d+\*\*\s*\|", ln)  # rows whose # cell is **N**
-    ]
-    assert data_rows, "expected at least one numbered data row"
-    first_cells = [c.strip() for c in data_rows[0].split("|")]
-    # cells: ['', '**1**', '[C-NN](#c-nn) — Name', 'P1 · <mitigation>', ...]
-    # (Priority column dropped 2026-06-03 — Component shifted from index 3 to 2.)
-    comp_cell = first_cells[2]
-    assert _re.match(r"^\[C-\d+\]\(#c-\d+\)\s+—\s+.+", comp_cell) or comp_cell == "Cross-cutting", (
-        f"first row's Component cell must be a `[C-NN](#c-nn) — Name` link "
-        f"(matching Architecture Assessment) or 'Cross-cutting', got {comp_cell!r}"
-    )
+    rows = _remediation_rows(rendered)
+    assert "<em>No root cause linked</em>" in rows[0] and 'rowspan="3"' in rows[0]
+    for mid in ("M-001", "M-002", "M-003"):
+        assert any(f'<a href="#{mid.lower()}">{mid}</a>' in r for r in rows)
 
 
 def test_top_mitigations_put_declared_business_context_first_within_a_priority(tmp_path: Path) -> None:
     """Declared context reorders inside a priority and names the asset; it never
     lifts a P2 above a P1 (FE-7)."""
     out = _prepare_output_dir(tmp_path)
-    yml_path = out / "threat-model.yaml"
-    data = yaml.safe_load(yml_path.read_text())
-    data["business_context_trace"] = {"status": "applied", "declared_asset_names": ["Order History"]}
-    data["assets"] = [{"name": "Order History", "classification": "Restricted", "linked_threats": ["T-003", "T-010"]}]
-    yml_path.write_text(yaml.safe_dump(data, sort_keys=False))
+    _with_model(
+        out,
+        business_context_trace={"status": "applied", "declared_asset_names": ["Order History"]},
+        assets=[{"name": "Order History", "classification": "Restricted", "linked_threats": ["T-003", "T-010"]}],
+    )
 
     rendered, _ = compose.render(CONTRACT, out)
-    ms_slice = rendered.split("### Top Mitigations", 1)[1].split("\n### ", 1)[0]
-    rows = [ln for ln in ms_slice.splitlines() if ln.startswith("| **")]
+    rows = _remediation_rows(rendered)
 
-    order = [next(m for m in ("M-001", "M-002", "M-003") if f"[{m}]" in row) for row in rows]
+    order = [next(m for m in ("M-001", "M-002", "M-003") if f">{m}</a>" in row) for row in rows]
     assert order.index("M-002") < order.index("M-001") < order.index("M-003")
-    marked = next(row for row in rows if "[M-002]" in row)
-    assert "*Business-critical: Order History*" in marked
-    assert "Business-critical" not in next(row for row in rows if "[M-001]" in row)
+    marked = next(row for row in rows if ">M-002</a>" in row)
+    assert "<em>Business-critical: Order History</em>" in marked
+    assert "Business-critical" not in next(row for row in rows if ">M-001</a>" in row)
 
 
 # ---------------------------------------------------------------------------
@@ -6728,43 +6748,21 @@ def test_sec7_rewrite_dedupes_within_cell_and_ignores_prose():
     assert "[F-015 — evidence prose](#f-015)" in out
 
 
-def test_ms_top_weaknesses_table_and_ordering():
+def test_ms_top_weaknesses_rank_by_severity_and_top_up_short_lists():
     class _Ctx:
         yaml_data = {
             "weaknesses": [
-                {
-                    "id": "W-003",
-                    "title": "Object-Level Ownership Check",
-                    "severity": "Critical",
-                    "severity_basis": "confirmed",
-                    "instances": [{"id": "T-008"}],
-                },
-                {
-                    "id": "W-007",
-                    "title": "Weak Cryptography safeguards in auth",
-                    "severity": "Medium",
-                    "severity_basis": "observed-practice",
-                    "observable_backing": {"practice_evidence": [{"id": "T-027"}]},
-                },
+                {"id": "W-007", "severity": "Medium", "severity_basis": "observed-practice"},
+                {"id": "W-003", "severity": "Critical", "severity_basis": "confirmed"},
+                {"id": "W-009", "severity": "Low"},
             ]
         }
 
-        @staticmethod
-        def severity_emoji(s):
-            return {"critical": "🔴", "medium": "🟡"}.get(s, "")
-
-    out = compose._render_ms_top_weaknesses(_Ctx())
-    assert out.startswith("### Top Weaknesses")
-    # Bullet form (2026-07-14): "- 🔴 **[W-003](#w-003) — Title** (Critical) — …".
-    assert "**[W-003](#w-003) — Object-Level Ownership Check**" in out
-    assert "[F-008](#f-008)" in out
-    # Critical sorts above Medium.
-    assert out.index("W-003") < out.index("W-007")
-    # Title's " safeguards in ..." tail is stripped.
-    assert "Weak Cryptography**" in out
+    # Fewer than three High-or-worse root causes: the list is topped up in rank order.
+    assert [w["id"] for w in compose._ms_top_weaknesses(_Ctx())] == ["W-003", "W-007", "W-009"]
 
 
-def test_ms_open_questions_follow_top_weaknesses(monkeypatch) -> None:
+def test_ms_open_questions_follow_remediation_priorities(monkeypatch) -> None:
     finding = {
         "id": "T-001",
         "title": "Object owner not checked",
@@ -6801,7 +6799,7 @@ def test_ms_open_questions_follow_top_weaknesses(monkeypatch) -> None:
                     "heading": "### Security Posture & Top Threats",
                     "fragment_type": "computed",
                 },
-                "mitigations": {"heading": "### Top Mitigations", "fragment_type": "computed"},
+                "mitigations": {"heading": "### Remediation Priorities", "fragment_type": "computed"},
                 "operational_strengths": {
                     "heading": "### Operational Strengths",
                     "fragment_type": "computed",
@@ -6838,7 +6836,8 @@ def test_ms_open_questions_follow_top_weaknesses(monkeypatch) -> None:
     monkeypatch.setattr(compose, "_render_ai_exposure", lambda _ctx, _env: "")
     management_summary = compose._render_management_summary(_Ctx(), None, {})
     assert (
-        management_summary.index("### Top Weaknesses")
+        management_summary.index("### Verdict")
+        < management_summary.index("### Remediation Priorities")
         < management_summary.index("### Open Questions for the Team")
         < management_summary.index("### Security Posture & Top Threats")
     )
