@@ -192,8 +192,11 @@ def test_compact_rerender_prepare_verifies_artifacts_and_dispatches_stage2(monke
     assert action["action"] == "dispatch_agent"
     assert action["mode"] == "rerender"
     assert action["stage"] == "stage2"
-    assert action["instruction_file"] == str(controller.THIN_RERENDER_RUNTIME)
+    assert action["instruction_file"] == str(controller.THIN_STAGE2_RUNTIME)
     assert Path(action["config_path"]).is_file()
+    # The CLI prints only what passes the action contract; a rejected prepare
+    # strands the run lock it just took.
+    assert controller._validate_action(action) == action
 
 
 def test_compact_rerender_prepare_fails_before_lock_when_artifacts_are_missing(monkeypatch, tmp_path):

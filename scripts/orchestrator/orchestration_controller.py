@@ -2408,7 +2408,9 @@ def _prepare_rerender(cfg: dict[str, Any]) -> dict[str, Any]:
         "action": "dispatch_agent",
         "mode": "rerender",
         "stage": "stage2",
-        "instruction_file": str(THIN_RERENDER_RUNTIME),
+        # The stage runtime the session follows next, as full mode's prepare names
+        # the Stage-1 runtime; `route` already handed it SKILL-rerender-runtime.md.
+        "instruction_file": str(THIN_STAGE2_RUNTIME),
         "preflight_status": str(cfg.get("preflight_status") or ""),
         "run_plan": "Re-rendering existing Stage-1 artifacts; threat analysis is skipped.",
         "config_path": str(config_path),
