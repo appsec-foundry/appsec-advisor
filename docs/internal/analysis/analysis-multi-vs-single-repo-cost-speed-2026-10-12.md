@@ -100,7 +100,7 @@ The orchestrator has measurable cost beyond its share of the bill (≈ 5.4 $ and
 
 **Headless mode keeps the orchestrator without any of its interactive tasks.** `scripts/run-headless.sh` hands two or more `--repo` selections to `orchestration_controller.py assess` (line 236) but runs a single repository as `claude -p` with the `create-threat-model` skill. A headless single-repository run therefore pays for a session LLM that asks no questions and shows no UI.
 
-The orchestrator cannot be removed on its own in interactive mode. Only the session may dispatch Level-0 agents, and the role agents need Read, Grep, and Bash. Removing it requires the role conversion in step 1 below first.
+The orchestrator's decisions already come from `orchestration_controller.py next`; the session LLM is the loop that calls `next`, executes the returned action, and calls the next gate. A Python loop can take that place without converting the roles first: it can start each role as a `claude -p` host with an explicit model ID and the role's current tools, as the threat analyst already runs `claude -p` on a redacted copy.
 
 ## Recommendation
 
@@ -112,11 +112,14 @@ The orchestrator cannot be removed on its own in interactive mode. Only the sess
 | Semantic roles: STRIDE, evidence, abuse-case verification, rendering, and the other role agents | LLM, called once per job with deterministically assembled source windows and `StructuredOutput` only, instead of an agent with a tool loop |
 | Business-context dialog | LLM generates the questions; the session asks them |
 
-Order of adoption:
+The work splits into two independent tracks. The driver track removes the orchestrator; the role track removes the tool loops.
 
-1. **Convert the abuse-case verifier to a host call and compare it A/B.** It has the largest measured gap per role (3.49 $ vs 0.17 $) and a narrowly bounded input. Continue with the evidence verifier (its agent definition already describes bounded receipted source windows), architect reviewer, control analyst, and trust-boundary analyst. The earlier threat-analyst evaluation found no quality benefit from exploration (`--explore`), which supports this direction for bounded roles.
-2. **Run headless single-repository assessments through the Python controller.** This removes the session LLM where it has no interactive task. `assess` currently requires at least two `--repo` selections and has no architect review, threat merger, or QA reviewer stage; the gap to the single-repository pipeline must be closed or deliberately accepted.
-3. **Reduce the interactive session to preflight, dialog, and model selection.** The session then starts the controller as one background command, follows a progress file, and relays the finished summary unchanged.
+1. **Measure a Sonnet 5.5 session run.** Run Juice Shop at `standard` depth interactively with a Sonnet 5.5 session and compare it with a Sonnet 4.6 session run at the same depth. This separates the model effect from the architecture effect and decides whether the §2a recommendation of a Sonnet 4.6 session still holds. Done when cost, duration, and the `eval-threat-model` result exist for both runs.
+2. **Driver track, headless first: replace the session loop with a Python driver.** The driver calls `next`, starts every job as a `claude -p` host with an explicit model ID and the role's current tools, and calls the next gate, as `assess_repositories` does for several repositories. This removes the orchestrator's cost and per-stage turn and lets the configured model IDs take effect. `scripts/run-headless.sh` then hands a single repository to the driver instead of running `claude -p` with the skill. The stages `assess` lacks (architect review, threat merger, QA reviewer) must be carried over or deliberately dropped.
+3. **Role track: convert roles to tool-less host calls, one at a time, each with an A/B comparison.** Start with the abuse-case verifier: it has the largest measured gap per role (3.49 $ vs 0.17 $) and a narrowly bounded input. Continue with the evidence verifier (its agent definition already describes bounded receipted source windows), architect reviewer, control analyst, and trust-boundary analyst, and convert STRIDE last, because bounded windows are most likely to miss cross-file flows there. The earlier threat-analyst evaluation found no quality benefit from exploration (`--explore`), which supports this direction for bounded roles.
+4. **Driver track, interactive: the session becomes a launcher.** The session keeps preflight, the business-context dialog, and model selection, then starts the driver with one background Bash command and waits for its task notification. The driver writes the completion summary to a file; the session names the file and its key figures instead of relaying the summary text, which avoids the paraphrasing the `completion_relay` gate guards against. Afterwards the §2a question and the guards against orchestrator misbehavior can be removed.
+
+Users and CI can also run the driver without any session turn through the `!` prefix, for example `! scripts/run-headless.sh --repo <first> --repo <second> --output <dir>`. This is fully deterministic today for several repositories and becomes so for one repository with step 2. Without the dialog, business context comes only from `docs/security/business-context.md` or a flag.
 
 Independent of that order:
 
@@ -127,9 +130,10 @@ Independent of that order:
 ## Verification needed before adoption
 
 - **Quality is not compared.** Bounded windows can miss data flows across files that an exploring agent would follow. Each role change needs an A/B run on the same target and depth, graded with `eval-threat-model`.
-- **Separate model effect from architecture effect.** Run the single-repository pipeline on the same target with Sonnet 5.5 instead of the Sonnet 4.6 pin. The time and cost it saves is the model effect; the remaining gap to the host model approximates the architecture effect.
-- **Interactive progress and cancellation** need a replacement for Task rows and session interrupts once the controller runs as a background process.
-- **Not verified:** whether `claude -p` hosts started from an interactive session are billed and permitted like subagents. The multi run shows only that they work headless.
+- **Interactive progress and cancellation** need a replacement for Task rows and session interrupts once the driver runs as a background process.
+- **Telemetry for hosts with tools.** Agent lifecycle and budget accounting rely on Agent-tool hooks (SubagentStart, SubagentStop). A `claude -p` host exposes only its host events, as in the multi run.
+- **Isolation for hosts with tools.** A host with Read, Grep, or Bash on the target repository needs the same isolation as the threat analyst: a copy and the preflight against repository-owned agent configuration.
+- **Not verified:** whether `claude -p` hosts started from an interactive session work, are billed, and are permitted like subagents, and how the Bash sandbox treats their API traffic. The multi run shows only that they work headless. A first check is to run `! scripts/run-headless.sh` with two small repositories from a session.
 - **Not verified:** whether the session LLM contributes judgment in Stage 3 repair and Stage 4 beyond relaying controller actions. This analysis read the ownership sections, not `SKILL-thin-stage3.md`.
 
 ## Side observation
