@@ -636,13 +636,13 @@ SOURCE_TESTS = {
         "assessment_jobs multi_repo_controller schemas check_target_specificity"
     ),
     "scripts/shared/assessment_sources.py": _tests(
-        "assessment_sources multi_repo_analysis multi_repo_boundaries multi_repo_controller check_target_specificity finding_state gate_preconditions shared_paths stride_outputs multi_repo_builder multi_repo_figures multi_repo_exports portable_model_readers"
+        "assessment_sources multi_repo_analysis multi_repo_boundaries multi_repo_controller check_target_specificity finding_state gate_preconditions shared_paths stride_outputs multi_repo_builder multi_repo_figures multi_repo_exports portable_model_readers threat_fixture"
     ),
     "schemas/threat-model.output-v2.schema.yaml": _tests(
         "assessment_sources multi_repo_analysis multi_repo_boundaries multi_repo_controller schemas schema_integrity check_target_specificity multi_repo_builder multi_repo_figures multi_repo_exports"
     ),
     "scripts/contexts/multi_repo_analysis.py": _tests(
-        "multi_repo_analysis multi_repo_boundaries multi_repo_controller check_target_specificity finding_state gate_preconditions shared_paths stride_outputs multi_repo_builder multi_repo_exports"
+        "multi_repo_analysis multi_repo_boundaries multi_repo_controller check_target_specificity finding_state gate_preconditions shared_paths stride_outputs multi_repo_builder multi_repo_exports threat_fixture"
     ),
     "schemas/multi-repo-architecture.schema.json": _tests(
         "multi_repo_analysis multi_repo_boundaries multi_repo_controller schemas check_target_specificity multi_repo_builder multi_repo_exports"
@@ -673,6 +673,7 @@ SOURCE_TESTS = {
     """),
     "scripts/validators/validate_assessment_architecture.py": _tests(
         """
+        threat_fixture
         validate_assessment_architecture review_multi_repo_connections
         check_target_specificity finding_state gate_preconditions shared_paths stride_outputs
         multi_repo_builder
@@ -715,6 +716,7 @@ SOURCE_TESTS = {
     """),
     "scripts/runtime/multi_repo_scope.py": _tests(
         """
+        threat_fixture
         validate_assessment_architecture review_multi_repo_connections
         multi_repo_scope assessment_host multi_repo_discovery reconcile_multi_repo_architecture
         check_target_specificity finding_state gate_preconditions shared_paths stride_outputs
@@ -1935,6 +1937,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/renderers/component_labels.py": _tests("""
+        threat_fixture
         component_labels
         compose_threat_model
         figure1_svg

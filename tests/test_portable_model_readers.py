@@ -160,5 +160,5 @@ def test_combined_resolution_still_replaces_its_own_prior_model(output, model):
 
 def test_analyst_refuses_the_model_as_context(output):
     with pytest.raises(ContextError, match=f"{REFUSAL}.*--isolated") as caught:
-        _threat_model(output / "threat-model.yaml", False)
+        _threat_model(output / "threat-model.yaml", False, [])
     assert caught.value.required

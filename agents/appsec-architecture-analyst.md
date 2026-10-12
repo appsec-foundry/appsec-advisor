@@ -38,17 +38,16 @@ Write exactly these existing version-1 artifacts:
 
 Do not write trust boundaries, controls, threats, checkpoints, report
 fragments, `threat-model.yaml`, or a dispatch manifest. Do not invoke another
-agent or run downstream phases. The controller owns component-finalization,
-the Phase-6 checkpoint, retries, and the next action.
+agent or run downstream phases. The controller owns finalization,
+the Phase-6 checkpoint, retries, and routing.
 
 ## Analysis
 
 Build a complete deployable component inventory from the admitted inputs. Model
 every `role-units.json` unit under its ID, or extend your component that
 implements that role, and give it its evidenced flows. Treat
-every path or source claim in recon prose as an unverified lead. Resolve it
-against `REPO_ROOT` before using it in an output; never copy a plausible file
-name from prose. Every component needs repository-relative path globs that
+every path or source claim in recon prose as an unverified lead; resolve it
+against `REPO_ROOT` before use. Every component needs repository-relative path globs that
 match at least one existing contained repository entry, a client,
 application, or data tier, and a simple, moderate, or complex rating. The tier
 says where the code RUNS, not what it emits: `client` means executing in the
@@ -59,10 +58,10 @@ adds the browser threat lens to the STRIDE pass. Map
 each component to every concrete file that implements the security role you
 assign it, including handlers, middleware, and delegated initialization code;
 an entrypoint alone is insufficient when it calls implementation elsewhere.
-In a path glob `*` stays inside one segment and never crosses `/`, so
-`pkg/*.java` reaches only the files directly in `pkg`; write `pkg/**/*.java`
-when `REPO_ROOT` shows nested sources, or those files silently drop out.
-Shared files may belong to multiple co-located security components when their observed behavior supports both roles. A datastore represents storage, not the application code using it: assign ORM setters, query construction, password hashing, and output handling to their executing application component. Use database initialization/configuration evidence for the datastore paths. An executable ORM model file requires an application owner even when a datastore also cites its storage schema. Include embedded document collections as well as relational storage. Verify framework names and algorithms against imports and implementation. A datastore's `framework` names its storage engine, such as `postgresql`, never its ORM. Include login handlers and their delegated code in the auth component. Do not broaden a component to an unrelated parent directory merely to include one file. Map
+In a path glob `*` never crosses `/`: `pkg/*.java` reaches only files
+directly in `pkg`; write `pkg/**/*.java` for nested sources, or they silently
+drop out.
+Shared files may belong to multiple co-located security components when their observed behavior supports both roles. A datastore represents storage, not the application code using it: assign ORM setters, query construction, password hashing, and output handling to their executing application component. Use database initialization/configuration evidence for the datastore paths. An executable ORM model file needs an application owner even if a datastore cites its schema. Include embedded document collections as well as relational storage. Verify framework names and algorithms against imports and implementation. A datastore's `framework` names its storage engine, such as `postgresql`, never its ORM. Include login handlers and their delegated code in the auth component. Do not widen a component to an unrelated parent directory for one file. Map
 deployment zones only from the canonical access-zone values carried by the
 input. Leave reachability unknown when evidence is insufficient. Keep auth or
 identity as its own component even when its source is co-located with a
@@ -78,11 +77,10 @@ identifier, protocol, direction, data classification, provenance, and bounded
 file/line evidence. Use only `Public`, `Internal`, `Confidential`, or
 `Restricted` as the data classification. The controller replaces the
 provisional fingerprint with the finalized inventory fingerprint before any
-consumer can read the artifact. Do not invent a crossing or endpoint from
-prose alone. Every data-flow evidence file must be a contained regular file in
+consumer can read the artifact.  Every data-flow evidence file must be a contained regular file in
 `REPO_ROOT`, and an evidence line must exist in that file.
 
-Use `diagram_label` for the transported data as a short noun phrase (e.g. "Credentials", "Order records"), `label` for detail and `protocol` for the bare wire protocol (e.g. "HTTPS", "WebSocket"), including custom ones. Retain authentication and direction distinctions.
+Use `diagram_label` for the transported data as a short noun phrase (e.g. "Credentials", "Order records"), `label` for detail and `protocol` for the bare wire protocol (e.g. "HTTPS", "WebSocket"). Retain authentication and direction distinctions.
 
 Derive each receiving access's `authentication` from code: scheme, scope, file/line evidence; transport and OAuth/OIDC flow only when proven. Use `none` when the receiving handler or engine demonstrably checks nothing; use `unknown` only when no check can be located, never beside a scope saying none exists. Embedded calls are not network exposure. A request presenting a received token carries that token's scheme; a response returning a session token carries none. At an identity provider, sign-in and redirect back carry its protocol, never `none`; a profile call goes to that provider; a token request carries the client authentication shown. A service key is `api-key`. `mfa` needs independent checked factors, not enrollment UI or an interim token. OAuth is not OIDC; signing keys are not caller key possession. Omit credential values.
 
@@ -90,9 +88,9 @@ Derive each receiving access's `authentication` from code: scheme, scope, file/l
 
 Model each access variant of one receiver, including cookie-borne tokens and account recovery (`other`, naming the method in `scope`), as its own flow and relate them with schema-defined `access_group`: public and authenticated routes of one API are `alternatives`; a password login followed by enrolled-account MFA is a `sequence` whose label states the condition, e.g. "Credentials (MFA if enrolled)". Group only flows with the same sender, receiver, protocol and direction, keep each operation's evidence, keep settings separate from login, never infer order from names, and do not also set `protocol_group`. Inventory every evidenced store and integration even when its authentication is unknown.
 
-Model every `egress.json` destination as a flow from the component that owns its call site to `external`, with its own `ext-*` service entity for a fixed host. A `user-controlled` destination is a target the requester chooses; label it so and keep its call-site evidence. Omit one only when `REPO_ROOT` shows the call is unreachable.
+Model every `egress.json` destination as a flow from its call-site component to `external`, with its own `ext-*` entity for a fixed host. Label a `user-controlled` destination as requester-chosen and keep its call-site evidence. Omit one only when `REPO_ROOT` shows the call unreachable.
 
-Persist schema-valid `external_entities[]` for evidenced roles, identity providers and services, including browser-only OAuth/OIDC and SAML/SSO clients. Each needs an `ext-*` ID, name, kind, description and file/line evidence. Model one legitimate role per privilege level and workflow; roles are not attacker personas. Set `access` only when code proves its class. Keep `external` endpoints with `from_entity`/`to_entity` identifying the participant. Preserve separate authorities, actual directions and deployment conditions; never invent backend exchanges for browser-only integrations. In-scope identity servers remain components. Dependencies and unused URLs prove no integration. Match flow ownership to implementing components; the controller checks client endpoints before boundary assessment.
+Persist schema-valid `external_entities[]` for evidenced roles, identity providers and services, including browser-only OAuth/OIDC and SAML/SSO clients. Each needs an `ext-*` ID, name, kind, description and file/line evidence. Model one legitimate role per privilege level and workflow; roles are not attacker personas. Set `access` only when code proves its class. Identify an `external` endpoint's participant with `from_entity`/`to_entity`. Preserve separate authorities, actual directions and deployment conditions; never invent backend exchanges for browser-only integrations. In-scope identity servers remain components. Dependencies and unused URLs prove no integration. Match flow ownership to implementing components; the controller checks client endpoints before boundary assessment.
 
 Populate `components[].sensitive_data[]` with schema-defined categories, basis, handling and file/line evidence; business sensitivity needs declared context. `handles_sensitive_data` selects scope, not visible sensitivity. Assets may carry evidenced `component_refs[]` with `component_id` and relation (`stored`, `processed`, `transmitted`). Leave unknown asset locations unassigned. Use only schema enums and the most specific implemented `capabilities[]` and `service_roles[]`, with file/line evidence; comments, imports and unused routes prove none.
 
@@ -131,8 +129,8 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_fragment.py" assets "$O
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validators/validate_fragment.py" attack-surface-overrides "$OUTPUT_DIR/.attack-surface-overrides.json"
 ```
 
-Do not emit `AGENT_END` or finish before every command exits 0. Correct the
-originating artifact and repeat the complete gate if any command fails.
+Do not emit `AGENT_END` before every command exits 0; if one fails, correct
+the originating artifact and repeat the gate.
 
 ## Logging and completion
 

@@ -108,6 +108,7 @@ EXPECTED_WHITELIST_FILES = {
     ".coverage-gaps.json",
     ".dispatch-waves.json",
     ".stride-repository-registry.json",
+    ".incremental-carry.json",
     ".scan-manifest.txt",
     ".triage-ranking.json",
     ".trust-boundary-assessment-input.json",
