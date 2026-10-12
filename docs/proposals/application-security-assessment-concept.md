@@ -2,7 +2,7 @@
 
 Status: discussion draft, 2026-10-12. This proposal does not change approved requirements, record an accepted technical decision, or authorize implementation.
 
-The proposed main workflow is **Application Security Assessment**, invoked through `/appsec-advisor:assess-security`. Its result is an **Application Security Assessment Report**, saved as `security-assessment.md` with canonical data in `security-assessment.yaml`. Threat modeling remains an analysis method and part of the result. A later extension could explicitly compare selected requirements and design documents with implementation evidence.
+The proposed main workflow is **Application Security Assessment**, invoked through `/appsec-advisor:assess-security`. Its result is a **Security Assessment Report**, saved as `security-assessment.md` with canonical data in `security-assessment.yaml`. The report subtitle makes its focus on security architecture, threats, and requirements implementation explicit. Threat modeling remains an analysis method and part of the result. A later extension could explicitly compare selected requirements and design documents with implementation evidence.
 
 ## Purpose and terminology
 
@@ -12,7 +12,7 @@ The current name emphasizes the threat model even though the report also evaluat
 |---|---|
 | AppSec Advisor | The existing plugin and product name. |
 | Application Security Assessment | The bounded analysis of an application's security using the sources admitted for that run. |
-| Application Security Assessment Report | The human-readable result, including scope, evidence, limitations, findings, and recommendations. |
+| Security Assessment Report | The human-readable result, including scope, evidence, limitations, findings, and recommendations. Its subtitle identifies the architectural focus. |
 | Assessment data | The canonical structured result consumed by renderers and follow-on tools. |
 | Threat model | The representation of assets, actors, flows, trust boundaries, threats, and protection assumptions within the assessment. |
 | Threat modeling | A method used to investigate how the system can be attacked. STRIDE remains relevant. |
@@ -78,7 +78,15 @@ Keep the default output directory `docs/security/`. Change the common basename w
 | `threat-model-changelog.md` and `.jsonl` | Corresponding `security-assessment-changelog.*` history files when that migration is supported. |
 | `pentest-tasks.yaml` | Keep the current name and restricted publication behavior. |
 
-The full report title would be “Application Security Assessment — Project name”. A dedicated `security-assessment.json` is not part of this proposal: the existing structured contract is YAML, and SARIF already has its own JSON representation. Adding another full representation would need a separate consumer need and fidelity contract.
+The proposed title and subtitle are:
+
+> **Security Assessment Report — Project name**
+>
+> Analysis of security architecture, threats, and requirements implementation
+
+The German subtitle is “Analyse von Sicherheitsarchitektur, Bedrohungen und Anforderungsumsetzung”. The broad title covers the overall result, while the subtitle makes the architecture focus visible alongside concrete findings and requirements assessment. “Security Architecture Assessment Report” would emphasize architecture more narrowly and is not the proposed report name. If requirements assessment is outside a run's scope, omit requirements implementation from its subtitle and state that limitation in the scope section.
+
+A dedicated `security-assessment.json` is not part of this proposal: the existing structured contract is YAML, and SARIF already has its own JSON representation. Adding another full representation would need a separate consumer need and fidelity contract.
 
 Keep `business-context.md`, source specifications, requirements catalogs, and `requirements.md` as input documents. Keep `SECURITY.md` for the repository's security information, optionally linking to the assessment. Do not generate a separate `threat-model.md` containing a second independently maintained report. A compatibility copy of the same report is a migration mechanism, not a second analysis product.
 
