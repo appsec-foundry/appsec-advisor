@@ -15,7 +15,7 @@ rendering, exports, orchestration, and release gates.
 
 ## Contract hierarchy
 
-- `specs/requirements.md` contains stable product behavior a user relies on.
+- `requirements.md` contains stable product behavior a user relies on.
 - `data/requirement-bindings.yaml` maps each requirement to affected paths,
   decisions, documents, and exact test evidence.
 - `docs/internal/decisions.md` records costly or non-obvious technical choices. An entry states in a few sentences what holds and cites its guard. Mappings, rankings, limits, and algorithms stay in the code, data file, or contract the entry cites.

@@ -606,6 +606,9 @@ _AGENT_FILE_TESTS = (
 _SKILL_FILE_TESTS = "check_target_specificity context_routing requirements_verification"
 
 SOURCE_TESTS = {
+    ".claude/settings.json": _tests("check_permissions requirements_hook spec_guard requirements_verification"),
+    "specs/README.md": _tests("requirements_verification"),
+    "specs/changes/root-requirements-catalog/proposal.md": _tests("requirements_verification"),
     "scripts/orchestrator/assessment_context.py": _tests("assessment_context check_target_specificity"),
     "scripts/orchestrator/assessment_workspace.py": _tests(
         "multi_repo_assessment assessment_context assessment_review assessment_posture check_target_specificity"
@@ -1598,7 +1601,7 @@ SOURCE_TESTS = {
         requirements_verification
     """),
     "docs/threat-modeler.md": _tests("requirements_verification"),
-    "specs/requirements.md": _tests("""
+    "requirements.md": _tests("""
         check_specs
         requirements_hook
         requirements_verification

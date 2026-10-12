@@ -13,7 +13,7 @@
 
 The **Threat Analyst** covers the design side: on request, it analyzes a planned feature or a selected code change for threats and asks the team for missing design facts. The plugin also includes requirements audits, change reviews, and CI gates.
 
-[Why appsec-advisor?](#why-appsec-advisor) · [Security](#security-notes) · [Quick start](#quick-start) · [Threat Modeler](#threat-modeler) · [Threat Analyst](#threat-analyst) · [Requirements Audit](#requirements-audit) · [Developer tools](#additional-developer-tools) · [Report a failed run](#report-a-failed-run) · [Enterprise rollout](#enterprise-rollout) · [Documentation](#documentation) · [What's new in 0.6.0-beta.5](#whats-new-in-060-beta5) · [Contributing](#contributing)
+[Why appsec-advisor?](#why-appsec-advisor) · [Security](#security-notes) · [Quick start](#quick-start) · [Threat Modeler](#threat-modeler) · [Threat Analyst](#threat-analyst) · [Requirements Audit](#requirements-audit) · [Developer tools](#additional-developer-tools) · [Report a failed run](#report-a-failed-run) · [Enterprise rollout](#enterprise-rollout) · [Documentation](#documentation) · [Product requirements](requirements.md) · [What's new in 0.6.0-beta.5](#whats-new-in-060-beta5) · [Contributing](#contributing)
 
 ---
 

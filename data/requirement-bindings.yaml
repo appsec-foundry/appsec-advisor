@@ -20,6 +20,8 @@ retired_ids:
   - REQ-RPT-004
   - REQ-EVO-001
   - REQ-EVO-002
+  - REQ-MOD-005 # Merged into REQ-MOD-001.
+  - REQ-ANA-006 # Merged into REQ-ANA-005.
 
 requirements:
   REQ-PUR-001:
@@ -87,9 +89,16 @@ requirements:
     applies_to:
       - scripts/model/merge_threats.py
       - scripts/validators/validate_intermediate.py
+      - scripts/contexts/build_threat_modeling_context.py
+      - agents/appsec-stride-analyzer-v2.md
+      - schemas/related-repos.schema.yaml
+      - scripts/contexts/slice_cross_repo_for_component.py
+      - scripts/analyzers/discover_identity_providers.py
     decisions:
       - WK-6
       - FE-1
+      - FE-4
+      - FE-15
     documents: []
     coverage: partial
     guards:
@@ -97,6 +106,11 @@ requirements:
       - tests/test_merge_threats.py::TestConsolidateByGroup::test_distinct_sql_sinks_in_one_component_stay_separate
       - tests/test_merge_threats.py::TestConsolidateByGroup::test_distinct_xss_sinks_need_explicit_shared_control
       - tests/test_multi_repo_assessment.py::test_combined_assessment_publishes_one_qualified_model
+      - tests/test_agent_definitions.py::test_cross_repo_mismatch_requires_target_evidence
+      - tests/test_discover_identity_providers.py::test_client_integrations_are_generic_and_evidenced
+      - tests/test_discover_identity_providers.py::test_identity_provider_steps_carry_the_authentication_their_protocol_proves
+      - tests/test_discover_identity_providers.py::test_self_check_rejects_none_on_a_step_where_the_provider_authenticates
+      - tests/test_build_threat_modeling_context.py::test_supplied_reference_document_is_admitted_as_fenced_and_named_data
 
   REQ-MOD-002:
     applies_to:
@@ -191,26 +205,6 @@ requirements:
       - tests/test_derive_abuse_cases.py::test_derived_cases_are_validated_bounded_and_deduplicated
       - tests/test_orchestration_controller.py::test_thorough_prepare_abuse_derives_cases_once_before_matching
       - tests/test_match_abuse_cases.py::test_derived_cases_run_only_at_thorough_within_their_own_limit
-
-  REQ-MOD-005:
-    applies_to:
-      - scripts/model/merge_threats.py
-      - scripts/contexts/build_threat_modeling_context.py
-      - agents/appsec-stride-analyzer-v2.md
-      - schemas/related-repos.schema.yaml
-      - scripts/contexts/slice_cross_repo_for_component.py
-      - scripts/analyzers/discover_identity_providers.py
-    decisions:
-      - FE-4
-      - FE-15
-    documents: []
-    coverage: partial
-    guards:
-      - tests/test_agent_definitions.py::test_cross_repo_mismatch_requires_target_evidence
-      - tests/test_discover_identity_providers.py::test_client_integrations_are_generic_and_evidenced
-      - tests/test_discover_identity_providers.py::test_identity_provider_steps_carry_the_authentication_their_protocol_proves
-      - tests/test_discover_identity_providers.py::test_self_check_rejects_none_on_a_step_where_the_provider_authenticates
-      - tests/test_build_threat_modeling_context.py::test_supplied_reference_document_is_admitted_as_fenced_and_named_data
 
   REQ-MOD-009:
     applies_to:
@@ -413,6 +407,8 @@ requirements:
     coverage: direct
     guards:
       - tests/test_resolve_actors.py::test_resolver_never_writes_actor_choices_back_to_repo
+      - tests/test_resolve_actors.py::test_resolve_repo_cannot_reenable_enterprise_disabled
+      - tests/test_resolve_actors.py::test_insiders_and_device_holder_are_opt_in_and_inactive_even_with_every_signal
 
   REQ-BIZ-003:
     applies_to:
@@ -855,7 +851,7 @@ requirements:
     decisions: []
     documents:
       - docs/threat-modeler.md
-    coverage: direct
+    coverage: partial
     guards:
       - tests/test_query_threat_model.py::test_display_id_maps_t_to_f
       - tests/test_review_threat_model.py::test_reconcile_ranks_and_marks_untriaged
@@ -931,6 +927,7 @@ requirements:
       - schemas/analyst-catalog.schema.json
       - schemas/analyst-methodology.schema.json
       - data/analyst-questions.yaml
+      - data/analyst-methods/threat-modeling-manifesto.yaml
     decisions: []
     documents:
       - docs/threat-analyst.md
@@ -939,15 +936,6 @@ requirements:
       - tests/test_resolve_analyst_catalog.py::test_packages_cannot_carry_authority_or_unbounded_content
       - tests/test_analyst_controller.py::test_design_requests_never_produce_findings
       - tests/test_analyst_controller.py::test_unsupported_claims_fail_validation_and_publish_nothing_from_the_reply
-
-  REQ-ANA-006:
-    applies_to:
-      - data/analyst-methods/threat-modeling-manifesto.yaml
-    decisions: []
-    documents:
-      - docs/threat-analyst.md
-    coverage: direct
-    guards:
       - tests/test_analyst_catalog.py::test_manifesto_profile_is_attributed_optional_and_not_a_certification
       - tests/test_analyst_controller.py::test_without_a_selected_profile_no_methodology_is_delivered
       - tests/test_analyst_controller.py::test_selected_manifesto_profile_is_delivered_and_recorded
@@ -1178,3 +1166,429 @@ requirements:
       - tests/test_security_score.py::test_real_empty_scan_is_complete
       - tests/test_security_score.py::test_sparse_coverage_keeps_findings_and_warnings_visible
       - tests/test_security_score.py::test_comparability_tracks_coverage_not_control_status
+
+  REQ-PUR-004:
+    applies_to:
+      - README.md
+      - docs/threat-modeler.md
+      - agents/shared/prose-style.md
+    decisions: []
+    documents:
+      - docs/threat-modeler.md
+    coverage: advisory
+    guards: []
+
+  REQ-FLW-005:
+    applies_to:
+      - scripts/model/build_threat_model_yaml.py
+      - schemas/threat-model.output.schema.yaml
+      - scripts/runtime/multi_repo_scope.py
+    decisions: []
+    documents:
+      - docs/threat-modeler.md
+    coverage: partial
+    guards:
+      - tests/test_build_threat_model_yaml.py::test_business_context_trace_records_safe_provenance_without_prose
+      - tests/test_multi_repo_assessment.py::test_combined_assessment_publishes_one_qualified_model
+
+  REQ-FLW-009:
+    applies_to:
+      - scripts/runtime/resolve_config.py
+      - skills/create-threat-model/**
+    decisions: []
+    documents:
+      - docs/threat-modeler.md
+    coverage: partial
+    guards:
+      - tests/test_resolve_config.py::TestCLI::test_quick_shortcut_maps_to_assessment_depth
+      - tests/test_resolve_config.py::TestCLI::test_thorough_shortcut_maps_to_assessment_depth
+
+  REQ-FLW-010:
+    applies_to:
+      - agents/appsec-recon-scanner.md
+      - agents/appsec-stride-analyzer-v2.md
+      - scripts/analyzers/architecture_coverage_checks.py
+      - data/architecture-coverage-rules.yaml
+    decisions: []
+    documents:
+      - docs/threat-modeler.md
+    coverage: advisory
+    guards: []
+
+  REQ-ARC-003:
+    applies_to:
+      - scripts/contexts/build_architecture_analysis_context.py
+      - scripts/model/build_threat_model_yaml.py
+      - schemas/threat-model.output.schema.yaml
+    decisions: []
+    documents:
+      - docs/threat-modeler.md
+    coverage: partial
+    guards:
+      - tests/test_query_threat_model.py::test_components_assets_boundaries_controls_are_indexed
+      - tests/test_build_architecture_analysis_context.py::test_role_units_name_exactly_what_finalization_would_add
+
+  REQ-ARC-004:
+    applies_to:
+      - scripts/contexts/build_cross_repo_register.py
+      - scripts/contexts/slice_cross_repo_for_component.py
+      - schemas/related-repos.schema.yaml
+      - agents/appsec-stride-analyzer-v2.md
+    decisions:
+      - FE-4
+      - FE-15
+    documents: []
+    coverage: partial
+    guards:
+      - tests/test_agent_definitions.py::test_cross_repo_mismatch_requires_target_evidence
+
+  REQ-MOD-015:
+    applies_to:
+      - scripts/contexts/build_threat_modeling_context.py
+      - schemas/known-threats.schema.yaml
+    decisions: []
+    documents:
+      - docs/threat-modeler.md
+    coverage: partial
+    guards:
+      - tests/test_build_threat_modeling_context.py::test_rejects_invalid_known_threats_before_context_publication
+      - tests/test_build_threat_modeling_context.py::test_preserves_schema_valid_known_threats_as_fenced_input
+
+  REQ-BIZ-008:
+    applies_to:
+      - scripts/contexts/load_business_context.py
+      - scripts/contexts/build_threat_modeling_context.py
+      - scripts/runtime/resolve_config.py
+      - scripts/model/build_threat_model_yaml.py
+      - scripts/orchestrator/build_stride_dispatch_manifest.py
+      - scripts/contexts/build_stride_evidence_bundles.py
+      - scripts/model/triage_compute_ranking.py
+      - scripts/renderers/_business_relevance.py
+      - scripts/renderers/compose_threat_model.py
+      - agents/appsec-threat-renderer.md
+      - templates/fragments/verdict.md.j2
+      - scripts/validators/triage_validate_ratings.py
+      - agents/appsec-control-analyst.md
+      - agents/appsec-stride-analyzer-v2.md
+      - schemas/stride-component-business-context.schema.json
+      - schemas/stride-analyst-context.schema.json
+      - schemas/stride-dispatch-manifest.schema.yaml
+      - schemas/threat-model.output.schema.yaml
+    decisions:
+      - RC-1
+    documents:
+      - docs/threat-modeler.md
+    coverage: partial
+    guards:
+      - tests/test_triage_validate_ratings.py::test_step5b_explicit_no_harm_does_not_request_higher_impact
+      - tests/test_triage_compute_ranking.py::test_declared_no_harm_does_not_promote_findings_or_mitigations
+      - tests/test_build_stride_evidence_bundles.py::test_a_no_harm_declaration_is_withheld_from_the_stride_rating
+      - tests/test_build_threat_model_yaml.py::test_no_harm_context_is_applied_without_a_priority_basis
+      - tests/test_validate_intermediate.py::test_no_harm_context_counts_as_applied_without_priority_basis
+      - tests/test_compose_threat_model.py::test_verdict_discloses_no_harm_without_hiding_critical_findings
+      - tests/test_emit_verdict_to_model.py::test_no_harm_scope_survives_export_without_lowering_technical_severity
+      - tests/test_business_relevance.py::test_named_synthetic_assets_with_no_harm_do_not_add_priority
+
+  REQ-BIZ-006:
+    applies_to:
+      - scripts/contexts/business_context_preview.py
+      - scripts/contexts/load_business_context.py
+      - scripts/orchestrator/orchestration_controller.py
+      - schemas/business-context-preview.schema.json
+      - skills/create-threat-model/SKILL-full-runtime.md
+      - skills/create-threat-model/modes/business-context.md
+      - skills/create-threat-model/modes/business-impact.md
+    decisions:
+      - RC-4
+    documents:
+      - docs/threat-modeler.md
+      - docs/internal/contracts/orchestration-actions.md
+    coverage: partial
+    guards:
+      - tests/test_orchestration_controller.py::test_early_context_persists_answers_without_persisting_run_only_import
+      - tests/test_load_business_context.py::test_run_only_capture_stays_out_of_the_repository
+      - tests/test_runtime_cleanup.py::test_cleanup_preserves_persistent_business_context
+
+  REQ-BIZ-010:
+    applies_to:
+      - scripts/contexts/build_threat_modeling_context.py
+      - scripts/orchestrator/orchestration_controller.py
+      - scripts/runtime/resolve_config.py
+    decisions: []
+    documents:
+      - docs/threat-modeler.md
+    coverage: partial
+    guards:
+      - tests/test_build_threat_modeling_context.py::test_skip_context_excludes_the_repository_business_context
+      - tests/test_orchestration_controller.py::test_early_context_bypass_never_waits
+
+  REQ-MOD-012:
+    applies_to:
+      - scripts/model/promote_verified_abuse_cases.py
+      - scripts/renderers/render_abuse_cases.py
+      - scripts/validators/verify_abuse_cases.py
+      - schemas/threat-model.output.schema.yaml
+    decisions:
+      - AC-1
+      - AC-2
+      - AC-3
+      - AC-8
+      - AC-10
+      - AC-11
+      - AC-12
+    documents:
+      - docs/org-profiles.md
+    coverage: partial
+    guards:
+      - tests/test_promote_verified_abuse_cases.py::test_confirmed_business_case_becomes_a_confirmed_finding
+      - tests/test_promote_verified_abuse_cases.py::test_indicated_business_case_becomes_an_unproven_finding_at_the_same_severity
+      - tests/test_promote_verified_abuse_cases.py::test_business_case_without_confirmation_or_indication_is_not_promoted
+      - tests/test_build_threat_model_yaml.py::test_initial_abuse_analysis_distinguishes_pending_and_skipped_runs
+
+  REQ-RPT-009:
+    applies_to:
+      - scripts/renderers/team_questions.py
+      - scripts/renderers/compose_threat_model.py
+      - agents/shared/ms-template.md
+    decisions:
+      - RA-4
+      - RN-5
+      - OR-26
+      - RA-10
+      - RA-11
+      - RA-12
+      - RA-13
+      - RA-15
+      - RA-17
+      - RA-18
+      - RA-21
+    documents:
+      - docs/internal/contracts/schema-invariants.md
+      - agents/shared/prose-style.md
+    coverage: partial
+    guards:
+      - tests/test_team_questions.py::test_selector_caps_questions_and_leaves_unverified_findings_to_triage
+      - tests/test_team_questions.py::test_onboarding_requires_an_affected_finding
+      - tests/test_team_questions.py::test_asset_mention_without_impact_keeps_question_open
+      - tests/test_team_questions.py::test_answer_suppresses_only_its_component_and_topic
+      - tests/test_team_questions.py::test_code_investigation_is_not_a_catalog_question
+      - tests/test_team_questions.py::test_disputed_registration_is_shared_without_invented_finding_links
+
+  REQ-RPT-012:
+    applies_to:
+      - scripts/exporters/**
+      - schemas/threat-model.output.schema.yaml
+      - docs/threat-dragon-export.md
+    decisions:
+      - EXP-4
+      - EXP-5
+      - RC-6
+    documents:
+      - docs/threat-dragon-export.md
+      - docs/threat-modeler.md
+      - docs/internal/contracts/schema-invariants.md
+    coverage: partial
+    guards:
+      - tests/test_export_threat_dragon.py::test_traceability_is_folded_into_bounded_text
+      - tests/test_validate_intermediate.py::test_export_trace_cross_references_fail_closed
+
+  REQ-RPT-016:
+    applies_to:
+      - skills/export-threat-model/**
+      - scripts/exporters/**
+      - scripts/model/build_threat_model_yaml.py
+    decisions: []
+    documents:
+      - docs/threat-modeler.md
+    coverage: partial
+    guards:
+      - tests/test_export_threat_model_skill.py::test_sarif_helper_runs_standalone
+      - tests/test_export_threat_model_skill.py::test_pentest_helper_runs_yaml_only
+      - tests/test_export_threat_model_skill.py::test_threat_dragon_helper_runs_standalone
+
+  REQ-USE-004:
+    applies_to:
+      - scripts/runtime/resolve_config.py
+      - scripts/orchestrator/orchestration_controller.py
+      - scripts/model/persist_run_baseline.py
+      - skills/create-threat-model/**
+    decisions: []
+    documents:
+      - docs/threat-modeler.md
+    coverage: partial
+    guards:
+      - tests/test_incremental_two_run_e2e.py::test_two_run_incremental_carries_dropped_threat_and_extends_changelog
+      - tests/test_incremental_two_run_e2e.py::test_two_run_full_mode_does_not_reconcile
+
+  REQ-USE-005:
+    applies_to:
+      - scripts/model/query_threat_model.py
+      - skills/ask-threat-model/**
+      - skills/show-threat-model/**
+    decisions: []
+    documents:
+      - docs/threat-modeler.md
+    coverage: partial
+    guards:
+      - tests/test_query_threat_model.py::test_cli_default_digest
+      - tests/test_query_threat_model.py::test_cli_id_lookup
+
+  REQ-USE-006:
+    applies_to:
+      - scripts/model/threat_model_health.py
+      - skills/threat-model-health/**
+    decisions: []
+    documents:
+      - docs/threat-modeler.md
+    coverage: partial
+    guards:
+      - tests/test_threat_model_health.py::test_freshness_no_yaml_no_md
+      - tests/test_threat_model_health.py::test_freshness_unchanged_exit0
+      - tests/test_threat_model_health.py::test_freshness_plugin_drift_exit10
+      - tests/test_threat_model_health.py::test_collect_active_short_circuits
+
+  REQ-USE-007:
+    applies_to:
+      - scripts/model/publish_threat_model.py
+      - skills/publish-threat-model/**
+    decisions: []
+    documents:
+      - docs/threat-modeler.md
+    coverage: partial
+    guards:
+      - tests/test_publish_threat_model.py::TestMain::test_secret_in_md_blocks
+      - tests/test_publish_threat_model.py::TestMain::test_check_only_returns_zero_and_lists_files
+      - tests/test_publish_threat_model.py::test_support_drafts_and_reproductions_are_never_published
+
+  REQ-USE-008:
+    applies_to:
+      - scripts/analyzers/architect_review.py
+      - scripts/analyzers/architect_review_runtime.py
+      - scripts/contexts/build_architect_context.py
+    decisions: []
+    documents:
+      - docs/threat-modeler.md
+    coverage: partial
+    guards:
+      - tests/test_architect_review_runtime.py::test_corrections_survive_grouping_hydration_and_repeat_rebuild
+      - tests/test_architect_review_runtime.py::test_every_result_shape_is_recorded_explicitly
+      - tests/test_architect_review_runtime.py::test_old_rerender_does_not_claim_a_semantic_review
+
+  REQ-REQ-002:
+    applies_to:
+      - skills/audit-security-requirements/**
+      - scripts/contexts/build_requirements_contexts.py
+      - scripts/requirements/resolve_requirements_source.py
+      - scripts/requirements/requirements_report.py
+    decisions: []
+    documents:
+      - docs/security-requirements-audit-skill.md
+    coverage: partial
+    guards:
+      - tests/test_requirements_report.py::test_schema_valid_verdict_passes
+      - tests/test_requirements_report.py::test_schema_invalid_verdict_fails
+
+  REQ-REQ-003:
+    applies_to:
+      - scripts/requirements/requirements_report.py
+      - schemas/requirements-audit.schema.json
+    decisions: []
+    documents:
+      - docs/security-requirements-audit-skill.md
+    coverage: partial
+    guards:
+      - tests/test_requirements_report.py::test_schema_valid_verdict_passes
+      - tests/test_requirements_report.py::test_schema_invalid_verdict_fails
+
+  REQ-REQ-005:
+    applies_to:
+      - scripts/requirements/requirements_gate.py
+      - scripts/shared/_requirements_gate.py
+      - skills/audit-security-requirements/**
+    decisions: []
+    documents:
+      - docs/security-requirements-audit-skill.md
+    coverage: partial
+    guards:
+      - tests/test_requirements_gate.py::test_advisory_must_fail_exits_zero
+      - tests/test_requirements_gate.py::test_gate_must_fail_blocks
+      - tests/test_requirements_gate.py::test_gate_should_fail_below_default_floor_passes
+
+  REQ-SCO-002:
+    applies_to:
+      - scripts/analyzers/security_score.py
+      - schemas/security-score.schema.yaml
+      - skills/security-score/SKILL.md
+    decisions: []
+    documents:
+      - README.md
+    coverage: partial
+    guards:
+      - tests/test_security_score.py::test_comparability_tracks_coverage_not_control_status
+      - tests/test_security_score.py::test_unscored_and_excluded_findings_are_prominent
+
+  REQ-TRU-003:
+    applies_to:
+      - README.md
+      - SECURITY.md
+    decisions: []
+    documents:
+      - README.md
+      - SECURITY.md
+    coverage: advisory
+    guards: []
+
+  REQ-TRU-004:
+    applies_to:
+      - scripts/runtime/assessment_host.py
+      - scripts/runtime/analyst_host.py
+      - data/required-permissions.yaml
+    decisions: []
+    documents:
+      - docs/headless-mode.md
+      - docs/threat-analyst.md
+    coverage: partial
+    guards:
+      - tests/test_assessment_host.py::test_unauthorized_proposals_fail_before_another_model_call
+      - tests/test_analyst_host.py::test_only_an_exploring_session_gets_read_only_file_tools
+
+  REQ-FLW-006:
+    applies_to:
+      - scripts/run-headless.sh
+      - scripts/orchestrator/orchestration_controller.py
+    decisions: []
+    documents:
+      - docs/headless-mode.md
+    coverage: partial
+    guards:
+      - tests/test_orchestration_controller.py::test_early_context_bypass_never_waits
+      - tests/test_run_headless_completion.py::test_headless_has_no_generation_escape_hatch
+
+  REQ-FLW-007:
+    applies_to:
+      - scripts/runtime/aggregate_run_issues.py
+      - skills/status/**
+      - skills/report-error/**
+      - skills/fix-run-issues/**
+      - skills/clean-run-state/**
+    decisions: []
+    documents:
+      - README.md
+      - docs/threat-modeler.md
+    coverage: advisory
+    guards: []
+
+  REQ-FLW-008:
+    applies_to:
+      - scripts/run-headless.sh
+      - scripts/runtime/budget_watchdog.py
+      - scripts/runtime/resolve_config.py
+      - scripts/runtime/assessment_jobs.py
+    decisions: []
+    documents:
+      - docs/threat-modeler.md
+      - docs/headless-mode.md
+    coverage: partial
+    guards:
+      - tests/test_run_headless_completion.py::test_the_hard_cut_is_derived_from_the_soft_budget
+      - tests/test_run_headless_completion.py::test_an_explicit_hard_budget_wins_over_the_derived_one

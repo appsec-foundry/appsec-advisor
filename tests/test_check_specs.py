@@ -16,10 +16,9 @@ import check_specs  # noqa: E402
 
 def entry(
     rid: str = "REQ-XYZ-001",
-    title: str = "A title",
     text: str = "The stable product requirement.",
 ) -> str:
-    return f"# Plugin requirements\n\n## A section\n\n### {rid} — {title}\n\n{text}\n"
+    return f"# Plugin requirements\n\n## A section\n\n- **{rid}:** {text}\n"
 
 
 def binding_document(
@@ -76,7 +75,6 @@ def test_parses_only_normative_text():
     assert parsed == [
         check_specs.Entry(
             rid="REQ-XYZ-001",
-            title="A title",
             section="A section",
             line=5,
             text="The stable product requirement.",
@@ -84,8 +82,40 @@ def test_parses_only_normative_text():
     ]
 
 
+def test_bullets_keep_their_text_topic_and_source_line():
+    markdown = (
+        "# Requirements\n\n## Evidence\n\n"
+        "- **REQ-ABC-001:** Cite inspected code.\n"
+        "- **REQ-ABC-002:** Keep uncertainty visible.\n\n"
+        "## Exports\n\n- **REQ-DEF-001:** Preserve references.\n"
+    )
+    assert check_specs.parse(markdown) == [
+        check_specs.Entry("REQ-ABC-001", "Evidence", 5, "Cite inspected code."),
+        check_specs.Entry("REQ-ABC-002", "Evidence", 6, "Keep uncertainty visible."),
+        check_specs.Entry("REQ-DEF-001", "Exports", 10, "Preserve references."),
+    ]
+
+
+def test_malformed_bullet_id_is_not_silently_dropped(catalog_root):
+    markdown = entry() + "\n- **REQ-XYZ-12:** Another promise.\n"
+    assert any("malformed id" in problem for problem in problems(markdown, binding_document(), catalog_root))
+
+
+def test_requirement_outside_a_topic_is_rejected(catalog_root):
+    markdown = "# Requirements\n\n- **REQ-XYZ-001:** A promise.\n"
+    assert any("outside any section" in problem for problem in problems(markdown, binding_document(), catalog_root))
+
+
+def test_lookup_renders_bullet_text_once(catalog_root):
+    parsed = check_specs.parse(entry())[0]
+    binding = check_specs.parse_bindings(binding_document())[parsed.rid]
+    rendered = check_specs.render(parsed, binding)
+    assert "REQ-XYZ-001 (A section)" in rendered
+    assert rendered.count(parsed.text) == 1
+
+
 def test_duplicate_id_is_rejected(catalog_root):
-    doubled = entry() + entry(title="Another title").split("# Plugin requirements\n\n", 1)[1]
+    doubled = entry() + entry(text="Another requirement.").split("# Plugin requirements\n\n", 1)[1]
     assert any("duplicate id" in problem for problem in problems(doubled, binding_document(), catalog_root))
 
 
@@ -199,7 +229,7 @@ def test_applicable_ignores_paths_outside_repository(catalog_root):
 def test_main_reports_requirement_and_coverage_counts(capsys):
     assert check_specs.main([]) == 0
     output = capsys.readouterr().out
-    assert "46 requirements" in output
+    assert "72 requirements" in output
     assert "direct" in output and "partial" in output and "advisory" in output
 
 
@@ -216,8 +246,8 @@ def test_main_for_unbound_file_says_no_requirement_is_bound(capsys):
 
 
 def test_held_file_without_changed_proposal_is_unapproved():
-    assert check_specs.unapproved_changes(["specs/requirements.md"]) == [
-        "specs/requirements.md changed with no proposal under specs/changes/"
+    assert check_specs.unapproved_changes(["requirements.md"]) == [
+        "requirements.md changed with no proposal under specs/changes/"
     ]
 
 
@@ -230,7 +260,7 @@ def test_held_file_with_changed_proposal_is_recorded():
 
 
 def test_tasks_file_alone_is_not_a_change_proposal():
-    changed = ["specs/requirements.md", "specs/changes/some-change/tasks.md"]
+    changed = ["requirements.md", "specs/changes/some-change/tasks.md"]
     assert check_specs.unapproved_changes(changed)
 
 
@@ -299,8 +329,8 @@ def test_the_register_is_held_when_no_base_revision_can_be_read():
 
 def test_the_catalog_is_held_for_any_change(monkeypatch):
     with_base(monkeypatch, register_text())
-    assert check_specs.unapproved_changes(["specs/requirements.md"], "HEAD") == [
-        "specs/requirements.md changed with no proposal under specs/changes/"
+    assert check_specs.unapproved_changes(["requirements.md"], "HEAD") == [
+        "requirements.md changed with no proposal under specs/changes/"
     ]
 
 

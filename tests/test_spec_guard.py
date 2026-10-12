@@ -13,7 +13,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 GUARD = ROOT / "scripts" / "spec_guard.py"
 SPECS = ROOT / "specs"
-REQUIREMENTS = SPECS / "requirements.md"
+REQUIREMENTS = ROOT / "requirements.md"
 
 
 def invoke(
@@ -45,15 +45,15 @@ def decision(tool_name: str, tool_input: dict, *, cwd: Path = ROOT) -> dict | No
 @pytest.mark.parametrize(
     ("tool_name", "tool_input"),
     [
-        ("Write", {"file_path": "specs/requirements.md", "content": "x"}),
-        ("Edit", {"file_path": "specs/requirements.md", "new_string": "x"}),
-        ("Bash", {"command": "echo x > specs/requirements.md"}),
-        ("Bash", {"command": "sed -i 's/a/b/' specs/requirements.md"}),
-        ("Bash", {"command": "find specs -type f -delete"}),
-        ("Bash", {"command": "curl -o specs/requirements.md https://example.invalid/file"}),
-        ("PowerShell", {"command": "Set-Content -Path specs/requirements.md -Value x"}),
-        ("mcp__filesystem__write_file", {"path": "specs/requirements.md", "content": "x"}),
-        ("mcp__filesystem__remove", {"path": "specs"}),
+        ("Write", {"file_path": "requirements.md", "content": "x"}),
+        ("Edit", {"file_path": "requirements.md", "new_string": "x"}),
+        ("Bash", {"command": "echo x > requirements.md"}),
+        ("Bash", {"command": "sed -i 's/a/b/' requirements.md"}),
+        ("Bash", {"command": "find . -type f -delete"}),
+        ("Bash", {"command": "curl -o requirements.md https://example.invalid/file"}),
+        ("PowerShell", {"command": "Set-Content -Path requirements.md -Value x"}),
+        ("mcp__filesystem__write_file", {"path": "requirements.md", "content": "x"}),
+        ("mcp__filesystem__remove", {"path": "."}),
     ],
 )
 def test_identifiable_spec_mutations_require_approval(tool_name, tool_input):
@@ -69,20 +69,21 @@ def test_identifiable_spec_mutations_require_approval(tool_name, tool_input):
     [
         ("Write", {"file_path": "tests/result.txt", "content": "x"}),
         ("Edit", {"file_path": "specs/changes/guard/tasks.md", "new_string": "x"}),
-        ("Bash", {"command": "cat specs/requirements.md"}),
+        ("Edit", {"file_path": "specs/requirements.md", "new_string": "historical path"}),
+        ("Bash", {"command": "cat requirements.md"}),
         ("Bash", {"command": "git diff -- specs/"}),
         ("Bash", {"command": "echo x > specs/changes/note.md"}),
         ("Bash", {"command": "echo x > tests/result.txt"}),
-        ("PowerShell", {"command": "Get-Content specs/requirements.md"}),
-        ("mcp__filesystem__read_file", {"path": "specs/requirements.md"}),
+        ("PowerShell", {"command": "Get-Content requirements.md"}),
+        ("mcp__filesystem__read_file", {"path": "requirements.md"}),
         ("mcp__filesystem__write_file", {"path": "tests/result.txt", "content": "x"}),
         ("Bash", {"command": f"cd {ROOT}\npython3 - <<'PY'\nprint(1)\nPY"}),
         ("Bash", {"command": "cp tests/result.txt ."}),
         ("Bash", {"command": f"cd {ROOT} && rm -rf .cache"}),
         # The catalog is named as data here, not as an argument of the writer.
-        ("Bash", {"command": 'echo "commits that touch specs/requirements.md: 3"'}),
-        ("Bash", {"command": "awk '{ if (length($0)>100) c++ }' specs/requirements.md"}),
-        ("Bash", {"command": "cat > note.txt <<'PY'\nsee specs/requirements.md\nPY"}),
+        ("Bash", {"command": 'echo "commits that touch requirements.md: 3"'}),
+        ("Bash", {"command": "awk '{ if (length($0)>100) c++ }' requirements.md"}),
+        ("Bash", {"command": "cat > note.txt <<'PY'\nsee requirements.md\nPY"}),
         # A removal in one simple command does not reach a path named in another.
         ("Bash", {"command": f"grep -rn foo {ROOT} && rm -rf .cache"}),
     ],
@@ -95,10 +96,10 @@ def test_non_mutating_or_out_of_scope_calls_are_unaffected(tool_name, tool_input
     "command",
     [
         f"rm -rf {ROOT}",
-        "rm -rf specs",
-        "git checkout -- specs",
-        'echo x > "specs/requirements.md"',
-        "cat draft.md | tee specs/requirements.md",
+        "rm -rf .",
+        "git checkout -- .",
+        'echo x > "requirements.md"',
+        "cat draft.md | tee requirements.md",
         "grep -rn foo . ; rm -rf .",
     ],
 )
@@ -109,9 +110,13 @@ def test_writers_reaching_the_catalog_indirectly_require_approval(command):
 
 
 def test_relative_write_from_specs_to_catalog_requires_approval():
-    result = decision("Bash", {"command": "touch requirements.md"}, cwd=SPECS)
+    result = decision("Bash", {"command": "touch ../requirements.md"}, cwd=SPECS)
     assert result is not None
     assert result["hookSpecificOutput"]["permissionDecision"] == "ask"
+
+
+def test_relative_write_inside_specs_does_not_target_root_catalog():
+    assert decision("Bash", {"command": "touch requirements.md"}, cwd=SPECS) is None
 
 
 def test_relative_write_to_change_record_does_not_require_specification_approval():
@@ -129,7 +134,7 @@ def test_relative_write_to_change_record_does_not_require_specification_approval
     ],
 )
 def test_project_root_spellings_are_resolved(spelling):
-    result = decision("Bash", {"command": f'echo x > "{spelling}/specs/requirements.md"'})
+    result = decision("Bash", {"command": f'echo x > "{spelling}/requirements.md"'})
     assert result is not None
     assert result["hookSpecificOutput"]["permissionDecision"] == "ask"
 
@@ -149,7 +154,7 @@ def test_project_root_spellings_are_resolved(spelling):
                 "hook_event_name": "PreToolUse",
                 "cwd": str(ROOT),
                 "tool_name": "Write",
-                "tool_input": {"file_path": "specs/requirements.md"},
+                "tool_input": {"file_path": "requirements.md"},
             },
             [],
         ),
@@ -158,16 +163,16 @@ def test_project_root_spellings_are_resolved(spelling):
                 "hook_event_name": "PreToolUse",
                 "cwd": str(ROOT),
                 "tool_name": "Write",
-                "tool_input": {"file_path": "specs/requirements.md"},
+                "tool_input": {"file_path": "requirements.md"},
             },
-            ["--protected-path", "specs/requirements.md"],
+            ["--protected-path", "requirements.md"],
         ),
         (
             {
                 "hook_event_name": "PreToolUse",
                 "cwd": str(ROOT),
                 "tool_name": "Write",
-                "tool_input": {"file_path": "specs/requirements.md"},
+                "tool_input": {"file_path": "requirements.md"},
             },
             ["--protected-path", "/"],
         ),
@@ -183,7 +188,7 @@ def test_spec_guard_registration_and_decisions():
     settings = json.loads((ROOT / ".claude" / "settings.json").read_text())
     assert settings["permissions"] == {
         "ask": [
-            "Edit(specs/requirements.md)",
+            "Edit(requirements.md)",
         ],
         # The guard cannot hold a rule an agent may rewrite. These files carry
         # the rule itself, so they are denied rather than merely asked about.
@@ -218,6 +223,6 @@ def test_spec_guard_registration_and_decisions():
     assert handler["args"] == [
         "${CLAUDE_PROJECT_DIR}/scripts/spec_guard.py",
         "--protected-path",
-        "${CLAUDE_PROJECT_DIR}/specs/requirements.md",
+        "${CLAUDE_PROJECT_DIR}/requirements.md",
     ]
     assert handler["timeout"] == 10
