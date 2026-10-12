@@ -199,6 +199,32 @@ def test_compact_rerender_prepare_verifies_artifacts_and_dispatches_stage2(monke
     assert controller._validate_action(action) == action
 
 
+@pytest.mark.parametrize("prior_checkpoint", [None, "phase=11 status=completed timestamp=x\n"])
+def test_rerender_owes_the_report_even_when_one_is_on_disk(monkeypatch, tmp_path, prior_checkpoint):
+    """A finished run has no checkpoint (or a phase-11 one) beside its report;
+    the rerender must still recompose instead of skipping to Stage 3."""
+    cfg = _cfg(tmp_path, "rerender")
+    cfg["rerender"] = True
+    output = Path(cfg["output_dir"])
+    output.mkdir(parents=True)
+    Path(cfg["repo_root"]).mkdir()
+    for name in ("threat-model.yaml", "threat-model.md", ".threats-merged.json", ".triage-flags.json"):
+        (output / name).write_text("{}", encoding="utf-8")
+    fragments = output / ".fragments"
+    fragments.mkdir()
+    for name in ("system-overview.md", "assets.md", "security-architecture.md"):
+        (fragments / name).write_text("fragment", encoding="utf-8")
+    if prior_checkpoint:
+        (output / ".appsec-checkpoint").write_text(prior_checkpoint, encoding="utf-8")
+    assert not controller._checkpoint_needs_render(output)
+
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    monkeypatch.setattr(controller, "_run_script", lambda *args, **kwargs: _completed("lock acquired\n"))
+    controller.prepare(["--rerender"])
+
+    assert controller._checkpoint_needs_render(output)
+
+
 def test_compact_rerender_prepare_fails_before_lock_when_artifacts_are_missing(monkeypatch, tmp_path):
     cfg = _cfg(tmp_path, "rerender")
     cfg["rerender"] = True

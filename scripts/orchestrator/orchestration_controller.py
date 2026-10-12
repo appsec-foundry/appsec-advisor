@@ -2342,7 +2342,9 @@ def _run_id_for_this_run() -> str:
 
 
 def _prepare_rerender(cfg: dict[str, Any]) -> dict[str, Any]:
-    """Prepare the compact rerender path without touching Stage-1 artifacts."""
+    """Prepare the compact rerender path without touching Stage-1 artifacts.
+
+    It marks the report as owed so the next controller call recomposes it."""
     output_dir = Path(cfg["output_dir"]).resolve()
     repo_root = Path(cfg["repo_root"]).resolve()
     cfg["output_dir"] = str(output_dir)
@@ -2386,6 +2388,15 @@ def _prepare_rerender(cfg: dict[str, Any]) -> dict[str, Any]:
                 "--phase=skill",
                 "--step=stage2-dispatch",
             ],
+        )
+        # A rerender exists to rebuild the report, so the report is owed even when
+        # a finished one is on disk; otherwise `next` would find it and skip
+        # compose. The controller compose then advances the checkpoint to phase 11.
+        from shared._atomic_io import atomic_write_text  # noqa: PLC0415
+
+        atomic_write_text(
+            output_dir / ".appsec-checkpoint",
+            "phase=10b status=completed need_render=true runtime_generation=context-v2\n",
         )
     except (ControllerError, OSError) as exc:
         try:
