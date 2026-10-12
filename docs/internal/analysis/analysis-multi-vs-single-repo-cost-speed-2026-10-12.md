@@ -4,7 +4,7 @@
 
 **Status:** Analysis. No code changed. Findings below are measured from two finished runs; conclusions are qualified by their scope.
 
-**Question:** The new multi-repository assessment (`assess_repositories`, `scripts/orchestrator/orchestration_controller.py`) is noticeably faster and cheaper than the classic single-repository `create-threat-model` run. Which mechanisms cause the difference, and what can the single-repository runtime adopt?
+**Question:** The new multi-repository assessment (`assess_repositories`, `scripts/orchestrator/orchestration_controller.py`) is noticeably faster and cheaper than the classic single-repository `create-threat-model` run. Which mechanisms cause the difference, what does the session LLM orchestrator contribute, and what can the single-repository runtime adopt?
 
 ## Compared runs
 
@@ -79,17 +79,58 @@ Parallelism does not explain the multi run's speed. Its 143 host calls ran almos
 
 The throughput figures are not strictly comparable: the single run exposes only wall time including tool execution, the multi run exposes API time. STRIDE output counts in the single log are partial (`output_partial`) and are excluded from throughput.
 
-## Options for the single-repository runtime
+## Role of the session LLM orchestrator
 
-1. **Move bounded roles to the host model.** Assemble source windows deterministically and call the model once with `StructuredOutput` only. Candidates, in order of measured leverage: abuse-case verifier, evidence verifier (its agent definition already describes bounded receipted source windows), architect reviewer, control analyst, trust-boundary analyst. The earlier threat-analyst evaluation found no quality benefit from exploration (`--explore`), which supports this direction for bounded roles.
-2. **Revisit the Sonnet 4.6 pin.** The pin raises cost per token and lowers throughput relative to Sonnet 5.5. Decision MD-9 records that Sonnet 4.6 never delivers in combined STRIDE; whether the pin for the other roles is still required was not verified.
-3. **Move more stage sequencing into deterministic code.** The multi run shows that the full sequence runs without an LLM orchestrator.
-4. **Dispatch each STRIDE wave in one message.** The single log reports `wave_split_across_messages` twice. This saves turns but is a small lever.
+The orchestration contract already assigns control to Python: "Python controls execution and validates state. Models decide security meaning only at explicit semantic boundaries" (`docs/internal/contracts/orchestration-actions.md`). Those boundaries are the role agents, not the orchestrator. The session LLM performs the following tasks in a single-repository run:
+
+| Task | Semantic judgment | Deterministic alternative |
+|---|---|---|
+| Start the agents that `orchestration_controller.py next` names | No; relay of a controller action | Python starts tool-less `claude -p` hosts, as the multi run does |
+| Business-context dialog: confirm the use case from the preview, derive one business-harm question (at most two questions) | **Yes; the only judgment the orchestrator owns** | One host call produces the questions; the session only asks them |
+| Task rows, banners, `AskUserQuestion`, completion summary | No | Partly; Task rows and `AskUserQuestion` are bound to the session |
+| Start and stop the watchdog, re-enter through `next` after compaction | No | Python owns both |
+
+The orchestrator has measurable cost beyond its share of the bill (≈ 5.4 $ and one model turn per stage in the Juice Shop run). Several guards exist only to correct its behavior:
+
+- `check_stride_dispatch.py` blocks STRIDE performed inline instead of dispatched.
+- The `completion_relay` gate blocks a paraphrased completion summary.
+- The Stage-1 dispatch must be phrased as a command; otherwise the orchestrator backgrounds the analyst and the 600 s ceiling kills it.
+- `TELEMETRY_MISMATCH code=wave_split_across_messages` reports STRIDE waves spread over several messages (twice in the Juice Shop run).
+- After context compaction the orchestrator must rehydrate from the filesystem.
+
+**Headless mode keeps the orchestrator without any of its interactive tasks.** `scripts/run-headless.sh` hands two or more `--repo` selections to `orchestration_controller.py assess` (line 236) but runs a single repository as `claude -p` with the `create-threat-model` skill. A headless single-repository run therefore pays for a session LLM that asks no questions and shows no UI.
+
+The orchestrator cannot be removed on its own in interactive mode. Only the session may dispatch Level-0 agents, and the role agents need Read, Grep, and Bash. Removing it requires the role conversion in step 1 below first.
+
+## Recommendation
+
+**Make orchestration deterministic; keep the LLM for semantic roles, called as bounded single calls.** The decision separates three layers:
+
+| Layer | Recommendation |
+|---|---|
+| Orchestration: sequence, dispatch, retries, gates, status | Deterministic Python controller, as in `assess_repositories` |
+| Semantic roles: STRIDE, evidence, abuse-case verification, rendering, and the other role agents | LLM, called once per job with deterministically assembled source windows and `StructuredOutput` only, instead of an agent with a tool loop |
+| Business-context dialog | LLM generates the questions; the session asks them |
+
+Order of adoption:
+
+1. **Convert the abuse-case verifier to a host call and compare it A/B.** It has the largest measured gap per role (3.49 $ vs 0.17 $) and a narrowly bounded input. Continue with the evidence verifier (its agent definition already describes bounded receipted source windows), architect reviewer, control analyst, and trust-boundary analyst. The earlier threat-analyst evaluation found no quality benefit from exploration (`--explore`), which supports this direction for bounded roles.
+2. **Run headless single-repository assessments through the Python controller.** This removes the session LLM where it has no interactive task. `assess` currently requires at least two `--repo` selections and has no architect review, threat merger, or QA reviewer stage; the gap to the single-repository pipeline must be closed or deliberately accepted.
+3. **Reduce the interactive session to preflight, dialog, and model selection.** The session then starts the controller as one background command, follows a progress file, and relays the finished summary unchanged.
+
+Independent of that order:
+
+- **Retire the Sonnet 4.6 session prompt with the orchestrator, and give every role an explicit model.** The interactive session-model question (`SKILL-full-runtime.md` §2a) and `_session_model_advisory` in `scripts/runtime/resolve_config.py` only exist because the session model drives cost. Several roles (renderer, abuse-case verifier, and others listed as "follows session") inherit the session model; without a session orchestrator they need an explicit controller-assigned model, as `assess` already does.
+- **Revisit the Sonnet 4.6 economy pin separately.** The pin for STRIDE, triage, and merger in `resolve_config.py` is independent of the orchestrator. Its rationale (2026-07-04: same price per token, about 30 % fewer tokens than Sonnet 5) predates Sonnet 5.5, which the current price table lists as cheaper per token than Sonnet 4.6; the token-count difference for Sonnet 5.5 was not measured. Decision MD-9 records that Sonnet 4.6 returns no artifact from a tool-less STRIDE call, so any role converted to a host call cannot keep the pin.
+- **Record the architecture choice as a decision** in `docs/internal/decisions.md` once it is made, with operator-confirmed wording.
 
 ## Verification needed before adoption
 
-- **Quality is not compared.** Bounded windows can miss data flows across files that an exploring agent would follow. Each role change needs an A/B run on the same target and depth, graded with `eval-threat-model`. The abuse-case verifier is the recommended first candidate: largest measured gap, narrowly bounded input.
+- **Quality is not compared.** Bounded windows can miss data flows across files that an exploring agent would follow. Each role change needs an A/B run on the same target and depth, graded with `eval-threat-model`.
 - **Separate model effect from architecture effect.** Run the single-repository pipeline on the same target with Sonnet 5.5 instead of the Sonnet 4.6 pin. The time and cost it saves is the model effect; the remaining gap to the host model approximates the architecture effect.
+- **Interactive progress and cancellation** need a replacement for Task rows and session interrupts once the controller runs as a background process.
+- **Not verified:** whether `claude -p` hosts started from an interactive session are billed and permitted like subagents. The multi run shows only that they work headless.
+- **Not verified:** whether the session LLM contributes judgment in Stage 3 repair and Stage 4 beyond relaying controller actions. This analysis read the ownership sections, not `SKILL-thin-stage3.md`.
 
 ## Side observation
 
