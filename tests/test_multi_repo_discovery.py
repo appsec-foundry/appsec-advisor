@@ -215,3 +215,21 @@ def test_expired_budget_never_creates_a_host(tmp_path):
     with pytest.raises(HostCancelled, match="time limit"):
         discovery.discover(scope, host_factory=host.factory, budget=limits, should_stop=lambda: False)
     assert host.ceilings == []
+
+
+@pytest.mark.parametrize("usd,settled", [(0.0, True), (0.03, True), (None, False), (0.06, False)])
+def test_a_refused_call_with_a_reported_cost_is_settled_so_the_run_can_resume(tmp_path, usd, settled):
+    class RefusingHost:
+        def invoke(self, *args):
+            raise TransportError("host call failed: authentication_failed", reason="authentication_failed", usd=usd)
+
+    limits = budget()
+    with pytest.raises(TransportError) as caught:
+        discovery.discover(
+            sources(tmp_path), host_factory=lambda ceiling: RefusingHost(), budget=limits, should_stop=lambda: False
+        )
+    assert caught.value.reason == "authentication_failed"
+    # A known cost replaces the reservation; an unknown or impossible one keeps it (MR-4).
+    assert limits.failed is not settled
+    assert limits.spent_usd == pytest.approx(usd if settled else 0.05)
+    assert ("--resume" in str(caught.value)) is settled

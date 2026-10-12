@@ -272,3 +272,49 @@ def test_a_call_whose_thinking_runs_away_is_stopped_as_a_time_limit(tmp_path, es
     else:
         assert transport.invoke("s", "p", {}, 30, lambda: False).payload == {"ok": True}
     assert str(estimate) in events.read_text()
+
+
+def _refused(error: str, cost: float = 0) -> str:
+    """The stream the host emits when the API refuses a call: an assistant
+    message carrying the error code, then a result with `subtype: success`."""
+    assistant = {"type": "assistant", "error": error, "is_api_error_message": True, "message": {"content": []}}
+    result = {
+        "type": "result",
+        "subtype": "success",
+        "is_error": True,
+        "terminal_reason": "api_error",
+        "api_error_status": None,
+        "result": "HOST-TEXT-NOT-ECHOED",
+        "total_cost_usd": cost,
+    }
+    return f"print(json.dumps({assistant!r}), flush=True)\nprint(json.dumps({result!r}), flush=True)\n"
+
+
+@pytest.mark.parametrize(
+    "error,hint", [("authentication_failed", "/login"), ("billing_error", "no usage left"), ("rate_limit", None)]
+)
+def test_a_refused_call_names_the_api_error_not_the_success_subtype(tmp_path, error, hint):
+    with pytest.raises(host.TransportError) as caught:
+        _streaming(tmp_path, _refused(error), tmp_path / "events.jsonl").invoke("s", "p", {}, 30, lambda: False)
+    message = str(caught.value)
+    assert caught.value.reason == error and caught.value.usd == 0.0
+    assert error in message and "success" not in message and "HOST-TEXT" not in message
+    assert (hint in message) if hint else "(" not in message
+
+
+@pytest.mark.parametrize(
+    "outcome,reason,usd",
+    [
+        ({"is_error": True, "subtype": "success", "api_error_status": 401}, "authentication_failed", None),
+        ({"is_error": True, "subtype": "success", "api_error_status": 529, "total_cost_usd": 0}, "server_error", 0.0),
+        ({"is_error": True, "subtype": "success", "terminal_reason": "api_error"}, "api_error", None),
+        ({"is_error": True, "subtype": "error_max_budget_usd", "total_cost_usd": 0.4}, "error_max_budget_usd", 0.4),
+        ({"is_error": False, "subtype": "success", "result": "model prose"}, "no_structured_output", None),
+        ({"is_error": True, "subtype": "success", "total_cost_usd": "0.1"}, "error", None),
+    ],
+)
+def test_an_unrecorded_failure_is_classified_from_the_result_alone(tmp_path, outcome, reason, usd):
+    with pytest.raises(host.TransportError) as caught:
+        transport(tmp_path, f"print(json.dumps({outcome!r}))\n").invoke("s", "p", {}, 30, lambda: False)
+    assert caught.value.reason == reason and caught.value.usd == usd
+    assert "model prose" not in str(caught.value)

@@ -114,7 +114,20 @@ class DiscoveryBudget:
         self.calls += 1
         self.spent_usd += ceiling
         self.failed = True
-        reply = factory(ceiling).invoke(system, prompt, schema, remaining, should_stop)
+        try:
+            reply = factory(ceiling).invoke(system, prompt, schema, remaining, should_stop)
+        except TransportError as exc:
+            # A refused call whose cost the host still reported is settled, so
+            # the run can be resumed; an unknown cost stays reserved (MR-4).
+            if exc.usd is None or exc.usd > ceiling:
+                raise
+            self.spent_usd += exc.usd - ceiling
+            self.failed = False
+            raise TransportError(
+                f"{exc}; the run can continue: rerun the same command with --resume",
+                reason=exc.reason,
+                usd=exc.usd,
+            ) from None
         cost = reply.usd
         if type(cost) not in (int, float) or not math.isfinite(cost) or cost < 0 or cost > ceiling:
             raise TransportError("Discovery host cost is unavailable or exceeds its reservation")

@@ -33,6 +33,7 @@ if not __package__:
 
 
 import json
+import math
 import os
 import shutil
 import signal
@@ -59,7 +60,69 @@ _DROPPED_ENV_PREFIXES = ("GIT_", "APPSEC_", "OUTPUT_DIR", "CLAUDE_CODE_SESSION",
 
 
 class TransportError(Exception):
-    """The host call failed before producing a reply; it may be retried."""
+    """The host call failed before producing a reply; it may be retried.
+
+    `reason` is a fixed code naming why (see `_failure_reason`), never host or
+    model text. `usd` is the call's cost when the host still reported it, so a
+    budget can settle the call instead of treating its cost as unknown.
+    """
+
+    def __init__(self, message: str, *, reason: str = "transport", usd: float | None = None):
+        super().__init__(message)
+        self.reason = reason
+        self.usd = usd
+
+
+# The host's own error codes for a call the API refused. They come from the
+# assistant message the host synthesizes for an API error; the result event of
+# the same call reports `subtype: success` with `is_error: true`.
+API_ERROR_CODES = frozenset(
+    {
+        "authentication_failed",
+        "billing_error",
+        "rate_limit",
+        "invalid_request",
+        "server_error",
+        "max_output_tokens",
+        "unknown",
+    }
+)
+# The same classes by HTTP status, for output without the assistant message.
+_API_STATUS_CODES = {
+    401: "authentication_failed",
+    403: "authentication_failed",
+    402: "billing_error",
+    429: "rate_limit",
+}
+# What the operator has to do; a code without an entry needs no action of theirs.
+_FAILURE_HINTS = {
+    "authentication_failed": "the Claude Code login expired or is missing; sign in again with /login",
+    "billing_error": "the Claude account has no usage left",
+    "invalid_request": "the API rejected the request",
+}
+
+
+def _failure_reason(outcome: object, api_error: str | None) -> str:
+    """Name a failed host call by a fixed code: an API error, a host limit, or a missing result."""
+    if api_error in API_ERROR_CODES:
+        return api_error
+    if not isinstance(outcome, dict):
+        return "no_result"
+    status = outcome.get("api_error_status")
+    if type(status) is int:
+        return _API_STATUS_CODES.get(status) or ("server_error" if status >= 500 else "invalid_request")
+    if outcome.get("terminal_reason") == "api_error":
+        return "api_error"
+    subtype = outcome.get("subtype")
+    # Host limits such as error_max_budget_usd; bounded, never echoed beyond that.
+    if isinstance(subtype, str) and subtype.startswith("error_") and subtype.isascii() and len(subtype) <= 60:
+        return subtype
+    return "error" if outcome.get("is_error") else "no_structured_output"
+
+
+def _reported_usd(outcome: object) -> float | None:
+    usd = outcome.get("total_cost_usd") if isinstance(outcome, dict) else None
+    return float(usd) if type(usd) in (int, float) and math.isfinite(usd) and usd >= 0 else None
 
 
 class HostCancelled(Exception):
@@ -254,11 +317,12 @@ class ClaudeCliTransport:
         except OSError:
             raise TransportError("host could not be started") from None
         deadline = time.monotonic() + timeout_s
+        api_error = None
         try:
             if self.events_path is None:
                 stdout, _ = _communicate(proc, prompt.encode("utf-8"), deadline, should_stop)
             else:
-                stdout = _communicate_events(
+                stdout, api_error = _communicate_events(
                     proc,
                     prompt.encode("utf-8"),
                     deadline,
@@ -272,13 +336,17 @@ class ClaudeCliTransport:
         try:
             outcome = json.loads(stdout)
         except (json.JSONDecodeError, UnicodeDecodeError):
-            raise TransportError("host returned no parseable result") from None
+            raise TransportError("host call failed: no_result", reason="no_result") from None
         if not isinstance(outcome, dict) or outcome.get("is_error") or "structured_output" not in outcome:
-            # The subtype is a fixed host vocabulary (for example a budget or
-            # structured-output limit); bound it, never echo model text.
-            subtype = outcome.get("subtype") if isinstance(outcome, dict) else None
-            detail = f" ({str(subtype)[:60]})" if isinstance(subtype, str) and subtype.isascii() else ""
-            raise TransportError("host reported an error or no structured output" + detail)
+            # Named by a fixed code, never by the result text: a refused call's
+            # result reads `subtype: success`, and other results carry model text.
+            reason = _failure_reason(outcome, api_error)
+            hint = _FAILURE_HINTS.get(reason)
+            raise TransportError(
+                f"host call failed: {reason}" + (f" ({hint})" if hint else ""),
+                reason=reason,
+                usd=_reported_usd(outcome),
+            )
         usd = outcome.get("total_cost_usd")
         return HostReply(outcome["structured_output"], usd if isinstance(usd, (int, float)) else None)
 
@@ -326,8 +394,11 @@ def _communicate_events(
     events_path: Path,
     on_event: Callable[[dict], None] | None = None,
     max_thinking_tokens: int | None = None,
-) -> bytes:
-    """Record each event line with its elapsed seconds as it arrives; return the result event.
+) -> tuple[bytes, str | None]:
+    """Record each event line with its elapsed seconds as it arrives.
+
+    Returns the result event and the host's error code for a call the API
+    refused, which only the synthesized assistant message carries.
 
     Partial output chunks are only counted: one summary line every few seconds
     records how much thinking and output text has streamed, without the text.
@@ -337,6 +408,7 @@ def _communicate_events(
         threading.Thread(target=_feed, args=(stdin, data), daemon=True).start()
     started = time.monotonic()
     result: list[bytes] = []
+    api_error: list[str] = []
 
     streamed = {"thinking_chars": 0, "output_chars": 0}
     thinking = [0]
@@ -369,6 +441,8 @@ def _communicate_events(
                     thinking[0] = max(thinking[0], event["estimated_tokens"])
                 if event.get("type") == "result":
                     result[:] = [line]
+                if event.get("type") == "assistant" and event.get("error") in API_ERROR_CODES:
+                    api_error[:] = [event["error"]]
                 if on_event is not None:
                     try:
                         on_event(event)
@@ -397,7 +471,7 @@ def _communicate_events(
             except subprocess.TimeoutExpired:
                 pass
         reader.join(timeout=TERMINATE_GRACE_SECONDS)
-    return result[0] if result else b""
+    return (result[0] if result else b""), (api_error[0] if api_error else None)
 
 
 def _stop_group(proc: subprocess.Popen) -> None:

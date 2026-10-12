@@ -12,7 +12,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from runtime import acquire_lock
-from runtime.analyst_host import HostCancelled, HostReply
+from runtime.analyst_host import HostCancelled, HostReply, TransportError
 from runtime.assessment_host import ExchangeError
 from runtime.assessment_jobs import AssessmentBudget, AssessmentJobs
 from runtime.assessment_state import AssessmentState
@@ -154,6 +154,37 @@ def test_cost_reservation_is_durable_before_dispatch_and_unknown_cost_blocks_res
     with pytest.raises(ExchangeError, match="unfinished cost reservation"):
         with lifecycle(scope, resume=True).hold():
             pytest.fail("Unknown costs must not be refunded")
+
+
+def test_a_refused_call_with_a_reported_cost_leaves_the_run_resumable(scope):
+    state = lifecycle(scope)
+
+    class RefusingHost:
+        def invoke(self, *args):
+            raise TransportError("host call failed: authentication_failed", reason="authentication_failed", usd=0.0)
+
+    with pytest.raises(TransportError, match="--resume"):
+        with state.hold():
+            AssessmentJobs(
+                scope,
+                state.directory / "jobs",
+                state.budget,
+                lambda role, ceiling: RefusingHost(),
+                state.should_stop,
+                state.checkpoint,
+            ).execute(
+                role="recon_scanner",
+                selector="one",
+                instructions="trusted",
+                context={},
+                schema={"type": "object"},
+                allowed_sources=frozenset(),
+                validate=lambda a, r: None,
+            )
+    assert stored(scope)["status"] == "failed"
+    assert stored(scope)["accounting"] == {"calls": 1, "spent_usd": 0.0, "unavailable": False}
+    with lifecycle(scope, resume=True).hold() as resumed:
+        assert resumed.budget.calls == 1 and resumed.budget.spent_usd == 0.0
 
 
 def test_validated_cached_job_survives_resume_without_dispatch_or_extra_cost(scope):
