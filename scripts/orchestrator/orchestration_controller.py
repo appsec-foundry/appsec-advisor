@@ -8093,8 +8093,21 @@ def _assessment_session(scope, arguments, *, budget, host_factory, resume=False,
             reuse_inherited=not rebuild,
         )
         yield cfg, state, jobs
-        if _assessment_runtime_fingerprint() != state.identity["runtime_sha256"]:
-            raise ControllerError("assessment runtime changed while the session was running")
+
+
+def _assessment_runtime_warning(state) -> str | None:
+    """Disclose a plugin change during the run instead of discarding its report.
+
+    Every artifact was validated by the code that consumed it, so the report
+    stands; its parts may come from different plugin versions. Resuming stays
+    bound to the starting runtime through the state identity.
+    """
+    if _assessment_runtime_fingerprint() == state.identity["runtime_sha256"]:
+        return None
+    return (
+        "The plugin changed while this assessment ran, so parts of the report may come from different "
+        "plugin versions. Run again with --rebuild for a result from one version."
+    )
 
 
 def _assessment_role_instructions(role: str, adaptation: str) -> str:
@@ -9150,6 +9163,9 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                 say("Publishing the combined threat model")
                 delivered = _assessment_publish(scope, original, names, workspace, cfg, warnings)
                 state.complete(delivered)
+                runtime_warning = _assessment_runtime_warning(state)
+                if runtime_warning:
+                    warnings.append(runtime_warning)
                 if not cfg.get("keep_runtime_files"):
                     shutil.rmtree(workspace, ignore_errors=True)
         except ScopeError as exc:

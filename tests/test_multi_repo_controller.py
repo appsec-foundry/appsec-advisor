@@ -328,18 +328,19 @@ def test_controller_analysis_sessions_hold_owned_state_and_resume_without_new_ca
     assert not (scope.output / ".appsec-lock").exists()
 
 
-def test_session_rejects_runtime_changes_before_returning_completion(tmp_path, monkeypatch):
+def test_a_runtime_change_during_the_session_is_disclosed_not_fatal(tmp_path, monkeypatch):
     for name in ("caller", "receiver"):
         checkout(tmp_path / name)
     scope = admit([str(tmp_path / name) for name in ("caller", "receiver")], str(tmp_path / "out"))
     current = ["a" * 64]
     monkeypatch.setattr(controller, "_assessment_runtime_fingerprint", lambda: current[0])
-    with pytest.raises(controller.ControllerError, match="runtime changed"):
-        with controller._assessment_session(
-            scope, ["--no-requirements"], budget=AssessmentBudget(1, 0.05, 10, 60), host_factory=lambda *args: None
-        ):
-            current[0] = "b" * 64
-    assert json.loads((scope.output / ".assessment-state.json").read_text())["status"] == "failed"
+    with controller._assessment_session(
+        scope, ["--no-requirements"], budget=AssessmentBudget(1, 0.05, 10, 60), host_factory=lambda *args: None
+    ) as (_, state, _):
+        assert controller._assessment_runtime_warning(state) is None
+        current[0] = "b" * 64
+        assert "--rebuild" in controller._assessment_runtime_warning(state)
+    assert json.loads((scope.output / ".assessment-state.json").read_text())["status"] != "failed"
 
 
 @pytest.mark.parametrize("change", ["code", "instruction", "schema", "data"])

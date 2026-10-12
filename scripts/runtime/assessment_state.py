@@ -198,7 +198,9 @@ class AssessmentState:
     def _changed(self, identity) -> str:
         """Name what differs between a stored run identity and this one."""
         changed = [label for key, label in _IDENTITY_LABELS if identity.get(key) != self.identity.get(key)]
-        return ", ".join(changed) or "its identity"
+        if not changed:
+            return "its identity"
+        return changed[0] if len(changed) == 1 else ", ".join(changed[:-1]) + " and " + changed[-1]
 
     def _discard_unfinished_run(self):
         """Clear what an unfinished earlier assessment left, or refuse a fresh start.
