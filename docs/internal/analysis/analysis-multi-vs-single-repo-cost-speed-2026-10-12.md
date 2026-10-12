@@ -14,7 +14,7 @@ The two runs differ in target size and depth, so absolute numbers are not a like
 |---|---|---|
 | Target | OWASP Juice Shop (246 routes, 8 components) | `insecure-multirepoapp` (small services; STRIDE source windows of 25–171 lines per component, 10 components) |
 | Depth | `thorough` | `standard` |
-| Models | Opus 5.5 for STRIDE, merger, post-STRIDE synthesizer; Sonnet 4.6 for every other agent; Haiku 5.5 for recon | Sonnet 5.5 for every role; Haiku 5.5 for recon |
+| Models | Opus 5.5 for STRIDE, merger, post-STRIDE synthesizer; Sonnet 4.6 for every other agent (dispatched as the alias `sonnet`, resolved to the Sonnet 4.6 session model); Haiku 5.5 for recon | Sonnet 5.5 for every role; Haiku 5.5 for recon |
 | Wall clock | 99 min (`ASSESSMENT_START` → `ASSESSMENT_END`) | 41 min (`started_at` → publication) |
 | Cost | ≈ 17.9 $ subagents (priced from `AGENT_USAGE`) + ≈ 5.4 $ orchestrator session (`SESSION_STOP` at `ASSESSMENT_END`; whether child usage is included was not verified) | 7.58 $ (`.assessment-state.json` accounting, 143 calls) |
 | Findings | 79 (5 critical, 33 high, 41 medium) | 76 (2 critical, 40 high, 34 medium) |
@@ -120,8 +120,8 @@ Order of adoption:
 
 Independent of that order:
 
-- **Retire the Sonnet 4.6 session prompt with the orchestrator, and give every role an explicit model.** The interactive session-model question (`SKILL-full-runtime.md` §2a) and `_session_model_advisory` in `scripts/runtime/resolve_config.py` only exist because the session model drives cost. Several roles (renderer, abuse-case verifier, and others listed as "follows session") inherit the session model; without a session orchestrator they need an explicit controller-assigned model, as `assess` already does.
-- **Revisit the Sonnet 4.6 economy pin separately.** The pin for STRIDE, triage, and merger in `resolve_config.py` is independent of the orchestrator. Its rationale (2026-07-04: same price per token, about 30 % fewer tokens than Sonnet 5) predates Sonnet 5.5, which the current price table lists as cheaper per token than Sonnet 4.6; the token-count difference for Sonnet 5.5 was not measured. Decision MD-9 records that Sonnet 4.6 returns no artifact from a tool-less STRIDE call, so any role converted to a host call cannot keep the pin.
+- **Retire the Sonnet 4.6 session prompt with the orchestrator.** In an interactive run the configured model IDs do not reach the role agents. `resolve_config.py` assigns `claude-sonnet-5-5` to triage, merger, renderer, and abuse-case verifier, but the Juice Shop run dispatched all 33 Sonnet agents with the bare alias `sonnet`, and every one resolved to the Sonnet 4.6 session model. The code states this limit: "these explicit-id pins bite on the headless/hybrid path; an interactive run's subagents inherit the session model". The session-model question (`SKILL-full-runtime.md` §2a), which recommends a Sonnet 4.6 session, therefore sets the model of most roles. A controller that calls each role with an explicit model ID, as `assess` does, removes both the question and the inheritance.
+- **Drop the remaining STRIDE pin when STRIDE becomes a host call.** At `standard` depth, `sonnet-economy` still pins STRIDE to Sonnet 4.6. Its rationale (2026-07-04: same price per token, about 30 % fewer tokens than Sonnet 5) predates Sonnet 5.5, which the current price table lists as cheaper per token than Sonnet 4.6; the token-count difference for Sonnet 5.5 was not measured. Decision MD-9 records that Sonnet 4.6 returns no artifact from a tool-less STRIDE call, so a host-call STRIDE cannot keep the pin.
 - **Record the architecture choice as a decision** in `docs/internal/decisions.md` once it is made, with operator-confirmed wording.
 
 ## Verification needed before adoption
