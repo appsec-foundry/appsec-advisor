@@ -708,3 +708,85 @@ def test_each_cli_host_call_records_its_events_in_its_own_file(tmp_path):
     assert first.max_thinking_tokens == 20_000
     unrecorded = _assessment_cli_host_factory(tmp_path / "hosts")("x", "sonnet", 1.0)
     assert unrecorded.events_path is None and unrecorded.max_thinking_tokens is None
+
+
+class _MergerJobs:
+    """Answers each merger exchange with one decision per supplied group, as the merger would."""
+
+    def __init__(self, action="keep", reply=None):
+        self.action, self.reply, self.requests = action, reply, []
+
+    def execute(self, **request):
+        self.requests.append(request)
+        groups = request["context"]["candidate_groups"]
+        decisions = [
+            {"group_id": group["group_id"], "action": self.action, "member_indices": [0, 1], "rationale": "Same sink."}
+            | ({"merge_target_index": 0} if self.action == "merge" else {})
+            for group in groups
+        ]
+        artifact = self.reply or {"version": 2, "generated_at": "now", "model": "test", "decisions": decisions}
+        request["validate"](artifact, [])
+        return artifact
+
+
+def _merge_groups(count):
+    member = {"component_id": "edge", "title": "Unvalidated input"}
+    return [
+        {"group_id": f"G-{index:08x}", "member_count": 2, "members": [member, dict(member)]} for index in range(count)
+    ]
+
+
+@pytest.mark.parametrize("count, exchanges", [(1, 1), (controller.MERGE_REVIEW_GROUPS + 1, 2)])
+def test_merge_review_decides_every_group_in_bounded_tool_less_exchanges(count, exchanges):
+    jobs = _MergerJobs(action="merge")
+    progress = []
+    decisions = controller._assessment_merge_review(jobs, "verified", _merge_groups(count), progress=progress.append)
+    assert len(jobs.requests) == exchanges
+    assert all(r["role"] == "threat_merger" and r["allowed_sources"] == frozenset() for r in jobs.requests)
+    assert sorted(d["group_id"] for d in decisions) == [g["group_id"] for g in _merge_groups(count)]
+    assert all(line.startswith("Reviewing merge candidates (verified,") for line in progress)
+
+
+def test_merge_review_rejects_a_decision_set_that_omits_a_group():
+    reply = {"version": 2, "generated_at": "now", "model": "test", "decisions": []}
+    with pytest.raises(controller.ControllerError, match="omits candidate groups"):
+        controller._assessment_merge_review(_MergerJobs(reply=reply), "verified", _merge_groups(2), progress=print)
+
+
+@pytest.mark.parametrize(
+    "asset, name, description",
+    [
+        ({"name": "Customer order history", "description": None}, "Customer order history", "Customer order history."),
+        ({"name": "Signing keys", "description": "  "}, "Signing keys", "Signing keys."),
+        (
+            {"name": "Payment " + "authorization records of every merchant account " * 3, "description": "Kept."},
+            None,
+            "Kept.",
+        ),
+        ({"name": "Session tokens", "description": "Bearer tokens."}, "Session tokens", "Bearer tokens."),
+    ],
+)
+def test_architecture_assets_fit_the_legacy_asset_fragment(asset, name, description):
+    fitted = controller._assessment_asset_fields(dict(asset, id="asset-a", classification="Internal"))
+    assert len(fitted["name"]) <= controller.ASSET_NAME_CHARS
+    assert fitted["name"] == (name or fitted["name"]) and not fitted["name"].endswith(" of")
+    assert fitted["description"] == description
+
+
+@pytest.mark.parametrize("repositories, keep, kept", [(1, False, True), (2, False, False), (2, True, True)])
+def test_a_sole_repository_keeps_its_run_files(tmp_path, repositories, keep, kept):
+    workspace = tmp_path / "render"
+    workspace.mkdir()
+    (workspace / ".threats-merged.json").write_text("{}", encoding="utf-8")
+    controller._assessment_discard_workspace(workspace, repositories, {"keep_runtime_files": keep})
+    assert workspace.is_dir() is kept
+
+
+def test_an_interrupted_assessment_exits_without_a_traceback(monkeypatch, capsys):
+    def interrupted(argv):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(controller, "assess_repositories", interrupted)
+    assert controller.assess_main(["--repo", "x", "--output", "y"]) == 130
+    captured = capsys.readouterr()
+    assert "✗ assessment interrupted" in captured.err and "Traceback" not in captured.err

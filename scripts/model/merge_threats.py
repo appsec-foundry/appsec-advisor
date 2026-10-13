@@ -2492,6 +2492,40 @@ def _collect_resolved_prior_findings(pairs: list[tuple[str, dict]]) -> list[dict
     return out
 
 
+def consolidate_findings(threats: list[dict]) -> list[dict]:
+    """The one deduplication and consolidation chain of every merge path.
+
+    Legacy ``collect`` and the assessment controller's ``merge_assessment``
+    both run it, so evidence identity, systemic folding and survivor choice
+    cannot drift between the runtimes.
+    """
+    # Normalize before consolidation captures per-instance severity and picks
+    # a survivor; an over-cap analyst rating cannot win either decision.
+    normalize_risks(threats)
+    deduped = _dedupe_exact(threats)
+    # Evidence-identity dedup (2026-06): collapse the cross-STRIDE /
+    # cross-component duplicate (same file:line + CWE) that _exact_key and the
+    # (CWE,STRIDE) candidate grouping both miss. Runs here, before grouping, so
+    # the merger / finalize path never has to reunite a STRIDE-split pair.
+    deduped = _dedupe_evidence(deduped)
+    # Title-at-location identity: the same title at the same concrete line is
+    # one finding even when analyzers disagree on CWE and derived category.
+    deduped = _dedupe_title_locator(deduped)
+    # Systemic config-scan consolidation (2026-06-13): collapse N hits of one
+    # IaC/CI check (same config_check_id, across many files or many stages of
+    # one Dockerfile) into a single finding whose instances[] lists every hit.
+    # Runs before grouping so the coarse (CWE, STRIDE) merger never faces the
+    # un-mergeable per-instance pile. See _consolidate_config_checks.
+    deduped = _consolidate_config_checks(deduped)
+    # Generalized systemic consolidation (2026-06-15): collapse findings that
+    # are manifestations of one shared mechanism/object per the declarative
+    # data/consolidation-groups.yaml catalog (JWT verification, missing route
+    # auth, dependabot, websocket channel, …). Runs AFTER the config pass so its
+    # survivors fold in as instances, and BEFORE grouping so the LLM merger never
+    # sees the per-instance pile. Non-matching findings (IDOR, XSS) untouched.
+    return _consolidate_by_group(deduped)
+
+
 def cmd_collect(args: argparse.Namespace) -> int:
     out_dir = Path(args.output_dir).resolve()
     if not out_dir.exists():
@@ -2526,31 +2560,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
     # `.dep-scan.json` ingestion was removed 2026-05 — supply-chain
     # posture now arrives as §7.11 control rows + meta_findings[] sidecars,
     # not as CVE-shaped threats in this merged set.
-    # Normalize before consolidation captures per-instance severity and picks
-    # a survivor; an over-cap analyst rating cannot win either decision.
-    normalize_risks(flat)
-    deduped = _dedupe_exact(flat)
-    # Evidence-identity dedup (2026-06): collapse the cross-STRIDE /
-    # cross-component duplicate (same file:line + CWE) that _exact_key and the
-    # (CWE,STRIDE) candidate grouping both miss. Runs here, before grouping, so
-    # the merger / finalize path never has to reunite a STRIDE-split pair.
-    deduped = _dedupe_evidence(deduped)
-    # Title-at-location identity: the same title at the same concrete line is
-    # one finding even when analyzers disagree on CWE and derived category.
-    deduped = _dedupe_title_locator(deduped)
-    # Systemic config-scan consolidation (2026-06-13): collapse N hits of one
-    # IaC/CI check (same config_check_id, across many files or many stages of
-    # one Dockerfile) into a single finding whose instances[] lists every hit.
-    # Runs before grouping so the coarse (CWE, STRIDE) merger never faces the
-    # un-mergeable per-instance pile. See _consolidate_config_checks.
-    deduped = _consolidate_config_checks(deduped)
-    # Generalized systemic consolidation (2026-06-15): collapse findings that
-    # are manifestations of one shared mechanism/object per the declarative
-    # data/consolidation-groups.yaml catalog (JWT verification, missing route
-    # auth, dependabot, websocket channel, …). Runs AFTER the config pass so its
-    # survivors fold in as instances, and BEFORE grouping so the LLM merger never
-    # sees the per-instance pile. Non-matching findings (IDOR, XSS) untouched.
-    deduped = _consolidate_by_group(deduped)
+    deduped = consolidate_findings(flat)
     all_candidates = _group_candidates(deduped)
     candidates, auto_decisions = _split_auto_decisions(all_candidates)
 
@@ -3235,6 +3245,20 @@ def _reconcile_actor_attribution(out_dir: Path, threats: list[dict]) -> list[dic
 _REVIEW_BASIS = {"verified": "llm-verified"}
 
 
+def single_repository_groups(groups: list[dict], components: list[dict]) -> list[dict]:
+    """Candidate groups whose members all belong to components of one repository.
+
+    A merger judgment compares wording, which never establishes that two
+    repositories share one defect; such groups stay unmerged.
+    """
+    owner = {row["id"]: tuple(row.get("repository_ids") or ()) for row in components}
+
+    def repositories(group: dict) -> set:
+        return {owner.get(member.get("component_id")) for member in group.get("members") or []}
+
+    return [group for group in groups if len(repositories(group)) == 1 and None not in repositories(group)]
+
+
 def merge_assessment(
     scope,
     components: dict,
@@ -3244,15 +3268,22 @@ def merge_assessment(
     boundaries: list[dict],
     scanner_threats: dict[str, list[dict]] | None = None,
     started_at=None,
+    review_groups=None,
 ) -> dict:
-    """Use existing intake, evidence deduplication and ranking for v2 sources.
+    """Validate v2 sources, then run the legacy merge chain on them.
 
     Scoped jobs have already validated retrieval and independent review. This
-    handoff checks inventory coverage and provenance again. Equal source names
-    in different roots remain distinct; a model-authored shared-control name
-    never authorizes cross-repository consolidation. ``scanner_threats`` holds
-    deterministic scanner findings per component; the component's evidence
-    review decides them together with its STRIDE findings.
+    handoff checks inventory coverage and provenance again, then runs the same
+    steps as ``collect`` and ``finalize`` (see ``ASSESSMENT_TAIL``) within each
+    evidence verdict, so a refuted or unproven finding never absorbs one with a
+    different verdict. Equal source names in different roots remain distinct
+    because file keys stay root-qualified until the end; a model-authored
+    shared-control name never authorizes cross-repository consolidation.
+    ``scanner_threats`` holds deterministic scanner findings per component; the
+    component's evidence review decides them together with its STRIDE findings.
+    They are the only scanner input: no sidecar on disk is read again.
+    ``review_groups`` receives the candidate groups no deterministic rule
+    decides and returns merger decisions; without it those groups stay unmerged.
     """
     import copy
 
@@ -3334,21 +3365,30 @@ def merge_assessment(
     by_verdict: dict[str, list[dict]] = {}
     for threat in flat:
         by_verdict.setdefault(threat["evidence_check"], []).append(threat)
-    threats = [
-        threat
-        for verdict in sorted(by_verdict)
-        for threat in _dedupe_title_locator(_dedupe_evidence(_dedupe_exact(by_verdict[verdict])))
-    ]
+    threats = []
+    for verdict, rows in sorted(by_verdict.items()):
+        rows = consolidate_findings(rows)
+        # Group IDs hash the group key, so two verdicts can share one: each
+        # partition is grouped, reviewed and decided on its own.
+        pending, decisions = _split_auto_decisions(_group_candidates(rows))
+        pending = single_repository_groups(pending, components["components"])
+        # Refuted findings never reach the model, so merging them changes nothing.
+        if pending and review_groups is not None and verdict != "refuted":
+            decisions += review_groups(verdict, pending)
+        normalize_risks(rows)
+        threats += _apply_decisions(rows, decisions)
+    normalize_risks(threats)
     threats = _assign_t_ids(threats)
     threats = _remap_scenario_local_refs(threats)
-    normalize_risks(threats)
-    from contexts.prepare_trust_boundary_context import associate_boundary_refs
+    from contexts.prepare_trust_boundary_context import associate_boundary_refs, revalidate_boundary_refs
 
     # Both sides still carry root-qualified file keys here, so equal names in
     # different repositories can never match each other.
     traceability_gaps = associate_boundary_refs(
         threats, boundaries=boundary_view, known_component_ids=expected, components=components["components"]
     )
+    for warning in revalidate_boundary_refs(threats, boundaries=boundary_view, known_component_ids=expected):
+        print(f"TRUST_BOUNDARY_REF_WARN: {warning}", file=sys.stderr)
     weaknesses = build_weakness_register(threats)
     seen = set()
     for row in source_rows({"threats": threats, "weaknesses": weaknesses}):
@@ -3488,6 +3528,61 @@ def cmd_finalize(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_reconcile_attribution(args: argparse.Namespace) -> int:
+    """Apply finalize's actor attribution once actors are resolved after the merge.
+
+    The assessment controller resolves actors after ``merge_assessment``; this
+    runs the same rule then, keeping corrections an earlier pass recorded.
+    """
+    from analyzers.actor_attribution import merge_corrections
+
+    out_dir = Path(args.output_dir).resolve()
+    path = out_dir / ".threats-merged.json"
+    payload = _read_json_file(path, default=None)
+    if not isinstance(payload, dict) or not isinstance(payload.get("threats"), list):
+        print(f"merge_threats: {path} has no threats list", file=sys.stderr)
+        return 1
+    corrections = _reconcile_actor_attribution(out_dir, payload["threats"])
+    if corrections:
+        payload["actor_attribution_corrections"] = merge_corrections(
+            payload.get("actor_attribution_corrections") or [], corrections
+        )
+        atomic_write_json(path, payload, indent=2, sort_keys=False)
+    print(f"merge_threats: {len(corrections)} actor attribution correction(s)")
+    return 0
+
+
+# The legacy ``collect``/``finalize`` steps and where the assessment controller
+# runs each of them. Every plugin function those two commands call is either
+# here or in ``ASSESSMENT_OMISSIONS``; tests/test_merge_threats.py enforces it,
+# so a step added to the legacy chain cannot silently skip the controller.
+ASSESSMENT_TAIL = {
+    "merge_threats._flatten_threats": "merge_assessment",
+    "merge_threats.consolidate_findings": "merge_assessment",
+    "_severity_policy.normalize_risks": "merge_assessment",
+    "merge_threats._group_candidates": "merge_assessment",
+    "merge_threats._split_auto_decisions": "merge_assessment",
+    "merge_threats._apply_decisions": "merge_assessment",
+    "merge_threats._assign_t_ids": "merge_assessment",
+    "merge_threats._remap_scenario_local_refs": "merge_assessment",
+    "prepare_trust_boundary_context.associate_boundary_refs": "merge_assessment",
+    "prepare_trust_boundary_context.revalidate_boundary_refs": "merge_assessment",
+    "merge_threats._reconcile_actor_attribution": "controller render: merge_threats reconcile-attribution",
+    "merge_threats.refresh_weaknesses": "controller render: merge_threats refresh-weaknesses",
+}
+ASSESSMENT_OMISSIONS = {
+    "merge_threats._load_stride_outputs": "STRIDE artifacts arrive validated in memory, not as .stride-*.json files",
+    "stride_outputs.stride_output_files": "STRIDE artifacts arrive validated in memory, not as .stride-*.json files",
+    "merge_threats._collect_resolved_prior_findings": "incremental affirmed fixes; every assessment is a full run",
+    "merge_threats._load_config_scan_findings": "scanner findings arrive as scanner_threats; sidecars are not re-read",
+    "merge_threats._load_source_auth_findings": "scanner findings arrive as scanner_threats; sidecars are not re-read",
+    "merge_threats._read_agent_decisions": "merger decisions come from the controller job and are validated there",
+    "merge_threats._read_json_file": "artifact I/O; merge_assessment receives its inputs in memory",
+    "_atomic_io.atomic_write_json": "artifact I/O; the controller writes the merged register itself",
+    "_artifact_stamp.carry_generated_at": "artifact I/O; the controller stamps generated_at from its start time",
+}
+
+
 def cmd_validate_decisions(args: argparse.Namespace) -> int:
     """Validate merger output against its schema and admitted candidate set."""
     out_dir = Path(args.output_dir).resolve()
@@ -3540,6 +3635,10 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     w = sub.add_parser("refresh-weaknesses", help="Rebuild weaknesses after evidence verification and triage.")
     w.add_argument("--output-dir", required=True)
     w.set_defaults(func=cmd_refresh_weaknesses)
+
+    a = sub.add_parser("reconcile-attribution", help="Apply actor attribution after actors were resolved.")
+    a.add_argument("--output-dir", required=True)
+    a.set_defaults(func=cmd_reconcile_attribution)
 
     v = sub.add_parser(
         "validate-decisions",

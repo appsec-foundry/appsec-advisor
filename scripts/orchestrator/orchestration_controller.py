@@ -8353,7 +8353,7 @@ def _assessment_architecture(scope, jobs, *, progress):
             )
         for asset in artifact["assets"]:
             asset["id"] = _id("asset", rid, asset["id"])
-            assets.append(asset)
+            assets.append(_assessment_asset_fields(asset))
     # The existing canonical flow contract owns global size and reference
     # gates. Local IDs never enter it; numbering is controller-owned.
     for index, flow in enumerate(flows["data_flows"], 1):
@@ -8626,9 +8626,53 @@ def _assessment_stride(
         reviews.append(review)
     scope.verify_unchanged()
     merged = merge_assessment(
-        scope, components, documents, reviews, boundaries=boundaries, scanner_threats=scanned, started_at=started_at
+        scope,
+        components,
+        documents,
+        reviews,
+        boundaries=boundaries,
+        scanner_threats=scanned,
+        started_at=started_at,
+        review_groups=lambda verdict, groups: _assessment_merge_review(jobs, verdict, groups, progress=progress),
     )
     return documents, reviews, merged
+
+
+# Candidate groups per merger exchange; the legacy merger admits at most 64.
+MERGE_REVIEW_GROUPS = 32
+
+
+def _assessment_merge_review(jobs, verdict: str, groups: list[dict], *, progress) -> list[dict]:
+    """Run the legacy merger's judgment on the groups no deterministic rule decides."""
+    from model.merge_threats import validate_agent_decision_document
+
+    schema = json.loads((PLUGIN_ROOT / "schemas/merge-decisions.schema.json").read_text(encoding="utf-8"))
+    batches = [groups[start : start + MERGE_REVIEW_GROUPS] for start in range(0, len(groups), MERGE_REVIEW_GROUPS)]
+    decisions: list[dict] = []
+    for number, batch in enumerate(batches, 1):
+        progress(f"Reviewing merge candidates ({verdict}, {number}/{len(batches)})")
+        context = {"evidence_verdict": verdict, "candidate_groups": batch}
+
+        def validate(artifact, ranges, context=context):
+            errors = validate_agent_decision_document(artifact, context)
+            if errors:
+                raise ControllerError(errors[0])
+
+        artifact = jobs.execute(
+            role="threat_merger",
+            selector=f"merge:{verdict}:{number}/{len(batches)}",
+            instructions=_assessment_role_instructions(
+                "threat_merger",
+                "Return one decision per supplied candidate group. Every member shares one evidence verdict. "
+                "No source files are available in this job; judge only from the supplied members.",
+            ),
+            context=context,
+            schema=schema,
+            allowed_sources=frozenset(),
+            validate=validate,
+        )
+        decisions += artifact["decisions"]
+    return decisions
 
 
 def _assessment_evidence_review(
@@ -8822,6 +8866,7 @@ class _AssessmentConsole:
         ("Running deterministic source scanners", "9/11 STRIDE"),
         ("Analyzing all STRIDE categories", "9/11 STRIDE"),
         ("Independently verifying evidence", "9/11 STRIDE"),
+        ("Reviewing merge candidates", "10/11 Scan Synthesis"),
         ("Building the deterministic route inventory", "10/11 Scan Synthesis"),
         ("Evaluating posture producers", "10/11 Scan Synthesis"),
         ("Reviewing findings as architect", "10/11 Scan Synthesis"),
@@ -9145,6 +9190,29 @@ def _assessment_synthesis(jobs, workspace: Path, *, progress) -> None:
     _run_script("validators/validate_fragment.py", ["tier-root-causes", str(workspace / ".tier-root-causes.json")])
 
 
+# The legacy asset fragment's name limit, which the register and figures assume.
+ASSET_NAME_CHARS = 80
+
+
+def _assessment_asset_fields(asset: dict) -> dict:
+    """Fit a local architecture asset to the legacy asset fragment it becomes.
+
+    The versioned architecture contract allows a null description and an
+    unbounded name; the fragment requires a description and at most
+    ``ASSET_NAME_CHARS`` characters, and ``validate_fragment assets`` stops a run
+    that hands it anything else.
+    """
+    from shared._register_titles import _cut_at_word
+
+    name = " ".join(str(asset["name"]).split())
+    if len(name) > ASSET_NAME_CHARS:
+        name = _cut_at_word(name, ASSET_NAME_CHARS) or name[:ASSET_NAME_CHARS].rstrip()
+    asset["name"] = name
+    if not str(asset.get("description") or "").strip():
+        asset["description"] = f"{name}."
+    return asset
+
+
 def _assessment_assets(assets: list[dict], names) -> list[dict]:
     """Project the qualified assets with the legacy fragment's ``A-NNN`` identity.
 
@@ -9344,6 +9412,9 @@ def _assessment_render(scope, jobs, names, cfg, workspace: Path, root: Path, *, 
     receipts += related_register(scope, names, workspace, cfg)
     receipts += assessment_posture.run(scope, names, workspace, cfg, progress=progress)
     receipts += assessment_posture.discover_actors(scope, jobs, names, workspace, cfg, _assessment_role_instructions)
+    # Legacy finalize attributes actors right after the merge; here actors are
+    # resolved only now, so the same rule runs at this point.
+    _run_script("model/merge_threats.py", ["reconcile-attribution", "--output-dir", str(workspace)])
     _run_script("model/reclassify_components.py", [str(workspace), "--merged-only", "--strict"])
     from orchestrator.assessment_review import run_abuse_cases, run_architect_review
 
@@ -9683,8 +9754,7 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                 runtime_warning = _assessment_runtime_warning(state)
                 if runtime_warning:
                     warnings.append(runtime_warning)
-                if not cfg.get("keep_runtime_files"):
-                    shutil.rmtree(workspace, ignore_errors=True)
+                _assessment_discard_workspace(workspace, len(labels), cfg)
         except ScopeError as exc:
             raise ControllerError(f"selected source state changed or became unreadable: {exc}") from exc
     violations = _assessment_gate_violations(scope.output / "threat-model.yaml", ns.fail_on) if ns.fail_on else []
@@ -9696,9 +9766,22 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
         "repositories": labels,
         "deliverables": sorted(delivered),
         "warnings": warnings,
+        **({"runtime_files": str(workspace)} if workspace.is_dir() else {}),
         "spent_usd": round(budget.spent_usd, 2),
         "calls": budget.calls,
     }
+
+
+def _assessment_discard_workspace(workspace: Path, repositories: int, cfg: dict[str, Any]) -> None:
+    """Remove the render workspace unless its run files belong to the user.
+
+    A sole repository keeps its legacy-shaped run files (merged register,
+    triage, stage statistics, logs) under the state's work directory, which a
+    later --rebuild removes. Several repositories' files hold combined-copy
+    paths and are kept only on request.
+    """
+    if repositories > 1 and not cfg.get("keep_runtime_files"):
+        shutil.rmtree(workspace, ignore_errors=True)
 
 
 def _assessment_gate_violations(model_path: Path, level: str) -> list[str]:
@@ -9734,6 +9817,9 @@ def assess_main(argv: list[str]) -> int:
 
     try:
         outcome = assess_repositories(argv)
+    except KeyboardInterrupt:
+        print("\n✗ assessment interrupted", file=sys.stderr)
+        return 130
     except CallError as exc:
         print(f"✗ {exc}", file=sys.stderr)
         return 2
@@ -9758,6 +9844,8 @@ def assess_main(argv: list[str]) -> int:
         f"{', '.join(outcome['repositories'])} written to {outcome['output']} "
         f"({outcome['calls']} model calls, ≈ USD {outcome['spent_usd']:.2f})"
     )
+    if outcome.get("runtime_files"):
+        print(f"  Run files: {outcome['runtime_files']}")
     for warning in outcome.get("warnings") or []:
         print(f"⚠ {warning}", file=sys.stderr)
     if outcome.get("gate_violations"):
