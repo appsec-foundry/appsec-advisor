@@ -38,7 +38,7 @@
               "required": ["path", "reason"],
               "properties": {
                 "path": {"$ref": "#/$defs/path"},
-                "reason": {"enum": ["sensitive-name", "deleted", "binary", "symlink", "submodule", "nested-repository"]}
+                "reason": {"enum": ["sensitive-name", "deleted", "binary", "symlink", "submodule", "nested-repository", "assessment-artifact"]}
               }
             }
           }

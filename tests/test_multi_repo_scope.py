@@ -42,6 +42,34 @@ def pair(tmp_path: Path) -> list[str]:
     return [str(repository(tmp_path / "one")), str(repository(tmp_path / "two"))]
 
 
+@pytest.mark.parametrize("directory", ["docs/security-old", "audit/prior-run"])
+def test_prior_outputs_never_enter_model_reads_or_scanner_snapshots(tmp_path, directory):
+    root = repository(tmp_path / "service")
+    old = root / directory
+    old.mkdir(parents=True)
+    for name in ("threat-model.md", "threat-model.yaml", ".abuse-case-verdict-AC-T-006.json"):
+        (old / name).write_text("Earlier generated assessment\n")
+    # User-authored context in a report directory remains an admitted input.
+    context = root / "docs/security/business-context.md"
+    context.parent.mkdir(parents=True, exist_ok=True)
+    context.write_text("# Business purpose\nServe records.\n")
+    (context.parent / "threat-model.md").write_text("Earlier report\n")
+    (context.parent / "threat-model.yaml").write_text("meta: {}\n")
+    admitted = scope.admit([str(root)], str(tmp_path / "out"), minimum=1)
+    repo = admitted.repositories[0]
+    assert "app.py" in repo.files
+    assert "docs/security/business-context.md" in repo.files
+    for name in ("threat-model.md", "threat-model.yaml", ".abuse-case-verdict-AC-T-006.json"):
+        path = f"{directory}/{name}"
+        assert {"path": path, "reason": "assessment-artifact"} in repo.exclusions
+        with pytest.raises(scope.ScopeError, match="outside admitted"):
+            admitted.read(repo.repository_id, path)
+    with admitted.scanner_snapshot(repo.repository_id) as snapshot:
+        assert not (snapshot / directory).exists()
+        assert (snapshot / "docs/security/business-context.md").is_file()
+    admitted.verify_unchanged()
+
+
 def test_scanner_snapshot_uses_frozen_regular_files_and_cleans_up_on_failure(tmp_path):
     roots = pair(tmp_path)
     admitted = scope.admit(roots, str(tmp_path / "out"))

@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 
+from analyzers.scan_excludes import assessment_artifacts_in_inventory
 from jsonschema import Draft202012Validator
 from validators.secret_scan import mask_text
 
@@ -341,12 +342,14 @@ def _capture(root: Path, repository_id: str, remaining: int) -> RepositoryView:
     paths = sorted(modes)
     if len(paths) > MAX_FILES:
         raise ScopeError("Source inventory exceeds the file limit")
+    omissions = {listed: _omission(root, _relative(listed.rstrip("/")), modes[listed]) for listed in paths}
+    artifacts = assessment_artifacts_in_inventory(listed for listed in paths if omissions[listed] is None)
     files: dict[str, bytes] = {}
     exclusions: list[dict[str, str]] = []
     for listed in paths:
         path = listed[:-1] if listed.endswith("/") else listed
         parts = _relative(path)
-        reason = _omission(root, parts, modes[listed])
+        reason = omissions[listed]
         if listed.endswith("/") and reason not in ("nested-repository", "symlink"):
             raise ScopeError("Unexpected directory entry in the source inventory")
         if reason not in (None, "deleted"):
@@ -358,6 +361,9 @@ def _capture(root: Path, repository_id: str, remaining: int) -> RepositoryView:
         # A deletion is recorded, not confused with an empty captured file.
         if reason == "deleted":
             exclusions.append({"path": path, "reason": "deleted"})
+            continue
+        if path in artifacts:
+            exclusions.append({"path": path, "reason": "assessment-artifact"})
             continue
         try:
             data = _read(root, path)

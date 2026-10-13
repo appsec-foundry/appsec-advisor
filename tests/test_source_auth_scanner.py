@@ -273,6 +273,81 @@ def test_authz001_owner_field_bound_to_session_by_route_middleware(tmp_path: Pat
     assert ("AUTHZ-001" not in _ids(_scan(tmp_path))) is dropped
 
 
+@pytest.mark.parametrize("name", ["project", "invoice"])
+@pytest.mark.parametrize(
+    "case",
+    [
+        "after-handler",
+        "conditional",
+        "early-next",
+        "unrelated-module",
+        "string-only",
+        "unprotected-reference",
+        "wrapped-handler",
+        "conditional-mount",
+        "intervening-middleware",
+        "unknown-qualified-middleware",
+        "prefix-overwrite",
+        "handler-overwrite",
+        "dynamic-path",
+        "middleware-in-string",
+        "ambiguous-module",
+        "same-line-overwrite",
+    ],
+)
+def test_owner_binding_never_hides_an_unprotected_handler(tmp_path, name, case):
+    """A possible binding is not proof that every request uses the server identity."""
+    (tmp_path / "routes").mkdir()
+    (tmp_path / "lib").mkdir()
+    (tmp_path / f"routes/{name}.ts").write_text(_OWNER_QUERY)
+    middleware = _OWNER_BINDING
+    args = "bindOwner(), route.listProjects()"
+    extra = ""
+    if case == "after-handler":
+        args = "route.listProjects(), bindOwner()"
+    elif case == "conditional":
+        middleware = middleware.replace("    req.body.ownerId", "    if (req.user) req.body.ownerId")
+    elif case == "early-next":
+        middleware = middleware.replace("    req.body.ownerId", "    next()\n    req.body.ownerId")
+    elif case == "unrelated-module":
+        (tmp_path / "lib/unused.ts").write_text(middleware)
+        middleware = "export const bindOwner = () => (req, res, next) => next()\n"
+    elif case == "string-only":
+        args = "tag('bindOwner'), route.listProjects()"
+    elif case == "unprotected-reference":
+        extra = "app.get('/public', route.listProjects)\n"
+    elif case == "wrapped-handler":
+        extra = "app.get('/public', wrap(route.listProjects()))\n"
+    elif case == "conditional-mount":
+        extra = "if (enabled) app.use('/public', bindOwner())\napp.get('/public', route.listProjects())\n"
+    elif case == "intervening-middleware":
+        args = "bindOwner(), overwrite(), route.listProjects()"
+    elif case == "unknown-qualified-middleware":
+        args = "bindOwner(), custom.overwrite(), route.listProjects()"
+    elif case == "prefix-overwrite":
+        extra = "app.use('/public', bindOwner())\napp.use('/public', overwrite())\napp.get('/public', route.listProjects())\n"
+    elif case == "handler-overwrite":
+        (tmp_path / f"routes/{name}.ts").write_text(
+            _OWNER_QUERY.replace("    const rows", "    req.body.ownerId = req.query.ownerId\n    const rows")
+        )
+    elif case == "dynamic-path":
+        extra = "app.get(publicPath, route.listProjects())\n"
+    elif case == "middleware-in-string":
+        middleware = "const example = `\n" + middleware + "`\n"
+    elif case == "ambiguous-module":
+        (tmp_path / "lib/auth.js").write_text("export const bindOwner = () => (req, res, next) => next()\n")
+    elif case == "same-line-overwrite":
+        (tmp_path / f"routes/{name}.ts").write_text(
+            _OWNER_QUERY.replace("    const rows", "    req.body.ownerId = req.query.ownerId; const rows")
+        )
+    (tmp_path / "lib/auth.ts").write_text(middleware)
+    (tmp_path / "app.ts").write_text(
+        f"import * as route from './routes/{name}'\nimport {{ bindOwner }} from './lib/auth'\n"
+        f"app.get('/records', {args})\n{extra}"
+    )
+    assert "AUTHZ-001" in _ids(_scan(tmp_path))
+
+
 @pytest.mark.parametrize(
     ("source", "expected"),
     [

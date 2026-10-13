@@ -217,6 +217,22 @@ def test_one_repository_takes_the_combined_path_only_when_switched_on(tmp_path, 
     scope.verify_unchanged()
 
 
+@pytest.mark.parametrize("name", ["solo", "records-service"])
+def test_single_repository_controller_publishes_a_complete_report(tmp_path, monkeypatch, name):
+    """Exercise the actual deterministic producers and publication gates with bounded host replies."""
+    monkeypatch.setenv("APPSEC_SINGLE_REPO_CONTROLLER", "1")
+    outcome, host, out = _assess(tmp_path, monkeypatch, (name,), ("--no-pdf",))
+    assert outcome["status"] == "complete"
+    model = yaml.safe_load((out / "threat-model.yaml").read_text())
+    assert len(model["source_inventory"]["repositories"]) == 1
+    assert model["meta"]["schema_version"] == 2
+    report = (out / "threat-model.md").read_text()
+    assert "app.py" in report and f"{name}/app.py" not in report
+    assert "NARRATIVE_PLACEHOLDER" not in report
+    assert "ms_renderer" in host.roles
+    assert json.loads((out / ".assessment-state.json").read_text())["status"] == "complete"
+
+
 @pytest.mark.parametrize(("names", "depth"), [(("edge", "service"), "standard"), (("west", "east"), "thorough")])
 def test_combined_assessment_publishes_one_qualified_model(tmp_path, monkeypatch, names, depth):
     outcome, host, out = _assess(tmp_path, monkeypatch, names, ("--assessment-depth", depth))

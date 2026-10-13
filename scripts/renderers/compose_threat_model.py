@@ -5693,7 +5693,7 @@ def _figure_basename_for_md(md_name: str) -> str:
     return f"{Path(md_name).stem}.figure1.svg"
 
 
-def _figure1_intro(project: str, facts: dict, *, runtime: bool = False) -> str:
+def _figure1_intro(project: str, facts: dict, *, runtime: bool = False, has_boundaries: bool = True) -> str:
     """Introduce Figure 1 with this system's facts; the in-figure legend explains the notation."""
     system = f"{project} has {pluralize(facts['components'], 'component')} in {pluralize(facts['layers'], 'layer')}"
     if runtime:
@@ -5705,7 +5705,10 @@ def _figure1_intro(project: str, facts: dict, *, runtime: bool = False) -> str:
         shown += " and where the attack scenario below begins"
     elif facts["scenarios"]:
         shown += f" and where each of the {facts['scenarios']} attack scenarios below begins"
-    return f"{system}. {shown}. The complete boundary catalogue remains in [§1 Trust Boundaries](#trust-boundaries)."
+    intro = f"{system}. {shown}."
+    if has_boundaries:
+        intro += " The complete boundary catalogue remains in [§1 Trust Boundaries](#trust-boundaries)."
+    return intro
 
 
 def _figure1_display_data(ctx: RenderContext) -> dict:
@@ -5920,6 +5923,7 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
                     figure_data, attack_paths_data, attack_taxonomy, actor_labels=actor_labels, scenarios=scenarios
                 ),
                 runtime=split,
+                has_boundaries=bool(_ordered_trust_boundaries(ctx)),
             )
             if paged:
                 try:
@@ -5968,7 +5972,7 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
         # `figure1_svg.diag_rows` gates its own legend row on `drawn_dividers`, and a
         # caption that promises an element the figure omits is the same defect as the
         # §2 `==>` legend bullet.
-        if "trust boundary" in (svg or ""):
+        if "trust boundary" in (svg or "") and _ordered_trust_boundaries(ctx):
             intro += (
                 " Dashed slate lines mark trust-boundary crossings, labelled with the `tb-N` ids "
                 "catalogued in [§1 Trust Boundaries](#trust-boundaries)."
@@ -8086,6 +8090,8 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
             shown_count += 1
     if orphans:
         shown_groups.append((None, sorted(orphans, key=_row_sort_key)))
+    if not shown_groups and enriched:
+        shown_groups.append((None, enriched[:_REMEDIATION_MIN_ROWS]))
 
     def _md(text: str) -> str:
         return _render_inline_md_to_html(text)
@@ -8137,14 +8143,18 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
     out = ["### Remediation Priorities", ""]
     if not rows_html:
         out.append("No mitigation is recorded. See [§10 Mitigation Register](#10-mitigation-register).")
-        return "\n".join(out) + "\n"
-    out.append(
-        "The root causes behind the findings, ranked by severity, each with the measures to do first. "
-        "The lasting fix under a root cause removes it and every finding it causes. "
-        "Every mitigation that fixes a Critical finding is listed. "
-        "Details in the [§7 Weakness Register](#7-weakness-register) and the "
-        "[§10 Mitigation Register](#10-mitigation-register)."
-    )
+    elif ranked:
+        out.append(
+            "The root causes behind the findings, ranked by severity, each with the measures to do first. "
+            "The lasting fix under a root cause removes it and every finding it causes. "
+            "Every mitigation that fixes a Critical finding is listed. "
+            "Details in the [§7 Weakness Register](#7-weakness-register) and the "
+            "[§10 Mitigation Register](#10-mitigation-register)."
+        )
+    else:
+        out.append(
+            "The highest-priority recorded measures. Details in the [§10 Mitigation Register](#10-mitigation-register)."
+        )
     out.append("")
     out.append('<table style="table-layout:fixed;width:100%">')
     out.append(

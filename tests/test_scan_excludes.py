@@ -67,6 +67,33 @@ def _reset_cache():
     scan_excludes._reset_cache_for_tests()
 
 
+def test_inventory_output_detection_preserves_source_and_declared_inputs():
+    products = {
+        "threat-model.md",
+        "threat-model.yaml",
+        "old/.agent-run.log",
+        "old/.skill-config.json",
+        "old/.data-flows.json",
+        "custom/.abuse-case-verdict-case-17.json",
+        ".assessment-work/render/model.json",
+        ".assessment-work/render/business-context.md",
+    }
+    source = {
+        "app.py",
+        "docs/design.md",
+        "old/business-context.md",
+        "old/requirements.yaml",
+        "old/abuse-cases/business.yaml",
+        ".appsec/config.yaml",
+        "notes/threat-model.md",
+        "notes/.skill-config.json",
+        "old/known-threats/prior.yaml",
+        "old/app.py",
+        "old/.eslintrc.json",
+    }
+    assert scan_excludes.assessment_artifacts_in_inventory(products | source) == products
+
+
 # ---------------------------------------------------------------------------
 # YAML schema / shape
 # ---------------------------------------------------------------------------

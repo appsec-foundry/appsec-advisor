@@ -2846,6 +2846,38 @@ def test_remediation_priorities_without_root_causes_list_the_top_fixes(tmp_path:
         assert any(f'<a href="#{mid.lower()}">{mid}</a>' in r for r in rows)
 
 
+@pytest.mark.parametrize("priority", ["P3", "P4"])
+def test_remediation_priorities_keep_lower_priority_fixes_without_root_causes(tmp_path, priority):
+    out = _prepare_output_dir(tmp_path)
+    measures = _fixture_mitigations(out, [])
+    for measure in measures:
+        measure["priority"] = priority
+    _with_model(out, weaknesses=[], mitigations=measures)
+    rendered, _ = compose.render(CONTRACT, out)
+    section = _remediation_slice(rendered)
+    assert _remediation_rows(rendered)
+    assert "No mitigation is recorded" not in section
+    assert "#7-weakness-register" not in section
+    assert all(f">{m.get('id') or m['m_id']}</a>" in section for m in measures)
+    assert {m["priority"] for m in yaml.safe_load((out / "threat-model.yaml").read_text())["mitigations"]} == {priority}
+
+
+def test_remediation_priorities_empty_register_retains_table_contract(tmp_path):
+    out = _prepare_output_dir(tmp_path)
+    _with_model(out, weaknesses=[], mitigations=[])
+    rendered, _ = compose.render(CONTRACT, out)
+    section = _remediation_slice(rendered)
+    assert "No mitigation is recorded" in section
+    assert "<th>Root cause → lasting fix</th>" in section
+    assert not _remediation_rows(rendered)
+
+
+def test_figure1_intro_does_not_link_an_absent_boundary_catalog():
+    facts = {"components": 1, "layers": 1, "external_services": 0, "scenarios": 0}
+    assert "#trust-boundaries" not in compose._figure1_intro("Records", facts, has_boundaries=False)
+    assert "#trust-boundaries" in compose._figure1_intro("Records", facts, has_boundaries=True)
+
+
 def test_top_mitigations_put_declared_business_context_first_within_a_priority(tmp_path: Path) -> None:
     """Declared context reorders inside a priority and names the asset; it never
     lifts a P2 above a P1 (FE-7)."""

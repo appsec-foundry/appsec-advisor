@@ -38,7 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Abuse cases that were matched but never verified are retried once and otherwise named in Section 9 and the run issues instead of being reported as checked.
 - An invalid, oversized, or symlinked repository abuse-case file is rejected and reported on its own instead of silently dropping every abuse case from the run.
 - A wildcard CORS origin without credentials is no longer reported as a credentialed CORS anti-pattern, and OAuth implicit-flow tokens read from `location.hash` are now detected.
-- Broken finding links and similar report defects are repaired or stopped right after rendering instead of aborting the run at completion.
+- Reports handle empty weakness and boundary registers without broken links or missing remediation tables, and remaining link defects are repaired or stopped immediately after rendering.
+- Headless controller assessments exclude prior run products from source evidence while retaining repository inputs stored beside reports.
+- Ownership middleware suppresses a source finding only when its defining module and execution order establish the matching request-field binding for every recognized handler registration.
 - Threat Analyst runs report evidence they could not obtain, no longer end incomplete when a design question asks for code, and accept source-backed findings introduced by removed controls.
 - The completion summary of a run is shown once, in full, by the plugin itself instead of being copied by the session.
 - `update-baseline` keeps user scope when the project is the home directory and falls back to the signed updater when delegation fails.

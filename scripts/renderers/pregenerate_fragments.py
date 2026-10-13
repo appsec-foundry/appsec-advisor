@@ -3700,7 +3700,7 @@ def _emit_v2_grouped_control(
     name = (c.get("control") or c.get("name") or c.get("domain") or "Control").strip()
     title = _friendly_subcontrol_title(name)
     if section_id and idx:
-        lines.append("".join(f'<a id="{s}"></a>' for s in sorted({_v2_slug(name), _v2_slug(title)})))
+        lines.append("".join(f'<a id="{s}"></a>' for s in _v2_anchor_ids(lines, _v2_slug(name), _v2_slug(title))))
         lines.append(f"#### {section_id}.{idx} {title}")
     else:
         lines.append(f"#### {title}")
@@ -4937,7 +4937,10 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             # anchors so `**Controls covered:**` link variants (LLM-filled
             # placeholder vs. mechanical) both resolve to this H4.
             lines.append(
-                "".join(f'<a id="{s}"></a>' for s in sorted({_v2_slug(default_mech_raw), _v2_slug(default_mech)}))
+                "".join(
+                    f'<a id="{s}"></a>'
+                    for s in _v2_anchor_ids(lines, _v2_slug(default_mech_raw), _v2_slug(default_mech))
+                )
             )
             lines.append(f"#### {section_id}.1 {default_mech}")
             lines.append("")

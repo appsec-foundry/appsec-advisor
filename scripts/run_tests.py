@@ -5950,6 +5950,17 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/analyzers/scan_excludes.py": _tests("""
+        multi_repo_scope multi_repo_assessment assessment_host multi_repo_discovery
+        reconcile_multi_repo_architecture finding_state shared_paths multi_repo_builder
+        multi_repo_figures multi_repo_exports
+        abuse_case_hypothesis abuse_case_verdicts actor_attribution agent_config_checks analyst_cli
+        assessment_context assessment_declarations assessment_jobs assessment_posture assessment_review
+        assessment_scanner_findings assessment_sources assessment_stage2 assessment_state authnz_review_skill
+        build_architecture_analysis_context build_threat_model_yaml build_trust_boundary_assessment_input
+        business_abuse_cases carry_plan compose_threat_model_cov2 config_iac_scanner config_scanner_wireup
+        derive_abuse_cases egress_clients emit_sca_practice emit_threat_vektors enrichment_pass iac_resource_checks
+        multi_repo_analysis multi_repo_boundaries multi_repo_controller portable_model_readers supply_chain_facts
+        validate_evidence_lines
         validate_assessment_architecture review_multi_repo_connections
         arch_coverage_bridge
         architecture_coverage_checks

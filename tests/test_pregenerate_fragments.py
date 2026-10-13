@@ -3769,6 +3769,26 @@ class TestEmitV2SubcontrolBlock:
         assert "jwt-verification-signed-signedjwtservice" in ids
         assert ids.count("jwt-verification") == 1
 
+    @pytest.mark.parametrize("control", ["Build Pipeline and Dependency Controls", "JWT Verification"])
+    def test_grouped_controls_keep_unique_anchors_with_repeated_friendly_titles(self, control):
+        import re
+
+        lines = []
+        for idx, suffix in enumerate(("Service A", "Service B"), 1):
+            pf._emit_v2_grouped_control(
+                lines,
+                {"control": f"{control} ({suffix})"},
+                [],
+                [],
+                "6.2 Identity",
+                section_id="6.2",
+                idx=idx,
+            )
+        ids = re.findall(r'<a id="([^"]+)"></a>', "\n".join(lines))
+        assert len(ids) == len(set(ids)) == 3
+        assert ids.count(pf._v2_slug(control)) == 1
+        assert all(pf._v2_slug(f"{control} ({suffix})") in ids for suffix in ("Service A", "Service B"))
+
     def test_flow_type_diagram_placeholder(self):
         lines: list[str] = []
         sub = {"title": "Login", "type": "flow"}

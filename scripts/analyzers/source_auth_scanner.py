@@ -1979,16 +1979,11 @@ _TOP_LEVEL_DEFINITION_RE = re.compile(
     rf"^(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function\s*\*?\s*({_IDENT})|(?:const|let|var)\s+({_IDENT})\s*[:=])"
 )
 _REQUEST_FIELD_ASSIGNMENT_RE = re.compile(rf"\breq\.(body|query|params)\.({_IDENT})\s*=(?!=)\s*(.+)")
-_IDENTITY_SOURCE_RE = re.compile(
-    r"(?i)(?:token|jwt|session|claims|decoded|authenticated|principal)|\breq\.(?:user|auth)\b|\bres\.locals\.user\b"
-)
-_CLIENT_INPUT_RE = re.compile(r"\breq\.(?:body|query|params|headers|cookies)\b|\breq\.get\s*\(")
 _NAMESPACE_IMPORT_RE = re.compile(rf"import\s+\*\s+as\s+({_IDENT})\s+from\s+['\"]([^'\"]+)['\"]")
 _NAMED_IMPORT_RE = re.compile(r"import\s*\{([^}]*)\}\s*from\s+['\"]([^'\"]+)['\"]")
 _REQUIRE_RE = re.compile(rf"(?:const|let|var)\s+({_IDENT})\s*=\s*require\(\s*['\"]([^'\"]+)['\"]\s*\)")
 _DESTRUCTURED_REQUIRE_RE = re.compile(r"(?:const|let|var)\s*\{([^}]*)\}\s*=\s*require\(\s*['\"]([^'\"]+)['\"]\s*\)")
-_ROUTE_CALL_RE = re.compile(rf"\b({_IDENT})\.(get|post|put|patch|delete|all|use)\s*\(\s*(['\"`])([^'\"`]*)\3")
-_CALLEE_RE = re.compile(rf"(?:({_IDENT})\s*\.\s*)?({_IDENT})\s*\(")
+_ROUTE_CALL_RE = re.compile(rf"\b({_IDENT})\.(get|head|options|post|put|patch|delete|all|use)\s*\(")
 
 
 def _module_key(path: str) -> str:
@@ -2002,57 +1997,98 @@ def _module_key(path: str) -> str:
 
 
 def _definition_bodies(text: str) -> list[tuple[str, int, list[str]]]:
-    """Top-level definitions as (name, first line index, body lines up to the next top-level definition)."""
+    """Return bounded, balanced top-level bodies; trailing code is not a body."""
     lines = text.splitlines()
     starts = [
-        (i, m.group(1) or m.group(2)) for i, line in enumerate(lines) if (m := _TOP_LEVEL_DEFINITION_RE.match(line))
+        (i, m.group(1) or m.group(2))
+        for i, line in enumerate(code_only(text).splitlines())
+        if (m := _TOP_LEVEL_DEFINITION_RE.match(line))
     ]
-    return [
-        (name, start, lines[start : (starts[n + 1][0] if n + 1 < len(starts) else len(lines))])
-        for n, (start, name) in enumerate(starts)
-    ]
+    result = []
+    for n, (start, name) in enumerate(starts):
+        body = "\n".join(lines[start : starts[n + 1][0] if n + 1 < len(starts) else len(lines)])
+        masked = code_only(body)
+        opening = masked.find("{")
+        if opening < 0:
+            continue
+        depth = 0
+        for offset in range(opening, len(masked)):
+            depth += (masked[offset] == "{") - (masked[offset] == "}")
+            if depth == 0:
+                result.append((name, start, body[: offset + 1].splitlines()))
+                break
+    return result
 
 
-def _identity_binding_middlewares(scripts: dict[str, str]) -> dict[str, set[tuple[str, str]]]:
-    """Middleware name → the (request part, field) pairs it overwrites from the authenticated identity."""
-    bound: dict[str, set[tuple[str, str]]] = {}
-    for text in scripts.values():
+def _identity_binding_middlewares(scripts: dict[str, str]) -> dict[tuple[str, str], set[tuple[str, str]]]:
+    """Recognize straight-line middleware factories, keyed by defining module.
+
+    Branches, callbacks, extra statements and early continuation are uncertain,
+    so they never establish the guarantee needed to suppress a finding.
+    """
+    bound: dict[tuple[str, str], set[tuple[str, str]]] = {}
+    for rel, text in scripts.items():
         for name, _start, body in _definition_bodies(text):
             joined = "\n".join(body)
-            if not re.search(r"\bnext\s*\(", joined):
+            factory = re.fullmatch(
+                rf"(?:export\s+)?const\s+{re.escape(name)}\s*=\s*\(\s*\)\s*=>\s*\{{\s*"
+                r"return\s*\(\s*req\s*,\s*res\s*,\s*next\s*\)\s*=>\s*\{(?P<body>.*?)\}\s*;?\s*\}",
+                joined,
+                re.S,
+            )
+            if not factory:
                 continue
-            for line in body:
-                m = _REQUEST_FIELD_ASSIGNMENT_RE.search(line)
-                if m and _IDENTITY_SOURCE_RE.search(m.group(3)) and not _CLIENT_INPUT_RE.search(m.group(3)):
-                    bound.setdefault(name, set()).add((m.group(1), m.group(2)))
+            statements = [s.strip() for s in re.split(r"[;\n]", factory["body"]) if s.strip()]
+            if not statements or statements[-1] != "next()":
+                continue
+            fields = set()
+            for statement in statements[:-1]:
+                m = _REQUEST_FIELD_ASSIGNMENT_RE.fullmatch(statement)
+                if not m or not re.fullmatch(
+                    rf"(?:(?:req\.(?:user|auth)|res\.locals\.user)(?:\.{_IDENT})+"
+                    rf"|sessions\.lookup\(readToken\(req\)\)(?:\.{_IDENT})+)",
+                    m.group(3),
+                ):
+                    break
+                fields.add((m.group(1), m.group(2)))
+            else:
+                if fields:
+                    bound[(_module_key(rel), name)] = fields
     return bound
 
 
-def _imported_functions(rel: str, text: str) -> tuple[dict[str, str], dict[str, str]]:
+def _imported_functions(rel: str, text: str) -> tuple[dict[str, str], dict[str, tuple[str, str]]]:
     """Namespace alias → module and imported name → module, for relative imports of one file."""
 
     def resolve(spec: str) -> str | None:
         return _module_key(posixpath.join(posixpath.dirname(rel), spec)) if spec.startswith(".") else None
 
     namespaces: dict[str, str] = {}
-    names: dict[str, str] = {}
+    names: dict[str, tuple[str, str]] = {}
+    masked = code_only(text)
     for regex in (_NAMESPACE_IMPORT_RE, _REQUIRE_RE):
-        for alias, spec in regex.findall(text):
+        for match in regex.finditer(text):
+            if not masked[match.start() : match.start() + 6].strip():
+                continue
+            alias, spec = match.groups()
             if (module := resolve(spec)) is not None:
                 namespaces[alias] = module
     for regex in (_NAMED_IMPORT_RE, _DESTRUCTURED_REQUIRE_RE):
-        for listed, spec in regex.findall(text):
+        for match in regex.finditer(text):
+            if not masked[match.start() : match.start() + 6].strip():
+                continue
+            listed, spec = match.groups()
             if (module := resolve(spec)) is None:
                 continue
             for item in listed.split(","):
                 parts = re.split(r"\s+as\s+|\s*:\s*", item.strip())
                 if parts and parts[0]:
-                    names[parts[-1]] = module
+                    names[parts[-1]] = (module, parts[0])
     return namespaces, names
 
 
 def _handler_bindings(
-    scripts: dict[str, str], middlewares: dict[str, set[tuple[str, str]]]
+    scripts: dict[str, str], middlewares: dict[tuple[str, str], set[tuple[str, str]]]
 ) -> dict[tuple[str, str], set[tuple[str, str]]]:
     """(handler module, handler name) → the identity-bound request fields EVERY registration guarantees."""
     seen: dict[tuple[str, str], list[set[tuple[str, str]]]] = {}
@@ -2060,35 +2096,63 @@ def _handler_bindings(
         namespaces, names = _imported_functions(rel, text)
         module = _module_key(rel)
         mounts: list[tuple[str, int, str, set[tuple[str, str]]]] = []
+        masked = code_only(text)
+        cursor = depth = 0
         for m in _ROUTE_CALL_RE.finditer(text):
-            receiver, verb, path = m.group(1), m.group(2), m.group(4)
+            depth += masked[cursor : m.start()].count("{") - masked[cursor : m.start()].count("}")
+            cursor = m.start()
+            if not masked[m.start() : m.end(2)].strip():
+                continue
+            receiver, verb = m.group(1), m.group(2)
             # A registration call is bounded so a malformed file cannot make every route rescan it.
             call = text[m.end(2) : m.end(2) + 4000].lstrip()
-            args = call[: call_end(call, 0)] if call.startswith("(") else call[:400]
-            direct: set[tuple[str, str]] = set()
-            for name, fields in middlewares.items():
-                if re.search(rf"(?<![\w$]){re.escape(name)}\b", args):
-                    direct |= fields
+            opening = re.match(r"\(", call)
+            if opening is None or not call[: call_end(call, 0)].endswith(")"):
+                return {}  # An incomplete registration cannot establish exhaustive coverage.
+            all_args = _call_arguments(call, opening)
+            literal = re.fullmatch(r"(['\"])([^'\"\\]*)\1", all_args[0]) if all_args else None
+            path = literal[2] if literal else ""
+            args = all_args[1:] if literal or verb != "use" else all_args
             position = m.start()
-            inherited = set().union(
-                *(
-                    fields
-                    for mount_receiver, mount_pos, prefix, fields in mounts
-                    if mount_receiver == receiver
+            inherited: set[tuple[str, str]] = set()
+            for mount_receiver, mount_pos, prefix, fields in mounts:
+                if (
+                    mount_receiver == receiver
                     and mount_pos < position
                     and (path == prefix or path.startswith(prefix.rstrip("/") + "/"))
+                ):
+                    inherited = fields.copy()
+            guaranteed = inherited.copy()
+            # Conditional/nested registrations cannot establish a prefix guarantee.
+            line_start = text.rfind("\n", 0, m.start()) + 1
+            unconditional = literal is not None and depth == 0 and not masked[line_start : m.start()].strip()
+            for arg in args:
+                target = re.fullmatch(rf"(?:({_IDENT})\s*\.\s*)?({_IDENT})(\s*\(\s*\))?", arg)
+                if not target:
+                    # An unknown wrapper establishes no ownership guarantee.
+                    for qualifier, name in re.findall(rf"\b({_IDENT})\.({_IDENT})\b", code_only(arg)):
+                        if qualifier in namespaces:
+                            seen.setdefault((namespaces[qualifier], name), []).append(set())
+                    for name in re.findall(_IDENT, code_only(arg)):
+                        if name in names:
+                            seen.setdefault(names[name], []).append(set())
+                    guaranteed.clear()
+                    continue
+                qualifier, name, invoked = target.groups()
+                key = (
+                    ((namespaces[qualifier], name) if qualifier in namespaces else None)
+                    if qualifier
+                    else names.get(name, (module, name))
                 )
-            )
-            if verb == "use" and path and direct:
-                mounts.append((receiver, position, path, direct))
-            guaranteed = direct | inherited
-            for qualifier, name in _CALLEE_RE.findall(args):
-                if qualifier:
-                    key = (namespaces[qualifier], name) if qualifier in namespaces else None
+                if key in middlewares and invoked and unconditional:
+                    guaranteed.update(middlewares[key])
                 else:
-                    key = (names[name], name) if name in names else (module, name)
-                if key is not None and name not in middlewares:
-                    seen.setdefault(key, []).append(guaranteed)
+                    if key is not None:
+                        seen.setdefault(key, []).append(guaranteed.copy())
+                    # An intervening handler can overwrite the request fields.
+                    guaranteed.clear()
+            if verb == "use":
+                mounts.append((receiver, position, path, guaranteed.copy() if unconditional else set()))
     return {key: set.intersection(*sets) for key, sets in seen.items()}
 
 
@@ -2101,7 +2165,13 @@ def _enclosing_definition(text: str, line_idx: int) -> str | None:
 
 def _drop_identity_bound_owner_ids(findings: list[Finding], scripts: dict[str, str], check: Check) -> list[Finding]:
     """Drop AUTHZ-001 hits whose request field every route registration binds to the session identity."""
-    middlewares = _identity_binding_middlewares(scripts)
+    module_counts: dict[str, int] = {}
+    for path in scripts:
+        key = _module_key(path)
+        module_counts[key] = module_counts.get(key, 0) + 1
+    middlewares = {
+        key: fields for key, fields in _identity_binding_middlewares(scripts).items() if module_counts[key[0]] == 1
+    }
     if not middlewares:
         return findings
     bindings = _handler_bindings(scripts, middlewares)
@@ -2114,7 +2184,20 @@ def _drop_identity_bound_owner_ids(findings: list[Finding], scripts: dict[str, s
         lines = text.splitlines()
         hit = check.pattern.search(lines[finding.line - 1]) if 0 < finding.line <= len(lines) else None
         handler = _enclosing_definition(text, finding.line - 1)
-        guaranteed = bindings.get((_module_key(finding.file.replace("\\", "/")), handler or ""), set())
+        module = _module_key(finding.file.replace("\\", "/"))
+        guaranteed = bindings.get((module, handler or ""), set()) if module_counts[module] == 1 else set()
+        # A route binding is no longer a guarantee after the handler replaces
+        # request state or passes the request to an unknown mutating helper.
+        for name, start, _body in _definition_bodies(text):
+            if name == handler:
+                before = "\n".join(lines[start : finding.line - 1])
+                if hit:
+                    before += "\n" + lines[finding.line - 1][: hit.start()]
+                if re.search(
+                    r"\breq\.(?:body|query|params)(?:\.\w+|\[[^\]]*\])*\s*(?:[+?&|]*=|\+\+|--)", before
+                ) or re.search(r"\b(?!async\b|return\b|function\b)\w+\s*\(\s*req\s*[,)]", before):
+                    guaranteed = set()
+                break
         if hit and (hit.group(2), hit.group(1)) in guaranteed:
             continue
         kept.append(finding)

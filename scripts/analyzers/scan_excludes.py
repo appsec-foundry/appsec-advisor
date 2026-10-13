@@ -100,6 +100,51 @@ _ASSESSMENT_RUNTIME_MARKERS = frozenset(
     }
 )
 _ASSESSMENT_FINAL_PAIR = frozenset({"threat-model.md", "threat-model.yaml"})
+# Run products within a detected output directory. A marker pair must never
+# hide arbitrary application files that happen to share that directory.
+_ASSESSMENT_PRODUCT_PATTERNS = (
+    "threat-model.*",
+    "threat-model-*.md",
+    "threat-model-*.yaml",
+    "threat-model-*.pdf",
+    "analysis-model.md",
+    "pentest-tasks.yaml",
+    ".components.json",
+    ".assets.json",
+    ".security-controls.json",
+    ".trust-boundaries.json",
+    ".data-flows.json",
+    ".source-auth-findings.json",
+    ".config-scan-findings.json",
+    ".dep-scan.json",
+    ".threats-merged.json",
+    ".triage-flags.json",
+    ".recon-summary.md",
+    ".recon-signals.json",
+    ".recon-patterns.json",
+    ".route-inventory.json",
+    ".deployment-inventory.json",
+    ".supply-chain-view.json",
+    ".abuse-case-*.json",
+    ".stride-*.json",
+    ".trust-boundary-*.json",
+    ".component-inventory-finalization.json",
+    ".arch-design-signals.json",
+    ".impl-design-signals.json",
+    ".finding-design-signals.json",
+    ".impl-strategy.json",
+    ".architect-review.json",
+    ".architect-review.md",
+    ".business-context-input.md",
+    ".business-context-preview.json",
+    ".business-context-raw.md",
+    ".org-context.md",
+    ".org-context-manifest.json",
+    ".requirements.yaml",
+    ".context-routing-plan.receipt.json",
+    ".run-issues.json",
+    ".headless-result.json",
+)
 
 
 def _yaml_path() -> Path:
@@ -246,6 +291,41 @@ def is_excluded(
 # ---------------------------------------------------------------------------
 # Assessment-output detection
 # ---------------------------------------------------------------------------
+
+
+def assessment_artifacts_in_inventory(paths: Iterable[str]) -> set[str]:
+    """Identify old outputs using only a caller's admitted file inventory.
+
+    No filesystem walk or cached state can expand the caller's authority.
+    Declared repository inputs survive a report stored beside them. A report
+    in the repository root excludes its products, never the whole repository.
+    """
+    inventory = {PurePosixPath(path) for path in paths}
+    names: dict[PurePosixPath, set[str]] = {}
+    for path in inventory:
+        names.setdefault(path.parent, set()).add(path.name)
+    outputs = {
+        parent
+        for parent, children in names.items()
+        if _ASSESSMENT_FINAL_PAIR <= children or len(_ASSESSMENT_RUNTIME_MARKERS & children) >= 2
+    }
+    artifacts = set()
+    for path in inventory:
+        # Private output trees cannot become source by imitating an input name.
+        if any(part in {".assessment-work", ".appsec-cache", ".fragments", ".dispatch-context"} for part in path.parts):
+            artifacts.add(path.as_posix())
+            continue
+        if path.name in {"business-context.md", "requirements.yaml", "requirements.yml"} or any(
+            part in {".appsec", "abuse-cases", "known-threats"} for part in path.parts
+        ):
+            continue
+        owned = fnmatch.fnmatchcase(path.name, ".abuse-case-verdict-*.json") or path.name == ".assessment-state.json"
+        product = path.name in _ASSESSMENT_RUNTIME_MARKERS or any(
+            fnmatch.fnmatchcase(path.name, pattern) for pattern in _ASSESSMENT_PRODUCT_PATTERNS
+        )
+        if owned or (path.parent in outputs and product):
+            artifacts.add(path.as_posix())
+    return artifacts
 
 
 def is_assessment_output_dir(path: Path) -> bool:
