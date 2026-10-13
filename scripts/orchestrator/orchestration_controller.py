@@ -8873,9 +8873,11 @@ class _AssessmentConsole:
         ("Resolving actors", "10/11 Scan Synthesis"),
         ("Ranking findings", "10/11 Scan Synthesis"),
         ("Synthesizing cross-finding", "10/11 Scan Synthesis"),
-        ("Building the threat model", "11/11 Finalization"),
-        ("Deriving application-specific business abuse cases", "11/11 Finalization"),
-        ("Verifying abuse case", "11/11 Finalization"),
+        # The model is built before abuse verification, as the single-repository
+        # bootstrap does at the end of Scan Synthesis.
+        ("Building the threat model", "10/11 Scan Synthesis"),
+        ("Deriving application-specific business abuse cases", "10/11 Abuse Verification"),
+        ("Verifying abuse case", "10/11 Abuse Verification"),
         ("Rendering the report", "11/11 Finalization"),
         ("Stage 2:", "11/11 Finalization"),
         ("Running the quality gates", "11/11 Finalization"),
@@ -8902,7 +8904,8 @@ class _AssessmentConsole:
         "8/11 Controls": 11,
         "9/11 STRIDE": 55,
         "10/11 Scan Synthesis": 4,
-        "11/11 Finalization": 14,
+        "10/11 Abuse Verification": 5,
+        "11/11 Finalization": 9,
     }
 
     def __init__(self, verbose: bool, write=None):
