@@ -29,6 +29,64 @@ b = _load()
 import model.emit_clean_finding_titles as ecf  # noqa: E402  (scripts/ is on sys.path via the builder)
 from shared._finding_state import is_confirmed  # noqa: E402
 
+_FUNCTION_WORDS = {"a", "an", "the", "of", "to", "in", "on", "at", "by", "for", "from", "with", "and", "or", "without"}
+
+
+@pytest.mark.parametrize(
+    ("raw", "evidence", "instances", "expected"),
+    [
+        # Long class and qualifier plus a deep locator: the class survives whole.
+        (
+            "Broken authorization — attacker-controlled owner ID in resource query — "
+            "service/routes/admin/dataExport.ts:26",
+            {"file": "service/routes/admin/dataExport.ts", "line": 26},
+            None,
+            "Broken authorization — dataExport.ts:26",
+        ),
+        # A long title without a class separator is shortened on a whole phrase.
+        (
+            "Sensitive REST route registered without authentication middleware on the public "
+            "application router — server.ts:310",
+            {"file": "server.ts", "line": 310},
+            None,
+            None,
+        ),
+        # An ASCII " - " separator splits class and qualifier like the em-dash.
+        (
+            "Path traversal - user-controlled file name joined to the upload directory - routes/upload.ts:9",
+            {"file": "routes/upload.ts", "line": 9},
+            None,
+            "Path traversal — routes/upload.ts:9",
+        ),
+        # A consolidated survivor carries no representative locator.
+        (
+            "Insecure Direct Object Reference — owner ID taken from the request body — routes/order.ts:148",
+            {"file": "routes/order.ts", "line": 148},
+            [{"file": "routes/order.ts", "line": 148}, {"file": "routes/wallet.ts", "line": 27}],
+            "Insecure Direct Object Reference",
+        ),
+        # An already short, conforming title is unchanged.
+        ("SQL injection — routes/login.ts:34", {"file": "routes/login.ts", "line": 34}, None, None),
+    ],
+)
+def test_finding_title_keeps_its_class_through_builder_and_emitter(raw, evidence, instances, expected):
+    """The builder conforms a title, the emitter re-derives it; neither may cut
+    a weakness class mid-phrase. The builder used to drop the class separator
+    and truncate, then the emitter re-derived from that mangled string."""
+    threat = {"id": "T-001", "title": raw, "evidence": [evidence]}
+    if instances:
+        threat["instances"] = instances
+    b._conform_title(threat)
+    ecf.apply({"threats": [threat]})
+    title = threat["title"]
+    assert ecf._schema_ok(title), title
+    assert "…" not in title
+    assert title.split(" — ")[0].split()[-1].lower() not in _FUNCTION_WORDS, title
+    if expected is not None:
+        assert title == expected
+    if raw == "SQL injection — routes/login.ts:34":
+        assert title == raw
+
 
 def test_clamp_title_short_passthrough():
     t = "SQL Injection — routes/login.ts:34"
