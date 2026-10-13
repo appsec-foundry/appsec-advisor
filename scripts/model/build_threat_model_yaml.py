@@ -1407,7 +1407,10 @@ def _conform_title(threat: dict) -> bool:
     if not cleaned or len(_clamp_title(cleaned)) < _TITLE_MINLEN:
         cleaned, lossy = _fallback_title(threat), True
     threat["title"] = _clamp_title(cleaned)
-    if lossy:
+    # Any change keeps the original: cleaning drops the "class — qualifier"
+    # separator and may cut the wording, so the title emitter must re-derive
+    # from the source, not from this conformed string.
+    if lossy or threat["title"] != raw.strip():
         threat.setdefault("_title_source", raw)
     return lossy
 
@@ -1572,7 +1575,9 @@ def _clean_title(raw: str) -> str:
         if len(s) <= 80:
             suffix = ""
         else:
-            s = s[:79].rstrip().rstrip(",;:-") + "…"
+            from shared._register_titles import _cut_at_word  # noqa: PLC0415
+
+            s = _cut_at_word(s, 79) + "…"
             suffix = ""
     return f"{s}{suffix}"
 
