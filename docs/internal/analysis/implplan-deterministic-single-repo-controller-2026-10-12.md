@@ -105,6 +105,17 @@ Present these decisions to the operator before Phase 2.
 
 Exit criterion: Phase 0 comparison repeated on Juice Shop and on one further neutral target (for example the Spring fixture) with the final code.
 
+### Phase 3a: Experimental `create-threat-model2`
+
+A separate skill `create-threat-model2` launches the controller for one repository while `create-threat-model` stays unchanged, so both can be compared on the same targets. Its description marks it experimental; it is visible to all users. Replacing `create-threat-model` follows Phase 3 only after Phase 0 step 3 explains the Critical count difference.
+
+1. Same invocation and flags as `create-threat-model`; preflight and the business-context dialog complete before the launch (REQ-BIZ-005). The skill sets the single-repository opt-in itself.
+2. Output goes to `<repo>/docs/security`. Admission allows this one directory inside the sole checkout and excludes it from the source view; repository inputs stored there reach the run as declared context.
+3. Without an explicit budget flag, the launch passes a hard budget derived from the assessment depth.
+4. `--incremental` and rerender stop before the launch with a message; no fallback to the legacy runtime.
+5. A dedicated stop command ends the controller through the single terminator (OR-8); the launch line names it.
+6. A one-repository run publishes the version-1 workspace model (MR-8), so follow-on tools such as `publish`, `review` and `eval` accept it unchanged.
+
 ### Phase 3: Interactive runs launch the controller
 
 1. `SKILL-full-runtime.md` keeps preflight, lock handling, and the business-context dialog. REQ-BIZ-005 requires the answers to reach the same run, so the dialog completes before the launch and the controller captures the result as declared context.

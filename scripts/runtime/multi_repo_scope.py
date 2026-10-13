@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 
-from analyzers.scan_excludes import assessment_artifacts_in_inventory
+from analyzers.scan_excludes import assessment_artifacts_in_inventory, declared_repository_input
 from jsonschema import Draft202012Validator
 from validators.secret_scan import mask_text
 
@@ -39,6 +39,8 @@ MAX_FILE_BYTES = 1_048_576
 MAX_TOTAL_BYTES = 67_108_864
 MAX_GIT_BYTES = 4_194_304
 GIT_TIMEOUT = 30
+# MR-6: the one output location a sole repository may hold, as in a single scan.
+CHECKOUT_OUTPUT = PurePosixPath("docs/security")
 SENSITIVE_NAMES = (".env", ".env.*", "*.pem", "*.key", "*.p12", "*.pfx", "id_rsa*", "id_ed25519*")
 
 
@@ -313,8 +315,14 @@ def _omission(root: Path, parts: tuple[str, ...], mode: str | None) -> str | Non
     return None
 
 
-def _capture(root: Path, repository_id: str, remaining: int) -> RepositoryView:
+def _capture(root: Path, repository_id: str, remaining: int, output: PurePosixPath | None = None) -> RepositoryView:
+    """Capture one checkout; ``output`` names its report directory, if inside it.
+
+    The report directory is not source: only declared inputs kept there are
+    captured, and files the run writes there leave the state unchanged.
+    """
     head = _git(root, "rev-parse", "--verify", "HEAD^{commit}").decode("ascii").strip()
+    outside = (":(exclude,literal)" + output.as_posix(),) if output else ()
     dirty = bool(
         _git(
             root,
@@ -323,6 +331,9 @@ def _capture(root: Path, repository_id: str, remaining: int) -> RepositoryView:
             "-z",
             "--untracked-files=normal",
             "--ignore-submodules=all",
+            "--",
+            ".",
+            *outside,
             overrides=_filter_overrides(root),
         )
     )
@@ -339,6 +350,13 @@ def _capture(root: Path, repository_id: str, remaining: int) -> RepositoryView:
                 modes.setdefault(raw.decode("utf-8"), None)
     except UnicodeError:
         raise ScopeError("Source paths must be valid UTF-8") from None
+    if output:
+        modes = {
+            listed: mode
+            for listed, mode in modes.items()
+            if output not in PurePosixPath(listed.rstrip("/")).parents
+            or declared_repository_input(PurePosixPath(listed.rstrip("/")))
+        }
     paths = sorted(modes)
     if len(paths) > MAX_FILES:
         raise ScopeError("Source inventory exceeds the file limit")
@@ -433,6 +451,10 @@ class AssessmentScope:
             "lines": selected,
         }
 
+    def output_in_checkout(self) -> bool:
+        """Whether the output is the report directory of the sole checkout (MR-6)."""
+        return len(self.repositories) == 1 and self.output == self.repositories[0].root.joinpath(*CHECKOUT_OUTPUT.parts)
+
     def verify_unchanged(self) -> None:
         """Recheck every selected root before accepting or publishing results."""
         current = admit([str(r.root) for r in self.repositories], str(self.output), minimum=1)
@@ -482,6 +504,17 @@ def _lineage(path: Path) -> set[tuple[int, int]]:
     return {i for i in (_identity(item, missing_ok=True) for item in (path, *path.parents)) if i is not None}
 
 
+def _checkout_output(roots: list[Path], target: Path) -> PurePosixPath | None:
+    """The report directory inside a sole checkout (MR-6), or None.
+
+    Only `docs/security` of the one selected root qualifies. ``target`` is
+    resolved, so a symbolic link never makes another directory match.
+    """
+    if len(roots) == 1 and target == roots[0].joinpath(*CHECKOUT_OUTPUT.parts):
+        return CHECKOUT_OUTPUT
+    return None
+
+
 def admit(selections: list[str], output: str, *, minimum: int = 2) -> AssessmentScope:
     """Validate all roots before capture, with no filesystem mutation."""
     if not isinstance(selections, list) or not minimum <= len(selections) <= MAX_REPOSITORIES:
@@ -513,22 +546,24 @@ def admit(selections: list[str], output: str, *, minimum: int = 2) -> Assessment
         target = Path(output).resolve()
     except (OSError, RuntimeError, ValueError):
         raise ScopeError("Invalid output directory") from None
-    if any(target == root or root in target.parents or target in root.parents for root in roots):
-        raise ScopeError("Output must be separate from all selected repositories")
-    output_lineage = _lineage(target)
-    output_identity = _identity(target, missing_ok=True)
-    if any(
-        identities[root] in output_lineage or (output_identity is not None and output_identity in lineages[root])
-        for root in roots
-    ):
-        raise ScopeError("Output must be separate from all selected repositories")
+    inside = _checkout_output(roots, target)
+    if inside is None:
+        if any(target == root or root in target.parents or target in root.parents for root in roots):
+            raise ScopeError("Output must be separate from all selected repositories")
+        output_lineage = _lineage(target)
+        output_identity = _identity(target, missing_ok=True)
+        if any(
+            identities[root] in output_lineage or (output_identity is not None and output_identity in lineages[root])
+            for root in roots
+        ):
+            raise ScopeError("Output must be separate from all selected repositories")
     if target.exists() and not target.is_dir():
         raise ScopeError("Output is not a directory")
     remaining = MAX_TOTAL_BYTES
     views = []
     for root in sorted(roots):
         repository_id = "repo-" + _digest(os.fsencode(root))[:16]
-        view = _capture(root, repository_id, remaining)
+        view = _capture(root, repository_id, remaining, inside)
         remaining -= sum(len(data) for data in view.files.values())
         views.append(view)
     scope = AssessmentScope(tuple(views), target)

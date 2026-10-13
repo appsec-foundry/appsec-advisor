@@ -225,8 +225,9 @@ def test_single_repository_controller_publishes_a_complete_report(tmp_path, monk
     outcome, host, out = _assess(tmp_path, monkeypatch, (name,), ("--no-pdf",))
     assert outcome["status"] == "complete"
     model = yaml.safe_load((out / "threat-model.yaml").read_text())
-    assert len(model["source_inventory"]["repositories"]) == 1
-    assert model["meta"]["schema_version"] == 2
+    # MR-8: one repository publishes the version-1 single-repository contract.
+    assert "source_inventory" not in model
+    assert model["meta"]["schema_version"] == 1
     report = (out / "threat-model.md").read_text()
     assert "app.py" in report and f"{name}/app.py" not in report
     assert "NARRATIVE_PLACEHOLDER" not in report

@@ -87,8 +87,10 @@ def _project(value, names: Namespaces):
         return [_project(child, names) for child in value]
     if not isinstance(value, dict):
         return value
-    row = {key: _project(child, names) for key, child in value.items() if key not in _QUALIFIERS}
     rid = value.get("repository_id")
+    # Only a source reference carries qualifiers; another `sha256` (for example
+    # a context trace digest) is content the legacy shape keeps.
+    row = {key: _project(child, names) for key, child in value.items() if rid is None or key not in _QUALIFIERS}
     if rid is not None:
         for key in ("file", "path"):
             if isinstance(value.get(key), str):

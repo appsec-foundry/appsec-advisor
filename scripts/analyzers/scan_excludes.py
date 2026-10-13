@@ -293,6 +293,13 @@ def is_excluded(
 # ---------------------------------------------------------------------------
 
 
+def declared_repository_input(path: PurePosixPath) -> bool:
+    """Whether a repository file is an assessment input the user keeps beside reports."""
+    return path.name in {"business-context.md", "requirements.yaml", "requirements.yml"} or any(
+        part in {".appsec", "abuse-cases", "known-threats"} for part in path.parts
+    )
+
+
 def assessment_artifacts_in_inventory(paths: Iterable[str]) -> set[str]:
     """Identify old outputs using only a caller's admitted file inventory.
 
@@ -315,9 +322,7 @@ def assessment_artifacts_in_inventory(paths: Iterable[str]) -> set[str]:
         if any(part in {".assessment-work", ".appsec-cache", ".fragments", ".dispatch-context"} for part in path.parts):
             artifacts.add(path.as_posix())
             continue
-        if path.name in {"business-context.md", "requirements.yaml", "requirements.yml"} or any(
-            part in {".appsec", "abuse-cases", "known-threats"} for part in path.parts
-        ):
+        if declared_repository_input(path):
             continue
         owned = fnmatch.fnmatchcase(path.name, ".abuse-case-verdict-*.json") or path.name == ".assessment-state.json"
         product = path.name in _ASSESSMENT_RUNTIME_MARKERS or any(

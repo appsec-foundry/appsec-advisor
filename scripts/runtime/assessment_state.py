@@ -234,8 +234,13 @@ class AssessmentState:
         or any other file still blocks, so a fresh start never erases a report
         or a user's file; only --rebuild removes an earlier run's own files.
         The refusal names why the earlier run cannot continue.
+
+        In a sole checkout's `docs/security` (MR-6) only the controller's own
+        files count: inputs and a legacy report beside them are kept as they are.
         """
         leftovers = {child.name for child in self.output.iterdir()} - {".appsec-lock", ".appsec-lock.guard"}
+        if self.scope.output_in_checkout():
+            leftovers &= self._own_names()
         if not leftovers:
             return
         if STATE_NAME in leftovers and leftovers <= {STATE_NAME, WORK_NAME}:
@@ -293,6 +298,16 @@ class AssessmentState:
             f"({shown}); choose another --output or empty this one"
         )
 
+    def _own_names(self) -> set[str]:
+        """The state, work directory and recorded deliverables of an earlier run."""
+        names = {STATE_NAME, WORK_NAME}
+        if self.path.is_file():
+            try:
+                names |= set(_read_state(self.path)["deliverables"])
+            except ExchangeError:
+                pass
+        return names
+
     def _remove_earlier_run(self, earlier, leftovers) -> list[str]:
         """Remove an earlier assessment for --rebuild when it owns every file.
 
@@ -308,6 +323,9 @@ class AssessmentState:
                     owned.add(name)
             except ExchangeError:
                 continue
+        if self.scope.output_in_checkout():
+            # MR-6: an edited deliverable is kept until publication overwrites it.
+            leftovers &= owned
         if not leftovers <= owned:
             return sorted(leftovers - owned)
         if WORK_NAME in leftovers:

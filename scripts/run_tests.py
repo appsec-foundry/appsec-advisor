@@ -211,6 +211,7 @@ GROUPS = {
         multi_repo_boundaries
         multi_repo_controller
         multi_repo_assessment
+        single_repo_controller
         multi_repo_config
         multi_repo_discovery
         multi_repo_scope
@@ -612,7 +613,7 @@ SOURCE_TESTS = {
     "specs/changes/root-requirements-catalog/proposal.md": _tests("requirements_verification"),
     "scripts/orchestrator/assessment_context.py": _tests("assessment_context check_target_specificity"),
     "scripts/orchestrator/assessment_workspace.py": _tests(
-        "multi_repo_assessment assessment_context assessment_review assessment_posture check_target_specificity"
+        "multi_repo_assessment single_repo_controller assessment_context assessment_review assessment_posture check_target_specificity"
     ),
     "scripts/orchestrator/assessment_stage2.py": _tests("assessment_stage2 check_target_specificity"),
     "scripts/orchestrator/assessment_review.py": _tests("assessment_review check_target_specificity"),
@@ -2492,6 +2493,7 @@ SOURCE_TESTS = {
     "scripts/orchestrator/orchestration_controller.py": _tests("""
         multi_repo_controller
         multi_repo_assessment
+        single_repo_controller
         script_layout
         business_impact_scope
         architect_review_runtime

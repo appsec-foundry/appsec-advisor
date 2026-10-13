@@ -8822,6 +8822,11 @@ def _assessment_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rebuild", action="store_true")
     parser.add_argument("--soft-budget", "--max-cost", type=float, metavar="USD")
     parser.add_argument("--hard-budget", "--max-budget", type=float, metavar="USD")
+    parser.add_argument(
+        "--interactive-launch",
+        action="store_true",
+        help="Started by an interactive skill: without a budget flag, the depth sets the hard budget (MR-7).",
+    )
     parser.add_argument("--max-duration", type=int, metavar="SECONDS")
     parser.add_argument("--model")
     parser.add_argument("--project", help="Name of the combined system in the report.")
@@ -8833,12 +8838,33 @@ def _assessment_argument_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _assessment_budget(ns):
+# MR-7: hard budget in USD of an interactive launch without a budget flag.
+INTERACTIVE_DEPTH_BUDGET_USD = {"quick": 10.0, "standard": 20.0, "thorough": 40.0}
+
+
+def _requested_depth(rest: list[str]) -> str:
+    """The depth the unparsed flags select, as the configuration resolver reads them."""
+    depth = "standard"
+    for index, arg in enumerate(rest):
+        if arg in ("--quick", "--thorough"):
+            depth = arg[2:]
+        elif arg == "--assessment-depth" and index + 1 < len(rest):
+            depth = rest[index + 1]
+        elif arg.startswith("--assessment-depth="):
+            depth = arg.split("=", 1)[1]
+    if depth not in INTERACTIVE_DEPTH_BUDGET_USD:
+        raise CallError(f"invalid --assessment-depth value: {depth[:40]} (must be quick, standard, or thorough)")
+    return depth
+
+
+def _assessment_budget(ns, rest: list[str] = ()):
     from runtime.assessment_jobs import MAX_ASSESSMENT_CALLS, MAX_ASSESSMENT_SECONDS, AssessmentBudget
 
     limit = ns.hard_budget
     if limit is None and ns.soft_budget is not None:
         limit = round(ns.soft_budget * 1.25, 2)
+    if limit is None and ns.interactive_launch:
+        limit = INTERACTIVE_DEPTH_BUDGET_USD[_requested_depth(list(rest))]
     if limit is None:
         raise CallError("a multi-repository assessment requires --soft-budget or --hard-budget")
     seconds = ns.max_duration or ASSESSMENT_DEFAULT_SECONDS
@@ -9807,11 +9833,16 @@ def _assessment_publish(
     from shared._atomic_io import atomic_write_text
     from shared.assessment_sources import validate_portable_model
 
-    from orchestrator.assessment_workspace import canonical_model
+    from orchestrator.assessment_workspace import canonical_model, legacy_model
 
     view = yaml.safe_load((workspace / "threat-model.yaml").read_text(encoding="utf-8"))
     document = canonical_model(view, original, names)
     validate_portable_model(document)
+    if names.single:
+        # MR-8: one repository ships the version-1 contract, so follow-on tools
+        # treat it as a single-repository model; the qualified checks above
+        # still prove every location resolves to a captured file.
+        document = legacy_model(document, names)
     valid, messages = intermediate_contract.validate_threat_model_output(document)
     if not valid:
         raise ControllerError("combined model violates its output contract: " + "; ".join(messages[:5]))
@@ -9884,7 +9915,7 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
         raise CallError("a multi-repository assessment requires at least two --repo selections")
     console = None if progress or ns.quiet else _AssessmentConsole(ns.verbose)
     say = progress or (console.step if console else (lambda text: None))
-    budget = _assessment_budget(ns)
+    budget = _assessment_budget(ns, rest)
     if ns.trust_mode == "untrusted":
         # The console header reports the result once every pre-run check passed.
         if not console:
