@@ -8977,6 +8977,13 @@ class _AssessmentConsole:
         if "no model activity" in text or text.startswith("model call stopped"):
             self.write(f"    ⚠ {who}{text}")
             return
+        read = re.fullmatch(r"reads (.*) \((\d+) s\)", text)
+        if read:
+            # One round of a multi-round job: a count, never the paths (--verbose shows them).
+            more = re.search(r" \+(\d+) more$", read[1])
+            count = 0 if read[1] == "nothing" else len(read[1].split(", ")) + (int(more[1]) if more else 0)
+            self.write(f"    · {who}read {count} source range{'s' if count != 1 else ''} — {_duration(int(read[2]))}")
+            return
         finished = re.fullmatch(r"result: .* \((\d+) s\)", text)
         if finished:
             # A job's final answer; source reads in between stay behind --verbose.
