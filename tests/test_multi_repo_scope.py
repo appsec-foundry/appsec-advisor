@@ -85,9 +85,92 @@ def test_scanner_snapshot_uses_frozen_regular_files_and_cleans_up_on_failure(tmp
             raise RuntimeError("scanner failed")
     assert not snapshot.exists()
     assert (selected.root / "app.py").read_text() == "changed source\n"
+    with admitted.scanner_snapshot(selected.repository_id) as recovered:
+        assert (recovered / "app.py").read_bytes() == selected.files["app.py"]
+    assert not recovered.exists()
     with pytest.raises(scope.ScopeError, match="outside admitted"):
         with admitted.scanner_snapshot("repo-ffffffffffffffff"):
             pytest.fail("Unknown repository entered a scanner snapshot")
+
+
+@pytest.mark.parametrize("relative", ["src/handler.py", "worker/consumer.js"])
+def test_repeated_scanner_snapshots_mask_once_and_isolate_consumer_changes(tmp_path, monkeypatch, relative):
+    files = {relative: b"result = request.args['input']\n", "config/settings.yaml": b"mode: standard\n"}
+    repo = scope.RepositoryView("repo-1111111111111111", tmp_path / "service", "a" * 40, "b" * 64, files)
+    admitted = scope.AssessmentScope((repo,), tmp_path / "out")
+    masked = []
+    original = scope._masked_bytes
+
+    def mask(data):
+        masked.append(data)
+        return original(data)
+
+    monkeypatch.setattr(scope, "_masked_bytes", mask)
+    assert not masked
+    with admitted.scanner_snapshot(repo.repository_id) as first:
+        (first / relative).write_text("scanner-local mutation\n")
+        (first / "extra.py").write_text("unexpected = True\n")
+    assert not first.exists()
+    with admitted.scanner_snapshot(repo.repository_id) as second:
+        assert second != first
+        assert (second / relative).read_bytes() == files[relative]
+        assert (second / "config/settings.yaml").read_bytes() == files["config/settings.yaml"]
+        assert not (second / "extra.py").exists()
+        assert not second.stat().st_mode & 0o077
+        assert (second / relative).stat().st_mode & 0o777 == 0o600
+    assert not second.exists()
+    assert masked == list(files.values())
+    assert dict(repo.files) == files
+
+
+def test_scanner_mask_cache_does_not_cross_repository_views_or_new_admissions(tmp_path):
+    roots = pair(tmp_path)
+    admitted = scope.admit(roots, str(tmp_path / "out"))
+    first, peer = admitted.repositories
+    with admitted.scanner_snapshot(first.repository_id) as snapshot:
+        assert (snapshot / "app.py").read_bytes() == first.files["app.py"]
+    (first.root / "app.py").write_text("updated = True\n")
+    refreshed = scope.admit(roots, str(tmp_path / "out"))
+    assert refreshed.repositories[0].repository_id == first.repository_id
+    with refreshed.scanner_snapshot(first.repository_id) as snapshot:
+        assert (snapshot / "app.py").read_bytes() == b"updated = True\n"
+    with admitted.scanner_snapshot(first.repository_id) as snapshot:
+        assert (snapshot / "app.py").read_bytes() == first.files["app.py"]
+    with admitted.scanner_snapshot(peer.repository_id) as snapshot:
+        assert (snapshot / "app.py").read_bytes() == peer.files["app.py"]
+    with pytest.raises(scope.ScopeError, match="changed"):
+        admitted.verify_unchanged()
+
+
+def test_failed_scanner_masking_cleans_up_and_never_caches_partial_results(tmp_path, monkeypatch):
+    files = {"app.py": b"first = 1\n", "worker.py": b"second = 2\n"}
+    repo = scope.RepositoryView("repo-1111111111111111", tmp_path / "service", "a" * 40, "b" * 64, files)
+    admitted = scope.AssessmentScope((repo,), tmp_path / "out")
+    directories, masked = [], []
+    temporary = scope.tempfile.TemporaryDirectory
+    original = scope._masked_bytes
+
+    def directory(**kwargs):
+        result = temporary(dir=tmp_path, **kwargs)
+        directories.append(Path(result.name))
+        return result
+
+    def mask(data):
+        masked.append(data)
+        if len(masked) == 2:
+            raise RuntimeError("masking failed")
+        return original(data)
+
+    monkeypatch.setattr(scope.tempfile, "TemporaryDirectory", directory)
+    monkeypatch.setattr(scope, "_masked_bytes", mask)
+    with pytest.raises(RuntimeError, match="masking failed"):
+        with admitted.scanner_snapshot(repo.repository_id):
+            pytest.fail("Incomplete masking must not reach a scanner")
+    assert not directories[0].exists()
+    with admitted.scanner_snapshot(repo.repository_id) as snapshot:
+        assert {p.name: p.read_bytes() for p in snapshot.iterdir()} == files
+    assert all(not path.exists() for path in directories)
+    assert masked == list(files.values()) * 2
 
 
 def test_all_selected_roots_have_distinct_portable_identity_and_order_is_irrelevant(tmp_path):
@@ -476,12 +559,13 @@ def test_untracked_unlisted_file_secret_is_masked_in_reads_and_snapshots(tmp_pat
     reply = admitted.read(first.repository_id, name, 1, 3)
     assert key not in json.dumps(reply)
     assert reply["lines"][0] == "first: 1" and reply["lines"][2] == "last: 3"
-    with admitted.scanner_snapshot(first.repository_id) as snapshot:
-        text = (snapshot / name).read_text()
-        assert key not in text
-        assert text.splitlines() == reply["lines"]
-        assert not (snapshot / ".env.local").exists()
-        assert all(key.encode() not in path.read_bytes() for path in snapshot.rglob("*") if path.is_file())
+    for _ in range(2):
+        with admitted.scanner_snapshot(first.repository_id) as snapshot:
+            text = (snapshot / name).read_text()
+            assert key not in text
+            assert text.splitlines() == reply["lines"]
+            assert not (snapshot / ".env.local").exists()
+            assert all(key.encode() not in path.read_bytes() for path in snapshot.rglob("*") if path.is_file())
 
 
 def test_snapshot_keeps_line_numbers_after_multiline_masking(tmp_path):
@@ -492,7 +576,8 @@ def test_snapshot_keeps_line_numbers_after_multiline_masking(tmp_path):
     (Path(roots[0]) / "app.py").write_text(f"first = 1\n{header}\n{body}\n{footer}\nafter = 6\n")
     admitted = scope.admit(roots, str(tmp_path / "out"))
     first = next(r for r in admitted.repositories if str(r.root) == roots[0])
-    with admitted.scanner_snapshot(first.repository_id) as snapshot:
-        lines = (snapshot / "app.py").read_text().split("\n")
-    assert lines[0] == "first = 1" and lines[5] == "after = 6" and lines[6] == ""
-    assert "MIIB" not in "\n".join(lines)
+    for _ in range(2):
+        with admitted.scanner_snapshot(first.repository_id) as snapshot:
+            lines = (snapshot / "app.py").read_text().split("\n")
+        assert lines[0] == "first = 1" and lines[5] == "after = 6" and lines[6] == ""
+        assert "MIIB" not in "\n".join(lines)

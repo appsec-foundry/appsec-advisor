@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Headless controller assessments spend less time preparing repeated source and evidence checks.
 - The Management Summary merges Top Weaknesses and Top Mitigations into Remediation Priorities, which follows the verdict and lists the measures to do first under each root cause together with its lasting fix.
 - The Critical Attack Tree is replaced by Critical Findings by Root Cause, which links each Critical finding, including OS command injection and caller-controlled authentication bypasses, to its weakness record and the structural fix that closes it.
 - A finding whose code an abuse-case verification confirms is shown as verified instead of ambiguous.

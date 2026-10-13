@@ -25,6 +25,7 @@ from collections import Counter
 from collections.abc import Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from functools import cached_property
 from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 
@@ -275,6 +276,15 @@ class RepositoryView:
     def __post_init__(self) -> None:
         object.__setattr__(self, "files", MappingProxyType(dict(self.files)))
 
+    @cached_property
+    def _scanner_files(self) -> Mapping[str, bytes]:
+        """Reuse redaction only within this immutable admitted source view.
+
+        The cache holds bytes, never a scanner's mutable temporary files. A new
+        admission owns a new cache even when repository IDs and paths match.
+        """
+        return MappingProxyType({path: _masked_bytes(data) for path, data in self.files.items()})
+
     def inventory(self) -> dict:
         return {
             "repository_id": self.repository_id,
@@ -469,20 +479,21 @@ class AssessmentScope:
         not links to original sources. Each file holds the same redacted text
         that ``read`` serves, at unchanged line numbers. Never launch a model, build command or
         repository executable in it. It has no Git metadata and is destroyed
-        on normal completion and exceptions.
+        on normal completion and exceptions. Masked bytes are reused from the
+        frozen view, but each caller receives its own writable copy.
         """
         repo = next((r for r in self.repositories if r.repository_id == repository_id), None)
         if repo is None:
             raise ScopeError("Scanner repository is outside admitted scope")
         with tempfile.TemporaryDirectory(prefix="appsec-source-") as directory:
             root = Path(directory)
-            for relative, data in repo.files.items():
+            for relative, data in repo._scanner_files.items():
                 parts = _relative(relative)
                 target = root.joinpath(*parts)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 with target.open("xb") as handle:
                     os.chmod(target, 0o600)
-                    handle.write(_masked_bytes(data))
+                    handle.write(data)
             yield root
 
 
