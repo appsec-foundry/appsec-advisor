@@ -55,6 +55,19 @@ class FullHost:
             return HostReply(dict(action="complete", reads=[], artifact=artifact), 0.01)
         if role == "actor_discoverer":
             return Discoverer(line=2).invoke(role, prompt)
+        if role == "threat_merger":
+            context = json.loads(prompt.split(f"<<<{MARKER}\n")[1].split(f"\n{MARKER}>>>")[0])["context"]
+            decisions = [
+                dict(
+                    group_id=group["group_id"],
+                    action="keep",
+                    member_indices=list(range(group["member_count"])),
+                    rationale="Distinct sinks.",
+                )
+                for group in context["candidate_groups"]
+            ]
+            artifact = {"version": 2, "generated_at": "now", "model": "test", "decisions": decisions}
+            return HostReply(dict(action="complete", reads=[], artifact=artifact), 0.01)
         if role in ("ms_renderer", "secarch_renderer"):
             context = json.loads(prompt.split(f"<<<{MARKER}\n")[1].split(f"\n{MARKER}>>>")[0])["context"]
             return HostReply(dict(action="complete", reads=[], artifact=self.stage2(role, context)), 0.01)

@@ -205,6 +205,38 @@ def test_equally_reviewed_duplicates_still_merge(tmp_path):
     assert all(t["evidence_check"] == "verified" for t in merged["threats"])
 
 
+@pytest.mark.parametrize("names", [("edge", "service"), ("gateway", "processor")])
+def test_a_merge_candidate_spanning_repositories_never_reaches_the_merger(tmp_path, names):
+    from model.merge_threats import _group_candidates
+
+    scope, components, receipt, flows, _ = crossing_input(tmp_path, names=names)
+    identity = dict(
+        schema_version=2,
+        source_scope_sha256=components["source_scope_sha256"],
+        component_inventory_fingerprint=receipt["component_inventory_fingerprint"],
+    )
+    documents, reviews = [], []
+    for component, evidence in zip(components["components"], flows["data_flows"][0]["evidence"], strict=True):
+        document = stride(component, evidence, identity)
+        document["threats"][0]["cwe"] = "CWE-20"
+        documents.append(document)
+        decision = dict(local_id="issue-1", verdict="verified", reason="Source confirms it.", evidence=[evidence])
+        reviews.append(dict(**identity, decisions=[decision]))
+    offered = []
+    merged = merge_assessment(
+        scope,
+        components,
+        documents,
+        reviews,
+        boundaries=[],
+        review_groups=lambda verdict, groups: offered.append((verdict, groups)) or [],
+    )
+    # The two findings form a candidate group, but one per repository.
+    assert _group_candidates(copy.deepcopy(merged["threats"]))
+    assert offered == []
+    assert len(merged["threats"]) == 2
+
+
 def test_stride_finding_without_cwe_is_rejected_at_its_contract(tmp_path):
     from contexts.multi_repo_analysis import contract
     from jsonschema import Draft202012Validator

@@ -3593,3 +3593,102 @@ def test_a_source_scanner_finding_does_not_open_a_config_label_group(mt):
         _threat(component_id="api", cwe="CWE-639", threat_category_id="TH-06", source_check_id="AUTHZ-900"),
     ]
     assert not [g for g in mt._group_candidates(threats) if g["group_key"] == "config_label"]
+
+
+# ---------------------------------------------------------------------------
+# One merge chain for legacy collect/finalize and the assessment controller
+# ---------------------------------------------------------------------------
+
+
+def test_shared_chain_folds_check_hits_and_group_members_but_keeps_distinct_sinks(mt):
+    threats = [
+        *(_config_threat("IAC-010", f"deploy/{name}.yml", line=4) for name in ("build", "release", "nightly")),
+        _jwt("src/session/tokens.py", 30, component_id="gateway"),
+        _jwt("src/admin/tokens.py", 55, component_id="console"),
+        _threat(component_id="gateway", evidence={"file": "src/orders/query.py", "line": 12}),
+        _threat(component_id="gateway", evidence={"file": "src/reports/query.py", "line": 80}),
+    ]
+    result = mt.consolidate_findings(threats)
+
+    checks = [t for t in result if t.get("config_check_id") == "IAC-010"]
+    assert len(checks) == 1 and checks[0]["instance_count"] == 3
+    assert len([t for t in result if t.get("consolidation_group") == "jwt-verification"]) == 1
+    # Two SQL sinks without a shared control remain two findings.
+    assert len([t for t in result if t["cwe"] == "CWE-89"]) == 2
+
+
+def _calls(function) -> set:
+    """Plugin functions a function calls, as ``module.name`` of the called object."""
+    import ast
+    import importlib
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(function)))
+    namespace = dict(function.__globals__)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            module = importlib.import_module(node.module)
+            namespace.update({alias.asname or alias.name: getattr(module, alias.name) for alias in node.names})
+    plugin = {"model", "contexts", "analyzers", "shared", "runtime"}
+    called = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            target = namespace.get(node.func.id)
+            module = getattr(target, "__module__", "") or ""
+            if inspect.isfunction(target) and module.split(".")[0] in plugin:
+                called.add(f"{module.rsplit('.', 1)[-1]}.{target.__name__}")
+    return called
+
+
+def test_every_legacy_merge_step_runs_in_the_controller_or_is_a_named_omission(mt):
+    legacy = _calls(mt.cmd_collect) | _calls(mt.cmd_finalize)
+    assert legacy - (set(mt.ASSESSMENT_TAIL) | set(mt.ASSESSMENT_OMISSIONS)) == set()
+    # Steps the registry places in merge_assessment are really called there.
+    in_merge = {step for step, where in mt.ASSESSMENT_TAIL.items() if where == "merge_assessment"}
+    assert in_merge - _calls(mt.merge_assessment) == set()
+    # The chain is literally shared, not a second copy.
+    assert "merge_threats.consolidate_findings" in _calls(mt.cmd_collect) & _calls(mt.merge_assessment)
+
+
+def test_controller_steps_named_by_the_registry_exist(mt):
+    controller = (SCRIPT_PATH.parents[1] / "orchestrator" / "orchestration_controller.py").read_text(encoding="utf-8")
+    for step, where in mt.ASSESSMENT_TAIL.items():
+        if where.startswith("controller render: "):
+            command = where.removeprefix("controller render: merge_threats ")
+            assert f'"{command}"' in controller, step
+
+
+def test_review_groups_never_span_repositories(mt):
+    components = [
+        {"id": "edge", "repository_ids": ["repo-a"]},
+        {"id": "worker", "repository_ids": ["repo-a"]},
+        {"id": "store", "repository_ids": ["repo-b"]},
+    ]
+    local = {"group_id": "G-00000001", "members": [{"component_id": "edge"}, {"component_id": "worker"}]}
+    spanning = {"group_id": "G-00000002", "members": [{"component_id": "edge"}, {"component_id": "store"}]}
+    unknown = {"group_id": "G-00000003", "members": [{"component_id": "edge"}, {"component_id": "gone"}]}
+    assert mt.single_repository_groups([local, spanning, unknown], components) == [local]
+
+
+def test_attribution_runs_again_once_actors_are_resolved(mt, tmp_path, monkeypatch):
+    merged = {"version": 2, "threats": [_threat(t_id="T-001", component_id="edge")]}
+    path = tmp_path / ".threats-merged.json"
+    path.write_text(json.dumps(merged), encoding="utf-8")
+    correction = {"finding": "T-001", "removed": [], "added": ["visitor"], "actor_ids": ["visitor"]}
+    seen = []
+
+    def reconcile(out_dir, threats):
+        seen.append([t["t_id"] for t in threats])
+        return [correction]
+
+    monkeypatch.setattr(mt, "_reconcile_actor_attribution", reconcile)
+    assert mt.main(["reconcile-attribution", "--output-dir", str(tmp_path)]) == 0
+    assert seen == [["T-001"]]
+    assert json.loads(path.read_text(encoding="utf-8"))["actor_attribution_corrections"] == [correction]
+
+    # Without resolved actors there is no correction and the register stays as it was.
+    monkeypatch.setattr(mt, "_reconcile_actor_attribution", lambda out_dir, threats: [])
+    path.write_text(json.dumps(merged), encoding="utf-8")
+    assert mt.main(["reconcile-attribution", "--output-dir", str(tmp_path)]) == 0
+    assert "actor_attribution_corrections" not in json.loads(path.read_text(encoding="utf-8"))
