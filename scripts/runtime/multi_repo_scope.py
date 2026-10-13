@@ -303,7 +303,8 @@ def _omission(root: Path, parts: tuple[str, ...], mode: str | None) -> str | Non
     """Name why a listed path is not captured, without following or reading it.
 
     Git index modes mark tracked links and submodules; ``lstat`` marks a link
-    or nested worktree that replaced a path or any of its parents.
+    or nested worktree that replaced a path or any of its parents, and a
+    device, FIFO or socket at a listed path, such as a sandbox's /dev/null mask.
     """
     if mode == "160000":
         return "submodule"
@@ -318,6 +319,8 @@ def _omission(root: Path, parts: tuple[str, ...], mode: str | None) -> str | Non
                 return "symlink"
             if stat.S_ISDIR(info.st_mode) and os.path.lexists(current / ".git"):
                 return "nested-repository"
+            if not stat.S_ISDIR(info.st_mode) and not stat.S_ISREG(info.st_mode):
+                return "special-file"
         except (FileNotFoundError, NotADirectoryError):
             return "deleted"
         except OSError:

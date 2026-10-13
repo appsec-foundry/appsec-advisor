@@ -318,6 +318,25 @@ def test_untracked_nested_repository_is_recorded_as_omitted(tmp_path, name):
     admitted.verify_unchanged()
 
 
+@pytest.mark.parametrize("name", [".bashrc", "run/server.py"])
+def test_listed_special_file_is_recorded_as_omitted_and_never_opened(tmp_path, name):
+    roots = pair(tmp_path)
+    special = Path(roots[0]) / name
+    special.parent.mkdir(exist_ok=True)
+    special.write_text("listed = 1\n")
+    _commit(roots[0], name)
+    # Git lists the path; a FIFO or a sandbox's /dev/null mask now sits there.
+    special.unlink()
+    os.mkfifo(special)
+    admitted = scope.admit(roots, str(tmp_path / "out"))
+    first = next(r for r in admitted.repositories if str(r.root) == roots[0])
+    assert {"path": name, "reason": "special-file"} in first.exclusions
+    assert name not in first.files
+    assert "app.py" in first.files
+    row = next(r for r in admitted.inventory()["repositories"] if r["repository_id"] == first.repository_id)
+    assert {"path": name, "reason": "special-file"} in row["exclusions"]
+
+
 def test_omissions_are_covered_by_the_scope_fingerprint(tmp_path):
     roots = pair(tmp_path)
     before = scope.admit(roots, str(tmp_path / "out")).inventory()
