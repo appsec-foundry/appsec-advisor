@@ -119,6 +119,12 @@ $defs:
       control_scope:
         type: ["string", "null"]
         minLength: 1
+      object_ref:
+        # Data object an owner-ID or object-lookup query targets (the query
+        # receiver without its Model/Repository suffix). IDOR consolidation
+        # keeps different objects apart by this value, compared case-blind.
+        type: ["string", "null"]
+        minLength: 1
       source_type:
         $ref: "#/$defs/sourceType"
       file:

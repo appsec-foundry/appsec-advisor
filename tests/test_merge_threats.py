@@ -561,6 +561,24 @@ class TestConsolidateConfigChecks:
         assert "ci.yml" not in s["title"]
         assert s["title"] == "Workflow-level permissions block"
 
+    def test_qualified_evidence_lists_consolidate(self, mt):
+        """A version-2 assessment carries evidence as a list of qualified records."""
+        members = [_config_threat("IAC-010", f"{w}.yml") for w in ("ci", "release")]
+        for m in members:
+            m["evidence"] = [dict(m["evidence"], repository_id="repo-0123456789abcdef", sha256="0" * 64)]
+        result = mt._consolidate_config_checks(members)
+        assert len(result) == 1
+        assert sorted(i["file"] for i in result[0]["instances"]) == ["ci.yml", "release.yml"]
+
+    def test_one_check_in_two_repositories_stays_apart(self, mt):
+        """A combined assessment never folds one check's hits across repositories."""
+        members = [_config_threat("IAC-010", f"{w}.yml") for w in ("ci", "release")]
+        members[0]["evidence"] = [dict(members[0]["evidence"], repository_id="repo-aaaaaaaaaaaaaaaa")]
+        members[1]["evidence"] = [dict(members[1]["evidence"], repository_id="repo-bbbbbbbbbbbbbbbb")]
+        assert len(mt._consolidate_config_checks(members)) == 2
+        members[1]["evidence"][0]["repository_id"] = "repo-aaaaaaaaaaaaaaaa"
+        assert len(mt._consolidate_config_checks(members)) == 1
+
     def test_same_file_multi_line_repeats_collapse(self, mt):
         # Multi-stage Dockerfile: same check, same file, different lines.
         members = [
@@ -1701,6 +1719,24 @@ class TestConsolidateByGroup:
         assert len(mt._consolidate_by_group(rows)) == 2
         rows[1]["evidence"] = dict(rows[0]["evidence"])
         assert len(mt._consolidate_by_group(rows)) == 1
+
+    def test_idor_sinks_fold_per_queried_object_and_name_it(self, mt):
+        """Different data objects are different fixes; a sink without an object stays alone."""
+        sinks = [("routes/home.ts", 10, "Address"), ("routes/ship.ts", 22, "address"), ("routes/pay.ts", 7, "Card")]
+        rows = [
+            _threat(cwe="CWE-639", component_id="api", evidence={"file": f, "line": ln}, object_ref=obj)
+            for f, ln, obj in sinks
+        ]
+        rows.append(_threat(cwe="CWE-639", component_id="api", evidence={"file": "routes/misc.ts", "line": 3}))
+        out = mt._consolidate_by_group([dict(r) for r in rows])
+        folded = [t for t in out if t.get("instance_count")]
+        assert len(out) == 3 and len(folded) == 1
+        assert folded[0]["title"] == "Insecure Direct Object Reference (Address)"
+        assert sorted(i["file"] for i in folded[0]["instances"]) == ["routes/home.ts", "routes/ship.ts"]
+        # An explicit shared control still outranks the object.
+        for row in rows:
+            row["control_scope"] = "shared-authz-middleware"
+        assert len(mt._consolidate_by_group([dict(r) for r in rows])) == 1
 
     def test_distinct_xss_sinks_need_explicit_shared_control(self, mt):
         rows = [
