@@ -303,3 +303,23 @@ def test_quick_depth_skips_actor_discovery(tmp_path):
     _, _, workspace, receipts = discover(tmp_path, host, depth="quick")
     assert host.calls == [] and receipts == ["actor discovery skipped: quick depth"]
     assert read(workspace, ".actors-resolved.json")["quick_mode"] is True
+
+
+@pytest.mark.parametrize(("labels", "named"), [(("solo",), False), (("edge", "service"), True)])
+def test_posture_names_a_repository_only_when_several_are_selected(tmp_path, labels, named):
+    from runtime.multi_repo_scope import admit
+
+    from tests.test_multi_repo_controller import checkout
+
+    for label in labels:
+        checkout(tmp_path / label)
+    scope = admit([str(tmp_path / label) for label in labels], str(tmp_path / "out"), minimum=1)
+    names = Namespaces(scope)
+    repo = assessment_posture._Repo(scope.repositories[0], names)
+    label = repo.label
+    document = {"topology": {"zones": [{"name": "backend"}], "workloads": [{"zones": ["backend"]}]}}
+    zoned = assessment_posture._zones(document, None if names.single else label)
+    assert zoned["topology"]["zones"][0]["name"] == (f"{label}/backend" if named else "backend")
+    assert repo.text("see app.py:1", {("app.py", 1)}) == (f"see {label}/app.py:1" if named else "see app.py:1")
+    row = assessment_posture._sca_row(repo, {"control": "Dependency pinning", "evidence": []})
+    assert row["control"] == (f"Dependency pinning ({label})" if named else "Dependency pinning")

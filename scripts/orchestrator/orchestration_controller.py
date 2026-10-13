@@ -8188,11 +8188,12 @@ def _assessment_role_instructions(role: str, adaptation: str) -> str:
     )
 
 
-def _namespace_local_flow(flow: dict, repository_id: str, label: str, external_ids: dict) -> dict:
+def _namespace_local_flow(flow: dict, repository_id: str, label: str | None, external_ids: dict) -> dict:
     """Qualify every repository-local name a flow carries before flows of several jobs meet.
 
     Entity references, access groups and protocol groups are local like the
     entity IDs; two repositories may reuse one, which would join unrelated flows.
+    ``label`` is None for a sole repository, whose protocol groups cannot meet another's.
     """
     from contexts.reconcile_multi_repo_architecture import _id
 
@@ -8203,7 +8204,7 @@ def _namespace_local_flow(flow: dict, repository_id: str, label: str, external_i
             flow[field] = external_ids[flow[field]]
     if "access_group" in flow:
         flow["access_group"]["id"] = _id("group", repository_id, flow["access_group"]["id"])
-    if "protocol_group" in flow:
+    if "protocol_group" in flow and label is not None:
         flow["protocol_group"] = f"{flow['protocol_group']} ({label})"[:80]
     return flow
 
@@ -8295,7 +8296,9 @@ def _assessment_architecture(scope, jobs, *, progress):
             entity["id"] = external_ids[entity["id"]]
             flows["external_entities"].append(entity)
         for flow in artifact["data_flows"]:
-            flows["data_flows"].append(_namespace_local_flow(flow, rid, labels[rid], external_ids))
+            flows["data_flows"].append(
+                _namespace_local_flow(flow, rid, labels[rid] if len(labels) > 1 else None, external_ids)
+            )
         for asset in artifact["assets"]:
             asset["id"] = _id("asset", rid, asset["id"])
             assets.append(asset)
@@ -9058,10 +9061,43 @@ def _assessment_synthesis(jobs, workspace: Path, *, progress) -> None:
     _run_script("validators/validate_fragment.py", ["tier-root-causes", str(workspace / ".tier-root-causes.json")])
 
 
+def _assessment_assets(assets: list[dict], names) -> list[dict]:
+    """Project the qualified assets with the legacy fragment's ``A-NNN`` identity.
+
+    The qualified artifact keeps its ``asset-<slug>`` IDs; nothing references
+    an asset by ID. Numbering follows a stable order so a rerun of the same
+    architecture names the same asset alike.
+    """
+    from orchestrator import assessment_workspace as ws
+
+    ordered = sorted(assets, key=lambda row: (str(row.get("name") or "").casefold(), str(row.get("id"))))
+    projected = ws._project(ordered, names)
+    for number, row in enumerate(projected, 1):
+        row["id"] = f"A-{number:03d}"
+    return projected
+
+
 def _assessment_workspace(
-    scope, cfg, *, architecture, controls, boundaries, merged, root: Path, workspace: Path, project, captured
+    scope,
+    cfg,
+    *,
+    architecture,
+    controls,
+    boundaries,
+    merged,
+    root: Path,
+    workspace: Path,
+    project,
+    captured,
+    named: bool = True,
+    started_at: int | None = None,
+    invocation: str = "",
 ):
-    """Write the legacy-shaped Stage-1 handoff of the qualified artifacts."""
+    """Write the legacy-shaped Stage-1 handoff of the qualified artifacts.
+
+    ``named`` is false when the project name only repeats a sole repository's
+    label; the model then keeps the name its manifest gives (RA-18).
+    """
     from orchestrator import assessment_workspace as ws
 
     names = ws.Namespaces(scope)
@@ -9072,8 +9108,11 @@ def _assessment_workspace(
     ws.write_json(workspace / ".component-inventory-finalization.json", finalization)
     ws.write_json(workspace / ".data-flows.json", ws.project_flows(architecture["data_flows"], fingerprint, names))
     ws.write_json(
-        workspace / ".assets.json", {"schema_version": 1, "assets": ws._project(architecture["assets"], names)}
+        workspace / ".assets.json",
+        {"schema_version": 1, "assets": _assessment_assets(architecture["assets"], names)},
     )
+    # The legacy tail reads this fragment; it must meet the fragment's contract.
+    _run_script("validators/validate_fragment.py", ["assets", str(workspace / ".assets.json")])
     ws.write_json(
         workspace / ".trust-boundaries.json",
         ws.project_document(boundaries, names, schema_version=2),
@@ -9090,13 +9129,108 @@ def _assessment_workspace(
         "output_dir": str(workspace),
         "plugin_root": str(PLUGIN_ROOT),
         "mode": "full",
-        "project_name": project,
+        **({"project_name": project} if named else {}),
+        **({"invocation_args": invocation} if invocation else {}),
+        **({"assessment_started_at": started_at} if isinstance(started_at, int) else {}),
     }
     ws.write_json(workspace / ".skill-config.json", settings)
     from orchestrator import assessment_context
 
     assessment_context.write_workspace(captured, workspace, names, components=architecture["components"])
     return names, settings
+
+
+def _single_repository_meta(scope) -> dict:
+    """Repository facts a single-repository report shows, from the admitted checkout.
+
+    The revision is the admitted one; branch and remote are display data read
+    with the hardened Git reader, the remote without credentials.
+    """
+    from runtime.multi_repo_scope import ScopeError, _git
+    from shared._remote_url import public_remote_url
+
+    repo = scope.repositories[0]
+    row = scope.inventory()["repositories"][0]
+
+    def read(*args: str) -> str | None:
+        try:
+            value = _git(repo.root, *args).decode("utf-8", errors="replace").strip()
+        except (ScopeError, OSError):
+            return None
+        return value or None
+
+    branch = read("rev-parse", "--abbrev-ref", "HEAD")
+    return {
+        "git": {"commit_sha": row["head"], "branch": branch if branch and branch != "HEAD" else "unknown"},
+        "repo_url": public_remote_url(read("remote", "get-url", "origin")),
+        "repository_root": str(repo.root),
+        "output_dir": str(scope.output),
+    }
+
+
+def _assessment_invocation(argv: list[str]) -> str:
+    """The run's flags without values that name local paths or free text."""
+    keep_value = {
+        "--assessment-depth",
+        "--soft-budget",
+        "--max-cost",
+        "--hard-budget",
+        "--max-budget",
+        "--max-duration",
+        "--model",
+        "--trust-mode",
+        "--fail-on",
+    }
+    keep_flag = {"--full", "--resume", "--rebuild", "--quiet", "--verbose", "--json"}
+    kept: list[str] = []
+    tokens = iter(argv)
+    for token in tokens:
+        flag, equals, value = token.partition("=")
+        if flag in keep_value:
+            value = value if equals else next(tokens, "")
+            if re.fullmatch(r"[\w.:-]{1,64}", value):
+                kept.append(f"{flag} {value}")
+        elif token in keep_flag:
+            kept.append(token)
+    return " ".join(kept)
+
+
+def _write_assessment_stage_stats(workspace: Path, timing: dict) -> None:
+    """Per-role job timing in the Per-Stage table's format (`runtime/record_stage_stats.py`)."""
+    phases = {
+        "recon_scanner": (2, "Reconnaissance"),
+        "architecture_analyst": (3, "Architecture"),
+        "actor_discoverer": (3, "Architecture"),
+        "trust_boundary_analyst": (7, "Trust Boundaries"),
+        "control_analyst": (8, "Controls"),
+        "stride_analyzer": (9, "STRIDE"),
+        "evidence_verifier": (9, "STRIDE"),
+        "threat_merger": (10, "Scan Synthesis"),
+        "triage_validator": (10, "Scan Synthesis"),
+        "architect_reviewer": (10, "Scan Synthesis"),
+        "post_stride_synthesizer": (10, "Scan Synthesis"),
+        "abuse_case_deriver": (11, "Finalization"),
+        "abuse_case_verifier": (11, "Finalization"),
+    }
+    lines = []
+    for role in sorted(timing, key=lambda r: (phases.get(r, (11, ""))[0], r)):
+        row = timing[role]
+        stage, phase = phases.get(role, (11, "Finalization"))
+        jobs = f"{row['jobs']} job{'s' if row['jobs'] != 1 else ''}, {row['calls']} model calls"
+        reused = f"; {row['reused']} reused from an earlier run, time not recorded" if row["reused"] else ""
+        record = {
+            "stage": stage,
+            "name": f"{phase}: {role.replace('_', ' ')} ({jobs}{reused})",
+            "agent": f"controller:{role}",
+            "model": "—",
+            "duration_ms": round(row["seconds"] * 1000),
+            "tool_uses": 0,
+            "tokens": 0,
+            "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        lines.append(json.dumps(record, ensure_ascii=False))
+    if lines:
+        (workspace / ".stage-stats.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _assessment_render(scope, jobs, names, cfg, workspace: Path, root: Path, *, captured, progress) -> None:
@@ -9158,8 +9292,15 @@ def _assessment_render(scope, jobs, names, cfg, workspace: Path, root: Path, *, 
     model = yaml.safe_load(model_path.read_text(encoding="utf-8"))
     # Name every selected checkout before enrichment seals the model.
     model["meta"]["source_repositories"] = source_repositories(scope)
-    # The report title names the combined system, never a working directory.
-    model["meta"]["project_name"] = cfg["project_name"]
+    # The report title names the combined system, never a working directory. A
+    # sole repository keeps its manifest name (RA-18) unless --project named it.
+    if cfg.get("project_name"):
+        model["meta"]["project_name"] = cfg["project_name"]
+    if len(scope.repositories) == 1:
+        model["meta"].update(_single_repository_meta(scope))
+    if isinstance(cfg.get("assessment_started_at"), int):
+        # Analysis wall time up to the model build; rendering is not included.
+        model["meta"]["analysis_duration_seconds"] = max(0, int(time.time()) - cfg["assessment_started_at"])
     from orchestrator import assessment_context
 
     assessment_context.attribute_trace(captured, model)
@@ -9189,6 +9330,7 @@ def _assessment_render(scope, jobs, names, cfg, workspace: Path, root: Path, *, 
     from orchestrator.assessment_stage2 import render as render_stage2
 
     receipts += render_stage2(jobs, workspace, progress=progress)
+    _write_assessment_stage_stats(workspace, jobs.timing)
     if not _compose_if_ready(workspace, str(root)):
         blocked = workspace / ".compose-blocked.json"
         detail = blocked.read_text(encoding="utf-8")[-1500:] if blocked.is_file() else "unknown step"
@@ -9408,6 +9550,9 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                         workspace=workspace,
                         project=project,
                         captured=captured,
+                        named=bool(ns.project) or len(labels) > 1,
+                        started_at=state.state["started_at"],
+                        invocation=_assessment_invocation(argv),
                     )
                     _assessment_render(scope, jobs, names, settings, workspace, root, captured=captured, progress=say)
                     _export_pentest_tasks_if_configured(workspace, settings)

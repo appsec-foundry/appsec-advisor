@@ -104,6 +104,18 @@ class AssessmentJobs:
             if inherited
             else set()
         )
+        # Wall time and calls per role of the jobs this session ran; a reused
+        # job counts as reused, since its time was spent in an earlier run.
+        self.timing: dict[str, dict] = {}
+
+    def _record(self, role: str, *, seconds: float | None = None, calls: int = 0) -> None:
+        row = self.timing.setdefault(role, {"jobs": 0, "reused": 0, "calls": 0, "seconds": 0.0})
+        if seconds is None:
+            row["reused"] += 1
+        else:
+            row["jobs"] += 1
+            row["calls"] += calls
+            row["seconds"] += seconds
 
     def execute(self, **kwargs):
         """Return the accepted artifact of one controller-selected job."""
@@ -176,6 +188,7 @@ class AssessmentJobs:
                     self.scope.read(r["repository_id"], r["path"], r["start_line"], r["end_line"])
                     for r in receipt["source_ranges"]
                 )
+                self._record(role)
                 return ExchangeResult(copy.deepcopy(artifact), slices, receipt["calls"], receipt["usd"])
             receipt_path.unlink()
             artifact_path.unlink(missing_ok=True)
@@ -189,6 +202,7 @@ class AssessmentJobs:
         def review(artifact, slices):
             accept(copy.deepcopy(artifact), _ranges(slices))
 
+        started = time.monotonic()
         try:
             result = run_exchange(
                 BudgetedHost(factory, self.budget),
@@ -224,4 +238,5 @@ class AssessmentJobs:
         atomic_write_json(receipt_path, receipt)
         receipt_path.chmod(0o600)
         self.checkpoint()
+        self._record(role, seconds=time.monotonic() - started, calls=result.calls)
         return ExchangeResult(artifact, result.source_slices, result.calls, result.usd)

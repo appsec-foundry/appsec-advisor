@@ -36,7 +36,7 @@ def checkouts(tmp_path, names, files, remotes=None):
             (root / relative).parent.mkdir(parents=True, exist_ok=True)
             (root / relative).write_text(value if isinstance(value, str) else yaml.safe_dump(value))
         roots.append(root)
-    return admit([str(root) for root in roots], str(tmp_path / "out"))
+    return admit([str(root) for root in roots], str(tmp_path / "out"), minimum=1)
 
 
 def qualified_components(scope):
@@ -115,6 +115,43 @@ def test_invalid_boundary_declaration_stops_before_analysis(tmp_path):
     scope = checkouts(tmp_path, NAMES[0], {"service": {".appsec/trust-boundaries.yaml": "boundaries: []\n"}})
     with pytest.raises(declarations.DeclarationError, match="service/.appsec/trust-boundaries.yaml"):
         assessment_source_context(scope)
+
+
+@pytest.mark.parametrize("name", ["service", "order-portal"])
+def test_sole_repository_declaration_keeps_its_own_keys_and_paths(tmp_path, name):
+    """One repository names nothing to tell apart: keys and paths stay as declared (MR-3)."""
+    declared = boundaries(boundary("api", evidence=[{"file": "app.py", "line": 1}]))
+    scope = checkouts(tmp_path, [name], {name: {".appsec/trust-boundaries.yaml": declared}})
+    rows = declarations.boundary_declarations(scope, qualified_components(scope))
+    assert [row["key"] for row in rows] == ["public-ingress"]
+    assert assessment_source_context(scope)["boundary_declarations"]["keys"] == ["public-ingress"]
+    names = Namespaces(scope)
+    rid = scope.repositories[0].repository_id
+    assert declarations._actor_evidence(name, {"files": ["app.py"]}, names, rid) == {"files": ["app.py"]}
+
+
+def test_two_repositories_keep_namespaced_declaration_paths(tmp_path):
+    scope = checkouts(tmp_path, NAMES[0], {})
+    names = Namespaces(scope)
+    edge = next(r for r in scope.repositories if r.root.name == "edge")
+    evidence = declarations._actor_evidence("edge", {"files": ["app.py"]}, names, edge.repository_id)
+    assert evidence == {"files": ["edge/app.py"]}
+
+
+def test_sole_repository_actor_file_is_named_by_its_plain_path(tmp_path):
+    files = {"api": {".appsec/actors.yaml": {"actors": [repo_actor("ACT-R-001", "partner-operator")]}}}
+    scope = checkouts(tmp_path, ["api"], files)
+    root, workspace = tmp_path / "combined", tmp_path / "workspace"
+    root.mkdir()
+    workspace.mkdir()
+    installed = declarations.install_actor_config(scope, Namespaces(scope), root)
+    resolve_actors.resolve(
+        plugin_root=str(declarations.PLUGIN_ROOT), repo_root=str(root), output_dir=str(workspace), quick_mode=True
+    )
+    declarations.attribute_actor_owners(workspace, installed["owners"], single=True)
+    resolved = json.loads((workspace / ".actors-resolved.json").read_text())["resolved_actors"]
+    (custom,) = [a for a in resolved if a["id"].startswith("ACT-R-")]
+    assert custom["_provenance"]["source_file"] == ".appsec/actors.yaml"
 
 
 def repo_actor(actor_id, label):
