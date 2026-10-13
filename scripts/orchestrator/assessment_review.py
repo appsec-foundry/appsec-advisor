@@ -301,6 +301,7 @@ def run_abuse_cases(
     reject_repository_case_files(scope, names, cfg)
     workspace, root = Path(workspace), Path(root)
     receipts: list[str] = []
+    progress("Matching abuse cases")
     if cfg.get("assessment_depth") == "thorough" and not cfg.get("only_abuse_case_ids"):
         progress("Deriving application-specific business abuse cases")
         receipts += _derive(jobs, workspace, instructions=instructions)
@@ -331,6 +332,12 @@ def run_abuse_cases(
             f"abuse verifier fan-out has {len(candidates)} candidates; maximum is {MAX_CANDIDATES}"
         )
     receipts.append(f"abuse candidates: {len(candidates)}")
+    # The controller console's phase result step (`_phase_result`).
+    progress(
+        f"Phase result: Abuse cases: {len(candidates)} checked"
+        if candidates
+        else "Phase result: Abuse cases: none matched"
+    )
     if match.returncode != 0:
         receipts.append(f"matcher returned {match.returncode}; partial candidates retained")
     if candidates:

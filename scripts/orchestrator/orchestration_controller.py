@@ -8277,6 +8277,12 @@ def _assessment_architecture(scope, jobs, *, progress):
         },
     )
     components, receipt = finalize_assessment(scope, list(discovery.observations))
+    files = sum(len(repository.files) for repository in scope.repositories)
+    _phase_result(
+        progress,
+        "Reconnaissance",
+        f"{_count_noun(len(scope.repositories), 'repository')} · {_count_noun(files, 'file')}",
+    )
     progress("Reviewing evidenced cross-repository connection candidates")
     review = review_connections(
         scope,
@@ -8366,6 +8372,12 @@ def _assessment_architecture(scope, jobs, *, progress):
     flows, _classified = classify(flows, components["components"])
     validate_flows(scope, components, receipt, flows)
     scope.verify_unchanged()
+    _phase_result(
+        progress,
+        "Architecture",
+        f"{_count_noun(len(components['components']), 'component')} · "
+        f"{_count_noun(len(flows['data_flows']), 'data flow')}",
+    )
     return {
         "components": components,
         "finalization": receipt,
@@ -8626,6 +8638,8 @@ def _assessment_stride(
             review = {"schema_version": 2, **identity, "decisions": []}
         reviews.append(review)
     scope.verify_unchanged()
+    found = sum(len(document["threats"]) for document in documents) + sum(len(rows) for rows in scanned.values())
+    _phase_result(progress, "STRIDE", _count_noun(found, "finding"))
     merged = merge_assessment(
         scope,
         components,
@@ -8865,24 +8879,35 @@ def _elapsed(seconds: float) -> str:
     return _minutes(seconds) if not hours else f"{hours}h" + (f"{minutes:02d}m" if minutes else "")
 
 
-class _AssessmentConsole:
-    """The run's console view: phase lines at the margin, exceptions indented.
+def _count_noun(count: int, noun: str) -> str:
+    """``count`` with ``noun`` in singular or plural, for console result lines."""
+    if count != 1:
+        noun = noun[:-1] + "ies" if noun.endswith("y") and noun[-2:-1] not in "aeiou" else noun + "s"
+    return f"{count} {noun}"
 
-    ``▶ Phase`` opens a phase with the run's estimated share and elapsed time,
-    ``✓ Phase`` closes it with what it covered and its duration; both start at
-    the margin, so the margin alone reads as the run's course. Indented by one
-    level are only the lines that need attention: a rejected answer (``↻``), a
-    stalled or stopped model call (``⚠``) and, off a terminal, a ``still in
-    Phase`` liveness line during quiet stretches. On a terminal the component
-    or section in work is one status line rewritten in place. ``--verbose``
-    keeps that layout and adds every step and model call as indented lines;
-    ``--quiet`` prints nothing. Cost is never shown mid-run.
+
+def _phase_result(progress, phase: str, text: str) -> None:
+    """Report what a console phase produced; its ``finished`` line shows it."""
+    progress(f"{_AssessmentConsole.RESULT}{phase}: {text}")
+
+
+class _AssessmentConsole:
+    """The run's console view: two aligned phase lines, exceptions indented.
+
+    ``Phase n/N <name> started`` opens a phase with the run's estimated share
+    so far; ``finished`` closes it with the share reached, what the phase
+    produced and its duration. Phases are numbered within this run, so a
+    skipped phase (abuse cases) shortens N. Both lines start at the margin, so
+    the margin alone reads as the run's course. Indented by one level are only
+    the lines that need attention: a rejected answer (``↻``), a stalled or
+    stopped model call or a plugin change (``⚠``) and, off a terminal, a
+    ``still in`` liveness line during quiet stretches. On a terminal the
+    component or section in work is one status line rewritten in place.
+    ``--verbose`` keeps that layout and adds every step and model call as
+    indented lines; ``--quiet`` prints nothing. Cost is never shown mid-run.
     """
 
-    PIPELINE = (
-        "2 Recon · 3 Architecture · 7 Trust-Boundaries · 8 Controls · 9 STRIDE · 10 Scan-Synthesis · 11 Finalization"
-    )
-    # Liveness interval of the permanent "still in Phase" line, written only off
+    # Liveness interval of the permanent "still in" line, written only off
     # a terminal (CI, logs); a terminal gets the in-place status line instead.
     HEARTBEAT_SECONDS = 300
     # Reader-facing names of the model roles in liveness and completion lines.
@@ -8903,34 +8928,35 @@ class _AssessmentConsole:
         "secarch_renderer": "security architecture",
     }
 
-    # Step prefixes mapped onto that phase model, in run order.
+    # Step prefixes mapped onto the console phases, in run order.
     PHASES = (
-        ("Collecting the deterministic route", "2/11 Reconnaissance"),
-        ("Discovering every selected repository", "2/11 Reconnaissance"),
-        ("Reviewing evidenced cross-repository", "3/11 Architecture"),
-        ("Analyzing local architecture", "3/11 Architecture"),
-        ("Measuring the boundary source context", "7/11 Trust Boundaries"),
-        ("Reviewing trust crossing", "7/11 Trust Boundaries"),
-        ("Assessing controls", "8/11 Controls"),
-        ("Running deterministic source scanners", "9/11 STRIDE"),
-        ("Analyzing all STRIDE categories", "9/11 STRIDE"),
-        ("Independently verifying evidence", "9/11 STRIDE"),
-        ("Reviewing merge candidates", "10/11 Scan Synthesis"),
-        ("Building the deterministic route inventory", "10/11 Scan Synthesis"),
-        ("Evaluating posture producers", "10/11 Scan Synthesis"),
-        ("Reviewing findings as architect", "10/11 Scan Synthesis"),
-        ("Resolving actors", "10/11 Scan Synthesis"),
-        ("Ranking findings", "10/11 Scan Synthesis"),
-        ("Synthesizing cross-finding", "10/11 Scan Synthesis"),
+        ("Collecting the deterministic route", "Reconnaissance"),
+        ("Discovering every selected repository", "Reconnaissance"),
+        ("Reviewing evidenced cross-repository", "Architecture"),
+        ("Analyzing local architecture", "Architecture"),
+        ("Measuring the boundary source context", "Trust boundaries"),
+        ("Reviewing trust crossing", "Trust boundaries"),
+        ("Assessing controls", "Controls"),
+        ("Running deterministic source scanners", "STRIDE"),
+        ("Analyzing all STRIDE categories", "STRIDE"),
+        ("Independently verifying evidence", "STRIDE"),
+        ("Reviewing merge candidates", "Scan synthesis"),
+        ("Building the deterministic route inventory", "Scan synthesis"),
+        ("Evaluating posture producers", "Scan synthesis"),
+        ("Reviewing findings as architect", "Scan synthesis"),
+        ("Resolving actors", "Scan synthesis"),
+        ("Ranking findings", "Scan synthesis"),
+        ("Synthesizing cross-finding", "Scan synthesis"),
         # The model is built before abuse verification, as the single-repository
         # bootstrap does at the end of Scan Synthesis.
-        ("Building the threat model", "10/11 Scan Synthesis"),
-        ("Deriving application-specific business abuse cases", "10/11 Abuse Verification"),
-        ("Verifying abuse case", "10/11 Abuse Verification"),
-        ("Rendering the report", "11/11 Finalization"),
-        ("Stage 2:", "11/11 Finalization"),
-        ("Running the quality gates", "11/11 Finalization"),
-        ("Publishing", "11/11 Finalization"),
+        ("Building the threat model", "Scan synthesis"),
+        ("Matching abuse cases", "Abuse cases"),
+        ("Deriving application-specific business abuse cases", "Abuse cases"),
+        ("Verifying abuse case", "Abuse cases"),
+        ("Rendering the report", "Finalization"),
+        ("Stage 2:", "Finalization"),
+        ("Running the quality gates", "Finalization"),
+        ("Publishing", "Finalization"),
     )
     # Steps whose subject (component, section, abuse case) is worth a line;
     # model reads and per-call results stay behind --verbose.
@@ -8942,40 +8968,31 @@ class _AssessmentConsole:
         "Verifying abuse case": "abuse case ",
         "Stage 2:": "report section: ",
     }
-    # What each phase does, for the run header; one line each, in run order.
-    PHASE_SUMMARY = (
-        "2 Recon: scripts inventory routes, stores and outbound calls; a model describes each repository",
-        "3 Architecture: components, data flows, external parties and protected assets",
-        "7 Trust boundaries: a model checks each point where data crosses into another trust zone",
-        "8 Controls: the security controls each component implements, with code evidence",
-        "9 STRIDE: source scanners, then a model per component; a second model re-reads the evidence",
-        "10 Scan synthesis: merge, rank and root-cause the findings; check business abuse cases",
-        "11 Finalization: render the report, run the quality gates, publish",
-    )
-    # What a phase's numbered subjects are, for its completion line.
+    # What a phase's numbered subjects are, for its finished line.
     NOUNS = {
-        "Analyzing local architecture": "repository",
         "Reviewing trust crossing": "crossing",
         "Assessing controls": "component",
         "Analyzing all STRIDE categories": "component",
         "Reviewing findings as architect": "architect review",
-        "Verifying abuse case": "abuse case",
         "Stage 2:": "report section",
     }
+    # Prefix of a phase's result step: "<RESULT><phase>: <what it produced>".
+    RESULT = "Phase result: "
     _POSITION = re.compile(r"\s*\((\d+)/(\d+)\)$")
     # Share of a run's wall clock per phase, in percent. Estimated from the
     # model time per role of a single-repository standard run (Juice Shop,
     # 2026-10-13); STRIDE includes its evidence reviews. A display estimate only.
     WEIGHTS = {
-        "2/11 Reconnaissance": 5,
-        "3/11 Architecture": 5,
-        "7/11 Trust Boundaries": 6,
-        "8/11 Controls": 11,
-        "9/11 STRIDE": 55,
-        "10/11 Scan Synthesis": 4,
-        "10/11 Abuse Verification": 5,
-        "11/11 Finalization": 9,
+        "Reconnaissance": 5,
+        "Architecture": 5,
+        "Trust boundaries": 6,
+        "Controls": 11,
+        "STRIDE": 55,
+        "Scan synthesis": 4,
+        "Abuse cases": 5,
+        "Finalization": 9,
     }
+    _NAME_WIDTH = max(len(name) for name in WEIGHTS)
 
     def __init__(self, verbose: bool, write=None, live: bool | None = None):
         self.verbose = verbose
@@ -8984,12 +9001,20 @@ class _AssessmentConsole:
         )
         # The in-place status line needs a terminal; an injected writer is a log.
         self.live = (write is None and sys.stderr.isatty()) if live is None else live
-        self.phase, self.started, self.percent, self.announced = None, 0.0, 0, False
+        self.plan = list(self.WEIGHTS)
+        self.phase, self.started, self.percent = None, 0.0, 0
         self.finished_jobs = 0
         # The current subject's status text and the phase's largest numbered subject set.
         self.current, self.count = "", None
         self.parts: dict = {}
+        self.results: dict[str, str] = {}
+        # Called once a phase has started, e.g. to report a plugin change at once.
+        self.on_phase = None
         self.run_started = self.last = time.monotonic()
+
+    def plan_phases(self, *, abuse_cases: bool) -> None:
+        """Number the phases this run will execute; skipped abuse cases shorten the count."""
+        self.plan = [name for name in self.WEIGHTS if abuse_cases or name != "Abuse cases"]
 
     def write(self, text: str) -> None:
         self.last = time.monotonic()
@@ -9014,15 +9039,23 @@ class _AssessmentConsole:
         sys.stderr.flush()
         _AssessmentConsole.status_shown = True
 
+    def _share(self, phase: str, fraction: float) -> float:
+        """The run's estimated share in percent once ``fraction`` of ``phase`` is done."""
+        plan = self.plan if phase in self.plan else [*self.plan, phase]
+        before = sum(self.WEIGHTS[name] for name in plan[: plan.index(phase)])
+        return 100 * (before + self.WEIGHTS[phase] * fraction) / sum(self.WEIGHTS[name] for name in plan)
+
     def _percent(self, phase: str, done: int = 0, total: int = 1) -> int:
-        order = list(self.WEIGHTS)
-        before = sum(self.WEIGHTS[name] for name in order[: order.index(phase)])
-        self.percent = min(99, round(before + self.WEIGHTS[phase] * done / max(total, 1)))
+        self.percent = min(99, round(self._share(phase, done / max(total, 1))))
         return self.percent
 
     def _progress(self) -> str:
         """The run's estimated share with the time it has taken so far."""
         return f"~{self.percent}% · {_elapsed(time.monotonic() - self.run_started)} elapsed"
+
+    def _label(self, phase: str) -> str:
+        number = f"{self.plan.index(phase) + 1}/{len(self.plan)}" if phase in self.plan else "?"
+        return f"Phase {number:>3}  {phase:<{self._NAME_WIDTH}}"
 
     def facts(self, title: str | None, rows: list[tuple[str, str]]) -> None:
         """Run facts as ``Key : value`` rows, the single-repository wrapper's header format."""
@@ -9035,23 +9068,25 @@ class _AssessmentConsole:
             self.write(f"  {key:<{width}}: {first}")
             for line in more:
                 self.write(f"  {'':<{width}}  {line}")
+        self.write("")
 
     def step(self, text: str) -> None:
-        if not self.announced:
-            self.announced = True
-            self.write(f"   Pipeline: {self.PIPELINE}")
+        if text.startswith(self.RESULT):
+            phase, _, result = text[len(self.RESULT) :].partition(": ")
+            self.results[phase] = result
+            return
         prefix, phase = next(((p, name) for p, name in self.PHASES if text.startswith(p)), (None, None))
         if phase is None:
-            self.write(f"    · {text}" if self.verbose and self.phase else f"▶ {text}")
+            self.write(f"    · {text}" if self.verbose and self.phase else text)
             return
         if phase != self.phase:
             self.close()
             self.phase, self.started, self.finished_jobs = phase, time.monotonic(), 0
             self.current, self.count, self.parts = "", None, {}
-            number, _, head = phase.partition(" ")
             self._percent(phase)
-            self.write("")
-            self.write(f"▶ Phase {number} · {head} · {self._progress()}")
+            self.write(f"{self._label(phase)}  {'started':<8}  {'~' + str(self.percent) + '%':>5}")
+            if self.on_phase:
+                self.on_phase()
         position = self._POSITION.search(text)
         if position:
             # Steps already finished in this phase, so the share never runs ahead.
@@ -9089,10 +9124,8 @@ class _AssessmentConsole:
             # Phases without a known job count advance by each finished job,
             # approaching but never reaching the phase's end share.
             self.finished_jobs += 1
-            order = list(self.WEIGHTS)
-            before = sum(self.WEIGHTS[name] for name in order[: order.index(self.phase)])
-            share = self.WEIGHTS[self.phase] * self.finished_jobs / (self.finished_jobs + 1)
-            self.percent = max(self.percent, min(99, round(before + share)))
+            share = self._share(self.phase, self.finished_jobs / (self.finished_jobs + 1))
+            self.percent = max(self.percent, min(99, round(share)))
         if self.verbose:
             if finished:
                 # A subject's second job of one role is a further batch or part.
@@ -9113,7 +9146,7 @@ class _AssessmentConsole:
         now = time.monotonic()
         if self.phase and now - self.last >= self.HEARTBEAT_SECONDS:
             self.write(
-                f"    · still in Phase {self.phase} — {_minutes(now - self.started)}"
+                f"    · still in {self.phase} — {_minutes(now - self.started)}"
                 + (f" · {self.current}" if self.current else "")
                 + f" · {self._progress()}"
                 + (f" · {who}{status}" if status else "")
@@ -9121,12 +9154,15 @@ class _AssessmentConsole:
 
     def close(self) -> None:
         if self.phase:
-            number, _, head = self.phase.partition(" ")
-            covered = ""
-            if self.count:
-                total, noun = self.count
-                covered = f"{total} {noun if total == 1 else 'repositories' if noun == 'repository' else noun + 's'} · "
-            self.write(f"✓ Phase {number} · {head} — {covered}{_duration(time.monotonic() - self.started)}")
+            produced = [_count_noun(*self.count)] if self.count else []
+            if self.results.get(self.phase):
+                produced.append(self.results[self.phase])
+            share = min(100, round(self._share(self.phase, 1)))
+            self.percent = max(self.percent, min(99, share))
+            self.write(
+                f"{self._label(self.phase)}  {'finished':<8}  {'~' + str(share) + '%':>5}  "
+                f"{' · '.join(produced):<36}  {_duration(time.monotonic() - self.started):>6}"
+            )
         self.phase = None
 
 
@@ -9276,7 +9312,6 @@ def _assessment_intro(ns, budget, depth: str, lineup: str, runtime_changed=False
             "scripts run every stage, merge, rank, render and check the report;\n"
             "models answer bounded tool-less questions per component (no agent session)",
         ),
-        ("Phases", "\n".join(_AssessmentConsole.PHASE_SUMMARY)),
     ]
 
 
@@ -9827,8 +9862,17 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                         "AppSec Plugin — Headless Mode (deterministic controller, experimental)",
                         _assessment_intro(ns, budget, depth, lineup, state.runtime_changed),
                     )
-                    # The header's Phases row already lists the pipeline.
-                    console.announced = True
+                    console.plan_phases(abuse_cases=not cfg.get("skip_abuse_case_verification"))
+                    noticed = []
+
+                    def report_plugin_change():
+                        # Shown when a phase starts after the change, not only in the closing summary.
+                        warning = None if noticed else _assessment_runtime_warning(state)
+                        if warning:
+                            noticed.append(warning)
+                            console.write(f"    ⚠ {warning}")
+
+                    console.on_phase = report_plugin_change
                 else:
                     print(f"⚠ {kind} assessment is experimental.", file=sys.stderr, flush=True)
                     say(lineup)
@@ -9863,7 +9907,11 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                     output_dir=scope.output,
                     declarations=declarations,
                 )
+                _phase_result(
+                    say, "Trust boundaries", _count_noun(len(boundaries["trust_boundaries"]), "trust boundary")
+                )
                 controls = _assessment_controls(scope, jobs, architecture, progress=say)
+                _phase_result(say, "Controls", _count_noun(len(controls), "control"))
                 _, _, merged = _assessment_stride(
                     scope,
                     jobs,
@@ -9875,6 +9923,7 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                     depth=depth,
                     captured=captured,
                 )
+                _phase_result(say, "Scan synthesis", _count_noun(len(merged["threats"]), "finding") + " after merge")
                 original, _ = build_assessment_model(
                     scope,
                     skill_cfg={**cfg, "mode": "full"},
@@ -9916,6 +9965,7 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                 say("Publishing the threat model")
                 delivered = _assessment_publish(scope, original, names, workspace, cfg, warnings)
                 state.complete(delivered)
+                _phase_result(say, "Finalization", "report published")
                 if console:
                     console.close()
                 runtime_warning = _assessment_runtime_warning(state)

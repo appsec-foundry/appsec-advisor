@@ -280,36 +280,65 @@ def _console_run(console, monkeypatch):
     console.close()
 
 
-def test_default_console_brackets_phases_at_the_margin_and_indents_only_exceptions(monkeypatch):
+def _phase_lines(lines):
+    # The trailing duration varies; the label, status, share and result do not.
+    return [re.sub(r"\s+[0-9hms<]+$", "", line) for line in lines if line.startswith("Phase ")]
+
+
+def test_default_console_shows_aligned_phase_lines_and_indents_only_exceptions(monkeypatch):
     lines = []
     console = controller._AssessmentConsole(False, lines.append)
     _console_run(console, monkeypatch)
-    assert lines[:2] == [f"   Pipeline: {console.PIPELINE}", "▶ Models: sonnet (stride_analyzer)"]
-    # Each phase opens with its share and the run's elapsed time, and closes with what it covered.
-    assert [line.split(" · ~")[0] for line in lines if line.startswith("▶ Phase")] == [
-        "▶ Phase 2/11 · Reconnaissance",
-        "▶ Phase 7/11 · Trust Boundaries",
-        "▶ Phase 9/11 · STRIDE",
-        "▶ Phase 11/11 · Finalization",
-    ]
-    assert "▶ Phase 9/11 · STRIDE · ~27% · <1m elapsed" in lines
-    # The trailing duration varies; what the phase covered does not.
-    closed = [re.sub(r"(?: — | · )[0-9hms]+$", "", line) for line in lines if line.startswith("✓ Phase")]
-    assert closed == [
-        "✓ Phase 2/11 · Reconnaissance",
-        "✓ Phase 7/11 · Trust Boundaries — 3 crossings",
-        "✓ Phase 9/11 · STRIDE — 2 components",
-        "✓ Phase 11/11 · Finalization",
+    assert lines[0] == "Models: sonnet (stride_analyzer)"
+    # Numbered within the phases this run executes; each opens with the run's
+    # share so far and closes with the share reached and what it produced.
+    assert _phase_lines(lines) == [
+        "Phase 1/8  Reconnaissance    started     ~0%",
+        "Phase 1/8  Reconnaissance    finished    ~5%",
+        "Phase 3/8  Trust boundaries  started    ~10%",
+        "Phase 3/8  Trust boundaries  finished   ~16%  3 crossings",
+        "Phase 5/8  STRIDE            started    ~27%",
+        "Phase 5/8  STRIDE            finished   ~82%  2 components",
+        "Phase 8/8  Finalization      started    ~91%",
+        "Phase 8/8  Finalization      finished  ~100%",
     ]
     # Indented by exactly one level: the stall, the off-terminal liveness line and the rejection.
     assert [line for line in lines if line.startswith("    ")] == [
         "    ⚠ 1 min: no model activity for 95 s (waiting for the API)",
-        "    · still in Phase 9/11 STRIDE — <1m · 2/2 · Store · ~54% · <1m elapsed"
-        " · STRIDE: model is thinking (~9,000 tokens)",
+        "    · still in STRIDE — <1m · 2/2 · Store · ~54% · <1m elapsed · STRIDE: model is thinking (~9,000 tokens)",
         "    ↻ STRIDE: answer rejected, asking for a correction: threats/0: missing evidence",
     ]
     # No model-call detail, crossing hash, or per-subject line in the default view.
     assert not any("reads " in line or "signal-" in line or "answered" in line for line in lines)
+
+
+def test_phase_results_and_skipped_phases_shape_the_finished_lines():
+    lines = []
+    console = controller._AssessmentConsole(False, lines.append)
+    console.plan_phases(abuse_cases=False)
+    noticed = []
+    console.on_phase = lambda: noticed.append(console.phase)
+    console.step("Assessing controls: API (1/2)")
+    console.step(console.RESULT + "Controls: 5 controls")
+    # A result for a later phase waits for that phase, whatever step reports it.
+    console.step(console.RESULT + "Finalization: report published")
+    console.step("Publishing the threat model")
+    console.close()
+    assert _phase_lines(lines) == [
+        "Phase 4/7  Controls          started    ~17%",
+        "Phase 4/7  Controls          finished   ~28%  2 components · 5 controls",
+        "Phase 7/7  Finalization      started    ~91%",
+        "Phase 7/7  Finalization      finished  ~100%  report published",
+    ]
+    assert noticed == ["Controls", "Finalization"]
+    assert not any(console.RESULT in line for line in lines)
+
+
+def test_count_noun_inflects_regular_and_y_plurals():
+    assert controller._count_noun(1, "repository") == "1 repository"
+    assert controller._count_noun(3, "trust boundary") == "3 trust boundaries"
+    assert controller._count_noun(2, "data flow") == "2 data flows"
+    assert controller._count_noun(0, "finding") == "0 findings"
 
 
 def test_verbose_console_keeps_the_layout_and_adds_every_step_and_call():
@@ -322,7 +351,7 @@ def test_verbose_console_keeps_the_layout_and_adds_every_step_and_call():
     console.close()
     for shown in ("    · reads app/server.ts:1-200 (3 s)", "    · 1/2 · API", "    · STRIDE [sonnet] answered — 2m14s"):
         assert shown in verbose
-    assert verbose[-1].startswith("✓ Phase 9/11 · STRIDE — 2 components · ")
+    assert _phase_lines(verbose)[-1] == "Phase 5/8  STRIDE            finished   ~82%  2 components"
 
 
 def test_console_header_states_the_resolved_limits_models_and_checks():
@@ -336,7 +365,7 @@ def test_console_header_states_the_resolved_limits_models_and_checks():
     assert rows["Models"] == "m1 (a, b)\nm2 (c)"
     assert rows["Trust mode"] == "untrusted, preflight clean"
     assert rows["Output"] == "/o (--rebuild: replaces any earlier assessment)"
-    assert rows["Phases"].split("\n") == list(controller._AssessmentConsole.PHASE_SUMMARY)
+    assert "Phases" not in rows
     ns = parse(
         ["--repo", "/r", "--output", "/o", "--hard-budget", "5", "--trust-mode", "trusted", "--max-duration", "3900"]
     )
