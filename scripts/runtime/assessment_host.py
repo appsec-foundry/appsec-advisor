@@ -260,6 +260,10 @@ def run_exchange(
                         + (", each for the same reason" if repeated else "")
                         + f": {exc}"
                     ) from None
+                # A reporting transport may say that the answer is being corrected.
+                notice = getattr(transport, "on_correction", None)
+                if callable(notice):
+                    notice(str(exc))
                 feedback = {
                     "reason": str(exc)[:MAX_FEEDBACK_CHARS],
                     "instruction": "The controller rejected your previous complete result, included as `result`, "

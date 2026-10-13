@@ -8986,6 +8986,9 @@ class _AssessmentConsole:
         if "no model activity" in text or text.startswith("model call stopped"):
             self.write(f"{indent}⚠ {who}{text}")
             return
+        if text.startswith("answer rejected"):
+            self.write(f"{indent}↻ {who}{text}")
+            return
         read = re.fullmatch(r"reads (.*) \((\d+) s\)", text)
         if read:
             # One round of a multi-round job: a count, never the paths (--verbose shows them).
@@ -8997,7 +9000,7 @@ class _AssessmentConsole:
             return
         finished = re.fullmatch(r"result: .* \((\d+) s\)", text)
         if finished:
-            # A job's final answer; source reads in between stay behind --verbose.
+            # A complete answer; the controller may still reject it (↻ line).
             if self.phase:
                 # Phases without a known job count advance by each finished job,
                 # approaching but never reaching the phase's end share.
@@ -9010,7 +9013,7 @@ class _AssessmentConsole:
             self.parts[role] = self.parts.get(role, 0) + 1
             part = f" (part {self.parts[role]})" if self.parts[role] > 1 else ""
             self.write(
-                f"{indent}✓ {who.rstrip(': ') or 'model call'}{part} — {_duration(int(finished[1]))}"
+                f"{indent}· {who.rstrip(': ') or 'model call'}{part} answered — {_duration(int(finished[1]))}"
                 + (f" · ~{self.percent}%" if self.phase and not self.subject else "")
             )
             return
@@ -9069,6 +9072,10 @@ class _ReportedTransport:
         if self.phase == "thinking":
             return f"{minutes} min: model is thinking (~{self.thinking:,} tokens)"
         return f"{minutes} min: waiting for the model's first response"
+
+    def on_correction(self, reason: str) -> None:
+        """The controller rejected the last answer and asks the model to correct it."""
+        self.report("answer rejected, asking for a correction: " + re.sub(r"\s+", " ", reason)[:100])
 
     def _source(self, row):
         label = self.labels.get(row.get("repository_id"), "")
