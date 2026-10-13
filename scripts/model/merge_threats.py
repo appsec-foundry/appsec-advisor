@@ -894,6 +894,10 @@ def _source_auth_finding_to_threat(f: dict, components: list | None = None) -> d
         "finding_type_id": f.get("finding_type_id"),
         "control_scope": f.get("control_scope"),
     }
+    # The data object an owner-ID or object-lookup query targets keeps IDOR
+    # findings on different objects apart during consolidation.
+    if f.get("object_ref"):
+        threat["object_ref"] = f["object_ref"]
     # The crypto catalog establishes a security-relevant use before emitting a
     # row. Preserve that fact explicitly; do not infer a weakness later from a
     # CWE or an algorithm name alone.
@@ -1262,6 +1266,22 @@ def _declassify_config_title(title: str) -> str:
     return s.strip() or (title or "").strip()
 
 
+def _primary_evidence(t: dict) -> dict:
+    """The first evidence record of a finding.
+
+    Legacy findings carry one evidence dict; a version-2 assessment carries a
+    list of qualified records. Every consolidation step reads the anchor here.
+    """
+    ev = t.get("evidence")
+    if isinstance(ev, list):
+        return next((e for e in ev if isinstance(e, dict)), {})
+    return ev if isinstance(ev, dict) else {}
+
+
+def _component_of(t: dict) -> str:
+    return str(t.get("component_id") or t.get("component") or "").strip().lower()
+
+
 def _consolidate_config_checks(threats: list[dict]) -> list[dict]:
     """Collapse N config-scan findings sharing the same ``config_check_id`` into
     ONE systemic finding, preserving every hit as an ``instances[]`` entry.
@@ -1275,8 +1295,8 @@ def _consolidate_config_checks(threats: list[dict]) -> list[dict]:
     result was the 2026-06-13 juice-shop run shipping 74 config findings that
     were really ~13 distinct checks.
 
-    This deterministic pass keys purely on ``config_check_id``: same id →
-    one survivor (highest-risk member) carrying ``instances[]`` (each
+    This deterministic pass keys on ``config_check_id`` within one repository:
+    same id → one survivor (highest-risk member) carrying ``instances[]`` (each
     ``{file, line, snippet?}``), a derived ``affected_files[]`` summary,
     ``instance_count``, and ``systemic: true``. The survivor title is
     declassified (per-file locator stripped). Config findings WITHOUT a
@@ -1296,16 +1316,20 @@ def _consolidate_config_checks(threats: list[dict]) -> list[dict]:
     from collections import OrderedDict
 
     scanned_checks = {t.get("config_check_id") for t in threats if t.get("source") == "config-scan"}
-    buckets: OrderedDict[str, list[dict]] = OrderedDict()
+    buckets: OrderedDict[tuple[str, str], list[dict]] = OrderedDict()
     out: list[dict] = []
     for t in threats:
         cid = t.get("config_check_id")
         if cid and (t.get("source") == "config-scan" or cid in scanned_checks):
-            buckets.setdefault(cid, []).append(t)
+            # A combined assessment qualifies evidence by repository; a check
+            # never folds hits of two repositories. A carrier finding still
+            # absorbs the check's hits in other components of its repository.
+            repository = str(_primary_evidence(t).get("repository_id") or "")
+            buckets.setdefault((cid, repository), []).append(t)
         else:
             out.append(t)
 
-    for cid, members in buckets.items():
+    for _key, members in buckets.items():
         if len(members) == 1:
             out.append(members[0])
             continue
@@ -1323,7 +1347,7 @@ def _consolidate_config_checks(threats: list[dict]) -> list[dict]:
             if m.get("source") != "config-scan":
                 prior = [i for i in m.get("instances") or [] if isinstance(i, dict)]
             if not prior:
-                ev = m.get("evidence") or {}
+                ev = _primary_evidence(m)
                 inst: dict = {"file": (ev.get("file") or "").strip(), "line": ev.get("line")}
                 sn = (ev.get("snippet") or ev.get("excerpt") or "").strip()
                 if sn:
@@ -1429,12 +1453,7 @@ def _match_consolidation_group(t: dict, groups: tuple) -> dict | None:
     """First group whose ``match_any`` has an entry matching this threat."""
     cwe = (t.get("cwe") or "").strip().upper()
     title = t.get("title") or ""
-    ev = t.get("evidence")
-    if isinstance(ev, list):
-        ev = next((e for e in ev if isinstance(e, dict)), {})
-    elif not isinstance(ev, dict):
-        ev = {}
-    file_path = ev.get("file") or ""
+    file_path = _primary_evidence(t).get("file") or ""
     scid = t.get("source_check_id") or ""
     ccid = t.get("config_check_id") or ""
     for g in groups:
@@ -1465,16 +1484,20 @@ def _group_bucket_key(t: dict, g: dict) -> tuple:
             # A CWE, title or scanner rule alone does not establish that two
             # services share one owner or control. Keep the manifestations
             # separate until upstream provides a concrete control scope.
-            parts.extend(("component", (t.get("component_id") or t.get("component") or "").strip().lower()))
+            parts.extend(("component", _component_of(t)))
     else:
-        parts.append((t.get("component_id") or t.get("component") or "").strip().lower())
+        parts.append(_component_of(t))
     if g.get("require_shared_sink"):
+        # One defect needs one fix: an explicit shared control, else the one
+        # data object the queries target, else the single sink. A finding
+        # without an object never joins an object bucket.
         scope = str(t.get("control_scope") or "").strip()
-        evidence = t.get("evidence") or {}
-        if isinstance(evidence, list):
-            evidence = next((e for e in evidence if isinstance(e, dict)), {})
+        object_ref = str(t.get("object_ref") or "").strip().lower()
+        evidence = _primary_evidence(t)
         if scope:
             parts.extend(("control", scope))
+        elif object_ref:
+            parts.extend(("object", object_ref))
         elif evidence.get("file") and evidence.get("line"):
             parts.extend(("sink", str(evidence["file"]), str(evidence["line"])))
         else:
@@ -1501,11 +1524,7 @@ def _instances_of(m: dict) -> list[dict]:
                 inst.setdefault("source", m["source"])
             out.append(inst)
         return out
-    ev = m.get("evidence")
-    if isinstance(ev, list):
-        ev = next((e for e in ev if isinstance(e, dict)), {})
-    elif not isinstance(ev, dict):
-        ev = {}
+    ev = _primary_evidence(m)
     inst = {"file": (ev.get("file") or "").strip(), "line": ev.get("line"), "severity": m.get("risk")}
     if m.get("source"):
         inst["source"] = m["source"]
@@ -1615,6 +1634,11 @@ def _consolidate_by_group(threats: list[dict]) -> list[dict]:
         _union_lens_ids(survivor, members)
         if g.get("title"):
             survivor["title"] = g["title"]
+            # Survivors of one group that differ only by their object would
+            # otherwise share one title; every member carries the same value.
+            qualifier = str(survivor.get(g.get("title_qualifier_field") or "") or "").strip()
+            if qualifier:
+                survivor["title"] = f"{g['title']} ({qualifier})"
         if mids:
             survivor["mitigation_ids"] = mids
         if refs:

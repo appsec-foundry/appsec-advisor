@@ -190,6 +190,105 @@ def test_authz001_suppressed_by_session_identity(tmp_path: Path) -> None:
     assert "AUTHZ-001" not in _ids(_scan(tmp_path))
 
 
+_OWNER_BINDING = (
+    "export const bindOwner = () => {\n"
+    "  return (req, res, next) => {\n"
+    "    req.body.ownerId = sessions.lookup(readToken(req)).id\n"
+    "    next()\n"
+    "  }\n"
+    "}\n"
+)
+_OWNER_QUERY = (
+    "export function listProjects () {\n"
+    "  return async (req, res) => {\n"
+    "    const rows = await ProjectModel.findAll({ where: { ownerId: req.body.ownerId } })\n"
+    "    res.json(rows)\n"
+    "  }\n"
+    "}\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("middleware", "app", "dropped"),
+    [
+        # Mounted on the handler's only route through a namespace import.
+        (
+            _OWNER_BINDING,
+            "import * as project from './routes/project'\nimport { bindOwner } from './lib/auth'\n"
+            "app.get('/api/projects', bindOwner(), project.listProjects())\n",
+            True,
+        ),
+        # Variant: an earlier prefix mount on the same router, named import.
+        (
+            _OWNER_BINDING,
+            "import { listProjects } from './routes/project'\nimport { bindOwner } from './lib/auth'\n"
+            "router.use('/api', bindOwner())\nrouter.get('/api/projects', listProjects())\n",
+            True,
+        ),
+        # A prefix mount registered after the route does not run before it.
+        (
+            _OWNER_BINDING,
+            "import { listProjects } from './routes/project'\nimport { bindOwner } from './lib/auth'\n"
+            "router.get('/api/projects', listProjects())\nrouter.use('/api', bindOwner())\n",
+            False,
+        ),
+        # One registration without the middleware leaves the handler reachable.
+        (
+            _OWNER_BINDING,
+            "import * as project from './routes/project'\nimport { bindOwner } from './lib/auth'\n"
+            "app.get('/api/projects', bindOwner(), project.listProjects())\n"
+            "app.get('/api/all-projects', project.listProjects())\n",
+            False,
+        ),
+        # The middleware copies a client-supplied header, not the session identity.
+        (
+            _OWNER_BINDING.replace("sessions.lookup(readToken(req)).id", "req.headers['x-owner']"),
+            "import * as project from './routes/project'\nimport { bindOwner } from './lib/auth'\n"
+            "app.get('/api/projects', bindOwner(), project.listProjects())\n",
+            False,
+        ),
+        # The middleware binds another field than the query reads.
+        (
+            _OWNER_BINDING.replace("req.body.ownerId =", "req.body.tenantId ="),
+            "import * as project from './routes/project'\nimport { bindOwner } from './lib/auth'\n"
+            "app.get('/api/projects', bindOwner(), project.listProjects())\n",
+            False,
+        ),
+        # A function that never passes control on is not request middleware.
+        (
+            _OWNER_BINDING.replace("    next()\n", ""),
+            "import * as project from './routes/project'\nimport { bindOwner } from './lib/auth'\n"
+            "app.get('/api/projects', bindOwner(), project.listProjects())\n",
+            False,
+        ),
+    ],
+)
+def test_authz001_owner_field_bound_to_session_by_route_middleware(tmp_path: Path, middleware, app, dropped) -> None:
+    """An owner field every registration overwrites from the session identity is not attacker-controlled."""
+    (tmp_path / "routes").mkdir()
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "routes/project.ts").write_text(_OWNER_QUERY)
+    (tmp_path / "lib/auth.ts").write_text(middleware)
+    (tmp_path / "app.ts").write_text(app)
+    assert ("AUTHZ-001" not in _ids(_scan(tmp_path))) is dropped
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (_OWNER_QUERY, "Project"),
+        ("export const one = async (req) => ItemRepository.findOne({ where: { id: req.params.id } })\n", "Item"),
+        # A record literal handed to a query later names no enclosing query.
+        ("export const add = (req) => {\n  const row = {\n    ownerId: req.body.ownerId\n  }\n  return row\n}\n", None),
+    ],
+)
+def test_object_lookup_hits_name_the_queried_object(tmp_path: Path, source, expected) -> None:
+    (tmp_path / "routes").mkdir()
+    (tmp_path / "routes/project.ts").write_text(source)
+    hits = [f for f in _scan(tmp_path) if f.check_id in {"AUTHZ-001", "AUTHZ-002"}]
+    assert hits and {f.object_ref for f in hits} == {expected}
+
+
 def test_required_context_pattern_gates_ambiguous_syntax(tmp_path: Path) -> None:
     """A rule can require a local security purpose before it emits a finding."""
     check_path = _write_checks(
