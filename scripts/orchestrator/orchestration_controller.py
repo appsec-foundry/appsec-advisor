@@ -8972,7 +8972,8 @@ class _AssessmentConsole:
 
     Off a terminal (CI, logs) a progress line follows a change after
     ``PROGRESS_SECONDS`` and comes at the latest after ``HEARTBEAT_SECONDS``;
-    a terminal gets one progress line rewritten in place instead.
+    a terminal gets one progress line rewritten in place instead. Each
+    STRIDE component and each verified abuse case gets its own line in both.
     ``--verbose`` adds every step and model call as progress lines;
     ``--quiet`` prints nothing. Cost is never shown mid-run.
     """
@@ -9042,6 +9043,11 @@ class _AssessmentConsole:
         "Verifying abuse case",
         "Stage 2:",
     )
+    # Subjects that also get a permanent line each, so the run's console
+    # names every analyzed component and every verified abuse case.
+    LISTED = ("Analyzing all STRIDE categories", "Verifying abuse case")
+    # Listed names come from repository files and model output.
+    _NAME_MAX = 100
     # What a phase's subjects are, for progress lines and the done line's count.
     NOUNS = {
         "Reviewing trust crossing": "crossing",
@@ -9258,12 +9264,17 @@ class _AssessmentConsole:
             return
         # A crossing's ID is a signal hash, not a name a reader recognizes.
         name = "" if prefix == "Reviewing trust crossing" else self._POSITION.sub("", text[len(prefix) :].lstrip(": "))
+        # No terminal control sequence from a name reaches the console.
+        name = "".join(char if char.isprintable() else "?" for char in name)
+        if len(name) > self._NAME_MAX:
+            name = name[: self._NAME_MAX - 1].rstrip() + "…"
         noun = self.NOUNS.get(prefix, "")
         counter = f"{noun} {position[1]}/{position[2]}" if noun and position else noun
         self.parts = {}
         self.current = " · ".join(part for part in (counter, name) if part)
-        if self.verbose:
+        if self.verbose or prefix in self.LISTED:
             self.write(self._row("·", self.current, now), now)
+            self.shown = (self.current, round(100 * self.done))
         elif self.live:
             self._status(self._row("·", self.current, now))
         else:
@@ -10167,7 +10178,8 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
         "gate_violations": violations,
         "output": str(scope.output),
         "repositories": labels,
-        "deliverables": sorted(delivered),
+        # Publication order: model and report first, then figures and exports.
+        "deliverables": list(delivered),
         "warnings": warnings,
         **({"runtime_files": str(workspace)} if workspace.is_dir() else {}),
         "spent_usd": round(budget.spent_usd, 2),
@@ -10404,6 +10416,8 @@ def assess_main(argv: list[str]) -> int:
         f"{', '.join(outcome['repositories'])} written to {outcome['output']} "
         f"({outcome['calls']} model calls, ≈ USD {outcome['spent_usd']:.2f})"
     )
+    for name in outcome["deliverables"]:
+        print(f"  {Path(outcome['output']) / name}")
     if outcome.get("runtime_files"):
         print(f"  Run files: {outcome['runtime_files']}")
     for warning in outcome.get("warnings") or []:

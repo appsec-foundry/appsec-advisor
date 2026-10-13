@@ -234,6 +234,25 @@ def test_a_verified_case_is_promoted_with_its_namespaced_evidence_and_the_gate_p
     assert "Canonical abuse-case analysis persisted" in receipts
 
 
+def test_each_verified_case_is_reported_with_its_title_and_position(abuse):
+    shown = []
+    review.run_abuse_cases(
+        abuse.scope,
+        Jobs(_verifier()),
+        abuse.names,
+        abuse.workspace,
+        abuse.root,
+        abuse.cfg,
+        instructions=instructions,
+        run_script=_run_script(abuse),
+        enrich=lambda: None,
+        progress=shown.append,
+    )
+    assert f"Verifying abuse case: {CASE} — Expression evaluation leads to code execution (1/1)" in shown
+    # The numbered steps count the checked cases; no second count as a phase result.
+    assert not any(text.startswith("Phase result: Abuse cases") for text in shown)
+
+
 @pytest.mark.parametrize("read", [(1, 5), (17, 17)], ids=["unread-line", "read-line"])
 def test_a_verdict_must_cite_a_line_its_job_read(abuse, read):
     jobs = Jobs(_verifier(read=read))

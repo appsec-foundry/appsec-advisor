@@ -200,6 +200,22 @@ def _validate_retrieved(artifact: dict, ranges: list[dict], allowed: frozenset) 
             raise ExchangeError("Abuse-case evidence was not retrieved by its authorized job")
 
 
+def _candidate_titles(workspace: Path) -> dict[str, str]:
+    """``{AC-ID: title}`` from the matcher sidecar, for the console's progress lines.
+
+    Best-effort: without a readable sidecar a case is shown by its ID alone.
+    """
+    try:
+        matches = json.loads((workspace / ".abuse-case-matches.json").read_text(encoding="utf-8")).get("matches")
+    except (OSError, ValueError, AttributeError):
+        return {}
+    return {
+        str(match["abuse_case_id"]): str(match.get("title") or "").strip()
+        for match in matches or []
+        if isinstance(match, dict) and match.get("abuse_case_id")
+    }
+
+
 def _verify_candidate(jobs, names, workspace: Path, candidate: str, *, instructions) -> None:
     context = read_json(workspace / ".dispatch-context/abuse-cases" / f"{candidate}.json")
     body = context["candidate"]
@@ -359,12 +375,10 @@ def run_abuse_cases(
             f"abuse verifier fan-out has {len(candidates)} candidates; maximum is {MAX_CANDIDATES}"
         )
     receipts.append(f"abuse candidates: {len(candidates)}")
-    # The controller console's phase result step (`_phase_result`).
-    progress(
-        f"Phase result: Abuse cases: {len(candidates)} checked"
-        if candidates
-        else "Phase result: Abuse cases: none matched"
-    )
+    if not candidates:
+        # The controller console's phase result step (`_phase_result`); the
+        # numbered verification steps below count the checked cases.
+        progress("Phase result: Abuse cases: none matched")
     if match.returncode != 0:
         receipts.append(f"matcher returned {match.returncode}; partial candidates retained")
     if candidates:
@@ -373,8 +387,10 @@ def run_abuse_cases(
             ["--output-dir", str(workspace), "--repo-root", str(root)]
             + [arg for candidate in candidates for arg in ("--candidate", candidate)],
         )
-        for candidate in candidates:
-            progress("Verifying abuse case: " + candidate)
+        titles = _candidate_titles(workspace)
+        for position, candidate in enumerate(candidates, 1):
+            title = f" — {titles[candidate]}" if titles.get(candidate) else ""
+            progress(f"Verifying abuse case: {candidate}{title} ({position}/{len(candidates)})")
             _verify_candidate(jobs, names, workspace, candidate, instructions=instructions)
     run_script("validators/verify_abuse_cases.py", ["merge", "--output-dir", str(workspace)])
     run_script("model/match_abuse_cases.py", ["finalize", "--output-dir", str(workspace)])

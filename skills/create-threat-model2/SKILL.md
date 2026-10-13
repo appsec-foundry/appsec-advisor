@@ -118,6 +118,6 @@ for progress, show the last 15 lines of the task's output file verbatim.
 
 ## Completion
 
-When the task notification arrives, print the last 25 lines of its output
+When the task notification arrives, print the last 40 lines of its output
 verbatim in a code block, without summarizing or adding findings. On a non-zero
 exit, say that the assessment did not complete.

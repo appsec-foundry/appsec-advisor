@@ -332,16 +332,11 @@ def test_default_console_writes_every_line_in_one_column_grid():
         ("3/8 Trust boundaries", "start", "~21%", "1m", "", "3 crossings"),
         ("3/8 Trust boundaries", "done", "~33%", "2m", "", "1m00s · 3 crossings"),
         ("5/8 Threat analysis", "start", "~38%", "2m", "", "2 components"),
+        # Every STRIDE component gets its own line, so a model status within
+        # the heartbeat interval adds none.
+        ("5/8 Threat analysis", "·", "~38%", "2m", "", "component 1/2 · API"),
         ("5/8 Threat analysis", "⚠", "~38%", "3m", "", "1 min: no model activity for 95 s (waiting for the API)"),
-        # A changed subject after the progress interval; the role tells STRIDE from the evidence review.
-        (
-            "5/8 Threat analysis",
-            "·",
-            "~50%",
-            "6m",
-            "~6m",
-            "component 2/2 · Store · STRIDE: model is thinking (~9,000 tokens)",
-        ),
+        ("5/8 Threat analysis", "·", "~50%", "4m", "~4m", "component 2/2 · Store"),
         (
             "5/8 Threat analysis",
             "↻",
@@ -968,6 +963,44 @@ def test_jobs_record_fresh_and_reused_time_per_role():
     jobs._record("stride_analyzer", seconds=2.0, calls=3)
     jobs._record("stride_analyzer")
     assert jobs.timing["stride_analyzer"] == {"jobs": 1, "reused": 1, "calls": 3, "seconds": 2.0}
+
+
+@pytest.mark.parametrize("live", [False, True], ids=["log", "terminal"])
+def test_every_stride_component_and_abuse_case_gets_its_own_line(capsys, live):
+    lines, clock = [], _Clock()
+    console = controller._AssessmentConsole(False, lines.append, live=live, clock=clock)
+    console.plan_components(2)
+    console.step("Assessing controls: Gateway (1/2)")
+    console.step("Analyzing all STRIDE categories: Gateway (1/2)")
+    clock.tick(5)
+    console.step("Analyzing all STRIDE categories: Ledger \x1b[2J\u202e (2/2)")
+    console.step("Verifying abuse case: AC-901 — Replay a signed callback (1/2)")
+    console.step("Verifying abuse case: AC-902 (2/2)")
+    console.close()
+    controller._AssessmentConsole.clear_status()
+    capsys.readouterr()
+    listed = [row[5] for row in _rows(lines) if row[1] == "·"]
+    # A control subject stays a status or heartbeat; terminal escapes from a name never print.
+    assert listed == [
+        "component 1/2 · Gateway",
+        "component 2/2 · Ledger ?[2J?",
+        "abuse case 1/2 · AC-901 — Replay a signed callback",
+        "abuse case 2/2 · AC-902",
+    ]
+    assert [(row[0], row[5]) for row in _rows(lines) if row[1] == "done"][-1] == (
+        "7/8 Abuse cases",
+        "0s · 2 abuse cases",
+    )
+
+
+def test_a_completed_assessment_lists_each_delivered_file_on_its_own_line(tmp_path, monkeypatch, capsys):
+    delivered = ["threat-model.yaml", "threat-model.md", "threat-model.figure1.svg", "threat-model.pdf"]
+    outcome = {"repositories": ["edge"], "output": str(tmp_path), "calls": 3, "spent_usd": 1.0}
+    monkeypatch.setattr(controller, "assess_repositories", lambda argv: {**outcome, "deliverables": delivered})
+    assert controller.assess_main(["--repo", "edge"]) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert out[0].startswith("✓ Threat model of edge written to")
+    assert out[1:] == [f"  {tmp_path / name}" for name in delivered]
 
 
 def test_a_terminal_shows_the_subject_in_work_as_one_rewritten_status_line(capsys):
