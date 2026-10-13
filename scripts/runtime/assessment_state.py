@@ -110,6 +110,8 @@ class AssessmentState:
             },
         }
         self.state = None
+        # Set when --resume continues an unfinished run after a plugin change.
+        self.runtime_changed = False
         self.cancelled = False
         self._held = False
         self._last_heartbeat = 0.0
@@ -150,12 +152,20 @@ class AssessmentState:
             raise ExchangeError("Assessment output belongs to another live run")
         if self.resume:
             self.state = _read_state(self.path)
+            if self.state["identity"] != self.identity and self._continues_after_plugin_change(self.state):
+                # MR-4: the earlier run's accepted jobs stay as a cache that the
+                # job layer rechecks per request; this session starts afresh.
+                self.resume, self.runtime_changed, self.state = False, True, None
+        if self.resume:
             if self.state["identity"] != self.identity:
+                again = (
+                    "run again with --rebuild"
+                    if self.state["status"] == "complete"
+                    else "run again without --resume; unchanged model steps are reused"
+                )
                 raise ExchangeError(
-                    "Assessment cannot resume: "
-                    + self._changed(self.state["identity"])
-                    + " changed since it started. A new scan is required: run without --resume in another "
-                    "--output or an emptied one"
+                    f"Assessment cannot resume: {self._changed(self.state['identity'])} changed since it "
+                    f"started. A new scan is required: {again}"
                 )
             accounting = self.state["accounting"]
             if not math.isfinite(accounting["spent_usd"]):
@@ -194,6 +204,19 @@ class AssessmentState:
                 "deliverables": {},
             }
             self.directory.mkdir(mode=0o700, exist_ok=True)
+
+    def _continues_after_plugin_change(self, earlier) -> bool:
+        """Whether --resume may continue an unfinished run whose only change is the plugin.
+
+        A completed run, an unknown-cost reservation, or any other identity
+        change still refuses the resume.
+        """
+        unchanged = {key: value for key, value in earlier["identity"].items() if key != "runtime_sha256"}
+        return (
+            unchanged == {key: value for key, value in self.identity.items() if key != "runtime_sha256"}
+            and earlier["status"] != "complete"
+            and not earlier["accounting"]["unavailable"]
+        )
 
     def _changed(self, identity) -> str:
         """Name what differs between a stored run identity and this one."""

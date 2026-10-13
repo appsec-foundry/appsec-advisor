@@ -9247,11 +9247,13 @@ def _assessment_model_lines(cfg: dict[str, Any]) -> tuple[str, str | None]:
     return lineup, warning
 
 
-def _assessment_intro(ns, budget, depth: str, lineup: str) -> list[tuple[str, str]]:
+def _assessment_intro(ns, budget, depth: str, lineup: str, runtime_changed=False) -> list[tuple[str, str]]:
     """Return the console header rows, shown once every pre-run check has passed."""
     output = ns.output
     if ns.rebuild:
         output += " (--rebuild: replaces any earlier assessment)"
+    elif runtime_changed:
+        output += " (--resume: the plugin changed, so only unchanged model steps are reused)"
     elif ns.resume:
         output += " (--resume: continues the earlier assessment)"
     cut = f"model calls stop at ${budget.max_usd:.2f}"
@@ -9823,7 +9825,7 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                     # were accepted, so a refused start prints only its reason.
                     console.facts(
                         "AppSec Plugin — Headless Mode (deterministic controller, experimental)",
-                        _assessment_intro(ns, budget, depth, lineup),
+                        _assessment_intro(ns, budget, depth, lineup, state.runtime_changed),
                     )
                     # The header's Phases row already lists the pipeline.
                     console.announced = True

@@ -98,17 +98,97 @@ def test_complete_session_binds_deliverables_and_detects_later_changes(scope):
     "field,value,named",
     [
         ("configuration", {"stride_model": "sonnet"}, "the assessment settings changed"),
-        ("runtime_sha256", "b" * 64, "the plugin version changed"),
         ("budget", AssessmentBudget(2.0, 0.05, 10, 60), "the budget or time limits changed"),
     ],
 )
-def test_changed_settings_or_runtime_reject_resume_and_name_the_change(scope, field, value, named):
+def test_changed_settings_reject_resume_and_name_the_change(scope, field, value, named):
     with lifecycle(scope).hold():
         pass
-    with pytest.raises(ExchangeError, match=f"cannot resume: {named} .*new scan is required") as caught:
+    with pytest.raises(
+        ExchangeError, match=f"cannot resume: {named} .*new scan is required: run again without --resume"
+    ) as caught:
         with lifecycle(scope, resume=True, **{field: value}).hold():
             pytest.fail("Changed request must not resume")
     assert "source code" not in str(caught.value)
+
+
+def _plugin_change_jobs(state, host_factory):
+    # As the controller does: a session that is not a strict resume inherits earlier receipts.
+    return AssessmentJobs(
+        state.scope,
+        state.directory / "jobs",
+        state.budget,
+        host_factory,
+        state.should_stop,
+        state.checkpoint,
+        inherited=not state.resume,
+    )
+
+
+def test_resume_after_a_plugin_change_reuses_only_unchanged_jobs(scope):
+    schema = {"type": "object", "required": ["ok"], "properties": {"ok": {"const": True}}}
+
+    def job(selector, instructions):
+        return dict(
+            role="recon_scanner",
+            selector=selector,
+            instructions=instructions,
+            context={},
+            schema=schema,
+            allowed_sources=frozenset(),
+            validate=lambda a, r: None,
+        )
+
+    dispatched = []
+
+    class Host:
+        def __init__(self, role):
+            self.role = role
+
+        def invoke(self, *args):
+            dispatched.append(self.role)
+            return HostReply({"action": "complete", "reads": [], "artifact": {"ok": True}}, 0.01)
+
+    first = lifecycle(scope)
+    with first.hold():
+        jobs = _plugin_change_jobs(first, lambda role, ceiling: Host(role))
+        jobs.execute(**job("kept", "same prompt"))
+        jobs.execute(**job("changed", "old prompt"))
+    assert stored(scope)["status"] == "interrupted" and len(dispatched) == 2
+
+    resumed = lifecycle(scope, resume=True, runtime_sha256="b" * 64)
+    with resumed.hold():
+        assert resumed.runtime_changed and not resumed.resume
+        assert resumed.state["run_id"] != first.state["run_id"]
+        assert resumed.state["identity"]["runtime_sha256"] == "b" * 64
+        jobs = _plugin_change_jobs(resumed, lambda role, ceiling: Host(role))
+        jobs.execute(**job("kept", "same prompt"))
+        jobs.execute(**job("changed", "new prompt"))
+        assert len(dispatched) == 3  # only the job whose request changed ran again
+        assert resumed.budget.calls == 2 and resumed.budget.spent_usd == pytest.approx(0.02)
+
+
+def test_resume_after_a_plugin_change_still_refuses_a_completed_run_or_unknown_cost(scope):
+    with lifecycle(scope).hold() as state:
+        (scope.output / "threat-model.yaml").write_text("version: 2\n")
+        state.complete(["threat-model.yaml"])
+    with pytest.raises(ExchangeError, match="the plugin version changed .*run again with --rebuild"):
+        with lifecycle(scope, resume=True, runtime_sha256="b" * 64).hold():
+            pytest.fail("A completed run must not be continued after a plugin change")
+    # Unchanged plugin: a completed run still reopens as before.
+    with lifecycle(scope, resume=True).hold() as reopened:
+        assert not reopened.runtime_changed
+
+
+def test_resume_after_a_plugin_change_keeps_unknown_cost_blocking(scope):
+    with lifecycle(scope).hold():
+        pass
+    recorded = stored(scope)
+    recorded["accounting"]["unavailable"] = True
+    (scope.output / ".assessment-state.json").write_text(json.dumps(recorded))
+    with pytest.raises(ExchangeError, match="the plugin version changed"):
+        with lifecycle(scope, resume=True, runtime_sha256="b" * 64).hold():
+            pytest.fail("Unknown costs must not be refunded by a plugin change")
 
 
 def test_changed_source_cannot_resume_or_complete(scope):
