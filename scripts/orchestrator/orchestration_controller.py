@@ -8892,23 +8892,32 @@ def _phase_result(progress, phase: str, text: str) -> None:
 
 
 class _AssessmentConsole:
-    """The run's console view: two aligned phase lines, exceptions indented.
+    """The run's console view: every line in one fixed column grid.
 
-    ``Phase n/N <name> started`` opens a phase with the run's estimated share
-    so far; ``finished`` closes it with the share reached, what the phase
-    produced and its duration. Phases are numbered within this run, so a
-    skipped phase (abuse cases) shortens N. Both lines start at the margin, so
-    the margin alone reads as the run's course. Indented by one level are only
-    the lines that need attention: a rejected answer (``↻``), a stalled or
-    stopped model call or a plugin change (``⚠``) and, off a terminal, a
-    ``still in`` liveness line during quiet stretches. On a terminal the
-    component or section in work is one status line rewritten in place.
-    ``--verbose`` keeps that layout and adds every step and model call as
-    indented lines; ``--quiet`` prints nothing. Cost is never shown mid-run.
+    Each line reads ``TIME  PHASE  EVENT  PROGRESS  ELAPSED  LEFT  DETAIL``.
+    PHASE is numbered within this run, so a skipped phase (abuse cases)
+    shortens N. EVENT is ``start`` and ``done`` for a phase's bounds, ``·``
+    for progress, and ``⚠`` (stalled or stopped model call, plugin change) or
+    ``↻`` (rejected answer) for lines that need attention. PROGRESS, ELAPSED
+    and LEFT always describe the whole run. DETAIL describes the phase and
+    comes last, so its length never shifts a column; a ``done`` line's
+    detail starts with the phase's duration.
+
+    PROGRESS counts finished work. Once the component count is known
+    (``plan_components``), Controls and STRIDE weigh per component, and LEFT
+    extrapolates the speed this run measured so far. Before that PROGRESS
+    says ``planning``. Time stamps and durations read one clock.
+
+    Off a terminal (CI, logs) a progress line follows a change after
+    ``PROGRESS_SECONDS`` and comes at the latest after ``HEARTBEAT_SECONDS``;
+    a terminal gets one progress line rewritten in place instead.
+    ``--verbose`` adds every step and model call as progress lines;
+    ``--quiet`` prints nothing. Cost is never shown mid-run.
     """
 
-    # Liveness interval of the permanent "still in" line, written only off
-    # a terminal (CI, logs); a terminal gets the in-place status line instead.
+    # Off a terminal: a changed subject or share is shown after this quiet
+    # interval, an unchanged one after the heartbeat interval.
+    PROGRESS_SECONDS = 120
     HEARTBEAT_SECONDS = 300
     # Reader-facing names of the model roles in liveness and completion lines.
     ROLE_LABELS = {
@@ -8958,30 +8967,35 @@ class _AssessmentConsole:
         ("Running the quality gates", "Finalization"),
         ("Publishing", "Finalization"),
     )
-    # Steps whose subject (component, section, abuse case) is worth a line;
-    # model reads and per-call results stay behind --verbose.
-    SUBJECTS = {
-        "Analyzing local architecture": "",
-        "Assessing controls": "",
-        "Analyzing all STRIDE categories": "",
-        "Reviewing findings as architect": "architect review: ",
-        "Verifying abuse case": "abuse case ",
-        "Stage 2:": "report section: ",
-    }
-    # What a phase's numbered subjects are, for its finished line.
+    # Steps whose subject (component, section, abuse case) is worth a
+    # progress line; model reads and per-call results stay behind --verbose.
+    SUBJECTS = (
+        "Analyzing local architecture",
+        "Reviewing trust crossing",
+        "Assessing controls",
+        "Analyzing all STRIDE categories",
+        "Reviewing findings as architect",
+        "Verifying abuse case",
+        "Stage 2:",
+    )
+    # What a phase's subjects are, for progress lines and the done line's count.
     NOUNS = {
         "Reviewing trust crossing": "crossing",
         "Assessing controls": "component",
         "Analyzing all STRIDE categories": "component",
         "Reviewing findings as architect": "architect review",
+        "Verifying abuse case": "abuse case",
         "Stage 2:": "report section",
     }
     # Prefix of a phase's result step: "<RESULT><phase>: <what it produced>".
     RESULT = "Phase result: "
     _POSITION = re.compile(r"\s*\((\d+)/(\d+)\)$")
-    # Share of a run's wall clock per phase, in percent. Estimated from the
-    # model time per role of a single-repository standard run (Juice Shop,
-    # 2026-10-13); STRIDE includes its evidence reviews. A display estimate only.
+    # Expected share of a run's wall clock per phase, in points. Estimated
+    # from the model time per role of a single-repository standard run of
+    # nine components (Juice Shop, 2026-10-13); STRIDE includes its evidence
+    # reviews. Controls and STRIDE scale with the component count, the other
+    # phases stay fixed. A display estimate only: the remaining time follows
+    # the speed the run measures.
     WEIGHTS = {
         "Reconnaissance": 5,
         "Architecture": 5,
@@ -8992,34 +9006,58 @@ class _AssessmentConsole:
         "Abuse cases": 5,
         "Finalization": 9,
     }
+    PER_COMPONENT = {"Controls": 11 / 9, "STRIDE": 55 / 9}
     _NAME_WIDTH = max(len(name) for name in WEIGHTS)
+    # "n/N " before the phase name, then the event column.
+    _PHASE_WIDTH = _NAME_WIDTH + 4
+    _EVENT_WIDTH = 5
 
-    def __init__(self, verbose: bool, write=None, live: bool | None = None):
+    def __init__(self, verbose: bool, write=None, live: bool | None = None, clock=time.time):
         self.verbose = verbose
-        self._out = write or (
-            lambda text: print(f"{time.strftime('%H:%M:%S')}  {text}" if text else "", file=sys.stderr, flush=True)
-        )
+        self._out = write or (lambda text: print(text, file=sys.stderr, flush=True))
         # The in-place status line needs a terminal; an injected writer is a log.
         self.live = (write is None and sys.stderr.isatty()) if live is None else live
+        # One clock for time stamps and durations, so each line's figures agree.
+        self.clock = clock
         self.plan = list(self.WEIGHTS)
-        self.phase, self.started, self.percent = None, 0.0, 0
-        self.finished_jobs = 0
-        # The current subject's status text and the phase's largest numbered subject set.
-        self.current, self.count = "", None
+        self.phase, self.started, self.finished_jobs = None, 0.0, 0
+        # Finished share of the current phase and of the run, both 0..1 and never falling.
+        self.fraction, self.done = 0.0, 0.0
+        self.components = None
+        # The current subject, the phase's largest numbered subject set, and
+        # whether the phase reports positions at all.
+        self.current, self.count, self.positioned = "", None, False
         self.parts: dict = {}
         self.results: dict[str, str] = {}
+        self.headed, self.shown = False, None
         # Called once a phase has started, e.g. to report a plugin change at once.
         self.on_phase = None
-        self.run_started = self.last = time.monotonic()
+        self.run_started = self.last = self.clock()
 
     def plan_phases(self, *, abuse_cases: bool) -> None:
         """Number the phases this run will execute; skipped abuse cases shorten the count."""
         self.plan = [name for name in self.WEIGHTS if abuse_cases or name != "Abuse cases"]
 
-    def write(self, text: str) -> None:
-        self.last = time.monotonic()
+    def plan_components(self, count: int) -> None:
+        """Scale Controls and STRIDE to the run's components; RUN then shows a share."""
+        self.components = max(1, count)
+        # Recomputed with the scaled weights; the old share assumed nine components.
+        self.done = 0.0
+        if self.phase:
+            self._advance(self.fraction)
+
+    def _stamp(self, now: float) -> str:
+        return time.strftime("%H:%M:%S", time.localtime(now))
+
+    def write(self, text: str, now: float | None = None) -> None:
+        now = self.clock() if now is None else now
+        self.last = now
         self.clear_status()
-        self._out(text)
+        self._out(f"{self._stamp(now)}  {text}" if text else "")
+
+    def notice(self, text: str) -> None:
+        """A line that needs attention, in the grid of the current phase."""
+        self.write(self._row("⚠", text))
 
     @staticmethod
     def clear_status() -> None:
@@ -9035,27 +9073,64 @@ class _AssessmentConsole:
     def _status(self, text: str) -> None:
         if not self.live or self.verbose:
             return
-        sys.stderr.write(f"\r\033[K{time.strftime('%H:%M:%S')}  {text}")
+        sys.stderr.write(f"\r\033[K{self._stamp(self.clock())}  {text}")
         sys.stderr.flush()
         _AssessmentConsole.status_shown = True
 
-    def _share(self, phase: str, fraction: float) -> float:
-        """The run's estimated share in percent once ``fraction`` of ``phase`` is done."""
-        plan = self.plan if phase in self.plan else [*self.plan, phase]
-        before = sum(self.WEIGHTS[name] for name in plan[: plan.index(phase)])
-        return 100 * (before + self.WEIGHTS[phase] * fraction) / sum(self.WEIGHTS[name] for name in plan)
+    def _weight(self, phase: str) -> float:
+        if self.components and phase in self.PER_COMPONENT:
+            return self.PER_COMPONENT[phase] * self.components
+        return self.WEIGHTS[phase]
 
-    def _percent(self, phase: str, done: int = 0, total: int = 1) -> int:
-        self.percent = min(99, round(self._share(phase, done / max(total, 1))))
-        return self.percent
+    def _advance(self, fraction: float) -> None:
+        """Record ``fraction`` of the current phase as finished."""
+        self.fraction = max(self.fraction, min(fraction, 1.0))
+        plan = self.plan if self.phase in self.plan else [*self.plan, self.phase]
+        before = sum(self._weight(name) for name in plan[: plan.index(self.phase)])
+        total = sum(self._weight(name) for name in plan)
+        self.done = max(self.done, (before + self._weight(self.phase) * self.fraction) / total)
 
-    def _progress(self) -> str:
-        """The run's estimated share with the time it has taken so far."""
-        return f"~{self.percent}% · {_elapsed(time.monotonic() - self.run_started)} elapsed"
+    def _run(self, now: float) -> str:
+        """The run columns: finished share, elapsed time, and the remaining time at the measured speed."""
+        elapsed, left = now - self.run_started, ""
+        if self.done >= 1:
+            share = "100%"
+        elif not self.components:
+            share = "planning"
+        else:
+            share = f"~{min(99, round(100 * self.done))}%"
+            if self.done > 0:
+                left = "~" + _elapsed(elapsed * (1 - self.done) / self.done)
+        return f"{share:>8}  {_elapsed(elapsed):>7}  {left:>6}"
 
-    def _label(self, phase: str) -> str:
-        number = f"{self.plan.index(phase) + 1}/{len(self.plan)}" if phase in self.plan else "?"
-        return f"Phase {number:>3}  {phase:<{self._NAME_WIDTH}}"
+    def _row(self, event: str, detail: str = "", now: float | None = None) -> str:
+        now = self.clock() if now is None else now
+        phase = self.phase or ""
+        if phase:
+            number = f"{self.plan.index(phase) + 1}/{len(self.plan)}" if phase in self.plan else "?"
+            phase = f"{number} {phase}"
+        # Free text comes last, so a long detail never shifts a column.
+        row = f"{phase:<{self._PHASE_WIDTH}}  {event:<{self._EVENT_WIDTH}}  {self._run(now)}  {detail}"
+        return row.rstrip()
+
+    def _header(self) -> None:
+        if not self.headed:
+            self.headed = True
+            self.clear_status()
+            self._out(
+                f"{'TIME':<8}  {'PHASE':<{self._PHASE_WIDTH}}  {'EVENT':<{self._EVENT_WIDTH}}  "
+                f"{'PROGRESS':>8}  {'ELAPSED':>7}  {'LEFT':>6}  DETAIL"
+            )
+
+    def _heartbeat(self, now: float, extra: str = "") -> None:
+        """Off a terminal: a progress line after a change, or as a liveness sign in a quiet stretch."""
+        if not self.phase:
+            return
+        key = (self.current, round(100 * self.done))
+        quiet = now - self.last
+        if quiet >= self.HEARTBEAT_SECONDS or (quiet >= self.PROGRESS_SECONDS and key != self.shown):
+            self.shown = key
+            self.write(self._row("·", " · ".join(part for part in (self.current, extra) if part), now), now)
 
     def facts(self, title: str | None, rows: list[tuple[str, str]]) -> None:
         """Run facts as ``Key : value`` rows, the single-repository wrapper's header format."""
@@ -9077,92 +9152,94 @@ class _AssessmentConsole:
             return
         prefix, phase = next(((p, name) for p, name in self.PHASES if text.startswith(p)), (None, None))
         if phase is None:
-            self.write(f"    · {text}" if self.verbose and self.phase else text)
+            # Before the first phase a plain line; inside a phase a progress line of it.
+            self.write(self._row("·", text) if self.phase else text)
             return
+        now = self.clock()
+        position = self._POSITION.search(text)
         if phase != self.phase:
-            self.close()
-            self.phase, self.started, self.finished_jobs = phase, time.monotonic(), 0
-            self.current, self.count, self.parts = "", None, {}
-            self._percent(phase)
-            self.write(f"{self._label(phase)}  {'started':<8}  {'~' + str(self.percent) + '%':>5}")
+            self.close(now)
+            self.phase, self.started, self.finished_jobs = phase, now, 0
+            self.current, self.count, self.positioned, self.parts = "", None, False, {}
+            self.fraction = 0.0
+            self._advance(0.0)
+            scope = _count_noun(int(position[2]), self.NOUNS[prefix]) if position and prefix in self.NOUNS else ""
+            self._header()
+            self.write(self._row("start", scope, now), now)
+            self.shown = (self.current, round(100 * self.done))
             if self.on_phase:
                 self.on_phase()
-        position = self._POSITION.search(text)
         if position:
-            # Steps already finished in this phase, so the share never runs ahead.
-            self._percent(phase, int(position[1]) - 1, int(position[2]))
+            # Subjects already finished in this phase, so the share never runs ahead.
+            self.positioned = True
+            self._advance((int(position[1]) - 1) / max(int(position[2]), 1))
             if prefix in self.NOUNS:
                 self.count = (max(int(position[2]), self.count[0] if self.count else 0), self.NOUNS[prefix])
-        if prefix == "Reviewing trust crossing":
-            # A crossing's ID is a signal hash, not a name a reader recognizes.
-            subject = "trust crossing"
-        elif prefix in self.SUBJECTS:
-            subject = self.SUBJECTS[prefix] + self._POSITION.sub("", text[len(prefix) :].lstrip(": "))
-        else:
+        if prefix not in self.SUBJECTS:
             if self.verbose:
-                self.write(f"    · {text}")
+                self.write(self._row("·", text, now), now)
             return
+        # A crossing's ID is a signal hash, not a name a reader recognizes.
+        name = "" if prefix == "Reviewing trust crossing" else self._POSITION.sub("", text[len(prefix) :].lstrip(": "))
+        noun = self.NOUNS.get(prefix, "")
+        counter = f"{noun} {position[1]}/{position[2]}" if noun and position else noun
         self.parts = {}
-        self.current = (f"{position[1]}/{position[2]} · " if position else "") + subject
+        self.current = " · ".join(part for part in (counter, name) if part)
         if self.verbose:
-            self.write(f"    · {self.current}")
+            self.write(self._row("·", self.current, now), now)
+        elif self.live:
+            self._status(self._row("·", self.current, now))
         else:
-            self._status(f"    · {self.current} · {self._progress()}")
+            self._heartbeat(now)
 
     def call(self, text: str, role: str | None = None, model: str | None = None) -> None:
         """A model-call line: always for a stall or a rejection, every line with --verbose."""
         label = self.ROLE_LABELS.get(role, (role or "").replace("_", " "))
         who = f"{label} [{model}]: " if role and model else (f"{label}: " if role else "")
         if "no model activity" in text or text.startswith("model call stopped"):
-            self.write(f"    ⚠ {who}{text}")
+            self.write(self._row("⚠", f"{who}{text}"))
             return
         if text.startswith("answer rejected"):
-            self.write(f"    ↻ {who}{text}")
+            self.write(self._row("↻", f"{who}{text}"))
             return
+        now = self.clock()
         finished = re.fullmatch(r"result: .* \((\d+) s\)", text)
-        if finished and self.phase:
-            # Phases without a known job count advance by each finished job,
+        if finished and self.phase and not self.positioned:
+            # Phases without numbered subjects advance by each finished job,
             # approaching but never reaching the phase's end share.
             self.finished_jobs += 1
-            share = self._share(self.phase, self.finished_jobs / (self.finished_jobs + 1))
-            self.percent = max(self.percent, min(99, round(share)))
+            self._advance(self.finished_jobs / (self.finished_jobs + 1))
         if self.verbose:
             if finished:
                 # A subject's second job of one role is a further batch or part.
                 self.parts[role] = self.parts.get(role, 0) + 1
                 part = f" (part {self.parts[role]})" if self.parts[role] > 1 else ""
-                self.write(f"    · {who.rstrip(': ') or 'model call'}{part} answered — {_duration(int(finished[1]))}")
+                answered = f"{who.rstrip(': ') or 'model call'}{part} answered — {_duration(int(finished[1]))}"
+                self.write(self._row("·", answered, now), now)
             else:
-                self.write(f"    · {who}{text}")
+                self.write(self._row("·", f"{who}{text}", now), now)
             return
         status = re.sub(r"^\d+ min: ", "", text) if re.match(r"\d+ min: ", text) else ""
-        if finished and not self.live:
-            return
+        # The phase column already names a role of the same name.
+        extra = status if not status or label.lower() == (self.phase or "").lower() else f"{label}: {status}"
         if self.live:
             if self.phase:
-                detail = f" · {who}{status}" if status else ""
-                self._status(f"    · {self.current + ' · ' if self.current else ''}{self._progress()}{detail}")
+                self._status(self._row("·", " · ".join(part for part in (self.current, extra) if part), now))
             return
-        now = time.monotonic()
-        if self.phase and now - self.last >= self.HEARTBEAT_SECONDS:
-            self.write(
-                f"    · still in {self.phase} — {_minutes(now - self.started)}"
-                + (f" · {self.current}" if self.current else "")
-                + f" · {self._progress()}"
-                + (f" · {who}{status}" if status else "")
-            )
+        self._heartbeat(now, extra)
 
-    def close(self) -> None:
+    def close(self, now: float | None = None) -> None:
         if self.phase:
-            produced = [_count_noun(*self.count)] if self.count else []
+            now = self.clock() if now is None else now
+            produced = [_duration(now - self.started)]
+            if self.count:
+                produced.append(_count_noun(*self.count))
             if self.results.get(self.phase):
                 produced.append(self.results[self.phase])
-            share = min(100, round(self._share(self.phase, 1)))
-            self.percent = max(self.percent, min(99, share))
-            self.write(
-                f"{self._label(self.phase)}  {'finished':<8}  {'~' + str(share) + '%':>5}  "
-                f"{' · '.join(produced):<36}  {_duration(time.monotonic() - self.started):>6}"
-            )
+            self._advance(1.0)
+            if self.phase == self.plan[-1]:
+                self.done = 1.0
+            self.write(self._row("done", " · ".join(produced), now), now)
         self.phase = None
 
 
@@ -9870,7 +9947,7 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                         warning = None if noticed else _assessment_runtime_warning(state)
                         if warning:
                             noticed.append(warning)
-                            console.write(f"    ⚠ {warning}")
+                            console.notice(warning)
 
                     console.on_phase = report_plugin_change
                 else:
@@ -9886,6 +9963,8 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                 except assessment_context.ContextError as exc:
                     raise CallError(f"declared context cannot be delivered: {exc}") from exc
                 architecture = _assessment_architecture(scope, jobs, progress=say)
+                if console:
+                    console.plan_components(len(architecture["components"]["components"]))
                 from orchestrator.assessment_declarations import DeclarationError, boundary_declarations
 
                 # Needs only the finalized components: reject a bad declaration

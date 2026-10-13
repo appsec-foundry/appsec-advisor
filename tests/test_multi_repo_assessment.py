@@ -263,72 +263,141 @@ def test_combined_assessment_publishes_one_qualified_model(tmp_path, monkeypatch
     assert not list(out.glob("threat-model-*"))
 
 
-def _console_run(console, monkeypatch):
+class _Clock:
+    """A settable clock, so console time stamps and durations are deterministic."""
+
+    def __init__(self):
+        self.now = 1_000_000.0
+
+    def __call__(self):
+        return self.now
+
+    def tick(self, seconds):
+        self.now += seconds
+
+
+def _rows(lines):
+    """Phase rows as (phase, event, progress, elapsed, left, detail), without the time stamp.
+
+    Cut at fixed offsets: a row whose columns shifted reads as garbage here.
+    """
+    rows = []
+    for line in lines:
+        body = line[10:]
+        if re.match(r"\d\d:\d\d:\d\d  ", line) and re.match(r"(\d+/\d+|\?) ", body):
+            cuts = ((0, 20), (22, 27), (29, 37), (39, 46), (48, 54), (56, None))
+            rows.append(tuple(body[a:b].strip() for a, b in cuts))
+    return rows
+
+
+def _console_run(console, clock):
     console.step("Models: sonnet (stride_analyzer)")
     console.step("Discovering every selected repository")
+    clock.tick(98)
     console.call("reads app/server.ts:1-200 (3 s)")
+    console.step(console.RESULT + "Reconnaissance: 1 repository")
+    console.plan_components(2)
     console.step("Reviewing trust crossing: signal-external-ingress-0123abcd (1/3)")
+    clock.tick(60)
     console.step("Analyzing all STRIDE categories: API (1/2)")
+    clock.tick(60)
     console.call("1 min: no model activity for 95 s (waiting for the API)")
     console.step("Independently verifying evidence: API")
+    clock.tick(60)
     console.step("Analyzing all STRIDE categories: Store (2/2)")
-    monkeypatch.setattr(console, "HEARTBEAT_SECONDS", 0)
+    clock.tick(console.PROGRESS_SECONDS)
     console.call("2 min: model is thinking (~9,000 tokens)", "stride_analyzer")
     console.call("result: 3 threats (134 s)", "stride_analyzer", "claude-sonnet-5-5")
     console.call("answer rejected, asking for a correction: threats/0: missing evidence", "stride_analyzer")
+    clock.tick(30)
     console.step("Stage 2: Management Summary")
+    clock.tick(30)
     console.close()
 
 
-def _phase_lines(lines):
-    # The trailing duration varies; the label, status, share and result do not.
-    return [re.sub(r"\s+[0-9hms<]+$", "", line) for line in lines if line.startswith("Phase ")]
-
-
-def test_default_console_shows_aligned_phase_lines_and_indents_only_exceptions(monkeypatch):
-    lines = []
-    console = controller._AssessmentConsole(False, lines.append)
-    _console_run(console, monkeypatch)
-    assert lines[0] == "Models: sonnet (stride_analyzer)"
-    # Numbered within the phases this run executes; each opens with the run's
-    # share so far and closes with the share reached and what it produced.
-    assert _phase_lines(lines) == [
-        "Phase 1/8  Reconnaissance    started     ~0%",
-        "Phase 1/8  Reconnaissance    finished    ~5%",
-        "Phase 3/8  Trust boundaries  started    ~10%",
-        "Phase 3/8  Trust boundaries  finished   ~16%  3 crossings",
-        "Phase 5/8  STRIDE            started    ~27%",
-        "Phase 5/8  STRIDE            finished   ~82%  2 components",
-        "Phase 8/8  Finalization      started    ~91%",
-        "Phase 8/8  Finalization      finished  ~100%",
+def test_default_console_writes_every_line_in_one_column_grid():
+    lines, clock = [], _Clock()
+    console = controller._AssessmentConsole(False, lines.append, clock=clock)
+    _console_run(console, clock)
+    assert lines[0].endswith("  Models: sonnet (stride_analyzer)")
+    assert lines[1].split() == ["TIME", "PHASE", "EVENT", "PROGRESS", "ELAPSED", "LEFT", "DETAIL"]
+    # Numbered within the phases this run executes. PROGRESS, ELAPSED and LEFT
+    # describe the whole run; the free-text detail comes last.
+    assert _rows(lines) == [
+        ("1/8 Reconnaissance", "start", "planning", "<1m", "", ""),
+        # Components are planned while the phase runs, so its done line has a share.
+        ("1/8 Reconnaissance", "done", "~10%", "1m", "~14m", "1m38s · 1 repository"),
+        ("3/8 Trust boundaries", "start", "~21%", "1m", "~6m", "3 crossings"),
+        ("3/8 Trust boundaries", "done", "~33%", "2m", "~5m", "1m00s · 3 crossings"),
+        ("5/8 STRIDE", "start", "~38%", "2m", "~4m", "2 components"),
+        ("5/8 STRIDE", "⚠", "~38%", "3m", "~5m", "1 min: no model activity for 95 s (waiting for the API)"),
+        # A changed subject after the progress interval; the phase already names the role.
+        ("5/8 STRIDE", "·", "~50%", "6m", "~6m", "component 2/2 · Store · model is thinking (~9,000 tokens)"),
+        (
+            "5/8 STRIDE",
+            "↻",
+            "~50%",
+            "6m",
+            "~6m",
+            "STRIDE: answer rejected, asking for a correction: threats/0: missing evidence",
+        ),
+        ("5/8 STRIDE", "done", "~63%", "7m", "~4m", "4m30s · 2 components"),
+        ("8/8 Finalization", "start", "~82%", "7m", "~1m", ""),
+        ("8/8 Finalization", "done", "100%", "7m", "", "30s"),
     ]
-    # Indented by exactly one level: the stall, the off-terminal liveness line and the rejection.
-    assert [line for line in lines if line.startswith("    ")] == [
-        "    ⚠ 1 min: no model activity for 95 s (waiting for the API)",
-        "    · still in STRIDE — <1m · 2/2 · Store · ~54% · <1m elapsed · STRIDE: model is thinking (~9,000 tokens)",
-        "    ↻ STRIDE: answer rejected, asking for a correction: threats/0: missing evidence",
-    ]
-    # No model-call detail, crossing hash, or per-subject line in the default view.
+    # No model-call detail or crossing hash in the default view.
     assert not any("reads " in line or "signal-" in line or "answered" in line for line in lines)
 
 
-def test_phase_results_and_skipped_phases_shape_the_finished_lines():
-    lines = []
-    console = controller._AssessmentConsole(False, lines.append)
+def test_time_stamps_and_durations_read_one_clock():
+    """A phase's duration equals the distance between its own time stamps."""
+    lines, clock = [], _Clock()
+    console = controller._AssessmentConsole(False, lines.append, clock=clock)
+    console.step("Analyzing local architecture: api")
+    clock.tick(231)
+    console.step("Measuring the boundary source context")
+    start, done = (line for line in lines if "2/8 Architecture" in line)
+    seconds = [int(h) * 3600 + int(m) * 60 + int(s) for h, m, s in (line[:8].split(":") for line in (start, done))]
+    assert (seconds[1] - seconds[0]) % 86400 == 231
+    assert _rows([done])[0][5] == "3m51s"
+
+
+@pytest.mark.parametrize(("components", "share"), [(2, "~38%"), (12, "~25%")])
+def test_progress_counts_the_planned_components(components, share):
+    """Controls and STRIDE scale with the component count; before it is known there is no share."""
+    lines, clock = [], _Clock()
+    console = controller._AssessmentConsole(False, lines.append, clock=clock)
+    console.step("Analyzing local architecture: api")
+    clock.tick(300)
+    assert _rows(lines)[-1][2] == "planning"
+    console.plan_components(components)
+    console.step("Running deterministic source scanners")
+    phase, event, progress, elapsed, left, _ = _rows(lines)[-1]
+    assert (phase, event, progress, elapsed) == ("5/8 STRIDE", "start", share, "5m")
+    # LEFT extrapolates the measured speed: elapsed × (1 − share) / share.
+    exact = console.done
+    assert left == "~" + controller._elapsed(300 * (1 - exact) / exact)
+
+
+def test_phase_results_and_skipped_phases_shape_the_done_lines():
+    lines, clock = [], _Clock()
+    console = controller._AssessmentConsole(False, lines.append, clock=clock)
     console.plan_phases(abuse_cases=False)
     noticed = []
     console.on_phase = lambda: noticed.append(console.phase)
     console.step("Assessing controls: API (1/2)")
+    clock.tick(5)
     console.step(console.RESULT + "Controls: 5 controls")
     # A result for a later phase waits for that phase, whatever step reports it.
     console.step(console.RESULT + "Finalization: report published")
     console.step("Publishing the threat model")
+    clock.tick(5)
     console.close()
-    assert _phase_lines(lines) == [
-        "Phase 4/7  Controls          started    ~17%",
-        "Phase 4/7  Controls          finished   ~28%  2 components · 5 controls",
-        "Phase 7/7  Finalization      started    ~91%",
-        "Phase 7/7  Finalization      finished  ~100%  report published",
+    assert [(row[0], row[1], row[5]) for row in _rows(lines)] == [
+        ("4/7 Controls", "start", "2 components"),
+        ("4/7 Controls", "done", "5s · 2 components · 5 controls"),
+        ("7/7 Finalization", "start", ""),
+        ("7/7 Finalization", "done", "5s · report published"),
     ]
     assert noticed == ["Controls", "Finalization"]
     assert not any(console.RESULT in line for line in lines)
@@ -341,17 +410,18 @@ def test_count_noun_inflects_regular_and_y_plurals():
     assert controller._count_noun(0, "finding") == "0 findings"
 
 
-def test_verbose_console_keeps_the_layout_and_adds_every_step_and_call():
-    verbose = []
-    console = controller._AssessmentConsole(True, verbose.append)
+def test_verbose_console_keeps_the_grid_and_adds_every_step_and_call():
+    verbose, clock = [], _Clock()
+    console = controller._AssessmentConsole(True, verbose.append, clock=clock)
     console.step("Discovering every selected repository")
     console.call("reads app/server.ts:1-200 (3 s)")
     console.step("Analyzing all STRIDE categories: API (1/2)")
     console.call("result: 3 threats (134 s)", "stride_analyzer", "sonnet")
     console.close()
-    for shown in ("    · reads app/server.ts:1-200 (3 s)", "    · 1/2 · API", "    · STRIDE [sonnet] answered — 2m14s"):
-        assert shown in verbose
-    assert _phase_lines(verbose)[-1] == "Phase 5/8  STRIDE            finished   ~82%  2 components"
+    details = [(row[1], row[5]) for row in _rows(verbose)]
+    for shown in ("reads app/server.ts:1-200 (3 s)", "component 1/2 · API", "STRIDE [sonnet] answered — 2m14s"):
+        assert ("·", shown) in details
+    assert details[-1] == ("done", "0s · 2 components")
 
 
 def test_console_header_states_the_resolved_limits_models_and_checks():
@@ -394,7 +464,7 @@ def test_per_call_progress_lines_reach_the_end_of_a_combined_run(tmp_path, monke
     """Calls made after the workspace exists, such as the report renderers, still label their reads."""
     outcome, host, _ = _assess(tmp_path, monkeypatch, names, ("--verbose",), progress=None)
     assert outcome["status"] == "complete" and "ms_renderer" in host.roles
-    lines = [line for line in capsys.readouterr().err.splitlines() if "    · reads " in line]
+    lines = [row[5] for row in _rows(capsys.readouterr().err.splitlines()) if "reads " in row[5]]
     assert lines and any(f"{name}/" in line for line in lines for name in names)
 
 
@@ -899,10 +969,12 @@ def test_a_terminal_shows_the_subject_in_work_as_one_rewritten_status_line(capsy
     # Each status rewrites the line in place and never ends it; a permanent line clears it first.
     statuses = [part for part in err.split("\r\033[K") if part]
     assert all("\n" not in part for part in statuses)
-    assert any("· 1/8 · CI/CD Pipeline · ~" in part and "elapsed" in part for part in statuses)
-    assert any("controls: model is thinking" in part for part in statuses)
+    assert any(part.endswith("component 1/8 · CI/CD Pipeline") for part in statuses)
+    assert any(part.endswith("· model is thinking (~2,000 tokens)") for part in statuses)
     assert err.endswith("\r\033[K") and not controller._AssessmentConsole.status_shown
-    assert "    ↻ controls: answer rejected, asking for a correction: controls/0: missing evidence" in lines
+    assert ("↻", "controls: answer rejected, asking for a correction: controls/0: missing evidence") in [
+        (row[1], row[5]) for row in _rows(lines)
+    ]
     assert not any("CI/CD Pipeline" in line for line in lines)
 
 
