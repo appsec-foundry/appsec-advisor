@@ -8208,6 +8208,46 @@ def _namespace_local_flow(flow: dict, repository_id: str, label: str, external_i
     return flow
 
 
+def _assessment_inventories(scope) -> dict[str, dict]:
+    """Deterministic per-repository inventories for discovery and architecture.
+
+    Each repository is scanned on its own masked snapshot, so every path stays
+    repository-relative. Models receive the bounded projections the
+    single-repository architecture analyst receives, never raw source text;
+    the full route inventory stays with the controller.
+    """
+    from analyzers.deployment_inventory import build_inventory as deployment_inventory
+    from analyzers.route_inventory import build_inventory as route_inventory
+    from contexts.build_architecture_analysis_context import (
+        project_egress,
+        project_role_units,
+        project_routes,
+        project_topology,
+    )
+    from contexts.build_trust_boundary_assessment_input import _bounded_text
+
+    def stable(document: dict) -> dict:
+        # The scan time and the temporary snapshot path differ on every call;
+        # a job request must stay identical for an unchanged source scope.
+        return {key: value for key, value in document.items() if key not in ("generated_at", "repo_root")}
+
+    inventories = {}
+    for repo in sorted(scope.repositories, key=lambda row: row.repository_id):
+        with scope.scanner_snapshot(repo.repository_id) as root:
+            routes = stable(route_inventory(root))
+            # A route string is repository text; the boundary context bounds it alike.
+            for row in routes["routes"]:
+                row["path"] = _bounded_text(row.get("path"), 180)
+            inventories[repo.repository_id] = {
+                "routes": routes,
+                "route_projection": project_routes(json.dumps(routes).encode("utf-8")),
+                "role_units": project_role_units(root),
+                "egress": project_egress(root),
+                "topology": project_topology(json.dumps(stable(deployment_inventory(root))).encode("utf-8")),
+            }
+    return inventories
+
+
 def _assessment_architecture(scope, jobs, *, progress):
     """Sequence fresh per-root discovery and the existing architecture handoff.
 
@@ -8221,6 +8261,7 @@ def _assessment_architecture(scope, jobs, *, progress):
     from runtime.multi_repo_discovery import discover
     from validators.validate_assessment_architecture import validate_flows
 
+    inventories = _assessment_inventories(scope)
     progress("Discovering every selected repository")
     discovery = discover(
         scope,
@@ -8228,6 +8269,10 @@ def _assessment_architecture(scope, jobs, *, progress):
         budget=jobs.budget,
         should_stop=jobs.should_stop,
         jobs=jobs,
+        # Discovery lists every file already; it gets the small inventories only.
+        inventories={
+            rid: {key: row[key] for key in ("role_units", "egress", "topology")} for rid, row in inventories.items()
+        },
     )
     components, receipt = finalize_assessment(scope, list(discovery.observations))
     progress("Reviewing evidenced cross-repository connection candidates")
@@ -8271,7 +8316,10 @@ def _assessment_architecture(scope, jobs, *, progress):
                 "and cannot be added here. Cite retrieved qualified sources for every claim. Use local "
                 "asset-<slug> and ext-<slug> identifiers; the controller namespaces them. Do not infer "
                 "authentication, encryption, deployment activation, trust or identity propagation from names. "
-                "The reviewed connections are already modelled; do not repeat their calls as external services.",
+                "The reviewed connections are already modelled; do not repeat their calls as external services. "
+                "The deterministic_inventory lists routes, role units and embedded stores, outbound destinations "
+                "and workloads found by static scanning: account for each with a flow, an external entity or an "
+                "asset after reading its cited source, or leave it out when the source does not support it.",
             ),
             context={
                 "repository_id": rid,
@@ -8283,6 +8331,9 @@ def _assessment_architecture(scope, jobs, *, progress):
                 "reviewed_connections": [
                     {k: flow[k] for k in ("from", "to", "label", "protocol", "evidence")} for flow in reviewed
                 ],
+                "deterministic_inventory": {
+                    key: inventories[rid][key] for key in ("route_projection", "role_units", "egress", "topology")
+                },
             },
             schema=schema,
             allowed_sources=analysis.source_selection(local),
@@ -8319,6 +8370,7 @@ def _assessment_architecture(scope, jobs, *, progress):
         "retrieval": list(discovery.retrieval),
         "connections": discovery.connections,
         "connection_review": review,
+        "route_inventories": {rid: row["routes"] for rid, row in inventories.items()},
     }
 
 
@@ -9110,6 +9162,15 @@ def _assessment_render(scope, jobs, names, cfg, workspace: Path, root: Path, *, 
         ["--repo-root", str(root), "--output-dir", str(workspace)],
         receipts,
     )
+    # Registration and authorization evidence for actor resolution, as the
+    # single-repository prepass provides it. Its findings already entered the
+    # model through the scanner stage; this sidecar is evidence, not a new merge.
+    _best_effort_script(
+        workspace,
+        "analyzers/source_auth_scanner.py",
+        ["--repo-root", str(root), "--output-dir", str(workspace), "--quiet"],
+        receipts,
+    )
     from model import assessment_posture
 
     from orchestrator.assessment_declarations import related_register
@@ -9352,7 +9413,7 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                 except DeclarationError as exc:
                     raise CallError(f"repository boundary declaration rejected: {exc}") from exc
                 say("Measuring the boundary source context")
-                source_context = assessment_source_context(scope)
+                source_context = assessment_source_context(scope, architecture["route_inventories"])
                 assessment, candidates = _assessment_boundary_candidates(
                     scope, jobs, architecture, source_context, depth, progress=say
                 )

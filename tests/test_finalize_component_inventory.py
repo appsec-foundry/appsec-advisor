@@ -227,6 +227,76 @@ def test_embedded_store_owned_by_a_modelled_data_component_is_not_duplicated(tmp
     assert manifest.reconcile_inventory(result, tmp_path)[1] == []
 
 
+_SEQUELIZE_SQLITE = (
+    "import { Sequelize } from 'sequelize'\n"
+    "export const db = new Sequelize('main', 'user', 'secret', { dialect: 'sqlite', storage: 'data/app.sqlite' })\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("dependency", "relative", "source"),
+    [
+        ("sqlite3", "models/index.ts", _SEQUELIZE_SQLITE),
+        (
+            "better-sqlite3",
+            "src/db.js",
+            "const Database = require('better-sqlite3')\nconst db = new Database('a.db')\n",
+        ),
+        ("sqlite3", "db/source.ts", "import { DataSource } from 'typeorm'\nnew DataSource({ type: 'sqlite' })\n"),
+    ],
+)
+def test_embedded_sql_engine_opened_directly_or_through_an_orm_is_a_store(tmp_path, dependency, relative, source):
+    (tmp_path / "package.json").write_text(json.dumps({"dependencies": {dependency: "5.0"}}))
+    (tmp_path / relative).parent.mkdir(parents=True)
+    (tmp_path / relative).write_text(source)
+    stores = manifest._detect_embedded_stores(tmp_path)
+    assert [(s["framework"], s["paths"], s["tier"]) for s in stores] == [("sqlite", [relative], "data")]
+    # An analyst-modelled SQLite store already covers the detected engine.
+    modelled = [_component("database", framework="sqlite", tier="data", paths=["models/**"])]
+    assert not [c for c in manifest.reconcile_inventory(modelled, tmp_path)[1] if c["tier"] == "data"]
+
+
+@pytest.mark.parametrize(
+    ("dependencies", "relative", "source"),
+    [
+        # Model declarations without the engine dependency do not prove a store.
+        ({"sequelize": "6.0"}, "models/index.ts", _SEQUELIZE_SQLITE),
+        # The engine dependency alone, with models but no constructor selecting it.
+        ({"sqlite3": "5.0"}, "models/user.ts", "import { DataTypes } from 'sequelize'\ndb.define('User', {})\n"),
+        # A different dialect is not the embedded engine.
+        ({"sqlite3": "5.0"}, "models/index.ts", _SEQUELIZE_SQLITE.replace("'sqlite'", "'postgres'")),
+        # Test code never establishes a runtime store.
+        ({"sqlite3": "5.0"}, "src/tests/db.ts", _SEQUELIZE_SQLITE),
+        ({"sqlite3": "5.0"}, "models/index.ts", "// " + _SEQUELIZE_SQLITE.replace("\n", "\n// ")),
+    ],
+)
+def test_sql_store_needs_engine_dependency_and_a_constructor_selecting_it(tmp_path, dependencies, relative, source):
+    (tmp_path / "package.json").write_text(json.dumps({"dependencies": dependencies}))
+    (tmp_path / relative).parent.mkdir(parents=True)
+    (tmp_path / relative).write_text(source)
+    assert manifest._detect_embedded_stores(tmp_path) == []
+
+
+def test_orm_code_gets_an_owner_without_a_discovered_data_tier_only_on_a_snapshot(tmp_path):
+    repo, output = tmp_path / "repo", tmp_path / "out"
+    output.mkdir()
+    (repo / "models").mkdir(parents=True)
+    (repo / "models/account.ts").write_text(
+        "import { DataTypes } from 'sequelize'; db.define('Account', {name: DataTypes.STRING});"
+    )
+    (repo / "node_modules/orm").mkdir(parents=True)
+    (repo / "node_modules/orm/index.js").write_text("const s = require('sequelize'); s.define('X', {});")
+    _write_components(output, [_component("api", paths=["routes/**"])])
+    (repo / "routes").mkdir()
+    (repo / "routes/api.ts").write_text("export const route = 1\n")
+    # A guessed repository root never widens the ORM search beyond claimed stores.
+    assert finalizer.finalize(repo, output)[1]["injected_component_ids"] == []
+    finalized, receipt = finalizer.finalize(repo, output, whole_repository=True)
+    assert receipt["injected_component_ids"] == ["sequelize-data-access"]
+    owner = next(c for c in finalized["components"] if c["id"] == "sequelize-data-access")
+    assert owner["tier"] == "application" and owner["paths"] == ["models/account.ts"]
+
+
 def test_orm_cannot_be_finalized_as_database_engine(tmp_path):
     (tmp_path / "models").mkdir()
     (tmp_path / "models/account.ts").write_text("export const account = true\n")

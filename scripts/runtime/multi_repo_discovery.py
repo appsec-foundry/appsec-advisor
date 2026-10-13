@@ -38,6 +38,10 @@ names. Do not invent runtime services from package declarations. Report only
 this repository; a later architecture stage reviews cross-repository links.
 The controller records unread files separately; do not claim exhaustive
 source coverage or hide a required component to fit the response limits.
+A deterministic_inventory, when supplied, lists role-bearing units, embedded
+stores, outbound destinations and workloads the controller found by static
+scanning. Use it to choose which sources to read and which components to
+report; it is a lead, not evidence, so read the cited files before claiming.
 """
 
 
@@ -160,8 +164,14 @@ def discover(
     budget: DiscoveryBudget,
     should_stop: Callable[[], bool],
     jobs=None,
+    inventories: dict[str, dict] | None = None,
 ) -> DiscoveryResult:
-    """Discover every admitted target or return no combined result."""
+    """Discover every admitted target or return no combined result.
+
+    ``inventories`` maps a repository ID to controller-derived deterministic
+    leads (role units, outbound destinations, deployable workloads). They
+    point the model at sources to read; they are not evidence.
+    """
     if should_stop():
         raise HostCancelled("Discovery cancelled")
     scope.verify_unchanged()
@@ -180,6 +190,8 @@ def discover(
             "label": labels[repo.repository_id],
             "files": [{"path": p, "bytes": len(b)} for p, b in sorted(repo.files.items())],
         }
+        if inventories and repo.repository_id in inventories:
+            context["deterministic_inventory"] = inventories[repo.repository_id]
         allowed = frozenset((repo.repository_id, p) for p in repo.files)
 
         def accept(artifact, ranges):

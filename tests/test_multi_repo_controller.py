@@ -244,6 +244,98 @@ def test_controller_fresh_architecture_controls_and_stride_keep_equal_paths_dist
     ]
 
 
+def _inventory_checkouts(tmp_path):
+    roots = [tmp_path / "edge", tmp_path / "pay"]
+    for root in roots:
+        checkout(root)
+    (roots[0] / "package.json").write_text(json.dumps({"name": "edge", "dependencies": {"express": "4.18.0"}}))
+    (roots[0] / "server.js").write_text(
+        "const express = require('express')\nconst app = express()\n"
+        "app.get('/records/:id', (req, res) => res.json({}))\napp.listen(8080)\n"
+    )
+    (roots[1] / "package.json").write_text(json.dumps({"name": "pay", "dependencies": {"axios": "1.6.0"}}))
+    (roots[1] / "client.js").write_text(
+        "const axios = require('axios')\n"
+        "export async function charge(order) { return axios.post('https://api.payments-provider.net/charge', order) }\n"
+    )
+    return roots
+
+
+def test_discovery_and_architecture_receive_their_own_repository_inventories(tmp_path):
+    roots = _inventory_checkouts(tmp_path)
+    scope = admit([str(r) for r in roots], str(tmp_path / "out"))
+    host = Host(scope)
+    jobs = AssessmentJobs(
+        scope,
+        scope.output / ".assessment/jobs",
+        AssessmentBudget(2, 0.05, 60, 120),
+        host.factory,
+        lambda: False,
+        lambda: None,
+    )
+    architecture = controller._assessment_architecture(scope, jobs, progress=lambda text: None)
+    rid = {repo.root.name: repo.repository_id for repo in scope.repositories}
+    discovery = {
+        ctx["repository_id"]: ctx["deterministic_inventory"] for role, ctx in host.calls if role == "recon_scanner"
+    }
+    local = {
+        ctx["repository_id"]: ctx["deterministic_inventory"]
+        for role, ctx in host.calls
+        if role == "architecture_analyst" and "deterministic_inventory" in ctx
+    }
+    # Discovery lists every file already; it gets only the small inventories.
+    assert all(set(rows) == {"role_units", "egress", "topology"} for rows in discovery.values())
+    assert [d["host"] for d in discovery[rid["pay"]]["egress"]["destinations"]] == ["api.payments-provider.net"]
+    assert discovery[rid["edge"]]["egress"]["destinations"] == []
+    # Each repository's job sees its own routes, repository-relative, never the other's.
+    edge_routes = local[rid["edge"]]["route_projection"]["routes"]
+    assert [(r["path"], r["handler_file"]) for r in edge_routes] == [("/records/:id", "server.js")]
+    assert local[rid["pay"]]["route_projection"]["routes"] == []
+    sent = json.dumps([ctx for _, ctx in host.calls])
+    assert str(tmp_path) not in sent and '"match"' not in sent and "generated_at" not in sent
+    assert set(architecture["route_inventories"]) == set(rid.values())
+
+
+def test_inventories_at_their_bounds_leave_most_of_the_context_for_source(tmp_path):
+    from runtime.assessment_host import MAX_CONTEXT_BYTES
+
+    roots = _inventory_checkouts(tmp_path)
+    segment = "/".join(f"segment{j:02d}" for j in range(60))
+    (roots[0] / "server.js").write_text(
+        "const express = require('express')\nconst app = express()\n"
+        + "".join(f"app.post('/{segment}/{i}/:id', (req, res) => res.json({{}}))\n" for i in range(400))
+    )
+    scope = admit([str(r) for r in roots], str(tmp_path / "out"))
+    inventories = controller._assessment_inventories(scope)
+    edge = inventories[next(repo.repository_id for repo in scope.repositories if repo.root.name == "edge")]
+    sent = {key: edge[key] for key in ("route_projection", "role_units", "egress", "topology")}
+    assert all(len(r["path"]) <= 180 for r in edge["route_projection"]["routes"])
+    assert len(json.dumps(sent).encode()) <= MAX_CONTEXT_BYTES // 4
+
+
+def test_render_tail_gives_actor_resolution_the_source_auth_evidence(tmp_path, monkeypatch):
+    """Registration evidence must exist before posture and actor resolution read it."""
+    from orchestrator import assessment_declarations
+
+    calls = []
+    monkeypatch.setattr(controller, "_run_script", lambda name, args, **_: calls.append((name, list(args))))
+
+    class Stop(Exception):
+        pass
+
+    def stop(*args, **kwargs):
+        raise Stop
+
+    monkeypatch.setattr(assessment_declarations, "related_register", stop)
+    workspace, root = tmp_path / "workspace", tmp_path / "root"
+    with pytest.raises(Stop):
+        controller._assessment_render(None, None, None, {}, workspace, root, captured=None, progress=lambda text: None)
+    names = [name for name, _ in calls]
+    assert names.index("analyzers/route_inventory.py") < names.index("analyzers/source_auth_scanner.py")
+    args = dict(zip(*[iter(calls[names.index("analyzers/source_auth_scanner.py")][1][:4])] * 2))
+    assert args == {"--repo-root": str(root), "--output-dir": str(workspace)}
+
+
 def test_scanner_findings_reach_the_merge_through_independent_review(tmp_path):
     roots = [tmp_path / name for name in ("caller", "receiver")]
     for root in roots:
