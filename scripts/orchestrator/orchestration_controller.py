@@ -8969,12 +8969,13 @@ class _AssessmentConsole:
                 + progress
             )
 
-    def call(self, text: str, role: str | None = None) -> None:
+    def call(self, text: str, role: str | None = None, model: str | None = None) -> None:
         """A model-call line: with --verbose always; otherwise a stall, a finished job, or liveness."""
         if self.verbose:
             self.write(f"  · {text}")
             return
-        who = f"{self.ROLE_LABELS.get(role, (role or '').replace('_', ' '))}: " if role else ""
+        label = self.ROLE_LABELS.get(role, (role or "").replace("_", " "))
+        who = f"{label} [{model}]: " if role and model else (f"{label}: " if role else "")
         if "no model activity" in text or text.startswith("model call stopped"):
             self.write(f"    ⚠ {who}{text}")
             return
@@ -9665,7 +9666,9 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                 labels={row["repository_id"]: row["label"] for row in scope.inventory()["repositories"]},  # noqa: B006
             ):
                 return _ReportedTransport(
-                    plain(role, model, ceiling), lambda text, role=role: console.call(text, role), labels
+                    plain(role, model, ceiling),
+                    lambda text, role=role, model=model: console.call(text, role, model),
+                    labels,
                 )
 
         try:

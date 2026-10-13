@@ -259,7 +259,7 @@ def test_default_console_shows_phases_counts_and_stalls_not_call_detail(monkeypa
     console.step("Analyzing all STRIDE categories: Store (2/2)")
     monkeypatch.setattr(console, "HEARTBEAT_SECONDS", 0)
     console.call("2 min: model is thinking (~9,000 tokens)", "stride_analyzer")
-    console.call("result: 3 threats (134 s)", "stride_analyzer")
+    console.call("result: 3 threats (134 s)", "stride_analyzer", "claude-sonnet-5-5")
     console.step("Stage 2: Management Summary")
     console.close()
     assert lines[:2] == [f"   Pipeline: {console.PIPELINE}", "▶ Models: sonnet (stride_analyzer)"]
@@ -279,7 +279,7 @@ def test_default_console_shows_phases_counts_and_stalls_not_call_detail(monkeypa
         "    · Store (2/2) · ~54%",
         "    · report section: Management Summary",
         "    · still in Phase 9/11 STRIDE — <1m · ~54%   [+<1m total] · STRIDE: model is thinking (~9,000 tokens)",
-        "    ✓ STRIDE — 2m14s · ~54%",
+        "    ✓ STRIDE [claude-sonnet-5-5] — 2m14s · ~54%",
         "    · read 1 source range — 3s",
     ):
         assert shown in lines
