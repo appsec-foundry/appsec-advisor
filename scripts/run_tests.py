@@ -215,6 +215,7 @@ GROUPS = {
         multi_repo_config
         multi_repo_discovery
         multi_repo_scope
+        serving_units
         portable_model_readers
         reconcile_multi_repo_architecture
         review_multi_repo_connections
@@ -648,7 +649,7 @@ SOURCE_TESTS = {
         "assessment_sources multi_repo_analysis multi_repo_boundaries multi_repo_controller schemas schema_integrity check_target_specificity multi_repo_builder multi_repo_figures multi_repo_exports"
     ),
     "scripts/contexts/multi_repo_analysis.py": _tests(
-        "multi_repo_analysis multi_repo_boundaries multi_repo_controller check_target_specificity finding_state gate_preconditions shared_paths stride_outputs multi_repo_builder multi_repo_exports threat_fixture"
+        "multi_repo_analysis serving_units multi_repo_boundaries multi_repo_controller check_target_specificity finding_state gate_preconditions shared_paths stride_outputs multi_repo_builder multi_repo_exports threat_fixture"
     ),
     "schemas/multi-repo-architecture.schema.json": _tests(
         "multi_repo_analysis multi_repo_boundaries multi_repo_controller schemas check_target_specificity multi_repo_builder multi_repo_exports"
@@ -712,8 +713,14 @@ SOURCE_TESTS = {
         multi_repo_exports
     """
     ),
+    "scripts/analyzers/serving_units.py": _tests("""
+        serving_units multi_repo_controller
+    """),
+    "schemas/architecture-serving-units.schema.json": _tests("""
+        serving_units schemas
+    """),
     "scripts/runtime/multi_repo_discovery.py": _tests("""
-        review_multi_repo_connections
+        review_multi_repo_connections serving_units
         multi_repo_discovery check_target_specificity finding_state gate_preconditions shared_paths stride_outputs
     """),
     "scripts/runtime/assessment_host.py": _tests("""
@@ -1881,7 +1888,7 @@ SOURCE_TESTS = {
     """),
     "scripts/model/finalize_component_inventory.py": _tests(
         """
-        validate_assessment_architecture review_multi_repo_connections
+        validate_assessment_architecture review_multi_repo_connections serving_units
         build_trust_boundary_assessment_input
         check_target_specificity
         discover_identity_providers
@@ -5486,7 +5493,7 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/model/reclassify_components.py": _tests("""
-        validate_assessment_architecture review_multi_repo_connections
+        validate_assessment_architecture review_multi_repo_connections serving_units
         run_invariants
         topology_workloads
         architect_review_runtime

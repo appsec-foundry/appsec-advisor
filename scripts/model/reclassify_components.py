@@ -270,18 +270,18 @@ def _primary_component_id(components: list) -> str:
     pseudo-component threats (Dockerfile / CI findings) whose evidence file
     matches no component glob, so their §8 Component link resolves to a real
     `#c-NN` anchor instead of dangling at `#ci-cd-pipeline`. Falls back to the
-    first component with an id."""
+    first component with an id. A data-tier component is never the primary
+    one, even when it lists a file such as ``models/index.ts``."""
     entry_re = re.compile(r"(?:^|/)(?:server|app|main|index)\.(?:ts|js)\b")
     for c in components:
-        if not isinstance(c, dict):
+        if not isinstance(c, dict) or c.get("tier") == "data":
             continue
         for g in c.get("paths") or []:
             if isinstance(g, str) and entry_re.search(g):
                 return (c.get("id") or "").strip()
-    for c in components:
-        if isinstance(c, dict) and (c.get("id") or "").strip():
-            return (c.get("id") or "").strip()
-    return ""
+    named = [c for c in components if isinstance(c, dict) and (c.get("id") or "").strip()]
+    first = next((c for c in named if c.get("tier") != "data"), named[0] if named else None)
+    return (first.get("id") or "").strip() if first else ""
 
 
 def resolve_owner(file_path: str, components: list) -> tuple[str, str] | None:

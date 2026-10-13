@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -265,6 +266,82 @@ def _reviewed_call_flows(repository_id, artifact, connections) -> list[str]:
     )
 
 
+# A line that mounts or opens the browser UI; the first non-blank line otherwise.
+_UI_ENTRY_LINE = re.compile(r"<body\b|\b(?:bootstrap\w*|createRoot|render|createApp|mount)\s*\(")
+
+
+def client_entry_evidence(scope, repository_id: str, local_components: list[dict], units: list[dict]) -> dict:
+    """Controller-attested evidence of each client component's browser entry point.
+
+    A client component that lists an entry file of a client-app serving unit
+    is cited at that file; other client components get none and keep their
+    use with the model.
+    """
+    from analyzers.serving_units import carriers  # noqa: PLC0415
+
+    repo = next(r for r in scope.repositories if r.repository_id == repository_id)
+    evidence = {}
+    for unit in units:
+        if unit["kind"] != "client-app":
+            continue
+        for component in local_components:
+            if component.get("tier") != "client" or component["id"] in evidence:
+                continue
+            view = {**component, "paths": [p["path"] for p in component["paths"]]}
+            if not carriers(unit, [view]):
+                continue
+            path = next(rel for rel in unit["entry_files"] if rel in view["paths"])
+            lines = scope.read(repository_id, path, 1, min(400, max(1, repo.files[path].count(b"\n") + 1)))["lines"]
+            numbered = [(n, text) for n, text in enumerate(lines, 1) if text.strip()]
+            line = next((n for n, text in numbered if _UI_ENTRY_LINE.search(text)), numbered[0][0] if numbered else 1)
+            evidence[component["id"]] = {
+                "file": path,
+                "line": line,
+                "repository_id": repository_id,
+                "sha256": hashlib.sha256(repo.files[path]).hexdigest(),
+            }
+    return evidence
+
+
+def add_client_use(artifact: dict, entries: dict) -> dict:
+    """Add the sole regular role's use of each client that has none; idempotent.
+
+    The flow invariants require a legitimate role to use every client. With
+    exactly one regular (non-privileged) role the user is unambiguous, so the
+    controller writes that interaction at the client's entry evidence. With
+    several roles, which role uses which client stays with the model.
+    """
+    roles = [
+        e["id"]
+        for e in artifact["external_entities"]
+        if e.get("kind") == "legitimate-role" and e.get("access") != "internet-priv-user"
+    ]
+    if len(roles) != 1:
+        return artifact
+    flows = artifact["data_flows"]
+    for client in sorted(entries):
+        if any(f.get("interaction") and f["to"] == client for f in flows):
+            continue
+        number = 1 + max((int(f["id"][3:]) for f in flows if str(f.get("id", "")).startswith("df-")), default=0)
+        flows.append(
+            {
+                "id": f"df-{number:03d}",
+                "from": "external",
+                "from_entity": roles[0],
+                "to": client,
+                "label": "Browser uses the client application (human interaction)",
+                "diagram_label": "Application use",
+                "protocol": "HTTPS",
+                "data_classification": "Public",
+                "direction": "request-response",
+                "interaction": True,
+                "evidence": [dict(entries[client])],
+                "provenance": "recon",
+            }
+        )
+    return artifact
+
+
 def local_architecture_normalizer(local_components: list[dict]):
     """Remove each `interaction` flag the local flow invariants can never accept.
 
@@ -293,7 +370,9 @@ def local_architecture_normalizer(local_components: list[dict]):
     return normalize
 
 
-def validate_local_architecture(scope, repository_id, components, receipt, artifact, ranges, connections=()):
+def validate_local_architecture(
+    scope, repository_id, components, receipt, artifact, ranges, connections=(), client_entries=None
+):
     if not Draft202012Validator(contract("multi-repo-architecture.schema.json")).is_valid(artifact):
         raise ExchangeError("Local architecture violates its versioned contract")
     if (
@@ -344,8 +423,11 @@ def validate_local_architecture(scope, repository_id, components, receipt, artif
     # The combined flow gate enforces these invariants too, but no job can
     # still correct its result there; checking them here lets the analyst
     # repair it in the exchange.
+    # Flows the controller adds after the job count as present: the model is
+    # never asked for a client use the controller writes itself.
+    completed = add_client_use(copy.deepcopy(artifact), client_entries or {})
     errors = flow_invariant_errors(
-        {"data_flows": artifact["data_flows"], "external_entities": artifact["external_entities"]},
+        {"data_flows": completed["data_flows"], "external_entities": completed["external_entities"]},
         {"components": local},
     )
     if errors:

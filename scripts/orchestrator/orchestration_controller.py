@@ -8239,6 +8239,7 @@ def _assessment_inventories(scope) -> dict[str, dict]:
     single-repository architecture analyst receives, never raw source text;
     the full route inventory stays with the controller.
     """
+    from analyzers import serving_units
     from analyzers.deployment_inventory import build_inventory as deployment_inventory
     from analyzers.route_inventory import build_inventory as route_inventory
     from contexts.build_architecture_analysis_context import (
@@ -8267,6 +8268,7 @@ def _assessment_inventories(scope) -> dict[str, dict]:
                 "role_units": project_role_units(root),
                 "egress": project_egress(root),
                 "topology": project_topology(json.dumps(stable(deployment_inventory(root))).encode("utf-8")),
+                "serving_units": serving_units.project(serving_units.scan(root, routes["routes"])),
             }
     return inventories
 
@@ -8295,7 +8297,8 @@ def _assessment_architecture(scope, jobs, *, progress):
         jobs=jobs,
         # Discovery lists every file already; it gets the small inventories only.
         inventories={
-            rid: {key: row[key] for key in ("role_units", "egress", "topology")} for rid, row in inventories.items()
+            rid: {key: row[key] for key in ("role_units", "egress", "topology", "serving_units")}
+            for rid, row in inventories.items()
         },
     )
     components, receipt = finalize_assessment(scope, list(discovery.observations))
@@ -8336,6 +8339,7 @@ def _assessment_architecture(scope, jobs, *, progress):
             if "connection_id" in flow and any(e["repository_id"] == rid for e in flow["evidence"])
         ]
         progress("Analyzing local architecture: " + labels[rid])
+        client_entries = analysis.client_entry_evidence(scope, rid, local, inventories[rid]["serving_units"]["units"])
         artifact = jobs.execute(
             role="architecture_analyst",
             selector="local-architecture:" + rid,
@@ -8349,7 +8353,9 @@ def _assessment_architecture(scope, jobs, *, progress):
                 "The reviewed connections are already modelled; do not repeat their calls as external services. "
                 "The deterministic_inventory lists routes, role units and embedded stores, outbound destinations "
                 "and workloads found by static scanning: account for each with a flow, an external entity or an "
-                "asset after reading its cited source, or leave it out when the source does not support it.",
+                "asset after reading its cited source, or leave it out when the source does not support it. "
+                "A client component's requests to the API it calls are flows from that client component. When "
+                "exactly one regular legitimate role exists, the controller adds its use of each client itself.",
             ),
             context={
                 "repository_id": rid,
@@ -8368,10 +8374,11 @@ def _assessment_architecture(scope, jobs, *, progress):
             schema=schema,
             allowed_sources=analysis.source_selection(local),
             validate=lambda artifact, ranges: analysis.validate_local_architecture(
-                scope, rid, components, receipt, artifact, ranges, reviewed
+                scope, rid, components, receipt, artifact, ranges, reviewed, client_entries
             ),
             normalize=analysis.local_architecture_normalizer(local),
         )
+        artifact = analysis.add_client_use(artifact, client_entries)
         external_ids = {row["id"]: _id("ext", rid, row["id"]) for row in artifact["external_entities"]}
         for entity in artifact["external_entities"]:
             entity["id"] = external_ids[entity["id"]]
@@ -9587,6 +9594,7 @@ def _assessment_workspace(
     ``named`` is false when the project name only repeats a sole repository's
     label; the model then keeps the name its manifest gives (RA-18).
     """
+    from orchestrator import assessment_review
     from orchestrator import assessment_workspace as ws
 
     names = ws.Namespaces(scope)
@@ -9618,6 +9626,8 @@ def _assessment_workspace(
         "output_dir": str(workspace),
         "plugin_root": str(PLUGIN_ROOT),
         "mode": "full",
+        # The matcher reads per-scan case files below `root`, the controller's copy.
+        "abuse_case_files": assessment_review.scan_case_files(scope, names, cfg.get("abuse_case_files")),
         **({"project_name": project} if named else {}),
         **({"invocation_args": invocation} if invocation else {}),
         **({"assessment_started_at": started_at} if isinstance(started_at, int) else {}),

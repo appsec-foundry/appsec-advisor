@@ -61,8 +61,13 @@ class Host:
         ctx, slices = packet["context"], packet["source_slices"]
         self.calls.append((role, copy.deepcopy(ctx)))
         rid = ctx.get("repository_id")
+        # Discovery carries each serving unit by listing its first entry file.
+        carried = [
+            unit["entry_files"][0]
+            for unit in ctx.get("deterministic_inventory", {}).get("serving_units", {}).get("units", [])
+        ]
         if role == "recon_scanner":
-            allowed = [(rid, "app.py")]
+            allowed = [(rid, "app.py"), *((rid, path) for path in carried)]
         elif "candidate" in ctx:
             allowed = [(p["repository_id"], p["path"]) for c in ctx["components"] for p in c["paths"]]
         else:
@@ -92,7 +97,7 @@ class Host:
                         name="Service",
                         description="Application service.",
                         tier="application",
-                        paths=["app.py"],
+                        paths=["app.py", *carried],
                     )
                 ],
                 interfaces=[
@@ -284,7 +289,9 @@ def test_discovery_and_architecture_receive_their_own_repository_inventories(tmp
         if role == "architecture_analyst" and "deterministic_inventory" in ctx
     }
     # Discovery lists every file already; it gets only the small inventories.
-    assert all(set(rows) == {"role_units", "egress", "topology"} for rows in discovery.values())
+    assert all(set(rows) == {"role_units", "egress", "topology", "serving_units"} for rows in discovery.values())
+    assert [u["id"] for u in discovery[rid["edge"]]["serving_units"]["units"]] == ["http-api:."]
+    assert discovery[rid["pay"]]["serving_units"]["units"] == []
     assert [d["host"] for d in discovery[rid["pay"]]["egress"]["destinations"]] == ["api.payments-provider.net"]
     assert discovery[rid["edge"]]["egress"]["destinations"] == []
     # Each repository's job sees its own routes, repository-relative, never the other's.

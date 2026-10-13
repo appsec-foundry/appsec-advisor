@@ -312,9 +312,10 @@ def test_a_sole_repository_keeps_its_case_files_as_a_single_scan_does(path):
     """Its files sit at the combined root itself, so the resolver attributes them correctly."""
     sole = Scope({SERVICE: {path: b"cases: []\n"}})
     review.reject_repository_case_files(sole, Namespaces(sole), {})
-    with pytest.raises(review.AssessmentReviewError, match="per-scan"):
-        review.reject_repository_case_files(sole, Namespaces(sole), {"abuse_case_files": ["cases.yaml"]})
+    review.reject_repository_case_files(sole, Namespaces(sole), {"abuse_case_files": [path]})
     pair = Scope({EDGE: {"app.py": b"x\n"}, SERVICE: {path: b"cases: []\n"}})
+    with pytest.raises(review.AssessmentReviewError, match="per-scan"):
+        review.reject_repository_case_files(pair, Namespaces(pair), {"abuse_case_files": [path]})
     with pytest.raises(review.AssessmentReviewError, match=f"service:{path}"):
         review.reject_repository_case_files(pair, Namespaces(pair), {})
 
@@ -407,3 +408,86 @@ def test_disabled_architect_review_dispatches_nothing(architect):
     assert _architect(architect, jobs) == ["Architect review disabled"]
     assert jobs.calls == []
     assert not (architect.workspace / ".architect-review.json").exists()
+
+
+@pytest.mark.parametrize("given", ["release/cases.yaml", "ABSOLUTE"])
+def test_a_sole_repository_per_scan_case_file_is_read_below_the_assessment_root(tmp_path, given):
+    """The matcher reads below the controller's copy, so the path becomes repository-relative."""
+    checkout = tmp_path / "service"
+    sole = Scope({SERVICE: {"release/cases.yaml": b"cases: []\n"}})
+    sole.repositories[0].root = checkout
+    raw = str(checkout / "release/cases.yaml") if given == "ABSOLUTE" else given
+    assert review.scan_case_files(sole, Namespaces(sole), [raw]) == ["release/cases.yaml"]
+
+
+@pytest.mark.parametrize("raw", ["../outside.yaml", "release/missing.yaml", "/etc/cases.yaml"])
+def test_a_per_scan_case_file_outside_the_admitted_repository_is_refused(tmp_path, raw):
+    sole = Scope({SERVICE: {"release/cases.yaml": b"cases: []\n"}})
+    sole.repositories[0].root = tmp_path / "service"
+    with pytest.raises(review.AssessmentReviewError, match="outside the selected repository|not an admitted file"):
+        review.scan_case_files(sole, Namespaces(sole), [raw])
+
+
+TEAM_CASES = """schema_version: 2
+abuse_cases:
+- id: REPO-AC-901
+  kind: descriptive
+  title: Customer refunds an order twice
+  check: Check whether a customer can receive a refund for the same order more than once.
+  scope_qualifier:
+    path_patterns: ['*export*']
+"""
+
+
+def test_a_sole_repository_selects_shipped_business_and_per_scan_cases_with_the_real_matcher(tmp_path):
+    """The controller's own matcher call: shipped business cases and the run's case file become candidates."""
+    files = {
+        "routes/export.js": b"module.exports = (req, res) => res.json(store.all(req.query.account))\n",
+        "release/cases.yaml": TEAM_CASES.encode(),
+    }
+    scope = Scope({SERVICE: files})
+    scope.repositories[0].root = tmp_path / "checkout"
+    names = Namespaces(scope)
+    root, workspace = tmp_path / "root", tmp_path / "workspace"
+    for path, data in files.items():
+        (root / path).parent.mkdir(parents=True, exist_ok=True)
+        (root / path).write_bytes(data)
+    workspace.mkdir()
+    case_files = review.scan_case_files(scope, names, [str(scope.repositories[0].root / "release/cases.yaml")])
+    cfg = {"repo_root": str(root), "output_dir": str(workspace), "mode": "full", "assessment_depth": "standard"}
+    (workspace / ".skill-config.json").write_text(json.dumps({**cfg, "abuse_case_files": case_files}))
+    components = [{"id": "api", "name": "API", "tier": "application", "paths": ["routes/export.js"]}]
+    (workspace / ".components.json").write_text(json.dumps({"schema_version": 1, "components": components}))
+    (workspace / ".threats-merged.json").write_text(json.dumps({"version": 1, "threats": []}))
+    keys = ["has_auth_surface", "has_public_routes"]
+    (workspace / ".recon-signals.json").write_text(
+        json.dumps({"schema_version": 2, "signals": dict.fromkeys(keys, True), "component_hints": []})
+    )
+    listed = []
+
+    class Stop(Exception):
+        pass
+
+    def run(name, args, acceptable=(0,)):
+        if name != "model/match_abuse_cases.py":
+            raise Stop(name)
+        done = subprocess.run([sys.executable, str(ROOT / "scripts" / name), *args], text=True, capture_output=True)
+        assert done.returncode in acceptable, done.stderr
+        if args[0] == "list-candidates":
+            listed.extend(done.stdout.split())
+        return done
+
+    with pytest.raises(Stop):
+        review.run_abuse_cases(
+            scope,
+            None,
+            names,
+            workspace,
+            root,
+            {**cfg, "abuse_case_files": case_files},
+            instructions=instructions,
+            run_script=run,
+            enrich=lambda: None,
+            progress=lambda text: None,
+        )
+    assert "AC-B-001" in listed and "REPO-AC-901" in listed

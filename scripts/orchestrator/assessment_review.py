@@ -104,6 +104,33 @@ def _verdict_schema(candidate: str, steps: list[int]) -> dict:
     }
 
 
+def scan_case_files(scope, names, files) -> list[str]:
+    """Per-scan case files as paths below the assessment root, or a refusal.
+
+    The matcher reads these files below the root it is given, which is the
+    controller's copy of the admitted files, never the checkout. A sole
+    repository's files sit at that root itself, so a file of that repository
+    keeps its repository-relative path. Several repositories share one root
+    without origin attribution, so the files are refused there.
+    """
+    if not files:
+        return []
+    if not names.single:
+        raise AssessmentReviewError("per-scan abuse-case files are not supported for a multi-repository assessment yet")
+    repo = scope.repositories[0]
+    relative = []
+    for raw in files:
+        path = Path(raw)
+        try:
+            rel = path.resolve().relative_to(repo.root.resolve()) if path.is_absolute() else Path(raw)
+        except ValueError:
+            raise AssessmentReviewError(f"abuse-case file {raw} is outside the selected repository") from None
+        if rel.as_posix() not in repo.files:
+            raise AssessmentReviewError(f"abuse-case file {raw} is not an admitted file of the selected repository")
+        relative.append(rel.as_posix())
+    return relative
+
+
 def reject_repository_case_files(scope, names, cfg: dict) -> None:
     """Refuse per-repository and per-scan case files the combined root cannot attribute.
 
@@ -112,8 +139,7 @@ def reject_repository_case_files(scope, names, cfg: dict) -> None:
     attributed to the wrong checkout. A sole repository's files sit at the
     combined root itself, so the resolver attributes them as a single scan does.
     """
-    if cfg.get("abuse_case_files"):
-        raise AssessmentReviewError("per-scan abuse-case files are not supported for a multi-repository assessment yet")
+    scan_case_files(scope, names, cfg.get("abuse_case_files"))
     if names.single:
         return
     found = []
@@ -322,9 +348,10 @@ def run_abuse_cases(
         ],
         acceptable=(0, 1, 2),
     )
-    if match.returncode != 0 and cfg.get("only_abuse_case_ids"):
+    # Cases this run was explicitly given must not degrade to a receipt.
+    if match.returncode != 0 and (cfg.get("abuse_case_files") or cfg.get("only_abuse_case_ids")):
         detail = (match.stderr or match.stdout or "").strip()
-        raise AssessmentReviewError(f"the abuse-case matcher rejected the selected case IDs: {detail[-500:]}")
+        raise AssessmentReviewError(f"the abuse-case matcher rejected the selected cases: {detail[-500:]}")
     listed = run_script("model/match_abuse_cases.py", ["list-candidates", "--output-dir", str(workspace)])
     candidates = [item for item in (listed.stdout or "").split() if _ABUSE_ID_RE.fullmatch(item)]
     if len(candidates) > MAX_CANDIDATES:

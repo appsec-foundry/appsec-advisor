@@ -317,6 +317,8 @@ def finalize_assessment(scope, discoveries: list[dict]) -> tuple[dict, dict]:
     legacy consumers reject it until explicitly migrated. Nothing is written
     to a selected source checkout or the assessment's publication directory.
     """
+    from analyzers import serving_units
+    from analyzers.route_inventory import build_inventory as route_inventory
     from contexts.reconcile_multi_repo_architecture import _id, reconcile
     from orchestrator.build_stride_dispatch_manifest import _path_owns
     from validators.validate_assessment_architecture import (
@@ -354,6 +356,14 @@ def finalize_assessment(scope, discoveries: list[dict]) -> tuple[dict, dict]:
             # The snapshot holds exactly the admitted files, so ORM code is
             # found even when discovery modelled no data tier.
             local, receipt = finalize(root, output, whole_repository=True)
+            # A carried serving unit brings its handler modules or client source;
+            # an uncarried one would silently drop its findings, so it stops here.
+            routes = route_inventory(root)["routes"]
+            units = serving_units.scan(root, routes)
+            serving_units.adopt(units, local["components"], root, routes)
+            missing = serving_units.uncovered(units, local["components"])
+            if missing:
+                raise ValueError("No component carries these serving units: " + serving_units.describe(missing))
         collapsed += receipt["collapsed_duplicate_count"]
         injected_ids.extend(_id("component", repo.repository_id, cid) for cid in receipt["injected_component_ids"])
         hashes = {p: hashlib.sha256(data).hexdigest() for p, data in repo.files.items()}

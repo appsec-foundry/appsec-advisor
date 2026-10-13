@@ -13,6 +13,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from analyzers import serving_units
 from contexts.reconcile_multi_repo_architecture import SCHEMA, reconcile, validate_discovery
 
 from runtime.analyst_host import HostCancelled, HostReply, HostTimeout, Transport, TransportError
@@ -42,6 +43,12 @@ A deterministic_inventory, when supplied, lists role-bearing units, embedded
 stores, outbound destinations and workloads the controller found by static
 scanning. Use it to choose which sources to read and which components to
 report; it is a lead, not evidence, so read the cited files before claiming.
+Report every runtime component, including those that only serve inbound
+requests and client applications, not only those that make outbound calls.
+Its serving_units list each request-serving unit and client application;
+carry each with a component that lists at least one of the unit's
+entry_files: an application component for an http-api unit, a client or
+application component for a client-app unit.
 """
 
 
@@ -206,6 +213,15 @@ def discover(
                         for r in ranges
                     ):
                         raise ExchangeError("Discovery evidence cites a line not retrieved by its task")
+            # A missing serving unit is correctable: the reason names it, and
+            # the model reads an entry file and adds a carrying component.
+            units = ((inventories or {}).get(repo.repository_id) or {}).get("serving_units", {}).get("units", [])
+            missing = serving_units.uncovered(units, artifact["components"])
+            if missing:
+                raise ExchangeError(
+                    "No component carries these serving units; read one entry file of each and model it: "
+                    + serving_units.describe(missing)
+                )
 
         if jobs is None:
             result = run_exchange(
@@ -217,6 +233,7 @@ def discover(
                 allowed_sources=allowed,
                 timeout_s=budget.remaining_seconds(),
                 should_stop=should_stop,
+                review=accept,
             )
         else:
             result = jobs.exchange(
