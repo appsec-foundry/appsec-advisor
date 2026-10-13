@@ -8262,6 +8262,7 @@ def _assessment_architecture(scope, jobs, *, progress):
     from runtime.multi_repo_discovery import discover
     from validators.validate_assessment_architecture import validate_flows
 
+    progress("Collecting the deterministic route, egress and role inventories")
     inventories = _assessment_inventories(scope)
     progress("Discovering every selected repository")
     discovery = discover(
@@ -8788,11 +8789,30 @@ class _AssessmentConsole:
     PIPELINE = (
         "2 Recon · 3 Architecture · 7 Trust-Boundaries · 8 Controls · 9 STRIDE · 10 Scan-Synthesis · 11 Finalization"
     )
-    # Off a TTY the single-repository view throttles liveness lines to this interval.
-    HEARTBEAT_SECONDS = 300
+    # Liveness interval: each minute on a terminal, as the single-repository
+    # watchdog prints; off a TTY that view throttles to five minutes.
+    HEARTBEAT_SECONDS = 60 if sys.stderr.isatty() else 300
+    # Reader-facing names of the model roles in liveness and completion lines.
+    ROLE_LABELS = {
+        "recon_scanner": "discovery",
+        "architecture_analyst": "architecture",
+        "trust_boundary_analyst": "trust boundaries",
+        "control_analyst": "controls",
+        "stride_analyzer": "STRIDE",
+        "evidence_verifier": "evidence review",
+        "threat_merger": "merge review",
+        "actor_discoverer": "actor discovery",
+        "architect_reviewer": "architect review",
+        "post_stride_synthesizer": "root-cause synthesis",
+        "abuse_case_deriver": "abuse-case derivation",
+        "abuse_case_verifier": "abuse-case verification",
+        "ms_renderer": "management summary",
+        "secarch_renderer": "security architecture",
+    }
 
     # Step prefixes mapped onto that phase model, in run order.
     PHASES = (
+        ("Collecting the deterministic route", "2/11 Reconnaissance"),
         ("Discovering every selected repository", "2/11 Reconnaissance"),
         ("Reviewing evidenced cross-repository", "3/11 Architecture"),
         ("Analyzing local architecture", "3/11 Architecture"),
@@ -8903,19 +8923,26 @@ class _AssessmentConsole:
                 + progress
             )
 
-    def call(self, text: str) -> None:
-        """A model-call line: with --verbose always; otherwise a stall, a stopped call, or liveness."""
+    def call(self, text: str, role: str | None = None) -> None:
+        """A model-call line: with --verbose always; otherwise a stall, a finished job, or liveness."""
         if self.verbose:
             self.write(f"  · {text}")
             return
+        who = f"{self.ROLE_LABELS.get(role, (role or '').replace('_', ' '))}: " if role else ""
         if "no model activity" in text or text.startswith("model call stopped"):
-            self.write(f"    ⚠ {text}")
+            self.write(f"    ⚠ {who}{text}")
+            return
+        finished = re.fullmatch(r"result: .* \((\d+) s\)", text)
+        if finished:
+            # A job's final answer; source reads in between stay behind --verbose.
+            self.write(f"    ✓ {who.rstrip(': ') or 'model call'} — {_duration(int(finished[1]))}")
             return
         now = time.monotonic()
         if self.phase and now - self.last >= self.HEARTBEAT_SECONDS:
+            status = re.sub(r"^\d+ min: ", "", text) if re.match(r"\d+ min: ", text) else ""
             self.write(
                 f"    · still in Phase {self.phase} — {_minutes(now - self.started)} · ~{self.percent}%"
-                f"   [+{_minutes(now - self.run_started)} total]"
+                f"   [+{_minutes(now - self.run_started)} total]" + (f" · {who}{status}" if status else "")
             )
 
     def close(self) -> None:
@@ -9547,7 +9574,9 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                 ceiling,
                 labels={row["repository_id"]: row["label"] for row in scope.inventory()["repositories"]},  # noqa: B006
             ):
-                return _ReportedTransport(plain(role, model, ceiling), console.call, labels)
+                return _ReportedTransport(
+                    plain(role, model, ceiling), lambda text, role=role: console.call(text, role), labels
+                )
 
         try:
             session = _assessment_session(
@@ -9557,12 +9586,12 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                 _assessment_unsupported_configuration(cfg, scope)
                 lineup, model_warning = _assessment_model_lines(cfg)
                 kind = "Single-repository controller" if len(labels) == 1 else "Multi-repository"
-                print(f"⚠ {kind} assessment is experimental.", file=sys.stderr, flush=True)
                 if console and not console.verbose:
+                    # The run header already says the controller is experimental.
                     models = lineup.removeprefix("Models: ").replace("; ", "\n")
                     console.facts(None, [("Depth", str(cfg.get("assessment_depth") or "standard")), ("Models", models)])
-                    console.write("")
                 else:
+                    print(f"⚠ {kind} assessment is experimental.", file=sys.stderr, flush=True)
                     say(lineup)
                 if model_warning:
                     # Shown even with --quiet: it changes the run's cost or outcome.
