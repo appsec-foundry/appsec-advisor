@@ -294,6 +294,13 @@ def validate_local_architecture(scope, repository_id, components, receipt, artif
     for asset in artifact["assets"]:
         if any(ref["component_id"] not in local_ids for ref in asset["component_refs"]):
             raise ExchangeError("Local asset refers to a component outside its repository")
+    # The model needs at least one asset. Only a sole repository must supply
+    # it; in a combined assessment another repository may hold the assets.
+    if not artifact["assets"] and len(scope.repositories) == 1:
+        raise ExchangeError(
+            "Local architecture names no protected asset; name the data, credentials or capabilities "
+            "these components store, process or guard, each with its component_refs"
+        )
     # The combined flow handoff applies the single-root evidence guards later;
     # apply them here too, so this job can still correct its own result.
     from validators.validate_assessment_architecture import flow_invariant_errors, legacy_source_errors
@@ -419,6 +426,31 @@ def validate_stride(
                     raise ExchangeError("STRIDE evidence does not cite an executable implementation")
 
 
+def evidence_batches(findings, *, max_windows, max_findings, window_lines):
+    """Split one component's findings so each review can read every anchor.
+
+    A verified decision must cite its own anchor, and one exchange serves a
+    bounded number of slices; a batch therefore holds at most ``max_windows``
+    distinct anchor windows. Findings sharing a window stay together.
+    """
+
+    def window(finding):
+        anchor = finding["evidence"]
+        line = 0 if anchor.get("kind") == "absence" else (anchor.get("line") or 1) // window_lines
+        return (anchor["repository_id"], anchor["file"], line)
+
+    batches: list[list[dict]] = []
+    windows: set = set()
+    for finding in sorted(findings, key=lambda row: (window(row), row["local_id"])):
+        key = window(finding)
+        if not batches or len(batches[-1]) >= max_findings or (key not in windows and len(windows) >= max_windows):
+            batches.append([])
+            windows = set()
+        batches[-1].append(finding)
+        windows.add(key)
+    return batches
+
+
 def validate_evidence_review(scope, findings, component_fingerprint, artifact, ranges, allowed_sources):
     if not Draft202012Validator(contract("multi-repo-evidence-review.schema.json")).is_valid(artifact):
         raise ExchangeError("Evidence review violates its versioned contract")
@@ -426,7 +458,16 @@ def validate_evidence_review(scope, findings, component_fingerprint, artifact, r
     expected = {finding["local_id"] for finding in findings}
     supplied = [row["local_id"] for row in artifact["decisions"]]
     if len(supplied) != len(set(supplied)) or set(supplied) != expected:
-        raise ExchangeError("Evidence review must decide each finding exactly once")
+        # Name the IDs: a bare count gives the correction turn nothing to fix.
+        gaps = {
+            "missing": sorted(expected - set(supplied)),
+            "not supplied": sorted(set(supplied) - expected),
+            "repeated": sorted({i for i in supplied if supplied.count(i) > 1}),
+        }
+        raise ExchangeError(
+            "Evidence review must decide each finding exactly once; "
+            + "; ".join(f"{label}: {', '.join(ids[:20])}" for label, ids in gaps.items() if ids)
+        )
     validate_retrieved_sources(scope, artifact, ranges, allowed_sources)
     for decision in artifact["decisions"]:
         original = next(finding for finding in findings if finding["local_id"] == decision["local_id"])

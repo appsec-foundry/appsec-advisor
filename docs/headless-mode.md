@@ -139,6 +139,10 @@ A combined run uses Sonnet 5.5 for STRIDE at quick and standard depth, while a s
 
 The models in a combined run have no file, shell or network tools. The controller serves every source excerpt a model reads, only from the selected checkouts, with secrets masked. Each analysis step is recorded, so `--resume` continues an interrupted run without repeating accepted steps, as long as the sources, settings and plugin version are unchanged. A run whose model cost became unknown cannot resume; start a new run.
 
+While it runs, a combined run prints each phase, the component or report section in work, and a warning when a model call stalls; `--verbose` adds every step and model call with the source ranges it reads.
+
+To run one repository through this same procedure instead of the single-repository scan, set `APPSEC_SINGLE_REPO_CONTROLLER=1` and pass that repository with one `--repo`; the budget and `--output` rules above apply, and without the variable a single `--repo` keeps the single-repository scan.
+
 A new run in the same `--output` directory reuses every model step of an unfinished earlier run whose input is unchanged. A directory that already holds a report needs `--rebuild`, which removes only the files the earlier run wrote and refuses when any other or edited file is present; `--rebuild` also redoes every model step and cannot be combined with `--resume`. `--incremental`, `--rerender`, `--dry-run`, `--base`, `--pr-mode` and `--restore-from` are not available for combined runs and stop them before any model call. Business context, known threats and a run-wide `--requirements` catalog are supported; each repository keeps its own business context and known threats. A requirements catalog inside one of the selected repositories stops the run unless you pass `--requirements <source>`. Repository-local abuse-case files stop the run; use `--no-abuse-cases` or move the cases to the organization profile. The follow-on skills that only support single-repository models, such as fixing findings in place or publishing the model into a repository, say so when they open a combined model.
 
 ## Cost and duration limits

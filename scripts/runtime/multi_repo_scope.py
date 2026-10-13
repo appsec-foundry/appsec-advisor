@@ -9,6 +9,7 @@ multi-repository assessment entry point.
 
 from __future__ import annotations
 
+import codecs
 import difflib
 import fnmatch
 import hashlib
@@ -197,6 +198,21 @@ def _relative(value: str) -> tuple[str, ...]:
     return tuple(PurePosixPath(value).parts)
 
 
+class OversizedBinary(ScopeError):
+    """An oversized file whose leading bytes are binary."""
+
+
+def _binary_prefix(prefix: bytes) -> bool:
+    """Apply the captured-file binary rule to a leading chunk."""
+    if b"\0" in prefix:
+        return True
+    try:
+        codecs.getincrementaldecoder("utf-8")().decode(prefix, final=False)
+    except UnicodeError:
+        return True
+    return False
+
+
 def _read(root: Path, relative: str) -> bytes:
     """Open every path segment relative to pinned descriptors without links."""
     parts = _relative(relative)
@@ -218,6 +234,10 @@ def _read(root: Path, relative: str) -> bytes:
         if not stat.S_ISREG(before.st_mode):
             raise ScopeError("Source is not a regular file")
         if before.st_size > MAX_FILE_BYTES:
+            # An oversized binary would be excluded after capture anyway; only
+            # oversized text stops admission.
+            if _binary_prefix(os.read(fd, 8192)):
+                raise OversizedBinary("Oversized binary source is excluded")
             raise ScopeError("Source file exceeds the admission limit")
         result = bytearray()
         while chunk := os.read(fd, min(65_536, MAX_FILE_BYTES + 1 - len(result))):
@@ -339,7 +359,11 @@ def _capture(root: Path, repository_id: str, remaining: int) -> RepositoryView:
         if reason == "deleted":
             exclusions.append({"path": path, "reason": "deleted"})
             continue
-        data = _read(root, path)
+        try:
+            data = _read(root, path)
+        except OversizedBinary:
+            exclusions.append({"path": path, "reason": "binary"})
+            continue
         remaining -= len(data)
         if remaining < 0:
             raise ScopeError("Selected sources exceed the aggregate admission limit")
@@ -405,7 +429,7 @@ class AssessmentScope:
 
     def verify_unchanged(self) -> None:
         """Recheck every selected root before accepting or publishing results."""
-        current = admit([str(r.root) for r in self.repositories], str(self.output))
+        current = admit([str(r.root) for r in self.repositories], str(self.output), minimum=1)
         if current.inventory() != self.inventory():
             raise ScopeError("Selected source state changed; a fresh assessment is required")
 
@@ -452,10 +476,10 @@ def _lineage(path: Path) -> set[tuple[int, int]]:
     return {i for i in (_identity(item, missing_ok=True) for item in (path, *path.parents)) if i is not None}
 
 
-def admit(selections: list[str], output: str) -> AssessmentScope:
+def admit(selections: list[str], output: str, *, minimum: int = 2) -> AssessmentScope:
     """Validate all roots before capture, with no filesystem mutation."""
-    if not isinstance(selections, list) or not 2 <= len(selections) <= MAX_REPOSITORIES:
-        raise ScopeError("Multi-repository scope requires 2 to 16 local checkouts")
+    if not isinstance(selections, list) or not minimum <= len(selections) <= MAX_REPOSITORIES:
+        raise ScopeError(f"Multi-repository scope requires {minimum} to {MAX_REPOSITORIES} local checkouts")
     if not isinstance(output, str) or not output.strip() or any(ord(c) < 32 for c in output):
         raise ScopeError("Multi-repository scope requires an explicit output directory")
     roots: list[Path] = []

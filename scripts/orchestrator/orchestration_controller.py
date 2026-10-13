@@ -8342,7 +8342,7 @@ def _assessment_boundary_candidates(scope, jobs, architecture, source_context, d
     for index, signal in enumerate(assessment["signals"]):
         projection = project_assessment_signal(assessment, signal["id"], architecture["data_flows"]["data_flows"])
         allowed = analysis.source_selection(projection["components"])
-        progress("Reviewing trust crossing: " + signal["id"])
+        progress(f"Reviewing trust crossing: {signal['id']} ({index + 1}/{len(assessment['signals'])})")
         exchange = jobs.exchange(
             role="trust_boundary_analyst",
             selector="boundary:" + signal["id"],
@@ -8403,8 +8403,8 @@ def _assessment_controls(scope, jobs, architecture, *, progress):
     controls = []
     # One component per job prevents a broad control context from becoming an
     # implicit source grant. Shared mechanisms can retain several scoped rows.
-    for component in components:
-        progress("Assessing controls: " + component["name"])
+    for position, component in enumerate(components, 1):
+        progress(f"Assessing controls: {component['name']} ({position}/{len(components)})")
         artifact = jobs.execute(
             role="control_analyst",
             selector="controls:" + component["id"],
@@ -8440,6 +8440,7 @@ def _assessment_stride(
     from contexts import multi_repo_analysis as analysis
     from model import assessment_scanner_findings
     from model.merge_threats import merge_assessment
+    from runtime.assessment_host import MAX_SLICE_LINES
 
     components = architecture["components"]
     flows = architecture["data_flows"]
@@ -8469,7 +8470,7 @@ def _assessment_stride(
     documents, reviews = [], []
     progress("Running deterministic source scanners")
     scanned = assessment_scanner_findings.scan(scope, components, depth=depth)
-    for component in components["components"]:
+    for position, component in enumerate(components["components"], 1):
         neighborhood = analysis.component_neighborhood(components, flows, component["id"])
         incident = [flow for flow in flows["data_flows"] if component["id"] in (flow["from"], flow["to"])]
         adjacent = [
@@ -8494,7 +8495,7 @@ def _assessment_stride(
         }
         if captured is not None:
             context["declared_context"] = assessment_context.component_context(captured, component)
-        progress("Analyzing all STRIDE categories: " + component["name"])
+        progress(f"Analyzing all STRIDE categories: {component['name']} ({position}/{len(components['components'])})")
         document = jobs.execute(
             role="stride_analyzer",
             selector="stride:" + component["id"],
@@ -8534,34 +8535,36 @@ def _assessment_stride(
         review_sources = allowed | frozenset(
             (row["evidence"]["repository_id"], row["evidence"]["file"]) for row in scanned[component["id"]]
         )
+        # Every finding is reviewed; a component whose anchors exceed one
+        # exchange's read budget is reviewed in several jobs.
+        batches = analysis.evidence_batches(
+            findings,
+            max_windows=EVIDENCE_REVIEW_WINDOWS,
+            max_findings=EVIDENCE_REVIEW_FINDINGS,
+            window_lines=MAX_SLICE_LINES,
+        )
         if findings:
             progress("Independently verifying evidence: " + component["name"])
-            review = jobs.execute(
-                role="evidence_verifier",
-                selector="evidence:" + component["id"],
-                instructions=_assessment_role_instructions(
-                    "evidence_verifier",
-                    "Independently read and decide every supplied finding. Cite retrieved qualified evidence "
-                    "for each decision. Verify the actual implementation and claimed exploit conditions, not "
-                    "only whether the line exists. A verified decision must cite the original anchor. Cross-repo "
-                    "claims require both endpoints and demonstrated payload or identity continuity. Matching "
-                    "names alone prove neither. Use ambiguous when the insecure practice is observed but the "
-                    "claimed exploit is unproven; use refuted when source contradicts the finding. Decisions "
-                    "cannot change source authority, architecture, finding identity, ratings or remediation.",
-                ),
-                context={
-                    **identity,
-                    "component": component,
-                    "findings": findings,
-                    "incident_flows": incident,
-                    **({"declared_context": context["declared_context"]} if "declared_context" in context else {}),
-                },
-                schema=analysis.contract("multi-repo-evidence-review.schema.json"),
-                allowed_sources=review_sources,
-                validate=lambda artifact, ranges: analysis.validate_evidence_review(
-                    scope, findings, fingerprint, artifact, ranges, review_sources
-                ),
+        parts = []
+        for number, batch in enumerate(batches, 1):
+            selector = "evidence:" + component["id"] + (f":{number}/{len(batches)}" if len(batches) > 1 else "")
+            parts.append(
+                _assessment_evidence_review(
+                    jobs,
+                    analysis,
+                    scope,
+                    identity,
+                    component,
+                    batch,
+                    incident,
+                    context,
+                    fingerprint,
+                    review_sources,
+                    selector,
+                )
             )
+        if parts:
+            review = {**parts[0], "decisions": [row for part in parts for row in part["decisions"]]}
         else:
             review = {"schema_version": 2, **identity, "decisions": []}
         reviews.append(review)
@@ -8570,6 +8573,44 @@ def _assessment_stride(
         scope, components, documents, reviews, boundaries=boundaries, scanner_threats=scanned, started_at=started_at
     )
     return documents, reviews, merged
+
+
+def _assessment_evidence_review(
+    jobs, analysis, scope, identity, component, findings, incident, context, fingerprint, review_sources, selector
+):
+    """Run one independent evidence review over a batch of one component's findings."""
+    return jobs.execute(
+        role="evidence_verifier",
+        selector=selector,
+        instructions=_assessment_role_instructions(
+            "evidence_verifier",
+            "Independently read and decide every supplied finding. Cite retrieved qualified evidence "
+            "for each decision. Verify the actual implementation and claimed exploit conditions, not "
+            "only whether the line exists. A verified decision must cite the original anchor. Cross-repo "
+            "claims require both endpoints and demonstrated payload or identity continuity. Matching "
+            "names alone prove neither. Use ambiguous when the insecure practice is observed but the "
+            "claimed exploit is unproven; use refuted when source contradicts the finding. Decisions "
+            "cannot change source authority, architecture, finding identity, ratings or remediation.",
+        ),
+        context={
+            **identity,
+            "component": component,
+            "findings": findings,
+            "incident_flows": incident,
+            **({"declared_context": context["declared_context"]} if "declared_context" in context else {}),
+        },
+        schema=analysis.contract("multi-repo-evidence-review.schema.json"),
+        allowed_sources=review_sources,
+        validate=lambda artifact, ranges: analysis.validate_evidence_review(
+            scope, findings, fingerprint, artifact, ranges, review_sources
+        ),
+    )
+
+
+# One review keeps a third of its read budget for context beyond the anchors,
+# such as the second endpoint of a cross-repository claim.
+EVIDENCE_REVIEW_WINDOWS = 8
+EVIDENCE_REVIEW_FINDINGS = 15
 
 
 # ---------------------------------------------------------------------------
@@ -8668,6 +8709,153 @@ def _assessment_preflight(roots: list[str]) -> None:
                 "Move repository-owned agent configuration out of the checkout, or pass --trust-mode trusted "
                 "only for repositories you control."
             )
+
+
+def _duration(seconds: float) -> str:
+    minutes, rest = divmod(round(seconds), 60)
+    return f"{minutes}m{rest:02d}s" if minutes else f"{rest}s"
+
+
+def _minutes(seconds: float) -> str:
+    return "<1m" if seconds < 60 else f"{int(seconds // 60)}m"
+
+
+class _AssessmentConsole:
+    """The default console view: phases, the component or section in work, stalls.
+
+    Phases and line formats follow the single-repository progress view
+    (``renderers/render_progress.py``): a clock column, the pipeline once,
+    ``▶ Phase`` with the run's elapsed time, a ``still in Phase`` line during
+    quiet stretches, and ``✓ Phase … done``. ``--verbose`` prints every step
+    and every model call instead; ``--quiet`` prints neither.
+    """
+
+    PIPELINE = (
+        "2 Recon · 3 Architecture · 7 Trust-Boundaries · 8 Controls · 9 STRIDE · 10 Scan-Synthesis · 11 Finalization"
+    )
+    # Off a TTY the single-repository view throttles liveness lines to this interval.
+    HEARTBEAT_SECONDS = 300
+
+    # Step prefixes mapped onto that phase model, in run order.
+    PHASES = (
+        ("Discovering every selected repository", "2/11 Reconnaissance"),
+        ("Reviewing evidenced cross-repository", "3/11 Architecture"),
+        ("Analyzing local architecture", "3/11 Architecture"),
+        ("Measuring the boundary source context", "7/11 Trust Boundaries"),
+        ("Reviewing trust crossing", "7/11 Trust Boundaries"),
+        ("Assessing controls", "8/11 Controls"),
+        ("Running deterministic source scanners", "9/11 STRIDE"),
+        ("Analyzing all STRIDE categories", "9/11 STRIDE"),
+        ("Independently verifying evidence", "9/11 STRIDE"),
+        ("Building the deterministic route inventory", "10/11 Scan Synthesis"),
+        ("Evaluating posture producers", "10/11 Scan Synthesis"),
+        ("Reviewing findings as architect", "10/11 Scan Synthesis"),
+        ("Resolving actors", "10/11 Scan Synthesis"),
+        ("Ranking findings", "10/11 Scan Synthesis"),
+        ("Synthesizing cross-finding", "10/11 Scan Synthesis"),
+        ("Building the threat model", "11/11 Finalization"),
+        ("Deriving application-specific business abuse cases", "11/11 Finalization"),
+        ("Verifying abuse case", "11/11 Finalization"),
+        ("Rendering the report", "11/11 Finalization"),
+        ("Stage 2:", "11/11 Finalization"),
+        ("Running the quality gates", "11/11 Finalization"),
+        ("Publishing", "11/11 Finalization"),
+    )
+    # Steps whose subject (component, section, abuse case) is worth a line;
+    # model reads and per-call results stay behind --verbose.
+    SUBJECTS = {
+        "Analyzing local architecture": "",
+        "Assessing controls": "",
+        "Analyzing all STRIDE categories": "",
+        "Reviewing findings as architect": "architect review: ",
+        "Verifying abuse case": "abuse case ",
+        "Stage 2:": "report section: ",
+    }
+    _POSITION = re.compile(r"\s*\((\d+)/(\d+)\)$")
+    # Share of a run's wall clock per phase, in percent. Estimated from the
+    # model time per role of a single-repository standard run (Juice Shop,
+    # 2026-10-13); STRIDE includes its evidence reviews. A display estimate only.
+    WEIGHTS = {
+        "2/11 Reconnaissance": 5,
+        "3/11 Architecture": 5,
+        "7/11 Trust Boundaries": 6,
+        "8/11 Controls": 11,
+        "9/11 STRIDE": 55,
+        "10/11 Scan Synthesis": 4,
+        "11/11 Finalization": 14,
+    }
+
+    def __init__(self, verbose: bool, write=None):
+        self.verbose = verbose
+        self._out = write or (
+            lambda text: print(f"{time.strftime('%H:%M:%S')}  {text}" if text else "", file=sys.stderr, flush=True)
+        )
+        self.phase, self.started, self.percent, self.announced = None, 0.0, 0, False
+        self.run_started = self.last = time.monotonic()
+
+    def write(self, text: str) -> None:
+        self.last = time.monotonic()
+        self._out(text)
+
+    def _percent(self, phase: str, done: int = 0, total: int = 1) -> int:
+        order = list(self.WEIGHTS)
+        before = sum(self.WEIGHTS[name] for name in order[: order.index(phase)])
+        self.percent = min(99, round(before + self.WEIGHTS[phase] * done / max(total, 1)))
+        return self.percent
+
+    def step(self, text: str) -> None:
+        if self.verbose:
+            self.write(f"▶ {text}")
+            return
+        if not self.announced:
+            self.announced = True
+            self.write(f"   Pipeline: {self.PIPELINE}")
+        prefix, phase = next(((p, name) for p, name in self.PHASES if text.startswith(p)), (None, None))
+        if phase is None:
+            self.write(f"▶ {text}")
+            return
+        now = time.monotonic()
+        if phase != self.phase:
+            self.close()
+            self.phase, self.started = phase, now
+            number, _, head = phase.partition(" ")
+            self.write("")
+            self.write(
+                f"▶ Phase {number} · {head} · ~{self._percent(phase)}%   [+{_minutes(now - self.run_started)} total]"
+            )
+        position = self._POSITION.search(text)
+        # Steps already finished in this phase, so the share never runs ahead.
+        progress = f" · ~{self._percent(phase, int(position[1]) - 1, int(position[2]))}%" if position else ""
+        if prefix == "Reviewing trust crossing" and position:
+            # A crossing's ID is a signal hash, not a name a reader recognizes.
+            self.write(f"    · trust crossing {position[1]} of {position[2]}{progress}")
+        elif prefix in self.SUBJECTS:
+            subject = self._POSITION.sub("", text[len(prefix) :].lstrip(": "))
+            self.write(
+                f"    · {self.SUBJECTS[prefix]}{subject}"
+                + (f" ({position[1]}/{position[2]})" if position else "")
+                + progress
+            )
+
+    def call(self, text: str) -> None:
+        """A model-call line: with --verbose always; otherwise a stall, a stopped call, or liveness."""
+        if self.verbose:
+            self.write(f"  · {text}")
+            return
+        if "no model activity" in text or text.startswith("model call stopped"):
+            self.write(f"    ⚠ {text}")
+            return
+        now = time.monotonic()
+        if self.phase and now - self.last >= self.HEARTBEAT_SECONDS:
+            self.write(
+                f"    · still in Phase {self.phase} — {_minutes(now - self.started)} · ~{self.percent}%"
+                f"   [+{_minutes(now - self.run_started)} total]"
+            )
+
+    def close(self) -> None:
+        if self.phase and not self.verbose:
+            self.write(f"    ✓ Phase {self.phase} done — {_duration(time.monotonic() - self.started)}")
+        self.phase = None
 
 
 class _ReportedTransport:
@@ -9095,22 +9283,27 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
         raise CallError(f"{', '.join(unsupported)} is not supported for a multi-repository assessment")
     if ns.rebuild and ns.resume:
         raise CallError("--rebuild starts the assessment again and cannot be combined with --resume")
-    if len(ns.repo) < 2:
+    # APPSEC_SINGLE_REPO_CONTROLLER=1 runs one repository through the same stages.
+    minimum = 1 if os.environ.get("APPSEC_SINGLE_REPO_CONTROLLER") == "1" else 2
+    if len(ns.repo) < minimum:
         raise CallError("a multi-repository assessment requires at least two --repo selections")
-    say = progress or (lambda text: None if ns.quiet else print(f"▶ {text}", file=sys.stderr, flush=True))
+    console = None if progress or ns.quiet else _AssessmentConsole(ns.verbose)
+    say = progress or (console.step if console else (lambda text: None))
     budget = _assessment_budget(ns)
     if ns.trust_mode == "untrusted":
         say("Checking every selected repository for repository-owned agent configuration")
         _assessment_preflight(ns.repo)
     try:
-        scope = admit(ns.repo, ns.output)
+        scope = admit(ns.repo, ns.output, minimum=minimum)
     except ScopeError as exc:
         raise CallError(f"repository selection rejected: {exc}") from exc
     labels = sorted(row["label"] for row in scope.inventory()["repositories"])
     warnings: list[str] = []
     # The repository list is stated in the report's assessment notes; joined
     # into the system name it surfaced in titles, scope and actor labels.
-    project = (ns.project or f"Combined system ({len(labels)} repositories)").strip()
+    project = (
+        ns.project or (labels[0] if len(labels) == 1 else f"Combined system ({len(labels)} repositories)")
+    ).strip()
     with tempfile.TemporaryDirectory(prefix="appsec-hosts-") as hosts:
         factory = host_factory or _assessment_cli_host_factory(
             Path(hosts), scope.output / ".assessment-work" / "host-events"
@@ -9127,11 +9320,7 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                 ceiling,
                 labels={row["repository_id"]: row["label"] for row in scope.inventory()["repositories"]},  # noqa: B006
             ):
-                return _ReportedTransport(
-                    plain(role, model, ceiling),
-                    lambda text: print(f"  · {text}", file=sys.stderr, flush=True),
-                    labels,
-                )
+                return _ReportedTransport(plain(role, model, ceiling), console.call, labels)
 
         try:
             session = _assessment_session(
@@ -9140,7 +9329,8 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
             with session as (cfg, state, jobs):
                 _assessment_unsupported_configuration(cfg, scope)
                 lineup, model_warning = _assessment_model_lines(cfg)
-                print("⚠ Multi-repository assessment is experimental.", file=sys.stderr, flush=True)
+                kind = "Single-repository controller" if len(labels) == 1 else "Multi-repository"
+                print(f"⚠ {kind} assessment is experimental.", file=sys.stderr, flush=True)
                 say(lineup)
                 if model_warning:
                     # Shown even with --quiet: it changes the run's cost or outcome.
@@ -9221,9 +9411,11 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                     )
                     _assessment_render(scope, jobs, names, settings, workspace, root, captured=captured, progress=say)
                     _export_pentest_tasks_if_configured(workspace, settings)
-                say("Publishing the combined threat model")
+                say("Publishing the threat model")
                 delivered = _assessment_publish(scope, original, names, workspace, cfg, warnings)
                 state.complete(delivered)
+                if console:
+                    console.close()
                 runtime_warning = _assessment_runtime_warning(state)
                 if runtime_warning:
                     warnings.append(runtime_warning)
@@ -9289,7 +9481,7 @@ def assess_main(argv: list[str]) -> int:
             print(f"✗ {exc.code}", file=sys.stderr)
         return 2
     except (ControllerError, ExchangeError, TransportError, HostCancelled, ValueError, OSError) as exc:
-        print(f"✗ multi-repository assessment stopped: {_cap_reason(str(exc))}", file=sys.stderr)
+        print(f"✗ assessment stopped: {_cap_reason(str(exc))}", file=sys.stderr)
         draft = _unpublished_draft(argv)
         if draft:
             print(
@@ -9298,7 +9490,8 @@ def assess_main(argv: list[str]) -> int:
             )
         return 1
     print(
-        f"✓ Combined threat model of {', '.join(outcome['repositories'])} written to {outcome['output']} "
+        f"✓ {'Combined threat model' if len(outcome['repositories']) > 1 else 'Threat model'} of "
+        f"{', '.join(outcome['repositories'])} written to {outcome['output']} "
         f"({outcome['calls']} model calls, ≈ USD {outcome['spent_usd']:.2f})"
     )
     for warning in outcome.get("warnings") or []:

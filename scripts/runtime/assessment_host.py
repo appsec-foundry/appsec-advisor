@@ -198,7 +198,7 @@ def run_exchange(
         remaining = math.floor(deadline - time.monotonic())
         if remaining < 1:
             raise HostCancelled("Assessment exceeded its time limit")
-        packet = {"context": context, "source_slices": slices}
+        packet = {"context": context, "source_slices": slices, "source_reads_remaining": MAX_READS - len(seen)}
         if feedback is not None:
             packet["rejected_result"] = feedback
         try:
@@ -289,8 +289,14 @@ def run_exchange(
             # served twice and does not count against the read limit.
             if key in seen:
                 continue
+            # The model cannot know which of its reads exhausts the budget, so
+            # reads past it are refused back rather than failing the job.
             if len(seen) >= MAX_READS:
-                raise ExchangeError("Source-read limit exceeded")
+                range_feedback = {
+                    "reason": f"The limit of {MAX_READS} source reads is reached; later slices were not served.",
+                    "instruction": "Return a complete result from the supplied source_slices.",
+                }
+                break
             rid, path, start, end = key
             # An oversized range is narrowed to the slice limit; a range past
             # the end of an authorized file is reported back, not fatal.

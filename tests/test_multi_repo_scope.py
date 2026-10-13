@@ -278,6 +278,19 @@ def test_source_and_slice_limits_fail_closed(tmp_path, monkeypatch):
         scope.admit(roots, str(tmp_path / "out"))
 
 
+@pytest.mark.parametrize("payload", [b"GIF89a\x10\x00\x10\x00" * 8, b"\xff\xd8\xff\xe0 jpeg-like" * 8])
+def test_oversized_binary_is_excluded_while_oversized_text_still_fails(tmp_path, monkeypatch, payload):
+    roots = pair(tmp_path)
+    (Path(roots[0]) / "assets").mkdir()
+    (Path(roots[0]) / "assets" / "clip.bin").write_bytes(payload)
+    monkeypatch.setattr(scope, "MAX_FILE_BYTES", 32)
+    admitted = scope.admit(roots, str(tmp_path / "out"))
+    assert {"path": "assets/clip.bin", "reason": "binary"} in admitted.repositories[0].exclusions
+    (Path(roots[1]) / "big.py").write_text("x = 1\n" * 8)
+    with pytest.raises(scope.ScopeError, match="file exceeds"):
+        scope.admit(roots, str(tmp_path / "out"))
+
+
 def test_git_environment_cannot_redirect_repository_selection(tmp_path, monkeypatch):
     roots = pair(tmp_path)
     monkeypatch.setenv("GIT_DIR", str(tmp_path / "foreign"))

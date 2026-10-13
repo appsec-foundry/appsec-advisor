@@ -162,8 +162,8 @@ def _assess(tmp_path, monkeypatch, names, extra=(), seed=None, progress=lambda t
     host = FullHost()
     real_admit = multi_repo_scope.admit
 
-    def admit(selections, output):
-        host.scope = real_admit(selections, output)
+    def admit(selections, output, **options):
+        host.scope = real_admit(selections, output, **options)
         return host.scope
 
     monkeypatch.setattr(multi_repo_scope, "admit", admit)
@@ -186,6 +186,22 @@ def _assess(tmp_path, monkeypatch, names, extra=(), seed=None, progress=lambda t
         progress=progress,
     )
     return outcome, host, tmp_path / "out"
+
+
+def test_one_repository_takes_the_combined_path_only_when_switched_on(tmp_path, monkeypatch):
+    for part in ("off", "on"):
+        (tmp_path / part).mkdir()
+    monkeypatch.delenv("APPSEC_SINGLE_REPO_CONTROLLER", raising=False)
+    with pytest.raises(controller.CallError, match="at least two"):
+        _assess(tmp_path / "off", monkeypatch, ("solo",))
+    monkeypatch.setenv("APPSEC_SINGLE_REPO_CONTROLLER", "1")
+    seen = []
+    monkeypatch.setattr(controller, "_assessment_architecture", lambda scope, *a, **k: seen.append(scope) or 1 / 0)
+    with pytest.raises(ZeroDivisionError):
+        _assess(tmp_path / "on", monkeypatch, ("solo",))
+    (scope,) = seen
+    assert [row["label"] for row in scope.inventory()["repositories"]] == ["solo"]
+    scope.verify_unchanged()
 
 
 @pytest.mark.parametrize(("names", "depth"), [(("edge", "service"), "standard"), (("west", "east"), "thorough")])
@@ -217,10 +233,55 @@ def test_combined_assessment_publishes_one_qualified_model(tmp_path, monkeypatch
     assert not list(out.glob("threat-model-*"))
 
 
+def test_default_console_shows_phases_counts_and_stalls_not_call_detail(monkeypatch):
+    lines = []
+    console = controller._AssessmentConsole(False, lines.append)
+    console.step("Models: sonnet (stride_analyzer)")
+    console.step("Discovering every selected repository")
+    console.call("reads app/server.ts:1-200 (3 s)")
+    console.step("Reviewing trust crossing: signal-external-ingress-0123abcd (1/3)")
+    console.step("Analyzing all STRIDE categories: API (1/2)")
+    console.call("1 min: no model activity for 95 s (waiting for the API)")
+    console.step("Independently verifying evidence: API")
+    console.step("Analyzing all STRIDE categories: Store (2/2)")
+    monkeypatch.setattr(console, "HEARTBEAT_SECONDS", 0)
+    console.call("2 min: model is thinking (~9,000 tokens)")
+    console.step("Stage 2: Management Summary")
+    console.close()
+    assert lines[:2] == [f"   Pipeline: {console.PIPELINE}", "▶ Models: sonnet (stride_analyzer)"]
+    # Phase lines carry the run's estimated share and elapsed time, as the single-repository view does.
+    assert [line.split(" · ~")[0] for line in lines if line.startswith("▶ Phase")] == [
+        "▶ Phase 2/11 · Reconnaissance",
+        "▶ Phase 7/11 · Trust Boundaries",
+        "▶ Phase 9/11 · STRIDE",
+        "▶ Phase 11/11 · Finalization",
+    ]
+    assert "▶ Phase 9/11 · STRIDE · ~27%   [+<1m total]" in lines
+    assert sum(line.startswith("    ✓ Phase") for line in lines) == 4
+    # The component or section in work is named; a crossing's signal hash is not.
+    for shown in (
+        "    · trust crossing 1 of 3 · ~10%",
+        "    · API (1/2) · ~27%",
+        "    · Store (2/2) · ~54%",
+        "    · report section: Management Summary",
+        "    · still in Phase 9/11 STRIDE — <1m · ~54%   [+<1m total]",
+    ):
+        assert shown in lines
+    assert "    ⚠ 1 min: no model activity for 95 s (waiting for the API)" in lines
+    assert not any("reads " in line or "signal-" in line or "verifying evidence" in line for line in lines)
+    # --verbose keeps every step and call line and adds no phase summary.
+    verbose = []
+    console = controller._AssessmentConsole(True, verbose.append)
+    console.step("Discovering every selected repository")
+    console.call("reads app/server.ts:1-200 (3 s)")
+    console.close()
+    assert verbose == ["▶ Discovering every selected repository", "  · reads app/server.ts:1-200 (3 s)"]
+
+
 @pytest.mark.parametrize("names", [("edge", "service"), ("west", "east")])
 def test_per_call_progress_lines_reach_the_end_of_a_combined_run(tmp_path, monkeypatch, capsys, names):
     """Calls made after the workspace exists, such as the report renderers, still label their reads."""
-    outcome, host, _ = _assess(tmp_path, monkeypatch, names, progress=None)
+    outcome, host, _ = _assess(tmp_path, monkeypatch, names, ("--verbose",), progress=None)
     assert outcome["status"] == "complete" and "ms_renderer" in host.roles
     lines = [line for line in capsys.readouterr().err.splitlines() if line.startswith("  · reads ")]
     assert lines and any(f"{name}/" in line for line in lines for name in names)
@@ -303,8 +364,8 @@ def test_rebuild_redoes_every_job_an_earlier_run_accepted(tmp_path, monkeypatch,
     host = FullHost()
     real_admit = multi_repo_scope.admit
 
-    def admit(selections, output):
-        host.scope = real_admit(selections, output)
+    def admit(selections, output, **options):
+        host.scope = real_admit(selections, output, **options)
         return host.scope
 
     monkeypatch.setattr(multi_repo_scope, "admit", admit)
@@ -337,8 +398,8 @@ def test_resume_reuses_accepted_jobs_after_an_interrupted_render(tmp_path, monke
     host = FullHost()
     real_admit = multi_repo_scope.admit
 
-    def admit(selections, output):
-        host.scope = real_admit(selections, output)
+    def admit(selections, output, **options):
+        host.scope = real_admit(selections, output, **options)
         return host.scope
 
     monkeypatch.setattr(multi_repo_scope, "admit", admit)
@@ -379,8 +440,8 @@ def test_changed_source_stops_publication(tmp_path, monkeypatch):
     host = FullHost()
     real_admit = multi_repo_scope.admit
 
-    def admit(selections, output):
-        host.scope = real_admit(selections, output)
+    def admit(selections, output, **options):
+        host.scope = real_admit(selections, output, **options)
         return host.scope
 
     monkeypatch.setattr(multi_repo_scope, "admit", admit)

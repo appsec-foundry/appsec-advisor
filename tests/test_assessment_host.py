@@ -275,6 +275,22 @@ def test_an_out_of_file_range_is_reported_back_and_an_oversized_one_is_narrowed(
         invoke(Model([read("missing.py")]), tmp_path)
 
 
+def test_reads_past_the_budget_are_refused_back_and_the_budget_is_stated(tmp_path, monkeypatch):
+    monkeypatch.setattr(host, "MAX_READS", 2)
+
+    def lines(*ends):
+        return {**read(), "reads": [{**read()["reads"][0], "end_line": end} for end in ends]}
+
+    model = Model([lines(1), lines(2, 3), complete()])
+    result = invoke(model, tmp_path)
+    assert '"source_reads_remaining": 2' in model.prompts[0]
+    assert '"source_reads_remaining": 0' in model.prompts[2] and "limit of 2 source reads" in model.prompts[2]
+    assert len(result.source_slices) == 2
+    # The budget still bounds the job: a model that keeps reading never gets more source.
+    with pytest.raises(host.ExchangeError, match="exchange limit"):
+        invoke(Model([lines(1), *[lines(2, 3)] * host.MAX_EXCHANGES]), tmp_path)
+
+
 def _reviewed(model, tmp_path, review, context=None):
     return host.run_exchange(
         model,

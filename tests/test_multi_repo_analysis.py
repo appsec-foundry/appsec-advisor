@@ -282,10 +282,58 @@ def test_evidence_review_cannot_forge_completion(tmp_path, kind):
         review["decisions"] *= 2
     else:
         review["decisions"][0]["evidence"] = [evidence[1]]
-    with pytest.raises(ExchangeError):
+    with pytest.raises(ExchangeError) as raised:
         stage.validate_evidence_review(
             scope, artifact["threats"], FP, review, ranges, stage.source_selection(components)
         )
+    # The correction turn must learn which decision to fix, not only that one is off.
+    expected = {"missing": "missing: issue-1", "duplicate": "repeated: issue-1"}.get(kind)
+    if expected:
+        assert expected in str(raised.value)
+
+
+@pytest.mark.parametrize("repositories", [1, 2])
+def test_a_sole_repository_must_name_a_protected_asset(tmp_path, repositories):
+    combined, components, evidence, ranges, _identity = sources(tmp_path)
+    scope = AssessmentScope(combined.repositories[:repositories], tmp_path / "output")
+    rid = components[0]["repository_ids"][0]
+    inventory = dict(components=components[:repositories], source_scope_sha256=scope.inventory()["scope_sha256"])
+    identity = dict(
+        schema_version=2, source_scope_sha256=inventory["source_scope_sha256"], component_inventory_fingerprint=FP
+    )
+    empty = dict(**identity, repository_id=rid, data_flows=[], external_entities=[], assets=[])
+    arguments = (scope, rid, inventory, dict(component_inventory_fingerprint=FP))
+    if repositories == 1:
+        with pytest.raises(ExchangeError, match="no protected asset"):
+            stage.validate_local_architecture(*arguments, empty, ranges)
+    else:
+        stage.validate_local_architecture(*arguments, empty, ranges)
+    asset = dict(
+        id="asset-orders",
+        name="Order records",
+        classification="Confidential",
+        description="Customer orders the service stores.",
+        component_refs=[dict(component_id=components[0]["id"], relation="processed", evidence=[evidence[0]])],
+    )
+    stage.validate_local_architecture(*arguments, {**empty, "assets": [asset]}, ranges)
+
+
+def test_evidence_batches_keep_every_anchor_readable_within_one_review():
+    def finding(local_id, file, line=10, kind=None):
+        evidence = {"repository_id": "r", "file": file, "line": line, **({"kind": kind} if kind else {})}
+        return {"local_id": local_id, "evidence": evidence}
+
+    findings = [finding(f"f{i}", f"wf/{i % 13}.yml") for i in range(29)] + [
+        finding("same-window", "wf/0.yml", 20),
+        finding("absence", "wf/1.yml", None, "absence"),
+    ]
+    batches = stage.evidence_batches(findings, max_windows=8, max_findings=15, window_lines=400)
+    assert sorted(f["local_id"] for batch in batches for f in batch) == sorted(f["local_id"] for f in findings)
+    for batch in batches:
+        assert len(batch) <= 15
+        assert len({(f["evidence"]["file"], (f["evidence"]["line"] or 0) // 400) for f in batch}) <= 8
+    # Findings that one slice can show stay in one review.
+    assert len(stage.evidence_batches(findings[:3], max_windows=8, max_findings=15, window_lines=400)) == 1
 
 
 def test_local_architecture_cannot_promote_a_peer_without_connection_review(tmp_path):
