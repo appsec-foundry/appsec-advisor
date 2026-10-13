@@ -504,6 +504,33 @@ def _lineage(path: Path) -> set[tuple[int, int]]:
     return {i for i in (_identity(item, missing_ok=True) for item in (path, *path.parents)) if i is not None}
 
 
+def _selected_root(value: str) -> Path:
+    """Resolve one selection, which must name a top-level Git checkout."""
+    if not isinstance(value, str) or not value.strip() or any(ord(c) < 32 for c in value):
+        raise ScopeError("Invalid repository selection")
+    try:
+        root = Path(value).resolve(strict=True)
+    except (OSError, RuntimeError, ValueError):
+        raise ScopeError("Selected repository does not exist") from None
+    top = _git(root, "rev-parse", "--show-toplevel").decode("utf-8").strip()
+    if root != Path(top).resolve():
+        raise ScopeError("Multi-repository selections must name top-level Git checkouts")
+    return root
+
+
+def checkout_report_directory(selection: str) -> tuple[Path, Path]:
+    """One checkout and its report directory (MR-6), checked before anything is written.
+
+    The directory must not resolve elsewhere, so a link in the checkout cannot
+    redirect a write outside it.
+    """
+    root = _selected_root(selection)
+    output = root.joinpath(*CHECKOUT_OUTPUT.parts)
+    if output.resolve() != output or (output.exists() and not output.is_dir()):
+        raise ScopeError("The repository's docs/security must be a real directory")
+    return root, output
+
+
 def _checkout_output(roots: list[Path], target: Path) -> PurePosixPath | None:
     """The report directory inside a sole checkout (MR-6), or None.
 
@@ -523,15 +550,7 @@ def admit(selections: list[str], output: str, *, minimum: int = 2) -> Assessment
         raise ScopeError("Multi-repository scope requires an explicit output directory")
     roots: list[Path] = []
     for value in selections:
-        if not isinstance(value, str) or not value.strip() or any(ord(c) < 32 for c in value):
-            raise ScopeError("Invalid repository selection")
-        try:
-            root = Path(value).resolve(strict=True)
-        except (OSError, RuntimeError, ValueError):
-            raise ScopeError("Selected repository does not exist") from None
-        top = _git(root, "rev-parse", "--show-toplevel").decode("utf-8").strip()
-        if root != Path(top).resolve():
-            raise ScopeError("Multi-repository selections must name top-level Git checkouts")
+        root = _selected_root(value)
         if any(root == other or root in other.parents or other in root.parents for other in roots):
             raise ScopeError("Duplicate or overlapping repository selections")
         roots.append(root)

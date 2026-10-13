@@ -1,7 +1,13 @@
 """A one-repository controller run reports into its checkout (MR-6) as a single-repository model (MR-8)."""
 
+import json
+import os
+import signal
+import subprocess
 import sys
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -146,3 +152,101 @@ def test_explicit_budget_replaces_the_depth_default():
         _budget(["--thorough"])
     with pytest.raises(controller.CallError, match="invalid --assessment-depth"):
         _budget(["--interactive-launch", "--assessment-depth", "deep"])
+
+
+def _answer(reports, text="Records of paying customers for invoicing."):
+    raw = reports / ".business-context-raw.md"
+    raw.write_text(f"## Business purpose\n\n**Question:** What is the use case?\n**Answer:** {text}\n")
+    return raw
+
+
+@pytest.mark.parametrize("name", ["solo", "records-service"])
+def test_dialog_answers_reach_the_checkout_context_without_a_session_run(tmp_path, name):
+    root = tmp_path / name
+    checkout(root)
+    action = controller.assess_context_preview(str(root))
+    reports = root / "docs" / "security"
+    assert Path(action["preview"]).is_file() and Path(action["output_dir"]) == reports
+    _answer(reports)
+    saved = controller.assess_context_save(
+        str(root), context_answer="answered", impact_choice=None, use_case_choice="confirmed"
+    )
+    assert saved["action"] == "context_saved"
+    assert "paying customers for invoicing" in (reports / "business-context.md").read_text()
+    assert not (reports / ".business-context-raw.md").exists() and not Path(action["preview"]).exists()
+
+
+def test_dialog_save_refuses_inconsistent_or_foreign_state(tmp_path):
+    root = tmp_path / "solo"
+    reports = _checkout_with_reports(root)
+    before = (reports / "business-context.md").read_text()
+    with pytest.raises(controller.CallError, match="impact choice requires"):
+        controller.assess_context_save(
+            str(root), context_answer="skip", impact_choice="declared-harm", use_case_choice=None
+        )
+    _answer(reports, "api_key = 'sk-live-0123456789abcdefghijklmnop'")
+    with pytest.raises(controller.CallError, match="rejected"):
+        controller.assess_context_save(str(root), context_answer="answered", impact_choice=None, use_case_choice=None)
+    assert (reports / "business-context.md").read_text() == before
+    # A live run holding the directory keeps it to itself.
+    controller.acquire_lock._write_lock(reports / ".appsec-lock", os.getpid(), int(time.time()), "another-run")
+    with pytest.raises(controller.CallError, match="another live run"):
+        controller.assess_context_preview(str(root))
+
+
+def test_a_linked_report_directory_is_refused_before_any_write(tmp_path):
+    root = tmp_path / "solo"
+    checkout(root)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (root / "docs").mkdir()
+    (root / "docs" / "security").symlink_to(elsewhere)
+    with pytest.raises(controller.CallError, match="real directory"):
+        controller.assess_context_preview(str(root))
+    assert not any(elsewhere.iterdir())
+
+
+def _running(reports, pid, *, run_id="assessment-0123", age=0):
+    reports.mkdir(parents=True, exist_ok=True)
+    (reports / ".assessment-state.json").write_text(json.dumps({"status": "running", "run_id": run_id}))
+    controller.acquire_lock._write_lock(reports / ".appsec-lock", pid, int(time.time()) - age, run_id)
+
+
+def test_stop_signals_only_the_running_controller_assessment(tmp_path):
+    reports = tmp_path / "solo" / "docs" / "security"
+    target = subprocess.Popen(["sleep", "30"])
+    try:
+        _running(reports, target.pid)
+        assert controller.assess_stop(reports)["action"] == "stopping"
+        assert target.wait(timeout=10) == -signal.SIGTERM
+    finally:
+        target.kill()
+
+
+@pytest.mark.parametrize("planted", ["stale", "foreign-run", "finished"])
+def test_stop_never_signals_through_a_stale_or_planted_lock(tmp_path, planted):
+    reports = tmp_path / "solo" / "docs" / "security"
+    target = subprocess.Popen(["sleep", "30"])
+    try:
+        _running(reports, target.pid, age=86_400 if planted == "stale" else 0)
+        if planted == "foreign-run":
+            controller.acquire_lock._write_lock(reports / ".appsec-lock", target.pid, int(time.time()), "other")
+        if planted == "finished":
+            (reports / ".assessment-state.json").write_text(
+                json.dumps({"status": "complete", "run_id": "assessment-0123"})
+            )
+        with pytest.raises(controller.CallError):
+            controller.assess_stop(reports)
+        assert target.poll() is None
+    finally:
+        target.kill()
+
+
+def test_terminate_becomes_the_runs_own_cancellation():
+    state = SimpleNamespace(cancelled=False)
+    previous = signal.getsignal(signal.SIGTERM)
+    with controller._stop_on_terminate(state):
+        os.kill(os.getpid(), signal.SIGTERM)
+        time.sleep(0.05)
+    assert state.cancelled
+    assert signal.getsignal(signal.SIGTERM) is previous

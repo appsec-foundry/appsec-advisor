@@ -482,6 +482,7 @@ requirements:
       - skills/create-threat-model/SKILL-full-runtime.md
       - skills/create-threat-model/modes/business-context.md
       - skills/create-threat-model/modes/business-impact.md
+      - skills/create-threat-model2/SKILL.md
     decisions:
       - RC-4
     documents:
@@ -490,6 +491,7 @@ requirements:
     coverage: partial
     guards:
       - tests/test_orchestration_controller.py::test_early_context_blocks_scanners_until_answers_reach_context
+      - tests/test_single_repo_controller.py::test_dialog_answers_reach_the_checkout_context_without_a_session_run
       - tests/test_orchestration_controller.py::test_early_context_persists_answers_without_persisting_run_only_import
       - tests/test_orchestration_controller.py::test_early_context_rejects_unsafe_persistence_before_writes
       - tests/test_load_business_context.py::test_repository_context_precedence_and_run_override

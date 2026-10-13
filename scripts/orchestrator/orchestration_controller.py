@@ -2630,43 +2630,31 @@ def review_business_impact(output_dir: Path, *, run_id: str) -> dict[str, Any]:
     }
 
 
-def complete_preflight(
+def _save_business_context_answer(
+    repo_root: Path,
     output_dir: Path,
     *,
-    run_id: str,
     context_answer: str,
-    impact_choice: str | None = None,
-    use_case_choice: str | None = None,
-) -> dict[str, Any]:
-    """Accept the dialog result once, before any expensive scanner or dispatch.
+    impact_choice: str | None,
+    use_case_choice: str | None,
+) -> None:
+    """Validate the dialog's raw answer file and persist the confirmed context.
 
-    ``impact_choice`` names the selected application-wide impact option; the
-    answer is then marked so every runtime component receives it before STRIDE
-    (see ``contexts.business_impact_scope``). Free-text answers pass none.
-    ``use_case_choice`` marks a confirmed or corrected use case so the report can
-    state it (see ``contexts.business_use_case``).
+    Shared by the session runtime's preflight and the controller launch of
+    `create-threat-model2`, so both apply the same checks and destinations.
     """
     import contexts.business_context_preview as business_context_preview
     import contexts.business_impact_scope as business_impact_scope
     import contexts.business_use_case as business_use_case
     import contexts.load_business_context as load_business_context
-    import runtime.acquire_lock as acquire_lock
     from shared._atomic_io import atomic_write_text
 
-    output_dir, cfg = _load_run_config(output_dir)
-    if cfg.get("run_id") != run_id or acquire_lock.read_run_id(output_dir / ".appsec-lock") != run_id:
-        raise CallError("business-context answer does not belong to the run holding this output directory")
-    if cfg.get("business_context_pending") is not True:
-        raise CallError("this run is not waiting for business context")
-    if cfg.get("business_context_step") != "worst_case":
-        raise CallError("review business impact after the use-case question before completing preflight")
     if context_answer not in {"answered", "skip", "unchanged"}:
         raise CallError("invalid business-context decision")
     if impact_choice is not None and context_answer != "answered":
         raise CallError("an impact choice requires an answered business-context dialog")
     if use_case_choice is not None and context_answer != "answered":
         raise CallError("a use-case choice requires an answered business-context dialog")
-    repo_root = Path(cfg["repo_root"])
     raw_path = output_dir / business_context_preview.RAW_NAME
     if context_answer == "answered":
         # A fixed, bounded data file is the sole answer input. Neither imported
@@ -2713,6 +2701,40 @@ def complete_preflight(
         except (OSError, ValueError) as exc:
             raise CallError(f"business-context answer rejected: {exc}") from exc
     raw_path.unlink(missing_ok=True)
+
+
+def complete_preflight(
+    output_dir: Path,
+    *,
+    run_id: str,
+    context_answer: str,
+    impact_choice: str | None = None,
+    use_case_choice: str | None = None,
+) -> dict[str, Any]:
+    """Accept the dialog result once, before any expensive scanner or dispatch.
+
+    ``impact_choice`` names the selected application-wide impact option; the
+    answer is then marked so every runtime component receives it before STRIDE
+    (see ``contexts.business_impact_scope``). Free-text answers pass none.
+    ``use_case_choice`` marks a confirmed or corrected use case so the report can
+    state it (see ``contexts.business_use_case``).
+    """
+    import runtime.acquire_lock as acquire_lock
+
+    output_dir, cfg = _load_run_config(output_dir)
+    if cfg.get("run_id") != run_id or acquire_lock.read_run_id(output_dir / ".appsec-lock") != run_id:
+        raise CallError("business-context answer does not belong to the run holding this output directory")
+    if cfg.get("business_context_pending") is not True:
+        raise CallError("this run is not waiting for business context")
+    if cfg.get("business_context_step") != "worst_case":
+        raise CallError("review business impact after the use-case question before completing preflight")
+    _save_business_context_answer(
+        Path(cfg["repo_root"]),
+        output_dir,
+        context_answer=context_answer,
+        impact_choice=impact_choice,
+        use_case_choice=use_case_choice,
+    )
     _run_script(
         "runtime/acquire_lock.py",
         [str(output_dir / ".appsec-lock"), f"--run-id={run_id}", "--heartbeat", "--phase=skill"],
@@ -8141,7 +8163,7 @@ def _assessment_session(scope, arguments, *, budget, host_factory, resume=False,
             raise ControllerError(f"assessment job {role} requires a registered semantic role and resolved model")
         return host_factory(role, cfg[key], ceiling)
 
-    with state.hold():
+    with _stop_on_terminate(state), state.hold():
         # A fresh session may reuse the accepted jobs of an unfinished earlier run.
         jobs = AssessmentJobs(
             scope,
@@ -10160,6 +10182,141 @@ def _unpublished_draft(argv: list[str], before: tuple[Path, int | None] | None) 
     return after[0]
 
 
+@contextmanager
+def _stop_on_terminate(state):
+    """Turn SIGTERM from `assess-stop` into the run's own cancellation.
+
+    Every job observes it through `should_stop`, stops its host process, and
+    the run ends interrupted with its lock released (OR-8); accepted jobs stay
+    for --resume.
+    """
+    import signal
+    import threading
+
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    previous = signal.signal(signal.SIGTERM, lambda signum, frame: setattr(state, "cancelled", True))
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+def _launch_directory(repo: str) -> tuple[Path, Path]:
+    """The checkout and report directory of a `create-threat-model2` launch."""
+    from runtime.multi_repo_scope import ScopeError, checkout_report_directory
+
+    try:
+        root, output = checkout_report_directory(repo)
+    except ScopeError as exc:
+        raise CallError(f"repository selection rejected: {exc}") from exc
+    if acquire_lock.lock_held_by_live_other_run(output / ".appsec-lock"):
+        raise CallError("another live run holds this repository's docs/security; wait for it or stop it first")
+    return root, output
+
+
+def assess_context_preview(repo: str) -> dict[str, Any]:
+    """Write the bounded application overview the business-context dialog reads."""
+    import contexts.business_context_preview as business_context_preview
+    import contexts.load_business_context as load_business_context
+    from shared._atomic_io import atomic_write_json
+
+    root, output = _launch_directory(repo)
+    output.mkdir(parents=True, exist_ok=True)
+    # An answer file left by an abandoned dialog never counts as this one.
+    (output / business_context_preview.RAW_NAME).unlink(missing_ok=True)
+    preview = business_context_preview.build(root, context_path=load_business_context.effective_source(root, output))
+    atomic_write_json(output / business_context_preview.PREVIEW_NAME, preview)
+    return {
+        "schema_version": 1,
+        "action": "decision_required",
+        "repo_root": str(root),
+        "output_dir": str(output),
+        "preview": str(output / business_context_preview.PREVIEW_NAME),
+        "instruction_file": str(PLUGIN_ROOT / "skills/create-threat-model/modes/business-context.md"),
+    }
+
+
+def assess_context_save(
+    repo: str, *, context_answer: str, impact_choice: str | None, use_case_choice: str | None
+) -> dict[str, Any]:
+    """Persist the dialog result with the same checks as the session runtime's preflight."""
+    import contexts.business_context_preview as business_context_preview
+
+    root, output = _launch_directory(repo)
+    _save_business_context_answer(
+        root, output, context_answer=context_answer, impact_choice=impact_choice, use_case_choice=use_case_choice
+    )
+    (output / business_context_preview.PREVIEW_NAME).unlink(missing_ok=True)
+    return {"schema_version": 1, "action": "context_saved", "decision": context_answer}
+
+
+def assess_stop(output_dir: Path) -> dict[str, Any]:
+    """Ask the controller assessment that holds ``output_dir`` to stop.
+
+    Only a running state whose run ID matches a fresh lock qualifies, so a
+    stale or planted lock file never directs the signal at another process.
+    """
+    import signal
+
+    from runtime.assessment_state import STATE_NAME
+
+    lock = output_dir / ".appsec-lock"
+    try:
+        state = json.loads((output_dir / STATE_NAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise CallError("no controller assessment was found in this output directory") from None
+    run_id = state.get("run_id") if isinstance(state, dict) else None
+    fresh, _ = acquire_lock._classify_lock(lock)
+    if state.get("status") != "running" or not run_id or acquire_lock.read_run_id(lock) != run_id or fresh != "fresh":
+        raise CallError("no running controller assessment holds this output directory")
+    pid, _ = acquire_lock._parse_lock(lock)
+    if not pid or pid == os.getpid() or not acquire_lock._pid_alive(pid):
+        raise CallError("the assessment process is no longer alive")
+    os.kill(pid, signal.SIGTERM)
+    return {
+        "schema_version": 1,
+        "action": "stopping",
+        "run_id": run_id,
+        "reason": "The assessment stops after its current model calls end; accepted steps stay for --resume.",
+    }
+
+
+_LAUNCH_COMMANDS = ("assess-context-preview", "assess-context-save", "assess-stop")
+
+
+def _launch_main(command: str, argv: list[str]) -> int:
+    """Command-line entry for the `create-threat-model2` launch helpers; prints one JSON action."""
+    parser = argparse.ArgumentParser(prog=f"orchestration_controller.py {command}")
+    if command == "assess-stop":
+        parser.add_argument("--output", required=True)
+    else:
+        parser.add_argument("--repo", required=True)
+    if command == "assess-context-save":
+        parser.add_argument("--context-answer", choices=("answered", "skip", "unchanged"), required=True)
+        parser.add_argument("--impact-choice", choices=("no-material-harm", "declared-harm"))
+        parser.add_argument("--use-case-choice", choices=("confirmed", "corrected"))
+    args = parser.parse_args(argv)
+    try:
+        if command == "assess-context-preview":
+            action = assess_context_preview(args.repo)
+        elif command == "assess-context-save":
+            action = assess_context_save(
+                args.repo,
+                context_answer=args.context_answer,
+                impact_choice=args.impact_choice,
+                use_case_choice=args.use_case_choice,
+            )
+        else:
+            action = assess_stop(Path(args.output))
+    except (CallError, OSError) as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(action, indent=2))
+    return 0
+
+
 def assess_main(argv: list[str]) -> int:
     """Command-line entry for `assess`; prints a short summary and returns an exit code."""
     from runtime.analyst_host import HostCancelled, TransportError
@@ -10283,6 +10440,8 @@ def main(argv: list[str] | None = None) -> int:
         # The combined assessment runs its own scoped stages to completion; it
         # has no action protocol for an orchestrating session to follow.
         return assess_main(arguments[2:] if arguments[1:2] == ["--"] else arguments[1:])
+    if arguments[:1] and arguments[0] in _LAUNCH_COMMANDS:
+        return _launch_main(arguments[0], arguments[1:])
     parser = _build_argument_parser()
     args = parser.parse_args(argv)
 
