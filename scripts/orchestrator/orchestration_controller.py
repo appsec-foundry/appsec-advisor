@@ -8911,6 +8911,7 @@ class _AssessmentConsole:
             lambda text: print(f"{time.strftime('%H:%M:%S')}  {text}" if text else "", file=sys.stderr, flush=True)
         )
         self.phase, self.started, self.percent, self.announced = None, 0.0, 0, False
+        self.finished_jobs = 0
         self.run_started = self.last = time.monotonic()
 
     def write(self, text: str) -> None:
@@ -8948,7 +8949,7 @@ class _AssessmentConsole:
         now = time.monotonic()
         if phase != self.phase:
             self.close()
-            self.phase, self.started = phase, now
+            self.phase, self.started, self.finished_jobs = phase, now, 0
             number, _, head = phase.partition(" ")
             self.write("")
             self.write(
@@ -8987,7 +8988,18 @@ class _AssessmentConsole:
         finished = re.fullmatch(r"result: .* \((\d+) s\)", text)
         if finished:
             # A job's final answer; source reads in between stay behind --verbose.
-            self.write(f"    ✓ {who.rstrip(': ') or 'model call'} — {_duration(int(finished[1]))}")
+            if self.phase:
+                # Phases without a known job count advance by each finished job,
+                # approaching but never reaching the phase's end share.
+                self.finished_jobs += 1
+                order = list(self.WEIGHTS)
+                before = sum(self.WEIGHTS[name] for name in order[: order.index(self.phase)])
+                share = self.WEIGHTS[self.phase] * self.finished_jobs / (self.finished_jobs + 1)
+                self.percent = max(self.percent, min(99, round(before + share)))
+            self.write(
+                f"    ✓ {who.rstrip(': ') or 'model call'} — {_duration(int(finished[1]))}"
+                + (f" · ~{self.percent}%" if self.phase else "")
+            )
             return
         now = time.monotonic()
         if self.phase and now - self.last >= self.HEARTBEAT_SECONDS:

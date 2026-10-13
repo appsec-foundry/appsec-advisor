@@ -279,7 +279,7 @@ def test_default_console_shows_phases_counts_and_stalls_not_call_detail(monkeypa
         "    · Store (2/2) · ~54%",
         "    · report section: Management Summary",
         "    · still in Phase 9/11 STRIDE — <1m · ~54%   [+<1m total] · STRIDE: model is thinking (~9,000 tokens)",
-        "    ✓ STRIDE — 2m14s",
+        "    ✓ STRIDE — 2m14s · ~54%",
         "    · read 1 source range — 3s",
     ):
         assert shown in lines
