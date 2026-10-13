@@ -28,6 +28,8 @@ if not __package__:
 
 import argparse
 import json
+import os
+import stat
 import sys
 from pathlib import Path
 from typing import Any
@@ -59,11 +61,26 @@ _REPO_OWNED_CLAUDE_PATHS = (
 )
 
 
+def _is_null_device(st: os.stat_result) -> bool:
+    # The Claude Code Bash sandbox bind-mounts /dev/null over absent host
+    # configuration paths to keep them unwritable. Such a mount carries no
+    # configuration, and git cannot check out a device node.
+    try:
+        null_rdev = os.stat(os.devnull).st_rdev
+    except OSError:
+        return False
+    return stat.S_ISCHR(st.st_mode) and st.st_rdev == null_rdev
+
+
 def _scan_repo_owned_hooks(repo_root: Path) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     for rel in _REPO_OWNED_CLAUDE_PATHS:
         p = repo_root / rel
-        if p.exists():
+        try:
+            st = p.lstat()
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        if not _is_null_device(st):
             findings.append(
                 {
                     "kind": "repo-owned-hook",
