@@ -455,6 +455,8 @@ properties:
         $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/status
       reason:
         $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/reason
+      not_performed:
+        $ref: https://appsec-advisor/schemas/threat-model.output.schema.yaml#/properties/abuse_case_analysis/properties/not_performed
       cases:
         type: array
         items:
