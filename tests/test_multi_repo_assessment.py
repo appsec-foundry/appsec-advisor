@@ -1,5 +1,7 @@
 """A combined assessment runs every stage through scoped exchanges and publishes one model."""
 
+import copy
+import hashlib
 import json
 import re
 import subprocess
@@ -233,6 +235,75 @@ def test_single_repository_controller_publishes_a_complete_report(tmp_path, monk
     assert "NARRATIVE_PLACEHOLDER" not in report
     assert "ms_renderer" in host.roles
     assert json.loads((out / ".assessment-state.json").read_text())["status"] == "complete"
+
+
+@pytest.mark.parametrize(("label", "count"), [("dispatch", 9), ("telemetry", 10), ("compact", 2)])
+def test_publication_keeps_the_rendered_figure_1a_detail_and_its_stamped_link(tmp_path, label, count):
+    from model.finalize_component_inventory import component_inventory_fingerprint
+    from orchestrator import assessment_workspace as ws
+    from renderers import compose_threat_model as compose
+
+    from tests.test_assessment_sources import fixture
+    from tests.test_figure1b_compose import _write_ci_evidence
+
+    scope = _scope(tmp_path, (label,))
+    names = ws.Namespaces(scope)
+    original, _ = fixture(tmp_path)
+    original["source_inventory"] = scope.inventory()
+    original["components"] = [
+        {**_component(scope, "app.py"), "id": f"component-{i}", "name": f"{label.title()} processor {i}"}
+        for i in range(1, count + 1)
+    ]
+    path = original["components"][0]["paths"][0]
+    original["data_flows"] = [
+        {
+            "id": f"df-{i:03d}",
+            "from": f"component-{i}",
+            "to": f"component-{i + 1}",
+            "label": "Record exchange",
+            "protocol": "gRPC",
+            "data_classification": "Internal",
+            "direction": "request-response",
+            "evidence": [
+                {"repository_id": path["repository_id"], "file": path["path"], "line": 1, "sha256": path["sha256"]}
+            ],
+        }
+        for i in range(1, count)
+    ]
+    original["meta"].update(
+        source_scope_sha256=scope.inventory()["scope_sha256"],
+        component_inventory_fingerprint=component_inventory_fingerprint(original["components"]),
+    )
+    scope.output.mkdir()
+    workspace = tmp_path / "render"
+    workspace.mkdir()
+    view = ws.legacy_model(original, names)
+    (workspace / "threat-model.yaml").write_text(yaml.safe_dump(view))
+    _write_ci_evidence(workspace)
+    ctx = compose.RenderContext(
+        output_dir=workspace,
+        contract={},
+        yaml_data=view,
+        triage={},
+        fragments_dir=workspace / ".fragments",
+        figure_basename="threat-model.figure1.svg",
+    )
+    report = compose._render_figure1_svg(ctx, {}, compose._load_attack_class_taxonomy())
+    assert "Figure 1a" in report and not ctx.warnings
+    (workspace / "threat-model.md").write_text(report)
+    (workspace / "unpublished.svg").write_text("diagnostic only")
+    delivered = controller._assessment_publish(scope, original, names, workspace, {"slug": label}, [])
+    detail = "threat-model.figure1-detail.svg"
+    assert (workspace / detail).is_file() is (count > 8)
+    assert (detail in delivered) is (count > 8)
+    assert (scope.output / detail).is_file() is (count > 8)
+    if count > 8:
+        assert f"]({detail})" in (scope.output / "threat-model.md").read_text()
+        assert delivered[detail] == hashlib.sha256((scope.output / detail).read_bytes()).hexdigest()
+        stamped = f"threat-model-{label}.figure1-detail.svg"
+        assert stamped in delivered and (scope.output / stamped).read_bytes() == (workspace / detail).read_bytes()
+        assert f"]({stamped})" in (scope.output / f"threat-model-{label}.md").read_text()
+    assert "unpublished.svg" not in delivered and not (scope.output / "unpublished.svg").exists()
 
 
 @pytest.mark.parametrize(("names", "depth"), [(("edge", "service"), "standard"), (("west", "east"), "thorough")])
@@ -869,6 +940,133 @@ def test_several_repositories_keep_their_namespace(tmp_path):
         assert (root / "edge" / "app.py").is_file() and (root / "service" / "app.py").is_file()
     card = ws.project_components({"components": [_component(scope, "app.py")]}, names)["components"][0]
     assert card["name"].startswith("Records API [")
+
+
+def _embedded_architecture(scope, path):
+    components, flows = [], []
+    for i, repo in enumerate(scope.repositories, 1):
+        digest = hashlib.sha256(repo.files[path]).hexdigest()
+        evidence = {"repository_id": repo.repository_id, "file": path, "line": 2, "sha256": digest}
+        components.append(
+            {
+                "id": f"component-{i}",
+                "name": f"Record store {i}",
+                "tier": "data",
+                "repository_ids": [repo.repository_id],
+                "paths": [{"repository_id": repo.repository_id, "path": path, "sha256": digest}],
+            }
+        )
+        flows.append(
+            {
+                "id": f"df-{i:03d}",
+                "from": "external",
+                "to": f"component-{i}",
+                "evidence": [evidence],
+            }
+        )
+    return {"components": components}, {"data_flows": flows}
+
+
+@pytest.mark.parametrize(("label", "path"), [("records", "src/store.py"), ("ledger", "persistence/cache.py")])
+def test_assessment_embedded_access_uses_qualified_frozen_sources(tmp_path, label, path):
+    from orchestrator import assessment_workspace as ws
+    from renderers.figure1_security import profile_catalog
+    from validators.validate_assessment_architecture import validate_source
+
+    scope = _scope(tmp_path, (label,), {path: 'import sqlite3\nstore = sqlite3.connect("records.db")\n'})
+    components, flows = _embedded_architecture(scope, path)
+    before = copy.deepcopy((components, flows))
+    # A live checkout edit must not substitute evidence for the captured source.
+    (scope.repositories[0].root / path).write_text("changed = True\n")
+    result = controller._assessment_embedded_access(scope, components, flows)
+    assert (components, flows) == before
+    auth = result["data_flows"][0]["authentication"]
+    assert auth["scheme"] == "none" and auth["evidence"] == flows["data_flows"][0]["evidence"]
+    validate_source(scope, auth["evidence"][0], path_key="file")
+    display = ws.project_document(result, ws.Namespaces(scope))
+    assert profile_catalog(display["data_flows"])[("none",)]["number"] == "0"
+
+
+@pytest.mark.parametrize("kind", ["authored", "unknown", "network", "application", "shared"])
+def test_assessment_embedded_access_preserves_other_authentication(tmp_path, kind):
+    path = "src/store.py"
+    scope = _scope(tmp_path, ("records", "gateway"), {path: 'import sqlite3\nstore = sqlite3.connect("records.db")\n'})
+    components, flows = _embedded_architecture(scope, path)
+    if kind in {"authored", "unknown"}:
+        for flow in flows["data_flows"]:
+            flow["authentication"] = {
+                "scheme": "password" if kind == "authored" else "unknown",
+                "scope": "Producer assessment",
+                "evidence": copy.deepcopy(flow["evidence"]),
+            }
+    else:
+        for component in components["components"]:
+            if kind == "network":
+                component["framework"] = "PostgreSQL"
+            elif kind == "application":
+                component["tier"] = "application"
+            else:
+                component["repository_ids"] = [r.repository_id for r in scope.repositories]
+    assert controller._assessment_embedded_access(scope, components, flows) == flows
+
+
+def test_assessment_embedded_access_cannot_borrow_another_repositories_instantiation(tmp_path):
+    from runtime.multi_repo_scope import admit
+
+    roots = [tmp_path / label for label in ("records", "remote")]
+    for root in roots:
+        checkout(root)
+    (roots[0] / "app.py").write_text('import sqlite3\nstore = sqlite3.connect("records.db")\n')
+    scope = admit([str(root) for root in roots], str(tmp_path / "out"))
+    components, flows = _embedded_architecture(scope, "app.py")
+    # Even a foreign constructor citation with the same file and line cannot
+    # establish an embedded receiver in the other repository.
+    embedded = next(i for i, repo in enumerate(scope.repositories) if repo.root == roots[0])
+    foreign = 1 - embedded
+    flows["data_flows"][foreign]["evidence"] = copy.deepcopy(flows["data_flows"][embedded]["evidence"])
+    result = controller._assessment_embedded_access(scope, components, flows)
+    assert result["data_flows"][embedded]["authentication"]["scheme"] == "none"
+    assert "authentication" not in result["data_flows"][foreign]
+
+
+def test_single_repository_controller_carries_embedded_authentication_into_figure_1(tmp_path, monkeypatch):
+    class EmbeddedHost(FullHost):
+        def invoke(self, role, system, prompt, schema, timeout_s, should_stop):
+            reply = super().invoke(role, system, prompt, schema, timeout_s, should_stop)
+            artifact = reply.payload.get("artifact")
+            if role == "recon_scanner" and artifact:
+                artifact["components"][0].update(tier="data", name="Record store")
+            if role == "architecture_analyst" and artifact and "assets" in artifact:
+                ref = artifact["assets"][0]["component_refs"][0]
+                artifact["data_flows"] = [
+                    {
+                        "id": "df-001",
+                        "from": "external",
+                        "to": ref["component_id"],
+                        "label": "Read records",
+                        "protocol": "in-process",
+                        "provenance": "architecture",
+                        "data_classification": "Confidential",
+                        "direction": "request-response",
+                        "evidence": ref["evidence"],
+                    }
+                ]
+            return reply
+
+    def seed(roots):
+        path = roots[0] / "app.py"
+        first = path.read_text().splitlines()[0]
+        path.write_text(first + '; import sqlite3\nstore = sqlite3.connect("records.db")\n')
+
+    monkeypatch.setenv("APPSEC_SINGLE_REPO_CONTROLLER", "1")
+    monkeypatch.setattr(sys.modules[__name__], "FullHost", EmbeddedHost)
+    outcome, _, out = _assess(tmp_path, monkeypatch, ("records",), ("--no-pdf",), seed=seed)
+    assert outcome["status"] == "complete"
+    model = yaml.safe_load((out / "threat-model.yaml").read_text())
+    auth = model["data_flows"][0]["authentication"]
+    assert auth["scheme"] == "none"
+    assert auth["evidence"][0]["repository_id"] == model["source_inventory"]["repositories"][0]["repository_id"]
+    assert 'data-authentication="0"' in (out / "threat-model.figure1.svg").read_text()
 
 
 def test_assets_get_fragment_ids_in_a_stable_order(tmp_path):

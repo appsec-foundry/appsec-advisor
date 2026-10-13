@@ -685,6 +685,7 @@ SOURCE_TESTS = {
         check_target_specificity finding_state gate_preconditions shared_paths stride_outputs
         multi_repo_builder
         multi_repo_exports
+        multi_repo_assessment
     """
     ),
     "schemas/multi-repo-connection-review.schema.json": _tests("""
@@ -2870,6 +2871,7 @@ SOURCE_TESTS = {
         figure1b_svg
     """),
     "scripts/renderers/compose_threat_model.py": _tests("""
+        multi_repo_assessment
         report_anatomy
         figure1b_compose
         script_layout
@@ -4557,6 +4559,8 @@ SOURCE_TESTS = {
         stride_outputs
     """),
     "scripts/analyzers/embedded_store_access.py": _tests("""
+        multi_repo_assessment
+        multi_repo_controller
         check_target_specificity
         discover_identity_providers
         embedded_store_access

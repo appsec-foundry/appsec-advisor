@@ -8278,6 +8278,39 @@ def _assessment_inventories(scope) -> dict[str, dict]:
     return inventories
 
 
+def _assessment_embedded_access(scope, components: dict, flows: dict) -> dict:
+    """Apply the existing embedded-store handoff on each receiver's frozen sources."""
+    import copy
+
+    from analyzers.embedded_store_access import record_embedded_access
+    from validators.validate_assessment_architecture import _repository_projection, validate_source
+
+    result = copy.deepcopy(flows)
+    for repo in scope.repositories:
+        # A shared component has no unambiguous receiving repository. Keep its
+        # authored authentication rather than letting repository order decide.
+        local = [c for c in components["components"] if c["repository_ids"] == [repo.repository_id]]
+        if not any(c.get("tier") == "data" for c in local):
+            continue
+        projected = _repository_projection(
+            {"components": local, "data_flows": result["data_flows"]}, repo.repository_id
+        )
+        with scope.scanner_snapshot(repo.repository_id) as root:
+            enriched = record_embedded_access(root, projected["components"], projected)
+        for flow, amended in zip(result["data_flows"], enriched["data_flows"], strict=True):
+            if flow.get("authentication") or not amended.get("authentication"):
+                continue
+            authentication = amended["authentication"]
+            for evidence in authentication["evidence"]:
+                source = repo.files.get(evidence["file"])
+                if source is None:
+                    raise ControllerError("Embedded-store authentication cites source outside the admitted repository")
+                evidence.update(repository_id=repo.repository_id, sha256=hashlib.sha256(source).hexdigest())
+                validate_source(scope, evidence, path_key="file")
+            flow["authentication"] = authentication
+    return result
+
+
 def _assessment_architecture(scope, jobs, *, progress):
     """Sequence fresh per-root discovery and the existing architecture handoff.
 
@@ -8401,6 +8434,7 @@ def _assessment_architecture(scope, jobs, *, progress):
     # gates. Local IDs never enter it; numbering is controller-owned.
     for index, flow in enumerate(flows["data_flows"], 1):
         flow["id"] = f"df-{index:03d}"
+    flows = _assessment_embedded_access(scope, components, flows)
     # The single-repository handoff's role-access steps, so both paths model roles alike.
     from model.reconcile_role_access import classify, reconcile
 
@@ -8837,6 +8871,7 @@ _ASSESSMENT_PUBLISHED = (
     "threat-model.md",
     "threat-model.figure1.svg",
     "threat-model.figure1-dark.svg",
+    "threat-model.figure1-detail.svg",
     "threat-model.figure1b.svg",
     "threat-model.figure1b-dark.svg",
     "threat-model.figure2.svg",

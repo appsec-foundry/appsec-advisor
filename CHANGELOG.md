@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A wildcard CORS origin without credentials is no longer reported as a credentialed CORS anti-pattern, and OAuth implicit-flow tokens read from `location.hash` are now detected.
 - Reports handle empty weakness and boundary registers without broken links or missing remediation tables, and remaining link defects are repaired or stopped immediately after rendering.
 - Headless controller assessments exclude prior run products from source evidence while retaining repository inputs stored beside reports.
+- Headless controller reports retain linked architecture detail diagrams and mark evidenced embedded database accesses as having no separate authentication.
 - Controller root causes and remediation priorities now include the findings that abuse-case verification adds.
 - The controller console shows a remaining time only once the first component's threat analysis is finished, and trust-boundary warnings no longer break into its status line.
 - Single-repository controller assessments accept `--abuse-case-file`, and an unreadable or invalid case file stops the run instead of being skipped.
