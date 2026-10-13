@@ -8668,7 +8668,7 @@ def _assessment_stride(
         reviews.append(review)
     scope.verify_unchanged()
     found = sum(len(document["threats"]) for document in documents) + sum(len(rows) for rows in scanned.values())
-    _phase_result(progress, "STRIDE", _count_noun(found, "finding"))
+    _phase_result(progress, "Threat analysis", _count_noun(found, "finding"))
     merged = merge_assessment(
         scope,
         components,
@@ -9001,9 +9001,9 @@ class _AssessmentConsole:
         ("Measuring the boundary source context", "Trust boundaries"),
         ("Reviewing trust crossing", "Trust boundaries"),
         ("Assessing controls", "Controls"),
-        ("Running deterministic source scanners", "STRIDE"),
-        ("Analyzing all STRIDE categories", "STRIDE"),
-        ("Independently verifying evidence", "STRIDE"),
+        ("Running deterministic source scanners", "Threat analysis"),
+        ("Analyzing all STRIDE categories", "Threat analysis"),
+        ("Independently verifying evidence", "Threat analysis"),
         ("Reviewing merge candidates", "Scan synthesis"),
         ("Building the deterministic route inventory", "Scan synthesis"),
         ("Evaluating posture producers", "Scan synthesis"),
@@ -9047,21 +9047,21 @@ class _AssessmentConsole:
     _POSITION = re.compile(r"\s*\((\d+)/(\d+)\)$")
     # Expected share of a run's wall clock per phase, in points. Estimated
     # from the model time per role of a single-repository standard run of
-    # nine components (Juice Shop, 2026-10-13); STRIDE includes its evidence
-    # reviews. Controls and STRIDE scale with the component count, the other
-    # phases stay fixed. A display estimate only: the remaining time follows
-    # the speed the run measures.
+    # nine components (Juice Shop, 2026-10-13); threat analysis includes the
+    # source scanners and evidence reviews. Controls and threat analysis scale
+    # with the component count, the other phases stay fixed. A display
+    # estimate only: the remaining time follows the speed the run measures.
     WEIGHTS = {
         "Reconnaissance": 5,
         "Architecture": 5,
         "Trust boundaries": 6,
         "Controls": 11,
-        "STRIDE": 55,
+        "Threat analysis": 55,
         "Scan synthesis": 4,
         "Abuse cases": 5,
         "Finalization": 9,
     }
-    PER_COMPONENT = {"Controls": 11 / 9, "STRIDE": 55 / 9}
+    PER_COMPONENT = {"Controls": 11 / 9, "Threat analysis": 55 / 9}
     _NAME_WIDTH = max(len(name) for name in WEIGHTS)
     # "n/N " before the phase name, then the event column.
     _PHASE_WIDTH = _NAME_WIDTH + 4

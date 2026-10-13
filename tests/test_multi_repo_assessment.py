@@ -330,19 +330,26 @@ def test_default_console_writes_every_line_in_one_column_grid():
         ("1/8 Reconnaissance", "done", "~10%", "1m", "~14m", "1m38s · 1 repository"),
         ("3/8 Trust boundaries", "start", "~21%", "1m", "~6m", "3 crossings"),
         ("3/8 Trust boundaries", "done", "~33%", "2m", "~5m", "1m00s · 3 crossings"),
-        ("5/8 STRIDE", "start", "~38%", "2m", "~4m", "2 components"),
-        ("5/8 STRIDE", "⚠", "~38%", "3m", "~5m", "1 min: no model activity for 95 s (waiting for the API)"),
-        # A changed subject after the progress interval; the phase already names the role.
-        ("5/8 STRIDE", "·", "~50%", "6m", "~6m", "component 2/2 · Store · model is thinking (~9,000 tokens)"),
+        ("5/8 Threat analysis", "start", "~38%", "2m", "~4m", "2 components"),
+        ("5/8 Threat analysis", "⚠", "~38%", "3m", "~5m", "1 min: no model activity for 95 s (waiting for the API)"),
+        # A changed subject after the progress interval; the role tells STRIDE from the evidence review.
         (
-            "5/8 STRIDE",
+            "5/8 Threat analysis",
+            "·",
+            "~50%",
+            "6m",
+            "~6m",
+            "component 2/2 · Store · STRIDE: model is thinking (~9,000 tokens)",
+        ),
+        (
+            "5/8 Threat analysis",
             "↻",
             "~50%",
             "6m",
             "~6m",
             "STRIDE: answer rejected, asking for a correction: threats/0: missing evidence",
         ),
-        ("5/8 STRIDE", "done", "~63%", "7m", "~4m", "4m30s · 2 components"),
+        ("5/8 Threat analysis", "done", "~63%", "7m", "~4m", "4m30s · 2 components"),
         ("8/8 Finalization", "start", "~82%", "7m", "~1m", ""),
         ("8/8 Finalization", "done", "100%", "7m", "", "30s"),
     ]
@@ -365,7 +372,7 @@ def test_time_stamps_and_durations_read_one_clock():
 
 @pytest.mark.parametrize(("components", "share"), [(2, "~38%"), (12, "~25%")])
 def test_progress_counts_the_planned_components(components, share):
-    """Controls and STRIDE scale with the component count; before it is known there is no share."""
+    """Controls and threat analysis scale with the component count; before it is known there is no share."""
     lines, clock = [], _Clock()
     console = controller._AssessmentConsole(False, lines.append, clock=clock)
     console.step("Analyzing local architecture: api")
@@ -374,7 +381,7 @@ def test_progress_counts_the_planned_components(components, share):
     console.plan_components(components)
     console.step("Running deterministic source scanners")
     phase, event, progress, elapsed, left, _ = _rows(lines)[-1]
-    assert (phase, event, progress, elapsed) == ("5/8 STRIDE", "start", share, "5m")
+    assert (phase, event, progress, elapsed) == ("5/8 Threat analysis", "start", share, "5m")
     # LEFT extrapolates the measured speed: elapsed × (1 − share) / share.
     exact = console.done
     assert left == "~" + controller._elapsed(300 * (1 - exact) / exact)
