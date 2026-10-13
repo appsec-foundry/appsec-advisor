@@ -3322,21 +3322,25 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
     y += 20
     _stride_strip(c, lx + 10, y - 9, {"S": 1, "T": 1, "I": 1})
     c.text(lx + 10, y + 20, "STRIDE-per-element: filled = threats found in that class", size=8.5, anchor="start")
-    y += 30
+    # The category example sits closer to its own caption than to the STRIDE
+    # caption above or the severity key below, so neither caption reads as
+    # belonging to the neighbouring sample.
+    y += 36
     _weak_line(c, lx + 10, y + 1, [("Unsafe Query Construction (SQLi)", 3, 0)], 200)
     c.text(
         lx + 10,
-        y + 28,
+        y + 13,
         "All Critical · High fills to 5 · +N = omitted High categories",
         size=8.5,
         anchor="start",
         fill=MUTED,
     )
-    y += 38
+    y += 32
     xx = lx + 10
     for s, col in SEV_COL.items():
-        c.circle(xx, y - 2, 4.5, fill=col)
-        c.text(xx + 8, y + 1, s, size=9, anchor="start")
+        # Left edge on the legend's symbol column, like every other sample.
+        c.circle(xx + 4.5, y - 2, 4.5, fill=col)
+        c.text(xx + 13, y + 1, s, size=9, anchor="start")
         xx += 70
     c.text(
         lx + 10,

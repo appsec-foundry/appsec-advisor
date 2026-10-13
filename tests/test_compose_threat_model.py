@@ -2836,6 +2836,56 @@ def test_remediation_priorities_keep_a_root_cause_without_any_fix(tmp_path: Path
     assert row.endswith("<td>-</td><td>-</td></tr>")
 
 
+@pytest.mark.parametrize(
+    ("own_severity", "basis"),
+    [("High", "confirmed"), ("Medium", "observed-practice")],
+)
+def test_remediation_priorities_rank_a_cause_by_its_worst_finding(tmp_path: Path, own_severity, basis) -> None:
+    """A weakness's own severity counts confirmed instances only, so the cause
+    owning a Critical practice site can carry a lower heading. It must still
+    lead a design risk that resolves only Medium findings, and that design
+    risk's P3 measure is never offered as "do first"."""
+    out = _prepare_output_dir(tmp_path)
+    data = yaml.safe_load((out / "threat-model.yaml").read_text())
+    threats = data["threats"] + [{"t_id": "T-020", "title": "Unencoded label", "risk": "Medium"}]
+    _with_model(
+        out,
+        threats=threats,
+        weaknesses=[
+            {
+                "id": "W-001",
+                "title": "Output is not encoded",
+                "severity": "High",
+                "severity_basis": "design-risk",
+                "observable_backing": {"practice_evidence": [{"id": "T-020"}]},
+                "structural_recommendation": "encode output by default",
+            },
+            {
+                "id": "W-002",
+                "title": "Keys live in source",
+                "severity": own_severity,
+                "severity_basis": basis,
+                "instances": [{"id": "T-010"}] if basis == "confirmed" else [],
+                "observable_backing": {"practice_evidence": [{"id": "T-003"}]},
+                "structural_recommendation": "load keys from a managed store",
+            },
+        ],
+        mitigations=_fixture_mitigations(
+            out,
+            [{"id": "M-004", "title": "Encode the label", "priority": "P3", "effort": "Low", "threat_ids": ["T-020"]}],
+        ),
+    )
+    rendered, _ = compose.render(CONTRACT, out)
+    rows = _remediation_rows(rendered)
+
+    w2 = next(i for i, r in enumerate(rows) if '<a href="#w-002">W-002</a>' in r)
+    w1 = next(i for i, r in enumerate(rows) if '<a href="#w-001">W-001</a>' in r)
+    assert w2 < w1
+    assert '<a href="#m-002">M-002</a>' in rows[w2]
+    assert ">M-004</a>" not in _remediation_slice(rendered)
+    assert rows[w1].endswith(">-</td><td>-</td><td>-</td></tr>")
+
+
 def test_remediation_priorities_without_root_causes_list_the_top_fixes(tmp_path: Path) -> None:
     """Without a weakness register the table still lists the P1/P2 measures."""
     out = _prepare_output_dir(tmp_path)
@@ -2896,6 +2946,24 @@ def test_top_mitigations_put_declared_business_context_first_within_a_priority(t
     marked = next(row for row in rows if ">M-002</a>" in row)
     assert "<em>Business-critical: Order History</em>" in marked
     assert "Business-critical" not in next(row for row in rows if ">M-001</a>" in row)
+
+
+@pytest.mark.parametrize(("reached", "marked"), [({"T-001", "T-002", "T-003", "T-010"}, False), ({"T-001"}, True)])
+def test_unnamed_business_context_marker_appears_only_when_it_distinguishes(tmp_path: Path, reached, marked) -> None:
+    """The unnamed marker explains why a measure leads its priority. When the
+    declared context reaches every measure it orders nothing, so no row
+    carries it; when it reaches only some, those rows keep it."""
+    out = _prepare_output_dir(tmp_path)
+    data = yaml.safe_load((out / "threat-model.yaml").read_text())
+    for threat in data["threats"]:
+        if threat["t_id"] in reached:
+            threat["business_context_basis"] = ["impact_if_compromised"]
+    _with_model(out, threats=data["threats"], business_context_trace={"status": "applied"})
+
+    rendered, _ = compose.render(CONTRACT, out)
+    row = next(row for row in _remediation_rows(rendered) if ">M-001</a>" in row)
+
+    assert ("<em>Declared business context</em>" in row) is marked
 
 
 # ---------------------------------------------------------------------------

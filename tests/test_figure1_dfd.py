@@ -2466,6 +2466,38 @@ def test_legend_content_has_clearance_below_header():
     assert float(description.get("y")) - float(description.get("font-size")) - float(title.get("y")) >= 4
 
 
+@pytest.mark.parametrize("prefix", ["archive", "shipment"])
+def test_category_example_sits_with_its_own_caption_and_severity_key_aligns(prefix):
+    """The category example is visually closer to its caption than to the
+    STRIDE caption above or the severity key below, and the severity dots start
+    on the symbol column like every other sample."""
+    model = _routing_model(["application", "data"], [(0, 1)], prefix)
+    svg, _ = F._build(model, [], [], detail=False)
+    notation = ET.fromstring(svg).find("{*}g[@data-legend-section='notation']")
+    texts = {t.text: t for t in notation.findall(".//{*}text")}
+
+    def baseline(prefix_text):
+        return float(next(t for s, t in texts.items() if s and s.startswith(prefix_text)).get("y"))
+
+    stride_caption = baseline("STRIDE-per-element")
+    example = texts["Unsafe Query Construction (SQLi)"]
+    example_y, example_top = float(example.get("y")), float(example.get("y")) - float(example.get("font-size"))
+    caption = texts["All Critical · High fills to 5 · +N = omitted High categories"]
+    caption_y = float(caption.get("y"))
+    caption_top = caption_y - float(caption.get("font-size"))
+    dot = next(c for c in notation.findall(".//{*}circle") if c.get("fill") == F.SEV_COL["Critical"])
+    dot_top = float(dot.get("cy")) - float(dot.get("r"))
+
+    own_gap = caption_top - example_y
+    assert own_gap < example_top - stride_caption
+    assert own_gap < dot_top - caption_y
+    assert dot_top > caption_y > example_y
+    example_marker = next(
+        r for r in notation.findall(".//{*}rect") if r.get("width") == "6.0" and float(r.get("y")) == example_y - 7
+    )
+    assert float(dot.get("cx")) - float(dot.get("r")) == float(example_marker.get("x"))
+
+
 @pytest.mark.parametrize("prefix", ["shipment", "measurement"])
 def test_composer_keeps_dfd_for_opposing_routes(tmp_path, prefix):
     from types import SimpleNamespace

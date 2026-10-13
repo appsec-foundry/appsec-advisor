@@ -8030,6 +8030,12 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
         )
 
     enriched = sorted((enrich(m) for m in mitigations), key=_row_sort_key)
+    # When declared context reaches every measure, the unnamed marker orders
+    # nothing and tells the reader nothing; a named asset still explains a row.
+    if enriched and all(r["business_note"] for r in enriched):
+        for r in enriched:
+            if r["business_note"] == _business_relevance.UNNAMED_CONTEXT_NOTE:
+                r["business_note"] = ""
     eligible = [r for r in enriched if r["priority"] in ("P1", "P2")]
 
     top = _ms_top_weaknesses(ctx)
@@ -8069,14 +8075,8 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
     assigned = {r["id"] for rows in groups.values() for r in rows} | {r["id"] for r in orphans}
     shown_groups: list[tuple[dict | None, list[dict[str, Any]]]] = []
     for wid, rows in groups.items():
-        if not rows:
-            # A top root cause without a P1/P2 measure of its own keeps its best
-            # remaining one; with none, its row still names the lasting fix.
-            best = next(
-                (r for r in enriched if r["id"] not in assigned and _cause_of(r, [weakness_by_id[wid]])),
-                None,
-            )
-            rows = [best] if best else []
+        # A top root cause without a P1/P2 measure of its own still names its
+        # lasting fix; a P3/P4 measure is never shown as "do first".
         shown_groups.append((weakness_by_id[wid], _cap(rows)))
     # A model with few or no root causes would leave the table nearly empty:
     # top up with the best P1/P2 measures that have no root cause.
@@ -9971,11 +9971,30 @@ def _ranked_weaknesses(ctx: RenderContext) -> list[dict]:
 
 
 def _ms_top_weaknesses(ctx: RenderContext) -> list[dict]:
-    """The root causes the Management Summary leads with: the Critical/High
-    weaknesses, capped at 6, topped up from the ranked list when fewer than 3
-    reach High so the view is never trivially short."""
-    ranked = _ranked_weaknesses(ctx)
-    top = [w for w in ranked if (w.get("severity") or "").strip().lower() in ("critical", "high")]
+    """The root causes the Management Summary leads with: those whose own
+    severity or worst owned finding is Critical/High, capped at 6, topped up
+    from the ranked list when fewer than 3 qualify so the view is never
+    trivially short.
+
+    A weakness's own severity counts confirmed instances only, so a cause whose
+    Critical finding is a practice site can carry a lower heading than that
+    finding. The order therefore takes the worse of both, then the worst owned
+    finding, so a cause behind a Critical finding never trails one that resolves
+    only Medium findings."""
+    severity_of = {
+        _finding_key(t.get("t_id") or t.get("id")): t.get("effective_severity") or t.get("risk") or t.get("severity")
+        for t in ctx.yaml_data.get("threats") or []
+        if isinstance(t, dict) and (t.get("t_id") or t.get("id"))
+    }
+
+    def finding_rank(w: dict) -> int:
+        return min((_severity_rank(severity_of.get(_finding_key(f))) for f in _weakness_finding_ids(w)), default=99)
+
+    def own_rank(w: dict) -> int:
+        return _severity_rank(w.get("severity"))
+
+    ranked = sorted(_ranked_weaknesses(ctx), key=lambda w: (min(own_rank(w), finding_rank(w)), finding_rank(w)))
+    top = [w for w in ranked if min(own_rank(w), finding_rank(w)) <= 1]
     if len(top) < 3:
         top = ranked[: min(5, len(ranked))]
     return top[:6]
