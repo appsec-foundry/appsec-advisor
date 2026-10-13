@@ -1257,11 +1257,69 @@ def _merge_same_id_components(components: list) -> list:
     return out
 
 
+def _engine_sources(repo_root: Path, needle: str, directories: tuple[str, ...]):
+    """Yield ``(path, source)`` of non-test source files that mention ``needle``, comments removed."""
+    for directory in directories:
+        for rel in _grep_paths(repo_root, directory, needle):
+            path = repo_root / rel
+            if not path.resolve().is_relative_to(repo_root.resolve()) or re.search(
+                r"(?:^|/)(?:tests?|__tests__|node_modules)/|\.(?:test|spec)\.", rel
+            ):
+                continue
+            try:
+                if path.stat().st_size > 512_000:
+                    continue
+                source = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            yield rel, re.sub(r"/\*[\s\S]*?\*/|^[ \t]*//[^\n]*", "", source, flags=re.M)
+
+
+def _imported_binding(source: str, package: str) -> str | None:
+    imported = re.search(
+        r"(?:import\s+(?:\*\s+as\s+)?|(?:const|let|var)\s+)([A-Za-z_$][\w$]*)\s*(?:from\s*|=\s*require\(\s*)['\"]"
+        + re.escape(package)
+        + r"['\"]",
+        source,
+    )
+    return imported[1] if imported else None
+
+
+# Embedded SQL engines and the ORM settings that open them. The engine package
+# must be a dependency; a constructor or ORM option selecting it must appear in
+# application source. A model declaration alone never establishes the store.
+_SQL_ENGINES = {"sqlite": ("sqlite3", "better-sqlite3")}
+_SQL_ORM_SELECTORS = (
+    (r"\bnew\s+Sequelize\s*\(", r"\bdialect\s*:\s*['\"]{engine}['\"]"),
+    (r"\bnew\s+DataSource\s*\(|\bcreateConnection\s*\(", r"\btype\s*:\s*['\"](?:{engine}|{packages})['\"]"),
+    (r"\bknex\s*\(", r"\bclient\s*:\s*['\"](?:{packages})['\"]"),
+)
+_STORE_DIRECTORIES = ("data", "src", "lib", "server", "app")
+_SQL_STORE_DIRECTORIES = (*_STORE_DIRECTORIES, "models", "db", "database", "config")
+
+
+def _store_card(engine: str, description: str, paths: list[str]) -> dict:
+    return {
+        "id": re.sub(r"[^a-z0-9]+", "-", engine).strip("-") + "-store",
+        "name": f"{'SQLite' if engine == 'sqlite' else engine} Embedded Store",
+        "description": description,
+        "paths": sorted(set(paths)),
+        "tier": "data",
+        "framework": engine,
+        "complexity": "simple",
+        "deployment_zones": [],
+        "handles_sensitive_data": False,
+        "origin": "reconciliation",
+    }
+
+
 def _detect_embedded_stores(repo_root: Path) -> list[dict]:
     """Require a runtime dependency, source import, and engine constructor.
 
     An installed SDK, comment, test, or model declaration is insufficient.
     Keep each engine distinct; an existing SQL store does not cover a document store.
+    An embedded SQL engine may be opened through an ORM; the ORM constructor
+    must then select that engine.
     """
     deps = _package_deps(repo_root)
     stores = []
@@ -1275,54 +1333,50 @@ def _detect_embedded_stores(repo_root: Path) -> list[dict]:
         if engine not in deps:
             continue
         paths = []
-        for directory in ("data", "src", "lib", "server", "app"):
-            for rel in _grep_paths(repo_root, directory, engine):
-                path = repo_root / rel
-                if not path.resolve().is_relative_to(repo_root.resolve()) or re.search(
-                    r"(?:^|/)(?:tests?|__tests__|node_modules)/|\.(?:test|spec)\.", rel
-                ):
-                    continue
-                try:
-                    if path.stat().st_size > 512_000:
-                        continue
-                    source = path.read_text(encoding="utf-8", errors="replace")
-                except OSError:
-                    continue
-                source = re.sub(r"/\*[\s\S]*?\*/|^[ \t]*//[^\n]*", "", source, flags=re.M)
-                imported = re.search(
-                    r"(?:import\s+(?:\*\s+as\s+)?|(?:const|let|var)\s+)([A-Za-z_$][\w$]*)\s*(?:from\s*|=\s*require\(\s*)['\"]"
-                    + re.escape(engine)
-                    + r"['\"]",
-                    source,
-                )
-                if imported and re.search(
-                    r"\bnew\s+" + re.escape(imported[1]) + (r"\." + constructor if constructor else "") + r"\s*\(",
-                    source,
-                ):
-                    paths.append(rel)
+        for rel, source in _engine_sources(repo_root, engine, _STORE_DIRECTORIES):
+            binding = _imported_binding(source, engine)
+            if binding and re.search(
+                r"\bnew\s+" + re.escape(binding) + (r"\." + constructor if constructor else "") + r"\s*\(",
+                source,
+            ):
+                paths.append(rel)
         if paths:
             stores.append(
-                {
-                    "id": re.sub(r"[^a-z0-9]+", "-", engine).strip("-") + "-store",
-                    "name": f"{engine} Embedded Store",
-                    "description": f"Embedded {engine} persistence instantiated in application code.",
-                    "paths": sorted(set(paths)),
-                    "tier": "data",
-                    "framework": engine,
-                    "complexity": "simple",
-                    "deployment_zones": [],
-                    "handles_sensitive_data": False,
-                    "origin": "reconciliation",
-                }
+                _store_card(engine, f"Embedded {engine} persistence instantiated in application code.", paths)
             )
+    for engine, packages in _SQL_ENGINES.items():
+        present = [package for package in packages if package in deps]
+        if not present:
+            continue
+        alternatives = "|".join(re.escape(package) for package in present)
+        paths = []
+        for rel, source in _engine_sources(repo_root, engine, _SQL_STORE_DIRECTORIES):
+            direct = any(
+                (binding := _imported_binding(source, package))
+                and re.search(r"\bnew\s+" + re.escape(binding) + r"(?:\.Database)?\s*\(", source)
+                for package in present
+            )
+            via_orm = any(
+                re.search(opener, source)
+                and re.search(selector.format(engine=re.escape(engine), packages=alternatives), source)
+                for opener, selector in _SQL_ORM_SELECTORS
+            )
+            if direct or via_orm:
+                paths.append(rel)
+        if paths:
+            stores.append(_store_card(engine, f"Embedded {engine} database opened in application code.", paths))
     return stores
 
 
-def _reconcile_orm_ownership(components: list, repo_root: Path) -> list[dict]:
-    """Give executable ORM source an application owner without turning it into a database engine."""
+def _reconcile_orm_ownership(components: list, repo_root: Path, *, whole_repository: bool = False) -> list[dict]:
+    """Give executable ORM source an application owner without turning it into a database engine.
+
+    ``whole_repository`` finds ORM code even when no data component claims it;
+    only a caller whose ``repo_root`` holds exactly the admitted files may set it.
+    """
     from model.reclassify_components import _glob_to_regex, orm_source_files
 
-    source_files = orm_source_files(components, repo_root)
+    source_files = orm_source_files(components, repo_root, whole_repository=whole_repository)
     owners = [_glob_to_regex(p) for c in components if c.get("tier") == "application" for p in c.get("paths") or []]
     missing = {path: framework for path, framework in source_files.items() if not any(p.search(path) for p in owners)}
     added = []
@@ -1362,7 +1416,7 @@ def _reconcile_orm_ownership(components: list, repo_root: Path) -> list[dict]:
     return added
 
 
-def reconcile_inventory(components: list, repo_root: Path) -> tuple:
+def reconcile_inventory(components: list, repo_root: Path, *, whole_repository: bool = False) -> tuple:
     """Inject security-relevant deployable units that hard repo evidence shows
     exist but Phase-3 did not enumerate as their own role-bearing component.
 
@@ -1370,6 +1424,7 @@ def reconcile_inventory(components: list, repo_root: Path) -> tuple:
     carried by an enumerated (or already-injected) component is never added
     twice, and same-``id`` duplicates already in the inventory are collapsed into
     one. Injected components carry ``origin: "reconciliation"`` for audit.
+    ``whole_repository`` is for callers whose ``repo_root`` is an admitted snapshot.
     """
     existing = _merge_same_id_components([c for c in components if isinstance(c, dict)])
     augmented = list(existing)
@@ -1396,7 +1451,7 @@ def reconcile_inventory(components: list, repo_root: Path) -> tuple:
             if not any(c.get("id") == candidate["id"] for c in augmented):
                 augmented.append(candidate)
                 injected.append(candidate)
-    injected.extend(_reconcile_orm_ownership(augmented, repo_root))
+    injected.extend(_reconcile_orm_ownership(augmented, repo_root, whole_repository=whole_repository))
     return augmented, injected
 
 

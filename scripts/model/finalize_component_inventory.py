@@ -249,7 +249,9 @@ def annotate_workload_placement(components: list[dict[str, Any]], output_dir: Pa
             component["deployment_evidence"] = evidence[:MAX_DEPLOYMENT_EVIDENCE]
 
 
-def finalize(repo_root: Path, output_dir: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+def finalize(
+    repo_root: Path, output_dir: Path, *, whole_repository: bool = False
+) -> tuple[dict[str, Any], dict[str, Any]]:
     repo_root = repo_root.resolve()
     output_dir = output_dir.resolve()
     component_path = output_dir / ".components.json"
@@ -257,7 +259,7 @@ def finalize(repo_root: Path, output_dir: Path) -> tuple[dict[str, Any], dict[st
     _validate(document, COMPONENT_SCHEMA)
     original = document["components"]
     original_ids = [row.get("id") for row in original if isinstance(row, dict)]
-    finalized, injected = reconcile_inventory(original, repo_root)
+    finalized, injected = reconcile_inventory(original, repo_root, whole_repository=whole_repository)
     annotate_languages(finalized, repo_root)
     refine_model_capabilities(finalized, repo_root)
     annotate_workload_placement(finalized, output_dir)
@@ -349,7 +351,9 @@ def finalize_assessment(scope, discoveries: list[dict]) -> tuple[dict, dict]:
                 output / ".components.json",
                 {"schema_version": 1, "components": by_repo[repo.repository_id]["components"]},
             )
-            local, receipt = finalize(root, output)
+            # The snapshot holds exactly the admitted files, so ORM code is
+            # found even when discovery modelled no data tier.
+            local, receipt = finalize(root, output, whole_repository=True)
         collapsed += receipt["collapsed_duplicate_count"]
         injected_ids.extend(_id("component", repo.repository_id, cid) for cid in receipt["injected_component_ids"])
         hashes = {p: hashlib.sha256(data).hexdigest() for p, data in repo.files.items()}

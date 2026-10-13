@@ -576,6 +576,14 @@ def test_missing_late_registration_verdict_preserves_recon_signal_state(tmp_path
     }
 
 
+@pytest.mark.parametrize("verdict", ["true", "false"])
+def test_late_registration_verdict_keeps_matching_ungated_without_recon_signals(tmp_path: Path, verdict: str):
+    # No recon sidecar means every signal is unknown; a registration verdict
+    # must not turn that into "every other required signal is absent".
+    (tmp_path / "threat-model.yaml").write_text(f"meta:\n  open_user_registration: {verdict}\n", encoding="utf-8")
+    assert mac._effective_registration_signal(None, tmp_path) is None
+
+
 def test_malformed_late_registration_meta_preserves_recon_signal_state(tmp_path: Path):
     (tmp_path / "threat-model.yaml").write_text("meta: malformed\n", encoding="utf-8")
 
