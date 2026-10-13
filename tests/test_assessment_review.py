@@ -43,7 +43,7 @@ class Jobs:
         self.respond = respond
         self.calls = []
 
-    def execute(self, *, role, selector, instructions, context, schema, allowed_sources, validate):
+    def execute(self, *, role, selector, instructions, context, schema, allowed_sources, validate, on_failure=None):
         self.calls.append({"role": role, "selector": selector, "allowed": allowed_sources, "context": context})
         artifact, ranges = self.respond(role, context)
         if not Draft202012Validator(schema).is_valid(artifact):

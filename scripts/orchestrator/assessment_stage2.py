@@ -291,7 +291,15 @@ def _management_summary(jobs, workspace: Path, override) -> str:
         schema=ms_schema(),
         allowed_sources=frozenset(),
         validate=validate,
+        on_failure=lambda reason: None,
     )
+    if artifact is None:
+        # OR-39: the deterministic verdict floor stands in; the optional MS
+        # fragments keep their deterministic state.
+        _run_gate("renderers/pregenerate_fragments.py", str(workspace), "--only", "ms-verdict.json")
+        if not (workspace / ".fragments" / MS_FRAGMENTS["verdict"][1]).is_file():
+            raise ExchangeError("Management Summary has neither an authored nor a deterministic verdict")
+        return "stage2: management summary unavailable; deterministic verdict kept"
     texts = _check_ms(workspace, artifact)
     names = {key: name for key, (_kind, name) in MS_FRAGMENTS.items()}
     remove = tuple(names[key] for key in MS_FRAGMENTS if artifact.get(key) is None)

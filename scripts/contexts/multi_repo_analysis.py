@@ -14,7 +14,7 @@ from pathlib import Path
 
 import yaml
 from jsonschema import Draft202012Validator
-from runtime.assessment_host import ExchangeError
+from runtime.assessment_host import ExchangeError, Rejection
 from shared.assessment_sources import source_key, source_rows
 from validators.validate_assessment_architecture import validate_source
 
@@ -265,6 +265,34 @@ def _reviewed_call_flows(repository_id, artifact, connections) -> list[str]:
     )
 
 
+def local_architecture_normalizer(local_components: list[dict]):
+    """Remove each `interaction` flag the local flow invariants can never accept.
+
+    An interaction is a human legitimate role using a client component with no
+    server authentication claim (validators.validate_fragment). A flag on any
+    other flow says nothing the flow's endpoints and authentication do not, but
+    its consumers skip the flow's route and authentication; without it the flow
+    stays an ordinary, analyzed access. A repository without a client
+    component can carry no interaction at all, which the model cannot see
+    from a rejection alone.
+    """
+    from validators.validate_fragment import interaction_shape_holds, interaction_targets_client
+
+    tiers = {row["id"]: row.get("tier") for row in local_components}
+
+    def normalize(artifact):
+        kinds = {row["id"]: row.get("kind") for row in artifact["external_entities"]}
+        for flow in artifact["data_flows"]:
+            if "interaction" in flow and not (
+                flow["interaction"] and interaction_shape_holds(flow, kinds) and interaction_targets_client(flow, tiers)
+            ):
+                del flow["interaction"]
+        return artifact
+
+    normalize.version = "local-architecture-interaction-1"
+    return normalize
+
+
 def validate_local_architecture(scope, repository_id, components, receipt, artifact, ranges, connections=()):
     if not Draft202012Validator(contract("multi-repo-architecture.schema.json")).is_valid(artifact):
         raise ExchangeError("Local architecture violates its versioned contract")
@@ -312,7 +340,7 @@ def validate_local_architecture(scope, repository_id, components, receipt, artif
         repository_ids={repository_id},
     )
     if errors:
-        raise ExchangeError("Local architecture violates repository evidence rules: " + "; ".join(errors[:3]))
+        raise Rejection("Local architecture violates repository evidence rules", errors)
     # The combined flow gate enforces these invariants too, but no job can
     # still correct its result there; checking them here lets the analyst
     # repair it in the exchange.
@@ -321,7 +349,7 @@ def validate_local_architecture(scope, repository_id, components, receipt, artif
         {"components": local},
     )
     if errors:
-        raise ExchangeError("Local architecture violates flow invariants: " + "; ".join(errors[:3]))
+        raise Rejection("Local architecture violates flow invariants", errors)
 
 
 def _comparison(value):
@@ -394,9 +422,9 @@ def validate_stride(
                 raise ExchangeError("Cross-repository finding trace has no reviewed directional connection")
     projection = _comparison(artifact)
     projection.pop("schema_version", None)
-    ok, _ = legacy_validate(projection)
+    ok, errors = legacy_validate(projection)
     if not ok:
-        raise ExchangeError("STRIDE job violates existing evidence, trace or remediation rules")
+        raise Rejection("STRIDE job violates existing evidence, trace or remediation rules", errors)
     from contexts.prepare_trust_boundary_context import validate_finding_boundary_refs
 
     adjacent = {
@@ -416,14 +444,19 @@ def validate_stride(
                 known_component_ids={row["id"] for row in neighborhood},
             )
             if diagnostics or len(refs) != len(finding["boundary_refs"]):
-                raise ExchangeError("Finding refers to a boundary absent from its validated neighborhood")
+                raise Rejection(
+                    f"Finding {finding.get('id')} refers to a boundary absent from its validated neighborhood "
+                    f"(boundaries adjacent to this component: {', '.join(sorted(adjacent)) or 'none'})",
+                    diagnostics,
+                )
     evidence = list(source_rows(artifact))
     for repo in scope.repositories:
         own_evidence = [row for row in evidence if row["repository_id"] == repo.repository_id]
         if own_evidence:
             with scope.scanner_snapshot(repo.repository_id) as root:
-                if repository_evidence_errors(own_evidence, root, require_line=True, require_code=True):
-                    raise ExchangeError("STRIDE evidence does not cite an executable implementation")
+                errors = repository_evidence_errors(own_evidence, root, require_line=True, require_code=True)
+                if errors:
+                    raise Rejection("STRIDE evidence does not cite an executable implementation", errors)
 
 
 def evidence_batches(findings, *, max_windows, max_findings, window_lines):
@@ -505,4 +538,4 @@ def validate_boundary_candidates(scope, assessment, artifact, ranges, allowed_so
         "trust-boundary-candidates", _comparison(artifact), context=_comparison(assessment)
     )
     if errors:
-        raise ExchangeError("Boundary candidates violate existing coverage and crossing invariants")
+        raise Rejection("Boundary candidates violate existing coverage and crossing invariants", errors)

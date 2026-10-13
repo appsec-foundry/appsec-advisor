@@ -545,6 +545,60 @@ def test_local_architecture_returns_every_combined_flow_invariant_to_its_author(
         )
 
 
+@pytest.mark.parametrize(
+    ("scheme", "entity_kind", "with_client"),
+    [
+        # The run that exposed it: a password login and a cookie request marked as interactions, no client at all.
+        ("password", "legitimate-role", False),
+        ("cookie", "legitimate-role", False),
+        # The same flag on an unauthenticated server request, or from a non-human entity, beside a real client.
+        (None, "legitimate-role", True),
+        (None, "external-service", True),
+    ],
+)
+def test_an_impossible_interaction_flag_is_removed_not_returned_for_correction(
+    tmp_path, scheme, entity_kind, with_client
+):
+    """The controller knows every fact that decides an interaction; a wrong flag never costs a correction turn."""
+    scope, components, evidence, ranges, identity = sources(tmp_path)
+    local = [dict(components[0], id="component-api")]
+    artifact = _role_architecture(evidence[0], identity, [scheme or "none"], via_client=False)
+    if with_client:
+        local.append(dict(components[0], id="component-ui", name="Browser client", tier="client"))
+        artifact["data_flows"].append(
+            dict(artifact["data_flows"][0], id="df-009", to="component-ui", interaction=True, authentication=None)
+        )
+        artifact["data_flows"][-1].pop("authentication")
+    artifact["external_entities"][0]["kind"] = entity_kind
+    artifact["data_flows"][0]["interaction"] = True
+    if scheme is None:
+        artifact["data_flows"][0].pop("authentication", None)
+    validate = (
+        lambda value: stage.validate_local_architecture(  # noqa: E731
+            scope,
+            evidence[0]["repository_id"],
+            dict(components=local + components[1:], source_scope_sha256=identity["source_scope_sha256"]),
+            dict(component_inventory_fingerprint=FP),
+            value,
+            ranges[:1],
+        )
+    )
+    if entity_kind == "legitimate-role":
+        with pytest.raises(ExchangeError, match="interaction"):
+            validate(copy.deepcopy(artifact))
+    normalize = stage.local_architecture_normalizer(local)
+    fixed = normalize(copy.deepcopy(artifact))
+    assert "interaction" not in fixed["data_flows"][0]
+    # The flow stays an analyzed access with its own authentication claim.
+    assert fixed["data_flows"][0].get("authentication") == artifact["data_flows"][0].get("authentication")
+    assert normalize(copy.deepcopy(fixed)) == fixed
+    if entity_kind == "legitimate-role":
+        validate(fixed)
+    if with_client:
+        # A human-to-client interaction is kept; a non-human entity's is not.
+        assert ("interaction" in fixed["data_flows"][-1]) is (entity_kind == "legitimate-role")
+
+
 @pytest.mark.parametrize(("jobs", "used", "expected"), [(5, 0, 100), (2, 100, 200), (3, 500, 0)])
 def test_each_job_gets_its_share_of_a_combined_list_limit(jobs, used, expected):
     """Concatenated job lists can no longer exceed the combined contract that bounds them."""

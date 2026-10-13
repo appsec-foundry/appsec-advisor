@@ -8,6 +8,7 @@ boundary; this module validates proposals and services reads outside it.
 
 from __future__ import annotations
 
+import copy
 import json
 import math
 from dataclasses import dataclass
@@ -47,6 +48,27 @@ _READ = {
 
 class ExchangeError(ValueError):
     """Invalid or incomplete model exchange; no artifact can be published."""
+
+
+class ModelAnswerFailure(ExchangeError):
+    """The model returned no acceptable result within the exchange's limits.
+
+    Unlike a scope, receipt or contract breach of the host itself, this is the
+    one exchange failure a job may replace (`AssessmentJobs.exchange`).
+    """
+
+
+class Rejection(ExchangeError):
+    """A review rejection that names every violation, so a correction turn can act on each.
+
+    Reviews raise this instead of a summary alone: a reason without its
+    violations leaves a stateless model nothing to correct, and the exchange
+    spends its correction turns on the same defect.
+    """
+
+    def __init__(self, summary: str, errors):
+        self.errors = [str(error) for error in errors]
+        super().__init__(summary + (": " + "; ".join(self.errors) if self.errors else ""))
 
 
 def response_schema(artifact_schema: dict) -> dict:
@@ -160,9 +182,14 @@ def run_exchange(
     timeout_s: int,
     should_stop,
     review=None,
+    normalize=None,
 ) -> ExchangeResult:
     """Resolve model read proposals only against caller-admitted source bytes.
 
+    ``normalize(artifact)`` returns a contract-valid complete result with every
+    field the controller can derive set or removed; review, correction and the
+    returned artifact all see that result, so the model is never asked to
+    repair what the controller already knows. It must be idempotent.
     ``review(artifact, slices)`` applies the caller's deterministic acceptance
     checks to a complete result. A rejection is returned to the model as a
     bounded controller-authored reason, at most ``MAX_CORRECTIONS`` times; the
@@ -245,17 +272,20 @@ def run_exchange(
         elif cost is not None:
             cost += reply.usd
         if reply.payload["action"] == "complete":
+            artifact = reply.payload["artifact"]
             try:
                 if contract_error is not None:
                     raise ExchangeError("Result violates its contract at " + contract_error)
+                if normalize is not None:
+                    artifact = normalize(copy.deepcopy(artifact))
                 if review is not None:
-                    review(reply.payload["artifact"], tuple(slices))
+                    review(artifact, tuple(slices))
             except ValueError as exc:
                 corrections += 1
                 reasons.append(str(exc))
                 if corrections > MAX_CORRECTIONS or number == MAX_EXCHANGES:
                     repeated = len(set(reasons)) == 1 and len(reasons) > 1
-                    raise ExchangeError(
+                    raise ModelAnswerFailure(
                         f"Result rejected after {corrections} attempt(s)"
                         + (", each for the same reason" if repeated else "")
                         + f": {exc}"
@@ -268,10 +298,10 @@ def run_exchange(
                     "reason": str(exc)[:MAX_FEEDBACK_CHARS],
                     "instruction": "The controller rejected your previous complete result, included as `result`, "
                     "for this reason. Correct that result and return it complete, or read more source first.",
-                    "result": reply.payload["artifact"],
+                    "result": artifact,
                 }
                 continue
-            return ExchangeResult(reply.payload["artifact"], tuple(slices), number, cost)
+            return ExchangeResult(artifact, tuple(slices), number, cost)
         fresh = 0
         range_feedback = None
         for request in reply.payload["reads"]:
@@ -326,4 +356,4 @@ def run_exchange(
                 "reason": "Every requested slice is already in source_slices.",
                 "instruction": "Use the supplied source_slices: return a complete result, or read other lines.",
             }
-    raise ExchangeError("Assessment exchange limit exceeded without a final artifact")
+    raise ModelAnswerFailure("Assessment exchange limit exceeded without a final artifact")

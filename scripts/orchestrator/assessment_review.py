@@ -214,7 +214,11 @@ def _verify_candidate(jobs, names, workspace: Path, candidate: str, *, instructi
         schema=_verdict_schema(candidate, steps),
         allowed_sources=allowed,
         validate=validate,
+        # Without a verdict file the merge records the case as not checked (OR-39).
+        on_failure=lambda reason: None,
     )
+    if artifact is None:
+        return
     verdict = {"abuse_case_id": candidate, "step_verdicts": []}
     for row in artifact["step_verdicts"]:
         evidence = row["evidence"]
@@ -251,6 +255,8 @@ def _derive(jobs, workspace: Path, *, instructions) -> list[str]:
         schema=schema,
         allowed_sources=frozenset(),
         validate=validate,
+        # A failed derivation proposes no case; the catalog cases still run (OR-39).
+        on_failure=lambda reason: {"cases": []},
     )
     write_json(workspace / derive_abuse_cases.OUTPUT_FILE, artifact)
     result = derive_abuse_cases.admit(workspace)
@@ -414,6 +420,8 @@ def _review_job(jobs, workspace: Path, job: dict, allowed: frozenset, *, instruc
             schema=schema,
             allowed_sources=allowed,
             validate=validate,
+            # Packets without a proposal stay unreviewed, which OR-33 reports (OR-39).
+            on_failure=lambda reason: {"proposals": {}},
         )
         proposals.update(artifact["proposals"])
     return {"schema_version": 1, "job_id": job["job_id"], "proposals": proposals}

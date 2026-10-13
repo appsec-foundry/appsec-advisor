@@ -81,7 +81,7 @@ class FakeJobs:
         self.replies = replies
         self.calls = []
 
-    def execute(self, *, role, selector, instructions, context, schema, allowed_sources, validate):
+    def execute(self, *, role, selector, instructions, context, schema, allowed_sources, validate, on_failure=None):
         self.calls.append({"role": role, "selector": selector, "allowed_sources": allowed_sources, "context": context})
         assert isinstance(instructions, str) and instructions
         json.dumps(context)

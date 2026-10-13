@@ -304,3 +304,71 @@ def test_a_cancelled_call_is_never_retried(tmp_path):
     with pytest.raises(HostCancelled, match="job cancelled"):
         jobs.execute(**kwargs)
     assert host.calls == 1
+
+
+def test_the_receipt_records_the_normalized_artifact_and_names_its_normalizer(tmp_path):
+    def normalize(artifact):
+        artifact["result"] = artifact["result"].upper()
+        return artifact
+
+    normalize.version = "upper-1"
+    reviewed = []
+    jobs, host, kwargs, _ = setup(tmp_path, validate=lambda a, r: reviewed.append(a["result"]))
+    assert jobs.execute(**kwargs, normalize=normalize) == {"result": "ACCEPTED"}
+    # Resumed from the receipt: the stored result is the normalized one and passes unchanged.
+    assert jobs.execute(**kwargs, normalize=normalize) == {"result": "ACCEPTED"}
+    assert host.calls == 1 and set(reviewed) == {"ACCEPTED"}
+    # A changed normalizer is a changed request, never a silent reuse.
+    normalize.version = "upper-2"
+    with pytest.raises(ExchangeError, match="stale"):
+        jobs.execute(**kwargs, normalize=normalize)
+
+
+def test_an_optional_job_the_model_cannot_answer_is_replaced_without_a_receipt(tmp_path):
+    """OR-39: the replacement stands in, the gap is named, and a later run retries the job."""
+
+    def reject(artifact, ranges):
+        raise ValueError("never acceptable")
+
+    replies = [{"action": "complete", "reads": [], "artifact": {"result": "draft"}}] * 3
+    jobs, host, kwargs, _ = setup(tmp_path, replies=replies, validate=reject)
+    result = jobs.execute(**kwargs, on_failure=lambda reason: {"result": "replacement"})
+    assert result == {"result": "replacement"} and host.calls == 3
+    assert [gap["selector"] for gap in jobs.gaps] == ["one"] and "never acceptable" in jobs.gaps[0]["reason"]
+    assert not list(jobs.directory.glob("*.receipt.json"))
+
+
+def test_a_required_job_still_stops_on_the_same_failure(tmp_path):
+    def reject(artifact, ranges):
+        raise ValueError("never acceptable")
+
+    replies = [{"action": "complete", "reads": [], "artifact": {"result": "draft"}}] * 3
+    jobs, _, kwargs, _ = setup(tmp_path, replies=replies, validate=reject)
+    with pytest.raises(ExchangeError, match="rejected after"):
+        jobs.execute(**kwargs)
+    assert jobs.gaps == []
+
+
+@pytest.mark.parametrize("breach", ["scope", "unsettled-cost"])
+def test_a_trust_or_accounting_failure_is_never_replaced(tmp_path, breach):
+    from runtime.analyst_host import TransportError
+
+    if breach == "scope":
+        replies = [
+            {
+                "action": "read",
+                "artifact": None,
+                "reads": [{"repository_id": "repo-ffffffffffffffff", "path": "x.py", "start_line": 1, "end_line": 1}],
+            }
+        ]
+        jobs, _, kwargs, _ = setup(tmp_path, replies=replies)
+    else:
+        jobs, host, kwargs, _ = setup(tmp_path)
+
+        def unsettled(*args):
+            raise TransportError("host call failed: no_result", reason="no_result", usd=None)
+
+        host.invoke = unsettled
+    with pytest.raises((ExchangeError, TransportError)):
+        jobs.execute(**kwargs, on_failure=lambda reason: {"result": "replacement"})
+    assert jobs.gaps == []

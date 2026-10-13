@@ -11,6 +11,7 @@ import copy
 import hashlib
 import json
 import math
+import re
 import stat
 import time
 from pathlib import Path
@@ -18,8 +19,8 @@ from pathlib import Path
 from jsonschema import Draft202012Validator
 from shared._atomic_io import atomic_write_json
 
-from runtime.analyst_host import HostTimeout
-from runtime.assessment_host import MAX_EXCHANGES, ExchangeError, ExchangeResult, run_exchange
+from runtime.analyst_host import HostTimeout, TransportError
+from runtime.assessment_host import MAX_EXCHANGES, ExchangeError, ExchangeResult, ModelAnswerFailure, run_exchange
 from runtime.multi_repo_discovery import BudgetedHost, DiscoveryBudget
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -107,6 +108,8 @@ class AssessmentJobs:
         # Wall time and calls per role of the jobs this session ran; a reused
         # job counts as reused, since its time was spent in an earlier run.
         self.timing: dict[str, dict] = {}
+        # Optional jobs replaced after a model failure, in run order (OR-39).
+        self.gaps: list[dict] = []
 
     def _record(self, role: str, *, seconds: float | None = None, calls: int = 0) -> None:
         row = self.timing.setdefault(role, {"jobs": 0, "reused": 0, "calls": 0, "seconds": 0.0})
@@ -121,8 +124,34 @@ class AssessmentJobs:
         """Return the accepted artifact of one controller-selected job."""
         return self.exchange(**kwargs).artifact
 
-    def exchange(self, *, role, selector, instructions, context, schema, allowed_sources, validate):
-        """Execute or resume one job, including its accepted retrieval receipt."""
+    def exchange(
+        self,
+        *,
+        role,
+        selector,
+        instructions,
+        context,
+        schema,
+        allowed_sources,
+        validate,
+        normalize=None,
+        on_failure=None,
+    ):
+        """Execute or resume one job, including its accepted retrieval receipt.
+
+        ``normalize`` derives controller-known fields of each complete result
+        before review (see ``run_exchange``); the receipt records the
+        normalized artifact. Its identity joins the request, so a changed
+        normalizer redoes the job instead of failing a resumed one.
+
+        ``on_failure(reason)`` makes the job optional (decision OR-39): when
+        the model returns no acceptable result, a call times out after its
+        retries, or the host fails with its cost settled, the job returns that
+        deterministic replacement instead of stopping the run, records the gap
+        in ``gaps`` and writes no receipt, so a later run retries it. A scope or
+        receipt breach, the budget or time limit, a cancellation and unsettled
+        accounting still stop the run.
+        """
         if self.should_stop():
             raise ExchangeError("Assessment cancelled")
         self.budget.remaining_seconds()
@@ -135,6 +164,8 @@ class AssessmentJobs:
             "context": context,
             "allowed_sources": sorted(allowed_sources),
         }
+        if normalize is not None:
+            request["normalizer"] = getattr(normalize, "version", None) or normalize.__qualname__
         request_sha256 = digest(request)
         job_id = "job-" + digest({"role": role, "selector": selector})[:24]
         artifact_path = self.directory / f"{job_id}.json"
@@ -214,10 +245,19 @@ class AssessmentJobs:
                 timeout_s=self.budget.remaining_seconds(),
                 should_stop=self.should_stop,
                 review=review,
+                normalize=normalize,
             )
-        except HostTimeout as exc:
-            # Name the job, so a hang that survived its retry can be traced.
-            raise HostTimeout(f"{selector}: {exc}") from None
+        except (ModelAnswerFailure, HostTimeout, TransportError) as exc:
+            replaceable = isinstance(exc, (ModelAnswerFailure, HostTimeout)) or not self.budget.failed
+            if on_failure is None or not replaceable or self.should_stop():
+                if isinstance(exc, HostTimeout):
+                    # Name the job, so a hang that survived its retry can be traced.
+                    raise HostTimeout(f"{selector}: {exc}") from None
+                raise
+            reason = re.sub(r"\s+", " ", str(exc))[:300]
+            self.gaps.append({"role": role, "selector": selector, "reason": reason})
+            self._record(role, seconds=time.monotonic() - started)
+            return ExchangeResult(on_failure(reason), (), 0, None)
         ranges = _ranges(result.source_slices)
         artifact = copy.deepcopy(result.artifact)
         accept(artifact, ranges)

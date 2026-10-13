@@ -536,7 +536,7 @@ def test_rebuild_keeps_a_directory_with_edited_or_foreign_files(scope, extra):
     _completed(scope)
     kept = scope.output / ("threat-model.md" if extra == "edited-report" else "notes.txt")
     kept.write_text("mine\n")
-    with pytest.raises(ExchangeError, match="did not write or that changed"):
+    with pytest.raises(ExchangeError, match=rf"did not write or that changed since \({kept.name}\)"):
         with lifecycle(scope, replace=True).hold():
             pytest.fail("--rebuild must not erase a user's file")
     assert kept.read_text() == "mine\n" and (scope.output / ".assessment-state.json").exists()

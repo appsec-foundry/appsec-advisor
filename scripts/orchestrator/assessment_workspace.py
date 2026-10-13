@@ -178,7 +178,9 @@ def canonical_model(view: dict, original: dict, names: Namespaces) -> dict:
     """Convert the enriched workspace model back into the qualified contract.
 
     Every location must resolve to a captured file of a selected repository.
-    Component identity and qualified paths come from the accepted original.
+    Component identity and qualified paths come from the accepted original,
+    extended only by the files its findings and controls cite
+    (`claim_cited_files`).
     """
     by_id = {row["id"]: row for row in original["components"]}
     document = _qualify({k: v for k, v in view.items() if k not in ("meta", "components")}, names)
@@ -194,6 +196,11 @@ def canonical_model(view: dict, original: dict, names: Namespaces) -> dict:
         components.append(row)
     if {row["id"] for row in components} != set(by_id):
         raise WorkspaceError("Enrichment removed an accepted component")
+    # Findings and controls added or moved during enrichment may cite a file
+    # their component does not list yet; one shared rule lets it list it.
+    from shared.assessment_sources import claim_cited_files
+
+    claim_cited_files({"components": components, **document})
     # `meta` carries evidence too (for example the open-registration
     # resolution), so it takes the same location rule as the rest.
     # Local checkout and output paths only label the rendered report; like a

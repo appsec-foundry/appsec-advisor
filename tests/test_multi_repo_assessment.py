@@ -1,6 +1,7 @@
 """A combined assessment runs every stage through scoped exchanges and publishes one model."""
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -11,7 +12,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from orchestrator import orchestration_controller as controller
 from runtime.analyst_host import HostReply
-from runtime.assessment_host import MARKER
+from runtime.assessment_host import MARKER, ExchangeError
 
 from tests.test_assessment_posture import Discoverer
 from tests.test_multi_repo_controller import BoundaryHost, Host, checkout
@@ -164,7 +165,7 @@ class FullHost:
         return {"verdict": verdict, "attack_paths": attack_paths, "anti_patterns": None}
 
 
-def _assess(tmp_path, monkeypatch, names, extra=(), seed=None, progress=lambda text: None):
+def _assess(tmp_path, monkeypatch, names, extra=(), seed=None, progress=lambda text: None, host=None):
     from runtime import multi_repo_scope
 
     roots = [tmp_path / name for name in names]
@@ -172,7 +173,7 @@ def _assess(tmp_path, monkeypatch, names, extra=(), seed=None, progress=lambda t
         checkout(root)
     if seed:
         seed(roots)
-    host = FullHost()
+    host = host or FullHost()
     real_admit = multi_repo_scope.admit
 
     def admit(selections, output, **options):
@@ -262,9 +263,7 @@ def test_combined_assessment_publishes_one_qualified_model(tmp_path, monkeypatch
     assert not list(out.glob("threat-model-*"))
 
 
-def test_default_console_shows_phases_counts_and_stalls_not_call_detail(monkeypatch):
-    lines = []
-    console = controller._AssessmentConsole(False, lines.append)
+def _console_run(console, monkeypatch):
     console.step("Models: sonnet (stride_analyzer)")
     console.step("Discovering every selected repository")
     console.call("reads app/server.ts:1-200 (3 s)")
@@ -276,43 +275,89 @@ def test_default_console_shows_phases_counts_and_stalls_not_call_detail(monkeypa
     monkeypatch.setattr(console, "HEARTBEAT_SECONDS", 0)
     console.call("2 min: model is thinking (~9,000 tokens)", "stride_analyzer")
     console.call("result: 3 threats (134 s)", "stride_analyzer", "claude-sonnet-5-5")
-    console.call("result: 1 decisions (9 s)", "evidence_verifier", "sonnet")
-    console.call("result: 1 decisions (8 s)", "evidence_verifier", "sonnet")
     console.call("answer rejected, asking for a correction: threats/0: missing evidence", "stride_analyzer")
     console.step("Stage 2: Management Summary")
     console.close()
+
+
+def test_default_console_brackets_phases_at_the_margin_and_indents_only_exceptions(monkeypatch):
+    lines = []
+    console = controller._AssessmentConsole(False, lines.append)
+    _console_run(console, monkeypatch)
     assert lines[:2] == [f"   Pipeline: {console.PIPELINE}", "▶ Models: sonnet (stride_analyzer)"]
-    # Phase lines carry the run's estimated share and elapsed time, as the single-repository view does.
+    # Each phase opens with its share and the run's elapsed time, and closes with what it covered.
     assert [line.split(" · ~")[0] for line in lines if line.startswith("▶ Phase")] == [
         "▶ Phase 2/11 · Reconnaissance",
         "▶ Phase 7/11 · Trust Boundaries",
         "▶ Phase 9/11 · STRIDE",
         "▶ Phase 11/11 · Finalization",
     ]
-    assert "▶ Phase 9/11 · STRIDE · ~27%   [+<1m total]" in lines
-    assert sum(line.startswith("    ✓ Phase") for line in lines) == 4
-    # The component or section in work is named; a crossing's signal hash is not.
-    for shown in (
-        "    · trust crossing 1 of 3 · ~10%",
-        "    · API (1/2) · ~27%",
-        "    · Store (2/2) · ~54%",
-        "    · report section: Management Summary",
-        "    · still in Phase 9/11 STRIDE — <1m · ~54%   [+<1m total] · STRIDE: model is thinking (~9,000 tokens)",
-        "      · STRIDE [claude-sonnet-5-5] answered — 2m14s",
-        "      · evidence review [sonnet] (part 2) answered — 8s",
-        "      ↻ STRIDE: answer rejected, asking for a correction: threats/0: missing evidence",
-        "    · read 1 source range — 3s",
-    ):
-        assert shown in lines
-    assert "      ⚠ 1 min: no model activity for 95 s (waiting for the API)" in lines
-    assert not any("reads " in line or "signal-" in line or "verifying evidence" in line for line in lines)
-    # --verbose keeps every step and call line and adds no phase summary.
+    assert "▶ Phase 9/11 · STRIDE · ~27% · <1m elapsed" in lines
+    # The trailing duration varies; what the phase covered does not.
+    closed = [re.sub(r"(?: — | · )[0-9hms]+$", "", line) for line in lines if line.startswith("✓ Phase")]
+    assert closed == [
+        "✓ Phase 2/11 · Reconnaissance",
+        "✓ Phase 7/11 · Trust Boundaries — 3 crossings",
+        "✓ Phase 9/11 · STRIDE — 2 components",
+        "✓ Phase 11/11 · Finalization",
+    ]
+    # Indented by exactly one level: the stall, the off-terminal liveness line and the rejection.
+    assert [line for line in lines if line.startswith("    ")] == [
+        "    ⚠ 1 min: no model activity for 95 s (waiting for the API)",
+        "    · still in Phase 9/11 STRIDE — <1m · 2/2 · Store · ~54% · <1m elapsed"
+        " · STRIDE: model is thinking (~9,000 tokens)",
+        "    ↻ STRIDE: answer rejected, asking for a correction: threats/0: missing evidence",
+    ]
+    # No model-call detail, crossing hash, or per-subject line in the default view.
+    assert not any("reads " in line or "signal-" in line or "answered" in line for line in lines)
+
+
+def test_verbose_console_keeps_the_layout_and_adds_every_step_and_call():
     verbose = []
     console = controller._AssessmentConsole(True, verbose.append)
     console.step("Discovering every selected repository")
     console.call("reads app/server.ts:1-200 (3 s)")
+    console.step("Analyzing all STRIDE categories: API (1/2)")
+    console.call("result: 3 threats (134 s)", "stride_analyzer", "sonnet")
     console.close()
-    assert verbose == ["▶ Discovering every selected repository", "  · reads app/server.ts:1-200 (3 s)"]
+    for shown in ("    · reads app/server.ts:1-200 (3 s)", "    · 1/2 · API", "    · STRIDE [sonnet] answered — 2m14s"):
+        assert shown in verbose
+    assert verbose[-1].startswith("✓ Phase 9/11 · STRIDE — 2 components · ")
+
+
+def test_console_header_states_the_resolved_limits_models_and_checks():
+    parse = controller._assessment_argument_parser().parse_args
+    ns = parse(["--repo", "/r", "--output", "/o", "--soft-budget", "15", "--rebuild"])
+    rows = dict(
+        controller._assessment_intro(ns, controller._assessment_budget(ns), "standard", "Models: m1 (a, b); m2 (c)")
+    )
+    assert rows["Budget"] == "model calls stop at $18.75 (1.25 × --soft-budget $15; no soft steering in this mode)"
+    assert rows["Time limit"] == "4h" and rows["Depth"] == "standard"
+    assert rows["Models"] == "m1 (a, b)\nm2 (c)"
+    assert rows["Trust mode"] == "untrusted, preflight clean"
+    assert rows["Output"] == "/o (--rebuild: replaces any earlier assessment)"
+    assert rows["Phases"].split("\n") == list(controller._AssessmentConsole.PHASE_SUMMARY)
+    ns = parse(
+        ["--repo", "/r", "--output", "/o", "--hard-budget", "5", "--trust-mode", "trusted", "--max-duration", "3900"]
+    )
+    rows = dict(controller._assessment_intro(ns, controller._assessment_budget(ns), "quick", "Models: m1 (a)"))
+    assert rows["Budget"] == "model calls stop at $5.00" and rows["Time limit"] == "1h05m"
+    assert rows["Trust mode"] == "trusted, no preflight" and rows["Output"] == "/o"
+
+
+def test_a_refused_start_prints_its_reason_without_a_run_header(tmp_path, monkeypatch, capsys):
+    for name in ("edge", "service"):
+        checkout(tmp_path / name)
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "notes.txt").write_text("mine\n")
+    monkeypatch.setattr(controller, "_assessment_runtime_fingerprint", lambda: "a" * 64)
+    argv = ["--repo", str(tmp_path / "edge"), "--repo", str(tmp_path / "service"), "--output", str(out)]
+    with pytest.raises(ExchangeError, match="notes.txt"):
+        controller.assess_repositories(
+            [*argv, "--hard-budget", "5", "--trust-mode", "trusted"], host_factory=lambda *a: pytest.fail("no call")
+        )
+    assert "Headless Mode" not in capsys.readouterr().err and (out / "notes.txt").read_text() == "mine\n"
 
 
 @pytest.mark.parametrize("names", [("edge", "service"), ("west", "east")])
@@ -320,7 +365,7 @@ def test_per_call_progress_lines_reach_the_end_of_a_combined_run(tmp_path, monke
     """Calls made after the workspace exists, such as the report renderers, still label their reads."""
     outcome, host, _ = _assess(tmp_path, monkeypatch, names, ("--verbose",), progress=None)
     assert outcome["status"] == "complete" and "ms_renderer" in host.roles
-    lines = [line for line in capsys.readouterr().err.splitlines() if line.startswith("  · reads ")]
+    lines = [line for line in capsys.readouterr().err.splitlines() if "    · reads " in line]
     assert lines and any(f"{name}/" in line for line in lines for name in names)
 
 
@@ -618,15 +663,29 @@ def test_a_host_failure_ends_with_a_message_not_a_traceback(tmp_path, monkeypatc
 
 def test_a_stopped_run_names_its_kept_draft_as_unpublished(tmp_path, monkeypatch, capsys):
     draft = tmp_path / "out" / ".assessment-work" / "render"
-    draft.mkdir(parents=True)
-    (draft / "threat-model.md").write_text("# Threat Model\n")
 
     def fail(*args, **kwargs):
+        draft.mkdir(parents=True)
+        (draft / "threat-model.md").write_text("# Threat Model\n")
         raise ValueError("Multi-repository model violates its versioned output schema: meta: bad")
 
     monkeypatch.setattr(controller, "assess_repositories", fail)
     assert controller.assess_main(["--repo", "a", "--repo", "b", "--output", str(tmp_path / "out")]) == 1
     assert f"Unpublished draft kept for diagnosis in {draft}" in capsys.readouterr().err
+
+
+def test_a_run_stopped_before_rendering_does_not_claim_an_earlier_draft(tmp_path, monkeypatch, capsys):
+    draft = tmp_path / "out" / ".assessment-work" / "render"
+    draft.mkdir(parents=True)
+    (draft / "threat-model.md").write_text("# Threat Model\n")
+
+    def fail(*args, **kwargs):
+        raise ExchangeError("This output directory holds files the earlier assessment did not write")
+
+    monkeypatch.setattr(controller, "assess_repositories", fail)
+    assert controller.assess_main(["--repo", "a", "--repo", "b", "--output", str(tmp_path / "out")]) == 1
+    err = capsys.readouterr().err
+    assert "stopped: This output directory" in err and "Unpublished draft" not in err
 
 
 # ---------------------------------------------------------------------------
@@ -797,3 +856,73 @@ def test_jobs_record_fresh_and_reused_time_per_role():
     jobs._record("stride_analyzer", seconds=2.0, calls=3)
     jobs._record("stride_analyzer")
     assert jobs.timing["stride_analyzer"] == {"jobs": 1, "reused": 1, "calls": 3, "seconds": 2.0}
+
+
+def test_a_terminal_shows_the_subject_in_work_as_one_rewritten_status_line(capsys):
+    lines = []
+    console = controller._AssessmentConsole(False, lines.append, live=True)
+    console.step("Assessing controls: CI/CD Pipeline (1/8)")
+    console.call("1 min: model is thinking (~2,000 tokens)", "control_analyst")
+    console.call("answer rejected, asking for a correction: controls/0: missing evidence", "control_analyst")
+    console.close()
+    controller._AssessmentConsole.clear_status()
+    err = capsys.readouterr().err
+    # Each status rewrites the line in place and never ends it; a permanent line clears it first.
+    statuses = [part for part in err.split("\r\033[K") if part]
+    assert all("\n" not in part for part in statuses)
+    assert any("· 1/8 · CI/CD Pipeline · ~" in part and "elapsed" in part for part in statuses)
+    assert any("controls: model is thinking" in part for part in statuses)
+    assert err.endswith("\r\033[K") and not controller._AssessmentConsole.status_shown
+    assert "    ↻ controls: answer rejected, asking for a correction: controls/0: missing evidence" in lines
+    assert not any("CI/CD Pipeline" in line for line in lines)
+
+
+class _FailingHost(FullHost):
+    """Every call of the named roles fails with its cost settled, as a host without a result does."""
+
+    def __init__(self, failing):
+        super().__init__()
+        self.failing = set(failing)
+
+    def invoke(self, role, *args):
+        from runtime.analyst_host import TransportError
+
+        if role in self.failing:
+            raise TransportError("host call failed: no_result", reason="no_result", usd=0.0)
+        return super().invoke(role, *args)
+
+
+OPTIONAL_ROLES = (
+    "evidence_verifier",
+    "threat_merger",
+    "abuse_case_deriver",
+    "abuse_case_verifier",
+    "architect_reviewer",
+    "post_stride_synthesizer",
+    "ms_renderer",
+)
+
+
+def test_after_stride_a_failed_optional_job_is_replaced_and_named_not_fatal(tmp_path, monkeypatch):
+    """OR-39: once STRIDE is accepted, every optional stage degrades to its deterministic replacement."""
+    host = _FailingHost(OPTIONAL_ROLES)
+    outcome, host, out = _assess(
+        tmp_path, monkeypatch, ("edge", "service"), ("--assessment-depth", "thorough"), host=host
+    )
+    assert outcome["status"] == "complete" and (out / "threat-model.md").is_file()
+    failed = set(host.roles) & set(OPTIONAL_ROLES)
+    assert {"evidence_verifier", "ms_renderer", "post_stride_synthesizer"} <= failed
+    replaced = " ".join(w for w in outcome["warnings"] if "replaced after a model failure" in w)
+    for role in failed:
+        assert controller._AssessmentConsole.ROLE_LABELS[role] in replaced
+    # Findings no independent review read stay unproven.
+    model = yaml.safe_load((out / "threat-model.yaml").read_text())
+    assert model["threats"] and all(t.get("evidence_check") != "verified" for t in model["threats"])
+
+
+# §6 has no authorless form yet: its contract requires one sequence diagram per flow.
+@pytest.mark.parametrize("role", ["stride_analyzer", "control_analyst", "architecture_analyst", "secarch_renderer"])
+def test_a_failure_up_to_stride_still_stops_the_run(tmp_path, monkeypatch, role):
+    with pytest.raises(Exception, match="no_result"):
+        _assess(tmp_path, monkeypatch, ("edge", "service"), host=_FailingHost([role]))
+    assert not (tmp_path / "out" / "threat-model.md").exists()

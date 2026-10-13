@@ -421,3 +421,20 @@ The controller persists `.architect-review.json` under `schemas/architect-review
 The YAML builder projects accepted fixes after mitigation grouping and before requirement annotation. Changed ratings rederive priorities on linked fix cards through their existing deterministic policy; unrelated authored priorities and separate review or investigation tasks remain intact. Old override cards have no source-bound exception proof and cannot override a changed rating or replace an accepted fix. Shared cards retain unrelated members. Enrichment and Stage 4 reject lost corrections; a finding legitimately below the configured report floor remains in the audit.
 
 Stage 4 performs deterministic preservation and existing release gates only. It never dispatches a second editorial pass. Its `status: pass` means preservation gates passed; `outcome` distinguishes `reviewed`, `incomplete`, `unavailable`, and `not_run`; `unavailable` means no finding was reviewed and carries `reason` (`not_dispatched`, `no_proposals`, or `rejected_proposals`) together with `reviewed`, `jobs_dispatched` and `jobs_returned`, and the controller logs an `ORCHESTRATION_GATE_WARN`. Older rerenders without a transaction report `not_run`. New full/rebuild runs with enabled review cannot close without the transaction. Missing agent results degrade the optional semantic enrichment to explicit incomplete or unavailable coverage, while invalid required source data and corrupted transactions block publication.
+
+## Assessment controller failure policy
+
+The deterministic assessment controller (`assess`) stops the run on any failure until every component's STRIDE analysis is accepted. Architecture, component inventory, trust boundaries, controls and STRIDE are the foundation of the result, and stopping before STRIDE costs little.
+
+After that point, a failed model job or optional stage does not stop the run. The stage supplies a deterministic replacement, the gap is published as a run warning that names the replaced job, and the job writes no receipt, so a later run retries it. Replacements:
+
+- an abuse case becomes not checked;
+- a failed abuse-case derivation proposes no case;
+- an evidence-review batch leaves its findings `ambiguous`;
+- a merge-review batch keeps its findings separate;
+- unanswered architect-review packets stay unreviewed;
+- root-cause synthesis falls back to the title-derived tier view;
+- the Management Summary keeps the deterministic verdict floor;
+- a failed export is a warning.
+
+The Security Architecture section still stops the run: its contract requires a sequence diagram per flow, which only its author can write. At any point, the run also stops on a violated trust boundary (a read outside the admitted scope, a changed or foreign receipt, or source changed during the run), on a model that still violates its output contract, provenance or the secret gate after every deterministic repair, on an inconsistent register after the integrity steps, on unsettled call accounting, and on the hard budget or time limit.

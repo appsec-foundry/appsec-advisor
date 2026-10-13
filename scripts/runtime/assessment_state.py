@@ -239,13 +239,15 @@ class AssessmentState:
                 earlier = _read_state(self.path)
             except ExchangeError:
                 earlier = None
-            if self.replace and earlier is not None and self._remove_earlier_run(earlier, leftovers):
+            foreign = self._remove_earlier_run(earlier, leftovers) if self.replace and earlier is not None else None
+            if foreign == []:
                 return
             fresh = "choose another --output or empty this one"
             if earlier is None:
                 message = f"holds an unreadable earlier assessment; {fresh}"
             elif self.replace:
-                message = f"holds files the earlier assessment did not write or that changed since; {fresh}"
+                shown = ", ".join(foreign[:3]) + (", ..." if len(foreign) > 3 else "")
+                message = f"holds files the earlier assessment did not write or that changed since ({shown}); {fresh}"
             elif earlier["identity"] != self.identity:
                 message = (
                     "holds an earlier assessment that cannot be continued because "
@@ -268,12 +270,13 @@ class AssessmentState:
             f"({shown}); choose another --output or empty this one"
         )
 
-    def _remove_earlier_run(self, earlier, leftovers) -> bool:
+    def _remove_earlier_run(self, earlier, leftovers) -> list[str]:
         """Remove an earlier assessment for --rebuild when it owns every file.
 
         Owned are its state, its work directory and each recorded deliverable
         whose bytes are unchanged. Any other or edited file keeps the
-        directory, so a rebuild never erases a user's file.
+        directory, so a rebuild never erases a user's file. Returns those
+        files, sorted; an empty list means the earlier run was removed.
         """
         owned = {STATE_NAME, WORK_NAME}
         for name, expected in earlier["deliverables"].items():
@@ -283,14 +286,14 @@ class AssessmentState:
             except ExchangeError:
                 continue
         if not leftovers <= owned:
-            return False
+            return sorted(leftovers - owned)
         if WORK_NAME in leftovers:
             _real_directory(self.directory)
             shutil.rmtree(self.directory)
         for name in sorted(leftovers - {STATE_NAME, WORK_NAME}):
             (self.output / name).unlink()
         self.path.unlink()
-        return True
+        return []
 
     def _check_receipts(self, accounting):
         """Require state accounting to cover every accepted job receipt.

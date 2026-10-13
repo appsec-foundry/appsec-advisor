@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A wildcard CORS origin without credentials is no longer reported as a credentialed CORS anti-pattern, and OAuth implicit-flow tokens read from `location.hash` are now detected.
 - Reports handle empty weakness and boundary registers without broken links or missing remediation tables, and remaining link defects are repaired or stopped immediately after rendering.
 - Headless controller assessments exclude prior run products from source evidence while retaining repository inputs stored beside reports.
+- Headless controller assessments no longer stop over model answers the controller can correct itself, and once STRIDE is complete a failed later model job no longer stops the run: the report is published and the replaced job is named as a warning.
 - Ownership middleware suppresses a source finding only when its defining module and execution order establish the matching request-field binding for every recognized handler registration.
 - Threat Analyst runs report evidence they could not obtain, no longer end incomplete when a design question asks for code, and accept source-backed findings introduced by removed controls.
 - The completion summary of a run is shown once, in full, by the plugin itself instead of being copied by the session.

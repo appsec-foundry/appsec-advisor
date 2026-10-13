@@ -72,6 +72,50 @@ def source_rows(value):
         stack.extend((child, depth + 1, ancestors) for child in children)
 
 
+def claim_cited_files(document: dict) -> list[str]:
+    """Let each component list the files its findings and controls are anchored in.
+
+    `validate_portable_model` requires a finding's component to list the file
+    its first evidence cites, and a control's components to list each file its
+    evidence cites. Producers that run after component finalization (promoted
+    abuse-case steps, posture rules, reclassification) give a file no
+    component lists to a fallback owner (`resolve_owner`); the file then joins
+    that owner, the rule `own_scanner_anchors` applies at finalization. A file
+    joins only a component of its own repository, so repository ownership
+    never widens, and its hash is the one its evidence carries, which the
+    validator still checks against the source inventory. Returns the added
+    files as ``<repository_id>:<path>``.
+    """
+    by_id = {row["id"]: row for row in document["components"]}
+    added: list[str] = []
+
+    def listed(components) -> set:
+        return {(p["repository_id"], p["path"]) for row in components for p in row["paths"]}
+
+    def claim(candidates, row) -> None:
+        key = (row.get("repository_id"), row.get("file"))
+        if not isinstance(row.get("sha256"), str) or key in listed(candidates):
+            return
+        owner = next((c for c in candidates if key[0] in c["repository_ids"]), None)
+        if owner is None:
+            return  # Another repository's file stays a validation error.
+        owner["paths"].append({"repository_id": key[0], "path": key[1], "sha256": row["sha256"]})
+        owner["paths"].sort(key=lambda p: (p["repository_id"], p["path"]))
+        added.append(f"{key[0]}:{key[1]}")
+
+    for finding in document.get("threats") or []:
+        anchor = (finding.get("evidence") or [None])[0]
+        component = by_id.get(finding.get("component"))
+        if isinstance(anchor, dict) and anchor.get("file") and component is not None:
+            claim([component], anchor)
+    for control in document.get("security_controls") or []:
+        components = [by_id[cid] for cid in control.get("component_ids") or [] if cid in by_id]
+        for row in control.get("evidence") or []:
+            if components and isinstance(row, dict) and row.get("file"):
+                claim(components, row)
+    return added
+
+
 def validate_portable_model(document: dict) -> None:
     """Validate the portable model without granting access to local sources."""
     # Check expansion before recursive JSON-Schema validation.

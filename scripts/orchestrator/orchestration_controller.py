@@ -8342,6 +8342,7 @@ def _assessment_architecture(scope, jobs, *, progress):
             validate=lambda artifact, ranges: analysis.validate_local_architecture(
                 scope, rid, components, receipt, artifact, ranges, reviewed
             ),
+            normalize=analysis.local_architecture_normalizer(local),
         )
         external_ids = {row["id"]: _id("ext", rid, row["id"]) for row in artifact["external_entities"]}
         for entity in artifact["external_entities"]:
@@ -8645,6 +8646,7 @@ MERGE_REVIEW_GROUPS = 32
 def _assessment_merge_review(jobs, verdict: str, groups: list[dict], *, progress) -> list[dict]:
     """Run the legacy merger's judgment on the groups no deterministic rule decides."""
     from model.merge_threats import validate_agent_decision_document
+    from runtime.assessment_host import Rejection
 
     schema = json.loads((PLUGIN_ROOT / "schemas/merge-decisions.schema.json").read_text(encoding="utf-8"))
     batches = [groups[start : start + MERGE_REVIEW_GROUPS] for start in range(0, len(groups), MERGE_REVIEW_GROUPS)]
@@ -8656,7 +8658,9 @@ def _assessment_merge_review(jobs, verdict: str, groups: list[dict], *, progress
         def validate(artifact, ranges, context=context):
             errors = validate_agent_decision_document(artifact, context)
             if errors:
-                raise ControllerError(errors[0])
+                # A rejection the exchange can return for correction; a
+                # ControllerError would end the run on the first wrong decision.
+                raise Rejection("Merge decisions violate their contract", errors)
 
         artifact = jobs.execute(
             role="threat_merger",
@@ -8670,6 +8674,18 @@ def _assessment_merge_review(jobs, verdict: str, groups: list[dict], *, progress
             schema=schema,
             allowed_sources=frozenset(),
             validate=validate,
+            # Without a decision, every group's findings stay separate (OR-39).
+            on_failure=lambda reason, batch=batch: {
+                "decisions": [
+                    {
+                        "group_id": group["group_id"],
+                        "action": "keep",
+                        "keep_indices": list(range(len(group["members"]))),
+                        "rationale": f"Merge review unavailable, kept separate: {reason}"[:300],
+                    }
+                    for group in batch
+                ]
+            },
         )
         decisions += artifact["decisions"]
     return decisions
@@ -8704,7 +8720,30 @@ def _assessment_evidence_review(
         validate=lambda artifact, ranges: analysis.validate_evidence_review(
             scope, findings, fingerprint, artifact, ranges, review_sources
         ),
+        on_failure=lambda reason: _unreviewed_evidence(identity, findings, reason),
     )
+
+
+def _unreviewed_evidence(identity: dict, findings: list[dict], reason: str) -> dict:
+    """The review a failed evidence job stands for: every finding stays ambiguous (OR-39).
+
+    An ambiguous finding is an observed practice whose exploit is unproven, so
+    nothing is confirmed or refuted without an independent reading.
+    """
+    keys = ("repository_id", "file", "line", "sha256")
+    return {
+        "schema_version": 2,
+        **identity,
+        "decisions": [
+            {
+                "local_id": finding["local_id"],
+                "verdict": "ambiguous",
+                "reason": f"Independent evidence review unavailable: {reason}"[:500],
+                "evidence": [{key: finding["evidence"].get(key, 1) for key in keys}],
+            }
+            for finding in findings
+        ],
+    }
 
 
 # One review keeps a third of its read budget for context beyond the anchors,
@@ -8820,22 +8859,32 @@ def _minutes(seconds: float) -> str:
     return "<1m" if seconds < 60 else f"{int(seconds // 60)}m"
 
 
-class _AssessmentConsole:
-    """The default console view: phases, the component or section in work, stalls.
+def _elapsed(seconds: float) -> str:
+    """Minutes below an hour, then hours and minutes: ``13m``, ``1h05m``."""
+    hours, minutes = divmod(int(seconds // 60), 60)
+    return _minutes(seconds) if not hours else f"{hours}h" + (f"{minutes:02d}m" if minutes else "")
 
-    Phases and line formats follow the single-repository progress view
-    (``renderers/render_progress.py``): a clock column, the pipeline once,
-    ``▶ Phase`` with the run's elapsed time, a ``still in Phase`` line during
-    quiet stretches, and ``✓ Phase … done``. ``--verbose`` prints every step
-    and every model call instead; ``--quiet`` prints neither.
+
+class _AssessmentConsole:
+    """The run's console view: phase lines at the margin, exceptions indented.
+
+    ``▶ Phase`` opens a phase with the run's estimated share and elapsed time,
+    ``✓ Phase`` closes it with what it covered and its duration; both start at
+    the margin, so the margin alone reads as the run's course. Indented by one
+    level are only the lines that need attention: a rejected answer (``↻``), a
+    stalled or stopped model call (``⚠``) and, off a terminal, a ``still in
+    Phase`` liveness line during quiet stretches. On a terminal the component
+    or section in work is one status line rewritten in place. ``--verbose``
+    keeps that layout and adds every step and model call as indented lines;
+    ``--quiet`` prints nothing. Cost is never shown mid-run.
     """
 
     PIPELINE = (
         "2 Recon · 3 Architecture · 7 Trust-Boundaries · 8 Controls · 9 STRIDE · 10 Scan-Synthesis · 11 Finalization"
     )
-    # Liveness interval: each minute on a terminal, as the single-repository
-    # watchdog prints; off a TTY that view throttles to five minutes.
-    HEARTBEAT_SECONDS = 60 if sys.stderr.isatty() else 300
+    # Liveness interval of the permanent "still in Phase" line, written only off
+    # a terminal (CI, logs); a terminal gets the in-place status line instead.
+    HEARTBEAT_SECONDS = 300
     # Reader-facing names of the model roles in liveness and completion lines.
     ROLE_LABELS = {
         "recon_scanner": "discovery",
@@ -8893,6 +8942,26 @@ class _AssessmentConsole:
         "Verifying abuse case": "abuse case ",
         "Stage 2:": "report section: ",
     }
+    # What each phase does, for the run header; one line each, in run order.
+    PHASE_SUMMARY = (
+        "2 Recon: scripts inventory routes, stores and outbound calls; a model describes each repository",
+        "3 Architecture: components, data flows, external parties and protected assets",
+        "7 Trust boundaries: a model checks each point where data crosses into another trust zone",
+        "8 Controls: the security controls each component implements, with code evidence",
+        "9 STRIDE: source scanners, then a model per component; a second model re-reads the evidence",
+        "10 Scan synthesis: merge, rank and root-cause the findings; check business abuse cases",
+        "11 Finalization: render the report, run the quality gates, publish",
+    )
+    # What a phase's numbered subjects are, for its completion line.
+    NOUNS = {
+        "Analyzing local architecture": "repository",
+        "Reviewing trust crossing": "crossing",
+        "Assessing controls": "component",
+        "Analyzing all STRIDE categories": "component",
+        "Reviewing findings as architect": "architect review",
+        "Verifying abuse case": "abuse case",
+        "Stage 2:": "report section",
+    }
     _POSITION = re.compile(r"\s*\((\d+)/(\d+)\)$")
     # Share of a run's wall clock per phase, in percent. Estimated from the
     # model time per role of a single-repository standard run (Juice Shop,
@@ -8908,20 +8977,42 @@ class _AssessmentConsole:
         "11/11 Finalization": 9,
     }
 
-    def __init__(self, verbose: bool, write=None):
+    def __init__(self, verbose: bool, write=None, live: bool | None = None):
         self.verbose = verbose
         self._out = write or (
             lambda text: print(f"{time.strftime('%H:%M:%S')}  {text}" if text else "", file=sys.stderr, flush=True)
         )
+        # The in-place status line needs a terminal; an injected writer is a log.
+        self.live = (write is None and sys.stderr.isatty()) if live is None else live
         self.phase, self.started, self.percent, self.announced = None, 0.0, 0, False
         self.finished_jobs = 0
-        # The component, section or crossing whose jobs the following lines belong to.
-        self.subject, self.parts = False, {}
+        # The current subject's status text and the phase's largest numbered subject set.
+        self.current, self.count = "", None
+        self.parts: dict = {}
         self.run_started = self.last = time.monotonic()
 
     def write(self, text: str) -> None:
         self.last = time.monotonic()
+        self.clear_status()
         self._out(text)
+
+    @staticmethod
+    def clear_status() -> None:
+        """Remove the in-place status line before any permanent line is written."""
+        if _AssessmentConsole.status_shown:
+            sys.stderr.write("\r\033[K")
+            sys.stderr.flush()
+            _AssessmentConsole.status_shown = False
+
+    # Shared, so the command-line entry can clear a status line before its last message.
+    status_shown = False
+
+    def _status(self, text: str) -> None:
+        if not self.live or self.verbose:
+            return
+        sys.stderr.write(f"\r\033[K{time.strftime('%H:%M:%S')}  {text}")
+        sys.stderr.flush()
+        _AssessmentConsole.status_shown = True
 
     def _percent(self, phase: str, done: int = 0, total: int = 1) -> int:
         order = list(self.WEIGHTS)
@@ -8929,108 +9020,113 @@ class _AssessmentConsole:
         self.percent = min(99, round(before + self.WEIGHTS[phase] * done / max(total, 1)))
         return self.percent
 
+    def _progress(self) -> str:
+        """The run's estimated share with the time it has taken so far."""
+        return f"~{self.percent}% · {_elapsed(time.monotonic() - self.run_started)} elapsed"
+
     def facts(self, title: str | None, rows: list[tuple[str, str]]) -> None:
         """Run facts as ``Key : value`` rows, the single-repository wrapper's header format."""
         if title:
             self.write("")
             self.write(f"▶ {title}")
+        width = max([11, *(len(key) for key, _ in rows)])
         for key, value in rows:
             first, *more = value.split("\n")
-            self.write(f"  {key:<11}: {first}")
+            self.write(f"  {key:<{width}}: {first}")
             for line in more:
-                self.write(f"  {'':<11}  {line}")
+                self.write(f"  {'':<{width}}  {line}")
 
     def step(self, text: str) -> None:
-        if self.verbose:
-            self.write(f"▶ {text}")
-            return
         if not self.announced:
             self.announced = True
             self.write(f"   Pipeline: {self.PIPELINE}")
         prefix, phase = next(((p, name) for p, name in self.PHASES if text.startswith(p)), (None, None))
         if phase is None:
-            self.write(f"▶ {text}")
+            self.write(f"    · {text}" if self.verbose and self.phase else f"▶ {text}")
             return
-        now = time.monotonic()
         if phase != self.phase:
             self.close()
-            self.phase, self.started, self.finished_jobs = phase, now, 0
-            self.subject, self.parts = False, {}
+            self.phase, self.started, self.finished_jobs = phase, time.monotonic(), 0
+            self.current, self.count, self.parts = "", None, {}
             number, _, head = phase.partition(" ")
+            self._percent(phase)
             self.write("")
-            self.write(
-                f"▶ Phase {number} · {head} · ~{self._percent(phase)}%   [+{_minutes(now - self.run_started)} total]"
-            )
+            self.write(f"▶ Phase {number} · {head} · {self._progress()}")
         position = self._POSITION.search(text)
-        # Steps already finished in this phase, so the share never runs ahead.
-        progress = f" · ~{self._percent(phase, int(position[1]) - 1, int(position[2]))}%" if position else ""
-        if prefix == "Reviewing trust crossing" and position:
+        if position:
+            # Steps already finished in this phase, so the share never runs ahead.
+            self._percent(phase, int(position[1]) - 1, int(position[2]))
+            if prefix in self.NOUNS:
+                self.count = (max(int(position[2]), self.count[0] if self.count else 0), self.NOUNS[prefix])
+        if prefix == "Reviewing trust crossing":
             # A crossing's ID is a signal hash, not a name a reader recognizes.
-            self.write(f"    · trust crossing {position[1]} of {position[2]}{progress}")
-            self.subject, self.parts = True, {}
+            subject = "trust crossing"
         elif prefix in self.SUBJECTS:
-            self.subject, self.parts = True, {}
-            subject = self._POSITION.sub("", text[len(prefix) :].lstrip(": "))
-            self.write(
-                f"    · {self.SUBJECTS[prefix]}{subject}"
-                + (f" ({position[1]}/{position[2]})" if position else "")
-                + progress
-            )
+            subject = self.SUBJECTS[prefix] + self._POSITION.sub("", text[len(prefix) :].lstrip(": "))
+        else:
+            if self.verbose:
+                self.write(f"    · {text}")
+            return
+        self.parts = {}
+        self.current = (f"{position[1]}/{position[2]} · " if position else "") + subject
+        if self.verbose:
+            self.write(f"    · {self.current}")
+        else:
+            self._status(f"    · {self.current} · {self._progress()}")
 
     def call(self, text: str, role: str | None = None, model: str | None = None) -> None:
-        """A model-call line: with --verbose always; otherwise a stall, a finished job, or liveness."""
-        if self.verbose:
-            self.write(f"  · {text}")
-            return
+        """A model-call line: always for a stall or a rejection, every line with --verbose."""
         label = self.ROLE_LABELS.get(role, (role or "").replace("_", " "))
         who = f"{label} [{model}]: " if role and model else (f"{label}: " if role else "")
-        # Job lines sit under the component or section they work on.
-        indent = "      " if self.subject else "    "
         if "no model activity" in text or text.startswith("model call stopped"):
-            self.write(f"{indent}⚠ {who}{text}")
+            self.write(f"    ⚠ {who}{text}")
             return
         if text.startswith("answer rejected"):
-            self.write(f"{indent}↻ {who}{text}")
-            return
-        read = re.fullmatch(r"reads (.*) \((\d+) s\)", text)
-        if read:
-            # One round of a multi-round job: a count, never the paths (--verbose shows them).
-            more = re.search(r" \+(\d+) more$", read[1])
-            count = 0 if read[1] == "nothing" else len(read[1].split(", ")) + (int(more[1]) if more else 0)
-            self.write(
-                f"{indent}· {who}read {count} source range{'s' if count != 1 else ''} — {_duration(int(read[2]))}"
-            )
+            self.write(f"    ↻ {who}{text}")
             return
         finished = re.fullmatch(r"result: .* \((\d+) s\)", text)
-        if finished:
-            # A complete answer; the controller may still reject it (↻ line).
+        if finished and self.phase:
+            # Phases without a known job count advance by each finished job,
+            # approaching but never reaching the phase's end share.
+            self.finished_jobs += 1
+            order = list(self.WEIGHTS)
+            before = sum(self.WEIGHTS[name] for name in order[: order.index(self.phase)])
+            share = self.WEIGHTS[self.phase] * self.finished_jobs / (self.finished_jobs + 1)
+            self.percent = max(self.percent, min(99, round(before + share)))
+        if self.verbose:
+            if finished:
+                # A subject's second job of one role is a further batch or part.
+                self.parts[role] = self.parts.get(role, 0) + 1
+                part = f" (part {self.parts[role]})" if self.parts[role] > 1 else ""
+                self.write(f"    · {who.rstrip(': ') or 'model call'}{part} answered — {_duration(int(finished[1]))}")
+            else:
+                self.write(f"    · {who}{text}")
+            return
+        status = re.sub(r"^\d+ min: ", "", text) if re.match(r"\d+ min: ", text) else ""
+        if finished and not self.live:
+            return
+        if self.live:
             if self.phase:
-                # Phases without a known job count advance by each finished job,
-                # approaching but never reaching the phase's end share.
-                self.finished_jobs += 1
-                order = list(self.WEIGHTS)
-                before = sum(self.WEIGHTS[name] for name in order[: order.index(self.phase)])
-                share = self.WEIGHTS[self.phase] * self.finished_jobs / (self.finished_jobs + 1)
-                self.percent = max(self.percent, min(99, round(before + share)))
-            # A subject's second job of one role is a further batch or part.
-            self.parts[role] = self.parts.get(role, 0) + 1
-            part = f" (part {self.parts[role]})" if self.parts[role] > 1 else ""
-            self.write(
-                f"{indent}· {who.rstrip(': ') or 'model call'}{part} answered — {_duration(int(finished[1]))}"
-                + (f" · ~{self.percent}%" if self.phase and not self.subject else "")
-            )
+                detail = f" · {who}{status}" if status else ""
+                self._status(f"    · {self.current + ' · ' if self.current else ''}{self._progress()}{detail}")
             return
         now = time.monotonic()
         if self.phase and now - self.last >= self.HEARTBEAT_SECONDS:
-            status = re.sub(r"^\d+ min: ", "", text) if re.match(r"\d+ min: ", text) else ""
             self.write(
-                f"    · still in Phase {self.phase} — {_minutes(now - self.started)} · ~{self.percent}%"
-                f"   [+{_minutes(now - self.run_started)} total]" + (f" · {who}{status}" if status else "")
+                f"    · still in Phase {self.phase} — {_minutes(now - self.started)}"
+                + (f" · {self.current}" if self.current else "")
+                + f" · {self._progress()}"
+                + (f" · {who}{status}" if status else "")
             )
 
     def close(self) -> None:
-        if self.phase and not self.verbose:
-            self.write(f"    ✓ Phase {self.phase} done — {_duration(time.monotonic() - self.started)}")
+        if self.phase:
+            number, _, head = self.phase.partition(" ")
+            covered = ""
+            if self.count:
+                total, noun = self.count
+                covered = f"{total} {noun if total == 1 else 'repositories' if noun == 'repository' else noun + 's'} · "
+            self.write(f"✓ Phase {number} · {head} — {covered}{_duration(time.monotonic() - self.started)}")
         self.phase = None
 
 
@@ -9151,6 +9247,37 @@ def _assessment_model_lines(cfg: dict[str, Any]) -> tuple[str, str | None]:
     return lineup, warning
 
 
+def _assessment_intro(ns, budget, depth: str, lineup: str) -> list[tuple[str, str]]:
+    """Return the console header rows, shown once every pre-run check has passed."""
+    output = ns.output
+    if ns.rebuild:
+        output += " (--rebuild: replaces any earlier assessment)"
+    elif ns.resume:
+        output += " (--resume: continues the earlier assessment)"
+    cut = f"model calls stop at ${budget.max_usd:.2f}"
+    if ns.hard_budget is None:
+        # --soft-budget only derives this cut; nothing steers the run below it.
+        cut += f" (1.25 × --soft-budget ${ns.soft_budget:g}; no soft steering in this mode)"
+    limit = _elapsed(budget.timeout_s)
+    trust = "untrusted, preflight clean" if ns.trust_mode == "untrusted" else "trusted, no preflight"
+    return [
+        ("Repository" if len(ns.repo) == 1 else "Repositories", "\n".join(ns.repo)),
+        ("Output", output),
+        ("Billing", "api" if os.environ.get("ANTHROPIC_API_KEY") else "subscription"),
+        ("Budget", cut),
+        ("Time limit", limit),
+        ("Depth", depth),
+        ("Models", lineup.removeprefix("Models: ").replace("; ", "\n")),
+        ("Trust mode", trust),
+        (
+            "Flow",
+            "scripts run every stage, merge, rank, render and check the report;\n"
+            "models answer bounded tool-less questions per component (no agent session)",
+        ),
+        ("Phases", "\n".join(_AssessmentConsole.PHASE_SUMMARY)),
+    ]
+
+
 def _assessment_cli_host_factory(work_root: Path, events_dir: Path | None = None):
     """Launch each exchange as a tool-less `claude -p` in a fresh private directory.
 
@@ -9227,7 +9354,13 @@ def _assessment_synthesis(jobs, workspace: Path, *, progress) -> None:
         schema=schema,
         allowed_sources=frozenset(),
         validate=lambda artifact, ranges: None,
+        # Without the sidecar the model builder derives root causes from the
+        # findings' titles (build_tier_root_causes), the deterministic view (OR-39).
+        on_failure=lambda reason: None,
     )
+    if artifact is None:
+        (workspace / ".tier-root-causes.json").unlink(missing_ok=True)
+        return
     write_json(workspace / ".tier-root-causes.json", artifact)
     _run_script("validators/validate_fragment.py", ["tier-root-causes", str(workspace / ".tier-root-causes.json")])
 
@@ -9638,27 +9771,10 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
     console = None if progress or ns.quiet else _AssessmentConsole(ns.verbose)
     say = progress or (console.step if console else (lambda text: None))
     budget = _assessment_budget(ns)
-    if console:
-        cut = f"${budget.max_usd:.2f} (model calls stop here"
-        cut += f"; derived as 1.25 × --soft-budget ${ns.soft_budget:g})" if ns.hard_budget is None else ")"
-        console.facts(
-            "AppSec Plugin — Headless Mode (deterministic controller, experimental)",
-            [
-                ("Repository" if len(ns.repo) == 1 else "Repositories", "\n".join(ns.repo)),
-                ("Output", ns.output),
-                ("Billing", "api" if os.environ.get("ANTHROPIC_API_KEY") else "subscription"),
-                ("Budget", cut),
-                ("Trust mode", ns.trust_mode),
-                (
-                    "Flow",
-                    "scripts run every stage, merge, rank, render and check the report;\n"
-                    "models answer bounded tool-less questions per component (no agent session)",
-                ),
-            ],
-        )
-        console.write("")
     if ns.trust_mode == "untrusted":
-        say("Checking every selected repository for repository-owned agent configuration")
+        # The console header reports the result once every pre-run check passed.
+        if not console:
+            say("Checking every selected repository for repository-owned agent configuration")
         _assessment_preflight(ns.repo)
     try:
         scope = admit(ns.repo, ns.output, minimum=minimum)
@@ -9700,11 +9816,17 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
             with session as (cfg, state, jobs):
                 _assessment_unsupported_configuration(cfg, scope)
                 lineup, model_warning = _assessment_model_lines(cfg)
+                depth = str(cfg.get("assessment_depth") or "standard")
                 kind = "Single-repository controller" if len(labels) == 1 else "Multi-repository"
-                if console and not console.verbose:
-                    # The run header already says the controller is experimental.
-                    models = lineup.removeprefix("Models: ").replace("; ", "\n")
-                    console.facts(None, [("Depth", str(cfg.get("assessment_depth") or "standard")), ("Models", models)])
+                if console:
+                    # One header after the output directory, scope and configuration
+                    # were accepted, so a refused start prints only its reason.
+                    console.facts(
+                        "AppSec Plugin — Headless Mode (deterministic controller, experimental)",
+                        _assessment_intro(ns, budget, depth, lineup),
+                    )
+                    # The header's Phases row already lists the pipeline.
+                    console.announced = True
                 else:
                     print(f"⚠ {kind} assessment is experimental.", file=sys.stderr, flush=True)
                     say(lineup)
@@ -9717,7 +9839,6 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                     captured = assessment_context.capture(scope, cfg, state.directory / "context")
                 except assessment_context.ContextError as exc:
                     raise CallError(f"declared context cannot be delivered: {exc}") from exc
-                depth = str(cfg.get("assessment_depth") or "standard")
                 architecture = _assessment_architecture(scope, jobs, progress=say)
                 from orchestrator.assessment_declarations import DeclarationError, boundary_declarations
 
@@ -9798,6 +9919,12 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                 runtime_warning = _assessment_runtime_warning(state)
                 if runtime_warning:
                     warnings.append(runtime_warning)
+                # Optional jobs a model failure replaced (OR-39); a later run retries them.
+                warnings.extend(
+                    f"{_AssessmentConsole.ROLE_LABELS.get(gap['role'], gap['role'])} job {gap['selector']} "
+                    f"was replaced after a model failure ({gap['reason']}); rerun to retry it"
+                    for gap in jobs.gaps
+                )
                 _assessment_discard_workspace(workspace, len(labels), cfg)
         except ScopeError as exc:
             raise ControllerError(f"selected source state changed or became unreadable: {exc}") from exc
@@ -9844,14 +9971,31 @@ def _assessment_gate_violations(model_path: Path, level: str) -> list[str]:
     )
 
 
-def _unpublished_draft(argv: list[str]) -> Path | None:
-    """The kept render workspace of a stopped run, which must not be read as its report."""
+def _draft_stamp(argv: list[str]) -> tuple[Path, int | None] | None:
+    """The render workspace draft of `argv`'s output and its modification time, if present."""
     try:
         ns, _rest = _assessment_argument_parser().parse_known_args(argv)
     except SystemExit:
         return None
-    draft = Path(ns.output) / ".assessment-work" / "render" if getattr(ns, "output", None) else None
-    return draft if draft and (draft / "threat-model.md").is_file() else None
+    if not getattr(ns, "output", None):
+        return None
+    draft = Path(ns.output) / ".assessment-work" / "render"
+    try:
+        return draft, (draft / "threat-model.md").stat().st_mtime_ns
+    except OSError:
+        return draft, None
+
+
+def _unpublished_draft(argv: list[str], before: tuple[Path, int | None] | None) -> Path | None:
+    """The kept render workspace of a stopped run, which must not be read as its report.
+
+    Only a draft this run wrote counts: an earlier run's draft left in the
+    output directory says nothing about a run that stopped before rendering.
+    """
+    after = _draft_stamp(argv)
+    if after is None or after[1] is None or (before is not None and before[1] == after[1]):
+        return None
+    return after[0]
 
 
 def assess_main(argv: list[str]) -> int:
@@ -9859,8 +10003,13 @@ def assess_main(argv: list[str]) -> int:
     from runtime.analyst_host import HostCancelled, TransportError
     from runtime.assessment_host import ExchangeError
 
+    before = _draft_stamp(argv)
     try:
-        outcome = assess_repositories(argv)
+        try:
+            outcome = assess_repositories(argv)
+        finally:
+            # A stopped run must not print its last message onto the status line.
+            _AssessmentConsole.clear_status()
     except KeyboardInterrupt:
         print("\n✗ assessment interrupted", file=sys.stderr)
         return 130
@@ -9876,7 +10025,7 @@ def assess_main(argv: list[str]) -> int:
         return 2
     except (ControllerError, ExchangeError, TransportError, HostCancelled, ValueError, OSError) as exc:
         print(f"✗ assessment stopped: {_cap_reason(str(exc))}", file=sys.stderr)
-        draft = _unpublished_draft(argv)
+        draft = _unpublished_draft(argv, before)
         if draft:
             print(
                 f"  Unpublished draft kept for diagnosis in {draft}; it did not pass publication.",

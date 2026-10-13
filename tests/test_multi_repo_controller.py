@@ -748,9 +748,13 @@ def test_merge_review_decides_every_group_in_bounded_tool_less_exchanges(count, 
 
 
 def test_merge_review_rejects_a_decision_set_that_omits_a_group():
+    """The rejection is a correction the exchange returns to the merger, not the end of the run."""
+    from runtime.assessment_host import Rejection
+
     reply = {"version": 2, "generated_at": "now", "model": "test", "decisions": []}
-    with pytest.raises(controller.ControllerError, match="omits candidate groups"):
+    with pytest.raises(Rejection, match="omits candidate groups") as raised:
         controller._assessment_merge_review(_MergerJobs(reply=reply), "verified", _merge_groups(2), progress=print)
+    assert isinstance(raised.value, ValueError)
 
 
 @pytest.mark.parametrize(

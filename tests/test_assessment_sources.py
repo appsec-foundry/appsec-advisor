@@ -173,3 +173,76 @@ def test_a_system_wide_control_with_a_textual_statement_is_a_valid_portable_row(
     if foreign["repository_id"] not in document["components"][1]["repository_ids"]:
         with pytest.raises(ValueError, match="outside its component ownership"):
             validate_portable_model(document)
+
+
+def _unlisted_fixture(tmp_path):
+    """Two repositories, each with a file its only component does not list."""
+    files = {"src/app.py": b"value = 1\n", "web/client.ts": b"localStorage.setItem('t', t)\n"}
+    views = tuple(
+        RepositoryView(f"repo-{i:016x}", tmp_path / f"repository-{i}", "a" * 40, "b" * 64, dict(files)) for i in (1, 2)
+    )
+    document, _ = fixture(tmp_path)
+    document["source_inventory"] = AssessmentScope(views, tmp_path / "out").inventory()
+
+    def cite(rid, path):
+        return {"repository_id": rid, "file": path, "line": 1, "sha256": hashlib.sha256(files[path]).hexdigest()}
+
+    return document, cite
+
+
+def _finding(component, anchor):
+    return {
+        "id": "T-001",
+        "title": "Session token stored in web-accessible client storage",
+        "scenario": "A script running in the page reads the stored session token.",
+        "stride": "Information Disclosure",
+        "likelihood": "High",
+        "impact": "High",
+        "risk": "High",
+        "component": component,
+        "evidence": [anchor],
+    }
+
+
+@pytest.mark.parametrize("where", ["finding", "control"])
+def test_a_cited_file_no_component_lists_joins_its_own_component(tmp_path, where):
+    """A late producer's fallback owner lists the file it cites, so publication never fails on it."""
+    document, cite = _unlisted_fixture(tmp_path)
+    rid = document["components"][0]["repository_ids"][0]
+    anchor = cite(rid, "web/client.ts")
+    if where == "finding":
+        document["threats"] = [_finding("component-1", anchor)]
+    else:
+        document["security_controls"] = [
+            {
+                "domain": "Session management",
+                "control": "Token storage",
+                "effectiveness": "Weak",
+                "component_ids": ["component-1"],
+                "evidence": [anchor],
+            }
+        ]
+    with pytest.raises(ValueError, match="outside its component ownership"):
+        sources.validate_portable_model(copy.deepcopy(document))
+    assert sources.claim_cited_files(document) == [f"{rid}:web/client.ts"]
+    sources.validate_portable_model(document)
+    # Idempotent, and the other repository's component is untouched.
+    assert sources.claim_cited_files(document) == []
+    assert [p["path"] for p in document["components"][1]["paths"]] == ["src/app.py"]
+
+
+def test_a_file_of_another_repository_is_never_claimed(tmp_path):
+    document, cite = _unlisted_fixture(tmp_path)
+    other = document["components"][1]["repository_ids"][0]
+    document["threats"] = [_finding("component-1", cite(other, "web/client.ts"))]
+    assert sources.claim_cited_files(document) == []
+    with pytest.raises(ValueError, match="outside its component ownership"):
+        sources.validate_portable_model(document)
+
+
+def test_a_listed_file_changes_nothing(tmp_path):
+    document, cite = _unlisted_fixture(tmp_path)
+    rid = document["components"][0]["repository_ids"][0]
+    document["threats"] = [_finding("component-1", cite(rid, "src/app.py"))]
+    before = copy.deepcopy(document["components"])
+    assert sources.claim_cited_files(document) == [] and document["components"] == before

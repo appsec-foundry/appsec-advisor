@@ -348,3 +348,49 @@ def test_an_exhausted_correction_says_whether_every_attempt_failed_alike(tmp_pat
     with pytest.raises(host.ExchangeError) as raised:
         _reviewed(model, tmp_path, review)
     assert ("each for the same reason" in str(raised.value)) is repeat
+
+
+def test_a_normalized_result_is_what_review_correction_and_caller_see(tmp_path):
+    """The controller sets what it can derive; the model is never asked to repair it."""
+    reviewed = []
+
+    def normalize(artifact):
+        artifact["summary"] = artifact["summary"].strip()
+        return artifact
+
+    def review(artifact, slices):
+        reviewed.append(artifact["summary"])
+        if artifact["summary"] == "draft":
+            raise ValueError("too vague")
+
+    model = Model([_result("  draft  "), _result(" final ")])
+    result = host.run_exchange(
+        model,
+        view(tmp_path),
+        instructions="trusted task",
+        context={},
+        artifact_schema=ARTIFACT,
+        allowed_sources=frozenset({(REPO, "app.py")}),
+        timeout_s=60,
+        should_stop=lambda: False,
+        review=review,
+        normalize=normalize,
+    )
+    assert reviewed == ["draft", "final"] and result.artifact == {"summary": "final"}
+    packet = json.loads(model.prompts[1].split("\n", 4)[4].rsplit("\n", 2)[0])
+    assert packet["rejected_result"]["result"] == {"summary": "draft"}
+
+
+def test_a_rejection_hands_every_violation_to_the_correction_turn(tmp_path):
+    errors = [f"df-00{n}: interaction must target a client component" for n in range(1, 6)]
+    rejected = []
+
+    def review(artifact, slices):
+        if not rejected:
+            rejected.append(True)
+            raise host.Rejection("Local architecture violates flow invariants", errors)
+
+    model = Model([_result("a"), _result("b")])
+    _reviewed(model, tmp_path, review)
+    reason = json.loads(model.prompts[1].split("\n", 4)[4].rsplit("\n", 2)[0])["rejected_result"]["reason"]
+    assert reason.startswith("Local architecture violates flow invariants: ") and all(e in reason for e in errors)
