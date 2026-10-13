@@ -243,12 +243,12 @@ class AssessmentState:
                 return
             fresh = "choose another --output or empty this one"
             if earlier is None:
-                message = f"holds an unreadable earlier combined assessment; {fresh}"
+                message = f"holds an unreadable earlier assessment; {fresh}"
             elif self.replace:
-                message = f"holds files the earlier combined assessment did not write or that changed since; {fresh}"
+                message = f"holds files the earlier assessment did not write or that changed since; {fresh}"
             elif earlier["identity"] != self.identity:
                 message = (
-                    "holds an earlier combined assessment that cannot be continued because "
+                    "holds an earlier assessment that cannot be continued because "
                     f"{self._changed(earlier['identity'])} changed since it started. A new scan is required: "
                     f"add --rebuild to replace it, or {fresh}"
                 )

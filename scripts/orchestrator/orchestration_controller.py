@@ -8855,6 +8855,17 @@ class _AssessmentConsole:
         self.percent = min(99, round(before + self.WEIGHTS[phase] * done / max(total, 1)))
         return self.percent
 
+    def facts(self, title: str | None, rows: list[tuple[str, str]]) -> None:
+        """Run facts as ``Key : value`` rows, the single-repository wrapper's header format."""
+        if title:
+            self.write("")
+            self.write(f"▶ {title}")
+        for key, value in rows:
+            first, *more = value.split("\n")
+            self.write(f"  {key:<11}: {first}")
+            for line in more:
+                self.write(f"  {'':<11}  {line}")
+
     def step(self, text: str) -> None:
         if self.verbose:
             self.write(f"▶ {text}")
@@ -9351,6 +9362,25 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
     console = None if progress or ns.quiet else _AssessmentConsole(ns.verbose)
     say = progress or (console.step if console else (lambda text: None))
     budget = _assessment_budget(ns)
+    if console:
+        cut = f"${budget.max_usd:.2f} (model calls stop here"
+        cut += f"; derived as 1.25 × --soft-budget ${ns.soft_budget:g})" if ns.hard_budget is None else ")"
+        console.facts(
+            "AppSec Plugin — Headless Mode (deterministic controller, experimental)",
+            [
+                ("Repository" if len(ns.repo) == 1 else "Repositories", "\n".join(ns.repo)),
+                ("Output", ns.output),
+                ("Billing", "api" if os.environ.get("ANTHROPIC_API_KEY") else "subscription"),
+                ("Budget", cut),
+                ("Trust mode", ns.trust_mode),
+                (
+                    "Flow",
+                    "scripts run every stage, merge, rank, render and check the report;\n"
+                    "models answer bounded tool-less questions per component (no agent session)",
+                ),
+            ],
+        )
+        console.write("")
     if ns.trust_mode == "untrusted":
         say("Checking every selected repository for repository-owned agent configuration")
         _assessment_preflight(ns.repo)
@@ -9392,7 +9422,12 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                 lineup, model_warning = _assessment_model_lines(cfg)
                 kind = "Single-repository controller" if len(labels) == 1 else "Multi-repository"
                 print(f"⚠ {kind} assessment is experimental.", file=sys.stderr, flush=True)
-                say(lineup)
+                if console and not console.verbose:
+                    models = lineup.removeprefix("Models: ").replace("; ", "\n")
+                    console.facts(None, [("Depth", str(cfg.get("assessment_depth") or "standard")), ("Models", models)])
+                    console.write("")
+                else:
+                    say(lineup)
                 if model_warning:
                     # Shown even with --quiet: it changes the run's cost or outcome.
                     print(f"⚠ {model_warning}", file=sys.stderr, flush=True)
