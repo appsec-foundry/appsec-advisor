@@ -5,7 +5,9 @@ The semantic stages of a combined assessment produce repository-qualified
 quality gates downstream of them consume the single-root legacy shapes. This
 module projects the qualified artifacts into a private workspace in which every
 source location is ``<repository label>/<relative path>`` and the matching
-source root holds one directory per selected repository. It converts the
+source root holds one directory per selected repository; with one repository
+locations are the plain relative paths over that repository's files (MR-3),
+and no component name, zone or label names the repository. It converts the
 finished model back into the qualified version-2 contract before publication.
 
 The workspace and its combined source root are controller-owned private state.
@@ -38,7 +40,12 @@ class WorkspaceError(ValueError):
 
 
 class Namespaces:
-    """Bijective mapping between repository IDs and their path prefixes."""
+    """Bijective mapping between repository IDs and their path prefixes.
+
+    With one selected repository the namespace is empty (MR-3): locations are
+    the plain repository-relative paths, so nothing downstream names the
+    repository. Every location must still resolve to a captured file of it.
+    """
 
     def __init__(self, scope: AssessmentScope):
         rows = scope.inventory()["repositories"]
@@ -50,13 +57,20 @@ class Namespaces:
             if "/" in label or label in {"", ".", ".."} or label.startswith("."):
                 raise WorkspaceError("Repository label cannot be used as a path namespace")
         self.files = {repo.repository_id: repo.files for repo in scope.repositories}
+        self.single = next(iter(self.prefix)) if len(self.prefix) == 1 else None
 
     def qualify(self, rid: str, path: str) -> str:
         if rid not in self.prefix:
             raise WorkspaceError("Source reference names a repository outside the admitted scope")
-        return f"{self.prefix[rid]}/{path}"
+        return path if self.single else f"{self.prefix[rid]}/{path}"
 
     def split(self, value: str) -> tuple[str, str]:
+        if self.single:
+            # No namespace to check; the captured-file lookup of each caller
+            # rejects any location outside the repository.
+            if not value or value.startswith("/"):
+                raise WorkspaceError(f"Workspace location is not repository-relative: {value[:200]}")
+            return self.single, value
         label, separator, path = value.partition("/")
         if not separator or label not in self.repository or not path:
             raise WorkspaceError(f"Workspace location has no repository namespace: {value[:200]}")
@@ -87,9 +101,11 @@ def project_components(components: dict, names: Namespaces) -> dict:
     for component in components["components"]:
         row = _project({k: v for k, v in component.items() if k not in ("origin", "local_id", "repository_ids")}, names)
         row["paths"] = [names.qualify(p["repository_id"], p["path"]) for p in component["paths"]]
-        # Repository membership is a short annotation, never a trust zone.
-        owners = ", ".join(names.prefix[rid] for rid in component["repository_ids"])
-        row["name"] = f"{component['name']} [{owners}]"
+        # Repository membership is a short annotation, never a trust zone; with
+        # one repository it names nothing a reader could tell apart.
+        if not names.single:
+            owners = ", ".join(names.prefix[rid] for rid in component["repository_ids"])
+            row["name"] = f"{component['name']} [{owners}]"
         rows.append(row)
     return {"schema_version": 1, "components": rows}
 
@@ -180,7 +196,12 @@ def canonical_model(view: dict, original: dict, names: Namespaces) -> dict:
         raise WorkspaceError("Enrichment removed an accepted component")
     # `meta` carries evidence too (for example the open-registration
     # resolution), so it takes the same location rule as the rest.
-    meta = _qualify({k: v for k, v in view["meta"].items() if k != "source_repositories"}, names)
+    # Local checkout and output paths only label the rendered report; like a
+    # single scan's model, the published one carries no local path.
+    meta = _qualify(
+        {k: v for k, v in view["meta"].items() if k not in ("source_repositories", "repository_root", "output_dir")},
+        names,
+    )
     meta.update(
         schema_version=2,
         source_scope_sha256=original["meta"]["source_scope_sha256"],
@@ -200,7 +221,7 @@ def combined_root(scope: AssessmentScope, names: Namespaces):
     with tempfile.TemporaryDirectory(prefix="appsec-combined-") as directory:
         root = Path(directory)
         for repo in scope.repositories:
-            base = root / names.prefix[repo.repository_id]
+            base = root if names.single else root / names.prefix[repo.repository_id]
             for relative, data in repo.files.items():
                 target = base.joinpath(*_relative(relative))
                 target.parent.mkdir(parents=True, exist_ok=True)

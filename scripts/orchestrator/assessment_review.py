@@ -109,10 +109,13 @@ def reject_repository_case_files(scope, names, cfg: dict) -> None:
 
     The resolver loads repository-local cases relative to one root and records
     no origin repository, so in the combined root they would be dropped or
-    attributed to the wrong checkout.
+    attributed to the wrong checkout. A sole repository's files sit at the
+    combined root itself, so the resolver attributes them as a single scan does.
     """
     if cfg.get("abuse_case_files"):
         raise AssessmentReviewError("per-scan abuse-case files are not supported for a multi-repository assessment yet")
+    if names.single:
+        return
     found = []
     for repo in scope.repositories:
         label = names.prefix[repo.repository_id]

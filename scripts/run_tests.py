@@ -528,6 +528,7 @@ GROUPS = {
         postscan_secret_check
         preflight_untrusted
         redact_known_secrets
+        remote_url
         run_path_guard
         url_guard
     """),
@@ -3685,6 +3686,11 @@ SOURCE_TESTS = {
         threat_model_fields
         threat_model_fields_evidence
         multi_repo_exports
+    """),
+    "scripts/shared/_remote_url.py": _tests("""
+        build_threat_model_yaml
+        multi_repo_assessment
+        remote_url
     """),
     "scripts/shared/_url_guard.py": _tests("""
         appsec_status

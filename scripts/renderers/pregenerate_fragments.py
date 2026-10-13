@@ -460,6 +460,9 @@ def gen_system_overview(yaml_data: dict) -> str:
     # A combined assessment names every selected checkout; the working
     # directory of this process is never one of them.
     sources = meta.get("source_repositories") if isinstance(meta.get("source_repositories"), list) else None
+    # One selected checkout reads like a single scan: its remote when known.
+    if sources and len(sources) == 1 and repository:
+        sources = None
     if sources:
         repository = ", ".join(
             f"`{row.get('label')}` (revision `{str(row.get('head') or '')[:12]}`"
@@ -486,7 +489,7 @@ def gen_system_overview(yaml_data: dict) -> str:
         lines.append(desc.rstrip("."))
         lines.append("")
 
-    lines.append(f"**{'Repositories' if sources else 'Repository'}:** {repository or '_n/a_'}")
+    lines.append(f"**{'Repositories' if sources and len(sources) > 1 else 'Repository'}:** {repository or '_n/a_'}")
     if runtime:
         # Runtime values like "Node.js 20 - 24" are product/version labels,
         # not code. Render in normal prose weight. The dot-TLD safety pass

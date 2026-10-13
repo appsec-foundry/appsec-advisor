@@ -590,3 +590,173 @@ def test_a_stopped_run_names_its_kept_draft_as_unpublished(tmp_path, monkeypatch
     monkeypatch.setattr(controller, "assess_repositories", fail)
     assert controller.assess_main(["--repo", "a", "--repo", "b", "--output", str(tmp_path / "out")]) == 1
     assert f"Unpublished draft kept for diagnosis in {draft}" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# One selected repository (MR-3): plain paths, the manifest name, own metadata
+# ---------------------------------------------------------------------------
+
+
+def _scope(tmp_path, labels, files=None, remote=None):
+    from runtime.multi_repo_scope import admit
+
+    roots = []
+    for label in labels:
+        root = tmp_path / label
+        checkout(root)
+        for relative, text in (files or {}).items():
+            (root / relative).parent.mkdir(parents=True, exist_ok=True)
+            (root / relative).write_text(text)
+        if remote:
+            subprocess.run(["git", "-C", str(root), "remote", "add", "origin", remote], check=True)
+        roots.append(str(root))
+    return admit(roots, str(tmp_path / "out"), minimum=1)
+
+
+def _component(scope, path):
+    import hashlib
+
+    repo = scope.repositories[0]
+    sha = hashlib.sha256(repo.files[path]).hexdigest()
+    return {
+        "id": "component-1",
+        "local_id": "api",
+        "name": "Records API",
+        "description": "Application service.",
+        "tier": "application",
+        "repository_ids": [repo.repository_id],
+        "paths": [{"repository_id": repo.repository_id, "path": path, "sha256": sha}],
+    }
+
+
+@pytest.mark.parametrize(("label", "path"), [("solo", "app.py"), ("order-portal", "src/api/handler.py")])
+def test_single_repository_workspace_uses_plain_paths(tmp_path, label, path):
+    from orchestrator import assessment_workspace as ws
+
+    scope = _scope(tmp_path, (label,), {path: "handler = route(payload)\n"})
+    names = ws.Namespaces(scope)
+    rid = scope.repositories[0].repository_id
+    assert names.qualify(rid, path) == path
+    # A `path:line` locator still reaches the captured-file check unchanged.
+    assert names.split(f"{path}:1") == (rid, f"{path}:1")
+    assert ws._qualify({"file": f"{path}:1"}, names)["file"] == path
+    for outside in ("missing.py", f"{label}/{path}", "../outside.py"):
+        with pytest.raises(ws.WorkspaceError):
+            ws._qualify({"file": outside}, names)
+    with pytest.raises(ws.WorkspaceError):
+        names.split("/etc/passwd")
+    with ws.combined_root(scope, names) as root:
+        assert (root / path).is_file() and not (root / label).exists()
+    card = ws.project_components({"components": [_component(scope, path)]}, names)["components"][0]
+    assert card["name"] == "Records API" and card["paths"] == [path]
+
+
+def test_several_repositories_keep_their_namespace(tmp_path):
+    from orchestrator import assessment_workspace as ws
+
+    scope = _scope(tmp_path, ("edge", "service"))
+    names = ws.Namespaces(scope)
+    edge = next(r for r in scope.repositories if r.root.name == "edge")
+    assert names.single is None
+    assert names.qualify(edge.repository_id, "app.py") == "edge/app.py"
+    assert names.split("edge/app.py") == (edge.repository_id, "app.py")
+    with pytest.raises(ws.WorkspaceError):
+        names.split("app.py")
+    with ws.combined_root(scope, names) as root:
+        assert (root / "edge" / "app.py").is_file() and (root / "service" / "app.py").is_file()
+    card = ws.project_components({"components": [_component(scope, "app.py")]}, names)["components"][0]
+    assert card["name"].startswith("Records API [")
+
+
+def test_assets_get_fragment_ids_in_a_stable_order(tmp_path):
+    from orchestrator import assessment_workspace as ws
+
+    scope = _scope(tmp_path, ("solo",))
+    names = ws.Namespaces(scope)
+    assets = [
+        {"id": "asset-orders", "name": "Orders", "classification": "Confidential", "description": "Orders."},
+        {"id": "asset-accounts", "name": "Accounts", "classification": "Restricted", "description": "Logins."},
+    ]
+    projected = controller._assessment_assets(assets, names)
+    assert [(row["id"], row["name"]) for row in projected] == [("A-001", "Accounts"), ("A-002", "Orders")]
+    assert controller._assessment_assets(list(reversed(assets)), names) == projected
+    fragment = tmp_path / ".assets.json"
+    fragment.write_text(json.dumps({"schema_version": 1, "assets": projected}))
+    validator = controller.PLUGIN_ROOT / "scripts/validators/validate_fragment.py"
+    result = subprocess.run(
+        [sys.executable, str(validator), "assets", str(fragment)], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_single_repository_meta_comes_from_the_admitted_checkout(tmp_path):
+    scope = _scope(tmp_path, ("solo",), remote="https://deploy:t0ken@example.invalid/org/solo.git")
+    meta = controller._single_repository_meta(scope)
+    assert meta["git"]["commit_sha"] == scope.inventory()["repositories"][0]["head"]
+    assert meta["git"]["branch"] not in ("", "unknown", "HEAD")
+    assert meta["repo_url"] == "https://example.invalid/org/solo.git"
+    assert meta["repository_root"] == str(scope.repositories[0].root)
+    assert meta["output_dir"] == str(scope.output)
+
+
+def test_published_model_carries_no_local_path(tmp_path):
+    from orchestrator import assessment_workspace as ws
+
+    scope = _scope(tmp_path, ("solo",))
+    names = ws.Namespaces(scope)
+    original = {
+        "meta": {"source_scope_sha256": "a" * 64, "component_inventory_fingerprint": "sha256:" + "0" * 64},
+        "source_inventory": scope.inventory(),
+        "components": [_component(scope, "app.py")],
+    }
+    view = {
+        "meta": {"project": "solo", "repository_root": "/home/someone/solo", "output_dir": "/tmp/out"},
+        "components": [{"id": "component-1", "name": "Records API", "paths": ["app.py"]}],
+    }
+    published = ws.canonical_model(view, original, names)
+    assert "repository_root" not in published["meta"] and "output_dir" not in published["meta"]
+
+
+def test_invocation_keeps_flags_and_drops_paths_and_free_text():
+    argv = [
+        "--repo",
+        "/home/someone/api",
+        "--output=/tmp/out",
+        "--assessment-depth",
+        "thorough",
+        "--soft-budget=15",
+        "--project",
+        "Internal codename",
+        "--verbose",
+        "--model",
+        "sonnet;rm",
+    ]
+    assert controller._assessment_invocation(argv) == "--assessment-depth thorough --soft-budget 15 --verbose"
+    assert controller._assessment_invocation(["--repo", "a"]) == ""
+
+
+def test_job_timing_reaches_the_per_stage_table(tmp_path):
+    from renderers.compose_threat_model import _read_stage_stats
+
+    timing = {
+        "stride_analyzer": {"jobs": 2, "reused": 1, "calls": 5, "seconds": 12.5},
+        "recon_scanner": {"jobs": 1, "reused": 0, "calls": 1, "seconds": 3.0},
+    }
+    controller._write_assessment_stage_stats(tmp_path, timing)
+    rows = _read_stage_stats(tmp_path)
+    assert [(row["stage"], row["duration_ms"]) for row in rows] == [(2, 3000), (9, 12500)]
+    assert "1 reused from an earlier run" in rows[1]["name"] and "reused" not in rows[0]["name"]
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    controller._write_assessment_stage_stats(empty, {})
+    assert not (empty / ".stage-stats.jsonl").exists()
+
+
+def test_jobs_record_fresh_and_reused_time_per_role():
+    from runtime.assessment_jobs import AssessmentJobs
+
+    jobs = AssessmentJobs.__new__(AssessmentJobs)
+    jobs.timing = {}
+    jobs._record("stride_analyzer", seconds=2.0, calls=3)
+    jobs._record("stride_analyzer")
+    assert jobs.timing["stride_analyzer"] == {"jobs": 1, "reused": 1, "calls": 3, "seconds": 2.0}

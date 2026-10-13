@@ -4253,6 +4253,25 @@ def test_combined_scope_groups_components_by_repository(first, second):
     assert "in 2 repositories:" not in pf.gen_system_overview(model)
 
 
+@pytest.mark.parametrize("url", ["https://example.invalid/org/shop.git", "ssh://example.invalid/team/ledger.git"])
+def test_overview_of_one_selected_repository_reads_like_a_single_scan(url):
+    """One checkout shows its remote and description; several keep the repository list."""
+    sources = [{"label": "shop", "head": "a" * 40}]
+    meta = {
+        "project_name": "Shop",
+        "repo_url": url,
+        "project_description": "Order intake.",
+        "source_repositories": sources,
+    }
+    md = pf.gen_system_overview({"meta": meta, "components": [{"id": "api", "name": "Order API", "paths": ["app.py"]}]})
+    assert f"**Repository:** {url}" in md and "Repositories" not in md and "Order intake" in md
+    # Without a remote the one checkout is still named by its revision, as "Repository".
+    bare = pf.gen_system_overview({"meta": {**meta, "repo_url": None}, "components": []})
+    assert "**Repository:** `shop` (revision `aaaaaaaaaaaa`)" in bare
+    pair = {**meta, "source_repositories": [*sources, {"label": "billing", "head": "b" * 40}]}
+    assert "**Repositories:** `shop`" in pf.gen_system_overview({"meta": pair, "components": []})
+
+
 @pytest.mark.parametrize("labels", [["frontend", "backend"], ["north", "south", "east"]])
 def test_assessment_intro_names_the_repositories_of_a_combined_assessment(labels):
     model = {

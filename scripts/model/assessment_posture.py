@@ -128,6 +128,8 @@ class _Repo:
 
     def text(self, value: str, pairs) -> str:
         """Namespace the ``file:line`` tokens an emitter copied into prose."""
+        if self.names.single:
+            return value
         for file, line in sorted(pairs, key=lambda pair: -len(pair[0])):
             token = re.escape(f"{file}:{line}")
             value = re.sub(rf"(?<![\w./-]){token}(?!\d)", f"{self.label}/{file}:{line}", value)
@@ -260,8 +262,13 @@ _DEPLOYMENT_CAPS = {"environments": 8, "ci": 8, "packages": 40}
 _TOPOLOGY_CAPS = {"zones": 64, "workloads": 256, "zone_bridging": 256}
 
 
-def _zones(document: dict, label: str) -> dict:
-    """Keep equally named networks or namespaces of two repositories distinct."""
+def _zones(document: dict, label: str | None) -> dict:
+    """Keep equally named networks or namespaces of two repositories distinct.
+
+    ``label`` is None for a sole repository, whose names cannot collide.
+    """
+    if label is None:
+        return document
     compose = document.get("compose")
     if compose:
         for row in (compose, *compose["services"]):
@@ -278,7 +285,13 @@ def _zones(document: dict, label: str) -> dict:
 
 def _merge_deployment(rows: list[tuple[_Repo, dict]], receipts: list[str]) -> dict:
     documents = [
-        (repo, _zones(repo.rewrite(document, _DEPLOYMENT_PATHS, frozenset({"variants"}), captured=False), repo.label))
+        (
+            repo,
+            _zones(
+                repo.rewrite(document, _DEPLOYMENT_PATHS, frozenset({"variants"}), captured=False),
+                None if repo.names.single else repo.label,
+            ),
+        )
         for repo, document in rows
     ]
     merged: dict = {"schema_version": 1}
@@ -332,7 +345,8 @@ def _sca_row(repo: _Repo, row: dict) -> dict:
             if isinstance(target.get(key), str):
                 target[key] = repo.text(target[key], pairs)
     # One row per repository; the label keeps two repositories' rows apart.
-    row["control"] = f"{row['control']} ({repo.label})"
+    if not repo.names.single:
+        row["control"] = f"{row['control']} ({repo.label})"
     return row
 
 
@@ -412,7 +426,7 @@ def _resolve_actors(
     valid, _ = validate_actors_resolved(_read(workspace / ".actors-resolved.json"))
     if not valid:
         raise ValueError("Combined actor resolution violates its schema")
-    assessment_declarations.attribute_actor_owners(workspace, declared["owners"])
+    assessment_declarations.attribute_actor_owners(workspace, declared["owners"], single=bool(names.single))
     return declared["receipts"]
 
 

@@ -572,6 +572,44 @@ def _meta(repo_root, **cfg):
     )
 
 
+@pytest.mark.parametrize(
+    ("manifest", "description", "runtime"),
+    [
+        (
+            {"name": "order-portal", "description": "Order intake for retail stores.", "engines": {"node": "20"}},
+            "Order intake for retail stores.",
+            "Node.js 20",
+        ),
+        ({"name": "ledger"}, None, None),
+    ],
+)
+def test_build_meta_describes_the_project_from_its_own_manifest(tmp_path, monkeypatch, manifest, description, runtime):
+    """§1 reads description and runtime from meta, never from the renderer's working directory."""
+    (tmp_path / "package.json").write_text(json.dumps(manifest))
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "package.json").write_text(json.dumps({"name": "foreign", "description": "Not this project."}))
+    monkeypatch.chdir(elsewhere)
+    meta = _meta(tmp_path)
+    assert meta.get("project_description") == description
+    assert meta.get("runtime") == runtime
+
+
+def test_build_meta_masks_a_secret_in_the_manifest_description(tmp_path):
+    secret = "AKIA" + "ABCDEFGHIJKLMNOP"
+    (tmp_path / "package.json").write_text(json.dumps({"name": "api", "description": f"Deploy key {secret} here."}))
+    assert secret not in _meta(tmp_path)["project_description"]
+
+
+def test_build_meta_publishes_the_remote_without_credentials(tmp_path):
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    remote = "https://deploy:t0ken@example.invalid/org/api.git"
+    subprocess.run(["git", "-C", str(tmp_path), "remote", "add", "origin", remote], check=True)
+    assert _meta(tmp_path)["repo_url"] == "https://example.invalid/org/api.git"
+
+
 def test_build_meta_propagates_check_requirements_true(tmp_path):
     assert _meta(tmp_path, check_requirements=True)["check_requirements"] is True
 

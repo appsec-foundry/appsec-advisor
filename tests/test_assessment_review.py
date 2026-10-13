@@ -307,6 +307,18 @@ def test_repository_case_files_are_rejected_rather_than_misattributed(abuse, lab
         _abuse(abuse, Jobs(_verifier()))
 
 
+@pytest.mark.parametrize("path", ["docs/security/abuse-cases/refunds.yaml", ".appsec/abuse-cases/refunds.yml"])
+def test_a_sole_repository_keeps_its_case_files_as_a_single_scan_does(path):
+    """Its files sit at the combined root itself, so the resolver attributes them correctly."""
+    sole = Scope({SERVICE: {path: b"cases: []\n"}})
+    review.reject_repository_case_files(sole, Namespaces(sole), {})
+    with pytest.raises(review.AssessmentReviewError, match="per-scan"):
+        review.reject_repository_case_files(sole, Namespaces(sole), {"abuse_case_files": ["cases.yaml"]})
+    pair = Scope({EDGE: {"app.py": b"x\n"}, SERVICE: {path: b"cases: []\n"}})
+    with pytest.raises(review.AssessmentReviewError, match=f"service:{path}"):
+        review.reject_repository_case_files(pair, Namespaces(pair), {})
+
+
 def test_a_repository_labelled_docs_cannot_inject_combined_root_cases():
     scope = Scope({EDGE: {"security/abuse-cases/x.yaml": b""}, SERVICE: {"security/abuse-cases/notes.md": b""}})
     scope.rows[0]["label"] = "docs"
