@@ -8239,6 +8239,8 @@ def _assessment_inventories(scope) -> dict[str, dict]:
     single-repository architecture analyst receives, never raw source text;
     the full route inventory stays with the controller.
     """
+    import copy
+
     from analyzers import serving_units
     from analyzers.deployment_inventory import build_inventory as deployment_inventory
     from analyzers.route_inventory import build_inventory as route_inventory
@@ -8259,11 +8261,14 @@ def _assessment_inventories(scope) -> dict[str, dict]:
     for repo in sorted(scope.repositories, key=lambda row: row.repository_id):
         with scope.scanner_snapshot(repo.repository_id) as root:
             routes = stable(route_inventory(root))
+            # Component finalization resolves handlers from the unbounded rows.
+            rows = copy.deepcopy(routes["routes"])
             # A route string is repository text; the boundary context bounds it alike.
             for row in routes["routes"]:
                 row["path"] = _bounded_text(row.get("path"), 180)
             inventories[repo.repository_id] = {
                 "routes": routes,
+                "route_rows": rows,
                 "route_projection": project_routes(json.dumps(routes).encode("utf-8")),
                 "role_units": project_role_units(root),
                 "egress": project_egress(root),
@@ -8301,7 +8306,9 @@ def _assessment_architecture(scope, jobs, *, progress):
             for rid, row in inventories.items()
         },
     )
-    components, receipt = finalize_assessment(scope, list(discovery.observations))
+    components, receipt = finalize_assessment(
+        scope, list(discovery.observations), routes={rid: row["route_rows"] for rid, row in inventories.items()}
+    )
     files = sum(len(repository.files) for repository in scope.repositories)
     _phase_result(
         progress,
@@ -9004,19 +9011,21 @@ class _AssessmentConsole:
         ("Running deterministic source scanners", "Threat analysis"),
         ("Analyzing all STRIDE categories", "Threat analysis"),
         ("Independently verifying evidence", "Threat analysis"),
-        ("Reviewing merge candidates", "Scan synthesis"),
-        ("Building the deterministic route inventory", "Scan synthesis"),
-        ("Evaluating posture producers", "Scan synthesis"),
-        ("Reviewing findings as architect", "Scan synthesis"),
-        ("Resolving actors", "Scan synthesis"),
-        ("Ranking findings", "Scan synthesis"),
-        ("Synthesizing cross-finding", "Scan synthesis"),
-        # The model is built before abuse verification, as the single-repository
-        # bootstrap does at the end of Scan Synthesis.
-        ("Building the threat model", "Scan synthesis"),
+        ("Reviewing merge candidates", "Consolidation"),
+        ("Building the deterministic route inventory", "Consolidation"),
+        ("Evaluating posture producers", "Consolidation"),
+        ("Reviewing findings as architect", "Consolidation"),
+        ("Resolving actors", "Consolidation"),
+        ("Ranking findings", "Consolidation"),
+        # The model is built before abuse verification, which binds its steps
+        # to the ranked findings.
+        ("Building the threat model", "Consolidation"),
         ("Matching abuse cases", "Abuse cases"),
         ("Deriving application-specific business abuse cases", "Abuse cases"),
         ("Verifying abuse case", "Abuse cases"),
+        # Root causes cover the findings abuse verification adds.
+        ("Synthesizing cross-finding", "Finalization"),
+        ("Rebuilding the threat model", "Finalization"),
         ("Rendering the report", "Finalization"),
         ("Stage 2:", "Finalization"),
         ("Running the quality gates", "Finalization"),
@@ -9057,7 +9066,7 @@ class _AssessmentConsole:
         "Trust boundaries": 6,
         "Controls": 11,
         "Threat analysis": 55,
-        "Scan synthesis": 4,
+        "Consolidation": 4,
         "Abuse cases": 5,
         "Finalization": 9,
     }
@@ -9145,6 +9154,19 @@ class _AssessmentConsole:
         total = sum(self._weight(name) for name in plan)
         self.done = max(self.done, (before + self._weight(self.phase) * self.fraction) / total)
 
+    def _measured(self) -> bool:
+        """Whether a threat-analysis component has finished.
+
+        The earlier phases are mostly deterministic scans whose duration
+        follows file count and host load, not model speed; extrapolated
+        from them, the remaining time overstated a Juice Shop run twofold.
+        """
+        key = "Threat analysis"
+        if self.phase not in self.plan or key not in self.plan:
+            return False
+        here, there = self.plan.index(self.phase), self.plan.index(key)
+        return here > there or (here == there and self.fraction > 0)
+
     def _run(self, now: float) -> str:
         """The run columns: finished share, elapsed time, and the remaining time at the measured speed."""
         elapsed, left = now - self.run_started, ""
@@ -9154,7 +9176,7 @@ class _AssessmentConsole:
             share = "planning"
         else:
             share = f"~{min(99, round(100 * self.done))}%"
-            if self.done > 0:
+            if self.done > 0 and self._measured():
                 left = "~" + _elapsed(elapsed * (1 - self.done) / self.done)
         return f"{share:>8}  {_elapsed(elapsed):>7}  {left:>6}"
 
@@ -9787,37 +9809,41 @@ def _assessment_render(scope, jobs, names, cfg, workspace: Path, root: Path, *, 
     _run_script("model/merge_threats.py", ["refresh-weaknesses", "--output-dir", str(workspace)])
     _run_script("validators/validate_intermediate.py", ["threats_merged", str(workspace / ".threats-merged.json")])
     _run_script("validators/validate_intermediate.py", ["triage_flags", str(workspace / ".triage-flags.json")])
-    merged = json.loads((workspace / ".threats-merged.json").read_text(encoding="utf-8"))
-    if merged.get("threats"):
-        _assessment_synthesis(jobs, workspace, progress=progress)
-    progress("Building the threat model")
-    _run_script(
-        "model/build_threat_model_yaml.py",
-        [str(workspace), "--repo-root", str(root), "--plugin-root", str(PLUGIN_ROOT)],
-    )
     from shared._atomic_io import atomic_write_text
 
     from orchestrator.assessment_workspace import source_repositories
 
     model_path = workspace / "threat-model.yaml"
-    model = yaml.safe_load(model_path.read_text(encoding="utf-8"))
-    # Name every selected checkout before enrichment seals the model.
-    model["meta"]["source_repositories"] = source_repositories(scope)
-    # The report title names the combined system, never a working directory. A
-    # sole repository keeps its manifest name (RA-18) unless --project named it.
-    if cfg.get("project_name"):
-        model["meta"]["project_name"] = cfg["project_name"]
-    if len(scope.repositories) == 1:
-        model["meta"].update(_single_repository_meta(scope))
-    if isinstance(cfg.get("assessment_started_at"), int):
-        # Analysis wall time up to the model build; rendering is not included.
-        model["meta"]["analysis_duration_seconds"] = max(0, int(time.time()) - cfg["assessment_started_at"])
-    from orchestrator import assessment_context
 
-    assessment_context.attribute_trace(captured, model)
-    atomic_write_text(model_path, yaml.safe_dump(model, sort_keys=False, allow_unicode=True))
-    _run_script("validators/validate_intermediate.py", ["threat_model_output", str(model_path)])
-    _enrich_and_gate_yaml(workspace, {**cfg, "repo_root": str(root)}, receipts)
+    def build_model(step: str) -> None:
+        progress(step)
+        _run_script(
+            "model/build_threat_model_yaml.py",
+            [str(workspace), "--repo-root", str(root), "--plugin-root", str(PLUGIN_ROOT)],
+        )
+        model = yaml.safe_load(model_path.read_text(encoding="utf-8"))
+        # Name every selected checkout before enrichment seals the model.
+        model["meta"]["source_repositories"] = source_repositories(scope)
+        # The report title names the combined system, never a working directory. A
+        # sole repository keeps its manifest name (RA-18) unless --project named it.
+        if cfg.get("project_name"):
+            model["meta"]["project_name"] = cfg["project_name"]
+        if len(scope.repositories) == 1:
+            model["meta"].update(_single_repository_meta(scope))
+        if isinstance(cfg.get("assessment_started_at"), int):
+            # Analysis wall time up to the model build; rendering is not included.
+            model["meta"]["analysis_duration_seconds"] = max(0, int(time.time()) - cfg["assessment_started_at"])
+        from orchestrator import assessment_context
+
+        assessment_context.attribute_trace(captured, model)
+        atomic_write_text(model_path, yaml.safe_dump(model, sort_keys=False, allow_unicode=True))
+        _run_script("validators/validate_intermediate.py", ["threat_model_output", str(model_path)])
+        _enrich_and_gate_yaml(workspace, {**cfg, "repo_root": str(root)}, receipts)
+
+    # Abuse matching binds its steps to the ranked findings, so the model is
+    # built before it; the root-cause synthesis then covers the findings that
+    # abuse verification adds, and the model is built again with them.
+    build_model("Building the threat model")
     receipts += run_abuse_cases(
         scope,
         jobs,
@@ -9830,6 +9856,10 @@ def _assessment_render(scope, jobs, names, cfg, workspace: Path, root: Path, *, 
         enrich=lambda: _enrich_and_gate_yaml(workspace, {**cfg, "repo_root": str(root)}, receipts),
         progress=progress,
     )
+    if json.loads((workspace / ".threats-merged.json").read_text(encoding="utf-8")).get("threats"):
+        _assessment_synthesis(jobs, workspace, progress=progress)
+        build_model("Rebuilding the threat model with the root causes")
+        _run_script("model/triage_compute_ranking.py", [str(workspace), "--if-deterministic-owner"])
     progress("Rendering the report")
     _run_script(
         "renderers/pregenerate_fragments.py",
@@ -9927,6 +9957,8 @@ def _assessment_publish(
 
 def assess_repositories(argv: list[str], *, host_factory=None, progress=None) -> dict[str, Any]:
     """Assess several selected local checkouts as one system and publish one model."""
+    import contextlib
+    import io
     import tempfile
 
     from contexts.build_trust_boundary_assessment_input import assessment_source_context
@@ -10041,14 +10073,20 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                 assessment, candidates = _assessment_boundary_candidates(
                     scope, jobs, architecture, source_context, depth, progress=say
                 )
-                boundaries, _coverage, _warnings = promote_assessment_boundaries(
-                    scope,
-                    architecture["components"],
-                    assessment,
-                    candidates,
-                    output_dir=scope.output,
-                    declarations=declarations,
-                )
+                # The promoter also prints each warning to stderr, which would
+                # break into the console's in-place status line.
+                with contextlib.redirect_stderr(io.StringIO()):
+                    boundaries, _coverage, boundary_warnings = promote_assessment_boundaries(
+                        scope,
+                        architecture["components"],
+                        assessment,
+                        candidates,
+                        output_dir=scope.output,
+                        declarations=declarations,
+                    )
+                if console:
+                    for message in boundary_warnings:
+                        console.call("warning: " + message, role="trust_boundary_analyst")
                 _phase_result(
                     say, "Trust boundaries", _count_noun(len(boundaries["trust_boundaries"]), "trust boundary")
                 )
@@ -10065,7 +10103,7 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                     depth=depth,
                     captured=captured,
                 )
-                _phase_result(say, "Scan synthesis", _count_noun(len(merged["threats"]), "finding") + " after merge")
+                _phase_result(say, "Consolidation", _count_noun(len(merged["threats"]), "finding") + " after merge")
                 original, _ = build_assessment_model(
                     scope,
                     skill_cfg={**cfg, "mode": "full"},

@@ -327,11 +327,12 @@ def test_default_console_writes_every_line_in_one_column_grid():
     assert _rows(lines) == [
         ("1/8 Reconnaissance", "start", "planning", "<1m", "", ""),
         # Components are planned while the phase runs, so its done line has a share.
-        ("1/8 Reconnaissance", "done", "~10%", "1m", "~14m", "1m38s · 1 repository"),
-        ("3/8 Trust boundaries", "start", "~21%", "1m", "~6m", "3 crossings"),
-        ("3/8 Trust boundaries", "done", "~33%", "2m", "~5m", "1m00s · 3 crossings"),
-        ("5/8 Threat analysis", "start", "~38%", "2m", "~4m", "2 components"),
-        ("5/8 Threat analysis", "⚠", "~38%", "3m", "~5m", "1 min: no model activity for 95 s (waiting for the API)"),
+        # LEFT stays empty until a threat-analysis component has finished.
+        ("1/8 Reconnaissance", "done", "~10%", "1m", "", "1m38s · 1 repository"),
+        ("3/8 Trust boundaries", "start", "~21%", "1m", "", "3 crossings"),
+        ("3/8 Trust boundaries", "done", "~33%", "2m", "", "1m00s · 3 crossings"),
+        ("5/8 Threat analysis", "start", "~38%", "2m", "", "2 components"),
+        ("5/8 Threat analysis", "⚠", "~38%", "3m", "", "1 min: no model activity for 95 s (waiting for the API)"),
         # A changed subject after the progress interval; the role tells STRIDE from the evidence review.
         (
             "5/8 Threat analysis",
@@ -381,10 +382,14 @@ def test_progress_counts_the_planned_components(components, share):
     console.plan_components(components)
     console.step("Running deterministic source scanners")
     phase, event, progress, elapsed, left, _ = _rows(lines)[-1]
-    assert (phase, event, progress, elapsed) == ("5/8 Threat analysis", "start", share, "5m")
-    # LEFT extrapolates the measured speed: elapsed × (1 − share) / share.
+    assert (phase, event, progress, elapsed, left) == ("5/8 Threat analysis", "start", share, "5m", "")
+    # Once a component has finished, LEFT extrapolates the measured speed:
+    # elapsed × (1 − share) / share.
+    console.step("Analyzing all STRIDE categories: api (1/2)")
+    clock.tick(60)
+    console.step("Analyzing all STRIDE categories: store (2/2)")
     exact = console.done
-    assert left == "~" + controller._elapsed(300 * (1 - exact) / exact)
+    assert console._run(clock()).split()[-1] == "~" + controller._elapsed(360 * (1 - exact) / exact)
 
 
 def test_phase_results_and_skipped_phases_shape_the_done_lines():
@@ -1035,3 +1040,45 @@ def test_a_failure_up_to_stride_still_stops_the_run(tmp_path, monkeypatch, role)
     with pytest.raises(Exception, match="no_result"):
         _assess(tmp_path, monkeypatch, ("edge", "service"), host=_FailingHost([role]))
     assert not (tmp_path / "out" / "threat-model.md").exists()
+
+
+@pytest.mark.parametrize("verbose", [False, True])
+def test_boundary_warnings_never_break_into_the_console_status_line(tmp_path, monkeypatch, capsys, verbose):
+    """The promoter prints each warning to stderr; the console shows it only as its own verbose line."""
+    from contexts import prepare_trust_boundary_context as promoter
+
+    original = promoter.promote_assessment_boundaries
+
+    def warning(*args, **kwargs):
+        boundaries, coverage, warnings = original(*args, **kwargs)
+        print("TRUST_BOUNDARY_WARN: neutral-crossing: assumption restates enforcement_point", file=sys.stderr)
+        return boundaries, coverage, [*warnings, "neutral-crossing: assumption restates enforcement_point"]
+
+    monkeypatch.setattr(promoter, "promote_assessment_boundaries", warning)
+    flags = ("--verbose",) if verbose else ()
+    outcome, _, _ = _assess(tmp_path, monkeypatch, ("edge", "service"), flags, progress=None)
+    assert outcome["status"] == "complete"
+    err = capsys.readouterr().err
+    assert "TRUST_BOUNDARY_WARN" not in err
+    shown = [line for line in err.splitlines() if "neutral-crossing" in line]
+    assert (len(shown) == 1 and "trust boundaries: warning: neutral-crossing" in shown[0]) if verbose else not shown
+
+
+@pytest.mark.parametrize("names", [("edge", "service"), ("west", "east")])
+def test_root_causes_are_synthesized_after_abuse_verification(tmp_path, monkeypatch, names):
+    """Findings that abuse verification adds must reach the root-cause synthesis and the rebuilt model."""
+    from orchestrator import assessment_review
+
+    host, before = FullHost(), []
+    original = assessment_review.run_abuse_cases
+
+    def abuse(*args, **kwargs):
+        before.extend(host.roles)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(assessment_review, "run_abuse_cases", abuse)
+    outcome, _, out = _assess(tmp_path, monkeypatch, names, ("--no-pdf",), host=host)
+    assert outcome["status"] == "complete" and before
+    assert "post_stride_synthesizer" not in before and "post_stride_synthesizer" in host.roles
+    model = yaml.safe_load((out / "threat-model.yaml").read_text())
+    assert "Unvalidated request input" in json.dumps(model["tier_root_causes"])

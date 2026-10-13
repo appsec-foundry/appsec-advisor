@@ -308,7 +308,9 @@ def validate_receipt(output_dir: Path, repo_root: Path | None = None) -> dict[st
     return receipt
 
 
-def finalize_assessment(scope, discoveries: list[dict]) -> tuple[dict, dict]:
+def finalize_assessment(
+    scope, discoveries: list[dict], routes: dict[str, list[dict]] | None = None
+) -> tuple[dict, dict]:
     """Run existing component finalization against each frozen source tree.
 
     Local reconciliation, language/capability refinement and path/ORM guards
@@ -358,9 +360,10 @@ def finalize_assessment(scope, discoveries: list[dict]) -> tuple[dict, dict]:
             local, receipt = finalize(root, output, whole_repository=True)
             # A carried serving unit brings its handler modules or client source;
             # an uncarried one would silently drop its findings, so it stops here.
-            routes = route_inventory(root)["routes"]
-            units = serving_units.scan(root, routes)
-            serving_units.adopt(units, local["components"], root, routes)
+            # A caller that already scanned the routes passes them by repository.
+            rows = routes[repo.repository_id] if routes is not None else route_inventory(root)["routes"]
+            units = serving_units.scan(root, rows)
+            serving_units.adopt(units, local["components"], root, rows)
             missing = serving_units.uncovered(units, local["components"])
             if missing:
                 raise ValueError("No component carries these serving units: " + serving_units.describe(missing))
