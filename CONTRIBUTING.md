@@ -97,38 +97,38 @@ Cross-repository behavior has a separate driver. See the [cross-repository fixtu
 
 #### Targeted tests before finishing a non-trivial change
 
-Select tests by the affected behavior. Include the changed producer, its consumers, and the requirement guards returned by `scripts/check_specs.py --for <path>`. Requirement bindings supply evidence tests, not a complete dependency graph.
+Follow the [verification rules in AGENTS.md](AGENTS.md#verification) to select checks for changed behavior, affected consumers, and applicable contract or security invariants. Review candidates with `python3 scripts/run_tests.py --list --path <path>` for each changed file, including requirement guards from `scripts/check_specs.py --for <path>`. Routes and bindings aid selection; they are neither a mandatory minimum nor a complete dependency graph.
 
 | Change | Local checks |
 |---|---|
 | Documentation or examples | Applicable document, example, and contract validators. |
-| Isolated Python behavior | Module and consumer tests, base checks, and `make lint`. |
-| Agent or skill prompts | Base checks, the `prompts` group, and tests for affected behavior. Markdown under `agents/` or `skills/` is runtime input. |
-| Rendering, report structure, or exports | Base checks, the `report` group, and affected producer and consumer tests. Replay a golden fixture for deterministic-tail changes. |
-| Scanner or heuristic | Base checks, the `scanner` group, neutral regression cases, and a golden fixture replay. |
-| Shared runtime behavior or uncertain impact | `make check`. The `runtime` group supports iteration but does not replace this gate. |
+| Python behavior | Affected module and consumer tests, applicable validators, and lint and format checks. |
+| Agent or skill prompts | Applicable prompt and contract checks, plus tests for affected behavior. Markdown under `agents/` or `skills/` is runtime input. |
+| Rendering, report structure, or exports | Affected producer, consumer, and contract checks. Replay a golden fixture for deterministic-tail changes. |
+| Scanner or heuristic | Affected scanner and consumer checks, neutral regression cases, and a golden fixture replay. |
+| Impact that cannot be bounded to focused checks | State why the impact cannot be bounded, then run `make check`. |
 | Release | `make release-check` and the prescribed live E2E checks. |
 
-Select by the files of the current change:
+For the current task, the combined command below applies only when all routed tests and all validators are required. For smaller selections, invoke the required validators and exact pytest selectors directly.
 
 ```bash
 make validate test-for FILES="scripts/example.py tests/test_example.py"
 ```
 
-Only the named files count, so unrelated local changes and branch commits add no tests. When a named file has no reviewed route or needs the full suite, the command exits with code 2 and names the reason instead of running the whole suite.
+`test-for` selects only the named files, so unrelated local changes and branch commits add no tests. `validate` still checks the whole working tree. When a named file has no reviewed route or needs the full suite, `test-for` exits with code 2 and names the reason. Report it and assess the actual impact before selecting further checks.
 
-To verify a complete branch, inspect the Git-based selection before using it:
+For a complete branch, inspect the Git-based selection and run the combined command only when its entire selection is required:
 
 ```bash
 make test-plan BASE=origin/dev
 make validate test-changed BASE=origin/dev
 ```
 
-The selection includes commits since the merge base with `BASE`, staged changes, unstaged changes, and untracked files. `BASE` defaults to the local `origin/dev` reference; the runner does not fetch it. Use `make test-plan BASE=HEAD` for separately bounded work when the current branch already contains unrelated local commits. An invalid reference fails before pytest starts. Each routed source path selects its reviewed producer and consumer test modules directly. Changed test modules run directly, and applicable requirement bindings retain their exact pytest selectors. A clean comparison runs no tests because `make validate` owns the shared drift checks.
+The selection includes commits since the merge base with `BASE` and all staged, unstaged, and untracked files. `BASE` defaults to the local `origin/dev` reference; the runner does not fetch it. `make test-plan BASE=HEAD` excludes branch commits but still includes all local tasks. Use named paths to isolate one task in a mixed working tree. An invalid reference fails before pytest starts. Routes select reviewed producer and consumer modules; changed test modules run directly, and requirement bindings retain exact pytest selectors. A clean comparison runs no tests because `make validate` owns shared drift checks.
 
 Source routes cover explicitly reviewed producers, consumers, prompts, schemas, templates, and repository documents. Routes for multiple changed source files are united. Unknown paths, shared inputs without a reviewed route, and deleted files fall back to the full suite. Every Python script has a reviewed route or an explicit full-suite reason in `scripts/run_tests.py`. The plan lists every changed path that requires this fallback, so repairing one route does not conceal another missing route. Review the plan against the behavior changed; an existing route does not prove that a new dependency is covered. Full compatibility and coverage runs remain in CI while the local selection is evaluated.
 
-Run `make lint` whenever Python changes in `scripts/`, `tests/`, or `hooks/`. Use `make check` for foundational runtime changes whose consumers are not bounded by reviewed routes, coupled runtime or contract changes beyond those routes, or uncertain impact. A module having several known consumers does not by itself require the full suite when its reviewed route covers them. For iteration or separately bounded work in a mixed working tree, use `make validate test-quick` and the affected groups plus any additional consumer tests. Reuse successful checks until relevant source, contracts, dependencies, or the test environment changes. The full gate already includes the base checks.
+For Python changes, run Ruff lint and format checks on the affected files. Use `make lint` only when its global scope over `scripts/`, `tests/`, and `hooks/` is required. Multiple consumers or a routing fallback alone do not justify a full suite; use `make check` only at release boundaries or when impact cannot be bounded to focused checks. Reuse successful checks until relevant source, contracts, dependencies, or the test environment changes, or failures require a rerun. Stop when required checks pass.
 
 Group membership and source routes live in [`scripts/run_tests.py`](scripts/run_tests.py). The groups are `quick`, `prose-formatting`, `report`, `scanner`, `prompts`, `runtime`, `incremental`, `e2e`, `qa-repair`, `findings`, `config`, `requirements`, `baseline`, `packaging`, `context`, `trust`, `shared`, `tooling`, and `integration`. The `e2e` group retains the frozen-run replay without model calls; `integration` covers other deterministic integration tests and drivers. Manual live-run assertions have a separate role and are not added to focused groups.
 
@@ -168,7 +168,7 @@ GIT_LFS_SKIP_SMUDGE=1 git worktree add -d "$base_dir" "$(git merge-base origin/d
 git worktree remove --force "$base_dir"
 ```
 
-A test that also fails at the merge base is a pre-existing failure. A test that passes there is a regression caused by the current change. A test that is skipped there has no baseline; tests that read git-ignored local data, such as `tests/fixtures/e2e/_last-run`, skip in the worktree. Do not normalize or hide new failures. When targeted tests fail outside touched files, report failing test names and error heads instead of stale global counts.
+The same failure at the reference revision is pre-existing; a comparable passing run establishes a regression. A missing or skipped test provides no baseline. Tests that read git-ignored local data, such as `tests/fixtures/e2e/_last-run`, skip in the worktree. Do not normalize or hide new failures. When targeted tests fail outside touched files, report failing test names and error heads instead of stale global counts.
 
 ### Validation scripts
 
@@ -225,7 +225,7 @@ ruff check scripts/ tests/ hooks/
 ruff format --check scripts/ tests/ hooks/
 ```
 
-Run both locally before opening a pull request. `ruff check --fix` and `ruff format` can apply most fixes. Keep rule exceptions scoped and documented in `pyproject.toml`.
+For Python changes, run both checks on the affected files before opening a pull request. Use the directory-wide commands above when their full scope is required under the [verification rules](AGENTS.md#verification). `ruff check --fix` and `ruff format` can apply most fixes. Keep rule exceptions scoped and documented in `pyproject.toml`.
 
 ## Type hints
 
