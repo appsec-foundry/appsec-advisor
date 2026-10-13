@@ -9016,8 +9016,9 @@ class _ReportedTransport:
 def _assessment_model_lines(cfg: dict[str, Any]) -> tuple[str, str | None]:
     """Return the model of each role and a STRIDE model warning when one applies (MD-9).
 
-    The warning names an automatic move off Sonnet 4.6 and its cost, or an
-    explicit Sonnet 4.6 setting that is expected to return no STRIDE result.
+    The lineup already shows the automatic move off Sonnet 4.6; only an
+    explicit Sonnet 4.6 setting, which is expected to return no STRIDE
+    result, is warned about.
     """
     from orchestrator.assessment_stage2 import RENDERER_MODEL_KEYS
 
@@ -9027,14 +9028,7 @@ def _assessment_model_lines(cfg: dict[str, Any]) -> tuple[str, str | None]:
             by_model.setdefault(str(cfg[key]), []).append(role)
     lineup = "Models: " + "; ".join(f"{model} ({', '.join(roles)})" for model, roles in sorted(by_model.items()))
     warning = None
-    if cfg.get("stride_model_moved_from"):
-        warning = (
-            f"STRIDE runs on {cfg['stride_model']} instead of {cfg['stride_model_moved_from']}: "
-            f"{cfg['stride_model_moved_from']} returns no STRIDE result in a multi-repository "
-            "assessment. STRIDE calls cost more, because the newer model counts the same text "
-            "in about 30% more tokens at the same price per token."
-        )
-    elif cfg.get("stride_model") == resolve_config.SONNET46:
+    if cfg.get("stride_model") == resolve_config.SONNET46:
         warning = (
             f"STRIDE is set to {resolve_config.SONNET46}. In a multi-repository assessment it "
             "exhausts its thinking without returning a result; drop the explicit STRIDE model "

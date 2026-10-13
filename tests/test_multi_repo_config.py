@@ -85,7 +85,7 @@ def test_explicit_sonnet_46_stride_is_kept_and_warned(tmp_path, monkeypatch, ori
     assert warning and "returning a result" in warning and "stride_model_moved_from" not in resolved
 
 
-def test_default_combined_lineup_names_the_stride_move_and_its_cost(tmp_path, monkeypatch):
+def test_default_combined_lineup_shows_the_stride_move_without_a_warning(tmp_path, monkeypatch):
     from orchestrator import orchestration_controller as controller
 
     monkeypatch.delenv("APPSEC_STRIDE_MODEL", raising=False)
@@ -93,7 +93,7 @@ def test_default_combined_lineup_names_the_stride_move_and_its_cost(tmp_path, mo
     lineup, warning = controller._assessment_model_lines(resolved)
     stride_group = next(group for group in lineup.removeprefix("Models: ").split("; ") if "stride_analyzer" in group)
     assert stride_group.startswith(config.SONNET5)
-    assert warning and f"instead of {config.SONNET46}" in warning and "cost more" in warning
+    assert warning is None
 
 
 def test_an_explicit_latest_sonnet_stride_is_not_reported_as_a_move(tmp_path, monkeypatch):
