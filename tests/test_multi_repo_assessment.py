@@ -260,6 +260,8 @@ def test_default_console_shows_phases_counts_and_stalls_not_call_detail(monkeypa
     monkeypatch.setattr(console, "HEARTBEAT_SECONDS", 0)
     console.call("2 min: model is thinking (~9,000 tokens)", "stride_analyzer")
     console.call("result: 3 threats (134 s)", "stride_analyzer", "claude-sonnet-5-5")
+    console.call("result: 1 decisions (9 s)", "evidence_verifier", "sonnet")
+    console.call("result: 1 decisions (8 s)", "evidence_verifier", "sonnet")
     console.step("Stage 2: Management Summary")
     console.close()
     assert lines[:2] == [f"   Pipeline: {console.PIPELINE}", "▶ Models: sonnet (stride_analyzer)"]
@@ -279,11 +281,12 @@ def test_default_console_shows_phases_counts_and_stalls_not_call_detail(monkeypa
         "    · Store (2/2) · ~54%",
         "    · report section: Management Summary",
         "    · still in Phase 9/11 STRIDE — <1m · ~54%   [+<1m total] · STRIDE: model is thinking (~9,000 tokens)",
-        "    ✓ STRIDE [claude-sonnet-5-5] — 2m14s · ~54%",
+        "      ✓ STRIDE [claude-sonnet-5-5] — 2m14s",
+        "      ✓ evidence review [sonnet] (part 2) — 8s",
         "    · read 1 source range — 3s",
     ):
         assert shown in lines
-    assert "    ⚠ 1 min: no model activity for 95 s (waiting for the API)" in lines
+    assert "      ⚠ 1 min: no model activity for 95 s (waiting for the API)" in lines
     assert not any("reads " in line or "signal-" in line or "verifying evidence" in line for line in lines)
     # --verbose keeps every step and call line and adds no phase summary.
     verbose = []

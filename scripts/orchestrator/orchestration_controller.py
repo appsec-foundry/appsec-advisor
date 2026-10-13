@@ -8912,6 +8912,8 @@ class _AssessmentConsole:
         )
         self.phase, self.started, self.percent, self.announced = None, 0.0, 0, False
         self.finished_jobs = 0
+        # The component, section or crossing whose jobs the following lines belong to.
+        self.subject, self.parts = False, {}
         self.run_started = self.last = time.monotonic()
 
     def write(self, text: str) -> None:
@@ -8950,6 +8952,7 @@ class _AssessmentConsole:
         if phase != self.phase:
             self.close()
             self.phase, self.started, self.finished_jobs = phase, now, 0
+            self.subject, self.parts = False, {}
             number, _, head = phase.partition(" ")
             self.write("")
             self.write(
@@ -8961,7 +8964,9 @@ class _AssessmentConsole:
         if prefix == "Reviewing trust crossing" and position:
             # A crossing's ID is a signal hash, not a name a reader recognizes.
             self.write(f"    · trust crossing {position[1]} of {position[2]}{progress}")
+            self.subject, self.parts = True, {}
         elif prefix in self.SUBJECTS:
+            self.subject, self.parts = True, {}
             subject = self._POSITION.sub("", text[len(prefix) :].lstrip(": "))
             self.write(
                 f"    · {self.SUBJECTS[prefix]}{subject}"
@@ -8976,15 +8981,19 @@ class _AssessmentConsole:
             return
         label = self.ROLE_LABELS.get(role, (role or "").replace("_", " "))
         who = f"{label} [{model}]: " if role and model else (f"{label}: " if role else "")
+        # Job lines sit under the component or section they work on.
+        indent = "      " if self.subject else "    "
         if "no model activity" in text or text.startswith("model call stopped"):
-            self.write(f"    ⚠ {who}{text}")
+            self.write(f"{indent}⚠ {who}{text}")
             return
         read = re.fullmatch(r"reads (.*) \((\d+) s\)", text)
         if read:
             # One round of a multi-round job: a count, never the paths (--verbose shows them).
             more = re.search(r" \+(\d+) more$", read[1])
             count = 0 if read[1] == "nothing" else len(read[1].split(", ")) + (int(more[1]) if more else 0)
-            self.write(f"    · {who}read {count} source range{'s' if count != 1 else ''} — {_duration(int(read[2]))}")
+            self.write(
+                f"{indent}· {who}read {count} source range{'s' if count != 1 else ''} — {_duration(int(read[2]))}"
+            )
             return
         finished = re.fullmatch(r"result: .* \((\d+) s\)", text)
         if finished:
@@ -8997,9 +9006,12 @@ class _AssessmentConsole:
                 before = sum(self.WEIGHTS[name] for name in order[: order.index(self.phase)])
                 share = self.WEIGHTS[self.phase] * self.finished_jobs / (self.finished_jobs + 1)
                 self.percent = max(self.percent, min(99, round(before + share)))
+            # A subject's second job of one role is a further batch or part.
+            self.parts[role] = self.parts.get(role, 0) + 1
+            part = f" (part {self.parts[role]})" if self.parts[role] > 1 else ""
             self.write(
-                f"    ✓ {who.rstrip(': ') or 'model call'} — {_duration(int(finished[1]))}"
-                + (f" · ~{self.percent}%" if self.phase else "")
+                f"{indent}✓ {who.rstrip(': ') or 'model call'}{part} — {_duration(int(finished[1]))}"
+                + (f" · ~{self.percent}%" if self.phase and not self.subject else "")
             )
             return
         now = time.monotonic()
