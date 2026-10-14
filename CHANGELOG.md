@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Headless controller assessments spend less time preparing repeated source and evidence checks.
 - The headless controller console lists each STRIDE component and each verified abuse case with its title on its own line, and ends with one line per delivered file.
+- In a terminal, the headless controller's status line refreshes every few seconds with each running model call's duration and activity, also with `--verbose`; CI logs are unchanged.
 - The Management Summary merges Top Weaknesses and Top Mitigations into Remediation Priorities, which follows the verdict and lists the measures to do first under each root cause together with its lasting fix; root causes are ranked by the most severe finding they resolve, and only P1 and P2 measures appear as measures to do first.
 - The Critical Attack Tree is replaced by Critical Findings by Root Cause, which links each Critical finding, including OS command injection and caller-controlled authentication bypasses, to its weakness record and the structural fix that closes it.
 - A finding whose code an abuse-case verification confirms is shown as verified instead of ambiguous.
@@ -53,6 +54,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Headless controller analysis uses component-specific guides and checks that every supplied source target was read and assessed, splitting large components into bounded jobs without dropping targets.
 - Headless controller assessments no longer stop over model answers the controller can correct itself, and once STRIDE is complete a failed later model job no longer stops the run: the report is published and the replaced job is named as a warning.
 - Headless controller `--resume` continues an interrupted assessment after a plugin update and repeats only the model steps whose input changed.
+- Headless controller assessments apply the OWASP LLM guides to components whose source calls a model SDK, so their AI/LLM Exposure section and model provider return, and name a model integration the architecture did not model as a warning.
+- Headless controller assessments no longer reject repositories that commit Claude Code configuration such as `CLAUDE.md`, because their model calls never load it; escaping symlinks, IDE-loaded files and unlisted related-repository URLs still stop the run.
 - Headless controller progress lines share one column layout with the run's finished share, elapsed and remaining time, counted per analyzed component, and phase durations now match their time stamps.
 - Ownership middleware suppresses a source finding only when its defining module and execution order establish the matching request-field binding for every recognized handler registration.
 - Threat Analyst runs report evidence they could not obtain, no longer end incomplete when a design question asks for code, and accept source-backed findings introduced by removed controls.

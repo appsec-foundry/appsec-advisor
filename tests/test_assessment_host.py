@@ -381,6 +381,31 @@ def test_a_normalized_result_is_what_review_correction_and_caller_see(tmp_path):
     assert packet["rejected_result"]["result"] == {"summary": "draft"}
 
 
+@pytest.mark.parametrize(
+    "anchor,served",
+    [
+        ((REPO, "app.py", 1), True),
+        # Outside the task's sources, or past the end of the file: named, never served.
+        ((REPO, "other.py", 1), False),
+        ((REPO, "app.py", 90), False),
+    ],
+)
+def test_a_rejection_serves_its_unread_anchors_before_the_correction_turn(tmp_path, anchor, served):
+    seen_slices = []
+
+    def review(artifact, slices):
+        seen_slices.append([(s["path"], s["start_line"]) for s in slices])
+        if len(seen_slices) == 1:
+            raise host.Rejection("Analysis evidence was not retrieved", ["cited line was not read"], reads=[anchor])
+
+    model = Model([_result("a"), _result("b")])
+    _reviewed(model, tmp_path, review)
+    packet = json.loads(model.prompts[1].split("\n", 4)[4].rsplit("\n", 2)[0])
+    assert seen_slices[0] == []
+    assert ([(s["path"], s["start_line"]) for s in packet["source_slices"]] == [("app.py", 1)]) is served
+    assert ("added the cited source windows" in packet["rejected_result"]["instruction"]) is served
+
+
 def test_a_rejection_hands_every_violation_to_the_correction_turn(tmp_path):
     errors = [f"df-00{n}: interaction must target a client component" for n in range(1, 6)]
     rejected = []

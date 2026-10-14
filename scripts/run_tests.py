@@ -576,6 +576,7 @@ GROUPS = {
 
 MANUAL_TESTS = {
     "tests/test_full_run_e2e.py": "Assertions on live-run artifacts; only enabled by the manual E2E driver.",
+    "tests/test_host_isolation_live.py": "Calls the real claude host and spends money; enabled by APPSEC_LIVE_HOST=1.",
 }
 
 # These sources retain the full suite until their behavior has measured coverage.

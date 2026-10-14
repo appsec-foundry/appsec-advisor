@@ -66,8 +66,15 @@ class Rejection(ExchangeError):
     spends its correction turns on the same defect.
     """
 
-    def __init__(self, summary: str, errors):
+    def __init__(self, summary: str, errors, reads=()):
+        """`reads` names (repository_id, path, line) anchors the correction turn must see.
+
+        The host serves a window around each authorized anchor before the
+        correction turn, so a claim copied from context without reading its
+        source is confirmed or withdrawn against the delivered bytes.
+        """
         self.errors = [str(error) for error in errors]
+        self.reads = tuple(reads)
         super().__init__(summary + (": " + "; ".join(self.errors) if self.errors else ""))
 
 
@@ -169,6 +176,33 @@ class ExchangeResult:
     source_slices: tuple[dict, ...]
     calls: int
     usd: float | None
+
+
+_ANCHOR_CONTEXT_LINES = 20
+
+
+def _serve_anchors(scope, anchors, allowed_sources, slices: list, seen: set) -> int:
+    """Deliver a window around each authorized, unserved anchor within the read limit.
+
+    Returns the number of windows added. An anchor outside the task's sources or
+    past the end of its file is skipped; the rejection reason still names it.
+    """
+    served = 0
+    for rid, path, line in anchors:
+        if (rid, path) not in allowed_sources or len(seen) >= MAX_READS:
+            continue
+        start = max(1, line - _ANCHOR_CONTEXT_LINES)
+        key = (rid, path, start, line + _ANCHOR_CONTEXT_LINES)
+        if key in seen:
+            continue
+        try:
+            piece = scope.read(rid, path, *key[2:])
+        except ScopeError:
+            continue
+        seen.add(key)
+        slices.append(piece)
+        served += 1
+    return served
 
 
 def run_exchange(
@@ -300,6 +334,11 @@ def run_exchange(
                     "for this reason. Correct that result and return it complete, or read more source first.",
                     "result": artifact,
                 }
+                if isinstance(exc, Rejection) and _serve_anchors(scope, exc.reads, allowed_sources, slices, seen):
+                    feedback["instruction"] += (
+                        " The controller added the cited source windows to source_slices: keep a claim only "
+                        "when those lines support it."
+                    )
                 continue
             return ExchangeResult(artifact, tuple(slices), number, cost)
         fresh = 0

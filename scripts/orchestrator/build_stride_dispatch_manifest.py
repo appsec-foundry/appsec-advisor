@@ -77,25 +77,31 @@ _AI_SIGNAL_KINDS = {
 _AI_CONFIG_DIRS = {".claude", ".cursor", ".continue", ".codeium", ".aider", ".windsurf", ".kiro", ".vscode"}
 
 
-def _owned_ai_signals(output_dir: Path, paths: list) -> list[dict]:
-    """Retain source leads owned by this component; configuration is not autonomy."""
-    data = _read_json(output_dir / ".recon-patterns.json", {})
-    findings = (data.get("categories", {}).get("13", {}) or {}).get("findings", [])
-    return [
-        f
-        for f in findings
-        if isinstance(f, dict)
+def _is_ai_source_signal(f) -> bool:
+    """A Cat-13 hit in application source; configuration is not autonomy."""
+    return (
+        isinstance(f, dict)
         and f.get("subcategory") in _AI_SIGNAL_KINDS
         and isinstance(f.get("file"), str)
         and Path(f["file"]).suffix.lower() in _AI_SOURCE_SUFFIXES
         and not set(Path(f["file"]).parts) & _AI_CONFIG_DIRS
-        and _path_owns(paths, f["file"])
-    ]
+    )
+
+
+def _owned_ai_signals(output_dir: Path, paths: list) -> list[dict]:
+    """Retain source leads owned by this component."""
+    data = _read_json(output_dir / ".recon-patterns.json", {})
+    findings = (data.get("categories", {}).get("13", {}) or {}).get("findings", [])
+    return [f for f in findings if _is_ai_source_signal(f) and _path_owns(paths, f["file"])]
 
 
 def _cat13_supplement(output_dir: Path, paths: list | None = None) -> str:
     """Preserve owned signal kinds independently of the ten-location excerpt cap."""
-    findings = _owned_ai_signals(output_dir, paths or [])
+    return _ai_signal_summary(_owned_ai_signals(output_dir, paths or []))
+
+
+def _ai_signal_summary(findings: list[dict]) -> str:
+    """Name every signal kind and up to ten locations; empty without a signal."""
     kinds = sorted({f["subcategory"] for f in findings})
     if not kinds:
         return ""

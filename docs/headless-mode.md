@@ -143,7 +143,7 @@ The models in a combined run have no file, shell or network tools. The controlle
 
 The controller supplies component-specific analysis guides and requires a source-backed decision for each investigation target: detected handlers, outbound calls, capability and flow evidence, and component files without a detected surface. Large components use several bounded jobs within the existing run budget. An unread or unresolved target prevents that component's analysis from completing. This checks the supplied targets; it does not prove that every vulnerability or framework-specific mechanism was found.
 
-While it runs, a combined run prints each phase, the component or report section in work, and a warning when a model call stalls; `--verbose` adds every step and model call with the source ranges it reads.
+While it runs, a combined run prints each phase, the component or report section in work, and a warning when a model call stalls; `--verbose` adds every step and model call with the source ranges it reads. In a terminal, one status line is redrawn every five seconds with each running model call's duration and whether it is thinking, writing or waiting for the API; output that is not a terminal, such as a CI log, gets no status line.
 
 To run one repository through this same procedure instead of the single-repository scan, set `APPSEC_SINGLE_REPO_CONTROLLER=1` and pass that repository with one `--repo`; the budget and `--output` rules above apply, and without the variable a single `--repo` keeps the single-repository scan.
 

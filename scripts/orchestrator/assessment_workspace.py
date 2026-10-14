@@ -241,10 +241,13 @@ def combined_root(scope: AssessmentScope, names: Namespaces):
 
 
 def source_repositories(scope: AssessmentScope) -> list[dict]:
-    """Presentation rows of the selected checkouts for the workspace model."""
-    return [
-        {"label": row["label"], "head": row["head"], "dirty": row["dirty"]} for row in scope.inventory()["repositories"]
-    ]
+    """Presentation rows of the selected checkouts for the workspace model, by label.
+
+    The inventory orders repositories by identity, which is independent of the
+    selection order but meaningless to a reader; report text lists them by name.
+    """
+    rows = sorted(scope.inventory()["repositories"], key=lambda row: row["label"])
+    return [{"label": row["label"], "head": row["head"], "dirty": row["dirty"]} for row in rows]
 
 
 def recon_summary(project: str, scope: AssessmentScope) -> str:

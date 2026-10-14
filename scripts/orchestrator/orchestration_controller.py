@@ -54,6 +54,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import threading
 import time
 from collections import Counter
 from contextlib import contextmanager
@@ -8398,6 +8399,7 @@ def _assessment_architecture(scope, jobs, *, progress):
     assets = []
     flows.setdefault("external_entities", [])
     labels = {r["repository_id"]: r["label"] for r in scope.inventory()["repositories"]}
+    model_leads = {}
     for index, repository in enumerate(scope.repositories):
         rid = repository.repository_id
         # The combined flow contract bounds the concatenation of every job's lists.
@@ -8414,6 +8416,7 @@ def _assessment_architecture(scope, jobs, *, progress):
             if "connection_id" in flow and any(e["repository_id"] == rid for e in flow["evidence"])
         ]
         progress("Analyzing local architecture: " + labels[rid])
+        model_leads[rid] = analysis.model_integration_leads(scope, local)
         client_entries = analysis.client_entry_evidence(scope, rid, local, inventories[rid]["serving_units"]["units"])
         artifact = jobs.execute(
             role="architecture_analyst",
@@ -8430,7 +8433,11 @@ def _assessment_architecture(scope, jobs, *, progress):
                 "and workloads found by static scanning: account for each with a flow, an external entity or an "
                 "asset after reading its cited source, or leave it out when the source does not support it. "
                 "A client component's requests to the API it calls are flows from that client component. When "
-                "exactly one regular legitimate role exists, the controller adds its use of each client itself.",
+                "exactly one regular legitimate role exists, the controller adds its use of each client itself. "
+                "Its model_integrations name source lines that reference a model SDK or provider: when the cited "
+                "source calls a model, record the model provider as an external entity with service role "
+                "llm-inference and the call as a flow from that component; a configurable endpoint is still "
+                "that provider.",
             ),
             context={
                 "repository_id": rid,
@@ -8443,7 +8450,8 @@ def _assessment_architecture(scope, jobs, *, progress):
                     {k: flow[k] for k in ("from", "to", "label", "protocol", "evidence")} for flow in reviewed
                 ],
                 "deterministic_inventory": {
-                    key: inventories[rid][key] for key in ("route_projection", "role_units", "egress", "topology")
+                    **{key: inventories[rid][key] for key in ("route_projection", "role_units", "egress", "topology")},
+                    "model_integrations": model_leads[rid],
                 },
             },
             schema=schema,
@@ -8495,6 +8503,13 @@ def _assessment_architecture(scope, jobs, *, progress):
         "connection_review": review,
         "route_inventories": {rid: row["routes"] for rid, row in inventories.items()},
         "egress_inventories": {rid: row["egress_sources"] for rid, row in inventories.items()},
+        # A lead can be a mention rather than a call, so a gap is a warning, not a stop.
+        "model_integration_gaps": [
+            next(c["name"] for c in components["components"] if c["id"] == component_id)
+            for component_id in analysis.model_integration_gaps(
+                [lead for leads in model_leads.values() for lead in leads], flows
+            )
+        ],
     }
 
 
@@ -8680,7 +8695,7 @@ def _assessment_stride(
         target_batches = analysis.evidence_batches(
             targets, max_windows=MAX_READS // 2, max_findings=64, window_lines=MAX_SLICE_LINES
         ) or [[]]
-        lens_ids, lens_policy = analysis.analysis_lenses(component)
+        lens_ids, lens_policy = analysis.analysis_lenses(scope, component)
         context["lens_ids"] = lens_ids
         schema = analysis.contract("multi-repo-stride.schema.json")
         schema["required"].append("surface_coverage")
@@ -9015,17 +9030,34 @@ def _assessment_budget(ns, rest: list[str] = ()):
 
 
 def _assessment_preflight(roots: list[str]) -> None:
-    """Apply the untrusted-repository preflight to every selected root."""
+    """Apply the untrusted-repository preflight to every selected root.
+
+    Model exchanges never load configuration from a checkout (TR-10), so
+    repository-owned Claude Code configuration is not a finding here; escaping
+    symlinks, IDE-loaded files and unlisted related-repository URLs still are.
+    """
     for root in roots:
         failure = _script_failure(
             "validators/preflight_untrusted.py",
-            ["--repo-root", root, "--strict", "--strict-urls", "--format", "text", "--output", "-"],
+            ["--repo-root", root, "--strict", "--strict-urls", "--isolated-host", "--format", "text", "--output", "-"],
         )
         if failure:
             raise CallError(
                 f"untrusted-repository preflight rejected {Path(root).name}: {failure}. "
-                "Move repository-owned agent configuration out of the checkout, or pass --trust-mode trusted "
+                "Remove the listed paths or URLs from the checkout, or pass --trust-mode trusted "
                 "only for repositories you control."
+            )
+
+
+def _assessment_host_root_outside(work_root: Path, scope) -> None:
+    """Refuse a host working root inside a selected checkout (TR-10)."""
+    resolved = work_root.resolve()
+    for repository in scope.repositories:
+        root = Path(repository.root).resolve()
+        if resolved == root or root in resolved.parents:
+            raise CallError(
+                f"the model host directory {resolved} lies inside the selected checkout {root.name}; "
+                "set TMPDIR to a directory outside every selected repository"
             )
 
 
@@ -9075,16 +9107,22 @@ class _AssessmentConsole:
 
     Off a terminal (CI, logs) a progress line follows a change after
     ``PROGRESS_SECONDS`` and comes at the latest after ``HEARTBEAT_SECONDS``;
-    a terminal gets one progress line rewritten in place instead. Each
-    STRIDE component and each verified abuse case gets its own line in both.
-    ``--verbose`` adds every step and model call as progress lines;
-    ``--quiet`` prints nothing. Cost is never shown mid-run.
+    a terminal gets one progress line rewritten in place instead, redrawn
+    every ``TICK_SECONDS`` with each running model call's age and activity,
+    or the running controller step's age. Each STRIDE component and each
+    verified abuse case gets its own line in both. ``--verbose`` adds every
+    step and model call as progress lines and keeps the terminal's status
+    line; ``--quiet`` prints nothing. Cost is never shown mid-run.
     """
 
     # Off a terminal: a changed subject or share is shown after this quiet
     # interval, an unchanged one after the heartbeat interval.
     PROGRESS_SECONDS = 120
     HEARTBEAT_SECONDS = 300
+    # On a terminal: how often the status line is redrawn, and how many
+    # running calls it names before "+N more".
+    TICK_SECONDS = 5
+    TICK_CALLS = 2
     # Reader-facing names of the model roles in liveness and completion lines.
     ROLE_LABELS = {
         "recon_scanner": "discovery",
@@ -9206,6 +9244,49 @@ class _AssessmentConsole:
         # Called once a phase has started, e.g. to report a plugin change at once.
         self.on_phase = None
         self.run_started = self.last = self.clock()
+        # Model calls in flight (_ReportedTransport registers itself) and the
+        # last controller step with its start, for the terminal's status line.
+        self.running: dict[int, Any] = {}
+        self.activity, self.activity_started = "", time.monotonic()
+
+    def start_ticker(self) -> None:
+        """On a terminal, redraw the status line every ``TICK_SECONDS`` until the run stops."""
+        if not self.live:
+            return
+        _AssessmentConsole._stopped.clear()
+
+        def tick():
+            while not _AssessmentConsole._stopped.wait(self.TICK_SECONDS):
+                try:
+                    self.tick()
+                except Exception:  # noqa: BLE001 - a status redraw must never print a traceback or end the run
+                    pass
+
+        threading.Thread(target=tick, daemon=True).start()
+
+    @staticmethod
+    def stop() -> None:
+        """End the ticker and remove the status line, so no redraw follows the run's last message."""
+        with _AssessmentConsole._lock:
+            _AssessmentConsole._stopped.set()
+            _AssessmentConsole.clear_status()
+
+    def tick(self) -> None:
+        """Redraw the status line: what runs right now and for how long."""
+        if not self.phase:
+            return
+        now = time.monotonic()
+        # Copied first: calls register and leave from their own threads.
+        calls = sorted(list(self.running.values()), key=lambda call: call.started)
+        if calls:
+            shown = [f"{call.name or 'model call'} {_duration(now - call.started)} {call.state()}" for call in calls]
+            more = len(shown) - self.TICK_CALLS
+            working = " · ".join(shown[: self.TICK_CALLS]) + (f" · +{more} more" if more > 0 else "")
+        elif self.activity:
+            working = f"{self.activity} · {_duration(now - self.activity_started)}"
+        else:
+            working = ""
+        self._status(self._row("·", " · ".join(part for part in (self.current, working) if part)))
 
     def plan_phases(self, *, abuse_cases: bool) -> None:
         """Number the phases this run will execute; skipped abuse cases shorten the count."""
@@ -9225,8 +9306,10 @@ class _AssessmentConsole:
     def write(self, text: str, now: float | None = None) -> None:
         now = self.clock() if now is None else now
         self.last = now
-        self.clear_status()
-        self._out(f"{self._stamp(now)}  {text}" if text else "")
+        # Heartbeat threads and the ticker write too; a line must not split a redraw.
+        with _AssessmentConsole._lock:
+            self.clear_status()
+            self._out(f"{self._stamp(now)}  {text}" if text else "")
 
     def notice(self, text: str) -> None:
         """A line that needs attention, in the grid of the current phase."""
@@ -9235,20 +9318,29 @@ class _AssessmentConsole:
     @staticmethod
     def clear_status() -> None:
         """Remove the in-place status line before any permanent line is written."""
-        if _AssessmentConsole.status_shown:
-            sys.stderr.write("\r\033[K")
-            sys.stderr.flush()
-            _AssessmentConsole.status_shown = False
+        with _AssessmentConsole._lock:
+            if _AssessmentConsole.status_shown:
+                sys.stderr.write("\r\033[K")
+                sys.stderr.flush()
+                _AssessmentConsole.status_shown = False
 
     # Shared, so the command-line entry can clear a status line before its last message.
     status_shown = False
+    _lock = threading.RLock()
+    _stopped = threading.Event()
 
     def _status(self, text: str) -> None:
-        if not self.live or self.verbose:
+        if not self.live:
             return
-        sys.stderr.write(f"\r\033[K{self._stamp(self.clock())}  {text}")
-        sys.stderr.flush()
-        _AssessmentConsole.status_shown = True
+        line = f"{self._stamp(self.clock())}  {text}"
+        # A wrapped status line would survive the next "\r\033[K" as a stray row.
+        width = shutil.get_terminal_size().columns - 1
+        if len(line) > width:
+            line = line[: max(width - 1, 0)] + "…"
+        with _AssessmentConsole._lock:
+            sys.stderr.write(f"\r\033[K{line}")
+            sys.stderr.flush()
+            _AssessmentConsole.status_shown = True
 
     def _weight(self, phase: str) -> float:
         if self.components and phase in self.PER_COMPONENT:
@@ -9336,6 +9428,9 @@ class _AssessmentConsole:
             phase, _, result = text[len(self.RESULT) :].partition(": ")
             self.results[phase] = result
             return
+        # Steps name repository components; only printable text reaches the status line.
+        self.activity = "".join(char if char.isprintable() else "?" for char in text)[: self._NAME_MAX]
+        self.activity_started = time.monotonic()
         prefix, phase = next(((p, name) for p, name in self.PHASES if text.startswith(p)), (None, None))
         if phase is None:
             # Before the first phase a plain line; inside a phase a progress line of it.
@@ -9447,9 +9542,12 @@ class _ReportedTransport:
     HEARTBEAT_SECONDS = 60
     SILENT_SECONDS = 90
 
-    def __init__(self, inner, report, labels=None):
+    def __init__(self, inner, report, labels=None, running=None, name=""):
         self.inner, self.report, self.labels = inner, report, labels or {}
+        # ``running`` is the console's registry of calls in flight; ``name`` labels this call there.
+        self.running, self.name = running, name
         self.phase, self.thinking, self.written, self.active = "starting", 0, 0, time.monotonic()
+        self.started = self.active
         if hasattr(inner, "on_event"):
             inner.on_event = self._observe
 
@@ -9466,15 +9564,19 @@ class _ReportedTransport:
                 self.phase = "writing"
                 self.written += len(delta.get("partial_json") or delta.get("text") or "")
 
-    def _status(self, minutes):
+    def state(self):
+        """What the running call does right now."""
         quiet = round(time.monotonic() - self.active)
         if quiet >= self.SILENT_SECONDS:
-            return f"{minutes} min: no model activity for {quiet} s (waiting for the API)"
+            return f"no model activity for {quiet} s (waiting for the API)"
         if self.phase == "writing":
-            return f"{minutes} min: model is writing its result (~{self.written:,} characters)"
+            return f"model is writing its result (~{self.written:,} characters)"
         if self.phase == "thinking":
-            return f"{minutes} min: model is thinking (~{self.thinking:,} tokens)"
-        return f"{minutes} min: waiting for the model's first response"
+            return f"model is thinking (~{self.thinking:,} tokens)"
+        return "waiting for the model's first response"
+
+    def _status(self, minutes):
+        return f"{minutes} min: {self.state()}"
 
     def on_correction(self, reason: str) -> None:
         """The controller rejected the last answer and asks the model to correct it."""
@@ -9486,12 +9588,13 @@ class _ReportedTransport:
         return f"{label + '/' if label else ''}{path}:{row.get('start_line')}-{row.get('end_line')}"
 
     def invoke(self, system, prompt, schema, timeout_s, should_stop):
-        import threading
-
         from runtime.analyst_host import HostTimeout
 
         started = time.monotonic()
         self.phase, self.thinking, self.written, self.active = "starting", 0, 0, started
+        self.started = started
+        if self.running is not None:
+            self.running[id(self)] = self
         done = threading.Event()
 
         def heartbeat():
@@ -9509,6 +9612,8 @@ class _ReportedTransport:
             raise
         finally:
             done.set()
+            if self.running is not None:
+                self.running.pop(id(self), None)
         # Duration only: cost belongs to the end-of-run summary, never mid-run.
         timing = f"{round(time.monotonic() - started)} s"
         payload = reply.payload if isinstance(reply.payload, dict) else {}
@@ -10094,6 +10199,8 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
     if len(ns.repo) < minimum:
         raise CallError("a multi-repository assessment requires at least two --repo selections")
     console = None if progress or ns.quiet else _AssessmentConsole(ns.verbose)
+    if console:
+        console.start_ticker()
     say = progress or (console.step if console else (lambda text: None))
     budget = _assessment_budget(ns, rest)
     if ns.trust_mode == "untrusted":
@@ -10113,6 +10220,7 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
         ns.project or (labels[0] if len(labels) == 1 else f"Combined system ({len(labels)} repositories)")
     ).strip()
     with tempfile.TemporaryDirectory(prefix="appsec-hosts-") as hosts:
+        _assessment_host_root_outside(Path(hosts), scope)
         factory = host_factory or _assessment_cli_host_factory(
             Path(hosts), scope.output / ".assessment-work" / "host-events"
         )
@@ -10132,6 +10240,8 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                     plain(role, model, ceiling),
                     lambda text, role=role, model=model: console.call(text, role, model),
                     labels,
+                    console.running,
+                    _AssessmentConsole.ROLE_LABELS.get(role, role.replace("_", " ")),
                 )
 
         try:
@@ -10272,6 +10382,11 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                     f"{_AssessmentConsole.ROLE_LABELS.get(gap['role'], gap['role'])} job {gap['selector']} "
                     f"was replaced after a model failure ({gap['reason']}); rerun to retry it"
                     for gap in jobs.gaps
+                )
+                warnings.extend(
+                    f"{name} references a model SDK or provider in its source, but the architecture models no "
+                    "LLM inference service for it; review its AI exposure manually"
+                    for name in architecture["model_integration_gaps"]
                 )
                 _assessment_discard_workspace(workspace, len(labels), cfg)
         except ScopeError as exc:
@@ -10493,7 +10608,7 @@ def assess_main(argv: list[str]) -> int:
             outcome = assess_repositories(argv)
         finally:
             # A stopped run must not print its last message onto the status line.
-            _AssessmentConsole.clear_status()
+            _AssessmentConsole.stop()
     except KeyboardInterrupt:
         print("\n✗ assessment interrupted", file=sys.stderr)
         return 130

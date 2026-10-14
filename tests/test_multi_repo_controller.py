@@ -389,6 +389,33 @@ def test_discovery_and_architecture_receive_their_own_repository_inventories(tmp
     assert set(architecture["route_inventories"]) == set(rid.values())
 
 
+def test_architecture_receives_model_integration_leads_and_reports_unmodelled_ones(tmp_path):
+    roots = _inventory_checkouts(tmp_path)
+    with (roots[1] / "app.py").open("a") as handle:
+        handle.write("from anthropic import Anthropic\n")
+    scope = admit([str(r) for r in roots], str(tmp_path / "out"))
+    host = Host(scope)
+    jobs = AssessmentJobs(
+        scope,
+        scope.output / ".assessment/jobs",
+        AssessmentBudget(2, 0.05, 60, 120),
+        host.factory,
+        lambda: False,
+        lambda: None,
+    )
+    architecture = controller._assessment_architecture(scope, jobs, progress=lambda text: None)
+    rid = {repo.root.name: repo.repository_id for repo in scope.repositories}
+    leads = {
+        ctx["repository_id"]: ctx["deterministic_inventory"]["model_integrations"]
+        for role, ctx in host.calls
+        if role == "architecture_analyst" and "deterministic_inventory" in ctx
+    }
+    assert leads[rid["edge"]] == []
+    assert [row["evidence"] for row in leads[rid["pay"]]] == [[{"file": "app.py", "line": 3}]]
+    # The test host models no inference service, so the lead stays a reported gap.
+    assert architecture["model_integration_gaps"] == ["Service"]
+
+
 def test_inventories_at_their_bounds_leave_most_of_the_context_for_source(tmp_path):
     from runtime.assessment_host import MAX_CONTEXT_BYTES
 
@@ -755,8 +782,11 @@ def test_each_model_call_reports_progress_without_echoing_model_text(monkeypatch
             HostTimeout("host call exceeded its time limit"),
         ]
     )
-    transport = _ReportedTransport(inner, lines.append, {"repo-1": "user-service"})
+    running = {}
+    transport = _ReportedTransport(inner, lines.append, {"repo-1": "user-service"}, running, "STRIDE")
     transport.invoke("s", "p", {}, 30, lambda: False)
+    # A finished call leaves the console's registry of calls in flight.
+    assert running == {}
     transport.invoke("s", "p", {}, 30, lambda: False)
     with pytest.raises(HostTimeout):
         transport.invoke("s", "p", {}, 30, lambda: False)

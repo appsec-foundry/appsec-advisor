@@ -1051,6 +1051,7 @@ requirements:
     decisions:
       - TR-1
       - TR-2
+      - TR-10
       - TR-3
     documents:
       - README.md
@@ -1063,7 +1064,9 @@ requirements:
       - tests/test_preflight_untrusted.py::test_repo_root_claude_memory_is_flagged
       - tests/test_preflight_untrusted.py::test_escaping_symlink_flagged
       - tests/test_run_headless_completion.py::test_preflight_abort_names_the_trust_mode_escape_hatch
-      - tests/test_multi_repo_assessment.py::test_untrusted_preflight_rejects_repository_owned_agent_configuration
+      - tests/test_multi_repo_assessment.py::test_untrusted_preflight_rejects_redirection_but_not_unloaded_agent_configuration
+      - tests/test_multi_repo_assessment.py::test_model_host_directory_must_lie_outside_every_checkout
+      - tests/test_preflight_untrusted.py::test_isolated_host_omits_only_claude_code_configuration
       - tests/test_multi_repo_scope.py::test_untrusted_references_cannot_escape_the_admitted_view
       - tests/test_multi_repo_scope.py::test_tracked_symlink_is_recorded_as_omitted_not_followed
       - tests/test_assessment_host.py::test_unauthorized_proposals_fail_before_another_model_call

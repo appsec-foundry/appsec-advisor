@@ -72,9 +72,13 @@ def _is_null_device(st: os.stat_result) -> bool:
     return stat.S_ISCHR(st.st_mode) and st.st_rdev == null_rdev
 
 
-def _scan_repo_owned_hooks(repo_root: Path) -> list[dict[str, Any]]:
+def _scan_repo_owned_hooks(repo_root: Path, *, isolated_host: bool = False) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     for rel in _REPO_OWNED_CLAUDE_PATHS:
+        # TR-10: an isolated host never loads Claude Code configuration from
+        # the checkout; IDE-loaded files stay findings.
+        if isolated_host and (rel.startswith(".claude/") or rel.startswith("CLAUDE")):
+            continue
         p = repo_root / rel
         try:
             st = p.lstat()
@@ -152,9 +156,9 @@ def _scan_related_repos(repo_root: Path, *, strict_urls: bool) -> list[dict[str,
     return findings
 
 
-def run(repo_root: Path, *, strict: bool, strict_urls: bool) -> dict[str, Any]:
+def run(repo_root: Path, *, strict: bool, strict_urls: bool, isolated_host: bool = False) -> dict[str, Any]:
     findings: list[dict[str, Any]] = []
-    findings.extend(_scan_repo_owned_hooks(repo_root))
+    findings.extend(_scan_repo_owned_hooks(repo_root, isolated_host=isolated_host))
     findings.extend(_scan_symlinks(repo_root))
     findings.extend(_scan_related_repos(repo_root, strict_urls=strict_urls))
     return {
@@ -198,6 +202,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="require APPSEC_URL_ALLOWLIST for related-repos URLs",
     )
     p.add_argument(
+        "--isolated-host",
+        action="store_true",
+        help="the caller's model host runs outside the checkout with --safe-mode --restricted (TR-10); "
+        "skip repository-owned Claude Code configuration",
+    )
+    p.add_argument(
         "--format",
         choices=("json", "text", "both"),
         default="both",
@@ -212,7 +222,7 @@ def main(argv: list[str] | None = None) -> int:
     if not repo_root.is_dir():
         print(f"preflight-untrusted: repo root not found: {repo_root}", file=sys.stderr)
         return 3
-    report = run(repo_root, strict=args.strict, strict_urls=args.strict_urls)
+    report = run(repo_root, strict=args.strict, strict_urls=args.strict_urls, isolated_host=args.isolated_host)
 
     if args.format in ("text", "both"):
         print(_render_human(report), file=sys.stderr)

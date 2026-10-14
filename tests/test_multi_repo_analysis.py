@@ -205,13 +205,101 @@ def test_stride_parts_keep_every_finding_and_remap_category_references(tmp_path)
     assert parts[0]["threats"][0]["local_id"] == "issue-1"
 
 
-def test_selected_lenses_use_existing_selector_and_plugin_policy():
-    selected, policy = stage.analysis_lenses({"id": "client", "name": "Portal", "tier": "client"})
+def test_selected_lenses_use_existing_selector_and_plugin_policy(tmp_path):
+    scope, components, _, _, _ = sources(tmp_path)
+    selected, policy = stage.analysis_lenses(
+        scope, {**components[0], "id": "client", "name": "Portal", "tier": "client"}
+    )
     assert selected == ["spa"] and (stage.ROOT / "agents/shared/spa-threats.md").read_text() == policy
     selected, policy = stage.analysis_lenses(
-        {"id": "worker", "name": "Worker", "tier": "application", "lens_ids": ["../../foreign"]}
+        scope, {**components[0], "id": "worker", "name": "Worker", "lens_ids": ["../../foreign"]}
     )
     assert selected == [] and policy == ""
+
+
+def _owned_sources(tmp_path, files, owned):
+    repo = RepositoryView("repo-" + "1" * 16, tmp_path / "repo", "b" * 40, "c" * 64, files)
+    scope = AssessmentScope((repo,), tmp_path / "output")
+    component = dict(
+        id="component-1",
+        name="Service",
+        tier="application",
+        repository_ids=[repo.repository_id],
+        paths=[dict(repository_id=repo.repository_id, path=path) for path in owned],
+    )
+    return scope, component
+
+
+@pytest.mark.parametrize(
+    "path,source",
+    [
+        ("routes/chat.ts", b"import { createOpenAICompatible } from '@ai-sdk/openai-compatible'\n"),
+        ("svc/assistant/reply.py", b"from anthropic import Anthropic\nclient = Anthropic()\n"),
+    ],
+)
+def test_owned_llm_source_selects_the_llm_lens_for_a_generic_component(tmp_path, path, source):
+    # Twenty-five strong hits elsewhere precede the owned file; a repository-wide
+    # excerpt cap must not decide whether this component receives the lens.
+    noise = {f"aaa/other{i}.py": b"import openai\n" for i in range(25)}
+    scope, component = _owned_sources(
+        tmp_path, {**noise, path: source, "server.ts": b"app.listen(3000)\n"}, [path, "server.ts"]
+    )
+    selected, policy = stage.analysis_lenses(scope, component)
+    assert "llm" in selected
+    assert (stage.ROOT / "agents/shared/owasp-llm-top10.md").read_text() in policy
+
+
+@pytest.mark.parametrize(
+    "files,owned",
+    [
+        # Prompt vocabulary alone is weak and does not prove a model call.
+        ({"routes/verify.ts": b"const systemPrompt = loadSystemPrompt()\n"}, ["routes/verify.ts"]),
+        # A provider named only in configuration is not application source.
+        ({"config/default.yml": b"llm: openai\n", "app.ts": b"app.listen(3000)\n"}, ["config/default.yml", "app.ts"]),
+        # Another component's model call does not select this component's lens.
+        ({"chat/call.ts": b"import OpenAI from 'openai'\n", "shop/cart.ts": b"cart.add(item)\n"}, ["shop/cart.ts"]),
+    ],
+)
+def test_llm_lens_requires_a_strong_signal_in_owned_source(tmp_path, files, owned):
+    scope, component = _owned_sources(tmp_path, files, owned)
+    assert stage.known_llm_patterns(scope, component) == ""
+    assert "llm" not in stage.analysis_lenses(scope, component)[0]
+    assert stage.model_integration_leads(scope, [component]) == []
+
+
+@pytest.mark.parametrize("path,line", [("app.py", 1), ("svc/models/index.ts", 7)])
+def test_unretrieved_evidence_rejection_names_each_citation(tmp_path, path, line):
+    from runtime.assessment_host import Rejection
+
+    files = {path: b"\n".join(b"row = %d" % i for i in range(1, 10)) + b"\n", "other.py": b"pass\n"}
+    scope, component = _owned_sources(tmp_path, files, [path, "other.py"])
+    rid = scope.repositories[0].repository_id
+    digest = {p: hashlib.sha256(files[p]).hexdigest() for p in files}
+    cited = dict(repository_id=rid, file=path, line=line, sha256=digest[path])
+    read = dict(repository_id=rid, file="other.py", line=1, sha256=digest["other.py"])
+    artifact = {"evidence": [cited, read]}
+    ranges = [dict(repository_id=rid, path="other.py", sha256=digest["other.py"], start_line=1, end_line=1)]
+    allowed = stage.source_selection([component])
+    with pytest.raises(Rejection) as raised:
+        stage.validate_retrieved_sources(scope, artifact, ranges, allowed)
+    assert raised.value.errors == [f"{rid}/{path}:{line} was not read; read it or remove the claim"]
+    # Once the cited window is delivered, the same claims pass.
+    ranges.append(dict(repository_id=rid, path=path, sha256=digest[path], start_line=1, end_line=9))
+    stage.validate_retrieved_sources(scope, artifact, ranges, allowed)
+
+
+def test_model_integration_gap_closes_only_with_a_flow_to_an_inference_service(tmp_path):
+    source = b"// assistant\nimport OpenAI from 'openai'\n"
+    scope, component = _owned_sources(tmp_path, {"assist/reply.ts": source}, ["assist/reply.ts"])
+    leads = stage.model_integration_leads(scope, [component])
+    assert leads == [{"component_id": "component-1", "evidence": [{"file": "assist/reply.ts", "line": 2}]}]
+    inference = {"id": "ext-model", "service_roles": [{"role": "llm-inference", "evidence": []}]}
+    other = {"id": "ext-rpc", "service_roles": [{"role": "blockchain-rpc", "evidence": []}]}
+    flow = {"from": "component-1", "to": "ext-model"}
+    assert stage.model_integration_gaps(leads, {"external_entities": [other], "data_flows": []}) == ["component-1"]
+    unrelated = {"external_entities": [inference, other], "data_flows": [{"from": "component-1", "to": "ext-rpc"}]}
+    assert stage.model_integration_gaps(leads, unrelated) == ["component-1"]
+    assert stage.model_integration_gaps(leads, {"external_entities": [inference], "data_flows": [flow]}) == []
 
 
 @pytest.mark.parametrize(

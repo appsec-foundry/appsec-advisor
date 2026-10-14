@@ -178,7 +178,75 @@ def analysis_targets(scope, component: dict, architecture: dict, scanned: list[d
     return [targets[key] for key in sorted(targets)]
 
 
-def analysis_lenses(component: dict) -> tuple[list[str], str]:
+def known_llm_patterns(scope, component: dict) -> str:
+    """Apply the single-repository LLM seed rule to the component's frozen sources.
+
+    A strong AI-integration signal in an owned source file marks an LLM surface
+    even when the component's name and authored fields do not; the summary then
+    carries every owned signal kind for the agentic and retrieval lenses. Every
+    owned file is read, so no repository-wide excerpt cap decides the result.
+    The summary selects lenses only; it never establishes a capability or finding.
+    """
+    from orchestrator.build_stride_dispatch_manifest import _ai_signal_summary
+
+    signals = _owned_ai_signals(scope, component)
+    if not any(signal["strength"] == "strong" for signal in signals):
+        return ""
+    return _ai_signal_summary(signals)
+
+
+def _owned_ai_signals(scope, component: dict) -> list[dict]:
+    from analyzers.recon_patterns import cat13_line_signals
+    from orchestrator.build_stride_dispatch_manifest import _is_ai_source_signal
+
+    repos = {r.repository_id: r for r in scope.repositories}
+    signals = []
+    for rid, path in sorted(source_selection([component])):
+        for number, line in enumerate(repos[rid].files[path].decode("utf-8", "replace").splitlines(), 1):
+            for kind, strength in cat13_line_signals(line):
+                signal = {"subcategory": kind, "strength": strength, "file": path, "line": number}
+                if _is_ai_source_signal(signal):
+                    signals.append(signal)
+    return signals
+
+
+def model_integration_leads(scope, components: list[dict]) -> list[dict]:
+    """Strong model-SDK or provider lines per component, as leads for the architecture job.
+
+    A lead says the source names a model integration, not that it calls one or
+    where the provider runs; the architecture job decides after reading it.
+    """
+    leads = []
+    for component in components:
+        strong = [row for row in _owned_ai_signals(scope, component) if row["strength"] == "strong"]
+        if strong:
+            evidence = list(dict.fromkeys((row["file"], row["line"]) for row in strong))[:8]
+            leads.append(
+                {
+                    "component_id": component["id"],
+                    "evidence": [{"file": file, "line": line} for file, line in evidence],
+                }
+            )
+    return leads
+
+
+def model_integration_gaps(leads: list[dict], flows: dict) -> list[str]:
+    """Component IDs with a model-integration lead but no flow to an LLM inference service."""
+    inference = {
+        entity["id"]
+        for entity in flows.get("external_entities", [])
+        if any(role.get("role") == "llm-inference" for role in entity.get("service_roles") or [])
+    }
+    connected = {
+        end
+        for flow in flows.get("data_flows", [])
+        for end, other in ((flow.get("from"), flow.get("to")), (flow.get("to"), flow.get("from")))
+        if other in inference
+    }
+    return [lead["component_id"] for lead in leads if lead["component_id"] not in connected]
+
+
+def analysis_lenses(scope, component: dict) -> tuple[list[str], str]:
     """Resolve the existing lens selector only to fixed plugin-owned policy."""
     from orchestrator.build_stride_dispatch_manifest import _stride_lens_ids
 
@@ -191,7 +259,7 @@ def analysis_lenses(component: dict) -> tuple[list[str], str]:
         "mobile": "stride-lenses/mobile.md",
         "supply-chain": "shared/supply-chain-patterns.md",
     }
-    selected = _stride_lens_ids(component, {})
+    selected = _stride_lens_ids(component, {"known_llm_patterns": known_llm_patterns(scope, component)})
     return selected, "\n\n".join((ROOT / "agents" / files[key]).read_text(encoding="utf-8") for key in selected)
 
 
@@ -314,17 +382,35 @@ def component_neighborhood(components: dict, flows: dict, component_id: str) -> 
 
 
 def validate_retrieved_sources(scope, artifact, ranges, allowed_sources):
-    """Every evidence claim must cite bytes actually delivered to this job."""
+    """Every evidence claim must cite bytes actually delivered to this job.
+
+    The rejection names each unretrieved citation; a stateless correction turn
+    cannot otherwise tell which claim to read or remove. Context anchors invite
+    such citations, so the host also serves each authorized unread anchor
+    before the correction turn.
+    """
+    missing, anchors = [], []
     for row in source_rows(artifact):
         validate_source(scope, row, path_key="file")
         key = (row["repository_id"], row["file"])
-        if key not in allowed_sources or not any(
+        location = f"{row['repository_id']}/{row['file']}:{row['line']}"
+        if key not in allowed_sources:
+            missing.append(location + " is outside this job's sources; remove the claim")
+        elif not any(
             (r["repository_id"], r["path"]) == key
             and r["sha256"] == row["sha256"]
             and r["start_line"] <= row["line"] <= r["end_line"]
             for r in ranges
         ):
-            raise ExchangeError("Analysis evidence was not retrieved by its authorized job")
+            missing.append(location + " was not read; read it or remove the claim")
+            anchors.append((row["repository_id"], row["file"], row["line"]))
+    if missing:
+        # The correction feedback is capped at 2,000 characters; name the rest by count.
+        unique = list(dict.fromkeys(missing))
+        shown = unique[:12] + ([f"{len(unique) - 12} more unretrieved citations"] if len(unique) > 12 else [])
+        raise Rejection(
+            "Analysis evidence was not retrieved by its authorized job", shown, reads=list(dict.fromkeys(anchors))
+        )
 
 
 def validate_identity(scope, artifact, component_fingerprint):
