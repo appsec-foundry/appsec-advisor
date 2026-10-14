@@ -2343,7 +2343,9 @@ def _run_id_for_this_run() -> str:
 
 
 def _prepare_rerender(cfg: dict[str, Any]) -> dict[str, Any]:
-    """Prepare the compact rerender path without touching Stage-1 artifacts."""
+    """Prepare the compact rerender path without touching Stage-1 artifacts.
+
+    It marks the report as owed so the next controller call recomposes it."""
     output_dir = Path(cfg["output_dir"]).resolve()
     repo_root = Path(cfg["repo_root"]).resolve()
     cfg["output_dir"] = str(output_dir)
@@ -2388,6 +2390,15 @@ def _prepare_rerender(cfg: dict[str, Any]) -> dict[str, Any]:
                 "--step=stage2-dispatch",
             ],
         )
+        # A rerender exists to rebuild the report, so the report is owed even when
+        # a finished one is on disk; otherwise `next` would find it and skip
+        # compose. The controller compose then advances the checkpoint to phase 11.
+        from shared._atomic_io import atomic_write_text  # noqa: PLC0415
+
+        atomic_write_text(
+            output_dir / ".appsec-checkpoint",
+            "phase=10b status=completed need_render=true runtime_generation=context-v2\n",
+        )
     except (ControllerError, OSError) as exc:
         try:
             (output_dir / ".appsec-lock").unlink()
@@ -2409,7 +2420,9 @@ def _prepare_rerender(cfg: dict[str, Any]) -> dict[str, Any]:
         "action": "dispatch_agent",
         "mode": "rerender",
         "stage": "stage2",
-        "instruction_file": str(THIN_RERENDER_RUNTIME),
+        # The stage runtime the session follows next, as full mode's prepare names
+        # the Stage-1 runtime; `route` already handed it SKILL-rerender-runtime.md.
+        "instruction_file": str(THIN_STAGE2_RUNTIME),
         "preflight_status": str(cfg.get("preflight_status") or ""),
         "run_plan": "Re-rendering existing Stage-1 artifacts; threat analysis is skipped.",
         "config_path": str(config_path),

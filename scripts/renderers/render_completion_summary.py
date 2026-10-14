@@ -2190,6 +2190,8 @@ def render_run_overview(
         scope = "security-relevant delta from previous threat-model.yaml"
     elif mode == "rebuild":
         scope = "fresh full repository assessment"
+    elif mode == "rerender":
+        scope = "report re-rendered from the existing assessment, no re-analysis"
     if change:
         mode = f"{mode} (delta: +{change['added_n']} / ~{change['changed_n']} / -{change['resolved_n']})"
 
@@ -2738,7 +2740,7 @@ def _bool_pair(
 
 
 _RUN_CHOICES = {
-    "mode": ("full", "incremental", "rebuild", "dry-run"),
+    "mode": ("full", "incremental", "rebuild", "rerender", "dry-run"),
     "reasoning_model": ("opus-cheap", "sonnet", "opus", "sonnet-economy", "haiku-economy"),
     "assessment_depth": ("quick", "standard", "thorough"),
 }

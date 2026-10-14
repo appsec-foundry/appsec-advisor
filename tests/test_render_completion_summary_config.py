@@ -229,8 +229,13 @@ def _identity_args(argv):
             ("/srv/a", "full", "quick", "opus"),
         ),
         ({}, {"repo_root": Path("/work/b")}, ("/work/b", "full", "standard", "opus")),
+        (
+            {"repo_root": "/srv/a", "mode": "rerender", "assessment_depth": "thorough", "reasoning_model": "opus"},
+            {},
+            ("/srv/a", "rerender", "thorough", "opus"),
+        ),
     ],
-    ids=["config-only", "flag-overrides", "no-config"],
+    ids=["config-only", "flag-overrides", "no-config", "rerender"],
 )
 def test_run_identity_comes_from_the_run_config(config, argv, expected):
     args = _identity_args(argv)
