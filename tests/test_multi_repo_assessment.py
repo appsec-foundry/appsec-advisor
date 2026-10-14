@@ -521,6 +521,11 @@ def test_console_header_states_the_resolved_limits_models_and_checks():
     rows = dict(controller._assessment_intro(ns, controller._assessment_budget(ns), "quick", "Models: m1 (a)"))
     assert rows["Budget"] == "model calls stop at $5.00" and rows["Time limit"] == "1h05m"
     assert rows["Trust mode"] == "trusted, no preflight" and rows["Output"] == "/o"
+    ns = parse(["--repo", "/r", "--output", "/o", "--interactive-launch"])
+    rows = dict(controller._assessment_intro(ns, controller._assessment_budget(ns), "standard", "Models: m1 (a)"))
+    assert rows["Budget"] == (
+        "model calls stop at $20.00 (default for the assessment depth; set --soft-budget or --hard-budget to change it)"
+    )
 
 
 def test_a_refused_start_prints_its_reason_without_a_run_header(tmp_path, monkeypatch, capsys):

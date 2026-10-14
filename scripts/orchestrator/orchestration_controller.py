@@ -9561,9 +9561,11 @@ def _assessment_intro(ns, budget, depth: str, lineup: str, runtime_changed=False
     elif ns.resume:
         output += " (--resume: continues the earlier assessment)"
     cut = f"model calls stop at ${budget.max_usd:.2f}"
-    if ns.hard_budget is None:
+    if ns.hard_budget is None and ns.soft_budget is not None:
         # --soft-budget only derives this cut; nothing steers the run below it.
         cut += f" (1.25 × --soft-budget ${ns.soft_budget:g}; no soft steering in this mode)"
+    elif ns.hard_budget is None:
+        cut += " (default for the assessment depth; set --soft-budget or --hard-budget to change it)"
     limit = _elapsed(budget.timeout_s)
     trust = "untrusted, preflight clean" if ns.trust_mode == "untrusted" else "trusted, no preflight"
     return [
