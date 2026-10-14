@@ -294,8 +294,10 @@ def test_actor_discovery_cites_retrieved_sources_and_reaches_the_resolver(tmp_pa
 
 
 def test_actor_discovery_rejects_evidence_it_did_not_retrieve(tmp_path):
-    with pytest.raises(ValueError):
-        discover(tmp_path, Discoverer(line=3))
+    # The unretrieved evidence is never accepted; after STRIDE the failed job is replaced (OR-39).
+    _, _, workspace, receipts = discover(tmp_path, Discoverer(line=3))
+    assert receipts == ["actor discovery unavailable: the model job failed; deterministic actors kept"]
+    assert not (workspace / ".actors-discovered.json").exists()
 
 
 def test_quick_depth_skips_actor_discovery(tmp_path):
