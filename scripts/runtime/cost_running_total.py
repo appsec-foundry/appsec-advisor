@@ -53,6 +53,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from renderers.term_style import COLOR_MODES, Style
+
 # Reuse the canonical pricing + parsing primitives from runtime/verify_run_costs.py.
 # This keeps the pricing-tier table single-sourced (haiku-4-5 was added
 # there in 2026-04 — any new model lands there first, this script picks
@@ -576,7 +578,7 @@ def _run_start_iso(output_dir: Path) -> str | None:
     return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def format_phase_table(agent_log: Path, since_iso: str | None = None) -> str:
+def format_phase_table(agent_log: Path, since_iso: str | None = None, st: Style | None = None) -> str:
     """Where the run's time and money went, phase by phase.
 
     Built from the ``PHASE_COST`` lines ``runtime/skill_watchdog.py`` writes at every
@@ -612,13 +614,14 @@ def format_phase_table(agent_log: Path, since_iso: str | None = None) -> str:
         last_total = fields.get("total", last_total)
     if not rows:
         return ""
+    st = st or Style(False)
     width = max(len(r[0]) for r in rows)
-    out = ["  Cost by phase — floor, from the run log"]
+    out = [st("  Cost by phase", "bold") + st(" — floor, from the run log", "muted")]
     for phase, duration, cost in rows:
-        out.append(f"    phase {phase.ljust(width)}  {duration:>7}  {cost:>9}")
+        out.append(f"    {st('phase', 'muted')} {phase.ljust(width)}  {st(f'{duration:>7}', 'muted')}  {cost:>9}")
     budget_line = _budget_line(agent_log.parent, last_total)
     if budget_line:
-        out.append(budget_line)
+        out.append(st(budget_line, "bold"))
     return "\n".join(out)
 
 
@@ -652,6 +655,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--format", choices=("banner", "json", "total-only", "phases"), default="banner")
     p.add_argument("--since-iso", default=None, help="Override window start (ISO 8601). Default: ASSESSMENT_START.")
     p.add_argument("--phase-label", default=None, help="Optional phase label for the banner (informational).")
+    p.add_argument("--color", choices=COLOR_MODES, default="auto", help="Colour for --format phases.")
     ns = p.parse_args(argv)
 
     output_dir = Path(ns.output_dir)
@@ -660,7 +664,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if ns.format == "phases":
-        table = format_phase_table(output_dir / ".agent-run.log", ns.since_iso or _run_start_iso(output_dir))
+        table = format_phase_table(
+            output_dir / ".agent-run.log",
+            ns.since_iso or _run_start_iso(output_dir),
+            Style.for_stream(sys.stdout, ns.color),
+        )
         if table:
             print(table)
         return 0

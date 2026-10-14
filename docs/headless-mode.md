@@ -143,7 +143,7 @@ The models in a combined run have no file, shell or network tools. The controlle
 
 The controller supplies component-specific analysis guides and requires a source-backed decision for each investigation target: detected handlers, outbound calls, capability and flow evidence, and component files without a detected surface. Large components use several bounded jobs within the existing run budget. An unread or unresolved target prevents that component's analysis from completing. This checks the supplied targets; it does not prove that every vulnerability or framework-specific mechanism was found.
 
-While it runs, a combined run prints each phase, the component or report section in work, and a warning when a model call stalls; `--verbose` adds every step and model call with the source ranges it reads. In a terminal, one status line is redrawn every five seconds with each running model call's duration and whether it is thinking, writing or waiting for the API; output that is not a terminal, such as a CI log, gets no status line.
+While it runs, a combined run prints each phase, the component or report section in work, and a warning when a model call stalls; `--verbose` adds every step and model call with the source ranges it reads. In a terminal, one status line with a spinner and a progress bar is redrawn in place with each running model call's duration and whether it is thinking, writing or waiting for the API; output that is not a terminal, such as a CI log, gets no status line.
 
 To run one repository through this same procedure instead of the single-repository scan, set `APPSEC_SINGLE_REPO_CONTROLLER=1` and pass that repository with one `--repo`; the budget and `--output` rules above apply, and without the variable a single `--repo` keeps the single-repository scan.
 
@@ -216,6 +216,8 @@ modes:
 ## While the run is going
 
 Unless you pass `--quiet`, the run prints a progress line: the phase it is in, roughly how far along it is, how long it has taken, and what it has spent so far. The spend is a lower bound, marked `≥`, because sub-agents only report when they finish. With `--soft-budget` it is shown against that budget, and passing 80 % or 100 % of it prints a warning once. A warning never stops the run; only `--hard-budget` does that.
+
+In a terminal the output is coloured: phases, status marks, warnings and finding severities each have their own colour. Output that is not a terminal, such as a CI log or a file, carries no colour codes. `NO_COLOR` turns colour off, `FORCE_COLOR=1` turns it on for output that is not a terminal, and `TERM=dumb` turns it off; `NO_COLOR` wins over `FORCE_COLOR`. Terminals that set `COLORTERM=truecolor` get the full palette, others the basic terminal colours.
 
 If the host reports no usage, the run prints a notice and omits spend figures. Soft-budget tracking is then unavailable; `--hard-budget` still applies.
 

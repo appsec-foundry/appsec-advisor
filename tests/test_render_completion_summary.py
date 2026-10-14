@@ -2669,3 +2669,54 @@ class TestHeadlessWrapperForwardsVerbose:
     def test_verbose_reaches_the_skill_prompt(self):
         body = (REPO_ROOT / "scripts" / "run-headless.sh").read_text(encoding="utf-8")
         assert 'PROMPT="$PROMPT $VERBOSE"' in body
+
+
+# ---------------------------------------------------------------------------
+# Terminal colour for the headless console
+# ---------------------------------------------------------------------------
+
+
+class TestStyleSummary:
+    _ANSI = re.compile(r"\x1b\[[0-9;]*m")
+    TEXT = (
+        "Assessment complete: Create Threat Model\n\n"
+        "Results\n"
+        "  Threats     : 20 total | 2 Critical | 7 High | 11 Medium\n"
+        "  Mitigations : F-001 (unproven) | W-002\n\n"
+        "Security Notice\n"
+        "  Warning: threat-model.md is NOT git-ignored and may be committed.\n"
+        "  - Open the report\n"
+    )
+
+    def _style(self, enabled: bool = True) -> str:
+        from renderers.term_style import Style
+
+        return rcs.style_summary(self.TEXT, Style(enabled, True))
+
+    def test_disabled_style_returns_the_text_unchanged(self):
+        assert self._style(False) == self.TEXT
+
+    def test_every_plain_line_survives_in_order(self):
+        plain = self._ANSI.sub("", self._style()).splitlines()
+        it = iter(plain)
+        for line in self.TEXT.splitlines():
+            expected = f"✓ {line}" if line.startswith("Assessment complete") else line
+            assert any(candidate == expected for candidate in it), line
+
+    def test_unproven_stays_visible(self):
+        """REQ-MOD-009: colour never drops the unproven marker."""
+        assert "F-001 (unproven)" in self._ANSI.sub("", self._style())
+
+    def test_severity_bars_follow_the_threats_field(self):
+        plain = self._ANSI.sub("", self._style()).splitlines()
+        start = plain.index("  Threats     : 20 total | 2 Critical | 7 High | 11 Medium")
+        bars = plain[start + 1 : start + 4]
+        assert [b.split()[0:2] for b in bars] == [["critical", "2"], ["high", "7"], ["medium", "11"]]
+        assert bars[2].count("▪") == 16
+        assert bars[0].count("▪") < bars[1].count("▪")
+
+    def test_coloured_lines_close_their_colour(self):
+        for line in self._style().splitlines():
+            codes = self._ANSI.findall(line)
+            if codes:
+                assert codes[-1] == "\x1b[0m", line

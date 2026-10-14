@@ -54,6 +54,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import textwrap
 import threading
 import time
 from collections import Counter
@@ -93,6 +94,7 @@ import runtime.telemetry_consistency as telemetry_consistency  # noqa: E402
 import validators.validate_intermediate as intermediate_contract  # noqa: E402
 import validators.validate_recon_summary as recon_summary_contract  # noqa: E402
 import validators.validate_threat_modeling_context as context_document_contract  # noqa: E402
+from renderers.term_style import ANSI_RE, SPINNER, Style, logo, plugin_version  # noqa: E402
 from runtime.event_log import format_line  # noqa: E402
 from shared._fragment_ownership import FORCE_REGENERATED_FRAGMENTS  # noqa: E402
 
@@ -9172,8 +9174,10 @@ class _AssessmentConsole:
     Off a terminal (CI, logs) a progress line follows a change after
     ``PROGRESS_SECONDS`` and comes at the latest after ``HEARTBEAT_SECONDS``;
     a terminal gets one progress line rewritten in place instead, redrawn
-    every ``TICK_SECONDS`` with each running model call's age and activity,
-    or the running controller step's age. Each STRIDE component and each
+    every ``TICK_SECONDS`` with a spinner, a progress bar, each running model
+    call's age and activity, or the running controller step's age. On a
+    terminal the columns carry colour (``renderers/term_style``); an injected
+    writer is a log and stays plain. Each STRIDE component and each
     verified abuse case gets its own line in both. ``--verbose`` adds every
     step and model call as progress lines and keeps the terminal's status
     line; ``--quiet`` prints nothing. Cost is never shown mid-run.
@@ -9183,10 +9187,14 @@ class _AssessmentConsole:
     # interval, an unchanged one after the heartbeat interval.
     PROGRESS_SECONDS = 120
     HEARTBEAT_SECONDS = 300
-    # On a terminal: how often the status line is redrawn, and how many
-    # running calls it names before "+N more".
-    TICK_SECONDS = 5
+    # On a terminal: how often the status line is redrawn (fast enough to turn
+    # the spinner), and how many running calls it names before "+N more".
+    TICK_SECONDS = 0.2
     TICK_CALLS = 2
+    # Width of the status line's progress bar.
+    BAR_WIDTH = 12
+    # Colour of a row's phase and event columns, by event.
+    EVENT_ROLES = {"start": "accent", "done": "ok", "⚠": "warn", "↻": "warn"}
     # Reader-facing names of the model roles in liveness and completion lines.
     ROLE_LABELS = {
         "recon_scanner": "discovery",
@@ -9292,6 +9300,8 @@ class _AssessmentConsole:
         self._out = write or (lambda text: print(text, file=sys.stderr, flush=True))
         # The in-place status line needs a terminal; an injected writer is a log.
         self.live = (write is None and sys.stderr.isatty()) if live is None else live
+        self.st = Style.for_stream(sys.stderr) if write is None else Style(False)
+        self.frame = 0
         # One clock for time stamps and durations, so each line's figures agree.
         self.clock = clock
         self.plan = list(self.WEIGHTS)
@@ -9350,7 +9360,8 @@ class _AssessmentConsole:
             working = f"{self.activity} · {_duration(now - self.activity_started)}"
         else:
             working = ""
-        self._status(self._row("·", " · ".join(part for part in (self.current, working) if part)))
+        self.frame += 1
+        self._status(self._row("·", " · ".join(part for part in (self.current, working) if part), live=True))
 
     def plan_phases(self, *, abuse_cases: bool) -> None:
         """Number the phases this run will execute; skipped abuse cases shorten the count."""
@@ -9373,7 +9384,7 @@ class _AssessmentConsole:
         # Heartbeat threads and the ticker write too; a line must not split a redraw.
         with _AssessmentConsole._lock:
             self.clear_status()
-            self._out(f"{self._stamp(now)}  {text}" if text else "")
+            self._out(f"{self.st(self._stamp(now), 'muted')}  {text}" if text else "")
 
     def notice(self, text: str) -> None:
         """A line that needs attention, in the grid of the current phase."""
@@ -9396,10 +9407,12 @@ class _AssessmentConsole:
     def _status(self, text: str) -> None:
         if not self.live:
             return
-        line = f"{self._stamp(self.clock())}  {text}"
+        line = f"{self.st(self._stamp(self.clock()), 'muted')}  {text}"
         # A wrapped status line would survive the next "\r\033[K" as a stray row.
+        # Measured without colour codes; a line that must be cut loses its colour.
         width = shutil.get_terminal_size().columns - 1
-        if len(line) > width:
+        if len(ANSI_RE.sub("", line)) > width:
+            line = ANSI_RE.sub("", line)
             line = line[: max(width - 1, 0)] + "…"
         with _AssessmentConsole._lock:
             sys.stderr.write(f"\r\033[K{line}")
@@ -9445,23 +9458,44 @@ class _AssessmentConsole:
                 left = "~" + _elapsed(elapsed * (1 - self.done) / self.done)
         return f"{share:>8}  {_elapsed(elapsed):>7}  {left:>6}"
 
-    def _row(self, event: str, detail: str = "", now: float | None = None) -> str:
+    def _row(self, event: str, detail: str = "", now: float | None = None, live: bool = False) -> str:
+        """One grid row; ``live`` marks the terminal's status line (spinner and bar)."""
         now = self.clock() if now is None else now
         phase = self.phase or ""
         if phase:
             number = f"{self.plan.index(phase) + 1}/{len(self.plan)}" if phase in self.plan else "?"
             phase = f"{number} {phase}"
+        run = self._run(now)
+        if live:
+            event = SPINNER[self.frame % len(SPINNER)]
+            if self.components:
+                detail = f"{self.st.bar(round(100 * self.done), 100, self.BAR_WIDTH)}  {detail}".rstrip()
         # Free text comes last, so a long detail never shifts a column.
-        row = f"{phase:<{self._PHASE_WIDTH}}  {event:<{self._EVENT_WIDTH}}  {self._run(now)}  {detail}"
-        return row.rstrip()
+        row = f"{phase:<{self._PHASE_WIDTH}}  {event:<{self._EVENT_WIDTH}}  {run}  {detail}"
+        if not self.st.enabled:
+            return row.rstrip()
+        # Colour wraps each padded column, so the grid keeps its widths.
+        st, role = self.st, ("accent" if live else self.EVENT_ROLES.get(event))
+        if event in ("start", "done"):
+            phase_cell = st(f"{phase:<{self._PHASE_WIDTH}}", role, "bold")
+        else:
+            phase_cell = st(f"{phase:<{self._PHASE_WIDTH}}", "accent")
+        event_cell = st(f"{event:<{self._EVENT_WIDTH}}", role or "muted")
+        run_cell = st(run if detail else run.rstrip(), "muted")
+        detail_cell = st(detail, "warn") if event == "⚠" else detail
+        return f"{phase_cell}  {event_cell}  {run_cell}  {detail_cell}".rstrip()
 
     def _header(self) -> None:
         if not self.headed:
             self.headed = True
             self.clear_status()
             self._out(
-                f"{'TIME':<8}  {'PHASE':<{self._PHASE_WIDTH}}  {'EVENT':<{self._EVENT_WIDTH}}  "
-                f"{'PROGRESS':>8}  {'ELAPSED':>7}  {'LEFT':>6}  DETAIL"
+                self.st(
+                    f"{'TIME':<8}  {'PHASE':<{self._PHASE_WIDTH}}  {'EVENT':<{self._EVENT_WIDTH}}  "
+                    f"{'PROGRESS':>8}  {'ELAPSED':>7}  {'LEFT':>6}  DETAIL",
+                    "muted",
+                    "bold",
+                )
             )
 
     def _heartbeat(self, now: float, extra: str = "") -> None:
@@ -9476,16 +9510,55 @@ class _AssessmentConsole:
 
     def facts(self, title: str | None, rows: list[tuple[str, str]]) -> None:
         """Run facts as ``Key : value`` rows, the single-repository wrapper's header format."""
+        st = self.st
         if title:
             self.write("")
-            self.write(f"▶ {title}")
+            if st.enabled:
+                # The terminal gets the logo; its last line carries the title's mode.
+                version = plugin_version()
+                mode = title.partition(" — ")[2] or title
+                with _AssessmentConsole._lock:
+                    self.clear_status()
+                    for line in logo(st, f"v{version} · {mode}" if version else mode):
+                        self._out(line)
+                self.write("")
+            else:
+                self.write(f"▶ {title}")
         width = max([11, *(len(key) for key, _ in rows)])
+        # On a terminal a long value wraps under its own column instead of at
+        # the screen edge; time stamp, key and separators take the rest.
+        fit = shutil.get_terminal_size().columns - 1 - (8 + 2 + 2 + width + 2) if st.enabled else 0
         for key, value in rows:
-            first, *more = value.split("\n")
-            self.write(f"  {key:<{width}}: {first}")
+            lines: list[str] = []
+            for part in value.split("\n"):
+                if fit > 20 and len(part) > fit:
+                    pieces = textwrap.wrap(part, fit, subsequent_indent="  ", break_on_hyphens=False)
+                else:
+                    pieces = [part]
+                lines.append(self._fact(key, pieces[0]))
+                lines.extend(st(piece, "muted") for piece in pieces[1:])
+            first, *more = lines
+            self.write(f"  {st(f'{key:<{width}}:', 'muted')} {first}")
             for line in more:
                 self.write(f"  {'':<{width}}  {line}")
         self.write("")
+
+    # Header facts whose leading value is coloured; a trailing "(…)" is context.
+    FACT_ROLES = {
+        "Repository": "accent",
+        "Repositories": "accent",
+        "Output": "accent",
+        "Models": "agent",
+        "Depth": "accent",
+    }
+
+    def _fact(self, key: str, line: str) -> str:
+        if not self.st.enabled:
+            return line
+        head, sep, tail = line.partition(" (")
+        if key == "Trust mode":
+            return self.st(line, "ok" if "clean" in line else "warn")
+        return self.st(head, self.FACT_ROLES.get(key, "bold")) + self.st(sep + tail, "muted")
 
     def step(self, text: str) -> None:
         if text.startswith(self.RESULT):
@@ -9538,7 +9611,7 @@ class _AssessmentConsole:
             self.write(self._row("·", self.current, now), now)
             self.shown = (self.current, round(100 * self.done))
         elif self.live:
-            self._status(self._row("·", self.current, now))
+            self._status(self._row("·", self.current, now, live=True))
         else:
             self._heartbeat(now)
 
@@ -9574,7 +9647,7 @@ class _AssessmentConsole:
         extra = status if not status or label.lower() == (self.phase or "").lower() else f"{label}: {status}"
         if self.live:
             if self.phase:
-                self._status(self._row("·", " · ".join(part for part in (self.current, extra) if part), now))
+                self._status(self._row("·", " · ".join(part for part in (self.current, extra) if part), now, live=True))
             return
         self._heartbeat(now, extra)
 
@@ -10739,21 +10812,22 @@ def assess_main(argv: list[str]) -> int:
                 file=sys.stderr,
             )
         return 1
+    out, err = Style.for_stream(sys.stdout), Style.for_stream(sys.stderr)
+    kind = "Combined threat model" if len(outcome["repositories"]) > 1 else "Threat model"
     print(
-        f"✓ {'Combined threat model' if len(outcome['repositories']) > 1 else 'Threat model'} of "
-        f"{', '.join(outcome['repositories'])} written to {outcome['output']} "
-        f"({outcome['calls']} model calls, ≈ USD {outcome['spent_usd']:.2f})"
+        out(f"✓ {kind} of {', '.join(outcome['repositories'])} written to {outcome['output']}", "ok", "bold")
+        + out(f" ({outcome['calls']} model calls, ≈ USD {outcome['spent_usd']:.2f})", "muted")
     )
     for name in outcome["deliverables"]:
-        print(f"  {Path(outcome['output']) / name}")
+        print(f"  {out(str(Path(outcome['output']) / name), 'accent')}")
     if outcome.get("runtime_files"):
-        print(f"  Run files: {outcome['runtime_files']}")
+        print(f"  {out('Run files:', 'muted')} {outcome['runtime_files']}")
     for warning in outcome.get("warnings") or []:
-        print(f"⚠ {warning}", file=sys.stderr)
+        print(f"{err('⚠', 'warn')} {warning}", file=sys.stderr)
     if outcome.get("gate_violations"):
         violations = outcome["gate_violations"]
         print(
-            f"✗ PR gate: {len(violations)} new threat(s) at or above '{outcome['fail_on']}': "
+            err(f"✗ PR gate: {len(violations)} new threat(s) at or above '{outcome['fail_on']}': ", "critical")
             + ", ".join(violations[:10]),
             file=sys.stderr,
         )

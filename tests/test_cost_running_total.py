@@ -664,6 +664,21 @@ class TestPhaseTable:
         assert "phase 8" in table and "6m12s" in table and "≥$3.01" in table
         assert "phase 9" in table and "24m10s" in table and "≥$12.40" in table
 
+    def test_colour_changes_no_character_of_the_table(self, tmp_path):
+        import re
+
+        from renderers.term_style import Style
+
+        crt = _load()
+        log = self._log(
+            tmp_path,
+            "2026-09-05T17:40:00Z  [--------]  INFO   skill-watchdog      PHASE_COST"
+            "          phase=8  duration=6m12s  delta=≥$3.01  total=≥$5.66\n",
+        )
+        coloured = crt.format_phase_table(log, st=Style(True, True))
+        assert "\x1b[" in coloured
+        assert re.sub(r"\x1b\[[0-9;]*m", "", coloured) == crt.format_phase_table(log)
+
     def test_a_phase_without_metered_usage_shows_its_duration_only(self, tmp_path):
         crt = _load()
         log = self._log(

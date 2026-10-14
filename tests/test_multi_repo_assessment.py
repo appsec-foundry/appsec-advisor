@@ -1553,3 +1553,77 @@ def test_root_causes_are_synthesized_after_abuse_verification(tmp_path, monkeypa
     assert "post_stride_synthesizer" not in before and "post_stride_synthesizer" in host.roles
     model = yaml.safe_load((out / "threat-model.yaml").read_text())
     assert "Unvalidated request input" in json.dumps(model["tier_root_causes"])
+
+
+# ── Terminal colour ──────────────────────────────────────────────────────────
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _coloured_console_output(monkeypatch, capsys, **env):
+    for key in ("NO_COLOR", "FORCE_COLOR", "COLORTERM"):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    console = controller._AssessmentConsole(False, clock=_Clock(), live=False)
+    console.facts("AppSec Plugin — Headless Mode", [("Repository", "/srv/app"), ("Trust mode", "untrusted, clean")])
+    console.plan_components(2)
+    console.step("Assessing controls: Gateway (1/2)")
+    console.step("Analyzing all STRIDE categories: Gateway (1/2)")
+    console.notice("model call stalled")
+    console.close()
+    return capsys.readouterr().err
+
+
+def test_colour_changes_no_column_of_the_console(monkeypatch, capsys):
+    """Colour wraps each padded column; without it the grid is what it was."""
+    plain = _coloured_console_output(monkeypatch, capsys)
+    assert "\x1b" not in plain
+    coloured = _coloured_console_output(monkeypatch, capsys, FORCE_COLOR="1", COLORTERM="truecolor")
+    assert "\x1b[" in coloured
+    stripped = _ANSI.sub("", coloured).splitlines()
+    plain_lines = plain.splitlines()
+    # On a terminal the logo replaces the title line; every fact and row stays.
+    assert "   ╭───╮  appsec-advisor" in stripped
+    assert "▶ AppSec Plugin — Headless Mode" not in "\n".join(stripped)
+    facts = lambda lines: [line for line in lines if " : " in line]  # noqa: E731
+    assert facts(stripped) == facts(plain_lines)
+    assert _rows(stripped) == _rows(plain_lines)
+
+
+def test_an_injected_writer_stays_plain_under_forced_colour(monkeypatch):
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    lines = []
+    console = controller._AssessmentConsole(False, lines.append, clock=_Clock())
+    console.step("Assessing controls: Gateway (1/2)")
+    console.close()
+    assert lines and not any("\x1b" in line for line in lines)
+
+
+def test_a_long_fact_wraps_under_its_column_on_a_terminal(monkeypatch, capsys):
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    monkeypatch.setenv("COLUMNS", "80")
+    console = controller._AssessmentConsole(False, clock=_Clock(), live=False)
+    roles = ", ".join(f"role_{index}" for index in range(30))
+    console.facts(None, [("Models", f"claude-sonnet-5-5 ({roles})")])
+    lines = [_ANSI.sub("", line) for line in capsys.readouterr().err.splitlines() if line.strip()]
+    assert len(lines) > 1
+    assert all(len(line) <= 79 for line in lines)
+    assert " ".join(line[10:].strip() for line in lines).replace("Models     : ", "") == f"claude-sonnet-5-5 ({roles})"
+
+
+def test_the_status_line_turns_a_spinner_and_draws_a_bar(capsys, monkeypatch):
+    monkeypatch.setenv("COLUMNS", "400")
+    console = controller._AssessmentConsole(False, [].append, live=True)
+    console.plan_components(4)
+    console.step("Analyzing all STRIDE categories: Gateway (2/4)")
+    console.tick()
+    first = capsys.readouterr().err.split("\r\033[K")[-1]
+    console.tick()
+    second = capsys.readouterr().err.split("\r\033[K")[-1]
+    controller._AssessmentConsole.clear_status()
+    frame = lambda status: status[10 + controller._AssessmentConsole._PHASE_WIDTH + 2]  # noqa: E731 - the event column
+    assert "━" in first and "─" in first
+    assert first.endswith("component 2/4 · Gateway · Analyzing all STRIDE categories: Gateway (2/4) · 0s")
+    assert {frame(first), frame(second)} <= set(controller.SPINNER) and frame(first) != frame(second)

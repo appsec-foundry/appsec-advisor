@@ -308,6 +308,7 @@ GROUPS = {
         stride_quick_profile
         stride_serial_dispatch_detection
         telemetry_consistency
+        term_style
         terminate_run
         thin_runtime_regressions_2026_07_20
         validate_analyst
@@ -2379,6 +2380,16 @@ SOURCE_TESTS = {
         stride_outputs
         terminate_run
         verify_run_costs
+    """),
+    "scripts/renderers/term_style.py": _tests("""
+        completion_relay
+        cost_running_total
+        headless_usage
+        multi_repo_assessment
+        render_completion_summary
+        render_progress
+        run_headless_completion
+        term_style
     """),
     "scripts/renderers/render_progress.py": _tests("""
         check_target_specificity

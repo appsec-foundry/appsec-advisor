@@ -68,17 +68,38 @@
 set -eu
 
 # ── Colors & helpers ────────────────────────────────────────────────
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-NC='\033[0m'
+# Same rule as renderers/term_style.py: NO_COLOR disables, FORCE_COLOR enables,
+# TERM=dumb disables, otherwise colour only when the stream is a terminal — so
+# logs and CI output carry no escape sequences.
+color_on() {
+    [ -n "${NO_COLOR:-}" ] && return 1
+    [ -n "${FORCE_COLOR:-}" ] && [ "${FORCE_COLOR}" != "0" ] && return 0
+    [ "${TERM:-}" = "dumb" ] && return 1
+    [ -t "$1" ]
+}
+RED='' GREEN='' YELLOW='' CYAN='' DIM='' NC='' ERR_RED='' ERR_NC='' COLOR_FLAG='--color never'
+if color_on 1; then
+    case "${COLORTERM:-}" in
+        truecolor|24bit)
+            RED='\033[38;2;236;109;118m' GREEN='\033[38;2;143;209;158m'
+            YELLOW='\033[38;2;240;198;110m' CYAN='\033[38;2;124;196;228m'
+            DIM='\033[38;2;109;118;134m' ;;
+        *)  RED='\033[31m' GREEN='\033[32m' YELLOW='\033[33m' CYAN='\033[36m' DIM='\033[90m' ;;
+    esac
+    NC='\033[0m'
+    COLOR_FLAG='--color always'
+fi
+if color_on 2; then
+    ERR_RED='\033[31m' ERR_NC='\033[0m'
+fi
 
 info()  { printf "${CYAN}▶${NC} %s\n" "$*"; }
 ok()    { printf "${GREEN}✓${NC} %s\n" "$*"; }
 warn()  { printf "${YELLOW}⚠${NC} %s\n" "$*"; }
-err()   { printf "${RED}✗${NC} %s\n" "$*" >&2; }
+err()   { printf "${ERR_RED}✗${ERR_NC} %s\n" "$*" >&2; }
 die()   { err "$@"; exit 1; }
+# One "  Key : value" line of the start-up summary; the key is dimmed.
+row()   { _key="$1"; shift; printf "  ${DIM}%s${NC}%s\n" "$_key" "$*"; }
 
 usage() {
     cat <<'HELP'
@@ -754,10 +775,16 @@ export APPSEC_RUN_ID="run-$(date +%s)-$$"
 
 # ── Print summary ───────────────────────────────────────────────────
 echo ""
-info "AppSec Plugin — Headless Mode"
-echo "  Skill      : $SKILL"
-echo "  Billing    : $BILLING_MODE"
-echo "  Depth      : ${ASSESSMENT_DEPTH:-standard}"
+if [ -n "$NC" ]; then
+    python3 "$SCRIPT_DIR/renderers/term_style.py" logo $COLOR_FLAG "headless" 2>/dev/null \
+        || info "AppSec Plugin — Headless Mode"
+    printf "  ${DIM}%s${NC}\n" "────────────────────────────────────────────────────────────────"
+else
+    info "AppSec Plugin — Headless Mode"
+fi
+row "Skill      : " "$SKILL"
+row "Billing    : " "$BILLING_MODE"
+row "Depth      : " "${ASSESSMENT_DEPTH:-standard}"
 # Every model the run will use, grouped by model with the roles it drives.
 # A bare "Model: <session>" line read as "the whole assessment runs on this",
 # which is wrong and misleading in the direction that costs money: the session
@@ -768,28 +795,29 @@ MODEL_LINEUP=""
     --session "$MODEL" \
     ${REASONING_TIER:+--reasoning "$REASONING_TIER"} \
     --depth "${ASSESSMENT_DEPTH:-standard}" 2>/dev/null || printf '%s' "$MODEL")"
-[ -n "$MODEL_LINEUP" ]     && echo "  Models     : $MODEL_LINEUP"
+[ -n "$MODEL_LINEUP" ]     && row "Models     : " "$MODEL_LINEUP"
 # The roles behind each model are sub-agent dispatches, and a role that carries
 # no pin of its own inherits the session tier — so a run without an override
 # lists the session model twice over and looks like it has fewer models than it
 # uses. Naming the end-of-run table here closes that loop: what is listed is
 # what gets billed, and a missing model there means missing spend, not a
 # sub-agent the accounting skipped.
-[ -n "$MODEL_LINEUP" ]     && echo "               each role is a sub-agent dispatch on that model; the end-of-run cost table bills exactly these"
-echo "  Context    : $CONTEXT_INFO"
-echo "  Plugin     : $PLUGIN_DIR"
-[ -n "$REPO_PATH" ]        && echo "  Repository : $REPO_PATH"
-[ -n "$OUTPUT_PATH" ]      && echo "  Output     : $OUTPUT_PATH"
-[ -n "$SKILL_FLAGS" ]      && echo "  Flags      :$SKILL_FLAGS"
-[ -n "$REQUIREMENTS_INFO" ] && echo "  Requirements: $REQUIREMENTS_INFO"
+[ -n "$MODEL_LINEUP" ]     && row "             " "each role is a sub-agent dispatch on that model; the end-of-run cost table bills exactly these"
+row "Context    : " "$CONTEXT_INFO"
+row "Plugin     : " "$PLUGIN_DIR"
+[ -n "$REPO_PATH" ]        && row "Repository : " "$REPO_PATH"
+[ -n "$OUTPUT_PATH" ]      && row "Output     : " "$OUTPUT_PATH"
+[ -n "$SKILL_FLAGS" ]      && row "Flags      :" "$SKILL_FLAGS"
+[ -n "$REQUIREMENTS_INFO" ] && row "Requirements: " "$REQUIREMENTS_INFO"
 # One-line intake summary (req + blueprint counts, source names) when the
 # requirements source is a readable local file. Fails soft for URLs / config.
 [ -n "$REQUIREMENTS_SRC" ] && [ -f "$REQUIREMENTS_SRC" ] && \
     python3 "$SCRIPT_DIR/runtime/run_summary.py" requirements "$REQUIREMENTS_SRC" 2>/dev/null || true
-[ -n "$SOFT_BUDGET" ]      && echo "  Soft budget: \$$SOFT_BUDGET (steers; the run still finishes)"
-[ -n "$MAX_BUDGET" ]       && echo "  Hard cut   : \$$MAX_BUDGET (kills the session)"
-[ -n "$CATEGORY_FILTER" ]  && echo "  Category   : $CATEGORY_FILTER"
-[ -n "$VERBOSE" ]          && echo "  Verbose    : real-time hook event log on stderr"
+[ -n "$SOFT_BUDGET" ]      && row "Soft budget: " "\$$SOFT_BUDGET (steers; the run still finishes)"
+[ -n "$MAX_BUDGET" ]       && row "Hard cut   : " "\$$MAX_BUDGET (kills the session)"
+[ -n "$CATEGORY_FILTER" ]  && row "Category   : " "$CATEGORY_FILTER"
+[ -n "$VERBOSE" ]          && row "Verbose    : " "real-time hook event log on stderr"
+[ -n "$NC" ]               && printf "  ${DIM}%s${NC}\n" "────────────────────────────────────────────────────────────────"
 echo ""
 
 # ── Opus-orchestrator advisory ──────────────────────────────────────
@@ -945,8 +973,9 @@ RESULT_CAPTURE="$RESULT_DIR/.headless-result.json"
 #      the host session only, so it is a lower bound and must never be shown
 #      as if it were the run's cost.
 print_phase_costs() {
+    # Captured, so the script cannot see the terminal; pass the decision down.
     _phase_table=$(python3 "$SCRIPT_DIR/runtime/cost_running_total.py" "$RESULT_DIR" \
-        --format phases 2>/dev/null || true)
+        --format phases $COLOR_FLAG 2>/dev/null || true)
     [ -n "$_phase_table" ] || return 0
     echo ""
     printf '%s\n' "$_phase_table"
@@ -954,7 +983,7 @@ print_phase_costs() {
 
 print_usage_summary() {
     [ -n "$RESULT_CAPTURE" ] || return 0
-    if python3 "$SCRIPT_DIR/runtime/headless_usage.py" "$RESULT_CAPTURE" 2>/dev/null; then
+    if python3 "$SCRIPT_DIR/runtime/headless_usage.py" "$RESULT_CAPTURE" $COLOR_FLAG 2>/dev/null; then
         # The model table is exact and covers the whole run; the phase table
         # below it is the floor the live view accumulated, and answers the one
         # question the exact figure cannot — which phase spent it.
@@ -1181,7 +1210,7 @@ if [ -n "$RESULT_CAPTURE" ] && [ -s "$RESULT_CAPTURE" ]; then
 fi
 # The completion summary reaches an interactive reader as a hook systemMessage,
 # which headless output does not carry; print the run's record here instead.
-python3 "$SCRIPT_DIR/runtime/completion_relay.py" --output-dir "$OUTPUT_PATH" 2>/dev/null || true
+python3 "$SCRIPT_DIR/runtime/completion_relay.py" --output-dir "$OUTPUT_PATH" $COLOR_FLAG 2>/dev/null || true
 
 # If the run was interrupted by Ctrl-C, stop here instead of proceeding to
 # artifact parsing — the user asked to abort.

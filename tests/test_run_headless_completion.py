@@ -11,6 +11,7 @@ reported ``✓ completed successfully`` (exit 0).
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -753,3 +754,47 @@ def test_repeated_repository_selection_reaches_the_combined_assessment_before_ou
     assert message in result.stderr
     assert not output.exists()
     assert not marker.exists()
+
+
+def _run_banner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **env: str) -> subprocess.CompletedProcess:
+    """Run the wrapper up to a stub Claude that exits at once; return its output."""
+    repo, output = tmp_path / "repo", tmp_path / "out"
+    repo.mkdir()
+    launcher = tmp_path / "claude-stub"
+    launcher.write_text(
+        '#!/bin/sh\nif [ "$1" = "auth" ]; then printf \'{"loggedIn": true}\\n\'; exit 0; fi\nexit 42\n',
+        encoding="utf-8",
+    )
+    launcher.chmod(0o755)
+    monkeypatch.setenv("APPSEC_CLAUDE_EXECUTABLE", str(launcher))
+    for key in ("NO_COLOR", "FORCE_COLOR", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    return subprocess.run(
+        [str(SCRIPT), "--repo", str(repo), "--output", str(output), "--trust-mode", "trusted", "--quiet"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+
+def test_output_off_a_terminal_carries_no_escape_sequences(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Logs and CI output read the summary as plain text, exactly as before."""
+    result = _run_banner(tmp_path, monkeypatch)
+    assert result.returncode == 42, result.stdout + result.stderr
+    assert "\x1b" not in result.stdout + result.stderr
+    assert "▶ AppSec Plugin — Headless Mode" in result.stdout
+    assert "\n  Skill      : create-threat-model\n" in result.stdout
+
+
+def test_forced_colour_styles_the_banner_without_changing_its_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _run_banner(tmp_path, monkeypatch, FORCE_COLOR="1")
+    assert result.returncode == 42, result.stdout + result.stderr
+    assert "\x1b[" in result.stdout
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
+    assert "╭───╮  appsec-advisor" in plain
+    assert "│ ◆ │  code-derived STRIDE threat modeling" in plain
+    assert "\n  Skill      : create-threat-model\n" in plain
