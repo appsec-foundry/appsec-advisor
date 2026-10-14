@@ -873,6 +873,20 @@ def test_each_cli_host_call_records_its_events_in_its_own_file(tmp_path):
     assert unrecorded.events_path is None and unrecorded.max_thinking_tokens is None
 
 
+def test_controller_host_calls_write_the_short_lived_prompt_cache(tmp_path, monkeypatch):
+    """MD-11: a unique exchange prompt is not paid at the one-hour cache-write rate."""
+    from orchestrator.orchestration_controller import _assessment_cli_host_factory
+    from runtime.analyst_host import ClaudeCliTransport
+
+    monkeypatch.delenv("FORCE_PROMPT_CACHING_5M", raising=False)
+    (tmp_path / "hosts").mkdir()
+    for events in (tmp_path / "events", None):
+        transport = _assessment_cli_host_factory(tmp_path / "hosts", events)("stride_analyzer", "sonnet", 1.0)
+        assert transport.environment()["FORCE_PROMPT_CACHING_5M"] == "1"
+    # Other hosts keep the login's default TTL.
+    assert "FORCE_PROMPT_CACHING_5M" not in ClaudeCliTransport(tmp_path / "work").environment()
+
+
 class _MergerJobs:
     """Answers each merger exchange with one decision per supplied group, as the merger would."""
 
@@ -957,3 +971,56 @@ def test_an_interrupted_assessment_exits_without_a_traceback(monkeypatch, capsys
     assert controller.assess_main(["--repo", "x", "--output", "y"]) == 130
     captured = capsys.readouterr()
     assert "✗ assessment interrupted" in captured.err and "Traceback" not in captured.err
+
+
+@pytest.mark.parametrize("names", [("edge", "service"), ("west", "east")])
+def test_boundary_jobs_answer_from_their_preloaded_cited_source(tmp_path, names):
+    """A crossing's cited source reaches the first packet, so no call only requests it."""
+    from tests.test_multi_repo_boundaries import crossing_input
+
+    scope, components, receipt, flows, context = crossing_input(tmp_path, names=names)
+    architecture = dict(components=components, finalization=receipt, data_flows=flows)
+    host = BoundaryHost()
+    jobs = AssessmentJobs(
+        scope,
+        scope.output / ".assessment/jobs",
+        AssessmentBudget(1, 0.05, 20, 60),
+        lambda role, ceiling: host,
+        lambda: False,
+        lambda: None,
+    )
+    assessment, candidates = controller._assessment_boundary_candidates(
+        scope, jobs, architecture, context, "standard", progress=lambda text: None
+    )
+    assert assessment["signals"] and host.calls == len(assessment["signals"])
+    assert len(candidates["dispositions"]) == len(assessment["signals"])
+
+
+def test_control_and_stride_contexts_omit_path_hashes_and_controls_answer_in_one_call(tmp_path):
+    roots = [tmp_path / "edge", tmp_path / "service"]
+    for root in roots:
+        checkout(root)
+    scope = admit([str(r) for r in roots], str(tmp_path / "out"))
+    host = Host(scope)
+    jobs = AssessmentJobs(
+        scope,
+        scope.output / ".assessment/jobs",
+        AssessmentBudget(2, 0.05, 60, 120),
+        host.factory,
+        lambda: False,
+        lambda: None,
+    )
+    architecture = controller._assessment_architecture(scope, jobs, progress=lambda text: None)
+    controls = controller._assessment_controls(scope, jobs, architecture, progress=lambda text: None)
+    controller._assessment_stride(scope, jobs, architecture, controls, [], progress=lambda text: None)
+    roles = [role for role, _ in host.calls]
+    assert roles.count("control_analyst") == len(architecture["components"]["components"])
+    model_components = [
+        component
+        for role, ctx in host.calls
+        if role in ("control_analyst", "stride_analyzer", "evidence_verifier")
+        for component in [ctx["component"], *ctx.get("incident_components", [])]
+    ]
+    assert model_components and all("sha256" not in row for c in model_components for row in c["paths"])
+    # Acceptance still sees the full inventory: the controller's own components keep their hashes.
+    assert all(row["sha256"] for c in architecture["components"]["components"] for row in c["paths"])

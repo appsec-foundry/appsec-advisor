@@ -569,3 +569,106 @@ def test_a_preloaded_job_gets_one_round_of_further_reads(tmp_path):
     assert [s["start_line"] for s in result.source_slices] == [1, 2]
     assert [p["source_reads_remaining"] for p in packets] == [host.MAX_READS, 0, 0]
     assert "one round of further reads" in packets[2]["rejected_result"]["reason"]
+
+
+FINDINGS = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["threats"],
+    "properties": {
+        "threats": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["title", "evidence"],
+                "properties": {"title": {"type": "string"}, "evidence": {"type": "object"}},
+            },
+        }
+    },
+}
+
+
+class Recorded(Model):
+    def __init__(self, replies):
+        super().__init__(replies)
+        self.systems = []
+
+    def invoke(self, system, prompt, schema, timeout_s, should_stop):
+        self.systems.append(system)
+        return super().invoke(system, prompt, schema, timeout_s, should_stop)
+
+
+def _anchored(tmp_path, path, source, cited, replies):
+    import hashlib
+
+    scope = AssessmentScope(
+        (RepositoryView(REPO, tmp_path / "source", "a" * 40, "b" * 64, {path: source}),), tmp_path / "out"
+    )
+    digest = hashlib.sha256(source).hexdigest()
+    lines = source.decode().splitlines()
+
+    def finding(line):
+        evidence = {"repository_id": REPO, "file": path, "line": line, "sha256": digest}
+        return {"title": f"Role upgrade without payment ({path}:{line})", "evidence": evidence}
+
+    def review(artifact, slices):
+        row = artifact["threats"][0]["evidence"]
+        if not lines[row["line"] - 1].strip():
+            raise host.Rejection(
+                "STRIDE evidence does not cite an executable implementation",
+                [f"evidence[0] cites a blank line ({path}:{row['line']})"],
+                anchors=[(row, "cites a blank line")],
+            )
+
+    model = Recorded(
+        [{"action": "complete", "reads": [], "artifact": {"threats": [finding(cited)]}}, *replies(finding)]
+    )
+    result = host.run_exchange(
+        model,
+        scope,
+        instructions="trusted task",
+        context={"component": "large"},
+        artifact_schema=FINDINGS,
+        allowed_sources=frozenset({(REPO, path)}),
+        timeout_s=60,
+        should_stop=lambda: False,
+        review=review,
+        preload=[(REPO, path, 1, len(lines))],
+    )
+    return model, result
+
+
+@pytest.mark.parametrize(
+    "path,source,cited,fixed",
+    [
+        ("routes/deluxe.ts", b"const user = load()\n\nawait user.update({ role: 'deluxe' })\n", 2, 3),
+        ("src/billing/upgrade.py", b"def upgrade(user):\n    plan = user.plan\n\n    user.save(role='pro')\n", 3, 4),
+    ],
+)
+def test_a_result_rejected_only_for_a_blank_anchor_is_fixed_by_its_line_alone(tmp_path, path, source, cited, fixed):
+    """MR-2: a whole result is not regenerated because one citation points at a blank line."""
+    model, result = _anchored(
+        tmp_path, path, source, cited, lambda _: [{"anchors": [{"anchor_id": "a1", "line": fixed}]}]
+    )
+    finding = result.artifact["threats"][0]
+    assert finding["evidence"]["line"] == fixed and finding["title"].endswith(f"({path}:{fixed})")
+    assert result.calls == 2 and model.systems[1] == host._ANCHOR_INSTRUCTIONS
+    packet = json.loads(model.prompts[1].split(f"<<<{host.MARKER}\n")[1].split(f"\n{host.MARKER}>>>")[0])
+    # The anchor call carries the citation and its nearby lines, not the job context or the whole result.
+    assert [e["line"] for e in packet["context"]["anchor_corrections"]] == [cited]
+    assert "component" not in packet["context"] and "rejected_result" not in packet
+
+
+def test_an_unusable_anchor_answer_falls_back_to_a_full_correction(tmp_path):
+    source = b"const user = load()\n\nawait user.update({ role: 'deluxe' })\n"
+
+    def replies(finding):
+        # A line outside the served window is refused; the model then corrects the whole result.
+        return [
+            {"anchors": [{"anchor_id": "a1", "line": 99}]},
+            {"action": "complete", "reads": [], "artifact": {"threats": [finding(3)]}},
+        ]
+
+    model, result = _anchored(tmp_path, "routes/deluxe.ts", source, 2, replies)
+    assert result.artifact["threats"][0]["evidence"]["line"] == 3 and result.calls == 3
+    assert "rejected_result" in model.prompts[2]

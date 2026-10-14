@@ -127,6 +127,56 @@ def source_selection(components: list[dict]) -> frozenset:
     return frozenset((row["repository_id"], row["path"]) for c in components for row in c["paths"])
 
 
+def model_components(components: list[dict]) -> list[dict]:
+    """Components as a model job sees them: each path without its content hash.
+
+    A served slice carries its own hash, and acceptance checks citations
+    against retrieved slices, never against these rows; a large client app's
+    hashes otherwise fill a third of every packet that names it.
+    """
+    return [
+        {**component, "paths": [{k: v for k, v in row.items() if k != "sha256"} for row in component["paths"]]}
+        for component in components
+    ]
+
+
+def route_resource(path) -> str:
+    """A route path up to its first parameter, so collection and item routes form one resource."""
+    parts = []
+    for part in str(path or "").split("/"):
+        if not part:
+            continue
+        if part[0] in ":{<*(":
+            break
+        parts.append(part)
+    return "/" + "/".join(parts)
+
+
+@lru_cache(maxsize=1)
+def _security_patterns():
+    from analyzers.security_relevance_filter import SECURITY_PATTERNS
+
+    return tuple(pattern for _, pattern in SECURITY_PATTERNS)
+
+
+def has_security_signal(data: bytes) -> bool:
+    """Whether the security keyword catalog matches a file's content (MR-13).
+
+    Identifiers are also split at camelCase and snake_case joints, so
+    ``checkPermission`` and ``custom_permission_check`` match the catalog's
+    word-bounded ``permission`` like the plain word does.
+    """
+    text = data.decode("utf-8", "ignore")
+    words = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", text).replace("_", " ")
+    return any(pattern.search(text) or pattern.search(words) for pattern in _security_patterns())
+
+
+# A grouped route target lists its routes for the model; the anchor alone
+# names only the first. Bounded so one generated router cannot fill a packet.
+MAX_TARGET_ROUTES = 32
+MAX_TARGET_RELATED = 4
+
+
 def analysis_targets(scope, component: dict, architecture: dict, scanned: list[dict]) -> list[dict]:
     """Source-backed surfaces to examine, independent of finding counts or repository names.
 
@@ -135,12 +185,23 @@ def analysis_targets(scope, component: dict, architecture: dict, scanned: list[d
     cannot also hide the call from STRIDE. Sources stay inside the finalized
     component; a scanner result never authorizes reading an unrelated file.
 
+    Decision MR-13: routes sharing a registration file, a source window and
+    their path up to the first parameter form one resource. A resource with a
+    resolved handler module becomes a target in that module listing its
+    routes, and every target in the module names the registration lines as
+    ``related``, so its job reads handler and guards together; a resource
+    without one stays a target at its registration lines. A file without any
+    other lead becomes a target only when
+    the security keyword catalog matches it (`has_security_signal`);
+    `unexamined_files` names the rest for the run report.
+
     Each anchor cites a line the STRIDE evidence rule accepts: the surface
     decision must cite it, so a comment or blank anchor, such as the license
     header of a file without a lead, would reject every answer. An anchor on
     such a line moves to the next accepted line, else the previous one; a file
     without one offers no target.
     """
+    from runtime.assessment_host import MAX_SLICE_LINES
     from validators.validate_fragment import _cited_line_problem
 
     own = source_selection([component])
@@ -157,10 +218,10 @@ def analysis_targets(scope, component: dict, architecture: dict, scanned: list[d
     def add(evidence, kind):
         rid, path = evidence.get("repository_id"), evidence.get("file")
         if (rid, path) not in own:
-            return
+            return None
         line = code_line(rid, path, evidence.get("line") or 1)
         if line is None:
-            return
+            return None
         source = {
             "repository_id": rid,
             "file": path,
@@ -174,10 +235,56 @@ def analysis_targets(scope, component: dict, architecture: dict, scanned: list[d
             targets[key] = {"local_id": identifier, "evidence": source, "kinds": []}
         if kind not in targets[key]["kinds"]:
             targets[key]["kinds"].append(kind)
+        return targets[key]
 
+    def relate(target, window):
+        related = target.setdefault("related", [])
+        if list(window) not in related and len(related) < MAX_TARGET_RELATED:
+            related.append(list(window))
+
+    groups: dict[tuple, list[tuple[int, dict]]] = {}
     for rid, inventory in architecture.get("route_inventories", {}).items():
         for route in inventory.get("routes", []):
-            add({"repository_id": rid, "file": route.get("handler_file"), "line": route.get("handler_line")}, "route")
+            path = route.get("handler_file")
+            if (rid, path) not in own:
+                continue
+            line = code_line(rid, path, route.get("handler_line") or 1)
+            if line is not None:
+                key = (rid, path, line // MAX_SLICE_LINES, route_resource(route.get("path")))
+                groups.setdefault(key, []).append((line, route))
+    modules = architecture.get("route_handler_modules", {})
+    registrations: dict[tuple, list[tuple]] = {}
+
+    def list_routes(target, members):
+        listed = target.setdefault("routes", [])
+        listed.extend(
+            {"method": route.get("method"), "path": route.get("path"), "line": line}
+            for line, route in members[: max(0, MAX_TARGET_ROUTES - len(listed))]
+        )
+
+    for (rid, path, _, _), members in sorted(groups.items(), key=lambda item: item[0]):
+        members.sort(key=lambda member: (member[0], str(member[1].get("method"))))
+        # The registration's whole source window: every handler of one
+        # registration file then shares the same one or two preloaded windows.
+        start = max(1, members[0][0] // MAX_SLICE_LINES * MAX_SLICE_LINES)
+        span = (rid, path, start, members[0][0] // MAX_SLICE_LINES * MAX_SLICE_LINES + MAX_SLICE_LINES - 1)
+        handlers = sorted(
+            module
+            for module in {modules.get(rid, {}).get(route.get("route_id")) for _, route in members} - {None, path}
+            if (rid, module) in own
+        )
+        # A resolved resource is decided at its handler, with the registration
+        # lines (its guards) preloaded beside it; a registration without an own
+        # handler module, such as a guard-only line, is decided where it stands.
+        anchored = [(module, add({"repository_id": rid, "file": module, "line": 1}, "route")) for module in handlers]
+        anchored = [(module, target) for module, target in anchored if target is not None]
+        for module, target in anchored:
+            registrations.setdefault((rid, module), []).append(span)
+            list_routes(target, members)
+        if not anchored:
+            target = add({"repository_id": rid, "file": path, "line": members[0][0]}, "route")
+            if target is not None:
+                list_routes(target, members)
     for rid, destinations in architecture.get("egress_inventories", {}).items():
         for destination in destinations:
             for evidence in destination["evidence"]:
@@ -189,15 +296,25 @@ def analysis_targets(scope, component: dict, architecture: dict, scanned: list[d
             add(evidence, "data-flow")
     for finding in scanned:
         add(finding["evidence"], "scanner-lead")
-    # Files without a detected surface still require source investigation;
-    # neither a known route elsewhere nor an unsupported stack hides them.
+    # A file without a lead is investigated when it shows a security signal;
+    # neither a known route elsewhere nor an unsupported stack hides it.
     # A first-code-line lead does not claim to enumerate all mechanisms in a file.
     covered_files = {(rid, path) for rid, path, _ in targets}
     for rid, path in sorted(own - covered_files):
-        add({"repository_id": rid, "file": path, "line": 1}, "component-source")
+        if has_security_signal(repos[rid].files[path]):
+            add({"repository_id": rid, "file": path, "line": 1}, "component-source")
+    for (rid, path, _), target in targets.items():
+        for span in registrations.get((rid, path), []):
+            relate(target, span)
     if len(targets) > 20_000:
         raise ExchangeError("Component investigation exceeds the source-reference limit")
     return [targets[key] for key in sorted(targets)]
+
+
+def unexamined_files(component: dict, targets: list[dict]) -> list[tuple[str, str]]:
+    """Component sources no target names; the run reports them (MR-13)."""
+    named = {(t["evidence"]["repository_id"], t["evidence"]["file"]) for t in targets}
+    return sorted(source_selection([component]) - named)
 
 
 def known_llm_patterns(scope, component: dict) -> str:
@@ -924,7 +1041,19 @@ def validate_stride(
             with scope.scanner_snapshot(repo.repository_id) as root:
                 errors = repository_evidence_errors(own_evidence, root, require_line=True, require_code=True)
                 if errors:
-                    raise Rejection("STRIDE evidence does not cite an executable implementation", errors)
+                    # Every earlier check passed, so naming each failing row lets
+                    # the exchange ask for its line alone (MR-2).
+                    anchors = [
+                        (row, problem[0])
+                        for row in own_evidence
+                        if type(row.get("line")) is int
+                        and (problem := repository_evidence_errors([row], root, require_line=True, require_code=True))
+                    ]
+                    raise Rejection(
+                        "STRIDE evidence does not cite an executable implementation",
+                        errors,
+                        anchors=anchors if len(anchors) == len(errors) else (),
+                    )
 
 
 def target_batches(scope, targets, *, room, max_targets, max_windows, window_lines, max_unserved):
@@ -936,7 +1065,9 @@ def target_batches(scope, targets, *, room, max_targets, max_windows, window_lin
     with its target list, at most `max_windows`, so the job count follows
     source size rather than a fixed small window count. A window the scope cannot serve in one slice, or larger than
     `room`, is left to the model's own reads, at most `max_unserved` per job. Targets sharing a window
-    stay together up to `max_targets`. Returns ``(targets, preload)`` pairs.
+    stay together up to `max_targets`. A target's ``related`` ranges (MR-13: a route's handler module,
+    a handler's registration lines) are preloaded in the same job when they fit; one the job cannot
+    hold is left to the model's reads. Returns ``(targets, preload)`` pairs.
     """
 
     def window(target):
@@ -944,6 +1075,14 @@ def target_batches(scope, targets, *, room, max_targets, max_windows, window_lin
         index = (anchor.get("line") or 1) // window_lines
         start = max(1, index * window_lines)
         return (anchor["repository_id"], anchor["file"], start, index * window_lines + window_lines - 1)
+
+    def serve(key):
+        try:
+            piece = scope.read(*key)
+        except ScopeError:
+            return None, 0
+        size = len(json.dumps(piece, ensure_ascii=False).encode())
+        return ((*key[:3], piece["end_line"]), size) if size <= room else (None, 0)
 
     grouped: dict[tuple, list[dict]] = {}
     for target in sorted(targets, key=lambda row: (window(row), row["local_id"])):
@@ -958,29 +1097,46 @@ def target_batches(scope, targets, *, room, max_targets, max_windows, window_lin
     batches: list[tuple[list[dict], list[tuple]]] = []
     used = unserved = 0
     for key, members in chunks:
-        try:
-            piece = scope.read(*key)
-            key, size = (*key[:3], piece["end_line"]), len(json.dumps(piece, ensure_ascii=False).encode())
-        except ScopeError:
-            piece, size = None, 0
-        if size > room:
-            piece, size = None, 0
+        primary, size = serve(key)
         size += len(json.dumps(members, ensure_ascii=False).encode())
+        related = []
+        for extra in dict.fromkeys(tuple(r) for member in members for r in member.get("related", [])):
+            if extra[:3] != key[:3]:
+                served, extra_size = serve(extra)
+                if served is not None:
+                    related.append((served, extra_size))
+
+        def missing(batch):
+            # A range inside a window the job already holds adds nothing.
+            return [
+                (k, n)
+                for k, n in related
+                if not any(p[:2] == k[:2] and p[2] <= k[2] and k[3] <= p[3] for p in batch[1])
+            ]
+
+        new = missing(batches[-1]) if batches else related
         full = batches and (
             len(batches[-1][0]) + len(members) > max_targets
             or used + size > room
-            or (piece is not None and len(batches[-1][1]) >= max_windows)
-            or (piece is None and unserved >= max_unserved)
+            or (primary is not None and len(batches[-1][1]) >= max_windows)
+            or (primary is None and unserved >= max_unserved)
         )
         if not batches or full:
             batches.append(([], []))
             used = unserved = 0
+            new = missing(([], [primary] if primary else []))
         batches[-1][0].extend(members)
-        if piece is None:
+        if primary is None:
             unserved += 1
-        else:
-            batches[-1][1].append(key)
+        elif primary[:3] not in {k[:3] for k in batches[-1][1]}:
+            batches[-1][1].append(primary)
         used += size
+        if primary is not None:
+            new = [(k, n) for k, n in new if not (k[:2] == primary[:2] and primary[2] <= k[2] and k[3] <= primary[3])]
+        for extra, extra_size in new:
+            if len(batches[-1][1]) < max_windows and used + extra_size <= room:
+                batches[-1][1].append(extra)
+                used += extra_size
     return batches
 
 
@@ -1007,6 +1163,48 @@ def evidence_batches(findings, *, max_windows, max_findings, window_lines):
         batches[-1].append(finding)
         windows.add(key)
     return batches
+
+
+def evidence_preload(scope, evidence, allowed_sources, *, room, max_windows, before=30, after=90, max_lines=400):
+    """Slices around the anchors a job is told to read, for its first packet.
+
+    A boundary or control job otherwise spends a call only to request source
+    the controller already cites. Ranges in one file merge when they overlap;
+    an anchor outside ``allowed_sources``, a range the scope cannot serve, and
+    whatever exceeds ``room`` bytes or ``max_windows`` slices is left to the
+    model's own reads. Returns ``(repository_id, path, start, end)`` keys.
+    """
+    spans: dict[tuple, list[list[int]]] = {}
+    for row in evidence:
+        rid, path, line = row.get("repository_id"), row.get("file"), row.get("line")
+        if (rid, path) not in allowed_sources or type(line) is not int or line < 1:
+            continue
+        spans.setdefault((rid, path), []).append([max(1, line - before), line + after])
+    keys = []
+    for (rid, path), ranges in sorted(spans.items()):
+        ranges.sort()
+        merged = [ranges[0]]
+        for start, end in ranges[1:]:
+            if start <= merged[-1][1] + 1:
+                merged[-1][1] = max(merged[-1][1], end)
+            else:
+                merged.append([start, end])
+        for start, end in merged:
+            keys.extend((rid, path, s, min(end, s + max_lines - 1)) for s in range(start, end + 1, max_lines))
+    preload, used = [], 0
+    for key in keys:
+        if len(preload) >= max_windows:
+            break
+        try:
+            piece = scope.read(*key)
+        except ScopeError:
+            continue
+        size = len(json.dumps(piece, ensure_ascii=False).encode())
+        if used + size > room:
+            continue
+        preload.append((*key[:3], piece["end_line"]))
+        used += size
+    return preload
 
 
 def validate_evidence_review(scope, findings, component_fingerprint, artifact, ranges, allowed_sources):
