@@ -427,6 +427,57 @@ def test_the_run_warning_counts_retries_and_their_paid_cost():
     assert "USD" not in _assessment_retry_warning(rows[:1])
 
 
+def test_a_nearly_spent_budget_stops_with_its_reason_before_another_call(tmp_path):
+    jobs, kwargs = _hanging(tmp_path, Host([{"action": "complete", "reads": [], "artifact": {"result": "accepted"}}]))
+    jobs.budget.spent_usd = 0.97
+    with pytest.raises(ExchangeError, match="budget exhausted: USD 0.03 is left"):
+        jobs.execute(**kwargs)
+    assert jobs.budget.calls == 0
+
+
+@pytest.mark.parametrize("reason", ["authentication_failed", "billing_error"])
+def test_a_login_or_billing_failure_is_never_replaced(tmp_path, reason):
+    from runtime.analyst_host import TransportError
+
+    jobs, kwargs = _hanging(tmp_path, Refused(1, reason))
+    with pytest.raises(TransportError, match=reason):
+        jobs.execute(**kwargs, on_failure=lambda reason: {"result": "replacement"})
+    assert jobs.gaps == []
+
+
+def test_a_stopped_call_is_repeated_only_within_the_paid_retry_allowance(tmp_path):
+    from runtime import multi_repo_discovery
+
+    notices = []
+    host = Hanging(1)
+    jobs, kwargs = _hanging(tmp_path, host)
+    jobs.budget.on_retry = notices.append
+    assert jobs.execute(**kwargs) == {"result": "accepted"}
+    assert jobs.budget.retries == [{"reason": "timeout", "usd": 0.05, "paid": True}] and len(notices) == 1
+    jobs.budget.retries = [{"reason": "timeout", "usd": 0.05, "paid": True}] * multi_repo_discovery.MAX_PAID_RETRIES
+    host = Hanging(1)
+    jobs.host_factory = lambda role, ceiling: host
+    from runtime.analyst_host import HostTimeout
+
+    with pytest.raises(HostTimeout):
+        jobs.execute(**{**kwargs, "selector": "over-allowance"})
+    assert host.calls == 1
+
+
+def test_an_optional_job_past_its_own_time_limit_is_replaced(tmp_path):
+    class Slow(Host):
+        def invoke(self, *args):
+            time.sleep(1.1)
+            return super().invoke(*args)
+
+    read = {"repository_id": RID, "path": "app.py", "start_line": 1, "end_line": 1}
+    host = Slow([{"action": "read", "artifact": None, "reads": [read]}] * 6)
+    jobs, kwargs = _hanging(tmp_path, host)
+    jobs.budget = AssessmentBudget(1.0, 0.05, 10, 2)
+    result = jobs.execute(**kwargs, on_failure=lambda reason: {"result": "replacement"})
+    assert result == {"result": "replacement"} and "time limit" in jobs.gaps[0]["reason"]
+
+
 def test_a_retry_wait_ends_when_the_run_is_stopped(tmp_path, monkeypatch):
     from runtime import multi_repo_discovery
 

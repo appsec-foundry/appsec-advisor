@@ -152,6 +152,8 @@ FREE_FAILURE_USD = 0.001
 # and at most this often per run: repeated paid failures point to a systematic
 # cause that further calls would only pay for again.
 MAX_PAID_RETRIES = 3
+# A call reserved below this cannot finish a real answer; the budget is spent.
+MIN_CALL_USD = 0.05
 
 
 @dataclass
@@ -191,6 +193,8 @@ class DiscoveryBudget:
         # One row per repeated call: the failure's reason and reported cost.
         self.retries: list[dict] = []
         self.on_retry: Callable[[str], None] | None = None
+        # The latest call's reservation, which a stopped call is charged.
+        self._reserved = 0.0
 
     def remaining_seconds(self) -> int:
         remaining = math.floor(self.deadline - time.monotonic())
@@ -201,23 +205,34 @@ class DiscoveryBudget:
     def invoke(self, factory, system, prompt, schema, timeout_s, should_stop) -> HostReply:
         timeouts = 0
         failures = 0
+        # A retry gets the caller's time that is left, not the full limit again.
+        deadline = time.monotonic() + timeout_s
+        left = timeout_s
         while True:
+            if timeouts or failures:
+                left = math.floor(deadline - time.monotonic())
+                if left < 1:
+                    raise HostTimeout("model call exceeded its job's time limit")
             try:
-                return self._invoke_once(factory, system, prompt, schema, timeout_s, should_stop)
+                return self._invoke_once(factory, system, prompt, schema, left, should_stop)
             except HostTimeout:
                 # The host enforces the reservation as its own spending limit, so
                 # the reserved amount bounds the unknown cost: keep it as spent
-                # and leave accounting available for the retry.
+                # and leave accounting available for the retry. A stopped call
+                # cost its whole reservation, so its retry counts as paid (MR-9).
                 self.failed = False
                 timeouts += 1
-                if timeouts > MAX_TIMEOUT_RETRIES:
+                if timeouts > MAX_TIMEOUT_RETRIES or self._paid_retries() >= MAX_PAID_RETRIES:
                     raise
+                self.retries.append({"reason": "timeout", "usd": self._reserved, "paid": True})
+                if self.on_retry is not None:
+                    self.on_retry("model call stopped at its time or thinking limit; repeating it once")
             except TransportError as exc:
                 # Only a settled call leaves accounting available (`failed` is false).
                 if self.failed or exc.reason not in TRANSIENT_FAILURES or failures >= len(TRANSIENT_RETRY_DELAYS):
                     raise
                 paid = exc.usd is not None and exc.usd > FREE_FAILURE_USD
-                if paid and (failures or sum(row["paid"] for row in self.retries) >= MAX_PAID_RETRIES):
+                if paid and (failures or self._paid_retries() >= MAX_PAID_RETRIES):
                     raise
                 delay = TRANSIENT_RETRY_DELAYS[failures]
                 failures += 1
@@ -229,6 +244,9 @@ class DiscoveryBudget:
                         f"model call failed ({exc.reason}); repeating it in {delay} s (attempt {failures + 1})"
                     )
                 self._wait(delay, should_stop)
+
+    def _paid_retries(self) -> int:
+        return sum(row["paid"] for row in self.retries)
 
     @staticmethod
     def _wait(seconds: float, should_stop) -> None:
@@ -245,8 +263,12 @@ class DiscoveryBudget:
             raise ExchangeError("Discovery call budget exhausted or accounting unavailable")
         # Round downward to match the host's cent-denominated budget argument.
         ceiling = math.floor(min(self.call_usd, self.max_usd - self.spent_usd) * 100 + 1e-9) / 100
-        if ceiling < 0.01:
-            raise ExchangeError("Discovery cost budget exhausted")
+        if ceiling < MIN_CALL_USD:
+            raise ExchangeError(
+                f"Assessment cost budget exhausted: USD {max(0.0, self.max_usd - self.spent_usd):.2f} "
+                "is left, too little for another model call"
+            )
+        self._reserved = ceiling
         remaining = min(timeout_s, self.remaining_seconds(), MAX_CALL_SECONDS)
         self.calls += 1
         self.spent_usd += ceiling
@@ -267,7 +289,7 @@ class DiscoveryBudget:
             ) from None
         cost = reply.usd
         if type(cost) not in (int, float) or not math.isfinite(cost) or cost < 0 or cost > ceiling:
-            raise TransportError("Discovery host cost is unavailable or exceeds its reservation")
+            raise TransportError("Model call cost is unavailable or exceeds its reservation")
         self.spent_usd += cost - ceiling
         self.failed = False
         return reply

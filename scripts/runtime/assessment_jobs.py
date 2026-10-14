@@ -249,7 +249,11 @@ class AssessmentJobs:
                 normalize=normalize,
             )
         except (ModelAnswerFailure, HostTimeout, TransportError) as exc:
-            replaceable = isinstance(exc, (ModelAnswerFailure, HostTimeout)) or not self.budget.failed
+            # A login or billing failure fails every later call too; it is never replaced.
+            operator = isinstance(exc, TransportError) and exc.reason in ("authentication_failed", "billing_error")
+            replaceable = not operator and (
+                isinstance(exc, (ModelAnswerFailure, HostTimeout)) or not self.budget.failed
+            )
             if on_failure is None or not replaceable or self.should_stop():
                 if isinstance(exc, HostTimeout):
                     # Name the job, so a hang that survived its retry can be traced.
