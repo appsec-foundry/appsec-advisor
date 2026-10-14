@@ -1464,6 +1464,34 @@ def test_after_stride_a_failed_optional_job_is_replaced_and_named_not_fatal(tmp_
     assert model["threats"] and all(t.get("evidence_check") != "verified" for t in model["threats"])
 
 
+@pytest.mark.parametrize("selector", ["stage2:requirements-compliance", "actors"])
+def test_a_failed_requirements_or_actor_job_after_stride_is_replaced_not_fatal(tmp_path, monkeypatch, selector):
+    """OR-39 covers these late jobs too; only the Security Architecture section has no replacement."""
+    from runtime import assessment_jobs
+
+    from tests.test_assessment_context import CATALOG
+
+    exchange = assessment_jobs.AssessmentJobs.exchange
+
+    def rejecting(self, **request):
+        if request["selector"] == selector:
+
+            def validate(artifact, ranges):
+                raise ExchangeError("the controller rejects this result")
+
+            request["validate"] = validate
+        return exchange(self, **request)
+
+    monkeypatch.setattr(assessment_jobs.AssessmentJobs, "exchange", rejecting)
+    catalog = tmp_path / "catalog.yaml"
+    catalog.write_text(CATALOG.replace("priority: high", "priority: MUST"))
+    outcome, _, out = _assess(tmp_path, monkeypatch, ("edge", "service"), ("--requirements", str(catalog)))
+    assert outcome["status"] == "complete" and (out / "threat-model.md").is_file()
+    assert any(selector in w and "replaced after a model failure" in w for w in outcome["warnings"])
+    if selector == "stage2:requirements-compliance":
+        assert "not assessed" in (out / "threat-model.md").read_text().lower()
+
+
 # §6 has no authorless form yet: its contract requires one sequence diagram per flow.
 @pytest.mark.parametrize("role", ["stride_analyzer", "control_analyst", "architecture_analyst", "secarch_renderer"])
 def test_a_failure_up_to_stride_still_stops_the_run(tmp_path, monkeypatch, role):

@@ -488,10 +488,29 @@ def _requirements_compliance(jobs, workspace: Path, override) -> str:
         schema=requirements_schema(catalog),
         allowed_sources=frozenset(),
         validate=validate,
+        # OR-39: after STRIDE a failed model job is replaced, not fatal.
+        on_failure=lambda reason: _unassessed_requirements(catalog),
     )
     fragment = _check_requirements(workspace, catalog, findings, artifact)
     _publish(workspace, {"requirements-compliance.md": fragment}, (), {})
     return f"stage2: requirements compliance assessed {len(catalog)} requirement(s)"
+
+
+def _unassessed_requirements(catalog: dict) -> dict:
+    """The deterministic replacement: every requirement stays unverifiable, citing no finding."""
+    return {
+        "summary": "Requirements compliance was not assessed in this run; the requirements job failed.",
+        "rows": [
+            {
+                "id": key,
+                "title": str(row.get("title") or key)[:120],
+                "status": "UNVERIFIABLE",
+                "evidence": "Not assessed: the requirements job failed in this run.",
+                "finding_ids": [],
+            }
+            for key, row in catalog.items()
+        ],
+    }
 
 
 def placeholders(scaffold: str) -> list[dict]:
@@ -787,7 +806,8 @@ def _security_architecture(jobs, workspace: Path, override) -> str:
         validate=validate,
     )
     filled = apply_fills(scaffold, rows, copy.deepcopy(artifact))
-    _check_section6(workspace, filled)
+    # The same check the job's review applied; links the scaffold itself carries are not the model's.
+    _check_section6(workspace, filled, scaffold)
     if _bounded_text(path) != scaffold:
         raise ExchangeError("Security-architecture scaffold changed while it was being filled")
     atomic_write_text(path, filled)

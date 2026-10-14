@@ -243,6 +243,31 @@ def test_a_selected_repository_is_not_automatically_readable_by_every_task(tmp_p
     assert "Read only these files: app.py" in model.prompts[1]
 
 
+def test_a_file_of_another_selected_repository_is_refused_back_not_fatal(tmp_path):
+    """A flow's evidence may name the peer repository's file; reading it is refused, never served."""
+    peer = "repo-fedcba9876543210"
+    scope = AssessmentScope(
+        (
+            RepositoryView(REPO, tmp_path / "source", "a" * 40, "b" * 64, {"app.py": b"print('frozen')\n"}),
+            RepositoryView(peer, tmp_path / "peer", "c" * 40, "d" * 64, {"svc.py": b"secret_peer_code()\n"}),
+        ),
+        tmp_path / "out",
+    )
+    model = Model([read("svc.py", peer), complete()])
+    result = host.run_exchange(
+        model,
+        scope,
+        instructions="task",
+        context={},
+        artifact_schema=ARTIFACT,
+        allowed_sources=frozenset({(REPO, "app.py")}),
+        timeout_s=30,
+        should_stop=lambda: False,
+    )
+    assert result.source_slices == () and not any("secret_peer_code" in prompt for prompt in model.prompts)
+    assert "svc.py is not among this task's source files" in model.prompts[1]
+
+
 def test_host_schema_drops_keywords_a_strict_host_rejects_but_keeps_structure():
     from contexts.multi_repo_analysis import contract
 

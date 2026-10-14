@@ -66,13 +66,18 @@ def job_share(schema: dict, combined: str, *, jobs: int, used: dict[str, int] | 
     that afterwards. Bounding every job to its share instead turns an excess
     into contract feedback inside that job's exchange. `used` counts entries
     the controller already placed in a combined list.
+
+    The share is rounded up, so while capacity remains every job may return at
+    least one entry; each job's share never exceeds the capacity left, so the
+    concatenation still fits. A floor share gave every early job of a large
+    system zero entries, and a job that had to report one could not.
     """
     result = copy.deepcopy(schema)
     for field, spec in contract(combined).get("properties", {}).items():
         own = result.get("properties", {}).get(field)
         if not isinstance(own, dict) or not isinstance(spec, dict) or "maxItems" not in spec:
             continue
-        share = max(0, spec["maxItems"] - (used or {}).get(field, 0)) // max(1, jobs)
+        share = -(-max(0, spec["maxItems"] - (used or {}).get(field, 0)) // max(1, jobs))
         own["maxItems"] = min(own.get("maxItems", share), share)
     return result
 
