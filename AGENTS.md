@@ -40,11 +40,17 @@ Preserve these boundaries:
 
 ## Verification
 
-**Run only checks required by this task:** changed behavior, affected consumers, and applicable contract or security invariants. Routing supplies candidates, not a mandatory minimum. Include required checks even when routing misses them. Stop when they pass.
+**The overriding rule: run only the checks this change requires. Nothing else.** This rule takes precedence over everything routing, make targets, or this section's table suggest.
+
+A check is required only when it exercises behavior the change alters, a consumer of changed output, or a contract or security invariant the change can break. Every other check stays unrun, even when routing lists it, it is cheap, or it would add confidence.
+
+**Routing is orientation, never the decision.** `run_tests.py --list`, `test-for`, and `test-plan` propose candidates; they routinely include more than the change needs. Before running anything, cross-check each candidate against the change itself and ask: does this check actually exercise something this change can break? Drop every candidate where the answer is no or where you cannot name what the check would catch. Add a required check that routing missed. Stop as soon as the required checks pass.
 
 ### Select checks
 
-Review candidates with `python3 scripts/run_tests.py --list --path <path>` for each changed file. Prefer exact pytest node IDs or focused modules. Add missing coverage or report the gap. Python changes require applicable lint and format checks; documentation changes require applicable document and contract checks. Markdown under `agents/` and `skills/` is runtime input; root `AGENTS.md` is repository guidance.
+List candidates with `python3 scripts/run_tests.py --list --path <path>` for each changed file, then cross-check them against the change and keep only the required checks. Prefer exact pytest node IDs, then single modules. Add missing coverage or report the gap. Changed Python files require lint and format checks on those files; documentation changes require only the document and contract checks they can affect. Markdown under `agents/` and `skills/` is runtime input; root `AGENTS.md` is repository guidance.
+
+The table lists bundled targets, not mandatory steps. Each one runs everything it selects, so use it only when you have cross-checked that its entire selection is required.
 
 | Scope | Command | Constraint |
 |---|---|---|
@@ -54,7 +60,7 @@ Review candidates with `python3 scripts/run_tests.py --list --path <path>` for e
 | Global lint | `make lint` | Covers `scripts/`, `tests/`, and `hooks/`. |
 | Full gate | `make check` | Only for releases or impact that cannot be bounded to focused checks; state the reason first. |
 
-Run combined check targets or global lint only when their entire selection is required; otherwise invoke validators, pytest selectors, and lint checks directly. A routing refusal or fallback requires reporting and impact assessment, never an automatic full gate. Do not add group, full-suite, or coverage runs for extra confidence. [Contributing](CONTRIBUTING.md#targeted-tests-before-finishing-a-non-trivial-change) provides command details; this section governs selection.
+In all other cases, invoke validators, pytest selectors, and lint checks directly. A routing refusal or fallback requires reporting and impact assessment, never an automatic full gate. Do not add group, full-suite, or coverage runs for extra confidence. [Contributing](CONTRIBUTING.md#targeted-tests-before-finishing-a-non-trivial-change) provides command details; this section governs selection.
 
 ### Evidence and completion
 
