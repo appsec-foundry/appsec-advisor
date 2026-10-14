@@ -1492,6 +1492,19 @@ def test_a_failed_requirements_or_actor_job_after_stride_is_replaced_not_fatal(t
         assert "not assessed" in (out / "threat-model.md").read_text().lower()
 
 
+def test_an_oversized_lockfile_is_excluded_and_named_not_rejecting_the_run(tmp_path, monkeypatch):
+    """MR-10: the repository is assessed without the file, and the run names it."""
+    from runtime import multi_repo_scope
+
+    def seed(roots):
+        (roots[0] / "package-lock.json").write_text('{"lockfileVersion": 3}\n' * 40)
+
+    monkeypatch.setattr(multi_repo_scope, "MAX_FILE_BYTES", 600)
+    outcome, _, out = _assess(tmp_path, monkeypatch, ("edge", "service"), seed=seed)
+    assert outcome["status"] == "complete" and (out / "threat-model.md").is_file()
+    assert any("over 1 MiB were not analysed: edge/package-lock.json" in w for w in outcome["warnings"])
+
+
 # §6 has no authorless form yet: its contract requires one sequence diagram per flow.
 @pytest.mark.parametrize("role", ["stride_analyzer", "control_analyst", "architecture_analyst", "secarch_renderer"])
 def test_a_failure_up_to_stride_still_stops_the_run(tmp_path, monkeypatch, role):

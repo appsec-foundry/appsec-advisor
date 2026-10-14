@@ -331,8 +331,55 @@ def analysis_lenses(scope, component: dict) -> tuple[list[str], str]:
     return selected, "\n\n".join((ROOT / "agents" / files[key]).read_text(encoding="utf-8") for key in selected)
 
 
+def surface_evidence_normalizer(targets):
+    """Insert each target's exact anchor into a decision that cites the target's file.
+
+    A model that read the target's file seldom copies its 64-character hash; the
+    controller knows the anchor and adds it. A decision citing another file
+    gains nothing, and `validate_surface_coverage` still requires the read.
+    """
+    anchors = {target["local_id"]: target["evidence"] for target in targets}
+
+    def normalize(artifact):
+        for row in artifact.get("surface_coverage") or []:
+            anchor = anchors.get(row.get("target_id"))
+            evidence = row.get("evidence")
+            if anchor is None or not isinstance(evidence, list) or anchor in evidence:
+                continue
+            same_file = [
+                index
+                for index, item in enumerate(evidence)
+                if isinstance(item, dict)
+                and item.get("repository_id") == anchor["repository_id"]
+                and item.get("file") == anchor["file"]
+            ]
+            if same_file:
+                if len(evidence) < 4:
+                    evidence.append(dict(anchor))
+                else:
+                    evidence[same_file[0]] = dict(anchor)
+        return artifact
+
+    normalize.version = "surface-anchor-1"
+    return normalize
+
+
+def unresolved_targets(artifact, targets) -> list[str]:
+    """Locations of targets a job read but left unresolved (MR-11)."""
+    anchors = {target["local_id"]: target["evidence"] for target in targets}
+    return [
+        f"{anchor['repository_id']}/{anchor['file']}:{anchor['line']}"
+        for row in artifact.get("surface_coverage") or []
+        if row["disposition"] == "unresolved" and (anchor := anchors.get(row["target_id"]))
+    ]
+
+
 def validate_surface_coverage(artifact, ranges, targets):
-    """No authored disposition can substitute for actually retrieving a target."""
+    """No authored disposition can substitute for actually retrieving a target.
+
+    A target the job read may stay `unresolved` with its reason; the run names it
+    as a warning (MR-11). An unread target is always rejected.
+    """
     expected = {target["local_id"]: target for target in targets}
     rows = artifact.get("surface_coverage", [])
     if len(rows) != len(expected) or {row["target_id"] for row in rows} != set(expected):
@@ -351,14 +398,34 @@ def validate_surface_coverage(artifact, ranges, targets):
         )
         if not read or target not in row["evidence"]:
             errors.append("Unexamined source target: " + location)
-        if row["disposition"] == "unresolved":
-            errors.append("Unresolved source target: " + location)
         if not set(row["finding_ids"]) <= findings:
             errors.append("Surface coverage refers to unknown findings")
         if row["disposition"] == "not-applicable" and row["finding_ids"]:
             errors.append("An inapplicable surface cannot carry findings")
     if errors:
         raise Rejection("STRIDE investigation is incomplete", errors[:3])
+
+
+def component_stride_contract(jobs: int | None) -> dict:
+    """The STRIDE contract of a component analysed in `jobs` bounded jobs (MR-12).
+
+    Each job's own contract keeps its limit of findings; the combined document
+    allows that many per job, so findings that every job returned within its
+    limit never fail the combination after all jobs were paid. `None` checks a
+    combined document whose job count is no longer known: its parts were
+    already bounded when it was combined.
+    """
+    schema = contract("multi-repo-stride.schema.json")
+    per_job = schema["properties"]["threats"]["maxItems"]
+    for spec in (
+        schema["properties"]["threats"],
+        schema["properties"]["coverage"]["items"]["properties"]["finding_ids"],
+    ):
+        if jobs is None:
+            spec.pop("maxItems")
+        else:
+            spec["maxItems"] = per_job * max(1, jobs)
+    return schema
 
 
 def combine_stride_parts(parts):
@@ -389,7 +456,7 @@ def combine_stride_parts(parts):
             disposition="finding" if ids else (next(iter(dispositions)) if len(dispositions) == 1 else "no-evidence"),
             reason="Component analysis combines the recorded decisions of all source-target jobs.",
         )
-    if not Draft202012Validator(contract("multi-repo-stride.schema.json")).is_valid(result):
+    if not Draft202012Validator(component_stride_contract(len(parts))).is_valid(result):
         raise ExchangeError("Combined STRIDE investigation exceeds its component contract; no findings were dropped")
     return result
 

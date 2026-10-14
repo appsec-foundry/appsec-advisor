@@ -146,11 +146,63 @@ def test_source_surface_coverage_cannot_be_satisfied_by_category_labels(tmp_path
         row["evidence"] = [evidence[1]]
     elif kind == "unknown-finding":
         row["finding_ids"] = ["not-a-finding"]
-    if kind == "valid":
+    if kind in ("valid", "unresolved"):
+        # MR-11: a target the job read may stay unresolved; the run names it.
         stage.validate_surface_coverage(artifact, ranges, targets)
+        assert bool(stage.unresolved_targets(artifact, targets)) is (kind == "unresolved")
     else:
         with pytest.raises(ValueError):
             stage.validate_surface_coverage(artifact, ranges, targets)
+
+
+@pytest.mark.parametrize("kind", ["other-line", "extra-anchors", "foreign", "unread"])
+def test_a_read_target_needs_no_exact_anchor_copy_but_an_unread_one_still_fails(tmp_path, kind):
+    scope, components, evidence, ranges, identity = sources(tmp_path)
+    architecture = {
+        "data_flows": {"data_flows": []},
+        "route_inventories": {
+            evidence[0]["repository_id"]: {"routes": [{"handler_file": "app.py", "handler_line": 1}]},
+        },
+    }
+    targets = stage.analysis_targets(scope, components[0], architecture, [])
+    artifact = stride(components[0], evidence[0], identity)
+    cited = {**evidence[0], "line": evidence[0]["line"] + 1, "sha256": "f" * 64}
+    rows = {
+        "other-line": [cited],
+        "extra-anchors": [cited] * 4,
+        "foreign": [evidence[1]],
+        "unread": [cited],
+    }[kind]
+    artifact["surface_coverage"] = [
+        dict(
+            target_id=targets[0]["local_id"],
+            disposition="examined",
+            reason="The handler consumes the retrieved input.",
+            finding_ids=["issue-1"],
+            evidence=copy.deepcopy(rows),
+        )
+    ]
+    if kind == "unread":
+        ranges = ranges[1:]
+    normalized = stage.surface_evidence_normalizer(targets)(copy.deepcopy(artifact))
+    assert stage.surface_evidence_normalizer(targets)(copy.deepcopy(normalized)) == normalized
+    if kind in ("other-line", "extra-anchors"):
+        stage.validate_surface_coverage(normalized, ranges, targets)
+        assert len(normalized["surface_coverage"][0]["evidence"]) <= 4
+    else:
+        with pytest.raises(ValueError):
+            stage.validate_surface_coverage(normalized, ranges, targets)
+
+
+def test_a_component_keeps_every_finding_its_bounded_jobs_returned():
+    """MR-12: the combined document allows each job's limit, so no paid finding fails the merge."""
+    per_job = stage.contract("multi-repo-stride.schema.json")["properties"]["threats"]["maxItems"]
+    assert stage.component_stride_contract(3)["properties"]["threats"]["maxItems"] == 3 * per_job
+    finding_ids = stage.component_stride_contract(3)["properties"]["coverage"]["items"]["properties"]["finding_ids"]
+    assert finding_ids["maxItems"] == 3 * per_job
+    assert "maxItems" not in stage.component_stride_contract(None)["properties"]["threats"]
+    # A single job keeps its own limit.
+    assert stage.component_stride_contract(1)["properties"]["threats"]["maxItems"] == per_job
 
 
 @pytest.mark.parametrize("path", ["policy/check.py", "domain/permit.kt"])

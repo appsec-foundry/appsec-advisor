@@ -452,21 +452,25 @@ def test_source_and_slice_limits_fail_closed(tmp_path, monkeypatch):
         scope.admit(roots, str(tmp_path / "out"))
     monkeypatch.setattr(scope, "MAX_TOTAL_BYTES", 1000)
     monkeypatch.setattr(scope, "MAX_FILE_BYTES", 1)
-    with pytest.raises(scope.ScopeError, match="file exceeds"):
-        scope.admit(roots, str(tmp_path / "out"))
+    # MR-10: past the per-file limit a file is excluded; only the aggregate limit rejects.
+    admitted = scope.admit(roots, str(tmp_path / "out"))
+    assert {"path": "app.py", "reason": "oversized"} in admitted.repositories[0].exclusions
 
 
 @pytest.mark.parametrize("payload", [b"GIF89a\x10\x00\x10\x00" * 8, b"\xff\xd8\xff\xe0 jpeg-like" * 8])
-def test_oversized_binary_is_excluded_while_oversized_text_still_fails(tmp_path, monkeypatch, payload):
+def test_an_oversized_file_is_excluded_by_its_kind_not_rejecting_its_repository(tmp_path, monkeypatch, payload):
+    """MR-10: an oversized text file, such as a lockfile, is excluded as not analysed."""
     roots = pair(tmp_path)
     (Path(roots[0]) / "assets").mkdir()
     (Path(roots[0]) / "assets" / "clip.bin").write_bytes(payload)
+    (Path(roots[1]) / "package-lock.json").write_text('{"lockfileVersion": 3}\n' * 8)
     monkeypatch.setattr(scope, "MAX_FILE_BYTES", 32)
     admitted = scope.admit(roots, str(tmp_path / "out"))
     assert {"path": "assets/clip.bin", "reason": "binary"} in admitted.repositories[0].exclusions
-    (Path(roots[1]) / "big.py").write_text("x = 1\n" * 8)
-    with pytest.raises(scope.ScopeError, match="file exceeds"):
-        scope.admit(roots, str(tmp_path / "out"))
+    assert {"path": "package-lock.json", "reason": "oversized"} in admitted.repositories[1].exclusions
+    assert "package-lock.json" not in admitted.repositories[1].files
+    # The inventory that records the exclusion still satisfies its contract.
+    admitted.inventory()
 
 
 @pytest.fixture
