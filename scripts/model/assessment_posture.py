@@ -662,7 +662,11 @@ def discover_actors(scope, jobs, names, workspace: Path, cfg: dict, instructions
         schema=discovery_contract(),
         allowed_sources=allowed,
         validate=validate,
+        # OR-39: the deterministic actor resolution already written stands in.
+        on_failure=lambda reason: None,
     )
+    if artifact is None:
+        return ["actor discovery unavailable: the model job failed; deterministic actors kept"]
     key = "assessment-" + hashlib.sha256(json.dumps(context, sort_keys=True).encode()).hexdigest()[:32]
     discovered = _legacy_discovery(artifact, names, key)
     valid, _ = validate_actors_discovered(discovered)

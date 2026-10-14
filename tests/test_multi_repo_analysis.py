@@ -812,7 +812,7 @@ def test_an_impossible_interaction_flag_is_removed_not_returned_for_correction(
         assert ("interaction" in fixed["data_flows"][-1]) is (entity_kind == "legitimate-role")
 
 
-@pytest.mark.parametrize(("jobs", "used", "expected"), [(5, 0, 100), (2, 100, 200), (3, 500, 0)])
+@pytest.mark.parametrize(("jobs", "used", "expected"), [(5, 0, 100), (2, 100, 200), (3, 500, 0), (600, 0, 1)])
 def test_each_job_gets_its_share_of_a_combined_list_limit(jobs, used, expected):
     """Concatenated job lists can no longer exceed the combined contract that bounds them."""
     schema = stage.job_share(
@@ -822,8 +822,26 @@ def test_each_job_gets_its_share_of_a_combined_list_limit(jobs, used, expected):
         used={"data_flows": used},
     )
     assert schema["properties"]["data_flows"]["maxItems"] == expected
-    assert schema["properties"]["external_entities"]["maxItems"] == 64 // jobs
+    assert schema["properties"]["external_entities"]["maxItems"] == -(-64 // jobs)
     assert stage.contract("multi-repo-architecture.schema.json")["properties"]["data_flows"]["maxItems"] == 500
+
+
+@pytest.mark.parametrize("jobs", [3, 499, 500, 501, 800])
+def test_jobs_that_fill_their_shares_never_exceed_the_combined_limit_or_starve_early(jobs):
+    used, shares = 0, []
+    for index in range(jobs):
+        schema = stage.job_share(
+            stage.contract("multi-repo-architecture.schema.json"),
+            "fragments/data-flows-v2.schema.json",
+            jobs=jobs - index,
+            used={"data_flows": used},
+        )
+        share = schema["properties"]["data_flows"]["maxItems"]
+        shares.append(share)
+        used += share
+    assert used <= 500
+    # Every job may return an entry while the combined list has room for one.
+    assert all(share >= 1 for share in shares[: min(jobs, 500)])
 
 
 def test_local_group_names_of_two_repositories_never_join_their_flows():

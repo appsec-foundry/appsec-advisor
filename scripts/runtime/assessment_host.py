@@ -365,10 +365,11 @@ def run_exchange(
         for request in reply.payload["reads"]:
             key = tuple(request[k] for k in ("repository_id", "path", "start_line", "end_line"))
             if key[:2] not in allowed_sources:
-                # Another file of the task's own repositories is a scope question
-                # the model can correct; another repository or an unadmitted
-                # path breaks repository isolation and fails.
-                if key[:2] not in admitted or key[0] not in {rid for rid, _ in allowed_sources}:
+                # Another admitted file, also of another selected repository, is
+                # a scope question the model can correct: nothing is served. A
+                # flow's evidence may name the peer repository's file. An
+                # unadmitted repository or path breaks isolation and fails.
+                if key[:2] not in admitted:
                     raise ExchangeError("Model requested a source outside this task's selection")
                 seen.add(key)
                 range_feedback = {
