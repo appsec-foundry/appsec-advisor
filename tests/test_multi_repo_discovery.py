@@ -233,3 +233,33 @@ def test_a_refused_call_with_a_reported_cost_is_settled_so_the_run_can_resume(tm
     assert limits.failed is not settled
     assert limits.spent_usd == pytest.approx(usd if settled else 0.05)
     assert ("--resume" in str(caught.value)) is settled
+
+
+def test_a_small_repository_keeps_its_complete_file_list():
+    files = {"app.py": b"print(1)\n", "lib/util.py": b"x = 1\n"}
+    assert discovery.file_listing(files, None) == {
+        "files": [{"path": "app.py", "bytes": 9}, {"path": "lib/util.py", "bytes": 6}]
+    }
+
+
+@pytest.mark.parametrize("count", [3_000, 12_000])
+def test_a_large_repository_lists_cited_and_source_files_first_and_counts_the_rest(count):
+    from runtime.assessment_host import _prompt
+
+    files = {
+        f"src/main/java/com/example/module{i // 50}/ServiceImplementation{i}.java": b"class A {}\n"
+        for i in range(count)
+    }
+    files.update({f"docs/guide/page{i}.md": b"# Page\n" for i in range(200)})
+    entry = "test/fixtures/deep/entry/Server.java"
+    files[entry] = b"class Server {}\n"
+    listing = discovery.file_listing(files, {"serving_units": {"units": [{"entry_files": [entry]}]}})
+    listed = {row["path"] for row in listing["files"]}
+    # The cited entry file is listed although its path looks peripheral; documentation is not.
+    assert entry in listed and not any(path.startswith("docs/") for path in listed)
+    assert listing["unlisted"]["files"] == len(files) - len(listed)
+    assert sum(row["files"] for row in listing["unlisted"]["directories"]) == listing["unlisted"]["files"]
+    # The packet the model receives fits, leaving room for source reads.
+    context = {"repository_id": "repo-0123456789abcdef", "label": "large", **listing}
+    prompt = _prompt({"context": context, "source_slices": [], "source_reads_remaining": 12})
+    assert len(prompt.encode()) < 150_000
