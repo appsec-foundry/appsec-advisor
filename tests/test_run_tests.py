@@ -184,7 +184,7 @@ def test_wrapper_requires_a_name_after_group(fake_pytest_env):
 def test_every_test_has_an_explicit_group_or_manual_role():
     grouped = {path for group in runner.GROUPS for path in runner.select_tests(group)}
     discovered = {path.relative_to(runner.ROOT).as_posix() for path in (runner.ROOT / "tests").rglob("test_*.py")}
-    assert discovered == grouped | {"tests/test_full_run_e2e.py"}
+    assert discovered == grouped | set(runner.MANUAL_TESTS)
 
 
 def test_scanner_group_includes_architecture_producers_and_bridge():
