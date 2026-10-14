@@ -373,6 +373,60 @@ def test_an_unsettled_failure_is_never_retried(tmp_path, no_retry_wait):
     assert host.calls == 1 and jobs.budget.failed
 
 
+def test_a_paid_failure_is_repeated_once_and_reported(tmp_path, no_retry_wait):
+    from runtime.analyst_host import TransportError
+
+    notices = []
+    host = Refused(1, "no_structured_output", usd=0.04)
+    jobs, kwargs = _hanging(tmp_path, host)
+    jobs.budget.on_retry = notices.append
+    assert jobs.execute(**kwargs) == {"result": "accepted"}
+    assert host.calls == 2 and jobs.budget.spent_usd == pytest.approx(0.05)
+    assert jobs.budget.retries == [{"reason": "no_structured_output", "usd": 0.04, "paid": True}]
+    assert len(notices) == 1 and "no_structured_output" in notices[0]
+    # A second paid failure of the same call is not paid for again.
+    host = Refused(2, "no_structured_output", usd=0.04)
+    jobs, kwargs = _hanging(tmp_path / "again", host)
+    with pytest.raises(TransportError, match="no_structured_output"):
+        jobs.execute(**kwargs)
+    assert host.calls == 2
+
+
+def test_paid_retries_stop_once_the_run_has_spent_its_allowance(tmp_path, no_retry_wait):
+    from runtime import multi_repo_discovery
+    from runtime.analyst_host import TransportError
+
+    jobs, kwargs = _hanging(tmp_path, Refused(0, "no_structured_output"))
+    for number in range(multi_repo_discovery.MAX_PAID_RETRIES):
+        host = Refused(1, "no_structured_output", usd=0.01)
+        jobs.host_factory = lambda role, ceiling, host=host: host
+        assert jobs.execute(**{**kwargs, "selector": f"job-{number}"}) == {"result": "accepted"}
+    host = Refused(1, "no_structured_output", usd=0.01)
+    jobs.host_factory = lambda role, ceiling: host
+    with pytest.raises(TransportError):
+        jobs.execute(**{**kwargs, "selector": "one-too-many"})
+    assert host.calls == 1
+    # Free refusals stay retried after the paid allowance is spent.
+    host = Refused(2, "rate_limit")
+    jobs.host_factory = lambda role, ceiling: host
+    assert jobs.execute(**{**kwargs, "selector": "free"}) == {"result": "accepted"}
+
+
+def test_the_run_warning_counts_retries_and_their_paid_cost():
+    from orchestrator.orchestration_controller import _assessment_retry_warning
+
+    assert _assessment_retry_warning([]) is None
+    rows = [
+        {"reason": "rate_limit", "usd": 0.0, "paid": False},
+        {"reason": "rate_limit", "usd": 0.0, "paid": False},
+        {"reason": "no_structured_output", "usd": 0.04, "paid": True},
+    ]
+    text = _assessment_retry_warning(rows)
+    assert text.startswith("3 model call(s) were repeated")
+    assert "no_structured_output ×1, rate_limit ×2" in text and "USD 0.04" in text
+    assert "USD" not in _assessment_retry_warning(rows[:1])
+
+
 def test_a_retry_wait_ends_when_the_run_is_stopped(tmp_path, monkeypatch):
     from runtime import multi_repo_discovery
 

@@ -10216,6 +10216,7 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
         console.start_ticker()
     say = progress or (console.step if console else (lambda text: None))
     budget = _assessment_budget(ns, rest)
+    budget.on_retry = console.notice if console else say
     if ns.trust_mode == "untrusted":
         # The console header reports the result once every pre-run check passed.
         if not console:
@@ -10396,6 +10397,9 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                     f"was replaced after a model failure ({gap['reason']}); rerun to retry it"
                     for gap in jobs.gaps
                 )
+                retry_warning = _assessment_retry_warning(budget.retries)
+                if retry_warning:
+                    warnings.append(retry_warning)
                 warnings.extend(
                     f"{name} references a model SDK or provider in its source, but the architecture models no "
                     "LLM inference service for it; review its AI exposure manually"
@@ -10418,6 +10422,18 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
         "spent_usd": round(budget.spent_usd, 2),
         "calls": budget.calls,
     }
+
+
+def _assessment_retry_warning(retries: list[dict]) -> str | None:
+    """Name the repeated model calls, so a run that only completed through retries says so."""
+    if not retries:
+        return None
+    from collections import Counter
+
+    reasons = ", ".join(f"{reason} ×{count}" for reason, count in sorted(Counter(r["reason"] for r in retries).items()))
+    paid = sum(row["usd"] for row in retries if row["paid"])
+    cost = f"; the failed paid attempts cost ≈ USD {paid:.2f}" if paid else ""
+    return f"{len(retries)} model call(s) were repeated after a transient failure ({reasons}){cost}"
 
 
 def _assessment_discard_workspace(workspace: Path, repositories: int, cfg: dict[str, Any]) -> None:
