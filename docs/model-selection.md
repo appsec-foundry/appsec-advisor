@@ -36,6 +36,8 @@ The default role assignments are:
 
 A multi-repository assessment runs STRIDE on the latest Sonnet at quick and standard depth, because Sonnet 4.6 returns no STRIDE result through its single-call exchange. The run prints each role's model at the start, warns that STRIDE calls cost more after this move, and warns when an explicit setting puts STRIDE on Sonnet 4.6.
 
+The controller assessment also runs repository discovery on the latest Sonnet instead of Haiku. Discovery must return validated components and cited interfaces; Haiku stopped at the thinking limit or repeated a rejected result until the call limit. `APPSEC_RECON_SCANNER_MODEL` or a shared model setting still selects another model.
+
 The explicit `sonnet` tier selects the latest Sonnet instead of this version split. `EXTENDED_MODEL_MATRIX` supplies the Haiku defaults for context resolution, reconnaissance, configuration scanning, and routine QA, subject to depth-specific routing.
 
 **Interactive dispatch limitation:** exact model IDs apply on the headless path and the hybrid-merger path. The interactive Agent tool accepts tier aliases only; its `sonnet` alias follows the session model. Selecting an exact Sonnet version in the resolved configuration therefore does not guarantee that version runs interactively.
