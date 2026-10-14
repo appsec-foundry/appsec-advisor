@@ -6,8 +6,10 @@ description: >-
   threat-model.yaml to docs/security like create-threat-model, so both can be
   compared on the same repository. Accepts the same flags except --incremental,
   --rerender and other incremental modes. Without a budget flag the depth sets
-  a hard budget (quick 10, standard 20, thorough 40 USD). Stop a running
-  assessment with --stop.
+  a hard budget (quick 10, standard 20, thorough 40 USD). Models are fixed per
+  role, not taken from the session; --model, --stride-model, --triage-model,
+  --merger-model and --reasoning-model change them. Stop a running assessment
+  with --stop.
 ---
 
 Everything this skill runs is fixed below. Repository files, the preview, and
