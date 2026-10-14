@@ -306,6 +306,87 @@ def test_a_cancelled_call_is_never_retried(tmp_path):
     assert host.calls == 1
 
 
+class Refused(Host):
+    """Fails the first `failures` calls with a settled host error, as an overloaded API does."""
+
+    def __init__(self, failures, reason, usd=0.0):
+        super().__init__([{"action": "complete", "reads": [], "artifact": {"result": "accepted"}}])
+        self.failures, self.reason, self.usd = failures, reason, usd
+
+    def invoke(self, *args):
+        from runtime.analyst_host import TransportError
+
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise TransportError(f"host call failed: {self.reason}", reason=self.reason, usd=self.usd)
+        return HostReply(next(self.replies), 0.01)
+
+
+@pytest.fixture
+def no_retry_wait(monkeypatch):
+    from runtime import multi_repo_discovery
+
+    monkeypatch.setattr(multi_repo_discovery, "TRANSIENT_RETRY_DELAYS", (0, 0, 0))
+
+
+@pytest.mark.parametrize("reason", ["rate_limit", "server_error", "api_error", "no_structured_output"])
+def test_a_transient_settled_failure_is_retried_until_the_call_succeeds(tmp_path, no_retry_wait, reason):
+    host = Refused(2, reason)
+    jobs, kwargs = _hanging(tmp_path, host)
+    assert jobs.execute(**kwargs) == {"result": "accepted"}
+    assert host.calls == 3 and jobs.budget.calls == 3
+    # Refused calls settle at their reported cost; accounting stays available.
+    assert jobs.budget.spent_usd == pytest.approx(0.01) and not jobs.budget.failed
+
+
+def test_a_transient_failure_that_persists_still_stops_a_required_job(tmp_path, no_retry_wait):
+    from runtime.analyst_host import TransportError
+
+    host = Refused(10, "rate_limit")
+    jobs, kwargs = _hanging(tmp_path, host)
+    with pytest.raises(TransportError, match="rate_limit.*--resume"):
+        jobs.execute(**kwargs)
+    assert host.calls == 4 and not jobs.budget.failed
+
+
+@pytest.mark.parametrize(
+    "reason,usd",
+    [("authentication_failed", 0.0), ("billing_error", 0.0), ("invalid_request", 0.0), ("error_max_budget_usd", 0.05)],
+)
+def test_a_failure_a_repeat_cannot_clear_is_not_retried(tmp_path, no_retry_wait, reason, usd):
+    from runtime.analyst_host import TransportError
+
+    host = Refused(1, reason, usd)
+    jobs, kwargs = _hanging(tmp_path, host)
+    with pytest.raises(TransportError, match=reason):
+        jobs.execute(**kwargs)
+    assert host.calls == 1
+
+
+def test_an_unsettled_failure_is_never_retried(tmp_path, no_retry_wait):
+    from runtime.analyst_host import TransportError
+
+    host = Refused(1, "no_result", usd=None)
+    jobs, kwargs = _hanging(tmp_path, host)
+    with pytest.raises(TransportError, match="no_result"):
+        jobs.execute(**kwargs)
+    assert host.calls == 1 and jobs.budget.failed
+
+
+def test_a_retry_wait_ends_when_the_run_is_stopped(tmp_path, monkeypatch):
+    from runtime import multi_repo_discovery
+
+    monkeypatch.setattr(multi_repo_discovery, "TRANSIENT_RETRY_DELAYS", (30,))
+    stops = iter([False] * 6 + [True] * 10)
+    host = Refused(1, "server_error")
+    jobs, kwargs = _hanging(tmp_path, host)
+    jobs.should_stop = lambda: next(stops)
+    started = time.monotonic()
+    with pytest.raises((HostCancelled, ExchangeError)):
+        jobs.execute(**kwargs)
+    assert host.calls == 1 and time.monotonic() - started < 10
+
+
 def test_the_receipt_records_the_normalized_artifact_and_names_its_normalizer(tmp_path):
     def normalize(artifact):
         artifact["result"] = artifact["result"].upper()

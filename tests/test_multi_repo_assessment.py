@@ -869,6 +869,17 @@ def test_a_host_failure_ends_with_a_message_not_a_traceback(tmp_path, monkeypatc
     assert "stopped: host returned no parseable result" in err and "Unpublished draft" not in err
 
 
+def test_a_contract_check_failure_ends_with_a_message_not_a_traceback(monkeypatch, capsys):
+    from jsonschema import ValidationError
+
+    def fail(*args, **kwargs):
+        raise ValidationError("[] should be non-empty")
+
+    monkeypatch.setattr(controller, "assess_repositories", fail)
+    assert controller.assess_main(["--repo", "a", "--repo", "b"]) == 1
+    assert "stopped: [] should be non-empty" in capsys.readouterr().err
+
+
 def test_a_stopped_run_names_its_kept_draft_as_unpublished(tmp_path, monkeypatch, capsys):
     draft = tmp_path / "out" / ".assessment-work" / "render"
 

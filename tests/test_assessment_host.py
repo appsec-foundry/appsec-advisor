@@ -91,6 +91,32 @@ def test_unauthorized_proposals_fail_before_another_model_call(tmp_path, proposa
     assert len(model.prompts) == 1
 
 
+@pytest.mark.parametrize("start,end", [(2, 1), (1, 1)])
+def test_a_reversed_or_single_line_range_is_served_not_fatal(tmp_path, start, end):
+    proposal = read()
+    proposal["reads"][0].update(start_line=start, end_line=end)
+    result = invoke(Model([proposal, complete()]), tmp_path)
+    assert result.source_slices[0]["start_line"] == 1 and result.source_slices[0]["lines"] == ["print('frozen')"]
+
+
+def test_a_read_that_would_overflow_the_next_packet_is_refused_back_not_fatal(tmp_path):
+    # The context alone fits; with one more slice the next packet would not.
+    pad = host.MAX_CONTEXT_BYTES - host._FEEDBACK_RESERVE_BYTES - 120
+    model = Model([read(), complete()])
+    result = host.run_exchange(
+        model,
+        view(tmp_path),
+        instructions="trusted",
+        context={"pad": "x" * pad},
+        artifact_schema=ARTIFACT,
+        allowed_sources=frozenset({(REPO, "app.py")}),
+        timeout_s=30,
+        should_stop=lambda: False,
+    )
+    assert result.source_slices == () and len(model.prompts) == 2
+    assert "reached the size limit" in model.prompts[1]
+
+
 def test_repeated_reads_and_incomplete_results_are_not_silently_accepted(tmp_path):
     # A repeated slice is not served twice; the model is told to use it.
     model = Model([read(), read(), complete()])

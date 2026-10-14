@@ -10612,6 +10612,7 @@ def _launch_main(command: str, argv: list[str]) -> int:
 
 def assess_main(argv: list[str]) -> int:
     """Command-line entry for `assess`; prints a short summary and returns an exit code."""
+    from jsonschema import SchemaError, ValidationError
     from runtime.analyst_host import HostCancelled, TransportError
     from runtime.assessment_host import ExchangeError
 
@@ -10635,7 +10636,17 @@ def assess_main(argv: list[str]) -> int:
         if isinstance(exc.code, str):
             print(f"✗ {exc.code}", file=sys.stderr)
         return 2
-    except (ControllerError, ExchangeError, TransportError, HostCancelled, ValueError, OSError) as exc:
+    # A contract check by `jsonschema` raises neither ValueError nor OSError.
+    except (
+        ControllerError,
+        ExchangeError,
+        TransportError,
+        HostCancelled,
+        ValueError,
+        OSError,
+        ValidationError,
+        SchemaError,
+    ) as exc:
         print(f"✗ assessment stopped: {_cap_reason(str(exc))}", file=sys.stderr)
         draft = _unpublished_draft(argv, before)
         if draft:
