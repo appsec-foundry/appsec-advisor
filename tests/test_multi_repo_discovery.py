@@ -12,7 +12,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from runtime import multi_repo_discovery as discovery
 from runtime.analyst_host import HostCancelled, HostReply, TransportError
-from runtime.assessment_host import MARKER, ExchangeError
+from runtime.assessment_host import MARKER, ExchangeError, ModelAnswerFailure
 from runtime.multi_repo_scope import ScopeError, admit
 
 
@@ -130,10 +130,19 @@ def test_cross_repository_read_is_denied_before_any_source_is_served(tmp_path):
                 r.repository_id for r in scope.repositories if r.repository_id != context["repository_id"]
             )
 
-    host = ScriptedHost(scope, mutate=mutate)
-    with pytest.raises(ExchangeError, match="outside this task"):
+    served = []
+
+    class Recording(ScriptedHost):
+        def invoke(self, system, prompt, *args):
+            packet = json.loads(prompt.split(f"<<<{MARKER}\n")[1].split(f"\n{MARKER}>>>")[0])
+            served.extend((row["repository_id"], packet["context"]["repository_id"]) for row in packet["source_slices"])
+            return super().invoke(system, prompt, *args)
+
+    host = Recording(scope, mutate=mutate)
+    # The read is refused back, never served; a model that keeps asking ends its own job.
+    with pytest.raises(ModelAnswerFailure):
         discovery.discover(scope, host_factory=host.factory, budget=budget(), should_stop=lambda: False)
-    assert len(host.contexts) == 1
+    assert served == [] and len(host.contexts) > 1
 
 
 def test_real_but_unretrieved_source_cannot_support_model_observation(tmp_path):

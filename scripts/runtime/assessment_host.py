@@ -16,7 +16,7 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
-from runtime.analyst_host import HostCancelled, Transport, TransportError
+from runtime.analyst_host import HostCancelled, HostTimeout, Transport, TransportError
 from runtime.multi_repo_scope import AssessmentScope, ScopeError
 
 MAX_EXCHANGES = 6
@@ -270,7 +270,8 @@ def run_exchange(
             raise HostCancelled("Assessment cancelled")
         remaining = math.floor(deadline - time.monotonic())
         if remaining < 1:
-            raise HostCancelled("Assessment exceeded its time limit")
+            # The job's own limit, not a cancellation: an optional job is replaced (OR-39).
+            raise HostTimeout("Assessment job exceeded its time limit")
         packet = {"context": context, "source_slices": slices, "source_reads_remaining": MAX_READS - len(seen)}
         if feedback is not None:
             packet["rejected_result"] = feedback
@@ -287,8 +288,9 @@ def run_exchange(
                 # that still overflows ends this answer, not the host contract.
                 raise ModelAnswerFailure("Correction packet exceeds its context limit") from None
         reply = transport.invoke(instructions, prompt, projected, remaining, should_stop)
-        if should_stop() or time.monotonic() >= deadline:
-            raise HostCancelled("Assessment cancelled or exceeded its time limit")
+        # A reply that arrived is used; the next turn checks the job's limit.
+        if should_stop():
+            raise HostCancelled("Assessment cancelled")
         try:
             encoded = json.dumps(reply.payload, allow_nan=False)
         except (TypeError, ValueError):

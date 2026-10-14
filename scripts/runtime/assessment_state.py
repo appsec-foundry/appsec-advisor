@@ -173,7 +173,10 @@ class AssessmentState:
             if self.state["expires_at"] != self.state["started_at"] + self.budget.timeout_s:
                 raise ExchangeError("Assessment resume deadline differs from its original limit")
             if accounting["unavailable"]:
-                raise ExchangeError("Assessment resume cannot reconcile an unfinished cost reservation")
+                raise ExchangeError(
+                    "Assessment resume cannot reconcile an unfinished cost reservation; rerun the same "
+                    "command without --resume, which reuses every accepted job that still matches"
+                )
             if (
                 accounting["calls"] > self.budget.max_calls
                 or accounting["spent_usd"] > self.budget.max_usd
