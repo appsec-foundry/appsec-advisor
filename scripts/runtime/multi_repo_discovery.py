@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import time
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -49,7 +50,84 @@ Its serving_units list each request-serving unit and client application;
 carry each with a component that lists at least one of the unit's
 entry_files: an application component for an http-api unit, a client or
 application component for a client-app unit.
+When unlisted is present, files names the admitted files most relevant to
+discovery and unlisted counts the remaining ones per directory; request only
+listed paths.
 """
+
+
+# The discovery packet lists admitted files within this many bytes, so a large
+# repository leaves room for its inventory and the source the model reads; the
+# full list of a repository with about 3,000 files exceeded the packet limit
+# before the first call. Smaller repositories keep their complete list.
+FILE_LIST_BYTES = 120_000
+UNLISTED_BYTES = 16_000
+# Path segments and suffixes that rarely carry runtime components. Example
+# trees count only at the root: `example` is also a common package segment.
+_PERIPHERAL_SEGMENTS = frozenset(
+    {"test", "tests", "__tests__", "spec", "specs", "doc", "docs", "fixtures", "vendor", "node_modules"}
+)
+_PERIPHERAL_ROOTS = frozenset({"example", "examples", "sample", "samples"})
+_PERIPHERAL_SUFFIXES = frozenset({".md", ".rst", ".txt", ".snap", ".map", ".svg", ".lock", ".csv"})
+
+
+def _cited_paths(value, paths: set[str], found: set[str]) -> None:
+    if isinstance(value, str):
+        if value in paths:
+            found.add(value)
+    elif isinstance(value, dict):
+        for item in value.values():
+            _cited_paths(item, paths, found)
+    elif isinstance(value, list):
+        for item in value:
+            _cited_paths(item, paths, found)
+
+
+def file_listing(files: dict[str, bytes], inventory: dict | None) -> dict:
+    """The discovery context's file list, bounded to FILE_LIST_BYTES.
+
+    Within the bound every admitted file is listed, as before. Beyond it,
+    files the deterministic inventory cites come first, then source outside
+    test, documentation and example trees, each in path order; the rest are
+    counted per directory, collapsed toward the root until the counts fit.
+    """
+    rows = [{"path": p, "bytes": len(b)} for p, b in sorted(files.items())]
+    if len(json.dumps(rows)) <= FILE_LIST_BYTES:
+        return {"files": rows}
+    cited: set[str] = set()
+    _cited_paths(inventory or {}, set(files), cited)
+
+    def rank(path: str) -> int:
+        if path in cited:
+            return 0
+        parts = path.lower().split("/")
+        peripheral = (
+            any(part in _PERIPHERAL_SEGMENTS for part in parts[:-1])
+            or (len(parts) > 1 and parts[0] in _PERIPHERAL_ROOTS)
+            or any(parts[-1].endswith(suffix) for suffix in _PERIPHERAL_SUFFIXES)
+        )
+        return 2 if peripheral else 1
+
+    listed, size = [], 2
+    for row in sorted(rows, key=lambda row: (rank(row["path"]), row["path"])):
+        cost = len(json.dumps(row)) + 2
+        if size + cost > FILE_LIST_BYTES:
+            break
+        listed.append(row)
+        size += cost
+    shown = {row["path"] for row in listed}
+    rest = [row["path"] for row in rows if row["path"] not in shown]
+    depth = max(path.count("/") for path in rest)
+    while True:
+        counts = Counter("/".join(path.split("/")[: min(depth, path.count("/"))]) or "." for path in rest)
+        directories = [{"directory": name, "files": count} for name, count in sorted(counts.items())]
+        if depth == 0 or len(json.dumps(directories)) <= UNLISTED_BYTES:
+            break
+        depth -= 1
+    return {
+        "files": sorted(listed, key=lambda row: row["path"]),
+        "unlisted": {"files": len(rest), "directories": directories},
+    }
 
 
 # One host call produces one bounded artifact without tools. A call that runs
@@ -243,7 +321,7 @@ def discover(
         context = {
             "repository_id": repo.repository_id,
             "label": labels[repo.repository_id],
-            "files": [{"path": p, "bytes": len(b)} for p, b in sorted(repo.files.items())],
+            **file_listing(repo.files, (inventories or {}).get(repo.repository_id)),
         }
         if inventories and repo.repository_id in inventories:
             context["deterministic_inventory"] = inventories[repo.repository_id]

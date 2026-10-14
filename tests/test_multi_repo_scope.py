@@ -469,6 +469,46 @@ def test_oversized_binary_is_excluded_while_oversized_text_still_fails(tmp_path,
         scope.admit(roots, str(tmp_path / "out"))
 
 
+@pytest.fixture
+def operator_excludes(tmp_path, monkeypatch):
+    """An operator home whose global Git configuration names its own ignore file."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "ignore-list").write_text(".editor-state/\n")
+    (home / ".gitconfig").write_text("[core]\n\texcludesFile = ~/ignore-list\n")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    scope._user_excludes_file.cache_clear()
+    yield
+    scope._user_excludes_file.cache_clear()
+
+
+def test_the_operators_global_ignore_list_keeps_editor_files_out_of_the_scope(tmp_path, operator_excludes):
+    roots = pair(tmp_path)
+    state = Path(roots[0]) / ".editor-state"
+    state.mkdir()
+    (state / "workspace.xml").write_text("<state/>\n")
+    admitted = scope.admit(roots, str(tmp_path / "out"))
+    assert not any(path.startswith(".editor-state/") for path in admitted.repositories[0].files)
+    # An editor rewriting its state during the run is not a source change.
+    (state / "workspace.xml").write_text("<state changed='1'/>\n")
+    admitted.verify_unchanged()
+    # The list hides only what it names; a change to admitted source still counts.
+    (Path(roots[0]) / "app.py").write_text("print(3)\n")
+    with pytest.raises(scope.ScopeError, match="state changed"):
+        admitted.verify_unchanged()
+
+
+def test_a_tracked_file_stays_in_the_scope_whatever_the_global_ignore_list_says(tmp_path, operator_excludes):
+    roots = pair(tmp_path)
+    state = Path(roots[0]) / ".editor-state"
+    state.mkdir()
+    (state / "shared.xml").write_text("<shared/>\n")
+    subprocess.run(["git", "-C", roots[0], "add", "-f", ".editor-state/shared.xml"], check=True)
+    admitted = scope.admit(roots, str(tmp_path / "out"))
+    assert ".editor-state/shared.xml" in admitted.repositories[0].files
+
+
 def test_git_environment_cannot_redirect_repository_selection(tmp_path, monkeypatch):
     roots = pair(tmp_path)
     monkeypatch.setenv("GIT_DIR", str(tmp_path / "foreign"))

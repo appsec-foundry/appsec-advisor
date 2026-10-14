@@ -25,7 +25,7 @@ from collections import Counter
 from collections.abc import Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from functools import cached_property
+from functools import cache, cached_property
 from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 
@@ -57,6 +57,33 @@ def _json_digest(value: object) -> str:
     return _digest(json.dumps(value, sort_keys=True, separators=(",", ":")).encode())
 
 
+@cache
+def _user_excludes_file() -> str | None:
+    """The operator's own `core.excludesFile`, which the isolated Git calls would not read.
+
+    Global configuration stays off, so no filter, hook or alias of it runs; only
+    this ignore list returns. Without it, untracked editor and OS files such as
+    `.idea/` became admitted source, and the next write to one stopped the run
+    as changed source.
+    """
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    try:
+        proc = subprocess.run(
+            ["git", "config", "--global", "--path", "--get", "core.excludesFile"],
+            capture_output=True,
+            env={**env, "GIT_CONFIG_NOSYSTEM": "1", "GIT_TERMINAL_PROMPT": "0"},
+            timeout=GIT_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    value = proc.stdout.decode("utf-8", "replace").strip()
+    if proc.returncode or not value or "\n" in value:
+        return None
+    path = Path(value).expanduser()
+    return str(path.resolve()) if path.is_absolute() and path.is_file() else None
+
+
 def _git(root: Path, *args: str, overrides: tuple[str, ...] = ()) -> bytes:
     """Read Git metadata without hooks, fsmonitor, or unbounded output.
 
@@ -75,6 +102,7 @@ def _git(root: Path, *args: str, overrides: tuple[str, ...] = ()) -> bytes:
         "diff.external=",
         "-c",
         "core.quotePath=false",
+        *(("-c", f"core.excludesFile={excludes}") if (excludes := _user_excludes_file()) else ()),
         *(item for value in overrides for item in ("-c", value)),
         "-C",
         str(root),
