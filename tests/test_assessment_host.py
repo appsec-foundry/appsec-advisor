@@ -470,3 +470,102 @@ def test_a_rejection_hands_every_violation_to_the_correction_turn(tmp_path):
     _reviewed(model, tmp_path, review)
     reason = json.loads(model.prompts[1].split("\n", 4)[4].rsplit("\n", 2)[0])["rejected_result"]["reason"]
     assert reason.startswith("Local architecture violates flow invariants: ") and all(e in reason for e in errors)
+
+
+def test_preloaded_sources_reach_the_first_packet_without_spending_reads(tmp_path):
+    same = {
+        "action": "read",
+        "artifact": None,
+        "reads": [{"repository_id": REPO, "path": "app.py", "start_line": 1, "end_line": 1}],
+    }
+    model = Model([same, complete()])
+    result = host.run_exchange(
+        model,
+        view(tmp_path),
+        instructions="trusted task",
+        context={"files": ["app.py"]},
+        artifact_schema=ARTIFACT,
+        allowed_sources=frozenset({(REPO, "app.py")}),
+        timeout_s=30,
+        should_stop=lambda: False,
+        preload=[(REPO, "app.py", 1, 1)],
+    )
+    first = json.loads(model.prompts[0].split(host.MARKER)[1])
+    assert "print('frozen')" in model.prompts[0]
+    assert first["source_reads_remaining"] == host.MAX_READS
+    # Requesting an already preloaded window serves it no second time.
+    assert len(result.source_slices) == 1 and result.calls == 2
+
+
+@pytest.mark.parametrize("key", [(REPO, "other.py", 1, 1), (REPO, "app.py", 5, 6)])
+def test_an_unauthorized_or_invalid_preload_fails_before_any_call(tmp_path, key):
+    model = Model([complete()])
+    with pytest.raises(host.ExchangeError, match="Preloaded source"):
+        host.run_exchange(
+            model,
+            view(tmp_path),
+            instructions="trusted task",
+            context={},
+            artifact_schema=ARTIFACT,
+            allowed_sources=frozenset({(REPO, "app.py")}),
+            timeout_s=30,
+            should_stop=lambda: False,
+            preload=[key],
+        )
+    assert model.prompts == []
+
+
+def test_the_receipt_contract_admits_every_range_one_exchange_can_serve():
+    schema = json.loads(
+        (Path(__file__).resolve().parents[1] / "schemas/assessment-job-receipt.schema.json").read_text()
+    )
+    assert schema["properties"]["source_ranges"]["maxItems"] == host.MAX_READS + host.MAX_PRELOAD_WINDOWS
+
+
+def test_more_preloaded_windows_than_the_limit_fail_before_any_call(tmp_path, monkeypatch):
+    monkeypatch.setattr(host, "MAX_PRELOAD_WINDOWS", 1)
+    model = Model([complete()])
+    with pytest.raises(host.ExchangeError, match="window limit"):
+        host.run_exchange(
+            model,
+            view(tmp_path),
+            instructions="trusted task",
+            context={},
+            artifact_schema=ARTIFACT,
+            allowed_sources=frozenset({(REPO, "app.py")}),
+            timeout_s=30,
+            should_stop=lambda: False,
+            preload=[(REPO, "app.py", 1, 1), (REPO, "app.py", 1, 2)],
+        )
+    assert model.prompts == []
+
+
+def test_a_preloaded_job_gets_one_round_of_further_reads(tmp_path):
+    def one(start):
+        return {
+            "action": "read",
+            "artifact": None,
+            "reads": [{"repository_id": REPO, "path": "app.py", "start_line": start, "end_line": start}],
+        }
+
+    scope = AssessmentScope(
+        (RepositoryView(REPO, tmp_path / "source", "a" * 40, "b" * 64, {"app.py": b"a = 1\nb = 2\nc = 3\n"}),),
+        tmp_path / "out",
+    )
+    model = Model([one(2), one(3), complete()])
+    result = host.run_exchange(
+        model,
+        scope,
+        instructions="trusted task",
+        context={},
+        artifact_schema=ARTIFACT,
+        allowed_sources=frozenset({(REPO, "app.py")}),
+        timeout_s=30,
+        should_stop=lambda: False,
+        preload=[(REPO, "app.py", 1, 1)],
+    )
+    packets = [json.loads(p.split(host.MARKER)[1]) for p in model.prompts]
+    # The second read round is refused back, not served; the job still completes.
+    assert [s["start_line"] for s in result.source_slices] == [1, 2]
+    assert [p["source_reads_remaining"] for p in packets] == [host.MAX_READS, 0, 0]
+    assert "one round of further reads" in packets[2]["rejected_result"]["reason"]

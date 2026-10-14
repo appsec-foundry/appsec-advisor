@@ -303,7 +303,8 @@ def test_stride_splits_surface_work_without_losing_findings_or_reading_foreign_s
     root = tmp_path / "service"
     checkout(root)
     path = root / "app.py"
-    path.write_text(path.read_text() + "value = request.args['input']\n" * 2400)
+    # Long lines make seven 400-line target windows exceed one job's preload room.
+    path.write_text(path.read_text() + ("value = request.args['input'] + '" + "x" * 60 + "'\n") * 2400)
     peer = tmp_path / "peer"
     checkout(peer)
     scope = admit([str(root), str(peer)], str(tmp_path / "out"))
@@ -333,16 +334,54 @@ def test_stride_splits_surface_work_without_losing_findings_or_reading_foreign_s
     contexts = [
         ctx for role, ctx in host.calls if role == "stride_analyzer" and ctx["component"]["repository_ids"] == [rid]
     ]
-    # Each job exchanges once to read and once to complete.
-    assert [len(ctx["investigation_targets"]) for ctx in contexts[::2]] == [6, 1]
+    # The controller preloads every target window, so each job completes in one exchange;
+    # the job count follows source size, and every target is decided exactly once.
+    supplied = [t["local_id"] for ctx in contexts for t in ctx["investigation_targets"]]
+    assert len(contexts) > 1 and len(supplied) == len(set(supplied)) == 7
     assert all(ctx["assessment_depth"] == "thorough" for ctx in contexts)
     assert len(documents) == len(reviews) == 2
     document = next(d for d in documents if d["threats"][0]["evidence"]["repository_id"] == rid)
-    assert len(document["threats"]) == 2
-    assert {t["evidence"]["line"] for t in document["threats"]} == {2, 2401}
+    # Every job's finding survives the combination, anchored in that job's first window.
+    first_windows = {
+        max(1, min(t["evidence"]["line"] for t in ctx["investigation_targets"]) // 400 * 400) + 1 for ctx in contexts
+    }
+    assert len(document["threats"]) == len(contexts)
+    assert {t["evidence"]["line"] for t in document["threats"]} == first_windows
     assert sum(len(r["decisions"]) for r in reviews) == 3
     assert all(t["evidence"]["repository_id"] == rid for t in document["threats"])
     assert merged["threats"]
+
+
+def test_a_job_with_more_preloaded_windows_than_reads_passes_its_receipt(tmp_path):
+    """Preloaded windows join the receipt; its contract must admit more ranges than MAX_READS."""
+    from runtime.assessment_host import MAX_READS
+
+    root = tmp_path / "service"
+    checkout(root)
+    path = root / "app.py"
+    # Short lines keep twenty-one 400-line windows within one job's preload room.
+    path.write_text(path.read_text() + "v = 1\n" * 8000)
+    peer = tmp_path / "peer"
+    checkout(peer)
+    scope = admit([str(root), str(peer)], str(tmp_path / "out"))
+    host = Host(scope)
+    jobs = AssessmentJobs(
+        scope,
+        scope.output / ".assessment/jobs",
+        AssessmentBudget(2, 0.05, 60, 120),
+        host.factory,
+        lambda: False,
+        lambda: None,
+    )
+    architecture = controller._assessment_architecture(scope, jobs, progress=lambda _: None)
+    rid = next(r.repository_id for r in scope.repositories if r.root == root)
+    architecture["route_inventories"] = {
+        rid: {"routes": [dict(handler_file="app.py", handler_line=line) for line in range(1, 8002, 400)]}
+    }
+    controller._assessment_stride(scope, jobs, architecture, [], [], progress=lambda _: None)
+    receipts = [json.loads(p.read_text()) for p in (scope.output / ".assessment/jobs").glob("*.receipt.json")]
+    stride = [r for r in receipts if r["role"] == "stride_analyzer" and r["source_ranges"][0]["repository_id"] == rid]
+    assert max(len(r["source_ranges"]) for r in stride) > MAX_READS
 
 
 def test_toolless_architect_receives_the_shared_remediation_policy():

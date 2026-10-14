@@ -221,6 +221,43 @@ def test_files_without_scanner_signals_still_need_investigation(tmp_path, path):
     assert next(t for t in targets if t["evidence"]["file"] == path)["kinds"] == ["component-source"]
 
 
+@pytest.mark.parametrize(
+    "path,source,expected",
+    [
+        # A license header precedes the first statement of a file without a lead.
+        ("models/order.ts", b"/*\n * Copyright (c) Example\n */\n\nimport { Model } from 'orm'\nclass Order {}\n", 5),
+        ("store/ledger.py", b"#!/usr/bin/env python3\n# SPDX-License-Identifier: MIT\n\nrows = load()\n", 4),
+        # A file that starts with code keeps its first line.
+        ("lib/basket.ts", b"export const total = 0\n// end\n", 1),
+    ],
+)
+def test_file_targets_cite_the_first_line_the_evidence_rule_accepts(tmp_path, path, source, expected):
+    from validators.validate_fragment import _cited_line_problem
+
+    scope, component = _owned_sources(
+        tmp_path, {path: source, "notes.ts": b"// only a comment\n\n"}, [path, "notes.ts"]
+    )
+    targets = stage.analysis_targets(scope, component, {"data_flows": {"data_flows": []}}, [])
+    # A comment-only file offers no line to cite and therefore no target.
+    assert [(t["evidence"]["file"], t["evidence"]["line"]) for t in targets] == [(path, expected)]
+    assert _cited_line_problem(source.decode().splitlines()[expected - 1], allow_imports=True) is None
+
+
+@pytest.mark.parametrize("lead,expected", [(2, 3), (4, 3), (3, 3)])
+def test_a_lead_on_a_comment_moves_to_the_nearest_following_code_line(tmp_path, lead, expected):
+    source = b"import express from 'express'\n// handler\nrouter.get('/order', show)\n\n"
+    scope, component = _owned_sources(tmp_path, {"routes/order.ts": source}, ["routes/order.ts"])
+    architecture = {
+        "data_flows": {"data_flows": []},
+        "route_inventories": {
+            scope.repositories[0].repository_id: {"routes": [{"handler_file": "routes/order.ts", "handler_line": lead}]}
+        },
+    }
+    targets = stage.analysis_targets(scope, component, architecture, [])
+    # A trailing blank lead has no following code line and falls back to the previous one.
+    assert [(t["evidence"]["line"], t["kinds"]) for t in targets] == [(expected, ["route"])]
+
+
 @pytest.mark.parametrize("path", ["api/submit.py", "web/ingest.ts"])
 def test_surface_targets_include_egress_without_a_modelled_flow(tmp_path, path):
     scope, components, evidence, ranges, identity = sources(tmp_path, path)
@@ -970,3 +1007,69 @@ def test_local_architecture_cannot_repeat_a_reviewed_call_as_an_external_service
     # Without a reviewed connection the same external call stays a valid local flow.
     assert stage._reviewed_call_flows(rid, artifact, []) == []
     assert stage._reviewed_call_flows(rid, artifact, reviewed) == (["connection-" + "a" * 16] if rejected else [])
+
+
+def _file_targets(scope, files, lines=(1,)):
+    rid = scope.repositories[0].repository_id
+    return [
+        {"local_id": f"surface-{path}-{line}", "evidence": {"repository_id": rid, "file": path, "line": line}}
+        for path in files
+        for line in lines
+    ]
+
+
+@pytest.mark.parametrize("prefix", ["routes", "handlers/v2"])
+def test_target_jobs_follow_source_size_and_preload_every_window(tmp_path, prefix):
+    files = {f"{prefix}/h{i:02d}.ts": b"export const handle = (req) => req.body\n" for i in range(20)}
+    scope, _ = _owned_sources(tmp_path, files, sorted(files))
+    targets = _file_targets(scope, sorted(files))
+    # Twenty small windows are one job when they fit, not ceil(20 / 6) jobs.
+    roomy = stage.target_batches(
+        scope, targets, room=100_000, max_targets=64, max_windows=36, window_lines=400, max_unserved=6
+    )
+    assert len(roomy) == 1 and len(roomy[0][1]) == 20
+    tight = stage.target_batches(
+        scope, targets, room=1_500, max_targets=64, max_windows=36, window_lines=400, max_unserved=6
+    )
+    assert 1 < len(tight) < 20
+    for batch in (roomy, tight):
+        assert sorted(t["local_id"] for part, _ in batch for t in part) == sorted(t["local_id"] for t in targets)
+        assert all(len(preload) == len({t["evidence"]["file"] for t in part}) for part, preload in batch)
+
+
+def test_targets_sharing_a_window_stay_together_and_oversized_windows_are_left_to_the_model(tmp_path):
+    files = {"server.ts": b"app.get('/a', a)\n" * 50, "big.ts": b"const x = '" + b"y" * 5_000 + b"'\n"}
+    scope, _ = _owned_sources(tmp_path, files, sorted(files))
+    targets = _file_targets(scope, ["server.ts"], lines=range(1, 40, 3)) + _file_targets(scope, ["big.ts"])
+    batches = stage.target_batches(
+        scope, targets, room=3_000, max_targets=64, max_windows=36, window_lines=400, max_unserved=6
+    )
+    server = [part for part, _ in batches if any(t["evidence"]["file"] == "server.ts" for t in part)]
+    assert len(server) == 1 and sum(t["evidence"]["file"] == "server.ts" for t in server[0]) == 13
+    # A window larger than the room is not preloaded; the model reads it within its own allowance.
+    assert all(key[1] != "big.ts" for _, preload in batches for key in preload)
+
+
+def test_a_window_with_more_targets_than_one_job_decides_is_split(tmp_path):
+    scope, _ = _owned_sources(tmp_path, {"server.ts": b"app.get('/a', a)\n" * 50}, ["server.ts"])
+    targets = _file_targets(scope, ["server.ts"], lines=range(1, 40, 3))
+    batches = stage.target_batches(
+        scope, targets, room=100_000, max_targets=5, max_windows=36, window_lines=400, max_unserved=6
+    )
+    assert [len(part) for part, _ in batches] == [5, 5, 3]
+    assert all(len(preload) == 1 for _, preload in batches)
+
+
+def test_a_job_preloads_at_most_its_window_limit(tmp_path):
+    files = {f"h{i:02d}.ts": b"export const handle = 1\n" for i in range(9)}
+    scope, _ = _owned_sources(tmp_path, files, sorted(files))
+    batches = stage.target_batches(
+        scope,
+        _file_targets(scope, sorted(files)),
+        room=100_000,
+        max_targets=64,
+        max_windows=4,
+        window_lines=400,
+        max_unserved=6,
+    )
+    assert [len(preload) for _, preload in batches] == [4, 4, 1]

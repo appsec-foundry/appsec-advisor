@@ -8644,7 +8644,7 @@ def _assessment_stride(
     from contexts import multi_repo_analysis as analysis
     from model import assessment_scanner_findings
     from model.merge_threats import merge_assessment
-    from runtime.assessment_host import MAX_READS, MAX_SLICE_LINES
+    from runtime.assessment_host import MAX_PRELOAD_WINDOWS, MAX_READS, MAX_SLICE_LINES, preload_room
 
     components = architecture["components"]
     flows = architecture["data_flows"]
@@ -8702,18 +8702,25 @@ def _assessment_stride(
             context["declared_context"] = assessment_context.component_context(captured, component)
         progress(f"Analyzing all STRIDE categories: {component['name']} ({position}/{len(components['components'])})")
         targets = analysis.analysis_targets(scope, component, architecture, scanned[component["id"]])
-        # Reserve half the existing read allowance for following a lead to its
-        # control/sink. More surfaces get further bounded jobs, never silent
-        # truncation or a larger per-job budget.
-        target_batches = analysis.evidence_batches(
-            targets, max_windows=MAX_READS // 2, max_findings=64, window_lines=MAX_SLICE_LINES
-        ) or [[]]
         lens_ids, lens_policy = analysis.analysis_lenses(scope, component)
         context["lens_ids"] = lens_ids
+        # The controller serves every target window with the first packet, so
+        # no call only requests them; the read allowance stays for following a
+        # lead to its control or sink. More source gets further bounded jobs,
+        # never silent truncation or a larger per-job budget.
+        target_batches = analysis.target_batches(
+            scope,
+            targets,
+            room=preload_room(context),
+            max_targets=64,
+            max_windows=MAX_PRELOAD_WINDOWS,
+            window_lines=MAX_SLICE_LINES,
+            max_unserved=MAX_READS // 2,
+        ) or [([], [])]
         schema = analysis.contract("multi-repo-stride.schema.json")
         schema["required"].append("surface_coverage")
         parts = []
-        for index, target_batch in enumerate(target_batches, 1):
+        for index, (target_batch, preload) in enumerate(target_batches, 1):
             selector = (
                 "stride:" + component["id"] + (f":{index}/{len(target_batches)}" if len(target_batches) > 1 else "")
             )
@@ -8730,7 +8737,9 @@ def _assessment_stride(
                         "the supplied confirmed incident flows. A connection does not establish payload continuity, "
                         "identity propagation or exploitation. Read both ends before asserting a cross-repository "
                         "mechanism and retain its source-to-sink trace. "
-                        "Read every investigation_targets anchor and follow its mechanism to the relevant control or sink. "
+                        "The controller supplies each investigation_targets anchor's source in source_slices; follow its "
+                        "mechanism to the relevant control or sink. Request all further source you need in one read "
+                        "action: the job allows one round of further reads, and each call re-analyzes the whole packet. "
                         "Return one surface_coverage decision per target, citing that exact anchor and linking any findings. "
                         "Targets are investigation leads, never findings or proof of vulnerability. Use examined when "
                         "you investigated the mechanism, not-applicable only with a source-backed reason, and unresolved "
@@ -8746,6 +8755,7 @@ def _assessment_stride(
                     schema=schema,
                     allowed_sources=allowed,
                     normalize=analysis.surface_evidence_normalizer(target_batch),
+                    preload=preload,
                     validate=lambda artifact, ranges, targets=target_batch: analysis.validate_stride(
                         scope,
                         component,
@@ -8761,7 +8771,7 @@ def _assessment_stride(
                     ),
                 )
             )
-        for part, target_batch in zip(parts, target_batches, strict=True):
+        for part, (target_batch, _) in zip(parts, target_batches, strict=True):
             jobs.notes.extend(
                 f"{component['name']}: STRIDE left source target {location} unresolved after reading it"
                 for location in analysis.unresolved_targets(part, target_batch)
