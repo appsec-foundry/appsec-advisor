@@ -179,13 +179,22 @@ class ExchangeResult:
 
 
 _ANCHOR_CONTEXT_LINES = 20
+# Room a packet keeps for a correction reason and its instruction.
+_FEEDBACK_RESERVE_BYTES = 8_192
 
 
-def _serve_anchors(scope, anchors, allowed_sources, slices: list, seen: set) -> int:
-    """Deliver a window around each authorized, unserved anchor within the read limit.
+def _slices_fit(context: dict, slices: list) -> bool:
+    """Whether the next packet, with room for feedback, stays within the context limit."""
+    packet = {"context": context, "source_slices": slices, "source_reads_remaining": MAX_READS}
+    return len(json.dumps(packet, ensure_ascii=False).encode()) <= MAX_CONTEXT_BYTES - _FEEDBACK_RESERVE_BYTES
+
+
+def _serve_anchors(scope, anchors, allowed_sources, slices: list, seen: set, fits=lambda: True) -> int:
+    """Deliver a window around each authorized, unserved anchor within the read and size limits.
 
     Returns the number of windows added. An anchor outside the task's sources or
     past the end of its file is skipped; the rejection reason still names it.
+    A window that would overflow the next packet (`fits`) is withdrawn.
     """
     served = 0
     for rid, path, line in anchors:
@@ -199,8 +208,11 @@ def _serve_anchors(scope, anchors, allowed_sources, slices: list, seen: set) -> 
             piece = scope.read(rid, path, *key[2:])
         except ScopeError:
             continue
-        seen.add(key)
         slices.append(piece)
+        if not fits():
+            slices.pop()
+            break
+        seen.add(key)
         served += 1
     return served
 
@@ -268,7 +280,12 @@ def run_exchange(
             if not feedback or "result" not in feedback:
                 raise
             packet["rejected_result"] = {k: v for k, v in feedback.items() if k != "result"}
-            prompt = _prompt(packet)
+            try:
+                prompt = _prompt(packet)
+            except ExchangeError:
+                # Served slices are bounded by `_slices_fit`; a rejected reason
+                # that still overflows ends this answer, not the host contract.
+                raise ModelAnswerFailure("Correction packet exceeds its context limit") from None
         reply = transport.invoke(instructions, prompt, projected, remaining, should_stop)
         if should_stop() or time.monotonic() >= deadline:
             raise HostCancelled("Assessment cancelled or exceeded its time limit")
@@ -334,7 +351,9 @@ def run_exchange(
                     "for this reason. Correct that result and return it complete, or read more source first.",
                     "result": artifact,
                 }
-                if isinstance(exc, Rejection) and _serve_anchors(scope, exc.reads, allowed_sources, slices, seen):
+                if isinstance(exc, Rejection) and _serve_anchors(
+                    scope, exc.reads, allowed_sources, slices, seen, lambda: _slices_fit(context, slices)
+                ):
                     feedback["instruction"] += (
                         " The controller added the cited source windows to source_slices: keep a claim only "
                         "when those lines support it."
@@ -371,9 +390,11 @@ def run_exchange(
                 }
                 break
             rid, path, start, end = key
-            # An oversized range is narrowed to the slice limit; a range past
-            # the end of an authorized file is reported back, not fatal.
-            end = min(end, start + MAX_SLICE_LINES - 1) if start <= end else end
+            # A reversed range names the same lines; an oversized range is
+            # narrowed to the slice limit; a range past the end of an
+            # authorized file is reported back, not fatal.
+            start, end = min(start, end), max(start, end)
+            end = min(end, start + MAX_SLICE_LINES - 1)
             try:
                 piece = scope.read(rid, path, start, end)
             except ScopeError as exc:
@@ -385,8 +406,18 @@ def run_exchange(
                     }
                     continue
                 raise ExchangeError("Model requested a source outside admitted scope or limits") from None
-            seen.add(key)
             slices.append(piece)
+            # A slice that would overflow the next packet is withdrawn and the
+            # model is told to answer from what it has, not failed for asking.
+            if not _slices_fit(context, slices):
+                slices.pop()
+                range_feedback = {
+                    "reason": f"{path} lines {start}-{end} were not served: source_slices reached the size limit.",
+                    "instruction": "Return a complete result from the supplied source_slices, "
+                    "or request fewer and shorter ranges.",
+                }
+                break
+            seen.add(key)
             fresh += 1
         if range_feedback is not None:
             feedback = range_feedback

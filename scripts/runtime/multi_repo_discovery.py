@@ -59,6 +59,14 @@ MAX_CALL_SECONDS = 900
 # STRIDE call that had exceeded 900 s in a live run (2026-10-11) finished in
 # 104 s, so a hang is transient; a second timeout still fails the job.
 MAX_TIMEOUT_RETRIES = 1
+# Host failures with a settled cost that a repeated stateless call can clear:
+# an overloaded, rate-limited or failing API, and a model that answered in text
+# instead of the structured result. Without a retry, one such failure among a
+# run's hundreds of calls stopped every stage before STRIDE. Login, billing and
+# request errors, host limits and unsettled costs are never retried.
+TRANSIENT_FAILURES = frozenset({"rate_limit", "server_error", "api_error", "no_structured_output"})
+# Seconds to wait before each repeated call; their count bounds the retries.
+TRANSIENT_RETRY_DELAYS = (15, 60, 180)
 
 
 @dataclass
@@ -100,6 +108,7 @@ class DiscoveryBudget:
 
     def invoke(self, factory, system, prompt, schema, timeout_s, should_stop) -> HostReply:
         timeouts = 0
+        failures = 0
         while True:
             try:
                 return self._invoke_once(factory, system, prompt, schema, timeout_s, should_stop)
@@ -111,6 +120,23 @@ class DiscoveryBudget:
                 timeouts += 1
                 if timeouts > MAX_TIMEOUT_RETRIES:
                     raise
+            except TransportError as exc:
+                # Only a settled call leaves accounting available (`failed` is false).
+                if self.failed or exc.reason not in TRANSIENT_FAILURES or failures >= len(TRANSIENT_RETRY_DELAYS):
+                    raise
+                delay = TRANSIENT_RETRY_DELAYS[failures]
+                failures += 1
+                if delay >= self.remaining_seconds():
+                    raise
+                self._wait(delay, should_stop)
+
+    @staticmethod
+    def _wait(seconds: float, should_stop) -> None:
+        end = time.monotonic() + seconds
+        while (left := end - time.monotonic()) > 0:
+            if should_stop():
+                raise HostCancelled("Discovery cancelled")
+            time.sleep(min(1.0, left))
 
     def _invoke_once(self, factory, system, prompt, schema, timeout_s, should_stop) -> HostReply:
         if should_stop():

@@ -212,6 +212,7 @@ GROUPS = {
         multi_repo_controller
         multi_repo_assessment
         single_repo_controller
+        controller_e2e
         multi_repo_config
         multi_repo_discovery
         multi_repo_scope
@@ -637,6 +638,7 @@ SOURCE_TESTS = {
     "schemas/multi-repo-state.schema.json": _tests(
         "assessment_state multi_repo_controller schemas check_target_specificity"
     ),
+    "tests/e2e/fake_claude.py": _tests("controller_e2e"),
     "scripts/runtime/assessment_jobs.py": _tests(
         "assessment_jobs multi_repo_controller check_target_specificity finding_state gate_preconditions shared_paths stride_outputs"
     ),
@@ -722,7 +724,7 @@ SOURCE_TESTS = {
         serving_units schemas
     """),
     "scripts/runtime/multi_repo_discovery.py": _tests("""
-        review_multi_repo_connections serving_units
+        review_multi_repo_connections serving_units assessment_jobs controller_e2e
         multi_repo_discovery check_target_specificity finding_state gate_preconditions shared_paths stride_outputs
     """),
     "scripts/runtime/assessment_host.py": _tests("""
@@ -1242,6 +1244,7 @@ SOURCE_TESTS = {
     """),
     "scripts/run-headless.sh": _tests("""
         acceptance_invocation
+        controller_e2e
         agent_logger
         budget_watchdog
         check_target_specificity
@@ -6369,6 +6372,7 @@ SOURCE_TESTS = {
     "scripts/runtime/analyst_host.py": _tests("""
         multi_repo_discovery
         assessment_host
+        controller_e2e
         analyst_controller
         analyst_host
         analyst_skill

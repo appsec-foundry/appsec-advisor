@@ -93,6 +93,13 @@ Additional targets cover specific paths:
 
 Use `make e2e-full-keep` to rerun assertions against the previous E2E output without another model call.
 
+The deterministic assessment controller has its own checks:
+
+| Target | Purpose |
+|---|---|
+| `make e2e-controller` | Offline, no model cost, about two minutes with `pytest-xdist` installed: complete controller runs through `scripts/run-headless.sh` and the real CLI transport against `tests/e2e/fake_claude.py`, with injected rate-limit, overload, text-answer and login failures and a `--resume` after a stopped run. |
+| `make e2e-controller-live` | One live quick controller run with the real `claude` CLI on the synthetic repository, or on `REPO=<path>`, bounded by `BUDGET` (default 3 USD); it checks that a valid model was published and prints the host event logs for diagnosis. |
+
 Cross-repository behavior has a separate driver. See the [cross-repository fixture runbook](docs/internal/runbooks/e2e-cross-repo-fixture.md).
 
 #### Targeted tests before finishing a non-trivial change
