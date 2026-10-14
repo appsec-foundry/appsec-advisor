@@ -139,6 +139,7 @@ class AssessmentJobs:
         validate,
         normalize=None,
         on_failure=None,
+        preload=(),
     ):
         """Execute or resume one job, including its accepted retrieval receipt.
 
@@ -146,6 +147,9 @@ class AssessmentJobs:
         before review (see ``run_exchange``); the receipt records the
         normalized artifact. Its identity joins the request, so a changed
         normalizer redoes the job instead of failing a resumed one.
+
+        ``preload`` slices reach the first packet (see ``run_exchange``) and
+        join the request identity.
 
         ``on_failure(reason)`` makes the job optional (decision OR-39): when
         the model returns no acceptable result, a call times out after its
@@ -169,6 +173,8 @@ class AssessmentJobs:
         }
         if normalize is not None:
             request["normalizer"] = getattr(normalize, "version", None) or normalize.__qualname__
+        if preload:
+            request["preload"] = [list(key) for key in preload]
         request_sha256 = digest(request)
         job_id = "job-" + digest({"role": role, "selector": selector})[:24]
         artifact_path = self.directory / f"{job_id}.json"
@@ -249,6 +255,7 @@ class AssessmentJobs:
                 should_stop=self.should_stop,
                 review=review,
                 normalize=normalize,
+                preload=preload,
             )
         except (ModelAnswerFailure, HostTimeout, TransportError) as exc:
             # A login or billing failure fails every later call too; it is never replaced.

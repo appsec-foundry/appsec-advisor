@@ -21,6 +21,9 @@ from runtime.multi_repo_scope import AssessmentScope, ScopeError
 
 MAX_EXCHANGES = 6
 MAX_READS = 12
+# Slices a caller may preload into one exchange. A job's receipt records its
+# preloaded and read ranges, so the receipt contract allows MAX_READS plus this.
+MAX_PRELOAD_WINDOWS = 36
 # A complete result the controller rejects may be corrected this often within
 # the exchange limit; each correction is a further, budgeted call.
 MAX_CORRECTIONS = 2
@@ -189,6 +192,18 @@ def _slices_fit(context: dict, slices: list) -> bool:
     return len(json.dumps(packet, ensure_ascii=False).encode()) <= MAX_CONTEXT_BYTES - _FEEDBACK_RESERVE_BYTES
 
 
+def preload_room(context: dict) -> int:
+    """Bytes of source slices a caller may serve with the first packet of `context`.
+
+    Half of what the packet leaves beside the context; the other half stays for
+    the model's own reads, which `_slices_fit` still bounds.
+    """
+    packet = {"context": context, "source_slices": [], "source_reads_remaining": MAX_READS}
+    return max(
+        0, (MAX_CONTEXT_BYTES - _FEEDBACK_RESERVE_BYTES - len(json.dumps(packet, ensure_ascii=False).encode())) // 2
+    )
+
+
 def _serve_anchors(scope, anchors, allowed_sources, slices: list, seen: set, fits=lambda: True) -> int:
     """Deliver a window around each authorized, unserved anchor within the read and size limits.
 
@@ -229,8 +244,16 @@ def run_exchange(
     should_stop,
     review=None,
     normalize=None,
+    preload=(),
 ) -> ExchangeResult:
     """Resolve model read proposals only against caller-admitted source bytes.
+
+    ``preload`` lists ``(repository_id, path, start_line, end_line)`` slices the
+    caller already knows the model must read; they arrive with the first packet
+    and do not count against ``MAX_READS``; the job then gets one round of
+    further reads before it must complete. Each must lie inside
+    ``allowed_sources`` and the packet limit, or the exchange fails before any
+    call.
 
     ``normalize(artifact)`` returns a contract-valid complete result with every
     field the controller can derive set or removed; review, correction and the
@@ -261,9 +284,26 @@ def run_exchange(
     deadline = time.monotonic() + timeout_s
     slices: list[dict] = []
     seen: set[tuple] = set()
+    preloaded = set()
+    if len(preload) > MAX_PRELOAD_WINDOWS:
+        raise ExchangeError("Preloaded sources exceed the per-exchange window limit")
+    for key in preload:
+        if tuple(key[:2]) not in allowed_sources:
+            raise ExchangeError("Preloaded source is outside this task's selection")
+        try:
+            slices.append(scope.read(*key))
+        except ScopeError:
+            raise ExchangeError("Preloaded source range is invalid") from None
+        preloaded.add(tuple(key))
+    if slices and not _slices_fit(context, slices):
+        raise ExchangeError("Preloaded sources exceed the context limit")
     cost: float | None = 0.0
     feedback: dict | None = None
     corrections = 0
+    # Each call re-sends and re-analyzes the whole packet. A job whose sources
+    # were preloaded may follow its leads in one further read round, so a
+    # model that reads one slice per call cannot multiply its calls.
+    read_rounds = 0
     reasons: list[str] = []
     for number in range(1, MAX_EXCHANGES + 1):
         if should_stop():
@@ -272,7 +312,8 @@ def run_exchange(
         if remaining < 1:
             # The job's own limit, not a cancellation: an optional job is replaced (OR-39).
             raise HostTimeout("Assessment job exceeded its time limit")
-        packet = {"context": context, "source_slices": slices, "source_reads_remaining": MAX_READS - len(seen)}
+        reads_left = 0 if preload and read_rounds else MAX_READS - len(seen)
+        packet = {"context": context, "source_slices": slices, "source_reads_remaining": reads_left}
         if feedback is not None:
             packet["rejected_result"] = feedback
         try:
@@ -362,6 +403,13 @@ def run_exchange(
                     )
                 continue
             return ExchangeResult(artifact, tuple(slices), number, cost)
+        if preload and read_rounds:
+            feedback = {
+                "reason": "This job's one round of further reads is used; the requested slices were not served.",
+                "instruction": "Return a complete result from the supplied source_slices.",
+            }
+            continue
+        read_rounds += 1
         fresh = 0
         range_feedback = None
         for request in reply.payload["reads"]:
@@ -382,7 +430,7 @@ def run_exchange(
                 continue
             # Each call is stateless; a slice already in source_slices is not
             # served twice and does not count against the read limit.
-            if key in seen:
+            if key in seen or key in preloaded:
                 continue
             # The model cannot know which of its reads exhausts the budget, so
             # reads past it are refused back rather than failing the job.
@@ -428,5 +476,10 @@ def run_exchange(
             feedback = {
                 "reason": "Every requested slice is already in source_slices.",
                 "instruction": "Use the supplied source_slices: return a complete result, or read other lines.",
+            }
+        elif preload:
+            feedback = {
+                "reason": "The requested slices were added; this was the job's one round of further reads.",
+                "instruction": "Return a complete result from the supplied source_slices.",
             }
     raise ModelAnswerFailure("Assessment exchange limit exceeded without a final artifact")

@@ -16,6 +16,7 @@ from pathlib import Path
 import yaml
 from jsonschema import Draft202012Validator
 from runtime.assessment_host import ExchangeError, Rejection
+from runtime.multi_repo_scope import ScopeError
 from shared.assessment_sources import source_key, source_rows
 from validators.validate_assessment_architecture import validate_source
 
@@ -133,16 +134,33 @@ def analysis_targets(scope, component: dict, architecture: dict, scanned: list[d
     and outbound call sites supplement authored topology, so a missing flow
     cannot also hide the call from STRIDE. Sources stay inside the finalized
     component; a scanner result never authorizes reading an unrelated file.
+
+    Each anchor cites a line the STRIDE evidence rule accepts: the surface
+    decision must cite it, so a comment or blank anchor, such as the license
+    header of a file without a lead, would reject every answer. An anchor on
+    such a line moves to the next accepted line, else the previous one; a file
+    without one offers no target.
     """
+    from validators.validate_fragment import _cited_line_problem
+
     own = source_selection([component])
     repos = {r.repository_id: r for r in scope.repositories}
     targets = {}
+    texts: dict[tuple, list[str]] = {}
+
+    def code_line(rid, path, line):
+        lines = texts.setdefault((rid, path), repos[rid].files[path].decode("utf-8", "ignore").splitlines())
+        line = max(1, min(line, len(lines)))
+        order = [*range(line, len(lines) + 1), *range(line - 1, 0, -1)]
+        return next((n for n in order if _cited_line_problem(lines[n - 1], allow_imports=True) is None), None)
 
     def add(evidence, kind):
         rid, path = evidence.get("repository_id"), evidence.get("file")
         if (rid, path) not in own:
             return
-        line = evidence.get("line") or 1
+        line = code_line(rid, path, evidence.get("line") or 1)
+        if line is None:
+            return
         source = {
             "repository_id": rid,
             "file": path,
@@ -173,11 +191,10 @@ def analysis_targets(scope, component: dict, architecture: dict, scanned: list[d
         add(finding["evidence"], "scanner-lead")
     # Files without a detected surface still require source investigation;
     # neither a known route elsewhere nor an unsupported stack hides them.
-    # A first-line lead does not claim to enumerate all mechanisms in a file.
+    # A first-code-line lead does not claim to enumerate all mechanisms in a file.
     covered_files = {(rid, path) for rid, path, _ in targets}
     for rid, path in sorted(own - covered_files):
-        if repos[rid].files[path].splitlines():
-            add({"repository_id": rid, "file": path, "line": 1}, "component-source")
+        add({"repository_id": rid, "file": path, "line": 1}, "component-source")
     if len(targets) > 20_000:
         raise ExchangeError("Component investigation exceeds the source-reference limit")
     return [targets[key] for key in sorted(targets)]
@@ -908,6 +925,63 @@ def validate_stride(
                 errors = repository_evidence_errors(own_evidence, root, require_line=True, require_code=True)
                 if errors:
                     raise Rejection("STRIDE evidence does not cite an executable implementation", errors)
+
+
+def target_batches(scope, targets, *, room, max_targets, max_windows, window_lines, max_unserved):
+    """Split one component's investigation targets into jobs that receive their source up front.
+
+    Every target must be read, and the controller knows where: each job gets
+    its targets' windows as preloaded slices instead of spending a call to
+    request them. A job holds as many windows as fit `room` bytes together
+    with its target list, at most `max_windows`, so the job count follows
+    source size rather than a fixed small window count. A window the scope cannot serve in one slice, or larger than
+    `room`, is left to the model's own reads, at most `max_unserved` per job. Targets sharing a window
+    stay together up to `max_targets`. Returns ``(targets, preload)`` pairs.
+    """
+
+    def window(target):
+        anchor = target["evidence"]
+        index = (anchor.get("line") or 1) // window_lines
+        start = max(1, index * window_lines)
+        return (anchor["repository_id"], anchor["file"], start, index * window_lines + window_lines - 1)
+
+    grouped: dict[tuple, list[dict]] = {}
+    for target in sorted(targets, key=lambda row: (window(row), row["local_id"])):
+        grouped.setdefault(window(target), []).append(target)
+    # A window with more targets than one job may decide is split; each part
+    # receives the same window.
+    chunks = [
+        (key, members[start : start + max_targets])
+        for key, members in grouped.items()
+        for start in range(0, len(members), max_targets)
+    ]
+    batches: list[tuple[list[dict], list[tuple]]] = []
+    used = unserved = 0
+    for key, members in chunks:
+        try:
+            piece = scope.read(*key)
+            key, size = (*key[:3], piece["end_line"]), len(json.dumps(piece, ensure_ascii=False).encode())
+        except ScopeError:
+            piece, size = None, 0
+        if size > room:
+            piece, size = None, 0
+        size += len(json.dumps(members, ensure_ascii=False).encode())
+        full = batches and (
+            len(batches[-1][0]) + len(members) > max_targets
+            or used + size > room
+            or (piece is not None and len(batches[-1][1]) >= max_windows)
+            or (piece is None and unserved >= max_unserved)
+        )
+        if not batches or full:
+            batches.append(([], []))
+            used = unserved = 0
+        batches[-1][0].extend(members)
+        if piece is None:
+            unserved += 1
+        else:
+            batches[-1][1].append(key)
+        used += size
+    return batches
 
 
 def evidence_batches(findings, *, max_windows, max_findings, window_lines):

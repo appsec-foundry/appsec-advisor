@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The headless controller console lists each STRIDE component and each verified abuse case with its title on its own line, and ends with one line per delivered file.
 - In a terminal, the headless controller's status line refreshes every few seconds with each running model call's duration and activity, also with `--verbose`; CI logs are unchanged.
 - Headless controller assessments run repository discovery on Sonnet 5.5 instead of Haiku, so large repositories no longer stall or fail there; `APPSEC_RECON_SCANNER_MODEL` still selects another model.
+- Headless controller threat analysis of large components needs fewer and cheaper model calls, because each job receives the source of its investigation targets up front.
 - The Management Summary merges Top Weaknesses and Top Mitigations into Remediation Priorities, which follows the verdict and lists the measures to do first under each root cause together with its lasting fix; root causes are ranked by the most severe finding they resolve, and only P1 and P2 measures appear as measures to do first.
 - The Critical Attack Tree is replaced by Critical Findings by Root Cause, which links each Critical finding, including OS command injection and caller-controlled authentication bypasses, to its weakness record and the structural fix that closes it.
 - A finding whose code an abuse-case verification confirms is shown as verified instead of ambiguous.
@@ -36,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Headless controller threat analysis no longer stops on source files that begin with a license header or other comment.
 - Hardcoded secrets that a finding cites, including keys passed directly as call arguments, are masked in every report output, and the secret gate fails when one remains.
 - Trust boundaries are detected regardless of source layout, keep separately deployed targets and build channels apart, and link only to findings whose weakness fits them.
 - Outbound calls to external services and to request-chosen URLs become data flows with their own trust boundaries.
