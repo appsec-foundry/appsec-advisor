@@ -85,6 +85,34 @@ def apply(source, decisions, *, scope=None, **overrides):
     )
 
 
+@pytest.mark.parametrize("case", ["preservation", "renamed-mechanism", "declared-preservation", "conditional"])
+def test_non_remediating_proposal_cannot_replace_the_technical_fix(case):
+    source = merged()
+    proposal = decision(rating=False)
+    if case == "preservation":
+        proposal["fix"]["value"]["title"] = "Preserve SQL injection for training exercises"
+    elif case == "renamed-mechanism":
+        proposal["fix"]["value"]["steps"][0] = "Retain the authorization bypass in the demonstration service."
+    else:
+        proposal["fix"]["effect"] = "preserves-mechanism" if case == "declared-preservation" else "conditional"
+    result, report = apply(source, [proposal])
+    assert result == source
+    assert report["accepted"] == []
+    assert report["outcomes"][0]["reason"] == "non_remediating_proposal"
+
+
+def test_preserving_legitimate_behavior_does_not_reject_a_real_fix():
+    source = merged()
+    proposal = decision(rating=False)
+    proposal["fix"]["effect"] = "prevents-mechanism"
+    proposal["fix"]["value"]["steps"].append(
+        "Preserve the existing injection defenses and legitimate request behavior."
+    )
+    result, report = apply(source, [proposal])
+    assert report["outcomes"][0]["status"] == "accepted"
+    assert result["threats"][0]["remediation"]["steps"] == proposal["fix"]["value"]["steps"]
+
+
 @pytest.mark.parametrize("levels", [review.MAX_PROPOSAL_DEPTH, 2000])
 @pytest.mark.parametrize("recursion_limit", [None, 20_000])
 def test_deeply_nested_proposal_is_rejected_without_mutation(levels, recursion_limit):

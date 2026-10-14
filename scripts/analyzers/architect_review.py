@@ -143,6 +143,10 @@ def _apply_decision(original: dict, decision: dict) -> tuple[dict, str | None]:
         ):
             candidate.pop(key, None)
     if fix:
+        from validators.validate_mitigation_quality import preserves_vulnerability
+
+        if fix.get("effect", "prevents-mechanism") != "prevents-mechanism" or preserves_vulnerability(fix["value"]):
+            return original, "non_remediating_proposal"
         existing = original.get("remediation")
         has_fix = isinstance(existing, dict) and bool(existing.get("steps"))
         if (fix["operation"] == "add") == has_fix:

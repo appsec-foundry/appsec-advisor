@@ -461,7 +461,9 @@ def test_a_projection_its_schema_rejects_is_a_projection_error() -> None:
         context._checked(context.RECON_SCHEMA, {"schema_version": 1})  # noqa: SLF001
 
 
-def test_egress_projection_is_bounded_and_counts_what_it_drops(tmp_path):
+def test_egress_projection_is_bounded_and_counts_what_it_drops(tmp_path, monkeypatch):
+    from analyzers import egress_clients
+
     hosts = [f"svc{n:02d}.vendorhub.io" for n in range(context.MAX_EGRESS_DESTINATIONS + 1)]
     lines = [f"fetch('https://{host}/x')" for host in hosts]
     lines += ["fetch('https://busy.vendorhub.io/x')"] * (context.MAX_EGRESS_EVIDENCE + 2)
@@ -476,3 +478,7 @@ def test_egress_projection_is_bounded_and_counts_what_it_drops(tmp_path):
     assert busiest["host"] == "busy.vendorhub.io"
     assert len(busiest["evidence"]) == context.MAX_EGRESS_EVIDENCE
     assert busiest["omitted_evidence"] == 2
+    sources = egress_clients.scan(tmp_path)
+    monkeypatch.setattr(egress_clients, "scan", lambda _: pytest.fail("An existing inventory must not be rescanned"))
+    assert context.project_egress(tmp_path, sources=sources) == projected
+    assert context.project_egress(tmp_path, sources=[])["destinations"] == []

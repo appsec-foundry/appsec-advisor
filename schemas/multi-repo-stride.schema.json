@@ -99,6 +99,58 @@
         }
       }
     },
+    "surface_coverage": {
+      "description": "Decisions for controller-selected source targets; current jobs require every supplied target.",
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "target_id",
+          "disposition",
+          "reason",
+          "finding_ids",
+          "evidence"
+        ],
+        "properties": {
+          "target_id": {
+            "type": "string",
+            "pattern": "^surface-[a-f0-9]{16}$"
+          },
+          "disposition": {
+            "enum": [
+              "examined",
+              "not-applicable",
+              "unresolved"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 500
+          },
+          "finding_ids": {
+            "type": "array",
+            "uniqueItems": true,
+            "maxItems": 100,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 4,
+            "items": {
+              "$ref": "https://appsec-advisor/schemas/fragments/components-v2.schema.json#/$defs/evidence"
+            }
+          }
+        }
+      }
+    },
     "threats": {
       "type": "array",
       "maxItems": 100,

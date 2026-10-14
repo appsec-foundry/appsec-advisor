@@ -121,6 +121,143 @@ def source_selection(components: list[dict]) -> frozenset:
     return frozenset((row["repository_id"], row["path"]) for c in components for row in c["paths"])
 
 
+def analysis_targets(scope, component: dict, architecture: dict, scanned: list[dict]) -> list[dict]:
+    """Source-backed surfaces to examine, independent of finding counts or repository names.
+
+    These are investigation leads, not vulnerabilities. Full route inventories
+    and outbound call sites supplement authored topology, so a missing flow
+    cannot also hide the call from STRIDE. Sources stay inside the finalized
+    component; a scanner result never authorizes reading an unrelated file.
+    """
+    own = source_selection([component])
+    repos = {r.repository_id: r for r in scope.repositories}
+    targets = {}
+
+    def add(evidence, kind):
+        rid, path = evidence.get("repository_id"), evidence.get("file")
+        if (rid, path) not in own:
+            return
+        line = evidence.get("line") or 1
+        source = {
+            "repository_id": rid,
+            "file": path,
+            "line": line,
+            "sha256": hashlib.sha256(repos[rid].files[path]).hexdigest(),
+        }
+        validate_source(scope, source, path_key="file")
+        key = (rid, path, line)
+        if key not in targets:
+            identifier = "surface-" + hashlib.sha256(json.dumps(key).encode()).hexdigest()[:16]
+            targets[key] = {"local_id": identifier, "evidence": source, "kinds": []}
+        if kind not in targets[key]["kinds"]:
+            targets[key]["kinds"].append(kind)
+
+    for rid, inventory in architecture.get("route_inventories", {}).items():
+        for route in inventory.get("routes", []):
+            add({"repository_id": rid, "file": route.get("handler_file"), "line": route.get("handler_line")}, "route")
+    for rid, destinations in architecture.get("egress_inventories", {}).items():
+        for destination in destinations:
+            for evidence in destination["evidence"]:
+                add({**evidence, "repository_id": rid}, "outbound-call")
+    for evidence in source_rows(component):
+        add(evidence, "component-capability")
+    for flow in architecture["data_flows"]["data_flows"]:
+        for evidence in source_rows(flow):
+            add(evidence, "data-flow")
+    for finding in scanned:
+        add(finding["evidence"], "scanner-lead")
+    # Files without a detected surface still require source investigation;
+    # neither a known route elsewhere nor an unsupported stack hides them.
+    # A first-line lead does not claim to enumerate all mechanisms in a file.
+    covered_files = {(rid, path) for rid, path, _ in targets}
+    for rid, path in sorted(own - covered_files):
+        if repos[rid].files[path].splitlines():
+            add({"repository_id": rid, "file": path, "line": 1}, "component-source")
+    if len(targets) > 20_000:
+        raise ExchangeError("Component investigation exceeds the source-reference limit")
+    return [targets[key] for key in sorted(targets)]
+
+
+def analysis_lenses(component: dict) -> tuple[list[str], str]:
+    """Resolve the existing lens selector only to fixed plugin-owned policy."""
+    from orchestrator.build_stride_dispatch_manifest import _stride_lens_ids
+
+    files = {
+        "llm": "shared/owasp-llm-top10.md",
+        "agentic": "shared/owasp-asi-top10.md",
+        "rag": "stride-lenses/rag.md",
+        "mcp": "stride-lenses/mcp.md",
+        "spa": "shared/spa-threats.md",
+        "mobile": "stride-lenses/mobile.md",
+        "supply-chain": "shared/supply-chain-patterns.md",
+    }
+    selected = _stride_lens_ids(component, {})
+    return selected, "\n\n".join((ROOT / "agents" / files[key]).read_text(encoding="utf-8") for key in selected)
+
+
+def validate_surface_coverage(artifact, ranges, targets):
+    """No authored disposition can substitute for actually retrieving a target."""
+    expected = {target["local_id"]: target for target in targets}
+    rows = artifact.get("surface_coverage", [])
+    if len(rows) != len(expected) or {row["target_id"] for row in rows} != set(expected):
+        raise ExchangeError("STRIDE surface coverage must decide every supplied target exactly once")
+    findings = {row["local_id"] for row in artifact["threats"]}
+    errors = []
+    for row in rows:
+        target = expected[row["target_id"]]["evidence"]
+        location = f"{target['repository_id']}/{target['file']}:{target['line']}"
+        read = any(
+            r["repository_id"] == target["repository_id"]
+            and r["path"] == target["file"]
+            and r["sha256"] == target["sha256"]
+            and r["start_line"] <= target["line"] <= r["end_line"]
+            for r in ranges
+        )
+        if not read or target not in row["evidence"]:
+            errors.append("Unexamined source target: " + location)
+        if row["disposition"] == "unresolved":
+            errors.append("Unresolved source target: " + location)
+        if not set(row["finding_ids"]) <= findings:
+            errors.append("Surface coverage refers to unknown findings")
+        if row["disposition"] == "not-applicable" and row["finding_ids"]:
+            errors.append("An inapplicable surface cannot carry findings")
+    if errors:
+        raise Rejection("STRIDE investigation is incomplete", errors[:3])
+
+
+def combine_stride_parts(parts):
+    """Fold bounded jobs into the existing one-document-per-component merge input.
+
+    Per-surface decisions remain in each job's validated artifact and receipt.
+    All finding IDs and category references are rewritten together; no finding
+    is discarded to fit the component contract.
+    """
+    if len(parts) == 1:
+        return parts[0]
+    result = copy.deepcopy(parts[0])
+    result.pop("surface_coverage", None)
+    result["threats"] = []
+    for index, part in enumerate(parts, 1):
+        for finding in part["threats"]:
+            finding = copy.deepcopy(finding)
+            # Hash the local identity instead of truncating arbitrary IDs.
+            finding["local_id"] = f"part-{index}-" + hashlib.sha256(finding["local_id"].encode()).hexdigest()[:16]
+            result["threats"].append(finding)
+    for coverage in result["coverage"]:
+        category = coverage["category"]
+        ids = [f["local_id"] for f in result["threats"] if f["stride"] == category]
+        inputs = [next(c for c in part["coverage"] if c["category"] == category) for part in parts]
+        dispositions = {c["disposition"] for c in inputs}
+        coverage.update(
+            finding_ids=ids,
+            disposition="finding" if ids else (next(iter(dispositions)) if len(dispositions) == 1 else "no-evidence"),
+            reason="Component analysis combines the recorded decisions of all source-target jobs.",
+        )
+    if not Draft202012Validator(contract("multi-repo-stride.schema.json")).is_valid(result):
+        raise ExchangeError("Combined STRIDE investigation exceeds its component contract; no findings were dropped")
+    return result
+
+
 def connection_relays(flows: list[dict]) -> dict[str, set[str]]:
     """Map each reviewed connection to its relay nodes, such as a message broker.
 
@@ -448,7 +585,16 @@ def _comparison(value):
 
 
 def validate_stride(
-    scope, component, neighborhood, flows, artifact, ranges, *, boundaries=(), allowed_requirement_ids=frozenset()
+    scope,
+    component,
+    neighborhood,
+    flows,
+    artifact,
+    ranges,
+    *,
+    boundaries=(),
+    allowed_requirement_ids=frozenset(),
+    targets=None,
 ):
     """Preserve legacy policy/trace checks and scoped executable evidence.
 
@@ -478,6 +624,8 @@ def validate_stride(
             raise ExchangeError("STRIDE category coverage does not match its findings")
     allowed = source_selection(neighborhood)
     validate_retrieved_sources(scope, artifact, ranges, allowed)
+    if targets is not None:
+        validate_surface_coverage(artifact, ranges, targets)
     own = source_selection([component])
     if not any((row["repository_id"], row["path"]) in own for row in ranges):
         raise ExchangeError("STRIDE job did not retrieve its component's source")

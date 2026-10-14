@@ -139,6 +139,8 @@ A combined run uses Sonnet 5.5 for STRIDE at quick and standard depth, while a s
 
 The models in a combined run have no file, shell or network tools. The controller serves every source excerpt a model reads, only from the selected checkouts, with secrets masked. Each analysis step is recorded, so `--resume` continues an interrupted run without repeating accepted steps, as long as the sources and settings are unchanged. After a plugin update, `--resume` reuses only the steps whose input is unchanged and redoes the rest. A run whose model cost became unknown cannot resume; start a new run.
 
+The controller supplies component-specific analysis guides and requires a source-backed decision for each investigation target: detected handlers, outbound calls, capability and flow evidence, and component files without a detected surface. Large components use several bounded jobs within the existing run budget. An unread or unresolved target prevents that component's analysis from completing. This checks the supplied targets; it does not prove that every vulnerability or framework-specific mechanism was found.
+
 While it runs, a combined run prints each phase, the component or report section in work, and a warning when a model call stalls; `--verbose` adds every step and model call with the source ranges it reads.
 
 To run one repository through this same procedure instead of the single-repository scan, set `APPSEC_SINGLE_REPO_CONTROLLER=1` and pass that repository with one `--repo`; the budget and `--output` rules above apply, and without the variable a single `--repo` keeps the single-repository scan.

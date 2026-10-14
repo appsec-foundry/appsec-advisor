@@ -16,10 +16,10 @@ from runtime.multi_repo_scope import AssessmentScope, RepositoryView
 FP = "sha256:" + "a" * 64
 
 
-def sources(tmp_path):
+def sources(tmp_path, path="app.py"):
     repos = tuple(
         RepositoryView(
-            f"repo-{i:016x}", tmp_path / f"repo{i}", "b" * 40, "c" * 64, {"app.py": b"result = request.args['input']\n"}
+            f"repo-{i:016x}", tmp_path / f"repo{i}", "b" * 40, "c" * 64, {path: b"result = request.args['input']\n"}
         )
         for i in (1, 2)
     )
@@ -30,14 +30,12 @@ def sources(tmp_path):
             name="Service",
             tier="application",
             repository_ids=[r.repository_id],
-            paths=[
-                dict(repository_id=r.repository_id, path="app.py", sha256=hashlib.sha256(r.files["app.py"]).hexdigest())
-            ],
+            paths=[dict(repository_id=r.repository_id, path=path, sha256=hashlib.sha256(r.files[path]).hexdigest())],
         )
         for i, r in enumerate(repos, 1)
     ]
     evidence = [
-        dict(repository_id=r.repository_id, file="app.py", line=1, sha256=components[i]["paths"][0]["sha256"])
+        dict(repository_id=r.repository_id, file=path, line=1, sha256=components[i]["paths"][0]["sha256"])
         for i, r in enumerate(repos)
     ]
     ranges = [
@@ -112,6 +110,108 @@ def test_valid_stride_and_independent_verification_preserve_sources(tmp_path):
     stage.validate_evidence_review(
         scope, artifact["threats"], FP, review, ranges[:1], stage.source_selection(components)
     )
+
+
+@pytest.mark.parametrize(
+    "kind", ["valid", "missing", "duplicate", "unread", "unresolved", "foreign", "unknown-finding"]
+)
+def test_source_surface_coverage_cannot_be_satisfied_by_category_labels(tmp_path, kind):
+    scope, components, evidence, ranges, identity = sources(tmp_path)
+    architecture = {
+        "data_flows": {"data_flows": []},
+        "route_inventories": {
+            evidence[0]["repository_id"]: {"routes": [{"handler_file": "app.py", "handler_line": 1}]},
+        },
+    }
+    targets = stage.analysis_targets(scope, components[0], architecture, [])
+    assert len(targets) == 1 and targets[0]["kinds"] == ["route"]
+    artifact = stride(components[0], evidence[0], identity)
+    row = dict(
+        target_id=targets[0]["local_id"],
+        disposition="examined",
+        reason="The handler consumes the retrieved input.",
+        finding_ids=["issue-1"],
+        evidence=[evidence[0]],
+    )
+    artifact["surface_coverage"] = [row]
+    if kind == "missing":
+        artifact.pop("surface_coverage")
+    elif kind == "duplicate":
+        artifact["surface_coverage"].append(copy.deepcopy(row))
+    elif kind == "unread":
+        ranges = ranges[1:]
+    elif kind == "unresolved":
+        row["disposition"] = "unresolved"
+    elif kind == "foreign":
+        row["evidence"] = [evidence[1]]
+    elif kind == "unknown-finding":
+        row["finding_ids"] = ["not-a-finding"]
+    if kind == "valid":
+        stage.validate_surface_coverage(artifact, ranges, targets)
+    else:
+        with pytest.raises(ValueError):
+            stage.validate_surface_coverage(artifact, ranges, targets)
+
+
+@pytest.mark.parametrize("path", ["policy/check.py", "domain/permit.kt"])
+def test_files_without_scanner_signals_still_need_investigation(tmp_path, path):
+    from dataclasses import replace
+
+    scope, components, evidence, _, _ = sources(tmp_path)
+    repo = scope.repositories[0]
+    repo = replace(repo, files={**repo.files, path: b"custom_permission_check()\n", "empty.txt": b""})
+    scope = replace(scope, repositories=(repo, scope.repositories[1]))
+    component = components[0]
+    component["paths"] += [dict(repository_id=repo.repository_id, path=p) for p in (path, "empty.txt")]
+    architecture = {"data_flows": {"data_flows": [{"evidence": [evidence[0]]}]}}
+    targets = stage.analysis_targets(scope, component, architecture, [])
+    assert {t["evidence"]["file"] for t in targets} == {"app.py", path}
+    assert next(t for t in targets if t["evidence"]["file"] == path)["kinds"] == ["component-source"]
+
+
+@pytest.mark.parametrize("path", ["api/submit.py", "web/ingest.ts"])
+def test_surface_targets_include_egress_without_a_modelled_flow(tmp_path, path):
+    scope, components, evidence, ranges, identity = sources(tmp_path, path)
+    # The projection uses an arbitrary existing source anchor, not a filename heuristic.
+    anchor = evidence[0]
+    architecture = {
+        "data_flows": {"data_flows": []},
+        "egress_inventories": {
+            anchor["repository_id"]: [{"evidence": [{"file": path, "line": 1}]}],
+            evidence[1]["repository_id"]: [{"evidence": [{"file": path, "line": 1}]}],
+        },
+    }
+    targets = stage.analysis_targets(scope, components[0], architecture, [])
+    assert len(targets) == 1 and targets[0]["evidence"] == anchor
+    assert targets[0]["kinds"] == ["outbound-call"]
+
+
+def test_surface_batches_preserve_all_targets_and_reserve_followup_reads(tmp_path):
+    scope, components, evidence, ranges, identity = sources(tmp_path)
+    targets = [dict(local_id=f"surface-{i:016x}", evidence={**evidence[0], "line": 400 * i + 1}) for i in range(15)]
+    batches = stage.evidence_batches(targets, max_windows=6, max_findings=64, window_lines=400)
+    assert [len(batch) for batch in batches] == [6, 6, 3]
+    assert {t["local_id"] for b in batches for t in b} == {t["local_id"] for t in targets}
+
+
+def test_stride_parts_keep_every_finding_and_remap_category_references(tmp_path):
+    scope, components, evidence, ranges, identity = sources(tmp_path)
+    parts = [stride(components[0], evidence[0], identity) for _ in range(2)]
+    combined = stage.combine_stride_parts(parts)
+    assert len(combined["threats"]) == 2
+    ids = {f["local_id"] for f in combined["threats"]}
+    assert len(ids) == 2
+    assert set(next(c for c in combined["coverage"] if c["category"] == "Tampering")["finding_ids"]) == ids
+    assert parts[0]["threats"][0]["local_id"] == "issue-1"
+
+
+def test_selected_lenses_use_existing_selector_and_plugin_policy():
+    selected, policy = stage.analysis_lenses({"id": "client", "name": "Portal", "tier": "client"})
+    assert selected == ["spa"] and (stage.ROOT / "agents/shared/spa-threats.md").read_text() == policy
+    selected, policy = stage.analysis_lenses(
+        {"id": "worker", "name": "Worker", "tier": "application", "lens_ids": ["../../foreign"]}
+    )
+    assert selected == [] and policy == ""
 
 
 @pytest.mark.parametrize(

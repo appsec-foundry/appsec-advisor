@@ -75,6 +75,19 @@ class Host:
             allowed = [(p["repository_id"], p["path"]) for c in components if c for p in c["paths"]]
             allowed += [(f["evidence"]["repository_id"], f["evidence"]["file"]) for f in ctx.get("findings", [])]
         if not slices:
+            targets = ctx.get("investigation_targets", ctx.get("findings", []))
+            target_reads = {}
+            for target in targets:
+                anchor = target["evidence"]
+                r, p = anchor["repository_id"], anchor["file"]
+                start = max(1, ((anchor.get("line") or 1) // 400) * 400)
+                repo = next(repo for repo in self.scope.repositories if repo.repository_id == r)
+                target_reads[r, p, start] = dict(
+                    repository_id=r,
+                    path=p,
+                    start_line=start,
+                    end_line=min(start + 399, len(repo.files[p].splitlines())),
+                )
             return HostReply(
                 dict(
                     action="read",
@@ -82,11 +95,21 @@ class Host:
                     reads=[
                         dict(repository_id=r, path=p, start_line=1, end_line=20 if "findings" in ctx else 2)
                         for r, p in sorted(set(allowed))
-                    ],
+                    ]
+                    if not targets
+                    else list(target_reads.values()),
                 ),
                 0.01,
             )
-        evidence = [dict(repository_id=s["repository_id"], file=s["path"], line=2, sha256=s["sha256"]) for s in slices]
+        evidence = [
+            dict(
+                repository_id=s["repository_id"],
+                file=s["path"],
+                line=min(s["start_line"] + 1, s["end_line"]),
+                sha256=s["sha256"],
+            )
+            for s in slices
+        ]
         if role == "recon_scanner":
             artifact = dict(
                 schema_version=1,
@@ -185,6 +208,16 @@ class Host:
                     partial=False,
                     skipped_categories=[],
                     threats=[finding],
+                    surface_coverage=[
+                        dict(
+                            target_id=t["local_id"],
+                            disposition="examined",
+                            reason="The target implementation was read and investigated.",
+                            finding_ids=["issue-1"],
+                            evidence=[t["evidence"]],
+                        )
+                        for t in ctx.get("investigation_targets", [])
+                    ],
                     coverage=[
                         dict(
                             category=category,
@@ -264,6 +297,59 @@ def _inventory_checkouts(tmp_path):
         "export async function charge(order) { return axios.post('https://api.payments-provider.net/charge', order) }\n"
     )
     return roots
+
+
+def test_stride_splits_surface_work_without_losing_findings_or_reading_foreign_sources(tmp_path):
+    root = tmp_path / "service"
+    checkout(root)
+    path = root / "app.py"
+    path.write_text(path.read_text() + "value = request.args['input']\n" * 2400)
+    peer = tmp_path / "peer"
+    checkout(peer)
+    scope = admit([str(root), str(peer)], str(tmp_path / "out"))
+    host = Host(scope)
+    jobs = AssessmentJobs(
+        scope,
+        scope.output / ".assessment/jobs",
+        AssessmentBudget(2, 0.05, 60, 120),
+        host.factory,
+        lambda: False,
+        lambda: None,
+    )
+    architecture = controller._assessment_architecture(scope, jobs, progress=lambda _: None)
+    rid = next(r.repository_id for r in scope.repositories if r.root == root)
+    architecture["route_inventories"] = {
+        rid: {"routes": [dict(handler_file="app.py", handler_line=line) for line in range(1, 2402, 400)]}
+    }
+    documents, reviews, merged = controller._assessment_stride(
+        scope,
+        jobs,
+        architecture,
+        [],
+        [],
+        progress=lambda _: None,
+        depth="thorough",
+    )
+    contexts = [
+        ctx for role, ctx in host.calls if role == "stride_analyzer" and ctx["component"]["repository_ids"] == [rid]
+    ]
+    # Each job exchanges once to read and once to complete.
+    assert [len(ctx["investigation_targets"]) for ctx in contexts[::2]] == [6, 1]
+    assert all(ctx["assessment_depth"] == "thorough" for ctx in contexts)
+    assert len(documents) == len(reviews) == 2
+    document = next(d for d in documents if d["threats"][0]["evidence"]["repository_id"] == rid)
+    assert len(document["threats"]) == 2
+    assert {t["evidence"]["line"] for t in document["threats"]} == {2, 2401}
+    assert sum(len(r["decisions"]) for r in reviews) == 3
+    assert all(t["evidence"]["repository_id"] == rid for t in document["threats"])
+    assert merged["threats"]
+
+
+def test_toolless_architect_receives_the_shared_remediation_policy():
+    policy = (controller.PLUGIN_ROOT / "agents/shared/architect-semantic-review.md").read_text()
+    instructions = controller._assessment_role_instructions("architect_reviewer", "Review the supplied findings.")
+    assert policy in instructions
+    assert "fix.effect: prevents-mechanism" in instructions
 
 
 def test_discovery_and_architecture_receive_their_own_repository_inventories(tmp_path):

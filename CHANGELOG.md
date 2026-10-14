@@ -43,11 +43,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A wildcard CORS origin without credentials is no longer reported as a credentialed CORS anti-pattern, and OAuth implicit-flow tokens read from `location.hash` are now detected.
 - Reports handle empty weakness and boundary registers without broken links or missing remediation tables, and remaining link defects are repaired or stopped immediately after rendering.
 - Headless controller assessments exclude prior run products from source evidence while retaining repository inputs stored beside reports.
-- Headless controller reports retain linked architecture detail diagrams and mark evidenced embedded database accesses as having no separate authentication.
+- Headless controller reports retain linked architecture detail diagrams, include evidenced OAuth and identity-provider integrations, and mark evidenced embedded database accesses as having no separate authentication.
 - Controller root causes and remediation priorities now include the findings that abuse-case verification adds.
+- Root-cause grouping recognizes verified implementation evidence that begins a multiline call, including entity mass assignment.
+- Architect review retains the technical fix when a proposed replacement preserves the vulnerability or only fixes a hypothetical deployment, and explicit preservation instructions no longer pass as fix cards.
 - The controller console shows a remaining time only once the first component's threat analysis is finished, and trust-boundary warnings no longer break into its status line.
 - Single-repository controller assessments accept `--abuse-case-file`, and an unreadable or invalid case file stops the run instead of being skipped.
 - Headless controller assessments now model every route-serving API and browser application, with their handler and client code, instead of publishing a thin report that omits them; a run that still cannot place one stops instead.
+- Headless controller analysis uses component-specific guides and checks that every supplied source target was read and assessed, splitting large components into bounded jobs without dropping targets.
 - Headless controller assessments no longer stop over model answers the controller can correct itself, and once STRIDE is complete a failed later model job no longer stops the run: the report is published and the replaced job is named as a warning.
 - Headless controller `--resume` continues an interrupted assessment after a plugin update and repeats only the model steps whose input changed.
 - Headless controller progress lines share one column layout with the run's finished share, elapsed and remaining time, counted per analyzed component, and phase durations now match their time stamps.

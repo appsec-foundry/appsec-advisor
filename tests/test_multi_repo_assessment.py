@@ -987,6 +987,93 @@ def test_assessment_embedded_access_uses_qualified_frozen_sources(tmp_path, labe
     assert profile_catalog(display["data_flows"])[("none",)]["number"] == "0"
 
 
+@pytest.mark.parametrize(("label", "path"), [("portal", "client/login.ts"), ("tests", "ui/signin.js")])
+def test_assessment_reuses_identity_discovery_with_qualified_sources(tmp_path, label, path):
+    from validators.validate_assessment_architecture import _evidence_rows, validate_source
+
+    scope = _scope(
+        tmp_path,
+        (label, "api"),
+        {path: "window.location.assign('https://login.example.invalid/oauth2/authorize?response_type=code')\n"},
+    )
+    components = []
+    for i, repo in enumerate(scope.repositories):
+        component = _component(scope, path)
+        component.update(id=f"component-{i}", tier="client", repository_ids=[repo.repository_id])
+        component["paths"][0]["repository_id"] = repo.repository_id
+        components.append(component)
+    flows = {"data_flows": [], "external_entities": []}
+    before = copy.deepcopy((components, flows))
+    result = controller._assessment_identity_integrations(scope, {"components": components}, flows)
+    assert (components, flows) == before
+    assert len(result["external_entities"]) == 1
+    assert {f["from"] for f in result["data_flows"]} == {c["id"] for c in components}
+    for evidence in _evidence_rows(result):
+        validate_source(scope, evidence, path_key="file")
+    assert {e["repository_id"] for f in result["data_flows"] for e in f["evidence"]} == {
+        r.repository_id for r in scope.repositories
+    }
+    assert controller._assessment_identity_integrations(scope, {"components": components}, result) == result
+
+
+@pytest.mark.parametrize("case", ["unused", "foreign-owner", "internal", "ambiguous"])
+def test_assessment_identity_discovery_preserves_evidence_and_ownership_rules(tmp_path, case):
+    path = "client/login.ts"
+    url = "https://login.example.invalid/oauth2/authorize"
+    body = f"const unused = '{url}'\n" if case == "unused" else f"window.location.assign('{url}')\n"
+    scope = _scope(tmp_path, ("portal",), {path: body})
+    component = _component(scope, path)
+    component["tier"] = "client"
+    components = [component]
+    flows = {"data_flows": [], "external_entities": []}
+    if case == "foreign-owner":
+        component["paths"] = []
+    if case == "ambiguous":
+        components.append({**copy.deepcopy(component), "id": "component-duplicate"})
+    if case == "internal":
+        source = component["paths"][0]
+        flows["data_flows"] = [
+            {
+                "id": "df-001",
+                "from": component["id"],
+                "to": "component-identity",
+                "evidence": [
+                    {"file": path, "line": 1, "repository_id": source["repository_id"], "sha256": source["sha256"]}
+                ],
+            }
+        ]
+    if case in {"foreign-owner", "ambiguous"}:
+        with pytest.raises(ValueError, match="unique component owner"):
+            controller._assessment_identity_integrations(scope, {"components": components}, flows)
+    else:
+        assert controller._assessment_identity_integrations(scope, {"components": components}, flows) == flows
+
+
+def test_single_repository_controller_carries_oauth_provider_into_figure_1(tmp_path, monkeypatch):
+    class OAuthHost(FullHost):
+        def invoke(self, role, system, prompt, schema, timeout_s, should_stop):
+            reply = super().invoke(role, system, prompt, schema, timeout_s, should_stop)
+            artifact = reply.payload.get("artifact")
+            if role == "recon_scanner" and artifact:
+                artifact["components"][0].update(tier="client", name="Browser portal")
+                artifact["interfaces"] = []
+            return reply
+
+    def seed(roots):
+        (roots[0] / "app.py").write_text(
+            "window.location.assign('https://login.example.invalid/oauth2/authorize?response_type=code')\n"
+            "value = request.args['input']\n"
+        )
+
+    monkeypatch.setenv("APPSEC_SINGLE_REPO_CONTROLLER", "1")
+    outcome, _, out = _assess(tmp_path, monkeypatch, ("portal",), ("--no-pdf",), seed=seed, host=OAuthHost())
+    assert outcome["status"] == "complete"
+    model = yaml.safe_load((out / "threat-model.yaml").read_text())
+    provider = next(e for e in model["external_entities"] if e["kind"] == "identity-provider")
+    assert any(f.get("to_entity") == provider["id"] for f in model["data_flows"])
+    assert "login.example.invalid" in (out / "threat-model.figure1.svg").read_text()
+
+
 @pytest.mark.parametrize("kind", ["authored", "unknown", "network", "application", "shared"])
 def test_assessment_embedded_access_preserves_other_authentication(tmp_path, kind):
     path = "src/store.py"
