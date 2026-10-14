@@ -2382,13 +2382,32 @@ SOURCE_TESTS = {
         verify_run_costs
     """),
     "scripts/renderers/term_style.py": _tests("""
+        aggregate_run_issues
+        architect_review_runtime
+        check_target_specificity
         completion_relay
+        controller_e2e
         cost_running_total
+        finding_state
+        gate_preconditions
         headless_usage
+        measure_run
+        model_release_pricing
         multi_repo_assessment
+        p1_renderer_correctness
+        persist_run_baseline
         render_completion_summary
+        render_completion_summary_config
+        render_completion_summary_verdict
+        render_integrity
         render_progress
+        report_plugin_issue
+        requirements_verification
         run_headless_completion
+        shared_paths
+        skill_watchdog
+        stride_outputs
+        team_questions
         term_style
     """),
     "scripts/renderers/render_progress.py": _tests("""
