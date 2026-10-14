@@ -272,6 +272,9 @@ class RepositoryView:
     files: Mapping[str, bytes] = field(repr=False)
     exclusions: tuple[dict[str, str], ...] = ()
     dirty: bool = False
+    # Products of assessment runs. Never source and never part of the source
+    # identity: a concurrent run or plugin hook rewriting them changes nothing.
+    artifacts: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "files", MappingProxyType(dict(self.files)))
@@ -336,19 +339,17 @@ def _capture(root: Path, repository_id: str, remaining: int, output: PurePosixPa
     """
     head = _git(root, "rev-parse", "--verify", "HEAD^{commit}").decode("ascii").strip()
     outside = (":(exclude,literal)" + output.as_posix(),) if output else ()
-    dirty = bool(
-        _git(
-            root,
-            "status",
-            "--porcelain=v1",
-            "-z",
-            "--untracked-files=normal",
-            "--ignore-submodules=all",
-            "--",
-            ".",
-            *outside,
-            overrides=_filter_overrides(root),
-        )
+    status = _git(
+        root,
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+        "--ignore-submodules=all",
+        "--",
+        ".",
+        *outside,
+        overrides=_filter_overrides(root),
     )
     # Index modes identify tracked links and submodules; untracked nested
     # repositories are listed once, as a directory with a trailing slash.
@@ -375,6 +376,7 @@ def _capture(root: Path, repository_id: str, remaining: int, output: PurePosixPa
         raise ScopeError("Source inventory exceeds the file limit")
     omissions = {listed: _omission(root, _relative(listed.rstrip("/")), modes[listed]) for listed in paths}
     artifacts = assessment_artifacts_in_inventory(listed for listed in paths if omissions[listed] is None)
+    dirty = any(path not in artifacts for path in _status_paths(status))
     files: dict[str, bytes] = {}
     exclusions: list[dict[str, str]] = []
     for listed in paths:
@@ -394,7 +396,6 @@ def _capture(root: Path, repository_id: str, remaining: int, output: PurePosixPa
             exclusions.append({"path": path, "reason": "deleted"})
             continue
         if path in artifacts:
-            exclusions.append({"path": path, "reason": "assessment-artifact"})
             continue
         try:
             data = _read(root, path)
@@ -419,7 +420,24 @@ def _capture(root: Path, repository_id: str, remaining: int, output: PurePosixPa
         "files": {p: _digest(b) for p, b in sorted(files.items())},
         "exclusions": exclusions,
     }
-    return RepositoryView(repository_id, root, head, _json_digest(state), files, tuple(exclusions), dirty)
+    return RepositoryView(
+        repository_id, root, head, _json_digest(state), files, tuple(exclusions), dirty, tuple(sorted(artifacts))
+    )
+
+
+def _status_paths(status: bytes) -> list[str]:
+    """Paths of `git status --porcelain=v1 -z` entries; a rename's source is skipped."""
+    entries = status.split(b"\0")
+    paths, index = [], 0
+    while index < len(entries):
+        entry = entries[index]
+        index += 1
+        if len(entry) < 4:
+            continue
+        paths.append(entry[3:].decode("utf-8", "replace"))
+        if entry[:1] in (b"R", b"C"):
+            index += 1
+    return paths
 
 
 @dataclass(frozen=True)

@@ -43,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An invalid, oversized, or symlinked repository abuse-case file is rejected and reported on its own instead of silently dropping every abuse case from the run.
 - A wildcard CORS origin without credentials is no longer reported as a credentialed CORS anti-pattern, and OAuth implicit-flow tokens read from `location.hash` are now detected.
 - Reports handle empty weakness and boundary registers without broken links or missing remediation tables, and remaining link defects are repaired or stopped immediately after rendering.
-- Headless controller assessments exclude prior run products from source evidence while retaining repository inputs stored beside reports.
+- Headless controller assessments exclude prior run products and the plugin's hook state from source evidence while retaining repository inputs stored beside reports, and another run or Claude Code session writing such files into the checkout no longer stops a running assessment.
 - Headless controller reports retain linked architecture detail diagrams, include evidenced OAuth and identity-provider integrations, and mark evidenced embedded database accesses as having no separate authentication.
 - Controller root causes and remediation priorities now include the findings that abuse-case verification adds.
 - Root-cause grouping recognizes verified implementation evidence that begins a multiline call, including entity mass assignment.

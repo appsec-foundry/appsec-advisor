@@ -61,13 +61,61 @@ def test_prior_outputs_never_enter_model_reads_or_scanner_snapshots(tmp_path, di
     assert "docs/security/business-context.md" in repo.files
     for name in ("threat-model.md", "threat-model.yaml", ".abuse-case-verdict-AC-T-006.json"):
         path = f"{directory}/{name}"
-        assert {"path": path, "reason": "assessment-artifact"} in repo.exclusions
+        assert path in repo.artifacts and path not in repo.files
         with pytest.raises(scope.ScopeError, match="outside admitted"):
             admitted.read(repo.repository_id, path)
     with admitted.scanner_snapshot(repo.repository_id) as snapshot:
         assert not (snapshot / directory).exists()
         assert (snapshot / "docs/security/business-context.md").is_file()
     admitted.verify_unchanged()
+
+
+def _commit_all(root: Path) -> None:
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "src",
+        ],
+        check=True,
+    )
+
+
+@pytest.mark.parametrize("directory", ["docs/security", "audit/run-2"])
+def test_a_concurrent_run_writing_into_the_checkout_leaves_its_source_state_unchanged(tmp_path, directory):
+    root = repository(tmp_path / "service")
+    _commit_all(root)
+    admitted = scope.admit([str(root)], str(tmp_path / "out"), minimum=1)
+    assert admitted.repositories[0].dirty is False
+    # Another session's run and the plugin's hooks write their state into the checkout.
+    output = root / directory
+    for relative in (
+        ".active-tool-calls/toolu_01.json",
+        ".active-tool-calls/.agent-lifecycle.lock",
+        ".assessment-work/host-events/0001-recon_scanner.jsonl",
+        ".assessment-state.json",
+        ".budget-state.json",
+        ".assessment-summary-emitted",
+        ".hook-events.log",
+        ".agent-run.log",
+    ):
+        (output / relative).parent.mkdir(parents=True, exist_ok=True)
+        (output / relative).write_text("run state\n")
+    admitted.verify_unchanged()
+    again = scope.admit([str(root)], str(tmp_path / "out"), minimum=1).repositories[0]
+    assert again.dirty is False and not any(".active-tool-calls" in path for path in again.files)
+    # A real source change still invalidates the assessment.
+    (root / "worker.py").write_text("print('new')\n")
+    with pytest.raises(scope.ScopeError, match="source state changed"):
+        admitted.verify_unchanged()
 
 
 def test_scanner_snapshot_uses_frozen_regular_files_and_cleans_up_on_failure(tmp_path):

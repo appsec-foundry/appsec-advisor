@@ -100,6 +100,12 @@ _ASSESSMENT_RUNTIME_MARKERS = frozenset(
     }
 )
 _ASSESSMENT_FINAL_PAIR = frozenset({"threat-model.md", "threat-model.yaml"})
+_PRIVATE_OUTPUT_TREES = frozenset(
+    {".assessment-work", ".appsec-cache", ".fragments", ".dispatch-context", ".active-tool-calls"}
+)
+# Plugin run-state files, wherever a run or its hooks wrote them; these names
+# carry no application meaning.
+_OWNED_STATE_FILES = frozenset({".assessment-state.json", ".budget-state.json", ".assessment-summary-emitted"})
 # Run products within a detected output directory. A marker pair must never
 # hide arbitrary application files that happen to share that directory.
 _ASSESSMENT_PRODUCT_PATTERNS = (
@@ -319,12 +325,14 @@ def assessment_artifacts_in_inventory(paths: Iterable[str]) -> set[str]:
     artifacts = set()
     for path in inventory:
         # Private output trees cannot become source by imitating an input name.
-        if any(part in {".assessment-work", ".appsec-cache", ".fragments", ".dispatch-context"} for part in path.parts):
+        # `.active-tool-calls` is the plugin hooks' per-session registry: any
+        # Claude Code session using the plugin in the checkout rewrites it.
+        if any(part in _PRIVATE_OUTPUT_TREES for part in path.parts):
             artifacts.add(path.as_posix())
             continue
         if declared_repository_input(path):
             continue
-        owned = fnmatch.fnmatchcase(path.name, ".abuse-case-verdict-*.json") or path.name == ".assessment-state.json"
+        owned = fnmatch.fnmatchcase(path.name, ".abuse-case-verdict-*.json") or path.name in _OWNED_STATE_FILES
         product = path.name in _ASSESSMENT_RUNTIME_MARKERS or any(
             fnmatch.fnmatchcase(path.name, pattern) for pattern in _ASSESSMENT_PRODUCT_PATTERNS
         )
