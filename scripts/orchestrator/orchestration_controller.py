@@ -9084,7 +9084,7 @@ def _assessment_budget(ns, rest: list[str] = ()):
     if limit is None and ns.interactive_launch:
         limit = INTERACTIVE_DEPTH_BUDGET_USD[_requested_depth(list(rest))]
     if limit is None:
-        raise CallError("a multi-repository assessment requires --soft-budget or --hard-budget")
+        raise CallError("a headless controller assessment requires --soft-budget or --hard-budget")
     seconds = ns.max_duration or ASSESSMENT_DEFAULT_SECONDS
     if not 1 <= seconds <= MAX_ASSESSMENT_SECONDS:
         raise CallError(f"--max-duration must be between 1 and {MAX_ASSESSMENT_SECONDS} seconds")
@@ -9716,7 +9716,7 @@ def _assessment_model_lines(cfg: dict[str, Any]) -> tuple[str, str | None]:
     warning = None
     if cfg.get("stride_model") == resolve_config.SONNET46:
         warning = (
-            f"STRIDE is set to {resolve_config.SONNET46}. In a multi-repository assessment it "
+            f"STRIDE is set to {resolve_config.SONNET46}. In a controller assessment it "
             "exhausts its thinking without returning a result; drop the explicit STRIDE model "
             f"to use {resolve_config.SONNET5}."
         )
