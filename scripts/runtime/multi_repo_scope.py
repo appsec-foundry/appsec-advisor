@@ -234,6 +234,10 @@ class OversizedBinary(ScopeError):
     """An oversized file whose leading bytes are binary."""
 
 
+class OversizedText(ScopeError):
+    """An oversized text file, such as a lockfile or a generated bundle (MR-10)."""
+
+
 def _binary_prefix(prefix: bytes) -> bool:
     """Apply the captured-file binary rule to a leading chunk."""
     if b"\0" in prefix:
@@ -266,11 +270,11 @@ def _read(root: Path, relative: str) -> bytes:
         if not stat.S_ISREG(before.st_mode):
             raise ScopeError("Source is not a regular file")
         if before.st_size > MAX_FILE_BYTES:
-            # An oversized binary would be excluded after capture anyway; only
-            # oversized text stops admission.
+            # An oversized binary would be excluded after capture anyway; an
+            # oversized text file is excluded as not analysed (MR-10).
             if _binary_prefix(os.read(fd, 8192)):
                 raise OversizedBinary("Oversized binary source is excluded")
-            raise ScopeError("Source file exceeds the admission limit")
+            raise OversizedText("Oversized text source is excluded")
         result = bytearray()
         while chunk := os.read(fd, min(65_536, MAX_FILE_BYTES + 1 - len(result))):
             result.extend(chunk)
@@ -429,6 +433,9 @@ def _capture(root: Path, repository_id: str, remaining: int, output: PurePosixPa
             data = _read(root, path)
         except OversizedBinary:
             exclusions.append({"path": path, "reason": "binary"})
+            continue
+        except OversizedText:
+            exclusions.append({"path": path, "reason": "oversized"})
             continue
         remaining -= len(data)
         if remaining < 0:

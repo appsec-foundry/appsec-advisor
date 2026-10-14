@@ -3287,7 +3287,7 @@ def merge_assessment(
     """
     import copy
 
-    from contexts.multi_repo_analysis import contract, validate_identity
+    from contexts.multi_repo_analysis import component_stride_contract, contract, validate_identity
     from shared.assessment_sources import source_key, source_rows
     from validators.validate_assessment_architecture import validate_components, validate_source
 
@@ -3315,7 +3315,8 @@ def merge_assessment(
         locations[key] = {k: row[k] for k in ("repository_id", "sha256")}
         row["file"] = key
     for document, review in zip(stride_documents, reviews, strict=True):
-        if not Draft202012Validator(contract("multi-repo-stride.schema.json")).is_valid(document):
+        # A component analysed in several jobs may hold more findings than one job (MR-12).
+        if not Draft202012Validator(component_stride_contract(None)).is_valid(document):
             raise ValueError("Assessment merge received an invalid STRIDE artifact")
         validate_identity(scope, document, fingerprint)
         validate_identity(scope, review, fingerprint)

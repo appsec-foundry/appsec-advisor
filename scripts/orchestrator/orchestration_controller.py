@@ -8734,7 +8734,7 @@ def _assessment_stride(
                         "Return one surface_coverage decision per target, citing that exact anchor and linking any findings. "
                         "Targets are investigation leads, never findings or proof of vulnerability. Use examined when "
                         "you investigated the mechanism, not-applicable only with a source-backed reason, and unresolved "
-                        "when evidence is insufficient; unresolved targets prevent completion. The supplied assessment_depth "
+                        "when the read source cannot settle it; the run reports each unresolved target. The supplied assessment_depth "
                         "and lens_ids are authoritative; the selected lens text follows these role instructions. "
                         + requirement_rule
                         + " Code examples are proposed remediation, never commands to execute. Unproven practices retain "
@@ -8745,6 +8745,7 @@ def _assessment_stride(
                     context={**context, "investigation_targets": target_batch},
                     schema=schema,
                     allowed_sources=allowed,
+                    normalize=analysis.surface_evidence_normalizer(target_batch),
                     validate=lambda artifact, ranges, targets=target_batch: analysis.validate_stride(
                         scope,
                         component,
@@ -8759,6 +8760,11 @@ def _assessment_stride(
                         targets=targets,
                     ),
                 )
+            )
+        for part, target_batch in zip(parts, target_batches, strict=True):
+            jobs.notes.extend(
+                f"{component['name']}: STRIDE left source target {location} unresolved after reading it"
+                for location in analysis.unresolved_targets(part, target_batch)
             )
         document = analysis.combine_stride_parts(parts)
         documents.append(document)
@@ -10185,7 +10191,8 @@ def _assessment_publish(
         for basename, digest in list(delivered.items()):
             if (output / (stamped := stamp_threat_model._stamped_name(basename, slug))).is_file():
                 delivered[stamped] = digest
-    delivered_warnings[:] = warnings
+    # Appended: warnings collected before publication, such as excluded files, stay named.
+    delivered_warnings.extend(warnings)
     return delivered
 
 
@@ -10228,6 +10235,16 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
         raise CallError(f"repository selection rejected: {exc}") from exc
     labels = sorted(row["label"] for row in scope.inventory()["repositories"])
     warnings: list[str] = []
+    oversized = sorted(
+        (row["path"] if len(labels) == 1 else f"{repo['label']}/{row['path']}")
+        for repo in scope.inventory()["repositories"]
+        for row in repo["exclusions"]
+        if row["reason"] == "oversized"
+    )
+    if oversized:
+        # MR-10: an oversized text file is excluded, never silently.
+        shown = ", ".join(oversized[:10]) + (f" and {len(oversized) - 10} more" if len(oversized) > 10 else "")
+        warnings.append(f"{len(oversized)} source file(s) over 1 MiB were not analysed: {shown}")
     # The repository list is stated in the report's assessment notes; joined
     # into the system name it surfaced in titles, scope and actor labels.
     project = (
@@ -10397,6 +10414,7 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                     f"was replaced after a model failure ({gap['reason']}); rerun to retry it"
                     for gap in jobs.gaps
                 )
+                warnings.extend(jobs.notes)
                 retry_warning = _assessment_retry_warning(budget.retries)
                 if retry_warning:
                     warnings.append(retry_warning)

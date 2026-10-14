@@ -111,6 +111,8 @@ class AssessmentJobs:
         self.timing: dict[str, dict] = {}
         # Optional jobs replaced after a model failure, in run order (OR-39).
         self.gaps: list[dict] = []
+        # Run warnings the controller derives from accepted jobs, in run order.
+        self.notes: list[str] = []
 
     def _record(self, role: str, *, seconds: float | None = None, calls: int = 0) -> None:
         row = self.timing.setdefault(role, {"jobs": 0, "reused": 0, "calls": 0, "seconds": 0.0})
