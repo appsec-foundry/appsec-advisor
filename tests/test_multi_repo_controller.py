@@ -392,7 +392,7 @@ def test_discovery_and_architecture_receive_their_own_repository_inventories(tmp
 def test_architecture_receives_model_integration_leads_and_reports_unmodelled_ones(tmp_path):
     roots = _inventory_checkouts(tmp_path)
     with (roots[1] / "app.py").open("a") as handle:
-        handle.write("from anthropic import Anthropic\n")
+        handle.write("from anthropic import Anthropic\nclient = Anthropic()\n")
     scope = admit([str(r) for r in roots], str(tmp_path / "out"))
     host = Host(scope)
     jobs = AssessmentJobs(
@@ -411,7 +411,8 @@ def test_architecture_receives_model_integration_leads_and_reports_unmodelled_on
         if role == "architecture_analyst" and "deterministic_inventory" in ctx
     }
     assert leads[rid["edge"]] == []
-    assert [row["evidence"] for row in leads[rid["pay"]]] == [[{"file": "app.py", "line": 3}]]
+    # The lead names the call (line 4), never the import the evidence rule rejects (line 3).
+    assert [row["evidence"] for row in leads[rid["pay"]]] == [[{"file": "app.py", "line": 4}]]
     # The test host models no inference service, so the lead stays a reported gap.
     assert architecture["model_integration_gaps"] == ["Service"]
 

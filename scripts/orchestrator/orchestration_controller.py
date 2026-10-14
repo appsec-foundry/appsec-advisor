@@ -8447,10 +8447,10 @@ def _assessment_architecture(scope, jobs, *, progress):
                 "asset after reading its cited source, or leave it out when the source does not support it. "
                 "A client component's requests to the API it calls are flows from that client component. When "
                 "exactly one regular legitimate role exists, the controller adds its use of each client itself. "
-                "Its model_integrations name source lines that reference a model SDK or provider: when the cited "
+                "Its model_integrations name source lines that use a model SDK or provider client: when the cited "
                 "source calls a model, record the model provider as an external entity with service role "
-                "llm-inference and the call as a flow from that component; a configurable endpoint is still "
-                "that provider.",
+                "llm-inference and the call as a flow from that component, citing that call rather than an "
+                "import; a configurable endpoint is still that provider.",
             ),
             context={
                 "repository_id": rid,

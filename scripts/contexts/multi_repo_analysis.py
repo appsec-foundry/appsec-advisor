@@ -204,7 +204,14 @@ def _owned_ai_signals(scope, component: dict) -> list[dict]:
     for rid, path in sorted(source_selection([component])):
         for number, line in enumerate(repos[rid].files[path].decode("utf-8", "replace").splitlines(), 1):
             for kind, strength in cat13_line_signals(line):
-                signal = {"subcategory": kind, "strength": strength, "file": path, "line": number}
+                signal = {
+                    "subcategory": kind,
+                    "strength": strength,
+                    "repository_id": rid,
+                    "file": path,
+                    "line": number,
+                    "text": line,
+                }
                 if _is_ai_source_signal(signal):
                     signals.append(signal)
     return signals
@@ -215,10 +222,31 @@ def model_integration_leads(scope, components: list[dict]) -> list[dict]:
 
     A lead says the source names a model integration, not that it calls one or
     where the provider runs; the architecture job decides after reading it.
+    Only lines the service-role evidence rule accepts are offered: an import,
+    comment or blank line names the SDK but cannot evidence the call, and a
+    lead on it invites a citation that rule rejects.
     """
+    from validators.validate_fragment import _cited_line_problem
+
+    repos = {r.repository_id: r for r in scope.repositories}
     leads = []
     for component in components:
-        strong = [row for row in _owned_ai_signals(scope, component) if row["strength"] == "strong"]
+        strong = []
+        for row in _owned_ai_signals(scope, component):
+            if row["strength"] != "strong":
+                continue
+            problem = _cited_line_problem(row["text"], allow_imports=False)
+            if problem is None:
+                strong.append(row)
+            elif problem == "an import or dependency declaration":
+                # An SDK is usually named only where it is imported; its call
+                # carries the imported binding, not the provider's name.
+                lines = repos[row["repository_id"]].files[row["file"]].decode("utf-8", "replace").splitlines()
+                strong.extend(
+                    {**row, "line": number}
+                    for number in _binding_calls(lines, row["text"])
+                    if _cited_line_problem(lines[number - 1], allow_imports=False) is None
+                )
         if strong:
             evidence = list(dict.fromkeys((row["file"], row["line"]) for row in strong))[:8]
             leads.append(
@@ -228,6 +256,41 @@ def model_integration_leads(scope, components: list[dict]) -> list[dict]:
                 }
             )
     return leads
+
+
+_IMPORTED_NAMES = (
+    # JS/TS: default, namespace and named imports; CommonJS require.
+    re.compile(r"^import\s+(?:type\s+)?(\w+)?\s*,?\s*(?:\*\s+as\s+(\w+))?\s*(?:\{([^}]*)\})?\s*from\s"),
+    re.compile(r"^(?:const|let|var)\s+(?:(\w+)|\{([^}]*)\})\s*=\s*(?:await\s+)?(?:require|import)\s*\("),
+    # Python: `from x import a, b as c` and `import x as y`.
+    re.compile(r"^from\s+\S+\s+import\s+\(?([^)#]*)"),
+    re.compile(r"^import\s+([\w.]+(?:\s+as\s+\w+)?)\s*$"),
+)
+
+
+def _binding_calls(lines: list[str], import_line: str, limit: int = 4) -> list[int]:
+    """One-based lines that call a binding the import line introduces, first occurrences first."""
+    names = set()
+    for pattern in _IMPORTED_NAMES:
+        match = pattern.match(import_line.strip())
+        if not match:
+            continue
+        for group in match.groups():
+            for part in (group or "").split(","):
+                words = part.replace(" as ", " : ").replace(":", " ").split()
+                if words and words[-1].isidentifier() and words[-1] != "type":
+                    names.add(words[-1].split(".")[-1])
+        break
+    if not names:
+        return []
+    call = re.compile(r"(?<![\w.$])(?:new\s+)?(?:" + "|".join(map(re.escape, sorted(names))) + r")\s*(?:\(|\.\w)")
+    found = []
+    for number, text in enumerate(lines, 1):
+        if text.strip() != import_line.strip() and call.search(text):
+            found.append(number)
+            if len(found) >= limit:
+                break
+    return found
 
 
 def model_integration_gaps(leads: list[dict], flows: dict) -> list[str]:

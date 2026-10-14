@@ -288,11 +288,36 @@ def test_unretrieved_evidence_rejection_names_each_citation(tmp_path, path, line
     stage.validate_retrieved_sources(scope, artifact, ranges, allowed)
 
 
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        # The provider is named only in the import; the call uses the imported binding.
+        (
+            b"import { streamText } from 'ai'\nimport { createOpenAICompatible } from '@ai-sdk/openai-compatible'\n"
+            b"\nconst provider = createOpenAICompatible({ baseURL: url })\n",
+            [4],
+        ),
+        (b"from anthropic import Anthropic\n\n# client\nclient = Anthropic(api_key=key)\n", [4]),
+        # An import that is never called offers nothing the evidence rule would accept.
+        (b"import OpenAI from 'openai'\nexport const unused = 1\n", []),
+    ],
+)
+def test_model_integration_leads_cite_only_lines_the_evidence_rule_accepts(tmp_path, source, expected):
+    from validators.validate_fragment import _cited_line_problem
+
+    scope, component = _owned_sources(tmp_path, {"svc/model.ts": source}, ["svc/model.ts"])
+    leads = stage.model_integration_leads(scope, [component])
+    lines = [row["line"] for lead in leads for row in lead["evidence"]]
+    assert lines == expected
+    text = source.decode().splitlines()
+    assert all(_cited_line_problem(text[line - 1], allow_imports=False) is None for line in lines)
+
+
 def test_model_integration_gap_closes_only_with_a_flow_to_an_inference_service(tmp_path):
-    source = b"// assistant\nimport OpenAI from 'openai'\n"
+    source = b"// assistant\nimport OpenAI from 'openai'\nconst client = new OpenAI()\n"
     scope, component = _owned_sources(tmp_path, {"assist/reply.ts": source}, ["assist/reply.ts"])
     leads = stage.model_integration_leads(scope, [component])
-    assert leads == [{"component_id": "component-1", "evidence": [{"file": "assist/reply.ts", "line": 2}]}]
+    assert leads == [{"component_id": "component-1", "evidence": [{"file": "assist/reply.ts", "line": 3}]}]
     inference = {"id": "ext-model", "service_roles": [{"role": "llm-inference", "evidence": []}]}
     other = {"id": "ext-rpc", "service_roles": [{"role": "blockchain-rpc", "evidence": []}]}
     flow = {"from": "component-1", "to": "ext-model"}
