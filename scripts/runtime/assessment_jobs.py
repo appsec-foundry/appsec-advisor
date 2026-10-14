@@ -55,6 +55,7 @@ class AssessmentBudget(DiscoveryBudget):
             raise ExchangeError("Invalid full-assessment budget")
         self.deadline = time.monotonic() + self.timeout_s
         self.failed = False
+        self.init_retries()
 
     def remaining_seconds(self):
         # Every individual exchange still has the existing one-hour ceiling.

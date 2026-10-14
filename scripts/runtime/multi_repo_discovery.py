@@ -65,8 +65,15 @@ MAX_TIMEOUT_RETRIES = 1
 # run's hundreds of calls stopped every stage before STRIDE. Login, billing and
 # request errors, host limits and unsettled costs are never retried.
 TRANSIENT_FAILURES = frozenset({"rate_limit", "server_error", "api_error", "no_structured_output"})
-# Seconds to wait before each repeated call; their count bounds the retries.
+# Seconds to wait before each repeated call; their count bounds the retries of
+# a free failure. A refused API call reports no cost, so these cost only time.
 TRANSIENT_RETRY_DELAYS = (15, 60, 180)
+# A failed call that reported at most this cost is free to repeat.
+FREE_FAILURE_USD = 0.001
+# A failed call that cost money, such as a text answer, is repeated at most once,
+# and at most this often per run: repeated paid failures point to a systematic
+# cause that further calls would only pay for again.
+MAX_PAID_RETRIES = 3
 
 
 @dataclass
@@ -99,6 +106,13 @@ class DiscoveryBudget:
             raise ExchangeError("Invalid discovery budget")
         self.deadline = time.monotonic() + self.timeout_s
         self.failed = False
+        self.init_retries()
+
+    def init_retries(self) -> None:
+        """Start the run's retry record; `on_retry(text)` reports each repeated call."""
+        # One row per repeated call: the failure's reason and reported cost.
+        self.retries: list[dict] = []
+        self.on_retry: Callable[[str], None] | None = None
 
     def remaining_seconds(self) -> int:
         remaining = math.floor(self.deadline - time.monotonic())
@@ -124,10 +138,18 @@ class DiscoveryBudget:
                 # Only a settled call leaves accounting available (`failed` is false).
                 if self.failed or exc.reason not in TRANSIENT_FAILURES or failures >= len(TRANSIENT_RETRY_DELAYS):
                     raise
+                paid = exc.usd is not None and exc.usd > FREE_FAILURE_USD
+                if paid and (failures or sum(row["paid"] for row in self.retries) >= MAX_PAID_RETRIES):
+                    raise
                 delay = TRANSIENT_RETRY_DELAYS[failures]
                 failures += 1
                 if delay >= self.remaining_seconds():
                     raise
+                self.retries.append({"reason": exc.reason, "usd": exc.usd or 0.0, "paid": paid})
+                if self.on_retry is not None:
+                    self.on_retry(
+                        f"model call failed ({exc.reason}); repeating it in {delay} s (attempt {failures + 1})"
+                    )
                 self._wait(delay, should_stop)
 
     @staticmethod

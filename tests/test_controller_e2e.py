@@ -122,7 +122,7 @@ def in_process(monkeypatch):
     [
         "recon_scanner:rate_limit:2",
         "architecture_analyst:server_error:1",
-        "stride_analyzer:text:3",
+        "stride_analyzer:text:1",
         "*:rate_limit:1,control_analyst:server_error:2",
     ],
 )
@@ -133,6 +133,16 @@ def test_transient_api_failures_are_retried_and_the_run_completes(tmp_path, in_p
     _assert_published(out, 1)
     planned = sum(int(entry.rsplit(":", 1)[1]) for entry in faults.split(","))
     assert sum(1 for call in _calls(state) if call["fault"]) == planned
+    # The published run names its repeated calls.
+    assert any(f"{planned} model call(s) were repeated" in warning for warning in outcome["warnings"])
+
+
+def test_a_text_answer_is_paid_for_again_only_once(tmp_path, in_process):
+    argv, env, out, state = _system(tmp_path, ("solo",), faults="stride_analyzer:text:2")
+    with pytest.raises(TransportError, match="no_structured_output"):
+        in_process(argv, env)
+    assert [call["fault"] for call in _calls(state) if call["role"] == "stride_analyzer"] == ["text", "text"]
+    assert not (out / "threat-model.md").exists()
 
 
 def test_a_run_stopped_by_a_persistent_api_failure_resumes_without_redoing_accepted_jobs(tmp_path, in_process):
