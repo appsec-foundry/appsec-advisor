@@ -298,9 +298,20 @@ class DiscoveryBudget:
 class BudgetedHost:
     def __init__(self, factory: Callable[[float], Transport], budget: DiscoveryBudget):
         self.factory, self.budget = factory, budget
+        self.last: Transport | None = None
 
     def invoke(self, system, prompt, schema, timeout_s, should_stop) -> HostReply:
-        return self.budget.invoke(self.factory, system, prompt, schema, timeout_s, should_stop)
+        def build(ceiling):
+            self.last = self.factory(ceiling)
+            return self.last
+
+        return self.budget.invoke(build, system, prompt, schema, timeout_s, should_stop)
+
+    def on_correction(self, reason: str) -> None:
+        """Tell the transport whose answer was rejected; each call has its own."""
+        notice = getattr(self.last, "on_correction", None)
+        if callable(notice):
+            notice(reason)
 
 
 @dataclass(frozen=True)

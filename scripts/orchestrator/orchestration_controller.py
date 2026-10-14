@@ -8259,6 +8259,7 @@ def _assessment_inventories(scope) -> dict[str, dict]:
     from analyzers import serving_units
     from analyzers.deployment_inventory import build_inventory as deployment_inventory
     from analyzers.egress_clients import scan as scan_egress
+    from analyzers.handler_resolver import HandlerResolver
     from analyzers.route_inventory import build_inventory as route_inventory
     from contexts.build_architecture_analysis_context import (
         project_egress,
@@ -8283,9 +8284,16 @@ def _assessment_inventories(scope) -> dict[str, dict]:
             # A route string is repository text; the boundary context bounds it alike.
             for row in routes["routes"]:
                 row["path"] = _bounded_text(row.get("path"), 180)
+            resolver = HandlerResolver(root)
             inventories[repo.repository_id] = {
                 "routes": routes,
                 "route_rows": rows,
+                # STRIDE keeps a route's handler module in its job (MR-13).
+                "route_handlers": {
+                    row["route_id"]: module
+                    for row in rows
+                    if row.get("route_id") and (module := resolver.handler_module(row))
+                },
                 "route_projection": project_routes(json.dumps(routes).encode("utf-8")),
                 "role_units": project_role_units(root),
                 "egress": project_egress(root, sources=egress),
@@ -8515,6 +8523,7 @@ def _assessment_architecture(scope, jobs, *, progress):
         "connections": discovery.connections,
         "connection_review": review,
         "route_inventories": {rid: row["routes"] for rid, row in inventories.items()},
+        "route_handler_modules": {rid: row["route_handlers"] for rid, row in inventories.items()},
         "egress_inventories": {rid: row["egress_sources"] for rid, row in inventories.items()},
         # A lead can be a mention rather than a call, so a gap is a warning, not a stop.
         "model_integration_gaps": [
@@ -8542,10 +8551,16 @@ def _assessment_boundary_candidates(scope, jobs, architecture, source_context, d
         source_context,
         depth,
     )
+    from runtime.assessment_host import MAX_PRELOAD_WINDOWS, preload_room
+
     candidates, dispositions, ranges = [], [], []
     for index, signal in enumerate(assessment["signals"]):
         projection = project_assessment_signal(assessment, signal["id"], architecture["data_flows"]["data_flows"])
         allowed = analysis.source_selection(projection["components"])
+        cited = [
+            row for item in (*projection["signals"], *projection["data_flows"]) for row in item.get("evidence", [])
+        ]
+        view = {**projection, "components": analysis.model_components(projection["components"])}
         progress(f"Reviewing trust crossing: {signal['id']} ({index + 1}/{len(assessment['signals'])})")
         exchange = jobs.exchange(
             role="trust_boundary_analyst",
@@ -8554,13 +8569,14 @@ def _assessment_boundary_candidates(scope, jobs, architecture, source_context, d
                 "trust_boundary_analyst",
                 "Decide the one supplied crossing signal. A reviewed connection establishes communication, "
                 "not a trust boundary or effective control. Read the endpoints and actual enforcement before "
-                "classifying it. Repository membership never establishes a trust domain. Use same-trust, "
+                "classifying it. The controller supplies the cited source in source_slices; request any further "
+                "source in one read action. Repository membership never establishes a trust domain. Use same-trust, "
                 "not-applicable or unresolved when supported; uncertainty must remain visible. Every boundary "
                 "candidate must state its falsifiable assumption and cite retrieved qualified evidence. "
                 "Return provisional candidate keys, never public boundary IDs. Account for this signal "
                 "exactly once and keep candidate coverage consistent with its real endpoints and flow IDs.",
             ),
-            context=projection,
+            context=view,
             schema=analysis.job_share(
                 analysis.contract("fragments/trust-boundary-candidates-v2.schema.json"),
                 "fragments/trust-boundary-candidates-v2.schema.json",
@@ -8568,6 +8584,9 @@ def _assessment_boundary_candidates(scope, jobs, architecture, source_context, d
                 used={"candidates": len(candidates)},
             ),
             allowed_sources=allowed,
+            preload=analysis.evidence_preload(
+                scope, cited, allowed, room=preload_room(view), max_windows=MAX_PRELOAD_WINDOWS
+            ),
             validate=lambda artifact, ranges: analysis.validate_boundary_candidates(
                 scope, projection, artifact, ranges, allowed
             ),
@@ -8601,6 +8620,8 @@ def _assessment_boundary_candidates(scope, jobs, architecture, source_context, d
 
 def _assessment_controls(scope, jobs, architecture, *, progress):
     from contexts import multi_repo_analysis as analysis
+    from runtime.assessment_host import MAX_PRELOAD_WINDOWS, preload_room
+    from shared.assessment_sources import source_rows
 
     components = architecture["components"]["components"]
     fingerprint = architecture["finalization"]["component_inventory_fingerprint"]
@@ -8609,6 +8630,14 @@ def _assessment_controls(scope, jobs, architecture, *, progress):
     # implicit source grant. Shared mechanisms can retain several scoped rows.
     for position, component in enumerate(components, 1):
         progress(f"Assessing controls: {component['name']} ({position}/{len(components)})")
+        context = {
+            "source_scope_sha256": scope.inventory()["scope_sha256"],
+            "component_inventory_fingerprint": fingerprint,
+            "component": analysis.model_components([component])[0],
+            "flows": [f for f in architecture["data_flows"]["data_flows"] if component["id"] in (f["from"], f["to"])],
+        }
+        allowed = analysis.source_selection([component])
+        cited = [*source_rows(component), *(row for flow in context["flows"] for row in flow.get("evidence", []))]
         artifact = jobs.execute(
             role="control_analyst",
             selector="controls:" + component["id"],
@@ -8617,18 +8646,16 @@ def _assessment_controls(scope, jobs, architecture, *, progress):
                 "Assess existing security controls for the selected component. Cite retrieved implementation "
                 "with repository_id, relative file, positive line and exact source hash. Dependency names alone "
                 "do not establish enforcement. An empty result means no source-backed control observation, "
-                "not that the system has no controls. Do not manufacture a control absence from unread files.",
+                "not that the system has no controls. Do not manufacture a control absence from unread files. "
+                "The controller supplies the component's cited source in source_slices; request any further "
+                "source in one read action.",
             ),
-            context={
-                "source_scope_sha256": scope.inventory()["scope_sha256"],
-                "component_inventory_fingerprint": fingerprint,
-                "component": component,
-                "flows": [
-                    f for f in architecture["data_flows"]["data_flows"] if component["id"] in (f["from"], f["to"])
-                ],
-            },
+            context=context,
             schema=analysis.contract("multi-repo-controls.schema.json"),
-            allowed_sources=analysis.source_selection([component]),
+            allowed_sources=allowed,
+            preload=analysis.evidence_preload(
+                scope, cited, allowed, room=preload_room(context), max_windows=MAX_PRELOAD_WINDOWS
+            ),
             validate=lambda artifact, ranges: analysis.validate_controls(
                 scope, [component], fingerprint, artifact, ranges
             ),
@@ -8690,8 +8717,8 @@ def _assessment_stride(
         allowed = analysis.source_selection(neighborhood)
         context = {
             **identity,
-            "component": component,
-            "incident_components": neighborhood,
+            "component": analysis.model_components([component])[0],
+            "incident_components": analysis.model_components(neighborhood),
             "incident_flows": incident,
             "adjacent_boundaries": adjacent,
             "existing_controls": [row for row in controls if component["id"] in row["component_ids"]],
@@ -8702,6 +8729,13 @@ def _assessment_stride(
             context["declared_context"] = assessment_context.component_context(captured, component)
         progress(f"Analyzing all STRIDE categories: {component['name']} ({position}/{len(components['components'])})")
         targets = analysis.analysis_targets(scope, component, architecture, scanned[component["id"]])
+        unexamined = analysis.unexamined_files(component, targets)
+        if unexamined:
+            examples = ", ".join(path for _, path in unexamined[:5])
+            jobs.notes.append(
+                f"{component['name']}: {_count_noun(len(unexamined), 'source file')} without a route, lead or "
+                f"security signal were not individually examined (for example {examples})"
+            )
         lens_ids, lens_policy = analysis.analysis_lenses(scope, component)
         context["lens_ids"] = lens_ids
         # The controller serves every target window with the first packet, so
@@ -8738,7 +8772,8 @@ def _assessment_stride(
                         "identity propagation or exploitation. Read both ends before asserting a cross-repository "
                         "mechanism and retain its source-to-sink trace. "
                         "The controller supplies each investigation_targets anchor's source in source_slices; follow its "
-                        "mechanism to the relevant control or sink. Request all further source you need in one read "
+                        "mechanism to the relevant control or sink. A target's routes lists every route it covers; "
+                        "decide them together, including their guards and handler. Request all further source you need in one read "
                         "action: the job allows one round of further reads, and each call re-analyzes the whole packet. "
                         "Return one surface_coverage decision per target, citing that exact anchor and linking any findings. "
                         "Targets are investigation leads, never findings or proof of vulnerability. Use examined when "
@@ -8906,7 +8941,7 @@ def _assessment_evidence_review(
         ),
         context={
             **identity,
-            "component": component,
+            "component": analysis.model_components([component])[0],
             "findings": findings,
             "incident_flows": incident,
             **({"declared_context": context["declared_context"]} if "declared_context" in context else {}),
@@ -9610,6 +9645,9 @@ class _ReportedTransport:
     def on_correction(self, reason: str) -> None:
         """The controller rejected the last answer and asks the model to correct it."""
         self.report("answer rejected, asking for a correction: " + re.sub(r"\s+", " ", reason)[:100])
+        notice = getattr(self.inner, "on_correction", None)
+        if callable(notice):
+            notice(reason)
 
     def _source(self, row):
         label = self.labels.get(row.get("repository_id"), "")
@@ -9743,6 +9781,8 @@ def _assessment_cli_host_factory(work_root: Path, events_dir: Path | None = None
             effort=ASSESSMENT_EFFORT,
             events_path=events_dir / f"{next(sequence):04d}-{role}.jsonl" if events_dir else None,
             max_thinking_tokens=ASSESSMENT_MAX_THINKING_TOKENS if events_dir else None,
+            # Each exchange prompt is unique and read again only within minutes (MD-11).
+            short_cache=True,
         )
 
     return factory

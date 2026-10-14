@@ -225,10 +225,19 @@ def test_files_without_scanner_signals_still_need_investigation(tmp_path, path):
     "path,source,expected",
     [
         # A license header precedes the first statement of a file without a lead.
-        ("models/order.ts", b"/*\n * Copyright (c) Example\n */\n\nimport { Model } from 'orm'\nclass Order {}\n", 5),
-        ("store/ledger.py", b"#!/usr/bin/env python3\n# SPDX-License-Identifier: MIT\n\nrows = load()\n", 4),
+        # Each file carries a security signal (MR-13), so it is a target at all.
+        (
+            "models/order.ts",
+            b"/*\n * Copyright (c) Example\n */\n\nimport { Model } from 'orm'\nclass Order { query() {} }\n",
+            5,
+        ),
+        (
+            "store/ledger.py",
+            b"#!/usr/bin/env python3\n# SPDX-License-Identifier: MIT\n\nrows = load()\nexec(rows)\n",
+            4,
+        ),
         # A file that starts with code keeps its first line.
-        ("lib/basket.ts", b"export const total = 0\n// end\n", 1),
+        ("lib/basket.ts", b"export const total = 0\n// end\nexport const token = ''\n", 1),
     ],
 )
 def test_file_targets_cite_the_first_line_the_evidence_rule_accepts(tmp_path, path, source, expected):
@@ -1073,3 +1082,152 @@ def test_a_job_preloads_at_most_its_window_limit(tmp_path):
         max_unserved=6,
     )
     assert [len(preload) for _, preload in batches] == [4, 4, 1]
+
+
+def _route(route_id, method, path, file, line):
+    return {"route_id": route_id, "method": method, "path": path, "handler_file": file, "handler_line": line}
+
+
+@pytest.mark.parametrize(
+    "registration,handler", [("server.ts", "routes/items.ts"), ("src/app.js", "handlers/v2/catalog.js")]
+)
+def test_a_resolved_route_resource_is_one_target_at_its_handler_with_its_guards(tmp_path, registration, handler):
+    """MR-13: collection and item routes are one decision, read beside their registration lines."""
+    files = {
+        registration: (
+            b"const app = express()\n"
+            b"app.get('/api/Items', items.list())\n"
+            b"app.put('/api/Items/:id', security.denyAll())\n"
+            b"app.get('/rest/login', login())\n"
+        ),
+        handler: b"export const list = () => (req, res) => db.query(req.query)\n",
+    }
+    scope, component = _owned_sources(tmp_path, files, sorted(files))
+    rid = scope.repositories[0].repository_id
+    architecture = {
+        "data_flows": {"data_flows": []},
+        "route_inventories": {
+            rid: {
+                "routes": [
+                    _route("R-1", "GET", "/api/Items", registration, 2),
+                    _route("R-2", "PUT", "/api/Items/:id", registration, 3),
+                    _route("R-3", "GET", "/rest/login", registration, 4),
+                ]
+            }
+        },
+        "route_handler_modules": {rid: {"R-1": handler}},
+    }
+    targets = stage.analysis_targets(scope, component, architecture, [])
+    by_file = {t["evidence"]["file"]: t for t in targets}
+    assert len(targets) == 2 and set(by_file) == {registration, handler}
+    resource = by_file[handler]
+    assert resource["kinds"] == ["route"]
+    assert [(r["method"], r["path"]) for r in resource["routes"]] == [("GET", "/api/Items"), ("PUT", "/api/Items/:id")]
+    assert resource["related"] == [[rid, registration, 1, 399]]
+    # A resource without a resolved handler, here the inline login, stays at its registration.
+    assert by_file[registration]["evidence"]["line"] == 4
+    assert [r["path"] for r in by_file[registration]["routes"]] == ["/rest/login"]
+    # Even a job holding only the handler preloads the registration window with its guards.
+    batches = stage.target_batches(
+        scope, targets, room=100_000, max_targets=1, max_windows=36, window_lines=400, max_unserved=6
+    )
+    handler_job = next(preload for part, preload in batches if part[0]["evidence"]["file"] == handler)
+    assert {key[1] for key in handler_job} == {handler, registration}
+    login_job = next(preload for part, preload in batches if part[0]["evidence"]["file"] == registration)
+    assert [key[1] for key in login_job] == [registration]
+
+
+@pytest.mark.parametrize(
+    "path,resource",
+    [
+        ("/api/Users/:id/orders", "/api/Users"),
+        ("/users/{user_id}", "/users"),
+        ("/files/<name>", "/files"),
+        ("/assets/*", "/assets"),
+        # A path without parameters is its own resource, so distinct actions stay apart.
+        ("/rest/user/login", "/rest/user/login"),
+    ],
+)
+def test_route_resources_end_at_the_first_parameter(path, resource):
+    assert stage.route_resource(path) == resource
+
+
+@pytest.mark.parametrize(
+    "acl", [b"export function checkPermission(user) {}\n", b"def custom_permission_check(): pass\n"]
+)
+def test_a_file_without_a_security_signal_is_reported_instead_of_targeted(tmp_path, acl):
+    files = {
+        "lib/format.ts": b"export const pad = (s) => s.padStart(2)\n",
+        "lib/acl.code": acl,
+        "views/card.html": b'<div [innerHTML]="text"></div>\n',
+    }
+    scope, component = _owned_sources(tmp_path, files, sorted(files))
+    targets = stage.analysis_targets(scope, component, {"data_flows": {"data_flows": []}}, [])
+    # Authorization logic in an identifier and a template sink are signals; formatting is not.
+    assert {t["evidence"]["file"] for t in targets} == {"lib/acl.code", "views/card.html"}
+    assert stage.unexamined_files(component, targets) == [(scope.repositories[0].repository_id, "lib/format.ts")]
+
+
+def test_evidence_preload_serves_cited_ranges_inside_the_job_bounds(tmp_path):
+    files = {"a.ts": b"".join(b"line_%d()\n" % n for n in range(1, 301)), "foreign.ts": b"x()\n"}
+    scope, component = _owned_sources(tmp_path, files, ["a.ts"])
+    rid = scope.repositories[0].repository_id
+    allowed = stage.source_selection([component])
+    cited = [
+        {"repository_id": rid, "file": "a.ts", "line": 10},
+        {"repository_id": rid, "file": "a.ts", "line": 50},
+        {"repository_id": rid, "file": "a.ts", "line": 260},
+        {"repository_id": rid, "file": "foreign.ts", "line": 1},
+    ]
+    # Overlapping ranges merge, the end clamps to the file, and an unselected file is never served.
+    assert stage.evidence_preload(scope, cited, allowed, room=100_000, max_windows=36) == [
+        (rid, "a.ts", 1, 140),
+        (rid, "a.ts", 230, 300),
+    ]
+    assert stage.evidence_preload(scope, cited, allowed, room=100_000, max_windows=1) == [(rid, "a.ts", 1, 140)]
+    assert stage.evidence_preload(scope, cited, allowed, room=100, max_windows=36) == []
+
+
+def test_model_components_drop_only_the_path_hashes(tmp_path):
+    scope, components, _, _, _ = sources(tmp_path)
+    original = copy.deepcopy(components)
+    view = stage.model_components(components)
+    assert components == original
+    assert [row for c in view for row in c["paths"]] == [
+        {k: v for k, v in row.items() if k != "sha256"} for c in original for row in c["paths"]
+    ]
+    assert all(
+        {k: v for k, v in c.items() if k != "paths"} == {k: v for k, v in o.items() if k != "paths"}
+        for c, o in zip(view, original, strict=True)
+    )
+
+
+@pytest.mark.parametrize("line,problem", [(2, "blank"), (3, "comment")])
+def test_a_non_executable_finding_anchor_is_named_for_an_anchor_only_correction(tmp_path, line, problem):
+    from runtime.assessment_host import Rejection
+
+    source = b"result = request.args['input']\n\n# Blocking sleep helper\nsleep(result)\n"
+    repo = RepositoryView("repo-" + "1" * 16, tmp_path / "repo", "b" * 40, "c" * 64, {"app.py": source})
+    scope = AssessmentScope((repo,), tmp_path / "output")
+    digest = hashlib.sha256(source).hexdigest()
+    component = dict(
+        id="component-1",
+        name="Service",
+        tier="application",
+        repository_ids=[repo.repository_id],
+        paths=[dict(repository_id=repo.repository_id, path="app.py", sha256=digest)],
+    )
+    evidence = dict(repository_id=repo.repository_id, file="app.py", line=line, sha256=digest)
+    identity = dict(
+        schema_version=2, source_scope_sha256=scope.inventory()["scope_sha256"], component_inventory_fingerprint=FP
+    )
+    ranges = [dict(repository_id=repo.repository_id, path="app.py", sha256=digest, start_line=1, end_line=4)]
+    flows = dict(component_inventory_fingerprint=FP, data_flows=[])
+    with pytest.raises(Rejection) as raised:
+        stage.validate_stride(scope, component, [component], flows, stride(component, evidence, identity), ranges)
+    assert problem in str(raised.value)
+    assert [row["line"] for row, _ in raised.value.anchors] == [line]
+    # An executable anchor passes the same validation.
+    stage.validate_stride(
+        scope, component, [component], flows, stride(component, {**evidence, "line": 1}, identity), ranges
+    )

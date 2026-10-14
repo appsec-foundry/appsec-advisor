@@ -148,6 +148,54 @@ def test_a_rejected_result_is_corrected_with_the_controller_reason(tmp_path):
     assert "result must name the corrected state" in prompts[1]
 
 
+@pytest.mark.parametrize("reason", ["result must name the corrected state", "threats/0: missing evidence"])
+def test_a_rejection_reaches_the_transport_whose_answer_it_rejects(tmp_path, reason):
+    """The job's host wrapper forwards the correction notice, so the call's own log can record it."""
+    notices = []
+
+    def reject_first(artifact, ranges):
+        if artifact["result"] != "corrected":
+            raise ExchangeError(reason)
+
+    replies = [
+        {"action": "complete", "reads": [], "artifact": {"result": "first"}},
+        {"action": "complete", "reads": [], "artifact": {"result": "corrected"}},
+    ]
+    jobs, host, kwargs, _ = setup(tmp_path, replies=replies, validate=reject_first)
+    host.on_correction = notices.append
+    assert jobs.execute(**kwargs) == {"result": "corrected"}
+    assert notices == [reason]
+
+
+def test_an_accepted_first_answer_sends_no_correction_notice(tmp_path):
+    notices = []
+    jobs, host, kwargs, _ = setup(tmp_path)
+    host.on_correction = notices.append
+    jobs.execute(**kwargs)
+    assert notices == []
+
+
+def test_cli_transport_records_a_rejection_in_its_event_stream(tmp_path):
+    from runtime.analyst_host import ClaudeCliTransport
+
+    events = tmp_path / "events" / "0001-stride_analyzer.jsonl"
+    transport = ClaudeCliTransport(tmp_path / "work", events_path=events)
+    # Before the call has written its stream there is nothing to annotate.
+    transport.on_correction("ignored")
+    assert not events.exists()
+    events.parent.mkdir()
+    events.write_text('0.5\t{"type": "result"}\n')
+    transport.on_correction("STRIDE investigation is incomplete: " + "x" * 3000)
+    stamp, record = events.read_text().splitlines()[-1].split("\t", 1)
+    assert stamp == "-" and json.loads(record)["type"] == "controller_rejection"
+    assert (
+        json.loads(record)["reason"].startswith("STRIDE investigation is incomplete")
+        and len(json.loads(record)["reason"]) == 2000
+    )
+    # An unrecorded call keeps no file.
+    ClaudeCliTransport(tmp_path / "work2").on_correction("ignored")
+
+
 def test_cancellation_stops_even_a_cached_job(tmp_path):
     cancelled = [False]
     jobs, host, kwargs, _ = setup(tmp_path, should_stop=lambda: cancelled[0])
