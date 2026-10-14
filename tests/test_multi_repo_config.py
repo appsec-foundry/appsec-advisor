@@ -56,7 +56,7 @@ def test_combined_assessment_moves_economy_stride_off_sonnet_46(tmp_path, monkey
     resolved = config.resolve_assessment(scope(tmp_path), arguments, ROOT)
     assert resolved["stride_model"] == config.SONNET5
     assert f"STRIDE: {config.SONNET5}" in resolved["reasoning_label"]
-    # Only STRIDE moves; the other economy roles keep their pins.
+    # Only STRIDE moves; the other economy roles keep their pins (discovery: MD-10).
     single = config.resolve(
         ["--repo", str(tmp_path), "--output", str(tmp_path / "single"), "--full", *arguments],
         ROOT,
@@ -65,9 +65,27 @@ def test_combined_assessment_moves_economy_stride_off_sonnet_46(tmp_path, monkey
     )
     assert single["stride_model"] == config.SONNET46
     assert resolved["stride_model_moved_from"] == config.SONNET46
-    assert {k: v for k, v in resolved.items() if k.endswith("_model") and k != "stride_model"} == {
-        k: v for k, v in single.items() if k.endswith("_model") and k != "stride_model"
+    moved = {"stride_model", "recon_scanner_model"}
+    assert {k: v for k, v in resolved.items() if k.endswith("_model") and k not in moved} == {
+        k: v for k, v in single.items() if k.endswith("_model") and k not in moved
     }
+
+
+def test_controller_discovery_leaves_the_haiku_recon_default(tmp_path, monkeypatch):
+    monkeypatch.delenv("APPSEC_RECON_SCANNER_MODEL", raising=False)
+    arguments = ["--no-requirements"]
+    single = config.resolve(
+        ["--repo", str(tmp_path), "--output", str(tmp_path / "single"), "--full", *arguments],
+        ROOT,
+        create_output_dir=False,
+        source_count=1,
+    )
+    assert single["recon_scanner_model"] == config.HAIKU
+    assert config.resolve_assessment(scope(tmp_path), arguments, ROOT)["recon_scanner_model"] == config.SONNET5
+    # An explicit role pin or shared model still wins.
+    assert config.resolve_assessment(scope(tmp_path), arguments, ROOT, model="haiku")["recon_scanner_model"] == "haiku"
+    monkeypatch.setenv("APPSEC_RECON_SCANNER_MODEL", config.HAIKU)
+    assert config.resolve_assessment(scope(tmp_path), arguments, ROOT)["recon_scanner_model"] == config.HAIKU
 
 
 @pytest.mark.parametrize("origin", ["environment", "shared"])
