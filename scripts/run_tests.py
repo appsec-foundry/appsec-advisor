@@ -261,6 +261,7 @@ GROUPS = {
         event_log
         gate_preconditions
         headless_usage
+        remote_repositories
         hook_payload
         hook_payload_contract
         hooks_schema
@@ -615,6 +616,7 @@ _AGENT_FILE_TESTS = (
 _SKILL_FILE_TESTS = "check_target_specificity context_routing requirements_verification"
 
 SOURCE_TESTS = {
+    "scripts/runtime/remote_repositories.py": _tests("remote_repositories"),
     ".claude/settings.json": _tests("check_permissions requirements_hook spec_guard requirements_verification"),
     "specs/README.md": _tests("requirements_verification"),
     "specs/changes/root-requirements-catalog/proposal.md": _tests("requirements_verification"),
@@ -1247,6 +1249,7 @@ SOURCE_TESTS = {
         validate_fragment
     """),
     "scripts/run-headless.sh": _tests("""
+        remote_repositories
         acceptance_invocation
         controller_e2e
         agent_logger

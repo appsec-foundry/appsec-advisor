@@ -66,6 +66,7 @@ requirements:
 
   REQ-PUR-003:
     applies_to:
+      - scripts/runtime/remote_repositories.py
       - scripts/runtime/resolve_config.py
       - scripts/runtime/multi_repo_scope.py
       - scripts/orchestrator/assessment_workspace.py
@@ -76,6 +77,8 @@ requirements:
       - README.md
     coverage: direct
     guards:
+      - tests/test_remote_repositories.py::test_multiple_urls_and_local_paths_share_one_invocation
+      - tests/test_remote_repositories.py::test_real_checkout_and_cleanup_with_stable_identity
       - tests/test_resolve_config.py::TestCLI::test_repo_flag_resolves_path
       - tests/test_resolve_config.py::TestCLI::test_repo_flag_honours_explicit_subdir_not_git_root
       - tests/test_multi_repo_assessment.py::test_combined_assessment_publishes_one_qualified_model
@@ -975,6 +978,7 @@ requirements:
 
   REQ-TRU-001:
     applies_to:
+      - scripts/runtime/remote_repositories.py
       - scripts/appsec-reviewer-cli
       - scripts/validators/preflight_untrusted.py
       - scripts/runtime/multi_repo_scope.py
@@ -987,6 +991,7 @@ requirements:
       - SECURITY.md
     coverage: direct
     guards:
+      - tests/test_remote_repositories.py::test_clone_does_not_execute_operator_filters_or_hooks
       - tests/test_appsec_reviewer_cli.py::test_repository_owned_claude_configuration_is_refused_unless_trusted
       - tests/test_appsec_reviewer_cli.py::test_a_checked_in_verdict_is_never_reported_as_this_review
       - tests/test_preflight_untrusted.py::test_repo_owned_claude_settings_flagged
@@ -1454,6 +1459,7 @@ requirements:
 
   REQ-FLW-006:
     applies_to:
+      - scripts/runtime/remote_repositories.py
       - scripts/run-headless.sh
       - scripts/orchestrator/orchestration_controller.py
     decisions: []
@@ -1461,6 +1467,8 @@ requirements:
       - docs/headless-mode.md
     coverage: partial
     guards:
+      - tests/test_remote_repositories.py::test_missing_credentials_fail_without_prompting
+      - tests/test_remote_repositories.py::test_sigterm_stops_runner_and_removes_checkouts
       - tests/test_orchestration_controller.py::test_early_context_bypass_never_waits
       - tests/test_run_headless_completion.py::test_headless_has_no_generation_escape_hatch
 
