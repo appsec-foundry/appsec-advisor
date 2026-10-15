@@ -46,6 +46,18 @@ A check is required only when it exercises behavior the change alters, a consume
 
 **Routing is orientation, never the decision.** `run_tests.py --list`, `test-for`, and `test-plan` propose candidates; they routinely include more than the change needs. Before running anything, cross-check each candidate against the change itself and ask: does this check actually exercise something this change can break? Drop every candidate where the answer is no or where you cannot name what the check would catch. Add a required check that routing missed. Stop as soon as the required checks pass.
 
+**Never run, unless the user asks or a release requires it:**
+
+- `make check`, the full suite, a whole test group, or coverage runs.
+- A bundled target (`test-plan`, `test-changed`, `test-for`, `validate`, `lint`) whose entire selection you have not cross-checked as required.
+- A whole test module when the required behavior is covered by named node IDs.
+- Any check before the change to capture a baseline, or after it to gain confidence.
+- A check that already passed, unless a later edit touches what it exercises.
+
+Before running a check, name the changed behavior it exercises. If you cannot, do not run it.
+
+**Commit after the required checks pass.** Stage only the files this task changed, confirm with `git diff --cached` that no foreign edits are staged, and commit on the current branch. Do not run further checks before or after the commit. If a required check fails, fix the cause and rerun only that check; do not commit a failing change.
+
 ### Select checks
 
 List candidates with `python3 scripts/run_tests.py --list --path <path>` for each changed file, then cross-check them against the change and keep only the required checks. Prefer exact pytest node IDs, then single modules. Add missing coverage or report the gap. Changed Python files require lint and format checks on those files; documentation changes require only the document and contract checks they can affect. Markdown under `agents/` and `skills/` is runtime input; root `AGENTS.md` is repository guidance.
@@ -60,7 +72,7 @@ The table lists bundled targets, not mandatory steps. Each one runs everything i
 | Global lint | `make lint` | Covers `scripts/`, `tests/`, and `hooks/`. |
 | Full gate | `make check` | Only for releases or impact that cannot be bounded to focused checks; state the reason first. |
 
-In all other cases, invoke validators, pytest selectors, and lint checks directly. A routing refusal or fallback requires reporting and impact assessment, never an automatic full gate. Do not add group, full-suite, or coverage runs for extra confidence. [Contributing](CONTRIBUTING.md#targeted-tests-before-finishing-a-non-trivial-change) provides command details; this section governs selection.
+In all other cases, invoke validators, pytest selectors, and lint checks directly. A routing refusal or fallback requires reporting and impact assessment, never an automatic full gate. [Contributing](CONTRIBUTING.md#targeted-tests-before-finishing-a-non-trivial-change) provides command details; this section governs selection.
 
 ### Evidence and completion
 
@@ -69,7 +81,7 @@ In all other cases, invoke validators, pytest selectors, and lint checks directl
 - **Deterministic-tail or source-scanner changes:** Replay a golden fixture with `scripts/threat_fixture.py` using the [fixture runbook](docs/internal/runbooks/threat-fixture.md).
 - **Test inventory or dependencies:** Maintain exact groups, manual roles, and producer/consumer routes in [scripts/run_tests.py](scripts/run_tests.py). `make validate` rejects missing assignments and stale paths. After adding or editing a source route, run `make audit-test-routes` with its full measurement scope. Unchanged routes need no audit.
 
-Do not run tests before a change merely to capture a baseline. If a selected test fails, rerun only failures at the merge base, or `HEAD` for work selected with `BASE=HEAD`, following Contributing. The same failure there is pre-existing; a comparable passing run establishes a regression. Missing or skipped tests provide no baseline. Reuse successful checks unless relevant changes or failures require reruns.
+If a selected test fails, rerun only failures at the merge base, or `HEAD` for work selected with `BASE=HEAD`, following Contributing. The same failure there is pre-existing; a comparable passing run establishes a regression. Missing or skipped tests provide no baseline. Reuse successful checks unless relevant changes or failures require reruns.
 
 ## Documentation
 
