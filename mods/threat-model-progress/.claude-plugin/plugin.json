@@ -1,6 +1,6 @@
 {
   "name": "threat-model-progress",
-  "version": "0.1.0",
-  "description": "Live pane with the progress of a background create-threat-model2 step",
+  "version": "0.2.0",
+  "description": "Band, toasts and a live pane with the progress of a background create-threat-model2 step",
   "types": "./types/index.d.ts"
 }

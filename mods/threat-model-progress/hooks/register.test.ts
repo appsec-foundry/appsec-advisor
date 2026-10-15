@@ -1,6 +1,11 @@
 import { expect, test } from 'claude-code/testing'
 
-import { isStepCommand, outputFileOf, tailOf } from './register'
+import { durationOf, isStepCommand, outputFileOf, rowOf, stepOf, tailOf, toastOf } from './register'
+
+const START = '18:55:27  1/8 Reconnaissance    start  planning      <1m'
+const WARN = '17:56:51  1/8 Reconnaissance    ⚠      planning       3m          model call failed (server_error); repeating it in 15 s (attempt 2)'
+const DONE = '19:04:40  1/8 Reconnaissance    done   planning       9m          recon complete'
+const NEXT = '19:04:40  2/8 Architecture      start  planning       9m  1h02m'
 
 test('recognizes a create-threat-model2 step command', () => {
   expect(isStepCommand('APPSEC_SINGLE_REPO_CONTROLLER=1 "/x/scripts/run-headless.sh" --repo r --output o --interactive-launch --pause-after 1')).toBe(true)
@@ -17,4 +22,34 @@ test('takes the output file from the background notice', () => {
 
 test('keeps the last non-empty lines', () => {
   expect(tailOf('a\n\nb\r\nc\n', 2)).toEqual(['b', 'c'])
+})
+
+test('reads grid rows with a blank or filled LEFT column', () => {
+  expect(rowOf(START)).toEqual({ k: 1, n: 8, name: 'Reconnaissance', event: 'start', elapsed: 0, detail: '' })
+  expect(rowOf(WARN)?.detail).toBe('model call failed (server_error); repeating it in 15 s (attempt 2)')
+  expect(rowOf(WARN)?.elapsed).toBe(180)
+  expect(rowOf(NEXT)?.elapsed).toBe(540)
+  expect(rowOf('18:55:27    Depth      : standard')).toBe(undefined)
+})
+
+test('derives the step outcome', () => {
+  expect(stepOf([START, WARN]).outcome).toBe('running')
+  expect(stepOf([START, DONE, '⏸ Paused after phase 1/8 — Reconnaissance; continue with --resume']).outcome).toBe('paused')
+  expect(stepOf([START, '✗ assessment stopped: budget']).message).toBe('assessment stopped: budget')
+  expect(stepOf(['12:00:00  8/8 Finalization      done   writing      1h10m']).outcome).toBe('complete')
+})
+
+test('toasts a phase end only when the phase was running before', () => {
+  const before = stepOf([START])
+  expect(toastOf(before, stepOf([START, DONE, NEXT]), 552, 552)).toBe('✓ Phase 1/8 Reconnaissance done (9m12s)')
+  expect(toastOf(before, stepOf([START, DONE]), 2, 2)).toBe(undefined)
+  expect(toastOf(stepOf([]), stepOf([START, DONE, NEXT]), 600, 600)).toBe(undefined)
+  expect(toastOf(before, stepOf([START, '✗ boom']), 5, 5)).toBe('✗ Threat model: boom')
+  expect(toastOf(stepOf([START, '✗ boom']), stepOf([START, '✗ boom', '✗ boom']), 5, 5)).toBe(undefined)
+})
+
+test('formats durations like the controller', () => {
+  expect(durationOf(42)).toBe('42s')
+  expect(durationOf(252)).toBe('4m12s')
+  expect(durationOf(3840)).toBe('1h04m')
 })
