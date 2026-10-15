@@ -46,6 +46,14 @@ MAX_STATE_BYTES = 2_097_152
 MAX_DELIVERABLE_BYTES = 67_108_864
 
 
+class AssessmentPaused(Exception):
+    """The run stopped at a requested phase boundary; --resume continues it."""
+
+    def __init__(self, number: int, total: int, phase: str):
+        super().__init__(f"paused after phase {number}/{total} ({phase})")
+        self.number, self.total, self.phase = number, total, phase
+
+
 def _real_directory(path: Path, *, create=False):
     """Reject links in the controller-selected writable path and its parents."""
     for parent in reversed((path, *path.parents)):
@@ -133,7 +141,9 @@ class AssessmentState:
                 yield self
             except BaseException as error:
                 self.state["status"] = (
-                    "interrupted" if isinstance(error, (HostCancelled, KeyboardInterrupt)) else "failed"
+                    "interrupted"
+                    if isinstance(error, (HostCancelled, KeyboardInterrupt, AssessmentPaused))
+                    else "failed"
                 )
                 self.checkpoint()
                 raise
