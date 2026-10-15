@@ -300,6 +300,76 @@ def test_registration_guards_keep_their_signal(tmp_path):
     assert route(ri.build_inventory(tmp_path), "/feedback")["authn_signal"] == "middleware_present"
 
 
+LIST_HANDLER = "export function listOrders () {\n  return (req, res) => res.json([])\n}\n"
+
+
+@pytest.mark.parametrize(
+    ("files", "path", "evidence"),
+    [
+        (
+            {
+                "lib/access.ts": "import tokenGate from 'express-jwt'\n"
+                "export const requireToken = () => tokenGate(({ secret: publicKey }) as any)\n",
+                "server.ts": "import express from 'express'\n"
+                "import * as access from './lib/access'\n"
+                "import { listOrders } from './routes/orders'\n"
+                "const app = express()\n"
+                "app.use('/api/orders', access.requireToken())\n"
+                "app.get('/api/orders/:id', listOrders())\n",
+            },
+            "/api/orders/:id",
+            {"file": "lib/access.ts", "line": 2},
+        ),
+        (
+            {
+                "app.js": "const express = require('express')\n"
+                "const { expressjwt } = require('express-jwt')\n"
+                "const { listOrders } = require('./routes/orders')\n"
+                "const app = express()\n"
+                "app.get('/reports', expressjwt({ secret: KEY, algorithms: ['HS256'] }), listOrders())\n",
+            },
+            "/reports",
+            {"file": "app.js", "line": 5},
+        ),
+    ],
+)
+def test_an_authentication_package_guard_verifies_its_routes(tmp_path, files, path, evidence):
+    write(tmp_path, {"routes/orders.ts": LIST_HANDLER, "routes/orders.js": LIST_HANDLER, **files})
+    inventory = ri.build_inventory(tmp_path)
+    jsonschema.validate(inventory, SCHEMA)
+    row = route(inventory, path)
+    assert row["authn_handler_signal"] == "verified" and row["authn_handler_scheme"] == "bearer"
+    assert row["authn_handler_evidence"] == [evidence]
+    assert row["handler_module"] in {"routes/orders.ts", "routes/orders.js"}
+
+
+@pytest.mark.parametrize(
+    ("imported", "mount"),
+    [
+        ("tokenGate from 'express-jwt'", "'/api/orders', tokenGate({ secret: KEY, credentialsRequired: false })"),
+        ("tokenGate from 'express-jwt'", "'/api/orders', tokenGate(options)"),
+        ("{ claimCheck } from 'express-oauth2-jwt-bearer'", "'/api/orders', claimCheck((claims) => true)"),
+        ("tokenGate from 'express-jwt'", "'/admin', tokenGate({ secret: KEY })"),
+    ],
+    ids=["rejection-off", "options-by-name", "non-rejecting-member", "prefix-elsewhere"],
+)
+def test_an_authentication_package_that_may_not_reject_stays_unresolved(tmp_path, imported, mount):
+    write(
+        tmp_path,
+        {
+            "routes/orders.ts": LIST_HANDLER,
+            "server.ts": "import express from 'express'\n"
+            f"import {imported}\n"
+            "import { listOrders } from './routes/orders'\n"
+            "const app = express()\n"
+            f"app.use({mount})\n"
+            "app.get('/api/orders/:id', listOrders())\n",
+        },
+    )
+    row = route(ri.build_inventory(tmp_path), "/api/orders/:id")
+    assert row["authn_handler_signal"] != "verified"
+
+
 def test_authz_confirm_reads_the_resolved_handler_not_the_registration_window(tmp_path):
     write(
         tmp_path,

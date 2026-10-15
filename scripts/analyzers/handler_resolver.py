@@ -22,7 +22,9 @@ Resolution covers JavaScript/TypeScript call registrations (same-file
 definitions, ES imports and ``require`` of repository modules, factory calls,
 objects created by a package call, one level of same-file helpers) and
 decorated Python handlers including FastAPI ``Depends(...)``/``Security(...)``
-targets; NestJS handlers report ``verified``/``decode_only`` only, because
+targets. A call of a known authentication middleware package
+(``_AUTHENTICATING_PACKAGES``) counts as ``verified`` when its inline options
+keep rejection on; NestJS handlers report ``verified``/``decode_only`` only, because
 class and global guards stay invisible. Other stacks return no signal. Comments
 never count, only a function's own body counts, and test files are never used
 as definitions. ``analyzers/route_inventory.py`` records the signal and
@@ -40,7 +42,7 @@ if not __package__:
 
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from shared._path_guard import is_safe_to_read
@@ -58,8 +60,8 @@ _REJECT_WINDOW = 8
 
 # Middleware packages that never read a credential: body parsing, uploads,
 # compression, CORS, security headers, logging, metrics, rate limiting,
-# localisation, static files, robots and error pages. Any other package is
-# unresolved, because it may authenticate.
+# localisation, static files, robots and error pages. Any other package that
+# _AUTHENTICATING_PACKAGES does not list is unresolved, because it may authenticate.
 _NON_CREDENTIAL_PACKAGES = frozenset(
     {
         "body-parser",
@@ -88,6 +90,36 @@ _NON_CREDENTIAL_PACKAGES = frozenset(
         "serve-static",
     }
 )
+
+
+@dataclass(frozen=True)
+class _PackageGuard:
+    """A call of an authentication middleware package that rejects requests without a valid credential.
+
+    ``evidence`` is the repository line that calls the package, set once the
+    call's options are seen to keep rejection on; until then the guard only
+    names the package's scheme and the option that would turn rejection off.
+    """
+
+    scheme: str
+    members: frozenset[str] | None
+    disabled: re.Pattern | None
+    evidence: tuple[str, int] | None = None
+
+
+# Middleware packages whose call rejects a request without a valid credential
+# by default: (scheme, exported members that do so or None for any, option that
+# turns rejection off). Session loaders such as express-session and strategy
+# frameworks such as passport are absent: they do not reject on their own.
+_AUTHENTICATING_PACKAGES = {
+    "express-jwt": _PackageGuard("bearer", None, re.compile(r"\bcredentialsRequired\s*:\s*false\b")),
+    "koa-jwt": _PackageGuard("bearer", None, re.compile(r"\bpassthrough\s*:\s*true\b")),
+    "express-oauth2-jwt-bearer": _PackageGuard(
+        "bearer", frozenset({"auth"}), re.compile(r"\bauthRequired\s*:\s*false\b")
+    ),
+    "express-basic-auth": _PackageGuard("other", None, None),
+}
+_JS_INLINE_OPTIONS_RE = re.compile(r"[\s(]*\{.*\}[\s)]*(?:as\s+[\w$.<>]+\s*)?", re.DOTALL)
 _JS_APP_FACTORY_RE = re.compile(
     r"=\s*(?:express|fastify|restify\.createServer)\s*\(|=\s*new\s+Koa\s*\(|Hapi\.server\s*\("
 )
@@ -275,6 +307,19 @@ def _returned_package_call(code: str, imports: dict[str, tuple[str, str]]) -> st
     return m.group(1) if m and root in imports and not imports[root][0].startswith(".") else None
 
 
+def _rejecting_call(code: str, callee: str, guard: _PackageGuard) -> bool:
+    """`code` calls `callee` with inline options that keep the package's rejection on.
+
+    Options passed by name could hold the disabling option unseen, so only an
+    inline object literal counts.
+    """
+    m = re.search(rf"(?<![\w$]){re.escape(callee)}\s*\(", code)
+    if not m:
+        return False
+    args = code[m.end() : _matching(code, m.end() - 1) - 1]
+    return bool(_JS_INLINE_OPTIONS_RE.fullmatch(args)) and not (guard.disabled and guard.disabled.search(args))
+
+
 def _scheme(text: str) -> str:
     if re.search(r"(?i)cookies", text):
         return "cookie"
@@ -421,21 +466,25 @@ class HandlerResolver:
             re.sub(r"\s+", "", callee.group(1)) if callee else None,
         )
 
-    def _resolve_js(self, rel: str, dotted: str, depth: int = 0) -> list[Body] | str | None:
-        """Code behind a callee path; 'external' for a non-credential package; None when unresolved."""
+    def _resolve_js(self, rel: str, dotted: str, depth: int = 0) -> list[Body] | str | _PackageGuard | None:
+        """Code behind a callee path; 'external' for a non-credential package; a guard for an
+        authentication package; None when unresolved."""
         if depth > 4:
             return None
         parts = [p.strip() for p in dotted.split(".")]
         imported = self._js_imports(rel).get(parts[0])
         if imported:
             src, exported = imported
+            member = exported if exported != "*" else (parts[1] if len(parts) > 1 else "default")
             if not src.startswith("."):
                 package = "/".join(src.split("/")[:2]) if src.startswith("@") else src.split("/")[0]
-                return "external" if package in _NON_CREDENTIAL_PACKAGES else None
+                if package in _NON_CREDENTIAL_PACKAGES:
+                    return "external"
+                guard = _AUTHENTICATING_PACKAGES.get(package)
+                return guard if guard and (guard.members is None or member in guard.members) else None
             module = self._module(rel, src)
             if module is None:
                 return None
-            member = exported if exported != "*" else (parts[1] if len(parts) > 1 else "default")
             return self._resolve_js(module, member, depth + 1)
         definition = self._js_definition(rel, parts[0])
         if definition is None:
@@ -446,16 +495,20 @@ class HandlerResolver:
         if not initializer:
             return [(rel, line, code)]
         resolved = self._resolve_js(rel, initializer, depth + 1)
-        if resolved is None:
-            return None
+        if isinstance(resolved, _PackageGuard) and resolved.evidence is None:
+            # A definition calling the package (`() => jwtGuard({...})`) is the guard's evidence.
+            return replace(resolved, evidence=(rel, line)) if _rejecting_call(code, initializer, resolved) else None
+        if resolved is None or isinstance(resolved, _PackageGuard):
+            return resolved
         return [(rel, line, code), *([] if resolved == "external" else resolved)]
 
-    def _js_element(self, rel: str, line: int, expr: str, depth: int = 0) -> tuple[bool, list[Body]]:
-        """(resolved, code) of one middleware or handler expression.
+    def _js_element(self, rel: str, line: int, expr: str, depth: int = 0) -> tuple[bool, list[Body] | _PackageGuard]:
+        """(resolved, code or authentication guard) of one middleware or handler expression.
 
         Only the outer callee counts. Its arguments are followed only when it
         resolves to repository code (a wrapper such as `asyncHandler(handler())`);
-        a package middleware's arguments are configuration.
+        a package middleware's arguments are configuration. A guard passed into
+        a wrapper stays unresolved, since the wrapper decides whether it runs.
         """
         expr = expr.strip()
         bare = _JS_STRING_RE.sub("''", expr)
@@ -471,6 +524,13 @@ class HandlerResolver:
         resolved = self._resolve_js(rel, callee)
         if resolved is None:
             return False, []
+        if isinstance(resolved, _PackageGuard):
+            if resolved.evidence is None:
+                # The registration calls the package itself.
+                if not (outer and _rejecting_call(expr, callee, resolved)):
+                    return False, []
+                resolved = replace(resolved, evidence=(rel, line))
+            return True, resolved
         if resolved == "external":
             return True, []
         code = list(resolved)
@@ -484,7 +544,7 @@ class HandlerResolver:
                     continue
                 if literal or _JS_CALLEE_RE.match(arg) or _JS_PATH_RE.match(arg):
                     ok, inner = self._js_element(rel, line, arg, depth + 1)
-                    if not ok:
+                    if not ok or isinstance(inner, _PackageGuard):
                         return False, []
                     code.extend(inner)
         return True, code
@@ -691,8 +751,15 @@ class HandlerResolver:
             return HandlerSignal("unresolved")
         mounted, handler, complete = found
         chain = [*mounted, *handler]
-        results = [self._classify(code, python) if ok else HandlerSignal("unresolved") for ok, code in chain]
-        bodies = [body for _ok, code in [*handler, *mounted] for body in code]
+        results = [
+            HandlerSignal("unresolved")
+            if not ok
+            else HandlerSignal("verified", code.scheme, [{"file": code.evidence[0], "line": code.evidence[1]}])
+            if isinstance(code, _PackageGuard)
+            else self._classify(code, python)
+            for ok, code in chain
+        ]
+        bodies = [body for _ok, code in [*handler, *mounted] if isinstance(code, list) for body in code]
         verified = next((r for r in results if r.signal == "verified"), None)
         if verified:
             return HandlerSignal("verified", verified.scheme, verified.evidence, bodies)
@@ -709,7 +776,7 @@ class HandlerResolver:
         found = self._chain(route)
         if not found or not found[1] or not all(ok for ok, _code in found[1]):
             return None
-        return "\n".join(body for _ok, code in found[1] for _rel, _line, body in code) or None
+        return "\n".join(body for _ok, code in found[1] if isinstance(code, list) for _rel, _line, body in code) or None
 
     def handler_module(self, route: dict) -> str | None:
         """Repository file that defines the route's own handler, or None when unresolved.
