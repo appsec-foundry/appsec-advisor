@@ -273,3 +273,83 @@ def test_a_large_repository_lists_cited_and_source_files_first_and_counts_the_re
     context = {"repository_id": "repo-0123456789abcdef", "label": "large", **listing}
     prompt = _prompt({"context": context, "source_slices": [], "source_reads_remaining": 12})
     assert len(prompt.encode()) < 150_000
+
+
+@pytest.mark.parametrize(
+    "max_usd,call_usd,concurrent", [(5.0, 2.0, 2), (16.0, 2.0, 4)], ids=["tight-budget", "roomy-budget"]
+)
+def test_concurrent_calls_never_reserve_more_than_the_budget(max_usd, call_usd, concurrent):
+    """MR-16: running reservations count against the budget; a call waits instead of overspending."""
+    import threading
+    import time
+
+    limits = discovery.DiscoveryBudget(max_usd=max_usd, call_usd=call_usd, max_calls=12, timeout_s=60)
+    release = threading.Event()
+    lock = threading.Lock()
+    running, peak, ceilings = [0], [0], []
+
+    class Blocking:
+        def __init__(self, ceiling):
+            ceilings.append(ceiling)
+
+        def invoke(self, system, prompt, schema, timeout_s, should_stop):
+            with lock:
+                running[0] += 1
+                peak[0] = max(peak[0], running[0])
+            release.wait(10)
+            with lock:
+                running[0] -= 1
+            return HostReply({}, 0.5)
+
+    threads = [
+        threading.Thread(target=limits.invoke, args=(Blocking, "s", "p", {}, 30, lambda: False)) for _ in range(4)
+    ]
+    for thread in threads:
+        thread.start()
+    deadline = time.monotonic() + 5
+    while len(ceilings) < concurrent and time.monotonic() < deadline:
+        time.sleep(0.01)
+    time.sleep(0.2)
+    # Only calls whose full ceiling fits beside the running reservations have started.
+    assert len(ceilings) == concurrent and limits.spent_usd <= max_usd and limits.failed
+    release.set()
+    for thread in threads:
+        thread.join(10)
+    # Settled costs free the reservations, so every waiting call ran with its full ceiling.
+    assert peak[0] == concurrent and ceilings == [call_usd] * 4
+    assert limits.spent_usd == pytest.approx(4 * 0.5) and not limits.failed
+
+
+def test_an_unsettled_concurrent_call_stops_the_calls_waiting_for_budget():
+    import threading
+
+    limits = discovery.DiscoveryBudget(max_usd=3.0, call_usd=2.0, max_calls=12, timeout_s=60)
+    started, release = threading.Event(), threading.Event()
+    errors = []
+
+    class Unknown:
+        def __init__(self, ceiling):
+            pass
+
+        def invoke(self, system, prompt, schema, timeout_s, should_stop):
+            started.set()
+            release.wait(10)
+            raise TransportError("host crashed", reason="api_error")
+
+    def call():
+        try:
+            limits.invoke(Unknown, "s", "p", {}, 30, lambda: False)
+        except Exception as exc:  # noqa: BLE001 - the test inspects every outcome
+            errors.append(exc)
+
+    first = threading.Thread(target=call)
+    first.start()
+    started.wait(5)
+    waiting = threading.Thread(target=call)
+    waiting.start()
+    release.set()
+    first.join(10)
+    waiting.join(10)
+    # The unknown cost keeps its reservation and no waiting call starts after it.
+    assert limits.unsettled and limits.calls == 1
+    assert any(isinstance(e, ExchangeError) and "accounting unavailable" in str(e) for e in errors)

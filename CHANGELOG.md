@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Headless controller assessments analyze and verify up to four components at a time instead of one after another, within the same cost budget.
 - Headless controller assessments spend less time preparing repeated source and evidence checks.
 - The headless controller console lists each STRIDE component and each verified abuse case with its title on its own line, and ends with one line per delivered file.
 - In a terminal, the headless controller's status line turns a spinner and draws a progress bar with each running model call's duration and activity, also with `--verbose`; CI logs are unchanged.

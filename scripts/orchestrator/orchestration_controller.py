@@ -8701,10 +8701,11 @@ def _assessment_stride(
             "No requirements catalog or prior findings were supplied. Do not invent requirement links or prior "
             "verification."
         )
-    documents, reviews = [], []
     progress("Running deterministic source scanners")
     scanned = assessment_scanner_findings.scan(scope, components, depth=depth)
-    for position, component in enumerate(components["components"], 1):
+
+    def analyze(position, component, jobs):
+        """Analyze and review one component; `jobs` is its own view (MR-16)."""
         neighborhood = analysis.component_neighborhood(components, flows, component["id"])
         incident = [flow for flow in flows["data_flows"] if component["id"] in (flow["from"], flow["to"])]
         adjacent = [
@@ -8855,7 +8856,6 @@ def _assessment_stride(
                 for location in analysis.unresolved_targets(part, target_batch)
             )
         document = analysis.combine_stride_parts(parts)
-        documents.append(document)
         findings = document["threats"] + scanned[component["id"]]
         if len({row["local_id"] for row in findings}) != len(findings):
             raise ControllerError("STRIDE finding IDs collide with deterministic scanner finding IDs")
@@ -8896,7 +8896,9 @@ def _assessment_stride(
             review = {**parts[0], "decisions": [row for part in parts for row in part["decisions"]]}
         else:
             review = {"schema_version": 2, **identity, "decisions": []}
-        reviews.append(review)
+        return document, review
+
+    documents, reviews = _assessment_components_concurrently(jobs, components["components"], analyze)
     scope.verify_unchanged()
     found = sum(len(document["threats"]) for document in documents) + sum(len(rows) for rows in scanned.values())
     _phase_result(progress, "Threat analysis", _count_noun(found, "finding"))
@@ -8911,6 +8913,49 @@ def _assessment_stride(
         review_groups=lambda verdict, groups: _assessment_merge_review(jobs, verdict, groups, progress=progress),
     )
     return documents, reviews, merged
+
+
+# MR-16: components whose STRIDE and evidence-review jobs run at the same time.
+ASSESSMENT_COMPONENT_WORKERS = 4
+
+
+def _assessment_components_concurrently(jobs, components, analyze):
+    """Run `analyze(position, component, jobs)` for every component on a bounded pool (MR-16).
+
+    Each component gets its own job view, so its notes and gaps join in
+    component order, as do the returned results. The first failure admits no
+    further job; running calls finish, so their receipts and accounting stay
+    resumable, and that failure is raised once every component has stopped.
+    """
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    halt = threading.Event()
+    failures = []
+    views = [jobs.view() for _ in components]
+    for view in views:
+        view.halt = halt
+
+    def run(position, component, view):
+        try:
+            return analyze(position, component, view)
+        except BaseException as exc:
+            if not halt.is_set():
+                failures.append(exc)
+                halt.set()
+            raise
+
+    with ThreadPoolExecutor(max_workers=ASSESSMENT_COMPONENT_WORKERS, thread_name_prefix="component") as pool:
+        futures = [
+            pool.submit(run, position, component, view)
+            for (position, component), view in zip(enumerate(components, 1), views, strict=True)
+        ]
+    for view in views:
+        jobs.join(view)
+    if failures:
+        raise failures[0]
+    results = [future.result() for future in futures]
+    return [document for document, _ in results], [review for _, review in results]
 
 
 # Candidate groups per merger exchange; the legacy merger admits at most 64.

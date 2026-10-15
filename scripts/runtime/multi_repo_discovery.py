@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import math
+import threading
 import time
 from collections import Counter
 from collections.abc import Callable
@@ -193,8 +194,31 @@ class DiscoveryBudget:
         # One row per repeated call: the failure's reason and reported cost.
         self.retries: list[dict] = []
         self.on_retry: Callable[[str], None] | None = None
-        # The latest call's reservation, which a stopped call is charged.
-        self._reserved = 0.0
+        # MR-16: concurrent calls share this accounting under one lock. Each
+        # call reserves its own ceiling; `_inflight` counts calls whose cost
+        # is not settled yet, and a thread's latest reservation is what its
+        # stopped call is charged.
+        self._lock = threading.Condition()
+        self._inflight = 0
+        self._local = threading.local()
+
+    @property
+    def failed(self) -> bool:
+        """Whether accounting is unavailable: a call is running or a cost is unknown.
+
+        A checkpoint persists this; a running call's reservation is unknown
+        until it settles.
+        """
+        return self.unsettled or getattr(self, "_inflight", 0) > 0
+
+    @failed.setter
+    def failed(self, value: bool) -> None:
+        self._unsettled = bool(value)
+
+    @property
+    def unsettled(self) -> bool:
+        """Whether a finished call left its cost unknown; no further call may start."""
+        return self._unsettled
 
     def remaining_seconds(self) -> int:
         remaining = math.floor(self.deadline - time.monotonic())
@@ -220,16 +244,16 @@ class DiscoveryBudget:
                 # the reserved amount bounds the unknown cost: keep it as spent
                 # and leave accounting available for the retry. A stopped call
                 # cost its whole reservation, so its retry counts as paid (MR-9).
-                self.failed = False
                 timeouts += 1
                 if timeouts > MAX_TIMEOUT_RETRIES or self._paid_retries() >= MAX_PAID_RETRIES:
                     raise
-                self.retries.append({"reason": "timeout", "usd": self._reserved, "paid": True})
+                self.retries.append({"reason": "timeout", "usd": self._local.reserved, "paid": True})
                 if self.on_retry is not None:
                     self.on_retry("model call stopped at its time or thinking limit; repeating it once")
             except TransportError as exc:
-                # Only a settled call leaves accounting available (`failed` is false).
-                if self.failed or exc.reason not in TRANSIENT_FAILURES or failures >= len(TRANSIENT_RETRY_DELAYS):
+                # Only a settled call leaves accounting available; another
+                # running call does not block this retry (MR-16).
+                if self.unsettled or exc.reason not in TRANSIENT_FAILURES or failures >= len(TRANSIENT_RETRY_DELAYS):
                     raise
                 paid = exc.usd is not None and exc.usd > FREE_FAILURE_USD
                 if paid and (failures or self._paid_retries() >= MAX_PAID_RETRIES):
@@ -257,42 +281,71 @@ class DiscoveryBudget:
             time.sleep(min(1.0, left))
 
     def _invoke_once(self, factory, system, prompt, schema, timeout_s, should_stop) -> HostReply:
-        if should_stop():
-            raise HostCancelled("Discovery cancelled")
-        if self.failed or self.calls >= self.max_calls:
-            raise ExchangeError("Discovery call budget exhausted or accounting unavailable")
-        # Round downward to match the host's cent-denominated budget argument.
-        ceiling = math.floor(min(self.call_usd, self.max_usd - self.spent_usd) * 100 + 1e-9) / 100
-        if ceiling < MIN_CALL_USD:
-            raise ExchangeError(
-                f"Assessment cost budget exhausted: USD {max(0.0, self.max_usd - self.spent_usd):.2f} "
-                "is left, too little for another model call"
-            )
-        self._reserved = ceiling
-        remaining = min(timeout_s, self.remaining_seconds(), MAX_CALL_SECONDS)
-        self.calls += 1
-        self.spent_usd += ceiling
-        self.failed = True
+        with self._lock:
+            while True:
+                if should_stop():
+                    raise HostCancelled("Discovery cancelled")
+                if self.unsettled or self.calls >= self.max_calls:
+                    raise ExchangeError("Discovery call budget exhausted or accounting unavailable")
+                # MR-16: while other calls run, wait for one to settle instead
+                # of starting below the full ceiling; running reservations are
+                # already part of `spent_usd`.
+                if self.max_usd - self.spent_usd < self.call_usd and self._inflight:
+                    self.remaining_seconds()
+                    self._lock.wait(1.0)
+                    continue
+                break
+            # Round downward to match the host's cent-denominated budget argument.
+            ceiling = math.floor(min(self.call_usd, self.max_usd - self.spent_usd) * 100 + 1e-9) / 100
+            if ceiling < MIN_CALL_USD:
+                raise ExchangeError(
+                    f"Assessment cost budget exhausted: USD {max(0.0, self.max_usd - self.spent_usd):.2f} "
+                    "is left, too little for another model call"
+                )
+            self._local.reserved = ceiling
+            remaining = min(timeout_s, self.remaining_seconds(), MAX_CALL_SECONDS)
+            self.calls += 1
+            self.spent_usd += ceiling
+            self._inflight += 1
         try:
             reply = factory(ceiling).invoke(system, prompt, schema, remaining, should_stop)
         except TransportError as exc:
             # A refused call whose cost the host still reported is settled, so
             # the run can be resumed; an unknown cost stays reserved (MR-4).
             if exc.usd is None or exc.usd > ceiling:
+                self._settle(ceiling, None)
                 raise
-            self.spent_usd += exc.usd - ceiling
-            self.failed = False
+            self._settle(ceiling, exc.usd)
             raise TransportError(
                 f"{exc}; the run can continue: rerun the same command with --resume",
                 reason=exc.reason,
                 usd=exc.usd,
             ) from None
+        except HostTimeout:
+            # The host enforces the reservation as its own spending limit, so
+            # the reserved amount bounds the unknown cost: keep it as spent
+            # and leave accounting available for the retry.
+            self._settle(ceiling, ceiling)
+            raise
+        except BaseException:
+            self._settle(ceiling, None)
+            raise
         cost = reply.usd
         if type(cost) not in (int, float) or not math.isfinite(cost) or cost < 0 or cost > ceiling:
+            self._settle(ceiling, None)
             raise TransportError("Model call cost is unavailable or exceeds its reservation")
-        self.spent_usd += cost - ceiling
-        self.failed = False
+        self._settle(ceiling, cost)
         return reply
+
+    def _settle(self, ceiling: float, cost: float | None) -> None:
+        """Replace a finished call's reservation by its cost; an unknown cost stops further calls."""
+        with self._lock:
+            self._inflight -= 1
+            if cost is None:
+                self._unsettled = True
+            else:
+                self.spent_usd += cost - ceiling
+            self._lock.notify_all()
 
 
 class BudgetedHost:

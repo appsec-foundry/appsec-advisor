@@ -1284,10 +1284,12 @@ def test_job_timing_reaches_the_per_stage_table(tmp_path):
 
 
 def test_jobs_record_fresh_and_reused_time_per_role():
+    import threading
+
     from runtime.assessment_jobs import AssessmentJobs
 
     jobs = AssessmentJobs.__new__(AssessmentJobs)
-    jobs.timing = {}
+    jobs.timing, jobs._lock = {}, threading.RLock()
     jobs._record("stride_analyzer", seconds=2.0, calls=3)
     jobs._record("stride_analyzer")
     assert jobs.timing["stride_analyzer"] == {"jobs": 1, "reused": 1, "calls": 3, "seconds": 2.0}
