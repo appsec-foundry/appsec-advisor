@@ -76,9 +76,9 @@ a schema-valid provisional inventory fingerprint, a stable `df-NNN`
 identifier, protocol, direction, data classification, provenance, and bounded
 file/line evidence. Use only `Public`, `Internal`, `Confidential`, or
 `Restricted` as the data classification. The controller replaces the
-provisional fingerprint with the finalized inventory fingerprint before any
-consumer can read the artifact.  Every data-flow evidence file must be a contained regular file in
-`REPO_ROOT`, and an evidence line must exist in that file.
+provisional fingerprint before any consumer reads the artifact.
+Do not invent a crossing or endpoint from prose alone. Each data-flow evidence
+file must be a contained regular file in `REPO_ROOT` with the cited line.
 
 Use `diagram_label` for the transported data as a short noun phrase (e.g. "Credentials", "Order records"), `label` for detail and `protocol` for the bare wire protocol (e.g. "HTTPS", "WebSocket"). Retain authentication and direction distinctions.
 
