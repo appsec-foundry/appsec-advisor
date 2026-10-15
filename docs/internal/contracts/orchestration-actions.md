@@ -302,6 +302,8 @@ of Stage 2 — each at most once, so an ignored redirect cannot loop.
 
 At thorough depth, unless the run names its cases, `prepare-abuse` first returns one `dispatch_agent` for the abuse-case deriver (decision AC-12). Its declared input is `abuse-case-deriver-context` v1, which carries no source code, and its `next_boundary` is `derive-abuse`. That boundary validates the proposals, admits at most three `MODEL-AC` cases, records the outcome in `.abuse-case-derivation.json`, and returns the matching action that `prepare-abuse` would. A missing or invalid proposal file admits nothing, and the record keeps derivation from running twice.
 
+The assessment controller (`assess`) follows abuse-case promotion with one bounded architect-review supplement when architect review is enabled. Only finding IDs absent from the initial review input enter this supplement; the complete register remains available for severity-policy validation. The optional `supplement` in `architect-review-runtime.schema.json` preserves the initial transaction and binds the additional proposals to their own input and job identities. Rebuild, mitigation-title normalization and preservation gates consume both transactions. Missing or rejected proposals remain unreviewed without another dispatch. Final coverage reconciles accepted decisions with the delivered findings, including findings added after either review. Ranking and root-cause synthesis consume the supplemented register before publication.
+
 Every semantic role is classified as producer-gated or controller-recovered
 before it can be dispatched. Producer-gated roles run the same deterministic
 schema or Markdown validator before returning that the controller repeats at

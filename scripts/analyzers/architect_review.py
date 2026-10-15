@@ -348,6 +348,7 @@ def apply_review(
     max_packet_bytes: int,
     max_packets: int,
     output_dir: Path | None = None,
+    finding_ids: list[str] | None = None,
 ) -> tuple[dict, dict]:
     """Apply independent packets against their common frozen input snapshot.
 
@@ -367,6 +368,7 @@ def apply_review(
         max_packet_bytes=max_packet_bytes,
         max_packets=max_packets,
         output_dir=output_dir,
+        finding_ids=finding_ids,
     )
     packet_ids = {packet["packet_id"] for packet in manifest["packets"]}
     if not isinstance(proposals, dict) or not set(proposals).issubset(packet_ids):

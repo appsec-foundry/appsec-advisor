@@ -266,14 +266,15 @@ def generalize_title(original: str, cwe: str) -> str:
 
 def reviewed_fix_titles(output_dir: Path) -> frozenset[tuple[str, str]]:
     """(t_id, title) of every fix the architect review accepted; those titles are owned by the review."""
-    from analyzers.architect_review_runtime import load_review
+    from analyzers.architect_review_runtime import load_review, review_transactions
 
     value = load_review(output_dir)
     if value is None:
         return frozenset()
     return frozenset(
         (row["t_id"], row["remediation"]["after"]["title"])
-        for row in value["application"]["accepted"]
+        for transaction in review_transactions(value)
+        for row in transaction["application"]["accepted"]
         if row["remediation"]
     )
 

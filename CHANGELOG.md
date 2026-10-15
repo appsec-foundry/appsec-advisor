@@ -71,6 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Headless controller assessments exclude prior run products and the plugin's hook state from source evidence while retaining repository inputs stored beside reports, and another run or Claude Code session writing such files into the checkout no longer stops a running assessment.
 - Headless controller reports retain linked architecture detail diagrams, include evidenced OAuth and identity-provider integrations, and mark evidenced embedded database accesses as having no separate authentication.
 - Controller root causes and remediation priorities now include the findings that abuse-case verification adds.
+- Enabled architect review checks findings added by abuse-case verification and reports unreviewed findings against the final report instead of only the initial review scope.
 - Root-cause grouping recognizes verified implementation evidence that begins a multiline call, including entity mass assignment.
 - Architect review retains the technical fix when a proposed replacement preserves the vulnerability or only fixes a hypothetical deployment, and explicit preservation instructions no longer pass as fix cards.
 - The controller console shows a remaining time only once the first component's threat analysis is finished, and trust-boundary warnings no longer break into its status line.
