@@ -1,6 +1,6 @@
 # Single-repository controller: quality, cost and runtime tracker
 
-Status: Open, started 2026-10-15; last updated 2026-10-15 at `d33ec9ab` on `feat/single-repo-controller`. This is the working record for bringing the headless single-repository controller (`APPSEC_SINGLE_REPO_CONTROLLER=1 scripts/run-headless.sh`) back to the cost, runtime and report depth of the previous controller. Update the status column and the measurement table with every change; a new session continues from here.
+Status: Open, started 2026-10-15; last updated 2026-10-15 at `bdc52d1d` on `feat/single-repo-controller`. This is the working record for bringing the headless single-repository controller (`APPSEC_SINGLE_REPO_CONTROLLER=1 scripts/run-headless.sh`) back to the cost, runtime and report depth of the previous controller. Update the status column and the measurement table with every change; a new session continues from here.
 
 ## Goal
 
@@ -126,6 +126,27 @@ Pre-existing failure, unrelated to this session: `tests/test_schema_drift.py::te
 - **Verify before reporting a cause:** check each claimed cause against the run's artifacts and the code; RC-Q was first misdiagnosed from a plausible assumption.
 - **Tests:** the controller modules (`test_multi_repo_controller`, `test_single_repo_controller`, `test_multi_repo_assessment`) take 15 to 25 minutes together; run them in the background and only when the change reaches them. Prove each new test fails on the previous commit in a worktree, not with `git stash`.
 - **Decisions:** MR-15, MR-16 and MR-17 were confirmed by the operator on 2026-10-15; any further decision needs its wording confirmed before it is written.
+
+## Implementation 2026-10-15 (after the root-cause check)
+
+Commits on `feat/single-repo-controller`, none measured in a run yet:
+
+- `7996678d` F2 a: `handler_resolver` knows authenticating middleware packages (`express-jwt`, `koa-jwt`, `express-oauth2-jwt-bearer` `auth`, `express-basic-auth`); Juice Shop: 40 routes `verified bearer` instead of 4; the remaining 81 `middleware_present` unresolved rows are all in `data/static/codefixes/`.
+- `5092e602` F2 b, F1: the controller runs `flow_route_auth` per repository after architecture and `reconcile_privileged_roles` after actor discovery; a `middleware_present` route whose chain is verified counts as authenticated; actor discovery gets role comparisons that name a privileged role as preloaded lines (`assessment_posture.privileged_checks`). The first version passed the inventory document instead of its route list; fixed in `2b71cebb`.
+- `4f83fdf3`: `meta.unowned_source` and a §1 Scope line for program files outside every component (Juice Shop: 138, of them 93 in `data/static`, 21 in `lib/` including `lib/xml.ts`, `lib/utils.ts`, `lib/webhook.ts`).
+- `2b71cebb` MR-19: targets list their files' direct imports (authorized, not preloaded) and `guard_lines` from the route inventory (Juice Shop: the route at `server.ts:601` names its guard at 398).
+- `cf347f6e` MR-20 (commented-out guard as absence evidence), MR-21 (session path downgrades `ambiguous` too), MR-22 (Critical needs two `attack_steps`), and an MR-18 clause: a flag that enables the vulnerable branch is no control and no precondition unless shown off by default. All wording confirmed by the operator on 2026-10-15.
+- `08d0f031`: the architecture analyst prompt again bans prose-invented crossings; `test_diagram_prose_distinguishes_zones_from_boundary_crossings` passes.
+- `7dac435b`: undecided STRIDE targets are `meta.undecided_targets` and a §1 Scope line; the console prints one info line.
+- `f0587ffd`: the abuse-case analysis is persisted again after the synthesis rebuild, which had reset it to `not_run`.
+- `29ea7318` F4: `analyzers/capability_signals.py` labels components from call sites; Juice Shop replay: JWT issuer, MFA verifier, OAuth client, file upload, WebSocket endpoint, blockchain client, code evaluation. Admin functions and URL fetch still need semantics.
+- `bdc52d1d` F2 c: `analyzers/client_api_flows.py` adds client-to-API flows per proven authentication; Juice Shop replay: Angular to Express as bearer, cookie, none and unknown alternatives, Angular to Auth.
+
+RC-G replay not needed: the recorded findings state their reasons. T-022 and T-030 treated the challenge flag as a control or precondition (fixed by the MR-18 clause); T-035 says "the model definition was not read" (`models/user.ts`, another component's file, readable since MR-19).
+
+Register floor: not silent. "Method and limits" already states which tiers the floor drops (`pregenerate_fragments.py`); the loss is the rating (confirmed-exploitable CSRF rated Low), not the disclosure.
+
+Open: controller end-to-end tests on `bdc52d1d`, `make audit-test-routes` for the two new source routes, then measurement run `/tmp/127` (the operator wants to be asked before it starts) and the comparison of Figure 1 and findings against the reference.
 
 ## Order of work
 
