@@ -1615,6 +1615,25 @@ def test_a_long_fact_wraps_under_its_column_on_a_terminal(monkeypatch, capsys):
     assert " ".join(line[10:].strip() for line in lines).replace("Models     : ", "") == f"claude-sonnet-5-5 ({roles})"
 
 
+@pytest.mark.parametrize("columns", [110, 160])
+def test_a_long_event_detail_wraps_under_its_column_on_a_terminal(monkeypatch, capsys, columns):
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    monkeypatch.setenv("COLUMNS", str(columns))
+    console = controller._AssessmentConsole(False, clock=_Clock(), live=False)
+    console.phase = "Threat analysis"
+    reason = "STRIDE evidence does not cite an executable implementation: evidence[21] cites a blank line " * 2
+    console.notice(reason.strip())
+    console.notice("short")
+    lines = [_ANSI.sub("", line) for line in capsys.readouterr().err.splitlines() if line.strip()]
+    start = lines[0].index("STRIDE")
+    # Every piece fits the screen and continues in the detail column, never at column 0.
+    assert len(lines) > 2 and all(len(line) <= columns - 1 for line in lines)
+    assert all(line[:start].strip() == "" and line[start] != " " for line in lines[1:-1])
+    assert " ".join(line[start:] for line in lines[:-1]) == reason.strip()
+    assert lines[-1].endswith("short")
+
+
 def test_the_status_line_turns_a_spinner_and_draws_a_bar(capsys, monkeypatch):
     monkeypatch.setenv("COLUMNS", "400")
     console = controller._AssessmentConsole(False, [].append, live=True)

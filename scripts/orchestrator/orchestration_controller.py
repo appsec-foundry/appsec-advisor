@@ -9582,8 +9582,16 @@ class _AssessmentConsole:
             phase_cell = st(f"{phase:<{self._PHASE_WIDTH}}", "accent")
         event_cell = st(f"{event:<{self._EVENT_WIDTH}}", role or "muted")
         run_cell = st(run if detail else run.rstrip(), "muted")
-        detail_cell = st(detail, "warn") if event == "⚠" else detail
-        return f"{phase_cell}  {event_cell}  {run_cell}  {detail_cell}".rstrip()
+        head = f"{phase_cell}  {event_cell}  {run_cell}  "
+        # A long detail wraps under its own column instead of at the screen
+        # edge; the status line is cut by `_status` instead.
+        indent = len(self._stamp(now)) + 2 + len(ANSI_RE.sub("", head))
+        fit = shutil.get_terminal_size().columns - 1 - indent
+        pieces = [detail]
+        if not live and fit >= 20 and len(detail) > fit:
+            pieces = textwrap.wrap(detail, fit, break_on_hyphens=False)
+        cells = [st(piece, "warn") if event == "⚠" else piece for piece in pieces]
+        return (head + ("\n" + " " * indent).join(cells)).rstrip()
 
     def _header(self) -> None:
         if not self.headed:
