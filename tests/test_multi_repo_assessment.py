@@ -914,6 +914,72 @@ def test_a_host_failure_ends_with_a_message_not_a_traceback(tmp_path, monkeypatc
     assert "stopped: host returned no parseable result" in err and "Unpublished draft" not in err
 
 
+@pytest.mark.parametrize("dependency", ["jsonschema", "yaml"])
+@pytest.mark.parametrize("failure", ["interrupt", "error"])
+def test_controller_startup_interrupt_is_quiet_without_hiding_import_failures(tmp_path, dependency, failure):
+    """A real SIGINT at a dependency import must leave existing resume data untouched."""
+    import os
+    import selectors
+    import signal
+
+    output = tmp_path / "previous run"
+    output.mkdir()
+    checkpoint = output / ".assessment-state.json"
+    saved = '{"status":"interrupted","run_id":"previous-run"}\n'
+    checkpoint.write_text(saved)
+    # Pause at the real CLI's import boundary, before its normal exception
+    # handler exists. The subprocess receives a signal, not a mocked exception.
+    boot = """
+import runpy, sys, time
+dependency, failure, script, output = sys.argv[1:]
+sys.argv = [script, 'assess', '--', '--output', output, '--resume']
+class ImportBoundary:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == dependency:
+            if failure == 'error':
+                raise RuntimeError('synthetic dependency failure')
+            print('import-ready', flush=True)
+            # A signal just before signal.pause() can miss its wakeup. Short
+            # sleeps give Python another opportunity to dispatch that signal.
+            while True:
+                time.sleep(0.01)
+sys.meta_path.insert(0, ImportBoundary())
+runpy.run_path(script, run_name='__main__')
+"""
+    process = subprocess.Popen(
+        [sys.executable, "-c", boot, dependency, failure, controller.__file__, str(output)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        if failure == "interrupt":
+            with selectors.DefaultSelector() as selector:
+                selector.register(process.stdout, selectors.EVENT_READ)
+                assert selector.select(timeout=10), "controller did not reach the import boundary"
+            assert process.stdout.readline().strip() == "import-ready"
+            os.killpg(process.pid, signal.SIGINT)
+        try:
+            _, stderr = process.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            stdout, stderr = process.communicate(timeout=5)
+            pytest.fail(f"startup did not stop after SIGINT: {stdout!r}, {stderr!r}")
+        if failure == "interrupt":
+            assert process.returncode in (-signal.SIGINT, 128 + signal.SIGINT)
+            assert stderr.strip() == "⏸ assessment interrupted"
+        else:
+            assert process.returncode == 1
+            assert "RuntimeError: synthetic dependency failure" in stderr and "Traceback" in stderr
+        assert checkpoint.read_text() == saved
+        assert list(output.iterdir()) == [checkpoint]
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=5)
+
+
 @pytest.mark.parametrize(
     ("error", "code"),
     [

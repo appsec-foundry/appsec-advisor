@@ -38,6 +38,20 @@ from __future__ import annotations
 
 # Direct CLI execution must resolve the same packages as imports from scripts/.
 import sys as _sys
+
+# CLI startup can be interrupted before dependencies and assess_main exist.
+# Leave signal delivery and cleanup alone; only suppress an uncaught Ctrl-C's
+# traceback. Importing this module must not replace its caller's error hook.
+if __name__ == "__main__" and _sys.argv[1:2] == ["assess"]:
+
+    def _assessment_startup_exception(exc_type, exc, traceback):
+        if issubclass(exc_type, KeyboardInterrupt):
+            _sys.stderr.write("\n⏸ assessment interrupted\n")
+        else:
+            _sys.__excepthook__(exc_type, exc, traceback)
+
+    _sys.excepthook = _assessment_startup_exception
+
 from pathlib import Path as _Path
 
 if not __package__:
