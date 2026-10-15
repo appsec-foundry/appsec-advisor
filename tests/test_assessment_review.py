@@ -1,9 +1,11 @@
 """Combined-assessment abuse-case verification and architect review run as scoped, validated jobs."""
 
+import contextlib
 import hashlib
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -34,6 +36,16 @@ class Scope:
 
     def inventory(self):
         return {"repositories": self.rows, "scope_sha256": "f" * 64}
+
+    @contextlib.contextmanager
+    def scanner_snapshot(self, repository_id):
+        repo = next(r for r in self.repositories if r.repository_id == repository_id)
+        with tempfile.TemporaryDirectory() as root:
+            for path, data in repo.files.items():
+                target = Path(root, path)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(data)
+            yield Path(root)
 
 
 class Jobs:

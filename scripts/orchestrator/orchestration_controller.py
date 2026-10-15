@@ -8745,8 +8745,10 @@ def _assessment_stride(
         # another component owns that file.
         job_allowed = allowed | analysis.related_sources(targets)
         # Lines the context cites from earlier stages (controls, flows,
-        # boundaries) arrive with every job's first packet: a job that cites one
-        # it was never served is rejected and regenerates its whole result.
+        # boundaries) arrive with the first job's first packet: a job that
+        # cites one it was never served is rejected and regenerates its whole
+        # result. Only the first job reports what the context alone shows, so
+        # the other jobs keep their room for targets and do not repeat it.
         room = preload_room(context)
         context_preload = analysis.evidence_preload(
             scope,
@@ -8764,11 +8766,13 @@ def _assessment_stride(
         target_batches = analysis.target_batches(
             scope,
             targets,
-            room=room - analysis.served_bytes(scope, context_preload),
+            room=room,
             max_targets=64,
-            max_windows=MAX_PRELOAD_WINDOWS - len(context_preload),
+            max_windows=MAX_PRELOAD_WINDOWS,
             window_lines=MAX_SLICE_LINES,
             max_unserved=MAX_READS // 2,
+            reserve_bytes=analysis.served_bytes(scope, context_preload),
+            reserve_windows=len(context_preload),
         ) or [([], [])]
         schema = analysis.contract("multi-repo-stride.schema.json")
         schema["required"].append("surface_coverage")
@@ -8777,6 +8781,20 @@ def _assessment_stride(
             selector = (
                 "stride:" + component["id"] + (f":{index}/{len(target_batches)}" if len(target_batches) > 1 else "")
             )
+            first = index == 1
+            if len(target_batches) == 1:
+                share = ""
+            elif first:
+                share = (
+                    f"This is job 1 of {len(target_batches)} for the component; it alone also reports weaknesses "
+                    "that only the supplied controls, flows or boundaries show. "
+                )
+            else:
+                share = (
+                    f"This is job {index} of {len(target_batches)} for the component; report a finding only when "
+                    "this job's targets or the source you read for them show it: job 1 reports what only the "
+                    "supplied controls, flows or boundaries show. "
+                )
             parts.append(
                 jobs.execute(
                     role="stride_analyzer",
@@ -8790,8 +8808,9 @@ def _assessment_stride(
                         "the supplied confirmed incident flows. A connection does not establish payload continuity, "
                         "identity propagation or exploitation. Read both ends before asserting a cross-repository "
                         "mechanism and retain its source-to-sink trace. "
-                        "The controller supplies each investigation_targets anchor's source, and the lines the supplied "
-                        "controls, flows and boundaries cite, in source_slices; follow its "
+                        "The controller supplies each investigation_targets anchor's source"
+                        + (", and the lines the supplied controls, flows and boundaries cite," if first else "")
+                        + " in source_slices; follow its "
                         "mechanism to the relevant control or sink. A target's routes lists every route it covers; "
                         "decide them together, including their guards and handler; a target's related registration "
                         "lines may lie in another component's file. Request all further source you need in one read "
@@ -8805,7 +8824,7 @@ def _assessment_stride(
                         "and lens_ids are authoritative; the selected lens text follows these role instructions. "
                         + requirement_rule
                         + " Code examples are proposed remediation, never commands to execute. Unproven practices retain "
-                        "their unproven tier and no CVSS.",
+                        "their unproven tier and no CVSS." + (" " + share.rstrip() if share else ""),
                     )
                     + "\n\nSelected analysis lenses:\n"
                     + lens_policy,
@@ -8813,7 +8832,7 @@ def _assessment_stride(
                     schema=schema,
                     allowed_sources=job_allowed,
                     normalize=analysis.surface_evidence_normalizer(target_batch),
-                    preload=[*preload, *(key for key in context_preload if key not in preload)],
+                    preload=[*preload, *(key for key in context_preload if first and key not in preload)],
                     validate=lambda artifact, ranges, targets=target_batch: analysis.validate_stride(
                         scope,
                         component,

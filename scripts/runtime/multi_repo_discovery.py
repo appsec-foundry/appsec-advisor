@@ -381,6 +381,14 @@ def discover(
                     "No component carries these serving units; read one entry file of each and model it: "
                     + serving_units.describe(missing)
                 )
+            from contexts.multi_repo_analysis import validate_executable_evidence
+
+            validate_executable_evidence(
+                scope,
+                artifact["interfaces"],
+                "Discovery evidence does not cite an executable implementation",
+                repository_id=repo.repository_id,
+            )
 
         if jobs is None:
             result = run_exchange(

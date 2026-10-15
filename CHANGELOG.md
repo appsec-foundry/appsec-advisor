@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Headless controller assessments see each source line with its line number, so cited lines no longer drift deep in a file, and a control, flow or boundary that cites a blank line or comment is corrected in its own job instead of failing every later analysis that relies on it.
 - Headless controller threat analysis no longer stops on source files that begin with a license header or other comment.
 - Headless controller threat analysis decides a route in the component that owns its handler, reading the guards where the route is registered, instead of leaving it unresolved when handler and registration belong to different components; it also receives the source the supplied controls cite and reads an Angular component together with its template, evidence reviews receive each finding's anchor up front, and a target that already links a finding needs no separate reason.
 - A configured address quoted as inline code in the controller's Security Architecture section, such as a CORS origin, no longer forces the section to be rewritten.

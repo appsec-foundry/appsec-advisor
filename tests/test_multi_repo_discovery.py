@@ -68,7 +68,8 @@ class ScriptedHost:
                 "reads": [{"repository_id": rid, "path": "service.txt", "start_line": 1, "end_line": 1}],
             }
         else:
-            quote = packet["source_slices"][0]["lines"][0]
+            # A model quotes the source text without its line-number prefix (MR-15).
+            quote = packet["source_slices"][0]["lines"][0].split(": ", 1)[1]
             artifact = {
                 "schema_version": 1,
                 "repository_id": rid,
