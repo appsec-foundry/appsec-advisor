@@ -8755,8 +8755,12 @@ def _assessment_stride(
             examples = ", ".join(path for _, path in unexamined[:5])
             # MR-13 coverage statement, not a defect: shown as information.
             jobs.infos.append(
-                f"{component['name']}: {_count_noun(len(unexamined), 'source file')} without a route, lead or "
-                f"security signal were not individually examined (for example {examples})"
+                {
+                    "component": component["name"],
+                    "files": len(unexamined),
+                    "text": f"{component['name']}: {_count_noun(len(unexamined), 'source file')} without a route, "
+                    f"lead or security signal were not individually examined (for example {examples})",
+                }
             )
         lens_ids, lens_policy = analysis.analysis_lenses(scope, component)
         context["lens_ids"] = lens_ids
@@ -9264,6 +9268,17 @@ def _elapsed(seconds: float) -> str:
     """Minutes below an hour, then hours and minutes: ``13m``, ``1h05m``."""
     hours, minutes = divmod(int(seconds // 60), 60)
     return _minutes(seconds) if not hours else f"{hours}h" + (f"{minutes:02d}m" if minutes else "")
+
+
+def _coverage_infos(entries: list[dict], verbose: bool) -> list[str]:
+    """Per-component coverage statements with --verbose, otherwise one summary line."""
+    if verbose or len(entries) <= 1:
+        return [entry["text"] for entry in entries]
+    files = sum(entry["files"] for entry in entries)
+    return [
+        f"{_count_noun(files, 'source file')} without a route, lead or security signal in "
+        f"{_count_noun(len(entries), 'component')} were not individually examined; --verbose lists them"
+    ]
 
 
 def _count_noun(count: int, noun: str) -> str:
@@ -10428,6 +10443,11 @@ def _assessment_render(scope, jobs, names, cfg, workspace: Path, root: Path, *, 
             model["meta"]["project_name"] = cfg["project_name"]
         if len(scope.repositories) == 1:
             model["meta"].update(_single_repository_meta(scope))
+        if jobs.infos:
+            # REQ-FLW-005: the report names the coverage gap, not only the console.
+            model["meta"]["unexamined_source"] = [
+                {"component": entry["component"], "files": entry["files"]} for entry in jobs.infos
+            ]
         if isinstance(cfg.get("assessment_started_at"), int):
             # Analysis wall time up to the model build; rendering is not included.
             model["meta"]["analysis_duration_seconds"] = max(0, int(time.time()) - cfg["assessment_started_at"])
@@ -10774,7 +10794,7 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                     for gap in jobs.gaps
                 )
                 warnings.extend(jobs.notes)
-                infos.extend(jobs.infos)
+                infos.extend(_coverage_infos(jobs.infos, ns.verbose))
                 retry_warning = _assessment_retry_warning(budget.retries)
                 if retry_warning:
                     warnings.append(retry_warning)

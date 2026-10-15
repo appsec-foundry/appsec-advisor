@@ -139,6 +139,31 @@ class TestSystemOverview:
         assert f"**Basis:** {pf.METHOD_SENTENCE}" in md
         assert "as built, not as designed" in md
 
+    @pytest.mark.parametrize(
+        ("rows", "sentence"),
+        [
+            (
+                [{"component": "Order store", "files": 11}, {"component": "Build pipeline", "files": 4}],
+                "**Not individually examined:** 15 source files in 2 components had no route, lead or "
+                "security signal (Order store 11, Build pipeline 4).",
+            ),
+            (
+                [{"component": "Ledger API", "files": 1}],
+                "**Not individually examined:** 1 source file in 1 component had no route, lead or "
+                "security signal (Ledger API 1).",
+            ),
+        ],
+    )
+    def test_scope_names_source_files_no_target_covered(self, minimal_yaml_data, rows, sentence):
+        """REQ-FLW-005: a coverage gap the analysis recorded reaches the report, not only the console."""
+        minimal_yaml_data["meta"]["unexamined_source"] = rows
+        md = pf.gen_system_overview(minimal_yaml_data)
+        assert sentence in md
+        assert md.index(sentence) < md.index("**Out of scope:**")
+
+    def test_scope_without_unexamined_source_states_nothing(self, minimal_yaml_data):
+        assert "Not individually examined" not in pf.gen_system_overview(minimal_yaml_data)
+
     def test_method_boundary_is_independent_of_meta_scope(self):
         md = pf.gen_system_overview({"meta": {}, "components": []})
         assert f"**Basis:** {pf.METHOD_SENTENCE}" in md

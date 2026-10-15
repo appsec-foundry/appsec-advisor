@@ -121,8 +121,10 @@ class AssessmentJobs:
         self.gaps: list[dict] = []
         # Run warnings the controller derives from accepted jobs, in run order.
         self.notes: list[str] = []
-        # Coverage statements that need no action, such as files no target covered.
-        self.infos: list[str] = []
+        # Coverage statements that need no action, such as files no target covered:
+        # {component, files, text}; the console collapses them unless --verbose,
+        # and the model records them as meta.unexamined_source.
+        self.infos: list[dict] = []
         # Set by a concurrent caller after a failure: no further job starts (MR-16).
         self.halt = None
 
