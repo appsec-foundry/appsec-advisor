@@ -8199,6 +8199,7 @@ def _assessment_session(scope, arguments, *, budget, host_factory, resume=False,
         return host_factory(role, cfg[key], ceiling)
 
     with _stop_on_terminate(state), state.hold():
+        budget.plan_completion()
         # A fresh session may reuse the accepted jobs of an unfinished earlier run.
         jobs = AssessmentJobs(
             scope,
@@ -8210,7 +8211,13 @@ def _assessment_session(scope, arguments, *, budget, host_factory, resume=False,
             inherited=not state.resume,
             reuse_inherited=not rebuild,
         )
-        yield cfg, state, jobs
+        from runtime.multi_repo_discovery import BudgetExhausted
+
+        try:
+            yield cfg, state, jobs
+        except BudgetExhausted as exc:
+            exc.report = state.budget_report(jobs)
+            raise
 
 
 def _assessment_runtime_warning(state) -> str | None:
@@ -8344,6 +8351,12 @@ def _assessment_inventories(scope) -> dict[str, dict]:
                     row["route_id"]: module
                     for row in rows
                     if row.get("route_id") and (module := resolver.handler_module(row))
+                },
+                # Analysis and review receive the middlewares a route runs (MR-19).
+                "route_middleware": {
+                    row["route_id"]: spans
+                    for row in rows
+                    if row.get("route_id") and (spans := resolver.middleware_definitions(row))
                 },
                 "route_projection": project_routes(json.dumps(routes).encode("utf-8")),
                 "role_units": project_role_units(root),
@@ -8679,6 +8692,7 @@ def _assessment_architecture(scope, jobs, *, progress):
         "connection_review": review,
         "route_inventories": {rid: row["routes"] for rid, row in inventories.items()},
         "route_handler_modules": {rid: row["route_handlers"] for rid, row in inventories.items()},
+        "route_middleware": {rid: row["route_middleware"] for rid, row in inventories.items()},
         "egress_inventories": {rid: row["egress_sources"] for rid, row in inventories.items()},
         # A lead can be a mention rather than a call, so a gap is a warning, not a stop.
         "model_integration_gaps": [
@@ -8876,6 +8890,10 @@ def _assessment_stride(
     import itertools
 
     finished = itertools.count(1)
+    for component in components["components"]:
+        # Before a worker has built its exact batches, keep one job allowance
+        # for that component. Replace it by the batch count before dispatch.
+        jobs.budget.plan_required("stride:" + component["id"], "stride_analyzer", 1)
     # The console tracks concurrent components by the label in their progress
     # steps; components of different repositories may share a name.
     names = Counter(row["name"] for row in components["components"])
@@ -8959,6 +8977,7 @@ def _assessment_stride(
             reserve_bytes=analysis.served_bytes(scope, context_preload),
             reserve_windows=len(context_preload),
         ) or [([], [])]
+        jobs.budget.plan_required("stride:" + component["id"], "stride_analyzer", len(target_batches))
         schema = analysis.contract("multi-repo-stride.schema.json")
         schema["required"].append("surface_coverage")
         parts = []
@@ -8984,6 +9003,7 @@ def _assessment_stride(
                 jobs.execute(
                     role="stride_analyzer",
                     selector=selector,
+                    budget_group="stride:" + component["id"],
                     instructions=_assessment_role_instructions(
                         "stride_analyzer",
                         "Analyze the selected component across all six STRIDE categories. Return exactly one coverage "
@@ -9381,8 +9401,20 @@ def _assessment_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--resume", action="store_true")
     # Redo every model job instead of reusing an earlier run's accepted ones.
     parser.add_argument("--rebuild", action="store_true")
-    parser.add_argument("--soft-budget", "--max-cost", type=float, metavar="USD")
-    parser.add_argument("--hard-budget", "--max-budget", type=float, metavar="USD")
+    parser.add_argument(
+        "--soft-budget",
+        "--max-cost",
+        type=float,
+        metavar="USD",
+        help="Deprecated: derives a hard limit of 1.25 times USD unless --hard-budget is supplied.",
+    )
+    parser.add_argument(
+        "--hard-budget",
+        "--max-budget",
+        type=float,
+        metavar="USD",
+        help="Total model-cost limit; the controller reserves required completion work automatically.",
+    )
     parser.add_argument(
         "--interactive-launch",
         action="store_true",
@@ -10335,8 +10367,7 @@ def _assessment_intro(ns, budget, depth: str, lineup: str, runtime_changed=False
         output += " (--resume: continues the earlier assessment)"
     cut = f"model calls stop at ${budget.max_usd:.2f}"
     if ns.hard_budget is None and ns.soft_budget is not None:
-        # --soft-budget only derives this cut; nothing steers the run below it.
-        cut += f" (1.25 × --soft-budget ${ns.soft_budget:g}; no soft steering in this mode)"
+        cut += f" (1.25 × deprecated --soft-budget ${ns.soft_budget:g}; use --hard-budget)"
     elif ns.hard_budget is None:
         cut += " (default for the assessment depth; set --soft-budget or --hard-budget to change it)"
     limit = _elapsed(budget.timeout_s)
@@ -10346,6 +10377,7 @@ def _assessment_intro(ns, budget, depth: str, lineup: str, runtime_changed=False
         ("Output", output),
         ("Billing", "api" if os.environ.get("ANTHROPIC_API_KEY") else "subscription"),
         ("Budget", cut),
+        ("Completion reserve", "required analysis and report take priority over optional model work"),
         ("Time limit", limit),
         ("Depth", depth),
         ("Models", lineup.removeprefix("Models: ").replace("; ", "\n")),
@@ -11110,6 +11142,13 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                     f"{_AssessmentConsole.ROLE_LABELS.get(gap['role'], gap['role'])} job {gap['selector']} "
                     f"was replaced after a model failure ({gap['reason']}); rerun to retry it"
                     for gap in jobs.gaps
+                    if not gap.get("budget")
+                )
+                warnings.extend(
+                    f"{_AssessmentConsole.ROLE_LABELS.get(gap['role'], gap['role'])} job {gap['selector']} "
+                    "was not completed to preserve the budget for required work; its deterministic replacement is used"
+                    for gap in jobs.gaps
+                    if gap.get("budget")
                 )
                 warnings.extend(jobs.notes)
                 infos.extend(_coverage_infos(jobs.infos, ns.verbose))
@@ -11359,6 +11398,7 @@ def assess_main(argv: list[str]) -> int:
     from runtime.analyst_host import HostCancelled, HostTimeout, TransportError
     from runtime.assessment_host import ExchangeError
     from runtime.assessment_state import AssessmentPaused
+    from runtime.multi_repo_discovery import BudgetExhausted
 
     before = _draft_stamp(argv)
     try:
@@ -11372,6 +11412,12 @@ def assess_main(argv: list[str]) -> int:
         return 130
     except AssessmentPaused as exc:
         print(f"⏸ Paused after phase {exc.number}/{exc.total} — {exc.phase}; continue with --resume", flush=True)
+        return ASSESS_PAUSED_EXIT
+    except BudgetExhausted as exc:
+        print(f"⏸ assessment incomplete: {_cap_reason(str(exc))}", file=sys.stderr)
+        if getattr(exc, "report", None):
+            print(f"  Incomplete budget report: {exc.report}", file=sys.stderr)
+        print("  Increase the limit and rerun without --resume to reuse compatible accepted steps.", file=sys.stderr)
         return ASSESS_PAUSED_EXIT
     except CallError as exc:
         print(f"✗ {exc}", file=sys.stderr)

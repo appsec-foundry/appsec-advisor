@@ -426,7 +426,7 @@ Stage 4 performs deterministic preservation and existing release gates only. It 
 
 ## Assessment controller failure policy
 
-The deterministic assessment controller (`assess`) stops the run on any failure until every component's STRIDE analysis is accepted. Architecture, component inventory, trust boundaries, controls and STRIDE are the foundation of the result, and stopping before STRIDE costs little.
+The deterministic assessment controller (`assess`) requires accepted architecture, component inventory, trust boundaries, controls and every component's STRIDE analysis before publishing a complete result. A resource-budget interruption may instead publish the separate incomplete snapshot described below; other failures before those foundations are accepted stop the run.
 
 After that point, a failed model job or optional stage does not stop the run. The stage supplies a deterministic replacement, the gap is published as a run warning that names the replaced job, and the job writes no receipt, so a later run retries it. Replacements:
 
@@ -439,4 +439,12 @@ After that point, a failed model job or optional stage does not stop the run. Th
 - the Management Summary keeps the deterministic verdict floor;
 - a failed export is a warning.
 
-The Security Architecture section still stops the run: its contract requires a sequence diagram per flow, which only its author can write. At any point, the run also stops on a violated trust boundary (a read outside the admitted scope, a changed or foreign receipt, or source changed during the run), on a model that still violates its output contract, provenance or the secret gate after every deterministic repair, on an inconsistent register after the integrity steps, on unsettled call accounting, and on the hard budget or time limit.
+The Security Architecture section remains required: its contract requires a sequence diagram per flow, which only its author can write. At any point, the run stops on a violated trust boundary (a read outside the admitted scope, a changed or foreign receipt, or source changed during the run), on a model that still violates its output contract, provenance or the secret gate after every deterministic repair, on an inconsistent register after the integrity steps, or on unsettled call accounting.
+
+### Completion budget
+
+`AssessmentBudget` owns resource admission under the same lock as concurrent call reservations. The controller plans the required Security Architecture job and outstanding STRIDE batches. Optional jobs protect all planned work; required analysis protects report completion. Estimates use the largest accepted job cost and duration for each role under the run's fixed model selection, with correction headroom; roles without observations use conservative call allowances. Exact constants and the parallel-work calculation live in `runtime/assessment_jobs.py`. Reused, revalidated jobs reduce outstanding work and contribute measured cost, while their previous costs remain charged to the run. The plan is reconstructed during resume, never taken from model output.
+
+Every exchange and retry rechecks the reserve before dispatch. An optional job that cannot fit returns its existing deterministic replacement, records a budget-specific gap and writes no acceptance receipt. User cancellation, a stale or foreign receipt, source drift and unavailable accounting never take this fallback. A completed result still passes all existing report gates.
+
+If required work cannot fit, `BudgetExhausted` interrupts the lifecycle and exits `3`. While it still owns the lock and after workers have joined, the lifecycle may write `.assessment-work/budget-report.md` from results accepted or revalidated in this session. The optional `partial_report` field of `schemas/multi-repo-state.schema.json` defines its structured projection, bounds and omission counts. Source verification, redaction against captured sources, inert rendering and the secret check precede the write. The snapshot identifies preliminary candidates and missing work, never claims completed analysis, and never enters the normal model/export publication path. Cancellation, unknown accounting or source/contract violations block it. A successful continuation removes the snapshot; a fresh attempt with changed limits reuses compatible accepted jobs through the existing cache.

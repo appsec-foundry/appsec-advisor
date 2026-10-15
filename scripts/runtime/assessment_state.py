@@ -22,18 +22,20 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
-from shared._atomic_io import atomic_write_json
+from shared._atomic_io import atomic_write_json, atomic_write_text
 
 from runtime import acquire_lock
 from runtime.analyst_host import HostCancelled
 from runtime.assessment_host import ExchangeError
 from runtime.assessment_jobs import RECEIPT_SCHEMA, AssessmentBudget, _read_json, digest
+from runtime.multi_repo_discovery import BudgetExhausted
 from runtime.multi_repo_scope import AssessmentScope
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = ROOT / "schemas/multi-repo-state.schema.json"
 STATE_NAME = ".assessment-state.json"
 WORK_NAME = ".assessment-work"
+PARTIAL_REPORT = "budget-report.md"
 # What a refused resume names when its recorded identity no longer matches.
 _IDENTITY_LABELS = (
     ("scope_sha256", "the selected source code"),
@@ -163,7 +165,7 @@ class AssessmentState:
             except BaseException as error:
                 self.state["status"] = (
                     "interrupted"
-                    if isinstance(error, (HostCancelled, KeyboardInterrupt, AssessmentPaused))
+                    if isinstance(error, (HostCancelled, KeyboardInterrupt, AssessmentPaused, BudgetExhausted))
                     else "failed"
                 )
                 self.checkpoint()
@@ -435,7 +437,9 @@ class AssessmentState:
         atomic_write_json(self.path, self.state)
         self.path.chmod(0o600)
         now = int(time.time())
-        acquire_lock._write_lock(self.lock, os.getpid(), now, self.state["run_id"], stale_after=self.STALE_AFTER_SECONDS)
+        acquire_lock._write_lock(
+            self.lock, os.getpid(), now, self.state["run_id"], stale_after=self.STALE_AFTER_SECONDS
+        )
         self.lock.chmod(0o600)
         self._last_heartbeat = time.monotonic()
 
@@ -454,5 +458,125 @@ class AssessmentState:
         self.budget.remaining_seconds()
         self.scope.verify_unchanged()
         self.state["deliverables"] = {name: _deliverable(self.output, name) for name in deliverables}
+        self.state.pop("partial_report", None)
+        (self.directory / PARTIAL_REPORT).unlink(missing_ok=True)
         self.state["status"] = "complete"
         self.checkpoint()
+
+    def budget_report(self, jobs):
+        """Publish a separate incomplete snapshot, never a canonical threat model.
+
+        Called while this session still owns its lock, after component workers
+        joined. Only results accepted or revalidated in this session qualify.
+        No cached file, failed answer or render draft is promoted here.
+        """
+        import html
+
+        from validators.redact_known_secrets import _STRING_LITERAL_RE
+        from validators.secret_scan import mask_text, scan_text
+
+        if self.cancelled or self.budget.failed:
+            raise ExchangeError("Cannot publish an incomplete report with unsettled accounting or cancellation")
+        self.scope.verify_unchanged()
+        self.checkpoint()
+        rows = sorted(jobs.accepted_results.values(), key=lambda row: row["selector"])
+        findings = [finding for row in rows for finding in row["findings"]][:200]
+        for finding in findings:
+            self.scope.read(finding["repository_id"], finding["file"], finding["line"], finding["line"])
+        count = sum(row["finding_count"] for row in rows)
+        # Redact against the captured source, without reopening arbitrary paths.
+        secrets_found = set()
+        for repo in self.scope.repositories:
+            for data in repo.files.values():
+                secrets_found.update(
+                    hit.value for hit in scan_text(data.decode("utf-8", errors="replace")) if hit.value
+                )
+            # A candidate may name a credential literal the generic scanner
+            # cannot classify. Remove every literal at its evidence line.
+            for finding in findings:
+                if finding["repository_id"] != repo.repository_id:
+                    continue
+                data = repo.files.get(finding["file"])
+                lines = data.decode("utf-8", errors="replace").splitlines() if data else []
+                if 0 < finding["line"] <= len(lines):
+                    secrets_found.update(m.group(2) for m in _STRING_LITERAL_RE.finditer(lines[finding["line"] - 1]))
+
+        def clean(value):
+            text = str(value)
+            for secret in sorted(secrets_found, key=len, reverse=True):
+                if len(secret) >= 4:
+                    text = text.replace(secret, "[REDACTED]")
+            text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\u202a-\u202e\u2066-\u2069]", "", text)
+            return " ".join(mask_text(text)[0].split())
+
+        partial = {
+            "status": "incomplete",
+            "reason": "budget",
+            "accepted_jobs": [{"role": clean(r["role"]), "selector": clean(r["selector"])} for r in rows[:500]],
+            "omitted_jobs": max(0, len(rows) - 500),
+            "findings": [{**f, "title": clean(f["title"]), "file": clean(f["file"])} for f in findings],
+            "omitted_findings": count - len(findings),
+            "remaining_jobs": [
+                {"selector": clean(key), "role": role, "jobs": number}
+                for key, (role, number) in sorted(self.budget.required.items())
+            ],
+        }
+        # This optional state field is also the report's structured contract.
+        candidate = {**self.state, "partial_report": partial}
+        Draft202012Validator(json.loads(SCHEMA.read_text())).validate(candidate)
+
+        def md(value):
+            # Render all source/model strings as inert single-line text.
+            return re.sub(r"([\\`*{}_\[\]()#+.!|>-])", r"\\\1", html.escape(str(value)))
+
+        lines = [
+            "# Incomplete assessment: budget limit",
+            "",
+            "This is an incomplete snapshot, not a completed threat model or security verdict.",
+            "Required analysis or report work remains. Any normal output files are not an accepted result of this attempt.",
+            "",
+            f"Accounted cost: USD {self.budget.spent_usd:.2f}; limit: USD {self.budget.max_usd:.2f}.",
+            "",
+            "## Accepted steps",
+            "",
+            *[f"- {md(r['role'])}: {md(r['selector'])}" for r in partial["accepted_jobs"]],
+            "",
+            "## Preliminary finding candidates",
+            "",
+            "These candidates passed their source-analysis contracts; independent verification, merging and final ratings may be missing.",
+            "Scanner-only findings and later review changes are not consolidated in this snapshot.",
+            "",
+            *[
+                f"- {md(f['title'])} ({md(f['repository_id'])}, {md(f['file'])}:{f['line']})"
+                for f in partial["findings"]
+            ],
+            "",
+            f"Additional accepted steps omitted: {partial['omitted_jobs']}; additional candidates omitted: {partial['omitted_findings']}.",
+            "",
+            "## Remaining work",
+            "",
+            *[f"- {md(r['selector'])}: {r['jobs']} required job(s)" for r in partial["remaining_jobs"]],
+            "- Any stages not reached still require execution; the outstanding job list is a plan, not complete coverage.",
+            "- Final model validation, report quality checks and publication have not completed.",
+            "",
+            "## Continue",
+            "",
+            "Increase --hard-budget or --max-duration as needed and rerun without --resume or --rebuild to reuse compatible accepted jobs.",
+            "The accounting includes reused job costs. --resume keeps the original limits and cannot replenish an exhausted budget.",
+            "",
+        ]
+        # Use the sanitized projection throughout, including the Markdown list.
+        clean_report = "\n".join(lines)
+        for secret in sorted(secrets_found, key=len, reverse=True):
+            if len(secret) >= 4:
+                clean_report = clean_report.replace(secret, "[REDACTED]")
+        text = mask_text(clean_report)[0]
+        if scan_text(text):
+            raise ExchangeError("Incomplete report did not pass secret redaction")
+        self.scope.verify_unchanged()
+        path = self.directory / PARTIAL_REPORT
+        atomic_write_text(path, text)
+        path.chmod(0o600)
+        self.state["partial_report"] = partial
+        self.checkpoint()
+        return path

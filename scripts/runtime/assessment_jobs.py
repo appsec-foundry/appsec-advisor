@@ -15,6 +15,7 @@ import re
 import stat
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
@@ -22,7 +23,7 @@ from shared._atomic_io import atomic_write_json
 
 from runtime.analyst_host import HostCancelled, HostTimeout, TransportError
 from runtime.assessment_host import MAX_EXCHANGES, ExchangeError, ExchangeResult, ModelAnswerFailure, run_exchange
-from runtime.multi_repo_discovery import BudgetedHost, DiscoveryBudget
+from runtime.multi_repo_discovery import MAX_CALL_SECONDS, BudgetedHost, BudgetExhausted, DiscoveryBudget
 
 ROOT = Path(__file__).resolve().parents[2]
 RECEIPT_SCHEMA = ROOT / "schemas/assessment-job-receipt.schema.json"
@@ -31,6 +32,9 @@ MAX_ARTIFACT_BYTES = 2_097_152
 # bounded architecture/boundary/report jobs, each with at most six exchanges.
 MAX_ASSESSMENT_CALLS = (1600 * 2 + 4096 + 500 + 16 * 4 + 16) * MAX_EXCHANGES
 MAX_ASSESSMENT_SECONDS = 43_200
+# Local composition, validation and publication need time even after the last call.
+FINALIZATION_SECONDS = 120
+REPORT_JOB = "stage2:security-architecture"
 
 
 def digest(value) -> str:
@@ -57,10 +61,97 @@ class AssessmentBudget(DiscoveryBudget):
         self.deadline = time.monotonic() + self.timeout_s
         self.failed = False
         self.init_retries()
+        self.required = {}
+        self.observed = {}
+        self.reserve_completion = False
+
+    def plan_completion(self):
+        """Protect the required renderer; only the controller may change this plan."""
+        self.reserve_completion = True
+        self.plan_required(REPORT_JOB, "secarch_renderer", 1)
+
+    def plan_required(self, group, role, count):
+        with self._lock:
+            if count:
+                self.required[group] = (role, count)
+            else:
+                self.required.pop(group, None)
+
+    @contextmanager
+    def job(self, group, role, optional):
+        self._local.job = (group, role, optional)
+        try:
+            yield
+        finally:
+            del self._local.job
+
+    def accepted(self, group, role, usd, seconds=None):
+        """Learn only from accepted jobs under this run's fixed model selection."""
+        with self._lock:
+            cost, duration = self.observed.get(role, (0.0, 0.0))
+            self.observed[role] = (max(cost, usd), max(duration, seconds or 0.0))
+            if group in self.required:
+                planned_role, count = self.required[group]
+                self.plan_required(group, planned_role, count - 1)
+
+    def _estimate(self, role):
+        cost, seconds = self.observed.get(role, (0.0, 0.0))
+        # A cold role keeps a full call allowance. Measurements include all
+        # exchanges of a job; double the largest accepted job for correction.
+        return (max(0.05, 2 * cost) if cost else self.call_usd, 2 * seconds if seconds else MAX_CALL_SECONDS)
+
+    def _reserve(self):
+        group, _role, optional = getattr(self._local, "job", (None, None, False))
+        dollars, serial, parallel = 0.0, 0.0, 0.0
+        for key, (role, count) in self.required.items():
+            # Required source analysis protects the report; optional work also
+            # protects every remaining STRIDE batch. Running calls are already
+            # charged, so this deliberately errs on the conservative side.
+            if key == group or (not optional and key != REPORT_JOB):
+                continue
+            usd, seconds = self._estimate(role)
+            dollars += count * usd
+            if role == "stride_analyzer":
+                parallel += count * seconds
+            else:
+                serial += count * seconds
+        return dollars, math.ceil(serial + parallel / 4) + FINALIZATION_SECONDS
+
+    def available_usd(self):
+        available = super().available_usd()
+        if not self.reserve_completion:
+            return available
+        reserved, _ = self._reserve()
+        available -= reserved
+        _group, role, optional = getattr(self._local, "job", (None, None, False))
+        if optional and available + 1e-9 < self._estimate(role)[0]:
+            return 0.0
+        return available
+
+    def call_seconds(self):
+        seconds = self.remaining_seconds()
+        if self.reserve_completion:
+            _, reserved = self._reserve()
+            seconds = math.floor(self.deadline - time.monotonic() - reserved)
+            if seconds < 1:
+                raise BudgetExhausted("Assessment time budget reserved for required completion work")
+        return seconds
+
+    def call_limit(self):
+        if not self.reserve_completion:
+            return self.max_calls
+        group, _role, optional = getattr(self._local, "job", (None, None, False))
+        reserved = sum(
+            2 * count for key, (_, count) in self.required.items() if key != group and (optional or key == REPORT_JOB)
+        )
+        return self.max_calls - reserved
 
     def remaining_seconds(self):
         # Every individual exchange still has the existing one-hour ceiling.
-        return min(3600, super().remaining_seconds())
+        try:
+            return min(3600, super().remaining_seconds())
+        except HostCancelled as exc:
+            raise BudgetExhausted("Assessment aggregate time budget exhausted") from exc
 
 
 def _read_json(path: Path):
@@ -117,6 +208,9 @@ class AssessmentJobs:
         # Wall time and calls per role of the jobs this session ran; a reused
         # job counts as reused, since its time was spent in an earlier run.
         self.timing: dict[str, dict] = {}
+        # Only accepted in-memory results enter a budget interruption report.
+        # Shared by component views; no receipt is trusted merely by reading it.
+        self.accepted_results: dict[str, dict] = {}
         # Optional jobs replaced after a model failure, in run order (OR-39).
         self.gaps: list[dict] = []
         # Run warnings the controller derives from accepted jobs, in run order.
@@ -157,6 +251,27 @@ class AssessmentJobs:
         """Return the accepted artifact of one controller-selected job."""
         return self.exchange(**kwargs).artifact
 
+    def _remember(self, role, selector, artifact):
+        findings = []
+        threats = artifact.get("threats", []) if role == "stride_analyzer" else []
+        for threat in threats[:200]:
+            evidence = threat.get("evidence") or {}
+            findings.append(
+                {
+                    "title": str(threat.get("title", ""))[:300],
+                    "repository_id": evidence.get("repository_id", ""),
+                    "file": evidence.get("file", ""),
+                    "line": evidence.get("line", 1),
+                }
+            )
+        with self._lock:
+            self.accepted_results[selector] = {
+                "role": role,
+                "selector": selector,
+                "finding_count": len(threats),
+                "findings": findings,
+            }
+
     def exchange(
         self,
         *,
@@ -170,6 +285,7 @@ class AssessmentJobs:
         normalize=None,
         on_failure=None,
         preload=(),
+        budget_group=None,
     ):
         """Execute or resume one job, including its accepted retrieval receipt.
 
@@ -186,12 +302,14 @@ class AssessmentJobs:
         retries, or the host fails with its cost settled, the job returns that
         deterministic replacement instead of stopping the run, records the gap
         in ``gaps`` and writes no receipt, so a later run retries it. A scope or
-        receipt breach, the budget or time limit, a cancellation and unsettled
-        accounting still stop the run.
+        receipt breach, a cancellation and unsettled accounting still stop the
+        run. A planned budget stop uses the same explicit replacement before
+        another optional call can spend the completion reserve.
         """
         if self.should_stop() or (self.halt is not None and self.halt.is_set()):
             # A stop request is an interruption the run can resume, not a failure.
             raise HostCancelled("Assessment cancelled")
+        group = budget_group or selector
         self.budget.remaining_seconds()
         request = {
             "role": role,
@@ -261,6 +379,8 @@ class AssessmentJobs:
                     for r in receipt["source_ranges"]
                 )
                 self._record(role)
+                self.budget.accepted(group, role, receipt["usd"])
+                self._remember(role, selector, artifact)
                 return ExchangeResult(copy.deepcopy(artifact), slices, receipt["calls"], receipt["usd"])
             receipt_path.unlink()
             artifact_path.unlink(missing_ok=True)
@@ -276,19 +396,27 @@ class AssessmentJobs:
 
         started = time.monotonic()
         try:
-            result = run_exchange(
-                BudgetedHost(factory, self.budget),
-                self.scope,
-                instructions=instructions,
-                context=context,
-                artifact_schema=schema,
-                allowed_sources=allowed_sources,
-                timeout_s=self.budget.remaining_seconds(),
-                should_stop=self.should_stop,
-                review=review,
-                normalize=normalize,
-                preload=preload,
-            )
+            with self.budget.job(group, role, on_failure is not None):
+                result = run_exchange(
+                    BudgetedHost(factory, self.budget),
+                    self.scope,
+                    instructions=instructions,
+                    context=context,
+                    artifact_schema=schema,
+                    allowed_sources=allowed_sources,
+                    timeout_s=self.budget.remaining_seconds(),
+                    should_stop=self.should_stop,
+                    review=review,
+                    normalize=normalize,
+                    preload=preload,
+                )
+        except BudgetExhausted as exc:
+            if on_failure is None or self.budget.unsettled or self.should_stop():
+                raise
+            reason = "budget reserved for required completion work"
+            self.gaps.append({"role": role, "selector": selector, "reason": reason, "budget": True})
+            self._record(role, seconds=time.monotonic() - started)
+            return ExchangeResult(on_failure(str(exc)), (), 0, None)
         except (ModelAnswerFailure, HostTimeout, TransportError) as exc:
             # A login or billing failure fails every later call too; it is never replaced.
             operator = isinstance(exc, TransportError) and exc.reason in ("authentication_failed", "billing_error")
@@ -325,4 +453,6 @@ class AssessmentJobs:
         receipt_path.chmod(0o600)
         self.checkpoint()
         self._record(role, seconds=time.monotonic() - started, calls=result.calls)
+        self.budget.accepted(group, role, result.usd, time.monotonic() - started)
+        self._remember(role, selector, artifact)
         return ExchangeResult(artifact, result.source_slices, result.calls, result.usd)

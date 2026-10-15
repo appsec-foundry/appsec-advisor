@@ -484,6 +484,138 @@ def test_a_nearly_spent_budget_stops_with_its_reason_before_another_call(tmp_pat
     assert jobs.budget.calls == 0
 
 
+@pytest.mark.parametrize("selector", ["review:orders", "verify:billing"])
+def test_optional_work_preserves_the_report_budget(tmp_path, selector):
+    """A review cannot consume the last report allowance, regardless of its name."""
+    from runtime.assessment_jobs import REPORT_JOB
+
+    jobs, host, kwargs, _ = setup(tmp_path)
+    jobs.budget.deadline += 3600
+    jobs.budget.plan_completion()
+    jobs.budget.spent_usd = 0.94
+    result = jobs.execute(**{**kwargs, "selector": selector}, on_failure=lambda reason: {"result": "not reviewed"})
+    assert result == {"result": "not reviewed"} and host.calls == 0
+    assert jobs.gaps[0]["budget"] and not list(jobs.directory.glob("*.receipt.json"))
+    assert jobs.execute(**{**kwargs, "role": "secarch_renderer", "selector": REPORT_JOB}) == {"result": "accepted"}
+    assert host.calls == 1 and jobs.budget.spent_usd == pytest.approx(0.95)
+    assert REPORT_JOB not in jobs.budget.required
+
+
+def test_optional_work_still_runs_with_sufficient_completion_budget(tmp_path):
+    jobs, host, kwargs, _ = setup(tmp_path)
+    jobs.budget.deadline += 3600
+    jobs.budget.plan_completion()
+    assert jobs.execute(**kwargs, on_failure=lambda reason: {"result": "not reviewed"}) == {"result": "accepted"}
+    assert host.calls == 1 and jobs.gaps == []
+
+
+def test_optional_work_protects_pending_analysis_and_uses_measured_job_cost(tmp_path):
+    jobs, host, kwargs, _ = setup(tmp_path)
+    jobs.budget.deadline += 3600
+    jobs.budget.plan_completion()
+    jobs.budget.plan_required("stride:remaining", "stride_analyzer", 4)
+    jobs.budget.spent_usd = 0.73
+    assert jobs.execute(**kwargs, on_failure=lambda reason: {"result": "not reviewed"}) == {"result": "not reviewed"}
+    assert host.calls == 0
+    # A validated batch updates both outstanding work and the role estimate.
+    jobs.budget.accepted("stride:remaining", "stride_analyzer", 0.01, 1)
+    assert jobs.execute(**kwargs, on_failure=lambda reason: {"result": "not reviewed"}) == {"result": "accepted"}
+    assert host.calls == 1
+
+
+def test_optional_work_keeps_time_for_the_report_and_local_finalization(tmp_path):
+    from runtime.assessment_jobs import FINALIZATION_SECONDS, REPORT_JOB
+
+    jobs, host, kwargs, _ = setup(tmp_path)
+    jobs.budget.plan_completion()
+    jobs.budget.deadline = time.monotonic() + FINALIZATION_SECONDS + 30
+    assert jobs.execute(**kwargs, on_failure=lambda reason: {"result": "not reviewed"}) == {"result": "not reviewed"}
+    assert host.calls == 0
+    assert jobs.execute(**{**kwargs, "role": "secarch_renderer", "selector": REPORT_JOB}) == {"result": "accepted"}
+    assert host.calls == 1
+
+
+@pytest.mark.parametrize("failure", ["cancelled", "unknown_cost", "tampered"])
+def test_budget_fallback_never_masks_authority_or_accounting_failures(tmp_path, failure):
+    jobs, host, kwargs, _ = setup(tmp_path)
+    if failure == "tampered":
+        jobs.execute(**kwargs)
+        artifact = next(p for p in jobs.directory.glob("*.json") if not p.name.endswith(".receipt.json"))
+        artifact.write_text(json.dumps({"result": "tampered"}))
+    jobs.budget.deadline += 3600
+    jobs.budget.plan_completion()
+    jobs.budget.spent_usd = 0.99
+    if failure == "cancelled":
+        jobs.should_stop = lambda: True
+    elif failure == "unknown_cost":
+        jobs.budget.failed = True
+    with pytest.raises((ExchangeError, HostCancelled)):
+        jobs.execute(**kwargs, on_failure=lambda reason: {"result": "not reviewed"})
+    assert jobs.gaps == []
+
+
+def test_completion_reservation_applies_to_each_correction_call(tmp_path):
+    replies = [{"action": "complete", "reads": [], "artifact": {"result": "rejected"}}] * 3
+
+    def reject(artifact, ranges):
+        raise ExchangeError("correct the result")
+
+    jobs, host, kwargs, _ = setup(tmp_path, replies=replies, validate=reject)
+    jobs.budget.deadline += 3600
+    jobs.budget.plan_completion()
+    jobs.budget.spent_usd = 0.90
+    assert jobs.execute(**kwargs, on_failure=lambda reason: {"result": "not reviewed"}) == {"result": "not reviewed"}
+    assert host.calls == 1 and jobs.gaps[0]["budget"]
+    assert jobs.budget.spent_usd == pytest.approx(0.91)
+
+
+def test_parallel_optional_calls_cannot_spend_completion_reserve():
+    from concurrent.futures import ThreadPoolExecutor
+
+    from runtime.assessment_jobs import REPORT_JOB
+
+    budget = AssessmentBudget(1.0, 0.2, 100, 6000)
+    budget.plan_completion()
+    reservations = []
+
+    class Reply:
+        def invoke(self, *args):
+            time.sleep(0.01)
+            return HostReply({}, 0.04)
+
+    def factory(ceiling):
+        with budget._lock:
+            reservations.append(budget.spent_usd)
+        return Reply()
+
+    def call(index):
+        with budget.job(f"review:{index}", "review", True):
+            return budget.invoke(factory, "", "", {}, 60, lambda: False)
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        assert len(list(pool.map(call, range(8)))) == 8
+    assert max(reservations) <= 0.8 + 1e-9
+    assert budget.spent_usd == pytest.approx(0.32) and not budget.failed
+    assert REPORT_JOB in budget.required
+
+
+@pytest.mark.parametrize("remainder", [0.10, 0.20, 0.40])
+def test_host_budget_cut_distinguishes_a_reduced_run_allowance_from_a_call_limit(tmp_path, remainder):
+    from runtime.analyst_host import TransportError
+    from runtime.multi_repo_discovery import BudgetExhausted
+
+    cost = min(remainder, 0.20)
+    host = Refused(1, "error_max_budget_usd", usd=cost)
+    jobs, kwargs = _hanging(tmp_path, host)
+    jobs.budget = AssessmentBudget(1.0, 0.20, 10, 60)
+    jobs.budget.spent_usd = 1.0 - remainder
+    expected = BudgetExhausted if remainder <= 0.20 else TransportError
+    with pytest.raises(expected):
+        jobs.execute(**kwargs)
+    assert host.calls == 1 and not jobs.budget.failed
+    assert jobs.budget.spent_usd == pytest.approx(1.0 - remainder + cost)
+
+
 @pytest.mark.parametrize("reason", ["authentication_failed", "billing_error"])
 def test_a_login_or_billing_failure_is_never_replaced(tmp_path, reason):
     from runtime.analyst_host import TransportError

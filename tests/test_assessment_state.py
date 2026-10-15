@@ -65,6 +65,73 @@ def stored(scope):
     return json.loads((scope.output / ".assessment-state.json").read_text())
 
 
+def test_budget_report_is_incomplete_redacted_and_resumable(scope):
+    from types import SimpleNamespace
+
+    from runtime.multi_repo_discovery import BudgetExhausted
+
+    state = lifecycle(scope)
+    state.budget.plan_completion()
+    repo = scope.repositories[0]
+    jobs = SimpleNamespace(
+        accepted_results={
+            "stride:example": {
+                "role": "stride_analyzer",
+                "selector": "stride:example",
+                "finding_count": 1,
+                "findings": [
+                    {
+                        "title": "<img src=x> [click](https://example.invalid) neutral fixture",
+                        "repository_id": repo.repository_id,
+                        "file": "app.py",
+                        "line": 1,
+                    }
+                ],
+            }
+        }
+    )
+    with pytest.raises(BudgetExhausted), state.hold():
+        path = state.budget_report(jobs)
+        text = path.read_text()
+        assert "Incomplete assessment" in text and "not a completed threat model" in text
+        assert "neutral fixture" not in text and "REDACTED" in text
+        assert "<img" not in text and "[click](" not in text
+        assert not (scope.output / "threat-model.md").exists()
+        raise BudgetExhausted("cost limit")
+    assert stored(scope)["status"] == "interrupted"
+    assert stored(scope)["partial_report"]["status"] == "incomplete"
+    assert stored(scope)["deliverables"] == {}
+    with lifecycle(scope, resume=True).hold():
+        pass
+
+
+@pytest.mark.parametrize("invalid", ["scope", "accounting", "cancelled", "contract"])
+def test_budget_report_refuses_invalid_security_context(scope, invalid):
+    from types import SimpleNamespace
+
+    state = lifecycle(scope)
+    with state.hold():
+        jobs = SimpleNamespace(accepted_results={})
+        if invalid == "scope":
+            (scope.repositories[0].root / "app.py").write_text("print('changed')\n")
+        elif invalid == "accounting":
+            state.budget.failed = True
+        elif invalid == "cancelled":
+            state.cancelled = True
+        else:
+            jobs.accepted_results["bad"] = {
+                "selector": "bad",
+                "role": "stride_analyzer",
+                "finding_count": 1,
+                "findings": [{"title": "bad", "repository_id": "foreign", "file": "a", "line": 0}],
+            }
+        from jsonschema import ValidationError
+
+        with pytest.raises((ExchangeError, ScopeError, ValidationError)):
+            state.budget_report(jobs)
+        assert not (state.directory / "budget-report.md").exists()
+
+
 def test_interrupted_session_releases_lock_and_resumes_same_identity(scope):
     initial = lifecycle(scope)
     with initial.hold():

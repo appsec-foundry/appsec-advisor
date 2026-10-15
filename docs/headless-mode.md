@@ -79,7 +79,7 @@ Pass an HTTPS URL, an SSH URL (`ssh://git@host/team/repo.git`), or an SSH select
   --repo https://github.com/org/frontend.git \
   --repo git@github.com:org/backend.git \
   --output ./reports/system \
-  --soft-budget 40 \
+  --hard-budget 50 \
   --full
 ```
 
@@ -140,7 +140,7 @@ Repeat `--repo` to assess several repositories as one system, using local Git ch
   --repo /repos/frontend \
   --repo /repos/backend \
   --output /appsec-reports/order-system \
-  --soft-budget 40 \
+  --hard-budget 50 \
   --sarif
 ```
 
@@ -148,8 +148,12 @@ A combined run has these requirements:
 
 - Select 2–16 repositories. Local selections must name top-level Git checkouts. A checkout inside another selected checkout, or two paths that name the same directory, stop the run.
 - Choose an `--output` directory outside every selected checkout. The run writes nothing into a selected checkout.
-- Set `--soft-budget` or `--hard-budget`. The run reserves each model call against this budget and stops when it is exhausted. With only `--soft-budget`, the limit is 1.25 times that value.
+- Set `--hard-budget` to the total model-cost limit. The controller reserves resources for required analysis and report completion and omits optional model work when it would consume that reserve. `--soft-budget` is deprecated in controller mode; for compatibility, using it alone still sets the limit to 1.25 times its value. An explicit hard budget takes precedence.
 - The untrusted-repository preflight checks every selected checkout. `--trust-mode trusted` skips it for all of them.
+
+The completion reserve is an estimate, updated from accepted jobs under the run's fixed model selection. Running calls count against the limit. Required report authoring and local finalization also retain a time allowance. Optional work uses its existing deterministic replacement when money, time or calls are reserved for required work; the console names every affected job, and unverified findings remain unproven. A reserve improves the chance of completion but cannot guarantee that mandatory analysis fits every budget.
+
+If the budget cannot cover required work, the run exits `3` and writes `.assessment-work/budget-report.md`. This separate, explicitly incomplete snapshot lists accepted steps, preliminary STRIDE candidates and outstanding work; it contains no final ratings, consolidated scanner results or security verdict. It does not replace `threat-model.md` or `threat-model.yaml` and produces no exports. Its bounded structured projection is recorded in `.assessment-state.json`. Increase `--hard-budget` or `--max-duration` and rerun without `--resume` or `--rebuild` to reuse compatible accepted steps; reused job costs remain part of the accounting. `--resume` retains the original limits. Invalid source state, unsettled accounting and failed security checks do not produce this snapshot.
 
 What the result shows:
 
@@ -160,7 +164,7 @@ What the result shows:
 
 A controller run, combined or for one repository through `/appsec-advisor:create-threat-model2`, uses Sonnet 5.5 for STRIDE at quick and standard depth, while a scan through `/appsec-advisor:create-threat-model` keeps STRIDE on Sonnet 4.6. Each STRIDE result must come back from one model call, and Sonnet 4.6 exhausts its thinking there without returning one. STRIDE calls therefore cost more: Sonnet 5.5 counts the same text in about 30% more tokens at the same price per token. The run prints each role's model at the start and warns about this change, even with `--quiet`. An explicit STRIDE model through `--stride-model`, `APPSEC_STRIDE_MODEL` or `--model` is kept; if it is Sonnet 4.6, the run warns that STRIDE is expected to return no result.
 
-A controller run does not follow the model of the session that started it: every role has a fixed model version, so cost, budget and later replays stay predictable. To choose other models, pass `--model <id>` for every role you do not set separately, `--stride-model`, `--triage-model` or `--merger-model` for one stage, or `--reasoning-model` for a tier; set `APPSEC_<ROLE>_MODEL`, such as `APPSEC_EVIDENCE_VERIFIER_MODEL`, for any other role. `--no-opus` turns every Opus selection into Sonnet. `/appsec-advisor:create-threat-model2` passes these flags to the run. A stronger model reaches the budget sooner, so raise `--soft-budget` or `--hard-budget` with it.
+A controller run does not follow the model of the session that started it: every role has a fixed model version, so cost, budget and later replays stay predictable. To choose other models, pass `--model <id>` for every role you do not set separately, `--stride-model`, `--triage-model` or `--merger-model` for one stage, or `--reasoning-model` for a tier; set `APPSEC_<ROLE>_MODEL`, such as `APPSEC_EVIDENCE_VERIFIER_MODEL`, for any other role. `--no-opus` turns every Opus selection into Sonnet. `/appsec-advisor:create-threat-model2` passes these flags to the run. A stronger model can reach the budget sooner; choose an appropriate `--hard-budget`.
 
 The models in a combined run have no file, shell or network tools. The controller serves every source excerpt a model reads, only from the selected checkouts, with secrets masked. Each analysis step is recorded, so `--resume` continues an interrupted run without repeating accepted steps, as long as the sources and settings are unchanged. After a plugin update, `--resume` reuses only the steps whose input is unchanged and redoes the rest. A run whose model cost became unknown cannot resume; start a new run.
 
@@ -181,14 +185,16 @@ Headless limits are enforced outside the model runtime:
   --repo /repos/team-api \
   --full \
   --max-duration 3600 \
-  --soft-budget 30
+  --hard-budget 30
 ```
 
-`--max-duration` uses the host `timeout` command.
+`--max-duration` sets the controller's cumulative deadline, retained on `--resume`. The controller protects time for required report work before dispatching optional calls. The previous single-repository scan (`APPSEC_SINGLE_REPO_CONTROLLER=0`) uses the host `timeout` command.
 
-`--soft-budget` rejects a run before it starts if the estimated cost exceeds the budget. Once started, the run can exceed that budget and reports the overrun. `--hard-budget` stops the session at the host level and applies to API billing. If you supply only a soft budget, the hard budget defaults to 1.25 times that value. Set `--hard-budget` to override it.
+In controller mode, `--hard-budget` is the total limit, including running reservations and reused jobs. The controller protects required completion and replaces optional work as described above. `--soft-budget` is a deprecated compatibility spelling that derives a limit of 1.25 times its value unless an explicit hard budget is supplied.
 
-An interrupted assessment cannot resume mid-analysis. If Stage 1 finished, use `--rerender` to create the report from its validated artifacts. The run prints the applicable recovery command. `--full` and `--rebuild` require `--force` before discarding a completed Stage 1. If Stage 1 did not finish, start again with `--full` or `--rebuild`; partial component artifacts remain for diagnosis only.
+In the previous single-repository scan, `--soft-budget` rejects a run before it starts if the estimated cost exceeds the budget; an admitted run can exceed it. `--hard-budget` is the host-level API-billing cut, defaulting to 1.25 times a supplied soft budget.
+
+In the previous single-repository scan, an interrupted assessment cannot resume mid-analysis. If Stage 1 finished, use `--rerender` to create the report from its validated artifacts. The run prints the applicable recovery command. `--full` and `--rebuild` require `--force` before discarding a completed Stage 1. If Stage 1 did not finish, start again with `--full` or `--rebuild`; partial component artifacts remain for diagnosis only.
 
 ## Scheduled CI example
 
@@ -273,9 +279,9 @@ It prints the completion summary after the session's closing text.
 | `--slug [value]` | Also write a copy of every deliverable named `threat-model-<value>.*`, so several models can share one directory. A bare `--slug` picks a random value. |
 | `--requirements [source]` | Include the requirements catalog. |
 | `--context <source>` | Supply business context as untrusted data for this run. |
-| `--max-duration <seconds>` | Stop the wrapper after the host deadline. |
-| `--soft-budget <usd>` | Steer the run to this cost. A run that cannot fit does not start; a run that overruns still finishes. |
-| `--hard-budget <usd>` | Kill the session at this cost, losing the report (API billing). Defaults to 1.25 × the soft budget. |
+| `--max-duration <seconds>` | Bound controller runtime, or the host session in the previous single-repository scan. |
+| `--soft-budget <usd>` | Deprecated in controller mode: derives a limit of 1.25 × this value. In the previous scan, sets the admission target. |
+| `--hard-budget <usd>` | Total controller budget with an automatic completion reserve; a host-level API-billing cut in the previous scan. |
 | `--trust-mode trusted\|untrusted` | Select repository trust preflight; default is untrusted. |
 | `--clean-cache` | Delete transient cache state and exit. |
 | `--clean-all` | Delete the selected output directory contents after confirmation and exit. |
