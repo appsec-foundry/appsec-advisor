@@ -708,3 +708,54 @@ def test_an_unusable_anchor_answer_falls_back_to_a_full_correction(tmp_path):
     model, result = _anchored(tmp_path, "routes/deluxe.ts", source, 2, replies)
     assert result.artifact["threats"][0]["evidence"]["line"] == 3 and result.calls == 3
     assert "rejected_result" in model.prompts[2]
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "multi-repo-stride.schema.json",
+        "multi-repo-architecture.schema.json",
+        "merge-decisions.schema.json",
+        "fragments/trust-boundary-candidates-v2.schema.json",
+    ],
+)
+def test_every_removed_constraint_reaches_the_model(tmp_path, name):
+    """MR-17: each keyword the host strips from the tool schema is stated in the job's instructions."""
+    schema = json.loads((Path(__file__).resolve().parents[1] / "schemas" / name).read_text(encoding="utf-8"))
+    removed = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            removed.extend(
+                json.dumps(v, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+                for k, v in node.items()
+                if k in host._HOST_UNSUPPORTED
+            )
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(schema)
+    system = host.instructions_with_rules("trusted task", schema)
+    assert removed and all(text in system for text in removed)
+    assert not any(key in json.dumps(host.host_schema(schema)) for key in ('"not"', '"allOf"', '"if"'))
+
+
+def test_a_job_without_removed_constraints_keeps_its_instructions_and_a_job_with_them_sends_them(tmp_path):
+    assert host.instructions_with_rules("trusted task", ARTIFACT) == "trusted task"
+    schema = {**ARTIFACT, "properties": {"summary": {"type": "string", "not": {"pattern": "bypassSecurityTrustHtml"}}}}
+    model = Recorded([complete()])
+    host.run_exchange(
+        model,
+        view(tmp_path),
+        instructions="trusted task",
+        context={"files": ["app.py"]},
+        artifact_schema=schema,
+        allowed_sources=frozenset({(REPO, "app.py")}),
+        timeout_s=30,
+        should_stop=lambda: False,
+    )
+    assert model.systems[0].startswith("trusted task") and "result.summary: not" in model.systems[0]
+    assert "bypassSecurityTrustHtml" in model.systems[0]

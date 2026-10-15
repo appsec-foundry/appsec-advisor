@@ -165,6 +165,58 @@ def host_schema(schema):
     return projected
 
 
+# Bound on the rendered rules a job's instructions carry (MR-17); a rule is
+# never cut, since half a rule misleads more than none.
+_MAX_RULES_CHARS = 8_000
+
+
+def removed_constraints(schema, path: str = "result") -> list[str]:
+    """Each constraint ``host_schema`` removes, as ``<location>: <keyword> <JSON>`` (MR-17).
+
+    The output tool never sees these keywords, so the job's instructions state
+    them; a correction turn is then never the first time a model meets a rule.
+    """
+    rules: list[str] = []
+    if isinstance(schema, list):
+        for item in schema:
+            rules.extend(removed_constraints(item, path))
+        return rules
+    if not isinstance(schema, dict):
+        return rules
+    for key, value in schema.items():
+        if key in _HOST_UNSUPPORTED:
+            text = json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+            rules.append(f"{path}: {key} {text}")
+        if key == "properties":
+            for name, child in value.items():
+                rules.extend(removed_constraints(child, f"{path}.{name}"))
+        elif key in ("$defs", "definitions"):
+            for name, child in value.items():
+                rules.extend(removed_constraints(child, f"#/{key}/{name}"))
+        elif key == "items":
+            rules.extend(removed_constraints(value, f"{path}[]"))
+        elif key in ("additionalProperties", "patternProperties"):
+            rules.extend(removed_constraints(value, f"{path}.*"))
+        elif key in ("anyOf", "oneOf"):
+            rules.extend(removed_constraints(value, path))
+    return rules
+
+
+def instructions_with_rules(instructions: str, artifact_schema: dict) -> str:
+    """The job's instructions plus every rule its output tool cannot enforce (MR-17)."""
+    rules = removed_constraints(artifact_schema)
+    if not rules:
+        return instructions
+    text = "\n".join(f"- {rule}" for rule in rules)
+    if len(text) > _MAX_RULES_CHARS:
+        raise ExchangeError("Output contract carries more unenforceable rules than a job's instructions hold")
+    return (
+        instructions
+        + "\n\nThe output tool cannot enforce these JSON Schema rules of the result; the controller rejects a "
+        "result that breaks one:\n" + text
+    )
+
+
 def read_slice(scope, repository_id: str, path: str, start: int, end: int) -> dict:
     """A source slice as the model receives it: each line prefixed by its file line number (MR-15).
 
@@ -424,6 +476,7 @@ def run_exchange(
     # structural; enforce read/complete exclusivity with the full validator
     # below, outside the model. Nested artifact constraints are retained.
     projected = host_schema(schema)
+    system = instructions_with_rules(instructions, artifact_schema)
     deadline = time.monotonic() + timeout_s
     slices: list[dict] = []
     seen: set[tuple] = set()
@@ -475,7 +528,7 @@ def run_exchange(
                 # Served slices are bounded by `_slices_fit`; a rejected reason
                 # that still overflows ends this answer, not the host contract.
                 raise ModelAnswerFailure("Correction packet exceeds its context limit") from None
-        reply = transport.invoke(instructions, prompt, projected, remaining, should_stop)
+        reply = transport.invoke(system, prompt, projected, remaining, should_stop)
         # A reply that arrived is used; the next turn checks the job's limit.
         if should_stop():
             raise HostCancelled("Assessment cancelled")

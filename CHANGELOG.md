@@ -25,7 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Headless controller assessments analyze and verify up to four components at a time instead of one after another, within the same cost budget.
 - Headless controller assessments spend less time preparing repeated source and evidence checks.
 - The headless controller console lists each STRIDE component and each verified abuse case with its title on its own line, and ends with one line per delivered file.
-- In a terminal, the headless controller's status line turns a spinner and draws a progress bar with each running model call's duration and activity, also with `--verbose`; CI logs are unchanged.
+- In a terminal, the headless controller's status line turns a spinner and draws a progress bar with each running model call's duration and activity, also with `--verbose`; CI logs are unchanged. During threat analysis each running component has its own bar, and progress follows finished rather than started components.
+- The headless controller console counts corrected model answers per role on each phase's done line instead of listing every rejection; `--verbose` still names each reason. Coverage statements, such as files no target covered, are shown as information instead of warnings.
 - Headless output is coloured in a terminal, wraps long header values under their column, and honours `NO_COLOR` and `FORCE_COLOR`; logs and CI output carry no colour codes.
 - Headless controller assessments run repository discovery on Sonnet 5.5 instead of Haiku, so large repositories no longer stall or fail there; `APPSEC_RECON_SCANNER_MODEL` still selects another model.
 - Headless controller assessments need fewer and cheaper model calls: threat-analysis, trust-boundary and control jobs receive their cited source up front, threat analysis decides each route resource once together with its handler and guards instead of every registration line, source files without a security signal are named as not individually examined instead of analysed one by one, a result rejected only for citing a blank or comment line is corrected by asking for that line alone instead of regenerating the whole analysis, and model calls no longer pay the one-hour prompt-cache rate for prompts that are never reused.
@@ -39,6 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Headless controller assessments give every model the result rules its output tool cannot enforce and derive STRIDE category coverage, identity fields and title locations themselves, so far fewer answers are sent back for correction; control domains are limited to the report's sections.
+- The headless controller no longer warns that an LLM provider is unmodeled when the architecture already connects the component to it.
 - Headless controller assessments see each source line with its line number, so cited lines no longer drift deep in a file, and a control, flow or boundary that cites a blank line or comment is corrected in its own job instead of failing every later analysis that relies on it.
 - Headless controller threat analysis no longer stops on source files that begin with a license header or other comment.
 - Headless controller threat analysis decides a route in the component that owns its handler, reading the guards where the route is registered, instead of leaving it unresolved when handler and registration belong to different components; it also receives the source the supplied controls cite and reads an Angular component together with its template, evidence reviews receive each finding's anchor up front, and a target that already links a finding needs no separate reason.

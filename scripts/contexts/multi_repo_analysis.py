@@ -522,11 +522,16 @@ def model_integration_gaps(leads: list[dict], flows: dict) -> list[str]:
         for entity in flows.get("external_entities", [])
         if any(role.get("role") == "llm-inference" for role in entity.get("service_roles") or [])
     }
+    # A flow to an external entity names it in `to_entity`/`from_entity`; its
+    # `from`/`to` then read "external".
     connected = {
         end
         for flow in flows.get("data_flows", [])
-        for end, other in ((flow.get("from"), flow.get("to")), (flow.get("to"), flow.get("from")))
-        if other in inference
+        for end, others in (
+            (flow.get("from"), (flow.get("to"), flow.get("to_entity"))),
+            (flow.get("to"), (flow.get("from"), flow.get("from_entity"))),
+        )
+        if inference.intersection(others)
     }
     return [lead["component_id"] for lead in leads if lead["component_id"] not in connected]
 
@@ -585,6 +590,78 @@ def surface_evidence_normalizer(targets):
         return artifact
 
     normalize.version = "surface-anchor-2"
+    return normalize
+
+
+# A title's trailing location, which the controller derives from the anchor (MR-17).
+_TITLE_LOCATION = re.compile(r"\s*\([^()]*:\d+(?:-\d+)?\)\s*$")
+TITLE_MAX = 80
+
+
+def identity_normalizer(identity):
+    """Set the job's identity fields instead of checking the model's copy (MR-17)."""
+
+    def normalize(artifact):
+        artifact.update(
+            source_scope_sha256=identity["source_scope_sha256"],
+            component_inventory_fingerprint=identity["component_inventory_fingerprint"],
+        )
+        return artifact
+
+    normalize.version = "identity-1"
+    return normalize
+
+
+def stride_normalizer(targets, component, identity):
+    """Derive what the controller knows instead of checking and returning it (MR-17).
+
+    Identity fields come from the job; each category's ``finding_ids`` and
+    whether it holds findings come from the threats, keeping the model's reason;
+    a missing category is added as ``no-evidence``. A title's location bracket
+    is the anchor's file and line, appended when the title stays within its
+    limit. Coverage of investigation targets is normalized as before.
+    """
+    surface = surface_evidence_normalizer(targets)
+
+    def normalize(artifact):
+        artifact = surface(artifact)
+        artifact.update(
+            schema_version=2,
+            source_scope_sha256=identity["source_scope_sha256"],
+            component_inventory_fingerprint=identity["component_inventory_fingerprint"],
+            component_id=component["id"],
+            component_name=component["name"],
+        )
+        threats = [row for row in artifact.get("threats") or [] if isinstance(row, dict)]
+        rows = {
+            row.get("category"): row
+            for row in reversed(artifact.get("coverage") or [])
+            if isinstance(row, dict) and row.get("category") in STRIDE_CATEGORIES
+        }
+        coverage = []
+        for category in STRIDE_CATEGORIES:
+            row = dict(rows.get(category) or {"reason": "No finding was reported for this category."})
+            ids = [t["local_id"] for t in threats if t.get("stride") == category and isinstance(t.get("local_id"), str)]
+            row.update(category=category, finding_ids=ids)
+            if ids:
+                row["disposition"] = "finding"
+            elif row.get("disposition") in (None, "finding"):
+                row["disposition"] = "no-evidence"
+            coverage.append(row)
+        artifact["coverage"] = coverage
+        for threat in threats:
+            title, anchor = threat.get("title"), threat.get("evidence")
+            if not isinstance(title, str):
+                continue
+            base = _TITLE_LOCATION.sub("", title).rstrip()
+            if isinstance(anchor, dict) and isinstance(anchor.get("file"), str) and type(anchor.get("line")) is int:
+                located = f"{base} ({posixpath.basename(anchor['file'])}:{anchor['line']})"
+                threat["title"] = located if len(located) <= TITLE_MAX else base
+            else:
+                threat["title"] = base
+        return artifact
+
+    normalize.version = surface.version + "+stride-derive-1"
     return normalize
 
 
@@ -806,6 +883,18 @@ def validate_controls(scope, components, component_fingerprint, artifact, ranges
             describe_unplaced_controls(unplaced) + ". Use one of these domains: " + "; ".join(_placeable_domains())
         )
     validate_executable_evidence(scope, artifact, "Control evidence does not cite an executable implementation")
+
+
+def controls_contract() -> dict:
+    """The control job's contract with ``domain`` limited to the §6 titles that place a control (MR-17).
+
+    `validate_controls` accepts nothing else, so the output tool enforces the
+    choice instead of a correction turn.
+    """
+    schema = contract("multi-repo-controls.schema.json")
+    item = schema["properties"]["security_controls"]["items"]
+    item["properties"]["domain"] = {**item["properties"]["domain"], "enum": list(_placeable_domains())}
+    return schema
 
 
 def _unplaced_controls(controls: list[dict]) -> list[dict]:
@@ -1150,13 +1239,14 @@ def validate_executable_evidence(scope, artifact, summary, repository_id=None):
         own_evidence = [row for row in evidence if row.get("repository_id", repository_id) == repo.repository_id]
         if own_evidence:
             with scope.scanner_snapshot(repo.repository_id) as root:
-                errors = repository_evidence_errors(own_evidence, root, require_line=True, require_code=True)
+                check = dict(require_line=True, require_code=True)
+                errors = repository_evidence_errors(own_evidence, root, **check)
                 if errors:
                     anchors = [
                         (row, problem[0])
                         for row in own_evidence
                         if type(row.get("line")) is int
-                        and (problem := repository_evidence_errors([row], root, require_line=True, require_code=True))
+                        and (problem := repository_evidence_errors([row], root, **check))
                     ]
                     raise Rejection(summary, errors, anchors=anchors if len(anchors) == len(errors) else ())
 

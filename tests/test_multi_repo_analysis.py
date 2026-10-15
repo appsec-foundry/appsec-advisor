@@ -426,6 +426,31 @@ def test_model_integration_gap_closes_only_with_a_flow_to_an_inference_service(t
 
 
 @pytest.mark.parametrize(
+    "flow",
+    [
+        {"from": "component-1", "to": "external", "to_entity": "ext-model"},
+        {"from": "external", "from_entity": "ext-model", "to": "component-1"},
+    ],
+    ids=["outbound", "inbound"],
+)
+def test_a_flow_naming_its_inference_entity_closes_the_gap(tmp_path, flow):
+    """A local architecture's external flow names its entity in to_entity/from_entity (Juice Shop chatbot)."""
+    source = (
+        b"import { createOpenAICompatible } from '@ai-sdk/openai-compatible'\nconst p = createOpenAICompatible({})\n"
+    )
+    scope, component = _owned_sources(tmp_path, {"routes/chat.ts": source}, ["routes/chat.ts"])
+    leads = stage.model_integration_leads(scope, [component])
+    inference = {"id": "ext-model", "service_roles": [{"role": "llm-inference", "evidence": []}]}
+    rpc = {"id": "ext-rpc", "service_roles": [{"role": "blockchain-rpc", "evidence": []}]}
+    assert leads and stage.model_integration_gaps(leads, {"external_entities": [inference], "data_flows": [flow]}) == []
+    # An entity flow to another service still leaves the gap open.
+    other = {**flow, **{key: "ext-rpc" for key in ("to_entity", "from_entity") if key in flow}}
+    assert stage.model_integration_gaps(leads, {"external_entities": [inference, rpc], "data_flows": [other]}) == [
+        "component-1"
+    ]
+
+
+@pytest.mark.parametrize(
     "kind",
     [
         "owner",
@@ -1451,3 +1476,61 @@ def test_a_non_executable_finding_anchor_is_named_for_an_anchor_only_correction(
     stage.validate_stride(
         scope, component, [component], flows, stride(component, {**evidence, "line": 1}, identity), ranges
     )
+
+
+@pytest.mark.parametrize(
+    "damage",
+    ["coverage-mismatch", "missing-category", "stale-identity"],
+)
+def test_stride_coverage_and_identity_are_derived_before_validation(tmp_path, damage):
+    """MR-17: what the controller knows is set, not checked and returned to the model."""
+    scope, components, evidence, ranges, identity = sources(tmp_path)
+    component = components[0]
+    artifact = stride(component, evidence[0], identity)
+    flows = dict(component_inventory_fingerprint=FP, data_flows=[])
+    if damage == "coverage-mismatch":
+        artifact["coverage"] = [dict(row, disposition="no-evidence", finding_ids=[]) for row in artifact["coverage"]]
+    elif damage == "missing-category":
+        artifact["coverage"] = [row for row in artifact["coverage"] if row["category"] != "Tampering"]
+    else:
+        artifact.update(component_name="Renamed", source_scope_sha256="0" * 64)
+    with pytest.raises(ExchangeError):
+        stage.validate_stride(scope, component, [component], flows, copy.deepcopy(artifact), ranges[:1])
+    normalized = stage.stride_normalizer([], component, identity)(copy.deepcopy(artifact))
+    stage.validate_stride(scope, component, [component], flows, normalized, ranges[:1])
+    tampering = next(row for row in normalized["coverage"] if row["category"] == "Tampering")
+    assert tampering["disposition"] == "finding" and tampering["finding_ids"] == ["issue-1"]
+    assert [row["category"] for row in normalized["coverage"]] == list(stage.STRIDE_CATEGORIES)
+
+
+@pytest.mark.parametrize(
+    "title,expected",
+    [
+        ("Unvalidated input reaches the handler (old/place.py:99)", "Unvalidated input reaches the handler (app.py:1)"),
+        ("Unvalidated input reaches the handler", "Unvalidated input reaches the handler (app.py:1)"),
+        ("A" * 75, "A" * 75),
+    ],
+    ids=["replaced", "added", "dropped-when-too-long"],
+)
+def test_a_title_location_comes_from_its_anchor(tmp_path, title, expected):
+    scope, components, evidence, ranges, identity = sources(tmp_path)
+    artifact = stride(components[0], evidence[0], identity)
+    artifact["threats"][0]["title"] = title
+    normalized = stage.stride_normalizer([], components[0], identity)(artifact)
+    assert normalized["threats"][0]["title"] == expected and len(expected) <= stage.TITLE_MAX
+
+
+def test_the_control_job_may_only_choose_a_placeable_domain():
+    """MR-17 (RC-L): the output tool enforces the §6 domains `validate_controls` accepts."""
+    from jsonschema import Draft202012Validator
+
+    schema = stage.controls_contract()
+    domain = schema["properties"]["security_controls"]["items"]["properties"]["domain"]
+    assert domain["enum"] == list(stage._placeable_domains())
+    assert not stage._unplaced_controls(
+        [
+            dict(control="x", effectiveness="Weak", component_ids=[], evidence=[], assessment="-", domain=d)
+            for d in domain["enum"]
+        ]
+    )
+    assert not Draft202012Validator(domain).is_valid("Recovery")
