@@ -765,6 +765,51 @@ def test_controls_cannot_borrow_evidence_from_another_owner(tmp_path):
 
 
 @pytest.mark.parametrize(
+    "path,source,line,problem",
+    [
+        ("app.py", b"token = issue()\n\nstore(token)\n", 2, "blank line"),
+        ("web/signin.ts", b"const t = auth()\n// keep the token\nlocalStorage.setItem('t', t)\n", 2, "comment"),
+    ],
+    ids=["blank-line", "comment"],
+)
+def test_a_control_citing_a_blank_line_is_corrected_in_its_own_job(tmp_path, path, source, line, problem):
+    """MR-15: a control is held to STRIDE's executable-line check, so later jobs never inherit its bad anchor."""
+    from runtime.assessment_host import Rejection
+
+    repo = RepositoryView("repo-" + "1" * 16, tmp_path / "repo", "b" * 40, "c" * 64, {path: source})
+    scope = AssessmentScope((repo,), tmp_path / "output")
+    digest = hashlib.sha256(source).hexdigest()
+    component = dict(
+        id="component-1",
+        name="Client",
+        tier="application",
+        repository_ids=[repo.repository_id],
+        paths=[dict(repository_id=repo.repository_id, path=path, sha256=digest)],
+    )
+    identity = dict(
+        schema_version=2, source_scope_sha256=scope.inventory()["scope_sha256"], component_inventory_fingerprint=FP
+    )
+    ranges = [dict(repository_id=repo.repository_id, path=path, sha256=digest, start_line=1, end_line=3)]
+    evidence = dict(repository_id=repo.repository_id, file=path, line=line, sha256=digest)
+    control = dict(
+        domain="Authentication",
+        control="Client-side token storage",
+        effectiveness="Weak",
+        assessment="The token is readable by any script.",
+        component_ids=[component["id"]],
+        evidence=[evidence],
+    )
+    artifact = dict(**identity, security_controls=[control])
+    with pytest.raises(Rejection, match="Control evidence") as raised:
+        stage.validate_controls(scope, [component], FP, artifact, ranges)
+    assert problem in str(raised.value)
+    # Named for an anchor-only correction (MR-2), not a regenerated result.
+    assert [row["line"] for row, _ in raised.value.anchors] == [line]
+    control["evidence"] = [dict(evidence, line=3)]
+    stage.validate_controls(scope, [component], FP, artifact, ranges)
+
+
+@pytest.mark.parametrize(
     ("domain", "control"),
     [
         ("Trust-boundary enforcement", "postMessage origin validation"),
@@ -1044,6 +1089,22 @@ def test_target_jobs_follow_source_size_and_preload_every_window(tmp_path, prefi
     for batch in (roomy, tight):
         assert sorted(t["local_id"] for part, _ in batch for t in part) == sorted(t["local_id"] for t in targets)
         assert all(len(preload) == len({t["evidence"]["file"] for t in part}) for part, preload in batch)
+
+
+@pytest.mark.parametrize("reserve_bytes,reserve_windows", [(1_000, 0), (0, 32)], ids=["bytes", "windows"])
+def test_only_the_first_target_job_reserves_room_for_context_lines(tmp_path, reserve_bytes, reserve_windows):
+    files = {f"routes/h{i:02d}.ts": b"export const handle = (req) => req.body\n" for i in range(20)}
+    scope, _ = _owned_sources(tmp_path, files, sorted(files))
+    targets = _file_targets(scope, sorted(files))
+    arguments = dict(room=2_500, max_targets=64, max_windows=36, window_lines=400, max_unserved=6)
+    plain = stage.target_batches(scope, targets, **arguments)
+    reserved = stage.target_batches(
+        scope, targets, **arguments, reserve_bytes=reserve_bytes, reserve_windows=reserve_windows
+    )
+    # The first job holds fewer windows; every later job keeps its full room.
+    assert len(reserved[0][1]) < len(plain[0][1])
+    assert all(len(preload) == len(plain[1][1]) for _, preload in reserved[1:-1])
+    assert sorted(t["local_id"] for part, _ in reserved for t in part) == sorted(t["local_id"] for t in targets)
 
 
 def test_targets_sharing_a_window_stay_together_and_oversized_windows_are_left_to_the_model(tmp_path):

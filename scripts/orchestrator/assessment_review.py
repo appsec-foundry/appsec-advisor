@@ -216,7 +216,7 @@ def _candidate_titles(workspace: Path) -> dict[str, str]:
     }
 
 
-def _verify_candidate(jobs, names, workspace: Path, candidate: str, *, instructions) -> None:
+def _verify_candidate(scope, jobs, names, workspace: Path, candidate: str, *, instructions) -> None:
     context = read_json(workspace / ".dispatch-context/abuse-cases" / f"{candidate}.json")
     body = context["candidate"]
     steps = [row["step"] for row in body.get("chain") or body.get("steps") or []]
@@ -233,6 +233,9 @@ def _verify_candidate(jobs, names, workspace: Path, candidate: str, *, instructi
             raise ExchangeError("Abuse-case verdict does not answer every step exactly once")
         if any(row["matched_finding_id"] not in finding_ids | {None} for row in artifact["step_verdicts"]):
             raise ExchangeError("Abuse-case verdict binds a finding outside its candidate")
+        from contexts.multi_repo_analysis import validate_executable_evidence
+
+        validate_executable_evidence(scope, artifact, "Abuse-case evidence does not cite an executable implementation")
 
     artifact = jobs.execute(
         role="abuse_case_verifier",
@@ -391,7 +394,7 @@ def run_abuse_cases(
         for position, candidate in enumerate(candidates, 1):
             title = f" — {titles[candidate]}" if titles.get(candidate) else ""
             progress(f"Verifying abuse case: {candidate}{title} ({position}/{len(candidates)})")
-            _verify_candidate(jobs, names, workspace, candidate, instructions=instructions)
+            _verify_candidate(scope, jobs, names, workspace, candidate, instructions=instructions)
     run_script("validators/verify_abuse_cases.py", ["merge", "--output-dir", str(workspace)])
     run_script("model/match_abuse_cases.py", ["finalize", "--output-dir", str(workspace)])
     run_script("model/promote_verified_abuse_cases.py", ["--output-dir", str(workspace)])

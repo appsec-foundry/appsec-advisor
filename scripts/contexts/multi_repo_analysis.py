@@ -16,7 +16,7 @@ from pathlib import Path
 
 import yaml
 from jsonschema import Draft202012Validator
-from runtime.assessment_host import ExchangeError, Rejection
+from runtime.assessment_host import ExchangeError, Rejection, read_slice
 from runtime.multi_repo_scope import ScopeError
 from shared.assessment_sources import source_key, source_rows
 from validators.validate_assessment_architecture import validate_source
@@ -805,6 +805,7 @@ def validate_controls(scope, components, component_fingerprint, artifact, ranges
         raise ExchangeError(
             describe_unplaced_controls(unplaced) + ". Use one of these domains: " + "; ".join(_placeable_domains())
         )
+    validate_executable_evidence(scope, artifact, "Control evidence does not cite an executable implementation")
 
 
 def _unplaced_controls(controls: list[dict]) -> list[dict]:
@@ -1017,6 +1018,7 @@ def validate_local_architecture(
     )
     if errors:
         raise Rejection("Local architecture violates flow invariants", errors)
+    validate_executable_evidence(scope, artifact, "Architecture evidence does not cite an executable implementation")
 
 
 def _comparison(value):
@@ -1052,7 +1054,6 @@ def validate_stride(
     the neighborhood that the job's targets read as route registrations; their
     lines may support a finding, whose own anchor stays in the component.
     """
-    from validators.validate_fragment import repository_evidence_errors
     from validators.validate_intermediate import validate_stride as legacy_validate
 
     if not Draft202012Validator(contract("multi-repo-stride.schema.json")).is_valid(artifact):
@@ -1130,29 +1131,39 @@ def validate_stride(
                     f"(boundaries adjacent to this component: {', '.join(sorted(adjacent)) or 'none'})",
                     diagnostics,
                 )
+    validate_executable_evidence(scope, artifact, "STRIDE evidence does not cite an executable implementation")
+
+
+def validate_executable_evidence(scope, artifact, summary, repository_id=None):
+    """Every cited line must be code, not a blank line or comment (MR-15).
+
+    Each role runs this as its last check: every earlier check passed, so
+    naming each failing row lets the exchange ask for its line alone (MR-2).
+    A citation accepted here is inherited by later jobs, which would
+    otherwise each be rejected for it. A row without its own
+    ``repository_id`` belongs to `repository_id`.
+    """
+    from validators.validate_fragment import repository_evidence_errors
+
     evidence = list(source_rows(artifact))
     for repo in scope.repositories:
-        own_evidence = [row for row in evidence if row["repository_id"] == repo.repository_id]
+        own_evidence = [row for row in evidence if row.get("repository_id", repository_id) == repo.repository_id]
         if own_evidence:
             with scope.scanner_snapshot(repo.repository_id) as root:
                 errors = repository_evidence_errors(own_evidence, root, require_line=True, require_code=True)
                 if errors:
-                    # Every earlier check passed, so naming each failing row lets
-                    # the exchange ask for its line alone (MR-2).
                     anchors = [
                         (row, problem[0])
                         for row in own_evidence
                         if type(row.get("line")) is int
                         and (problem := repository_evidence_errors([row], root, require_line=True, require_code=True))
                     ]
-                    raise Rejection(
-                        "STRIDE evidence does not cite an executable implementation",
-                        errors,
-                        anchors=anchors if len(anchors) == len(errors) else (),
-                    )
+                    raise Rejection(summary, errors, anchors=anchors if len(anchors) == len(errors) else ())
 
 
-def target_batches(scope, targets, *, room, max_targets, max_windows, window_lines, max_unserved):
+def target_batches(
+    scope, targets, *, room, max_targets, max_windows, window_lines, max_unserved, reserve_bytes=0, reserve_windows=0
+):
     """Split one component's investigation targets into jobs that receive their source up front.
 
     Every target must be read, and the controller knows where: each job gets
@@ -1163,7 +1174,9 @@ def target_batches(scope, targets, *, room, max_targets, max_windows, window_lin
     `room`, is left to the model's own reads, at most `max_unserved` per job. Targets sharing a window
     stay together up to `max_targets`. A target's ``related`` ranges (MR-13: a route's handler module,
     a handler's registration lines) are preloaded in the same job when they fit; one the job cannot
-    hold is left to the model's reads. Returns ``(targets, preload)`` pairs.
+    hold is left to the model's reads. The first job keeps `reserve_bytes` and `reserve_windows` free for
+    slices its caller adds, such as the lines the component's context cites. Returns ``(targets, preload)``
+    pairs.
     """
 
     def window(target):
@@ -1174,7 +1187,7 @@ def target_batches(scope, targets, *, room, max_targets, max_windows, window_lin
 
     def serve(key):
         try:
-            piece = scope.read(*key)
+            piece = read_slice(scope, *key)
         except ScopeError:
             return None, 0
         size = len(json.dumps(piece, ensure_ascii=False).encode())
@@ -1192,6 +1205,7 @@ def target_batches(scope, targets, *, room, max_targets, max_windows, window_lin
     ]
     batches: list[tuple[list[dict], list[tuple]]] = []
     used = unserved = 0
+    cap = max_windows
     for key, members in chunks:
         primary, size = serve(key)
         size += len(json.dumps(members, ensure_ascii=False).encode())
@@ -1214,12 +1228,13 @@ def target_batches(scope, targets, *, room, max_targets, max_windows, window_lin
         full = batches and (
             len(batches[-1][0]) + len(members) > max_targets
             or used + size > room
-            or (primary is not None and len(batches[-1][1]) >= max_windows)
+            or (primary is not None and len(batches[-1][1]) >= cap)
             or (primary is None and unserved >= max_unserved)
         )
         if not batches or full:
             batches.append(([], []))
-            used = unserved = 0
+            used, cap = (reserve_bytes, max_windows - reserve_windows) if len(batches) == 1 else (0, max_windows)
+            unserved = 0
             new = missing(([], [primary] if primary else []))
         batches[-1][0].extend(members)
         if primary is None:
@@ -1230,7 +1245,7 @@ def target_batches(scope, targets, *, room, max_targets, max_windows, window_lin
         if primary is not None:
             new = [(k, n) for k, n in new if not (k[:2] == primary[:2] and primary[2] <= k[2] and k[3] <= primary[3])]
         for extra, extra_size in new:
-            if len(batches[-1][1]) < max_windows and used + extra_size <= room:
+            if len(batches[-1][1]) < cap and used + extra_size <= room:
                 batches[-1][1].append(extra)
                 used += extra_size
     return batches
@@ -1292,7 +1307,7 @@ def evidence_preload(scope, evidence, allowed_sources, *, room, max_windows, bef
         if len(preload) >= max_windows:
             break
         try:
-            piece = scope.read(*key)
+            piece = read_slice(scope, *key)
         except ScopeError:
             continue
         size = len(json.dumps(piece, ensure_ascii=False).encode())
@@ -1305,7 +1320,7 @@ def evidence_preload(scope, evidence, allowed_sources, *, room, max_windows, bef
 
 def served_bytes(scope, keys) -> int:
     """Packet bytes the slices of `keys` occupy, measured as `evidence_preload` measures them."""
-    return sum(len(json.dumps(scope.read(*key), ensure_ascii=False).encode()) for key in keys)
+    return sum(len(json.dumps(read_slice(scope, *key), ensure_ascii=False).encode()) for key in keys)
 
 
 def validate_evidence_review(scope, findings, component_fingerprint, artifact, ranges, allowed_sources):
@@ -1336,6 +1351,7 @@ def validate_evidence_review(scope, findings, component_fingerprint, artifact, r
             tuple(row[key] for key in fields) == tuple(anchor[key] for key in fields) for row in decision["evidence"]
         ):
             raise ExchangeError("Verified finding lacks an independent reading of its anchor")
+    validate_executable_evidence(scope, artifact, "Review evidence does not cite an executable implementation")
 
 
 def validate_boundary_candidates(scope, assessment, artifact, ranges, allowed_sources):
@@ -1363,3 +1379,4 @@ def validate_boundary_candidates(scope, assessment, artifact, ranges, allowed_so
     )
     if errors:
         raise Rejection("Boundary candidates violate existing coverage and crossing invariants", errors)
+    validate_executable_evidence(scope, artifact, "Boundary evidence does not cite an executable implementation")

@@ -653,6 +653,9 @@ def discover_actors(scope, jobs, names, workspace: Path, cfg: dict, instructions
 
     def validate(artifact, ranges):
         analysis.validate_retrieved_sources(scope, artifact, ranges, allowed)
+        analysis.validate_executable_evidence(
+            scope, artifact, "Actor evidence does not cite an executable implementation"
+        )
 
     artifact = jobs.execute(
         role="actor_discoverer",

@@ -69,9 +69,45 @@ def test_controller_services_a_valid_read_and_requires_a_valid_final_artifact(tm
     model = Model([read(), complete()])
     result = invoke(model, tmp_path)
     assert result.calls == 2 and result.usd == 0.02
-    assert result.source_slices[0]["lines"] == ["print('frozen')"]
+    assert result.source_slices[0]["lines"] == ["1: print('frozen')"]
     assert "print('frozen')" not in model.prompts[0]
     assert "print('frozen')" in model.prompts[1]
+
+
+@pytest.mark.parametrize(
+    "path,source,start,end",
+    [
+        ("app.py", b"import os\n\nuser = os.environ['USER']\nprint(user)\n", 2, 4),
+        ("src/login/login.component.ts", b"".join(b"line %d\n" % n for n in range(1, 151)), 95, 104),
+    ],
+    ids=["short-file", "deep-in-file"],
+)
+def test_source_slices_carry_their_file_line_numbers(tmp_path, path, source, start, end):
+    """MR-15: a model copies a cited line's number from the slice instead of counting array positions."""
+    import hashlib
+
+    scope = AssessmentScope(
+        (RepositoryView(REPO, tmp_path / "source", "a" * 40, "b" * 64, {path: source}),), tmp_path / "out"
+    )
+    model = Model([complete()])
+    result = host.run_exchange(
+        model,
+        scope,
+        instructions="trusted task",
+        context={"files": [path]},
+        artifact_schema=ARTIFACT,
+        allowed_sources=frozenset({(REPO, path)}),
+        timeout_s=30,
+        should_stop=lambda: False,
+        preload=[(REPO, path, start, end)],
+    )
+    packet = json.loads(model.prompts[0].split(f"<<<{host.MARKER}\n")[1].split(f"\n{host.MARKER}>>>")[0])
+    lines = source.decode().splitlines()
+    assert packet["source_slices"][0]["lines"] == [f"{n}: {lines[n - 1]}" for n in range(start, end + 1)]
+    # The prefix is presentation only: the served range and hash stay those of the source.
+    served = result.source_slices[0]
+    assert (served["start_line"], served["end_line"]) == (start, end)
+    assert served["sha256"] == hashlib.sha256(source).hexdigest()
 
 
 @pytest.mark.parametrize(
@@ -96,7 +132,7 @@ def test_a_reversed_or_single_line_range_is_served_not_fatal(tmp_path, start, en
     proposal = read()
     proposal["reads"][0].update(start_line=start, end_line=end)
     result = invoke(Model([proposal, complete()]), tmp_path)
-    assert result.source_slices[0]["start_line"] == 1 and result.source_slices[0]["lines"] == ["print('frozen')"]
+    assert result.source_slices[0]["start_line"] == 1 and result.source_slices[0]["lines"] == ["1: print('frozen')"]
 
 
 def test_a_read_that_would_overflow_the_next_packet_is_refused_back_not_fatal(tmp_path):

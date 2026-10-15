@@ -48,12 +48,14 @@ class Host:
         self.calls = []
         # The (repository_id, path, start, end) slices each call's packet carried.
         self.packets = []
+        self.systems = []
 
     def factory(self, role, ceiling):
         owner = self
 
         class Transport:
             def invoke(self, system, prompt, schema, timeout_s, should_stop):
+                owner.systems.append(system)
                 return owner.invoke(role, prompt)
 
         return Transport()
@@ -135,7 +137,7 @@ class Host:
                         address="https://api.example.invalid",
                         deployment="neutral-a",
                         operation="GET /records",
-                        evidence=[dict(file="app.py", line=1, quote=slices[0]["lines"][0])],
+                        evidence=[dict(file="app.py", line=1, quote=slices[0]["lines"][0].split(": ", 1)[1])],
                     )
                 ],
             )
@@ -151,7 +153,12 @@ class Host:
                         disposition="resolved",
                         reason="Both implementation endpoints and their deployment binding establish this communication.",
                         evidence=[
-                            dict(repository_id=s["repository_id"], file=s["path"], line=1, quote=s["lines"][0])
+                            dict(
+                                repository_id=s["repository_id"],
+                                file=s["path"],
+                                line=1,
+                                quote=s["lines"][0].split(": ", 1)[1],
+                            )
                             for s in slices
                         ],
                     )
@@ -355,6 +362,64 @@ def test_stride_splits_surface_work_without_losing_findings_or_reading_foreign_s
     assert sum(len(r["decisions"]) for r in reviews) == len(contexts) + len(peer["threats"]) == len(contexts) + 1
     assert all(t["evidence"]["repository_id"] == rid for t in document["threats"])
     assert merged["threats"]
+
+
+@pytest.mark.parametrize("line", [900, 1500])
+def test_only_the_first_job_of_a_split_component_carries_its_context_lines(tmp_path, line):
+    """Context-only weaknesses are one job's duty, so later jobs keep their room and do not repeat them."""
+    root = tmp_path / "service"
+    checkout(root)
+    path = root / "app.py"
+    path.write_text(path.read_text() + ("value = request.args['input'] + '" + "x" * 60 + "'\n") * 2400)
+    peer = tmp_path / "peer"
+    checkout(peer)
+    scope = admit([str(root), str(peer)], str(tmp_path / "out"))
+    host = Host(scope)
+    jobs = AssessmentJobs(
+        scope,
+        scope.output / ".assessment/jobs",
+        AssessmentBudget(2, 0.05, 60, 120),
+        host.factory,
+        lambda: False,
+        lambda: None,
+    )
+    architecture = controller._assessment_architecture(scope, jobs, progress=lambda _: None)
+    rid = next(r.repository_id for r in scope.repositories if r.root == root)
+    architecture["route_inventories"] = {
+        rid: {"routes": [dict(handler_file="app.py", handler_line=n) for n in range(1, 2402, 400)]}
+    }
+    component = next(c for c in architecture["components"]["components"] if c["repository_ids"] == [rid])
+    controls = [
+        dict(
+            domain="Input Validation",
+            control="Request Validation",
+            effectiveness="Partial",
+            assessment="The handler reads a request parameter directly.",
+            component_ids=[component["id"]],
+            evidence=[
+                dict(repository_id=rid, file="app.py", line=line, sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+            ],
+        )
+    ]
+    calls = len(host.calls)
+    controller._assessment_stride(scope, jobs, architecture, controls, [], progress=lambda _: None)
+    stride = [
+        (system, slices)
+        for (role, ctx), slices, system in zip(host.calls[calls:], host.packets[calls:], host.systems[calls:])
+        if role == "stride_analyzer" and ctx["component"]["id"] == component["id"]
+    ]
+    context_window = (rid, "app.py", line - 10)
+    carriers = [index for index, (_, slices) in enumerate(stride) if any(key[:3] == context_window for key in slices)]
+    assert len(stride) > 1 and carriers == [0]
+    assert f"job 1 of {len(stride)}" in stride[0][0]
+    assert all(f"job {n} of {len(stride)}" in system for n, (system, _) in enumerate(stride[1:], 2))
+    # A component analyzed in one job is not told about other jobs.
+    single = [
+        system
+        for (role, ctx), system in zip(host.calls[calls:], host.systems[calls:])
+        if role == "stride_analyzer" and ctx["component"]["id"] != component["id"]
+    ]
+    assert single and not any("job 1 of" in system for system in single)
 
 
 def test_a_job_with_more_preloaded_windows_than_reads_passes_its_receipt(tmp_path):
