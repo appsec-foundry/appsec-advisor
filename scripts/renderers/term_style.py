@@ -42,6 +42,9 @@ _PALETTE: dict[str, tuple[tuple[int, int, int], str]] = {
     "medium": ((240, 198, 110), "33"),
     "low": ((124, 196, 228), "36"),
     "muted": ((109, 118, 134), "90"),
+    # The logo's iris glows from a dark rim to a bright core.
+    "iris_rim": ((38, 92, 128), "36"),
+    "iris_core": ((215, 245, 255), "96"),
 }
 _ATTRS = {"bold": "1"}
 COLOR_MODES = ("auto", "always", "never")
@@ -131,16 +134,19 @@ def plugin_version() -> str:
 
 
 def logo(st: Style, detail: str) -> list[str]:
-    """The three-line headless logo: a scanner light bar, the name, the tagline and ``detail``.
+    """The three-line headless logo: a glowing iris in brackets, the name, the tagline and ``detail``.
 
     Shown only on a terminal; callers print their plain title line otherwise.
     """
-    frame = lambda text: st(text, "muted")  # noqa: E731
-    light = st("··", "muted") + st("▒▓█▓▒", "critical") + st("··", "muted")
+    bracket = lambda text: st(text, "agent")  # noqa: E731
+    rim = lambda text: st(text, "iris_rim")  # noqa: E731
+    top = rim("▄") + st("█", "accent") + rim("▄")
+    middle = rim("█") + st("█", "accent") + st("█", "iris_core") + st("█", "accent") + rim("█")
+    bottom = rim("▀") + st("█", "accent") + rim("▀")
     return [
-        f"   {frame('┌─────────┐')}  {st(st.gradient('appsec-advisor'), 'bold')}",
-        f"   {frame('│')}{light}{frame('│')}  {st(TAGLINE, 'muted')}",
-        f"   {frame('└─────────┘')}  {st(detail, 'muted')}",
+        f"   {bracket('╭')}  {top}  {bracket('╮')}  {st(st.gradient('appsec-advisor'), 'bold')}",
+        f"   {bracket('│')} {middle} {bracket('│')}  {st(TAGLINE, 'muted')}",
+        f"   {bracket('╰')}  {bottom}  {bracket('╯')}  {st(detail, 'muted')}",
     ]
 
 
