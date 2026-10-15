@@ -12,7 +12,7 @@ import json
 import posixpath
 import re
 from functools import lru_cache
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import yaml
 from jsonschema import Draft202012Validator
@@ -392,6 +392,48 @@ def analysis_targets(scope, component: dict, architecture: dict, scanned: list[d
 def related_sources(targets: list[dict]) -> frozenset:
     """Files the targets' related ranges name, registrations and templates: a STRIDE job may read and cite them (MR-13)."""
     return frozenset((row[0], row[1]) for target in targets for row in target.get("related", []))
+
+
+# Program code a STRIDE job could analyse; configuration, data and prose are not.
+_PROGRAM_SUFFIXES = frozenset(
+    ".py .js .jsx .ts .tsx .mjs .cjs .java .kt .kts .scala .go .rb .php .cs .rs .swift .c .cc .cpp .h .hpp "
+    ".m .mm .dart .ex .exs .erl .lua .pl .pm .vue .svelte".split()
+)
+_TEST_SOURCE_RE = re.compile(
+    r"(?:^|/)(?:tests?|__tests__|spec|e2e|cypress)(?:/|$)|\.(?:spec|test|cy)\.\w+$|(?:^|/)test_[^/]*$"
+)
+
+
+def unowned_sources(scope, components: list[dict]) -> list[tuple[str, str]]:
+    """Admitted program files outside every component and outside tests: no job analyses them."""
+    owned = source_selection(components)
+    return sorted(
+        (repo.repository_id, path)
+        for repo in scope.repositories
+        for path in repo.files
+        if (repo.repository_id, path) not in owned
+        and PurePosixPath(path).suffix.lower() in _PROGRAM_SUFFIXES
+        and not _TEST_SOURCE_RE.search(path)
+    )
+
+
+def unowned_summary(scope, components: list[dict], qualify) -> dict | None:
+    """``{files, by_directory}`` of ``unowned_sources``, grouped by top-level directory, or None.
+
+    ``qualify(repository_id, path)`` gives the reported path, so a combined
+    assessment names each repository's directories apart.
+    """
+    unowned = unowned_sources(scope, components)
+    if not unowned:
+        return None
+    counts: dict[str, int] = {}
+    for rid, path in unowned:
+        prefix = qualify(rid, path)[: -len(path)]
+        head, _, rest = path.partition("/")
+        key = prefix + (head + "/" if rest else "(repository root)")
+        counts[key] = counts.get(key, 0) + 1
+    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:10]
+    return {"files": len(unowned), "by_directory": [{"directory": d, "files": n} for d, n in ranked]}
 
 
 def unexamined_files(component: dict, targets: list[dict]) -> list[tuple[str, str]]:

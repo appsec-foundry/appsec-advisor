@@ -579,6 +579,21 @@ def gen_system_overview(yaml_data: dict) -> str:
             "security signal (" + ", ".join(f"{row['component']} {row['files']}" for row in unexamined) + ")."
         )
         lines.append("")
+    unowned = meta.get("unowned_source") if isinstance(meta.get("unowned_source"), dict) else {}
+    if isinstance(unowned.get("files"), int) and unowned["files"] > 0:
+        directories = [
+            f"`{row['directory']}` {row['files']}"
+            for row in unowned.get("by_directory") or []
+            if isinstance(row, dict) and row.get("directory") and isinstance(row.get("files"), int)
+        ]
+        lines.append(
+            f"**Not assigned to any component:** {unowned['files']} program "
+            f"{'file belongs' if unowned['files'] == 1 else 'files belong'} to no component and "
+            f"{'was' if unowned['files'] == 1 else 'were'} not analysed"
+            + (f" ({', '.join(directories)})" if directories else "")
+            + "."
+        )
+        lines.append("")
 
     out_of_scope = (meta.get("scope") if isinstance(meta.get("scope"), dict) else {}).get("out_of_scope") or []
     if out_of_scope:

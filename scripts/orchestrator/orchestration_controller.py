@@ -8734,6 +8734,20 @@ def _assessment_stride(
     taxonomy = yaml.safe_load((PLUGIN_ROOT / "data/threat-category-taxonomy.yaml").read_text(encoding="utf-8"))
     categories = [{key: row[key] for key in ("id", "title", "description", "stride")} for row in taxonomy["categories"]]
     from orchestrator import assessment_context
+    from orchestrator.assessment_workspace import Namespaces
+
+    # REQ-FLW-005: program files outside every component reach no job; the run says so.
+    unowned = analysis.unowned_summary(scope, components["components"], Namespaces(scope).qualify)
+    if unowned:
+        directories = ", ".join(f"{row['directory']} {row['files']}" for row in unowned["by_directory"])
+        jobs.infos.append(
+            {
+                "unowned": unowned,
+                "files": unowned["files"],
+                "text": f"{_count_noun(unowned['files'], 'program file')} belong to no component and were not "
+                f"analysed ({directories})",
+            }
+        )
 
     if captured is not None and assessment_context.requirement_ids(captured):
         requirement_rule = (
@@ -9319,11 +9333,16 @@ def _elapsed(seconds: float) -> str:
 
 
 def _coverage_infos(entries: list[dict], verbose: bool) -> list[str]:
-    """Per-component coverage statements with --verbose, otherwise one summary line."""
+    """Per-component coverage statements with --verbose, otherwise one summary line.
+
+    The statement about files outside every component is always its own line.
+    """
+    unowned = [entry["text"] for entry in entries if "unowned" in entry]
+    entries = [entry for entry in entries if "component" in entry]
     if verbose or len(entries) <= 1:
-        return [entry["text"] for entry in entries]
+        return unowned + [entry["text"] for entry in entries]
     files = sum(entry["files"] for entry in entries)
-    return [
+    return unowned + [
         f"{_count_noun(files, 'source file')} without a route, lead or security signal in "
         f"{_count_noun(len(entries), 'component')} were not individually examined; --verbose lists them"
     ]
@@ -10494,11 +10513,13 @@ def _assessment_render(scope, jobs, names, cfg, workspace: Path, root: Path, *, 
             model["meta"]["project_name"] = cfg["project_name"]
         if len(scope.repositories) == 1:
             model["meta"].update(_single_repository_meta(scope))
-        if jobs.infos:
-            # REQ-FLW-005: the report names the coverage gap, not only the console.
-            model["meta"]["unexamined_source"] = [
-                {"component": entry["component"], "files": entry["files"]} for entry in jobs.infos
-            ]
+        # REQ-FLW-005: the report names the coverage gap, not only the console.
+        unexamined = [{"component": e["component"], "files": e["files"]} for e in jobs.infos if "component" in e]
+        if unexamined:
+            model["meta"]["unexamined_source"] = unexamined
+        unowned = next((e["unowned"] for e in jobs.infos if "unowned" in e), None)
+        if unowned:
+            model["meta"]["unowned_source"] = unowned
         if isinstance(cfg.get("assessment_started_at"), int):
             # Analysis wall time up to the model build; rendering is not included.
             model["meta"]["analysis_duration_seconds"] = max(0, int(time.time()) - cfg["assessment_started_at"])
