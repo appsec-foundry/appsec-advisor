@@ -116,12 +116,47 @@ APPSEC_SINGLE_REPO_CONTROLLER=1 "$CLAUDE_PLUGIN_ROOT/scripts/run-headless.sh" \
   --repo "$REPO" --output "$OUTPUT_DIR" --interactive-launch [--rebuild] <remaining-arguments>
 ```
 
-Print exactly one line: `Assessment started in the background; stop it with
-/appsec-advisor:create-threat-model2 --stop.` Then end your turn. When asked
-for progress, show the last 15 lines of the task's output file verbatim.
+Keep the returned task ID and output file. Print exactly one line:
+`▶ Assessment started — live progress follows. To cancel, say "stop" or run
+/appsec-advisor:create-threat-model2 --stop.`
+
+## Live progress
+
+In the same message, start a `Monitor` (load it with `ToolSearch` first when
+it is deferred) with `timeout_ms: 1800000`, the description `threat-model
+assessment progress`, and this command, `<output-file>` being the task's
+output file:
+
+```bash
+tail -n +1 -F "<output-file>" 2>/dev/null | grep --line-buffered -E \
+  '^[0-9:]{8}  [0-9]+/[0-9]+ .*  (start|done|⚠|↻)  |Traceback|[Ee]rror|interrupted|stopped'
+```
+
+Then end your turn. For each event, print each line once, in arrival order,
+in the style of create-threat-model's stage banners:
+
+- `start` row: `▶ Phase <k>/<N> — <phase> starting  (elapsed <ELAPSED>, left <LEFT>)`
+- `done` row: `✓ Phase <k>/<N> — <phase>: <DETAIL>`; a `done` row without a
+  phase change (a STRIDE component) prints as `  ✓ <DETAIL>`
+- `⚠` or `↻` row, or any other line: the line verbatim in a code block
+
+Add nothing else: no interpretation, no findings, no questions. When the
+monitor expires while the task still runs, start it again with `tail -n 0`
+instead of `tail -n +1`. When asked for progress, show the last 15 lines of the
+task's output file verbatim.
+
+## Cancel
+
+When the user asks to stop or cancel the running assessment in any words
+(`stop`, `abbrechen`, `cancel`), run the `--stop` command above without asking
+and print its result. If it reports that no running assessment holds the
+directory, stop the background task with `TaskStop` instead. Keep the monitor
+running until the task notification arrives, so the final lines still show.
 
 ## Completion
 
-When the task notification arrives, print the last 40 lines of its output
-verbatim in a code block, without summarizing or adding findings. On a non-zero
-exit, say that the assessment did not complete.
+When the task notification arrives, stop the monitor with `TaskStop`, then
+print the last 40 lines of its output verbatim in a code block, without
+summarizing or adding findings. On a non-zero exit, say that the assessment did
+not complete; after a cancel, say that it was stopped and that accepted steps
+stay for `--resume`.
