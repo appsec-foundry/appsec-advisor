@@ -150,6 +150,16 @@ def test_source_surface_coverage_cannot_be_satisfied_by_category_labels(tmp_path
         # MR-11: a target the job read may stay unresolved; the run names it.
         stage.validate_surface_coverage(artifact, ranges, targets)
         assert bool(stage.unresolved_targets(artifact, targets)) is (kind == "unresolved")
+        if kind == "unresolved":
+            # The file and the model's reason say what is open; the anchor line of a
+            # file-level target is arbitrary, and one repository needs no qualifier.
+            anchor = targets[0]["evidence"]
+            assert stage.unresolved_targets(artifact, targets, qualified=False) == [
+                f"{anchor['file']}: The handler consumes the retrieved input."
+            ]
+            assert stage.unresolved_targets(artifact, targets) == [
+                f"{anchor['repository_id']}/{anchor['file']}: The handler consumes the retrieved input."
+            ]
     else:
         with pytest.raises(ValueError):
             stage.validate_surface_coverage(artifact, ranges, targets)

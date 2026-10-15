@@ -8869,8 +8869,8 @@ def _assessment_stride(
             progress(f"Finished STRIDE job: {label(component)} ({index}/{len(target_batches)})")
         for part, (target_batch, _) in zip(parts, target_batches, strict=True):
             jobs.notes.extend(
-                f"{component['name']}: STRIDE left source target {location} unresolved after reading it"
-                for location in analysis.unresolved_targets(part, target_batch)
+                f"{component['name']}: STRIDE could not decide {target}"
+                for target in analysis.unresolved_targets(part, target_batch, qualified=len(scope.repositories) > 1)
             )
         document = analysis.combine_stride_parts(parts)
         findings = document["threats"] + scanned[component["id"]]

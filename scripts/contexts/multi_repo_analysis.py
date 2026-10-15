@@ -665,11 +665,16 @@ def stride_normalizer(targets, component, identity):
     return normalize
 
 
-def unresolved_targets(artifact, targets) -> list[str]:
-    """Locations of targets a job read but left unresolved (MR-11)."""
+def unresolved_targets(artifact, targets, *, qualified: bool = True) -> list[str]:
+    """`file: reason` of each target a job read but left unresolved (MR-11).
+
+    The anchor line is omitted: a file-level target's anchor is only its first
+    code line, and the reason names what is missing. ``qualified`` prefixes the
+    repository, which only a combined assessment needs.
+    """
     anchors = {target["local_id"]: target["evidence"] for target in targets}
     return [
-        f"{anchor['repository_id']}/{anchor['file']}:{anchor['line']}"
+        f"{anchor['repository_id'] + '/' if qualified else ''}{anchor['file']}: {row.get('reason') or 'no reason given'}"
         for row in artifact.get("surface_coverage") or []
         if row["disposition"] == "unresolved" and (anchor := anchors.get(row["target_id"]))
     ]
