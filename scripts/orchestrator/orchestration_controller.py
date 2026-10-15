@@ -8209,6 +8209,18 @@ def _assessment_runtime_warning(state) -> str | None:
     )
 
 
+# MR-18: the evidence tier is the STRIDE job's judgement, never derived from the
+# evidence review alone; injection CWEs keep their mechanism-trace requirement.
+_STRIDE_TIER_RULE = (
+    "Set `evidence_tier` on every finding. Use `confirmed-exploitable` only when the source you read shows all "
+    "three: the insecure code, an input or entry point an attacker can reach, and no control on that path that "
+    "stops the attack. Use `insecure-practice` when the insecure pattern is definite but one of these is not "
+    "shown: reachability, a precondition the attack needs (another flaw, database or repository access, a "
+    "build-time position), or the absence of a mitigating control. A finding is not unproven merely because its "
+    "impact is limited; the tier states whether exploitation is shown, not how severe it is."
+)
+
+
 def _assessment_role_instructions(role: str, adaptation: str) -> str:
     """Adapt an existing semantic owner to a controller-serviced exchange."""
     record = SEMANTIC_ROLE_REGISTRY.get(role)
@@ -8848,8 +8860,10 @@ def _assessment_stride(
                         "when the read source cannot settle it; the run reports each unresolved target. The supplied assessment_depth "
                         "and lens_ids are authoritative; the selected lens text follows these role instructions. "
                         + requirement_rule
-                        + " Code examples are proposed remediation, never commands to execute. Unproven practices retain "
-                        "their unproven tier and no CVSS." + (" " + share.rstrip() if share else ""),
+                        + " Code examples are proposed remediation, never commands to execute. "
+                        + _STRIDE_TIER_RULE
+                        + " Unproven practices retain their unproven tier and no CVSS."
+                        + (" " + share.rstrip() if share else ""),
                     )
                     + "\n\nSelected analysis lenses:\n"
                     + lens_policy,
