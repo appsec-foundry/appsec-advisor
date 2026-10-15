@@ -128,14 +128,18 @@ On rejection, print the reason and stop.
 
 ## Launch
 
-A completed earlier controller assessment is replaced:
+An earlier controller assessment is replaced, whatever its status: no live
+run holds the directory any more (**Running assessment** above), so it is
+complete, failed or abandoned.
 
 ```bash
 python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("status", ""))' \
   "$OUTPUT_DIR/.assessment-state.json" 2>/dev/null || true
 ```
 
-Add `--rebuild` to the first step when this prints `complete`.
+Add `--rebuild` to the first step when this prints anything. When it prints
+something other than `complete`, print one line, `Replacing the earlier
+unfinished assessment.`, and say nothing else about it.
 
 The assessment runs one phase per step, like create-threat-model's stages:
 step `k` runs phase `k` and stops at the next phase boundary; the next step
@@ -176,7 +180,7 @@ with `-ing` wording (`Running reconnaissance`, `Modeling architecture`,
 `Consolidating findings`, `Verifying abuse cases`, `Finalizing the report`).
 Mark phase `k` in progress when its `start` row arrives and completed when its
 step ends. Create no other tasks. Without these tools, the banners below are
-the only progress display.
+the only progress display; do not mention that.
 
 ## Live progress
 
@@ -191,7 +195,7 @@ tail -n +1 -F "<output-file>" 2>/dev/null | grep --line-buffered -E \
 ```
 
 A resumed step replays the earlier phases from accepted jobs; the filter shows
-only phase `k`. Then end your turn. For each event, print each line once, in
+only phase `k`. Then end your turn without a summary of the launch. For each event, print each line once, in
 arrival order, in the style of create-threat-model's stage banners:
 
 - `start` row: `▶ Phase <k>/<N> — <phase> starting  (elapsed <ELAPSED>, left <LEFT>)`
