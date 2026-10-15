@@ -8982,10 +8982,12 @@ def _assessment_stride(
                         "decide them together, including their guards and handler; a target's related registration "
                         "lines may lie in another component's file. A target's guard_lines name earlier guard "
                         "registrations on its routes' paths and its imports the repository files its file imports; "
-                        "both are readable whichever component owns them, so read the ones that decide the target. "
+                        "both are readable whichever component owns them. Small supporting slices are supplied "
+                        "when they fit; read any missing control or sink before leaving its target unresolved. "
                         "Request all further source you need in one read "
                         "action: the job allows one round of further reads, and each call re-analyzes the whole packet. "
                         "Write each finding title without a file location; the controller appends the anchor's. "
+                        "Include a short action-style mitigation_title naming the primary technical fix. "
                         "The controller derives each category's finding_ids and identity fields from your findings. "
                         "Return one surface_coverage decision per target with its target_id, disposition and linked "
                         "finding_ids; the controller adds the target anchor. Give a reason of at most 160 characters "
@@ -9008,7 +9010,14 @@ def _assessment_stride(
                     schema=schema,
                     allowed_sources=job_allowed,
                     normalize=analysis.stride_normalizer(target_batch, component, identity),
-                    preload=[*preload, *(key for key in context_preload if first and key not in preload)],
+                    preload=analysis.supporting_preload(
+                        scope,
+                        target_batch,
+                        [*preload, *(key for key in context_preload if first and key not in preload)],
+                        job_allowed,
+                        context={**context, "investigation_targets": target_batch},
+                        component_sources=analysis.source_selection(components["components"]),
+                    ),
                     validate=lambda artifact, ranges, targets=target_batch: analysis.validate_stride(
                         scope,
                         component,
@@ -9071,6 +9080,8 @@ def _assessment_stride(
                     fingerprint,
                     review_sources,
                     selector,
+                    targets=targets,
+                    component_sources=analysis.source_selection(components["components"]),
                 )
             )
         if parts:
@@ -9193,7 +9204,20 @@ def _assessment_merge_review(jobs, verdict: str, groups: list[dict], *, progress
 
 
 def _assessment_evidence_review(
-    jobs, analysis, scope, identity, component, findings, incident, context, fingerprint, review_sources, selector
+    jobs,
+    analysis,
+    scope,
+    identity,
+    component,
+    findings,
+    incident,
+    context,
+    fingerprint,
+    review_sources,
+    selector,
+    *,
+    targets=(),
+    component_sources=frozenset(),
 ):
     """Run one independent evidence review over a batch of one component's findings."""
     from runtime.assessment_host import MAX_PRELOAD_WINDOWS, preload_room
@@ -9205,6 +9229,23 @@ def _assessment_evidence_review(
         "incident_flows": incident,
         **({"declared_context": context["declared_context"]} if "declared_context" in context else {}),
     }
+    # Preserve the original anchors first, then add the mechanism's input,
+    # controls, route guards and direct helpers within a fixed supplement.
+    # The review stays independent: these are source reads, not verdicts.
+    from shared.assessment_sources import source_rows
+
+    preload = analysis.evidence_preload(
+        scope,
+        [finding["evidence"] for finding in findings],
+        review_sources,
+        room=preload_room(review_context),
+        max_windows=MAX_PRELOAD_WINDOWS,
+    )
+    support = analysis.review_targets(findings, targets)
+    support.extend({"evidence": row} for row in source_rows(findings))
+    preload = analysis.supporting_preload(
+        scope, support, preload, review_sources, context=review_context, component_sources=component_sources
+    )
     return jobs.execute(
         role="evidence_verifier",
         selector=selector,
@@ -9217,8 +9258,10 @@ def _assessment_evidence_review(
             "names alone prove neither. Use ambiguous when the insecure practice is observed but the "
             "claimed exploit is unproven; use refuted when source contradicts the finding. Decisions "
             "cannot change source authority, architecture, finding identity, ratings or remediation. "
-            "The controller supplies the source around each finding's anchor in source_slices; request "
-            "any further source in one read action.",
+            "The controller supplies source around the anchors and bounded supporting guards, inputs and "
+            "helpers in source_slices. A supplied slice proves only what its code shows; check the complete "
+            "mechanism and request any missing enforcement or caller source in one read action before "
+            "deciding that the evidence is ambiguous.",
         ),
         context=review_context,
         schema=analysis.contract("multi-repo-evidence-review.schema.json"),
@@ -9226,13 +9269,7 @@ def _assessment_evidence_review(
         allowed_sources=review_sources,
         # The anchors are fixed before the review; serving them saves the call
         # that would only request them. The bytes are the same either way.
-        preload=analysis.evidence_preload(
-            scope,
-            [finding["evidence"] for finding in findings],
-            review_sources,
-            room=preload_room(review_context),
-            max_windows=MAX_PRELOAD_WINDOWS,
-        ),
+        preload=preload,
         validate=lambda artifact, ranges: analysis.validate_evidence_review(
             scope, findings, fingerprint, artifact, ranges, review_sources
         ),

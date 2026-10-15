@@ -232,6 +232,11 @@
             "type": "string",
             "minLength": 10
           },
+          "mitigation_title": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 80
+          },
           "attack_steps": {
             "type": [
               "array",

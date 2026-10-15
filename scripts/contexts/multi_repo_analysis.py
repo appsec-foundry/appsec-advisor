@@ -176,10 +176,15 @@ def has_security_signal(data: bytes) -> bool:
 # names only the first. Bounded so one generated router cannot fill a packet.
 MAX_TARGET_ROUTES = 32
 MAX_TARGET_RELATED = 4
-# MR-19: files a target's file imports and guard registrations of its routes,
-# authorized for reading but never preloaded.
+# Files a target imports and guard registrations on its routes remain bounded
+# read authority; supporting_preload serves a small part without splitting jobs.
 MAX_TARGET_IMPORTS = 12
 MAX_TARGET_GUARDS = 8
+
+# Supplemental source fits the existing preload budget, after target batches
+# are fixed. These limits bound added context independently of repository size.
+MAX_SUPPORT_BYTES = 8_192
+MAX_SUPPORT_WINDOWS = 8
 
 
 # A component's template named by a static path, relative to the component file.
@@ -424,6 +429,147 @@ def related_sources(targets: list[dict]) -> frozenset:
     return frozenset(
         (row[0], row[1]) for target in targets for row in [*target.get("related", []), *target.get("imports", [])]
     )
+
+
+def review_targets(findings: list[dict], targets: list[dict]) -> list[dict]:
+    """Retain the route/guard/helper context belonging to this review's findings.
+
+    Scanner findings may cite a registration rather than its handler. Match
+    that exact registration, not every route in the same source window.
+    """
+    anchors = list(source_rows(findings))
+    files = {(r["repository_id"], r["file"]) for r in anchors}
+    selected = []
+    for target in targets:
+        anchor = target["evidence"]
+        own = (anchor["repository_id"], anchor["file"]) in files
+        registration = any(
+            (r["repository_id"], r["file"]) == (rid, path)
+            and start <= r["line"] <= end
+            and any(route.get("line") == r["line"] for route in target.get("routes", []))
+            for r in anchors
+            for rid, path, start, end in target.get("related", [])
+        )
+        if own or registration:
+            selected.append(target)
+    # A scanner anchor need not have an investigation target. It still gets
+    # its direct dependencies, subject to the review's existing read authority.
+    covered = {(t["evidence"]["repository_id"], t["evidence"]["file"]) for t in selected}
+    selected.extend({"evidence": r} for r in anchors if (r["repository_id"], r["file"]) not in covered)
+    return selected
+
+
+def supporting_preload(scope, targets, preload, allowed_sources, *, context, component_sources=frozenset()):
+    """Add bounded guard, registration and direct-helper slices to a fixed job.
+
+    Only already authorized, captured sources are eligible. Guards precede
+    helpers; tests and unauthorized dependencies add nothing.
+    A keyword selects a read, never proves a finding. Existing target windows
+    stay intact, and overflow remains available through the normal read action.
+    """
+    from itertools import zip_longest
+
+    from analyzers.handler_resolver import direct_imports
+    from runtime.assessment_host import MAX_PRELOAD_WINDOWS, preload_room
+    from validators.validate_fragment import _cited_line_problem
+
+    result = list(preload)
+    room = min(MAX_SUPPORT_BYTES, max(0, preload_room(context) - served_bytes(scope, result)))
+    slots = min(MAX_SUPPORT_WINDOWS, MAX_PRELOAD_WINDOWS - len(result))
+    if room <= 0 or slots <= 0:
+        return result
+    repos = {r.repository_id: r.files for r in scope.repositories}
+    candidates, helpers = [], set()
+    for target in targets:
+        for rid, path, line in target.get("guard_lines", []):
+            candidates.append((rid, path, max(1, line - 4), line + 12))
+        for rid, path, start, end in target.get("related", []):
+            for route in target.get("routes", []):
+                line = route.get("line")
+                if type(line) is int and start <= line <= end:
+                    candidates.append((rid, path, max(1, line - 4), line + 12))
+            if path.endswith((".html", ".htm")):
+                helpers.add((rid, path))
+    for target in targets:
+        anchor = target["evidence"]
+        rid, path, line = anchor["repository_id"], anchor["file"], anchor["line"]
+        candidates.append((rid, path, max(1, line - 8), line + 48))
+        files = repos.get(rid, {})
+        if (rid, path) not in allowed_sources or path not in files:
+            continue
+        helpers.update(
+            (rid, other)
+            for other in direct_imports(path, files[path].decode("utf-8", "ignore"), files.__contains__)
+            if (rid, other) in allowed_sources and not _TEST_SOURCE_RE.search(other)
+        )
+        # A paired script is an input producer for a template, not an import.
+        if path.endswith((".html", ".htm")):
+            helpers.update((rid, other) for rid, other, _, _ in target.get("related", []) if other != path)
+    helper_windows = []
+
+    def helper_order(key):
+        data = repos.get(key[0], {}).get(key[1], b"")
+        return (key in component_sources, not has_security_signal(data), len(data), key)
+
+    for rid, path in sorted(helpers, key=helper_order):
+        data = repos.get(rid, {}).get(path)
+        if (
+            (rid, path) not in allowed_sources
+            or data is None
+            or _TEST_SOURCE_RE.search(path)
+            or Path(path).suffix.lower() not in _PROGRAM_SUFFIXES | {".html", ".htm"}
+        ):
+            continue
+        windows = []
+        lines = data.decode("utf-8", "ignore").splitlines()
+        if len(lines) <= 128:
+            # Short direct dependencies may implement a decisive parser or
+            # control without using a keyword from the security catalog.
+            windows.append((rid, path, 1, max(1, len(lines))))
+        elif has_security_signal(data):
+            end = 0
+            for number, text in enumerate(lines, 1):
+                if number > end and _cited_line_problem(text, allow_imports=False) is None:
+                    if has_security_signal(text.encode()):
+                        end = number + 32
+                        windows.append((rid, path, max(1, number - 8), end))
+        if windows:
+            helper_windows.append(windows)
+    # Helpers outside every component have no analysis job of their own.
+    # Prefer them, security signals, then short implementations. Read one slice
+    # of each long helper before its next, so one import cannot crowd out peers.
+    candidates.extend(span for turn in zip_longest(*helper_windows) for span in turn if span is not None)
+    added = 0
+    for rid, path, start, end in dict.fromkeys(candidates):
+        if added >= slots:
+            break
+        if (rid, path) not in allowed_sources:
+            continue
+        try:
+            piece = read_slice(scope, rid, path, start, end)
+        except ScopeError:
+            continue
+        missing = [(start, piece["end_line"])]
+        for prior in result:
+            if prior[:2] != (rid, path):
+                continue
+            missing = [
+                (lo, hi)
+                for lo, hi in missing
+                for lo, hi in ((lo, min(hi, prior[2] - 1)), (max(lo, prior[3] + 1), hi))
+                if lo <= hi
+            ]
+        for lo, hi in missing:
+            if added >= slots:
+                break
+            piece = read_slice(scope, rid, path, lo, hi)
+            size = len(json.dumps(piece, ensure_ascii=False).encode())
+            if size > room:
+                continue
+            result.append((rid, path, lo, hi))
+            room -= size
+            added += 1
+    return result
 
 
 # Program code a STRIDE job could analyse; configuration, data and prose are not.

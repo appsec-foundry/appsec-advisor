@@ -1710,3 +1710,135 @@ def test_the_control_job_may_only_choose_a_placeable_domain():
         ]
     )
     assert not Draft202012Validator(domain).is_valid("Recovery")
+
+
+@pytest.mark.parametrize("handler,helper", [("routes/read.ts", "lib/parser.ts"), ("api/get.js", "shared/check.js")])
+def test_supporting_sources_close_guard_and_helper_gaps_without_more_jobs(tmp_path, handler, helper):
+    import posixpath
+
+    spec = posixpath.relpath(helper, posixpath.dirname(handler))
+    files = {
+        "entry.ts": b"const app = express()\n"
+        + b"\n" * 396
+        + b"app.use('/records', authorize())\n"
+        + b"\n" * 202
+        + b"app.get('/records', read())\n",
+        handler: f"import {{ parse }} from '{spec}'\nexport const read = req => parse(req.body.xml)\n".encode(),
+        helper: b"export const parse = xml => parser.parse(xml, { resolveEntities: true })\n",
+        "lib/unrelated.ts": b"export const secret = 'unrelated-private-data'\n",
+    }
+    scope, component = _owned_sources(tmp_path, files, [handler, "entry.ts"])
+    rid = scope.repositories[0].repository_id
+    target = {
+        "local_id": "surface-read",
+        "evidence": {"repository_id": rid, "file": handler, "line": 2},
+        "related": [[rid, "entry.ts", 400, 799]],
+        "guard_lines": [[rid, "entry.ts", 398]],
+        "imports": [[rid, helper]],
+        "routes": [{"line": 601, "path": "/records"}],
+    }
+    batches = stage.target_batches(
+        scope, [target], room=100_000, max_targets=64, max_windows=36, window_lines=400, max_unserved=6
+    )
+    assert len(batches) == 1
+    allowed = stage.source_selection([component]) | stage.related_sources([target])
+    original = batches[0][1]
+    supplied = stage.supporting_preload(scope, [target], original, allowed, context={})
+    assert not any(p[1] == "entry.ts" and p[2] <= 398 <= p[3] for p in original)
+    assert any(p[1] == "entry.ts" and p[2] <= 398 <= p[3] for p in supplied)
+    assert any(p[1] == helper for p in supplied)
+    assert all(p[1] != "lib/unrelated.ts" for p in supplied)
+    assert supplied[: len(original)] == original and len(batches) == 1
+    assert stage.served_bytes(scope, supplied) - stage.served_bytes(scope, original) <= stage.MAX_SUPPORT_BYTES
+    # Existing control code remains visible too; reads do not imply a vulnerability.
+    assert "authorize()" in "\n".join(text for p in supplied for text in stage.read_slice(scope, *p)["lines"])
+    # Reapplying the supplement never duplicates source or spends more budget.
+    assert stage.supporting_preload(scope, [target], supplied, allowed, context={}) == supplied
+
+
+@pytest.mark.parametrize("limit", ["bytes", "windows", "authority"])
+def test_supporting_sources_respect_capacity_and_read_authority(tmp_path, limit):
+    files = {"entry.ts": b"authorize()\n" * 700, "private.ts": b"secret()\n"}
+    scope, component = _owned_sources(tmp_path, files, ["entry.ts"])
+    rid = scope.repositories[0].repository_id
+    target = {
+        "evidence": {"repository_id": rid, "file": "entry.ts", "line": 601},
+        "guard_lines": [[rid, "private.ts", 1]],
+    }
+    original = [(rid, "entry.ts", 400, 700)]
+    context = {}
+    if limit == "bytes":
+        context = {"already_supplied": "x" * 253_000}
+    elif limit == "windows":
+        original = [(rid, "entry.ts", n, n) for n in range(601, 637)]
+    allowed = stage.source_selection([component])
+    supplied = stage.supporting_preload(scope, [target], original, allowed, context=context)
+    assert supplied == original
+
+
+def test_supporting_sources_do_not_spend_the_budget_on_overlap_or_one_large_import(tmp_path):
+    files = {
+        "handler.ts": b"import { authorize } from './aaa-large'\n"
+        b"import { parse } from './zzz-parser'\nparse(request.body)\n",
+        "entry.ts": b"authorize()\n" * 700,
+        "aaa-large.ts": b"authorize(request)\n" * 900,
+        "zzz-parser.ts": b"export const parse = xml => parser.parse(xml, { resolveEntities: true })\n",
+    }
+    scope, component = _owned_sources(tmp_path, files, ["handler.ts", "entry.ts", "aaa-large.ts"])
+    rid = scope.repositories[0].repository_id
+    target = {
+        "evidence": {"repository_id": rid, "file": "handler.ts", "line": 3},
+        "guard_lines": [[rid, "entry.ts", 398], [rid, "entry.ts", 399]],
+    }
+    original = [(rid, "handler.ts", 1, 3), (rid, "entry.ts", 1, 399), (rid, "entry.ts", 400, 700)]
+    owned = stage.source_selection([component])
+    supplied = stage.supporting_preload(
+        scope, [target], original, owned | {(rid, "zzz-parser.ts")}, context={}, component_sources=owned
+    )
+    extra = supplied[len(original) :]
+    assert extra[0][1] == "zzz-parser.ts"
+    assert all(p[1] != "entry.ts" for p in extra)
+    assert any(p[1] == "aaa-large.ts" for p in extra)
+    assert len(extra) <= stage.MAX_SUPPORT_WINDOWS
+    assert stage.served_bytes(scope, supplied) - stage.served_bytes(scope, original) <= stage.MAX_SUPPORT_BYTES
+    for i, p in enumerate(supplied):
+        assert not any(p[:2] == q[:2] and max(p[2], q[2]) <= min(p[3], q[3]) for q in supplied[i + 1 :])
+
+
+def test_review_targets_follow_exact_registration_and_mechanism_sources(tmp_path):
+    rid = "repo-" + "1" * 16
+
+    def target(file, line):
+        return {
+            "evidence": {"repository_id": rid, "file": file, "line": 1},
+            "related": [[rid, "entry.ts", 400, 799]],
+            "routes": [{"line": line}],
+        }
+
+    read, write = target("read.ts", 601), target("write.ts", 602)
+    finding = {
+        "evidence": {"repository_id": rid, "file": "entry.ts", "line": 601},
+        "mechanism_trace": {"input": {"repository_id": rid, "file": "input.ts", "line": 4}},
+    }
+    chosen = stage.review_targets([finding], [read, write])
+    assert read in chosen and write not in chosen
+    assert any(t["evidence"]["file"] == "input.ts" for t in chosen)
+    assert stage.review_targets([], [read, write]) == []
+
+
+def test_stride_accepts_bounded_action_title_and_preserves_it_in_legacy_projection(tmp_path):
+    from model.build_threat_model_yaml import build_mitigations
+    from orchestrator.assessment_workspace import Namespaces, project_document
+
+    scope, components, evidence, ranges, identity = sources(tmp_path)
+    artifact = stride(components[0], evidence[0], identity)
+    title = "Validate request fields before processing"
+    artifact["threats"][0]["mitigation_title"] = title
+    schema = stage.contract("multi-repo-stride.schema.json")
+    assert Draft202012Validator(schema).is_valid(artifact)
+    assert stage._comparison(artifact)["threats"][0]["mitigation_title"] == title
+    projected = project_document(artifact, Namespaces(scope))
+    finding = {**projected["threats"][0], "id": "T-001"}
+    assert build_mitigations([finding])[0]["title"] == title
+    artifact["threats"][0]["mitigation_title"] = "x" * 81
+    assert not Draft202012Validator(schema).is_valid(artifact)
