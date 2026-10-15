@@ -6,8 +6,8 @@
 
 Run `python3 scripts/check_specs.py --for <path>` for each file, using its repository-relative path. Read every returned requirement, decision, and referenced contract.
 
-- [Requirements](requirements.md) define stable product behavior; [bindings](data/requirement-bindings.yaml) identify affected paths, decisions, documents, and test evidence.
-- The [decision register](docs/internal/decisions.md) records costly or non-obvious technical choices and their guards.
+- [Requirements](requirements.md) are the primary source of product behavior. Keep them simple and stable; derive technical contracts, implementation and tests from them through the [requirement bindings](data/requirement-bindings.yaml).
+- The [decision register](docs/internal/decisions.md) records only long-lived, cross-cutting technical choices that requirements leave open and whose reversal would have significant consequences. Apply its admission rule before adding an entry; a code change or a new test alone never requires one.
 - [Schemas](schemas/) and data define artifact shapes, values, limits, and vocabularies. Code owns algorithms and sequencing; tests guard behavior and drift.
 
 Change requirements first only when the product promise changes. Before writing any new or changed requirement or decision, show the operator its exact wording and a plain-language summary, and obtain confirmation of both. This includes new decisions that `check_specs.py --changed-against` permits without a proposal. Technical binding maintenance needs ordinary implementation review.
