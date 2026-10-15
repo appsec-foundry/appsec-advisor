@@ -42,9 +42,12 @@ _PALETTE: dict[str, tuple[tuple[int, int, int], str]] = {
     "medium": ((240, 198, 110), "33"),
     "low": ((124, 196, 228), "36"),
     "muted": ((109, 118, 134), "90"),
-    # The logo's iris glows from a dark rim to a bright core.
-    "iris_rim": ((38, 92, 128), "36"),
-    "iris_core": ((215, 245, 255), "96"),
+    # The logo's iris glows from a dark rim to a bright core; logo tones stay
+    # darker than the console's accent and agent colours.
+    "iris_rim": ((20, 52, 76), "36"),
+    "iris": ((66, 128, 162), "36"),
+    "iris_core": ((140, 196, 222), "96"),
+    "iris_bracket": ((116, 100, 172), "35"),
 }
 _ATTRS = {"bold": "1"}
 COLOR_MODES = ("auto", "always", "never")
@@ -138,13 +141,13 @@ def logo(st: Style, detail: str) -> list[str]:
 
     Shown only on a terminal; callers print their plain title line otherwise.
     """
-    bracket = lambda text: st(text, "agent")  # noqa: E731
+    bracket = lambda text: st(text, "iris_bracket")  # noqa: E731
     rim = lambda text: st(text, "iris_rim")  # noqa: E731
-    top = rim("▄") + st("█", "accent") + rim("▄")
-    middle = rim("█") + st("█", "accent") + st("█", "iris_core") + st("█", "accent") + rim("█")
-    bottom = rim("▀") + st("█", "accent") + rim("▀")
+    top = rim("▄") + st("█", "iris") + rim("▄")
+    middle = rim("█") + st("█", "iris") + st("█", "iris_core") + st("█", "iris") + rim("█")
+    bottom = rim("▀") + st("█", "iris") + rim("▀")
     return [
-        f"   {bracket('╭')}  {top}  {bracket('╮')}  {st(st.gradient('appsec-advisor'), 'bold')}",
+        f"   {bracket('╭')}  {top}  {bracket('╮')}  {st(st.gradient('appsec-advisor', 'iris', 'iris_bracket'), 'bold')}",
         f"   {bracket('│')} {middle} {bracket('│')}  {st(TAGLINE, 'muted')}",
         f"   {bracket('╰')}  {bottom}  {bracket('╯')}  {st(detail, 'muted')}",
     ]
