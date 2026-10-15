@@ -728,6 +728,8 @@ def test_stride_job_receives_the_evidence_tier_definition(tmp_path, monkeypatch)
     for text in prompts["stride_analyzer"]:
         assert controller._STRIDE_TIER_RULE in text
         assert "an input or entry point an attacker can reach" in text
+        # A flag that switches the vulnerable branch on is no control (MR-18).
+        assert "flag that enables the vulnerable branch is not a control" in text
     assert not any(controller._STRIDE_TIER_RULE in text for text in prompts.get("evidence_verifier", []))
 
 

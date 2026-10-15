@@ -1270,6 +1270,17 @@ def validate_stride(
                 reached.update(following)
             if component["id"] not in reached:
                 raise ExchangeError("Cross-repository finding trace has no reviewed directional connection")
+    # MR-22: the highest rating needs a traceable path a reader can check.
+    unbacked = [
+        finding["local_id"]
+        for finding in artifact["threats"]
+        if finding.get("risk") == "Critical" and len(finding.get("attack_steps") or []) < 2
+    ]
+    if unbacked:
+        raise Rejection(
+            "A Critical finding needs at least two attack_steps from the attacker's entry to the impact",
+            [f"{local_id}: add two to five attack_steps or rate it below Critical" for local_id in unbacked],
+        )
     projection = _comparison(artifact)
     projection.pop("schema_version", None)
     ok, errors = legacy_validate(projection)
@@ -1302,8 +1313,32 @@ def validate_stride(
     validate_executable_evidence(scope, artifact, "STRIDE evidence does not cite an executable implementation")
 
 
-def validate_executable_evidence(scope, artifact, summary, repository_id=None):
+_MISSING_CONTROL_CWES = frozenset({"CWE-284", "CWE-285", "CWE-306", "CWE-862", "CWE-863"})
+_COMMENT_MARKER_RE = re.compile(r"^\s*(?://+|#+|/\*+|\*+)\s*")
+# A call or registration such as `app.put('/x', guard())`, optionally ending in `;` or a trailing comment.
+_STATEMENT_RE = re.compile(r"[A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*\s*\(.*\)\s*;?\s*(?:(?://|#).*|\*/)?")
+
+
+def _cwes(value) -> list[str]:
+    return [value] if isinstance(value, str) else [v for v in value or [] if isinstance(v, str)]
+
+
+def _commented_out_statement(data: bytes, line: int) -> bool:
+    """Whether the line is a comment whose text, without the marker, is a call or registration (MR-20)."""
+    lines = data.decode("utf-8", "replace").splitlines()
+    if not 1 <= line <= len(lines):
+        return False
+    text = lines[line - 1]
+    marker = _COMMENT_MARKER_RE.match(text)
+    return bool(marker) and bool(_STATEMENT_RE.fullmatch(text[marker.end() :].rstrip()))
+
+
+def validate_executable_evidence(scope, artifact, summary, repository_id=None, absence_findings=frozenset()):
     """Every cited line must be code, not a blank line or comment (MR-15).
+
+    MR-20: evidence of a missing-control finding, a threat with such a CWE or
+    a review decision on a local ID in `absence_findings`, may cite a
+    commented-out call or registration of the control.
 
     Each role runs this as its last check: every earlier check passed, so
     naming each failing row lets the exchange ask for its line alone (MR-2).
@@ -1314,8 +1349,31 @@ def validate_executable_evidence(scope, artifact, summary, repository_id=None):
     from validators.validate_fragment import repository_evidence_errors
 
     evidence = list(source_rows(artifact))
+    # MR-20: a missing-control finding may cite the disabled statement of that control.
+    absence = {
+        id(row)
+        for threat in (artifact.get("threats") or [] if isinstance(artifact, dict) else [])
+        if isinstance(threat, dict) and set(_cwes(threat.get("cwe"))) & _MISSING_CONTROL_CWES
+        for row in source_rows(threat)
+    } | {
+        id(row)
+        for decision in (artifact.get("decisions") or [] if isinstance(artifact, dict) else [])
+        if isinstance(decision, dict) and decision.get("local_id") in absence_findings
+        for row in source_rows(decision)
+    }
     for repo in scope.repositories:
         own_evidence = [row for row in evidence if row.get("repository_id", repository_id) == repo.repository_id]
+        if absence:
+            files = repo.files
+            own_evidence = [
+                row
+                for row in own_evidence
+                if not (
+                    id(row) in absence
+                    and type(row.get("line")) is int
+                    and _commented_out_statement(files.get(row.get("file"), b""), row["line"])
+                )
+            ]
         if own_evidence:
             with scope.scanner_snapshot(repo.repository_id) as root:
                 check = dict(require_line=True, require_code=True)
@@ -1520,7 +1578,12 @@ def validate_evidence_review(scope, findings, component_fingerprint, artifact, r
             tuple(row[key] for key in fields) == tuple(anchor[key] for key in fields) for row in decision["evidence"]
         ):
             raise ExchangeError("Verified finding lacks an independent reading of its anchor")
-    validate_executable_evidence(scope, artifact, "Review evidence does not cite an executable implementation")
+    validate_executable_evidence(
+        scope,
+        artifact,
+        "Review evidence does not cite an executable implementation",
+        absence_findings={f["local_id"] for f in findings if set(_cwes(f.get("cwe"))) & _MISSING_CONTROL_CWES},
+    )
 
 
 def validate_boundary_candidates(scope, assessment, artifact, ranges, allowed_sources):

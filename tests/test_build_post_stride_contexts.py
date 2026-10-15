@@ -236,6 +236,34 @@ def test_evidence_application_accepts_only_selected_unique_flags(tmp_path: Path)
         contexts.apply_evidence_verification({"version": 1, "threats": copy.deepcopy(threats)}, context, verification)
 
 
+@pytest.mark.parametrize("verdict", ["ambiguous", "verified"])
+def test_ambiguous_review_downgrades_on_both_paths(tmp_path: Path, verdict: str) -> None:
+    """MR-21, session path: an ambiguous review leaves no exploitable tier or score."""
+    threat = {**_threat("T-001", "Critical", "app.py", 10), "evidence_tier": "confirmed-exploitable"}
+    threat["cvss_v4"] = {"vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"}
+    output, repo = _write_inputs(tmp_path, [threat])
+    context = contexts.build_evidence_context(
+        (output / ".threats-merged.json").read_bytes(), repo, depth="quick", noncritical_cap=20
+    )
+    summary = {"total_threats": 1, "sampled": 1, "verified": 0, "refuted": 0, "ambiguous": 0, "unchecked": 0}
+    summary[verdict] = 1
+    verification = {
+        "version": 1,
+        "generated_at": "2026-08-09T12:00:00Z",
+        "model_id": "sonnet",
+        "depth": "quick",
+        "summary": summary,
+        "flags": [{"flag_id": "EV-001", "t_id": "T-001", "verdict": verdict, "reason": "r", "line_excerpt": "x"}],
+    }
+    [applied] = contexts.apply_evidence_verification({"version": 1, "threats": [threat]}, context, verification)[
+        "threats"
+    ]
+    if verdict == "ambiguous":
+        assert applied["evidence_tier"] == "insecure-practice" and "cvss_v4" not in applied
+    else:
+        assert applied["evidence_tier"] == "confirmed-exploitable" and "cvss_v4" in applied
+
+
 def test_evidence_verification_is_applied_detects_a_completed_application(tmp_path: Path) -> None:
     """A re-entered boundary must recognise verdicts it already annotated."""
     threats = [_threat("T-001", "Critical", "app.py", 10), _threat("T-002", "Low", "app.py", 20)]
