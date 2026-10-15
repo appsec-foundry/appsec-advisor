@@ -3287,7 +3287,12 @@ def merge_assessment(
     """
     import copy
 
-    from contexts.multi_repo_analysis import component_stride_contract, contract, validate_identity
+    from contexts.multi_repo_analysis import (
+        component_evidence_review_contract,
+        component_stride_contract,
+        contract,
+        validate_identity,
+    )
     from shared.assessment_sources import source_key, source_rows
     from validators.validate_assessment_architecture import validate_components, validate_source
 
@@ -3320,7 +3325,8 @@ def merge_assessment(
             raise ValueError("Assessment merge received an invalid STRIDE artifact")
         validate_identity(scope, document, fingerprint)
         validate_identity(scope, review, fingerprint)
-        if not Draft202012Validator(contract("multi-repo-evidence-review.schema.json")).is_valid(review):
+        # A component reviewed in several jobs may hold more decisions than one job.
+        if not Draft202012Validator(component_evidence_review_contract()).is_valid(review):
             raise ValueError("Assessment merge received an invalid evidence review")
         decisions = {row["local_id"]: row for row in review["decisions"]}
         scanned = copy.deepcopy(scanner_threats.get(document["component_id"], []))

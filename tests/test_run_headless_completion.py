@@ -24,6 +24,12 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "run-headless.sh"
 
 
+@pytest.fixture(autouse=True)
+def _single_repository_scan(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests pin the single-repository scan's wiring, which a single --repo reaches only when the controller is switched off."""
+    monkeypatch.setenv("APPSEC_SINGLE_REPO_CONTROLLER", "0")
+
+
 def _body() -> str:
     return SCRIPT.read_text(encoding="utf-8")
 

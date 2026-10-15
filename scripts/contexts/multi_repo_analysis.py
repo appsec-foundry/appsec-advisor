@@ -1009,6 +1009,18 @@ def component_stride_contract(jobs: int | None) -> dict:
     return schema
 
 
+def component_evidence_review_contract() -> dict:
+    """The evidence-review contract of a component reviewed in several bounded jobs.
+
+    Each job's own contract keeps its limit of decisions; the controller joins
+    the parts of one component, so a component with more findings than one
+    review may decide never fails the merge after every review was paid.
+    """
+    schema = contract("multi-repo-evidence-review.schema.json")
+    schema["properties"]["decisions"].pop("maxItems")
+    return schema
+
+
 def combine_stride_parts(parts):
     """Fold bounded jobs into the existing one-document-per-component merge input.
 
