@@ -1008,6 +1008,91 @@ def _component(scope, path):
     }
 
 
+@pytest.mark.parametrize("verdict", ["verified", "ambiguous", "refuted"])
+def test_evidence_review_supplies_controls_and_trace_without_changing_verdict(tmp_path, verdict):
+    from contexts import multi_repo_analysis as analysis
+    from runtime.assessment_host import run_exchange
+
+    scope = _scope(
+        tmp_path,
+        ("records",),
+        {
+            "routes/read.ts": "export const read = req => parse(req.body.xml)\n",
+            "entry.ts": "app.use('/records', authorize())\n" + "\n" * 600 + "app.get('/records', read())\n",
+            "lib/parser.ts": "export const parse = xml => parser.parse(xml, { resolveEntities: true })\n",
+        },
+    )
+    component = _component(scope, "routes/read.ts")
+    repo = scope.repositories[0]
+    rid = repo.repository_id
+
+    def evidence(path, line):
+        return dict(repository_id=rid, file=path, line=line, sha256=hashlib.sha256(repo.files[path]).hexdigest())
+
+    anchor = evidence("routes/read.ts", 1)
+    finding = {"local_id": "issue-1", "evidence": anchor, "mechanism_trace": {"sink": evidence("lib/parser.ts", 1)}}
+    original = copy.deepcopy(finding)
+    identity = dict(
+        schema_version=2,
+        source_scope_sha256=scope.inventory()["scope_sha256"],
+        component_inventory_fingerprint="sha256:" + "a" * 64,
+    )
+    target = {
+        "evidence": anchor,
+        "guard_lines": [[rid, "entry.ts", 1]],
+        "related": [[rid, "entry.ts", 600, 602]],
+        "routes": [{"line": 602}],
+    }
+    allowed = frozenset((rid, path) for path in ("routes/read.ts", "entry.ts", "lib/parser.ts"))
+    calls = []
+    decision = dict(
+        local_id="issue-1", verdict=verdict, reason="The independent reviewer decides from source.", evidence=[anchor]
+    )
+
+    class Host:
+        def invoke(self, system, prompt, schema, timeout_s, should_stop):
+            packet = json.loads(prompt.split(f"<<<{MARKER}\n")[1].split(f"\n{MARKER}>>>")[0])
+            calls.append(packet)
+            return HostReply(dict(action="complete", reads=[], artifact={**identity, "decisions": [decision]}), 0)
+
+    class Jobs:
+        def execute(self, **kwargs):
+            assert kwargs["role"] == "evidence_verifier" and kwargs["allowed_sources"] == allowed
+            return run_exchange(
+                Host(),
+                scope,
+                instructions=kwargs["instructions"],
+                context=kwargs["context"],
+                artifact_schema=kwargs["schema"],
+                allowed_sources=kwargs["allowed_sources"],
+                preload=kwargs["preload"],
+                normalize=kwargs["normalize"],
+                review=kwargs["validate"],
+                timeout_s=30,
+                should_stop=lambda: False,
+            ).artifact
+
+    result = controller._assessment_evidence_review(
+        Jobs(),
+        analysis,
+        scope,
+        identity,
+        component,
+        [finding],
+        [],
+        {},
+        identity["component_inventory_fingerprint"],
+        allowed,
+        "evidence:component-1",
+        targets=[target],
+    )
+    assert len(calls) == 1 and result["decisions"] == [decision]
+    slices = calls[0]["source_slices"]
+    assert {s["path"] for s in slices} == {"routes/read.ts", "entry.ts", "lib/parser.ts"}
+    assert any(s["path"] == "entry.ts" and s["start_line"] <= 1 <= s["end_line"] for s in slices)
+    assert finding == original
+
+
 @pytest.mark.parametrize(("label", "path"), [("solo", "app.py"), ("order-portal", "src/api/handler.py")])
 def test_single_repository_workspace_uses_plain_paths(tmp_path, label, path):
     from orchestrator import assessment_workspace as ws
