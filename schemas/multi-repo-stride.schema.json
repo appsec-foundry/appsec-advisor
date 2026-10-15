@@ -100,7 +100,7 @@
       }
     },
     "surface_coverage": {
-      "description": "Decisions for controller-selected source targets; current jobs require every supplied target. MR-11: a decision that links a finding needs no reason; every other decision states one. The controller inserts the target anchor into evidence.",
+      "description": "Decisions for controller-selected source targets; current jobs require every supplied target. MR-11: a decision that links a finding needs no reason unless its target carries a review_question; every other decision states one. The controller inserts the target anchor into evidence.",
       "type": "array",
       "maxItems": 64,
       "items": {

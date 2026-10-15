@@ -524,7 +524,7 @@ def gen_system_overview(yaml_data: dict) -> str:
         crit_clause = (" Selection criteria: " + "; ".join(crit) + ".") if crit else ""
         lines.append(
             f"{name} comprises **{total}** modeled components; **{analyzed} of {total}** were analysed "
-            "with full STRIDE: " + ", ".join(f"**{n}**" for n in sel_names) + f".{crit_clause}"
+            "with full STRIDE." + crit_clause + "\n\n" + "\n".join(f"- {n}" for n in sel_names)
         )
         lines.append("")
         if screened:
@@ -547,8 +547,8 @@ def gen_system_overview(yaml_data: dict) -> str:
     else:
         lines.append(
             f"This threat model covers {len(components)} {'component' if len(components) == 1 else 'components'} of {name}: "
-            + ", ".join(f"**{c.get('name', c.get('id', '?'))}**" for c in components)
-            + "."
+            + "\n\n"
+            + "\n".join(f"- {c.get('name', c.get('id', '?'))}" for c in components)
         )
         if cs and (screened or declined):
             clauses = ([screening_clause(screened, bold=True)] if screened else []) + (
@@ -585,13 +585,13 @@ def gen_system_overview(yaml_data: dict) -> str:
         if isinstance(row, dict) and row.get("component") and row.get("target")
     ]
     if undecided:
-        shown = "; ".join(f"{row['component']}: {row['target']}" for row in undecided[:10])
-        more = f"; {len(undecided) - 10} more" if len(undecided) > 10 else ""
-        lines.append(
-            f"**Not decided:** the analysis read {len(undecided)} "
-            f"{'target' if len(undecided) == 1 else 'targets'} but could not decide "
-            f"{'it' if len(undecided) == 1 else 'them'} ({shown}{more})."
-        )
+        lines.append(f"**Open analysis questions ({len(undecided)}):**")
+        lines.append("")
+        lines.append("These checks remain unresolved in their analysis step; findings elsewhere do not settle them.")
+        lines.append("")
+        lines.extend(f"- {row['component']}: {row['target']}" for row in undecided[:10])
+        if len(undecided) > 10:
+            lines.append(f"- {len(undecided) - 10} further questions are recorded in `threat-model.yaml`.")
         lines.append("")
     unowned = meta.get("unowned_source") if isinstance(meta.get("unowned_source"), dict) else {}
     if isinstance(unowned.get("files"), int) and unowned["files"] > 0:

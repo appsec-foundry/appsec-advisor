@@ -677,6 +677,7 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
     # imports qa_checks function-locally, so there is no import cycle.
     from renderers.compose_threat_model import (
         _is_bare_finding_ref_line,
+        _is_inline_finding_citation,
         _strip_trailing_locator,
     )
 
@@ -753,7 +754,7 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
             continue
         new_line = line
 
-        def _labelled(full: str, fallback_anchor: str) -> str:
+        def _labelled(full: str, fallback_anchor: str, offset: int | None = None) -> str:
             """Build `[ID](#anchor) — Label` when the YAML index has an entry
             for this ID, else `[ID](#fallback_anchor)`.
 
@@ -767,7 +768,7 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
             entry = label_idx.get(full.upper())
             if entry:
                 label, anchor = entry
-                if in_section_7b:
+                if in_section_7b or (offset is not None and _is_inline_finding_citation(new_line, offset)):
                     return f"[{full}](#{anchor})"
                 return f"[{full}](#{anchor}) — {_canonical_label(label)}"
             return f"[{full}](#{fallback_anchor})"
@@ -795,7 +796,7 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
             tail = new_line[match.end() : match.end() + 5]
             if tail.startswith(" — "):
                 return f"[{full}](#{_lowercase_anchor('T', match.group(1))})"
-            return _labelled(full, _lowercase_anchor("T", match.group(1)))
+            return _labelled(full, _lowercase_anchor("T", match.group(1)), start)
 
         def sub_m(match: re.Match[str]) -> str:
             full = match.group(0)
@@ -833,7 +834,7 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
             tail = new_line[match.end() : match.end() + 5]
             if tail.startswith(" — "):
                 return f"[{full}](#{_lowercase_anchor('F', match.group(1))})"
-            return _labelled(full, _lowercase_anchor("F", match.group(1)))
+            return _labelled(full, _lowercase_anchor("F", match.group(1)), start)
 
         def sub_th(match: re.Match[str]) -> str:
             """Linkify bare TH-NN. Anchor target is `#th-NN` (zero-padded
@@ -878,6 +879,10 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
             def sub_existing(match: re.Match[str]) -> str:
                 if in_section_7b:
                     return match.group(0)  # citation next to the assessor's own sentence
+                if match.group(1).upper().startswith(("F-", "T-")) and _is_inline_finding_citation(
+                    new_line, match.start()
+                ):
+                    return match.group(0)
                 ref = match.group(1).upper()
                 entry = label_idx.get(ref)
                 if not entry:
@@ -4599,6 +4604,17 @@ _REQ_MS_COL_WIDTHS = ("46%", "27%", "27%")
 #   stale ~44-char boundary. NOT applied to link-stack columns (Notes / Linked
 #   Threats) where each `<br/>` deliberately separates one finding per line.
 _FIXED_LAYOUT_SPECS = (
+    (
+        ("ID", "Crossing", "Required condition", "Findings / open question"),
+        ("7%", "25%", "36%", "32%"),
+        {
+            0: "white-space:nowrap",
+            1: "overflow-wrap:break-word",
+            2: "overflow-wrap:break-word",
+            3: "overflow-wrap:break-word",
+        },
+        frozenset(),
+    ),
     (_AS_TABLE_HEADERS, _AS_COL_WIDTHS, {1: "overflow-wrap:anywhere"}, frozenset()),
     (
         _ASSET_TABLE_HEADERS,

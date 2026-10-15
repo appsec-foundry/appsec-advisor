@@ -169,10 +169,21 @@ class TestSystemOverview:
             {"component": "Web", "target": "routes/redirect.ts: allow-list helper was not supplied"}
         ]
         md = pf.gen_system_overview(minimal_yaml_data)
-        assert (
-            "**Not decided:** the analysis read 1 target but could not decide it "
-            "(Web: routes/redirect.ts: allow-list helper was not supplied)." in md
-        )
+        assert "**Open analysis questions (1):**" in md
+        assert "\n- Web: routes/redirect.ts: allow-list helper was not supplied\n" in md
+        assert "findings elsewhere do not settle them" in md
+
+    @pytest.mark.parametrize("name", ["Orders API", "Billing worker"])
+    def test_scope_lists_components_and_bounds_open_questions(self, minimal_yaml_data, name):
+        minimal_yaml_data["components"] = [{"id": "service", "name": name}]
+        minimal_yaml_data["meta"]["undecided_targets"] = [
+            {"component": name, "target": f"module{i}.py: helper unavailable"} for i in range(12)
+        ]
+        md = pf.gen_system_overview(minimal_yaml_data)
+        assert f"\n- {name}\n" in md and f"**{name}**" not in md
+        assert "Open analysis questions (12)" in md
+        assert "module9.py: helper unavailable" in md and "module10.py" not in md
+        assert "2 further questions are recorded in `threat-model.yaml`" in md
 
     def test_scope_names_program_files_outside_every_component(self, minimal_yaml_data):
         minimal_yaml_data["meta"]["unowned_source"] = {
@@ -3639,6 +3650,8 @@ def test_system_overview_renders_component_selection_transparency():
     yaml_data = {"meta": {"project": {"name": "Acme"}, "component_selection": cs}, "components": comps}
     out = mod.gen_system_overview(yaml_data)
     assert "**2 of 4**" in out
+    assert "\n- Web Frontend\n- Auth Service" in out
+    assert "**Web Frontend**" not in out
     assert "Not analysed at this depth: Worker, Database" in out
     assert "Selection criteria" in out
     assert "business-critical surface" not in out

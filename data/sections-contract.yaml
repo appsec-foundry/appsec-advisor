@@ -670,6 +670,9 @@ sections:
     heading: "### Trust Boundaries"
     heading_numbered: false
     fragment_type: computed
+    # Compact crossing / required condition / findings-or-question catalogue.
+    # Detailed provenance remains in canonical YAML; control sections do not
+    # duplicate inferred dependencies from CWE adjacency.
     # Canonical human catalogue folded under §1. The deterministic renderer
     # caps it at 20 rows and points overflow to YAML/query output. A boundary a
     # finding references is always rendered, so every `#tb-N` link on a finding

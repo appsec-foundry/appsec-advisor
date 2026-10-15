@@ -203,20 +203,14 @@ Also set `assumption` to the single most load-bearing of these conditions. It
 stays the one-line rollup for consumers that do not read legs; it is not a
 summary of all of them, and it must not join them with semicolons.
 
-The report renders this under **Assumption & verdict** and prints a verdict per
-leg directly beneath it, so every sentence must be the kind of statement a
-verdict can address. Four failure modes, all observed in one run (user
-2026-08-01). Promotion warns deterministically on the fact-list, absence and
-sanctioning shapes; a restatement is only caught when it reuses the
-`enforcement_point` string verbatim, so that one is on you:
+The report presents `assumption` as the required condition and links findings that evidence a gap. The model retains individual legs for assessment and scoring, so each condition must be falsifiable. Promotion warns on fact lists, absence statements and sanctioning shapes. It catches an enforcement-point restatement only when the text matches verbatim. Avoid these four patterns:
 
 - **A list of facts instead of a condition.** `SQLite runs embedded in the same
   Node.js process; no network isolation; Sequelize model methods use parameterized
   queries by default.` — three statements, none of which can be refuted as
   written. Pick the one that matters: *"Every query reaches SQLite through
   Sequelize parameter binding."* Never join clauses with semicolons.
-- **Restating `enforcement_point`.** The catalogue already prints the control in
-  the adjacent cell. Say what must be TRUE of it, not what it is.
+- **Restating `enforcement_point`.** The catalogue already names the control beside its required condition. Say what must be true of it, not what it is.
 - **Describing an absence.** `No outbound content filter or egress allow-list` is
   the opposite of an assumption — under a heading that announces one, it reads as
   a contradiction. Turn it into the condition the crossing relies on:

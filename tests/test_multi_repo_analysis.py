@@ -341,6 +341,101 @@ def _owned_sources(tmp_path, files, owned):
 @pytest.mark.parametrize(
     "path,source",
     [
+        ("service/reply.py", b"from anthropic import Anthropic\nclient = Anthropic()\n"),
+        (
+            "features/helper.ts",
+            b"import { createOpenAICompatible } from '@ai-sdk/openai-compatible'\nconst provider = createOpenAICompatible({name: 'assistant'})\n",
+        ),
+    ],
+)
+def test_llm_surfaces_require_separate_mechanism_decisions_without_a_finding_quota(tmp_path, path, source):
+    scope, component = _owned_sources(tmp_path, {path: source}, [path])
+    targets = stage.analysis_targets(scope, component, {"data_flows": {"data_flows": []}}, [])
+    questions = [t for t in targets if t.get("review_question")]
+    assert {t["review_check"] for t in questions} == set(stage.LLM_REVIEW_QUESTIONS)
+    assert len(questions) == 6
+    assert len({t["local_id"] for t in targets}) == len(targets)
+    # Shared anchors reuse a read window, not six independent jobs.
+    assert len(stage.evidence_batches(targets, max_windows=6, max_findings=64, window_lines=400)) == 1
+    ranges = [{**t["evidence"], "path": path, "start_line": 1, "end_line": 2} for t in targets]
+    artifact = {
+        "threats": [],
+        "surface_coverage": [
+            {
+                "target_id": t["local_id"],
+                "disposition": "not-applicable",
+                "finding_ids": [],
+                "reason": "The supplied source constructs a client but exposes no model action.",
+                "evidence": [t["evidence"]],
+            }
+            for t in targets
+        ],
+    }
+    stage.validate_surface_coverage(artifact, ranges, targets)
+    row = next(r for r in artifact["surface_coverage"] if r["target_id"] == questions[0]["local_id"])
+    row.update(disposition="examined", finding_ids=["issue-1"])
+    artifact["threats"] = [{"local_id": "issue-1"}]
+    normalized = stage.surface_evidence_normalizer(targets)(copy.deepcopy(artifact))
+    assert (
+        next(r for r in normalized["surface_coverage"] if r["target_id"] == row["target_id"])["reason"] == row["reason"]
+    )
+    row.pop("reason")
+    with pytest.raises(Rejection, match="incomplete"):
+        stage.validate_surface_coverage(artifact, ranges, targets)
+    row.update(disposition="unresolved", finding_ids=[], reason="The tool implementation is unavailable.")
+    stage.validate_surface_coverage(artifact, ranges, targets)
+    assert stage.unresolved_targets(artifact, targets, qualified=False) == [
+        f"{path} (client-context): The tool implementation is unavailable."
+    ]
+
+
+@pytest.mark.parametrize("mode", ["unused", "foreign", "test"])
+def test_llm_review_questions_do_not_promote_unused_or_unowned_integrations(tmp_path, mode):
+    source = b"from anthropic import Anthropic\n" + (b"" if mode == "unused" else b"client = Anthropic()\n")
+    path = "tests/test_chat.py" if mode == "test" else "chat.py"
+    scope, component = _owned_sources(
+        tmp_path, {path: source, "app.py": b"value = 1\n"}, ["app.py"] if mode == "foreign" else [path]
+    )
+    targets = stage.analysis_targets(scope, component, {"data_flows": {"data_flows": []}}, [])
+    assert not [t for t in targets if t.get("review_question")]
+
+
+def test_controller_keeps_llm_decisions_in_the_existing_stride_exchange(tmp_path):
+    from orchestrator import orchestration_controller as controller
+    from runtime.assessment_jobs import AssessmentBudget, AssessmentJobs
+    from runtime.multi_repo_scope import admit
+
+    from tests.test_multi_repo_controller import Host, checkout
+
+    roots = [tmp_path / name for name in ("service", "peer")]
+    for root in roots:
+        checkout(root)
+    path = roots[0] / "app.py"
+    path.write_text(path.read_text() + "from anthropic import Anthropic\nclient = Anthropic()\n")
+    scope = admit([str(root) for root in roots], str(tmp_path / "out"))
+    host = Host(scope)
+    jobs = AssessmentJobs(
+        scope,
+        scope.output / ".assessment/jobs",
+        AssessmentBudget(2, 0.05, 60, 120),
+        host.factory,
+        lambda: False,
+        lambda: None,
+    )
+    architecture = controller._assessment_architecture(scope, jobs, progress=lambda _: None)
+    documents, _, _ = controller._assessment_stride(scope, jobs, architecture, [], [], progress=lambda _: None)
+    calls = [ctx for role, ctx in host.calls if role == "stride_analyzer"]
+    assert len(calls) == 2  # one preloaded exchange per component, including the ordinary peer
+    questions = [t for ctx in calls for t in ctx["investigation_targets"] if t.get("review_question")]
+    assert {t["review_check"] for t in questions} == set(stage.LLM_REVIEW_QUESTIONS)
+    assert any("Answer each review_question independently" in system for system in host.systems)
+    decisions = {row["target_id"]: row for document in documents for row in document["surface_coverage"]}
+    assert all(decisions[t["local_id"]].get("reason") for t in questions)
+
+
+@pytest.mark.parametrize(
+    "path,source",
+    [
         ("routes/chat.ts", b"import { createOpenAICompatible } from '@ai-sdk/openai-compatible'\n"),
         ("svc/assistant/reply.py", b"from anthropic import Anthropic\nclient = Anthropic()\n"),
     ],
