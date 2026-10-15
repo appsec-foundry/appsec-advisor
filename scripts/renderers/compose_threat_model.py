@@ -189,6 +189,10 @@ class ContractError(Exception):
     """Raised when the contract file is malformed."""
 
 
+class FigureError(Exception):
+    """Raised when a deterministic figure builder fails or its output fails its self-check."""
+
+
 class FragmentError(Exception):
     """Raised when an LLM-authored fragment is missing, malformed, or fails
     schema validation."""
@@ -5859,18 +5863,15 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
     """Build Figure 1 as a deterministic hand-built SVG, write it next to
     threat-model.md, and return the image-reference markdown.
 
-    PRIMARY: ``figure1_dfd`` draws a data-flow diagram (trust zones, data flows,
+    ``figure1_dfd`` draws a data-flow diagram (trust zones, data flows,
     boundary crossings with their assumption verdict, STRIDE per element, attack
-    scenarios). FALLBACK: the ``figure1_svg`` tier stack. Both compute their own
-    layout and emit plain primitives (rect/path/text) which GitHub, VS Code and
-    WeasyPrint render natively — so the PDF export needs no Chrome for it. The
-    Mermaid builder below is the last resort: Mermaid/ELK lays each tier out as
-    one horizontal row and grew unboundedly wide on busy models.
+    scenarios) from plain primitives (rect/path/text) which GitHub, VS Code and
+    WeasyPrint render natively — so the PDF export needs no Chrome for it.
 
-    Each SVG builder projects the original actors for display and explains the
-    grouping, so its attribution matches Figure 2. Returns "" when
-    there is nothing to draw or the generator is unavailable — the caller then
-    falls back to the Mermaid builder and finally the LLM fragment.
+    The builder verifies its own output (no edge through a foreign node, no
+    label overlap, every arrow matches its YAML flow). A diagram that fails that
+    check is wrong, so it raises ``FigureError`` like a builder crash does and
+    the report is not published. Returns "" only when there is nothing to draw.
     """
     components = ctx.yaml_data.get("components") or []
     split = _supply_chain_split(ctx) is not None
@@ -5878,20 +5879,10 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
     if not components or not (split or attack_paths_data.get("attack_paths") or []):
         return ""
     actor_labels = (_load_posture_actor_labels() or {}).get("actors") or {}
-    kwargs = {"meta": ctx.yaml_data.get("meta") or {}, "actor_labels": actor_labels}
-    # PRIMARY: the data-flow diagram (zones, flows, boundary crossings, STRIDE
-    # per element). FALLBACK: the tier-stack generator, kept for models the DFD
-    # builder cannot draw. The DFD builder verifies its own output (no edge
-    # through a foreign node, no label overlap, every arrow matches its YAML
-    # flow); a diagram that fails that check is wrong, not merely ugly, so it
-    # falls back like a crash does — and both paths leave a RENDER_WARN, so a
-    # silent downgrade cannot hide behind a report that still has a Figure 1.
     # Figure 1 is the overview. Only a model beyond the overview caps also gets
     # a linked paged detail sibling.
-    svg, intro = "", ""
     detail_svg = ""
     detail_basename = f"{Path(ctx.figure_basename).stem}-detail.svg"
-    role_notes = []
     try:
         from renderers.figure1_detail import needs_views
         from renderers.figure1_dfd import check_diagram, legitimate_role_notes, overview_facts
@@ -5909,74 +5900,35 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
             actors=actors,
             detail=False,
         )
-        if problems:
-            ctx.warnings.append(
-                f"figure1: data-flow diagram failed its self-check ({len(problems)} problem(s): "
-                f"{'; '.join(problems[:3])}) — rendered the tier-stack fallback"
-            )
-            svg = ""
-        else:
-            role_notes = legitimate_role_notes(ctx.yaml_data)
-            intro = _figure1_intro(
-                (figure_data.get("project") or {}).get("name") or "The system",
-                overview_facts(
-                    figure_data, attack_paths_data, attack_taxonomy, actor_labels=actor_labels, scenarios=scenarios
-                ),
-                runtime=split,
-                has_boundaries=bool(_ordered_trust_boundaries(ctx)),
-            )
-            if paged:
-                try:
-                    detail_svg, detail_problems = check_diagram(
-                        figure_data,
-                        attack_paths_data,
-                        attack_taxonomy,
-                        actor_labels=actor_labels,
-                        scenarios=scenarios,
-                        actors=actors,
-                        detail=True,
-                    )
-                except Exception as exc:  # noqa: BLE001 — a detail failure must not discard a valid overview
-                    detail_svg, detail_problems = "", [str(exc)]
-                if detail_problems:
-                    ctx.warnings.append(
-                        f"figure1: detailed diagram failed its self-check: {'; '.join(detail_problems[:3])}"
-                    )
-                    detail_svg = ""
-    except Exception as exc:  # noqa: BLE001 — the DFD builder must never break the section
-        ctx.warnings.append(
-            f"figure1: data-flow diagram builder failed ({type(exc).__name__}: {exc}) — rendered the tier-stack fallback"
+    except Exception as exc:  # noqa: BLE001 — any builder failure stops publication with its cause
+        raise FigureError(f"figure1: data-flow diagram builder failed ({type(exc).__name__}: {exc})") from exc
+    if problems:
+        raise FigureError(
+            f"figure1: data-flow diagram failed its self-check ({len(problems)} problem(s): {'; '.join(problems[:3])})"
         )
-        svg = ""
-    if not (svg or "").strip():
+    role_notes = legitimate_role_notes(ctx.yaml_data)
+    intro = _figure1_intro(
+        (figure_data.get("project") or {}).get("name") or "The system",
+        overview_facts(figure_data, attack_paths_data, attack_taxonomy, actor_labels=actor_labels, scenarios=scenarios),
+        runtime=split,
+        has_boundaries=bool(_ordered_trust_boundaries(ctx)),
+    )
+    if paged:
         try:
-            from renderers.figure1_svg import build_figure1_svg
-        except Exception:  # noqa: BLE001 — missing module must never break the section
-            return ""
-        if split:
-            from renderers.figure1_dfd import runtime_model
-
-            svg = build_figure1_svg(
-                runtime_model(ctx.yaml_data), _runtime_attack_paths(attack_paths_data), attack_taxonomy, **kwargs
+            detail_svg, detail_problems = check_diagram(
+                figure_data,
+                attack_paths_data,
+                attack_taxonomy,
+                actor_labels=actor_labels,
+                scenarios=scenarios,
+                actors=actors,
+                detail=True,
             )
-        else:
-            svg = build_figure1_svg(ctx.yaml_data, attack_paths_data, attack_taxonomy, **kwargs)
-        if not (svg or "").strip():
-            return ""
-        intro = (
-            "Architecture tiers top-to-bottom (External Actors → Client → Application → Data) with the "
-            "top threats per component. The in-figure legend on the right explains the attack scenarios, "
-            "severity dots and symbols."
-        )
-        # Name the boundary dividers only when the builder actually drew them —
-        # `figure1_svg.diag_rows` gates its own legend row on `drawn_dividers`, and a
-        # caption that promises an element the figure omits is the same defect as the
-        # §2 `==>` legend bullet.
-        if "trust boundary" in (svg or "") and _ordered_trust_boundaries(ctx):
-            intro += (
-                " Dashed slate lines mark trust-boundary crossings, labelled with the `tb-N` ids "
-                "catalogued in [§1 Trust Boundaries](#trust-boundaries)."
-            )
+        except Exception as exc:  # noqa: BLE001 — a detail failure must not discard a valid overview
+            detail_svg, detail_problems = "", [str(exc)]
+        if detail_problems:
+            ctx.warnings.append(f"figure1: detailed diagram failed its self-check: {'; '.join(detail_problems[:3])}")
+            detail_svg = ""
     # Always write the file (referenced by the published md / consumed by export).
     _write_figure(ctx, ctx.figure_basename, svg)
     detail_path = ctx.output_dir / detail_basename
@@ -7694,22 +7646,15 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     # Figure 1 is built DETERMINISTICALLY from yaml + the SAME reconciled
     # attack_paths order that drives Figure 2's glyphs, so ①–⑦ agree across
     # both figures and the Top Threats table. Precedence, see
-    # `_render_figure1_svg`: the self-checked data-flow diagram, then the
-    # tier-stack SVG, then the Mermaid builder below, and an LLM/operator-
-    # authored `.fragments/top-threats-architecture.md` ONLY when every
-    # deterministic builder yields nothing (e.g. no attack_paths). The fragment
-    # comes last on purpose: when it was preferred it produced free-form
+    # `_render_figure1_svg`: the self-checked data-flow diagram, whose failure
+    # stops the report; when it has nothing to draw, the Mermaid builder below,
+    # and an LLM/operator-authored `.fragments/top-threats-architecture.md` ONLY
+    # when every deterministic builder yields nothing (e.g. no attack_paths). The
+    # fragment comes last on purpose: when it was preferred it produced free-form
     # diagrams that ignored the prescribed structure and emitted out-of-range
-    # `linkStyle` indices that crash Mermaid (2026-05-30 regression). Best-effort:
-    # a builder failure must never break the section (Figure 2 + table still render).
-    # PRIMARY: deterministic hand-built SVG (written next to threat-model.md).
-    figure1_md = ""
-    try:
-        figure1_md = _render_figure1_svg(ctx, figure1_paths, attack_taxonomy).strip()
-    except Exception:  # noqa: BLE001 — Figure 1 is non-essential
-        figure1_md = ""
-    # FALLBACK 1: the legacy deterministic Mermaid builder (kept for robustness
-    # if the SVG generator is unavailable or yields nothing).
+    # `linkStyle` indices that crash Mermaid (2026-05-30 regression).
+    figure1_md = _render_figure1_svg(ctx, figure1_paths, attack_taxonomy).strip()
+    # FALLBACK 1: the legacy deterministic Mermaid builder when the SVG builder has nothing to draw.
     split = _supply_chain_split(ctx) is not None
     if not figure1_md:
         try:
@@ -20099,6 +20044,9 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 4
+        return 1
+    except FigureError as e:
+        print(f"RENDER_FAILED: {e}", file=sys.stderr)
         return 1
     except ContractError as e:
         print(f"CONTRACT_ERROR: {e}", file=sys.stderr)

@@ -6188,21 +6188,16 @@ def test_authored_paths_release_build_time_findings_to_the_supply_chain_path(tmp
 
 @pytest.mark.parametrize("registration", [True, False])
 @pytest.mark.parametrize("access", [True, False])
-@pytest.mark.parametrize("fallback", [True, False])
-def test_figure1_role_grouping_explanation_follows_image_only_when_drawn(
-    tmp_path, monkeypatch, registration, access, fallback
-):
+def test_figure1_role_grouping_explanation_follows_image_only_when_drawn(tmp_path, registration, access):
     ctx = _fig1_ctx(tmp_path)
     ctx.yaml_data["meta"]["open_user_registration"] = registration
     ctx.yaml_data["external_entities"] = [
         {"id": key, "name": name, "kind": "legitimate-role", **({"access": slug} if access else {})}
         for key, name, slug in (("ext-reader", "Reader", "internet-anon"), ("ext-editor", "Editor", "internet-user"))
     ]
-    if fallback:
-        monkeypatch.setattr("renderers.figure1_dfd.check_diagram", lambda *a, **kw: ("", ["cannot route"]))
     md = light_images(compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX))
     note = "Anonymous and authenticated regular users share one card because self-registration is open."
-    assert (note in md) is (registration and access and not fallback)
+    assert (note in md) is (registration and access)
     if note in md:
         assert md.index(note) > md.index("](figure1.svg)")
         assert "Individual flows may still require login." in md
@@ -6390,32 +6385,27 @@ def test_render_figure1_svg_prefers_the_data_flow_diagram(tmp_path: Path) -> Non
     assert 'data-legend-section="notation"' in (out / "figure1.svg").read_text(encoding="utf-8")
 
 
-def test_render_figure1_svg_falls_back_to_tier_stack_when_dfd_raises(tmp_path: Path, monkeypatch) -> None:
+def test_render_figure1_svg_stops_when_the_dfd_builder_raises(tmp_path: Path, monkeypatch) -> None:
     def boom(*_a, **_k):
         raise KeyError("pts")
 
     monkeypatch.setattr("renderers.figure1_dfd.check_diagram", boom)
     out = tmp_path / "out"
     out.mkdir()
-    ctx = _fig1_ctx(out)
-    md = compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX)
-    assert md.startswith("Architecture tiers top-to-bottom")
-    assert (out / "figure1.svg").is_file()
-    assert [w for w in ctx.warnings if w.startswith("figure1: data-flow diagram builder failed (KeyError")]
+    with pytest.raises(compose.FigureError, match=r"builder failed \(KeyError"):
+        compose._render_figure1_svg(_fig1_ctx(out), _FIG1_APD, _FIG1_TAX)
+    assert not (out / "figure1.svg").exists()
 
 
-def test_render_figure1_svg_falls_back_when_dfd_fails_its_self_check(tmp_path: Path, monkeypatch) -> None:
+def test_render_figure1_svg_stops_when_the_dfd_fails_its_self_check(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         "renderers.figure1_dfd.check_diagram", lambda *_a, **_k: ("<svg>bad</svg>", ["edge df-001 crosses node api"])
     )
     out = tmp_path / "out"
     out.mkdir()
-    ctx = _fig1_ctx(out)
-    md = compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX)
-    assert md.startswith("Architecture tiers top-to-bottom")
-    assert "bad" not in (out / "figure1.svg").read_text(encoding="utf-8")
-    warns = [w for w in ctx.warnings if w.startswith("figure1: data-flow diagram failed its self-check")]
-    assert warns and "edge df-001 crosses node api" in warns[0]
+    with pytest.raises(compose.FigureError, match="edge df-001 crosses node api"):
+        compose._render_figure1_svg(_fig1_ctx(out), _FIG1_APD, _FIG1_TAX)
+    assert not (out / "figure1.svg").exists()
 
 
 # ---------------------------------------------------------------------------
