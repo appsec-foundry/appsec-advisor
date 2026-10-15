@@ -9755,6 +9755,11 @@ class _AssessmentConsole:
     # Shared, so the command-line entry can clear a status line before its last message.
     status_shown = False
     status_lines = 0
+    # A status redraw: begin a synchronized update, hide the cursor, return to
+    # the line start; then show the cursor and end the update. Terminals
+    # without synchronized updates ignore the mode.
+    FRAME_OPEN = "\033[?2026h\033[?25l\r"
+    FRAME_CLOSE = "\033[?25h\033[?2026l"
     _lock = threading.RLock()
     _stopped = threading.Event()
 
@@ -9770,9 +9775,20 @@ class _AssessmentConsole:
             if len(ANSI_RE.sub("", line)) > width:
                 lines[index] = ANSI_RE.sub("", line)[: max(width - 1, 0)] + "…"
         with _AssessmentConsole._lock:
-            # Clear and redraw in one write: flushed apart, the terminal shows
-            # the empty line between them on every tick, and the line flickers.
-            sys.stderr.write(_AssessmentConsole._clear_sequence() + "\n".join(lines))
+            # Overwrite in place instead of clearing first: a cleared line is
+            # painted empty between ticks (Windows Terminal via ConPTY does so
+            # even within one write), and the area flickers. Each line clears
+            # only its own tail, `\033[J` the rows a shorter area leaves below.
+            # The frame is a synchronized update with a hidden cursor, so the
+            # terminal never shows it half drawn or the cursor moving.
+            up = _AssessmentConsole.status_lines - 1 if _AssessmentConsole.status_shown else 0
+            sys.stderr.write(
+                _AssessmentConsole.FRAME_OPEN
+                + (f"\033[{up}A" if up > 0 else "")
+                + "\033[K\n".join(lines)
+                + "\033[K\033[J"
+                + _AssessmentConsole.FRAME_CLOSE
+            )
             sys.stderr.flush()
             _AssessmentConsole.status_shown = True
             _AssessmentConsole.status_lines = len(lines)
