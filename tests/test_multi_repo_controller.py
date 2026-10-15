@@ -12,7 +12,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from orchestrator import orchestration_controller as controller
 from runtime.analyst_host import HostReply
-from runtime.assessment_host import MARKER
+from runtime.assessment_host import MARKER, ExchangeError
 from runtime.assessment_jobs import AssessmentBudget, AssessmentJobs
 from runtime.multi_repo_scope import admit
 
@@ -1141,3 +1141,82 @@ def test_control_and_stride_contexts_omit_path_hashes_and_controls_answer_in_one
     assert model_components and all("sha256" not in row for c in model_components for row in c["paths"])
     # Acceptance still sees the full inventory: the controller's own components keep their hashes.
     assert all(row["sha256"] for c in architecture["components"]["components"] for row in c["paths"])
+
+
+@pytest.mark.parametrize("count", [6, 9])
+def test_components_run_concurrently_within_the_limit_and_keep_order(tmp_path, count):
+    """MR-16: up to four components at a time; results and warnings keep component order."""
+    import threading
+    import time
+
+    roots = [tmp_path / "edge", tmp_path / "service"]
+    for root in roots:
+        checkout(root)
+    scope = admit([str(r) for r in roots], str(tmp_path / "out"))
+    jobs = AssessmentJobs(
+        scope,
+        scope.output / ".assessment/jobs",
+        AssessmentBudget(2, 0.05, 60, 120),
+        Host(scope).factory,
+        lambda: False,
+        lambda: None,
+    )
+    lock = threading.Lock()
+    running, peak = [0], [0]
+
+    def analyze(position, component, view):
+        with lock:
+            running[0] += 1
+            peak[0] = max(peak[0], running[0])
+        # Later components finish first.
+        time.sleep(0.02 * (count - position))
+        view.notes.append(f"note {component}")
+        with lock:
+            running[0] -= 1
+        return f"document {component}", f"review {component}"
+
+    names = [f"c{n}" for n in range(count)]
+    documents, reviews = controller._assessment_components_concurrently(jobs, names, analyze)
+    assert 1 < peak[0] <= controller.ASSESSMENT_COMPONENT_WORKERS
+    assert documents == [f"document {n}" for n in names] and reviews == [f"review {n}" for n in names]
+    assert jobs.notes == [f"note {n}" for n in names]
+
+
+def test_a_failed_component_admits_no_further_job_and_is_raised(tmp_path):
+    import threading
+
+    roots = [tmp_path / "edge", tmp_path / "service"]
+    for root in roots:
+        checkout(root)
+    scope = admit([str(r) for r in roots], str(tmp_path / "out"))
+    jobs = AssessmentJobs(
+        scope,
+        scope.output / ".assessment/jobs",
+        AssessmentBudget(2, 0.05, 60, 120),
+        Host(scope).factory,
+        lambda: False,
+        lambda: None,
+    )
+    failed = threading.Event()
+    started = []
+
+    def analyze(position, component, view):
+        if position == 1:
+            failed.set()
+            raise ExchangeError("first component failed")
+        failed.wait(5)
+        # A job requested after the failure never starts.
+        view.execute(
+            role="r",
+            selector=component,
+            instructions="",
+            context={},
+            schema={},
+            allowed_sources=frozenset(),
+            validate=None,
+        )
+        started.append(component)
+
+    with pytest.raises(ExchangeError, match="first component failed"):
+        controller._assessment_components_concurrently(jobs, ["a", "b", "c", "d", "e"], analyze)
+    assert started == []

@@ -13,6 +13,7 @@ import json
 import math
 import re
 import stat
+import threading
 import time
 from pathlib import Path
 
@@ -94,7 +95,14 @@ class AssessmentJobs:
         self.budget = budget
         self.host_factory = host_factory
         self.should_stop = should_stop
-        self.checkpoint = checkpoint
+        # MR-16: concurrent jobs share receipts, timing and the checkpoint file.
+        self._lock = threading.RLock()
+
+        def locked_checkpoint():
+            with self._lock:
+                checkpoint()
+
+        self.checkpoint = locked_checkpoint
         self.reuse_inherited = reuse_inherited
         self.scope_sha256 = scope.inventory()["scope_sha256"]
         if self.directory.exists() and not stat.S_ISDIR(self.directory.lstat().st_mode):
@@ -113,15 +121,32 @@ class AssessmentJobs:
         self.gaps: list[dict] = []
         # Run warnings the controller derives from accepted jobs, in run order.
         self.notes: list[str] = []
+        # Set by a concurrent caller after a failure: no further job starts (MR-16).
+        self.halt = None
+
+    def view(self):
+        """Jobs for one concurrently analyzed component, with its own notes and gaps (MR-16).
+
+        Receipts, accounting and timing stay shared; `join` appends the view's
+        notes and gaps, so the caller keeps component order whatever finishes first.
+        """
+        child = copy.copy(self)
+        child.notes, child.gaps = [], []
+        return child
+
+    def join(self, child) -> None:
+        self.notes.extend(child.notes)
+        self.gaps.extend(child.gaps)
 
     def _record(self, role: str, *, seconds: float | None = None, calls: int = 0) -> None:
-        row = self.timing.setdefault(role, {"jobs": 0, "reused": 0, "calls": 0, "seconds": 0.0})
-        if seconds is None:
-            row["reused"] += 1
-        else:
-            row["jobs"] += 1
-            row["calls"] += calls
-            row["seconds"] += seconds
+        with self._lock:
+            row = self.timing.setdefault(role, {"jobs": 0, "reused": 0, "calls": 0, "seconds": 0.0})
+            if seconds is None:
+                row["reused"] += 1
+            else:
+                row["jobs"] += 1
+                row["calls"] += calls
+                row["seconds"] += seconds
 
     def execute(self, **kwargs):
         """Return the accepted artifact of one controller-selected job."""
@@ -159,7 +184,7 @@ class AssessmentJobs:
         receipt breach, the budget or time limit, a cancellation and unsettled
         accounting still stop the run.
         """
-        if self.should_stop():
+        if self.should_stop() or (self.halt is not None and self.halt.is_set()):
             raise ExchangeError("Assessment cancelled")
         self.budget.remaining_seconds()
         request = {
@@ -221,8 +246,9 @@ class AssessmentJobs:
             if current:
                 if inherited:
                     # The reused calls count against this run, so its accounting covers every receipt.
-                    self.budget.calls += receipt["calls"]
-                    self.budget.spent_usd += receipt["usd"]
+                    with self.budget._lock:
+                        self.budget.calls += receipt["calls"]
+                        self.budget.spent_usd += receipt["usd"]
                     self.checkpoint()
                 slices = tuple(
                     self.scope.read(r["repository_id"], r["path"], r["start_line"], r["end_line"])
@@ -261,7 +287,7 @@ class AssessmentJobs:
             # A login or billing failure fails every later call too; it is never replaced.
             operator = isinstance(exc, TransportError) and exc.reason in ("authentication_failed", "billing_error")
             replaceable = not operator and (
-                isinstance(exc, (ModelAnswerFailure, HostTimeout)) or not self.budget.failed
+                isinstance(exc, (ModelAnswerFailure, HostTimeout)) or not self.budget.unsettled
             )
             if on_failure is None or not replaceable or self.should_stop():
                 if isinstance(exc, HostTimeout):
