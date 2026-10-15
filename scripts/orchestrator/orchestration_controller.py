@@ -8552,7 +8552,9 @@ def _assessment_architecture(scope, jobs, *, progress):
     for index, flow in enumerate(flows["data_flows"], 1):
         flow["id"] = f"df-{index:03d}"
     flows = _assessment_embedded_access(scope, components, flows)
-    flows = _assessment_flow_route_auth(scope, flows, {rid: row["routes"] for rid, row in inventories.items()})
+    flows = _assessment_flow_route_auth(
+        scope, flows, {rid: row["routes"].get("routes") or [] for rid, row in inventories.items()}
+    )
     # The single-repository handoff's role-access steps, so both paths model roles alike.
     from model.reconcile_role_access import classify, reconcile
 
@@ -8896,7 +8898,10 @@ def _assessment_stride(
                         + " in source_slices; follow its "
                         "mechanism to the relevant control or sink. A target's routes lists every route it covers; "
                         "decide them together, including their guards and handler; a target's related registration "
-                        "lines may lie in another component's file. Request all further source you need in one read "
+                        "lines may lie in another component's file. A target's guard_lines name earlier guard "
+                        "registrations on its routes' paths and its imports the repository files its file imports; "
+                        "both are readable whichever component owns them, so read the ones that decide the target. "
+                        "Request all further source you need in one read "
                         "action: the job allows one round of further reads, and each call re-analyzes the whole packet. "
                         "Write each finding title without a file location; the controller appends the anchor's. "
                         "The controller derives each category's finding_ids and identity fields from your findings. "

@@ -1233,6 +1233,67 @@ def test_a_resolved_route_resource_is_one_target_at_its_handler_with_its_guards(
     assert [key[1] for key in login_job] == [registration]
 
 
+@pytest.mark.parametrize(
+    ("handler", "helper", "spec"),
+    [
+        ("routes/redirect.ts", "lib/allow.ts", "../lib/allow"),
+        ("api/v2/upload.js", "shared/xml/parse.js", "../../shared/xml/parse"),
+    ],
+)
+def test_imported_helper_of_another_component_is_readable(tmp_path, handler, helper, spec):
+    """MR-19: a target may read the files its file imports, whichever component owns them, unpreloaded."""
+    files = {
+        handler: f"import {{ check }} from '{spec}'\nimport express from 'express'\n"
+        f"export const go = (req, res) => check(req.query.to) && res.redirect(req.query.to)\n".encode(),
+        helper: b"export const check = (url) => url.includes('example.invalid')\n",
+        "lib/unused.ts": b"export const other = 1\n",
+    }
+    scope, component = _owned_sources(tmp_path, files, [handler])
+    rid = scope.repositories[0].repository_id
+    architecture = {"data_flows": {"data_flows": []}, "route_inventories": {}, "route_handler_modules": {}}
+    [target] = [
+        t for t in stage.analysis_targets(scope, component, architecture, []) if t["evidence"]["file"] == handler
+    ]
+    assert target["imports"] == [[rid, helper]]
+    assert stage.related_sources([target]) == {(rid, helper)}
+    # Authorized, never preloaded: no related window names the helper.
+    assert all(row[1] != helper for row in target.get("related", []))
+
+
+def test_guard_registration_outside_the_route_window_is_related(tmp_path):
+    """MR-19: a guard registered far above its route is named, so the job can read it."""
+    registration = "server.ts"
+    files = {
+        registration: b"const app = express()\n"
+        + b"app.use('/rest/account', guard())\n"
+        + b"\n" * 600
+        + b"app.get('/rest/account/details', details())\n",
+        "routes/details.ts": b"export const details = () => (req, res) => res.json(req.user)\n",
+    }
+    scope, component = _owned_sources(tmp_path, files, sorted(files))
+    rid = scope.repositories[0].repository_id
+    route = {**_route("R-1", "GET", "/rest/account/details", registration, 603), "guard_lines": [2]}
+    architecture = {
+        "data_flows": {"data_flows": []},
+        "route_inventories": {rid: {"routes": [route]}},
+        "route_handler_modules": {rid: {"R-1": "routes/details.ts"}},
+    }
+    by_file = {t["evidence"]["file"]: t for t in stage.analysis_targets(scope, component, architecture, [])}
+    resource = by_file["routes/details.ts"]
+    assert resource["guard_lines"] == [[rid, registration, 2]]
+    # The registration window (lines 400-799) misses the guard; the file stays readable.
+    assert resource["related"] == [[rid, registration, 400, 799]]
+    assert (rid, registration) in stage.related_sources([resource])
+    # Without a guard the target names none.
+    route.pop("guard_lines")
+    assert (
+        "guard_lines"
+        not in {t["evidence"]["file"]: t for t in stage.analysis_targets(scope, component, architecture, [])}[
+            "routes/details.ts"
+        ]
+    )
+
+
 @pytest.mark.parametrize("registration,handler", [("server.ts", "routes/login.ts"), ("src/app.js", "auth/session.js")])
 def test_a_route_is_decided_by_the_component_that_owns_its_handler(tmp_path, registration, handler):
     """MR-13 across components: the handler's owner decides the route and reads its registration guards."""

@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import analyzers.authz_confirm as ac  # noqa: E402
 import analyzers.route_inventory as ri  # noqa: E402
-from analyzers.handler_resolver import DECODE_ONLY_SCOPE, HandlerResolver  # noqa: E402
+from analyzers.handler_resolver import DECODE_ONLY_SCOPE, HandlerResolver, direct_imports  # noqa: E402
 
 SCHEMA = json.loads((ROOT / "schemas/route-inventory.schema.json").read_text())
 
@@ -541,3 +541,31 @@ def test_coverage_counts_an_unresolved_chain_as_unknown_not_absent(tmp_path):
         0,
         1,
     )
+
+
+@pytest.mark.parametrize(
+    ("path", "text", "expected"),
+    [
+        (
+            "routes/a.ts",
+            "import x from '../lib/x'\nconst y = require('./y')\nimport z from 'pkg'\n// import w from './w'\n",
+            ["lib/x.ts", "routes/y/index.js"],
+        ),
+        (
+            "svc/api/views.py",
+            "from .models import Order\nfrom ..core import auth\nimport os\n",
+            ["svc/api/models.py", "svc/core/__init__.py"],
+        ),
+        ("app/main.py", "from app.security import check\nfrom missing import nothing\n", ["app/security.py"]),
+    ],
+)
+def test_direct_imports_resolve_against_the_admitted_file_set(path, text, expected):
+    files = {
+        "lib/x.ts",
+        "routes/y/index.js",
+        "routes/w.ts",
+        "svc/api/models.py",
+        "svc/core/__init__.py",
+        "app/security.py",
+    }
+    assert direct_imports(path, text, files.__contains__) == expected

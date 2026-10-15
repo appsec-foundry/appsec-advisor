@@ -176,6 +176,10 @@ def has_security_signal(data: bytes) -> bool:
 # names only the first. Bounded so one generated router cannot fill a packet.
 MAX_TARGET_ROUTES = 32
 MAX_TARGET_RELATED = 4
+# MR-19: files a target's file imports and guard registrations of its routes,
+# authorized for reading but never preloaded.
+MAX_TARGET_IMPORTS = 12
+MAX_TARGET_GUARDS = 8
 
 
 # A component's template named by a static path, relative to the component file.
@@ -313,12 +317,20 @@ def analysis_targets(scope, component: dict, architecture: dict, scanned: list[d
     # another component; a scanner lead on such a line joins that decision.
     registered: dict[tuple, list[dict]] = {}
 
-    def list_routes(target, members):
+    def list_routes(target, members, rid, path):
         listed = target.setdefault("routes", [])
         listed.extend(
             {"method": route.get("method"), "path": route.get("path"), "line": line}
             for line, route in members[: max(0, MAX_TARGET_ROUTES - len(listed))]
         )
+        # MR-19: a guard registered earlier on the route's path may lie outside every preloaded window.
+        guards = target.setdefault("guard_lines", [])
+        for _line, route in members:
+            for guard in route.get("guard_lines") or []:
+                if [rid, path, guard] not in guards and len(guards) < MAX_TARGET_GUARDS:
+                    guards.append([rid, path, guard])
+        if not guards:
+            del target["guard_lines"]
 
     for (rid, path, _, _), members in sorted(groups.items(), key=lambda item: item[0]):
         members.sort(key=lambda member: (member[0], str(member[1].get("method"))))
@@ -339,7 +351,7 @@ def analysis_targets(scope, component: dict, architecture: dict, scanned: list[d
             registrations.setdefault((rid, module), []).append(span)
             # Routes registered in another component's file are listed only at their own handler.
             listed = members if registered_here else [m for m in members if handler_of(rid, m[1]) == module]
-            list_routes(target, listed)
+            list_routes(target, listed, rid, path)
             for line, _ in listed:
                 registered.setdefault((rid, path, line), []).append(target)
         if not anchored and registered_here:
@@ -350,7 +362,7 @@ def analysis_targets(scope, component: dict, architecture: dict, scanned: list[d
             if remaining:
                 target = add({"repository_id": rid, "file": path, "line": remaining[0][0]}, "route")
                 if target is not None:
-                    list_routes(target, remaining)
+                    list_routes(target, remaining, rid, path)
     for rid, destinations in architecture.get("egress_inventories", {}).items():
         for destination in destinations:
             for evidence in destination["evidence"]:
@@ -384,14 +396,34 @@ def analysis_targets(scope, component: dict, architecture: dict, scanned: list[d
             relate(target, span)
         for other in pairs.get((rid, path), []):
             relate(target, (rid, other, 1, MAX_SLICE_LINES - 1))
+    # MR-19: an in-process import is no data flow, so the neighborhood withholds the helpers a target calls.
+    from analyzers.handler_resolver import direct_imports
+
+    imported: dict[tuple, list[str]] = {}
+    for (rid, path, _), target in targets.items():
+        if (rid, path) not in imported:
+            files = repos[rid].files
+            imported[(rid, path)] = [
+                other
+                for other in direct_imports(path, files[path].decode("utf-8", "ignore"), files.__contains__)
+                if (rid, other) not in own and not _TEST_SOURCE_RE.search(other)
+            ][:MAX_TARGET_IMPORTS]
+        if imported[(rid, path)]:
+            target["imports"] = [[rid, other] for other in imported[(rid, path)]]
     if len(targets) > 20_000:
         raise ExchangeError("Component investigation exceeds the source-reference limit")
     return [targets[key] for key in sorted(targets)]
 
 
 def related_sources(targets: list[dict]) -> frozenset:
-    """Files the targets' related ranges name, registrations and templates: a STRIDE job may read and cite them (MR-13)."""
-    return frozenset((row[0], row[1]) for target in targets for row in target.get("related", []))
+    """Files a STRIDE job may read and cite beyond its neighborhood.
+
+    The targets' related ranges (registrations and templates, MR-13) and the
+    files their files import directly (MR-19); only related ranges are preloaded.
+    """
+    return frozenset(
+        (row[0], row[1]) for target in targets for row in [*target.get("related", []), *target.get("imports", [])]
+    )
 
 
 # Program code a STRIDE job could analyse; configuration, data and prose are not.
