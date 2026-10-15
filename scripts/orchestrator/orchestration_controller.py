@@ -9739,11 +9739,18 @@ class _AssessmentConsole:
         """Remove the in-place status lines before any permanent line is written."""
         with _AssessmentConsole._lock:
             if _AssessmentConsole.status_shown:
-                # The cursor stands on the last status line; clear it and each one above.
-                sys.stderr.write("\r\033[K" + "\033[1A\033[K" * (_AssessmentConsole.status_lines - 1))
+                sys.stderr.write(_AssessmentConsole._clear_sequence())
                 sys.stderr.flush()
                 _AssessmentConsole.status_shown = False
                 _AssessmentConsole.status_lines = 0
+
+    @staticmethod
+    def _clear_sequence() -> str:
+        """The cursor stands on the last status line; clear it and each one above."""
+        if not _AssessmentConsole.status_shown:
+            return ""
+        return "\r\033[K" + "\033[1A\033[K" * (_AssessmentConsole.status_lines - 1)
+
 
     # Shared, so the command-line entry can clear a status line before its last message.
     status_shown = False
@@ -9763,8 +9770,9 @@ class _AssessmentConsole:
             if len(ANSI_RE.sub("", line)) > width:
                 lines[index] = ANSI_RE.sub("", line)[: max(width - 1, 0)] + "…"
         with _AssessmentConsole._lock:
-            _AssessmentConsole.clear_status()
-            sys.stderr.write("\n".join(lines))
+            # Clear and redraw in one write: flushed apart, the terminal shows
+            # the empty line between them on every tick, and the line flickers.
+            sys.stderr.write(_AssessmentConsole._clear_sequence() + "\n".join(lines))
             sys.stderr.flush()
             _AssessmentConsole.status_shown = True
             _AssessmentConsole.status_lines = len(lines)

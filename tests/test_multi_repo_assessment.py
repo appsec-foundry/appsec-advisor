@@ -2,6 +2,7 @@
 
 import copy
 import hashlib
+import io
 import json
 import re
 import subprocess
@@ -1759,6 +1760,34 @@ def test_a_long_event_detail_wraps_under_its_column_on_a_terminal(monkeypatch, c
     assert all(line[:start].strip() == "" and line[start] != " " for line in lines[1:-1])
     assert " ".join(line[start:] for line in lines[:-1]) == reason.strip()
     assert lines[-1].endswith("short")
+
+
+@pytest.mark.parametrize("components", [0, 2])
+def test_a_status_redraw_clears_and_draws_in_one_flush(monkeypatch, components):
+    """A flush between clearing and drawing shows an empty status line on every tick."""
+    flushed: list[str] = []
+
+    class _Terminal(io.StringIO):
+        def flush(self) -> None:
+            flushed.append(self.getvalue())
+            self.seek(0)
+            self.truncate()
+
+    monkeypatch.setenv("COLUMNS", "200")
+    monkeypatch.setattr(sys, "stderr", _Terminal())
+    console = controller._AssessmentConsole(False, [].append, live=True)
+    console.plan_components(4)
+    for index in range(components):
+        console.step(f"Analyzing all STRIDE categories: Part{index} ({index + 1}/4)")
+    console.step("Running deterministic source scanners")
+    console.tick()
+    flushed.clear()
+    console.tick()
+    controller._AssessmentConsole.clear_status()
+    redraw, cleared = flushed
+    assert redraw.startswith("\r\033[K" + "\033[1A\033[K" * components)
+    assert redraw.count("\n") == components and "Running deterministic source scanners" in redraw
+    assert cleared == "\r\033[K" + "\033[1A\033[K" * components
 
 
 def test_the_status_line_turns_a_spinner_and_draws_a_bar(capsys, monkeypatch):
