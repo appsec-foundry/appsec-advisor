@@ -516,7 +516,8 @@ def test_console_header_states_the_resolved_limits_models_and_checks():
     rows = dict(
         controller._assessment_intro(ns, controller._assessment_budget(ns), "standard", "Models: m1 (a, b); m2 (c)")
     )
-    assert rows["Budget"] == "model calls stop at $18.75 (1.25 × --soft-budget $15; no soft steering in this mode)"
+    assert rows["Budget"] == "model calls stop at $18.75 (1.25 × deprecated --soft-budget $15; use --hard-budget)"
+    assert "report take priority" in rows["Completion reserve"]
     assert rows["Time limit"] == "4h" and rows["Depth"] == "standard"
     assert rows["Models"] == "m1 (a, b)\nm2 (c)"
     assert rows["Trust mode"] == "untrusted, preflight clean"
@@ -1849,6 +1850,63 @@ OPTIONAL_ROLES = (
     "post_stride_synthesizer",
     "ms_renderer",
 )
+
+
+@pytest.mark.parametrize("names", [("edge", "service"), ("portal", "ledger")])
+def test_budget_stop_keeps_accepted_candidates_in_a_separate_incomplete_report(tmp_path, monkeypatch, names):
+    import time
+
+    from runtime.assessment_jobs import FINALIZATION_SECONDS
+    from runtime.multi_repo_discovery import BudgetExhausted
+
+    original = controller._assessment_budget
+    budgets = []
+
+    def budget(*args):
+        value = original(*args)
+        budgets.append(value)
+        return value
+
+    def progress(message):
+        if message == "Stage 2: Security Architecture":
+            budgets[0].deadline = time.monotonic() + FINALIZATION_SECONDS - 1
+
+    monkeypatch.setattr(controller, "_assessment_budget", budget)
+    with pytest.raises(BudgetExhausted) as stopped:
+        _assess(tmp_path, monkeypatch, names, progress=progress)
+    out = tmp_path / "out"
+    report = stopped.value.report.read_text()
+    assert "Incomplete assessment" in report and r"app\.py" in report
+    assert "stride" in report and "stage2:security" in report
+    assert not (out / "threat-model.md").exists() and not (out / "threat-model.yaml").exists()
+    state = json.loads((out / ".assessment-state.json").read_text())
+    assert state["status"] == "interrupted" and state["partial_report"]["findings"]
+
+
+def test_budget_stop_uses_incomplete_exit_status(tmp_path, monkeypatch, capsys):
+    from runtime.multi_repo_discovery import BudgetExhausted
+
+    def stop(argv):
+        exc = BudgetExhausted("completion reserve reached")
+        exc.report = tmp_path / "budget-report.md"
+        raise exc
+
+    monkeypatch.setattr(controller, "assess_repositories", stop)
+    assert controller.assess_main(["--repo", "r", "--output", str(tmp_path)]) == 3
+    output = capsys.readouterr()
+    assert "incomplete" in output.err and "budget-report.md" in output.err
+    assert "✓" not in output.out
+
+
+def test_tight_budget_skips_optional_jobs_and_still_publishes_a_gated_report(tmp_path, monkeypatch):
+    outcome, host, out = _assess(tmp_path, monkeypatch, ("records",), ("--hard-budget", "3", "--no-pdf"))
+    assert outcome["status"] == "complete"
+    assert "ms_renderer" not in host.roles and "secarch_renderer" in host.roles
+    assert any("preserve the budget" in warning for warning in outcome["warnings"])
+    model = yaml.safe_load((out / "threat-model.yaml").read_text())
+    assert all(t.get("evidence_check") != "verified" for t in model["threats"])
+    assert "NARRATIVE_PLACEHOLDER" not in (out / "threat-model.md").read_text()
+    assert not (out / ".assessment-work/budget-report.md").exists()
 
 
 def test_after_stride_a_failed_optional_job_is_replaced_and_named_not_fatal(tmp_path, monkeypatch):

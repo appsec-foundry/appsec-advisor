@@ -1492,6 +1492,9 @@ requirements:
       - scripts/runtime/budget_watchdog.py
       - scripts/runtime/resolve_config.py
       - scripts/runtime/assessment_jobs.py
+      - scripts/runtime/assessment_state.py
+      - scripts/runtime/multi_repo_discovery.py
+      - scripts/orchestrator/orchestration_controller.py
     decisions: []
     documents:
       - docs/threat-modeler.md
@@ -1500,3 +1503,8 @@ requirements:
     guards:
       - tests/test_run_headless_completion.py::test_the_hard_cut_is_derived_from_the_soft_budget
       - tests/test_run_headless_completion.py::test_an_explicit_hard_budget_wins_over_the_derived_one
+      - tests/test_assessment_jobs.py::test_optional_work_preserves_the_report_budget
+      - tests/test_assessment_jobs.py::test_optional_work_protects_pending_analysis_and_uses_measured_job_cost
+      - tests/test_assessment_jobs.py::test_optional_work_keeps_time_for_the_report_and_local_finalization
+      - tests/test_multi_repo_assessment.py::test_budget_stop_keeps_accepted_candidates_in_a_separate_incomplete_report
+      - tests/test_multi_repo_assessment.py::test_budget_stop_uses_incomplete_exit_status

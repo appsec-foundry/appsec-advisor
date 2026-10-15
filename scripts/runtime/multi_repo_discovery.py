@@ -157,6 +157,10 @@ MAX_PAID_RETRIES = 3
 MIN_CALL_USD = 0.05
 
 
+class BudgetExhausted(ExchangeError):
+    """No further call fits the controller's resource limits."""
+
+
 @dataclass
 class DiscoveryBudget:
     """Shared admission accounting; reserve each call before creating its host.
@@ -287,25 +291,27 @@ class DiscoveryBudget:
             while True:
                 if should_stop():
                     raise HostCancelled("Discovery cancelled")
-                if self.unsettled or self.calls >= self.max_calls:
+                if self.unsettled:
                     raise ExchangeError("Discovery call budget exhausted or accounting unavailable")
+                if self.calls >= self.call_limit():
+                    raise BudgetExhausted("Discovery call budget exhausted")
                 # MR-16: while other calls run, wait for one to settle instead
                 # of starting below the full ceiling; running reservations are
                 # already part of `spent_usd`.
-                if self.max_usd - self.spent_usd < self.call_usd and self._inflight:
+                if self.available_usd() < self.call_usd and self._inflight:
                     self.remaining_seconds()
                     self._lock.wait(1.0)
                     continue
                 break
             # Round downward to match the host's cent-denominated budget argument.
-            ceiling = math.floor(min(self.call_usd, self.max_usd - self.spent_usd) * 100 + 1e-9) / 100
+            ceiling = math.floor(min(self.call_usd, self.available_usd()) * 100 + 1e-9) / 100
             if ceiling < MIN_CALL_USD:
-                raise ExchangeError(
-                    f"Assessment cost budget exhausted: USD {max(0.0, self.max_usd - self.spent_usd):.2f} "
+                raise BudgetExhausted(
+                    f"Assessment cost budget exhausted: USD {max(0.0, self.available_usd()):.2f} "
                     "is left, too little for another model call"
                 )
             self._local.reserved = ceiling
-            remaining = min(timeout_s, self.remaining_seconds(), MAX_CALL_SECONDS)
+            remaining = min(timeout_s, self.call_seconds(), MAX_CALL_SECONDS)
             self.calls += 1
             self.spent_usd += ceiling
             self._inflight += 1
@@ -317,6 +323,10 @@ class DiscoveryBudget:
             # reported cost, even one turn over it, is charged as reported.
             # Either way the run can be resumed.
             self._settle(ceiling, ceiling if exc.usd is None else exc.usd)
+            if exc.reason == "error_max_budget_usd" and (
+                ceiling < self.call_usd or self.max_usd - self.spent_usd < MIN_CALL_USD
+            ):
+                raise BudgetExhausted("Model call exhausted the remaining assessment budget allowance") from exc
             raise TransportError(
                 f"{exc}; the run can continue: rerun the same command with --resume",
                 reason=exc.reason,
@@ -337,6 +347,16 @@ class DiscoveryBudget:
             raise TransportError("Model call cost is unavailable")
         self._settle(ceiling, cost)
         return reply
+
+    def available_usd(self) -> float:
+        """Spendable funds after unsettled calls, under the admission lock."""
+        return self.max_usd - self.spent_usd
+
+    def call_seconds(self) -> int:
+        return self.remaining_seconds()
+
+    def call_limit(self) -> int:
+        return self.max_calls
 
     def _settle(self, ceiling: float, cost: float | None) -> None:
         """Replace a finished call's reservation by its cost; an unknown cost stops further calls."""

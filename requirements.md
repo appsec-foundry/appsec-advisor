@@ -120,4 +120,4 @@ The plugin's required behavior, grouped by topic. Implementation bindings and te
 - **REQ-FLW-003:** Required inputs and outputs must be validated before use; missing or invalid required data must stop publication of an apparently complete result.
 - **REQ-FLW-006:** Headless execution must require no interactive responses and must distinguish completion, incomplete execution, and failure.
 - **REQ-FLW-007:** Runs must expose progress, actionable diagnostics, and recovery options; external issue publication must require approval of the prepared content.
-- **REQ-FLW-008:** Budget behavior must be explicit for each execution mode, and interrupted or incomplete work must never be reported as successfully completed.
+- **REQ-FLW-008:** Budget behavior must be explicit for each execution mode, and interrupted or incomplete work must never be reported as successfully completed. Deterministic controller runs must reserve resources for required completion work, omit optional model work when necessary, and provide a clearly marked incomplete report of validated results when the budget cannot cover required analysis.
