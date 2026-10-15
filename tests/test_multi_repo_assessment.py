@@ -349,6 +349,13 @@ class _Clock:
         self.now += seconds
 
 
+def _status_frames(err):
+    """Each status redraw in ``err`` as its drawn lines, without cursor and clear codes."""
+    frames = err.split(controller._AssessmentConsole.FRAME_OPEN)[1:]
+    close = controller._AssessmentConsole.FRAME_CLOSE
+    return [re.sub(r"\033\[(\d*[AKJ]|\?\d+[hl])", "", frame.split(close)[0]).split("\n") for frame in frames]
+
+
 def _rows(lines):
     """Phase rows as (phase, event, progress, elapsed, left, detail), without the time stamp.
 
@@ -1469,10 +1476,10 @@ def test_a_terminal_shows_the_subject_in_work_as_one_rewritten_status_line(capsy
     controller._AssessmentConsole.clear_status()
     err = capsys.readouterr().err
     # Each status rewrites the line in place and never ends it; a permanent line clears it first.
-    statuses = [part for part in err.split("\r\033[K") if part]
-    assert all("\n" not in part for part in statuses)
-    assert any(part.endswith("component 1/8 · CI/CD Pipeline") for part in statuses)
-    assert any(part.endswith("· model is thinking (~2,000 tokens)") for part in statuses)
+    frames = _status_frames(err)
+    assert frames and all(len(frame) == 1 for frame in frames)
+    assert any(frame[0].endswith("component 1/8 · CI/CD Pipeline") for frame in frames)
+    assert any(frame[0].endswith("· model is thinking (~2,000 tokens)") for frame in frames)
     assert err.endswith("\r\033[K") and not controller._AssessmentConsole.status_shown
     # MR-17: a correction is counted on the phase's done line, not listed.
     rows = _rows(lines)
@@ -1506,7 +1513,7 @@ def test_the_terminal_status_line_names_each_running_call_with_its_age(capsys, m
     ):
         console.running[index] = _Call(name, now - age, state)
     console.tick()
-    status = capsys.readouterr().err.split("\r\033[K")[-1].split("\n")[-1]
+    status = _status_frames(capsys.readouterr().err)[-1][-1]
     # Oldest first, at most TICK_CALLS named; the rest counted.
     assert status.endswith(
         "0/3 components done · STRIDE 2m10s model is thinking (~9,000 tokens)"
@@ -1516,7 +1523,7 @@ def test_the_terminal_status_line_names_each_running_call_with_its_age(capsys, m
     console.running.clear()
     console.activity_started = clock.monotonic() - 45
     console.tick()
-    status = capsys.readouterr().err.split("\r\033[K")[-1].split("\n")[-1]
+    status = _status_frames(capsys.readouterr().err)[-1][-1]
     assert status.endswith("0/3 components done · Analyzing all STRIDE categories: Gateway (1/3) · 45s")
     controller._AssessmentConsole.clear_status()
 
@@ -1763,8 +1770,8 @@ def test_a_long_event_detail_wraps_under_its_column_on_a_terminal(monkeypatch, c
 
 
 @pytest.mark.parametrize("components", [0, 2])
-def test_a_status_redraw_clears_and_draws_in_one_flush(monkeypatch, components):
-    """A flush between clearing and drawing shows an empty status line on every tick."""
+def test_a_status_redraw_overwrites_in_place_in_one_flush(monkeypatch, components):
+    """A cleared status line is painted empty before its redraw, and the area flickers on every tick."""
     flushed: list[str] = []
 
     class _Terminal(io.StringIO):
@@ -1785,7 +1792,11 @@ def test_a_status_redraw_clears_and_draws_in_one_flush(monkeypatch, components):
     console.tick()
     controller._AssessmentConsole.clear_status()
     redraw, cleared = flushed
-    assert redraw.startswith("\r\033[K" + "\033[1A\033[K" * components)
+    console_ = controller._AssessmentConsole
+    body = redraw.removeprefix(console_.FRAME_OPEN + (f"\033[{components}A" if components else ""))
+    assert body != redraw and redraw.endswith("\033[K\033[J" + console_.FRAME_CLOSE)
+    # Each line is drawn first and only its tail cleared, never cleared ahead.
+    assert not body.startswith("\033[") and all(not line.startswith("\033[") for line in body.split("\n"))
     assert redraw.count("\n") == components and "Running deterministic source scanners" in redraw
     assert cleared == "\r\033[K" + "\033[1A\033[K" * components
 
@@ -1796,9 +1807,9 @@ def test_the_status_line_turns_a_spinner_and_draws_a_bar(capsys, monkeypatch):
     console.plan_components(4)
     console.step("Analyzing all STRIDE categories: Gateway (2/4)")
     console.tick()
-    *above, first = capsys.readouterr().err.split("\r\033[K")[-1].split("\n")
+    *above, first = _status_frames(capsys.readouterr().err)[-1]
     console.tick()
-    second = capsys.readouterr().err.split("\r\033[K")[-1].split("\n")[-1]
+    second = _status_frames(capsys.readouterr().err)[-1][-1]
     controller._AssessmentConsole.clear_status()
     frame = lambda status: status[10 + controller._AssessmentConsole._PHASE_WIDTH + 2]  # noqa: E731 - the event column
     assert "━" in first and "─" in first
@@ -1820,7 +1831,7 @@ def test_each_running_component_gets_its_own_bar_and_the_area_clears_whole(capsy
     console.step(f"Finished STRIDE job: Gateway ({done}/{total})")
     console.step("Independently verifying evidence: Ledger")
     console.tick()
-    *above, bottom = capsys.readouterr().err.split("\r\033[K")[-1].split("\n")
+    *above, bottom = _status_frames(capsys.readouterr().err)[-1]
     assert len(above) == 2 and "Gateway" in above[0] and "Ledger" in above[1]
     assert above[0].rstrip().endswith(f"{done}/{total} STRIDE jobs") and above[1].rstrip().endswith("evidence review")
     assert "0/4 components done" in bottom
@@ -1829,7 +1840,7 @@ def test_each_running_component_gets_its_own_bar_and_the_area_clears_whole(capsy
     # Three status lines are cleared from the bottom up before the permanent line.
     assert written == "\r\033[K" + "\033[1A\033[K" * 2 and lines[-1].endswith("component 1/4 · Ledger · 0s")
     console.tick()
-    assert len(capsys.readouterr().err.split("\r\033[K")[-1].split("\n")) == 2
+    assert len(_status_frames(capsys.readouterr().err)[-1]) == 2
     controller._AssessmentConsole.clear_status()
 
 
