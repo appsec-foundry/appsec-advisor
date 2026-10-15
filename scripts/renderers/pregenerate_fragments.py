@@ -579,6 +579,20 @@ def gen_system_overview(yaml_data: dict) -> str:
             "security signal (" + ", ".join(f"{row['component']} {row['files']}" for row in unexamined) + ")."
         )
         lines.append("")
+    undecided = [
+        row
+        for row in meta.get("undecided_targets") or []
+        if isinstance(row, dict) and row.get("component") and row.get("target")
+    ]
+    if undecided:
+        shown = "; ".join(f"{row['component']}: {row['target']}" for row in undecided[:10])
+        more = f"; {len(undecided) - 10} more" if len(undecided) > 10 else ""
+        lines.append(
+            f"**Not decided:** the analysis read {len(undecided)} "
+            f"{'target' if len(undecided) == 1 else 'targets'} but could not decide "
+            f"{'it' if len(undecided) == 1 else 'them'} ({shown}{more})."
+        )
+        lines.append("")
     unowned = meta.get("unowned_source") if isinstance(meta.get("unowned_source"), dict) else {}
     if isinstance(unowned.get("files"), int) and unowned["files"] > 0:
         directories = [

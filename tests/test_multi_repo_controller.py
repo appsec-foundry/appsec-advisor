@@ -493,6 +493,19 @@ def test_coverage_statements_collapse_to_one_line_unless_verbose():
     ]
     assert controller._coverage_infos(entries[:1], verbose=False) == [entries[0]["text"]]
     assert controller._coverage_infos([], verbose=False) == []
+    undecided = [
+        {
+            "undecided": {"component": "Web", "target": f"lib/{n}.ts: helper not read"},
+            "text": f"Web: STRIDE could not decide {n}",
+        }
+        for n in ("a", "b")
+    ]
+    # Undecided targets are coverage statements: one line unless verbose, each line with --verbose.
+    assert controller._coverage_infos(undecided, verbose=False) == [
+        "STRIDE could not decide 2 targets; the report's Scope and --verbose list them"
+    ]
+    assert controller._coverage_infos(undecided, verbose=True) == [row["text"] for row in undecided]
+    assert controller._coverage_infos(undecided[:1], verbose=False) == [undecided[0]["text"]]
     unowned = {
         "unowned": {"files": 3, "by_directory": []},
         "files": 3,

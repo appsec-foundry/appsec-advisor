@@ -8953,8 +8953,12 @@ def _assessment_stride(
             # Per-component progress: components run concurrently (MR-16).
             progress(f"Finished STRIDE job: {label(component)} ({index}/{len(target_batches)})")
         for part, (target_batch, _) in zip(parts, target_batches, strict=True):
-            jobs.notes.extend(
-                f"{component['name']}: STRIDE could not decide {target}"
+            # A coverage statement for the report, not an action item (REQ-FLW-005).
+            jobs.infos.extend(
+                {
+                    "undecided": {"component": component["name"], "target": target[:300]},
+                    "text": f"{component['name']}: STRIDE could not decide {target}",
+                }
                 for target in analysis.unresolved_targets(part, target_batch, qualified=len(scope.repositories) > 1)
             )
         document = analysis.combine_stride_parts(parts)
@@ -9352,14 +9356,21 @@ def _coverage_infos(entries: list[dict], verbose: bool) -> list[str]:
     The statement about files outside every component is always its own line.
     """
     unowned = [entry["text"] for entry in entries if "unowned" in entry]
+    undecided = [entry["text"] for entry in entries if "undecided" in entry]
+    if len(undecided) > 1 and not verbose:
+        undecided = [f"STRIDE could not decide {len(undecided)} targets; the report's Scope and --verbose list them"]
     entries = [entry for entry in entries if "component" in entry]
     if verbose or len(entries) <= 1:
-        return unowned + [entry["text"] for entry in entries]
+        return unowned + undecided + [entry["text"] for entry in entries]
     files = sum(entry["files"] for entry in entries)
-    return unowned + [
-        f"{_count_noun(files, 'source file')} without a route, lead or security signal in "
-        f"{_count_noun(len(entries), 'component')} were not individually examined; --verbose lists them"
-    ]
+    return (
+        unowned
+        + undecided
+        + [
+            f"{_count_noun(files, 'source file')} without a route, lead or security signal in "
+            f"{_count_noun(len(entries), 'component')} were not individually examined; --verbose lists them"
+        ]
+    )
 
 
 def _count_noun(count: int, noun: str) -> str:
@@ -10534,6 +10545,9 @@ def _assessment_render(scope, jobs, names, cfg, workspace: Path, root: Path, *, 
         unowned = next((e["unowned"] for e in jobs.infos if "unowned" in e), None)
         if unowned:
             model["meta"]["unowned_source"] = unowned
+        undecided = [e["undecided"] for e in jobs.infos if "undecided" in e]
+        if undecided:
+            model["meta"]["undecided_targets"] = undecided
         if isinstance(cfg.get("assessment_started_at"), int):
             # Analysis wall time up to the model build; rendering is not included.
             model["meta"]["analysis_duration_seconds"] = max(0, int(time.time()) - cfg["assessment_started_at"])
