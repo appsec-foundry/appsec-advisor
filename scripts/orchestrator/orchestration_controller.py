@@ -8653,7 +8653,8 @@ def _assessment_controls(scope, jobs, architecture, *, progress):
                 "source in one read action.",
             ),
             context=context,
-            schema=analysis.contract("multi-repo-controls.schema.json"),
+            schema=analysis.controls_contract(),
+            normalize=analysis.identity_normalizer(context),
             allowed_sources=allowed,
             preload=analysis.evidence_preload(
                 scope, cited, allowed, room=preload_room(context), max_windows=MAX_PRELOAD_WINDOWS
@@ -8747,7 +8748,8 @@ def _assessment_stride(
         unexamined = analysis.unexamined_files(component, targets)
         if unexamined:
             examples = ", ".join(path for _, path in unexamined[:5])
-            jobs.notes.append(
+            # MR-13 coverage statement, not a defect: shown as information.
+            jobs.infos.append(
                 f"{component['name']}: {_count_noun(len(unexamined), 'source file')} without a route, lead or "
                 f"security signal were not individually examined (for example {examples})"
             )
@@ -8827,6 +8829,8 @@ def _assessment_stride(
                         "decide them together, including their guards and handler; a target's related registration "
                         "lines may lie in another component's file. Request all further source you need in one read "
                         "action: the job allows one round of further reads, and each call re-analyzes the whole packet. "
+                        "Write each finding title without a file location; the controller appends the anchor's. "
+                        "The controller derives each category's finding_ids and identity fields from your findings. "
                         "Return one surface_coverage decision per target with its target_id, disposition and linked "
                         "finding_ids; the controller adds the target anchor. Give a reason of at most 160 characters "
                         "only when the decision links no finding. "
@@ -8843,7 +8847,7 @@ def _assessment_stride(
                     context={**context, "investigation_targets": target_batch},
                     schema=schema,
                     allowed_sources=job_allowed,
-                    normalize=analysis.surface_evidence_normalizer(target_batch),
+                    normalize=analysis.stride_normalizer(target_batch, component, identity),
                     preload=[*preload, *(key for key in context_preload if first and key not in preload)],
                     validate=lambda artifact, ranges, targets=target_batch: analysis.validate_stride(
                         scope,
@@ -9054,6 +9058,7 @@ def _assessment_evidence_review(
         ),
         context=review_context,
         schema=analysis.contract("multi-repo-evidence-review.schema.json"),
+        normalize=analysis.identity_normalizer(identity),
         allowed_sources=review_sources,
         # The anchors are fixed before the review; serving them saves the call
         # that would only request them. The bytes are the same either way.
@@ -9433,6 +9438,8 @@ class _AssessmentConsole:
         # STRIDE jobs and the current stage; and the components finished.
         self.units: dict[str, dict] = {}
         self.units_done = 0
+        # Corrected answers per role in the current phase (MR-17).
+        self.corrections: Counter = Counter()
         self.results: dict[str, str] = {}
         self.headed, self.shown = False, None
         # Called once a phase has started, e.g. to report a plugin change at once.
@@ -9726,6 +9733,7 @@ class _AssessmentConsole:
             self.phase, self.started, self.finished_jobs = phase, now, 0
             self.current, self.count, self.positioned, self.parts = "", None, False, {}
             self.units, self.units_done = {}, 0
+            self.corrections = Counter()
             self.fraction = 0.0
             self._advance(0.0)
             scope = _count_noun(int(position[2]), self.NOUNS[prefix]) if position and prefix in self.NOUNS else ""
@@ -9836,7 +9844,12 @@ class _AssessmentConsole:
             self.write(self._row("⚠", f"{who}{text}"))
             return
         if text.startswith("answer rejected"):
-            self.write(self._row("↻", f"{who}{text}"))
+            # MR-17: a correction repairs itself; the phase's done line counts it,
+            # and only --verbose names each reason.
+            with _AssessmentConsole._lock:
+                self.corrections[label or "model"] += 1
+            if self.verbose:
+                self.write(self._row("↻", f"{who}{text}"))
             return
         now = self.clock()
         finished = re.fullmatch(r"result: .* \((\d+) s\)", text)
@@ -9872,6 +9885,10 @@ class _AssessmentConsole:
                 produced.append(_count_noun(*self.count))
             if self.results.get(self.phase):
                 produced.append(self.results[self.phase])
+            if self.corrections:
+                total = sum(self.corrections.values())
+                roles = ", ".join(f"{role} {count}" for role, count in sorted(self.corrections.items()))
+                produced.append(f"{_count_noun(total, 'answer')} corrected ({roles})")
             self._advance(1.0)
             if self.phase == self.plan[-1]:
                 self.done = 1.0
@@ -10571,6 +10588,7 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
         raise CallError(f"repository selection rejected: {exc}") from exc
     labels = sorted(row["label"] for row in scope.inventory()["repositories"])
     warnings: list[str] = []
+    infos: list[str] = []
     oversized = sorted(
         (row["path"] if len(labels) == 1 else f"{repo['label']}/{row['path']}")
         for repo in scope.inventory()["repositories"]
@@ -10751,6 +10769,7 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                     for gap in jobs.gaps
                 )
                 warnings.extend(jobs.notes)
+                infos.extend(jobs.infos)
                 retry_warning = _assessment_retry_warning(budget.retries)
                 if retry_warning:
                     warnings.append(retry_warning)
@@ -10772,6 +10791,7 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
         # Publication order: model and report first, then figures and exports.
         "deliverables": list(delivered),
         "warnings": warnings,
+        "infos": infos,
         **({"runtime_files": str(workspace)} if workspace.is_dir() else {}),
         "spent_usd": round(budget.spent_usd, 2),
         "calls": budget.calls,
@@ -11037,6 +11057,8 @@ def assess_main(argv: list[str]) -> int:
         print(f"  {out('Run files:', 'muted')} {outcome['runtime_files']}")
     for warning in outcome.get("warnings") or []:
         print(f"{err('⚠', 'warn')} {warning}", file=sys.stderr)
+    for info in outcome.get("infos") or []:
+        print(err(f"ℹ {info}", "muted"), file=sys.stderr)
     if outcome.get("gate_violations"):
         violations = outcome["gate_violations"]
         print(

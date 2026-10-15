@@ -411,15 +411,8 @@ def test_default_console_writes_every_line_in_one_column_grid():
         # A finished component gets its line; the share follows completions, not starts.
         ("5/8 Threat analysis", "done", "~50%", "4m", "~4m", "component 1/2 · API · 2m00s"),
         ("5/8 Threat analysis", "·", "~50%", "4m", "~4m", "component 2/2 · Store"),
-        (
-            "5/8 Threat analysis",
-            "↻",
-            "~50%",
-            "6m",
-            "~6m",
-            "STRIDE: answer rejected, asking for a correction: threats/0: missing evidence",
-        ),
-        ("5/8 Threat analysis", "done", "~63%", "7m", "~4m", "4m30s · 2 components"),
+        # MR-17: a successful correction is counted on the done line, its reason only under --verbose.
+        ("5/8 Threat analysis", "done", "~63%", "7m", "~4m", "4m30s · 2 components · 1 answer corrected (STRIDE 1)"),
         ("8/8 Finalization", "start", "~82%", "7m", "~1m", ""),
         ("8/8 Finalization", "done", "100%", "7m", "", "30s"),
     ]
@@ -1365,9 +1358,10 @@ def test_a_terminal_shows_the_subject_in_work_as_one_rewritten_status_line(capsy
     assert any(part.endswith("component 1/8 · CI/CD Pipeline") for part in statuses)
     assert any(part.endswith("· model is thinking (~2,000 tokens)") for part in statuses)
     assert err.endswith("\r\033[K") and not controller._AssessmentConsole.status_shown
-    assert ("↻", "controls: answer rejected, asking for a correction: controls/0: missing evidence") in [
-        (row[1], row[5]) for row in _rows(lines)
-    ]
+    # MR-17: a correction is counted on the phase's done line, not listed.
+    rows = _rows(lines)
+    assert not any(row[1] == "↻" for row in rows)
+    assert rows[-1][1] == "done" and rows[-1][5].endswith("1 answer corrected (controls 1)")
     assert not any("CI/CD Pipeline" in line for line in lines)
 
 
@@ -1691,3 +1685,22 @@ def test_each_running_component_gets_its_own_bar_and_the_area_clears_whole(capsy
     console.tick()
     assert len(capsys.readouterr().err.split("\r\033[K")[-1].split("\n")) == 2
     controller._AssessmentConsole.clear_status()
+
+
+@pytest.mark.parametrize("verbose", [False, True], ids=["default", "verbose"])
+def test_a_successful_correction_is_counted_not_listed(verbose):
+    """MR-17: corrections repair themselves; the done line counts them per role, --verbose names each."""
+    lines, clock = [], _Clock()
+    console = controller._AssessmentConsole(verbose, lines.append, clock=clock)
+    console.plan_components(1)
+    console.step("Analyzing all STRIDE categories: API (1/1)")
+    console.call("answer rejected, asking for a correction: threats/0/title: too long", "stride_analyzer", "m")
+    console.call("answer rejected, asking for a correction: evidence[1] cites a blank line", "stride_analyzer", "m")
+    console.call("answer rejected, asking for a correction: decisions: missing T-1", "evidence_verifier", "m")
+    console.step("Merging candidate groups")
+    console.close()
+    rows = _rows(lines)
+    listed = [row for row in rows if row[1] == "↻"]
+    assert len(listed) == (3 if verbose else 0)
+    done = next(row[5] for row in rows if row[1] == "done" and row[0].endswith("Threat analysis"))
+    assert done.endswith("3 answers corrected (STRIDE 2, evidence review 1)")

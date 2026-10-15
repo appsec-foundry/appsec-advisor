@@ -177,7 +177,7 @@ class Host:
                     **identity,
                     security_controls=[
                         dict(
-                            domain="Input Validation",
+                            domain="Input Boundary Validation Controls",
                             control="Request Validation",
                             effectiveness="Partial",
                             assessment="The handler reads a request parameter directly.",
@@ -391,7 +391,7 @@ def test_only_the_first_job_of_a_split_component_carries_its_context_lines(tmp_p
     component = next(c for c in architecture["components"]["components"] if c["repository_ids"] == [rid])
     controls = [
         dict(
-            domain="Input Validation",
+            domain="Input Boundary Validation Controls",
             control="Request Validation",
             effectiveness="Partial",
             assessment="The handler reads a request parameter directly.",
@@ -1102,7 +1102,7 @@ def test_stride_and_review_jobs_receive_the_source_their_context_cites(tmp_path,
     # A control cites a line far from every investigation target window.
     controls = [
         dict(
-            domain="Input Validation",
+            domain="Input Boundary Validation Controls",
             control="Request Validation",
             effectiveness="Partial",
             assessment="The handler reads a request parameter directly.",

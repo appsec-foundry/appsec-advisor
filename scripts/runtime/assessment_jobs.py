@@ -121,6 +121,8 @@ class AssessmentJobs:
         self.gaps: list[dict] = []
         # Run warnings the controller derives from accepted jobs, in run order.
         self.notes: list[str] = []
+        # Coverage statements that need no action, such as files no target covered.
+        self.infos: list[str] = []
         # Set by a concurrent caller after a failure: no further job starts (MR-16).
         self.halt = None
 
@@ -131,12 +133,13 @@ class AssessmentJobs:
         notes and gaps, so the caller keeps component order whatever finishes first.
         """
         child = copy.copy(self)
-        child.notes, child.gaps = [], []
+        child.notes, child.gaps, child.infos = [], [], []
         return child
 
     def join(self, child) -> None:
         self.notes.extend(child.notes)
         self.gaps.extend(child.gaps)
+        self.infos.extend(child.infos)
 
     def _record(self, role: str, *, seconds: float | None = None, calls: int = 0) -> None:
         with self._lock:
