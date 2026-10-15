@@ -1254,6 +1254,104 @@ def test_assessment_route_auth_fills_only_the_repository_whose_routes_a_flow_cit
     assert untouched["authentication"] == unknown
 
 
+@pytest.mark.parametrize(("foreign", "invalid"), [(False, None), (True, None), (False, "file"), (False, "line")])
+def test_controller_preserves_missing_client_auth_variants_with_qualified_evidence(tmp_path, foreign, invalid):
+    from analyzers.client_api_flows import settle_access_groups
+    from renderers.figure1_dfd import build_figure1_dfd_svg
+    from validators.validate_assessment_architecture import (
+        AssessmentArchitectureError,
+        _evidence_rows,
+        validate_schema,
+        validate_source,
+    )
+
+    from tests.test_client_api_flows import route
+
+    scope = _scope(
+        tmp_path,
+        ("portal", "service"),
+        {
+            "ui/api.ts": "client.get('/records')\nclient.post('/session')\nclient.get('/dynamic')\n",
+            "server.ts": "route()\n" * 12,
+            "lib/guard.ts": "guard()\n" * 4,
+        },
+    )
+    repo, other = scope.repositories
+    rid = repo.repository_id
+    components = {
+        "components": [
+            {
+                "id": "component-web",
+                "name": "Portal",
+                "tier": "client",
+                "repository_ids": [rid],
+                "paths": [{"repository_id": rid, "path": "ui/api.ts"}],
+            },
+            {
+                "id": "component-api",
+                "name": "Service",
+                "tier": "application",
+                "repository_ids": [rid],
+                "paths": [{"repository_id": rid, "path": "server.ts"}],
+            },
+        ]
+    }
+    routes = [
+        route("GET", "/records", 10, "verified", "bearer", "present"),
+        route("POST", "/session", 11, "verified", "cookie", "present"),
+        route("GET", "/dynamic", 12),
+    ]
+    evidence_repo = other if foreign else repo
+    original = {
+        "schema_version": 2,
+        "source_scope_sha256": scope.inventory()["scope_sha256"],
+        "component_inventory_fingerprint": "sha256:" + "a" * 64,
+        "data_flows": [
+            {
+                "id": "df-001",
+                "from": "component-web",
+                "to": "component-api",
+                "label": "Read records",
+                "protocol": "HTTP",
+                "data_classification": "Internal",
+                "direction": "request-response",
+                "provenance": "architecture",
+                "evidence": [
+                    {
+                        "repository_id": evidence_repo.repository_id,
+                        "file": "server.ts",
+                        "line": 10,
+                        "sha256": hashlib.sha256(evidence_repo.files["server.ts"]).hexdigest(),
+                    }
+                ],
+            }
+        ],
+    }
+    before, routes_before = copy.deepcopy(original), copy.deepcopy(routes)
+    if invalid:
+        routes[1]["authn_handler_evidence"][0][invalid] = "../outside.ts" if invalid == "file" else 999
+        with pytest.raises((controller.ControllerError, AssessmentArchitectureError)):
+            controller._assessment_client_api_flows(scope, components, original, {rid: {"routes": {"routes": routes}}})
+        assert original == before
+        return
+    result = controller._assessment_client_api_flows(scope, components, original, {rid: {"routes": {"routes": routes}}})
+    added = result["data_flows"][1:]
+    assert {(flow.get("authentication") or {}).get("scheme", "unknown") for flow in added} == (
+        {"bearer", "cookie", "unknown"} if foreign else {"cookie", "unknown"}
+    )
+    assert original == before and routes == routes_before
+    for index, flow in enumerate(result["data_flows"], 1):
+        flow["id"] = f"df-{index:03d}"
+    result = controller._assessment_flow_route_auth(scope, result, {rid: routes})
+    settle_access_groups(result["data_flows"])
+    validate_schema(result, "fragments/data-flows-v2.schema.json")
+    for row in _evidence_rows(added):
+        assert row["repository_id"] == rid
+        validate_source(scope, row, path_key="file")
+    svg = build_figure1_dfd_svg({**components, **result}, {}, {}, detail=False)
+    assert "Bearer token" in svg and "Session cookie" in svg and "Unknown" in svg
+
+
 @pytest.mark.parametrize(("label", "path"), [("portal", "client/login.ts"), ("tests", "ui/signin.js")])
 def test_assessment_reuses_identity_discovery_with_qualified_sources(tmp_path, label, path):
     from validators.validate_assessment_architecture import _evidence_rows, validate_source
