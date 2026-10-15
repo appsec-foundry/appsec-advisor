@@ -146,7 +146,7 @@ RC-G replay not needed: the recorded findings state their reasons. T-022 and T-0
 
 Register floor: not silent. "Method and limits" already states which tiers the floor drops (`pregenerate_fragments.py`); the loss is the rating (confirmed-exploitable CSRF rated Low), not the disclosure.
 
-Open: controller end-to-end tests on `bdc52d1d`, `make audit-test-routes` for the two new source routes, then measurement run `/tmp/127` (the operator wants to be asked before it starts) and the comparison of Figure 1 and findings against the reference.
+`make audit-test-routes` was not run for the two new source routes (`capability_signals.py`, `client_api_flows.py`); the operator waived it, since only their own test module and `test_multi_repo_assessment` import them. Open: controller end-to-end tests on `bdc52d1d`, then measurement run `/tmp/127` (the operator wants to be asked before it starts) and the comparison of Figure 1 and findings against the reference.
 
 ## Order of work
 
