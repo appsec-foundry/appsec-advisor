@@ -2096,6 +2096,44 @@ def test_a_long_event_detail_wraps_under_its_column_on_a_terminal(monkeypatch, c
     assert lines[-1].endswith("short")
 
 
+@pytest.mark.parametrize("width", [70, 100])
+@pytest.mark.parametrize("terminal", [True, False])
+def test_width_bounds_every_console_line_on_and_off_a_terminal(monkeypatch, capsys, width, terminal):
+    """--width caps a wide terminal and also wraps output that is not a terminal."""
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    if terminal:
+        monkeypatch.setenv("FORCE_COLOR", "1")
+    else:
+        monkeypatch.delenv("FORCE_COLOR", raising=False)
+    monkeypatch.setenv("COLUMNS", "300")
+    monkeypatch.setattr(controller._AssessmentConsole, "max_columns", width)
+    monkeypatch.setattr(sys.stderr, "isatty", lambda: terminal, raising=False)
+    console = controller._AssessmentConsole(False, clock=_Clock(), live=False)
+    roles = ", ".join(f"role_{index}" for index in range(30))
+    console.facts(None, [("Models", f"claude-sonnet-5-5 ({roles})")])
+    console.phase = "Threat analysis"
+    reason = "STRIDE evidence does not cite an executable implementation: evidence[21] cites a blank line " * 2
+    console.notice(reason.strip())
+    warning = controller._AssessmentConsole.fit("⚠ " + "a target the model read but could not settle " * 4)
+    lines = [_ANSI.sub("", line) for line in capsys.readouterr().err.splitlines() if line.strip()]
+    lines += warning.splitlines()
+    assert len(lines) > 4 and all(len(line) <= width - 1 for line in lines)
+
+
+def test_without_width_the_console_keeps_the_terminal_width(monkeypatch):
+    monkeypatch.setenv("COLUMNS", "300")
+    monkeypatch.setattr(controller._AssessmentConsole, "max_columns", None)
+    assert controller._AssessmentConsole.columns() == 300
+    text = "x " * 400
+    assert controller._AssessmentConsole.fit(text) == text
+
+
+@pytest.mark.parametrize("value", ["59", "0", "wide"])
+def test_width_below_the_grid_minimum_is_rejected(value):
+    with pytest.raises(SystemExit):
+        controller._assessment_argument_parser().parse_args(["--repo", "r", "--output", "o", "--width", value])
+
+
 @pytest.mark.parametrize("components", [0, 2])
 def test_a_status_redraw_overwrites_in_place_in_one_flush(monkeypatch, components):
     """A cleared status line is painted empty before its redraw, and the area flickers on every tick."""

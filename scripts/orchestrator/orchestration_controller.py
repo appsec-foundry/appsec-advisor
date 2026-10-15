@@ -9437,7 +9437,25 @@ def _assessment_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--width",
+        type=_console_width,
+        metavar="COLUMNS",
+        help=f"Wrap console output at most at COLUMNS columns (at least {MIN_CONSOLE_WIDTH}), "
+        "also when it is not a terminal.",
+    )
     return parser
+
+
+# Narrower output cannot keep the progress grid's columns readable.
+MIN_CONSOLE_WIDTH = 60
+
+
+def _console_width(value: str) -> int:
+    width = int(value)
+    if width < MIN_CONSOLE_WIDTH:
+        raise argparse.ArgumentTypeError(f"must be at least {MIN_CONSOLE_WIDTH}")
+    return width
 
 
 # MR-7: hard budget in USD of an interactive launch without a budget flag.
@@ -9854,6 +9872,26 @@ class _AssessmentConsole:
             return ""
         return "\r\033[K" + "\033[1A\033[K" * (_AssessmentConsole.status_lines - 1)
 
+    # --width: the widest line the console writes, on a terminal and off it.
+    max_columns: int | None = None
+
+    @staticmethod
+    def columns() -> int:
+        """Columns a line may use: the terminal's, at most --width; --width alone off a terminal."""
+        columns = shutil.get_terminal_size().columns
+        limit = _AssessmentConsole.max_columns
+        if limit is None:
+            return columns
+        return min(columns, limit) if sys.stderr.isatty() else limit
+
+    @staticmethod
+    def fit(text: str, indent: str = "  ") -> str:
+        """`text` wrapped at --width, continuing under `indent`; unchanged without --width."""
+        if _AssessmentConsole.max_columns is None:
+            return text
+        width = _AssessmentConsole.columns() - 1
+        return "\n".join(textwrap.wrap(text, width, subsequent_indent=indent, break_on_hyphens=False)) or text
+
     # Shared, so the command-line entry can clear a status line before its last message.
     status_shown = False
     status_lines = 0
@@ -9872,7 +9910,7 @@ class _AssessmentConsole:
         lines = [*above, f"{self.st(self._stamp(self.clock()), 'muted')}  {text}"]
         # A wrapped status line would survive the next clear as a stray row.
         # Measured without colour codes; a line that must be cut loses its colour.
-        width = shutil.get_terminal_size().columns - 1
+        width = self.columns() - 1
         for index, line in enumerate(lines):
             if len(ANSI_RE.sub("", line)) > width:
                 lines[index] = ANSI_RE.sub("", line)[: max(width - 1, 0)] + "…"
@@ -9949,7 +9987,11 @@ class _AssessmentConsole:
         # Free text comes last, so a long detail never shifts a column.
         row = f"{phase:<{self._PHASE_WIDTH}}  {event:<{self._EVENT_WIDTH}}  {run}  {detail}"
         if not self.st.enabled:
-            return row.rstrip()
+            if self.max_columns is None:
+                return row.rstrip()
+            head = row[: len(row) - len(detail)]
+            indent, pieces = self._wrap_detail(len(head), detail, now, live)
+            return self._join(head, indent, pieces)
         # Colour wraps each padded column, so the grid keeps its widths.
         st, role = self.st, ("accent" if live else self.EVENT_ROLES.get(event))
         if event in ("start", "done"):
@@ -9961,13 +10003,31 @@ class _AssessmentConsole:
         head = f"{phase_cell}  {event_cell}  {run_cell}  "
         # A long detail wraps under its own column instead of at the screen
         # edge; the status line is cut by `_status` instead.
-        indent = len(self._stamp(now)) + 2 + len(ANSI_RE.sub("", head))
-        fit = shutil.get_terminal_size().columns - 1 - indent
-        pieces = [detail]
-        if not live and fit >= 20 and len(detail) > fit:
-            pieces = textwrap.wrap(detail, fit, break_on_hyphens=False)
-        cells = [st(piece, "warn") if event == "⚠" else piece for piece in pieces]
-        return (head + ("\n" + " " * indent).join(cells)).rstrip()
+        indent, pieces = self._wrap_detail(len(ANSI_RE.sub("", head)), detail, now, live)
+        cells = [st(piece, "warn") if event == "⚠" and piece else piece for piece in pieces]
+        return self._join(head, indent, cells)
+
+    def _wrap_detail(self, head: int, detail: str, now: float, live: bool) -> tuple[int, list[str]]:
+        """(indent, pieces) of a detail after a `head` columns wide grid head.
+
+        A long detail continues under its own column. Where --width leaves that
+        column too narrow, the detail starts on the next line after the time stamp.
+        """
+        indent = len(self._stamp(now)) + 2 + head
+        fit = self.columns() - 1 - indent
+        if live or len(detail) <= fit:
+            return indent, [detail]
+        if fit >= 20:
+            return indent, textwrap.wrap(detail, fit, break_on_hyphens=False)
+        if self.max_columns is None:
+            return indent, [detail]
+        indent = len(self._stamp(now)) + 2
+        return indent, ["", *textwrap.wrap(detail, self.columns() - 1 - indent, break_on_hyphens=False)]
+
+    @staticmethod
+    def _join(head: str, indent: int, pieces: list[str]) -> str:
+        lines = [head + pieces[0], *(" " * indent + piece for piece in pieces[1:])]
+        return "\n".join(line.rstrip() for line in lines)
 
     def _header(self) -> None:
         if not self.headed:
@@ -10011,7 +10071,7 @@ class _AssessmentConsole:
         width = max([11, *(len(key) for key, _ in rows)])
         # On a terminal a long value wraps under its own column instead of at
         # the screen edge; time stamp, key and separators take the rest.
-        fit = shutil.get_terminal_size().columns - 1 - (8 + 2 + 2 + width + 2) if st.enabled else 0
+        fit = self.columns() - 1 - (8 + 2 + 2 + width + 2) if st.enabled or self.max_columns else 0
         for key, value in rows:
             lines: list[str] = []
             for part in value.split("\n"):
@@ -10939,6 +10999,7 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
     minimum = 2 if os.environ.get("APPSEC_SINGLE_REPO_CONTROLLER") == "0" else 1
     if len(ns.repo) < minimum:
         raise CallError("a multi-repository assessment requires at least two --repo selections")
+    _AssessmentConsole.max_columns = ns.width
     console = None if progress or ns.quiet else _AssessmentConsole(ns.verbose)
     if console:
         console.start_ticker()
@@ -11447,7 +11508,7 @@ def assess_main(argv: list[str]) -> int:
                 file=sys.stderr,
             )
             return ASSESS_PAUSED_EXIT
-        print(f"✗ assessment stopped: {_cap_reason(str(exc))}", file=sys.stderr)
+        print(_AssessmentConsole.fit(f"✗ assessment stopped: {_cap_reason(str(exc))}"), file=sys.stderr)
         draft = _unpublished_draft(argv, before)
         if draft:
             print(
@@ -11465,10 +11526,12 @@ def assess_main(argv: list[str]) -> int:
         print(f"  {out(str(Path(outcome['output']) / name), 'accent')}")
     if outcome.get("runtime_files"):
         print(f"  {out('Run files:', 'muted')} {outcome['runtime_files']}")
+    fit = _AssessmentConsole.fit
     for warning in outcome.get("warnings") or []:
-        print(f"{err('⚠', 'warn')} {warning}", file=sys.stderr)
+        # Wrapped as plain text; only the leading mark is coloured.
+        print(err("⚠", "warn") + fit(f"⚠ {warning}")[1:], file=sys.stderr)
     for info in outcome.get("infos") or []:
-        print(err(f"ℹ {info}", "muted"), file=sys.stderr)
+        print(err(fit(f"ℹ {info}"), "muted"), file=sys.stderr)
     if outcome.get("gate_violations"):
         violations = outcome["gate_violations"]
         print(
