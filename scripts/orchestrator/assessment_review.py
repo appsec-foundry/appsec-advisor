@@ -401,7 +401,7 @@ def run_abuse_cases(
     if (workspace / ".abuse-case-verdicts.json").is_file():
         _rebuild_model(workspace, root, run_script, enrich)
         run_script("model/triage_compute_ranking.py", [str(workspace), "--if-deterministic-owner"])
-    run_script("renderers/render_abuse_cases.py", ["--output-dir", str(workspace), "--repo-root", str(root), *org])
+    persist_abuse_cases(workspace, root, cfg, run_script)
     receipts.append("Canonical abuse-case analysis persisted")
     gate = run_script(
         "validators/abuse_case_gate.py", ["--output-dir", str(workspace)], acceptable=(0, _ABUSE_GATE_EXIT)
@@ -409,6 +409,17 @@ def run_abuse_cases(
     if gate.returncode == _ABUSE_GATE_EXIT:
         raise AssessmentReviewError("abuse-case release gate failed: " + (gate.stderr or gate.stdout).strip()[-500:])
     return receipts
+
+
+def persist_abuse_cases(workspace, root, cfg, run_script) -> None:
+    """Render the abuse-case section and write its canonical analysis into threat-model.yaml.
+
+    Every model build starts the analysis at ``not_run``; a build after Stage 1d
+    must call this again, or the published model loses the verified cases the
+    report still shows.
+    """
+    org = ["--org-profile", str(cfg["org_profile_path"])] if cfg.get("org_profile_path") else []
+    run_script("renderers/render_abuse_cases.py", ["--output-dir", str(workspace), "--repo-root", str(root), *org])
 
 
 def _component_sources(components: dict, component_id: str, names) -> frozenset:

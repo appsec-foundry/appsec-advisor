@@ -1652,6 +1652,8 @@ def test_root_causes_are_synthesized_after_abuse_verification(tmp_path, monkeypa
     assert "post_stride_synthesizer" not in before and "post_stride_synthesizer" in host.roles
     model = yaml.safe_load((out / "threat-model.yaml").read_text())
     assert "Unvalidated request input" in json.dumps(model["tier_root_causes"])
+    # The rebuild for the synthesis must not reset the verified abuse-case analysis.
+    assert model["abuse_case_analysis"]["status"] != "not_run"
 
 
 # ── Terminal colour ──────────────────────────────────────────────────────────
