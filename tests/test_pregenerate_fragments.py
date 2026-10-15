@@ -164,6 +164,16 @@ class TestSystemOverview:
     def test_scope_without_unexamined_source_states_nothing(self, minimal_yaml_data):
         assert "Not individually examined" not in pf.gen_system_overview(minimal_yaml_data)
 
+    def test_scope_names_targets_the_analysis_could_not_decide(self, minimal_yaml_data):
+        minimal_yaml_data["meta"]["undecided_targets"] = [
+            {"component": "Web", "target": "routes/redirect.ts: allow-list helper was not supplied"}
+        ]
+        md = pf.gen_system_overview(minimal_yaml_data)
+        assert (
+            "**Not decided:** the analysis read 1 target but could not decide it "
+            "(Web: routes/redirect.ts: allow-list helper was not supplied)." in md
+        )
+
     def test_scope_names_program_files_outside_every_component(self, minimal_yaml_data):
         minimal_yaml_data["meta"]["unowned_source"] = {
             "files": 4,

@@ -70,6 +70,18 @@ properties:
           properties:
             component: {type: string, minLength: 1}
             files: {type: integer, minimum: 1}
+      undecided_targets:
+        type: array
+        description: >-
+          STRIDE targets a job read but could not decide, with the reason it named (MR-11); rendered
+          in §1 Scope as a coverage gap instead of a console warning.
+        items:
+          type: object
+          additionalProperties: false
+          required: [component, target]
+          properties:
+            component: {type: string, minLength: 1}
+            target: {type: string, minLength: 1, maxLength: 300}
       unowned_source:
         type: object
         description: >-
