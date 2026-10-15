@@ -317,6 +317,11 @@ def _local_marker_label(rows):
     return label
 
 
+def _local_marker_width(rows):
+    """Drawn width of a node's local trust-change marker; layout reserves it on the top edge."""
+    return _tw(_local_marker_label(rows), 7.5) + 14
+
+
 @cache
 def _capability_vocabulary():
     """Display labels for evidenced component capabilities and service roles."""
@@ -2278,7 +2283,9 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3, *, optimize=True, roomy_
             if e in ui_entries[e["dst"]]:
                 entries = ui_entries[e["dst"]]
                 slot = entries.index(e)
-                px = t["x"] + t["w"] * (slot + 1) / (len(entries) + 1)
+                # A local trust-change marker occupies the right end of the top edge.
+                span = t["w"] - t.get("marker_reserve", 0)
+                px = t["x"] + span * (slot + 1) / (len(entries) + 1)
                 py = t["y"] - 16 - 12 * (len(entries) - slot - 1)
                 e["pts"] = [(s["x"] + s["w"], e["ys"]), (cx, e["ys"]), (cx, py), (px, py), (px, t["y"])]
                 e["ui_top_entry"] = True
@@ -3174,7 +3181,7 @@ def _render(
     for nid, ids in (d.get("_local_boundaries") or {}).items():
         n, rows = nodes[nid], [by_id[tid] for tid in ids]
         label = _local_marker_label(rows)
-        w = _tw(label, 7.5) + 14
+        w = _local_marker_width(rows)
         mx, my = n["x"] + n["w"] - w - 8, n["y"] - 7
         crossings = "; ".join(
             f"{t['id']} " + " → ".join(cnums.get(t.get(key), "External") for key in ("from", "to")) for t in rows
@@ -3983,6 +3990,10 @@ def _build(
     d["_boundary_gaps"] = _boundary_gaps(d, nodes, tbs)
     if not detail:
         d["_local_boundaries"] = _local_boundaries(nodes, tbs, d["_boundary_gaps"])
+        rows_by_id = {t["id"]: t for t in tbs}
+        for nid, ids in d["_local_boundaries"].items():
+            # The marker and its 8-unit right inset; human interactions enter left of it.
+            nodes[nid]["marker_reserve"] = _local_marker_width([rows_by_id[tid] for tid in ids]) + 8
     flow_rows = {f["id"]: f for f in d.get("data_flows") or [] if isinstance(f, dict) and f.get("id")}
     for edge in edges:
         if edge.get("attack"):

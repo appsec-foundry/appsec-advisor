@@ -4029,6 +4029,68 @@ def test_inferred_trust_change_says_so_in_text():
     assert "2 TRUST CHANGES · 1 INFERRED" in _visible_text(root)
 
 
+def _roles_entering_the_client(roles):
+    from tests.test_figure1_security import auth
+
+    model, paths, taxonomy = _model(app=2, stores=1, flows=False, xss=True)
+    model["external_entities"] = [
+        {
+            "id": f"ext-role-{i}",
+            "kind": "legitimate-role",
+            "name": f"Role {i}",
+            "access": "internet-user" if i == 1 else "internet-priv-user",
+            "description": "Uses the application",
+        }
+        for i in range(1, roles + 1)
+    ]
+    model["data_flows"] = [
+        {
+            "id": f"df-{i:03d}",
+            "from": "external",
+            "from_entity": f"ext-role-{i}",
+            "to": "spa",
+            "interaction": True,
+            "label": "Uses UI",
+            "protocol": "UI",
+        }
+        for i in range(1, roles + 1)
+    ] + [
+        {
+            "id": f"df-{10 + i:03d}",
+            "from": "spa",
+            "to": f"app{i}",
+            "label": "Application requests",
+            "protocol": "HTTPS",
+            "authentication": auth("bearer"),
+        }
+        for i in range(2)
+    ]
+    return model, paths, taxonomy
+
+
+@pytest.mark.parametrize("roles", [2, 3])
+@pytest.mark.parametrize("pair", [("external", "spa"), ("spa", "external")])
+@pytest.mark.parametrize("confidence", ["confirmed", "inferred"])
+def test_human_interactions_enter_the_client_left_of_its_trust_change_marker(roles, pair, confidence):
+    """Several roles entering a client with a local trust change keep the overview (live run: Admin role)."""
+    model, paths, taxonomy = _roles_entering_the_client(roles)
+    model["trust_boundaries"] = [_resolved(*pair, 1, confidence=confidence)]
+    svg, problems = F.check_diagram(model, paths, taxonomy, detail=False)
+    assert problems == []
+    assert _local_markers(ET.fromstring(svg)) == {"spa": ["tb-1"]}
+
+
+def test_human_interactions_spread_over_the_whole_client_top_without_a_marker():
+    model, paths, taxonomy = _roles_entering_the_client(2)
+    svg, problems = F.check_diagram(model, paths, taxonomy, detail=False)
+    assert problems == [] and _local_markers(ET.fromstring(svg)) == {}
+    scenarios, actors = F.scenarios_from_attack_paths(model, paths, taxonomy)
+    _, state = F._build(model, scenarios, actors, detail=False)
+    client = state["nodes"]["spa"]
+    entries = sorted(e["pts"][-1][0] for e in state["edges"] if e.get("ui_top_entry"))
+    assert entries == [client["x"] + client["w"] * k / 3 for k in (1, 2)]
+
+
 @pytest.mark.parametrize(
     "row",
     [
