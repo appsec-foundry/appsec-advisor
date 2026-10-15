@@ -1063,6 +1063,55 @@ def test_assessment_embedded_access_uses_qualified_frozen_sources(tmp_path, labe
     assert profile_catalog(display["data_flows"])[("none",)]["number"] == "0"
 
 
+@pytest.mark.parametrize(("handler", "guard"), [("server.ts", "lib/access.ts"), ("api/app.js", "auth/token.js")])
+def test_assessment_route_auth_fills_only_the_repository_whose_routes_a_flow_cites(tmp_path, handler, guard):
+    from validators.validate_assessment_architecture import validate_source
+
+    files = {handler: "const app = express()\napp.get('/orders', guard(), listOrders())\n", guard: "x\ny\n"}
+    scope = _scope(tmp_path, ("edge", "service"), files)
+    edge, service = scope.repositories
+    unknown = {"scheme": "unknown", "scope": "Not located", "evidence": []}
+    flows = {
+        "data_flows": [
+            {
+                "id": f"df-00{i}",
+                "from": "component-web",
+                "to": "component-api",
+                "authentication": copy.deepcopy(unknown),
+                "evidence": [
+                    {
+                        "repository_id": repo.repository_id,
+                        "file": handler,
+                        "line": 2,
+                        "sha256": hashlib.sha256(repo.files[handler]).hexdigest(),
+                    }
+                ],
+            }
+            for i, repo in enumerate((edge, service), 1)
+        ]
+    }
+    verified = {
+        "handler_file": handler,
+        "handler_line": 2,
+        "authn_signal": "middleware_present",
+        "authn_handler_signal": "verified",
+        "authn_handler_scheme": "bearer",
+        "authn_handler_evidence": [{"file": guard, "line": 2}],
+    }
+    unresolved = {**verified, "authn_handler_signal": "unresolved", "authn_handler_scheme": None}
+    before = copy.deepcopy(flows)
+    result = controller._assessment_flow_route_auth(
+        scope, flows, {edge.repository_id: [verified], service.repository_id: [unresolved]}
+    )
+    assert flows == before
+    filled, untouched = result["data_flows"]
+    assert filled["authentication"]["scheme"] == "bearer"
+    evidence = filled["authentication"]["evidence"]
+    assert [(row["repository_id"], row["file"], row["line"]) for row in evidence] == [(edge.repository_id, guard, 2)]
+    validate_source(scope, evidence[0], path_key="file")
+    assert untouched["authentication"] == unknown
+
+
 @pytest.mark.parametrize(("label", "path"), [("portal", "client/login.ts"), ("tests", "ui/signin.js")])
 def test_assessment_reuses_identity_discovery_with_qualified_sources(tmp_path, label, path):
     from validators.validate_assessment_architecture import _evidence_rows, validate_source

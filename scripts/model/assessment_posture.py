@@ -51,6 +51,18 @@ NO_IAC_STUB = {"parse_error": "skipped: no IaC surface detected", "findings": []
 MAX_ROUTE_CARDS = 100
 MAX_COMPONENT_CARDS = 200
 MAX_CARD_PATHS = 10
+# Role comparisons naming a privileged role, offered to actor discovery as
+# preloaded lines: the evidence a privileged actor needs is a role check, and a
+# tool-less job that reads nothing could otherwise never confirm one.
+MAX_PRIVILEGED_CHECKS = 6
+PRIVILEGED_CHECK_CONTEXT = 3
+_PRIVILEGED_NAMES = r"(?:admin|administrator|superuser|super_?admin|sysadmin)"
+_PRIVILEGED_CHECK_RE = re.compile(
+    rf"(?i)\broles?\b[^\n;]{{0,60}}?(?:===?|!==?|\bin\b|\.includes\s*\(|\bis\b)[^\n;]{{0,40}}?\b{_PRIVILEGED_NAMES}\b"
+    rf"|\b(?:has|require|check|is)_?(?:any_?)?roles?\s*\(\s*['\"]{_PRIVILEGED_NAMES}['\"]"
+)
+_COMMENT_LINE_RE = re.compile(r"^\s*(?://|#|\*|/\*)")
+_TEST_PATH_RE = re.compile(r"(?:^|/)(?:tests?|__tests__|spec|e2e)(?:/|$)|\.(?:spec|test)\.\w+$|(?:^|/)test_[^/]*$")
 
 # Producers that run here but write no workspace sidecar of their own, and
 # producers that do not apply to a combined assessment.
@@ -64,7 +76,10 @@ ACTOR_ADAPTATION = (
     "holds the active static actors, the finalized components, external entities, data flows and route cards. "
     "Propose an additional actor only for a distinct attacker access or authority position that no active "
     "static actor holds. Cite qualified source evidence (repository_id, file, line, sha256) that you retrieved "
-    "for every confirmed or proposed actor. The controller sets the cache key and timestamp."
+    "for every confirmed or proposed actor. The controller sets the cache key and timestamp. "
+    "privileged_access_checks lists lines that compare a role with a privileged role name; their source is "
+    "already in source_slices. Confirm the privileged actor from such a line only when it grants or denies "
+    "elevated access, not when it merely records or reports the role."
 )
 
 
@@ -618,6 +633,50 @@ def _discovery_context(names, workspace: Path) -> tuple[dict, list[dict]]:
     return context, cards
 
 
+def reconcile_privileged_role(workspace: Path, root: Path) -> list[str]:
+    """Give a confirmed privileged actor its own role, as the single-repository handoff does (RA-11)."""
+    from model.reconcile_privileged_roles import reconcile
+
+    flows = _read(workspace / ".data-flows.json")
+    components = _read(workspace / ".components.json")["components"]
+    result, added = reconcile(root, components, flows, _read(workspace / ".actors-resolved.json"))
+    if not added:
+        return []
+    _require_valid(_schema("fragments/data-flows.schema.json"), result, "privileged role data flows")
+    atomic_write_json(workspace / ".data-flows.json", result)
+    return [f"privileged role added: {added['entity_id']} for {added['actor_id']} (flow {added['flow_id'] or '-'})"]
+
+
+def privileged_checks(scope, cards: list[dict]) -> list[dict]:
+    """Component lines that compare a role with a privileged role name, at most ``MAX_PRIVILEGED_CHECKS``.
+
+    Test files and comment lines never count. Whether a line enforces elevated
+    access, rather than only recording it, stays with the discoverer.
+    """
+    files = {repo.repository_id: repo.files for repo in scope.repositories}
+    seen, rows = set(), []
+    for card in cards:
+        for row in card["paths"]:
+            key = (row["repository_id"], row["path"])
+            data = files.get(row["repository_id"], {}).get(row["path"])
+            if key in seen or data is None or _TEST_PATH_RE.search(row["path"]):
+                continue
+            seen.add(key)
+            for number, text in enumerate(data.decode("utf-8", errors="replace").splitlines(), 1):
+                if not _COMMENT_LINE_RE.match(text) and _PRIVILEGED_CHECK_RE.search(text):
+                    rows.append(
+                        {
+                            "repository_id": key[0],
+                            "file": key[1],
+                            "line": number,
+                            "sha256": hashlib.sha256(data).hexdigest(),
+                            "_lines": len(data.splitlines()),
+                        }
+                    )
+    rows.sort(key=lambda r: (r["repository_id"], r["file"], r["line"]))
+    return rows[:MAX_PRIVILEGED_CHECKS]
+
+
 def _legacy_discovery(artifact: dict, names, key: str) -> dict:
     """Drop qualified evidence into the legacy prose fields as namespaced anchors."""
 
@@ -650,6 +709,17 @@ def discover_actors(scope, jobs, names, workspace: Path, cfg: dict, instructions
         return ["actor discovery skipped: disabled by configuration"]
     context, cards = _discovery_context(names, workspace)
     allowed = analysis.source_selection(cards)
+    checks = privileged_checks(scope, cards)
+    context["privileged_access_checks"] = [{k: v for k, v in row.items() if k != "_lines"} for row in checks]
+    preload = tuple(
+        (
+            row["repository_id"],
+            row["file"],
+            max(1, row["line"] - PRIVILEGED_CHECK_CONTEXT),
+            min(row["_lines"], row["line"] + PRIVILEGED_CHECK_CONTEXT),
+        )
+        for row in checks
+    )
 
     def validate(artifact, ranges):
         analysis.validate_retrieved_sources(scope, artifact, ranges, allowed)
@@ -667,6 +737,7 @@ def discover_actors(scope, jobs, names, workspace: Path, cfg: dict, instructions
         validate=validate,
         # OR-39: the deterministic actor resolution already written stands in.
         on_failure=lambda reason: None,
+        preload=preload,
     )
     if artifact is None:
         return ["actor discovery unavailable: the model job failed; deterministic actors kept"]

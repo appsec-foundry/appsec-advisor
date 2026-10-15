@@ -8387,6 +8387,39 @@ def _assessment_embedded_access(scope, components: dict, flows: dict) -> dict:
     return result
 
 
+def _assessment_flow_route_auth(scope, flows: dict, route_inventories: dict) -> dict:
+    """Apply the single-repository route fill (`flow_route_auth`) per repository.
+
+    A flow citing route registrations of one repository takes the outcome its
+    routes' resolved handlers prove there; evidence is qualified like every
+    controller-attested location.
+    """
+    import copy
+
+    from analyzers.flow_route_auth import reconcile
+    from validators.validate_assessment_architecture import _repository_projection, validate_source
+
+    result = copy.deepcopy(flows)
+    for repo in scope.repositories:
+        routes = route_inventories.get(repo.repository_id) or []
+        if not routes:
+            continue
+        projected = _repository_projection({"data_flows": result["data_flows"]}, repo.repository_id)
+        enriched, filled, _mixed = reconcile(projected, routes)
+        for flow, amended in zip(result["data_flows"], enriched["data_flows"], strict=True):
+            if amended.get("id") not in filled:
+                continue
+            authentication = copy.deepcopy(amended["authentication"])
+            for evidence in authentication["evidence"]:
+                source = repo.files.get(evidence["file"])
+                if source is None:
+                    raise ControllerError("Route authentication cites source outside the admitted repository")
+                evidence.update(repository_id=repo.repository_id, sha256=hashlib.sha256(source).hexdigest())
+                validate_source(scope, evidence, path_key="file")
+            flow["authentication"] = authentication
+    return result
+
+
 def _assessment_architecture(scope, jobs, *, progress):
     """Sequence fresh per-root discovery and the existing architecture handoff.
 
@@ -8519,6 +8552,7 @@ def _assessment_architecture(scope, jobs, *, progress):
     for index, flow in enumerate(flows["data_flows"], 1):
         flow["id"] = f"df-{index:03d}"
     flows = _assessment_embedded_access(scope, components, flows)
+    flows = _assessment_flow_route_auth(scope, flows, {rid: row["routes"] for rid, row in inventories.items()})
     # The single-repository handoff's role-access steps, so both paths model roles alike.
     from model.reconcile_role_access import classify, reconcile
 
@@ -10408,6 +10442,9 @@ def _assessment_render(scope, jobs, names, cfg, workspace: Path, root: Path, *, 
     receipts += related_register(scope, names, workspace, cfg)
     receipts += assessment_posture.run(scope, names, workspace, cfg, progress=progress)
     receipts += assessment_posture.discover_actors(scope, jobs, names, workspace, cfg, _assessment_role_instructions)
+    # The single-repository handoff adds a confirmed privileged role before boundary
+    # assessment; actors are confirmed only now here, so the same step follows them.
+    receipts += assessment_posture.reconcile_privileged_role(workspace, root)
     # Legacy finalize attributes actors right after the merge; here actors are
     # resolved only now, so the same rule runs at this point.
     _run_script("model/merge_threats.py", ["reconcile-attribution", "--output-dir", str(workspace)])
