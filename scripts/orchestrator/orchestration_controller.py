@@ -8623,6 +8623,9 @@ def _assessment_architecture(scope, jobs, *, progress):
     flows = _assessment_flow_route_auth(
         scope, flows, {rid: row["routes"].get("routes") or [] for rid, row in inventories.items()}
     )
+    from analyzers.client_api_flows import settle_access_groups
+
+    settle_access_groups(flows["data_flows"])
     # The single-repository handoff's role-access steps, so both paths model roles alike.
     from model.reconcile_role_access import classify, reconcile
 
@@ -9317,6 +9320,14 @@ def _assessment_argument_parser() -> argparse.ArgumentParser:
         help="Started by an interactive skill: without a budget flag, the depth sets the hard budget (MR-7).",
     )
     parser.add_argument("--max-duration", type=int, metavar="SECONDS")
+    # create-threat-model2 runs one phase per invocation and continues with --resume.
+    parser.add_argument(
+        "--pause-after",
+        type=int,
+        choices=range(1, len(_AssessmentConsole.WEIGHTS)),
+        metavar="PHASE",
+        help="Stop before the phase after PHASE (1-based); --resume continues the run.",
+    )
     parser.add_argument("--model")
     parser.add_argument("--project", help="Name of the combined system in the report.")
     parser.add_argument("--trust-mode", choices=("untrusted", "trusted"), default="untrusted")
@@ -9329,6 +9340,8 @@ def _assessment_argument_parser() -> argparse.ArgumentParser:
 
 # MR-7: hard budget in USD of an interactive launch without a budget flag.
 INTERACTIVE_DEPTH_BUDGET_USD = {"quick": 10.0, "standard": 20.0, "thorough": 40.0}
+# Exit status of a run that stopped at its --pause-after boundary.
+ASSESS_PAUSED_EXIT = 3
 
 
 def _requested_depth(rest: list[str]) -> str:
@@ -9439,6 +9452,25 @@ def _count_noun(count: int, noun: str) -> str:
     if count != 1:
         noun = noun[:-1] + "ies" if noun.endswith("y") and noun[-2:-1] not in "aeiou" else noun + "s"
     return f"{count} {noun}"
+
+
+def _pausing_progress(progress, after: int, plan: list[str], console):
+    """Stop the run at the first step of a phase after phase ``after`` of ``plan``.
+
+    Every phase begins with a step on the controller's own thread, so the
+    pause never lands inside a running model job.
+    """
+    from runtime.assessment_state import AssessmentPaused
+
+    def step(text: str) -> None:
+        phase = next((name for prefix, name in _AssessmentConsole.PHASES if text.startswith(prefix)), None)
+        if phase in plan and plan.index(phase) >= after:
+            if console:
+                console.close()
+            raise AssessmentPaused(after, len(plan), plan[after - 1])
+        progress(text)
+
+    return step
 
 
 def _phase_result(progress, phase: str, text: str) -> None:
@@ -10854,6 +10886,10 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
                 if model_warning:
                     # Shown even with --quiet: it changes the run's cost or outcome.
                     print(f"⚠ {model_warning}", file=sys.stderr, flush=True)
+                if ns.pause_after:
+                    abuse_cases = not cfg.get("skip_abuse_case_verification")
+                    plan = [name for name in _AssessmentConsole.WEIGHTS if abuse_cases or name != "Abuse cases"]
+                    say = _pausing_progress(say, ns.pause_after, plan, console)
                 from orchestrator import assessment_context
 
                 try:
@@ -11197,6 +11233,7 @@ def assess_main(argv: list[str]) -> int:
     from jsonschema import SchemaError, ValidationError
     from runtime.analyst_host import HostCancelled, TransportError
     from runtime.assessment_host import ExchangeError
+    from runtime.assessment_state import AssessmentPaused
 
     before = _draft_stamp(argv)
     try:
@@ -11208,6 +11245,9 @@ def assess_main(argv: list[str]) -> int:
     except KeyboardInterrupt:
         print("\n✗ assessment interrupted", file=sys.stderr)
         return 130
+    except AssessmentPaused as exc:
+        print(f"⏸ Paused after phase {exc.number}/{exc.total} — {exc.phase}; continue with --resume", flush=True)
+        return ASSESS_PAUSED_EXIT
     except CallError as exc:
         print(f"✗ {exc}", file=sys.stderr)
         return 2

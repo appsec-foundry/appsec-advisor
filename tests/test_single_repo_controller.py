@@ -242,6 +242,28 @@ def test_stop_never_signals_through_a_stale_or_planted_lock(tmp_path, planted):
         target.kill()
 
 
+def test_pause_after_stops_at_the_phase_boundary_and_resume_reuses_its_jobs(tmp_path, monkeypatch):
+    from runtime.assessment_state import AssessmentPaused
+
+    monkeypatch.setenv("APPSEC_SINGLE_REPO_CONTROLLER", "1")
+    steps, host = [], FullHost()
+    with pytest.raises(AssessmentPaused) as paused:
+        _assess(tmp_path, monkeypatch, ("solo",), ("--no-pdf", "--pause-after", "2"), progress=steps.append, host=host)
+    assert (paused.value.number, paused.value.phase) == (2, "Architecture")
+    assert not any(step.startswith("Measuring the boundary source context") for step in steps)
+    out = tmp_path / "out"
+    assert json.loads((out / ".assessment-state.json").read_text())["status"] == "interrupted"
+    assert not (out / "threat-model.md").exists()
+    calls = len(host.roles)
+    argv = ["--repo", str(tmp_path / "solo"), "--output", str(out), "--hard-budget", "5", "--trust-mode", "trusted"]
+    argv += ["--model", "haiku", "--no-pdf", "--resume"]
+    outcome = controller.assess_repositories(argv, host_factory=host.factory, progress=lambda text: None)
+    assert outcome["status"] == "complete"
+    # Accepted jobs of the paused phases are reused, not requested again.
+    assert "architecture_analyst" in host.roles[:calls]
+    assert "architecture_analyst" not in host.roles[calls:]
+
+
 def test_terminate_becomes_the_runs_own_cancellation():
     state = SimpleNamespace(cancelled=False)
     previous = signal.getsignal(signal.SIGTERM)
