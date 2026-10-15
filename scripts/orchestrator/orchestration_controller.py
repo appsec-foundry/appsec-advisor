@@ -8217,7 +8217,14 @@ _STRIDE_TIER_RULE = (
     "stops the attack. Use `insecure-practice` when the insecure pattern is definite but one of these is not "
     "shown: reachability, a precondition the attack needs (another flaw, database or repository access, a "
     "build-time position), or the absence of a mitigating control. A finding is not unproven merely because its "
-    "impact is limited; the tier states whether exploitation is shown, not how severe it is."
+    "impact is limited; the tier states whether exploitation is shown, not how severe it is. A feature or "
+    "configuration flag that enables the vulnerable branch is not a control and not a precondition, unless the "
+    "source you read shows it is off by default."
+)
+# MR-22, stated because the host strips conditional schema rules (MR-17).
+_STRIDE_CRITICAL_RULE = (
+    "A Critical finding carries at least two attack_steps leading from the attacker's entry to the impact; "
+    "a finding you cannot back with such steps is not Critical."
 )
 
 
@@ -8915,6 +8922,8 @@ def _assessment_stride(
                         + requirement_rule
                         + " Code examples are proposed remediation, never commands to execute. "
                         + _STRIDE_TIER_RULE
+                        + " "
+                        + _STRIDE_CRITICAL_RULE
                         + " Unproven practices retain their unproven tier and no CVSS."
                         + (" " + share.rstrip() if share else ""),
                     )

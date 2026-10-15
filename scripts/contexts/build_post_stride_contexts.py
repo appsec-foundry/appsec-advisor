@@ -320,6 +320,10 @@ def apply_evidence_verification(
             continue
         flag = verdict_by_threat[str(threat["t_id"])]
         record_evidence(threat, flag["verdict"], "llm-verified" if flag["verdict"] == "verified" else None)
+        if flag["verdict"] == "ambiguous":
+            # MR-21: an unconfirmed review never leaves a finding counted as exploitable.
+            threat["evidence_tier"] = "insecure-practice"
+            threat.pop("cvss_v4", None)
         annotation = {
             "flag_id": flag["flag_id"],
             "verdict": flag["verdict"],

@@ -10,7 +10,7 @@ from jsonschema import Draft202012Validator
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from contexts import multi_repo_analysis as stage
-from runtime.assessment_host import ExchangeError
+from runtime.assessment_host import ExchangeError, Rejection
 from runtime.multi_repo_scope import AssessmentScope, RepositoryView
 
 FP = "sha256:" + "a" * 64
@@ -603,6 +603,76 @@ def test_comment_cannot_substitute_for_implementation_evidence(tmp_path):
             artifact,
             ranges[:1],
         )
+
+
+@pytest.mark.parametrize(
+    ("risk", "steps", "accepted"),
+    [("Critical", None, False), ("Critical", 2, True), ("High", None, True)],
+)
+def test_critical_finding_without_attack_steps_is_corrected(tmp_path, risk, steps, accepted):
+    """MR-22: a Critical rating needs a traceable path; the rejection names the finding for a correction."""
+    scope, components, evidence, ranges, identity = sources(tmp_path)
+    artifact = stride(components[0], evidence[0], identity)
+    finding = artifact["threats"][0]
+    finding["risk"] = risk
+    finding["attack_steps"] = (
+        None if steps is None else [f"Step {n}: the attacker sends a crafted request." for n in range(steps)]
+    )
+    check = (
+        lambda: stage.validate_stride(  # noqa: E731
+            scope,
+            components[0],
+            components,
+            dict(component_inventory_fingerprint=FP, data_flows=[]),
+            artifact,
+            ranges[:1],
+        )
+    )
+    if accepted:
+        check()
+        return
+    with pytest.raises(Rejection) as raised:
+        check()
+    assert "attack_steps" in str(raised.value) and finding["local_id"] in str(raised.value.errors)
+
+
+def _commented(tmp_path, line, cwe):
+    scope, components, evidence, ranges, identity = sources(tmp_path)
+    views = list(scope.repositories)
+    views[0] = RepositoryView(views[0].repository_id, views[0].root, "b" * 40, "c" * 64, {"app.py": line.encode()})
+    scope = AssessmentScope(tuple(views), scope.output)
+    evidence[0]["sha256"] = hashlib.sha256(views[0].files["app.py"]).hexdigest()
+    ranges[0]["sha256"] = evidence[0]["sha256"]
+    identity["source_scope_sha256"] = scope.inventory()["scope_sha256"]
+    artifact = stride(components[0], evidence[0], identity)
+    artifact["threats"][0]["cwe"] = cwe
+    flows = dict(component_inventory_fingerprint=FP, data_flows=[])
+    return lambda: stage.validate_stride(scope, components[0], components, flows, artifact, ranges[:1])
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "  // app.put('/api/records/:id', guard.requireLogin()) // disabled for the demo\n",
+        "# router.add_route('DELETE', '/records', require_admin(handler))\n",
+    ],
+)
+def test_absence_finding_may_cite_a_commented_out_guard(tmp_path, line):
+    """MR-20: the disabled guard statement is the evidence that the control is missing."""
+    _commented(tmp_path, line, "CWE-306")()
+
+
+@pytest.mark.parametrize(
+    ("line", "cwe"),
+    [
+        ("# TODO: protect this route with requireLogin() later\n", "CWE-306"),
+        ("# see require_admin() for the check\n", "CWE-862"),
+        ("  // app.put('/api/records/:id', guard.requireLogin())\n", "CWE-89"),
+    ],
+)
+def test_prose_comment_stays_rejected(tmp_path, line, cwe):
+    with pytest.raises(ExchangeError, match="executable"):
+        _commented(tmp_path, line, cwe)()
 
 
 @pytest.mark.parametrize("kind", ["stale", "missing", "duplicate", "borrowed-anchor"])
