@@ -205,13 +205,13 @@ def _assess(tmp_path, monkeypatch, names, extra=(), seed=None, progress=lambda t
     return outcome, host, tmp_path / "out"
 
 
-def test_one_repository_takes_the_combined_path_only_when_switched_on(tmp_path, monkeypatch):
+def test_one_repository_takes_the_combined_path_unless_switched_off(tmp_path, monkeypatch):
     for part in ("off", "on"):
         (tmp_path / part).mkdir()
-    monkeypatch.delenv("APPSEC_SINGLE_REPO_CONTROLLER", raising=False)
+    monkeypatch.setenv("APPSEC_SINGLE_REPO_CONTROLLER", "0")
     with pytest.raises(controller.CallError, match="at least two"):
         _assess(tmp_path / "off", monkeypatch, ("solo",))
-    monkeypatch.setenv("APPSEC_SINGLE_REPO_CONTROLLER", "1")
+    monkeypatch.delenv("APPSEC_SINGLE_REPO_CONTROLLER")
     seen = []
     monkeypatch.setattr(controller, "_assessment_architecture", lambda scope, *a, **k: seen.append(scope) or 1 / 0)
     with pytest.raises(ZeroDivisionError):

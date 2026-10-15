@@ -10902,8 +10902,8 @@ def assess_repositories(argv: list[str], *, host_factory=None, progress=None) ->
         raise CallError(f"{', '.join(unsupported)} is not supported for a multi-repository assessment")
     if ns.rebuild and ns.resume:
         raise CallError("--rebuild starts the assessment again and cannot be combined with --resume")
-    # APPSEC_SINGLE_REPO_CONTROLLER=1 runs one repository through the same stages.
-    minimum = 1 if os.environ.get("APPSEC_SINGLE_REPO_CONTROLLER") == "1" else 2
+    # One repository runs through the same stages unless APPSEC_SINGLE_REPO_CONTROLLER=0.
+    minimum = 2 if os.environ.get("APPSEC_SINGLE_REPO_CONTROLLER") == "0" else 1
     if len(ns.repo) < minimum:
         raise CallError("a multi-repository assessment requires at least two --repo selections")
     console = None if progress or ns.quiet else _AssessmentConsole(ns.verbose)

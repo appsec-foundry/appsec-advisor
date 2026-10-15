@@ -260,13 +260,14 @@ fi
 # controller runs every stage itself, through tool-less model exchanges, so no
 # headless orchestrator session is started. The arguments travel as argv, so
 # paths with spaces or shell metacharacters stay literal data.
-# APPSEC_SINGLE_REPO_CONTROLLER=1 sends a single --repo the same way.
+# A single --repo takes the same path; APPSEC_SINGLE_REPO_CONTROLLER=0 sends
+# it to the single-repository scan instead.
 REPO_COUNT=0
 for _a in "$@"; do
     [ "$_a" = "--repo" ] && REPO_COUNT=$((REPO_COUNT + 1))
 done
-REPO_MIN=2
-[ "${APPSEC_SINGLE_REPO_CONTROLLER:-0}" = "1" ] && REPO_MIN=1
+REPO_MIN=1
+[ "${APPSEC_SINGLE_REPO_CONTROLLER:-1}" = "0" ] && REPO_MIN=2
 if [ "$REPO_COUNT" -ge "$REPO_MIN" ]; then
     if [ "$BILLING_MODE" = "subscription" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
         AUTH_JSON=$("$CLAUDE_EXECUTABLE" auth status 2>/dev/null) || AUTH_JSON="{}"
