@@ -11,7 +11,9 @@ grouped by their owning component and by the authentication their resolved
 handlers prove (`flow_route_auth.route_outcome`); each group becomes one flow
 citing the client call lines and the route registrations, so the route fill
 can set its authentication. Several groups between one pair are
-`alternatives` of one access group.
+`alternatives` of one access group; `settle_access_groups` keeps a flow in it
+only once the route fill has proven its authentication, because an access
+group admits no unknown member.
 
 False-positive exclusions: test files, templates, comment lines, literals without a
 leading path segment, and routes whose path is only `/` never match; a pair
@@ -135,3 +137,24 @@ def flows(client_id: str, calls: dict[int, list[dict]], routes: list[dict], owne
             }
         out.append(flow)
     return out
+
+
+def settle_access_groups(data_flows: list[dict]) -> None:
+    """After the route fill, drop route-extraction group members whose authentication stays unknown.
+
+    An access group requires every member's authentication to be evidenced
+    (`figure1_security.access_groups`); the unknown flow stays as its own
+    flow, and a group left with fewer than two members dissolves.
+    """
+    from renderers.figure1_security import authentication_profile
+
+    members: dict[str, list[dict]] = {}
+    for flow in data_flows:
+        if flow.get("provenance") == "route-extraction" and isinstance(flow.get("access_group"), dict):
+            if authentication_profile(flow)["scheme"] == "unknown":
+                del flow["access_group"]
+            else:
+                members.setdefault(flow["access_group"]["id"], []).append(flow)
+    for group in members.values():
+        if len(group) < 2:
+            del group[0]["access_group"]

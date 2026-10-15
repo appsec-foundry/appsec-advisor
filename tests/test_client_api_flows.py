@@ -79,3 +79,60 @@ def test_routes_group_by_owner_and_proven_authentication():
     # A route the client itself owns, or no component owns, adds no flow.
     assert flows("component-web", calls, ROUTES, lambda r: None) == []
     assert flows("component-web", calls, ROUTES, lambda r: "component-web") == []
+
+
+def _filled(client, source, routes, owner):
+    """The controller's order: emit, number, apply the route fill, settle the groups."""
+    from analyzers.client_api_flows import settle_access_groups
+    from analyzers.flow_route_auth import reconcile
+
+    result = flows(client, client_calls({"web/src/api.ts": source.encode()}, routes), routes, lambda r: owner)
+    for index, flow in enumerate(result, 1):
+        flow["id"] = f"df-{index:03d}"
+    document, _filled_ids, _mixed = reconcile({"data_flows": result}, routes)
+    settle_access_groups(document["data_flows"])
+    return document["data_flows"]
+
+
+def test_a_flow_left_unknown_by_the_route_fill_leaves_its_access_group():
+    from renderers.figure1_security import access_groups
+
+    source = (
+        "get = (id) => this.http.get(`${base}/api/orders/${id}`)\n"
+        "login = (c) => this.http.post(base + '/rest/login', c)\n"
+        "reports = () => this.http.get(base + '/rest/reports')\n"
+    )
+    result = _filled("component-web", source, ROUTES, "component-api")
+    # Before settling, the unknown member made the architecture gate stop the run.
+    assert access_groups(result)[1] == []
+    grouped = {flow["label"]: (flow.get("access_group") or {}).get("id") for flow in result}
+    assert grouped == {
+        "API requests (bearer)": "api-component-web-component-api",
+        "API requests (none)": "api-component-web-component-api",
+        "API requests (unknown authentication)": None,
+    }
+
+
+def test_a_group_with_one_proven_member_dissolves():
+    from renderers.figure1_security import access_groups
+
+    routes = [
+        route("DELETE", "/v2/items/:key", 30, "verified", "cookie", "middleware_present"),
+        route("GET", "/v2/audit", 31),
+    ]
+    source = "drop = (k) => client.delete(`/v2/items/${k}`)\naudit = () => client.get('/v2/audit')\n"
+    result = _filled("component-ui", source, routes, "component-backend")
+    assert len(result) == 2
+    assert all("access_group" not in flow for flow in result)
+    assert access_groups(result)[1] == []
+
+
+def test_settling_leaves_groups_of_other_producers_to_the_gate():
+    from analyzers.client_api_flows import settle_access_groups
+
+    authored = [
+        {"id": "df-001", "provenance": "model", "access_group": {"id": "g", "mode": "alternatives", "label": "x"}},
+        {"id": "df-002", "provenance": "model", "access_group": {"id": "g", "mode": "alternatives", "label": "x"}},
+    ]
+    settle_access_groups(authored)
+    assert all("access_group" in flow for flow in authored)
