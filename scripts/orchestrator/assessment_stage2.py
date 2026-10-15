@@ -316,8 +316,9 @@ def _plain_text(text: str, where: str, limit: int) -> None:
         or "|" in text
         or _CONTROL_RE.search(text)
         or _HTML_RE.search(_CODE_SPAN_RE.sub("", text))
-        or "://" in text
-        or "www." in text.lower()
+        # MR-14: a URL renders as literal text only inside inline code.
+        or "://" in _CODE_SPAN_RE.sub("", text)
+        or "www." in _CODE_SPAN_RE.sub("", text).lower()
         or "](" in text
         or text.lstrip().startswith("#")
     ):
@@ -546,8 +547,10 @@ def _check_fill(row: dict, text: str) -> None:
     # Inline code renders literally, so it may name markup such as `<img onerror>`.
     if "NARRATIVE_PLACEHOLDER" in text or "<!--" in text or _HTML_RE.search(_CODE_SPAN_RE.sub("", text)):
         raise ExchangeError(f"{where} contains HTML or a placeholder marker")
-    if "://" in text or "www." in text.lower() or "![" in text:
-        raise ExchangeError(f"{where} contains a URL or image")
+    # MR-14: a URL renders as literal text only inside inline code, never as a link.
+    prose = _CODE_SPAN_RE.sub("", text)
+    if "://" in prose or "www." in prose.lower() or "![" in text:
+        raise ExchangeError(f"{where} contains a URL or image outside inline code")
     if any(not _ANCHOR_RE.fullmatch(target.strip()) for target in _LINK_RE.findall(text)):
         raise ExchangeError(f"{where} links outside the document")
     lines = text.strip().split("\n")

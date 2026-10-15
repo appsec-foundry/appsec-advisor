@@ -39,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Headless controller threat analysis no longer stops on source files that begin with a license header or other comment.
+- Headless controller threat analysis decides a route in the component that owns its handler, reading the guards where the route is registered, instead of leaving it unresolved when handler and registration belong to different components; it also receives the source the supplied controls cite and reads an Angular component together with its template, evidence reviews receive each finding's anchor up front, and a target that already links a finding needs no separate reason.
+- A configured address quoted as inline code in the controller's Security Architecture section, such as a CORS origin, no longer forces the section to be rewritten.
 - Hardcoded secrets that a finding cites, including keys passed directly as call arguments, are masked in every report output, and the secret gate fails when one remains.
 - Trust boundaries are detected regardless of source layout, keep separately deployed targets and build channels apart, and link only to findings whose weakness fits them.
 - Outbound calls to external services and to request-chosen URLs become data flows with their own trust boundaries.

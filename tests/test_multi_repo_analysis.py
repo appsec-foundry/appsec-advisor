@@ -1137,6 +1137,165 @@ def test_a_resolved_route_resource_is_one_target_at_its_handler_with_its_guards(
     assert [key[1] for key in login_job] == [registration]
 
 
+@pytest.mark.parametrize("registration,handler", [("server.ts", "routes/login.ts"), ("src/app.js", "auth/session.js")])
+def test_a_route_is_decided_by_the_component_that_owns_its_handler(tmp_path, registration, handler):
+    """MR-13 across components: the handler's owner decides the route and reads its registration guards."""
+    files = {
+        registration: (
+            b"const app = express()\n"
+            b"app.post('/rest/user/login', login())\n"
+            b"app.get('/rest/health', (req, res) => res.send('ok'))\n"
+        ),
+        handler: b"export const login = () => (req, res) => db.query(req.body.email)\n",
+    }
+    scope, server = _owned_sources(tmp_path, files, [registration])
+    rid = scope.repositories[0].repository_id
+    auth = dict(server, id="component-2", name="Auth", paths=[dict(repository_id=rid, path=handler)])
+    architecture = {
+        "components": {"components": [server, auth]},
+        "data_flows": {"data_flows": []},
+        "route_inventories": {
+            rid: {
+                "routes": [
+                    _route("R-1", "POST", "/rest/user/login", registration, 2),
+                    _route("R-2", "GET", "/rest/health", registration, 3),
+                ]
+            }
+        },
+        "route_handler_modules": {rid: {"R-1": handler}},
+    }
+    lead = {"evidence": {"repository_id": rid, "file": registration, "line": 2}}
+    server_targets = stage.analysis_targets(scope, server, architecture, [lead])
+    # The registration file keeps only the route it decides itself; the lead on
+    # the login registration belongs to the handler owner's decision.
+    assert [(t["evidence"]["line"], [r["path"] for r in t["routes"]]) for t in server_targets] == [
+        (3, ["/rest/health"])
+    ]
+    auth_targets = stage.analysis_targets(scope, auth, architecture, [])
+    (target,) = auth_targets
+    assert target["evidence"]["file"] == handler
+    assert [r["path"] for r in target["routes"]] == ["/rest/user/login"]
+    assert target["related"] == [[rid, registration, 1, 399]]
+    assert stage.related_sources(auth_targets) == {(rid, registration)}
+    batches = stage.target_batches(
+        scope, auth_targets, room=100_000, max_targets=64, max_windows=36, window_lines=400, max_unserved=6
+    )
+    assert {key[1] for _, preload in batches for key in preload} == {handler, registration}
+    # A handler module no finalized component owns leaves the route at its registration.
+    orphan = {**architecture, "components": {"components": [server]}}
+    assert sorted(r["path"] for t in stage.analysis_targets(scope, server, orphan, []) for r in t["routes"]) == [
+        "/rest/health",
+        "/rest/user/login",
+    ]
+
+
+@pytest.mark.parametrize(
+    "registration,handler", [("server.ts", "routes/items.ts"), ("src/app.js", "handlers/v2/catalog.js")]
+)
+def test_a_scanner_lead_on_a_registration_line_joins_its_route_decision(tmp_path, registration, handler):
+    files = {
+        registration: (
+            b"const app = express()\n"
+            b"app.get('/api/Items', items.list())\n"
+            b"const sessionSecret = process.env.SECRET || 'fallback'\n"
+        ),
+        handler: b"export const list = () => (req, res) => db.query(req.query)\n",
+    }
+    scope, component = _owned_sources(tmp_path, files, sorted(files))
+    rid = scope.repositories[0].repository_id
+    architecture = {
+        "data_flows": {"data_flows": []},
+        "route_inventories": {rid: {"routes": [_route("R-1", "GET", "/api/Items", registration, 2)]}},
+        "route_handler_modules": {rid: {"R-1": handler}},
+    }
+
+    def lead(line):
+        return {"evidence": {"repository_id": rid, "file": registration, "line": line}}
+
+    targets = stage.analysis_targets(scope, component, architecture, [lead(2), lead(3)])
+    by_anchor = {(t["evidence"]["file"], t["evidence"]["line"]): t for t in targets}
+    # The registration-line lead is decided with the handler that reads the guards beside it.
+    assert (registration, 2) not in by_anchor
+    assert by_anchor[(handler, 1)]["kinds"] == ["route", "scanner-lead"]
+    # A lead on any other line stays its own target.
+    assert by_anchor[(registration, 3)]["kinds"] == ["scanner-lead"]
+
+
+@pytest.mark.parametrize(
+    "script,reference,template",
+    [
+        ("src/app/about/about.component.ts", "./about.component.html", "src/app/about/about.component.html"),
+        ("web/views/panel.js", "../templates/panel.html", "web/templates/panel.html"),
+    ],
+)
+def test_a_component_and_its_template_are_read_together(tmp_path, script, reference, template):
+    """MR-13: logic and markup decide an output sink together, from either side."""
+    files = {
+        script: f"@Component({{ templateUrl: '{reference}' }})\nexport class View {{ html = this.render(input) }}\n".encode(),
+        template: b'<div [innerHTML]="html"></div>\n',
+        "src/inline.component.ts": b"@Component({ template: '<b>{{ x }}</b>' })\nexport class Inline { x = input }\n",
+    }
+    scope, component = _owned_sources(tmp_path, files, sorted(files))
+    rid = scope.repositories[0].repository_id
+
+    def lead(path):
+        return {"evidence": {"repository_id": rid, "file": path, "line": 2 if path != template else 1}}
+
+    architecture = {"data_flows": {"data_flows": []}}
+    for start, other in ((script, template), (template, script)):
+        (target,) = [
+            t
+            for t in stage.analysis_targets(scope, component, architecture, [lead(start)])
+            if t["evidence"]["file"] == start
+        ]
+        assert target["related"] == [[rid, other, 1, 399]]
+    # An inline template names no file, so nothing is related.
+    (inline,) = [
+        t
+        for t in stage.analysis_targets(scope, component, architecture, [lead("src/inline.component.ts")])
+        if t["evidence"]["file"] == "src/inline.component.ts"
+    ]
+    assert "related" not in inline
+
+
+@pytest.mark.parametrize("path,line", [("routes/basket.ts", 19), ("svc/orders/handler.py", 4)])
+def test_a_coverage_decision_with_a_finding_needs_no_reason(path, line):
+    """MR-11: a linked finding states the reason; every other decision states its own, and the anchor is inserted."""
+    from runtime.assessment_host import Rejection
+
+    anchor = {"repository_id": "repo-" + "1" * 16, "file": path, "line": line, "sha256": "a" * 64}
+    target = {"local_id": "surface-" + "b" * 16, "evidence": anchor}
+    ranges = [
+        {"repository_id": anchor["repository_id"], "path": path, "sha256": "a" * 64, "start_line": 1, "end_line": 99}
+    ]
+    item = Draft202012Validator(
+        stage.contract("multi-repo-stride.schema.json")["properties"]["surface_coverage"]["items"]
+    )
+    normalize = stage.surface_evidence_normalizer([target])
+
+    def decided(**row):
+        artifact = {"threats": [{"local_id": "f-1"}], "surface_coverage": [{"target_id": target["local_id"], **row}]}
+        assert item.is_valid(artifact["surface_coverage"][0])
+        artifact = normalize(artifact)
+        stage.validate_surface_coverage(artifact, ranges, [target])
+        return artifact["surface_coverage"][0]
+
+    linked = decided(
+        disposition="examined", finding_ids=["f-1"], reason="The handler reads the basket without an owner check."
+    )
+    assert "reason" not in linked and linked["evidence"] == [anchor]
+    assert decided(disposition="unresolved", finding_ids=[], reason="The guard module was not read.")["evidence"] == [
+        anchor
+    ]
+    for disposition in ("examined", "not-applicable", "unresolved"):
+        with pytest.raises(Rejection, match="needs a reason"):
+            decided(disposition=disposition, finding_ids=[])
+    # A reason stays one short sentence.
+    assert not item.is_valid(
+        {"target_id": target["local_id"], "disposition": "unresolved", "finding_ids": [], "reason": "x" * 161}
+    )
+
+
 @pytest.mark.parametrize(
     "path,resource",
     [

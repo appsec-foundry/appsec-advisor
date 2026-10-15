@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import posixpath
 import re
 from functools import lru_cache
 from pathlib import Path
@@ -177,20 +178,58 @@ MAX_TARGET_ROUTES = 32
 MAX_TARGET_RELATED = 4
 
 
+# A component's template named by a static path, relative to the component file.
+_TEMPLATE_REF = re.compile(r"""\btemplateUrl\s*:\s*['"]([^'"\n]+\.html)['"]""")
+_TEMPLATE_OWNERS = (".ts", ".js", ".mjs")
+
+
+def template_pairs(scope, sources) -> dict[tuple, list[str]]:
+    """Component files and the templates they name, in both directions (MR-13).
+
+    Logic and markup together decide an output sink; a target in either file
+    names the other as related. A template's owner is found among the given
+    sources and the same-stem script beside each given template.
+    """
+    repos = {r.repository_id: r for r in scope.repositories}
+    candidates = {(rid, path) for rid, path in sources if path.endswith(_TEMPLATE_OWNERS)}
+    for rid, path in sources:
+        if path.endswith(".html"):
+            stem = path[: -len(".html")]
+            candidates.update((rid, stem + suffix) for suffix in _TEMPLATE_OWNERS if stem + suffix in repos[rid].files)
+    pairs: dict[tuple, list[str]] = {}
+    for rid, path in sorted(candidates):
+        for match in _TEMPLATE_REF.finditer(repos[rid].files[path].decode("utf-8", "ignore")):
+            template = posixpath.normpath(posixpath.join(posixpath.dirname(path), match.group(1)))
+            if template in repos[rid].files and template != path:
+                pairs.setdefault((rid, path), []).append(template)
+                pairs.setdefault((rid, template), []).append(path)
+    return pairs
+
+
 def analysis_targets(scope, component: dict, architecture: dict, scanned: list[dict]) -> list[dict]:
     """Source-backed surfaces to examine, independent of finding counts or repository names.
 
     These are investigation leads, not vulnerabilities. Full route inventories
     and outbound call sites supplement authored topology, so a missing flow
-    cannot also hide the call from STRIDE. Sources stay inside the finalized
-    component; a scanner result never authorizes reading an unrelated file.
+    cannot also hide the call from STRIDE. Targets stay inside the finalized
+    component, and only a route's registration window or a component's
+    template may lie outside it (`related_sources`); a scanner result never
+    authorizes reading an unrelated file.
 
     Decision MR-13: routes sharing a registration file, a source window and
     their path up to the first parameter form one resource. A resource with a
     resolved handler module becomes a target in that module listing its
     routes, and every target in the module names the registration lines as
     ``related``, so its job reads handler and guards together; a resource
-    without one stays a target at its registration lines. A file without any
+    without one stays a target at its registration lines. Ownership follows
+    the handler: a component owning the handler module but not the
+    registration file still decides the route, with the registration window
+    as a related read; the registration file's component leaves a route whose
+    handler another finalized component owns to that component. A scanner
+    lead at a registration line joins the decision of the route registered
+    there instead of becoming a second target. A target in a component file
+    or in the template it names (`template_pairs`) reads the other file as
+    related. A file without any
     other lead becomes a target only when
     the security keyword catalog matches it (`has_security_signal`);
     `unexamined_files` names the rest for the run report.
@@ -242,18 +281,37 @@ def analysis_targets(scope, component: dict, architecture: dict, scanned: list[d
         if list(window) not in related and len(related) < MAX_TARGET_RELATED:
             related.append(list(window))
 
+    modules = architecture.get("route_handler_modules", {})
+    owners = {
+        (row["repository_id"], row["path"]): row_component["id"]
+        for row_component in (architecture.get("components") or {}).get("components", [])
+        for row in row_component["paths"]
+    }
+
+    def handler_of(rid, route):
+        return modules.get(rid, {}).get(route.get("route_id"))
+
+    def decided_elsewhere(rid, path, route):
+        """Whether another finalized component owns this route's resolved handler module."""
+        module = handler_of(rid, route)
+        return module not in (None, path) and owners.get((rid, module)) not in (None, component["id"])
+
     groups: dict[tuple, list[tuple[int, dict]]] = {}
     for rid, inventory in architecture.get("route_inventories", {}).items():
         for route in inventory.get("routes", []):
             path = route.get("handler_file")
-            if (rid, path) not in own:
+            if (rid, path) not in own and (rid, handler_of(rid, route)) not in own:
+                continue
+            if path not in repos[rid].files:
                 continue
             line = code_line(rid, path, route.get("handler_line") or 1)
             if line is not None:
                 key = (rid, path, line // MAX_SLICE_LINES, route_resource(route.get("path")))
                 groups.setdefault(key, []).append((line, route))
-    modules = architecture.get("route_handler_modules", {})
     registrations: dict[tuple, list[tuple]] = {}
+    # Registration lines whose route is decided at a handler target, or by
+    # another component; a scanner lead on such a line joins that decision.
+    registered: dict[tuple, list[dict]] = {}
 
     def list_routes(target, members):
         listed = target.setdefault("routes", [])
@@ -269,22 +327,30 @@ def analysis_targets(scope, component: dict, architecture: dict, scanned: list[d
         start = max(1, members[0][0] // MAX_SLICE_LINES * MAX_SLICE_LINES)
         span = (rid, path, start, members[0][0] // MAX_SLICE_LINES * MAX_SLICE_LINES + MAX_SLICE_LINES - 1)
         handlers = sorted(
-            module
-            for module in {modules.get(rid, {}).get(route.get("route_id")) for _, route in members} - {None, path}
-            if (rid, module) in own
+            module for module in {handler_of(rid, route) for _, route in members} - {None, path} if (rid, module) in own
         )
         # A resolved resource is decided at its handler, with the registration
         # lines (its guards) preloaded beside it; a registration without an own
         # handler module, such as a guard-only line, is decided where it stands.
         anchored = [(module, add({"repository_id": rid, "file": module, "line": 1}, "route")) for module in handlers]
         anchored = [(module, target) for module, target in anchored if target is not None]
+        registered_here = (rid, path) in own
         for module, target in anchored:
             registrations.setdefault((rid, module), []).append(span)
-            list_routes(target, members)
-        if not anchored:
-            target = add({"repository_id": rid, "file": path, "line": members[0][0]}, "route")
-            if target is not None:
-                list_routes(target, members)
+            # Routes registered in another component's file are listed only at their own handler.
+            listed = members if registered_here else [m for m in members if handler_of(rid, m[1]) == module]
+            list_routes(target, listed)
+            for line, _ in listed:
+                registered.setdefault((rid, path, line), []).append(target)
+        if not anchored and registered_here:
+            for line, route in members:
+                if decided_elsewhere(rid, path, route):
+                    registered.setdefault((rid, path, line), [])
+            remaining = [m for m in members if not decided_elsewhere(rid, path, m[1])]
+            if remaining:
+                target = add({"repository_id": rid, "file": path, "line": remaining[0][0]}, "route")
+                if target is not None:
+                    list_routes(target, remaining)
     for rid, destinations in architecture.get("egress_inventories", {}).items():
         for destination in destinations:
             for evidence in destination["evidence"]:
@@ -295,7 +361,16 @@ def analysis_targets(scope, component: dict, architecture: dict, scanned: list[d
         for evidence in source_rows(flow):
             add(evidence, "data-flow")
     for finding in scanned:
-        add(finding["evidence"], "scanner-lead")
+        evidence = finding["evidence"]
+        rid, path = evidence.get("repository_id"), evidence.get("file")
+        if (rid, path) in own and evidence.get("line"):
+            joined = registered.get((rid, path, code_line(rid, path, evidence["line"])))
+            if joined is not None:
+                for target in joined:
+                    if "scanner-lead" not in target["kinds"]:
+                        target["kinds"].append("scanner-lead")
+                continue
+        add(evidence, "scanner-lead")
     # A file without a lead is investigated when it shows a security signal;
     # neither a known route elsewhere nor an unsupported stack hides it.
     # A first-code-line lead does not claim to enumerate all mechanisms in a file.
@@ -303,12 +378,20 @@ def analysis_targets(scope, component: dict, architecture: dict, scanned: list[d
     for rid, path in sorted(own - covered_files):
         if has_security_signal(repos[rid].files[path]):
             add({"repository_id": rid, "file": path, "line": 1}, "component-source")
+    pairs = template_pairs(scope, own | {(rid, path) for rid, path, _ in targets})
     for (rid, path, _), target in targets.items():
         for span in registrations.get((rid, path), []):
             relate(target, span)
+        for other in pairs.get((rid, path), []):
+            relate(target, (rid, other, 1, MAX_SLICE_LINES - 1))
     if len(targets) > 20_000:
         raise ExchangeError("Component investigation exceeds the source-reference limit")
     return [targets[key] for key in sorted(targets)]
+
+
+def related_sources(targets: list[dict]) -> frozenset:
+    """Files the targets' related ranges name, registrations and templates: a STRIDE job may read and cite them (MR-13)."""
+    return frozenset((row[0], row[1]) for target in targets for row in target.get("related", []))
 
 
 def unexamined_files(component: dict, targets: list[dict]) -> list[tuple[str, str]]:
@@ -466,17 +549,24 @@ def analysis_lenses(scope, component: dict) -> tuple[list[str], str]:
 
 
 def surface_evidence_normalizer(targets):
-    """Insert each target's exact anchor into a decision that cites the target's file.
+    """Insert each target's exact anchor into a decision that cites no evidence or the target's file.
 
     A model that read the target's file seldom copies its 64-character hash; the
-    controller knows the anchor and adds it. A decision citing another file
-    gains nothing, and `validate_surface_coverage` still requires the read.
+    controller knows the anchor and adds it, and a decision may omit evidence
+    entirely (MR-11). A decision citing only another file gains nothing, and
+    `validate_surface_coverage` still requires the read. A decision that links a
+    finding keeps no reason: the finding states it.
     """
     anchors = {target["local_id"]: target["evidence"] for target in targets}
 
     def normalize(artifact):
         for row in artifact.get("surface_coverage") or []:
+            if row.get("disposition") == "examined" and row.get("finding_ids"):
+                row.pop("reason", None)
             anchor = anchors.get(row.get("target_id"))
+            if anchor is not None and not row.get("evidence"):
+                row["evidence"] = [dict(anchor)]
+                continue
             evidence = row.get("evidence")
             if anchor is None or not isinstance(evidence, list) or anchor in evidence:
                 continue
@@ -494,7 +584,7 @@ def surface_evidence_normalizer(targets):
                     evidence[same_file[0]] = dict(anchor)
         return artifact
 
-    normalize.version = "surface-anchor-1"
+    normalize.version = "surface-anchor-2"
     return normalize
 
 
@@ -512,7 +602,8 @@ def validate_surface_coverage(artifact, ranges, targets):
     """No authored disposition can substitute for actually retrieving a target.
 
     A target the job read may stay `unresolved` with its reason; the run names it
-    as a warning (MR-11). An unread target is always rejected.
+    as a warning (MR-11). An unread target is always rejected. Only a decision
+    that links a finding may omit its reason.
     """
     expected = {target["local_id"]: target for target in targets}
     rows = artifact.get("surface_coverage", [])
@@ -530,12 +621,14 @@ def validate_surface_coverage(artifact, ranges, targets):
             and r["start_line"] <= target["line"] <= r["end_line"]
             for r in ranges
         )
-        if not read or target not in row["evidence"]:
+        if not read or target not in row.get("evidence", []):
             errors.append("Unexamined source target: " + location)
         if not set(row["finding_ids"]) <= findings:
             errors.append("Surface coverage refers to unknown findings")
         if row["disposition"] == "not-applicable" and row["finding_ids"]:
             errors.append("An inapplicable surface cannot carry findings")
+        if not (row["disposition"] == "examined" and row["finding_ids"]) and not row.get("reason"):
+            errors.append(f"Surface decision for {location} links no finding and needs a reason")
     if errors:
         raise Rejection("STRIDE investigation is incomplete", errors[:3])
 
@@ -950,11 +1043,14 @@ def validate_stride(
     boundaries=(),
     allowed_requirement_ids=frozenset(),
     targets=None,
+    related=frozenset(),
 ):
     """Preserve legacy policy/trace checks and scoped executable evidence.
 
     A finding may cite only requirement IDs of the catalog supplied to this job;
-    without a catalog the allowed set is empty.
+    without a catalog the allowed set is empty. `related` names files outside
+    the neighborhood that the job's targets read as route registrations; their
+    lines may support a finding, whose own anchor stays in the component.
     """
     from validators.validate_fragment import repository_evidence_errors
     from validators.validate_intermediate import validate_stride as legacy_validate
@@ -977,7 +1073,7 @@ def validate_stride(
         actual = {t["local_id"] for t in artifact["threats"] if t["stride"] == row["category"]}
         if set(row["finding_ids"]) != actual or bool(actual) != (row["disposition"] == "finding"):
             raise ExchangeError("STRIDE category coverage does not match its findings")
-    allowed = source_selection(neighborhood)
+    allowed = source_selection(neighborhood) | related
     validate_retrieved_sources(scope, artifact, ranges, allowed)
     if targets is not None:
         validate_surface_coverage(artifact, ranges, targets)
@@ -1205,6 +1301,11 @@ def evidence_preload(scope, evidence, allowed_sources, *, room, max_windows, bef
         preload.append((*key[:3], piece["end_line"]))
         used += size
     return preload
+
+
+def served_bytes(scope, keys) -> int:
+    """Packet bytes the slices of `keys` occupy, measured as `evidence_preload` measures them."""
+    return sum(len(json.dumps(scope.read(*key), ensure_ascii=False).encode()) for key in keys)
 
 
 def validate_evidence_review(scope, findings, component_fingerprint, artifact, ranges, allowed_sources):

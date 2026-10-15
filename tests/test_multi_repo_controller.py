@@ -46,6 +46,8 @@ class Host:
     def __init__(self, scope):
         self.scope = scope
         self.calls = []
+        # The (repository_id, path, start, end) slices each call's packet carried.
+        self.packets = []
 
     def factory(self, role, ceiling):
         owner = self
@@ -60,6 +62,7 @@ class Host:
         packet = json.loads(prompt.split(f"<<<{MARKER}\n")[1].split(f"\n{MARKER}>>>")[0])
         ctx, slices = packet["context"], packet["source_slices"]
         self.calls.append((role, copy.deepcopy(ctx)))
+        self.packets.append([(s["repository_id"], s["path"], s["start_line"], s["end_line"]) for s in slices])
         rid = ctx.get("repository_id")
         # Discovery carries each serving unit by listing its first entry file.
         carried = [
@@ -347,7 +350,9 @@ def test_stride_splits_surface_work_without_losing_findings_or_reading_foreign_s
     }
     assert len(document["threats"]) == len(contexts)
     assert {t["evidence"]["line"] for t in document["threats"]} == first_windows
-    assert sum(len(r["decisions"]) for r in reviews) == 3
+    # Every finding is reviewed: one per job of this component plus the peer's single finding.
+    peer = next(d for d in documents if d is not document)
+    assert sum(len(r["decisions"]) for r in reviews) == len(contexts) + len(peer["threats"]) == len(contexts) + 1
     assert all(t["evidence"]["repository_id"] == rid for t in document["threats"])
     assert merged["threats"]
 
@@ -994,6 +999,53 @@ def test_boundary_jobs_answer_from_their_preloaded_cited_source(tmp_path, names)
     )
     assert assessment["signals"] and host.calls == len(assessment["signals"])
     assert len(candidates["dispositions"]) == len(assessment["signals"])
+
+
+@pytest.mark.parametrize("line", [900, 1500])
+def test_stride_and_review_jobs_receive_the_source_their_context_cites(tmp_path, line):
+    """A cited control line and every finding anchor arrive with the first packet, never through a read-only call."""
+    roots = [tmp_path / "edge", tmp_path / "service"]
+    for root in roots:
+        checkout(root)
+    path = roots[1] / "app.py"
+    path.write_text(path.read_text() + "value = request.args['input']\n" * 1600)
+    scope = admit([str(r) for r in roots], str(tmp_path / "out"))
+    host = Host(scope)
+    jobs = AssessmentJobs(
+        scope,
+        scope.output / ".assessment/jobs",
+        AssessmentBudget(2, 0.05, 60, 120),
+        host.factory,
+        lambda: False,
+        lambda: None,
+    )
+    architecture = controller._assessment_architecture(scope, jobs, progress=lambda text: None)
+    rid = next(r.repository_id for r in scope.repositories if r.root == roots[1])
+    component = next(c for c in architecture["components"]["components"] if c["repository_ids"] == [rid])
+    # A control cites a line far from every investigation target window.
+    controls = [
+        dict(
+            domain="Input Validation",
+            control="Request Validation",
+            effectiveness="Partial",
+            assessment="The handler reads a request parameter directly.",
+            component_ids=[component["id"]],
+            evidence=[
+                dict(repository_id=rid, file="app.py", line=line, sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+            ],
+        )
+    ]
+    calls = len(host.calls)
+    controller._assessment_stride(scope, jobs, architecture, controls, [], progress=lambda text: None)
+    packets = list(zip(host.calls[calls:], host.packets[calls:]))
+    stride = [
+        slices
+        for (role, ctx), slices in packets
+        if role == "stride_analyzer" and ctx["component"]["id"] == component["id"]
+    ]
+    assert stride and all(any(key[:2] == (rid, "app.py") and key[2] <= line <= key[3] for key in s) for s in stride)
+    reviews = [slices for (role, _), slices in packets if role == "evidence_verifier"]
+    assert reviews and all(reviews)
 
 
 def test_control_and_stride_contexts_omit_path_hashes_and_controls_answer_in_one_call(tmp_path):
