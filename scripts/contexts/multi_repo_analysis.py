@@ -180,6 +180,8 @@ MAX_TARGET_RELATED = 4
 # read authority; supporting_preload serves a small part without splitting jobs.
 MAX_TARGET_IMPORTS = 12
 MAX_TARGET_GUARDS = 8
+# A middleware definition is served from its first line; a longer one is read on request.
+MAX_MIDDLEWARE_LINES = 40
 
 # Supplemental source fits the existing preload budget, after target batches
 # are fixed. These limits bound added context independently of repository size.
@@ -302,6 +304,7 @@ def analysis_targets(scope, component: dict, architecture: dict, scanned: list[d
             related.append(list(window))
 
     modules = architecture.get("route_handler_modules", {})
+    wares = architecture.get("route_middleware", {})
     owners = {
         (row["repository_id"], row["path"]): row_component["id"]
         for row_component in (architecture.get("components") or {}).get("components", [])
@@ -347,6 +350,15 @@ def analysis_targets(scope, component: dict, architecture: dict, scanned: list[d
                     guards.append([rid, path, guard])
         if not guards:
             del target["guard_lines"]
+        # The definitions of the middlewares the routes run, wherever they stand.
+        middleware = target.setdefault("middleware", [])
+        for _line, route in members:
+            for file, start, end in wares.get(rid, {}).get(route.get("route_id"), []):
+                span = [rid, file, start, min(end, start + MAX_MIDDLEWARE_LINES - 1)]
+                if file in repos[rid].files and span not in middleware and len(middleware) < MAX_TARGET_GUARDS:
+                    middleware.append(span)
+        if not middleware:
+            del target["middleware"]
 
     for (rid, path, _, _), members in sorted(groups.items(), key=lambda item: item[0]):
         members.sort(key=lambda member: (member[0], str(member[1].get("method"))))
@@ -463,11 +475,14 @@ def analysis_targets(scope, component: dict, architecture: dict, scanned: list[d
 def related_sources(targets: list[dict]) -> frozenset:
     """Files a STRIDE job may read and cite beyond its neighborhood.
 
-    The targets' related ranges (registrations and templates, MR-13) and the
-    files their files import directly (MR-19); only related ranges are preloaded.
+    The targets' related ranges (registrations and templates, MR-13), the
+    files their files import directly (MR-19) and the files defining the
+    middlewares their routes run; only related ranges are preloaded.
     """
     return frozenset(
-        (row[0], row[1]) for target in targets for row in [*target.get("related", []), *target.get("imports", [])]
+        (row[0], row[1])
+        for target in targets
+        for row in [*target.get("related", []), *target.get("imports", []), *target.get("middleware", [])]
     )
 
 
@@ -523,6 +538,8 @@ def supporting_preload(scope, targets, preload, allowed_sources, *, context, com
     for target in targets:
         for rid, path, line in target.get("guard_lines", []):
             candidates.append((rid, path, max(1, line - 4), line + 12))
+        # The guard a route runs decides access claims about its handler.
+        candidates.extend(tuple(span) for span in target.get("middleware", []))
         for rid, path, start, end in target.get("related", []):
             for route in target.get("routes", []):
                 line = route.get("line")

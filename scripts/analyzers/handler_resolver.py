@@ -840,3 +840,41 @@ class HandlerResolver:
         if not found or not found[1] or not found[1][0][0] or not found[1][0][1]:
             return None
         return found[1][0][1][0][0]
+
+    def middleware_definitions(self, route: dict) -> list[tuple[str, int, int]]:
+        """(file, first line, last line) of each repository middleware a call-registered route runs.
+
+        Every registration argument before the handler, then the middlewares
+        mounted on a path prefix of the route, resolved to their repository
+        definitions; an authentication package guard yields the line that
+        configures it. Middlewares mounted without a path run on every route
+        and say nothing about this one. A guard such as an identity-overwriting
+        middleware decides an access claim about the handler, yet lies in
+        neither the handler's nor the registration's file.
+        """
+        if route.get("framework") not in _CALL_FRAMEWORKS:
+            return []
+        found = self._js_registration(route)
+        if found is None:
+            return []
+        rel, line, text, call, args = found
+        obj, path = call.group("obj"), (route.get("path") or "").rstrip("/") or "/"
+        elements = [self._js_element(rel, line, arg) for arg in args[1:-1]]
+        for use in re.finditer(rf"\b{re.escape(obj)}\s*\.\s*use\s*\(", text[: call.start()]):
+            mounted = _split_args(text[use.end() : _matching(text, use.end() - 1) - 1])
+            if not mounted or mounted[0][:1] not in "'\"`[":
+                continue
+            prefixes = re.findall(r"['\"`](/[^'\"`]*)['\"`]", mounted[0])
+            if any(path == p.rstrip("/*") or path.startswith(p.rstrip("/*") + "/") for p in prefixes):
+                elements.extend(self._js_element(rel, _line_of(text, use.start()), m) for m in mounted[1:])
+        spans = []
+        for ok, code in elements:
+            if not ok:
+                continue
+            if isinstance(code, _PackageGuard):
+                if code.evidence is not None:
+                    spans.append((code.evidence[0], code.evidence[1], code.evidence[1]))
+            elif code:
+                rel, line, body = code[0]
+                spans.append((rel, line, line + body.count("\n")))
+        return list(dict.fromkeys(spans))
