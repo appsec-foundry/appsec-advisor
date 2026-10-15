@@ -844,6 +844,40 @@ def test_legend_uses_diagram_width_and_stays_below_all_nodes(name):
     assert F.check_diagram(model, paths, taxonomy)[1] == []
 
 
+@pytest.mark.parametrize(
+    ("width", "expected"),
+    [
+        (1075, (3, 345.0)),  # three standard blocks miss by 15 px: narrower blocks, no wide gap
+        (1010, (3, 323.3)),
+        (3 * F.LEGEND_W + 2 * F.LEGEND_GAP + 40, (3, F.LEGEND_W)),  # wide figures keep the standard block
+        (3 * F.LEGEND_MIN_W + 2 * F.LEGEND_GAP - 1, (2, F.LEGEND_W)),  # below the minimum: two columns
+        (200, (1, F.LEGEND_W)),
+    ],
+)
+def test_legend_layout_prefers_three_narrower_columns_over_a_wide_gap(width, expected):
+    columns, block = F._legend_layout(width, 5)
+    assert (columns, round(block, 1)) == expected
+    assert F._legend_layout(width, 1)[0] == 1
+
+
+def test_three_legend_columns_that_fit_only_narrower_leave_standard_gaps():
+    width = 1075
+    columns, block_width = F._legend_layout(width, 3)
+    blocks = []
+    for key in ("notation", "scenarios", "authentication"):
+        block = F._Canvas()
+        block.rect(0, 0, block_width, F.LEGEND_HEAD)
+        block.maxy = 200
+        blocks.append((key, block))
+    canvas = F._Canvas()
+    F._place_legend(canvas, blocks, width, 0, block_width)
+    lefts = sorted(box[0] for box in canvas.legend_boxes)
+    assert len(lefts) == columns == 3
+    assert all(round(b - a - block_width, 6) == F.LEGEND_GAP for a, b in zip(lefts, lefts[1:]))
+    assert max(box[2] for box in canvas.legend_boxes) <= F.MARGIN + width + 1e-6
+    assert F._check_geometry({}, [], canvas, []) == []
+
+
 def test_legend_balances_heights_and_keeps_small_assets_with_boundaries():
     sections = [
         ("notation", 317),
@@ -3723,13 +3757,16 @@ def test_capability_labels_require_known_values_and_evidence():
         assert "".join(more[0].itertext()).strip().endswith("+1")
         assert "MFA verifier" in more[0].find(f"{_SVG}title").text
         notation = " ".join(root.find("{*}g[@data-legend-section='notation']").itertext())
+        # Every section header spans the same block width, also after a section draws a pill.
+        heads = {float(g.find(f"{_SVG}rect").get("width")) for g in root.findall("{*}g[@data-legend-section]")}
+        assert len(heads) == 1 and min(heads) >= F.LEGEND_MIN_W
         assert "Security-relevant capabilities / service roles" in notation
         assert "LLM + tools = model calls with executable application tools" in notation
         flat = " ".join(notation.split())
         assert "Most security-critical functions always shown" in flat
         assert "most critical first, then most severe linked finding" in flat
         assert "+N = further labels" in flat
-        assert "a missing label does not mean absence" in notation
+        assert "a missing label does not mean absence" in flat
         further = " ".join(root.find("{*}g[@data-legend-section='capability-notes']").itertext())
         assert "Further capabilities" in further and ": MFA verifier" in further
     assert model == before

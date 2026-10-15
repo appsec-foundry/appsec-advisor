@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Headless controller assessments spend less time preparing repeated source and evidence checks.
 - The headless controller console lists each STRIDE component and each verified abuse case with its title on its own line, and ends with one line per delivered file.
 - In a terminal, the headless controller's status line turns a spinner and draws a progress bar with each running model call's duration and activity, also with `--verbose`; CI logs are unchanged. During threat analysis each running component has its own bar, and progress follows finished rather than started components.
+- The Figure 1 legend keeps three columns with narrower sections when the diagram is slightly narrower than three standard sections, instead of two columns with a wide empty gap.
 - A source target the headless controller's threat analysis could not decide is reported with its file and the reason, such as a helper outside the read source, instead of an arbitrary line of the file.
 - The headless controller console counts corrected model answers per role on each phase's done line instead of listing every rejection; `--verbose` still names each reason. Coverage statements, such as files no target covered, are shown as information instead of warnings.
 - Headless output is coloured in a terminal, wraps long header values under their column, and honours `NO_COLOR` and `FORCE_COLOR`; logs and CI output carry no colour codes.
