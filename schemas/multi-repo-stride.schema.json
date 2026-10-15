@@ -100,7 +100,7 @@
       }
     },
     "surface_coverage": {
-      "description": "Decisions for controller-selected source targets; current jobs require every supplied target.",
+      "description": "Decisions for controller-selected source targets; current jobs require every supplied target. MR-11: a decision that links a finding needs no reason; every other decision states one. The controller inserts the target anchor into evidence.",
       "type": "array",
       "maxItems": 64,
       "items": {
@@ -109,9 +109,7 @@
         "required": [
           "target_id",
           "disposition",
-          "reason",
-          "finding_ids",
-          "evidence"
+          "finding_ids"
         ],
         "properties": {
           "target_id": {
@@ -128,7 +126,7 @@
           "reason": {
             "type": "string",
             "minLength": 10,
-            "maxLength": 500
+            "maxLength": 160
           },
           "finding_ids": {
             "type": "array",

@@ -231,6 +231,31 @@ def test_secarch_fill_content_is_held_to_the_section6_contract(workspace, text):
 
 
 @pytest.mark.parametrize(
+    "text,allowed",
+    [
+        ("`server.ts:19` allows the single CORS origin `http://localhost:4200`.", True),
+        ("The client fetches `www.partner.invalid/feed` without pinning.", True),
+        ("The single CORS origin is http://localhost:4200.", False),
+        ("Requests go to www.partner.invalid/feed.", False),
+        ("See [the origin](`http://evil.invalid`).", False),
+    ],
+    ids=["code-url", "code-www", "bare-url", "bare-www", "link-around-code"],
+)
+def test_a_url_is_allowed_only_inside_an_inline_code_span(workspace, text, allowed):
+    """MR-14: a cited configured address is evidence; a URL outside inline code would render as a link."""
+    scaffold = (workspace / ".fragments" / "security-architecture.md").read_text(encoding="utf-8")
+    fills = _fills(workspace)
+    block = next(i for i, row in enumerate(stage2.placeholders(scaffold)) if not row["inline"] and not row["mermaid"])
+    fills["fills"][block]["text"] = text
+    if allowed:
+        stage2.render(FakeJobs(_replies(workspace, fills=fills)), workspace)
+        assert text in (workspace / ".fragments" / "security-architecture.md").read_text(encoding="utf-8")
+    else:
+        with pytest.raises(ExchangeError):
+            stage2.render(FakeJobs(_replies(workspace, fills=fills)), workspace)
+
+
+@pytest.mark.parametrize(
     "text",
     [
         "Token handling is described in [§6.3 Session and Token Controls](#63-session-and-token-controls).",

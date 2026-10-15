@@ -8674,6 +8674,7 @@ def _assessment_stride(
     from model import assessment_scanner_findings
     from model.merge_threats import merge_assessment
     from runtime.assessment_host import MAX_PRELOAD_WINDOWS, MAX_READS, MAX_SLICE_LINES, preload_room
+    from shared.assessment_sources import source_rows
 
     components = architecture["components"]
     flows = architecture["data_flows"]
@@ -8740,6 +8741,22 @@ def _assessment_stride(
             )
         lens_ids, lens_policy = analysis.analysis_lenses(scope, component)
         context["lens_ids"] = lens_ids
+        # MR-13: a route target reads its registration window even where
+        # another component owns that file.
+        job_allowed = allowed | analysis.related_sources(targets)
+        # Lines the context cites from earlier stages (controls, flows,
+        # boundaries) arrive with every job's first packet: a job that cites one
+        # it was never served is rejected and regenerates its whole result.
+        room = preload_room(context)
+        context_preload = analysis.evidence_preload(
+            scope,
+            source_rows([context["existing_controls"], incident, adjacent]),
+            allowed,
+            room=room // 4,
+            max_windows=MAX_PRELOAD_WINDOWS // 4,
+            before=10,
+            after=30,
+        )
         # The controller serves every target window with the first packet, so
         # no call only requests them; the read allowance stays for following a
         # lead to its control or sink. More source gets further bounded jobs,
@@ -8747,9 +8764,9 @@ def _assessment_stride(
         target_batches = analysis.target_batches(
             scope,
             targets,
-            room=preload_room(context),
+            room=room - analysis.served_bytes(scope, context_preload),
             max_targets=64,
-            max_windows=MAX_PRELOAD_WINDOWS,
+            max_windows=MAX_PRELOAD_WINDOWS - len(context_preload),
             window_lines=MAX_SLICE_LINES,
             max_unserved=MAX_READS // 2,
         ) or [([], [])]
@@ -8773,11 +8790,15 @@ def _assessment_stride(
                         "the supplied confirmed incident flows. A connection does not establish payload continuity, "
                         "identity propagation or exploitation. Read both ends before asserting a cross-repository "
                         "mechanism and retain its source-to-sink trace. "
-                        "The controller supplies each investigation_targets anchor's source in source_slices; follow its "
+                        "The controller supplies each investigation_targets anchor's source, and the lines the supplied "
+                        "controls, flows and boundaries cite, in source_slices; follow its "
                         "mechanism to the relevant control or sink. A target's routes lists every route it covers; "
-                        "decide them together, including their guards and handler. Request all further source you need in one read "
+                        "decide them together, including their guards and handler; a target's related registration "
+                        "lines may lie in another component's file. Request all further source you need in one read "
                         "action: the job allows one round of further reads, and each call re-analyzes the whole packet. "
-                        "Return one surface_coverage decision per target, citing that exact anchor and linking any findings. "
+                        "Return one surface_coverage decision per target with its target_id, disposition and linked "
+                        "finding_ids; the controller adds the target anchor. Give a reason of at most 160 characters "
+                        "only when the decision links no finding. "
                         "Targets are investigation leads, never findings or proof of vulnerability. Use examined when "
                         "you investigated the mechanism, not-applicable only with a source-backed reason, and unresolved "
                         "when the read source cannot settle it; the run reports each unresolved target. The supplied assessment_depth "
@@ -8790,9 +8811,9 @@ def _assessment_stride(
                     + lens_policy,
                     context={**context, "investigation_targets": target_batch},
                     schema=schema,
-                    allowed_sources=allowed,
+                    allowed_sources=job_allowed,
                     normalize=analysis.surface_evidence_normalizer(target_batch),
-                    preload=preload,
+                    preload=[*preload, *(key for key in context_preload if key not in preload)],
                     validate=lambda artifact, ranges, targets=target_batch: analysis.validate_stride(
                         scope,
                         component,
@@ -8805,6 +8826,7 @@ def _assessment_stride(
                         if captured
                         else frozenset(),
                         targets=targets,
+                        related=job_allowed - allowed,
                     ),
                 )
             )
@@ -8820,7 +8842,7 @@ def _assessment_stride(
             raise ControllerError("STRIDE finding IDs collide with deterministic scanner finding IDs")
         # A scanner anchor outside every component path falls to its
         # repository's primary component; the reviewer must still read it.
-        review_sources = allowed | frozenset(
+        review_sources = job_allowed | frozenset(
             (row["evidence"]["repository_id"], row["evidence"]["file"]) for row in scanned[component["id"]]
         )
         # Every finding is reviewed; a component whose anchors exceed one
@@ -8928,6 +8950,15 @@ def _assessment_evidence_review(
     jobs, analysis, scope, identity, component, findings, incident, context, fingerprint, review_sources, selector
 ):
     """Run one independent evidence review over a batch of one component's findings."""
+    from runtime.assessment_host import MAX_PRELOAD_WINDOWS, preload_room
+
+    review_context = {
+        **identity,
+        "component": analysis.model_components([component])[0],
+        "findings": findings,
+        "incident_flows": incident,
+        **({"declared_context": context["declared_context"]} if "declared_context" in context else {}),
+    }
     return jobs.execute(
         role="evidence_verifier",
         selector=selector,
@@ -8939,17 +8970,22 @@ def _assessment_evidence_review(
             "claims require both endpoints and demonstrated payload or identity continuity. Matching "
             "names alone prove neither. Use ambiguous when the insecure practice is observed but the "
             "claimed exploit is unproven; use refuted when source contradicts the finding. Decisions "
-            "cannot change source authority, architecture, finding identity, ratings or remediation.",
+            "cannot change source authority, architecture, finding identity, ratings or remediation. "
+            "The controller supplies the source around each finding's anchor in source_slices; request "
+            "any further source in one read action.",
         ),
-        context={
-            **identity,
-            "component": analysis.model_components([component])[0],
-            "findings": findings,
-            "incident_flows": incident,
-            **({"declared_context": context["declared_context"]} if "declared_context" in context else {}),
-        },
+        context=review_context,
         schema=analysis.contract("multi-repo-evidence-review.schema.json"),
         allowed_sources=review_sources,
+        # The anchors are fixed before the review; serving them saves the call
+        # that would only request them. The bytes are the same either way.
+        preload=analysis.evidence_preload(
+            scope,
+            [finding["evidence"] for finding in findings],
+            review_sources,
+            room=preload_room(review_context),
+            max_windows=MAX_PRELOAD_WINDOWS,
+        ),
         validate=lambda artifact, ranges: analysis.validate_evidence_review(
             scope, findings, fingerprint, artifact, ranges, review_sources
         ),
