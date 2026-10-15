@@ -327,6 +327,8 @@ _GUARD_NAME_RE = re.compile(
 )
 #: A registration call is short; the cap only bounds an unbalanced one.
 _MOUNT_SCOPE_CAP = 4000
+#: Earlier guard registrations recorded per route (MR-19); the closest-preceding few suffice.
+MAX_GUARD_LINES = 8
 
 
 def _mount_middleware(text: str, head: re.Match) -> str:
@@ -541,6 +543,7 @@ class RouteCandidate:
     authn_handler_evidence: list[dict] = field(default_factory=list)
     handler_module: str | None = None
     operation_permission_present: bool = False
+    guard_lines: list[int] = field(default_factory=list)
 
 
 def _detect_management_surface(path: str) -> bool:
@@ -687,6 +690,7 @@ def _extract_javascript(path: Path, lines: list[str]) -> list[RouteCandidate]:
         n = text.count("\n", 0, m.start()) + 1
         limit = registrations[index + 1].start() if index + 1 < len(registrations) else len(text)
         authn, authz = _scan_auth_text(_call_scope(text, m.start(), m.start("open"), limit, "//"))
+        guard_lines: list[int] = []
         # Prefix and exact guards belong only to this object and earlier registrations.
         for mount in _MOUNT_HEAD_RE.finditer(text, 0, m.start()):
             if mount.group("obj") != m.group("obj"):
@@ -697,6 +701,8 @@ def _extract_javascript(path: Path, lines: list[str]) -> list[RouteCandidate]:
             if not _guarded(candidate, prefixes, exact):
                 continue
             middleware = _mount_middleware(text, mount)
+            if _GUARD_NAME_RE.search(middleware) or _AUTHZ_GUARD_NAME_RE.search(middleware):
+                guard_lines.append(text.count("\n", 0, mount.start()) + 1)
             if authn == "unknown" and _GUARD_NAME_RE.search(middleware):
                 authn = "middleware_present"
             if authz == "unknown" and _AUTHZ_GUARD_NAME_RE.search(middleware):
@@ -716,6 +722,7 @@ def _extract_javascript(path: Path, lines: list[str]) -> list[RouteCandidate]:
                 authn_signal=authn,
                 authz_signal=authz,
                 management_surface=_detect_management_surface(route),
+                guard_lines=guard_lines[:MAX_GUARD_LINES],
             )
         )
 
@@ -1273,6 +1280,8 @@ def _serialize_route(i: int, r: RouteCandidate) -> dict:
             ordered["authn_handler_evidence"] = d["authn_handler_evidence"]
     if d["handler_module"]:
         ordered["handler_module"] = d["handler_module"]
+    if d["guard_lines"]:
+        ordered["guard_lines"] = d["guard_lines"]
     return ordered
 
 

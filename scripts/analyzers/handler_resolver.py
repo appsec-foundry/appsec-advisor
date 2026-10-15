@@ -320,6 +320,53 @@ def _rejecting_call(code: str, callee: str, guard: _PackageGuard) -> bool:
     return bool(_JS_INLINE_OPTIONS_RE.fullmatch(args)) and not (guard.disabled and guard.disabled.search(args))
 
 
+def direct_imports(path: str, text: str, exists) -> list[str]:
+    """Repository files `path` imports directly, resolved against a file set (MR-19).
+
+    `exists(candidate)` tells whether a repository-relative file is admitted.
+    JavaScript/TypeScript relative ``import``/``require`` and Python relative
+    or root-anchored ``from … import`` resolve; packages and unresolved
+    specifiers are dropped. The importing file never names itself.
+    """
+    import posixpath
+
+    found: list[str] = []
+    folder = posixpath.dirname(path)
+    if path.endswith(_JS_EXTS):
+        stripped = _strip_js_comments(text)
+        sources = [m.group("src") for m in _JS_IMPORT_RE.finditer(stripped)]
+        sources += [m.group("src") for m in _JS_REQUIRE_RE.finditer(stripped)]
+        for src in sources:
+            if not src.startswith("."):
+                continue
+            base = posixpath.normpath(posixpath.join(folder, src))
+            candidates = [base, *(base + ext for ext in _JS_EXTS), *(f"{base}/index{ext}" for ext in _JS_EXTS)]
+            hit = next((c for c in candidates if exists(c)), None)
+            if hit and hit != path and hit not in found:
+                found.append(hit)
+    elif path.endswith(".py"):
+        for m in _PY_IMPORT_RE.finditer(text):
+            module = m.group("mod")
+            dots = len(module) - len(module.lstrip("."))
+            parts = [p for p in module.lstrip(".").split(".") if p]
+            if dots:
+                base = folder
+                for _ in range(dots - 1):
+                    base = posixpath.dirname(base)
+                roots = [base]
+            else:
+                roots = ["", "src"]
+            for root in roots:
+                stem = posixpath.join(root, *parts) if parts else root
+                hit = next(
+                    (c for c in (stem + ".py", posixpath.join(stem, "__init__.py")) if parts and exists(c)), None
+                )
+                if hit and hit != path and hit not in found:
+                    found.append(hit)
+                    break
+    return found
+
+
 def _scheme(text: str) -> str:
     if re.search(r"(?i)cookies", text):
         return "cookie"
