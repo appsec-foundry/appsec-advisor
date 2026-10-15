@@ -564,6 +564,22 @@ def gen_system_overview(yaml_data: dict) -> str:
             lines.append(f"All {cs.get('total') or len(components)} modeled components were analysed with full STRIDE.")
         lines.append("")
 
+    # REQ-FLW-005: files the analysis recorded as not individually examined are a
+    # coverage gap of this assessment, stated next to the system boundary.
+    unexamined = [
+        row
+        for row in meta.get("unexamined_source") or []
+        if isinstance(row, dict) and row.get("component") and isinstance(row.get("files"), int) and row["files"] > 0
+    ]
+    if unexamined:
+        files = sum(row["files"] for row in unexamined)
+        lines.append(
+            f"**Not individually examined:** {files} source {'file' if files == 1 else 'files'} in "
+            f"{len(unexamined)} {'component' if len(unexamined) == 1 else 'components'} had no route, lead or "
+            "security signal (" + ", ".join(f"{row['component']} {row['files']}" for row in unexamined) + ")."
+        )
+        lines.append("")
+
     out_of_scope = (meta.get("scope") if isinstance(meta.get("scope"), dict) else {}).get("out_of_scope") or []
     if out_of_scope:
         lines.append("**Out of scope:** " + "; ".join(out_of_scope) + ".")

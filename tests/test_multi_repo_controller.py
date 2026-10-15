@@ -473,6 +473,28 @@ def test_toolless_architect_receives_the_shared_remediation_policy():
     assert "fix.effect: prevents-mechanism" in instructions
 
 
+def test_coverage_statements_collapse_to_one_line_unless_verbose():
+    entries = [
+        {
+            "component": "Order store",
+            "files": 11,
+            "text": "Order store: 11 source files were not individually examined",
+        },
+        {
+            "component": "Build pipeline",
+            "files": 4,
+            "text": "Build pipeline: 4 source files were not individually examined",
+        },
+    ]
+    assert controller._coverage_infos(entries, verbose=True) == [entry["text"] for entry in entries]
+    assert controller._coverage_infos(entries, verbose=False) == [
+        "15 source files without a route, lead or security signal in 2 components were not individually "
+        "examined; --verbose lists them"
+    ]
+    assert controller._coverage_infos(entries[:1], verbose=False) == [entries[0]["text"]]
+    assert controller._coverage_infos([], verbose=False) == []
+
+
 @pytest.mark.parametrize("role", ["stride_analyzer", "evidence_verifier"])
 def test_source_reading_roles_learn_that_a_mask_marker_is_a_real_secret(role):
     """A masked literal must stay reportable: the model sees only the marker."""
